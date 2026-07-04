@@ -24,13 +24,23 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { type BlogFaqSource } from "@takemetothefair/utils";
 import { type IndexState } from "@/lib/gsc-index-state";
-import { loadBlogCoverageRows, type PostRow } from "@/lib/admin/blog-coverage";
+import {
+  loadBlogCoverageRows,
+  blogClusterRollup,
+  BLOG_GSC_WINDOW_DAYS,
+  type PostRow,
+  type ClusterRollupRow,
+} from "@/lib/admin/blog-coverage";
 
 export const revalidate = 300;
 
 type SortKey =
   | "title"
   | "publishDate"
+  | "clicks"
+  | "impressions"
+  | "ctr"
+  | "ageWeeks"
   | "totalLinks"
   | "eventLinks"
   | "vendorLinks"
@@ -42,6 +52,10 @@ type SortKey =
 const SORT_VALUES: SortKey[] = [
   "title",
   "publishDate",
+  "clicks",
+  "impressions",
+  "ctr",
+  "ageWeeks",
   "totalLinks",
   "eventLinks",
   "vendorLinks",
@@ -49,6 +63,18 @@ const SORT_VALUES: SortKey[] = [
   "faqSource",
   "indexState",
   "bingIndexState",
+];
+
+// The cluster rollup panel sorts independently of the post table, via its own
+// `csort` query param so the two don't clobber each other.
+type ClusterSortKey = "clicks" | "clicksPerPost" | "posts" | "impressions" | "internalLinks";
+
+const CLUSTER_SORT_VALUES: ClusterSortKey[] = [
+  "clicks",
+  "clicksPerPost",
+  "posts",
+  "impressions",
+  "internalLinks",
 ];
 
 function sortRows(rows: PostRow[], key: SortKey): PostRow[] {
@@ -64,6 +90,16 @@ function sortRows(rows: PostRow[], key: SortKey): PostRow[] {
         (a, b) =>
           (b.publishDate?.getTime() ?? 0) - (a.publishDate?.getTime() ?? 0) || tieBreak(a, b)
       );
+    case "clicks":
+      return [...rows].sort((a, b) => b.clicks - a.clicks || tieBreak(a, b));
+    case "impressions":
+      return [...rows].sort((a, b) => b.impressions - a.impressions || tieBreak(a, b));
+    case "ctr":
+      return [...rows].sort((a, b) => b.ctr - a.ctr || tieBreak(a, b));
+    case "ageWeeks":
+      // Oldest first — a 0-click mature post is the one to scrutinize; young
+      // posts (null age sorts last) are still maturing.
+      return [...rows].sort((a, b) => (b.ageWeeks ?? -1) - (a.ageWeeks ?? -1) || tieBreak(a, b));
     case "totalLinks":
       return [...rows].sort((a, b) => b.totalLinks - a.totalLinks || tieBreak(a, b));
     case "eventLinks":
@@ -94,6 +130,25 @@ function sortRows(rows: PostRow[], key: SortKey): PostRow[] {
       const rank = (v: boolean | null): number => (v === false ? 0 : v === null ? 1 : 2);
       return [...rows].sort((a, b) => rank(a.bingIndexed) - rank(b.bingIndexed) || tieBreak(a, b));
     }
+  }
+}
+
+function sortClusterRows(rows: ClusterRollupRow[], key: ClusterSortKey): ClusterRollupRow[] {
+  // All numeric, descending. Tiebreaker = cluster name ascending for stability.
+  const tieBreak = (a: ClusterRollupRow, b: ClusterRollupRow) => a.cluster.localeCompare(b.cluster);
+  const byNumberDesc = (pick: (r: ClusterRollupRow) => number) =>
+    [...rows].sort((a, b) => pick(b) - pick(a) || tieBreak(a, b));
+  switch (key) {
+    case "clicks":
+      return byNumberDesc((r) => r.clicks);
+    case "clicksPerPost":
+      return byNumberDesc((r) => r.clicksPerPost);
+    case "posts":
+      return byNumberDesc((r) => r.posts);
+    case "impressions":
+      return byNumberDesc((r) => r.impressions);
+    case "internalLinks":
+      return byNumberDesc((r) => r.internalLinks);
   }
 }
 
@@ -142,19 +197,57 @@ function formatDate(d: Date | null): string {
   return d.toISOString().slice(0, 10);
 }
 
+// SEO takes ~8–12 weeks; treat < 10 weeks as "maturing" so a young 0-click
+// post isn't misjudged against a stale one. null age = no publish date.
+const MATURE_WEEKS = 10;
+
+function formatAge(weeks: number | null): { label: string; maturing: boolean } {
+  if (weeks === null) return { label: "—", maturing: false };
+  const maturing = weeks < MATURE_WEEKS;
+  return { label: `${weeks}w · ${maturing ? "maturing" : "mature"}`, maturing };
+}
+
+function formatCtr(ctr: number): string {
+  return `${(ctr * 100).toFixed(1)}%`;
+}
+
 interface SortHeaderProps {
   label: string;
   k: SortKey;
   active: SortKey;
+  csort: ClusterSortKey;
   align?: "left" | "right";
 }
 
-function SortHeader({ label, k, active, align = "left" }: SortHeaderProps) {
+function SortHeader({ label, k, active, csort, align = "left" }: SortHeaderProps) {
   const isActive = active === k;
   return (
     <th className={`px-4 py-2 font-medium ${align === "right" ? "text-right" : "text-left"}`}>
       <Link
-        href={`/admin/blog?sort=${k}`}
+        href={`/admin/blog?sort=${k}&csort=${csort}`}
+        className={`hover:text-foreground ${isActive ? "text-foreground font-semibold" : "text-muted-foreground"}`}
+      >
+        {label}
+        {isActive ? " ▾" : ""}
+      </Link>
+    </th>
+  );
+}
+
+interface ClusterSortHeaderProps {
+  label: string;
+  k: ClusterSortKey;
+  active: ClusterSortKey;
+  sort: SortKey;
+  align?: "left" | "right";
+}
+
+function ClusterSortHeader({ label, k, active, sort, align = "left" }: ClusterSortHeaderProps) {
+  const isActive = active === k;
+  return (
+    <th className={`px-4 py-2 font-medium ${align === "right" ? "text-right" : "text-left"}`}>
+      <Link
+        href={`/admin/blog?sort=${sort}&csort=${k}`}
         className={`hover:text-foreground ${isActive ? "text-foreground font-semibold" : "text-muted-foreground"}`}
       >
         {label}
@@ -169,14 +262,19 @@ export const dynamic = "force-dynamic";
 export default async function BlogCoveragePage({
   searchParams,
 }: {
-  searchParams: Promise<{ sort?: string }>;
+  searchParams: Promise<{ sort?: string; csort?: string }>;
 }) {
   const sp = await searchParams;
   const sort: SortKey = SORT_VALUES.includes(sp.sort as SortKey)
     ? (sp.sort as SortKey)
     : "totalLinks";
+  const csort: ClusterSortKey = CLUSTER_SORT_VALUES.includes(sp.csort as ClusterSortKey)
+    ? (sp.csort as ClusterSortKey)
+    : "clicks";
 
-  const rows = sortRows(await loadBlogCoverageRows(getCloudflareDb()), sort);
+  const allRows = await loadBlogCoverageRows(getCloudflareDb());
+  const rows = sortRows(allRows, sort);
+  const clusterRows = sortClusterRows(blogClusterRollup(allRows), csort);
 
   // Rollup tiles. Counted from `rows` so they always agree with the
   // table — no second query, no drift if the rendering filter changes.
@@ -193,9 +291,10 @@ export default async function BlogCoveragePage({
       <header>
         <h1 className="text-2xl font-bold text-foreground">Blog coverage</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Per-post link footprint, FAQ source, and Google indexation status. Sortable; default sort
-          is total link count descending. Indexation data comes from{" "}
-          <code>gsc_inspection_state</code> populated by the URL Inspection sweep.
+          Per-post reach (clicks/impressions/CTR), age, link footprint, FAQ source, and Google/Bing
+          indexation status, plus a per-cluster effectiveness rollup. Sortable; default sort is
+          total link count descending. Indexation data comes from <code>gsc_inspection_state</code>{" "}
+          populated by the URL Inspection sweep.
         </p>
       </header>
 
@@ -209,6 +308,96 @@ export default async function BlogCoveragePage({
 
       <Card>
         <CardHeader>
+          <CardTitle className="text-sm font-semibold">Effectiveness by cluster</CardTitle>
+          <p className="text-xs text-muted-foreground mt-1">
+            The ~113 posts collapsed into topic buckets by a <strong>v1 slug/tag heuristic</strong>{" "}
+            ( <code>src/lib/admin/blog-clusters.ts</code>) — directional, not an exact match to a
+            manual grouping (edge posts with &quot;fair&quot;/&quot;festival&quot; in the slug may
+            land a bucket off; tune the rules or supply a canonical slug→cluster map). Sortable.
+            Clicks &amp; impressions are GSC-sampled (top query×page) over the last{" "}
+            {BLOG_GSC_WINDOW_DAYS} days — they under-count the tail. Internal links = event + vendor
+            + venue links each cluster distributes.
+          </p>
+        </CardHeader>
+        <CardContent className="p-0">
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-muted border-b border-border">
+                <tr>
+                  <th className="px-4 py-2 font-medium text-left text-muted-foreground">cluster</th>
+                  <ClusterSortHeader
+                    label="posts"
+                    k="posts"
+                    active={csort}
+                    sort={sort}
+                    align="right"
+                  />
+                  <ClusterSortHeader
+                    label="clicks"
+                    k="clicks"
+                    active={csort}
+                    sort={sort}
+                    align="right"
+                  />
+                  <ClusterSortHeader
+                    label="clicks/post"
+                    k="clicksPerPost"
+                    active={csort}
+                    sort={sort}
+                    align="right"
+                  />
+                  <ClusterSortHeader
+                    label="impr"
+                    k="impressions"
+                    active={csort}
+                    sort={sort}
+                    align="right"
+                  />
+                  <ClusterSortHeader
+                    label="int. links"
+                    k="internalLinks"
+                    active={csort}
+                    sort={sort}
+                    align="right"
+                  />
+                </tr>
+              </thead>
+              <tbody>
+                {clusterRows.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="px-4 py-6 text-center text-muted-foreground">
+                      No blog posts.
+                    </td>
+                  </tr>
+                )}
+                {clusterRows.map((c) => (
+                  <tr key={c.cluster} className="border-b border-border hover:bg-muted">
+                    <td className="px-4 py-2 text-foreground">{c.cluster}</td>
+                    <td className="px-4 py-2 text-right tabular-nums text-muted-foreground">
+                      {c.posts}
+                    </td>
+                    <td className="px-4 py-2 text-right tabular-nums font-medium text-foreground">
+                      {c.clicks}
+                    </td>
+                    <td className="px-4 py-2 text-right tabular-nums text-foreground">
+                      {c.clicksPerPost.toFixed(1)}
+                    </td>
+                    <td className="px-4 py-2 text-right tabular-nums text-muted-foreground">
+                      {c.impressions}
+                    </td>
+                    <td className="px-4 py-2 text-right tabular-nums text-foreground">
+                      {c.internalLinks}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle className="text-sm font-semibold">Posts</CardTitle>
         </CardHeader>
         <CardContent className="p-0">
@@ -216,21 +405,55 @@ export default async function BlogCoveragePage({
             <table className="min-w-full text-sm">
               <thead className="bg-muted border-b border-border">
                 <tr>
-                  <SortHeader label="title" k="title" active={sort} />
-                  <SortHeader label="publish" k="publishDate" active={sort} />
-                  <SortHeader label="links" k="totalLinks" active={sort} align="right" />
-                  <SortHeader label="event" k="eventLinks" active={sort} align="right" />
-                  <SortHeader label="vendor" k="vendorLinks" active={sort} align="right" />
-                  <SortHeader label="venue" k="venueLinks" active={sort} align="right" />
-                  <SortHeader label="faq" k="faqSource" active={sort} />
-                  <SortHeader label="google" k="indexState" active={sort} />
-                  <SortHeader label="bing" k="bingIndexState" active={sort} />
+                  <SortHeader label="title" k="title" active={sort} csort={csort} />
+                  <SortHeader label="publish" k="publishDate" active={sort} csort={csort} />
+                  <SortHeader label="clicks" k="clicks" active={sort} csort={csort} align="right" />
+                  <SortHeader
+                    label="impr"
+                    k="impressions"
+                    active={sort}
+                    csort={csort}
+                    align="right"
+                  />
+                  <SortHeader label="ctr" k="ctr" active={sort} csort={csort} align="right" />
+                  <SortHeader label="age" k="ageWeeks" active={sort} csort={csort} />
+                  <SortHeader
+                    label="links"
+                    k="totalLinks"
+                    active={sort}
+                    csort={csort}
+                    align="right"
+                  />
+                  <SortHeader
+                    label="event"
+                    k="eventLinks"
+                    active={sort}
+                    csort={csort}
+                    align="right"
+                  />
+                  <SortHeader
+                    label="vendor"
+                    k="vendorLinks"
+                    active={sort}
+                    csort={csort}
+                    align="right"
+                  />
+                  <SortHeader
+                    label="venue"
+                    k="venueLinks"
+                    active={sort}
+                    csort={csort}
+                    align="right"
+                  />
+                  <SortHeader label="faq" k="faqSource" active={sort} csort={csort} />
+                  <SortHeader label="google" k="indexState" active={sort} csort={csort} />
+                  <SortHeader label="bing" k="bingIndexState" active={sort} csort={csort} />
                 </tr>
               </thead>
               <tbody>
                 {rows.length === 0 && (
                   <tr>
-                    <td colSpan={9} className="px-4 py-6 text-center text-muted-foreground">
+                    <td colSpan={13} className="px-4 py-6 text-center text-muted-foreground">
                       No blog posts.
                     </td>
                   </tr>
@@ -242,6 +465,7 @@ export default async function BlogCoveragePage({
                   const bingCrawled = r.bingLastCrawled
                     ? formatDate(new Date(r.bingLastCrawled))
                     : null;
+                  const age = formatAge(r.ageWeeks);
                   return (
                     <tr key={r.id} className="border-b border-border hover:bg-muted">
                       <td className="px-4 py-2">
@@ -271,6 +495,22 @@ export default async function BlogCoveragePage({
                       </td>
                       <td className="px-4 py-2 text-foreground tabular-nums">
                         {formatDate(r.publishDate)}
+                      </td>
+                      <td className="px-4 py-2 text-right tabular-nums text-foreground">
+                        {r.clicks}
+                      </td>
+                      <td className="px-4 py-2 text-right tabular-nums text-muted-foreground">
+                        {r.impressions}
+                      </td>
+                      <td className="px-4 py-2 text-right tabular-nums text-muted-foreground">
+                        {r.impressions > 0 ? formatCtr(r.ctr) : "—"}
+                      </td>
+                      <td className="px-4 py-2 tabular-nums">
+                        <span
+                          className={age.maturing ? "text-muted-foreground" : "text-foreground"}
+                        >
+                          {age.label}
+                        </span>
                       </td>
                       <td className="px-4 py-2 text-right tabular-nums font-medium text-foreground">
                         {r.totalLinks === 0 ? (
@@ -326,7 +566,11 @@ export default async function BlogCoveragePage({
       </Card>
 
       <p className="text-xs text-muted-foreground">
-        Indexation status reflects the most recent URL Inspection sweep run. Rows in{" "}
+        GSC clicks/impressions are sampled (top query×page) over the last {BLOG_GSC_WINDOW_DAYS}{" "}
+        days, so they under-count the tail; recent days also lag in GSC reporting. Age flags posts
+        younger than {MATURE_WEEKS} weeks as still maturing (SEO takes ~8–12 weeks), so a young
+        0-click post isn&apos;t misjudged against a mature one. Indexation status reflects the most
+        recent URL Inspection sweep run. Rows in{" "}
         <span className="text-red-700">discovered, not indexed</span> or{" "}
         <span className="text-amber-700">crawled, not indexed</span> are candidates for{" "}
         <code>request_indexing</code> (MCP) or content rewrites.

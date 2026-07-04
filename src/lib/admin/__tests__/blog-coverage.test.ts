@@ -11,7 +11,7 @@ import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import * as schema from "../../db/schema";
 import type { Database as AppDb } from "../../db";
-import { loadBlogCoverageRows } from "../blog-coverage";
+import { loadBlogCoverageRows, blogClusterRollup } from "../blog-coverage";
 
 // Minimal shapes of only the columns the loader reads.
 const SCHEMA_SQL = `
@@ -22,7 +22,8 @@ const SCHEMA_SQL = `
     status TEXT NOT NULL,
     publish_date INTEGER,
     faqs TEXT,
-    body TEXT
+    body TEXT,
+    tags TEXT
   );
   CREATE TABLE content_links (
     id TEXT PRIMARY KEY,
@@ -41,22 +42,45 @@ const SCHEMA_SQL = `
     crawl_error TEXT,
     last_checked_at INTEGER
   );
+  CREATE TABLE gsc_search_metrics (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL,
+    query TEXT NOT NULL,
+    page TEXT NOT NULL,
+    clicks INTEGER NOT NULL DEFAULT 0,
+    impressions INTEGER NOT NULL DEFAULT 0,
+    ctr REAL NOT NULL DEFAULT 0,
+    position REAL NOT NULL DEFAULT 0,
+    site_url TEXT NOT NULL DEFAULT 'https://meetmeatthefair.com/',
+    updated_at INTEGER NOT NULL DEFAULT 0
+  );
 `;
 
 let raw: InstanceType<typeof Database>;
 let db: AppDb;
 
-function seedPost(id: string, slug: string, status = "PUBLISHED") {
+function seedPost(id: string, slug: string, status = "PUBLISHED", tags: string | null = null) {
   raw
     .prepare(
-      `INSERT INTO blog_posts (id, slug, title, status, publish_date, faqs, body) VALUES (?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO blog_posts (id, slug, title, status, publish_date, faqs, body, tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     )
-    .run(id, slug, `Title ${slug}`, status, 1_700_000_000, null, "body text");
+    .run(id, slug, `Title ${slug}`, status, 1_700_000_000, null, "body text", tags);
 }
 function seedLink(id: string, sourceId: string, targetType: string) {
   raw
     .prepare(`INSERT INTO content_links (id, source_id, target_type) VALUES (?, ?, ?)`)
     .run(id, sourceId, targetType);
+}
+function seedMetric(page: string, date: string, clicks: number, impressions: number) {
+  raw
+    .prepare(
+      `INSERT INTO gsc_search_metrics (date, query, page, clicks, impressions, ctr, position) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(date, `q-${clicks}-${impressions}`, page, clicks, impressions, 0, 0);
+}
+
+function today(): string {
+  return new Date().toISOString().slice(0, 10);
 }
 
 beforeEach(() => {
@@ -138,5 +162,81 @@ describe("loadBlogCoverageRows — D1 100-param cap (OPE-79)", () => {
   it("returns [] on an empty corpus", async () => {
     const rows = await loadBlogCoverageRows(db);
     expect(rows).toEqual([]);
+  });
+});
+
+describe("loadBlogCoverageRows — GSC reach (Pass 5, OPE-96)", () => {
+  it("sums clicks/impressions per post and recomputes CTR from totals", async () => {
+    for (let i = 0; i < 120; i++) seedPost(`p${i}`, `post-${i}`);
+    const url = "https://meetmeatthefair.com/blog/post-118"; // second chunk
+    // Two in-window query rows for the same page — must SUM, not average CTR.
+    seedMetric(url, today(), 8, 100);
+    seedMetric(url, today(), 2, 100);
+
+    const rows = await loadBlogCoverageRows(db);
+    const p118 = rows.find((r) => r.slug === "post-118")!;
+    expect(p118.clicks).toBe(10);
+    expect(p118.impressions).toBe(200);
+    // 10/200 = 0.05, NOT the average of the two per-row ctrs.
+    expect(p118.ctr).toBeCloseTo(0.05, 6);
+    // A post with no metric rows reports zeros and ctr 0 (not NaN).
+    const p10 = rows.find((r) => r.slug === "post-10")!;
+    expect(p10.clicks).toBe(0);
+    expect(p10.impressions).toBe(0);
+    expect(p10.ctr).toBe(0);
+  });
+
+  it("excludes rows outside the rolling date window", async () => {
+    seedPost("p0", "post-0");
+    const url = "https://meetmeatthefair.com/blog/post-0";
+    seedMetric(url, today(), 5, 50); // in window
+    seedMetric(url, "2000-01-01", 99, 990); // far outside window
+
+    const rows = await loadBlogCoverageRows(db);
+    expect(rows[0].clicks).toBe(5);
+    expect(rows[0].impressions).toBe(50);
+  });
+});
+
+describe("blog clusters + rollup (OPE-96)", () => {
+  it("classifies posts and reports ageWeeks/cluster on each row", async () => {
+    seedPost("g", "gun-shows-new-england");
+    seedPost("b", "maine-breweries-guide");
+    seedPost("o", "something-unclassifiable");
+
+    const rows = await loadBlogCoverageRows(db);
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    expect(byId.get("g")!.cluster).toBe("Gun shows");
+    expect(byId.get("b")!.cluster).toBe("Breweries & beer");
+    expect(byId.get("o")!.cluster).toBe("Other / general");
+    // publish_date is a fixed past timestamp → mature (non-null, large age).
+    expect(byId.get("g")!.ageWeeks).toBeGreaterThan(10);
+  });
+
+  it("rolls up per cluster: posts, clicks, clicks/post, impressions, internal links", async () => {
+    seedPost("g1", "gun-shows-nh");
+    seedPost("g2", "gun-shows-maine");
+    seedPost("b1", "vermont-breweries");
+    // Gun cluster: 82 + 4 clicks across 2 posts; internal links exclude blog→blog.
+    seedMetric("https://meetmeatthefair.com/blog/gun-shows-nh", today(), 82, 1000);
+    seedMetric("https://meetmeatthefair.com/blog/gun-shows-maine", today(), 4, 60);
+    seedLink("l1", "g1", "EVENT");
+    seedLink("l2", "g1", "VENDOR");
+    seedLink("l3", "g1", "BLOG_POST"); // must NOT count toward internalLinks
+    seedLink("l4", "b1", "VENDOR");
+
+    const rows = await loadBlogCoverageRows(db);
+    const rollup = blogClusterRollup(rows);
+    // Sorted clicks desc — Gun shows first.
+    expect(rollup[0].cluster).toBe("Gun shows");
+    expect(rollup[0].posts).toBe(2);
+    expect(rollup[0].clicks).toBe(86);
+    expect(rollup[0].clicksPerPost).toBeCloseTo(43, 6);
+    expect(rollup[0].impressions).toBe(1060);
+    expect(rollup[0].internalLinks).toBe(2); // EVENT + VENDOR, not the BLOG_POST link
+
+    const beer = rollup.find((c) => c.cluster === "Breweries & beer")!;
+    expect(beer.internalLinks).toBe(1);
+    expect(beer.clicks).toBe(0);
   });
 });
