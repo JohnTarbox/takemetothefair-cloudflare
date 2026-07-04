@@ -59,3 +59,24 @@ export function fillDailySeries(rawByDate: Map<string, number>, days: number): S
   }
   return series;
 }
+
+/**
+ * Like fillDailySeries, but TRIMS the trailing days that have no row in
+ * rawByDate yet — the ~2–3-day GSC/GA4 reporting lag (OPE-95). A day PRESENT in
+ * rawByDate is kept even if its value is 0 (a real zero); only the unreported
+ * tail is dropped, so a chart ends at the last day with data instead of drawing
+ * a false cliff to zero. Interior gaps (rare) are left as 0. When rawByDate is
+ * empty (no data at all) the full 0-series is returned unchanged, so the card
+ * still renders a baseline rather than nothing. The last point's `date` is the
+ * "data through" date the caller captions with.
+ */
+export function fillDailySeriesTrimTrailing(
+  rawByDate: Map<string, number>,
+  days: number
+): SparklinePoint[] {
+  const series = fillDailySeries(rawByDate, days);
+  if (rawByDate.size === 0) return series;
+  let end = series.length;
+  while (end > 0 && !rawByDate.has(series[end - 1].date)) end--;
+  return series.slice(0, end);
+}

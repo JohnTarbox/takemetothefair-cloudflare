@@ -242,7 +242,9 @@ async function OverviewTab({ window }: { window: WindowKey }) {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
         <SparklineCard
           title="Search visibility (last 30 days)"
-          subtitle="Daily Google search clicks · source: GSC"
+          subtitle={`Daily Google search clicks · source: GSC${throughCaption(
+            snapshot.searchVisibilitySparkline
+          )}`}
           points={snapshot.searchVisibilitySparkline}
           colorClass="stroke-violet-600"
           fillClass="fill-violet-100"
@@ -269,7 +271,9 @@ async function OverviewTab({ window }: { window: WindowKey }) {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
         <SparklineCard
           title="Search visibility (last 90 days)"
-          subtitle="Daily Google search clicks · source: GSC"
+          subtitle={`Daily Google search clicks · source: GSC${throughCaption(
+            snapshot.kpiStrip90d.searchVisibility
+          )}`}
           points={snapshot.kpiStrip90d.searchVisibility}
           colorClass="stroke-violet-600"
           fillClass="fill-violet-100"
@@ -1329,6 +1333,19 @@ function RenderFaultHealthCardView({ snapshot }: { snapshot: OverviewSnapshot })
       </CardContent>
     </Card>
   );
+}
+
+/**
+ * OPE-95 — "· through Jun 30"-style suffix from a (trimmed) daily series' last
+ * point, so a GSC chart states its data window and the trailing-lag trim is
+ * explicit. Empty string when there are no points.
+ */
+function throughCaption(points: SparklinePoint[]): string {
+  if (points.length === 0) return "";
+  const last = points[points.length - 1].date;
+  const d = new Date(`${last}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return "";
+  return ` · through ${d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })}`;
 }
 
 function SparklineCard({
