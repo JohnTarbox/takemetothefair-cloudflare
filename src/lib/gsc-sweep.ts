@@ -169,25 +169,6 @@ export async function pickUrls(db: Db, batchSize: number): Promise<string[]> {
   const oneDayAgo = new Date(Date.now() - 86400 * 1000);
   const sixHoursAgo = new Date(Date.now() - 6 * 3600 * 1000);
 
-  // Tier 1: URLs with non-OK last verdict
-  const stale = await db
-    .select({ url: gscInspectionState.url })
-    .from(gscInspectionState)
-    .where(
-      and(
-        // null verdict means "never inspected" — treat as Tier 3 below
-        // anything that's not PASS / SUCCESS we re-inspect first
-        or(
-          eq(gscInspectionState.lastVerdict, "FAIL"),
-          eq(gscInspectionState.lastVerdict, "NEUTRAL"),
-          eq(gscInspectionState.lastVerdict, "PARTIAL")
-        )
-      )
-    )
-    .limit(batchSize);
-
-  const picked = new Set(stale.map((r) => r.url));
-
   // Tier 1.5 (A10/A11, 2026-06-26): GUARANTEED per-page-type coverage. The
   // sweep historically inspected almost only /events/ URLs (Tier 2/3 below are
   // event-heavy), so the venue/vendor/promoter/blog "Crawled/Discovered –
@@ -196,10 +177,24 @@ export async function pickUrls(db: Db, batchSize: number): Promise<string[]> {
   // least-recently-inspected indexable URL of EACH page type every run. The
   // LEFT JOIN onto gsc_inspection_state sorts never-inspected entities first
   // (SQLite ASC puts NULL `last_inspected_at` ahead), so coverage rotates.
-  // Runs BEFORE the early-return so a large Tier-1 backlog can't starve it.
+  //
+  // OPE-91 (2026-07-04): this per-type set is now built into its own
+  // `guaranteed` Set and is NEVER truncated. Previously it was mixed into a
+  // single `picked` Set together with Tier 1, then the function did
+  // `[...picked].slice(0, batchSize)` at the end. With the default batchSize=8
+  // and a full Tier-1 backlog, that slice DISCARDED every per-type URL (the Set
+  // is insertion-ordered and Tier 1 was inserted first), so blog/vendor/venue/
+  // promoter were never inspected — gsc_inspection_state had 0 blog rows and
+  // /admin/blog showed "unknown" for every post. We now return
+  // `[...guaranteed, ...filler]`: the guaranteed per-type coverage always ships
+  // in full, and the Tier 1 / 2 / 3 filler is added only up to the leftover
+  // budget. The returned length may exceed batchSize by design (guaranteed
+  // coverage + filler); GSC's ~2000/day quota comfortably covers the ~50-60
+  // URLs/run this produces.
   const PER_TYPE = 10;
+  const guaranteed = new Set<string>();
   const addByPrefix = (prefix: string, rows: Array<{ slug: string }>) => {
-    for (const r of rows) picked.add(`${HOST}${prefix}${r.slug}`);
+    for (const r of rows) guaranteed.add(`${HOST}${prefix}${r.slug}`);
   };
 
   const venueSample = await db
@@ -266,29 +261,63 @@ export async function pickUrls(db: Db, batchSize: number): Promise<string[]> {
       .map((v) => `${HOST}/vendors/${v.slug}`)
       .sort((a, b) => (lastByUrl.get(a) ?? 0) - (lastByUrl.get(b) ?? 0))
       .slice(0, PER_TYPE);
-    for (const u of vendorUrls) picked.add(u);
+    for (const u of vendorUrls) guaranteed.add(u);
   }
 
-  if (picked.size >= batchSize) return [...picked].slice(0, batchSize);
+  // Filler: Tier 1 (stale non-OK) + Tier 2/2b/2c/3 are added only up to the
+  // budget left over AFTER the guaranteed per-type coverage. Anything already
+  // in `guaranteed` is skipped (no double-count). When batchSize is small (the
+  // default 8) this budget can be 0 — that's fine, the guaranteed set still
+  // ships in full.
+  const filler = new Set<string>();
+  const fillerBudget = Math.max(0, batchSize - guaranteed.size);
+  /** Add to filler if there's budget and it isn't already guaranteed; returns true once filler is full. */
+  const addFiller = (url: string): boolean => {
+    if (filler.size >= fillerBudget) return true;
+    if (!guaranteed.has(url)) filler.add(url);
+    return filler.size >= fillerBudget;
+  };
+
+  // Tier 1: URLs with non-OK last verdict
+  if (fillerBudget > 0) {
+    const stale = await db
+      .select({ url: gscInspectionState.url })
+      .from(gscInspectionState)
+      .where(
+        and(
+          // null verdict means "never inspected" — treat as Tier 3 below
+          // anything that's not PASS / SUCCESS we re-inspect first
+          or(
+            eq(gscInspectionState.lastVerdict, "FAIL"),
+            eq(gscInspectionState.lastVerdict, "NEUTRAL"),
+            eq(gscInspectionState.lastVerdict, "PARTIAL")
+          )
+        )
+      )
+      .limit(fillerBudget);
+    for (const r of stale) if (addFiller(r.url)) break;
+  }
 
   // Tier 2: recently-published events
-  const recentEvents = await db
-    .select({ slug: events.slug })
-    .from(events)
-    .where(and(publicEventWhere(), gte(events.updatedAt, oneDayAgo)));
-  for (const e of recentEvents) {
-    picked.add(`${HOST}/events/${e.slug}`);
-    if (picked.size >= batchSize) return [...picked].slice(0, batchSize);
+  if (filler.size < fillerBudget) {
+    const recentEvents = await db
+      .select({ slug: events.slug })
+      .from(events)
+      .where(and(publicEventWhere(), gte(events.updatedAt, oneDayAgo)));
+    for (const e of recentEvents) {
+      if (addFiller(`${HOST}/events/${e.slug}`)) break;
+    }
   }
 
   // Tier 2b: recently-published blog posts
-  const recentBlog = await db
-    .select({ slug: blogPosts.slug })
-    .from(blogPosts)
-    .where(and(eq(blogPosts.status, "PUBLISHED"), gte(blogPosts.updatedAt, oneDayAgo)));
-  for (const b of recentBlog) {
-    picked.add(`${HOST}/blog/${b.slug}`);
-    if (picked.size >= batchSize) return [...picked].slice(0, batchSize);
+  if (filler.size < fillerBudget) {
+    const recentBlog = await db
+      .select({ slug: blogPosts.slug })
+      .from(blogPosts)
+      .where(and(eq(blogPosts.status, "PUBLISHED"), gte(blogPosts.updatedAt, oneDayAgo)));
+    for (const b of recentBlog) {
+      if (addFiller(`${HOST}/blog/${b.slug}`)) break;
+    }
   }
 
   // Tier 2c (REL5, 2026-06-16): URLs we've submitted to IndexNow but never
@@ -302,60 +331,58 @@ export async function pickUrls(db: Db, batchSize: number): Promise<string[]> {
   // all 5,924 rows. Prioritize the oldest unresolved submissions so each daily
   // sweep chips away at measuring them (the rate-limited backfill the §D1 ask
   // describes — there's no instant backfill under GSC's ~2000/day quota).
-  if (picked.size < batchSize) {
+  if (filler.size < fillerBudget) {
     const unresolvedSubmitted = await db
       .selectDistinct({ url: timeToIndexLog.url })
       .from(timeToIndexLog)
       .where(isNull(timeToIndexLog.firstCrawlAt))
       .orderBy(asc(timeToIndexLog.indexnowSubmittedAt))
-      .limit(batchSize - picked.size);
+      .limit(fillerBudget - filler.size);
     for (const r of unresolvedSubmitted) {
       // Only inspect our own-host URLs (the inspector resolves a path against
       // the property); a stray external URL in the log can't be inspected.
-      if (r.url.startsWith(HOST)) picked.add(r.url);
-      if (picked.size >= batchSize) return [...picked].slice(0, batchSize);
+      if (r.url.startsWith(HOST) && addFiller(r.url)) break;
     }
   }
 
   // Tier 3: round-robin oldest. Pull from gsc_inspection_state ordered by
   // last_inspected_at ASC. Backfill from sitemap URLs if state is empty.
-  const oldest = await db
-    .select({ url: gscInspectionState.url, lastInspectedAt: gscInspectionState.lastInspectedAt })
-    .from(gscInspectionState)
-    .orderBy(asc(gscInspectionState.lastInspectedAt))
-    .limit(batchSize - picked.size);
-  for (const o of oldest) {
-    // Skip if already inspected within the cache window (6h)
-    if (o.lastInspectedAt && o.lastInspectedAt.getTime() > sixHoursAgo.getTime()) continue;
-    picked.add(o.url);
-    if (picked.size >= batchSize) return [...picked].slice(0, batchSize);
+  if (filler.size < fillerBudget) {
+    const oldest = await db
+      .select({ url: gscInspectionState.url, lastInspectedAt: gscInspectionState.lastInspectedAt })
+      .from(gscInspectionState)
+      .orderBy(asc(gscInspectionState.lastInspectedAt))
+      .limit(fillerBudget - filler.size);
+    for (const o of oldest) {
+      // Skip if already inspected within the cache window (6h)
+      if (o.lastInspectedAt && o.lastInspectedAt.getTime() > sixHoursAgo.getTime()) continue;
+      if (addFiller(o.url)) break;
+    }
   }
 
   // Tier 3 fallback: seed from active events/venues if state is sparse
-  if (picked.size < batchSize) {
+  if (filler.size < fillerBudget) {
     const activeEvents = await db
       .select({ slug: events.slug })
       .from(events)
       .where(publicEventWhere())
-      .limit(batchSize - picked.size);
+      .limit(fillerBudget - filler.size);
     for (const e of activeEvents) {
-      picked.add(`${HOST}/events/${e.slug}`);
-      if (picked.size >= batchSize) break;
+      if (addFiller(`${HOST}/events/${e.slug}`)) break;
     }
   }
-  if (picked.size < batchSize) {
+  if (filler.size < fillerBudget) {
     const activeVenues = await db
       .select({ slug: venues.slug })
       .from(venues)
       .where(eq(venues.status, "ACTIVE"))
-      .limit(batchSize - picked.size);
+      .limit(fillerBudget - filler.size);
     for (const v of activeVenues) {
-      picked.add(`${HOST}/venues/${v.slug}`);
-      if (picked.size >= batchSize) break;
+      if (addFiller(`${HOST}/venues/${v.slug}`)) break;
     }
   }
 
-  return [...picked];
+  return [...guaranteed, ...filler];
 }
 
 /** Run a single sweep batch. */

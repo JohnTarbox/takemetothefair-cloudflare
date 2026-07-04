@@ -730,6 +730,21 @@ async function runScheduledGscSweep(env: Env): Promise<void> {
 }
 
 /**
+ * Bing URL Inspection sweep (OPE-91) — populates bing_inspection_state (the
+ * Bing analogue of gsc_inspection_state) so the /admin/blog "Bing" column has
+ * data. Runs right after the gsc sweep; blog-first, least-recently-checked, so
+ * a modest daily batch rotates through the corpus. Failsoft via runMainAppSweep.
+ */
+async function runScheduledBingInspectionSweep(env: Env): Promise<void> {
+  await runMainAppSweep(
+    env,
+    "bing inspection sweep",
+    "/api/admin/analytics/bing/inspection-sweep",
+    (r) => `inspected=${r.inspected ?? "?"} skipped=${r.skipped ?? "?"}`
+  );
+}
+
+/**
  * Bing Site Scan + Bing/GSC sitemap issue refresh (OPE-49). `refreshIssues`
  * writes the BING_SCAN / BING_SITEMAP / GSC_SITEMAP half of
  * site_health_issues, but was only reachable via a manual POST to
@@ -1520,6 +1535,7 @@ export default {
           })
         ),
         runScheduledGscSweep(env),
+        runScheduledBingInspectionSweep(env),
         runScheduledSiteHealthRefresh(env),
         runScheduledTimeToIndexSweep(env),
         runScheduledGa4LivenessCheck(env),

@@ -144,7 +144,7 @@ describe("REL5 — pickUrls surfaces unresolved time_to_index_log URLs", () => {
     expect(urls).not.toContain("https://someoneelse.example/events/x");
   });
 
-  it("respects the batch budget (never returns more than batchSize)", async () => {
+  it("respects the filler budget (no entities seeded → guaranteed set empty, filler capped at batchSize)", async () => {
     for (let i = 0; i < 10; i++) {
       seedSubmission(`${HOST}/events/e${i}`, `2026-06-0${(i % 9) + 1}T00:00:00Z`, null);
     }
@@ -195,5 +195,35 @@ describe("A10/A11 — per-page-type guaranteed coverage", () => {
 
     const urls = await pickUrls(db as never, 200);
     expect(urls).not.toContain(`${HOST}/vendors/deleted-vendor`);
+  });
+
+  // OPE-91 regression: with the default batchSize=8 and a FULL Tier-1 stale
+  // backlog (8 non-OK event rows), the old `[...picked].slice(0, batchSize)`
+  // discarded every per-type URL — blog/vendor/venue/promoter were never
+  // inspected, so gsc_inspection_state had 0 blog rows. The guaranteed per-type
+  // coverage must survive regardless of how full the Tier-1 filler is.
+  it("does NOT truncate per-type coverage when Tier 1 (stale) is full at batchSize=8", async () => {
+    // 8 stale (non-OK) event rows — exactly fills the default batch budget.
+    for (let i = 0; i < 8; i++) {
+      raw
+        .prepare(
+          `INSERT INTO gsc_inspection_state (url, last_inspected_at, last_verdict) VALUES (?, ?, 'FAIL')`
+        )
+        .run(`${HOST}/events/stale-${i}`, 1_700_000_000);
+    }
+    // Published blog posts that MUST still be sampled into the guaranteed set.
+    raw
+      .prepare(`INSERT INTO blog_posts (id, slug, status) VALUES (?, ?, 'PUBLISHED')`)
+      .run("b1", "guaranteed-post-a");
+    raw
+      .prepare(`INSERT INTO blog_posts (id, slug, status) VALUES (?, ?, 'PUBLISHED')`)
+      .run("b2", "guaranteed-post-b");
+
+    const urls = await pickUrls(db as never, 8);
+    // Blog coverage survives the full Tier-1 filler (the whole point of OPE-91).
+    expect(urls).toContain(`${HOST}/blog/guaranteed-post-a`);
+    expect(urls).toContain(`${HOST}/blog/guaranteed-post-b`);
+    // And a Tier-1 stale event still made it into the filler budget.
+    expect(urls.some((u) => u.startsWith(`${HOST}/events/stale-`))).toBe(true);
   });
 });

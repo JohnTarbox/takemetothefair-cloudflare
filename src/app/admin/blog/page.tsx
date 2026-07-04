@@ -36,7 +36,8 @@ type SortKey =
   | "vendorLinks"
   | "venueLinks"
   | "faqSource"
-  | "indexState";
+  | "indexState"
+  | "bingIndexState";
 
 const SORT_VALUES: SortKey[] = [
   "title",
@@ -47,6 +48,7 @@ const SORT_VALUES: SortKey[] = [
   "venueLinks",
   "faqSource",
   "indexState",
+  "bingIndexState",
 ];
 
 function sortRows(rows: PostRow[], key: SortKey): PostRow[] {
@@ -86,6 +88,12 @@ function sortRows(rows: PostRow[], key: SortKey): PostRow[] {
       };
       return [...rows].sort((a, b) => rank[a.indexState] - rank[b.indexState] || tieBreak(a, b));
     }
+    case "bingIndexState": {
+      // not-indexed first (actionable), then unknown, then indexed — mirroring
+      // the indexState ordering. null=unknown, false=not indexed, true=indexed.
+      const rank = (v: boolean | null): number => (v === false ? 0 : v === null ? 1 : 2);
+      return [...rows].sort((a, b) => rank(a.bingIndexed) - rank(b.bingIndexed) || tieBreak(a, b));
+    }
   }
 }
 
@@ -106,6 +114,16 @@ function indexStateChip(state: IndexState): { label: string; cls: string } {
     case "unknown":
       return { label: "unknown", cls: "bg-muted text-muted-foreground border-border" };
   }
+}
+
+function bingChip(indexed: boolean | null): { label: string; cls: string } {
+  if (indexed === true) {
+    return { label: "indexed", cls: "bg-green-50 text-green-800 border-green-200" };
+  }
+  if (indexed === false) {
+    return { label: "not indexed", cls: "bg-red-50 text-red-800 border-red-300" };
+  }
+  return { label: "unknown", cls: "bg-muted text-muted-foreground border-border" };
 }
 
 function faqSourceChip(source: BlogFaqSource): { label: string; cls: string } {
@@ -205,13 +223,14 @@ export default async function BlogCoveragePage({
                   <SortHeader label="vendor" k="vendorLinks" active={sort} align="right" />
                   <SortHeader label="venue" k="venueLinks" active={sort} align="right" />
                   <SortHeader label="faq" k="faqSource" active={sort} />
-                  <SortHeader label="indexation" k="indexState" active={sort} />
+                  <SortHeader label="google" k="indexState" active={sort} />
+                  <SortHeader label="bing" k="bingIndexState" active={sort} />
                 </tr>
               </thead>
               <tbody>
                 {rows.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="px-4 py-6 text-center text-muted-foreground">
+                    <td colSpan={9} className="px-4 py-6 text-center text-muted-foreground">
                       No blog posts.
                     </td>
                   </tr>
@@ -219,6 +238,10 @@ export default async function BlogCoveragePage({
                 {rows.map((r) => {
                   const faqMeta = faqSourceChip(r.faqSource);
                   const indexMeta = indexStateChip(r.indexState);
+                  const bingMeta = bingChip(r.bingIndexed);
+                  const bingCrawled = r.bingLastCrawled
+                    ? formatDate(new Date(r.bingLastCrawled))
+                    : null;
                   return (
                     <tr key={r.id} className="border-b border-border hover:bg-muted">
                       <td className="px-4 py-2">
@@ -279,6 +302,19 @@ export default async function BlogCoveragePage({
                         >
                           {indexMeta.label}
                         </span>
+                      </td>
+                      <td className="px-4 py-2">
+                        <span
+                          title={r.bingCrawlError ?? undefined}
+                          className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-medium border ${bingMeta.cls}`}
+                        >
+                          {bingMeta.label}
+                        </span>
+                        {bingCrawled && (
+                          <div className="text-[10px] text-muted-foreground tabular-nums mt-0.5">
+                            {bingCrawled}
+                          </div>
+                        )}
                       </td>
                     </tr>
                   );

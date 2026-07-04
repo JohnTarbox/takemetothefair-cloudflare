@@ -570,10 +570,19 @@ export async function getUrlInfo(
       };
     }>(env, "GetUrlInfo", { query: { url } });
     const r = data.d;
+    // OPE-91: `IsPage` is a STRUCTURAL flag Bing returns TRUE even for URLs it has
+    // never crawled — verified live 2026-07-04: a bogus /blog/ path returns
+    // `IsPage:true, LastCrawledDate:0001-01-01` (the .NET DateTime.MinValue
+    // sentinel). So IsPage does NOT mean "indexed"; the only reliable "Bing has
+    // this URL in its index" signal is a REAL last-crawled date. Treat the
+    // MinValue sentinel (year ≤ 1) as "never crawled" and derive isIndexed from
+    // whether a genuine crawl date exists.
+    const crawledDate = parseDateLoose(r?.LastCrawledDate);
+    const lastCrawled = crawledDate && crawledDate.getUTCFullYear() > 1 ? crawledDate : null;
     return {
       url: r?.Url ?? url,
-      isIndexed: r?.IsPage ?? null,
-      lastCrawled: parseDateLoose(r?.LastCrawledDate)?.toISOString() ?? null,
+      isIndexed: lastCrawled !== null,
+      lastCrawled: lastCrawled?.toISOString() ?? null,
       crawlError: r?.CrawlError ?? null,
       totalLinks: r?.TotalChildUrlCount ?? 0,
     };
