@@ -84,6 +84,13 @@ export const config = {
     // instead of 301-redirecting.
     "/venues/:slug",
     "/promoters/:slug",
+    // Singular typo paths (OPE-87) — a stray `/vendor/<slug>` / `/promoter/<slug>`
+    // link (e.g. a hand-authored blog typo) 301s to the plural public detail page.
+    // Single-segment only, so the private portal sub-routes (/vendor/profile,
+    // /promoter/events/new, …) are untouched. A blanket next.config redirect can't
+    // do this — real portal pages live under the same singular prefix.
+    "/vendor/:slug",
+    "/promoter/:slug",
     // Raw-markdown twin of a help article — `/help/<slug>.md` (OPE-62). App
     // Router can't express this as a dynamic route (see the handler comment),
     // so middleware serves it, matching only the `.md` shape so regular
@@ -171,6 +178,43 @@ export async function middleware(request: NextRequest) {
         "Cache-Control": "public, max-age=86400, s-maxage=86400",
       },
     });
+  }
+
+  // ── Singular /vendor/<slug> + /promoter/<slug> → plural (OPE-87) ─────────
+  // The public detail pages live at the PLURAL path (/vendors, /promoters); the
+  // singular prefix is the private user portal. A stray singular link to a public
+  // record (a blog typo, an external link) would otherwise 404 — and, while
+  // robots.txt used to block the singular prefix, get indexed URL-only. We 301 it
+  // to the plural canonical. The reserved sets are the portal's own nav routes,
+  // which must pass through untouched (they're auth-gated + noindex). Pure path
+  // rewrite — runs before the env lookup, no DB. Matcher restricts this to a
+  // single segment, so multi-segment portal routes (/promoter/events/new) never
+  // reach here.
+  const VENDOR_PORTAL_ROUTES = new Set([
+    "profile",
+    "calendar",
+    "applications",
+    "submissions",
+    "suggest-event",
+  ]);
+  const PROMOTER_PORTAL_ROUTES = new Set(["events"]);
+  if (pathname.startsWith("/vendor/")) {
+    const seg = pathname.slice("/vendor/".length);
+    if (seg && !seg.includes("/") && !VENDOR_PORTAL_ROUTES.has(seg)) {
+      const url = request.nextUrl.clone();
+      url.pathname = `/vendors/${seg}`;
+      return NextResponse.redirect(url, 301);
+    }
+    return NextResponse.next();
+  }
+  if (pathname.startsWith("/promoter/")) {
+    const seg = pathname.slice("/promoter/".length);
+    if (seg && !seg.includes("/") && !PROMOTER_PORTAL_ROUTES.has(seg)) {
+      const url = request.nextUrl.clone();
+      url.pathname = `/promoters/${seg}`;
+      return NextResponse.redirect(url, 301);
+    }
+    return NextResponse.next();
   }
 
   let env: Record<string, unknown> | null = null;

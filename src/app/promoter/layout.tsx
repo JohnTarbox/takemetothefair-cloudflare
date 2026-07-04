@@ -1,7 +1,16 @@
+import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { Calendar, Plus, Settings } from "lucide-react";
 import { auth } from "@/lib/auth";
+
+// OPE-87 — the promoter portal is private (auth-gated below). noindex makes that
+// protection robust at the app layer instead of relying on a robots.txt Disallow
+// (a robots-blocked URL can still get indexed URL-only). Applies to every page
+// under /promoter/*.
+export const metadata: Metadata = {
+  robots: { index: false, follow: false },
+};
 
 const promoterNav = [
   { name: "My Events", href: "/promoter/events", icon: Calendar },

@@ -1,8 +1,17 @@
+import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { Store, FileText, Settings, CalendarPlus, Send, Calendar } from "lucide-react";
 import { auth } from "@/lib/auth";
 import { VendorProfileCompleteness } from "@/components/vendor/profile-completeness";
+
+// OPE-87 — the vendor portal is private (auth-gated below). noindex makes that
+// protection robust at the app layer instead of relying on a robots.txt Disallow
+// (a robots-blocked URL can still get indexed URL-only). Applies to every page
+// under /vendor/*.
+export const metadata: Metadata = {
+  robots: { index: false, follow: false },
+};
 
 const vendorNav = [
   { name: "My Profile", href: "/vendor/profile", icon: Store },

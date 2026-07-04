@@ -6,10 +6,13 @@ Allow: /
 Disallow: /admin/
 Disallow: /api/
 Disallow: /dashboard/
-# Singular paths below are private user portals; the public listings live at
-# /promoters and /vendors and stay crawlable. Don't pluralize these.
-Disallow: /promoter/
-Disallow: /vendor/
+# NOTE (OPE-87): the singular /vendor/ and /promoter/ prefixes are the private
+# user portals, but they are deliberately NOT disallowed here. Blocking them made
+# stray singular links to real public records (e.g. a blog typo /vendor/<slug>)
+# get indexed URL-only ("Indexed, though blocked by robots.txt"). Instead the
+# portal pages are protected at the app layer (auth gate + page-level noindex),
+# and middleware 301s any singular /vendor/<slug> or /promoter/<slug> to the
+# plural public detail page. Public listings live at /vendors and /promoters.
 
 # Explicit allow for AI crawlers — newer agents look for per-bot rules as a
 # positive signal even when the wildcard above already permits them.
