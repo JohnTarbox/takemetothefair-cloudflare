@@ -68,10 +68,37 @@ describe("reconcileFaults", () => {
       expect(r.existing.map((x) => x.signature)).toEqual(["/x#boom"]);
       expect(r.upserts.some((u) => u.op === "touch" && u.signature === "/x#boom")).toBe(true);
       expect(r.upserts.some((u) => u.op === "propose")).toBe(false);
-      // touch bumps count (row 12 + group 5) and lastSeen.
+      // OPE-106: touch SETS count to the current window count (5), it does NOT
+      // accumulate (row 12 + group 5 = 17). The scan re-reads a rolling window
+      // every run, so accumulating would re-count the same rows into infinity.
       const touch = r.upserts.find((u) => u.op === "touch");
-      expect(touch && touch.op === "touch" && touch.count).toBe(17);
+      expect(touch && touch.op === "touch" && touch.count).toBe(5);
     }
+  });
+
+  it("(b') OPE-106: an inflated ledger count self-heals to the window count, never accumulates", () => {
+    // Simulate a row already corrupted by the old accumulate-across-runs bug
+    // (count=76) whose signature now has only 4 real occurrences in the window.
+    const row = ledgerRow("/x#boom", "filed", { opeId: "OPE-1", count: 76 });
+    const r = reconcileFaults([group("/x#boom", { count: 4 })], [row], NOW);
+    const touch = r.upserts.find((u) => u.op === "touch");
+    // Faithful: count becomes 4 (the real error_logs rows), not 76 or 80.
+    expect(touch && touch.op === "touch" && touch.count).toBe(4);
+  });
+
+  it("(b'') OPE-106: a regression's count is the window count, not accumulated", () => {
+    const row = ledgerRow("/x#boom", "done", {
+      resolvedAt: NOW.getTime() - 24 * HOUR,
+      count: 50,
+    });
+    const r = reconcileFaults(
+      [group("/x#boom", { lastSeen: NOW.getTime() - HOUR, count: 6 })],
+      [row],
+      NOW
+    );
+    expect(r.regressions[0].count).toBe(6);
+    const regress = r.upserts.find((u) => u.op === "regress");
+    expect(regress && regress.op === "regress" && regress.count).toBe(6);
   });
 
   it("(c) a signature recurring after done (lastSeen > resolvedAt) is a regression, not a dup", () => {

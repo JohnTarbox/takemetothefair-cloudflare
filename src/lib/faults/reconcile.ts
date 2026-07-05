@@ -80,8 +80,10 @@ export interface FaultCandidate {
 /**
  * A ledger mutation the endpoint applies. Times are ms-epoch numbers.
  *   - propose: insert a NEW 'proposed' row (createdAt=now).
- *   - touch:   bump last_seen + count on a still-active row (no status change).
- *   - regress: flip a 'done' row to 'regressed' and bump last_seen + count.
+ *   - touch:   set last_seen + count on a still-active row (no status change).
+ *   - regress: flip a 'done' row to 'regressed' and set last_seen + count.
+ * `count` is the current scan window's occurrence count (assigned, NOT accumulated
+ * across runs — see OPE-106), so it stays a faithful count of error_logs rows.
  */
 export type LedgerUpsert =
   | {
@@ -205,8 +207,16 @@ export function reconcileFaults(
     }
 
     // Already in the ledger. Compute the bumped snapshot once.
+    // OPE-106: `count` must be a FAITHFUL count of the occurrences in the current
+    // scan window — NOT accumulated across runs. The endpoint re-reads a rolling
+    // window (last 7 days) on every hourly scan, so adding groupCount to the prior
+    // ledger count re-counted the SAME error_logs rows every run (4 real rows →
+    // count=76 after ~19 runs). Assigning the window count makes count == the
+    // deduped error_logs rows for the signature, and lets the already-inflated
+    // prod rows self-heal down to the true value on the next scan (no backfill).
+    // lastSeen stays monotonic (never regress a timestamp).
     const bumpedLast = Math.max(row.lastSeen, groupLast);
-    const bumpedCount = safeNum(row.count, 0) + groupCount;
+    const windowCount = groupCount;
 
     if (row.status === "done") {
       const resolvedAt = row.resolvedAt;
@@ -217,7 +227,7 @@ export function reconcileFaults(
           signature: g.signature,
           route,
           errorClass,
-          count: bumpedCount,
+          count: windowCount,
           firstSeen: safeNum(row.firstSeen, groupFirst),
           lastSeen: bumpedLast,
           token: tokenFor(g.signature),
@@ -227,7 +237,7 @@ export function reconcileFaults(
           op: "regress",
           signature: g.signature,
           lastSeen: bumpedLast,
-          count: bumpedCount,
+          count: windowCount,
         });
       } else {
         // Stale occurrences that all predate the resolution — not a regression.
@@ -235,7 +245,7 @@ export function reconcileFaults(
           op: "touch",
           signature: g.signature,
           lastSeen: bumpedLast,
-          count: bumpedCount,
+          count: windowCount,
         });
       }
       continue;
@@ -247,7 +257,7 @@ export function reconcileFaults(
       op: "touch",
       signature: g.signature,
       lastSeen: bumpedLast,
-      count: bumpedCount,
+      count: windowCount,
     });
   }
 

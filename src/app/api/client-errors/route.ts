@@ -1,9 +1,12 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
+import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { logError } from "@/lib/logger";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { isKnownClientNoise } from "@/lib/client-error-filter";
+import { computeSignature } from "@/lib/faults/signature";
+import { isDuplicateClientError, type DedupKv } from "@/lib/client-error-ingest-dedup";
 
 const MAX_BODY_BYTES = 16_000;
 const MAX_MESSAGE_CHARS = 4_000;
@@ -95,6 +98,27 @@ export async function POST(request: Request) {
   // See src/lib/client-error-filter.ts for the rationale and what
   // exactly is filtered. Return 204 so the client doesn't retry.
   if (isKnownClientNoise(stack)) {
+    return new NextResponse(null, { status: 204 });
+  }
+
+  // OPE-106 — collapse identical bursts from ONE client (a reload-loop
+  // unhandledrejection can fire the same error dozens of times in seconds, which
+  // the client-side deduper misses across reloads). Dedup on the SAME normalized
+  // signature the render-fault reconcile groups on, keyed per client IP, in KV for
+  // a short window, so error_logs stays a faithful per-occurrence stream and the
+  // fault ledger's count isn't inflated. Fail-open — never suppress on KV error.
+  const signature = computeSignature({ route: pathname ?? null, message, digest: digest ?? null });
+  const clientIp =
+    request.headers.get("CF-Connecting-IP") ??
+    request.headers.get("X-Forwarded-For")?.split(",")[0]?.trim() ??
+    "unknown";
+  let dedupKv: DedupKv | null = null;
+  try {
+    dedupKv = (getCloudflareContext().env as { RATE_LIMIT_KV?: DedupKv }).RATE_LIMIT_KV ?? null;
+  } catch {
+    dedupKv = null;
+  }
+  if (await isDuplicateClientError(dedupKv, clientIp, signature)) {
     return new NextResponse(null, { status: 204 });
   }
 
