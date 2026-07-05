@@ -583,7 +583,7 @@ export function registerAnalyticsTools(server: McpServer, auth: AuthContext, env
 
   server.tool(
     "get_url_inspection",
-    "Inspects a single URL via Search Console's URL Inspection API. Returns index verdict, coverage state, last-crawl time, canonicalization, sitemap membership, mobile usability, and rich-results status. Rate-limited by Google to ~2000/day per property; cache 6h. Use to diagnose 'why isn't this page indexed?' — not for bulk audits. Admin only.",
+    "Inspects a single URL via Search Console's URL Inspection API. Returns index verdict, coverage state, last-crawl time, canonicalization, sitemap membership, mobile usability, and rich-results status. Rate-limited by Google to ~2000/day per property; cache 6h. Use to diagnose 'why isn't this page indexed?' — not for bulk audits. Pass persist=true to also refresh the gsc_inspection_state table (source='mcp-tool'). Admin only.",
     {
       path: z
         .string()
@@ -592,11 +592,18 @@ export function registerAnalyticsTools(server: McpServer, auth: AuthContext, env
           "URL path to inspect, must begin with '/'. Example: '/events' or '/blog/my-post'"
         ),
       refresh: z.boolean().optional().describe("Bypass the 6h cache (default false)."),
+      persist: z
+        .boolean()
+        .optional()
+        .describe(
+          "Also upsert the result into gsc_inspection_state (source='mcp-tool'). Default false (pure read)."
+        ),
     },
     async (params) => {
       try {
         const qs = new URLSearchParams({ path: params.path });
         if (params.refresh) qs.set("refresh", "1");
+        if (params.persist) qs.set("persist", "1");
         const data = await fetchAnalyticsJson(
           `/api/admin/analytics/url-inspection?${qs.toString()}`
         );
@@ -731,15 +738,20 @@ export function registerAnalyticsTools(server: McpServer, auth: AuthContext, env
 
   server.tool(
     "get_bing_url_info",
-    "Per-URL inspection from Bing Webmaster: indexed status, last crawl date, crawl errors, link counts. Cached 15 minutes. Admin only.",
+    "Per-URL inspection from Bing Webmaster: indexed status, last crawl date, crawl errors, link counts. Cached 15 minutes. Pass persist=true to also refresh the bing_inspection_state table. Admin only.",
     {
       url: z.string().url().describe("Absolute URL to inspect."),
       refresh: z.boolean().optional().describe("Bypass the 15-minute cache."),
+      persist: z
+        .boolean()
+        .optional()
+        .describe("Also upsert the result into bing_inspection_state. Default false (pure read)."),
     },
     async (params) => {
       try {
         const qs = new URLSearchParams({ url: params.url });
         if (params.refresh) qs.set("refresh", "1");
+        if (params.persist) qs.set("persist", "1");
         const data = await fetchAnalyticsJson(`/api/admin/analytics/bing/url-info?${qs}`);
         return { content: [jsonContent(data)] };
       } catch (error) {
