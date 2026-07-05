@@ -163,6 +163,25 @@ describe("loadBlogCoverageRows — D1 100-param cap (OPE-79)", () => {
     const rows = await loadBlogCoverageRows(db);
     expect(rows).toEqual([]);
   });
+
+  it("OPE-107: suppresses a Bing last_crawled earlier than the post's publish date (impossible → null)", async () => {
+    // seedPost stores publish_date = 1_700_000_000 for every post.
+    seedPost("stale", "post-stale");
+    seedPost("fresh", "post-fresh");
+    const ins = raw.prepare(
+      `INSERT INTO bing_inspection_state (url, is_indexed, last_crawled, crawl_error, last_checked_at) VALUES (?, ?, ?, ?, ?)`
+    );
+    // Impossible: crawled a year BEFORE publish → suppressed.
+    ins.run("https://meetmeatthefair.com/blog/post-stale", 1, 1_668_464_000, null, 1_700_000_500);
+    // Plausible: crawled AFTER publish → kept.
+    ins.run("https://meetmeatthefair.com/blog/post-fresh", 1, 1_800_000_000, null, 1_700_000_500);
+
+    const rows = await loadBlogCoverageRows(db);
+    expect(rows.find((r) => r.slug === "post-stale")!.bingLastCrawled).toBeNull();
+    // isIndexed is still reported — only the impossible crawl DATE is suppressed.
+    expect(rows.find((r) => r.slug === "post-stale")!.bingIndexed).toBe(true);
+    expect(rows.find((r) => r.slug === "post-fresh")!.bingLastCrawled).toBe(1_800_000_000 * 1000);
+  });
 });
 
 describe("loadBlogCoverageRows — GSC reach (Pass 5, OPE-96)", () => {

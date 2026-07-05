@@ -241,6 +241,18 @@ export async function loadBlogCoverageRows(db: Database): Promise<PostRow[]> {
       inspect?.lastVerdict ?? null,
       inspect?.lastCoverageState ?? null
     );
+    // OPE-107: Bing's GetUrlInfo occasionally returns an IMPOSSIBLE crawl date
+    // (~1 year stale) for a subset of URLs — a crawl can't predate the post's
+    // publish. Root cause is Bing's data, not our parse (a live GetUrlInfo on the
+    // same URLs returns the correct 2026 date; the daily sweep overwrites the
+    // stale stored value). Suppress a last_crawled earlier than publishDate as
+    // "unknown" rather than render the impossible date.
+    const bingCrawledMs = bing?.lastCrawled ? bing.lastCrawled.getTime() : null;
+    const publishMs = p.publishDate ? p.publishDate.getTime() : null;
+    const bingLastCrawled =
+      bingCrawledMs !== null && (publishMs === null || bingCrawledMs >= publishMs)
+        ? bingCrawledMs
+        : null;
     return {
       id: p.id,
       slug: p.slug,
@@ -256,7 +268,7 @@ export async function loadBlogCoverageRows(db: Database): Promise<PostRow[]> {
       indexState,
       coverageState: inspect?.lastCoverageState ?? null,
       bingIndexed: bing?.isIndexed ?? null,
-      bingLastCrawled: bing?.lastCrawled ? bing.lastCrawled.getTime() : null,
+      bingLastCrawled,
       bingCrawlError: bing?.crawlError ?? null,
       clicks: gsc.clicks,
       impressions: gsc.impressions,
