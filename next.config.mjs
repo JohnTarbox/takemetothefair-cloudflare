@@ -25,6 +25,21 @@ const nextConfig = {
   // path is already proven working under OpenNext (Bing/Twitter/Slack bots get
   // full head metadata today).
   htmlLimitedBots: /.*/,
+  // OPE-105 (2026-07-05) — de-blind cross-origin "Script error.". The browser
+  // strips message/stack/line from a script that throws cross-origin unless the
+  // tag carries `crossorigin` AND the host returns CORS headers. This stamps
+  // `crossorigin="anonymous"` on every Next-emitted <script>/<link> (framework
+  // chunks + next/script), so a first-party script that ever loads cross-origin
+  // (a future CDN/assetPrefix move) surfaces a real error instead of the opaque
+  // "Script error." Today our _next/static bundles are same-origin (no
+  // assetPrefix) — first-party errors already log with full detail, so the
+  // recurring `unknown#script error.` rows in error_logs are third-party/
+  // extension scripts (the desired signal separation: after this, a bare
+  // "Script error." is definitively NOT ours). Verified safe for the only
+  // affected third-party tag (Turnstile via next/script — challenges.cloudflare
+  // .com returns access-control-allow-origin:*); GA4/CF-beacon are raw <script>
+  // tags the config doesn't touch.
+  crossOrigin: "anonymous",
   images: {
     // IMG1 (2026-06-07) — wired Cloudflare URL-based Image Resizing as
     // a custom Next/Image loader. Drops `unoptimized: true` (which
