@@ -1,28 +1,19 @@
 /**
- * `resubmit_sitemap` admin MCP tool.
+ * `resubmit_bing_sitemap` admin MCP tool (OPE-109).
  *
- * Tells Google Search Console to re-fetch a sitemap URL — useful after a
- * bulk ingestion run that added many new entity pages. Google's default
- * recrawl cadence is multi-day; this signal typically triggers a re-fetch
- * within hours.
+ * The Bing counterpart to `resubmit_sitemap` (which targets Google Search
+ * Console). Tells Bing Webmaster Tools to (re-)fetch a sitemap URL via its
+ * SubmitFeed endpoint — needed to get per-child-sitemap tracking in Bing (the
+ * sitemap index alone doesn't split submitted/crawled counts by content type).
  *
- * Architecture: the tool itself is a thin shell over a POST to the main
- * app's `/api/admin/analytics/sitemap-submit` endpoint (authenticated via
- * `X-Internal-Key`). The actual GSC API call lives in main-app code so the
- * Google service-account credentials don't have to be duplicated into the
- * MCP server's environment.
+ * Architecture: a thin shell over a POST to the main app's
+ * `/api/admin/analytics/bing-sitemap-submit` endpoint (authenticated via
+ * `X-Internal-Key`). The actual Bing API call lives in main-app code because the
+ * `BING_WEBMASTER_API_KEY` secret only exists in the Cloudflare Worker env — there
+ * is no local path (the endpoint is deploy-only), and duplicating the secret into
+ * the MCP server is avoided.
  *
- * Bing has its own tool now — `resubmit_bing_sitemap` (OPE-109), which wraps
- * the `bing-sitemap-submit` endpoint / `submitFeed`. IndexNow remains for content
- * URLs rather than sitemap files, so it isn't the sitemap-submission path.
- *
- * Permission requirements (verified before merge):
- *   1. `webmasters` (full) OAuth scope — handled in main app via
- *      `SC_WRITE_SCOPE` constant; no env-var change needed.
- *   2. Service account must have Owner-level standing on the GSC property.
- *      Inferred to already exist because the daily URL-Inspection sweep
- *      (which also requires Owner) has been writing 50 rows to
- *      `gsc_inspection_state` with valid verdicts as recently as today.
+ * Logs to admin_actions with action='sitemap.resubmit.bing'.
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
@@ -38,15 +29,14 @@ interface Env {
 
 type SubmitResponse = {
   success: boolean;
-  siteUrl?: string;
-  feedpath?: string;
-  submittedAt?: string;
+  sitemap_url?: string;
+  submitted_at?: string;
   error?: string;
   status?: number;
   message?: string;
 };
 
-export function registerSitemapResubmitTool(
+export function registerBingSitemapResubmitTool(
   server: McpServer,
   db: Db,
   auth: AuthContext,
@@ -55,14 +45,14 @@ export function registerSitemapResubmitTool(
   if (auth.role !== "ADMIN") return;
 
   server.tool(
-    "resubmit_sitemap",
-    "Ask Google Search Console to re-fetch a sitemap URL. Use after a bulk ingestion run to nudge Google's recrawl ahead of the default multi-day cadence. The URL must belong to the configured GSC property (i.e. on meetmeatthefair.com). Logs to admin_actions with action='sitemap.resubmit'. Admin only. Google only — for Bing use resubmit_bing_sitemap.",
+    "resubmit_bing_sitemap",
+    "Ask Bing Webmaster Tools to (re-)fetch a sitemap URL via SubmitFeed. The Bing counterpart to resubmit_sitemap (Google). Use to get per-child-sitemap tracking in Bing or to nudge a recrawl after a bulk ingestion run. The URL must belong to the configured property (on meetmeatthefair.com). Logs to admin_actions with action='sitemap.resubmit.bing'. Admin only.",
     {
       sitemap_url: z
         .string()
         .url()
         .describe(
-          "Full sitemap URL to resubmit. Must be on the configured GSC property (meetmeatthefair.com). Example: 'https://meetmeatthefair.com/sitemap-events.xml'."
+          "Full sitemap URL to submit to Bing. Must be on meetmeatthefair.com. Example: 'https://meetmeatthefair.com/sitemap-vendors.xml'."
         ),
     },
     async (params) => {
@@ -72,14 +62,14 @@ export function registerSitemapResubmitTool(
             jsonContent({
               error: "config",
               message:
-                "resubmit_sitemap requires MAIN_APP_URL and INTERNAL_API_KEY in the MCP server environment.",
+                "resubmit_bing_sitemap requires MAIN_APP_URL and INTERNAL_API_KEY in the MCP server environment.",
             }),
           ],
           isError: true,
         };
       }
 
-      const url = `${env.MAIN_APP_URL}/api/admin/analytics/sitemap-submit`;
+      const url = `${env.MAIN_APP_URL}/api/admin/analytics/bing-sitemap-submit`;
       const startedAt = new Date();
 
       let response: Response;
@@ -120,12 +110,10 @@ export function registerSitemapResubmitTool(
         };
       }
 
-      // Audit-log every invocation — both successes and failures — because
-      // the failure mode here is "we asked GSC to recrawl and it didn't,"
-      // which has no other visible side effect and would otherwise leave
-      // no trace.
+      // Audit-log every invocation (success + failure) — the failure mode is
+      // "we asked Bing to recrawl and it didn't," which leaves no other trace.
       await db.insert(adminActions).values({
-        action: "sitemap.resubmit",
+        action: "sitemap.resubmit.bing",
         actorUserId: auth.userId,
         targetType: "sitemap",
         targetId: params.sitemap_url,
@@ -135,7 +123,7 @@ export function registerSitemapResubmitTool(
           ok: parsed.success === true,
           error: parsed.error ?? null,
           message: parsed.message ?? null,
-          submitted_at: parsed.submittedAt ?? startedAt.toISOString(),
+          submitted_at: parsed.submitted_at ?? startedAt.toISOString(),
         }),
         createdAt: new Date(),
       });
@@ -157,10 +145,9 @@ export function registerSitemapResubmitTool(
         content: [
           jsonContent({
             success: true,
-            sitemap_url: params.sitemap_url,
-            site_url: parsed.siteUrl,
-            submitted_at: parsed.submittedAt,
-            note: "GSC accepted the submission. Recrawl is typically within hours but not guaranteed; check sitemap status in GSC for processing state.",
+            sitemap_url: parsed.sitemap_url ?? params.sitemap_url,
+            submitted_at: parsed.submitted_at,
+            note: "Bing accepted the submission. get_bing_sitemaps may take ~60 min to reflect it (Bing caches sitemap status hourly).",
           }),
         ],
       };

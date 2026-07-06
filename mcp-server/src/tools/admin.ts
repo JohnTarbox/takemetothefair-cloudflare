@@ -66,6 +66,7 @@ import { registerPromoterEnrichmentReviewTools } from "./admin-promoter-enrichme
 import { registerFlushPendingSearchPingsTool } from "./admin-flush-pending-search-pings.js";
 import { registerResubmitIndexNowTool } from "./admin-resubmit-indexnow.js";
 import { registerSitemapResubmitTool } from "./admin-sitemap-resubmit.js";
+import { registerBingSitemapResubmitTool } from "./admin-bing-sitemap-resubmit.js";
 import { registerGscMilestoneIngestTool } from "./admin-gsc-milestone-ingest.js";
 import { registerRequestIndexingTool } from "./admin-request-indexing.js";
 import { registerAdminClaimApprovalTool } from "./admin-claim-approval.js";
@@ -139,6 +140,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   // ingest workflow — nudges Google to recrawl a sitemap ahead of its
   // default multi-day cadence.
   registerSitemapResubmitTool(server, db, auth, env);
+  registerBingSitemapResubmitTool(server, db, auth, env);
   registerGscMilestoneIngestTool(server, auth, env);
 
   // Google Indexing API per-URL recrawl notification. Use sparingly on

@@ -120,10 +120,12 @@ describe("EventSchema lifecycle → eventStatus mapping", () => {
   });
 });
 
-// offers emission (OPE-41) — price is stored in integer CENTS and converted
-// to dollars for JSON-LD. offers is OMITTED entirely when no price is known
-// (emitting a zero/empty offer is worse than none for rich results), and
-// suppressed for events closed to the public.
+// offers emission (OPE-41, extended by OPE-111) — price is stored in integer
+// CENTS and converted to dollars for JSON-LD. As of OPE-111, offers is emitted
+// whenever there's a purchase signal: a known price (priced Offer/AggregateOffer)
+// OR a ticketUrl (price-less Offer). It is cleanly OMITTED only when there is
+// NEITHER a price NOR a ticketUrl (we don't fabricate price:0/free — the Fryeburg
+// regression), and suppressed for events closed to the public.
 describe("EventSchema offers", () => {
   it("emits an Offer with dollars from ticketPriceMinCents (cents → dollars)", () => {
     const { container } = render(<EventSchema {...baseProps} ticketPriceMinCents={1400} />);
@@ -184,12 +186,40 @@ describe("EventSchema offers", () => {
     expect(ld.isAccessibleForFree).toBe(true);
   });
 
-  it("OMITS offers entirely when no ticket price is known", () => {
+  it("OMITS offers entirely when there is NEITHER a price NOR a ticketUrl", () => {
     const { container } = render(<EventSchema {...baseProps} />);
     const ld = extractJsonLd(container);
     expect(ld.offers).toBeUndefined();
-    // No price → also no free-admission signal.
+    // No price → also no free-admission signal (never fabricate price:0/free).
     expect(ld.isAccessibleForFree).toBeUndefined();
+  });
+
+  it("OPE-111: emits a price-LESS Offer when a ticketUrl is present but price is unknown", () => {
+    const { container } = render(
+      <EventSchema
+        {...baseProps}
+        ticketUrl="https://tickets.example.com/x"
+        createdAt={new Date("2026-01-02T00:00:00Z")}
+      />
+    );
+    const ld = extractJsonLd(container);
+    expect(ld.offers).toMatchObject({
+      "@type": "Offer",
+      url: "https://tickets.example.com/x",
+      availability: "https://schema.org/InStock",
+      validFrom: "2026-01-02T00:00:00.000Z",
+    });
+    // Honest: no price fabricated, and no free-admission claim.
+    expect((ld.offers as { price?: unknown }).price).toBeUndefined();
+    expect((ld.offers as { priceCurrency?: unknown }).priceCurrency).toBeUndefined();
+    expect(ld.isAccessibleForFree).toBeUndefined();
+  });
+
+  it("OPE-111: a ticketUrl-only offer is still suppressed for CLOSED-to-public events", () => {
+    const { container } = render(
+      <EventSchema {...baseProps} ticketUrl="https://tickets.example.com/x" publicAccess="CLOSED" />
+    );
+    expect(extractJsonLd(container).offers).toBeUndefined();
   });
 
   it("suppresses offers for events closed to the public even when priced", () => {
@@ -198,6 +228,37 @@ describe("EventSchema offers", () => {
     );
     const ld = extractJsonLd(container);
     expect(ld.offers).toBeUndefined();
+  });
+});
+
+// OPE-111 — organizer.url clean omission + description passthrough (both were
+// already emitted; these lock the OPE-111 refinements/behaviour in place).
+describe("EventSchema organizer + description (OPE-111)", () => {
+  it("emits organizer.url when the promoter has a website", () => {
+    const { container } = render(
+      <EventSchema {...baseProps} organizer={{ name: "Acme Shows", url: "https://acme.example" }} />
+    );
+    expect(extractJsonLd(container).organizer).toEqual({
+      "@type": "Organization",
+      name: "Acme Shows",
+      url: "https://acme.example",
+    });
+  });
+
+  it("OMITS organizer.url cleanly when the promoter has no website (no event-url fallback)", () => {
+    const { container } = render(
+      <EventSchema {...baseProps} organizer={{ name: "Acme Shows", url: null }} />
+    );
+    const org = extractJsonLd(container).organizer as Record<string, unknown>;
+    expect(org).toEqual({ "@type": "Organization", name: "Acme Shows" });
+    expect(org.url).toBeUndefined();
+  });
+
+  it("emits the event description when present", () => {
+    const { container } = render(
+      <EventSchema {...baseProps} description="A juried craft fair with 80 makers." />
+    );
+    expect(extractJsonLd(container).description).toBe("A juried craft fair with 80 makers.");
   });
 });
 

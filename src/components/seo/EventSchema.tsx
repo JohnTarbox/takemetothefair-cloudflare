@@ -282,39 +282,65 @@ export function EventSchema({
   // events.
   const closedToPublic = isClosedToPublic(publicAccess);
 
-  // Only emit `offers` when price is known AND the event is open. Schema.org
-  // marks `offers` as recommended-but-not-required, so omitting is the honest
-  // signal when we don't know whether an event is free or paid OR when the
-  // event isn't bookable by the public.
-  // `JSON.parse(JSON.stringify())` below strips the `undefined` from the
-  // final output.
+  // OPE-111 — emit `offers` whenever the event carries a purchase/attendance
+  // signal, not only when a price is known. An event with a `ticketUrl` clearly
+  // HAS an offer (you can buy tickets there) even if we don't store the price;
+  // gating solely on `hasKnownPrice` left ~100 ticketed events with no `offers`
+  // block, a GSC "Improve item appearance" recommended-field gap.
+  //   - price known  → emit the Offer/AggregateOffer with the price (unchanged).
+  //   - ticketUrl only (price unknown) → emit a price-LESS Offer (url +
+  //     availability + validFrom). Honest: there's a way to get in, we just don't
+  //     claim a price.
+  //   - no price AND no ticketUrl → cleanly OMIT. We deliberately do NOT fabricate
+  //     `price: 0`/free here: we can't tell "free" from "price unknown", and doing
+  //     so reintroduces the documented false-"Free admission" regression on
+  //     paid-gate events like the $14 Fryeburg Fair (see the hasKnownPrice note
+  //     above). This also honours OPE-41's "empty offer is worse than none".
+  // CLOSED-to-public events suppress `offers` entirely (TAX1 accuracy lever).
+  // `JSON.parse(JSON.stringify())` below strips any `undefined` from the output.
+  const hasTicketUrl = typeof ticketUrl === "string" && ticketUrl.length > 0;
   const offers =
-    !hasKnownPrice || closedToPublic
+    closedToPublic || (!hasKnownPrice && !hasTicketUrl)
       ? undefined
-      : priceMaxDollars !== null && priceMinDollars !== null && priceMaxDollars !== priceMinDollars
+      : !hasKnownPrice
         ? {
-            "@type": "AggregateOffer",
+            // ticketUrl present, price unknown — honest price-less Offer.
+            "@type": "Offer",
             url: ticketUrl || url,
-            lowPrice: priceMinDollars,
-            highPrice: priceMaxDollars,
-            priceCurrency: "USD",
             availability: "https://schema.org/InStock",
             validFrom: validFromDate,
           }
-        : {
-            "@type": "Offer",
-            url: ticketUrl || url,
-            price: priceMinDollars ?? priceMaxDollars ?? 0,
-            priceCurrency: "USD",
-            availability: "https://schema.org/InStock",
-            validFrom: validFromDate,
-          };
+        : priceMaxDollars !== null &&
+            priceMinDollars !== null &&
+            priceMaxDollars !== priceMinDollars
+          ? {
+              "@type": "AggregateOffer",
+              url: ticketUrl || url,
+              lowPrice: priceMinDollars,
+              highPrice: priceMaxDollars,
+              priceCurrency: "USD",
+              availability: "https://schema.org/InStock",
+              validFrom: validFromDate,
+            }
+          : {
+              "@type": "Offer",
+              url: ticketUrl || url,
+              price: priceMinDollars ?? priceMaxDollars ?? 0,
+              priceCurrency: "USD",
+              availability: "https://schema.org/InStock",
+              validFrom: validFromDate,
+            };
 
+  // OPE-111 — emit organizer.url only when the organizer actually has one
+  // (promoter website). Previously this fell back to the EVENT page URL when the
+  // promoter had no website, which misrepresented our own event page as the
+  // organizer's site; omit cleanly instead (the ~34% of promoters without a
+  // website simply carry organizer name only).
   const organizerBlock = organizer
     ? {
         "@type": "Organization",
         name: organizer.name,
-        url: organizer.url || url,
+        ...(organizer.url ? { url: organizer.url } : {}),
       }
     : undefined;
 
