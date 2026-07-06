@@ -836,6 +836,141 @@ export const eventSlugHistory = sqliteTable(
   })
 );
 
+// ── Performer tracking (OPE-112, drizzle/0152, 2026-07-06) ────────────────────
+// Net-new first-class entity for acts that appear at events (e.g. "Mr. Drew and
+// His Animals Too" at the Monmouth Fair). Modeled as a full entity mirroring
+// `vendors`/`event_vendors` so the same claim/enrichment/slug-history machinery
+// applies. Phase 0 = schema only; tables are unused until Phase 1 (OPE-113).
+//
+// `act_category` is a plain TEXT column (NOT a DB enum) on purpose: the value set
+// lives in the design doc's §3.1 which wasn't available at build time, and the
+// sibling `vendors.vendor_type` is likewise free text with a TS-level vocabulary.
+// Phase 1 will pin the allowed values in a TS enum (same pattern as
+// enrichment_source) — a value-set change must not require a migration.
+export const performers = sqliteTable("performers", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  // Nullable (unlike vendors): a performer can exist unclaimed with no account.
+  // Unique so a claimed performer maps to one user (NULLs are distinct in SQLite).
+  userId: text("user_id")
+    .unique()
+    .references(() => users.id, { onDelete: "set null" }),
+  name: text("name").notNull(),
+  slug: text("slug").$type<Slug>().notNull().unique(),
+  // PERSON = solo act; GROUP = band/troupe. TS-typed at the app layer.
+  performerType: text("performer_type", { enum: ["PERSON", "GROUP"] }),
+  // Free text; see the block comment above re: deferred enum.
+  actCategory: text("act_category"),
+  description: text("description"),
+  website: text("website"),
+  socialLinks: text("social_links"), // JSON
+  imageUrl: text("image_url"),
+  imageFocalX: real("image_focal_x").notNull().default(0.5),
+  imageFocalY: real("image_focal_y").notNull().default(0.5),
+  homeBaseCity: text("home_base_city"),
+  homeBaseState: text("home_base_state"),
+  contactName: text("contact_name"),
+  contactEmail: text("contact_email"),
+  contactPhone: text("contact_phone"),
+  verified: integer("verified", { mode: "boolean" }).notNull().default(false),
+  verifiedPro: integer("verified_pro", { mode: "boolean" }).notNull().default(false),
+  // Claimed tier — mirrors vendors.claimed.
+  claimed: integer("claimed", { mode: "boolean" }).notNull().default(false),
+  claimedAt: integer("claimed_at", { mode: "timestamp" }),
+  claimedBy: text("claimed_by").references(() => users.id, { onDelete: "set null" }),
+  // Enhanced Profile (paid tier) — mirrors vendors.
+  enhancedProfile: integer("enhanced_profile", { mode: "boolean" }).notNull().default(false),
+  enhancedProfileStartedAt: integer("enhanced_profile_started_at", { mode: "timestamp" }),
+  enhancedProfileExpiresAt: integer("enhanced_profile_expires_at", { mode: "timestamp" }),
+  // Enrichment + quality tracking — mirrors vendors §10.2.
+  enrichmentSource: text("enrichment_source"),
+  enrichmentAttemptedAt: integer("enrichment_attempted_at", { mode: "timestamp" }),
+  domainHijacked: integer("domain_hijacked", { mode: "boolean" }).notNull().default(false),
+  completenessScore: integer("completeness_score").notNull().default(0),
+  // Soft-delete + redirect/alias — mirrors vendors.
+  redirectToPerformerId: text("redirect_to_performer_id").references(
+    (): AnySQLiteColumn => performers.id,
+    { onDelete: "set null" }
+  ),
+  aliasOfPerformerId: text("alias_of_performer_id").references(
+    (): AnySQLiteColumn => performers.id,
+    { onDelete: "set null" }
+  ),
+  viewCount: integer("view_count").notNull().default(0),
+  deletedAt: integer("deleted_at", { mode: "timestamp" }),
+  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+});
+
+// One row = one performance/set (an APPEARANCE), mirroring event_vendors. A
+// performer can appear multiple times at one event (Sat 3 PM + Sun 10 AM), so the
+// unique key MUST include performance_start — keying on
+// (event_id, performer_id, event_day_id) alone would reject the second set.
+// NOTE: SQLite treats NULLs as DISTINCT in a UNIQUE index, so when
+// performance_start is NULL the app layer (Phase 1) must dedupe exact-duplicate
+// appearances itself — the constraint won't.
+export const eventPerformers = sqliteTable(
+  "event_performers",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    eventId: text("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    performerId: text("performer_id")
+      .notNull()
+      .references(() => performers.id, { onDelete: "cascade" }),
+    eventDayId: text("event_day_id").references(() => eventDays.id, { onDelete: "cascade" }),
+    // Epoch-integer wall-clock (mode:"timestamp" = seconds-epoch), consistent
+    // with events.start_date/end_date — NOT ISO strings.
+    performanceStart: integer("performance_start", { mode: "timestamp" }),
+    performanceEnd: integer("performance_end", { mode: "timestamp" }),
+    stage: text("stage"),
+    billing: text("billing", { enum: ["HEADLINER", "FEATURED", "SUPPORTING"] }),
+    status: text("status", { enum: ["CONFIRMED", "PENDING", "CANCELLED"] })
+      .notNull()
+      .default("PENDING"),
+    sourceUrl: text("source_url"),
+    notes: text("notes"),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  },
+  (t) => ({
+    appearanceUnique: uniqueIndex("idx_event_performers_unique").on(
+      t.eventId,
+      t.performerId,
+      t.eventDayId,
+      t.performanceStart
+    ),
+    eventIdx: index("idx_event_performers_event").on(t.eventId),
+    performerIdx: index("idx_event_performers_performer").on(t.performerId),
+    eventDayIdx: index("idx_event_performers_event_day").on(t.eventDayId),
+  })
+);
+
+// Performer slug history — mirrors vendorSlugHistory for /performers/[slug] 301s.
+export const performerSlugHistory = sqliteTable(
+  "performer_slug_history",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    performerId: text("performer_id")
+      .notNull()
+      .references(() => performers.id, { onDelete: "cascade" }),
+    oldSlug: text("old_slug").$type<Slug>().notNull(),
+    newSlug: text("new_slug").$type<Slug>().notNull(),
+    changedAt: integer("changed_at", { mode: "timestamp" }).notNull(),
+    changedBy: text("changed_by"),
+  },
+  (t) => ({
+    oldSlugIdx: index("idx_performer_slug_history_old_slug").on(t.oldSlug),
+    performerIdIdx: index("idx_performer_slug_history_performer_id").on(t.performerId),
+  })
+);
+
 // Venue slug history — mirrors eventSlugHistory for /venues/[slug].
 // drizzle/0109 (E remainder, Dev backlog 2026-06-05). Populated by
 // merge_venue so the merged-away slug 301-redirects to the keeper via
