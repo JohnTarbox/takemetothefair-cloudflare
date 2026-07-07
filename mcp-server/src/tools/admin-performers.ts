@@ -41,7 +41,7 @@ const APPEARANCE_STATUS = ["CONFIRMED", "PENDING", "CANCELLED"] as const;
 /** ≥ this fuzzy score is a likely duplicate — but the known dash/abbrev misses
  *  (e.g. "Mr Drew" vs "Mr. Drew and His Animals Too") mean we SURFACE matches
  *  for manual confirm rather than auto-linking on the score alone (spec §4.1). */
-const FUZZY_THRESHOLD = 0.92;
+export const FUZZY_THRESHOLD = 0.92;
 const FUZZY_CANDIDATE_CAP = 200;
 
 type ErrOut = { content: Array<{ type: "text"; text: string }>; isError: true };
@@ -56,7 +56,7 @@ const toSec = (d: Date | null | undefined): number | null =>
   d == null ? null : Math.floor(d.getTime() / 1000);
 
 /** Slug for a new performer name, made unique against existing performers. */
-async function ensureUniquePerformerSlug(db: Db, name: string): Promise<string> {
+export async function ensureUniquePerformerSlug(db: Db, name: string): Promise<string> {
   const base = createSlug(name);
   const existing = await db
     .select({ id: performers.id })
@@ -786,7 +786,7 @@ export function registerPerformerTools(server: McpServer, db: Db, auth: AuthCont
 /** Insert or return an existing appearance for the identity. Idempotent on the
  *  (event, performer, day, start) key — incl. the NULL-start case the UNIQUE
  *  index can't enforce (OPE-112 note). */
-async function linkAppearance(
+export async function linkAppearance(
   db: Db,
   a: {
     eventId: string;

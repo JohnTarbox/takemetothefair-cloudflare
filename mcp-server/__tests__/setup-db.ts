@@ -497,6 +497,37 @@ const SCHEMA_SQL = `
     ON performer_enrichment_candidates (performer_id, proposed_field)
     WHERE decision = 'pending';
 
+  -- Source-site JSON-LD scraped per event; OPE-116 harvest reads raw_json_ld.
+  CREATE TABLE event_schema_org (
+    id TEXT PRIMARY KEY,
+    event_id TEXT NOT NULL UNIQUE,
+    ticket_url TEXT,
+    raw_json_ld TEXT,
+    schema_name TEXT,
+    schema_description TEXT,
+    schema_start_date INTEGER,
+    schema_end_date INTEGER,
+    schema_venue_name TEXT,
+    schema_venue_address TEXT,
+    schema_venue_city TEXT,
+    schema_venue_state TEXT,
+    schema_venue_lat REAL,
+    schema_venue_lng REAL,
+    schema_image_url TEXT,
+    schema_ticket_url TEXT,
+    schema_price_min_cents INTEGER,
+    schema_price_max_cents INTEGER,
+    schema_event_status TEXT,
+    schema_organizer_name TEXT,
+    schema_organizer_url TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    last_fetched_at INTEGER,
+    last_error TEXT,
+    fetch_count INTEGER DEFAULT 0,
+    created_at INTEGER,
+    updated_at INTEGER
+  );
+
   CREATE TABLE event_performers (
     id TEXT PRIMARY KEY,
     event_id TEXT NOT NULL,
