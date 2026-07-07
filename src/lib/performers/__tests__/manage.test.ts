@@ -20,7 +20,9 @@ const SCHEMA_SQL = `
     claimed_at INTEGER, claimed_by TEXT, enhanced_profile INTEGER DEFAULT 0 NOT NULL,
     enhanced_profile_started_at INTEGER, enhanced_profile_expires_at INTEGER,
     enrichment_source TEXT, enrichment_attempted_at INTEGER, domain_hijacked INTEGER DEFAULT 0 NOT NULL,
-    completeness_score INTEGER DEFAULT 0 NOT NULL, redirect_to_performer_id TEXT,
+    completeness_score INTEGER DEFAULT 0 NOT NULL,
+    enrichment_status TEXT, enrichment_coverage TEXT, last_enriched_at INTEGER,
+    enrichment_blocked_reason TEXT, redirect_to_performer_id TEXT,
     alias_of_performer_id TEXT, view_count INTEGER DEFAULT 0 NOT NULL, deleted_at INTEGER,
     created_at INTEGER, updated_at INTEGER
   );
