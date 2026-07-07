@@ -461,6 +461,11 @@ const SCHEMA_SQL = `
     enrichment_attempted_at INTEGER,
     domain_hijacked INTEGER DEFAULT 0 NOT NULL,
     completeness_score INTEGER DEFAULT 0 NOT NULL,
+    -- OPE-116 (drizzle/0154) enrichment rails — enrich_performer writes these.
+    enrichment_status TEXT,
+    enrichment_coverage TEXT,
+    last_enriched_at INTEGER,
+    enrichment_blocked_reason TEXT,
     redirect_to_performer_id TEXT,
     alias_of_performer_id TEXT,
     view_count INTEGER DEFAULT 0 NOT NULL,
@@ -469,6 +474,28 @@ const SCHEMA_SQL = `
     updated_at INTEGER
   );
   CREATE UNIQUE INDEX idx_performers_slug ON performers (slug);
+
+  -- OPE-116 — performer pre-extraction staging (mirrors promoter_enrichment_candidates).
+  CREATE TABLE performer_enrichment_candidates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    performer_id TEXT NOT NULL,
+    job_run_id TEXT NOT NULL,
+    proposed_field TEXT NOT NULL,
+    current_value TEXT,
+    proposed_value TEXT NOT NULL,
+    source_url TEXT NOT NULL,
+    extraction_method TEXT NOT NULL,
+    fetch_method TEXT,
+    confidence REAL DEFAULT 0 NOT NULL,
+    flags TEXT DEFAULT '[]' NOT NULL,
+    created_at INTEGER NOT NULL,
+    reviewed_at INTEGER,
+    reviewed_by TEXT,
+    decision TEXT DEFAULT 'pending' NOT NULL
+  );
+  CREATE UNIQUE INDEX idx_perf_ec_pending_field
+    ON performer_enrichment_candidates (performer_id, proposed_field)
+    WHERE decision = 'pending';
 
   CREATE TABLE event_performers (
     id TEXT PRIMARY KEY,

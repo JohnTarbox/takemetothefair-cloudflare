@@ -76,7 +76,7 @@ export type EnrichmentStatus = "success" | "failure" | "skipped";
 export async function logEnrichment(
   db: Db,
   p: {
-    targetType: "vendor" | "event" | "promoter";
+    targetType: "vendor" | "event" | "promoter" | "performer";
     targetId: string;
     source: EnrichmentSource;
     status: EnrichmentStatus;
@@ -207,7 +207,7 @@ export function jsonContent(data: unknown): { type: "text"; text: string } {
 /** Build the canonical public URL for a content slug. Mirrors
  *  src/lib/indexnow.ts:indexNowUrlFor in the main app. */
 export function publicUrlFor(
-  kind: "events" | "venues" | "vendors" | "promoters" | "blog",
+  kind: "events" | "venues" | "vendors" | "promoters" | "performers" | "blog",
   slug: string
 ): string {
   return `https://meetmeatthefair.com/${kind}/${slug}`;

@@ -25,6 +25,7 @@ import { registerVendorRosterTools } from "./tools/admin-vendor-roster.js";
 import { registerSyndicationTools } from "./tools/admin-syndication.js";
 import { registerEnrichVendorTool } from "./tools/admin-enrich-vendor.js";
 import { registerEnrichPromoterTool } from "./tools/admin-enrich-promoter.js";
+import { registerEnrichPerformerTool } from "./tools/admin-enrich-performer.js";
 import { registerSendVendorEmailTool } from "./tools/admin-send-vendor-email.js";
 import { registerSendTestEmailTool } from "./tools/admin-send-test-email.js";
 import { registerCreateClaimInviteTool } from "./tools/admin-claim-invite.js";
@@ -310,6 +311,8 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
         // I1 (2026-06-13) — synchronous one-off vendor enrichment trigger.
         registerEnrichVendorTool(this.server, db, auth, this.env);
         registerEnrichPromoterTool(this.server, db, auth, this.env);
+        // OPE-116 — synchronous one-off performer enrichment trigger.
+        registerEnrichPerformerTool(this.server, db, auth, this.env);
         // K31 (2026-06-21) — send_vendor_email (claim invites + outreach).
         registerSendVendorEmailTool(this.server, db, auth, this.env);
         // K32 (2026-06-21) — send_test_email (no-side-effects deliverability test).
@@ -576,6 +579,7 @@ async function handleLegacyMcpRequest(request: Request, env: Env): Promise<Respo
       registerVendorRosterTools(server, db, auth);
       registerEnrichVendorTool(server, db, auth, env);
       registerEnrichPromoterTool(server, db, auth, env);
+      registerEnrichPerformerTool(server, db, auth, env);
       registerSendVendorEmailTool(server, db, auth, env);
       registerSendTestEmailTool(server, db, auth, env);
       registerCreateClaimInviteTool(server, db, auth, env);

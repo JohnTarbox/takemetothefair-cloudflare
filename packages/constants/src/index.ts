@@ -469,3 +469,94 @@ export function computePromoterEnrichment(
 
   return { status, coverage, coverageJson: JSON.stringify(coverage) };
 }
+
+// ── OPE-116 performer-enrichment rails ────────────────────────────
+//
+// Per-performer enrichment lifecycle — the performer analog of the promoter
+// rails above. Same five-state model; the only shape difference is the field
+// set: a performer has a SINGLE `image_url` (no hero/logo split) plus
+// description / socials / contact. Unlike promoters, a performer description
+// has no auto-generated boilerplate to detect, so "missing description" is
+// simply blank.
+export const PERFORMER_ENRICHMENT_STATUS_VALUES = [
+  "NEEDS_ENRICHMENT",
+  "IN_PROGRESS",
+  "ENRICHED",
+  "NO_SOURCE",
+  "BLOCKED",
+] as const;
+export type PerformerEnrichmentStatus = (typeof PERFORMER_ENRICHMENT_STATUS_VALUES)[number];
+
+// The four enrichment target fields tracked in `performers.enrichment_coverage`.
+export const PERFORMER_ENRICHMENT_FIELDS = ["image", "description", "socials", "contact"] as const;
+export type PerformerEnrichmentField = (typeof PERFORMER_ENRICHMENT_FIELDS)[number];
+
+// Why a NEEDS_ENRICHMENT performer can't be drained — set alongside BLOCKED.
+// Same vocabulary as promoters (the dispatcher maps only host_gated/js_gated/
+// stale, but the wider set stays available for operator/agent annotation).
+export const PERFORMER_ENRICHMENT_BLOCKED_REASONS = [
+  "js_gated",
+  "host_gated",
+  "parked",
+  "hijacked",
+  "no_image",
+  "stale",
+  "rate_limited",
+] as const;
+export type PerformerEnrichmentBlockedReason =
+  (typeof PERFORMER_ENRICHMENT_BLOCKED_REASONS)[number];
+
+export type PerformerEnrichmentCoverage = Record<PerformerEnrichmentField, boolean>;
+
+export interface PerformerEnrichmentInput {
+  website?: string | null;
+  imageUrl?: string | null;
+  description?: string | null;
+  socialLinks?: string | null;
+  contactEmail?: string | null;
+  contactPhone?: string | null;
+}
+
+export interface PerformerEnrichmentResult {
+  status: PerformerEnrichmentStatus;
+  coverage: PerformerEnrichmentCoverage;
+  /** JSON string for direct write to `performers.enrichment_coverage`. */
+  coverageJson: string;
+}
+
+/**
+ * Derive a performer's enrichment status + per-field coverage from its fields.
+ * Pure — the single source of truth for the enrich_performer recompute + the
+ * review-apply path. Mirrors computePromoterEnrichment's terminal-state rules.
+ *
+ * - all four fields covered → ENRICHED
+ * - no website → NO_SOURCE (nothing to enrich from)
+ * - IN_PROGRESS/BLOCKED preserved on edits that don't complete coverage
+ * - otherwise → NEEDS_ENRICHMENT
+ */
+export function computePerformerEnrichment(
+  p: PerformerEnrichmentInput,
+  currentStatus?: PerformerEnrichmentStatus | null
+): PerformerEnrichmentResult {
+  const coverage: PerformerEnrichmentCoverage = {
+    image: enrichmentHasText(p.imageUrl),
+    description: enrichmentHasText(p.description),
+    socials: enrichmentHasSocials(p.socialLinks),
+    contact: enrichmentHasText(p.contactEmail) || enrichmentHasText(p.contactPhone),
+  };
+  const allCovered = PERFORMER_ENRICHMENT_FIELDS.every((f) => coverage[f]);
+  const hasWebsite = enrichmentHasText(p.website);
+
+  let status: PerformerEnrichmentStatus;
+  if (allCovered) {
+    status = "ENRICHED";
+  } else if (!hasWebsite) {
+    status = "NO_SOURCE";
+  } else if (currentStatus === "IN_PROGRESS" || currentStatus === "BLOCKED") {
+    status = currentStatus;
+  } else {
+    status = "NEEDS_ENRICHMENT";
+  }
+
+  return { status, coverage, coverageJson: JSON.stringify(coverage) };
+}

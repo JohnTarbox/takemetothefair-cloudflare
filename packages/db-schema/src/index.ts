@@ -892,6 +892,16 @@ export const performers = sqliteTable("performers", {
   enrichmentAttemptedAt: integer("enrichment_attempted_at", { mode: "timestamp" }),
   domainHijacked: integer("domain_hijacked", { mode: "boolean" }).notNull().default(false),
   completenessScore: integer("completeness_score").notNull().default(0),
+  // OPE-116 (drizzle/0154) — enrichment rails, mirroring promoters (drizzle/0140).
+  // The enrich_performer pipeline drives these; NULL status = never assessed.
+  enrichmentStatus: text("enrichment_status", {
+    enum: ["NEEDS_ENRICHMENT", "IN_PROGRESS", "ENRICHED", "NO_SOURCE", "BLOCKED"],
+  }),
+  enrichmentCoverage: text("enrichment_coverage"), // JSON {image,description,socials,contact}
+  lastEnrichedAt: integer("last_enriched_at", { mode: "timestamp" }),
+  enrichmentBlockedReason: text("enrichment_blocked_reason", {
+    enum: ["js_gated", "host_gated", "parked", "hijacked", "no_image", "stale", "rate_limited"],
+  }),
   // Soft-delete + redirect/alias — mirrors vendors.
   redirectToPerformerId: text("redirect_to_performer_id").references(
     (): AnySQLiteColumn => performers.id,
@@ -2401,6 +2411,51 @@ export const promoterEnrichmentCandidates = sqliteTable(
     // Partial unique: at most one OPEN proposal per (promoter, field).
     uniqueIndex("idx_pec_pending_field")
       .on(t.promoterId, t.proposedField)
+      .where(sql`${t.decision} = 'pending'`),
+  ]
+);
+
+// OPE-116 — performer pre-extraction proposals (the performer analog of
+// promoter_enrichment_candidates). Staged by enrich_performer; drained by the
+// review tools. Fields: image | description | social_links | contact_email |
+// contact_phone (a performer has one image_url — no hero/logo split).
+export const performerEnrichmentCandidates = sqliteTable(
+  "performer_enrichment_candidates",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    performerId: text("performer_id").notNull(),
+    // Groups one enrich run's proposals; synchronous enrich_performer uses 'manual-<uuid>'.
+    jobRunId: text("job_run_id").notNull(),
+    // image | description | social_links | contact_email | contact_phone
+    proposedField: text("proposed_field").notNull(),
+    // Performer's value at proposal time — NULL under fill-empty-only, kept for audit.
+    currentValue: text("current_value"),
+    proposedValue: text("proposed_value").notNull(),
+    sourceUrl: text("source_url").notNull(),
+    // 'jsonld' | 'og-image' | 'mailto' | 'tel' | 'social-link' | 'regex'
+    extractionMethod: text("extraction_method").notNull(),
+    // 'standard' | 'browser-rendering'
+    fetchMethod: text("fetch_method"),
+    confidence: real("confidence").notNull().default(0),
+    // JSON array of safety-rule flag strings.
+    flags: text("flags").notNull().default("[]"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    reviewedAt: integer("reviewed_at", { mode: "timestamp" }),
+    reviewedBy: text("reviewed_by"),
+    // pending | approved | rejected | auto_merged
+    decision: text("decision", {
+      enum: ["pending", "approved", "rejected", "auto_merged"],
+    })
+      .notNull()
+      .default("pending"),
+  },
+  (t) => [
+    index("idx_perf_ec_performer").on(t.performerId),
+    index("idx_perf_ec_decision").on(t.decision),
+    index("idx_perf_ec_job_run").on(t.jobRunId),
+    // Partial unique: at most one OPEN proposal per (performer, field).
+    uniqueIndex("idx_perf_ec_pending_field")
+      .on(t.performerId, t.proposedField)
       .where(sql`${t.decision} = 'pending'`),
   ]
 );
