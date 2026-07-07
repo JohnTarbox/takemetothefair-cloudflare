@@ -20,8 +20,7 @@ import {
 } from "@/lib/db/schema";
 import { blogFaqSource, type BlogFaqSource } from "@takemetothefair/utils";
 import { classifyIndexState, type IndexState } from "@/lib/gsc-index-state";
-import { parseJsonArray } from "@/types";
-import { classifyCluster } from "@/lib/admin/blog-clusters";
+import { getClusterLabel } from "@/lib/admin/blog-clusters";
 
 /** D1 caps bound parameters at 100 per query; stay under with headroom. */
 export const BLOG_COVERAGE_PARAM_CHUNK = 90;
@@ -273,7 +272,7 @@ export async function loadBlogCoverageRows(db: Database): Promise<PostRow[]> {
       clicks: gsc.clicks,
       impressions: gsc.impressions,
       ctr,
-      cluster: classifyCluster({ slug: p.slug, tags: parseJsonArray(p.tags) }),
+      cluster: getClusterLabel(p.slug),
       ageWeeks,
     };
   });
@@ -292,6 +291,10 @@ export function blogClusterRollup(rows: PostRow[]): ClusterRollupRow[] {
     { posts: number; clicks: number; impressions: number; internalLinks: number }
   >();
   for (const r of rows) {
+    // OPE-101 — cluster PUBLISHED posts only. A DRAFT was inflating the totals to
+    // 114 (the canonical map covers the 113 published posts); drafts still show in
+    // the per-row table but must not count toward a cluster's effectiveness.
+    if (r.status !== "PUBLISHED") continue;
     const agg = byCluster.get(r.cluster) ?? {
       posts: 0,
       clicks: 0,

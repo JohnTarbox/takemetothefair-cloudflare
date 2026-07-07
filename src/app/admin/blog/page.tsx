@@ -314,13 +314,14 @@ export default async function BlogCoveragePage({
         <CardHeader>
           <CardTitle className="text-sm font-semibold">Effectiveness by cluster</CardTitle>
           <p className="text-xs text-muted-foreground mt-1">
-            The ~113 posts collapsed into topic buckets by a <strong>v1 slug/tag heuristic</strong>{" "}
-            ( <code>src/lib/admin/blog-clusters.ts</code>) — directional, not an exact match to a
-            manual grouping (edge posts with &quot;fair&quot;/&quot;festival&quot; in the slug may
-            land a bucket off; tune the rules or supply a canonical slug→cluster map). Sortable.
-            Clicks &amp; impressions are GSC-sampled (top query×page) over the last{" "}
-            {BLOG_GSC_WINDOW_DAYS} days — they under-count the tail. Internal links = event + vendor
-            + venue links each cluster distributes.
+            The 113 published posts grouped by an{" "}
+            <strong>explicit canonical slug→cluster map</strong> ({" "}
+            <code>src/lib/admin/blog-clusters.ts</code>, OPE-101) — every published post is assigned
+            by hand (no keyword heuristic); a new/unmapped post shows as{" "}
+            <strong>&quot;Unclustered&quot;</strong> until it&apos;s added to the map. Drafts are
+            excluded. Sortable. Clicks &amp; impressions are GSC-sampled (top query×page) over the
+            last {BLOG_GSC_WINDOW_DAYS} days — they under-count the tail. Internal links = event +
+            vendor + venue links each cluster distributes.
           </p>
         </CardHeader>
         <CardContent className="p-0">

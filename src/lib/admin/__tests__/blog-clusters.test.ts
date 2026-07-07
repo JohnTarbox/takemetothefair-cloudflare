@@ -1,61 +1,89 @@
 /**
- * OPE-96 — the blog cluster classifier is a pure, precedence-ordered slug/tag
- * map (`CLUSTER_RULES`). These tests pin the design brief's worked examples
- * (gun-shows → Gun shows, *-breweries-* → Breweries & beer, the-big-e → The
- * Big E) plus the precedence rules that matter (proper-noun / topical buckets
- * must win before the broad "fair"/"guide" catch-alls) and the "Other /
- * general" default.
+ * OPE-101 — the canonical slug→cluster map replaces the v1 keyword heuristic.
+ * These tests are the BUILD GUARD for map integrity: they fail if the map drifts
+ * from the design doc's 113-post shape (count / per-cluster totals / invalid ids),
+ * so a bad edit can't ship. (A live "every PUBLISHED post is in the map" check
+ * needs prod D1, unavailable in CI — the runtime signal is the `unclustered`
+ * bucket surfacing on /admin/blog; see blog-clusters.ts.)
  */
 import { describe, expect, it } from "vitest";
-import { classifyCluster, DEFAULT_CLUSTER } from "../blog-clusters";
+import {
+  SLUG_TO_CLUSTER,
+  CLUSTER_LABELS,
+  getCluster,
+  getClusterLabel,
+  UNCLUSTERED,
+  type ClusterId,
+} from "../blog-clusters";
 
-const bySlug = (slug: string) => classifyCluster({ slug, tags: [] });
+// The 12 real clusters + their expected post counts (design §4 group headers).
+const EXPECTED_COUNTS: Record<Exclude<ClusterId, "unclustered">, number> = {
+  "state-pillars": 7,
+  "craft-fairs": 20,
+  breweries: 9,
+  "gun-shows": 6,
+  "big-e": 6,
+  renaissance: 6,
+  "highland-games": 4,
+  "food-festivals": 14,
+  "boat-marine": 7,
+  "individual-fairs": 12,
+  "vendor-resources": 11,
+  "visitor-tips": 11,
+};
 
-describe("classifyCluster — design-brief worked examples", () => {
-  it("maps gun-show slugs to Gun shows", () => {
-    expect(bySlug("gun-shows-in-new-england")).toBe("Gun shows");
-    expect(bySlug("nh-gun-show-guide")).toBe("Gun shows");
+describe("canonical cluster map — build guard (OPE-101)", () => {
+  it("maps exactly 113 published posts", () => {
+    expect(Object.keys(SLUG_TO_CLUSTER)).toHaveLength(113);
   });
 
-  it("maps brewery slugs to Breweries & beer", () => {
-    expect(bySlug("maine-breweries-guide")).toBe("Breweries & beer");
-    expect(bySlug("vermont-craft-beer-trail")).toBe("Breweries & beer");
+  it("every mapped value is a real (non-unclustered) cluster id", () => {
+    for (const [slug, id] of Object.entries(SLUG_TO_CLUSTER)) {
+      expect(CLUSTER_LABELS[id], `${slug} → ${id}`).toBeDefined();
+      expect(id).not.toBe(UNCLUSTERED);
+    }
   });
 
-  it("maps the-big-e to The Big E (before generic fair matching)", () => {
-    expect(bySlug("the-big-e")).toBe("The Big E");
-    expect(bySlug("the-big-e-2026-guide")).toBe("The Big E");
+  it("per-cluster counts match the design doc (§4) and sum to 113", () => {
+    const counts: Record<string, number> = {};
+    for (const id of Object.values(SLUG_TO_CLUSTER)) counts[id] = (counts[id] ?? 0) + 1;
+    expect(counts).toEqual(EXPECTED_COUNTS);
+    const total = Object.values(counts).reduce((a, b) => a + b, 0);
+    expect(total).toBe(113);
+  });
+
+  it("every real cluster id has a display label", () => {
+    for (const id of Object.keys(EXPECTED_COUNTS) as ClusterId[]) {
+      expect(CLUSTER_LABELS[id]).toBeTruthy();
+    }
+    expect(CLUSTER_LABELS[UNCLUSTERED]).toBe("Unclustered");
   });
 });
 
-describe("classifyCluster — precedence (most-specific first)", () => {
-  it("craft-fairs beat the broad state-fair bucket", () => {
-    expect(bySlug("holiday-craft-fairs-maine")).toBe("Craft fairs");
+describe("getCluster / getClusterLabel (OPE-101)", () => {
+  it("fixes the named bug: 'Craft Fairs in Maine' lands in craft-fairs", () => {
+    expect(getCluster("craft-fairs-in-maine-2026-a-vendors-and-visitors-guide")).toBe(
+      "craft-fairs"
+    );
+    expect(getClusterLabel("craft-fairs-in-maine-2026-a-vendors-and-visitors-guide")).toBe(
+      "Craft fairs & art festivals"
+    );
   });
 
-  it("generic state/agricultural fair guides land in State fair/festival guides", () => {
-    expect(bySlug("fryeburg-fair-guide")).toBe("State fair/festival guides");
-    expect(bySlug("county-fair-season")).toBe("State fair/festival guides");
+  it("classifies representative posts across clusters", () => {
+    expect(getCluster("gun-shows-in-maine-2026-the-complete-schedule-and-guide")).toBe("gun-shows");
+    expect(getCluster("the-big-e-your-guide-to-the-eastern-states-exposition-in-2026")).toBe(
+      "big-e"
+    );
+    expect(getCluster("maine-breweries-2026-a-complete-guide-to-portland-and-beyond")).toBe(
+      "breweries"
+    );
+    // A food festival the old heuristic could mis-bucket as a fair guide.
+    expect(getCluster("moxie-festival-2026-visitors-guide")).toBe("food-festivals");
   });
 
-  it("classifies the remaining topical buckets", () => {
-    expect(bySlug("portland-scottish-highland-games")).toBe("Scottish & Highland");
-    expect(bySlug("maine-made-program-explained")).toBe("Maine Made program");
-    expect(bySlug("king-richards-renaissance-faire")).toBe("Renaissance faires");
-    expect(bySlug("maine-boat-show")).toBe("Boat & marine");
-    expect(bySlug("annual-clam-festival")).toBe("Food festivals");
-    expect(bySlug("how-to-sell-at-a-craft-fair")).toBe("Craft fairs");
-  });
-
-  it("matches on tags when the slug is unrevealing", () => {
-    expect(classifyCluster({ slug: "summer-roundup", tags: ["Gun Show"] })).toBe("Gun shows");
-    expect(classifyCluster({ slug: "summer-roundup", tags: ["beer"] })).toBe("Breweries & beer");
-  });
-});
-
-describe("classifyCluster — default", () => {
-  it("falls through to Other / general", () => {
-    expect(bySlug("welcome-to-the-blog")).toBe(DEFAULT_CLUSTER);
-    expect(classifyCluster({ slug: "random-post", tags: [] })).toBe("Other / general");
+  it("an unmapped slug is visibly 'unclustered', never silently mis-bucketed", () => {
+    expect(getCluster("some-brand-new-unmapped-post")).toBe(UNCLUSTERED);
+    expect(getClusterLabel("some-brand-new-unmapped-post")).toBe("Unclustered");
   });
 });
