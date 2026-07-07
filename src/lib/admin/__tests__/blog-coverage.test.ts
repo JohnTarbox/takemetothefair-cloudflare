@@ -218,27 +218,31 @@ describe("loadBlogCoverageRows — GSC reach (Pass 5, OPE-96)", () => {
 });
 
 describe("blog clusters + rollup (OPE-96)", () => {
-  it("classifies posts and reports ageWeeks/cluster on each row", async () => {
-    seedPost("g", "gun-shows-new-england");
-    seedPost("b", "maine-breweries-guide");
-    seedPost("o", "something-unclassifiable");
+  it("classifies posts and reports ageWeeks/cluster on each row (OPE-101 canonical map)", async () => {
+    seedPost("g", "gun-shows-in-maine-2026-the-complete-schedule-and-guide");
+    seedPost("b", "maine-breweries-2026-a-complete-guide-to-portland-and-beyond");
+    seedPost("o", "something-unmapped-and-new");
 
     const rows = await loadBlogCoverageRows(db);
     const byId = new Map(rows.map((r) => [r.id, r]));
     expect(byId.get("g")!.cluster).toBe("Gun shows");
     expect(byId.get("b")!.cluster).toBe("Breweries & beer");
-    expect(byId.get("o")!.cluster).toBe("Other / general");
+    // Unmapped slug → the visible "Unclustered" fallback (not silently mis-bucketed).
+    expect(byId.get("o")!.cluster).toBe("Unclustered");
     // publish_date is a fixed past timestamp → mature (non-null, large age).
     expect(byId.get("g")!.ageWeeks).toBeGreaterThan(10);
   });
 
   it("rolls up per cluster: posts, clicks, clicks/post, impressions, internal links", async () => {
-    seedPost("g1", "gun-shows-nh");
-    seedPost("g2", "gun-shows-maine");
-    seedPost("b1", "vermont-breweries");
+    const G1 = "gun-shows-in-maine-2026-the-complete-schedule-and-guide";
+    const G2 = "gun-shows-in-new-england-2026-your-complete-schedule-and-guide";
+    const B1 = "vermont-breweries-2026-hill-farmstead-heady-topper-and-the-states-59-breweries";
+    seedPost("g1", G1);
+    seedPost("g2", G2);
+    seedPost("b1", B1);
     // Gun cluster: 82 + 4 clicks across 2 posts; internal links exclude blog→blog.
-    seedMetric("https://meetmeatthefair.com/blog/gun-shows-nh", today(), 82, 1000);
-    seedMetric("https://meetmeatthefair.com/blog/gun-shows-maine", today(), 4, 60);
+    seedMetric(`https://meetmeatthefair.com/blog/${G1}`, today(), 82, 1000);
+    seedMetric(`https://meetmeatthefair.com/blog/${G2}`, today(), 4, 60);
     seedLink("l1", "g1", "EVENT");
     seedLink("l2", "g1", "VENDOR");
     seedLink("l3", "g1", "BLOG_POST"); // must NOT count toward internalLinks
@@ -257,5 +261,16 @@ describe("blog clusters + rollup (OPE-96)", () => {
     const beer = rollup.find((c) => c.cluster === "Breweries & beer")!;
     expect(beer.internalLinks).toBe(1);
     expect(beer.clicks).toBe(0);
+  });
+
+  it("OPE-101: excludes DRAFT posts from the cluster rollup (fixes 114 vs 113)", async () => {
+    seedPost("pub", "gun-shows-in-maine-2026-the-complete-schedule-and-guide", "PUBLISHED");
+    seedPost("draft", "gun-shows-in-new-england-2026-your-complete-schedule-and-guide", "DRAFT");
+
+    const rows = await loadBlogCoverageRows(db);
+    const rollup = blogClusterRollup(rows);
+    const gun = rollup.find((c) => c.cluster === "Gun shows")!;
+    // Only the PUBLISHED post counts toward the cluster (the draft is excluded).
+    expect(gun.posts).toBe(1);
   });
 });
