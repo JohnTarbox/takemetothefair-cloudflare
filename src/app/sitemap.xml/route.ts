@@ -21,6 +21,7 @@ const CHILD_SITEMAPS: ReadonlyArray<{ file: string; type: SitemapType }> = [
   { file: "sitemap-vendors.xml", type: "vendors" },
   { file: "sitemap-promoters.xml", type: "promoters" },
   { file: "sitemap-blog.xml", type: "blog" },
+  { file: "sitemap-performers.xml", type: "performers" }, // OPE-115
 ];
 
 export async function GET(): Promise<Response> {

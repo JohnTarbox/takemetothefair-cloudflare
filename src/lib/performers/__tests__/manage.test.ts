@@ -73,9 +73,12 @@ describe("aliasPerformer (OPE-113)", () => {
     expect(row.alias_of_performer_id).toBe("canon");
     expect(row.deleted_at).not.toBeNull();
     expect(row.slug).not.toBe("canonical-dup");
-    expect(
-      (raw.prepare("SELECT COUNT(*) c FROM performer_slug_history").get() as { c: number }).c
-    ).toBe(1);
+    // slug-history maps the alias's ORIGINAL slug → the live CANONICAL slug so the
+    // middleware 301s old links to the canonical page (not the tombstone).
+    const hist = raw
+      .prepare("SELECT old_slug, new_slug FROM performer_slug_history")
+      .all() as Array<{ old_slug: string; new_slug: string }>;
+    expect(hist).toEqual([{ old_slug: "canonical-dup", new_slug: "canonical" }]);
   });
 
   it("refuses self-alias", async () => {
@@ -109,9 +112,11 @@ describe("mergePerformer (OPE-113)", () => {
       website: string;
     };
     expect(keeperRow.website).toBe("https://dup.example");
-    expect(
-      (raw.prepare("SELECT COUNT(*) c FROM performer_slug_history").get() as { c: number }).c
-    ).toBe(1);
+    // slug-history maps dup's ORIGINAL slug → the live KEEPER slug (301 target).
+    const hist = raw
+      .prepare("SELECT old_slug, new_slug FROM performer_slug_history")
+      .all() as Array<{ old_slug: string; new_slug: string }>;
+    expect(hist).toEqual([{ old_slug: "dup", new_slug: "keeper" }]);
   });
 
   it("refuses self-merge", async () => {

@@ -19,10 +19,17 @@
  */
 import { and, eq, isNull, max } from "drizzle-orm";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { blogPosts, events, promoters, vendors, venues } from "@/lib/db/schema";
+import { blogPosts, events, promoters, vendors, venues, performers } from "@/lib/db/schema";
 import { isPublicEventStatus } from "@/lib/event-status";
 
-export type SitemapType = "static" | "events" | "venues" | "vendors" | "promoters" | "blog";
+export type SitemapType =
+  | "static"
+  | "events"
+  | "venues"
+  | "vendors"
+  | "promoters"
+  | "blog"
+  | "performers";
 
 // Vendor rows were historically written as ms-epoch where the Drizzle
 // `mode: "timestamp"` convention expects seconds-epoch; reading such rows
@@ -74,6 +81,15 @@ export async function getSitemapTypeLastMod(type: SitemapType): Promise<Date | n
     }
     case "promoters":
       return maxFor(db.select({ value: max(promoters.updatedAt) }).from(promoters));
+    case "performers":
+      // OPE-115 — non-deleted performers (the sitemap child further gates to those
+      // with a confirmed appearance; the lastMod max needn't be that precise).
+      return maxFor(
+        db
+          .select({ value: max(performers.updatedAt) })
+          .from(performers)
+          .where(isNull(performers.deletedAt))
+      );
     case "blog":
       return maxFor(
         db

@@ -41,7 +41,7 @@ export async function aliasPerformer(
   if (aliasId === canonicalId) return { ok: false, error: "self_alias" };
   const [alias] = await db.select().from(performers).where(eq(performers.id, aliasId)).limit(1);
   const [canon] = await db
-    .select({ id: performers.id })
+    .select({ id: performers.id, slug: performers.slug })
     .from(performers)
     .where(eq(performers.id, canonicalId))
     .limit(1);
@@ -49,10 +49,12 @@ export async function aliasPerformer(
   if (!canon) return { ok: false, error: "canonical_not_found" };
   const now = new Date();
   const tombstone = unsafeSlug(`${alias.slug}-alias-${alias.id.slice(0, 8)}`);
+  // slug-history maps the alias's ORIGINAL slug → the live CANONICAL slug (not the
+  // tombstone) so middleware 301s old links to the canonical page (OPE-115 fix).
   await db.insert(performerSlugHistory).values({
     performerId: canonicalId,
     oldSlug: alias.slug,
-    newSlug: tombstone,
+    newSlug: canon.slug,
     changedAt: now,
     changedBy,
   });
@@ -139,10 +141,12 @@ export async function mergePerformer(
 
   const now = new Date();
   const tombstone = unsafeSlug(`${dup.slug}-merged-${dup.id.slice(0, 8)}`);
+  // slug-history maps the duplicate's ORIGINAL slug → the live KEEPER slug (not the
+  // tombstone) so middleware 301s old links to the keeper page (OPE-115 fix).
   await db.insert(performerSlugHistory).values({
     performerId: keeperId,
     oldSlug: dup.slug,
-    newSlug: tombstone,
+    newSlug: keeper.slug,
     changedAt: now,
     changedBy,
   });

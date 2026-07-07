@@ -20,6 +20,31 @@ import { performers, eventPerformers, eventDays } from "@/lib/db/schema";
 import { createSlug, appendSlugSegment, unsafeSlug } from "@takemetothefair/utils";
 import { rankPerformerMatches } from "@/lib/performers/match";
 import { logError } from "@/lib/logger";
+import { getCloudflareEnv } from "@/lib/cloudflare";
+import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
+import type { Database } from "@/lib/db";
+
+/**
+ * OPE-115 — nudge IndexNow for a performer's public page once it has a CONFIRMED
+ * appearance (the moment the page is indexable + sitemap-eligible). pingIndexNow
+ * honours the kill-switch + same-URL dedup suppressor, so this can't burst-ping.
+ * Fail-open: an IndexNow hiccup must never fail the appearance write.
+ */
+async function nudgePerformerIndexNow(db: Database, performerId: string, reason: string) {
+  try {
+    const [p] = await db
+      .select({ slug: performers.slug })
+      .from(performers)
+      .where(eq(performers.id, performerId))
+      .limit(1);
+    if (p) {
+      const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+      await pingIndexNow(db, indexNowUrlFor("performers", p.slug), env, reason);
+    }
+  } catch {
+    /* observability only — never break the write path on a ping */
+  }
+}
 
 const BILLING = new Set(["HEADLINER", "FEATURED", "SUPPORTING"]);
 const STATUS = new Set(["CONFIRMED", "PENDING", "CANCELLED"]);
@@ -184,6 +209,9 @@ export const POST = withAuth<{ id: string }>({ role: "ADMIN" }, async ({ request
         updatedAt: now,
       })
       .returning();
+    // OPE-115 — a CONFIRMED appearance makes the performer page indexable.
+    if (status === "CONFIRMED")
+      await nudgePerformerIndexNow(db, performerId, "performer-appearance-confirmed");
     return NextResponse.json({ created: true, appearance: appearanceOut(rows[0]) });
   } catch (error) {
     await logError(db, {
@@ -229,6 +257,9 @@ export const PATCH = withAuth<{ id: string }>({ role: "ADMIN" }, async ({ reques
     .where(eq(eventPerformers.id, apprId))
     .returning();
   if (rows.length === 0) return NextResponse.json({ error: "not_found" }, { status: 404 });
+  // OPE-115 — a set flipped to CONFIRMED makes the performer page indexable.
+  if (values.status === "CONFIRMED")
+    await nudgePerformerIndexNow(db, rows[0].performerId, "performer-status-confirmed");
   return NextResponse.json({ appearance: appearanceOut(rows[0]) });
 });
 

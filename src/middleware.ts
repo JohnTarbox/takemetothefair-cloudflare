@@ -14,6 +14,8 @@ import {
   venueSlugHistory,
   promoters,
   promoterSlugHistory,
+  performers,
+  performerSlugHistory,
 } from "@/lib/db/schema";
 import { isPubliclyVisible, publicEventWhere, type EventLifecycle } from "@/lib/event-lifecycle";
 import { getHelpArticle } from "@/lib/help-articles";
@@ -84,6 +86,8 @@ export const config = {
     // instead of 301-redirecting.
     "/venues/:slug",
     "/promoters/:slug",
+    // Performer detail pages (OPE-115) — slug-history walker for merge/alias renames.
+    "/performers/:slug",
     // Singular typo paths (OPE-87) — a stray `/vendor/<slug>` / `/promoter/<slug>`
     // link (e.g. a hand-authored blog typo) 301s to the plural public detail page.
     // Single-segment only, so the private portal sub-routes (/vendor/profile,
@@ -658,6 +662,56 @@ export async function middleware(request: NextRequest) {
         if (target) {
           const url = request.nextUrl.clone();
           url.pathname = `/promoters/${cursor}`;
+          return NextResponse.redirect(url, 301);
+        }
+      }
+      return NextResponse.next();
+    } catch {
+      return NextResponse.next();
+    }
+  }
+
+  // ── /performers/<slug> ─────────────────────────────────────────
+  // OPE-115: slug-rename 301 via performer_slug_history. Same shape as promoters —
+  // set_performer_alias / merge_performer write oldSlug → live-canonical newSlug.
+  if (pathname.startsWith("/performers/")) {
+    const slug = pathname.slice("/performers/".length);
+    if (!slug || slug.includes("/")) return NextResponse.next();
+
+    const d1 = env.DB as D1Database | undefined;
+    if (!d1) return NextResponse.next();
+    const db = drizzle(d1);
+
+    try {
+      const [row] = await db
+        .select({ id: performers.id })
+        .from(performers)
+        .where(eq(performers.slug, unsafeSlug(slug)))
+        .limit(1);
+      if (row) return NextResponse.next();
+
+      let cursor = slug;
+      const seen = new Set<string>([cursor]);
+      for (let hop = 0; hop < 5; hop++) {
+        const [historyRow] = await db
+          .select({ newSlug: performerSlugHistory.newSlug })
+          .from(performerSlugHistory)
+          .where(eq(performerSlugHistory.oldSlug, unsafeSlug(cursor)))
+          .orderBy(desc(performerSlugHistory.changedAt))
+          .limit(1);
+        if (!historyRow || seen.has(historyRow.newSlug)) break;
+        cursor = historyRow.newSlug;
+        seen.add(cursor);
+      }
+      if (cursor !== slug) {
+        const [target] = await db
+          .select({ id: performers.id })
+          .from(performers)
+          .where(eq(performers.slug, unsafeSlug(cursor)))
+          .limit(1);
+        if (target) {
+          const url = request.nextUrl.clone();
+          url.pathname = `/performers/${cursor}`;
           return NextResponse.redirect(url, 301);
         }
       }

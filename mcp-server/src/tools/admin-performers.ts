@@ -618,7 +618,7 @@ export function registerPerformerTools(server: McpServer, db: Db, auth: AuthCont
           .where(eq(performers.id, params.alias_performer_id))
           .limit(1);
         const [canonical] = await db
-          .select({ id: performers.id })
+          .select({ id: performers.id, slug: performers.slug })
           .from(performers)
           .where(eq(performers.id, params.canonical_performer_id))
           .limit(1);
@@ -626,10 +626,12 @@ export function registerPerformerTools(server: McpServer, db: Db, auth: AuthCont
         if (!canonical) return err("not_found", `No performer ${params.canonical_performer_id}.`);
         const now = new Date();
         const tombstoneSlug = unsafeSlug(`${alias.slug}-alias-${alias.id.slice(0, 8)}`);
+        // slug-history newSlug = the live CANONICAL slug (not the tombstone) so the
+        // middleware 301s the alias's old slug to the canonical page (OPE-115 fix).
         await db.insert(performerSlugHistory).values({
           performerId: params.canonical_performer_id,
           oldSlug: alias.slug,
-          newSlug: tombstoneSlug,
+          newSlug: canonical.slug,
           changedAt: now,
           changedBy: auth.userId ?? null,
         });
@@ -739,10 +741,12 @@ export function registerPerformerTools(server: McpServer, db: Db, auth: AuthCont
 
         const now = new Date();
         const tombstoneSlug = unsafeSlug(`${dup.slug}-merged-${dup.id.slice(0, 8)}`);
+        // slug-history newSlug = the live KEEPER slug (not the tombstone) so the
+        // middleware 301s the duplicate's old slug to the keeper page (OPE-115 fix).
         await db.insert(performerSlugHistory).values({
           performerId: params.keeper_performer_id,
           oldSlug: dup.slug,
-          newSlug: tombstoneSlug,
+          newSlug: keeper.slug,
           changedAt: now,
           changedBy: auth.userId ?? null,
         });
