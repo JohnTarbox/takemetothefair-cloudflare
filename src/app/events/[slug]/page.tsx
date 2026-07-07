@@ -23,7 +23,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { formatDateRange, formatDiscontinuousDates, formatPrice } from "@/lib/utils";
-import { getCloudflareDb } from "@/lib/cloudflare";
+import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
+import { loadEventPerformers } from "@/lib/performers/load-event-performers";
+import { WhosPerforming } from "@/components/events/WhosPerforming";
 // K46 — getEvent (moved to event-detail-data.ts) owned the users/eventDays/
 // eventSeries/sql/isNull/inArray/resolveEventVendorTarget/isPublicVendorStatus
 // imports; the page body keeps only what it still references.
@@ -423,6 +425,20 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
     notFound();
   }
 
+  // OPE-114 — CONFIRMED performer appearances for the "Who's Performing" block +
+  // the schema.org `performer` emission. emit_performer_subevents is a global
+  // flag, DEFAULT OFF (times show on-page but aren't fed to search engines until
+  // an env flip — no code change needed).
+  const eventPerformerRows = await loadEventPerformers(getCloudflareDb(), event.id);
+  let emitPerformerSubevents = false;
+  try {
+    emitPerformerSubevents =
+      (getCloudflareEnv() as { EMIT_PERFORMER_SUBEVENTS?: string }).EMIT_PERFORMER_SUBEVENTS ===
+      "true";
+  } catch {
+    /* default off */
+  }
+
   const session = await auth();
   const vendorInfo = await getUserVendorInfo(session?.user?.id, event.id);
   const dateConflicts = vendorInfo
@@ -575,6 +591,21 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
           primaryAudience={event.primaryAudience}
           publicAccess={event.publicAccess}
           accessNotes={event.accessNotes}
+          // OPE-114 — CONFIRMED acts → schema.org `performer` who-list (merged
+          // with vendor-exhibitors in the builder). Sub-Event times gated OFF.
+          performers={eventPerformerRows.map((r) => ({
+            name: r.performerName,
+            slug: r.performerSlug,
+            performerType: r.performerType,
+            actCategory: r.actCategory,
+            sameAs: r.sameAs,
+            imageUrl: r.imageUrl,
+            billing: r.billing,
+            performanceStart: r.performanceStart,
+            performanceEnd: r.performanceEnd,
+            stage: r.stage,
+          }))}
+          emitPerformerSubevents={emitPerformerSubevents}
         />
         <BreadcrumbSchema
           items={[
@@ -874,6 +905,11 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
                       {event.description || "No description available."}
                     </p>
                   </div>
+
+                  {/* OPE-114 — "Who's Performing" (CONFIRMED acts only; renders
+                      null when there are none, so zero weight for the ~all
+                      events without a lineup yet). */}
+                  <WhosPerforming performers={eventPerformerRows} />
 
                   {publicTags.length > 0 && (
                     <div className="flex flex-wrap gap-2">

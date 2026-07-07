@@ -3,6 +3,12 @@ import { LIFECYCLE_TO_SCHEMA_ORG, type EventLifecycle } from "@/lib/event-lifecy
 import { buildPlaceJsonLd } from "@/lib/seo/place-jsonld";
 import { formatAudienceBadge, isClosedToPublic, hasNonDefaultAudience } from "@/lib/event-audience";
 import type { PrimaryAudience, PublicAccess } from "@takemetothefair/constants";
+import { SITE_URL } from "@takemetothefair/constants";
+import {
+  buildPerformerNodes,
+  performerSchemaType,
+  type ConfirmedAppearance,
+} from "@/lib/performers/event-jsonld";
 
 interface EventDay {
   date: string;
@@ -102,6 +108,15 @@ interface EventSchemaProps {
    * for standalone events, which is every event until the P1 backfill links them.
    */
   superEvent?: Record<string, unknown> | null;
+  // OPE-114 — CONFIRMED performer appearances for this event. Emitted as the
+  // schema.org `performer` who-list (deduped, billing-ordered) MERGED with the
+  // existing vendor-exhibitor performers (acts first). Only CONFIRMED acts are
+  // passed here (the loader filters); PENDING/CANCELLED never reach the schema.
+  performers?: ConfirmedAppearance[];
+  // OPE-114 §6.1a — when true, ALSO emit one `subEvent` per confirmed timed
+  // appearance (Mr. Drew, Sat 3 PM). Global feature flag, DEFAULT OFF: times are
+  // shown on-page but not submitted to search engines until John flips it.
+  emitPerformerSubevents?: boolean;
 }
 
 function getEventType(categories?: string[]): string {
@@ -139,6 +154,8 @@ export function EventSchema({
   previousEndDate,
   eventDays,
   vendors,
+  performers,
+  emitPerformerSubevents,
   createdAt,
   primaryAudience,
   publicAccess,
@@ -447,6 +464,43 @@ export function EventSchema({
           })
       : undefined;
 
+  // OPE-114 — schema.org `performer`. The vendor lineup already maps EXHIBITOR
+  // vendors → `performer` (drizzle/0071); MERGE the confirmed acts in FRONT of
+  // them (acts are the true performers, billing-ordered), keeping the vendor
+  // `sponsor` split intact. Omitted entirely when neither exists.
+  const vendorSplit = vendorBucketToPerformerSponsor(seriesWideVendors);
+  const actNodes = buildPerformerNodes(performers ?? [], SITE_URL);
+  const combinedPerformers = [...(actNodes ?? []), ...(vendorSplit.performer ?? [])];
+  const performerArray = combinedPerformers.length > 0 ? combinedPerformers : undefined;
+
+  // §6.1a — one sub-Event per confirmed TIMED appearance (Mr. Drew, Sat 3 PM).
+  // Behind the emit_performer_subevents flag (DEFAULT OFF): built but not emitted
+  // until John flips it, so appearance times show on-page yet aren't fed to Google.
+  const performerSubEvents =
+    emitPerformerSubevents && performers && performers.length > 0
+      ? performers
+          .filter((p) => p.performanceStart != null)
+          .map((p) => ({
+            "@type": "Event",
+            name: `${name}: ${p.name}`,
+            startDate: new Date((p.performanceStart as number) * 1000).toISOString(),
+            ...(p.performanceEnd != null
+              ? { endDate: new Date(p.performanceEnd * 1000).toISOString() }
+              : {}),
+            location,
+            performer: [
+              {
+                "@type": performerSchemaType(p.performerType, p.actCategory),
+                name: p.name,
+                url: `${SITE_URL}/performers/${p.slug}`,
+                ...(p.sameAs ? { sameAs: p.sameAs } : {}),
+              },
+            ],
+          }))
+      : [];
+  const allSubEvents =
+    performerSubEvents.length > 0 ? [...(subEvents ?? []), ...performerSubEvents] : subEvents;
+
   const schema = {
     "@context": "https://schema.org",
     "@type": getEventType(categories),
@@ -487,21 +541,15 @@ export function EventSchema({
             formatAudienceBadge(primaryAudience, publicAccess, accessNotes)?.label ?? "Restricted",
         }
       : undefined,
-    subEvent: subEvents,
+    subEvent: allSubEvents,
     organizer: organizerBlock,
-    // Split vendor lineup into schema.org `performer` + `sponsor` per the
-    // 2026-05-16 spec. EXHIBITOR / SPONSOR_AND_EXHIBITOR vendors go in
-    // performer; SPONSOR_ONLY / SPONSOR_AND_EXHIBITOR vendors go in sponsor.
-    // SPONSOR_AND_EXHIBITOR appears in BOTH arrays (honest signal that the
-    // org is funding the event AND has a booth on the floor). Legacy
-    // vendors without participationType set default to EXHIBITOR.
-    //
-    // K18 Phase 2 (2026-06-06): the top-level arrays carry SERIES-WIDE
-    // vendors only (vendorsByDay rows are emitted under their subEvent
-    // entry above). Pre-K18 lineups have everything in seriesWideVendors,
-    // so the emission is unchanged for events that haven't adopted
-    // per-day scoping.
-    ...vendorBucketToPerformerSponsor(seriesWideVendors),
+    // schema.org `performer` = confirmed ACTS (OPE-114) FIRST, then EXHIBITOR
+    // vendors (the 2026-05-16 vendor mapping, drizzle/0071). `sponsor` stays the
+    // vendor SPONSOR_ONLY / SPONSOR_AND_EXHIBITOR split. Both omitted when empty.
+    // (K18 Phase 2: the top-level arrays carry SERIES-WIDE vendors only; per-day
+    // vendors emit under their subEvent entry above.)
+    performer: performerArray,
+    sponsor: vendorSplit.sponsor,
     offers,
   };
 
