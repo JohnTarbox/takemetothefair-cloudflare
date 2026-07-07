@@ -427,6 +427,78 @@ const SCHEMA_SQL = `
     created_at INTEGER NOT NULL
   );
 
+  -- OPE-112/113 performer tracking. Full column set — the MCP tools use
+  -- .returning() which selects every schema column, so all must exist here.
+  CREATE TABLE performers (
+    id TEXT PRIMARY KEY,
+    user_id TEXT,
+    name TEXT NOT NULL,
+    slug TEXT NOT NULL,
+    performer_type TEXT,
+    act_category TEXT,
+    description TEXT,
+    website TEXT,
+    social_links TEXT,
+    image_url TEXT,
+    image_focal_x REAL DEFAULT 0.5 NOT NULL,
+    image_focal_y REAL DEFAULT 0.5 NOT NULL,
+    home_base_city TEXT,
+    home_base_state TEXT,
+    contact_name TEXT,
+    contact_email TEXT,
+    contact_phone TEXT,
+    verified INTEGER DEFAULT 0 NOT NULL,
+    verified_pro INTEGER DEFAULT 0 NOT NULL,
+    verified_pro_at INTEGER,
+    verified_pro_by TEXT,
+    claimed INTEGER DEFAULT 0 NOT NULL,
+    claimed_at INTEGER,
+    claimed_by TEXT,
+    enhanced_profile INTEGER DEFAULT 0 NOT NULL,
+    enhanced_profile_started_at INTEGER,
+    enhanced_profile_expires_at INTEGER,
+    enrichment_source TEXT,
+    enrichment_attempted_at INTEGER,
+    domain_hijacked INTEGER DEFAULT 0 NOT NULL,
+    completeness_score INTEGER DEFAULT 0 NOT NULL,
+    redirect_to_performer_id TEXT,
+    alias_of_performer_id TEXT,
+    view_count INTEGER DEFAULT 0 NOT NULL,
+    deleted_at INTEGER,
+    created_at INTEGER,
+    updated_at INTEGER
+  );
+  CREATE UNIQUE INDEX idx_performers_slug ON performers (slug);
+
+  CREATE TABLE event_performers (
+    id TEXT PRIMARY KEY,
+    event_id TEXT NOT NULL,
+    performer_id TEXT NOT NULL,
+    event_day_id TEXT,
+    performance_start INTEGER,
+    performance_end INTEGER,
+    stage TEXT,
+    billing TEXT,
+    status TEXT NOT NULL DEFAULT 'PENDING',
+    source_url TEXT,
+    notes TEXT,
+    created_at INTEGER,
+    updated_at INTEGER
+  );
+  -- Appearance identity — INCLUDES performance_start so repeat sets are allowed
+  -- but exact duplicates are blocked (matches drizzle/0152).
+  CREATE UNIQUE INDEX idx_event_performers_unique
+    ON event_performers (event_id, performer_id, event_day_id, performance_start);
+
+  CREATE TABLE performer_slug_history (
+    id TEXT PRIMARY KEY,
+    performer_id TEXT NOT NULL,
+    old_slug TEXT NOT NULL,
+    new_slug TEXT NOT NULL,
+    changed_at INTEGER NOT NULL,
+    changed_by TEXT
+  );
+
   CREATE TABLE event_vendors (
     id TEXT PRIMARY KEY,
     event_id TEXT NOT NULL,

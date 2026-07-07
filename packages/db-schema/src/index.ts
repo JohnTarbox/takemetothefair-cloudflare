@@ -875,6 +875,10 @@ export const performers = sqliteTable("performers", {
   contactPhone: text("contact_phone"),
   verified: integer("verified", { mode: "boolean" }).notNull().default(false),
   verifiedPro: integer("verified_pro", { mode: "boolean" }).notNull().default(false),
+  // OPE-113 (drizzle/0153) — verify audit columns, mirroring vendors. The OPE-112
+  // ticket's inline list omitted these; the design doc §3.1 includes them.
+  verifiedProAt: integer("verified_pro_at", { mode: "timestamp" }),
+  verifiedProBy: text("verified_pro_by").references(() => users.id, { onDelete: "set null" }),
   // Claimed tier — mirrors vendors.claimed.
   claimed: integer("claimed", { mode: "boolean" }).notNull().default(false),
   claimedAt: integer("claimed_at", { mode: "timestamp" }),
