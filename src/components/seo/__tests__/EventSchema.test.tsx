@@ -569,3 +569,75 @@ describe("startDate fallback from event_days", () => {
     expect(container.querySelector('script[type="application/ld+json"]')).toBeNull();
   });
 });
+
+// OPE-114 — performer (acts) emission + the emit_performer_subevents flag.
+describe("EventSchema performer emission (OPE-114)", () => {
+  const drew = {
+    name: "Mr. Drew",
+    slug: "mr-drew-and-his-animals-too",
+    performerType: "PERSON" as const,
+    actCategory: "ANIMAL_SHOW",
+    sameAs: "https://facebook.com/mrdrew",
+    imageUrl: null,
+    billing: "HEADLINER" as const,
+    performanceStart: 1_781_000_000,
+    performanceEnd: 1_781_003_600,
+    stage: "Main Stage",
+  };
+
+  it("emits a deduped performer who-list; empty case omits the property", () => {
+    const none = extractJsonLd(render(<EventSchema {...baseProps} />).container);
+    expect(none.performer).toBeUndefined();
+
+    const ld = extractJsonLd(render(<EventSchema {...baseProps} performers={[drew]} />).container);
+    expect(ld.performer).toEqual([
+      {
+        "@type": "Person",
+        name: "Mr. Drew",
+        url: "https://meetmeatthefair.com/performers/mr-drew-and-his-animals-too",
+        sameAs: "https://facebook.com/mrdrew",
+      },
+    ]);
+  });
+
+  it("merges acts FIRST, then EXHIBITOR vendors, in the performer array", () => {
+    const ld = extractJsonLd(
+      render(
+        <EventSchema
+          {...baseProps}
+          performers={[drew]}
+          vendors={[{ name: "Acme Crafts", url: "/acme", participationType: "EXHIBITOR" }]}
+        />
+      ).container
+    );
+    const names = (ld.performer as Array<{ name: string }>).map((p) => p.name);
+    expect(names).toEqual(["Mr. Drew", "Acme Crafts"]);
+  });
+
+  it("emit_performer_subevents OFF (default) → no performer sub-Events", () => {
+    const ld = extractJsonLd(render(<EventSchema {...baseProps} performers={[drew]} />).container);
+    // No eventDays here, so with the flag off there are no subEvents at all.
+    expect(ld.subEvent).toBeUndefined();
+  });
+
+  it("emit_performer_subevents ON → one timed sub-Event per appearance, still valid", () => {
+    const ld = extractJsonLd(
+      render(<EventSchema {...baseProps} performers={[drew]} emitPerformerSubevents />).container
+    );
+    const subs = ld.subEvent as Array<Record<string, unknown>>;
+    expect(subs).toHaveLength(1);
+    expect(subs[0]).toMatchObject({
+      "@type": "Event",
+      name: "Test Event: Mr. Drew",
+      startDate: new Date(1_781_000_000 * 1000).toISOString(),
+      performer: [
+        {
+          "@type": "Person",
+          name: "Mr. Drew",
+          url: "https://meetmeatthefair.com/performers/mr-drew-and-his-animals-too",
+        },
+      ],
+    });
+    expect((ld.performer as unknown[]).length).toBe(1);
+  });
+});
