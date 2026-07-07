@@ -70,6 +70,7 @@ import { registerSitemapResubmitTool } from "./admin-sitemap-resubmit.js";
 import { registerBingSitemapResubmitTool } from "./admin-bing-sitemap-resubmit.js";
 import { registerGscMilestoneIngestTool } from "./admin-gsc-milestone-ingest.js";
 import { registerPerformerTools } from "./admin-performers.js";
+import { registerPerformerDiscoveryTools } from "./admin-performer-discovery.js";
 import { registerRequestIndexingTool } from "./admin-request-indexing.js";
 import { registerAdminClaimApprovalTool } from "./admin-claim-approval.js";
 import { registerEventLifecycleTools } from "./admin-event-lifecycle.js";
@@ -149,6 +150,8 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   registerBingSitemapResubmitTool(server, db, auth, env);
   registerGscMilestoneIngestTool(server, auth, env);
   registerPerformerTools(server, db, auth);
+  // OPE-116 (2/3) — discovery harvest (event_schema_org) + dedup sweep.
+  registerPerformerDiscoveryTools(server, db, auth);
 
   // Google Indexing API per-URL recrawl notification. Use sparingly on
   // high-value pages stuck in "Discovered – not indexed" or fresh slug
