@@ -8,7 +8,7 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
-import { Music, MapPin, Globe, ShieldCheck, Calendar } from "lucide-react";
+import { Music, MapPin, Globe, ShieldCheck, Calendar, Star } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { EventList } from "@/components/events/event-list";
@@ -26,6 +26,30 @@ import { PerformerSchema } from "@/components/seo/PerformerSchema";
 import { ScrollDepthTracker } from "@/components/ScrollDepthTracker";
 import { unsafeSlug } from "@/lib/utils";
 import { cdnImage, OG_EVENT } from "@/lib/cdn-image";
+import { auth } from "@/lib/auth";
+import { ClaimListingCTA } from "@/components/performers/ClaimListingCTA";
+
+/** platform → label for the enhanced-profile social links block. */
+const SOCIAL_LABELS: Record<string, string> = {
+  facebook: "Facebook",
+  instagram: "Instagram",
+  youtube: "YouTube",
+  twitter: "X",
+  tiktok: "TikTok",
+};
+
+/** Parse the performers.social_links JSON into ordered [label, url] entries. */
+function parseSocialLinks(raw: string | null): Array<{ label: string; url: string }> {
+  if (!raw) return [];
+  try {
+    const obj = JSON.parse(raw) as Record<string, unknown>;
+    return Object.entries(obj)
+      .filter(([, v]) => typeof v === "string" && /^https?:\/\//i.test(v))
+      .map(([k, v]) => ({ label: SOCIAL_LABELS[k.toLowerCase()] ?? k, url: v as string }));
+  } catch {
+    return [];
+  }
+}
 
 export const revalidate = 300; // 5-minute ISR
 
@@ -142,6 +166,18 @@ export default async function PerformerDetailPage({ params }: Props) {
   const performer = await getPerformer(slug);
   if (!performer) notFound();
 
+  // OPE-116 — claim + enhanced-profile state (customer-facing surface).
+  const session = await auth();
+  const viewerEmail = session?.user?.email?.trim().toLowerCase() ?? null;
+  const isOwner = !!session?.user?.id && performer.userId === session.user.id;
+  const isAdmin = session?.user?.role === "ADMIN";
+  const eligibleForDirectClaim =
+    !!viewerEmail &&
+    !!performer.contactEmail &&
+    performer.contactEmail.trim().toLowerCase() === viewerEmail;
+  const isEnhanced = !!performer.enhancedProfile;
+  const socialLinks = isEnhanced ? parseSocialLinks(performer.socialLinks) : [];
+
   const category = performer.actCategory ? CATEGORY_LABEL[performer.actCategory] : null;
   const homeBase = [performer.homeBaseCity, performer.homeBaseState].filter(Boolean).join(", ");
   const schemaEvents = [...performer.upcomingEvents, ...performer.pastEvents].map((e) => ({
@@ -197,6 +233,17 @@ export default async function PerformerDetailPage({ params }: Props) {
                     <Badge variant="info" className="text-xs">
                       <ShieldCheck className="w-3 h-3 mr-1 inline" />
                       Verified
+                    </Badge>
+                  )}
+                  {isEnhanced && (
+                    <Badge variant="success" className="text-xs">
+                      <Star className="w-3 h-3 mr-1 inline" />
+                      Enhanced
+                    </Badge>
+                  )}
+                  {performer.claimed && !isEnhanced && (
+                    <Badge variant="info" className="text-xs">
+                      Claimed
                     </Badge>
                   )}
                 </h1>
@@ -263,21 +310,31 @@ export default async function PerformerDetailPage({ params }: Props) {
                 ) : (
                   <p className="text-sm text-muted-foreground">No website on file.</p>
                 )}
+                {/* OPE-116 — social links are an Enhanced-profile perk. */}
+                {socialLinks.map((s) => (
+                  <p key={s.url} className="flex items-center gap-2 text-sm">
+                    <Star className="w-4 h-4 text-muted-foreground" />
+                    <Link
+                      href={s.url}
+                      target="_blank"
+                      rel="noopener noreferrer nofollow"
+                      className="text-navy hover:underline break-all"
+                    >
+                      {s.label}
+                    </Link>
+                  </p>
+                ))}
               </CardContent>
             </Card>
 
-            {!performer.claimed && (
-              // OPE-115 — claim CTA for unclaimed acts. The claim FLOW lands in
-              // Phase 4 (OPE-116); for now this is an informational prompt.
-              <Card>
-                <CardContent className="py-6 space-y-2">
-                  <h2 className="text-lg font-semibold text-foreground">Are you this act?</h2>
-                  <p className="text-sm text-muted-foreground">
-                    Claim this profile to manage your bio, photo, and appearance schedule. Claiming
-                    opens soon — check back shortly.
-                  </p>
-                </CardContent>
-              </Card>
+            {!performer.claimed && !isOwner && !isAdmin && (
+              // OPE-116 — real claim CTA. One-click for email-match visitors;
+              // otherwise a prompt to sign in / contact for operator approval.
+              <ClaimListingCTA
+                performerName={performer.name}
+                performerSlug={performer.slug}
+                eligibleForDirectClaim={eligibleForDirectClaim}
+              />
             )}
           </aside>
         </div>
