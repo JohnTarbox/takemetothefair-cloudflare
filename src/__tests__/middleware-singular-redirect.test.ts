@@ -49,4 +49,32 @@ describe("middleware singular → plural redirect (OPE-87)", () => {
     expect(res.status).not.toBe(301);
     expect(res.headers.get("location")).toBeNull();
   });
+
+  // OPE-120 — performers have no singular portal, so every single-segment
+  // /performer/<slug> 301s to the plural public page.
+  it("301s /performer/<slug> to /performers/<slug>", async () => {
+    const res = await middleware(
+      new NextRequest("https://meetmeatthefair.com/performer/mr-drew-and-his-animals-too")
+    );
+    expect(res.status).toBe(301);
+    expect(res.headers.get("location")).toBe(
+      "https://meetmeatthefair.com/performers/mr-drew-and-his-animals-too"
+    );
+  });
+
+  it("preserves the query string on a performer redirect", async () => {
+    const res = await middleware(
+      new NextRequest("https://meetmeatthefair.com/performer/skip-bailey?ref=blog")
+    );
+    expect(res.status).toBe(301);
+    expect(res.headers.get("location")).toBe(
+      "https://meetmeatthefair.com/performers/skip-bailey?ref=blog"
+    );
+  });
+
+  it("does NOT redirect a multi-segment /performer/<a>/<b> path", async () => {
+    const res = await middleware(new NextRequest("https://meetmeatthefair.com/performer/a/b"));
+    expect(res.status).not.toBe(301);
+    expect(res.headers.get("location")).toBeNull();
+  });
 });

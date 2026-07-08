@@ -95,6 +95,9 @@ export const config = {
     // do this — real portal pages live under the same singular prefix.
     "/vendor/:slug",
     "/promoter/:slug",
+    // OPE-120 — performers have NO singular portal, so every /performer/<slug>
+    // 301s to the plural public page (mirrors the vendor/promoter typo redirect).
+    "/performer/:slug",
     // Raw-markdown twin of a help article — `/help/<slug>.md` (OPE-62). App
     // Router can't express this as a dynamic route (see the handler comment),
     // so middleware serves it, matching only the `.md` shape so regular
@@ -216,6 +219,19 @@ export async function middleware(request: NextRequest) {
     if (seg && !seg.includes("/") && !PROMOTER_PORTAL_ROUTES.has(seg)) {
       const url = request.nextUrl.clone();
       url.pathname = `/promoters/${seg}`;
+      return NextResponse.redirect(url, 301);
+    }
+    return NextResponse.next();
+  }
+  // OPE-120 — /performer/<slug> → /performers/<slug>. Performers have no private
+  // portal (unlike vendors/promoters), so there are no reserved routes to skip;
+  // any single-segment singular path 301s to the plural public detail page. If a
+  // performer portal is ever added under /performer/*, add a reserved set here.
+  if (pathname.startsWith("/performer/")) {
+    const seg = pathname.slice("/performer/".length);
+    if (seg && !seg.includes("/")) {
+      const url = request.nextUrl.clone();
+      url.pathname = `/performers/${seg}`;
       return NextResponse.redirect(url, 301);
     }
     return NextResponse.next();
