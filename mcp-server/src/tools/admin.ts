@@ -72,6 +72,7 @@ import { registerGscMilestoneIngestTool } from "./admin-gsc-milestone-ingest.js"
 import { registerPerformerTools } from "./admin-performers.js";
 import { registerPerformerDiscoveryTools } from "./admin-performer-discovery.js";
 import { registerPerformerClaimTools } from "./performer-claim-approval.js";
+import { registerPerformerHealthTool } from "./admin-performer-health.js";
 import { registerRequestIndexingTool } from "./admin-request-indexing.js";
 import { registerAdminClaimApprovalTool } from "./admin-claim-approval.js";
 import { registerEventLifecycleTools } from "./admin-event-lifecycle.js";
@@ -155,6 +156,8 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   registerPerformerDiscoveryTools(server, db, auth);
   // OPE-116 (3/3) — performer claim approval + enhanced-profile activation.
   registerPerformerClaimTools(server, db, auth);
+  // OPE-124 — read-only performer appearance data-health checks.
+  registerPerformerHealthTool(server, db, auth);
 
   // Google Indexing API per-URL recrawl notification. Use sparingly on
   // high-value pages stuck in "Discovered – not indexed" or fresh slug
