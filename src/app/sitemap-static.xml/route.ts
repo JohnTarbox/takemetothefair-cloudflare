@@ -139,6 +139,13 @@ function buildStaticUrls(): SitemapUrl[] {
       priority: 0.7,
     },
     {
+      // OPE-122 — public performers index.
+      url: `${SITEMAP_BASE_URL}/performers`,
+      lastModified: NOW(),
+      changeFrequency: "weekly",
+      priority: 0.7,
+    },
+    {
       url: `${SITEMAP_BASE_URL}/blog`,
       lastModified: NOW(),
       changeFrequency: "daily",
