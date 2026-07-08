@@ -291,6 +291,19 @@ export const VENDOR_ROSTER_STATUS_VALUES = [
 ] as const;
 export type VendorRosterStatus = (typeof VENDOR_ROSTER_STATUS_VALUES)[number];
 
+// OPE-123 — per-event PERFORMER-lineup research state (the performer analog of
+// vendor_roster_status). NEEDS_RESEARCH = lineup not yet re-verified; VERIFIED =
+// lineup re-grounded against a source; NO_LINEUP_PUBLISHED = researched dead-end
+// (sticky, so the sweep converges instead of re-checking events with no findable
+// lineup). Terminal statuses (everything but NEEDS_RESEARCH) stamp
+// performer_roster_checked_at.
+export const PERFORMER_ROSTER_STATUS_VALUES = [
+  "NEEDS_RESEARCH",
+  "VERIFIED",
+  "NO_LINEUP_PUBLISHED",
+] as const;
+export type PerformerRosterStatus = (typeof PERFORMER_ROSTER_STATUS_VALUES)[number];
+
 // "Producer-class" events — the big PRODUCED shows that publish a
 // web exhibitor directory worth backfilling (home/garden, boat/RV,
 // sportsman, trade, fiber, craft-festival, fairs). Deliberately

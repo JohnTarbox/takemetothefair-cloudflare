@@ -30,6 +30,7 @@ const SCHEMA_SQL = `
     id TEXT PRIMARY KEY, event_id TEXT NOT NULL, performer_id TEXT NOT NULL,
     event_day_id TEXT, performance_start INTEGER, performance_end INTEGER, stage TEXT,
     billing TEXT, status TEXT NOT NULL DEFAULT 'PENDING', source_url TEXT, notes TEXT,
+    last_verified_at INTEGER, last_verified_source TEXT,
     created_at INTEGER, updated_at INTEGER
   );
   CREATE TABLE performer_slug_history (

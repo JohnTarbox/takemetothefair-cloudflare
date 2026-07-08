@@ -193,7 +193,10 @@ const SCHEMA_SQL = `
     vendor_roster_status TEXT,
     vendor_roster_checked_at INTEGER,
     vendor_roster_source_url TEXT,
-    vendor_roster_offset INTEGER
+    vendor_roster_offset INTEGER,
+    performer_roster_status TEXT,
+    performer_roster_checked_at INTEGER,
+    performer_roster_source_url TEXT
   );
 
   -- EH3 P0 (drizzle/0127) — series parent. Needed here once tools join it
@@ -540,6 +543,8 @@ const SCHEMA_SQL = `
     status TEXT NOT NULL DEFAULT 'PENDING',
     source_url TEXT,
     notes TEXT,
+    last_verified_at INTEGER,
+    last_verified_source TEXT,
     created_at INTEGER,
     updated_at INTEGER
   );

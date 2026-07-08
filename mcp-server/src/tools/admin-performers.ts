@@ -15,9 +15,16 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { and, desc, eq, isNull, like } from "drizzle-orm";
-import { performers, eventPerformers, performerSlugHistory, adminActions } from "../schema.js";
+import {
+  performers,
+  eventPerformers,
+  performerSlugHistory,
+  adminActions,
+  events,
+} from "../schema.js";
 import { appendSlugSegment, createSlug, escapeLike, jsonContent, unsafeSlug } from "../helpers.js";
 import { combinedSimilarity } from "@takemetothefair/utils";
+import { PERFORMER_ROSTER_STATUS_VALUES } from "@takemetothefair/constants";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 
@@ -499,13 +506,20 @@ export function registerPerformerTools(server: McpServer, db: Db, auth: AuthCont
   // ── set_event_performer_status ────────────────────────────────────
   server.tool(
     "set_event_performer_status",
-    "Set an appearance's status (CONFIRMED/PENDING/CANCELLED). Only CONFIRMED is emitted to schema.org (Phase 2). Admin only.",
+    "Set an appearance's status (CONFIRMED/PENDING/CANCELLED). Only CONFIRMED is emitted to schema.org (Phase 2). Counts as a re-verification — stamps last_verified_at (OPE-123). Admin only.",
     {
       event_performer_id: z.string().min(1),
       status: z.enum(APPEARANCE_STATUS),
+      verified_source: z
+        .string()
+        .optional()
+        .describe("URL/source re-grounded against — stored in last_verified_source."),
     },
     async (params) =>
-      setAppearanceField(db, auth, params.event_performer_id, { status: params.status }, "status")
+      setAppearanceField(db, auth, params.event_performer_id, { status: params.status }, "status", {
+        stampVerified: true,
+        source: params.verified_source ?? null,
+      })
   );
 
   // ── set_event_performer_billing ───────────────────────────────────
@@ -529,7 +543,7 @@ export function registerPerformerTools(server: McpServer, db: Db, auth: AuthCont
   // ── set_event_performer_slot ──────────────────────────────────────
   server.tool(
     "set_event_performer_slot",
-    "Set an appearance's slot: day, start/end time (epoch seconds), and/or stage. Only provided fields change. Admin only.",
+    "Set an appearance's slot: day, start/end time (epoch seconds), and/or stage. Only provided fields change. Counts as a re-verification — stamps last_verified_at (OPE-123). Admin only.",
     {
       event_performer_id: z.string().min(1),
       event_day_id: z.string().nullable().optional(),
@@ -541,6 +555,10 @@ export function registerPerformerTools(server: McpServer, db: Db, auth: AuthCont
         .describe("epoch seconds, or null to clear"),
       performance_end: z.number().int().nullable().optional(),
       stage: z.string().nullable().optional(),
+      verified_source: z
+        .string()
+        .optional()
+        .describe("URL/source re-grounded against — stored in last_verified_source."),
     },
     async (params) => {
       const values: Record<string, unknown> = {};
@@ -551,7 +569,10 @@ export function registerPerformerTools(server: McpServer, db: Db, auth: AuthCont
         values.performanceEnd = toDate(params.performance_end);
       if (params.stage !== undefined) values.stage = params.stage;
       if (Object.keys(values).length === 0) return err("no_fields", "No slot fields to update.");
-      return setAppearanceField(db, auth, params.event_performer_id, values, "slot");
+      return setAppearanceField(db, auth, params.event_performer_id, values, "slot", {
+        stampVerified: true,
+        source: params.verified_source ?? null,
+      });
     }
   );
 
@@ -781,6 +802,101 @@ export function registerPerformerTools(server: McpServer, db: Db, auth: AuthCont
       }
     }
   );
+
+  // ── set_performer_roster_status ───────────────────────────────────
+  // OPE-123 — per-event performer-lineup research state (mirrors
+  // set_vendor_roster_status). Lets the re-verification sweep record outcomes
+  // and converge on dead-ends (NO_LINEUP_PUBLISHED is sticky).
+  server.tool(
+    "set_performer_roster_status",
+    [
+      "Record the performer-lineup research state for an event (OPE-123).",
+      "Pass event_id or event_slug (event_id wins). status is one of",
+      "NEEDS_RESEARCH | VERIFIED | NO_LINEUP_PUBLISHED. Terminal statuses",
+      "(everything except NEEDS_RESEARCH) stamp performer_roster_checked_at now",
+      "and store source_url. NEEDS_RESEARCH clears both (fresh attempt). Writes",
+      "an admin_actions audit row. Mirrors set_vendor_roster_status.",
+    ].join(" "),
+    {
+      event_id: z.string().min(1).optional().describe("Event ID (UUID or legacy hex)."),
+      event_slug: z.string().min(1).optional().describe("Event slug."),
+      status: z
+        .enum(PERFORMER_ROSTER_STATUS_VALUES)
+        .describe("NEEDS_RESEARCH | VERIFIED | NO_LINEUP_PUBLISHED"),
+      source_url: z
+        .string()
+        .url()
+        .optional()
+        .describe("URL of the lineup/schedule page the status was derived from."),
+    },
+    async (params) => {
+      if (!params.event_id && !params.event_slug) {
+        return err("missing_target", "event_id or event_slug is required.");
+      }
+      const rows = params.event_id
+        ? await db
+            .select({ id: events.id, slug: events.slug, status: events.performerRosterStatus })
+            .from(events)
+            .where(eq(events.id, params.event_id))
+            .limit(1)
+        : await db
+            .select({ id: events.id, slug: events.slug, status: events.performerRosterStatus })
+            .from(events)
+            .where(eq(events.slug, unsafeSlug(params.event_slug!)))
+            .limit(1);
+      if (rows.length === 0) return err("not_found", "Event not found.");
+      const event = rows[0];
+      const previous = event.status;
+
+      const now = new Date();
+      const isTerminal = params.status !== "NEEDS_RESEARCH";
+      await db
+        .update(events)
+        .set({
+          performerRosterStatus: params.status,
+          performerRosterCheckedAt: isTerminal ? now : null,
+          performerRosterSourceUrl: isTerminal ? (params.source_url ?? null) : null,
+          updatedAt: now,
+        })
+        .where(eq(events.id, event.id));
+
+      await db.insert(adminActions).values({
+        action: "event.performer_roster_status",
+        actorUserId: auth.userId,
+        targetType: "event",
+        targetId: event.id,
+        payloadJson: JSON.stringify({
+          previous_status: previous,
+          new_status: params.status,
+          source_url: params.source_url ?? null,
+          slug: event.slug,
+        }),
+        createdAt: now,
+      });
+
+      // Confirmed-appearance count so the sweep can sanity-check that VERIFIED
+      // actually has a lineup attached.
+      const confirmed = await db
+        .select({ id: eventPerformers.id })
+        .from(eventPerformers)
+        .where(and(eq(eventPerformers.eventId, event.id), eq(eventPerformers.status, "CONFIRMED")));
+
+      return {
+        content: [
+          jsonContent({
+            success: true,
+            event_id: event.id,
+            slug: event.slug,
+            previous_status: previous,
+            status: params.status,
+            checked_at: isTerminal ? now.toISOString() : null,
+            source_url: isTerminal ? (params.source_url ?? null) : null,
+            confirmed_appearance_count: confirmed.length,
+          }),
+        ],
+      };
+    }
+  );
 }
 
 /** Insert or return an existing appearance for the identity. Idempotent on the
@@ -826,16 +942,23 @@ export async function linkAppearance(
   return { row: rows[0], created: true };
 }
 
-/** Shared setter for the appearance field tools. */
+/** Shared setter for the appearance field tools. `opts.stampVerified` marks the
+ *  write as a re-verification (OPE-123) — stamps last_verified_at (+ source). */
 async function setAppearanceField(
   db: Db,
   auth: AuthContext,
   eventPerformerId: string,
   values: Record<string, unknown>,
-  what: string
+  what: string,
+  opts?: { stampVerified?: boolean; source?: string | null }
 ): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: true }> {
   try {
-    values.updatedAt = new Date();
+    const now = new Date();
+    values.updatedAt = now;
+    if (opts?.stampVerified) {
+      values.lastVerifiedAt = now;
+      if (opts.source !== undefined) values.lastVerifiedSource = opts.source;
+    }
     const rows = await db
       .update(eventPerformers)
       .set(values)

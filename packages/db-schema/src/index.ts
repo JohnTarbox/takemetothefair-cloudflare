@@ -487,6 +487,14 @@ export const events = sqliteTable(
     // Resume point for PARTIAL rosters — the source-list offset the last run
     // reached. Meaningful only when vendorRosterStatus = 'PARTIAL'.
     vendorRosterOffset: integer("vendor_roster_offset"),
+    // OPE-123 — per-event PERFORMER-lineup research state (mirrors the vendor-
+    // roster columns above). NULL = never evaluated. Lets a sweep pick the
+    // stalest / soonest-occurring events first + report lineup coverage.
+    performerRosterStatus: text("performer_roster_status", {
+      enum: ["NEEDS_RESEARCH", "VERIFIED", "NO_LINEUP_PUBLISHED"],
+    }),
+    performerRosterCheckedAt: integer("performer_roster_checked_at", { mode: "timestamp" }),
+    performerRosterSourceUrl: text("performer_roster_source_url"),
   },
   (table) => [
     index("idx_events_status_startdate").on(table.status, table.startDate),
@@ -525,6 +533,19 @@ export const events = sqliteTable(
     index("idx_events_vendor_roster_status")
       .on(table.vendorRosterStatus)
       .where(sql`${table.vendorRosterStatus} IS NOT NULL`),
+    // OPE-123 — partial index for the performer-lineup research-queue scan +
+    // coverage metric. Most rows are NULL (never evaluated), so the partial
+    // keeps it small (mirrors idx_events_vendor_roster_status).
+    index("idx_events_performer_roster_status")
+      .on(table.performerRosterStatus)
+      .where(sql`${table.performerRosterStatus} IS NOT NULL`),
+    // OPE-123 — composite for the "events in the next N days whose lineup is
+    // stale/unverified" sweep: range-scan start_date, then filter/order by
+    // performer_roster_checked_at (NULL = never checked sorts first).
+    index("idx_events_perf_roster_checked_start").on(
+      table.startDate,
+      table.performerRosterCheckedAt
+    ),
   ]
 );
 
@@ -948,6 +969,11 @@ export const eventPerformers = sqliteTable(
       .default("PENDING"),
     sourceUrl: text("source_url"),
     notes: text("notes"),
+    // OPE-123 — appearance-level verification stamp. lastVerifiedAt = when this
+    // appearance was last re-grounded against its source (stamped by
+    // set_event_performer_status / _slot); lastVerifiedSource = the URL used.
+    lastVerifiedAt: integer("last_verified_at", { mode: "timestamp" }),
+    lastVerifiedSource: text("last_verified_source"),
     createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
     updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   },
@@ -961,6 +987,8 @@ export const eventPerformers = sqliteTable(
     eventIdx: index("idx_event_performers_event").on(t.eventId),
     performerIdx: index("idx_event_performers_performer").on(t.performerId),
     eventDayIdx: index("idx_event_performers_event_day").on(t.eventDayId),
+    // OPE-123 — stalest-first ordering for the re-verification drain.
+    lastVerifiedIdx: index("idx_event_performers_last_verified").on(t.lastVerifiedAt),
   })
 );
 
