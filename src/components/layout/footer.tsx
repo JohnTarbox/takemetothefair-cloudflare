@@ -17,6 +17,7 @@ export function Footer() {
       { name: "Past Events", href: "/events/past" },
       { name: "Venues", href: "/venues" },
       { name: "Vendors", href: "/vendors" },
+      { name: "Performers", href: "/performers" },
       { name: "Blog", href: "/blog" },
       { name: "Suggest an Event", href: "/suggest-event" },
       { name: "Help", href: "/help" },

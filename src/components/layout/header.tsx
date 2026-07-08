@@ -28,6 +28,7 @@ export function Header() {
     { name: "Venues", href: "/venues" },
     { name: "Vendors", href: "/vendors" },
     { name: "Promoters", href: "/promoters" },
+    { name: "Performers", href: "/performers" },
     { name: "Blog", href: "/blog" },
     { name: "Help", href: "/help" },
   ];
