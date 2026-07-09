@@ -797,6 +797,9 @@ const SCHEMA_SQL = `
     status TEXT NOT NULL DEFAULT 'received',
     workflow_instance_id TEXT,
     body_text_excerpt TEXT,
+    -- OPE-156 (2026-07-09) — drizzle/0158 full inbound body columns.
+    body_text TEXT,
+    body_html TEXT,
     parsed_url TEXT,
     attachment_count INTEGER NOT NULL DEFAULT 0,
     -- OPE-68 (2026-07-03) — drizzle/0146 poster/PDF attachment refs (JSON).

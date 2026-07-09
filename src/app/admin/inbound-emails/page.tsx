@@ -53,6 +53,15 @@ interface InboundEmailRow {
   parentEmailId: string | null;
 }
 
+// OPE-156 — full inbound body detail (fetched from /api/admin/inbound-emails/[id]).
+interface InboundBodyDetail {
+  id: string;
+  bodyText: string | null;
+  bodyHtml: string | null;
+  bodyTextExcerpt: string | null;
+  rawSize: number | null;
+}
+
 interface ClassifierStats {
   windowDays: number;
   since: string;
@@ -142,6 +151,12 @@ export default function AdminInboundEmailsPage() {
   const [retrying, setRetrying] = useState<string | null>(null);
   const [retryError, setRetryError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  // OPE-156 — full message body, fetched on demand when a row is expanded
+  // (kept out of the list payload to keep it lean). Cached per row id.
+  const [bodyDetail, setBodyDetail] = useState<
+    Record<string, InboundBodyDetail | "loading" | "error">
+  >({});
+  const [rawBodyView, setRawBodyView] = useState(false);
   const [deciding, setDeciding] = useState<string | null>(null);
   const [decideError, setDecideError] = useState<string | null>(null);
   // OPE-157 — client-side column sort (default: newest first).
@@ -218,6 +233,29 @@ export default function AdminInboundEmailsPage() {
       setLoading(false);
     }
   }, [statusFilter, intentFilter, sinceHours]);
+
+  // OPE-156 — expand/collapse a row, fetching its full body on first open.
+  const toggleExpand = useCallback(
+    async (id: string) => {
+      setRawBodyView(false);
+      if (expandedId === id) {
+        setExpandedId(null);
+        return;
+      }
+      setExpandedId(id);
+      if (bodyDetail[id]) return; // cached
+      setBodyDetail((d) => ({ ...d, [id]: "loading" }));
+      try {
+        const res = await fetch(`/api/admin/inbound-emails/${encodeURIComponent(id)}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const j = (await res.json()) as InboundBodyDetail;
+        setBodyDetail((d) => ({ ...d, [id]: j }));
+      } catch {
+        setBodyDetail((d) => ({ ...d, [id]: "error" }));
+      }
+    },
+    [expandedId, bodyDetail]
+  );
 
   useEffect(() => {
     fetchRows();
@@ -657,7 +695,7 @@ export default function AdminInboundEmailsPage() {
                     <Fragment key={row.id}>
                       <tr
                         className="hover:bg-muted cursor-pointer"
-                        onClick={() => setExpandedId(expanded ? null : row.id)}
+                        onClick={() => void toggleExpand(row.id)}
                       >
                         <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
                           {formatTimestamp(row.receivedAt)}
@@ -905,6 +943,64 @@ export default function AdminInboundEmailsPage() {
                                   parent_email_id: {row.parentEmailId}
                                 </div>
                               )}
+
+                              {/* OPE-156 — full received body, fetched on expand.
+                                  HTML preview (sandboxed iframe) with a raw/text
+                                  toggle; pre-OPE-156 rows have no stored body and
+                                  degrade to the excerpt with an "excerpt only"
+                                  indicator. */}
+                              <div className="mt-3 pt-3 border-t border-border">
+                                <div className="flex items-center gap-3 mb-2">
+                                  <span className="font-medium">Message body</span>
+                                  {(() => {
+                                    const d = bodyDetail[row.id];
+                                    return d && d !== "loading" && d !== "error" && d.bodyHtml ? (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setRawBodyView((v) => !v);
+                                        }}
+                                        className="text-royal hover:underline text-xs"
+                                      >
+                                        {rawBodyView ? "Preview" : "Raw HTML"}
+                                      </button>
+                                    ) : null;
+                                  })()}
+                                </div>
+                                {(() => {
+                                  const d = bodyDetail[row.id];
+                                  if (!d || d === "loading")
+                                    return <p className="text-muted-foreground">Loading…</p>;
+                                  if (d === "error")
+                                    return <p className="text-terracotta">Failed to load body.</p>;
+                                  if (d.bodyHtml || d.bodyText) {
+                                    return d.bodyHtml && !rawBodyView ? (
+                                      <iframe
+                                        sandbox=""
+                                        title="Received email body"
+                                        srcDoc={d.bodyHtml}
+                                        className="w-full h-96 bg-white border border-border rounded"
+                                      />
+                                    ) : (
+                                      <pre className="whitespace-pre-wrap break-words text-xs bg-card border border-border rounded p-3 max-h-96 overflow-auto">
+                                        {rawBodyView && d.bodyHtml ? d.bodyHtml : d.bodyText}
+                                      </pre>
+                                    );
+                                  }
+                                  // Pre-OPE-156 row — only the excerpt survives.
+                                  return (
+                                    <div>
+                                      <Badge variant="warning" className="mb-1">
+                                        excerpt only
+                                      </Badge>
+                                      <pre className="whitespace-pre-wrap break-words text-xs bg-card border border-border rounded p-3 max-h-96 overflow-auto">
+                                        {d.bodyTextExcerpt || "(no body captured)"}
+                                      </pre>
+                                    </div>
+                                  );
+                                })()}
+                              </div>
 
                               {/* Phase D.1 classifier-metadata panel + admin
                                   affordances. Only shown when the row has

@@ -110,6 +110,11 @@ const ROLE_LIMITS: Record<string, number> = {
 const PER_SENDER_WINDOW_SEC = 86_400;
 const MAX_BODY_LEN = 50_000; // chars of body retained for URL extraction
 const BODY_EXCERPT_LEN = 500; // chars stored for admin preview
+// OPE-156 — cap on the full HTML body persisted to inbound_emails.body_html so
+// a pathological newsletter can't approach D1's 2 MB row limit. Real inbound
+// mail (raw ≤ ~70 KB incl. attachments) is far under this; the plain-text body
+// is already bounded by MAX_BODY_LEN.
+const BODY_STORE_MAX = 500_000;
 const SOURCE = "mcp:email-handler";
 
 // OPE-68 attachment-capture caps. Per-attachment size ceiling (skip larger)
@@ -157,6 +162,10 @@ export async function handleInboundEmail(
     const bodyText = (parsed.text || "").slice(0, MAX_BODY_LEN);
     const bodyHtml = parsed.html || "";
     const bodyTextExcerpt = bodyText.slice(0, BODY_EXCERPT_LEN);
+    // OPE-156 — full body persisted for the admin viewer (list preview stays
+    // the excerpt). null-coalesced to keep empty parts out of the row.
+    const bodyTextStored = bodyText || null;
+    const bodyHtmlStored = bodyHtml ? bodyHtml.slice(0, BODY_STORE_MAX) : null;
     const attachmentCount = parsed.attachments?.length ?? 0;
 
     if (!fromAddr) {
@@ -401,6 +410,8 @@ export async function handleInboundEmail(
             status: "received",
             workflowInstanceId: null,
             bodyTextExcerpt: bodyTextExcerpt || null,
+            bodyText: bodyTextStored,
+            bodyHtml: bodyHtmlStored,
             parsedUrl,
             attachmentCount,
             attachmentRefs: attachmentRefsJson,
@@ -463,6 +474,8 @@ export async function handleInboundEmail(
             status: "received",
             workflowInstanceId: null,
             bodyTextExcerpt: bodyTextExcerpt || null,
+            bodyText: bodyTextStored,
+            bodyHtml: bodyHtmlStored,
             parsedUrl: r.refUrl ?? parsedUrl,
             attachmentCount,
             attachmentRefs: attachmentRefsJson,
