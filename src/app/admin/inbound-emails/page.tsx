@@ -35,6 +35,8 @@ interface InboundEmailRow {
   attachmentCount: number;
   messageId: string | null;
   replyKind: string | null;
+  // OPE-152 — did the auto-reply actually go out (email_send_ledger, OPE-151)?
+  replyDelivery?: "sent" | "failed" | "stubbed" | null;
   fetchMethod: string | null;
   extractionMethod: string | null;
   resultingEvent: { id: string; slug: string; name: string } | null;
@@ -759,6 +761,28 @@ export default function AdminInboundEmailsPage() {
                                   >
                                     {row.replyKind}
                                   </span>
+                                </div>
+                              )}
+                              {row.replyDelivery && (
+                                <div>
+                                  <span className="font-medium">Reply delivery:</span>{" "}
+                                  <span
+                                    className={
+                                      row.replyDelivery === "sent"
+                                        ? "font-mono text-green-700"
+                                        : row.replyDelivery === "failed"
+                                          ? "font-mono text-terracotta"
+                                          : "font-mono text-amber-dark"
+                                    }
+                                  >
+                                    {row.replyDelivery === "sent" ? "delivered" : row.replyDelivery}
+                                  </span>{" "}
+                                  <a
+                                    href={`/admin/sent-emails?inboundEmailId=${encodeURIComponent(row.id)}`}
+                                    className="text-navy hover:underline text-xs"
+                                  >
+                                    view send →
+                                  </a>
                                 </div>
                               )}
                               {(row.extractionMethod || row.fetchMethod) && (
