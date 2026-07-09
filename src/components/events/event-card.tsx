@@ -45,6 +45,14 @@ interface EventCardProps {
     // join event_days still work — card falls back to publicStartDate
     // ?? startDate (the pre-Cohort-7 behavior).
     eventDayDates?: string[];
+    /**
+     * OPE-121 — optional override for the card's event link. When set (e.g. the
+     * performer page passes the occurrence URL `/events/<series>/<year>` for an
+     * occurrence-specific appearance), the card links there instead of the bare
+     * `/events/<slug>` series landing. Opt-in: callers that don't set it keep
+     * the existing behavior.
+     */
+    occurrenceHref?: string;
   };
   /**
    * Set to true for the SINGLE LCP candidate per page. Emits
@@ -140,11 +148,15 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
         : `Now through ${formatDate(displayEndDate)}`
       : formatDateRange(displayStartDate, displayEndDate);
 
+  // OPE-121 — occurrence-scoped link when provided (performer appearances),
+  // else the existing bare series/event slug.
+  const eventHref = event.occurrenceHref ?? `/events/${event.slug}`;
+
   return (
     <Card className="h-full hover:shadow-md hover:-translate-y-0.5 transition-all overflow-hidden">
       {/* Top accent bar */}
       <div className="h-1" style={{ backgroundColor: colors.accent }} />
-      <Link href={`/events/${event.slug}`} className="block">
+      <Link href={eventHref} className="block">
         <div
           className={`aspect-video relative ${event.imageUrl && !imgError ? "bg-muted" : colors.bg}`}
         >
@@ -437,7 +449,7 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
             })}
             {vendors.length > 8 && (
               <Link
-                href={`/events/${event.slug}`}
+                href={eventHref}
                 className="aspect-square rounded bg-muted flex items-center justify-center text-xs text-muted-foreground hover:bg-muted/80 transition-colors"
               >
                 +{vendors.length - 8}
