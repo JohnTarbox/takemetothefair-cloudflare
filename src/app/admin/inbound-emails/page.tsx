@@ -17,6 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Check, ExternalLink, HelpCircle, RotateCw, X } from "lucide-react";
 import { formatTimestamp, formatDateMedium } from "@/lib/datetime";
+import { SortHeader, sortBy, nextSort, type SortState } from "@/components/admin/sortable-table";
 
 const CF_ACCOUNT_ID = "e6011e48b7014ef83c77e3c767dac6cf";
 const WORKFLOWS_DASH = `https://dash.cloudflare.com/${CF_ACCOUNT_ID}/workers/workflows/inbound-email/instance`;
@@ -143,6 +144,25 @@ export default function AdminInboundEmailsPage() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [deciding, setDeciding] = useState<string | null>(null);
   const [decideError, setDecideError] = useState<string | null>(null);
+  // OPE-157 — client-side column sort (default: newest first).
+  const [sort, setSort] = useState<SortState>({ col: "receivedAt", dir: "desc" });
+  const onSort = (col: string) => setSort((s) => nextSort(s, col));
+  const sortInboundValue = (r: InboundEmailRow, col: string): string | number | null => {
+    switch (col) {
+      case "receivedAt":
+        return Date.parse(r.receivedAt);
+      case "fromAddress":
+        return r.fromAddress;
+      case "intent":
+        return r.intent;
+      case "subject":
+        return r.subject;
+      case "status":
+        return r.status;
+      default:
+        return null;
+    }
+  };
   // Item 19 (2026-05-25) — admin-driven manual-salvage notification flow.
   const [salvaging, setSalvaging] = useState<string | null>(null);
   const [salvageError, setSalvageError] = useState<string | null>(null);
@@ -588,16 +608,46 @@ export default function AdminInboundEmailsPage() {
             <table className="w-full text-sm">
               <thead className="bg-muted border-b">
                 <tr>
-                  <th className="px-3 py-2 text-left font-medium text-foreground">Received</th>
-                  <th className="px-3 py-2 text-left font-medium text-foreground">From</th>
-                  <th className="px-3 py-2 text-left font-medium text-foreground">Intent</th>
-                  <th className="px-3 py-2 text-left font-medium text-foreground">Subject</th>
-                  <th className="px-3 py-2 text-left font-medium text-foreground">Status</th>
+                  <SortHeader
+                    label="Received"
+                    col="receivedAt"
+                    sort={sort}
+                    onSort={onSort}
+                    className="text-left font-medium text-foreground"
+                  />
+                  <SortHeader
+                    label="From"
+                    col="fromAddress"
+                    sort={sort}
+                    onSort={onSort}
+                    className="text-left font-medium text-foreground"
+                  />
+                  <SortHeader
+                    label="Intent"
+                    col="intent"
+                    sort={sort}
+                    onSort={onSort}
+                    className="text-left font-medium text-foreground"
+                  />
+                  <SortHeader
+                    label="Subject"
+                    col="subject"
+                    sort={sort}
+                    onSort={onSort}
+                    className="text-left font-medium text-foreground"
+                  />
+                  <SortHeader
+                    label="Status"
+                    col="status"
+                    sort={sort}
+                    onSort={onSort}
+                    className="text-left font-medium text-foreground"
+                  />
                   <th className="px-3 py-2 text-right font-medium text-foreground">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
-                {rows.map((row) => {
+                {sortBy(rows, sort.col, sort.dir, sortInboundValue).map((row) => {
                   const canRetry = ["failed", "received", "processing"].includes(row.status);
                   const canDecide =
                     row.status === "waiting" &&
