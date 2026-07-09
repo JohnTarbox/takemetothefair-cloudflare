@@ -723,7 +723,9 @@ const SCHEMA_SQL = `
     error TEXT,
     subject TEXT,
     inbound_email_id TEXT,
-    provider TEXT
+    provider TEXT,
+    body_html TEXT,
+    body_text TEXT
   );
 
   CREATE TABLE email_suppression_list (
