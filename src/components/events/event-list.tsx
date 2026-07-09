@@ -24,6 +24,8 @@ interface EventListProps {
     // date badge resolves the next occurrence. Optional so existing
     // callers without the event_days JOIN still typecheck.
     eventDayDates?: string[];
+    // OPE-121 — forwarded to EventCard; occurrence-scoped link override.
+    occurrenceHref?: string;
   })[];
   emptyMessage?: string;
   /**

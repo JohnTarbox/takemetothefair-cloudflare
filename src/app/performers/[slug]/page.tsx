@@ -13,8 +13,17 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { EventList } from "@/components/events/event-list";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { performers, eventPerformers, events, venues, promoters } from "@/lib/db/schema";
-import { eq, and, lt } from "drizzle-orm";
+import {
+  performers,
+  eventPerformers,
+  events,
+  venues,
+  promoters,
+  eventSeries,
+} from "@/lib/db/schema";
+import { eq, and, lt, inArray } from "drizzle-orm";
+import { occurrenceUrl } from "@/lib/series/series-schema-org";
+import { SITE_URL } from "@takemetothefair/constants";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { upcomingEndPredicate } from "@/lib/event-dates";
 import { attachEventDayDates } from "@/lib/event-days-attach";
@@ -115,7 +124,30 @@ async function getPerformer(slug: string) {
         venue: r.venue as FullVenue,
         promoter: r.promoter as FullPromoter,
       }));
-      return attachEventDayDates(db, flat);
+      const withDays = await attachEventDayDates(db, flat);
+      // OPE-121 — link each appearance to its OCCURRENCE (/events/<series>/<year>),
+      // not the bare series landing (which doesn't render the lineup). Series
+      // canonical slug via eventSeries; year from the occurrence's own date.
+      // Standalone events (no series) keep the bare /events/<slug> (EventCard
+      // falls back when occurrenceHref is undefined).
+      const seriesIds = [
+        ...new Set(withDays.map((e) => e.seriesId).filter((s): s is string => !!s)),
+      ];
+      const seriesSlugById = new Map<string, string>();
+      for (let i = 0; i < seriesIds.length; i += 50) {
+        const srows = await db
+          .select({ id: eventSeries.id, canonicalSlug: eventSeries.canonicalSlug })
+          .from(eventSeries)
+          .where(inArray(eventSeries.id, seriesIds.slice(i, i + 50)));
+        for (const s of srows) seriesSlugById.set(s.id, s.canonicalSlug);
+      }
+      return withDays.map((e) => {
+        const cslug = e.seriesId ? seriesSlugById.get(e.seriesId) : null;
+        const year = e.startDate ? new Date(e.startDate).getUTCFullYear() : null;
+        const occurrenceHref =
+          cslug && year ? occurrenceUrl(cslug, year, e.slug).replace(SITE_URL, "") : undefined;
+        return { ...e, occurrenceHref };
+      });
     };
 
     const [upcomingEvents, pastEvents] = await Promise.all([loadEvents(true), loadEvents(false)]);
