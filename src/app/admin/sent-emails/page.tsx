@@ -17,6 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Search, RotateCw, ExternalLink, ChevronRight, ChevronDown } from "lucide-react";
 import { formatTimestamp } from "@/lib/datetime";
+import { SortHeader, sortBy, nextSort, type SortState } from "@/components/admin/sortable-table";
 
 interface SentEmailRow {
   messageId: string;
@@ -46,6 +47,8 @@ export default function SentEmailsPage() {
   const [error, setError] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const [status, setStatus] = useState<StatusFilter>("all");
+  // OPE-157 — client-side column sort (default: newest first).
+  const [sort, setSort] = useState<SortState>({ col: "sentAt", dir: "desc" });
   // OPE-155 — expand a row to fetch + show the rendered body (bodies are fetched
   // on demand, not in the list payload, to keep the list lean).
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -101,6 +104,27 @@ export default function SentEmailsPage() {
     acc[r.status] = (acc[r.status] ?? 0) + 1;
     return acc;
   }, {});
+
+  const sortValue = (r: SentEmailRow, col: string): string | number | null => {
+    switch (col) {
+      case "sentAt":
+        return Date.parse(r.sentAt);
+      case "recipient":
+        return r.recipient;
+      case "source":
+        return r.source;
+      case "subject":
+        return r.subject;
+      case "status":
+        return r.status;
+      case "provider":
+        return r.provider;
+      default:
+        return null;
+    }
+  };
+  const onSort = (col: string) => setSort((s) => nextSort(s, col));
+  const sortedRows = sortBy(rows, sort.col, sort.dir, sortValue);
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
@@ -173,17 +197,17 @@ export default function SentEmailsPage() {
             <table className="w-full text-sm">
               <thead className="border-b border-border text-left text-xs uppercase text-muted-foreground">
                 <tr>
-                  <th className="px-3 py-2">Sent</th>
-                  <th className="px-3 py-2">Recipient</th>
-                  <th className="px-3 py-2">Kind</th>
-                  <th className="px-3 py-2">Subject</th>
-                  <th className="px-3 py-2">Status</th>
-                  <th className="px-3 py-2">Provider</th>
+                  <SortHeader label="Sent" col="sentAt" sort={sort} onSort={onSort} />
+                  <SortHeader label="Recipient" col="recipient" sort={sort} onSort={onSort} />
+                  <SortHeader label="Kind" col="source" sort={sort} onSort={onSort} />
+                  <SortHeader label="Subject" col="subject" sort={sort} onSort={onSort} />
+                  <SortHeader label="Status" col="status" sort={sort} onSort={onSort} />
+                  <SortHeader label="Provider" col="provider" sort={sort} onSort={onSort} />
                   <th className="px-3 py-2">Thread</th>
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r) => (
+                {sortedRows.map((r) => (
                   <Fragment key={r.messageId}>
                     <tr className="border-b border-border/60 align-top">
                       <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
