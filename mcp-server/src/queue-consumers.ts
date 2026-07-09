@@ -215,6 +215,8 @@ export async function handleEmailBatch(
         provider: "cf-email",
         providerMessageId: result.messageId,
         inboundEmailId: m.body.inboundEmailId ?? null,
+        bodyHtml: m.body.html,
+        bodyText: m.body.text,
       });
       m.ack();
       console.log(`[queue:email] sent ${m.body.source} → ${m.body.to} (id=${result.messageId})`);
@@ -231,6 +233,8 @@ export async function handleEmailBatch(
         provider: "cf-email",
         error: result.error,
         inboundEmailId: m.body.inboundEmailId ?? null,
+        bodyHtml: m.body.html,
+        bodyText: m.body.text,
       });
       // Retry with a modest backoff; after max_retries=3 the message parks in
       // email-jobs-dlq (no longer dropped). Cap low so transactional mail stays

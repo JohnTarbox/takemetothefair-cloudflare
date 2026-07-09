@@ -25,6 +25,8 @@ describe("ledgerEmailSend / wasEmailSent (OPE-151)", () => {
       provider: "cf-email",
       providerMessageId: "cf-abc",
       inboundEmailId: "inb-1",
+      bodyHtml: "<p>Re: your inquiry</p>",
+      bodyText: "Re: your inquiry",
     });
     const [row] = await db
       .select()
@@ -37,6 +39,8 @@ describe("ledgerEmailSend / wasEmailSent (OPE-151)", () => {
     expect(row.provider).toBe("cf-email");
     expect(row.providerMessageId).toBe("cf-abc");
     expect(row.inboundEmailId).toBe("inb-1");
+    expect(row.bodyHtml).toBe("<p>Re: your inquiry</p>");
+    expect(row.bodyText).toBe("Re: your inquiry");
     expect(await wasEmailSent(db, "m1")).toBe(true);
   });
 

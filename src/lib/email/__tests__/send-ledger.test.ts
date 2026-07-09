@@ -22,7 +22,8 @@ const SCHEMA_SQL = `
   CREATE TABLE email_send_ledger (
     message_id TEXT PRIMARY KEY, sent_at INTEGER NOT NULL, recipient TEXT,
     source TEXT, provider_message_id TEXT, status TEXT NOT NULL DEFAULT 'sent',
-    error TEXT, subject TEXT, inbound_email_id TEXT, provider TEXT
+    error TEXT, subject TEXT, inbound_email_id TEXT, provider TEXT,
+    body_html TEXT, body_text TEXT
   );
 `;
 
@@ -69,6 +70,9 @@ describe("sendEmail ledgering (OPE-151)", () => {
     expect(rows[0].source).toBe("registration");
     expect(rows[0].subject).toBe("Verify your email");
     expect(rows[0].inboundEmailId).toBe("inb-9");
+    // OPE-155 — the rendered body is stored for the admin Sent viewer.
+    expect(rows[0].bodyHtml).toBe("<p>hi</p>");
+    expect(rows[0].bodyText).toBe("hi");
   });
 
   it("Resend failure → a 'failed' ledger row with the error", async () => {

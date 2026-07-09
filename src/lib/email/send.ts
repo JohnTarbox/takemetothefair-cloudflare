@@ -53,6 +53,8 @@ async function ledgerDirectSend(
       providerMessageId: outcome.providerMessageId ?? null,
       error: outcome.error ?? null,
       inboundEmailId: args.inboundEmailId ?? null,
+      bodyHtml: args.html,
+      bodyText: args.text,
     });
   } catch {
     /* ledger is best-effort — never affect the send outcome */

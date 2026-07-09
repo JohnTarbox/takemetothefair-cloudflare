@@ -29,6 +29,9 @@ export interface LedgerEntry {
   providerMessageId?: string | null;
   error?: string | null;
   inboundEmailId?: string | null;
+  /** OPE-155 — the rendered body that went out (for the admin Sent viewer). */
+  bodyHtml?: string | null;
+  bodyText?: string | null;
 }
 
 /**
@@ -47,6 +50,8 @@ export async function ledgerEmailSend(db: Db, e: LedgerEntry): Promise<void> {
     subject: e.subject ?? null,
     inboundEmailId: e.inboundEmailId ?? null,
     provider: e.provider ?? null,
+    bodyHtml: e.bodyHtml ?? null,
+    bodyText: e.bodyText ?? null,
   };
   try {
     await db

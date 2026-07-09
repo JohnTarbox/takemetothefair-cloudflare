@@ -2058,6 +2058,10 @@ export const emailSendLedger = sqliteTable(
     // OPE-152 admin thread view.
     inboundEmailId: text("inbound_email_id"),
     provider: text("provider"), // 'cf-email' | 'resend' | 'stub'
+    // OPE-155 — the rendered body that actually went out, so the admin Sent
+    // viewer shows full content (not just metadata). Inline; admin-gated read.
+    bodyHtml: text("body_html"),
+    bodyText: text("body_text"),
   },
   (table) => [
     index("idx_email_send_ledger_sent_at").on(table.sentAt),

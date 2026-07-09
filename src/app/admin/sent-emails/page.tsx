@@ -10,12 +10,12 @@
 
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Search, RotateCw, ExternalLink } from "lucide-react";
+import { Search, RotateCw, ExternalLink, ChevronRight, ChevronDown } from "lucide-react";
 import { formatTimestamp } from "@/lib/datetime";
 
 interface SentEmailRow {
@@ -46,6 +46,34 @@ export default function SentEmailsPage() {
   const [error, setError] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const [status, setStatus] = useState<StatusFilter>("all");
+  // OPE-155 — expand a row to fetch + show the rendered body (bodies are fetched
+  // on demand, not in the list payload, to keep the list lean).
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [detail, setDetail] = useState<
+    Record<string, { bodyHtml: string | null; bodyText: string | null } | "loading" | "error">
+  >({});
+  const [rawView, setRawView] = useState(false);
+
+  const toggleExpand = useCallback(
+    async (messageId: string) => {
+      if (expanded === messageId) {
+        setExpanded(null);
+        return;
+      }
+      setExpanded(messageId);
+      if (detail[messageId]) return; // cached
+      setDetail((d) => ({ ...d, [messageId]: "loading" }));
+      try {
+        const res = await fetch(`/api/admin/sent-emails/${encodeURIComponent(messageId)}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const j = (await res.json()) as { bodyHtml: string | null; bodyText: string | null };
+        setDetail((d) => ({ ...d, [messageId]: { bodyHtml: j.bodyHtml, bodyText: j.bodyText } }));
+      } catch {
+        setDetail((d) => ({ ...d, [messageId]: "error" }));
+      }
+    },
+    [expanded, detail]
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -156,54 +184,120 @@ export default function SentEmailsPage() {
               </thead>
               <tbody>
                 {rows.map((r) => (
-                  <tr key={r.messageId} className="border-b border-border/60 align-top">
-                    <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
-                      {formatTimestamp(r.sentAt)}
-                    </td>
-                    <td className="px-3 py-2 break-all">{r.recipient ?? "—"}</td>
-                    <td className="px-3 py-2 whitespace-nowrap">
-                      <code className="text-xs">{r.source ?? "—"}</code>
-                    </td>
-                    <td className="px-3 py-2 max-w-xs truncate" title={r.subject ?? ""}>
-                      {r.subject ?? "—"}
-                    </td>
-                    <td className="px-3 py-2">
-                      <Badge variant={STATUS_VARIANT[r.status]} className="text-xs">
-                        {r.status}
-                      </Badge>
-                      {r.status === "failed" && r.error && (
-                        <p className="mt-1 text-xs text-terracotta max-w-xs break-words">
-                          {r.error}
-                        </p>
-                      )}
-                    </td>
-                    <td className="px-3 py-2 whitespace-nowrap text-xs text-muted-foreground">
-                      {r.provider ?? "—"}
-                      {r.providerMessageId && (
-                        <span className="block break-all" title={r.providerMessageId}>
-                          {r.providerMessageId.slice(0, 16)}
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2 whitespace-nowrap">
-                      {r.inboundEmailId ? (
-                        <Link
-                          href={`/admin/inbound-emails?focus=${encodeURIComponent(r.inboundEmailId)}`}
-                          className="inline-flex items-center gap-1 text-navy hover:underline"
-                          title={
-                            r.inbound
-                              ? `Reply to ${r.inbound.fromAddress}: ${r.inbound.subject ?? ""}`
-                              : "Triggering inbound email"
-                          }
+                  <Fragment key={r.messageId}>
+                    <tr className="border-b border-border/60 align-top">
+                      <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
+                        <button
+                          type="button"
+                          onClick={() => void toggleExpand(r.messageId)}
+                          className="inline-flex items-center gap-1 hover:text-foreground"
+                          aria-expanded={expanded === r.messageId}
+                          title="Show the rendered body"
                         >
-                          <ExternalLink className="w-3 h-3" />
-                          {r.inbound?.fromAddress ?? "inbound"}
-                        </Link>
-                      ) : (
-                        <span className="text-muted-foreground">—</span>
-                      )}
-                    </td>
-                  </tr>
+                          {expanded === r.messageId ? (
+                            <ChevronDown className="w-3 h-3" />
+                          ) : (
+                            <ChevronRight className="w-3 h-3" />
+                          )}
+                          {formatTimestamp(r.sentAt)}
+                        </button>
+                      </td>
+                      <td className="px-3 py-2 break-all">{r.recipient ?? "—"}</td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        <code className="text-xs">{r.source ?? "—"}</code>
+                      </td>
+                      <td className="px-3 py-2 max-w-xs truncate" title={r.subject ?? ""}>
+                        {r.subject ?? "—"}
+                      </td>
+                      <td className="px-3 py-2">
+                        <Badge variant={STATUS_VARIANT[r.status]} className="text-xs">
+                          {r.status}
+                        </Badge>
+                        {r.status === "failed" && r.error && (
+                          <p className="mt-1 text-xs text-terracotta max-w-xs break-words">
+                            {r.error}
+                          </p>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap text-xs text-muted-foreground">
+                        {r.provider ?? "—"}
+                        {r.providerMessageId && (
+                          <span className="block break-all" title={r.providerMessageId}>
+                            {r.providerMessageId.slice(0, 16)}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        {r.inboundEmailId ? (
+                          <Link
+                            href={`/admin/inbound-emails?focus=${encodeURIComponent(r.inboundEmailId)}`}
+                            className="inline-flex items-center gap-1 text-navy hover:underline"
+                            title={
+                              r.inbound
+                                ? `Reply to ${r.inbound.fromAddress}: ${r.inbound.subject ?? ""}`
+                                : "Triggering inbound email"
+                            }
+                          >
+                            <ExternalLink className="w-3 h-3" />
+                            {r.inbound?.fromAddress ?? "inbound"}
+                          </Link>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </td>
+                    </tr>
+                    {expanded === r.messageId && (
+                      <tr className="border-b border-border/60 bg-muted/30">
+                        <td colSpan={7} className="px-3 py-3">
+                          {(() => {
+                            const d = detail[r.messageId];
+                            if (d === "loading" || d === undefined)
+                              return <p className="text-sm text-muted-foreground">Loading…</p>;
+                            if (d === "error")
+                              return (
+                                <p className="text-sm text-terracotta">Failed to load body.</p>
+                              );
+                            if (!d.bodyHtml && !d.bodyText)
+                              return (
+                                <p className="text-sm text-muted-foreground">
+                                  No body stored (sent before OPE-155, or none rendered).
+                                </p>
+                              );
+                            return (
+                              <div>
+                                <div className="flex items-center gap-3 mb-2">
+                                  <span className="text-xs font-medium text-muted-foreground">
+                                    Rendered body
+                                  </span>
+                                  {d.bodyHtml && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setRawView((v) => !v)}
+                                      className="text-xs text-navy hover:underline"
+                                    >
+                                      {rawView ? "Preview" : "Raw HTML"}
+                                    </button>
+                                  )}
+                                </div>
+                                {d.bodyHtml && !rawView ? (
+                                  <iframe
+                                    sandbox=""
+                                    title="Rendered email body"
+                                    srcDoc={d.bodyHtml}
+                                    className="w-full h-96 bg-white border border-border rounded"
+                                  />
+                                ) : (
+                                  <pre className="whitespace-pre-wrap break-words text-xs bg-card border border-border rounded p-3 max-h-96 overflow-auto">
+                                    {rawView && d.bodyHtml ? d.bodyHtml : d.bodyText}
+                                  </pre>
+                                )}
+                              </div>
+                            );
+                          })()}
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>

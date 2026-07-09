@@ -581,6 +581,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
               provider: "cf-email",
               providerMessageId: sendRes?.messageId ?? null,
               inboundEmailId: messageRowId,
+              bodyHtml: msg.html,
+              bodyText: msg.text,
             });
           }
         );
