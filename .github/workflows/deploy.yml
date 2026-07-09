@@ -95,6 +95,13 @@ jobs:
         env:
           NEXT_PUBLIC_GA_ID: ${{ secrets.NEXT_PUBLIC_GA_ID }}
           NEXT_PUBLIC_CF_BEACON_TOKEN: ${{ secrets.NEXT_PUBLIC_CF_BEACON_TOKEN }}
+          # OPE-150 — the register-page Cloudflare Turnstile sitekey. Public
+          # (inlined into the client bundle) but MUST be present at build or the
+          # widget never mounts and /api/auth/register dead-ends every signup on
+          # "complete the security check". Requires the GitHub repo secret
+          # NEXT_PUBLIC_TURNSTILE_SITE_KEY to be set (an empty/missing secret
+          # inlines blank — same broken state, so also guarded client-side).
+          NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${{ secrets.NEXT_PUBLIC_TURNSTILE_SITE_KEY }}
 
       - name: Deploy Worker
         uses: cloudflare/wrangler-action@v3

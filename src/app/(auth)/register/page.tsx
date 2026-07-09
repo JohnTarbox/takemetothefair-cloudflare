@@ -115,6 +115,14 @@ function RegisterForm() {
   // Get the Turnstile site key from environment
   const turnstileSiteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
 
+  // OPE-150 fail-safe — if the public sitekey is absent at build/runtime the
+  // invisible Turnstile widget can't mount, so the server would reject every
+  // submit with an unsolvable "complete the security check" (nothing to click).
+  // Detect that here and surface an honest, actionable state instead of a
+  // phantom checkbox. This does NOT bypass the server-side token check — bot
+  // protection stays intact; it just replaces a dead-end with a clear message.
+  const turnstileMisconfigured = !turnstileSiteKey;
+
   // Initialize Turnstile widget
   const initTurnstile = useCallback(() => {
     if (!turnstileSiteKey || !window.turnstile || !turnstileContainerRef.current) {
@@ -196,6 +204,15 @@ function RegisterForm() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+
+    // OPE-150 — never let the user submit into the unsolvable server-side
+    // "complete the security check" dead-end when the widget can't exist.
+    if (turnstileMisconfigured) {
+      setError(
+        "Account signup is temporarily unavailable due to a configuration issue on our end. Our team has been notified — please try again shortly."
+      );
+      return;
+    }
 
     const validation = validateAll(registerClientSchema, formData);
     if (!validation.ok) {
@@ -335,6 +352,15 @@ function RegisterForm() {
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+            {turnstileMisconfigured && (
+              <div
+                role="alert"
+                className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-sm"
+              >
+                Account signup is temporarily unavailable due to a configuration issue on our end.
+                Our team has been notified. Please try again shortly.
+              </div>
+            )}
             {error && (
               <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-600 text-sm">
                 {error}
@@ -453,7 +479,7 @@ function RegisterForm() {
               type="submit"
               className="w-full"
               isLoading={isLoading}
-              disabled={isLoading || !termsAccepted}
+              disabled={isLoading || !termsAccepted || turnstileMisconfigured}
             >
               Create Account
             </Button>
