@@ -61,6 +61,8 @@ export async function enqueueEmail(args: SendEmailArgs & { source: string }): Pr
       from: args.from,
       source: args.source,
       inboundEmailId: args.inboundEmailId,
+      inReplyTo: args.inReplyTo,
+      references: args.references,
     };
     await env.EMAIL_JOBS.send(msg);
     return;

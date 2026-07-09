@@ -22,6 +22,12 @@ export interface SendEmailArgs {
   source?: string;
   /** OPE-151 — link back to the triggering inbound email, when there is one. */
   inboundEmailId?: string;
+  /** OPE-163 — RFC 5322 threading for replies. Both set to the inbound
+   *  Message-ID so the recipient's client threads our reply. Applied as
+   *  In-Reply-To / References headers on the Resend path and forwarded through
+   *  the queue path (EmailJobMessage) to the CF-email consumer. */
+  inReplyTo?: string;
+  references?: string;
 }
 
 /**
@@ -79,6 +85,10 @@ async function sendViaResend(
   apiKey: string
 ): Promise<{ ok: true; id: string | null } | { ok: false; error: string }> {
   const from = args.from ?? `Meet Me at the Fair <${SUPPORT_EMAIL}>`;
+  // OPE-163 — threading headers for replies (Resend passes custom headers through).
+  const threadHeaders: Record<string, string> = {};
+  if (args.inReplyTo) threadHeaders["In-Reply-To"] = args.inReplyTo;
+  if (args.references) threadHeaders["References"] = args.references;
   try {
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
@@ -92,6 +102,7 @@ async function sendViaResend(
         subject: args.subject,
         html: args.html,
         text: args.text,
+        ...(Object.keys(threadHeaders).length > 0 ? { headers: threadHeaders } : {}),
       }),
     });
     if (!res.ok) {

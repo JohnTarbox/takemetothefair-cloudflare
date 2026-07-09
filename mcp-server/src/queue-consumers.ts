@@ -126,6 +126,11 @@ type ConsumerEnv = {
    *  from prod — at runtime in prod it is always present. */
   EMAIL?: SendEmail;
   INDEXNOW_KEY?: string;
+  /** OPE-163 — authoritative customer-facing reply gate. When not "true", any
+   *  `reply:*`-source message is NOT sent (recorded as a visible 'stubbed'
+   *  ledger row instead). The single hard stop, independent of which producer
+   *  enqueued it. */
+  EMAIL_REPLY_ENABLED?: string;
 };
 
 // ─── Email consumer ─────────────────────────────────────────────────────
@@ -209,6 +214,29 @@ export async function handleEmailBatch(
         sessionId,
         context: { id: m.id, error: e instanceof Error ? e.message : String(e) },
       });
+    }
+
+    // OPE-163 — authoritative reply gate. A customer-facing reply (source
+    // `reply:*`) is only delivered when EMAIL_REPLY_ENABLED === "true". While
+    // off, record a visible 'stubbed' ledger row (so the operator sees it was
+    // held, not silently dropped) and ack without sending. This is the single
+    // hard stop, enforced no matter which producer enqueued the message.
+    if (m.body.source?.startsWith("reply:") && env.EMAIL_REPLY_ENABLED !== "true") {
+      await ledgerEmailSend(db, {
+        messageId: m.id,
+        recipient: m.body.to,
+        source: m.body.source,
+        subject: m.body.subject,
+        status: "stubbed",
+        provider: "stub",
+        error: "reply-disabled (EMAIL_REPLY_ENABLED != 'true')",
+        inboundEmailId: m.body.inboundEmailId ?? null,
+        bodyHtml: m.body.html,
+        bodyText: m.body.text,
+      });
+      m.ack();
+      console.warn(`[queue:email] reply held (disabled) id=${m.id} → ${m.body.to}`);
+      continue;
     }
 
     const result = await sendViaCfEmail(m.body, env.EMAIL);
