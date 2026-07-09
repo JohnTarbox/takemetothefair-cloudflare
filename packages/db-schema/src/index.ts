@@ -2767,6 +2767,16 @@ export const inboundEmails = sqliteTable(
     status: text("status").notNull().default("received"),
     workflowInstanceId: text("workflow_instance_id"),
     bodyTextExcerpt: text("body_text_excerpt"),
+    /** OPE-156 (2026-07-09) — full parsed body captured at ingest so the
+     *  admin inbound viewer can show the whole message, not just the
+     *  500-char body_text_excerpt preview. Text ≤ MAX_BODY_LEN (50k) and
+     *  HTML ≤ BODY_STORE_MAX (both well under D1's 2 MB row limit — chosen
+     *  over R2 for parity with the outbound email_send_ledger.body_* columns
+     *  (OPE-155) and to keep the admin read path private + single-row).
+     *  NULL for rows predating this change (no backfill) and for the
+     *  excerpt-only spam / audit-noop terminal rows. Added drizzle/0158. */
+    bodyText: text("body_text"),
+    bodyHtml: text("body_html"),
     /** URL extracted from the body by pickPrimaryUrl in the entrypoint —
      *  the submit handler reads this rather than re-parsing the excerpt. */
     parsedUrl: text("parsed_url"),
