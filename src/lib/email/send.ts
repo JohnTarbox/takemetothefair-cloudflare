@@ -1,6 +1,7 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { logError } from "@/lib/logger";
 import { SITE_URL, SUPPORT_EMAIL } from "@takemetothefair/constants";
+import { emailSendLedger } from "@/lib/db/schema";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 
 export interface SendEmailArgs {
@@ -19,6 +20,43 @@ export interface SendEmailArgs {
    * through the synchronous fallback path.
    */
   source?: string;
+  /** OPE-151 — link back to the triggering inbound email, when there is one. */
+  inboundEmailId?: string;
+}
+
+/**
+ * OPE-151 — write one email_send_ledger row per direct-send attempt so the
+ * main-app Resend path is auditable (it previously wrote nothing). Best-effort:
+ * a ledger failure (or a null db) must never affect the send outcome. Direct
+ * sends get a generated `direct-<uuid>` id, so there's never a key conflict.
+ */
+async function ledgerDirectSend(
+  db: DrizzleD1Database<Record<string, unknown>> | null,
+  args: SendEmailArgs,
+  outcome: {
+    status: "sent" | "failed" | "stubbed";
+    provider: "resend" | "stub";
+    providerMessageId?: string | null;
+    error?: string | null;
+  }
+): Promise<void> {
+  if (!db) return;
+  try {
+    await db.insert(emailSendLedger).values({
+      messageId: `direct-${crypto.randomUUID()}`,
+      sentAt: new Date(),
+      recipient: args.to,
+      source: args.source ?? null,
+      subject: args.subject,
+      status: outcome.status,
+      provider: outcome.provider,
+      providerMessageId: outcome.providerMessageId ?? null,
+      error: outcome.error ?? null,
+      inboundEmailId: args.inboundEmailId ?? null,
+    });
+  } catch {
+    /* ledger is best-effort — never affect the send outcome */
+  }
 }
 
 export type SendResult =
@@ -37,7 +75,7 @@ function getRuntimeEnv(key: string): string | undefined {
 async function sendViaResend(
   args: SendEmailArgs,
   apiKey: string
-): Promise<{ ok: true } | { ok: false; error: string }> {
+): Promise<{ ok: true; id: string | null } | { ok: false; error: string }> {
   const from = args.from ?? `Meet Me at the Fair <${SUPPORT_EMAIL}>`;
   try {
     const res = await fetch("https://api.resend.com/emails", {
@@ -58,7 +96,9 @@ async function sendViaResend(
       const body = await res.text().catch(() => "<empty>");
       return { ok: false, error: `Resend ${res.status}: ${body.slice(0, 500)}` };
     }
-    return { ok: true };
+    // Resend returns { id: "<uuid>" } — capture it for the ledger (best-effort).
+    const json = (await res.json().catch(() => null)) as { id?: string } | null;
+    return { ok: true, id: json?.id ?? null };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
@@ -84,8 +124,18 @@ export async function sendEmail(
   if (apiKey) {
     const result = await sendViaResend(args, apiKey);
     if (result.ok) {
+      await ledgerDirectSend(db, args, {
+        status: "sent",
+        provider: "resend",
+        providerMessageId: result.id,
+      });
       return { ok: true, provider: "resend" };
     }
+    await ledgerDirectSend(db, args, {
+      status: "failed",
+      provider: "resend",
+      error: result.error,
+    });
     await logError(db, {
       level: "warn",
       message: `Resend send failed, content logged for manual delivery`,
@@ -119,6 +169,7 @@ export async function sendEmail(
       html: args.html,
     },
   });
+  await ledgerDirectSend(db, args, { status: "stubbed", provider: "stub" });
   return { ok: true, provider: "stub" };
 }
 

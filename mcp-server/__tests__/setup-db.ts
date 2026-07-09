@@ -718,7 +718,12 @@ const SCHEMA_SQL = `
     sent_at INTEGER NOT NULL,
     recipient TEXT,
     source TEXT,
-    provider_message_id TEXT
+    provider_message_id TEXT,
+    status TEXT NOT NULL DEFAULT 'sent',
+    error TEXT,
+    subject TEXT,
+    inbound_email_id TEXT,
+    provider TEXT
   );
 
   CREATE TABLE email_suppression_list (

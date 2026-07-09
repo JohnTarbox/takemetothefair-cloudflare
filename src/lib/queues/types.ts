@@ -18,6 +18,8 @@ export type EmailJobMessage = {
   from?: string;
   /** Free-form label for audit logs ("registration", "password-reset", etc.). */
   source: string;
+  /** OPE-151 — link back to the triggering inbound email, when there is one. */
+  inboundEmailId?: string;
 };
 
 /** A request to ping IndexNow for one or more URLs. */
