@@ -30,6 +30,11 @@ MAIN_APP_URL = "https://meetmeatthefair.com"
 # Set ENRICHMENT_DRY_RUN = "false" to enable Phase-2 auto-merge of un-flagged fills.
 CLOUDFLARE_ACCOUNT_ID = "e6011e48b7014ef83c77e3c767dac6cf"
 ENRICHMENT_DRY_RUN = "true"
+# OPE-163 — customer-facing reply send gate. reply_to_inbound_email (and the
+# forthcoming /admin/inbound-emails compose UI) refuse to send unless this is
+# "true". Shipped OFF (OPE-6); flip to "true" here + redeploy, or override in
+# the dashboard, when replies are cleared to go live.
+EMAIL_REPLY_ENABLED = "false"
 # INTERNAL_API_KEY is set via `wrangler secret put INTERNAL_API_KEY`
 # Inbound-email failures (parse / extract / submit) get forwarded here.
 # Must be a verified destination address in Cloudflare Email Routing —

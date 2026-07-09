@@ -20,6 +20,11 @@ export type EmailJobMessage = {
   source: string;
   /** OPE-151 — link back to the triggering inbound email, when there is one. */
   inboundEmailId?: string;
+  /** OPE-163 — RFC 5322 threading. Set both to the inbound Message-ID when this
+   *  is a reply, so the recipient's client threads it. Consumed by the MCP
+   *  email-jobs consumer (sendViaCfEmail → headers). */
+  inReplyTo?: string;
+  references?: string;
 };
 
 /** A request to ping IndexNow for one or more URLs. */

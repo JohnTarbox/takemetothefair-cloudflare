@@ -68,6 +68,7 @@ import { registerFlushPendingSearchPingsTool } from "./admin-flush-pending-searc
 import { registerResubmitIndexNowTool } from "./admin-resubmit-indexnow.js";
 import { registerSitemapResubmitTool } from "./admin-sitemap-resubmit.js";
 import { registerBingSitemapResubmitTool } from "./admin-bing-sitemap-resubmit.js";
+import { registerReplyToInboundEmailTool } from "./reply-to-inbound-email.js";
 import { registerGscMilestoneIngestTool } from "./admin-gsc-milestone-ingest.js";
 import { registerPerformerTools } from "./admin-performers.js";
 import { registerPerformerDiscoveryTools } from "./admin-performer-discovery.js";
@@ -115,6 +116,9 @@ interface Env {
   /** I1 dry-run switch, passed through to the post-create hook so it mirrors
    *  the cron/queue path. "false" flips off the Phase-1 dry-run default. */
   ENRICHMENT_DRY_RUN?: string;
+  /** OPE-163 — customer-facing reply send gate. reply_to_inbound_email refuses
+   *  to send unless this equals "true". Shipped OFF (OPE-6). */
+  EMAIL_REPLY_ENABLED?: string;
 }
 
 export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext, env?: Env) {
@@ -150,6 +154,12 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   // default multi-day cadence.
   registerSitemapResubmitTool(server, db, auth, env);
   registerBingSitemapResubmitTool(server, db, auth, env);
+  // OPE-163 — reply to an inbound email from the server (gated behind
+  // EMAIL_REPLY_ENABLED; shipped OFF).
+  registerReplyToInboundEmailTool(server, db, auth, {
+    EMAIL_JOBS: env?.EMAIL_JOBS as { send: (msg: unknown) => Promise<void> } | undefined,
+    EMAIL_REPLY_ENABLED: env?.EMAIL_REPLY_ENABLED,
+  });
   registerGscMilestoneIngestTool(server, auth, env);
   registerPerformerTools(server, db, auth);
   // OPE-116 (2/3) — discovery harvest (event_schema_org) + dedup sweep.
