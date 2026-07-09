@@ -87,6 +87,11 @@ type EmailJobMessage = {
   source: string;
   /** OPE-151 — link back to the triggering inbound email, when there is one. */
   inboundEmailId?: string;
+  /** OPE-163 — RFC 5322 threading. When replying to an inbound email, set both
+   *  to the inbound's Message-ID so the recipient's client threads our reply and
+   *  their next reply lands back correlated. */
+  inReplyTo?: string;
+  references?: string;
 };
 
 type IndexNowMessage = {
@@ -132,12 +137,17 @@ async function sendViaCfEmail(
   binding: SendEmail
 ): Promise<{ ok: true; messageId: string } | { ok: false; error: string }> {
   try {
+    // OPE-163 — RFC 5322 threading headers when this is a reply to an inbound.
+    const headers: Record<string, string> = {};
+    if (msg.inReplyTo) headers["In-Reply-To"] = msg.inReplyTo;
+    if (msg.references) headers["References"] = msg.references;
     const res = await binding.send({
       from: msg.from ?? DEFAULT_FROM,
       to: msg.to,
       subject: msg.subject,
       html: msg.html,
       text: msg.text,
+      ...(Object.keys(headers).length > 0 ? { headers } : {}),
     });
     return { ok: true, messageId: res.messageId };
   } catch (err) {
