@@ -15,7 +15,7 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { inboundEmails, events } from "@/lib/db/schema";
+import { inboundEmails, events, emailSendLedger } from "@/lib/db/schema";
 import { desc, eq, gte, inArray, and, type SQL } from "drizzle-orm";
 
 /** Window after received_at within which a resulting event is considered
@@ -151,6 +151,23 @@ export async function GET(request: NextRequest) {
     }
   }
 
+  // OPE-152 — did the auto-reply actually go out? Look up the ledger (OPE-151)
+  // by inbound_email_id so the UI can show reply delivery (sent/failed), not
+  // just that a reply_kind was chosen. Prefer 'sent' when both exist for an id.
+  const rowIds = rows.map((r) => r.id);
+  const replyByInbound = new Map<string, "sent" | "failed" | "stubbed">();
+  const REPLY_BATCH = 50;
+  for (let i = 0; i < rowIds.length; i += REPLY_BATCH) {
+    const led = await db
+      .select({ inb: emailSendLedger.inboundEmailId, status: emailSendLedger.status })
+      .from(emailSendLedger)
+      .where(inArray(emailSendLedger.inboundEmailId, rowIds.slice(i, i + REPLY_BATCH)));
+    for (const l of led) {
+      if (!l.inb) continue;
+      if (replyByInbound.get(l.inb) !== "sent") replyByInbound.set(l.inb, l.status);
+    }
+  }
+
   return NextResponse.json(
     rows.map((r) => {
       let resultingEvent: { id: string; slug: string; name: string } | null = null;
@@ -174,6 +191,7 @@ export async function GET(request: NextRequest) {
         ...r,
         receivedAt: r.receivedAt instanceof Date ? r.receivedAt.toISOString() : r.receivedAt,
         resultingEvent,
+        replyDelivery: replyByInbound.get(r.id) ?? null,
       };
     })
   );

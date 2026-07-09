@@ -18,6 +18,7 @@ import {
   FileText,
   BarChart3,
   Inbox,
+  Send,
 } from "lucide-react";
 import { auth } from "@/lib/auth";
 import { bearerTokenMatches } from "@/lib/api-auth";
@@ -36,6 +37,7 @@ const adminNav = [
   { name: "Users", href: "/admin/users", icon: Users },
   { name: "Submissions", href: "/admin/submissions", icon: ClipboardList },
   { name: "Inbound Emails", href: "/admin/inbound-emails", icon: Inbox },
+  { name: "Sent Emails", href: "/admin/sent-emails", icon: Send },
   { name: "Duplicates", href: "/admin/duplicates", icon: GitMerge },
   { name: "Blog Coverage", href: "/admin/coverage", icon: FileText },
   { name: "Blog Posts", href: "/admin/blog", icon: FileText },
