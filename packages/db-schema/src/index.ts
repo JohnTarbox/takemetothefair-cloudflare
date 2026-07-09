@@ -2037,14 +2037,34 @@ export const indexnowUrlLastSuccess = sqliteTable("indexnow_url_last_success", {
 export const emailSendLedger = sqliteTable(
   "email_send_ledger",
   {
-    // The Cloudflare Queue message id — stable across redeliveries of the same message.
+    // Idempotency/audit key. For queue sends this is the Cloudflare Queue
+    // message id (stable across redeliveries); for direct sends (workflow
+    // auto-replies, main-app Resend) it's a generated id (`reply-<inbound>` /
+    // `direct-<uuid>`).
     messageId: text("message_id").primaryKey(),
     sentAt: integer("sent_at", { mode: "timestamp" }).notNull(),
     recipient: text("recipient"),
     source: text("source"),
     providerMessageId: text("provider_message_id"),
+    // OPE-151 — audit columns. status: the outcome of the attempt; a redelivery
+    // that finally succeeds upserts 'sent' over an earlier 'failed'. Dedup skips
+    // only on status='sent', so a failed row never blocks a retry.
+    status: text("status", { enum: ["sent", "failed", "stubbed"] })
+      .notNull()
+      .default("sent"),
+    error: text("error"),
+    subject: text("subject"),
+    // Link back to the triggering inbound email (auto-replies) — powers the
+    // OPE-152 admin thread view.
+    inboundEmailId: text("inbound_email_id"),
+    provider: text("provider"), // 'cf-email' | 'resend' | 'stub'
   },
-  (table) => [index("idx_email_send_ledger_sent_at").on(table.sentAt)]
+  (table) => [
+    index("idx_email_send_ledger_sent_at").on(table.sentAt),
+    index("idx_email_send_ledger_recipient").on(table.recipient),
+    index("idx_email_send_ledger_inbound").on(table.inboundEmailId),
+    index("idx_email_send_ledger_status").on(table.status),
+  ]
 );
 
 // K36 (2026-06-25) — CAN-SPAM suppression list. Keyed by LOWERCASE email.

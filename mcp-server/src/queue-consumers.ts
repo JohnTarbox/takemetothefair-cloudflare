@@ -12,9 +12,10 @@
  * import that file here because it would drag in main-app-only deps.
  */
 
-import { eq, lt } from "drizzle-orm";
+import { lt } from "drizzle-orm";
 import { getDb, type Db } from "./db.js";
 import { indexnowSubmissions, emailSendLedger } from "./schema.js";
+import { ledgerEmailSend, wasEmailSent } from "./mailer.js";
 import { logError } from "./logger.js";
 import { captureDiscrepancy, type FieldClass, type DetectedBy } from "./goodwill/capture.js";
 
@@ -22,37 +23,32 @@ const HOST = "meetmeatthefair.com";
 const REPORT_API_BASE = "https://api.indexnow.org/IndexNow";
 
 /**
- * How long an email send is remembered for dedup. The window only needs to
- * outlast a message's retry lifetime (max_retries=3 with ≤60s backoff = minutes),
- * so a few days is generous; older rows are pruned per batch to bound the table.
+ * How long a send is retained in the ledger. OPE-151 repurposed the ledger from
+ * a short dedup table into an outbound-email AUDIT log, so retention is now a
+ * year (dedup only needs minutes; the audit answer "did we email X 3 weeks ago?"
+ * needs much longer). Volume is a few sends/day, so a year stays small.
  */
-const EMAIL_LEDGER_TTL_MS = 3 * 24 * 60 * 60 * 1000;
+const EMAIL_LEDGER_TTL_MS = 365 * 24 * 60 * 60 * 1000;
 
-/** True if a prior delivery of this queue message id already sent successfully. */
-export async function wasEmailSent(db: Db, messageId: string): Promise<boolean> {
-  const rows = await db
-    .select({ id: emailSendLedger.messageId })
-    .from(emailSendLedger)
-    .where(eq(emailSendLedger.messageId, messageId))
-    .limit(1);
-  return rows.length > 0;
-}
+// OPE-151 — the ledger choke point lives in ./mailer.js now. Re-exported here
+// for the existing importers (email-idempotency.test.ts). wasEmailSent returns
+// true only for a status='sent' row, so a 'failed' row never blocks a retry.
+export { ledgerEmailSend, wasEmailSent };
 
-/** Record a successful send so a later redelivery of the same id is skipped. */
+/** Back-compat: a successful-send ledger write. New call sites use
+ *  ledgerEmailSend directly with the full status/subject/inbound columns. */
 export async function recordEmailSent(
   db: Db,
   entry: { messageId: string; recipient: string; source: string; providerMessageId: string }
 ): Promise<void> {
-  await db
-    .insert(emailSendLedger)
-    .values({
-      messageId: entry.messageId,
-      sentAt: new Date(),
-      recipient: entry.recipient,
-      source: entry.source,
-      providerMessageId: entry.providerMessageId,
-    })
-    .onConflictDoNothing();
+  await ledgerEmailSend(db, {
+    messageId: entry.messageId,
+    recipient: entry.recipient,
+    source: entry.source,
+    providerMessageId: entry.providerMessageId,
+    status: "sent",
+    provider: "cf-email",
+  });
 }
 
 /** Drop ledger rows older than the dedup window so the table stays bounded. */
@@ -89,6 +85,8 @@ type EmailJobMessage = {
   text: string;
   from?: string;
   source: string;
+  /** OPE-151 — link back to the triggering inbound email, when there is one. */
+  inboundEmailId?: string;
 };
 
 type IndexNowMessage = {
@@ -206,26 +204,34 @@ export async function handleEmailBatch(
     const result = await sendViaCfEmail(m.body, env.EMAIL);
     if (result.ok) {
       // Record BEFORE ack so a crash in the send→ack window still leaves the
-      // dedup marker for the redelivery. Idempotent insert (same id is a no-op).
-      try {
-        await recordEmailSent(db, {
-          messageId: m.id,
-          recipient: m.body.to,
-          source: m.body.source,
-          providerMessageId: result.messageId,
-        });
-      } catch (e) {
-        await logError(env.DB, {
-          level: "warn",
-          source: "mcp:email-queue",
-          message: "ledger insert failed after successful send; acking anyway",
-          sessionId,
-          context: { id: m.id, error: e instanceof Error ? e.message : String(e) },
-        });
-      }
+      // sent marker for the redelivery. Upsert (same id overwrites a prior
+      // 'failed' attempt with 'sent'). ledgerEmailSend is best-effort.
+      await ledgerEmailSend(db, {
+        messageId: m.id,
+        recipient: m.body.to,
+        source: m.body.source,
+        subject: m.body.subject,
+        status: "sent",
+        provider: "cf-email",
+        providerMessageId: result.messageId,
+        inboundEmailId: m.body.inboundEmailId ?? null,
+      });
       m.ack();
       console.log(`[queue:email] sent ${m.body.source} → ${m.body.to} (id=${result.messageId})`);
     } else {
+      // OPE-151 — record the failed attempt so a silent drop / DLQ park is
+      // visible in the ledger. status='failed' does NOT block the retry (dedup
+      // checks status='sent'); a later success upserts 'sent' over this row.
+      await ledgerEmailSend(db, {
+        messageId: m.id,
+        recipient: m.body.to,
+        source: m.body.source,
+        subject: m.body.subject,
+        status: "failed",
+        provider: "cf-email",
+        error: result.error,
+        inboundEmailId: m.body.inboundEmailId ?? null,
+      });
       // Retry with a modest backoff; after max_retries=3 the message parks in
       // email-jobs-dlq (no longer dropped). Cap low so transactional mail stays
       // near-real-time on a transient blip.

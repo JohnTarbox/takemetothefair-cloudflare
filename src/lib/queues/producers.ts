@@ -60,6 +60,7 @@ export async function enqueueEmail(args: SendEmailArgs & { source: string }): Pr
       text: args.text,
       from: args.from,
       source: args.source,
+      inboundEmailId: args.inboundEmailId,
     };
     await env.EMAIL_JOBS.send(msg);
     return;

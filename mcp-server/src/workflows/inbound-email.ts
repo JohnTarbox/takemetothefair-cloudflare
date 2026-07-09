@@ -56,6 +56,7 @@ import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloud
 import { NonRetryableError } from "cloudflare:workflows";
 import { eq } from "drizzle-orm";
 import { getDb } from "../db.js";
+import { ledgerEmailSend } from "../mailer.js";
 import { inboundEmails, adminActions } from "../schema.js";
 import { logError } from "../logger.js";
 import { classifyDomainTier, isHigherTier, classifyDedupTier } from "@takemetothefair/utils";
@@ -560,13 +561,26 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
               headers["References"] = rows[0].messageId;
             }
 
-            await this.env.EMAIL.send({
+            const sendRes = await this.env.EMAIL.send({
               from: msg.from ?? DEFAULT_FROM,
               to: msg.to,
               subject: msg.subject,
               html: msg.html,
               text: msg.text,
               headers,
+            });
+            // OPE-151 — ledger the auto-reply. This path sends via env.EMAIL
+            // DIRECTLY (bypassing the queue consumer), so it was previously
+            // unrecorded — the exact gap that made Carol's reply un-auditable.
+            await ledgerEmailSend(db, {
+              messageId: `reply-${messageRowId}`,
+              recipient: msg.to,
+              source: `reply:${replyKind}`,
+              subject: msg.subject,
+              status: "sent",
+              provider: "cf-email",
+              providerMessageId: sendRes?.messageId ?? null,
+              inboundEmailId: messageRowId,
             });
           }
         );
@@ -583,6 +597,16 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           error: err,
           sessionId,
           context: { messageRowId, intent, replyKind, sendReplyError: sendReplyErr },
+        });
+        // OPE-151 — ledger the failed auto-reply so a silent drop is visible.
+        await ledgerEmailSend(getDb(this.env.DB), {
+          messageId: `reply-${messageRowId}`,
+          recipient: null,
+          source: `reply:${replyKind}`,
+          status: "failed",
+          provider: "cf-email",
+          error: sendReplyErr,
+          inboundEmailId: messageRowId,
         });
         // Promote to caughtError so mark-done writes status='failed'
         // (rather than 'replied') and the error is visible in the
