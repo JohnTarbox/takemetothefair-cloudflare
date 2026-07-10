@@ -182,9 +182,9 @@ ${reasonBlock}
 
 /**
  * Newsletter double opt-in confirmation. Sent once on signup; link
- * expires in 24h. The CAN-SPAM / GDPR posture is "we don't add you to
- * the list until you click" — until confirmed, the row sits with
- * `confirmed=false` and is excluded from sends.
+ * expires in 14 days (OPE-168 — NEWSLETTER_CONFIRM_TTL_DAYS). The CAN-SPAM /
+ * GDPR posture is "we don't add you to the list until you click" — until
+ * confirmed, the row sits with `confirmed=false` and is excluded from sends.
  */
 export function newsletterConfirmTemplate(args: { confirmUrl: string }): {
   subject: string;
@@ -194,11 +194,11 @@ export function newsletterConfirmTemplate(args: { confirmUrl: string }): {
   const html = baseLayout({
     heading: "Confirm your subscription",
     body: `<p style="margin:0 0 12px;">Thanks for signing up for the Meet Me at the Fair weekend digest.</p>
-<p style="margin:0 0 12px;">Click the button below to confirm your email and start receiving our weekly roundup of events, new vendors, and hidden gems across New England. The link expires in 24 hours.</p>
+<p style="margin:0 0 12px;">Click the button below to confirm your email and start receiving our weekly roundup of events, new vendors, and hidden gems across New England. The link is valid for 14 days.</p>
 <p style="margin:0 0 12px;">If you didn't sign up, you can ignore this email — without confirming, you won't be added to the list.</p>`,
     cta: { url: args.confirmUrl, label: "Confirm subscription" },
   });
-  const text = `Thanks for signing up for the Meet Me at the Fair weekend digest.\n\nClick the link below to confirm your email and start receiving our weekly roundup of events, new vendors, and hidden gems across New England. The link expires in 24 hours.\n\n${args.confirmUrl}\n\nIf you didn't sign up, you can ignore this email — without confirming, you won't be added to the list.`;
+  const text = `Thanks for signing up for the Meet Me at the Fair weekend digest.\n\nClick the link below to confirm your email and start receiving our weekly roundup of events, new vendors, and hidden gems across New England. The link is valid for 14 days.\n\n${args.confirmUrl}\n\nIf you didn't sign up, you can ignore this email — without confirming, you won't be added to the list.`;
   return {
     subject: "Confirm your Meet Me at the Fair subscription",
     html,

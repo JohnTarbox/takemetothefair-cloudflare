@@ -3,18 +3,26 @@
 // on `newsletter_subscribers.confirmation_token_hash` so a DB compromise
 // can't be used to silently confirm subscriptions.
 //
-// Mirrors src/lib/vendor-claim-token.ts intentionally — same TTL,
-// same hash function, same single-use semantics. Difference: state
-// lives inline on the subscriber row (column-per-token), not in a
-// separate tokens table, because each subscriber has at most one
-// outstanding token at a time.
+// Mirrors src/lib/vendor-claim-token.ts's hash + single-use semantics.
+// Difference: state lives inline on the subscriber row (column-per-token),
+// not in a separate tokens table, because each subscriber has at most one
+// outstanding token at a time. TTL intentionally DIVERGES from vendor-claim's
+// 24h — OPE-168 widened the newsletter window to 14 days (industry-standard
+// double opt-in) because the old 24h expiry was lapsing real signups before
+// they clicked confirm. This constant is the single source of truth for the
+// window (the confirmation email copy + /newsletter/confirmed expired page must
+// state the same duration).
 
 import { and, eq } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import { newsletterSubscribers } from "@/lib/db/schema";
 
 const TOKEN_BYTE_LENGTH = 32;
-const TOKEN_TTL_SECONDS = 24 * 60 * 60;
+/** OPE-168 — days a newsletter confirmation link stays valid. Widened from 1
+ *  to 14 (real signups were expiring at 24h). Keep the user-facing copy in
+ *  sync: templates.ts newsletter-confirm + the expired page. */
+export const NEWSLETTER_CONFIRM_TTL_DAYS = 14;
+const TOKEN_TTL_SECONDS = NEWSLETTER_CONFIRM_TTL_DAYS * 24 * 60 * 60;
 
 function toHex(buffer: ArrayBuffer): string {
   return Array.from(new Uint8Array(buffer))
