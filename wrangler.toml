@@ -33,6 +33,12 @@ CAL1_SSR_MONTH = "true"
 # (?cal_view=agenda|year). Requires CAL1_SSR_MONTH = "true". Default OFF = Month only.
 # Temporarily ON for live prod verification — flip back to "false" after.
 CAL2_VIEWS = "true"
+# OPE-163 — customer-facing reply send gate for the /admin/inbound-emails Reply
+# panel. The endpoint refuses to enqueue unless this is "true"; the MCP consumer
+# enforces the same flag as the authoritative hard stop. Shipped OFF (OPE-6).
+# To go live, flip to "true" here AND on the MCP Worker (mcp-server/wrangler.toml),
+# then redeploy — or override both in the dashboard.
+EMAIL_REPLY_ENABLED = "false"
 
 [[d1_databases]]
 binding = "DB"

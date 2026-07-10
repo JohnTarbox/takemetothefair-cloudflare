@@ -151,6 +151,13 @@ export default function AdminInboundEmailsPage() {
   const [retrying, setRetrying] = useState<string | null>(null);
   const [retryError, setRetryError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  // OPE-163 — inline reply composer (opens inside the expanded detail).
+  const [replyOpenId, setReplyOpenId] = useState<string | null>(null);
+  const [replySubject, setReplySubject] = useState("");
+  const [replyBody, setReplyBody] = useState("");
+  const [replyConfirm, setReplyConfirm] = useState(false);
+  const [replySending, setReplySending] = useState(false);
+  const [replyMsg, setReplyMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   // OPE-156 — full message body, fetched on demand when a row is expanded
   // (kept out of the list payload to keep it lean). Cached per row id.
   const [bodyDetail, setBodyDetail] = useState<
@@ -260,6 +267,54 @@ export default function AdminInboundEmailsPage() {
   useEffect(() => {
     fetchRows();
   }, [fetchRows]);
+
+  // OPE-163 — open the reply composer for a row, prefilling the subject.
+  const openReply = useCallback((row: InboundEmailRow) => {
+    setReplyOpenId(row.id);
+    setReplySubject(`Re: ${row.subject || "your message"}`.slice(0, 200));
+    setReplyBody("");
+    setReplyConfirm(false);
+    setReplyMsg(null);
+  }, []);
+
+  // OPE-163 — send the reply (after the confirm step). The endpoint enqueues via
+  // the transactional pipeline; a 409 means replies aren't enabled yet.
+  const sendReply = useCallback(
+    async (rowId: string) => {
+      setReplySending(true);
+      setReplyMsg(null);
+      try {
+        const res = await fetch(`/api/admin/inbound-emails/${encodeURIComponent(rowId)}/reply`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ subject: replySubject, body: replyBody }),
+        });
+        const j = (await res.json().catch(() => ({}))) as {
+          to?: string;
+          error?: string;
+          message?: string;
+        };
+        if (!res.ok) {
+          setReplyMsg({ kind: "err", text: j.message || j.error || `HTTP ${res.status}` });
+          setReplyConfirm(false);
+        } else {
+          setReplyMsg({
+            kind: "ok",
+            text: `Reply queued to ${j.to}. Check the Sent viewer for delivery.`,
+          });
+          setReplyConfirm(false);
+          setReplyBody("");
+          void fetchRows();
+        }
+      } catch (e) {
+        setReplyMsg({ kind: "err", text: e instanceof Error ? e.message : "Failed to send." });
+        setReplyConfirm(false);
+      } finally {
+        setReplySending(false);
+      }
+    },
+    [replySubject, replyBody, fetchRows]
+  );
 
   const handleRetry = async (messageRowId: string) => {
     setRetrying(messageRowId);
@@ -1000,6 +1055,100 @@ export default function AdminInboundEmailsPage() {
                                     </div>
                                   );
                                 })()}
+                              </div>
+
+                              {/* OPE-163 — reply composer (send from support@,
+                                  threaded + ledgered by the endpoint). Two-step
+                                  confirm before it actually sends. */}
+                              <div className="mt-3 pt-3 border-t border-border">
+                                {replyOpenId === row.id ? (
+                                  <div className="space-y-2" onClick={(e) => e.stopPropagation()}>
+                                    <div className="flex items-center justify-between">
+                                      <span className="font-medium">Reply</span>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setReplyOpenId(null);
+                                          setReplyConfirm(false);
+                                          setReplyMsg(null);
+                                        }}
+                                        className="text-xs text-muted-foreground hover:text-foreground"
+                                      >
+                                        Close
+                                      </button>
+                                    </div>
+                                    <div className="text-xs text-muted-foreground">
+                                      To <span className="font-mono">{row.fromAddress}</span> · from{" "}
+                                      <span className="font-mono">support@meetmeatthefair.com</span>
+                                    </div>
+                                    <input
+                                      type="text"
+                                      value={replySubject}
+                                      onChange={(e) => setReplySubject(e.target.value)}
+                                      className="w-full rounded border border-border bg-card px-2 py-1 text-sm"
+                                      placeholder="Subject"
+                                    />
+                                    <textarea
+                                      value={replyBody}
+                                      onChange={(e) => setReplyBody(e.target.value)}
+                                      rows={6}
+                                      className="w-full rounded border border-border bg-card px-2 py-1 text-sm"
+                                      placeholder="Write your reply…"
+                                    />
+                                    {replyMsg && (
+                                      <div
+                                        className={`text-xs ${replyMsg.kind === "ok" ? "text-green-700" : "text-terracotta"}`}
+                                      >
+                                        {replyMsg.text}
+                                      </div>
+                                    )}
+                                    {replyConfirm ? (
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-xs text-amber-dark">
+                                          Send this reply to {row.fromAddress}?
+                                        </span>
+                                        <button
+                                          type="button"
+                                          disabled={replySending}
+                                          onClick={() => void sendReply(row.id)}
+                                          className="rounded bg-navy px-3 py-1 text-xs text-white disabled:opacity-50"
+                                        >
+                                          {replySending ? "Sending…" : "Confirm send"}
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => setReplyConfirm(false)}
+                                          className="text-xs text-muted-foreground hover:text-foreground"
+                                        >
+                                          Back
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        disabled={!replyBody.trim() || !replySubject.trim()}
+                                        onClick={() => {
+                                          setReplyMsg(null);
+                                          setReplyConfirm(true);
+                                        }}
+                                        className="rounded bg-navy px-3 py-1 text-xs text-white disabled:opacity-50"
+                                      >
+                                        Send reply…
+                                      </button>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      openReply(row);
+                                    }}
+                                    className="rounded border border-navy px-3 py-1 text-xs text-navy hover:bg-navy hover:text-white"
+                                  >
+                                    Reply
+                                  </button>
+                                )}
                               </div>
 
                               {/* Phase D.1 classifier-metadata panel + admin
