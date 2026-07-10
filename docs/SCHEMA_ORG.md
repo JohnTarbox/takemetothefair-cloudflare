@@ -16,15 +16,15 @@ Schema.org is a collaborative vocabulary that search engines use to understand w
 
 ## Supported Schema Types
 
-| Schema Type | Component | Used On |
-|------------|-----------|---------|
-| Event | `EventSchema` | Event detail pages |
-| Place | `VenueSchema` | Venue detail pages |
-| LocalBusiness / FoodEstablishment / Store | `VendorSchema` | Vendor detail pages |
-| Organization + WebSite | `OrganizationSchema` | Homepage (site-wide) |
-| BreadcrumbList | `BreadcrumbSchema` | Detail pages |
-| ItemList | `ItemListSchema` | Listing pages |
-| FAQPage | `FAQSchema` | Contact page |
+| Schema Type                               | Component            | Used On              |
+| ----------------------------------------- | -------------------- | -------------------- |
+| Event                                     | `EventSchema`        | Event detail pages   |
+| Place                                     | `VenueSchema`        | Venue detail pages   |
+| LocalBusiness / FoodEstablishment / Store | `VendorSchema`       | Vendor detail pages  |
+| Organization + WebSite                    | `OrganizationSchema` | Homepage (site-wide) |
+| BreadcrumbList                            | `BreadcrumbSchema`   | Detail pages         |
+| ItemList                                  | `ItemListSchema`     | Listing pages        |
+| FAQPage                                   | `FAQSchema`          | Contact page         |
 
 ---
 
@@ -44,12 +44,12 @@ Generates Schema.org Event markup for fairs and festivals. This is the most impo
 
 ```typescript
 interface EventSchemaProps {
-  name: string;                    // Required: Event name
-  description?: string;            // Event description
-  startDate: Date;                 // Required: When event starts
-  endDate: Date;                   // Required: When event ends
-  imageUrl?: string | null;        // Event image (falls back to site default)
-  url: string;                     // Required: Canonical URL of event page
+  name: string; // Required: Event name
+  description?: string; // Event description
+  startDate: Date; // Required: When event starts
+  endDate: Date; // Required: When event ends
+  imageUrl?: string | null; // Event image (falls back to site default)
+  url: string; // Required: Canonical URL of event page
   venue?: {
     name: string;
     address?: string | null;
@@ -63,10 +63,10 @@ interface EventSchemaProps {
     name: string;
     url?: string | null;
   } | null;
-  ticketPriceMin?: number | null;  // Lowest ticket price (0 = free)
-  ticketPriceMax?: number | null;  // Highest ticket price
-  ticketUrl?: string | null;       // Where to buy tickets
-  categories?: string[];           // Event categories
+  ticketPriceMin?: number | null; // Lowest ticket price (0 = free)
+  ticketPriceMax?: number | null; // Highest ticket price
+  ticketUrl?: string | null; // Where to buy tickets
+  categories?: string[]; // Event categories
 }
 ```
 
@@ -120,15 +120,15 @@ interface EventSchemaProps {
 
 #### Data Requirements for Best Results
 
-| Field | Impact | Recommendation |
-|-------|--------|----------------|
-| name | High | Clear, descriptive name |
-| startDate/endDate | High | Always required for event rich results |
-| venue with address | High | Complete address enables "Events near me" |
-| venue with lat/lng | Medium | Enables map integration |
-| imageUrl | Medium | Use 16:9 aspect ratio, min 720px wide |
-| ticketPriceMin | Medium | Set to 0 for free events |
-| description | Low | 150-300 characters recommended |
+| Field              | Impact | Recommendation                            |
+| ------------------ | ------ | ----------------------------------------- |
+| name               | High   | Clear, descriptive name                   |
+| startDate/endDate  | High   | Always required for event rich results    |
+| venue with address | High   | Complete address enables "Events near me" |
+| venue with lat/lng | Medium | Enables map integration                   |
+| imageUrl           | Medium | Use 16:9 aspect ratio, min 720px wide     |
+| ticketPriceMin     | Medium | Set to 0 for free events                  |
+| description        | Low    | 150-300 characters recommended            |
 
 ---
 
@@ -144,19 +144,19 @@ Generates Schema.org Place markup for fairgrounds, parks, and event spaces.
 
 ```typescript
 interface VenueSchemaProps {
-  name: string;                   // Required: Venue name
+  name: string; // Required: Venue name
   description?: string | null;
   imageUrl?: string | null;
-  url: string;                    // Required: Canonical URL
+  url: string; // Required: Canonical URL
   address?: string | null;
   city?: string | null;
   state?: string | null;
   zip?: string | null;
   latitude?: number | null;
   longitude?: number | null;
-  capacity?: number | null;       // Maximum attendee capacity
+  capacity?: number | null; // Maximum attendee capacity
   telephone?: string | null;
-  amenities?: string[];           // Parking, restrooms, etc.
+  amenities?: string[]; // Parking, restrooms, etc.
 }
 ```
 
@@ -209,22 +209,22 @@ Generates Schema.org LocalBusiness (or subtype) markup for vendors. The schema t
 
 ```typescript
 interface VendorSchemaProps {
-  businessName: string;           // Required: Business name
+  businessName: string; // Required: Business name
   description?: string | null;
   logoUrl?: string | null;
-  url: string;                    // Required: Canonical URL
+  url: string; // Required: Canonical URL
   address?: string | null;
   city?: string | null;
   state?: string | null;
   zip?: string | null;
   telephone?: string | null;
   email?: string | null;
-  website?: string | null;        // External business website
+  website?: string | null; // External business website
   yearEstablished?: number | null;
-  paymentMethods?: string[];      // Cash, Credit Cards, etc.
-  socialLinks?: Record<string, string> | null;  // facebook, instagram, etc.
-  products?: string[];            // Products/services offered
-  vendorType?: string | null;     // Determines schema subtype
+  paymentMethods?: string[]; // Cash, Credit Cards, etc.
+  socialLinks?: Record<string, string> | null; // facebook, instagram, etc.
+  products?: string[]; // Products/services offered
+  vendorType?: string | null; // Determines schema subtype
 }
 ```
 
@@ -247,10 +247,7 @@ interface VendorSchemaProps {
   "email": "betty@bettypies.com",
   "foundingDate": "2015",
   "paymentAccepted": "Cash, Credit Cards",
-  "sameAs": [
-    "https://bettypies.com",
-    "https://facebook.com/bettypies"
-  ],
+  "sameAs": ["https://bettypies.com", "https://facebook.com/bettypies"],
   "makesOffer": [
     {
       "@type": "Offer",
@@ -294,10 +291,7 @@ No props - this component uses hardcoded site information.
         "@type": "ImageObject",
         "url": "https://meetmeatthefair.com/icon.png"
       },
-      "sameAs": [
-        "https://facebook.com/meetmeatthefair",
-        "https://instagram.com/meetmeatthefair"
-      ],
+      "sameAs": ["https://facebook.com/meetmeatthefair"],
       "contactPoint": {
         "@type": "ContactPoint",
         "email": "hello@meetmeatthefair.com",
@@ -337,8 +331,8 @@ Generates breadcrumb navigation markup that can appear in search results.
 
 ```typescript
 interface BreadcrumbItem {
-  name: string;  // Display text
-  url: string;   // Full URL
+  name: string; // Display text
+  url: string; // Full URL
 }
 
 interface BreadcrumbSchemaProps {
@@ -354,8 +348,18 @@ interface BreadcrumbSchemaProps {
   "@type": "BreadcrumbList",
   "itemListElement": [
     { "@type": "ListItem", "position": 1, "name": "Home", "item": "https://meetmeatthefair.com" },
-    { "@type": "ListItem", "position": 2, "name": "Events", "item": "https://meetmeatthefair.com/events" },
-    { "@type": "ListItem", "position": 3, "name": "Maine State Fair", "item": "https://meetmeatthefair.com/events/maine-state-fair" }
+    {
+      "@type": "ListItem",
+      "position": 2,
+      "name": "Events",
+      "item": "https://meetmeatthefair.com/events"
+    },
+    {
+      "@type": "ListItem",
+      "position": 3,
+      "name": "Maine State Fair",
+      "item": "https://meetmeatthefair.com/events/maine-state-fair"
+    }
   ]
 }
 ```
@@ -376,14 +380,14 @@ Generates ItemList markup for listing pages, limited to first 30 items to keep p
 type ItemListOrder = "ascending" | "descending" | "unordered";
 
 interface ItemListSchemaProps {
-  name: string;              // List title
+  name: string; // List title
   description?: string;
   items: Array<{
     name: string;
     url: string;
     image?: string | null;
   }>;
-  order?: ItemListOrder;     // Default: "ascending"
+  order?: ItemListOrder; // Default: "ascending"
 }
 ```
 
@@ -398,8 +402,18 @@ interface ItemListSchemaProps {
   "numberOfItems": 12,
   "itemListOrder": "https://schema.org/ItemListOrderAscending",
   "itemListElement": [
-    { "@type": "ListItem", "position": 1, "name": "Maine State Fair", "url": "https://meetmeatthefair.com/events/maine-state-fair" },
-    { "@type": "ListItem", "position": 2, "name": "Fryeburg Fair", "url": "https://meetmeatthefair.com/events/fryeburg-fair" }
+    {
+      "@type": "ListItem",
+      "position": 1,
+      "name": "Maine State Fair",
+      "url": "https://meetmeatthefair.com/events/maine-state-fair"
+    },
+    {
+      "@type": "ListItem",
+      "position": 2,
+      "name": "Fryeburg Fair",
+      "url": "https://meetmeatthefair.com/events/fryeburg-fair"
+    }
   ]
 }
 ```
@@ -460,14 +474,14 @@ interface FAQSchemaProps {
 
 When you fill in event, venue, or vendor details, that information directly impacts how pages appear in Google:
 
-| Field You Fill In | Search Result Impact |
-|------------------|---------------------|
-| Event name + dates | Event card in Google Search |
-| Venue address | "Events near me" results |
-| Event image | Thumbnail in search results |
-| Ticket price | Price shown in event card |
-| FAQ questions | Expandable FAQ in search results |
-| Vendor products | Can appear in product searches |
+| Field You Fill In  | Search Result Impact             |
+| ------------------ | -------------------------------- |
+| Event name + dates | Event card in Google Search      |
+| Venue address      | "Events near me" results         |
+| Event image        | Thumbnail in search results      |
+| Ticket price       | Price shown in event card        |
+| FAQ questions      | Expandable FAQ in search results |
+| Vendor products    | Can appear in product searches   |
 
 ### Tips for Better Rich Results
 
@@ -539,14 +553,12 @@ Example - adding `previousStartDate` to EventSchema:
 ```typescript
 interface EventSchemaProps {
   // ... existing props
-  previousStartDate?: Date | null;  // For rescheduled events
+  previousStartDate?: Date | null; // For rescheduled events
 }
 
 const schema = {
   // ... existing properties
-  previousStartDate: previousStartDate
-    ? new Date(previousStartDate).toISOString()
-    : undefined,
+  previousStartDate: previousStartDate ? new Date(previousStartDate).toISOString() : undefined,
 };
 ```
 

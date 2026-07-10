@@ -43,9 +43,7 @@ async function main() {
     await homepage.goto(BASE_URL, { waitUntil: "networkidle" });
 
     // og:image
-    const ogImage = await homepage
-      .locator('meta[property="og:image"]')
-      .getAttribute("content");
+    const ogImage = await homepage.locator('meta[property="og:image"]').getAttribute("content");
     if (ogImage) {
       pass("og:image (homepage)", ogImage);
     } else {
@@ -53,9 +51,7 @@ async function main() {
     }
 
     // Canonical
-    const canonical = await homepage
-      .locator('link[rel="canonical"]')
-      .getAttribute("href");
+    const canonical = await homepage.locator('link[rel="canonical"]').getAttribute("href");
     if (canonical) {
       pass("Canonical URL (homepage)", canonical);
     } else {
@@ -72,12 +68,10 @@ async function main() {
 
     // Heading hierarchy
     const headings = await homepage.evaluate(() => {
-      return Array.from(document.querySelectorAll("h1, h2, h3, h4, h5, h6")).map(
-        (h) => ({
-          level: parseInt(h.tagName[1]),
-          text: h.textContent?.trim().substring(0, 50) || "",
-        })
-      );
+      return Array.from(document.querySelectorAll("h1, h2, h3, h4, h5, h6")).map((h) => ({
+        level: parseInt(h.tagName[1]),
+        text: h.textContent?.trim().substring(0, 50) || "",
+      }));
     });
     const hasH1 = headings.some((h) => h.level === 1);
     const h3AfterH1 = headings.findIndex(
@@ -89,33 +83,27 @@ async function main() {
         headings.map((h) => `h${h.level}: ${h.text}`).join(" | ")
       );
     } else {
-      fail(
-        "Heading hierarchy (homepage)",
-        `h3 follows h1 without h2 at index ${h3AfterH1}`
-      );
+      fail("Heading hierarchy (homepage)", `h3 follows h1 without h2 at index ${h3AfterH1}`);
     }
 
-    // Footer social links
-    const fbLink = await homepage
-      .locator('a[href*="facebook.com/meetmeatthefair"]')
-      .count();
-    const igLink = await homepage
-      .locator('a[href*="instagram.com/meetmeatthefair"]')
-      .count();
-    if (fbLink > 0 && igLink > 0) {
-      pass("Footer social links", `Facebook: ${fbLink}, Instagram: ${igLink}`);
+    // Footer social links (OPE-171): Facebook is ours and must be present; the
+    // Instagram handle is NOT ours and must be gone site-wide.
+    const fbLink = await homepage.locator('a[href*="facebook.com/meetmeatthefair"]').count();
+    const igLink = await homepage.locator('a[href*="instagram.com/meetmeatthefair"]').count();
+    if (fbLink > 0 && igLink === 0) {
+      pass("Footer social links", `Facebook: ${fbLink}, Instagram removed (${igLink})`);
     } else {
-      fail("Footer social links", `Facebook: ${fbLink}, Instagram: ${igLink}`);
+      fail(
+        "Footer social links",
+        `expected Facebook present + Instagram absent — Facebook: ${fbLink}, Instagram: ${igLink}`
+      );
     }
 
     // Footer social links have aria-labels
     const fbLabel = await homepage
       .locator('a[href*="facebook.com"] [aria-label], a[aria-label*="Facebook"]')
       .count();
-    const igLabel = await homepage
-      .locator('a[href*="instagram.com"] [aria-label], a[aria-label*="Instagram"]')
-      .count();
-    if (fbLabel > 0 || igLabel > 0) {
+    if (fbLabel > 0) {
       pass("Social links aria-labels", "Present");
     } else {
       warn("Social links aria-labels", "Consider adding aria-label for accessibility");
@@ -129,9 +117,7 @@ async function main() {
     await eventsPage.goto(`${BASE_URL}/events`, { waitUntil: "networkidle" });
 
     // aria-current on active nav
-    const ariaCurrent = await eventsPage
-      .locator('a[href="/events"][aria-current="page"]')
-      .count();
+    const ariaCurrent = await eventsPage.locator('a[href="/events"][aria-current="page"]').count();
     if (ariaCurrent > 0) {
       pass("aria-current on Events nav", `Found ${ariaCurrent} link(s)`);
     } else {
@@ -162,9 +148,7 @@ async function main() {
 
     // Event card category colors
     const categoryBadges = await eventsPage.evaluate(() => {
-      const badges = document.querySelectorAll(
-        ".rounded-full.text-xs.font-medium"
-      );
+      const badges = document.querySelectorAll(".rounded-full.text-xs.font-medium");
       const classes = new Set<string>();
       badges.forEach((b) => {
         const cl = b.className;
@@ -183,16 +167,15 @@ async function main() {
     }
 
     // No internal tags visible
-    const internalTags = await eventsPage
-      .locator('text="#imported"')
-      .count();
-    const sourceTags = await eventsPage
-      .locator('text="#fairsandfestivals"')
-      .count();
+    const internalTags = await eventsPage.locator('text="#imported"').count();
+    const sourceTags = await eventsPage.locator('text="#fairsandfestivals"').count();
     if (internalTags === 0 && sourceTags === 0) {
       pass("No internal tags on events page", "Clean");
     } else {
-      fail("Internal tags visible", `#imported: ${internalTags}, #fairsandfestivals: ${sourceTags}`);
+      fail(
+        "Internal tags visible",
+        `#imported: ${internalTags}, #fairsandfestivals: ${sourceTags}`
+      );
     }
 
     await eventsPage.close();
@@ -245,10 +228,9 @@ async function main() {
     // ── Event Detail Page Tests ────────────────────────────────
     console.log("--- Event Detail Page ---");
     const detailPage = await context.newPage();
-    await detailPage.goto(
-      `${BASE_URL}/events/2026-orono-easter-craft-and-vendor-fair`,
-      { waitUntil: "networkidle" }
-    );
+    await detailPage.goto(`${BASE_URL}/events/2026-orono-easter-craft-and-vendor-fair`, {
+      waitUntil: "networkidle",
+    });
 
     // No internal tags on detail page
     const detailInternalTags = await detailPage.evaluate(() => {
@@ -275,16 +257,17 @@ async function main() {
     if (description && !description.endsWith("...")) {
       pass("Description not truncated", `${description.substring(0, 80)}...`);
     } else if (description.endsWith("...")) {
-      fail("Description truncated", `Ends with "...": ${description.substring(description.length - 40)}`);
+      fail(
+        "Description truncated",
+        `Ends with "...": ${description.substring(description.length - 40)}`
+      );
     } else {
       warn("Description check", "Could not find description element");
     }
 
     // Category badge colors on detail page
     const detailBadgeColors = await detailPage.evaluate(() => {
-      const badges = document.querySelectorAll(
-        ".rounded-full.text-xs.font-medium"
-      );
+      const badges = document.querySelectorAll(".rounded-full.text-xs.font-medium");
       const colors: string[] = [];
       badges.forEach((b) => {
         const cl = b.className;
@@ -313,20 +296,14 @@ async function main() {
     await scrollPage.goto(BASE_URL, { waitUntil: "networkidle" });
 
     // Check header before scroll
-    const headerBefore = await scrollPage
-      .locator("header")
-      .first()
-      .getAttribute("class");
+    const headerBefore = await scrollPage.locator("header").first().getAttribute("class");
     const hadShadowBefore = headerBefore?.includes("shadow-sm");
 
     // Scroll down
     await scrollPage.evaluate(() => window.scrollTo(0, 200));
     await scrollPage.waitForTimeout(300);
 
-    const headerAfter = await scrollPage
-      .locator("header")
-      .first()
-      .getAttribute("class");
+    const headerAfter = await scrollPage.locator("header").first().getAttribute("class");
     const hasShadowAfter = headerAfter?.includes("shadow-sm");
 
     if (!hadShadowBefore && hasShadowAfter) {
@@ -342,10 +319,9 @@ async function main() {
     // ── Dynamic OG Image Test ──────────────────────────────────
     console.log("--- Dynamic OG Image ---");
     const ogPage = await context.newPage();
-    await ogPage.goto(
-      `${BASE_URL}/events/2026-orono-easter-craft-and-vendor-fair`,
-      { waitUntil: "networkidle" }
-    );
+    await ogPage.goto(`${BASE_URL}/events/2026-orono-easter-craft-and-vendor-fair`, {
+      waitUntil: "networkidle",
+    });
     const eventOgImage = await ogPage
       .locator('meta[property="og:image"]')
       .getAttribute("content")
@@ -399,10 +375,7 @@ async function main() {
       if (page2Url.includes("page=2") && page2HasEvents) {
         pass("Events page 2 loads correctly", `URL: ${page2Url}`);
       } else {
-        fail(
-          "Events page 2 loads correctly",
-          `URL: ${page2Url}, hasEvents: ${page2HasEvents}`
-        );
+        fail("Events page 2 loads correctly", `URL: ${page2Url}, hasEvents: ${page2HasEvents}`);
       }
     }
     await paginationPage.close();
@@ -575,11 +548,7 @@ async function main() {
       const mobilePage2Overflow = await mobileEvents.evaluate(() => {
         return document.documentElement.scrollWidth > document.documentElement.clientWidth;
       });
-      if (
-        mobilePage2Url.includes("page=2") &&
-        mobilePage2HasEvents &&
-        !mobilePage2Overflow
-      ) {
+      if (mobilePage2Url.includes("page=2") && mobilePage2HasEvents && !mobilePage2Overflow) {
         pass("Mobile pagination page 2", `URL: ${mobilePage2Url}, no overflow`);
       } else {
         fail(
@@ -602,16 +571,10 @@ async function main() {
       .first()
       .getAttribute("href")
       .catch(() => null);
-    if (
-      mobileStateNextHref &&
-      mobileStateNextHref.startsWith("/events/maine?")
-    ) {
+    if (mobileStateNextHref && mobileStateNextHref.startsWith("/events/maine?")) {
       pass("Mobile state pagination link", mobileStateNextHref);
     } else if (mobileStateNextHref) {
-      fail(
-        "Mobile state pagination link",
-        `Wrong path: ${mobileStateNextHref}`
-      );
+      fail("Mobile state pagination link", `Wrong path: ${mobileStateNextHref}`);
     } else {
       warn("Mobile state pagination link", "No next link found");
     }
@@ -619,10 +582,9 @@ async function main() {
 
     // Mobile event detail page
     const mobileDetail = await mobileContext.newPage();
-    await mobileDetail.goto(
-      `${BASE_URL}/events/2026-orono-easter-craft-and-vendor-fair`,
-      { waitUntil: "networkidle" }
-    );
+    await mobileDetail.goto(`${BASE_URL}/events/2026-orono-easter-craft-and-vendor-fair`, {
+      waitUntil: "networkidle",
+    });
 
     const detailOverflow = await mobileDetail.evaluate(() => {
       return document.documentElement.scrollWidth > document.documentElement.clientWidth;
@@ -654,7 +616,10 @@ async function main() {
     if (smallTargets.length === 0) {
       pass("Touch targets >= 44px (mobile detail)", "All icon-only targets adequate");
     } else {
-      warn("Touch targets (mobile detail)", `${smallTargets.length} icon-only target(s) under 44px: ${smallTargets.join(", ")}`);
+      warn(
+        "Touch targets (mobile detail)",
+        `${smallTargets.length} icon-only target(s) under 44px: ${smallTargets.join(", ")}`
+      );
     }
 
     await mobileDetail.screenshot({ path: "/tmp/mmatf-mobile-detail.png" });
@@ -675,8 +640,7 @@ async function main() {
   const warned = results.filter((r) => r.status === "WARN").length;
 
   for (const r of results) {
-    const icon =
-      r.status === "PASS" ? "OK" : r.status === "FAIL" ? "FAIL" : "WARN";
+    const icon = r.status === "PASS" ? "OK" : r.status === "FAIL" ? "FAIL" : "WARN";
     console.log(`  [${icon}] ${r.name}`);
     console.log(`        ${r.detail}`);
   }
