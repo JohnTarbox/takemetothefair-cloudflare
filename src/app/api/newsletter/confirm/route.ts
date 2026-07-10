@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
  * so the page can show a tailored message.
  *
  * Token semantics are in src/lib/email/newsletter-confirm-token.ts —
- * single-use, 24h TTL, race-safe on the consume update.
+ * single-use, 14-day TTL (OPE-168), race-safe on the consume update.
  *
  * Auth: none. The raw token IS the authorization — anyone holding it
  * implicitly proves email control because it was emailed to that

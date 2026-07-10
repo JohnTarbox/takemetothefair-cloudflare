@@ -1,7 +1,7 @@
 /**
  * Tests for the newsletter double opt-in token helper. Pattern mirrors
- * the vendor-claim-token approach — same hash semantics, same TTL,
- * same single-use behavior; the difference is state lives inline on
+ * the vendor-claim-token approach — same hash + single-use semantics; the
+ * TTL was widened to 14 days (OPE-168, was 24h) and state lives inline on
  * newsletter_subscribers rather than in a separate tokens table.
  *
  * Uses better-sqlite3 against an in-memory schema rather than full D1
@@ -17,6 +17,7 @@ import { drizzle } from "drizzle-orm/better-sqlite3";
 import {
   issueNewsletterConfirmationToken,
   consumeNewsletterConfirmationToken,
+  NEWSLETTER_CONFIRM_TTL_DAYS,
 } from "../../lib/email/newsletter-confirm-token";
 
 const SCHEMA_SQL = `
@@ -65,8 +66,12 @@ describe("issueNewsletterConfirmationToken", () => {
     const { rawToken, expiresAt } = await issueNewsletterConfirmationToken(db, "user@example.com");
 
     expect(rawToken).toMatch(/^[0-9a-f]{64}$/);
-    expect(expiresAt.getTime()).toBeGreaterThan(Date.now());
-    expect(expiresAt.getTime()).toBeLessThanOrEqual(Date.now() + 24 * 60 * 60 * 1000);
+    // OPE-168 — the window is 14 days (was 24h); assert against the constant so
+    // a future accidental narrowing (the kmgr94-style drift) trips this test.
+    expect(NEWSLETTER_CONFIRM_TTL_DAYS).toBe(14);
+    const ttlMs = NEWSLETTER_CONFIRM_TTL_DAYS * 24 * 60 * 60 * 1000;
+    expect(expiresAt.getTime()).toBeGreaterThan(Date.now() + ttlMs - 60_000);
+    expect(expiresAt.getTime()).toBeLessThanOrEqual(Date.now() + ttlMs + 1000);
 
     const row = sqlite
       .prepare(

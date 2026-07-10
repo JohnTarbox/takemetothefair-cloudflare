@@ -37,7 +37,7 @@ const COPY_BY_STATUS: Record<string, StatusCopy> = {
     icon: Clock,
     iconClass: "text-yellow-600",
     heading: "This link has expired",
-    body: "Confirmation links are valid for 24 hours. Submit your email again on any page footer to get a fresh confirmation email.",
+    body: "Confirmation links are valid for 14 days. No problem — just submit your email again in the footer of any page and we'll send a fresh confirmation link right away.",
   },
   not_found: {
     icon: AlertCircle,
