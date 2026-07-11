@@ -75,7 +75,7 @@ export function HomeSearch() {
             type="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search fairs, festivals, vendors…"
+            placeholder="Search fairs & festivals…"
             aria-label="Keyword"
             className="h-[52px] border-0 bg-transparent px-0 text-base text-foreground shadow-none focus-visible:ring-0"
           />
