@@ -5,6 +5,9 @@ import {
   sitemapXmlHeaders,
   type SitemapUrl,
 } from "@/lib/sitemap-xml";
+import { getCloudflareDb } from "@/lib/cloudflare";
+import { newsletterIssues } from "@/lib/db/schema";
+import { desc, isNotNull } from "drizzle-orm";
 
 const NOW = () => new Date();
 
@@ -152,6 +155,13 @@ function buildStaticUrls(): SitemapUrl[] {
       priority: 0.7,
     },
     {
+      // OPE-170 — public newsletter archive.
+      url: `${SITEMAP_BASE_URL}/newsletter`,
+      lastModified: NOW(),
+      changeFrequency: "weekly",
+      priority: 0.6,
+    },
+    {
       url: `${SITEMAP_BASE_URL}/about`,
       lastModified: NOW(),
       changeFrequency: "monthly",
@@ -203,8 +213,30 @@ function buildStaticUrls(): SitemapUrl[] {
 }
 
 export async function GET(): Promise<Response> {
-  // Static URLs can cache aggressively — they only change when we deploy.
-  return new Response(serializeUrlset(buildStaticUrls()), {
+  const urls = buildStaticUrls();
+  // OPE-170 — append each SENT newsletter issue (sent_at not null; test-only
+  // records stay out of the index). Best-effort: the static URLs still serve if
+  // the query fails.
+  try {
+    const db = getCloudflareDb();
+    const issues = await db
+      .select({ slug: newsletterIssues.slug, sentAt: newsletterIssues.sentAt })
+      .from(newsletterIssues)
+      .where(isNotNull(newsletterIssues.sentAt))
+      .orderBy(desc(newsletterIssues.sentAt))
+      .limit(500);
+    for (const iss of issues) {
+      urls.push({
+        url: `${SITEMAP_BASE_URL}/newsletter/${iss.slug}`,
+        lastModified: iss.sentAt ?? NOW(),
+        changeFrequency: "yearly",
+        priority: 0.5,
+      });
+    }
+  } catch {
+    /* best-effort — static URLs still serve */
+  }
+  return new Response(serializeUrlset(urls), {
     headers: sitemapXmlHeaders(21600), // 6 hours
   });
 }
