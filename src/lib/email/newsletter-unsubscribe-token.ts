@@ -42,6 +42,15 @@ function timingSafeEqual(a: string, b: string): boolean {
   return diff === 0;
 }
 
+/** The signing secret for unsubscribe tokens. Reuses AUTH_SECRET (a stable
+ *  server secret) unless a dedicated NEWSLETTER_UNSUBSCRIBE_SECRET is set. Kept
+ *  here (not in the route file) so route modules only export handlers. */
+export function resolveUnsubscribeSecret(
+  env: Record<string, string | undefined>
+): string | undefined {
+  return env.NEWSLETTER_UNSUBSCRIBE_SECRET || env.AUTH_SECRET || env.NEXTAUTH_SECRET;
+}
+
 /** Sign a one-click unsubscribe token for `email`. */
 export async function signUnsubscribeToken(email: string, secret: string): Promise<string> {
   const payload = b64urlEncode(new TextEncoder().encode(email.trim().toLowerCase()));

@@ -13,18 +13,13 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { newsletterSubscribers } from "@/lib/db/schema";
-import { verifyUnsubscribeToken } from "@/lib/email/newsletter-unsubscribe-token";
+import {
+  verifyUnsubscribeToken,
+  resolveUnsubscribeSecret,
+} from "@/lib/email/newsletter-unsubscribe-token";
 import { getSiteUrl } from "@/lib/email/send";
 import { logError } from "@/lib/logger";
 import { eq } from "drizzle-orm";
-
-/** The signing secret for unsubscribe tokens. Reuses AUTH_SECRET (a stable
- *  server secret) unless a dedicated NEWSLETTER_UNSUBSCRIBE_SECRET is set. */
-export function resolveUnsubscribeSecret(
-  env: Record<string, string | undefined>
-): string | undefined {
-  return env.NEWSLETTER_UNSUBSCRIBE_SECRET || env.AUTH_SECRET || env.NEXTAUTH_SECRET;
-}
 
 function redirectTo(status: string) {
   return NextResponse.redirect(`${getSiteUrl()}/newsletter/unsubscribed?status=${status}`, {
