@@ -221,9 +221,12 @@ export function newsletterDigestTemplate(args: {
   contentText?: string;
   unsubscribeUrl: string;
   viewInBrowserUrl: string;
+  /** CAN-SPAM §5(a)(5) physical postal address. Falls back to a region line. */
+  mailingAddress?: string;
 }): { subject: string; html: string; text: string } {
+  const mailing = args.mailingAddress?.trim() || "Meet Me at the Fair, New England";
   const viewLine = `<div style="text-align:center;font-size:12px;color:#8A8178;margin:0 0 16px;"><a href="${args.viewInBrowserUrl}" style="color:#1E2761;">View this email in your browser</a></div>`;
-  const unsubFooter = `<div style="margin-top:28px;padding-top:16px;border-top:1px solid #E5DFD6;font-size:12px;line-height:1.5;color:#8A8178;">You're receiving this because you subscribed to the Meet Me at the Fair weekend digest.<br><a href="${args.unsubscribeUrl}" style="color:#8A8178;text-decoration:underline;">Unsubscribe</a> &middot; Meet Me at the Fair &middot; New England</div>`;
+  const unsubFooter = `<div style="margin-top:28px;padding-top:16px;border-top:1px solid #E5DFD6;font-size:12px;line-height:1.5;color:#8A8178;">You're receiving this because you subscribed to the Meet Me at the Fair weekend digest.<br><a href="${args.unsubscribeUrl}" style="color:#8A8178;text-decoration:underline;">Unsubscribe</a><br>${escapeHtmlText(mailing)}</div>`;
   const html = baseLayout({
     heading: args.subject,
     body: `${viewLine}${args.contentHtml}${unsubFooter}`,
@@ -235,7 +238,11 @@ export function newsletterDigestTemplate(args: {
       .replace(/<[^>]+>/g, " ")
       .replace(/\s+/g, " ")
       .trim();
-  const text = `${args.subject}\n\nView this issue in your browser: ${args.viewInBrowserUrl}\n\n${bodyText}\n\n—\nYou're receiving this because you subscribed to the Meet Me at the Fair weekend digest.\nUnsubscribe: ${args.unsubscribeUrl}`;
+  const text = `${args.subject}\n\nView this issue in your browser: ${args.viewInBrowserUrl}\n\n${bodyText}\n\n—\nYou're receiving this because you subscribed to the Meet Me at the Fair weekend digest.\nUnsubscribe: ${args.unsubscribeUrl}\n${mailing}`;
 
   return { subject: args.subject, html, text };
+}
+
+function escapeHtmlText(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }

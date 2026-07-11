@@ -39,6 +39,11 @@ CAL2_VIEWS = "true"
 # To go live, flip to "true" here AND on the MCP Worker (mcp-server/wrangler.toml),
 # then redeploy — or override both in the dashboard.
 EMAIL_REPLY_ENABLED = "false"
+# OPE-169 — newsletter BROADCAST gate. POST /api/admin/newsletter/send refuses a
+# real broadcast to the subscriber list unless this is "true" (a single-address
+# test_recipient send is always allowed). Shipped OFF (OPE-6 customer-facing mass
+# send). Flip to "true" + redeploy, or override in the dashboard, to broadcast.
+NEWSLETTER_SEND_ENABLED = "false"
 
 [[d1_databases]]
 binding = "DB"
