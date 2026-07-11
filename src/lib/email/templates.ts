@@ -205,3 +205,37 @@ export function newsletterConfirmTemplate(args: { confirmUrl: string }): {
     text,
   };
 }
+
+/**
+ * OPE-169 — the weekly digest broadcast. Wraps caller-provided issue content
+ * (event / vendor / featured slots) in the shared email shell, with a
+ * "view in browser" link at the top and a one-click unsubscribe footer at the
+ * bottom (CAN-SPAM). `unsubscribeUrl` is per-recipient (signed token);
+ * `viewInBrowserUrl` is the public /newsletter/{slug} page.
+ */
+export function newsletterDigestTemplate(args: {
+  subject: string;
+  /** Rendered issue body HTML (the caller builds the event/vendor/featured slots). */
+  contentHtml: string;
+  /** Plain-text alternative for the body; when omitted, derived by stripping tags. */
+  contentText?: string;
+  unsubscribeUrl: string;
+  viewInBrowserUrl: string;
+}): { subject: string; html: string; text: string } {
+  const viewLine = `<div style="text-align:center;font-size:12px;color:#8A8178;margin:0 0 16px;"><a href="${args.viewInBrowserUrl}" style="color:#1E2761;">View this email in your browser</a></div>`;
+  const unsubFooter = `<div style="margin-top:28px;padding-top:16px;border-top:1px solid #E5DFD6;font-size:12px;line-height:1.5;color:#8A8178;">You're receiving this because you subscribed to the Meet Me at the Fair weekend digest.<br><a href="${args.unsubscribeUrl}" style="color:#8A8178;text-decoration:underline;">Unsubscribe</a> &middot; Meet Me at the Fair &middot; New England</div>`;
+  const html = baseLayout({
+    heading: args.subject,
+    body: `${viewLine}${args.contentHtml}${unsubFooter}`,
+  });
+
+  const bodyText =
+    args.contentText ??
+    args.contentHtml
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  const text = `${args.subject}\n\nView this issue in your browser: ${args.viewInBrowserUrl}\n\n${bodyText}\n\n—\nYou're receiving this because you subscribed to the Meet Me at the Fair weekend digest.\nUnsubscribe: ${args.unsubscribeUrl}`;
+
+  return { subject: args.subject, html, text };
+}
