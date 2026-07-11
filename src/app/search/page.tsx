@@ -25,14 +25,20 @@ export const metadata: Metadata = {
 };
 
 interface SearchPageProps {
-  searchParams: Promise<{ q?: string }>;
+  // OPE-172 — `query` is an alias for `q` (homepage hero + bookmarked
+  // /events?query= links); `state` is the optional NE region filter.
+  searchParams: Promise<{ q?: string; query?: string; state?: string }>;
 }
 
 export const dynamic = "force-dynamic";
 
 export default async function SearchPage({ searchParams }: SearchPageProps) {
   const params = await searchParams;
-  const q = params.q?.trim() || "";
+  const q = (params.q ?? params.query)?.trim() || "";
+  // OPE-172 — optional region filter (events only; vendors travel across states).
+  const stateCode = params.state?.trim().toUpperCase();
+  const stateFilter =
+    stateCode && /^[A-Z]{2}$/.test(stateCode) ? eq(events.stateCode, stateCode) : undefined;
 
   if (!q || q.length < 2) {
     return (
@@ -70,7 +76,9 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
           isPublicEventStatus(),
           // A2 (Dev backlog 2026-06-05): 24h end-of-day grace per upcomingEndPredicate.
           upcomingEndPredicate(new Date()),
-          sql`(LOWER(${events.name}) LIKE LOWER(${searchTerm}) OR LOWER(${events.description}) LIKE LOWER(${searchTerm}))`
+          sql`(LOWER(${events.name}) LIKE LOWER(${searchTerm}) OR LOWER(${events.description}) LIKE LOWER(${searchTerm}))`,
+          // OPE-172 — honor the homepage region selector (undefined = all NE).
+          stateFilter
         )
       )
       .orderBy(events.startDate)

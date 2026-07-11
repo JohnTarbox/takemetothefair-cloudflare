@@ -3,18 +3,18 @@
 /**
  * C2 P1 (2026-06-12) — above-the-fold homepage search.
  *
- * The directory's core job-to-be-done is "find an event near me, soon." This
- * is the hero's primary action. It composes existing /events filters — it does
- * NOT introduce new query semantics:
- *   - keyword  → /events?query=
+ * The directory's core job-to-be-done is "find an event OR vendor near me." The
+ * hero's primary action is:
+ *   - keyword  → /search?q=  (OPE-172 — the global search returns events AND
+ *                vendors, so the "…vendors" placeholder promise is real; carries
+ *                the region selection as &state=<code>, which /search applies to
+ *                the events section)
+ * The event-specific quick actions still target /events (they're event filters
+ * /search doesn't model):
  *   - state    → /events?state=<2-letter stateCode>
- *   - Near me  → /events?sort=nearest  (events-view already prompts for browser
- *                geolocation and computes distance via src/lib/geo.ts)
- *
- * Submitting always navigates to /events with the selected params (C2 decision
- * #4) — the homepage weekend peek is the preview; this is the tool that lands
- * the visitor in results. The "When" date chips are deferred to C2 P2 (a date
- * filter on /events doesn't exist yet).
+ *   - Near me  → /events?sort=nearest  (events-view prompts for geolocation)
+ *   - category → /events?category=
+ * An empty keyword falls back to /events (browse), since /search needs ≥2 chars.
  */
 
 import { useState } from "react";
@@ -47,6 +47,7 @@ export function HomeSearch() {
   const [query, setQuery] = useState("");
   const [stateCode, setStateCode] = useState("");
 
+  // Event-specific quick actions (state / near-me / when) → /events.
   function navigate(extra?: Record<string, string>) {
     const params = new URLSearchParams();
     const q = query.trim();
@@ -57,17 +58,32 @@ export function HomeSearch() {
     router.push(qs ? `/events?${qs}` : "/events");
   }
 
+  // OPE-172 — the keyword search goes to the global /search (events + vendors),
+  // carrying the region as &state=. An empty keyword falls back to /events
+  // (browse), because /search needs at least 2 characters.
+  function search() {
+    const term = query.trim();
+    if (!term) {
+      navigate();
+      return;
+    }
+    const params = new URLSearchParams();
+    params.set("q", term);
+    if (stateCode) params.set("state", stateCode);
+    router.push(`/search?${params.toString()}`);
+  }
+
   return (
     <div className="mt-5 max-w-[660px] text-left">
       {/* "Printed" search bar — navy keyline + hard offset shadow, amber action. */}
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          navigate();
+          search();
         }}
         className="flex flex-col items-stretch overflow-hidden rounded-[14px] border-[1.5px] border-secondary bg-card shadow-[6px_6px_0_rgb(var(--secondary)/0.12)] sm:flex-row"
         role="search"
-        aria-label="Search events"
+        aria-label="Search events and vendors"
       >
         <div className="flex flex-1 items-center gap-2.5 px-4">
           <Search className="h-5 w-5 flex-none text-muted-foreground" aria-hidden="true" />
@@ -75,7 +91,7 @@ export function HomeSearch() {
             type="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search fairs & festivals…"
+            placeholder="Search fairs, festivals, vendors…"
             aria-label="Keyword"
             className="h-[52px] border-0 bg-transparent px-0 text-base text-foreground shadow-none focus-visible:ring-0"
           />
