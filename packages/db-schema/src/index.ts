@@ -1380,6 +1380,30 @@ export const newsletterSubscribers = sqliteTable(
 );
 
 /**
+ * OPE-170 / OPE-169 — one row per sent newsletter issue. Written by the
+ * broadcast send path (OPE-169) at send time; read by the public archive
+ * (`/newsletter` + `/newsletter/{slug}`, OPE-170). `html` is the fully-rendered
+ * issue body; the web page wraps it in the site shell. `sentAt` is null only for
+ * a draft record created before the send completes.
+ */
+export const newsletterIssues = sqliteTable(
+  "newsletter_issues",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    slug: text("slug").notNull().unique(),
+    subject: text("subject").notNull(),
+    html: text("html").notNull(),
+    sentAt: integer("sent_at", { mode: "timestamp" }),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  },
+  (table) => ({
+    sentAtIdx: index("idx_newsletter_issues_sent_at").on(table.sentAt),
+  })
+);
+
+/**
  * Content link index. Maintained by `syncContentLinks` whenever a blog post
  * body is written; never edited manually.
  *
