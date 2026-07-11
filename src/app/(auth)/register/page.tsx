@@ -65,7 +65,9 @@ interface TurnstileOptions {
   callback?: (token: string) => void;
   "expired-callback"?: () => void;
   "error-callback"?: (error: string) => void;
-  size?: "normal" | "compact" | "invisible";
+  // OPE-173 — "invisible" is NOT a valid explicit-render size (Turnstile throws);
+  // invisible/managed behavior is set on the sitekey in the Cloudflare dashboard.
+  size?: "normal" | "compact" | "flexible";
   theme?: "light" | "dark" | "auto";
 }
 
@@ -138,10 +140,12 @@ function RegisterForm() {
       }
     }
 
-    // Render invisible Turnstile widget
+    // OPE-173 — render with the sitekey's own widget mode (no explicit `size`;
+    // "invisible" is invalid here and threw on init, blocking registration). If
+    // the sitekey is an invisible/managed widget it auto-issues a token; if it's
+    // interactive it shows a checkbox in the (now visible) container below.
     turnstileWidgetId.current = window.turnstile.render(turnstileContainerRef.current, {
       sitekey: turnstileSiteKey,
-      size: "invisible",
       callback: (token: string) => {
         setTurnstileToken(token);
       },
@@ -342,8 +346,9 @@ function RegisterForm() {
         />
       )}
 
-      {/* Invisible Turnstile widget container */}
-      <div ref={turnstileContainerRef} className="hidden" />
+      {/* OPE-173 — Turnstile widget container. Visible so an interactive/managed
+          challenge is solvable; an invisible-mode sitekey renders nothing here. */}
+      <div ref={turnstileContainerRef} className="flex justify-center" />
 
       <Card className="w-full max-w-md">
         <CardHeader>
