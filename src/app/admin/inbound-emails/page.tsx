@@ -158,6 +158,15 @@ export default function AdminInboundEmailsPage() {
   const [replyConfirm, setReplyConfirm] = useState(false);
   const [replySending, setReplySending] = useState(false);
   const [replyMsg, setReplyMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  // OPE-178 — "log an external reply" composer (records a send made off-platform,
+  // e.g. from Gmail; never sends email).
+  const [logExtOpenId, setLogExtOpenId] = useState<string | null>(null);
+  const [logExtTo, setLogExtTo] = useState("");
+  const [logExtSubject, setLogExtSubject] = useState("");
+  const [logExtBody, setLogExtBody] = useState("");
+  const [logExtProvider, setLogExtProvider] = useState("gmail");
+  const [logExtSending, setLogExtSending] = useState(false);
+  const [logExtMsg, setLogExtMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   // OPE-156 — full message body, fetched on demand when a row is expanded
   // (kept out of the list payload to keep it lean). Cached per row id.
   const [bodyDetail, setBodyDetail] = useState<
@@ -314,6 +323,51 @@ export default function AdminInboundEmailsPage() {
       }
     },
     [replySubject, replyBody, fetchRows]
+  );
+
+  // OPE-178 — open/close + submit the "log external reply" composer.
+  const openLogExt = useCallback((row: InboundEmailRow) => {
+    setLogExtOpenId(row.id);
+    setLogExtTo(row.fromAddress);
+    setLogExtSubject(`Re: ${row.subject || "your message"}`.slice(0, 200));
+    setLogExtBody("");
+    setLogExtProvider("gmail");
+    setLogExtMsg(null);
+  }, []);
+
+  const logExternal = useCallback(
+    async (rowId: string) => {
+      setLogExtSending(true);
+      setLogExtMsg(null);
+      try {
+        const res = await fetch(
+          `/api/admin/inbound-emails/${encodeURIComponent(rowId)}/log-external-reply`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              recipient: logExtTo,
+              subject: logExtSubject,
+              body: logExtBody,
+              provider: logExtProvider,
+            }),
+          }
+        );
+        const j = (await res.json().catch(() => ({}))) as { error?: string; message?: string };
+        if (!res.ok) {
+          setLogExtMsg({ kind: "err", text: j.message || j.error || `HTTP ${res.status}` });
+        } else {
+          setLogExtMsg({ kind: "ok", text: "Logged. It now shows in the email history." });
+          setLogExtBody("");
+          void fetchRows();
+        }
+      } catch (e) {
+        setLogExtMsg({ kind: "err", text: e instanceof Error ? e.message : "Failed to log." });
+      } finally {
+        setLogExtSending(false);
+      }
+    },
+    [logExtTo, logExtSubject, logExtBody, logExtProvider, fetchRows]
   );
 
   const handleRetry = async (messageRowId: string) => {
@@ -1147,6 +1201,90 @@ export default function AdminInboundEmailsPage() {
                                     className="rounded border border-navy px-3 py-1 text-xs text-navy hover:bg-navy hover:text-white"
                                   >
                                     Reply
+                                  </button>
+                                )}
+                              </div>
+
+                              {/* OPE-178 — log a reply that was sent OFF-platform
+                                  (e.g. from Gmail) so the email history is complete.
+                                  Records a ledger row only; never sends email. */}
+                              <div className="mt-2">
+                                {logExtOpenId === row.id ? (
+                                  <div className="space-y-2" onClick={(e) => e.stopPropagation()}>
+                                    <div className="flex items-center justify-between">
+                                      <span className="font-medium">
+                                        Log an external reply (sent elsewhere)
+                                      </span>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setLogExtOpenId(null);
+                                          setLogExtMsg(null);
+                                        }}
+                                        className="text-xs text-muted-foreground hover:text-foreground"
+                                      >
+                                        Close
+                                      </button>
+                                    </div>
+                                    <div className="flex gap-2">
+                                      <input
+                                        type="text"
+                                        value={logExtTo}
+                                        onChange={(e) => setLogExtTo(e.target.value)}
+                                        className="flex-1 rounded border border-border bg-card px-2 py-1 text-sm"
+                                        placeholder="Recipient"
+                                      />
+                                      <input
+                                        type="text"
+                                        value={logExtProvider}
+                                        onChange={(e) => setLogExtProvider(e.target.value)}
+                                        className="w-28 rounded border border-border bg-card px-2 py-1 text-sm"
+                                        placeholder="Provider"
+                                        title="Where it was sent from, e.g. gmail"
+                                      />
+                                    </div>
+                                    <input
+                                      type="text"
+                                      value={logExtSubject}
+                                      onChange={(e) => setLogExtSubject(e.target.value)}
+                                      className="w-full rounded border border-border bg-card px-2 py-1 text-sm"
+                                      placeholder="Subject"
+                                    />
+                                    <textarea
+                                      value={logExtBody}
+                                      onChange={(e) => setLogExtBody(e.target.value)}
+                                      rows={4}
+                                      className="w-full rounded border border-border bg-card px-2 py-1 text-sm"
+                                      placeholder="Paste what you sent…"
+                                    />
+                                    {logExtMsg && (
+                                      <div
+                                        className={`text-xs ${logExtMsg.kind === "ok" ? "text-green-700" : "text-terracotta"}`}
+                                      >
+                                        {logExtMsg.text}
+                                      </div>
+                                    )}
+                                    <button
+                                      type="button"
+                                      disabled={
+                                        logExtSending || !logExtTo.trim() || !logExtBody.trim()
+                                      }
+                                      onClick={() => void logExternal(row.id)}
+                                      className="rounded border border-border px-3 py-1 text-xs text-foreground hover:bg-muted disabled:opacity-50"
+                                    >
+                                      {logExtSending ? "Logging…" : "Log this reply"}
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      openLogExt(row);
+                                    }}
+                                    className="text-xs text-muted-foreground underline hover:text-foreground"
+                                  >
+                                    Log an external reply
                                   </button>
                                 )}
                               </div>
