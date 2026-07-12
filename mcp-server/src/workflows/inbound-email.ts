@@ -299,6 +299,14 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     let result: HandlerResult;
     let caughtError: string | null = null;
 
+    // OPE-174 — record which pipeline the classified row was dispatched to.
+    // Previously `routed_to_workflow` was NEVER written (0/126 rows in prod), so
+    // its NULL couldn't be read as "routing didn't happen." Derive it up front
+    // from the resolved intent so mark-done can persist it on every path
+    // (including a caught dispatch error, where the intended route is still known).
+    const routedToWorkflow =
+      intent === "submit" || intent === "new_event" ? "submit-pipeline" : `handler:${intent}`;
+
     try {
       if (intent === "submit" || intent === "new_event") {
         result = await this.runSubmitPipeline(step, messageRowId);
@@ -664,6 +672,14 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             // matches pre-PR-B rows and keeps "did extraction even run?"
             // queryable.
             extractionMethod: result.extractionMethod ?? null,
+            // OPE-174 — record which pipeline handled this row (was never
+            // written before). Always set; queryable as "did routing happen?".
+            routedToWorkflow,
+            // OPE-174 — persist the no-URL / prose-failed salvage reason when the
+            // handler set one. CONDITIONAL spread (not `?? null`) so we never
+            // overwrite the extract-failed path's own direct write at
+            // submit/persist-extract-fail-reason, which runs before mark-done.
+            ...(result.extractFailReason ? { extractFailReason: result.extractFailReason } : {}),
             // K7 Tier 1 (analyst, 2026-05-31): thin extractions (AI silent
             // but deterministic salvage produced a partial event) flip
             // flagged_for_review so /admin/inbound-emails surfaces them as
@@ -901,6 +917,9 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         replyKind,
         replyParams: { subject, hasAttachments: rowSnapshot.attachmentCount > 0 },
         status: "replied",
+        // OPE-174 — record why we bounced so URL-less submissions are visible in
+        // source-quality telemetry (was NULL on this branch before).
+        extractFailReason: attemptedProse ? "prose-extract-failed" : "no-fetchable-url",
       };
     }
 
@@ -1882,6 +1901,10 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         replyKind: hasAttachments ? "no-url-prose-failed" : "no-url",
         replyParams: { subject, hasAttachments },
         status: "replied",
+        // OPE-174 — same telemetry gap as the single-source no-URL branch: record
+        // the bounce reason. `prose-extract-failed` covers the attachments-OCR'd-
+        // to-noise case (the reply_kind already folds attachments into that bucket).
+        extractFailReason: hasAttachments ? "prose-extract-failed" : "no-fetchable-url",
       };
     }
 

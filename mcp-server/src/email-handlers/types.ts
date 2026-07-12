@@ -142,6 +142,14 @@ export interface HandlerResult {
    *  triggers inbound_emails.flagged_for_review=1 at mark-done so the
    *  operator review queue picks it up. */
   extractionMethod?: "json-ld" | "ai" | "free-text" | "mixed" | "thin" | null;
+  /** OPE-174 — categorical failure bucket for the no-URL / prose-failed salvage
+   *  branches (`no-fetchable-url`, `prose-extract-failed`), persisted to
+   *  inbound_emails.extract_fail_reason at mark-done. Previously these branches
+   *  bounced without recording any reason, so URL-less submissions were invisible
+   *  in the source-quality telemetry (unlike the extract-failed path, which has
+   *  logged a reason since K7.4). mark-done writes it only when set, so it never
+   *  clobbers the extract-failed path's own direct write. */
+  extractFailReason?: string | null;
 }
 
 /**
