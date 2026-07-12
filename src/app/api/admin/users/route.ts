@@ -60,6 +60,9 @@ export const GET = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
         name: users.name,
         role: users.role,
         createdAt: users.createdAt,
+        // OPE-177 — surface verification state so the admin list can show a
+        // "mark verified" affordance for stuck accounts.
+        emailVerified: users.emailVerified,
       })
       .from(users)
       .orderBy(users.email);

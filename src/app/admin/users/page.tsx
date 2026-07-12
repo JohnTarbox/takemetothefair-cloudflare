@@ -17,6 +17,8 @@ interface User {
   name: string | null;
   role: string;
   createdAt: string;
+  // OPE-177 — verification timestamp (null = unverified).
+  emailVerified: string | null;
 }
 
 const roleColors: Record<string, "default" | "success" | "warning" | "danger" | "info"> = {
@@ -65,6 +67,25 @@ export default function AdminUsersPage() {
       }
     } catch (error) {
       console.error("Failed to update user role:", error);
+    }
+  };
+
+  // OPE-177 — clear a stuck account by marking its email verified.
+  const handleMarkVerified = async (userId: string) => {
+    try {
+      const res = await fetch(`/api/admin/users/${userId}/mark-verified`, { method: "POST" });
+      const data = (await res.json().catch(() => ({}))) as { emailVerified?: string };
+      if (res.ok) {
+        setUsers((prev) =>
+          prev.map((u) =>
+            u.id === userId
+              ? { ...u, emailVerified: data.emailVerified ?? new Date().toISOString() }
+              : u
+          )
+        );
+      }
+    } catch (error) {
+      console.error("Failed to mark user verified:", error);
     }
   };
 
@@ -147,6 +168,20 @@ export default function AdminUsersPage() {
                     </td>
                     <td className="py-3 px-4">
                       <div className="flex items-center justify-end gap-2">
+                        {/* OPE-177 — verification state + manual override for
+                            accounts whose verification email never arrived. */}
+                        {user.emailVerified ? (
+                          <Badge variant="success">Verified</Badge>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => void handleMarkVerified(user.id)}
+                            className="rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-muted"
+                            title="Manually mark this user's email as verified"
+                          >
+                            Mark verified
+                          </button>
+                        )}
                         <select
                           value={user.role}
                           onChange={(e) => handleRoleChange(user.id, e.target.value)}
