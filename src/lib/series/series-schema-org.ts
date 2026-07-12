@@ -49,6 +49,32 @@ export function derivedEventStatus(lifecycleStatus?: string | null): string | un
   return LIFECYCLE_TO_SCHEMA_ORG[lifecycleStatus as EventLifecycle] ?? undefined;
 }
 
+/**
+ * OPE-182 — `eventStatus` for an already-dated node, matching the single-Event
+ * builder's default: the lifecycle-derived status when known, else
+ * `EventScheduled`. Both builders below only call this for a node they've already
+ * confirmed is dated (they suppress dateless nodes entirely), so the future-tense
+ * `EventScheduled` default is always valid. This is the parity fix — before it, a
+ * series/occurrence whose lifecycle_status was null (the common case) emitted NO
+ * eventStatus at all, unlike its single-Event peers which always carry one.
+ */
+export function eventStatusForDatedNode(lifecycleStatus?: string | null): string {
+  return derivedEventStatus(lifecycleStatus) ?? "https://schema.org/EventScheduled";
+}
+
+/**
+ * OPE-182 — `eventAttendanceMode`, mirroring EventSchema.tsx: `OnlineEvent…` only
+ * when the lifecycle is MOVED_ONLINE, else `OfflineEvent…`. Always emitted (a
+ * Google-recommended field with a sensible default). The series builder omitted
+ * it entirely before this, the biggest single parity gap vs. the single-Event
+ * builder.
+ */
+export function eventAttendanceModeFor(lifecycleStatus?: string | null): string {
+  return lifecycleStatus === "MOVED_ONLINE"
+    ? "https://schema.org/OnlineEventAttendanceMode"
+    : "https://schema.org/OfflineEventAttendanceMode";
+}
+
 /** `image` fallback chain (the OPE-18 default order, matching the brief):
  *  event/occurrence image → venue hero → promoter logo → series image. First
  *  non-empty wins; undefined when the whole chain is empty. */
@@ -202,11 +228,12 @@ function occurrenceNode(
   // flags it. Falls back to "Location to be announced" when undated/venueless.
   node.location = buildPlaceJsonLd(occ.venue ?? null);
 
-  // OPE-18 — WARNING-set parity on each subEvent (the nodes Google validates as
-  // Events). Each is emit-when-known so a real top-level value is never
-  // overwritten by a derived one.
-  const eventStatus = derivedEventStatus(occ.lifecycleStatus);
-  if (eventStatus) node.eventStatus = eventStatus;
+  // OPE-18/OPE-182 — WARNING-set parity on each subEvent (the nodes Google
+  // validates as Events). eventStatus + eventAttendanceMode always emit with the
+  // single-Event builder's defaults (the node is already dated here); the rest
+  // stay emit-when-known so a real top-level value is never overwritten.
+  node.eventStatus = eventStatusForDatedNode(occ.lifecycleStatus);
+  node.eventAttendanceMode = eventAttendanceModeFor(occ.lifecycleStatus);
   if (occ.description) node.description = occ.description;
   // image fallback chain: occurrence image → venue hero → promoter logo → series image.
   const image = derivedImage(
@@ -257,12 +284,14 @@ export function buildEventSeriesJsonLd(
   if (series.endDateIso) node.endDate = series.endDateIso;
   if (series.description) node.description = series.description;
   if (series.imageUrl) node.image = series.imageUrl;
-  // OPE-18 — series-level WARNING-set parity. eventStatus from the hero
-  // occurrence's lifecycle; organizer from the series promoter. (offers/
-  // performer are per-occurrence concerns, not series-level — intentionally
-  // omitted here.)
-  const eventStatus = derivedEventStatus(series.lifecycleStatus);
-  if (eventStatus) node.eventStatus = eventStatus;
+  // OPE-18/OPE-182 — series-level WARNING-set parity. eventStatus + attendance
+  // mode always emit with the single-Event builder's defaults (the series node is
+  // already dated — the OPE-32 guard above returned null otherwise); eventStatus
+  // still prefers the hero occurrence's lifecycle when set. organizer stays
+  // emit-when-known. (offers/performer are per-occurrence concerns, not
+  // series-level — intentionally omitted here.)
+  node.eventStatus = eventStatusForDatedNode(series.lifecycleStatus);
+  node.eventAttendanceMode = eventAttendanceModeFor(series.lifecycleStatus);
   const organizer = derivedOrganizer(series.organizer);
   if (organizer) node.organizer = organizer;
   // OPE-32 — emit only the dated occurrences as subEvents; a dateless subEvent
