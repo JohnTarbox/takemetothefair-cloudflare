@@ -258,10 +258,19 @@ export function EventSchema({
 
   // Schema.org eventStatus: prefer the lifecycle column (post-PR-#157), fall
   // back to the legacy datesConfirmed heuristic for any caller / fixture not
-  // yet passing lifecycleStatus. LIFECYCLE_TO_SCHEMA_ORG.OCCURRED is null —
-  // we omit eventStatus for past events since schema.org's vocabulary has no
-  // OCCURRED equivalent and emitting EventScheduled for a past event sends
-  // a misleading signal to crawlers.
+  // yet passing lifecycleStatus.
+  //
+  // OPE-183 (2026-07-12) — DECISION, keep the two builders aligned: a past /
+  // OCCURRED event maps to null (LIFECYCLE_TO_SCHEMA_ORG.OCCURRED === null,
+  // schema.org has no OCCURRED value) and THEN takes the dated-fallback below to
+  // `EventScheduled` — it is NOT omitted. That is intentional and spec-correct:
+  // schema.org's EventScheduled is defined as "The event is taking place OR HAS
+  // TAKEN PLACE on the startDate as scheduled" and is the value assumed by
+  // default when eventStatus is absent — so emitting it on a past event is
+  // accurate, and suppressing it would change nothing semantically. The series
+  // builder (series-schema-org.ts `eventStatusForDatedNode`) mirrors this exactly.
+  // If you ever change one, change both and update docs/SCHEMA_ORG.md. (An
+  // earlier version of this comment wrongly claimed past events were omitted.)
   const lifecycleSchemaStatus = lifecycleStatus
     ? (LIFECYCLE_TO_SCHEMA_ORG[lifecycleStatus as EventLifecycle] ?? null)
     : null;

@@ -53,10 +53,18 @@ export function derivedEventStatus(lifecycleStatus?: string | null): string | un
  * OPE-182 — `eventStatus` for an already-dated node, matching the single-Event
  * builder's default: the lifecycle-derived status when known, else
  * `EventScheduled`. Both builders below only call this for a node they've already
- * confirmed is dated (they suppress dateless nodes entirely), so the future-tense
+ * confirmed is dated (they suppress dateless nodes entirely), so the
  * `EventScheduled` default is always valid. This is the parity fix — before it, a
  * series/occurrence whose lifecycle_status was null (the common case) emitted NO
  * eventStatus at all, unlike its single-Event peers which always carry one.
+ *
+ * OPE-183 (2026-07-12) — DECISION (documented in docs/SCHEMA_ORG.md): a past /
+ * OCCURRED node also lands on `EventScheduled` here (OCCURRED maps to null, then
+ * the ?? fallback fires). That is intentional and spec-correct — schema.org's
+ * EventScheduled means "taking place OR has taken place on the startDate as
+ * scheduled" and is the assumed default when absent, so it's accurate for past
+ * events and suppressing it would change nothing. This mirrors EventSchema.tsx
+ * exactly; keep the two builders aligned if you ever revisit it.
  */
 export function eventStatusForDatedNode(lifecycleStatus?: string | null): string {
   return derivedEventStatus(lifecycleStatus) ?? "https://schema.org/EventScheduled";

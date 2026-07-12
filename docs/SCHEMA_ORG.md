@@ -496,6 +496,23 @@ When you fill in event, venue, or vendor details, that information directly impa
 
 ## For Developers
 
+### `eventStatus` on past / OCCURRED events — documented decision (OPE-183)
+
+**Decision (2026-07-12): past/OCCURRED events emit `eventStatus: EventScheduled`, in BOTH builders. Do not diverge them.**
+
+There are two Event-JSON-LD builders and they must agree on this:
+
+| Builder                                   | File                                  | Where the fallback fires                                                             |
+| ----------------------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------ |
+| Single-event (`@type: Event`)             | `src/components/seo/EventSchema.tsx`  | the `eventStatus = lifecycleSchemaStatus ?? (dated ? EventScheduled : …)` expression |
+| Series (`@type: EventSeries` + subEvents) | `src/lib/series/series-schema-org.ts` | `eventStatusForDatedNode()`                                                          |
+
+**How it behaves.** `lifecycle_status = OCCURRED` maps to `null` (schema.org has no `OCCURRED` value — see `LIFECYCLE_TO_SCHEMA_ORG`). Both builders then fall back to `https://schema.org/EventScheduled` for any **dated** node. So a past event is **not** omitted — it carries `EventScheduled`.
+
+**Why this is correct, not a bug.** Schema.org defines `EventScheduled` as _"The event is taking place **or has taken place** on the startDate as scheduled. Use of this value is optional, as it is **assumed by default**."_ So emitting it on a past event is accurate, and suppressing it would change nothing semantically (absence ⇒ assumed `EventScheduled` anyway). Google Rich Results accepts either form; this is a consistency/correctness call, not a warning fix.
+
+**If you ever revisit it** (e.g. to suppress `eventStatus` on past events), you MUST change **both** builders together and update this section — otherwise the single-event and series pages silently diverge (the exact drift that spawned OPE-182/OPE-183). The dated-fallback only fires on already-dated nodes; dateless nodes are suppressed entirely upstream (OPE-32).
+
 ### Adding Schema to a New Page
 
 1. Import the appropriate schema component:
