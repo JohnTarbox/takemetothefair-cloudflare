@@ -290,10 +290,14 @@ describe("OPE-18 — WARNING-set parity on subEvents + series", () => {
     expect(sub.image).toBe("https://venue.jpg"); // falls through to venue hero
   });
 
-  it("omits WARNING-set keys on a subEvent with no source data (no empty emits)", () => {
+  it("omits data-derived WARNING-set keys on a bare subEvent, but keeps the always-on defaults (OPE-182)", () => {
     const ld = buildSeries(series, [occ({ slug: "bare", year: 2025 })]);
     const sub = (ld.subEvent as Array<Record<string, unknown>>)[0];
-    expect(sub).not.toHaveProperty("eventStatus");
+    // OPE-182 — eventStatus/eventAttendanceMode default in (single-Event parity):
+    // the node is dated, so it's Scheduled + Offline even with no lifecycle.
+    expect(sub.eventStatus).toBe("https://schema.org/EventScheduled");
+    expect(sub.eventAttendanceMode).toBe("https://schema.org/OfflineEventAttendanceMode");
+    // The genuinely data-derived keys are still omitted when their source is empty.
     expect(sub).not.toHaveProperty("image");
     expect(sub).not.toHaveProperty("organizer");
     expect(sub).not.toHaveProperty("offers");
@@ -313,6 +317,51 @@ describe("OPE-18 — WARNING-set parity on subEvents + series", () => {
     expect(ld.eventStatus).toBe("https://schema.org/EventPostponed");
     expect(ld.organizer).toMatchObject({ "@type": "Organization", name: "Org" });
     expect(ld.image).toBe("https://real.jpg"); // real series image not overwritten
+  });
+});
+
+// OPE-182 (2026-07-12) — complete the OPE-18 parity: eventStatus and
+// eventAttendanceMode always emit on the (already-dated) EventSeries node and
+// every subEvent, matching the single-Event builder. Fixes the "thin schema"
+// series pages (Galentine's Sip and Shop) that carried neither.
+describe("OPE-182 — eventStatus + eventAttendanceMode parity", () => {
+  it("emits EventScheduled + Offline on a dated series with no lifecycle", () => {
+    const ld = buildSeries(series, []); // no lifecycleStatus set
+    expect(ld.eventStatus).toBe("https://schema.org/EventScheduled");
+    expect(ld.eventAttendanceMode).toBe("https://schema.org/OfflineEventAttendanceMode");
+  });
+
+  it("emits EventScheduled + Offline on a dated subEvent with no lifecycle", () => {
+    const ld = buildSeries(series, [occ({ slug: "x", year: 2025 })]);
+    const sub = (ld.subEvent as Array<Record<string, unknown>>)[0];
+    expect(sub.eventStatus).toBe("https://schema.org/EventScheduled");
+    expect(sub.eventAttendanceMode).toBe("https://schema.org/OfflineEventAttendanceMode");
+  });
+
+  it("MOVED_ONLINE flips eventStatus AND attendance mode on the series", () => {
+    const ld = buildSeries({ ...series, lifecycleStatus: "MOVED_ONLINE" }, []);
+    expect(ld.eventStatus).toBe("https://schema.org/EventMovedOnline");
+    expect(ld.eventAttendanceMode).toBe("https://schema.org/OnlineEventAttendanceMode");
+  });
+
+  it("MOVED_ONLINE flips eventStatus AND attendance mode on a subEvent", () => {
+    const ld = buildSeries(series, [
+      occ({ slug: "x", year: 2025, lifecycleStatus: "MOVED_ONLINE" }),
+    ]);
+    const sub = (ld.subEvent as Array<Record<string, unknown>>)[0];
+    expect(sub.eventStatus).toBe("https://schema.org/EventMovedOnline");
+    expect(sub.eventAttendanceMode).toBe("https://schema.org/OnlineEventAttendanceMode");
+  });
+
+  it("a known lifecycle (CANCELLED) still wins over the Scheduled default", () => {
+    const ld = buildSeries({ ...series, lifecycleStatus: "CANCELLED" }, [
+      occ({ slug: "x", year: 2025, lifecycleStatus: "CANCELLED" }),
+    ]);
+    expect(ld.eventStatus).toBe("https://schema.org/EventCancelled");
+    const sub = (ld.subEvent as Array<Record<string, unknown>>)[0];
+    expect(sub.eventStatus).toBe("https://schema.org/EventCancelled");
+    // Cancelled is still an in-person event → attendance mode stays Offline.
+    expect(ld.eventAttendanceMode).toBe("https://schema.org/OfflineEventAttendanceMode");
   });
 });
 

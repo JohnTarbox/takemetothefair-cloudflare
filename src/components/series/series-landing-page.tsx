@@ -15,7 +15,8 @@ import {
   pickHeroOccurrence,
   toSchemaOccurrences,
 } from "@/lib/series/occurrence-view";
-import { buildEventSeriesJsonLd } from "@/lib/series/series-schema-org";
+import { buildEventSeriesJsonLd, seriesUrl } from "@/lib/series/series-schema-org";
+import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import type { SeriesLanding, LandingOccurrence } from "@/lib/series/get-series-landing";
 import { formatDateRange } from "@/lib/utils";
 import { cdnImage } from "@/lib/cdn-image";
@@ -101,6 +102,18 @@ export function SeriesLandingPage({ landing, now }: { landing: SeriesLanding; no
           dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd).replace(/</g, "\\u003c") }}
         />
       ) : null}
+
+      {/* OPE-182 — BreadcrumbList parity with the single-event page
+          (/events/[slug] emits Home → Events → name). Its absence on series
+          landing pages was one of the three gaps behind the "thin schema"
+          report. Series item points at the year-agnostic landing URL. */}
+      <BreadcrumbSchema
+        items={[
+          { name: "Home", url: "https://meetmeatthefair.com" },
+          { name: "Events", url: "https://meetmeatthefair.com/events" },
+          { name: series.name, url: seriesUrl(series.canonicalSlug) },
+        ]}
+      />
 
       <header className="mb-8">
         {heroImage ? (
