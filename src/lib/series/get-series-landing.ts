@@ -17,7 +17,7 @@ import { unsafeSlug } from "@takemetothefair/utils";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { eventSeries, events, venues, promoters } from "@/lib/db/schema";
 import { isPublicEventStatus } from "@/lib/event-status";
-import { pickHeroOccurrence } from "@/lib/series/occurrence-view";
+import { pickHeroOccurrence, resolveSeriesLandingContent } from "@/lib/series/occurrence-view";
 import type { PlaceVenue } from "@/lib/seo/place-jsonld";
 import type { SchemaOrganizer } from "@/lib/series/series-schema-org";
 
@@ -141,16 +141,24 @@ export const getSeriesLanding = cache(async (slug: string): Promise<SeriesLandin
       : null,
   }));
 
-  // OPE-27 — read-time hero-image inheritance. The series landing's image
-  // (og:image/twitter, the EventSeries JSON-LD, and the on-page hero) all read
-  // `series.imageUrl`, which is commonly NULL because the P1 backfill seeds the
-  // `event_series` row from an image-less member. When it's NULL, fall back to
-  // the hero occurrence's own image so the landing reflects the same photo as
-  // its occurrence — instead of og-default.png. A deliberately-set series image
-  // still wins. Self-heals on the existing 300s ISR; no write-path propagation
-  // or on-demand revalidation needed (the repo uses neither).
-  const heroImageUrl = pickHeroOccurrence(occurrences, new Date())?.imageUrl ?? null;
-  const effectiveImageUrl = series.imageUrl ?? heroImageUrl;
+  // OPE-27 → OPE-182 — read-through the drift-prone denormalized series columns.
+  // The series landing's image + description (og:image/twitter, the EventSeries
+  // JSON-LD, and the on-page hero) previously read `event_series.{image_url,
+  // description}` directly. Those are write-once backfill SNAPSHOTS that nothing
+  // updates, so editing an occurrence left the landing stale (OPE-182: a series
+  // page kept a pre-edit Easter image + old description after the event was
+  // re-imaged/rewritten). OPE-27 only fell back to the occurrence when the series
+  // image was NULL — a non-null *stale* snapshot still won. Now prefer the LIVE
+  // hero occurrence for both fields (there's no editorial series-level value to
+  // protect — the only writer is the backfill), falling back to the snapshot when
+  // the hero has none. `name` stays the canonical year-stripped series name.
+  // Self-heals on the existing 300s ISR; no write-path propagation or on-demand
+  // revalidation needed. See resolveSeriesLandingContent.
+  const hero = pickHeroOccurrence(occurrences, new Date());
+  const effective = resolveSeriesLandingContent(
+    { description: series.description, imageUrl: series.imageUrl },
+    hero
+  );
 
   // OPE-18 — series organizer from the joined promoter (emit-when-known: null
   // promoter ⇒ no organizer, rather than a fabricated one).
@@ -166,8 +174,8 @@ export const getSeriesLanding = cache(async (slug: string): Promise<SeriesLandin
     series: {
       canonicalSlug: series.canonicalSlug,
       name: series.name,
-      description: series.description,
-      imageUrl: effectiveImageUrl,
+      description: effective.description,
+      imageUrl: effective.imageUrl,
       organizer,
     },
     occurrences,

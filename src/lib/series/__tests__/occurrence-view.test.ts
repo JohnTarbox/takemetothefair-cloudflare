@@ -3,6 +3,7 @@ import {
   partitionOccurrences,
   pickHeroOccurrence,
   toSchemaOccurrences,
+  resolveSeriesLandingContent,
   type OccurrenceRow,
 } from "../occurrence-view";
 
@@ -131,5 +132,58 @@ describe("toSchemaOccurrences", () => {
     expect(o.lifecycleStatus).toBeNull();
     expect(o.description).toBeNull();
     expect(o.ticketPriceMinCents).toBeNull();
+  });
+});
+
+// OPE-182 — read-through the drift-prone denormalized event_series snapshot
+// columns: prefer the live hero occurrence's description/image over the stale
+// series snapshot, so an event edit is reflected on its series landing page.
+describe("resolveSeriesLandingContent", () => {
+  const snap = { description: "STALE series description", imageUrl: "https://cdn/stale.png" };
+  const hero = { description: "fresh occurrence description", imageUrl: "https://cdn/fresh.webp" };
+
+  it("prefers the live hero occurrence over the stale series snapshot", () => {
+    expect(resolveSeriesLandingContent(snap, hero)).toEqual({
+      description: "fresh occurrence description",
+      imageUrl: "https://cdn/fresh.webp",
+    });
+  });
+
+  it("falls back to the series snapshot when the hero value is missing", () => {
+    expect(resolveSeriesLandingContent(snap, { description: null, imageUrl: null })).toEqual({
+      description: "STALE series description",
+      imageUrl: "https://cdn/stale.png",
+    });
+  });
+
+  it("treats empty/whitespace hero values as absent (first-non-empty, not ??)", () => {
+    expect(resolveSeriesLandingContent(snap, { description: "  ", imageUrl: "" })).toEqual({
+      description: "STALE series description",
+      imageUrl: "https://cdn/stale.png",
+    });
+  });
+
+  it("falls back to the snapshot when there is no hero occurrence (empty series)", () => {
+    expect(resolveSeriesLandingContent(snap, null)).toEqual({
+      description: "STALE series description",
+      imageUrl: "https://cdn/stale.png",
+    });
+  });
+
+  it("returns null for a field when neither hero nor snapshot has a value", () => {
+    expect(
+      resolveSeriesLandingContent(
+        { description: null, imageUrl: "" },
+        { description: "", imageUrl: null }
+      )
+    ).toEqual({ description: null, imageUrl: null });
+  });
+
+  it("does not read `name` through — caller keeps the canonical series name (documented, not enforced here)", () => {
+    // resolveSeriesLandingContent intentionally has no `name` field; the loader
+    // keeps series.name. This test pins the shape so a future edit that adds
+    // name-passthrough here is a conscious choice, not an accident.
+    const out = resolveSeriesLandingContent(snap, hero);
+    expect(out).not.toHaveProperty("name");
   });
 });
