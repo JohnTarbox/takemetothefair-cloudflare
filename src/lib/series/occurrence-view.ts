@@ -95,6 +95,40 @@ export function pickHeroOccurrence(occurrences: OccurrenceRow[], now: Date): Occ
 }
 
 /**
+ * OPE-182 — read-through for the drift-prone denormalized `event_series` columns.
+ *
+ * `event_series.description` and `.image_url` are write-once backfill SNAPSHOTS:
+ * the backfill copies them verbatim from one "defaults member" occurrence and
+ * nothing ever updates them, so when that event is later edited the series
+ * landing (its JSON-LD, og:image, and on-page hero) keeps serving the stale copy.
+ * There is no editorial UI that sets these independently, so there is no
+ * deliberate series-level value to protect — prefer the LIVE hero occurrence's
+ * value, falling back to the series snapshot only when the hero has none.
+ *
+ * `name` is intentionally NOT read through: the backfill stores a *canonical*
+ * year-stripped series name (`stripNameEditionSuffix`), which must not be
+ * replaced by an occurrence's yeared name (e.g. "… 2025") on a multi-year series.
+ *
+ * Uses first-non-empty (not `??`) so an empty-string snapshot/occurrence value is
+ * treated as absent, matching how the rest of the schema layer handles blanks.
+ */
+export function resolveSeriesLandingContent(
+  seriesSnapshot: { description: string | null; imageUrl: string | null },
+  hero: Pick<OccurrenceRow, "description" | "imageUrl"> | null
+): { description: string | null; imageUrl: string | null } {
+  const firstNonEmpty = (...vals: Array<string | null | undefined>): string | null => {
+    for (const v of vals) {
+      if (typeof v === "string" && v.trim().length > 0) return v;
+    }
+    return null;
+  };
+  return {
+    description: firstNonEmpty(hero?.description, seriesSnapshot.description),
+    imageUrl: firstNonEmpty(hero?.imageUrl, seriesSnapshot.imageUrl),
+  };
+}
+
+/**
  * Map occurrences to schema.org `subEvent` inputs (chronological). Emits date-
  * only ISO from the UTC Date; P2.3 may substitute venue-zone formatting, which
  * is why the caller owns the final EventSchema wiring.
