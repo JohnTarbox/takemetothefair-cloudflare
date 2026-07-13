@@ -60,6 +60,38 @@ interface InboundBodyDetail {
   bodyHtml: string | null;
   bodyTextExcerpt: string | null;
   rawSize: number | null;
+  // OPE-187 — JSON string of [{key,name,mimeType,size}]; parsed for the
+  // attachment previews/download links in the detail panel.
+  attachmentRefs: string | null;
+}
+
+// OPE-187 — one stored inbound attachment.
+interface InboundAttachment {
+  key: string;
+  name: string;
+  mimeType: string;
+  size: number;
+}
+
+// OPE-187 — parse attachment_refs JSON defensively (bad/legacy rows → []).
+function parseAttachmentRefs(json: string | null | undefined): InboundAttachment[] {
+  if (!json) return [];
+  try {
+    const parsed = JSON.parse(json) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (r): r is InboundAttachment => !!r && typeof (r as InboundAttachment).key === "string"
+    );
+  } catch {
+    return [];
+  }
+}
+
+function formatBytes(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return "0 B";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 interface ClassifierStats {
@@ -1110,6 +1142,79 @@ export default function AdminInboundEmailsPage() {
                                   );
                                 })()}
                               </div>
+
+                              {/* OPE-187 — inbound attachments (emailed posters/
+                                  flyers/PDFs). Image previews + Open/Download links,
+                                  streamed from R2 via the admin-gated attachments
+                                  route (never public). Was a bare "Attachments: N". */}
+                              {(() => {
+                                const d = bodyDetail[row.id];
+                                const atts =
+                                  d && d !== "loading" && d !== "error"
+                                    ? parseAttachmentRefs(d.attachmentRefs)
+                                    : [];
+                                if (atts.length === 0) return null;
+                                return (
+                                  <div className="mt-3 pt-3 border-t border-border">
+                                    <span className="font-medium">Attachments ({atts.length})</span>
+                                    <div className="mt-2 flex flex-wrap gap-3">
+                                      {atts.map((a, i) => {
+                                        const src = `/api/admin/inbound-emails/${row.id}/attachments/${i}`;
+                                        const isImage = a.mimeType.startsWith("image/");
+                                        return (
+                                          <div
+                                            key={a.key}
+                                            className="w-48 border border-border rounded p-2 bg-card"
+                                            onClick={(e) => e.stopPropagation()}
+                                          >
+                                            {isImage ? (
+                                              <a
+                                                href={src}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                              >
+                                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                                <img
+                                                  src={src}
+                                                  alt={a.name}
+                                                  className="w-full h-32 object-contain bg-white border border-border rounded"
+                                                  loading="lazy"
+                                                />
+                                              </a>
+                                            ) : (
+                                              <div className="h-32 flex items-center justify-center bg-white border border-border rounded text-4xl">
+                                                📄
+                                              </div>
+                                            )}
+                                            <div className="mt-1 text-xs break-all" title={a.name}>
+                                              {a.name}
+                                            </div>
+                                            <div className="text-xs text-muted-foreground">
+                                              {a.mimeType} · {formatBytes(a.size)}
+                                            </div>
+                                            <div className="mt-1 flex gap-2 text-xs">
+                                              <a
+                                                href={src}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="text-royal hover:underline"
+                                              >
+                                                Open
+                                              </a>
+                                              <a
+                                                href={`${src}?dl=1`}
+                                                className="text-royal hover:underline"
+                                              >
+                                                Download
+                                              </a>
+                                            </div>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                );
+                              })()}
 
                               {/* OPE-163 — reply composer (send from support@,
                                   threaded + ledgered by the endpoint). Two-step

@@ -31,6 +31,9 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
       bodyHtml: inboundEmails.bodyHtml,
       bodyTextExcerpt: inboundEmails.bodyTextExcerpt,
       rawSize: inboundEmails.rawSize,
+      // OPE-187 — JSON [{key,name,mimeType,size}] so the detail panel can render
+      // each poster/flyer (previewed + downloaded via the authed attachments route).
+      attachmentRefs: inboundEmails.attachmentRefs,
     })
     .from(inboundEmails)
     .where(eq(inboundEmails.id, id))
