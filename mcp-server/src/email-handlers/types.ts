@@ -36,6 +36,13 @@ export type ReplyKind =
   // sender-facing message differs.
   | "ok-medium"
   | "ok-low"
+  // OPE-185 — a PENDING event was DRAFTED purely from the email body prose
+  // (URL-less forwarded submission, or a URL that couldn't be fetched, e.g.
+  // share.google returning 429). Lower confidence than the URL/attachment
+  // paths, so the reply says "we drafted this from your message; the team will
+  // review before publishing" — distinct copy per the OPE-6 STOP-gate. Still a
+  // PENDING event (never auto-published).
+  | "ok-low-body-extract"
   // B1 multi-URL: classifier returned sub_intent='multi_url'. Workflow
   // ran fetch+extract+submit sequentially per URL and produced a single
   // combined reply listing all per-URL outcomes (created, dedup-hit,
