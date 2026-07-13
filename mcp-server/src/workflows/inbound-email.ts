@@ -85,6 +85,7 @@ import { recordSourceCitations } from "../email-handlers/pipeline-citations.js";
 import { computeFillEmptyProposals } from "../email-handlers/enrich-proposal.js";
 import { detectRosterNames } from "../email-handlers/roster-detect.js";
 import { isShareRedirectHost, resolveShareRedirect } from "../email-handlers/share-redirect.js";
+import { toMarkdownWithRetry } from "../email-handlers/ocr-retry.js";
 import { buildReply } from "../email-reply-builder.js";
 import { issueToken } from "../feedback-tokens.js";
 import { issueCorrectionToken } from "../correction-tokens.js";
@@ -137,6 +138,12 @@ const DEFAULT_FROM = "Meet Me at the Fair <notify@meetmeatthefair.com>";
 // worth treating as an extraction source. Below this it's almost certainly
 // noise (a logo, a blank scan) rather than a flyer with event details.
 const MIN_OCR_CHARS = 20;
+
+// OPE-189 — how many times to attempt `toMarkdown` per attachment before giving
+// up. The image→markdown vision model times out on the FIRST (cold-start) call
+// and reads the poster fine on a warm retry, so a single transient miss must not
+// strand the OCR. Non-transient errors fail fast (see isTransientAiError).
+const MAX_OCR_ATTEMPTS = 3;
 
 /**
  * Classify an error thrown by the AI extract step into the small bucket
@@ -846,7 +853,13 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       const refsJson = rowSnapshot.attachmentRefs;
       attachmentSources = await step.do(
         "ocr-attachments",
-        { retries: { limit: 1, delay: "10 seconds", backoff: "constant" }, timeout: "60 seconds" },
+        // OPE-189 — the old 60s step timeout EQUALLED the AI binding's own 60s
+        // timeout, so a single cold-start toMarkdown timeout consumed the whole
+        // step budget and the (successful) warm retry was stranded. ocrAttachments
+        // now retries transient failures in-place (MAX_OCR_ATTEMPTS), so the step
+        // budget must cover several ~60s attempts; step-level retry stays as an
+        // outer backstop.
+        { retries: { limit: 1, delay: "10 seconds", backoff: "constant" }, timeout: "200 seconds" },
         () => this.ocrAttachments(refsJson)
       );
     }
@@ -1763,28 +1776,39 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           outcome = "object-not-found";
         } else {
           const blob = await obj.blob();
-          const results = await ai.toMarkdown([{ name: ref.name || ref.key, blob }]);
-          const first = Array.isArray(results) ? results[0] : results;
-          if (first && first.format === "markdown") {
-            const text = first.data;
-            const len = typeof text === "string" ? text.trim().length : 0;
-            if (typeof text === "string" && len >= MIN_OCR_CHARS) {
+          // OPE-189 — retry a transient (cold-start timeout / capacity) failure in
+          // place so a first-call miss doesn't strand a poster a warm retry reads
+          // fine. Every attempt is logged (incl. the attempt-1 timeout) so a
+          // recovered OCR still leaves a trace of what it took.
+          const result = await toMarkdownWithRetry(
+            ai,
+            { name: ref.name || ref.key, blob },
+            MAX_OCR_ATTEMPTS,
+            (attempt, attemptOutcome) => {
+              void logError(getDb(this.env.DB), {
+                level: attemptOutcome.startsWith("ok:") ? "info" : "warn",
+                source: "mcp:workflow:ocr-attachments",
+                message: `attachment "${ref.name || ref.key}" attempt ${attempt}/${MAX_OCR_ATTEMPTS}: ${attemptOutcome}`,
+              }).catch(() => {});
+            }
+          );
+          if (result.text !== null) {
+            const len = result.text.trim().length;
+            if (len >= MIN_OCR_CHARS) {
               const mime = (ref.mimeType || "").toLowerCase();
               sources.push({
                 kind: "attachment",
-                text,
+                text: result.text,
                 name: ref.name || "attachment",
                 imageKey: mime.startsWith("image/") ? ref.key : undefined,
               });
-              outcome = `ok:${len}chars`;
+              outcome = `ok:${len}chars(attempts=${result.attempts})`;
             } else {
               outcome = `under-threshold:${len}chars(min=${MIN_OCR_CHARS})`;
             }
-          } else if (first && first.format === "error") {
-            // The conversion itself failed — surface its error (was discarded).
-            outcome = `toMarkdown-error:${String((first as { error?: string }).error ?? "").slice(0, 200)}`;
           } else {
-            outcome = `unexpected-shape:${first ? JSON.stringify(first).slice(0, 150) : "null"}`;
+            // All attempts exhausted without markdown — surface the terminal cause.
+            outcome = `${result.outcome}(attempts=${result.attempts})`;
           }
         }
       } catch (err) {
@@ -1792,7 +1816,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         await logError(getDb(this.env.DB), {
           level: "warn",
           source: "mcp:workflow:ocr-attachments",
-          message: "toMarkdown/get threw for attachment; skipping",
+          message: "R2 get threw for attachment; skipping",
           error: err,
         }).catch(() => {});
       }
