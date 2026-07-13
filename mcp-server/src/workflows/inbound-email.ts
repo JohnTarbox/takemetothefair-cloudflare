@@ -1689,7 +1689,16 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
   private async ocrAttachments(refsJson: string): Promise<SubmitSource[]> {
     const bucket = this.env.VENDOR_ASSETS;
     const ai = this.env.AI;
-    if (!bucket || !ai) return [];
+    if (!bucket || !ai) {
+      // OPE-189 — this used to be a SILENT [] (0 events, 0 logs). Log the missing
+      // binding so an OCR no-op can never again hide as "attachment not usable".
+      await logError(getDb(this.env.DB), {
+        level: "warn",
+        source: "mcp:workflow:ocr-attachments",
+        message: `ocr skipped — binding missing (bucket=${!!bucket}, ai=${!!ai})`,
+      }).catch(() => {});
+      return [];
+    }
     let refs: AttachmentRef[];
     try {
       const parsed = JSON.parse(refsJson);
@@ -1701,32 +1710,55 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     const sources: SubmitSource[] = [];
     for (const ref of refs) {
       if (!ref || typeof ref.key !== "string") continue;
+      // OPE-189 — record a concrete per-attachment outcome for EVERY path so a
+      // 0-source OCR run is diagnosable from error_logs (was invisible: the
+      // toMarkdown `format:"error"` variant and the under-threshold drop both fell
+      // through to [] with no trace).
+      let outcome = "unknown";
       try {
         const obj = await bucket.get(ref.key);
-        if (!obj) continue;
-        const blob = await obj.blob();
-        const results = await ai.toMarkdown([{ name: ref.name || ref.key, blob }]);
-        const first = Array.isArray(results) ? results[0] : results;
-        const text = first && first.format === "markdown" ? first.data : "";
-        if (typeof text === "string" && text.trim().length >= MIN_OCR_CHARS) {
-          const mime = (ref.mimeType || "").toLowerCase();
-          sources.push({
-            kind: "attachment",
-            text,
-            name: ref.name || "attachment",
-            imageKey: mime.startsWith("image/") ? ref.key : undefined,
-          });
+        if (!obj) {
+          outcome = "object-not-found";
+        } else {
+          const blob = await obj.blob();
+          const results = await ai.toMarkdown([{ name: ref.name || ref.key, blob }]);
+          const first = Array.isArray(results) ? results[0] : results;
+          if (first && first.format === "markdown") {
+            const text = first.data;
+            const len = typeof text === "string" ? text.trim().length : 0;
+            if (typeof text === "string" && len >= MIN_OCR_CHARS) {
+              const mime = (ref.mimeType || "").toLowerCase();
+              sources.push({
+                kind: "attachment",
+                text,
+                name: ref.name || "attachment",
+                imageKey: mime.startsWith("image/") ? ref.key : undefined,
+              });
+              outcome = `ok:${len}chars`;
+            } else {
+              outcome = `under-threshold:${len}chars(min=${MIN_OCR_CHARS})`;
+            }
+          } else if (first && first.format === "error") {
+            // The conversion itself failed — surface its error (was discarded).
+            outcome = `toMarkdown-error:${String((first as { error?: string }).error ?? "").slice(0, 200)}`;
+          } else {
+            outcome = `unexpected-shape:${first ? JSON.stringify(first).slice(0, 150) : "null"}`;
+          }
         }
       } catch (err) {
-        // Best-effort: a single toMarkdown/get failure skips that attachment
-        // and never fails the step (which never fails the workflow).
+        outcome = "threw";
         await logError(getDb(this.env.DB), {
           level: "warn",
           source: "mcp:workflow:ocr-attachments",
-          message: "toMarkdown/get failed for attachment; skipping",
+          message: "toMarkdown/get threw for attachment; skipping",
           error: err,
         }).catch(() => {});
       }
+      await logError(getDb(this.env.DB), {
+        level: outcome.startsWith("ok:") ? "info" : "warn",
+        source: "mcp:workflow:ocr-attachments",
+        message: `attachment "${ref.name || ref.key}" (${ref.mimeType || "?"}, ${ref.size ?? "?"}B): ${outcome}`,
+      }).catch(() => {});
     }
     return sources;
   }
