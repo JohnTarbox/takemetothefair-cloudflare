@@ -81,6 +81,7 @@ import {
 } from "../email-handlers/submit.js";
 import { recordSourceCitations } from "../email-handlers/pipeline-citations.js";
 import { computeFillEmptyProposals } from "../email-handlers/enrich-proposal.js";
+import { detectRosterNames } from "../email-handlers/roster-detect.js";
 import { buildReply } from "../email-reply-builder.js";
 import { issueToken } from "../feedback-tokens.js";
 import { issueCorrectionToken } from "../correction-tokens.js";
@@ -746,6 +747,53 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     );
 
     const subject = rowSnapshot.subject ?? "";
+
+    // OPE-176 — roster capture (STAGE FOR REVIEW; John's call 2026-07-13). Detect
+    // an exhibitor/vendor roster in the body and flag the email for operator
+    // review instead of dropping it. Runs for EVERY submit email BEFORE the
+    // branch returns, so it also catches roster-carrying emails whose event
+    // extraction fails (the Art-in-the-Park evidence was no-url-prose-failed).
+    // Stage-for-review: we do NOT create or link any vendor — an operator applies
+    // the roster by hand from /admin/inbound-emails. Failsoft; never blocks the
+    // pipeline. Reads full body_text (bodyTextExcerpt is capped at 500 chars).
+    await step.do(
+      "submit/roster-capture",
+      { retries: { limit: 1, delay: "5 seconds", backoff: "constant" }, timeout: "5 seconds" },
+      async () => {
+        try {
+          const db = getDb(this.env.DB);
+          const [row] = await db
+            .select({ bodyText: inboundEmails.bodyText })
+            .from(inboundEmails)
+            .where(eq(inboundEmails.id, messageRowId))
+            .limit(1);
+          const roster = detectRosterNames(row?.bodyText ?? null);
+          if (roster.length === 0) return;
+          await db.insert(adminActions).values({
+            action: "roster.detected",
+            actorUserId: null,
+            targetType: "inbound_email",
+            targetId: messageRowId,
+            payloadJson: JSON.stringify({
+              count: roster.length,
+              names: roster,
+              fromAddress: rowSnapshot.fromAddress,
+            }),
+            createdAt: new Date(),
+          });
+          await db
+            .update(inboundEmails)
+            .set({ flaggedForReview: 1 })
+            .where(eq(inboundEmails.id, messageRowId));
+        } catch (err) {
+          await logError(getDb(this.env.DB), {
+            source: "mcp:workflow:roster-capture",
+            message: "roster capture failed",
+            error: err,
+          });
+        }
+      }
+    );
 
     // ───── OPE-55 Phase 1: unified multi-source fan-out ─────────────
     // Historically the three branches below were MUTUALLY EXCLUSIVE:
