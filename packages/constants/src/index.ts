@@ -227,6 +227,11 @@ export type EventScale = (typeof EVENT_SCALE)[keyof typeof EVENT_SCALE];
 
 export const EVENT_CATEGORIES = [
   "Agricultural Fair",
+  // OPE-186 (2026-07-13) — large non-fair public spectacles had no taxonomy
+  // lane, so air shows / balloon festivals landed as free-text or ["Event"] in
+  // the uncategorized queue (the Great State of Maine Air Show + Great Falls
+  // Balloon Festival were both un-modelable). "Balloon Festival" is added below.
+  "Air Show",
   "Antique Show",
   // K21 (2026-06-12). Reconciled the allow-list against live prod
   // data: 90 distinct category values were in use on APPROVED events
@@ -240,6 +245,7 @@ export const EVENT_CATEGORIES = [
   "Art Fair",
   "Art Show",
   "Art Walk",
+  "Balloon Festival", // OPE-186 — hot-air balloon festivals/rallies (spectacle lane)
   "Beer Festival",
   "Boat Show",
   "Bridal Show",
