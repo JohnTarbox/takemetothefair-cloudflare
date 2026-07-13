@@ -84,6 +84,7 @@ import {
 import { recordSourceCitations } from "../email-handlers/pipeline-citations.js";
 import { computeFillEmptyProposals } from "../email-handlers/enrich-proposal.js";
 import { detectRosterNames } from "../email-handlers/roster-detect.js";
+import { isShareRedirectHost, resolveShareRedirect } from "../email-handlers/share-redirect.js";
 import { buildReply } from "../email-reply-builder.js";
 import { issueToken } from "../feedback-tokens.js";
 import { issueCorrectionToken } from "../correction-tokens.js";
@@ -1006,44 +1007,85 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         () => submitFetch(this.env, url)
       );
     } catch (fetchErr) {
-      // OPE-185 — the URL couldn't be fetched (e.g. share.google / short-links
-      // return HTTP 429 to server-side fetchers). If the body carries substantive
-      // prose, DRAFT the event from it (PENDING, ok-low-body-extract reply) instead
-      // of bouncing. Falls through to the original bounce when there's no usable
-      // prose. Failsoft: any hiccup in the fallback re-throws the original error.
-      const rawBody = rowSnapshot.bodyText ?? rowSnapshot.bodyTextExcerpt ?? "";
-      const proseLen = stripSignature(stripForwardedPreamble(rawBody)).trim().length;
-      if (proseLen > 40) {
+      // OPE-193 — before bouncing to body-extract, for a known share/redirect
+      // host (share.google / g.co / youtu.be / fb.me) the initial fetch 429s
+      // because the host rate-limits server-side fetchers before redirecting.
+      // Try ONE manual-redirect hop with a browser UA to the real target page
+      // and, if it fetches, hand it back to the normal URL path below (richer +
+      // higher-confidence than the forwarded body prose). Strictly additive:
+      // any failure leaves `recovered` null and we fall through to OPE-185.
+      let recovered: SubmitFetchResult | null = null;
+      if (isShareRedirectHost(url)) {
         try {
-          const extracted = await step.do(
-            "submit/fetch-fail-body-extract",
+          const resolvedUrl = await step.do(
+            "submit/resolve-share-redirect",
             {
-              retries: { limit: 1, delay: "10 seconds", backoff: "constant" },
-              timeout: "30 seconds",
+              retries: { limit: 1, delay: "5 seconds", backoff: "constant" },
+              timeout: "20 seconds",
             },
-            () => submitFreeTextExtract(this.env, rawBody)
+            () => resolveShareRedirect(url)
           );
-          const hasMinFields =
-            !!extracted.event.name && (!!extracted.event.startDate || !!extracted.event.venueName);
-          if (hasMinFields) {
-            return await this.submitExtractedEvent(
-              step,
-              extracted,
-              subject,
-              rowSnapshot.fromAddress,
-              rowSnapshot.attachmentCount > 0,
-              null, // no successful fetch — this is a body-prose draft
-              messageRowId,
-              true // OPE-185 — drafted from body prose → ok-low-body-extract reply
+          if (resolvedUrl) {
+            recovered = await step.do(
+              "submit/fetch-resolved-url",
+              {
+                retries: { limit: 2, delay: "5 seconds", backoff: "exponential" },
+                timeout: "30 seconds",
+              },
+              () => submitFetch(this.env, resolvedUrl)
             );
           }
-          // Prose present but not enough to draft — record the reason, then bounce.
-          await this.recordExtractFailReason(messageRowId, "prose-insufficient");
         } catch {
-          // Body extract itself failed — fall through to the original fetch bounce.
+          // Redirect resolve or resolved-URL fetch failed — fall through below.
+          recovered = null;
         }
       }
-      throw fetchErr;
+
+      if (!recovered) {
+        // OPE-185 — the URL couldn't be fetched (e.g. share.google / short-links
+        // return HTTP 429 to server-side fetchers). If the body carries substantive
+        // prose, DRAFT the event from it (PENDING, ok-low-body-extract reply) instead
+        // of bouncing. Falls through to the original bounce when there's no usable
+        // prose. Failsoft: any hiccup in the fallback re-throws the original error.
+        const rawBody = rowSnapshot.bodyText ?? rowSnapshot.bodyTextExcerpt ?? "";
+        const proseLen = stripSignature(stripForwardedPreamble(rawBody)).trim().length;
+        if (proseLen > 40) {
+          try {
+            const extracted = await step.do(
+              "submit/fetch-fail-body-extract",
+              {
+                retries: { limit: 1, delay: "10 seconds", backoff: "constant" },
+                timeout: "30 seconds",
+              },
+              () => submitFreeTextExtract(this.env, rawBody)
+            );
+            const hasMinFields =
+              !!extracted.event.name &&
+              (!!extracted.event.startDate || !!extracted.event.venueName);
+            if (hasMinFields) {
+              return await this.submitExtractedEvent(
+                step,
+                extracted,
+                subject,
+                rowSnapshot.fromAddress,
+                rowSnapshot.attachmentCount > 0,
+                null, // no successful fetch — this is a body-prose draft
+                messageRowId,
+                true // OPE-185 — drafted from body prose → ok-low-body-extract reply
+              );
+            }
+            // Prose present but not enough to draft — record the reason, then bounce.
+            await this.recordExtractFailReason(messageRowId, "prose-insufficient");
+          } catch {
+            // Body extract itself failed — fall through to the original fetch bounce.
+          }
+        }
+        throw fetchErr;
+      }
+
+      // Share-redirect recovery succeeded — continue the normal URL path with
+      // the real page in place of the un-fetchable share link.
+      fetched = recovered;
     }
 
     // K7.4 (analyst, 2026-05-31): persist what we're about to send to the
