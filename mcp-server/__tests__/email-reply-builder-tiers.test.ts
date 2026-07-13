@@ -47,6 +47,16 @@ describe("buildReply — B3 confidence tiers", () => {
     expect(msg.text).toContain("more details");
   });
 
+  it("ok-low-body-extract (OPE-185) — distinct 'drafted from your message' copy", () => {
+    const msg = buildReply("ok-low-body-extract", "sender@example.com", { subject: "Test" });
+    expect(msg.text).toContain("drafted an event listing");
+    expect(msg.text).toContain("review it before it's published");
+    expect(msg.text).toContain("If anything looks off, just reply");
+    // Distinct from the URL/attachment ok reply — never claims it's already live.
+    expect(msg.text).not.toContain("being reviewed");
+    expect(msg.subject.startsWith("Re:")).toBe(true);
+  });
+
   it("ok-medium with empty unsureFields renders without dangling clause", () => {
     const msg = buildReply("ok-medium", "sender@example.com", {
       subject: "Test",

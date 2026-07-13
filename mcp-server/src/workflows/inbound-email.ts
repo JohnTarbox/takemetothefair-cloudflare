@@ -78,6 +78,8 @@ import {
   submitCheckDuplicate,
   submitEvent,
   stripSignature,
+  stripForwardedPreamble,
+  type SubmitFetchResult,
 } from "../email-handlers/submit.js";
 import { recordSourceCitations } from "../email-handlers/pipeline-citations.js";
 import { computeFillEmptyProposals } from "../email-handlers/enrich-proposal.js";
@@ -962,7 +964,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
               rowSnapshot.fromAddress,
               rowSnapshot.attachmentCount > 0,
               null, // no fetch happened on free-text path
-              messageRowId
+              messageRowId,
+              true // OPE-185 — drafted from body prose → ok-low-body-extract reply
             );
           }
         } catch {
@@ -989,14 +992,59 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     // (the classifier-override change made the narrowing less direct).
     const url = rowSnapshot.parsedUrl as string;
 
-    const fetched = await step.do(
-      "submit/fetch-url",
-      // 30s timeout (was 20s before A5) — Browser Rendering's managed
-      // headless Chrome can take 5–15s on first-cold-Chrome on top of the
-      // standard fetch's own 15s budget. drizzle/0078 tracks which path won.
-      { retries: { limit: 3, delay: "5 seconds", backoff: "exponential" }, timeout: "30 seconds" },
-      () => submitFetch(this.env, url)
-    );
+    let fetched: SubmitFetchResult;
+    try {
+      fetched = await step.do(
+        "submit/fetch-url",
+        // 30s timeout (was 20s before A5) — Browser Rendering's managed
+        // headless Chrome can take 5–15s on first-cold-Chrome on top of the
+        // standard fetch's own 15s budget. drizzle/0078 tracks which path won.
+        {
+          retries: { limit: 3, delay: "5 seconds", backoff: "exponential" },
+          timeout: "30 seconds",
+        },
+        () => submitFetch(this.env, url)
+      );
+    } catch (fetchErr) {
+      // OPE-185 — the URL couldn't be fetched (e.g. share.google / short-links
+      // return HTTP 429 to server-side fetchers). If the body carries substantive
+      // prose, DRAFT the event from it (PENDING, ok-low-body-extract reply) instead
+      // of bouncing. Falls through to the original bounce when there's no usable
+      // prose. Failsoft: any hiccup in the fallback re-throws the original error.
+      const rawBody = rowSnapshot.bodyText ?? rowSnapshot.bodyTextExcerpt ?? "";
+      const proseLen = stripSignature(stripForwardedPreamble(rawBody)).trim().length;
+      if (proseLen > 40) {
+        try {
+          const extracted = await step.do(
+            "submit/fetch-fail-body-extract",
+            {
+              retries: { limit: 1, delay: "10 seconds", backoff: "constant" },
+              timeout: "30 seconds",
+            },
+            () => submitFreeTextExtract(this.env, rawBody)
+          );
+          const hasMinFields =
+            !!extracted.event.name && (!!extracted.event.startDate || !!extracted.event.venueName);
+          if (hasMinFields) {
+            return await this.submitExtractedEvent(
+              step,
+              extracted,
+              subject,
+              rowSnapshot.fromAddress,
+              rowSnapshot.attachmentCount > 0,
+              null, // no successful fetch — this is a body-prose draft
+              messageRowId,
+              true // OPE-185 — drafted from body prose → ok-low-body-extract reply
+            );
+          }
+          // Prose present but not enough to draft — record the reason, then bounce.
+          await this.recordExtractFailReason(messageRowId, "prose-insufficient");
+        } catch {
+          // Body extract itself failed — fall through to the original fetch bounce.
+        }
+      }
+      throw fetchErr;
+    }
 
     // K7.4 (analyst, 2026-05-31): persist what we're about to send to the
     // AI extractor BEFORE the AI call, so we can tell what the AI saw
@@ -1136,7 +1184,13 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     // K12 (2026-06-02). Threaded from runSubmitPipeline so the new
     // submit/seed-discovery step can FK the email_source_suggestions
     // row back to the triggering inbound_emails row for audit trace.
-    messageRowId: string
+    messageRowId: string,
+    // OPE-185 — TRUE only when the event was drafted purely from the email BODY
+    // prose (the free-text branch or the fetch-fail fallback). Routes a fresh
+    // create to the distinct `ok-low-body-extract` reply. FALSE for URL /
+    // attachment / multi-source callers (they keep the HIGH/MEDIUM/LOW tiers and,
+    // for posters, the OPE-68 poster-hero flow).
+    bodyExtractDraft = false
   ): Promise<HandlerResult> {
     // C1 Phase 2 (analyst, 2026-05-30): multi-event landing pages
     // (e.g. https://downtownfarmington.com/farmers-markets/ listing 3
@@ -1402,9 +1456,19 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     // (name + date + venue). When the extract endpoint didn't return
     // confidence (older deploy / edge cases) default to HIGH — fall
     // back to current behavior rather than over-asking the sender.
+    // OPE-185 — an event drafted purely from body prose gets the distinct
+    // low-confidence `ok-low-body-extract` reply ("we drafted this from your
+    // message; the team will review before publishing") per the OPE-6 STOP-gate,
+    // regardless of per-field confidence. URL/attachment/multi-source callers pass
+    // bodyExtractDraft=false and keep the existing HIGH/MEDIUM/LOW tiers.
     const confidenceTier = computeReplyTier(extracted.fieldConfidence);
-    const replyKind =
-      confidenceTier === "high" ? "ok" : confidenceTier === "medium" ? "ok-medium" : "ok-low";
+    const replyKind: ReplyKind = bodyExtractDraft
+      ? "ok-low-body-extract"
+      : confidenceTier === "high"
+        ? "ok"
+        : confidenceTier === "medium"
+          ? "ok-medium"
+          : "ok-low";
 
     return {
       replyKind,
@@ -1735,6 +1799,28 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
    * event_data_citations — a "N sources agreed" admin surface (OPE-55 Phase 3
    * item 3) is intentionally out of scope for this ticket.
    */
+  /**
+   * OPE-185/OPE-174 — failsoft direct write of a categorical extract_fail_reason
+   * on a path that bounces BEFORE mark-done can carry the reason (mirrors the
+   * extract-failed path's own direct write). mark-done's conditional spread only
+   * writes extract_fail_reason when the result carries one, so it never clobbers
+   * this value.
+   */
+  private async recordExtractFailReason(messageRowId: string, reason: string): Promise<void> {
+    try {
+      await getDb(this.env.DB)
+        .update(inboundEmails)
+        .set({ extractFailReason: reason })
+        .where(eq(inboundEmails.id, messageRowId));
+    } catch (err) {
+      await logError(getDb(this.env.DB), {
+        source: "mcp:workflow:record-extract-fail-reason",
+        message: "extract_fail_reason direct write failed",
+        error: err,
+      });
+    }
+  }
+
   private async recordCitationsBestEffort(
     step: WorkflowStep,
     label: string,

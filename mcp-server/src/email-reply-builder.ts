@@ -219,6 +219,17 @@ ${SUPPORT_LINE}
 
 ${SIGN_OFF}`;
     }
+    // OPE-185 — event DRAFTED from the email body prose (URL-less forwarded
+    // submission, or an un-fetchable URL). Distinct low-confidence copy per the
+    // OPE-6 STOP-gate: the event is PENDING and will be reviewed before publishing.
+    // Copy approved by John 2026-07-13.
+    case "ok-low-body-extract": {
+      return `Thanks — we've drafted an event listing from the details in your message. Our team will review it before it's published, so keep an eye out. If anything looks off, just reply and let us know.
+
+${SUPPORT_LINE}
+
+${SIGN_OFF}`;
+    }
     // Cohort 2 (2026-06-01) MEDIUM-confidence dedup hit. New PENDING
     // event was created and tagged with possible_duplicate_of, but the
     // sender is told it MAY be a duplicate. The operator's admin queue

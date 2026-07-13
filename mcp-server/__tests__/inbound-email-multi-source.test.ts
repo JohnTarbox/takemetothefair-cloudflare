@@ -343,7 +343,9 @@ describe("OPE-55 backward-compat — single-source fast paths unchanged", () => 
 
     const result = await wf.runSubmitPipeline(step, "row-1");
 
-    expect(result.replyKind).toBe("ok");
+    // OPE-185 — a body-prose draft now gets the distinct ok-low-body-extract reply
+    // ("we drafted this from your message"), not the URL/attachment `ok`.
+    expect(result.replyKind).toBe("ok-low-body-extract");
     expect(created).toEqual(["Autumn Market"]);
     expect(submitBodies).toHaveLength(1);
     // B2 uses the fixed free-text label; the fan-out labels never appear.
@@ -374,7 +376,8 @@ describe("OPE-55 backward-compat — single-source fast paths unchanged", () => 
 
     const result = await wf.runSubmitPipeline(step, "row-1");
 
-    expect(result.replyKind).toBe("ok");
+    // OPE-185 — body-prose draft → ok-low-body-extract (was `ok`).
+    expect(result.replyKind).toBe("ok-low-body-extract");
     expect(created).toEqual(["Winter Fest"]);
     expect(labels.some((l) => l.startsWith("submit/multi["))).toBe(false);
   });
