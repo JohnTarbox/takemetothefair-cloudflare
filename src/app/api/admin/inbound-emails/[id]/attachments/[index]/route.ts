@@ -82,13 +82,30 @@ export async function GET(
   // Strip characters that could break the Content-Disposition header.
   const safeName = (ref.name || `attachment-${idx}`).replace(/[\r\n"\\]/g, "_");
 
+  // XSS defense: mimeType is attacker-influenced (it comes off the inbound email).
+  // Only render KNOWN-SAFE raster/pdf types inline — crucially NOT image/svg+xml
+  // (an image/* type that executes script) or text/html. Everything else is forced
+  // to a download. CSP sandbox + CORP are belt-and-suspenders so anything that does
+  // render can't touch the admin origin.
+  const SAFE_INLINE = new Set([
+    "image/png",
+    "image/jpeg",
+    "image/jpg",
+    "image/gif",
+    "image/webp",
+    "application/pdf",
+  ]);
+  const inline = !download && SAFE_INLINE.has(mime.toLowerCase());
+
   return new NextResponse(obj.body, {
     headers: {
       "Content-Type": mime,
-      "Content-Disposition": `${download ? "attachment" : "inline"}; filename="${safeName}"`,
+      "Content-Disposition": `${inline ? "inline" : "attachment"}; filename="${safeName}"`,
       // Private admin content — never cache in shared/edge caches.
       "Cache-Control": "private, no-store",
       "X-Content-Type-Options": "nosniff",
+      "Content-Security-Policy": "sandbox; default-src 'none'",
+      "Cross-Origin-Resource-Policy": "same-origin",
     },
   });
 }

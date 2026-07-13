@@ -76,6 +76,28 @@ describe("GET attachments route — guards (OPE-187)", () => {
     expect(res.headers.get("Cache-Control")).toContain("no-store");
   });
 
+  it("forces attachment disposition for image/svg+xml (XSS defense — svg can script)", async () => {
+    authMock.mockResolvedValue({ user: { role: "ADMIN", id: "a1" } });
+    dbRows = [
+      {
+        attachmentRefs: JSON.stringify([
+          {
+            key: "inbound-attachments/g/0-x.svg",
+            name: "x.svg",
+            mimeType: "image/svg+xml",
+            size: 9,
+          },
+        ]),
+      },
+    ];
+    bucketGet.mockResolvedValue({ body: "<svg/>", httpMetadata: { contentType: "image/svg+xml" } });
+    const res = await GET(req(), params());
+    expect(res.status).toBe(200);
+    // NOT inline — svg is excluded from the safe-inline allowlist.
+    expect(res.headers.get("Content-Disposition")).toBe('attachment; filename="x.svg"');
+    expect(res.headers.get("Content-Security-Policy")).toContain("sandbox");
+  });
+
   it("uses attachment disposition when ?dl=1", async () => {
     authMock.mockResolvedValue({ user: { role: "ADMIN", id: "a1" } });
     dbRows = [{ attachmentRefs: refs("inbound-attachments/g/0-poster.png") }];
