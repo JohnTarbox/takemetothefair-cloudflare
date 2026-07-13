@@ -28,6 +28,7 @@ import { registerEnrichPromoterTool } from "./tools/admin-enrich-promoter.js";
 import { registerEnrichPerformerTool } from "./tools/admin-enrich-performer.js";
 import { registerSendVendorEmailTool } from "./tools/admin-send-vendor-email.js";
 import { registerSendTestEmailTool } from "./tools/admin-send-test-email.js";
+import { registerSendNewsletterBroadcastTool } from "./tools/admin-send-newsletter-broadcast.js";
 import { registerCreateClaimInviteTool } from "./tools/admin-claim-invite.js";
 import { registerClaimReviewTools } from "./tools/admin-claim-review.js";
 import { registerAnalyticsTools } from "./tools/analytics.js";
@@ -317,6 +318,9 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
         registerSendVendorEmailTool(this.server, db, auth, this.env);
         // K32 (2026-06-21) — send_test_email (no-side-effects deliverability test).
         registerSendTestEmailTool(this.server, db, auth, this.env);
+        // OPE-190 (2026-07-13) — send_newsletter_broadcast (wraps the OPE-169
+        // broadcast endpoint; STOP-gated real broadcast, unattended test/preview).
+        registerSendNewsletterBroadcastTool(this.server, db, auth, this.env);
         // OPE-67 (2026-07-02) — claim tooling: create_claim_invite (cold invite)
         // + list_claims / approve_claim / reject_claim (review queue).
         registerCreateClaimInviteTool(this.server, db, auth, this.env);
@@ -582,6 +586,7 @@ async function handleLegacyMcpRequest(request: Request, env: Env): Promise<Respo
       registerEnrichPerformerTool(server, db, auth, env);
       registerSendVendorEmailTool(server, db, auth, env);
       registerSendTestEmailTool(server, db, auth, env);
+      registerSendNewsletterBroadcastTool(server, db, auth, env);
       registerCreateClaimInviteTool(server, db, auth, env);
       registerClaimReviewTools(server, db, auth);
       registerAnalyticsTools(server, auth, env);
