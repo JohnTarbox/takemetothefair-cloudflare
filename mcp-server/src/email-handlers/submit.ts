@@ -136,6 +136,43 @@ export function stripSignature(bodyText: string): string {
   return out.trim();
 }
 
+/**
+ * OPE-174 #2 — strip the Gmail/Apple "forwarded message" preamble so the AI
+ * extractor sees the real event content, not the forwarding metadata. Forwarded
+ * event submissions (the common case — John forwards an organizer's email) begin
+ * with a `---------- Forwarded message ----------` delimiter followed by a
+ * From/Date/Subject/To header block. Left in, that block wastes the extraction
+ * budget and derails date/name extraction (e.g. the AI reads `Date: Fri, Jul 10`
+ * as the event date, or the `Subject:` line as the event name). The Riverfest
+ * evidence (inbound_emails f5552b76) failed extraction with the header block in
+ * place despite carrying clean event prose below it.
+ *
+ * Conservative: only strips when a forwarded delimiter is IMMEDIATELY followed by
+ * a recognizable header block; otherwise returns the input unchanged. Takes the
+ * LAST delimiter (innermost forward) so nested forwards resolve to the original
+ * message. Never returns empty — falls back to the original if stripping would
+ * consume everything. Exported for unit tests.
+ */
+export function stripForwardedPreamble(bodyText: string): string {
+  const lines = bodyText.split(/\r?\n/);
+  const DELIM = /^\s*(?:-{2,}\s*Forwarded message\s*-{2,}|Begin forwarded message:)\s*$/i;
+  const HEADER = /^\s*(From|To|Cc|Bcc|Date|Sent|Subject|Reply-To|Message-ID)\s*:/i;
+
+  let delimIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (DELIM.test(lines[i])) delimIdx = i;
+  }
+  if (delimIdx === -1) return bodyText;
+
+  let i = delimIdx + 1;
+  while (i < lines.length && lines[i].trim() === "") i++; // skip blanks after delimiter
+  if (i >= lines.length || !HEADER.test(lines[i])) return bodyText; // no header block — don't strip
+  while (i < lines.length && lines[i].trim() !== "") i++; // consume the header block (until blank)
+
+  const rest = lines.slice(i).join("\n").trim();
+  return rest.length > 0 ? rest : bodyText;
+}
+
 export interface SubmitEventResult {
   /** ID of the newly-created event. Workflow writes this to
    *  inbound_emails.resulting_event_id at mark-done. */
@@ -374,7 +411,9 @@ export async function submitFreeTextExtract(
   env: HandlerEnv,
   bodyText: string
 ): Promise<SubmitExtractResult> {
-  const stripped = stripSignature(bodyText).slice(0, MAX_FETCH_CONTENT_LEN);
+  // OPE-174 #2 — strip the forwarded-message header block first (else it derails
+  // date/name extraction), then the trailing signature, then cap.
+  const stripped = stripSignature(stripForwardedPreamble(bodyText)).slice(0, MAX_FETCH_CONTENT_LEN);
   let res: Response;
   try {
     res = await fetch(`${env.MAIN_APP_URL}/api/admin/import-url/extract`, {

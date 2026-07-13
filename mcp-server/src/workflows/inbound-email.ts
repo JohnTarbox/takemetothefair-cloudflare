@@ -735,6 +735,11 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             // sent prose without a URL.
             classifiedSubIntent: inboundEmails.classifiedSubIntent,
             bodyTextExcerpt: inboundEmails.bodyTextExcerpt,
+            // OPE-174 #2 — full body (≤50k) for free-text extraction. The excerpt
+            // is only a 500-char preview; a forwarded submission's real event
+            // details often fall outside it, so free-text extract must see the
+            // whole body (forwarded-header-stripped inside submitFreeTextExtract).
+            bodyText: inboundEmails.bodyText,
           })
           .from(inboundEmails)
           .where(eq(inboundEmails.id, messageRowId))
@@ -939,7 +944,13 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
               retries: { limit: 1, delay: "10 seconds", backoff: "constant" },
               timeout: "30 seconds",
             },
-            () => submitFreeTextExtract(this.env, rowSnapshot.bodyTextExcerpt ?? "")
+            // OPE-174 #2 — full body (not the 500-char excerpt) so a forwarded
+            // submission's event details below the fold are extractable.
+            () =>
+              submitFreeTextExtract(
+                this.env,
+                rowSnapshot.bodyText ?? rowSnapshot.bodyTextExcerpt ?? ""
+              )
           );
           const hasMinFields =
             !!extracted.event.name && (!!extracted.event.startDate || !!extracted.event.venueName);
