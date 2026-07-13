@@ -85,6 +85,10 @@ const CATEGORY_COLORS: Record<string, CategoryColors> = {
   "Home Show": NAVY_SOFT,
   "Trade Show": NAVY_SOFT,
   "Car Show": NAVY_SOFT,
+  // OPE-186 — air shows join the NAVY (sky/aviation) "show" family; balloon
+  // festivals join the TERRACOTTA festival family.
+  "Air Show": NAVY_SOFT,
+  "Balloon Festival": TERRACOTTA,
   "Craft Fair": STONE_CRAFT,
   "Craft Show": STONE_CRAFT,
   "Fiber Arts Festival": STONE_CRAFT,

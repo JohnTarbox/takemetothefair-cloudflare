@@ -11,6 +11,10 @@ const NAME_PATTERNS: ReadonlyArray<readonly [RegExp, EventCategory]> = [
   [/\bcraft\s+fair\b/i, "Craft Fair"],
   [/\bcraft\s+show\b/i, "Craft Show"],
   [/\bcar\s+show\b/i, "Car Show"],
+  // OPE-186 — spectacle lane. "air show" is unambiguous; balloon needs a
+  // festival/fest/rally qualifier so "balloon animals at the fair" doesn't match.
+  [/\bair\s*show\b/i, "Air Show"],
+  [/\bballoon\s+(festival|fest|rally)\b/i, "Balloon Festival"],
   [/\bantique\s+show\b/i, "Antique Show"],
   [/\btrade\s+show\b/i, "Trade Show"],
   [/\bhome\s+show\b/i, "Home Show"],
