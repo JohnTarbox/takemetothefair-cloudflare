@@ -57,7 +57,7 @@ import { NonRetryableError } from "cloudflare:workflows";
 import { eq } from "drizzle-orm";
 import { getDb } from "../db.js";
 import { ledgerEmailSend } from "../mailer.js";
-import { inboundEmails, adminActions } from "../schema.js";
+import { inboundEmails, adminActions, events } from "../schema.js";
 import { logError } from "../logger.js";
 import { classifyDomainTier, isHigherTier, classifyDedupTier } from "@takemetothefair/utils";
 import type { EmailIntent } from "../email-intents.js";
@@ -80,6 +80,7 @@ import {
   stripSignature,
 } from "../email-handlers/submit.js";
 import { recordSourceCitations } from "../email-handlers/pipeline-citations.js";
+import { computeFillEmptyProposals } from "../email-handlers/enrich-proposal.js";
 import { buildReply } from "../email-reply-builder.js";
 import { issueToken } from "../feedback-tokens.js";
 import { issueCorrectionToken } from "../correction-tokens.js";
@@ -1207,6 +1208,76 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             }
           }
         );
+
+        // OPE-175 — enrich-on-match, STAGED FOR REVIEW (John's call 2026-07-13:
+        // fill-empty only, land PENDING). When a submission dedups to an existing
+        // event, capture the fields the email could FILL that are currently EMPTY
+        // on that event (image_url, source_url, description) and flag the inbound
+        // row for operator review — WITHOUT mutating the live (usually APPROVED)
+        // event. The operator applies the fills by hand from /admin/inbound-emails.
+        // Fill-empty-only: a populated field is never proposed, so curated data is
+        // untouchable. Distinct from the tier-audit's `dedup.would_enrich`
+        // observation above (which fires on source-tier promotion, not empty
+        // fields). Failsoft — a hiccup here must not block the already-exists reply.
+        if (dedup.existingEventId) {
+          const existingEventId = dedup.existingEventId;
+          await step.do(
+            "submit/enrich-proposal",
+            {
+              retries: { limit: 1, delay: "5 seconds", backoff: "constant" },
+              timeout: "5 seconds",
+            },
+            async () => {
+              try {
+                const db = getDb(this.env.DB);
+                const [existing] = await db
+                  .select({
+                    imageUrl: events.imageUrl,
+                    sourceUrl: events.sourceUrl,
+                    description: events.description,
+                  })
+                  .from(events)
+                  .where(eq(events.id, existingEventId))
+                  .limit(1);
+                if (!existing) return;
+                const proposals = computeFillEmptyProposals(existing, {
+                  imageUrl: extracted.event.imageUrl,
+                  sourceUrl: extracted.url,
+                  description: extracted.event.description,
+                });
+                if (Object.keys(proposals).length === 0) return;
+
+                await db.insert(adminActions).values({
+                  action: "dedup.enrich_proposed",
+                  actorUserId: null,
+                  targetType: "event",
+                  targetId: existingEventId,
+                  payloadJson: JSON.stringify({
+                    proposals,
+                    matchType: dedup.matchType ?? "exact_url",
+                    source: extracted.url || null,
+                    inboundEmailId: messageRowId,
+                    fromAddress,
+                  }),
+                  createdAt: new Date(),
+                });
+                // Surface the row in the /admin/inbound-emails review queue so an
+                // operator sees "matched + has fillable data" rather than a silent
+                // already-exists. SET only — never clears an operator's own flag.
+                await db
+                  .update(inboundEmails)
+                  .set({ flaggedForReview: 1 })
+                  .where(eq(inboundEmails.id, messageRowId));
+              } catch (err) {
+                await logError(getDb(this.env.DB), {
+                  source: "mcp:workflow:enrich-proposal",
+                  message: "dedup enrich-proposal capture failed",
+                  error: err,
+                });
+              }
+            }
+          );
+        }
 
         return {
           replyKind: "already-exists",
