@@ -398,6 +398,16 @@ export function dateLooksImplausible(input: DateGateInput): DateGateResult {
     reasons.push("end_date_in_past");
   }
 
+  if (input.startDate && input.startDate.getTime() < now.getTime() && !input.endDate) {
+    // OPE-201: a single-day auto-create whose START is already past (no end
+    // date) is almost always a real PAST EDITION — the Washington County Fair
+    // 2025 poster case. A fully-past multi-day event is caught by
+    // end_date_in_past above; an in-progress event (start past, end future) is
+    // legitimately upcoming and NOT flagged. Route this to review so it lands
+    // PENDING for web-confirm → OCCURRED (analyst lane), not silently APPROVED.
+    reasons.push("start_date_in_past");
+  }
+
   // Recurring-event exemption (analyst 2026-05-26 follow-up to PR #209):
   // a legitimately periodic series (Artisans' Market in Unity — biweekly
   // May–Dec, the three Farmington farmers markets — weekly season spans)

@@ -61,7 +61,7 @@ Return a JSON array where each event has these fields (use null for fields not f
 [
   {
     "name": "event title/name",
-    "description": "full event description (max 2000 chars)",
+    "description": "FACTUAL event description — what the event IS and what attendees can expect (activities, admission, who it's for). Do NOT describe the poster/flyer/graphic itself (never 'a promotional flyer for…', no colors/layout/design language). Max 2000 chars",
     "startDate": "YYYY-MM-DD format",
     "endDate": "YYYY-MM-DD format",
     "startTime": "HH:MM (24-hour) or null - opening time",
@@ -69,7 +69,7 @@ Return a JSON array where each event has these fields (use null for fields not f
     "hoursVaryByDay": true/false - whether hours differ on different days,
     "hoursNotes": "any notes about hours or per-day variations (e.g., 'Fri 5-9pm, Sat-Sun 10am-6pm')",
     "specificDates": ["YYYY-MM-DD", ...] or null - if the event runs on scattered/non-consecutive dates (e.g., "first Friday of each month", specific scattered dates), list each date here instead of using startDate/endDate,
-    "venueName": "venue or location name",
+    "venueName": "the venue/place name where the event is held (e.g. 'Fryeburg Fairgrounds', 'Pembroke Town Common'). ALWAYS also fill venueCity + venueState from the stated location — never leave the venue/location ONLY in the description",
     "venueAddress": "street address",
     "venueCity": "city",
     "venueState": "2-letter state code (Maine=ME)",
@@ -147,7 +147,7 @@ Return a JSON array where each event has these fields (use null for fields not f
 [
   {
     "name": "event title/name",
-    "description": "full event description (max 2000 chars)",
+    "description": "FACTUAL event description — what the event IS and what attendees can expect (activities, admission, who it's for). Do NOT describe the poster/flyer/graphic itself (never 'a promotional flyer for…', no colors/layout/design language). Max 2000 chars",
     "startDate": "YYYY-MM-DD format",
     "endDate": "YYYY-MM-DD format",
     "startTime": "HH:MM (24-hour) or null - opening time",
@@ -155,7 +155,7 @@ Return a JSON array where each event has these fields (use null for fields not f
     "hoursVaryByDay": true/false - whether hours differ on different days,
     "hoursNotes": "any notes about hours or per-day variations",
     "specificDates": ["YYYY-MM-DD", ...] or null,
-    "venueName": "venue or location name",
+    "venueName": "the venue/place name where the event is held (e.g. 'Fryeburg Fairgrounds', 'Pembroke Town Common'). ALWAYS also fill venueCity + venueState from the stated location — never leave the venue/location ONLY in the description",
     "venueAddress": "street address",
     "venueCity": "city",
     "venueState": "2-letter state code (Maine=ME)",
@@ -203,7 +203,7 @@ Find and extract these fields. Use null for any field not found:
 
 {
   "name": "event title/name",
-  "description": "full event description (max 2000 chars)",
+  "description": "FACTUAL event description — what the event IS and what attendees can expect (activities, admission, who it's for). Do NOT describe the poster/flyer/graphic itself (never 'a promotional flyer for…', no colors/layout/design language). Max 2000 chars",
   "startDate": "YYYY-MM-DD format (e.g., February 01, 2026 = 2026-02-01)",
   "endDate": "YYYY-MM-DD format",
   "startTime": "HH:MM (24-hour) or null - opening time (e.g., 10am = 10:00, 6pm = 18:00)",
@@ -211,7 +211,7 @@ Find and extract these fields. Use null for any field not found:
   "hoursVaryByDay": true/false - whether hours differ on different days,
   "hoursNotes": "any notes about hours or per-day variations (e.g., 'Fri 5-9pm, Sat-Sun 10am-6pm')",
   "specificDates": ["YYYY-MM-DD", ...] or null - if the event runs on scattered/non-consecutive dates, list each date here instead of using startDate/endDate,
-  "venueName": "venue or location name",
+  "venueName": "the venue/place name where the event is held (e.g. 'Fryeburg Fairgrounds', 'Pembroke Town Common'). ALWAYS also fill venueCity + venueState from the stated location — never leave the venue/location ONLY in the description",
   "venueAddress": "street address",
   "venueCity": "city",
   "venueState": "2-letter state code (Maine=ME, Massachusetts=MA, New Hampshire=NH)",

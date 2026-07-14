@@ -352,8 +352,14 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
       // WS2a — shared D1-safe batched insert (was an inline BATCH_SIZE=11 loop).
       await insertEventDaysBatched(db, newEventId, days);
     }
-    if (anyHoursUnknown) {
-      // DQ4: flag the parent event so the operator triage queue
+    // OPE-201: a past-dated auto-create is likely a real past EDITION that
+    // needs web-confirm → OCCURRED in the analyst lane — surface it in the
+    // flagged triage queue alongside DQ4 null-hours events.
+    const pastDated =
+      gateResult.reasons.includes("start_date_in_past") ||
+      gateResult.reasons.includes("end_date_in_past");
+    if (anyHoursUnknown || pastDated) {
+      // DQ4 / OPE-201: flag the parent event so the operator triage queue
       // (/admin/events?flagged=1) surfaces it for human follow-up.
       await db.update(events).set({ flaggedForReview: 1 }).where(eq(events.id, newEventId));
     }

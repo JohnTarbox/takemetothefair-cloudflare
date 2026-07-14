@@ -407,8 +407,11 @@ export async function POST(request: NextRequest) {
       // detected a MEDIUM-confidence dedup hit. NULL on every other path.
       possibleDuplicateOf: data.possibleDuplicateOf ?? null,
       // DQ4: flag for review when any event_day row carries NULL hours.
+      // OPE-201: also flag a past-dated auto-create — it's likely a real past
+      // EDITION that needs web-confirmation → OCCURRED in the review/analyst
+      // lane (the headless worker can't web-confirm), not an upcoming event.
       // Operator triage queue at /admin/events?flagged=1.
-      flaggedForReview: anyHoursUnknown ? 1 : 0,
+      flaggedForReview: anyHoursUnknown || gateReasons.includes("past_date") ? 1 : 0,
     });
 
     await recomputeEventCompleteness(db, newEventId);
