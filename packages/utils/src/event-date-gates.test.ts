@@ -124,4 +124,29 @@ describe("evaluateGates — date-plausibility checks (analyst spec)", () => {
     });
     expect(result.reasons).toContain("end_date_in_past");
   });
+
+  it("flags a past single-day auto-create with no end date (OPE-201 poster case)", () => {
+    const past = new Date("2024-08-23T12:00:00Z");
+    const result = evaluateGates({
+      name: "Washington County Fair 2024",
+      sourceName: "mainefairs.net",
+      startDate: past,
+      endDate: null,
+    });
+    expect(result.reasons).toContain("start_date_in_past");
+    expect(result.route).toBe("PENDING_REVIEW");
+  });
+
+  it("does NOT flag an in-progress event (start past, end future) as start_date_in_past", () => {
+    const start = new Date(Date.now() - 2 * 86400000); // 2 days ago
+    const end = new Date(Date.now() + 2 * 86400000); // 2 days out
+    const result = evaluateGates({
+      name: "Big State Fair",
+      sourceName: "mainefairs.net",
+      startDate: start,
+      endDate: end,
+      eventScale: "MAJOR",
+    });
+    expect(result.reasons).not.toContain("start_date_in_past");
+  });
 });
