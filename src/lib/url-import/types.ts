@@ -55,6 +55,16 @@ export interface ExtractedEventData {
   indoorOutdoor: "INDOOR" | "OUTDOOR" | "MIXED" | null;
   estimatedAttendance: number | null;
   applicationUrl: string | null;
+  // OPE-198 — vendor-application capture. `applicationDeadline` is a
+  // "YYYY-MM-DD" date-only string (see the header convention); leave null
+  // rather than guess. `applicationInstructions` is short prose (≤500 chars)
+  // for when there's a stated apply process but no URL (e.g. "email the
+  // organizer at X"). Both feed the OPE-191 vendor digest.
+  // Optional (unlike the older vendor fields) so the many "blank event"
+  // constructors in the wizard / suggest forms don't each need them; the AI
+  // extractor always sets them explicitly via sanitizeEventData.
+  applicationDeadline?: string | null;
+  applicationInstructions?: string | null;
   walkInsAllowed: boolean | null;
 }
 

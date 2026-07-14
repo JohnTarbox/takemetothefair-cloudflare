@@ -86,6 +86,8 @@ Return a JSON array where each event has these fields (use null for fields not f
     "indoorOutdoor": "INDOOR" or "OUTDOOR" or "MIXED" or null,
     "estimatedAttendance": number or null - expected attendance count,
     "applicationUrl": "URL for vendor applications",
+    "applicationDeadline": "YYYY-MM-DD or null - the deadline for VENDORS to apply for a booth (NOT the event's own date; leave null unless clearly stated as an application/registration deadline)",
+    "applicationInstructions": "how to apply when NO application URL is given (e.g. 'email organizer@example.com with product photos') - max 500 chars, or null",
     "walkInsAllowed": true/false/null - whether walk-in vendors are accepted
   }
 ]
@@ -170,6 +172,8 @@ Return a JSON array where each event has these fields (use null for fields not f
     "indoorOutdoor": "INDOOR" or "OUTDOOR" or "MIXED" or null,
     "estimatedAttendance": number or null,
     "applicationUrl": "URL for vendor applications",
+    "applicationDeadline": "YYYY-MM-DD or null - the deadline for VENDORS to apply for a booth (NOT the event's own date; leave null unless clearly stated as an application/registration deadline)",
+    "applicationInstructions": "how to apply when NO application URL is given (e.g. 'email organizer@example.com with product photos') - max 500 chars, or null",
     "walkInsAllowed": true/false/null
   }
 ]
@@ -224,6 +228,8 @@ Find and extract these fields. Use null for any field not found:
   "indoorOutdoor": "INDOOR" or "OUTDOOR" or "MIXED" or null,
   "estimatedAttendance": number or null - expected attendance count,
   "applicationUrl": "URL for vendor applications",
+  "applicationDeadline": "YYYY-MM-DD or null - the deadline for VENDORS to apply for a booth (NOT the event's own date; leave null unless clearly stated as an application/registration deadline)",
+  "applicationInstructions": "how to apply when NO application URL is given (e.g. 'email organizer@example.com with product photos') - max 500 chars, or null",
   "walkInsAllowed": true/false/null - whether walk-in vendors are accepted
 }
 
@@ -512,6 +518,11 @@ function sanitizeEventData(
     indoorOutdoor: sanitizeIndoorOutdoor(item.indoorOutdoor || item.indoor_outdoor),
     estimatedAttendance: sanitizePositiveInt(item.estimatedAttendance || item.estimated_attendance),
     applicationUrl: sanitizeUrl(item.applicationUrl || item.application_url),
+    applicationDeadline: sanitizeDate(item.applicationDeadline || item.application_deadline),
+    applicationInstructions: sanitizeString(
+      item.applicationInstructions || item.application_instructions,
+      500
+    ),
     walkInsAllowed:
       item.walkInsAllowed === true || item.walk_ins_allowed === true
         ? true
@@ -575,6 +586,8 @@ function createFallbackEvent(metadata: PageMetadata): ExtractedEvent[] {
     indoorOutdoor: null,
     estimatedAttendance: null,
     applicationUrl: null,
+    applicationDeadline: null,
+    applicationInstructions: null,
     walkInsAllowed: null,
   };
 
@@ -665,6 +678,8 @@ function parseAiResponse(
     indoorOutdoor: null,
     estimatedAttendance: null,
     applicationUrl: null,
+    applicationDeadline: null,
+    applicationInstructions: null,
     walkInsAllowed: null,
   };
 
@@ -734,6 +749,8 @@ function parseAiResponse(
       indoorOutdoor: sanitizeIndoorOutdoor(parsed.indoorOutdoor),
       estimatedAttendance: sanitizePositiveInt(parsed.estimatedAttendance),
       applicationUrl: sanitizeUrl(parsed.applicationUrl),
+      applicationDeadline: sanitizeDate(parsed.applicationDeadline),
+      applicationInstructions: sanitizeString(parsed.applicationInstructions, 500),
       walkInsAllowed:
         parsed.walkInsAllowed === true ? true : parsed.walkInsAllowed === false ? false : null,
     };

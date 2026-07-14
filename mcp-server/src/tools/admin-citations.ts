@@ -65,6 +65,36 @@ const DENORM_FIELD_MAP: Record<string, DenormSpec> = {
       return isNaN(d.getTime()) ? undefined : d;
     },
   },
+  // OPE-198 — the rest of the vendor-application family, so a field populated
+  // at intake (or by the OPE-192 backfill) can carry an auditable source URL.
+  vendor_fee_notes: {
+    column: "vendorFeeNotes",
+    parse: (raw) => {
+      const t = raw.trim();
+      return t.length > 0 ? t : undefined;
+    },
+  },
+  application_url: {
+    column: "applicationUrl",
+    parse: (raw) => {
+      const t = raw.trim();
+      return t.length > 0 ? t : undefined;
+    },
+  },
+  application_instructions: {
+    column: "applicationInstructions",
+    parse: (raw) => {
+      const t = raw.trim();
+      return t.length > 0 ? t.slice(0, 500) : undefined;
+    },
+  },
+  indoor_outdoor: {
+    column: "indoorOutdoor",
+    parse: (raw) => {
+      const u = raw.trim().toUpperCase();
+      return u === "INDOOR" || u === "OUTDOOR" || u === "MIXED" ? u : undefined;
+    },
+  },
   // K4 (analyst, 2026-05-31): structural fields — start_date, end_date,
   // venue_id, name. These are the highest-stakes fields on the site
   // ("trustworthy data" value prop), so corrections to them MUST carry

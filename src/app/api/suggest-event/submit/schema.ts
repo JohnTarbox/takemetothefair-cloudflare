@@ -43,6 +43,10 @@ export const submitEventSchema = z.object({
   estimatedAttendance: z.number().int().nullable().optional(),
   eventScale: z.enum(["SMALL", "MEDIUM", "LARGE", "MAJOR"]).nullable().optional(),
   applicationUrl: z.string().nullable().optional(),
+  // OPE-198 — vendor-application capture at intake (fed by the AI extractor +
+  // the inbound-email spread). Date-only string; short apply-process prose.
+  applicationDeadline: z.string().nullable().optional(),
+  applicationInstructions: z.string().transform(decodeHtmlEntities).nullable().optional(),
   walkInsAllowed: z.boolean().nullable().optional(),
   sourceUrl: z.string().url().optional(),
   suggesterEmail: z.string().email().optional().or(z.literal("")),
