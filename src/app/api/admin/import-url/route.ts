@@ -177,6 +177,13 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
       "ticket",
       urlClassifications
     );
+    // OPE-198 — gate the vendor application URL the same way (rejects
+    // aggregator/social hosts that shouldn't be presented as an apply link).
+    const gatedApplicationUrl = gateUrlForField(
+      event.applicationUrl || null,
+      "application",
+      urlClassifications
+    );
 
     // Pre-ingest gate evaluation. URL-import is the path that produced the
     // analyst's 2026-05-16 failures (TEC aggregator hosts, application
@@ -188,10 +195,12 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
       sourceName: "url-import",
       startDate,
       endDate,
-      // ExtractedEventData has no applicationDeadline field today — gate
-      // skips the start_equals_deadline check on URL-import for that reason.
-      // If the URL extractor learns to pull applicationDeadline, pass it here.
-      applicationDeadline: null,
+      // OPE-198 — the URL extractor now pulls applicationDeadline, so the
+      // start_equals_deadline gate (the "vendor deadline mistaken for the event
+      // date" failure) can finally run on the URL-import path too.
+      applicationDeadline: event.applicationDeadline
+        ? parseDateOnly(event.applicationDeadline)
+        : null,
       description: event.description,
     });
     const finalStatus = gateResult.route === "PENDING_REVIEW" ? "PENDING" : "APPROVED";
@@ -232,6 +241,21 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
       ticketPriceMinCents: dollarsToCents(event.ticketPriceMin),
       ticketPriceMaxCents: dollarsToCents(event.ticketPriceMax),
       imageUrl: event.imageUrl,
+      // OPE-198 — vendor-application fields the extractor pulled were being
+      // silently dropped here (only ticket price + image were persisted).
+      // Persist them so URL-imported events feed the OPE-191 vendor digest;
+      // null when the organizer page didn't state them (no guessing).
+      vendorFeeMinCents: dollarsToCents(event.vendorFeeMin),
+      vendorFeeMaxCents: dollarsToCents(event.vendorFeeMax),
+      vendorFeeNotes: event.vendorFeeNotes || null,
+      indoorOutdoor: event.indoorOutdoor ?? null,
+      estimatedAttendance: event.estimatedAttendance ?? null,
+      applicationUrl: gatedApplicationUrl,
+      applicationDeadline: event.applicationDeadline
+        ? parseDateOnly(event.applicationDeadline)
+        : null,
+      applicationInstructions: event.applicationInstructions || null,
+      walkInsAllowed: event.walkInsAllowed ?? null,
       status: finalStatus,
       gateFlags: gateFlagsJson,
       sourceName: "url-import",

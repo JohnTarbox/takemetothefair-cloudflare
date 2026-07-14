@@ -228,6 +228,20 @@ interface ExtractedEvent {
   // `discontinuousDates=true` to mark the resulting event row.
   specificDates?: string[] | null;
   discontinuousDates?: boolean;
+  // OPE-198 — vendor-application fields. These flow from the main-app extract
+  // endpoint and are forwarded verbatim via the `...extracted.event` spread in
+  // submitEvent, so the submit endpoint (schema.ts) persists them. Typed here so
+  // the two OPE-198 additions (applicationDeadline / applicationInstructions)
+  // survive the spread with the rest.
+  vendorFeeMin?: number | null;
+  vendorFeeMax?: number | null;
+  vendorFeeNotes?: string | null;
+  indoorOutdoor?: "INDOOR" | "OUTDOOR" | "MIXED" | null;
+  estimatedAttendance?: number | null;
+  applicationUrl?: string | null;
+  applicationDeadline?: string | null;
+  applicationInstructions?: string | null;
+  walkInsAllowed?: boolean | null;
 }
 
 /**

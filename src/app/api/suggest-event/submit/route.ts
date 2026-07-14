@@ -399,6 +399,9 @@ export async function POST(request: NextRequest) {
       estimatedAttendance: data.estimatedAttendance ?? null,
       eventScale: data.eventScale ?? null,
       applicationUrl: gatedApplicationUrl,
+      // OPE-198 — vendor-application deadline (date-only) + apply instructions.
+      applicationDeadline: normalizeEventDate(data.applicationDeadline ?? null),
+      applicationInstructions: data.applicationInstructions ?? null,
       walkInsAllowed: data.walkInsAllowed ?? null,
       // Cohort 2 (2026-06-01) — populated when the inbound-email workflow
       // detected a MEDIUM-confidence dedup hit. NULL on every other path.
