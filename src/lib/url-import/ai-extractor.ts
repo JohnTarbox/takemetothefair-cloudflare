@@ -14,6 +14,32 @@ import { WORKERS_AI_MODEL } from "@takemetothefair/constants";
 // no-console lint rule (warn/error allowed). The "[AI Extractor]" prefix
 // makes these easy to grep.
 
+/**
+ * Coerce a Workers AI `ai.run(...)` result into the raw response text.
+ *
+ * OPE-189: the model sometimes returns `{ response: <non-string> }` — for
+ * OCR'd-poster input it came back as a nested object, and the old inline
+ * `(response as {response?: string}).response || ""` yielded that object, so the
+ * downstream `responseText.substring(...)` threw `.substring is not a function`
+ * and every poster bounced (0 events). This never coerced, so the same crash was
+ * latent for any URL input that made the model return a structured `.response`.
+ *
+ * Always returns a string: a string `.response` passes through; a non-string
+ * `.response` (object/array) is JSON-stringified so the JSON-array/object regex
+ * in the parsers can still recover events from it, rather than crashing.
+ */
+function responseToText(response: unknown): string {
+  if (typeof response === "string") return response;
+  const inner = (response as { response?: unknown } | null | undefined)?.response;
+  if (typeof inner === "string") return inner;
+  if (inner === null || inner === undefined) return "";
+  try {
+    return JSON.stringify(inner);
+  } catch {
+    return String(inner);
+  }
+}
+
 const SYSTEM_PROMPT = `You are an expert at extracting event information from webpage text. You always respond with valid JSON only, no explanations.`;
 
 const MULTI_EVENT_SYSTEM_PROMPT = `You are an expert at extracting multiple event listings from webpage text. You find ALL events mentioned and return them as a JSON array. You always respond with valid JSON only, no explanations.`;
@@ -278,8 +304,7 @@ export async function extractEventData(
   );
 
   // Log raw response for debugging
-  const responseText =
-    typeof response === "string" ? response : (response as { response?: string }).response || "";
+  const responseText = responseToText(response);
   console.warn("[AI Extractor] Raw AI response:", responseText.substring(0, 1500));
 
   // Parse the response
@@ -356,8 +381,7 @@ export async function extractMultipleEvents(
   );
 
   // Log raw response for debugging
-  const responseText =
-    typeof response === "string" ? response : (response as { response?: string }).response || "";
+  const responseText = responseToText(response);
   console.warn("[AI Extractor Multi] Raw AI response:", responseText.substring(0, 2000));
 
   // Parse the response as array
@@ -376,8 +400,7 @@ function parseMultiEventResponse(
   response: AiTextGenerationOutput,
   metadata: PageMetadata
 ): ExtractedEvent[] {
-  const responseText =
-    typeof response === "string" ? response : (response as { response?: string }).response || "";
+  const responseText = responseToText(response);
 
   if (!responseText) {
     // Fallback to single event from metadata
@@ -646,8 +669,7 @@ function parseAiResponse(
   };
 
   // Get the response text
-  const responseText =
-    typeof response === "string" ? response : (response as { response?: string }).response || "";
+  const responseText = responseToText(response);
 
   if (!responseText) {
     return fallbackFromMetadata(defaultData, metadata);
