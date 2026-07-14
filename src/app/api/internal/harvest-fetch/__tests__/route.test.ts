@@ -67,7 +67,7 @@ describe("POST /api/internal/harvest-fetch (OPE-200)", () => {
   it("400 forbidden_host for an SSRF target (private IP)", async () => {
     const res = await POST(req({ url: "http://127.0.0.1/admin" }), ctx);
     expect(res.status).toBe(400);
-    expect((await res.json()).error).toBe("forbidden_host");
+    expect(((await res.json()) as { error: string }).error).toBe("forbidden_host");
   });
 
   it("fetches a sitemap → <loc> URLs (kind=sitemap, standard path)", async () => {
