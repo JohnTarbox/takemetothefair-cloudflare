@@ -8,6 +8,7 @@ import {
   forcedOutcome,
   hasSufficientAddress,
   hasNameLookupInputs,
+  isNonPointVenue,
   isAlreadyGeocoded,
   type GeocodeOutcome,
   type VenueForGeocode,
@@ -57,6 +58,18 @@ describe("hasSufficientAddress / hasNameLookupInputs / isAlreadyGeocoded", () =>
     expect(hasNameLookupInputs(venue({ name: "" }))).toBe(false);
   });
 
+  it("isNonPointVenue reads OUR name, not Google's answer (OPE-219)", () => {
+    expect(isNonPointVenue(venue({ name: "Framingham Parks (Rotating)" }))).toBe(true);
+    expect(isNonPointVenue(venue({ name: "Various Studios (Somerville)" }))).toBe(true);
+    expect(isNonPointVenue(venue({ name: "Location TBD" }))).toBe(true);
+    expect(isNonPointVenue(venue({ name: "Multiple Locations" }))).toBe(true);
+    // Ordinary venues are untouched.
+    expect(isNonPointVenue(venue({ name: "Fryeburg Fairgrounds" }))).toBe(false);
+    expect(isNonPointVenue(venue({ name: "Tanglewood" }))).toBe(false);
+    // Kept narrow on purpose: bare "multiple" must not reject a real venue.
+    expect(isNonPointVenue(venue({ name: "Multiple Sclerosis Society Hall" }))).toBe(false);
+  });
+
   it("needs BOTH lat and lng to count as geocoded", () => {
     expect(isAlreadyGeocoded(venue())).toBe(false);
     expect(isAlreadyGeocoded(venue({ latitude: 44, longitude: -70 }))).toBe(true);
@@ -94,6 +107,55 @@ describe("preflight", () => {
     // to dead-end at insufficient-address forever.
     expect(preflight(venue({ address: "" }), false)).toBeNull();
     expect(preflight(venue({ address: null }), false)).toBeNull();
+  });
+
+  // OPE-219 — refuse to invent a pin for a venue that says it has none.
+  it("returns not-a-point for a rotating venue, with NO Google call", () => {
+    const out = preflight(
+      venue({ name: "Framingham Parks (Rotating)", address: "", city: "Framingham", state: "MA" }),
+      false
+    );
+    expect(out?.status).toBe("not-a-point");
+    expect(out?.after).toEqual({ lat: null, lng: null, place_id: null });
+    // preflight short-circuiting IS the "no Google call" guarantee.
+    expect(out).not.toBeNull();
+  });
+
+  it("returns not-a-point for a 'Various' venue", () => {
+    expect(
+      preflight(
+        venue({
+          name: "Various Studios (Somerville)",
+          address: "",
+          city: "Somerville",
+          state: "MA",
+        }),
+        false
+      )?.status
+    ).toBe("not-a-point");
+  });
+
+  it("respects an operator-typed address on a rotating venue", () => {
+    // We only refuse to GUESS. A real street address is a deliberate human
+    // choice — geocode it via the address path as normal.
+    expect(
+      preflight(
+        venue({
+          name: "Framingham Parks (Rotating)",
+          address: "475 Union Ave",
+          city: "Framingham",
+        }),
+        false
+      )
+    ).toBeNull();
+  });
+
+  it("not-a-point is never forceable — no pin is correct", () => {
+    const out = mustPreflight(
+      venue({ name: "Framingham Parks (Rotating)", address: "", city: "Framingham", state: "MA" })
+    );
+    expect(shouldWrite(out, false)).toBe(false);
+    expect(shouldWrite(out, true)).toBe(false);
   });
 
   it("checks already-geocoded BEFORE address sufficiency", () => {
@@ -255,6 +317,20 @@ describe("nameOverlap", () => {
     expect(nameOverlap("", "Tanglewood")).toBe(0);
   });
 
+  it("scores a plain abbreviation at exactly 0.5 — why the threshold can't rise", () => {
+    // OPE-219 §2 (raise NAME_OVERLAP_MIN) was REJECTED because of this row.
+    // The correct pin "Memorial Boulevard, Bristol" vs Google's "Memorial Blvd"
+    // scores 0.50 — the SAME score as the org-office failure
+    // ("Framingham Parks (Rotating)" vs "Framingham Parks & Recreation").
+    // No threshold separates a correct abbreviation from a wrong office, so
+    // raising the bar would reject real pins. If this ever stops being 0.5,
+    // re-litigate that decision.
+    expect(nameOverlap("Memorial Boulevard, Bristol", "Memorial Blvd", "Bristol")).toBe(0.5);
+    expect(
+      nameOverlap("Framingham Parks (Rotating)", "Framingham Parks & Recreation", "Framingham")
+    ).toBe(0.5);
+  });
+
   it("ignores the city — echoing the query back is not corroboration", () => {
     // Without stripping the city this is 1/1 = 1.0 and a city centroid gets
     // stored as a venue pin. With it, there is nothing left to corroborate.
@@ -353,6 +429,49 @@ describe("judgeNameLookup", () => {
     expect(out.status).toBe("low-confidence");
     expect(out.error).toContain("name mismatch");
     expect(out.after).toEqual({ lat: null, lng: null, place_id: null });
+  });
+
+  // OPE-219 — the org-office case. Name matching provably cannot catch these:
+  // an office named after the event it runs scores 1.0 on any name metric.
+  it("refuses a candidate in an office suite — the org, not the venue", () => {
+    const out = judgeNameLookup(
+      venue({ name: "Falmouth Road Race Course", address: "", city: "Falmouth", state: "MA" }),
+      place({
+        name: "Falmouth Road Race",
+        city: "Falmouth",
+        state: "MA",
+        formattedAddress: "205 Worcester Ct Ste B-4, Falmouth, MA 02540, USA",
+      })
+    );
+    expect(out.status).toBe("low-confidence");
+    expect(out.error).toContain("office suite");
+    expect(out.after).toEqual({ lat: null, lng: null, place_id: null });
+  });
+
+  it("catches the office suite even when the name matches perfectly", () => {
+    // "Falmouth Road Race Course" vs "Falmouth Road Race" scores 1.0 — the
+    // office is named after the event it runs, so no name threshold can ever
+    // reject it. Only the suite signal sees this one.
+    expect(nameOverlap("Falmouth Road Race Course", "Falmouth Road Race", "Falmouth")).toBe(1);
+  });
+
+  it("leaves a suite-free candidate alone", () => {
+    const out = judgeNameLookup(tanglewood(), place());
+    expect(out.status).toBe("ok");
+  });
+
+  it("stays forceable — a small venue really can be in a suite", () => {
+    const out = judgeNameLookup(
+      venue({ name: "Downtown Wallingford", address: "", city: "Wallingford", state: "CT" }),
+      place({
+        name: "Downtown Wallingford",
+        city: "Wallingford",
+        state: "CT",
+        formattedAddress: "220 N Colony Rd Ste D, Wallingford, CT 06492, USA",
+      })
+    );
+    expect(shouldWrite(out, false)).toBe(false);
+    expect(shouldWrite(out, true)).toBe(true);
   });
 
   it("tolerates a hit with no displayName rather than rejecting on it", () => {

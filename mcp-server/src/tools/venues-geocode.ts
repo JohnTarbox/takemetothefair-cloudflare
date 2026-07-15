@@ -48,8 +48,11 @@ export function registerVenuesGeocodeTool(server: McpServer, auth: AuthContext, 
       "the row) is reported with its candidate address and NOT written — re-run with " +
       "force:true to store a candidate you have reviewed and believe is right: it returns status 'forced' " +
       "(keeping the reason the gate objected) and is logged to admin_actions. force only overrides the " +
-      "confidence verdict — it never stores an 'insufficient-address' or 'no-match' venue, because there is " +
-      "no candidate to store. Returns a per-venue outcome record. Admin only.",
+      "confidence verdict — it never stores an 'insufficient-address', 'no-match' or 'not-a-point' venue, " +
+      "because there is no candidate to store. A venue whose NAME says it has no fixed location " +
+      "('Framingham Parks (Rotating)', 'Various Studios') returns 'not-a-point' with no Google call at all — " +
+      "no pin is correct for it, so it is not forceable and needs no research. Returns a per-venue outcome " +
+      "record. Admin only.",
     {
       venue_id: z.string().optional().describe("Geocode a single venue by id."),
       venue_ids: z
