@@ -14,10 +14,11 @@
  * by finding venues within 1.5 miles of the photo's GPS, so an ungeocoded venue
  * can NEVER match a photo — coverage here is the ceiling on that feature.
  *
- * Non-destructive: existing coordinates are never silently overwritten
- * (`force: true` opts in). Low-confidence answers are reported, not written —
- * Google's fallback for a miss is a city centroid, which inside a 1.5-mile
- * radius is worse than a blank.
+ * Non-destructive: existing coordinates are never silently overwritten, and
+ * low-confidence answers are reported, not written — Google's fallback for a
+ * miss is a city centroid, which inside a 1.5-mile radius is worse than a
+ * blank. `force: true` opts out of both (OPE-215), storing a reviewed candidate
+ * as `forced` with an `admin_actions` row.
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
@@ -40,7 +41,10 @@ export function registerVenuesGeocodeTool(server: McpServer, auth: AuthContext, 
       "have no coordinates. Non-destructive: a venue that already has coords returns 'already-geocoded' and " +
       "is skipped unless force:true. A low-confidence match (multiple candidates, partial match, or a " +
       "city-centroid 'APPROXIMATE' pin) is reported with its candidate address and NOT written — re-run with " +
-      "force:true if the candidate looks right. Returns a per-venue outcome record. Admin only.",
+      "force:true to store a candidate you have reviewed and believe is right: it returns status 'forced' " +
+      "(keeping the reason the gate objected) and is logged to admin_actions. force only overrides the " +
+      "confidence verdict — it never stores an 'insufficient-address' or 'no-match' venue, because there is " +
+      "no candidate to store. Returns a per-venue outcome record. Admin only.",
     {
       venue_id: z.string().optional().describe("Geocode a single venue by id."),
       venue_ids: z
@@ -61,7 +65,11 @@ export function registerVenuesGeocodeTool(server: McpServer, auth: AuthContext, 
         .boolean()
         .optional()
         .default(false)
-        .describe("Re-geocode venues that already have coordinates, overwriting them."),
+        .describe(
+          "Override the safety defaults: re-geocode a venue that already has coordinates (overwriting " +
+            "them), AND store a reviewed low-confidence candidate (reported as 'forced'). Never stores an " +
+            "insufficient-address or no-match venue."
+        ),
     },
     async (params) => {
       if (!env?.MAIN_APP_URL || !env?.INTERNAL_API_KEY) {

@@ -16,6 +16,8 @@ import type { GeocodeDetail } from "../google-maps";
 
 export type GeocodeStatus =
   | "ok"
+  /** Low-confidence, but stored anyway because the caller passed `force`. */
+  | "forced"
   | "already-geocoded"
   | "insufficient-address"
   | "no-match"
@@ -96,9 +98,11 @@ export function preflight(v: VenueForGeocode, force: boolean): GeocodeOutcome | 
 /**
  * Judge Google's answer. Pure: the caller does the fetch and the write.
  *
- * A `low-confidence` result is reported with its candidate name and NOT
- * written — the operator can re-run with `force: true` if the candidate looks
- * right.
+ * `judge` always reports what Google actually returned, regardless of `force` —
+ * it takes no `force` parameter on purpose. Overriding is a decision about
+ * whether to STORE the pin, not about what the pin is, so it lives in
+ * `shouldWrite` / `forcedOutcome`. Keeping the two apart is what lets a forced
+ * write still carry the reason the gate objected.
  */
 export function judge(v: VenueForGeocode, detail: GeocodeDetail | null): GeocodeOutcome {
   const before = { lat: v.latitude, lng: v.longitude };
@@ -134,5 +138,37 @@ export function judge(v: VenueForGeocode, detail: GeocodeDetail | null): Geocode
     after: { lat: detail.lat, lng: detail.lng, place_id: detail.placeId },
     status: "ok",
     candidate: detail.formattedAddress ?? undefined,
+  };
+}
+
+/**
+ * OPE-215 — should the caller store this outcome's pin?
+ *
+ * `force` overrides the CONFIDENCE verdict and nothing else. It cannot conjure
+ * a pin that doesn't exist: `no-match` has no candidate to store, and
+ * `insufficient-address` never asked Google in the first place. Letting force
+ * reach those would turn "I looked at the candidate and it's right" into
+ * "write something, anything" — the exact failure the gate exists to prevent.
+ */
+export function shouldWrite(outcome: GeocodeOutcome, force: boolean): boolean {
+  if (outcome.status === "ok") return true;
+  return force && outcome.status === "low-confidence";
+}
+
+/**
+ * Re-label a low-confidence outcome the operator chose to store.
+ *
+ * `error` and `candidate` are deliberately KEPT, and the status is `forced`
+ * rather than `ok`: a pin that beat the gate by override must never be
+ * indistinguishable from one the gate cleared on its own. OPE-203 attributes
+ * on-site photos to a fair using these coordinates, so "which pins did someone
+ * override, and what did the gate object to?" has to stay answerable — in this
+ * record, and in `admin_actions` after the response is gone.
+ */
+export function forcedOutcome(outcome: GeocodeOutcome, detail: GeocodeDetail): GeocodeOutcome {
+  return {
+    ...outcome,
+    status: "forced",
+    after: { lat: detail.lat, lng: detail.lng, place_id: detail.placeId },
   };
 }

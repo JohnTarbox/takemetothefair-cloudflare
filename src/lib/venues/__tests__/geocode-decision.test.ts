@@ -2,8 +2,11 @@ import { describe, it, expect } from "vitest";
 import {
   preflight,
   judge,
+  shouldWrite,
+  forcedOutcome,
   hasSufficientAddress,
   isAlreadyGeocoded,
+  type GeocodeOutcome,
   type VenueForGeocode,
 } from "../geocode-decision";
 import type { GeocodeDetail } from "../../google-maps";
@@ -140,5 +143,66 @@ describe("judge", () => {
     const out = judge(venue({ latitude: 1, longitude: 2 }), detail());
     expect(out.before).toEqual({ lat: 1, lng: 2 });
     expect(out.status).toBe("ok");
+  });
+});
+
+// OPE-215 — `force` reached preflight() only, so a reviewed low-confidence
+// candidate could never be stored by any argument, in contradiction of the
+// tool's own docs. These pin the write decision that was missing.
+const mustPreflight = (v: VenueForGeocode, force = false): GeocodeOutcome => {
+  const out = preflight(v, force);
+  if (!out) throw new Error("expected preflight to short-circuit");
+  return out;
+};
+
+describe("shouldWrite", () => {
+  const ok = judge(venue(), detail());
+  const low = judge(venue(), detail({ partialMatch: true }));
+  const noMatch = judge(venue(), null);
+
+  it("writes a clean match, force or not", () => {
+    expect(shouldWrite(ok, false)).toBe(true);
+    expect(shouldWrite(ok, true)).toBe(true);
+  });
+
+  it("holds a low-confidence match by default — the core safety property", () => {
+    expect(shouldWrite(low, false)).toBe(false);
+  });
+
+  it("writes a low-confidence match under force — the escape hatch itself", () => {
+    expect(shouldWrite(low, true)).toBe(true);
+  });
+
+  it("force never invents a pin where Google gave no candidate", () => {
+    // force overrides the CONFIDENCE verdict, not the absence of an answer:
+    // no-match has nothing to store, insufficient-address never asked Google.
+    expect(shouldWrite(noMatch, true)).toBe(false);
+    expect(shouldWrite(mustPreflight(venue({ address: "" })), true)).toBe(false);
+  });
+
+  it("never writes an already-geocoded skip", () => {
+    const skip = mustPreflight(venue({ latitude: 44, longitude: -70 }));
+    expect(shouldWrite(skip, false)).toBe(false);
+    expect(shouldWrite(skip, true)).toBe(false);
+  });
+});
+
+describe("forcedOutcome", () => {
+  it("stores the candidate's coords", () => {
+    const d = detail({ partialMatch: true });
+    const out = forcedOutcome(judge(venue(), d), d);
+    expect(out.after).toEqual({ lat: 44.0176, lng: -70.9803, place_id: "ChIJexample" });
+  });
+
+  it("stays distinguishable from a pin the gate cleared on its own", () => {
+    const d = detail({ partialMatch: true, candidateCount: 2 });
+    const out = forcedOutcome(judge(venue(), d), d);
+    expect(out.status).toBe("forced");
+    expect(out.status).not.toBe("ok");
+    // The reason the gate objected must survive the override — OPE-203
+    // attributes photos on this pin, so the doubt has to stay on the record.
+    expect(out.error).toContain("partial match");
+    expect(out.error).toContain("2 candidates");
+    expect(out.candidate).toBe("1154 Main St, Fryeburg, ME 04037, USA");
   });
 });
