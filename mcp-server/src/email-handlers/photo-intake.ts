@@ -38,6 +38,8 @@ import { getDb, type Db } from "../db.js";
 import { and, eq, inArray, isNull, isNotNull, gte, lte } from "drizzle-orm";
 import type { HandlerFn, HandlerEnv, HandlerResult } from "./types.js";
 import { parsePlusSegment } from "../email-intents.js";
+import { logError } from "../logger.js";
+import { runBoothPipeline, type BoothPipelineResult } from "../photo/booth-pipeline.js";
 import { parseExif, type ExifData } from "../photo/exif.js";
 import {
   resolveOccurrence,
@@ -344,6 +346,20 @@ export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> =
   );
 
   if (resolution.status === "resolved") {
+    // OPE-204 Milestone A — identify the booths and STAGE them for review.
+    // No vendor/event/hero writes here; gated OFF by default and fail-soft, so
+    // a vision outage can never cost us the (already-correct) fair match.
+    let booths: BoothPipelineResult | null = null;
+    try {
+      booths = await runBoothPipeline(env, db, row.id, resolution.eventId, imageRefs(refs));
+    } catch (e) {
+      await logError(env.DB, {
+        message: "Booth pipeline failed (fair match unaffected)",
+        error: e,
+        source: "email-handlers/photo-intake.ts:runBoothPipeline",
+      });
+    }
+
     return {
       replyKind: "photo-intake-ack",
       replyParams: {
@@ -358,6 +374,8 @@ export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> =
         matchedDate: resolution.matchedDate ?? null,
         venueName: resolution.venueName ?? null,
         distanceMiles: resolution.distanceMiles ?? null,
+        boothsStaged: booths?.staged ?? 0,
+        boothNames: booths?.identifiedNames ?? [],
       },
       // The downstream OPE-204 vendor pipeline reads this off the row.
       resultingEventId: resolution.eventId,

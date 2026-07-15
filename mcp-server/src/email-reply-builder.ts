@@ -436,14 +436,22 @@ ${SIGN_OFF}`;
             : "";
       const dateLine = date ? `\nDate:    ${date}` : "";
 
+      // OPE-204 Milestone A — report what the vision pass staged, if it ran.
+      const staged = Number(params.boothsStaged ?? 0);
+      const names = Array.isArray(params.boothNames) ? (params.boothNames as string[]) : [];
+      const boothLine =
+        staged > 0
+          ? `\n\nWe spotted ${staged} booth${staged === 1 ? "" : "s"}${
+              names.length > 0 ? `: ${names.join(", ")}` : ""
+            }. These are held for review — nothing has been added to the site yet.`
+          : "";
+
       return `Thanks — we received ${n} ${noun} for Meet Me at the Fair.${hintLine}
 
 Matched to: ${matchedName}${dateLine}${whereLine}
-Matched by: ${method}
+Matched by: ${method}${boothLine}
 
 If that's not the right fair, reply and tell us which one — or resend to photos+<event-slug>@meetmeatthefair.com to name it explicitly.
-
-You'll hear back with a summary of what we did.
 
 ${SUPPORT_LINE}
 
