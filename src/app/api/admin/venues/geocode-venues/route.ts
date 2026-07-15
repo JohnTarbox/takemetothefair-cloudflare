@@ -2,6 +2,16 @@ export const dynamic = "force-dynamic";
 /**
  * OPE-207 — geocode specific venues by id, non-destructively.
  *
+ * ── Two lookup paths (OPE-213) ───────────────────────────────────────────
+ * A venue WITH a street address → Geocoding API (`judge`).
+ * A venue with only name + city + state → Places TEXT SEARCH (`judgeNameLookup`),
+ * which also back-fills the missing street address. Without this, the 38
+ * addressless landmarks blocking OPE-203's photo lane (Tanglewood, MASS MoCA,
+ * Jacob's Pillow…) returned `insufficient-address` forever — they were never
+ * missing data a human had to research, only being asked the wrong question.
+ * The two paths gate differently because the two APIs return different
+ * evidence; see `judgeNameLookup`.
+ *
  * The main-app half of the `venues_geocode` MCP tool. The Google Places client
  * (`src/lib/google-maps.ts`) lives in this app and the MCP Worker is a separate
  * build with no path into `src/`, so the tool proxies here over X-Internal-Key
@@ -37,13 +47,16 @@ import { withInternalKey } from "@/lib/api/with-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { venues, adminActions } from "@/lib/db/schema";
 import { eq, inArray, isNull, and } from "drizzle-orm";
-import { geocodeAddressDetailed } from "@/lib/google-maps";
+import { geocodeAddressDetailed, lookupPlace } from "@/lib/google-maps";
 import { logError } from "@/lib/logger";
 import {
   preflight,
   judge,
+  judgeNameLookup,
+  hasSufficientAddress,
   shouldWrite,
   forcedOutcome,
+  type GeocodePin,
   type GeocodeOutcome,
   type VenueForGeocode,
 } from "@/lib/venues/geocode-decision";
@@ -52,6 +65,10 @@ import {
  * Hard cap per call. Each venue costs one Google round-trip (8s timeout) plus a
  * pacing delay, and this route runs on the 100s edge budget — 25 × ~1s is a
  * comfortable fit while 233 in one shot is not. The caller pages.
+ *
+ * The OPE-213 name path is pricier: `lookupPlace` also fetches a photo URL for
+ * a hit that has photos, so budget ~2 round-trips per addressless venue. Still
+ * inside the budget at 25, but page smaller if a name-heavy batch runs long.
  */
 const MAX_PER_CALL = 25;
 
@@ -141,27 +158,63 @@ export const POST = withInternalKey(
       }
 
       try {
-        const detail = await geocodeAddressDetailed(
-          v.address ?? "",
-          v.city ?? "",
-          v.state ?? "",
-          v.zip ?? undefined,
-          apiKey
-        );
-        let outcome = judge(v, detail);
+        // Which API can answer for this venue is a property of the row, not a
+        // caller choice: a street address goes to the Geocoding API, a bare
+        // name+city+state to a Places text search (OPE-213). preflight() has
+        // already guaranteed at least one path is viable.
+        let outcome: GeocodeOutcome;
+        let pin: GeocodePin | null = null;
 
-        if (shouldWrite(outcome, force) && detail) {
-          if (outcome.status === "low-confidence") outcome = forcedOutcome(outcome, detail);
+        if (hasSufficientAddress(v)) {
+          const detail = await geocodeAddressDetailed(
+            v.address ?? "",
+            v.city ?? "",
+            v.state ?? "",
+            v.zip ?? undefined,
+            apiKey
+          );
+          outcome = judge(v, detail);
+          if (detail) {
+            pin = {
+              lat: detail.lat,
+              lng: detail.lng,
+              placeId: detail.placeId,
+              zip: detail.zip,
+              address: null, // the geocode path had an address already
+            };
+          }
+        } else {
+          const place = await lookupPlace(v.name, v.city ?? "", v.state ?? "", apiKey);
+          outcome = judgeNameLookup(v, place);
+          if (place && place.lat != null && place.lng != null) {
+            pin = {
+              lat: place.lat,
+              lng: place.lng,
+              placeId: place.googlePlaceId,
+              zip: place.zip,
+              // The text search returns the street address we were missing —
+              // this fixes the root data gap, not just the coordinates.
+              address: place.address,
+            };
+          }
+        }
+
+        if (shouldWrite(outcome, force) && pin) {
+          if (outcome.status === "low-confidence") outcome = forcedOutcome(outcome, pin);
 
           const updates: Record<string, unknown> = {
-            latitude: detail.lat,
-            longitude: detail.lng,
-            googlePlaceId: detail.placeId,
-            googleMapsUrl: `https://www.google.com/maps/place/?q=place_id:${detail.placeId}`,
+            latitude: pin.lat,
+            longitude: pin.lng,
             updatedAt: new Date(),
           };
-          // Fill a blank zip from the geocode, but never overwrite a stored one.
-          if (!v.zip && detail.zip) updates.zip = detail.zip;
+          // A null placeId would build a "place_id:null" URL — skip both.
+          if (pin.placeId) {
+            updates.googlePlaceId = pin.placeId;
+            updates.googleMapsUrl = `https://www.google.com/maps/place/?q=place_id:${pin.placeId}`;
+          }
+          // Fill blanks from the geocode, but never overwrite what's stored.
+          if (!v.zip && pin.zip) updates.zip = pin.zip;
+          if (!v.address?.trim() && pin.address) updates.address = pin.address;
           await db.update(venues).set(updates).where(eq(venues.id, v.id));
 
           // A pin that beat the confidence gate by override has to stay
@@ -176,8 +229,9 @@ export const POST = withInternalKey(
               payloadJson: JSON.stringify({
                 reason: outcome.error,
                 candidate: outcome.candidate,
-                lat: detail.lat,
-                lng: detail.lng,
+                method: outcome.method,
+                lat: pin.lat,
+                lng: pin.lng,
               }),
               createdAt: new Date(),
             });

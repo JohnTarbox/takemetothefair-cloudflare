@@ -2,14 +2,17 @@ import { describe, it, expect } from "vitest";
 import {
   preflight,
   judge,
+  judgeNameLookup,
+  nameOverlap,
   shouldWrite,
   forcedOutcome,
   hasSufficientAddress,
+  hasNameLookupInputs,
   isAlreadyGeocoded,
   type GeocodeOutcome,
   type VenueForGeocode,
 } from "../geocode-decision";
-import type { GeocodeDetail } from "../../google-maps";
+import type { GeocodeDetail, PlaceLookupResult } from "../../google-maps";
 
 const venue = (over: Partial<VenueForGeocode> = {}): VenueForGeocode => ({
   id: "v1",
@@ -35,7 +38,7 @@ const detail = (over: Partial<GeocodeDetail> = {}): GeocodeDetail => ({
   ...over,
 });
 
-describe("hasSufficientAddress / isAlreadyGeocoded", () => {
+describe("hasSufficientAddress / hasNameLookupInputs / isAlreadyGeocoded", () => {
   it("requires address + city + state", () => {
     expect(hasSufficientAddress(venue())).toBe(true);
     expect(hasSufficientAddress(venue({ address: "" }))).toBe(false);
@@ -44,6 +47,14 @@ describe("hasSufficientAddress / isAlreadyGeocoded", () => {
     expect(hasSufficientAddress(venue({ state: null }))).toBe(false);
     // Zip alone can't disambiguate a venue.
     expect(hasSufficientAddress(venue({ zip: null }))).toBe(true);
+  });
+
+  it("name lookup needs name + city + state, but no address (OPE-213)", () => {
+    expect(hasNameLookupInputs(venue({ address: "" }))).toBe(true);
+    expect(hasNameLookupInputs(venue({ address: null, zip: null }))).toBe(true);
+    expect(hasNameLookupInputs(venue({ city: "" }))).toBe(false);
+    expect(hasNameLookupInputs(venue({ state: "  " }))).toBe(false);
+    expect(hasNameLookupInputs(venue({ name: "" }))).toBe(false);
   });
 
   it("needs BOTH lat and lng to count as geocoded", () => {
@@ -70,8 +81,19 @@ describe("preflight", () => {
     expect(preflight(venue({ latitude: 44, longitude: -70 }), true)).toBeNull();
   });
 
-  it("reports insufficient-address without calling Google", () => {
-    expect(preflight(venue({ address: "" }), false)?.status).toBe("insufficient-address");
+  it("reports insufficient-address only when NEITHER path is viable", () => {
+    // No address AND no city to search by name with — nothing to ask Google.
+    expect(preflight(venue({ address: "", city: "" }), false)?.status).toBe("insufficient-address");
+    expect(preflight(venue({ address: "", state: null }), false)?.status).toBe(
+      "insufficient-address"
+    );
+  });
+
+  it("lets an addressless venue through to the name path (OPE-213)", () => {
+    // Tanglewood-shaped: no street address, but name + city + state. This used
+    // to dead-end at insufficient-address forever.
+    expect(preflight(venue({ address: "" }), false)).toBeNull();
+    expect(preflight(venue({ address: null }), false)).toBeNull();
   });
 
   it("checks already-geocoded BEFORE address sufficiency", () => {
@@ -176,14 +198,172 @@ describe("shouldWrite", () => {
   it("force never invents a pin where Google gave no candidate", () => {
     // force overrides the CONFIDENCE verdict, not the absence of an answer:
     // no-match has nothing to store, insufficient-address never asked Google.
+    // (city:"" so NEITHER path is viable — address:"" alone now goes to the
+    // name path, per OPE-213.)
     expect(shouldWrite(noMatch, true)).toBe(false);
-    expect(shouldWrite(mustPreflight(venue({ address: "" })), true)).toBe(false);
+    expect(shouldWrite(mustPreflight(venue({ address: "", city: "" })), true)).toBe(false);
   });
 
   it("never writes an already-geocoded skip", () => {
     const skip = mustPreflight(venue({ latitude: 44, longitude: -70 }));
     expect(shouldWrite(skip, false)).toBe(false);
     expect(shouldWrite(skip, true)).toBe(false);
+  });
+});
+
+// OPE-213 — the name path. Cases are drawn from the real 38 addressless
+// venues blocking OPE-203's photo lane.
+const tanglewood = (over: Partial<VenueForGeocode> = {}): VenueForGeocode =>
+  venue({ name: "Tanglewood", address: "", city: "Lenox", state: "MA", zip: "", ...over });
+
+const place = (over: Partial<PlaceLookupResult> = {}): PlaceLookupResult =>
+  ({
+    name: "Tanglewood",
+    lat: 42.3466,
+    lng: -73.3115,
+    address: "297 West St",
+    city: "Lenox",
+    state: "MA",
+    zip: "01240",
+    formattedAddress: "297 West St, Lenox, MA 01240, USA",
+    googlePlaceId: "ChIJtanglewood",
+    ...over,
+  }) as PlaceLookupResult;
+
+describe("nameOverlap", () => {
+  it("scores an exact name 1", () => {
+    expect(nameOverlap("Tanglewood", "Tanglewood")).toBe(1);
+  });
+
+  it("scores 1 when Google is merely more specific than we are", () => {
+    // The common real shape — and precisely where Jaccard would say 0.5 and
+    // wrongly reject. Containment is the metric that matches reality.
+    expect(nameOverlap("Jacob's Pillow", "Jacob's Pillow Dance Festival")).toBe(1);
+    expect(nameOverlap("MASS MoCA", "MASS MoCA Museum")).toBe(1);
+  });
+
+  it("scores 0 for unrelated names", () => {
+    expect(nameOverlap("Ballard Park", "Ridgefield Town Hall")).toBe(0);
+  });
+
+  it("is case- and punctuation-insensitive", () => {
+    expect(nameOverlap("JACOB'S PILLOW", "jacobs pillow")).toBe(1);
+  });
+
+  it("scores 0 against an empty name rather than dividing by zero", () => {
+    expect(nameOverlap("Tanglewood", "")).toBe(0);
+    expect(nameOverlap("", "Tanglewood")).toBe(0);
+  });
+
+  it("ignores the city — echoing the query back is not corroboration", () => {
+    // Without stripping the city this is 1/1 = 1.0 and a city centroid gets
+    // stored as a venue pin. With it, there is nothing left to corroborate.
+    expect(nameOverlap("Framingham Parks (Rotating)", "Framingham", "Framingham")).toBe(0);
+    // A real distinctive token still corroborates once the city is gone.
+    expect(nameOverlap("Downtown Worcester (City Common)", "Worcester Common", "Worcester")).toBe(
+      1
+    );
+  });
+});
+
+describe("judgeNameLookup", () => {
+  it("accepts a name+city+state match and reports method 'name'", () => {
+    const out = judgeNameLookup(tanglewood(), place());
+    expect(out.status).toBe("ok");
+    expect(out.method).toBe("name");
+    expect(out.after).toEqual({ lat: 42.3466, lng: -73.3115, place_id: "ChIJtanglewood" });
+  });
+
+  it("reports no-match when the text search returns nothing", () => {
+    expect(judgeNameLookup(tanglewood(), null).status).toBe("no-match");
+  });
+
+  it("reports no-match when a hit carries no coordinates", () => {
+    // Nothing to store — a hit without a pin is not a pin.
+    expect(judgeNameLookup(tanglewood(), place({ lat: null })).status).toBe("no-match");
+    expect(judgeNameLookup(tanglewood(), place({ lng: null })).status).toBe("no-match");
+  });
+
+  // The safety property the ticket names: never store a pin whose city/state
+  // disagrees with the row.
+  it("refuses a hit in a different state — the Ballard Park case", () => {
+    const out = judgeNameLookup(tanglewood(), place({ state: "NY", city: "Lenox" }));
+    expect(out.status).toBe("low-confidence");
+    expect(out.error).toContain("state mismatch");
+    expect(out.after).toEqual({ lat: null, lng: null, place_id: null });
+  });
+
+  it("refuses a hit in a different city", () => {
+    const out = judgeNameLookup(tanglewood(), place({ city: "Pittsfield" }));
+    expect(out.status).toBe("low-confidence");
+    expect(out.error).toContain("city mismatch");
+    expect(out.after.lat).toBeNull();
+  });
+
+  it("blames the state, not the city, when both are wrong", () => {
+    // A wrong state makes the city moot — one clear reason beats two.
+    const out = judgeNameLookup(tanglewood(), place({ city: "Albany", state: "NY" }));
+    expect(out.error).toContain("state mismatch");
+    expect(out.error).not.toContain("city mismatch");
+  });
+
+  it("refuses the right town but the wrong place — the town-hall case", () => {
+    const out = judgeNameLookup(
+      venue({ name: "Ballard Park", address: "", city: "Ridgefield", state: "CT" }),
+      place({ name: "Ridgefield Town Hall", city: "Ridgefield", state: "CT" })
+    );
+    expect(out.status).toBe("low-confidence");
+    expect(out.error).toContain("name mismatch");
+  });
+
+  it("surfaces the candidate so a low-confidence answer can be reviewed and forced", () => {
+    const out = judgeNameLookup(tanglewood(), place({ city: "Pittsfield" }));
+    expect(out.candidate).toContain("297 West St");
+    // The whole point of reporting rather than dropping: OPE-215's force can
+    // act on it. Google's `city` is the postal locality, which in New England
+    // is often the village not the town, so this path has real false-rejects.
+    expect(shouldWrite(out, true)).toBe(true);
+    expect(shouldWrite(out, false)).toBe(false);
+  });
+
+  it("accepts a village/town alias only via review, never silently", () => {
+    // Winchester Center CT ↔ Google's "Winsted" is a REAL correct pin, but it
+    // reads as a city mismatch. Conservative direction: report, don't store.
+    const out = judgeNameLookup(
+      venue({
+        name: "Winchester Grange Hall",
+        address: "",
+        city: "Winchester Center",
+        state: "CT",
+      }),
+      place({ name: "Winchester Grange Hall", city: "Winsted", state: "CT" })
+    );
+    expect(out.status).toBe("low-confidence");
+    expect(out.error).toContain("city mismatch");
+  });
+
+  it("refuses a bare city-name hit for a rotating venue — the centroid trap", () => {
+    // "Framingham Parks (Rotating)" has no single location. If Google answers
+    // with the municipality itself, every other signal agrees (right city,
+    // right state) and only the city-stripped name check catches it.
+    const out = judgeNameLookup(
+      venue({ name: "Framingham Parks (Rotating)", address: "", city: "Framingham", state: "MA" }),
+      place({ name: "Framingham", city: "Framingham", state: "MA" })
+    );
+    expect(out.status).toBe("low-confidence");
+    expect(out.error).toContain("name mismatch");
+    expect(out.after).toEqual({ lat: null, lng: null, place_id: null });
+  });
+
+  it("tolerates a hit with no displayName rather than rejecting on it", () => {
+    // Absent is not evidence of a bad match — same principle as a missing
+    // location_type on the address path.
+    expect(judgeNameLookup(tanglewood(), place({ name: null })).status).toBe("ok");
+  });
+
+  it("matches city/state case- and punctuation-insensitively", () => {
+    const out = judgeNameLookup(tanglewood(), place({ city: "LENOX", state: "ma" }));
+    expect(out.status).toBe("ok");
   });
 });
 
