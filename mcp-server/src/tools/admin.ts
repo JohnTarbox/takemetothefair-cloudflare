@@ -82,6 +82,7 @@ import { registerCreateOccurrenceTool } from "./admin-create-occurrence.js";
 import { registerRecommendationsTools } from "./admin-recommendations.js";
 import { registerUploadImageBytesTool } from "./upload-image-bytes.js";
 import { registerRequestImageUploadSlotTool } from "./request-image-upload-slot.js";
+import { registerVenuesGeocodeTool } from "./venues-geocode.js";
 import { registerEmailSenderTools } from "./admin-email-senders.js";
 import { registerSalvageInboundEmailTool } from "./admin-salvage-inbound-email.js";
 import { registerOgImageSweepTool } from "./admin-og-image-sweep.js";
@@ -221,6 +222,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   // on the main app; bytes flow Claude Desktop → main app directly,
   // never round-tripping through the MCP channel.
   registerRequestImageUploadSlotTool(server, auth, env);
+
+  // OPE-207 — venues_geocode: proxies to /api/admin/venues/geocode-venues on the
+  // main app (the Google Places client lives there; this Worker can't import it).
+  registerVenuesGeocodeTool(server, auth, env);
 
   // Analyst F1 (2026-05-29): MCP wrappers for three highest-leverage
   // admin endpoints added in the 5/26 mega-shipment. Each one lets Claude

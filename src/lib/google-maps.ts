@@ -53,8 +53,19 @@ export interface AutocompleteSuggestion {
 interface GeocodingResponse {
   status: string;
   results: Array<{
-    geometry: { location: { lat: number; lng: number } };
+    geometry: {
+      location: { lat: number; lng: number };
+      /**
+       * ROOFTOP | RANGE_INTERPOLATED | GEOMETRIC_CENTER | APPROXIMATE.
+       * APPROXIMATE means Google fell back to a city-level centroid rather
+       * than locating the address — see GeocodeDetail.
+       */
+      location_type?: string;
+    };
     place_id: string;
+    formatted_address?: string;
+    /** Google matched only part of the query — the rest was guessed. */
+    partial_match?: boolean;
     address_components: Array<{
       long_name: string;
       short_name: string;
@@ -118,18 +129,14 @@ const SEARCH_FIELD_MASK = PLACE_FIELD_MASK.split(",")
  * Parse a PlaceObject from the Google Places API (New) into our PlaceLookupResult.
  * Shared by lookupPlace and getPlaceById to avoid duplication.
  */
-async function parsePlaceObject(
-  place: PlaceObject,
-  apiKey: string
-): Promise<PlaceLookupResult> {
+async function parsePlaceObject(place: PlaceObject, apiKey: string): Promise<PlaceLookupResult> {
   const getComponent = (type: string) =>
     place.addressComponents?.find((c) => c.types.includes(type));
   const streetNumber = getComponent("street_number")?.longText || "";
   const route = getComponent("route")?.longText || "";
   const streetAddress = [streetNumber, route].filter(Boolean).join(" ") || null;
   const cityComponent = getComponent("locality")?.longText || null;
-  const stateComponent =
-    getComponent("administrative_area_level_1")?.shortText || null;
+  const stateComponent = getComponent("administrative_area_level_1")?.shortText || null;
   const zipComponent = getComponent("postal_code");
 
   // Fetch photo URL if available
@@ -164,31 +171,49 @@ async function parsePlaceObject(
     photoUrl,
     googlePlaceId: place.id || null,
     googleMapsUrl: place.googleMapsUri || null,
-    openingHours: place.regularOpeningHours
-      ? JSON.stringify(place.regularOpeningHours)
-      : null,
+    openingHours: place.regularOpeningHours ? JSON.stringify(place.regularOpeningHours) : null,
     googleRating: place.rating ?? null,
     googleRatingCount: place.userRatingCount ?? null,
     googleTypes: place.types ? JSON.stringify(place.types) : null,
-    accessibility: place.accessibilityOptions
-      ? JSON.stringify(place.accessibilityOptions)
-      : null,
-    parking: place.parkingOptions
-      ? JSON.stringify(place.parkingOptions)
-      : null,
+    accessibility: place.accessibilityOptions ? JSON.stringify(place.accessibilityOptions) : null,
+    parking: place.parkingOptions ? JSON.stringify(place.parkingOptions) : null,
     description: place.editorialSummary?.text || null,
     businessStatus: place.businessStatus || null,
     outdoorSeating: place.outdoorSeating ?? null,
   };
 }
 
-export async function geocodeAddress(
+/**
+ * OPE-207 — the same geocode, plus the signals needed to judge whether the pin
+ * is trustworthy enough to store on a venue.
+ *
+ * `geocodeAddress` (below) intentionally throws these away and returns the top
+ * hit; that's fine for the interactive admin form where a human eyeballs the
+ * pin on a map. It is NOT fine for an unattended tool writing coordinates that
+ * OPE-203 then uses to attribute photos to a fair within a 1.5-mile radius — a
+ * city-centroid pin there means silently matching the wrong venue, or none.
+ */
+export interface GeocodeDetail extends GeocodeResult {
+  formattedAddress: string | null;
+  /** How many results Google returned. >1 means the query was ambiguous. */
+  candidateCount: number;
+  /** Google matched only part of the query and guessed the rest. */
+  partialMatch: boolean;
+  /**
+   * ROOFTOP (best) | RANGE_INTERPOLATED | GEOMETRIC_CENTER | APPROXIMATE.
+   * APPROXIMATE = a city/region centroid, which can sit miles from a rural
+   * fairground's actual gate.
+   */
+  locationType: string | null;
+}
+
+export async function geocodeAddressDetailed(
   address: string,
   city: string,
   state: string,
   zip?: string,
   apiKey?: string | null
-): Promise<GeocodeResult | null> {
+): Promise<GeocodeDetail | null> {
   if (!apiKey) return null;
 
   const parts = [address, city, state, zip].filter(Boolean).join(", ");
@@ -202,19 +227,38 @@ export async function geocodeAddress(
     if (data.status !== "OK" || !data.results.length) return null;
 
     const result = data.results[0];
-    const zipComponent = result.address_components.find((c) =>
-      c.types.includes("postal_code")
-    );
+    const zipComponent = result.address_components.find((c) => c.types.includes("postal_code"));
 
     return {
       lat: result.geometry.location.lat,
       lng: result.geometry.location.lng,
       zip: zipComponent?.short_name || null,
       placeId: result.place_id,
+      formattedAddress: result.formatted_address ?? null,
+      candidateCount: data.results.length,
+      partialMatch: result.partial_match === true,
+      locationType: result.geometry.location_type ?? null,
     };
   } catch {
     return null;
   }
+}
+
+/**
+ * Top-hit geocode. Delegates to `geocodeAddressDetailed` so there is exactly
+ * one HTTP + parse path to keep correct; callers that don't care about match
+ * quality keep the original narrow shape.
+ */
+export async function geocodeAddress(
+  address: string,
+  city: string,
+  state: string,
+  zip?: string,
+  apiKey?: string | null
+): Promise<GeocodeResult | null> {
+  const detail = await geocodeAddressDetailed(address, city, state, zip, apiKey);
+  if (!detail) return null;
+  return { lat: detail.lat, lng: detail.lng, zip: detail.zip, placeId: detail.placeId };
 }
 
 export async function lookupPlace(
@@ -227,9 +271,7 @@ export async function lookupPlace(
   if (!apiKey) return null;
 
   const address = options?.address;
-  const textQuery = address
-    ? `${name} ${address} ${city} ${state}`
-    : `${name} ${city} ${state}`;
+  const textQuery = address ? `${name} ${address} ${city} ${state}` : `${name} ${city} ${state}`;
   const url = "https://places.googleapis.com/v1/places:searchText";
 
   const headers = {
@@ -360,10 +402,7 @@ export async function getPlaceById(
  * Resolve a Google Maps URL (including short links like maps.app.goo.gl)
  * to a PlaceLookupResult by following redirects and extracting place info.
  */
-export async function resolveGoogleMapsUrl(
-  url: string,
-  apiKey: string
-): Promise<ResolveResult> {
+export async function resolveGoogleMapsUrl(url: string, apiKey: string): Promise<ResolveResult> {
   try {
     // Follow redirects to get the final URL
     let finalUrl = url;
@@ -431,14 +470,9 @@ export async function resolveGoogleMapsUrl(
 
     // Try to extract place name and coordinates from the URL
     // Pattern: /place/Place+Name/@lat,lng,...
-    const placeNameMatch = finalUrl.match(
-      /\/place\/([^/@]+)\/@(-?[\d.]+),(-?[\d.]+)/
-    );
+    const placeNameMatch = finalUrl.match(/\/place\/([^/@]+)\/@(-?[\d.]+),(-?[\d.]+)/);
     if (placeNameMatch) {
-      const placeName = decodeURIComponent(placeNameMatch[1]).replace(
-        /\+/g,
-        " "
-      );
+      const placeName = decodeURIComponent(placeNameMatch[1]).replace(/\+/g, " ");
       const lat = parseFloat(placeNameMatch[2]);
       const lng = parseFloat(placeNameMatch[3]);
       const place = await lookupPlace(placeName, "", "", apiKey, { lat, lng });
@@ -446,9 +480,7 @@ export async function resolveGoogleMapsUrl(
     }
 
     // Try directions URL: /dir//Destination/@lat,lng or /dir/Origin/Destination/@lat,lng
-    const dirMatch = finalUrl.match(
-      /\/dir\/[^/]*\/([^/@]+)(?:\/@(-?[\d.]+),(-?[\d.]+))?/
-    );
+    const dirMatch = finalUrl.match(/\/dir\/[^/]*\/([^/@]+)(?:\/@(-?[\d.]+),(-?[\d.]+))?/);
     if (dirMatch) {
       const destination = decodeURIComponent(dirMatch[1]).replace(/\+/g, " ");
       const lat = dirMatch[2] ? parseFloat(dirMatch[2]) : undefined;
@@ -458,9 +490,7 @@ export async function resolveGoogleMapsUrl(
     }
 
     // Try just coordinates pattern: /@lat,lng
-    const coordMatch = finalUrl.match(
-      /\/@(-?[\d.]+),(-?[\d.]+)/
-    );
+    const coordMatch = finalUrl.match(/\/@(-?[\d.]+),(-?[\d.]+)/);
 
     // Try to extract a search query: /search/query
     const searchMatch = finalUrl.match(/\/search\/([^/@?]+)/);
@@ -475,10 +505,7 @@ export async function resolveGoogleMapsUrl(
     // Last resort: extract any place name from /place/Name
     const simplePlaceMatch = finalUrl.match(/\/place\/([^/@?]+)/);
     if (simplePlaceMatch) {
-      const placeName = decodeURIComponent(simplePlaceMatch[1]).replace(
-        /\+/g,
-        " "
-      );
+      const placeName = decodeURIComponent(simplePlaceMatch[1]).replace(/\+/g, " ");
       const place = await lookupPlace(placeName, "", "", apiKey);
       return { place };
     }
