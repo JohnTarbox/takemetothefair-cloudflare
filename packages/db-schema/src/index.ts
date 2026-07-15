@@ -743,6 +743,69 @@ export const vendors = sqliteTable("vendors", {
   imageFocalY: real("image_focal_y").notNull().default(0.5),
 });
 
+/**
+ * Vendor gallery photos — OPE-211 (drizzle/0160, 2026-07-15).
+ *
+ * The per-photo store the `vendors.gallery_images` JSON column can't be. That
+ * column still exists and still renders (a 2-up gallery on the enhanced
+ * profile); it is a JSON array of `{url, alt, caption?}` with **no ids, no
+ * ordering, and no attribution**, so a photo can't be reordered, captioned in
+ * place, deleted individually, or traced to whoever uploaded it. This table is
+ * the migration target for that data, not a parallel store — see OPE-211.
+ *
+ * `vendors.logo_url` stays the canonical single brand logo. This is the gallery
+ * only; a logo is not a gallery photo.
+ *
+ * SHAPE IS DELIBERATELY MIRRORABLE: OPE-212 adds `event_photos` with the same
+ * columns keyed on `event_id`. Keep them in step — the shared upload pipeline
+ * and gallery UI dispatch on entity type, not on a bespoke shape per table.
+ *
+ * NO `thumb_url` — deliberate deviation from OPE-211's scope note. This repo
+ * stores exactly ONE master object per image and derives every size at render
+ * time through `/cdn-cgi/image` (next.config.mjs → src/lib/image-loader.ts →
+ * cdnImage(), with named variants in src/lib/cdn-image.ts: CARD_THUMB,
+ * HERO_DESKTOP, OG_EVENT…). A stored thumb would be a second source of truth
+ * for a derived value — free to drift, and nothing would notice. Need a thumb?
+ * `cdnImage(photoUrl, CARD_THUMB)`.
+ */
+export const vendorPhotos = sqliteTable(
+  "vendor_photos",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    vendorId: text("vendor_id")
+      .notNull()
+      .references(() => vendors.id, { onDelete: "cascade" }),
+    /** R2-backed master on cdn.meetmeatthefair.com. Never a hot-linked origin. */
+    photoUrl: text("photo_url").notNull(),
+    caption: text("caption"),
+    /** Accessibility text. Falls back to the vendor name at render time. */
+    altText: text("alt_text"),
+    sortOrder: integer("sort_order").notNull().default(0),
+    /**
+     * booth | product | owner | other. TS-only enum (VENDOR_PHOTO_TYPES below)
+     * rather than a CHECK constraint — adding a type shouldn't need a migration,
+     * matching how `enrichment_source` is handled on vendors.
+     */
+    photoType: text("photo_type").notNull().default("other"),
+    /** At most one featured photo per vendor — enforced by the write path. */
+    isFeatured: integer("is_featured", { mode: "boolean" }).notNull().default(false),
+    /** users.id of the uploader, or null for MCP/system writes. */
+    uploadedBy: text("uploaded_by"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => ({
+    // The gallery is always read as "this vendor's photos, in order".
+    vendorSortIdx: index("idx_vendor_photos_vendor_sort").on(t.vendorId, t.sortOrder),
+  })
+);
+
+/** Photo types for `vendor_photos.photo_type` (and OPE-212's event_photos). */
+export const VENDOR_PHOTO_TYPES = ["booth", "product", "owner", "other"] as const;
+export type VendorPhotoType = (typeof VENDOR_PHOTO_TYPES)[number];
+
 // Entity claims — OPE-63 (drizzle/0144, 2026-07-02). The KEYSTONE claim-program
 // table. One row per attempt by a user to claim an entity (vendor, promoter, or
 // venue). `entity_id` is POLYMORPHIC — it references vendors.id / promoters.id /

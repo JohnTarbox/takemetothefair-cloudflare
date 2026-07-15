@@ -68,10 +68,11 @@ export function registerUploadImageBytesTool(server: McpServer, auth: AuthContex
         ),
       target_id: z.string().min(1).describe("UUID of the target row."),
       image_role: z
-        .enum(["logo", "hero"])
+        .enum(["logo", "hero", "gallery"])
         .optional()
         .describe(
-          "Only for target_type 'promoter': 'logo' (default, small square avatar) or 'hero' (full-bleed banner). Ignored for other targets."
+          "Which image slot to write. 'logo' (default) / 'hero' apply to target_type 'promoter' — a small square avatar vs a full-bleed banner — and are ignored for other targets. " +
+            "'gallery' is vendor-only and APPENDS a gallery photo (a vendor_photos row) instead of overwriting the single logo; the response returns its photo_id. Use it to add booth/product shots without clobbering the brand logo."
         ),
       caption: z
         .string()
