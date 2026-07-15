@@ -407,11 +407,69 @@ ${SIGN_OFF}`;
       const hint = (params.eventHint as string | undefined) ?? "";
       const noun = n === 1 ? "photo" : "photos";
       const hintLine = hint ? `\n\nWe noted the event hint "${hint}" from your address.` : "";
-      return `Thanks — we received ${n} ${noun} for Meet Me at the Fair.${hintLine}
+
+      // OPE-203 — the resolver names the fair. Absent on a pre-OPE-203 ack (or
+      // any future caller that doesn't resolve), so fall back to the original
+      // "we'll match them" copy rather than printing "matched to undefined".
+      const matchedName = (params.resolvedEventName as string | undefined) ?? "";
+      if (!matchedName) {
+        return `Thanks — we received ${n} ${noun} for Meet Me at the Fair.${hintLine}
 
 We'll match them to the fair and get to work; you'll hear back with a summary of what we did.
 
 Tip: for best results, send photos at ACTUAL/FULL size as attachments (not resized or inline) — that preserves the location + timestamp we use to identify which fair they're from.
+
+${SUPPORT_LINE}
+
+${SIGN_OFF}`;
+      }
+
+      const method = params.matchMethod === "override" ? "you named it" : "location + timestamp";
+      const date = (params.matchedDate as string | undefined) ?? "";
+      const venue = (params.venueName as string | undefined) ?? "";
+      const dist = params.distanceMiles;
+      const whereLine =
+        venue && dist !== null && dist !== undefined
+          ? `\nVenue:   ${venue} (${dist} mi from where the ${noun} were taken)`
+          : venue
+            ? `\nVenue:   ${venue}`
+            : "";
+      const dateLine = date ? `\nDate:    ${date}` : "";
+
+      return `Thanks — we received ${n} ${noun} for Meet Me at the Fair.${hintLine}
+
+Matched to: ${matchedName}${dateLine}${whereLine}
+Matched by: ${method}
+
+If that's not the right fair, reply and tell us which one — or resend to photos+<event-slug>@meetmeatthefair.com to name it explicitly.
+
+You'll hear back with a summary of what we did.
+
+${SUPPORT_LINE}
+
+${SIGN_OFF}`;
+    }
+    // OPE-203 — trusted sender, but we could not pin the fair. Distinct from
+    // photo-intake-held (which is about the SENDER not being verified): the
+    // photos are fine, we just won't guess which fair they belong to.
+    case "photo-intake-unresolved": {
+      const n = Number(params.photoCount ?? 0);
+      const noun = n === 1 ? "photo" : "photos";
+      const ask = (params.holdAsk as string | undefined) ?? "we could not identify the fair";
+      const detail = (params.holdDetail as string | undefined) ?? "";
+      const detailLine = detail ? `\n\nCandidates we saw: ${detail}.` : "";
+      const sawDate = (params.sawDate as string | undefined) ?? "";
+      const sawLine = sawDate ? `\n\nWe did read a capture date of ${sawDate}.` : "";
+
+      return `Thanks — we received ${n} ${noun} for Meet Me at the Fair, but we couldn't work out which fair they're from, so we've held them rather than guess.
+
+Why: ${ask}.${detailLine}${sawLine}
+
+To fix it, either:
+  1. Reply to this email naming the fair, or
+  2. Resend to photos+<event-slug>@meetmeatthefair.com — e.g. photos+fryeburg-fair@meetmeatthefair.com — which names the fair explicitly and skips the guesswork.
+
+Tip: send photos at ACTUAL/FULL size as attachments (not resized or inline). Most mail apps offer to shrink images, and that strips the location + timestamp we use to identify the fair. On iPhone, Settings → Camera → Formats → "Most Compatible" also helps (HEIC photos can't be read here).
 
 ${SUPPORT_LINE}
 
