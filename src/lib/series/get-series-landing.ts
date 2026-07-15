@@ -115,6 +115,25 @@ export const getSeriesLanding = cache(async (slug: string): Promise<SeriesLandin
     .leftJoin(venues, eq(events.venueId, venues.id))
     .where(and(eq(events.seriesId, series.id), isPublicEventStatus()));
 
+  // OPE-210 — a series with no PUBLIC occurrence has nothing to show. Without
+  // this guard it still rendered a full, self-canonical, indexable 200 hub
+  // (title + H1 + EventSeries JSON-LD) listing zero events — 31 such pages in
+  // prod on 2026-07-15.
+  //
+  // Why they exist: the backfill mints a series per event, then its only
+  // occurrence is later rejected/cancelled, leaving the series behind. Where an
+  // *event* also sits at the canonical_slug, middleware already returns 410/404
+  // before this code runs (middleware.ts:347) — which is why only the
+  // series-only slugs leaked through as 200s. This closes that gap so both
+  // paths agree.
+  //
+  // Returning null lets the caller fall through to its normal not-found path
+  // (getEvent → notFound() → the global 404 with noindex), rather than
+  // inventing a second 404 mechanism here. Verified safe: zero series with no
+  // public occurrence have a PUBLIC event at their canonical_slug, so this can
+  // never unmask an event page that used to render as a landing.
+  if (rows.length === 0) return null;
+
   const occurrences: LandingOccurrence[] = rows.map((r) => ({
     id: r.id,
     slug: r.slug,
