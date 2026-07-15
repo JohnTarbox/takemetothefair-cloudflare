@@ -52,7 +52,7 @@ export function registerRequestImageUploadSlotTool(
         .optional()
         .describe(
           "Which image slot the upload writes. 'logo' (default) / 'hero' apply to target_type 'promoter' — the small square avatar vs the full-bleed banner — and are ignored for other targets. " +
-            "'gallery' is vendor-only and APPENDS a gallery photo (a vendor_photos row) rather than overwriting the single logo."
+            "'gallery' works for target_type 'vendor' or 'event' and APPENDS a gallery photo (a vendor_photos / event_photos row) rather than overwriting the single logo/hero."
         ),
       caption: z
         .string()

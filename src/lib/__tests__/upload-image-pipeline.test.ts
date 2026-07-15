@@ -129,11 +129,13 @@ describe("resolveImageTarget", () => {
     return res.target;
   };
 
-  it("routes a vendor gallery upload to a row, not a column", () => {
-    const t = ok("vendor", "gallery");
-    expect(t.isGallery).toBe(true);
-    // The whole point: no column is touched, so the brand logo survives.
-    expect(t.imageColumn).toBeNull();
+  it("routes a gallery upload to a row, not a column", () => {
+    // The whole point: no column is touched, so the vendor's brand logo and the
+    // event's hero both survive an added gallery photo.
+    for (const t of ["vendor", "event"] as const) {
+      expect(ok(t, "gallery").isGallery).toBe(true);
+      expect(ok(t, "gallery").imageColumn).toBeNull();
+    }
   });
 
   it("keeps gallery objects away from the logo key", () => {
@@ -144,14 +146,21 @@ describe("resolveImageTarget", () => {
     expect(ok("vendor", "gallery").keyPrefix).toBe("vendors");
   });
 
-  it("refuses a gallery upload for a target with no gallery", () => {
-    // OPE-212 adds "event" once event_photos exists. Until then, refusing
-    // loudly beats silently clobbering events.image_url.
-    for (const t of ["event", "venue", "promoter"] as const) {
+  it("refuses a gallery upload for a target with no gallery table", () => {
+    // venue/promoter have no *_photos table — refusing loudly beats silently
+    // clobbering their single image column.
+    for (const t of ["venue", "promoter"] as const) {
       const res = resolveImageTarget(t, "gallery");
       expect(res.ok).toBe(false);
       if (!res.ok) expect(res.error).toContain("only supported for target_type");
     }
+  });
+
+  it("keeps event gallery objects away from the hero key (OPE-212)", () => {
+    // events/<id>/photos/photo-<ts> vs events/<id>/image-<ts>.
+    expect(ok("event", "gallery").keyPrefix).toBe("events");
+    expect(ok("event", "gallery").fileKind).toBe("photos/photo");
+    expect(ok("event", "logo").fileKind).toBe("image");
   });
 
   it("leaves every pre-OPE-211 route unchanged", () => {
