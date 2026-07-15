@@ -32,6 +32,7 @@ import { adminActions, inboundEmails } from "../schema.js";
 import { eq } from "drizzle-orm";
 import type { Db } from "../db.js";
 import { identifyBooth, disposition, type VisionAi, type Disposition } from "./vision.js";
+import { attachGeneralPhotos } from "./general-photos.js";
 
 /** Audit action for a staged booth identification. */
 export const BOOTH_PROPOSED_ACTION = "vendor.photo_proposed";
@@ -56,10 +57,14 @@ export interface BoothPipelineResult {
   examined: number;
   /** Identifications staged for review. */
   staged: number;
-  /** General scenery skipped (OPE-205 handles those). */
+  /** General (non-booth) scenery — the input to the gallery attach below. */
   skipped: number;
   /** Business names we'd write at Milestone B, for the reply. */
   identifiedNames: string[];
+  /** OPE-205 §3 — general photos attached to the event as gallery candidates. */
+  galleryAttached: number;
+  /** General photos we tried but couldn't attach. Reported, never swallowed. */
+  galleryFailed: number;
   /** Set when the gate is off — reported so a silent no-op is impossible. */
   disabledReason?: string;
 }
@@ -69,6 +74,10 @@ export interface BoothPipelineEnv {
   VENDOR_ASSETS?: R2Bucket;
   /** OPE-6 gate. Must equal "true" or the pipeline no-ops. Default OFF. */
   PHOTO_VISION_ENABLED?: string;
+  /** OPE-205 §3 — needed to hand general photos to the main app's pipeline. */
+  MAIN_APP?: { fetch: typeof fetch };
+  MAIN_APP_URL?: string;
+  INTERNAL_API_KEY?: string;
 }
 
 /**
@@ -90,6 +99,8 @@ export async function runBoothPipeline(
     staged: 0,
     skipped: 0,
     identifiedNames: [],
+    galleryAttached: 0,
+    galleryFailed: 0,
   };
 
   // OPE-6 gate — default OFF, and say so rather than no-op silently.
@@ -162,6 +173,20 @@ export async function runBoothPipeline(
       .where(eq(inboundEmails.id, inboundEmailId));
   }
 
+  // OPE-205 §3 — the "skip" bucket is general fair scenery, not a failure.
+  // Attach it to the resolved event as gallery candidates (OPE-212's
+  // event_photos). Fail-soft: this must never cost us the booth staging or the
+  // fair match that already succeeded.
+  let gallery = { attached: 0, failed: 0 };
+  const generalPhotos = results.filter((r) => r.d.action === "skip").map((r) => r.photo);
+  if (generalPhotos.length > 0) {
+    try {
+      gallery = await attachGeneralPhotos(env, eventId, generalPhotos);
+    } catch {
+      gallery = { attached: 0, failed: generalPhotos.length };
+    }
+  }
+
   return {
     examined: results.length,
     staged: toStage.length,
@@ -169,5 +194,7 @@ export async function runBoothPipeline(
     identifiedNames: toStage
       .map((r) => r.d.identification.businessName)
       .filter((n): n is string => n !== null),
+    galleryAttached: gallery.attached,
+    galleryFailed: gallery.failed,
   };
 }

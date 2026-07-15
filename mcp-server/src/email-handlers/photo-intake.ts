@@ -376,6 +376,9 @@ export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> =
         distanceMiles: resolution.distanceMiles ?? null,
         boothsStaged: booths?.staged ?? 0,
         boothNames: booths?.identifiedNames ?? [],
+        // OPE-205 §3 — general fair scenery attached to the event's gallery.
+        galleryAttached: booths?.galleryAttached ?? 0,
+        galleryFailed: booths?.galleryFailed ?? 0,
       },
       // The downstream OPE-204 vendor pipeline reads this off the row.
       resultingEventId: resolution.eventId,
