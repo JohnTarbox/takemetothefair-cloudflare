@@ -41,6 +41,7 @@ import {
   PIPELINE_ALLOWED_TYPES,
   PIPELINE_MAX_BYTES,
   type PipelineTargetType,
+  type PipelineImageRole,
 } from "@/lib/upload-image-pipeline";
 
 async function authorize(
@@ -88,7 +89,12 @@ export async function POST(request: NextRequest) {
   const targetId = formData.get("target_id") as string | null;
   const caption = (formData.get("caption") as string | null) || null;
   // OPE-33 — promoter logo-vs-hero target (ignored for other types).
-  const imageRole: "logo" | "hero" = formData.get("image_role") === "hero" ? "hero" : "logo";
+  // OPE-211 — "gallery" must survive here: the old `=== "hero" ? … : "logo"`
+  // shape silently coerced every unknown role to "logo", which for a gallery
+  // upload would overwrite the vendor's brand logo instead of appending.
+  const rawRole = formData.get("image_role");
+  const imageRole: PipelineImageRole =
+    rawRole === "hero" ? "hero" : rawRole === "gallery" ? "gallery" : "logo";
 
   if (!(file instanceof File)) {
     return NextResponse.json({ error: "Missing 'file' field" }, { status: 400 });

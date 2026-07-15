@@ -34,8 +34,12 @@ const MAX_BYTES_DEFAULT = 10 * 1024 * 1024;
 
 export type UploadTargetType = "event" | "vendor" | "venue" | "promoter";
 
-/** OPE-33 — for a `promoter` slot, which image column the upload writes. */
-export type UploadImageRole = "logo" | "hero";
+/**
+ * Which image slot the upload writes.
+ * OPE-33 — "logo"/"hero" pick a promoter column.
+ * OPE-211 — "gallery" appends a `vendor_photos` row (vendor only).
+ */
+export type UploadImageRole = "logo" | "hero" | "gallery";
 
 export interface UploadSlotClaims {
   targetType: UploadTargetType;

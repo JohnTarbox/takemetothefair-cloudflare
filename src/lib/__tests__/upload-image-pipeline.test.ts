@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { detectMagicBytes } from "../upload-image-pipeline";
+import { detectMagicBytes, resolveImageTarget } from "../upload-image-pipeline";
 
 /**
  * Unit tests for the pure magic-byte sniff. The full runUploadPipeline
@@ -110,5 +110,70 @@ describe("detectMagicBytes", () => {
     buf[0] = 0x3c; // '<'
     buf[1] = 0xff; // not a valid SVG continuation
     expect(detectMagicBytes(buf)).toBe(null);
+  });
+});
+
+/**
+ * OPE-211 — the role→destination dispatch. Extracted from runUploadPipeline
+ * specifically so it can be tested: the pipeline itself needs R2 + D1 + CF
+ * Image Resizing, and this decision is where a mistake is silent (a mis-routed
+ * role overwrites a live column instead of erroring).
+ */
+describe("resolveImageTarget", () => {
+  const ok = (
+    t: Parameters<typeof resolveImageTarget>[0],
+    r: Parameters<typeof resolveImageTarget>[1]
+  ) => {
+    const res = resolveImageTarget(t, r);
+    if (!res.ok) throw new Error(`expected ok, got error: ${res.error}`);
+    return res.target;
+  };
+
+  it("routes a vendor gallery upload to a row, not a column", () => {
+    const t = ok("vendor", "gallery");
+    expect(t.isGallery).toBe(true);
+    // The whole point: no column is touched, so the brand logo survives.
+    expect(t.imageColumn).toBeNull();
+  });
+
+  it("keeps gallery objects away from the logo key", () => {
+    // vendors/<id>/photos/photo-<ts> vs vendors/<id>/logo-<ts> — a gallery
+    // upload must never collide with, or be mistaken for, the single logo.
+    expect(ok("vendor", "gallery").fileKind).toBe("photos/photo");
+    expect(ok("vendor", "logo").fileKind).toBe("logo");
+    expect(ok("vendor", "gallery").keyPrefix).toBe("vendors");
+  });
+
+  it("refuses a gallery upload for a target with no gallery", () => {
+    // OPE-212 adds "event" once event_photos exists. Until then, refusing
+    // loudly beats silently clobbering events.image_url.
+    for (const t of ["event", "venue", "promoter"] as const) {
+      const res = resolveImageTarget(t, "gallery");
+      expect(res.ok).toBe(false);
+      if (!res.ok) expect(res.error).toContain("only supported for target_type");
+    }
+  });
+
+  it("leaves every pre-OPE-211 route unchanged", () => {
+    expect(ok("vendor", "logo").imageColumn).toBe("logoUrl");
+    expect(ok("promoter", "logo").imageColumn).toBe("logoUrl");
+    expect(ok("promoter", "hero").imageColumn).toBe("heroImageUrl");
+    expect(ok("event", "logo").imageColumn).toBe("imageUrl");
+    expect(ok("venue", "logo").imageColumn).toBe("imageUrl");
+    // Promoter key kind still tracks the role (OPE-33).
+    expect(ok("promoter", "hero").fileKind).toBe("hero");
+    expect(ok("event", "logo").fileKind).toBe("image");
+    expect(ok("event", "logo").keyPrefix).toBe("events");
+    expect(ok("venue", "logo").keyPrefix).toBe("venues");
+    expect(ok("promoter", "logo").keyPrefix).toBe("promoters");
+  });
+
+  it("never routes a non-gallery upload to the gallery", () => {
+    for (const t of ["event", "vendor", "venue", "promoter"] as const) {
+      for (const r of ["logo", "hero"] as const) {
+        expect(ok(t, r).isGallery).toBe(false);
+        expect(ok(t, r).imageColumn).not.toBeNull();
+      }
+    }
   });
 });

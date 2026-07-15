@@ -33,6 +33,7 @@ import {
   PIPELINE_ALLOWED_TYPES,
   PIPELINE_MAX_BYTES,
   type PipelineTargetType,
+  type PipelineImageRole,
 } from "@/lib/upload-image-pipeline";
 
 // 15s fetch cap: Workers have a 30s budget; 15s for the source fetch leaves
@@ -148,7 +149,10 @@ export async function POST(request: NextRequest) {
   const targetId = typeof body.target_id === "string" ? body.target_id : "";
   const caption = typeof body.caption === "string" ? body.caption : null;
   // OPE-33 — promoter logo-vs-hero target (ignored for other types).
-  const imageRole: "logo" | "hero" = body.image_role === "hero" ? "hero" : "logo";
+  // OPE-211 — "gallery" must survive here (see upload-image-bytes/route.ts):
+  // coercing an unknown role to "logo" would overwrite the brand logo.
+  const imageRole: PipelineImageRole =
+    body.image_role === "hero" ? "hero" : body.image_role === "gallery" ? "gallery" : "logo";
 
   if (!targetType || !["event", "vendor", "venue", "promoter"].includes(targetType)) {
     return NextResponse.json(

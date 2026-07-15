@@ -48,10 +48,11 @@ export function registerRequestImageUploadSlotTool(
         .describe("Which table to update. The slot can only upload to this target."),
       target_id: z.string().min(1).describe("UUID of the target row. Verified at slot-mint time."),
       image_role: z
-        .enum(["logo", "hero"])
+        .enum(["logo", "hero", "gallery"])
         .optional()
         .describe(
-          "Only for target_type 'promoter': which image to set — 'logo' (default, the small square avatar) or 'hero' (the full-bleed banner). Ignored for other targets."
+          "Which image slot the upload writes. 'logo' (default) / 'hero' apply to target_type 'promoter' — the small square avatar vs the full-bleed banner — and are ignored for other targets. " +
+            "'gallery' is vendor-only and APPENDS a gallery photo (a vendor_photos row) rather than overwriting the single logo."
         ),
       caption: z
         .string()

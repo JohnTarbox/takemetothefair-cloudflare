@@ -28,11 +28,11 @@
  * upload_image_bytes MCP tool.
  */
 
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 
 import * as schema from "@/lib/db/schema";
-import { events, vendors, venues, promoters } from "@/lib/db/schema";
+import { events, vendors, venues, promoters, vendorPhotos } from "@/lib/db/schema";
 import { logError } from "@/lib/logger";
 import { recomputeEventCompleteness } from "@/lib/completeness";
 import {
@@ -64,14 +64,100 @@ const PHASE2B_SKIP_BELOW_BYTES = 50 * 1024;
 export type PipelineTargetType = "event" | "vendor" | "venue" | "promoter";
 
 /**
- * OPE-33/OPE-34 — which promoter image column a `promoter` upload targets. Only
- * consulted for `target_type: "promoter"` (the other targets have one image
- * column each). Default "logo" → `promoters.logo_url`; "hero" → `hero_image_url`.
+ * Which image slot an upload targets.
+ *
+ * OPE-33/OPE-34 — "logo" / "hero" select a promoter COLUMN (`promoters.logo_url`
+ * vs `hero_image_url`); other targets have one image column each and ignore it.
+ *
+ * OPE-211 — "gallery" is different in kind: it APPENDS a `vendor_photos` row
+ * instead of overwriting a scalar column. Every role before it was
+ * last-write-wins by design, which is exactly why vendors could never have more
+ * than one picture. Only `target_type: "vendor"` accepts it today; OPE-212 adds
+ * `event` when `event_photos` lands.
  */
-export type PipelineImageRole = "logo" | "hero";
+export type PipelineImageRole = "logo" | "hero" | "gallery";
 
 export interface PipelineEnv {
   VENDOR_ASSETS?: R2Bucket;
+}
+
+/** Where an upload lands: which column (if any), and the R2 key shape. */
+export interface ImageTarget {
+  /** Append a `vendor_photos` row instead of setting a scalar column. */
+  isGallery: boolean;
+  /** null for a gallery upload — there is no column to set. */
+  imageColumn: "imageUrl" | "logoUrl" | "heroImageUrl" | null;
+  /** R2 key = `${keyPrefix}/${targetId}/${fileKind}-${timestamp}.${ext}` */
+  keyPrefix: string;
+  fileKind: string;
+}
+
+/**
+ * Resolve (targetType, imageRole) → where the upload lands. Pure, so the
+ * dispatch is testable.
+ *
+ * WHY THIS IS A FUNCTION AND NOT INLINE: this decision is exactly where a
+ * mistake is silent and expensive. Every caller before OPE-211 collapsed an
+ * unknown role to "logo" (`role === "hero" ? "hero" : "logo"`), so a `gallery`
+ * upload would have quietly OVERWRITTEN the vendor's brand logo instead of
+ * appending a photo — no error, just a lost logo. `runUploadPipeline` itself is
+ * unreachable in unit tests (R2 + D1 + CF Image Resizing), so leaving this
+ * inline would leave the one part most worth pinning untested.
+ */
+export function resolveImageTarget(
+  targetType: PipelineTargetType,
+  imageRole: PipelineImageRole
+): { ok: true; target: ImageTarget } | { ok: false; error: string } {
+  const keyPrefix =
+    targetType === "event"
+      ? "events"
+      : targetType === "vendor"
+        ? "vendors"
+        : targetType === "promoter"
+          ? "promoters"
+          : "venues";
+
+  if (imageRole === "gallery") {
+    // Vendor-only today. OPE-212 adds "event" once event_photos exists — until
+    // then an event gallery upload has nowhere to land, so refuse loudly rather
+    // than silently clobber events.image_url.
+    if (targetType !== "vendor") {
+      return {
+        ok: false,
+        error: `image_role "gallery" is only supported for target_type "vendor" (got "${targetType}")`,
+      };
+    }
+    // Under photos/ so a gallery object can never collide with the single logo.
+    return {
+      ok: true,
+      target: { isGallery: true, imageColumn: null, keyPrefix, fileKind: "photos/photo" },
+    };
+  }
+
+  // OPE-33 — vendor → logoUrl; promoter → logo_url or hero_image_url per role;
+  // event/venue → imageUrl.
+  if (targetType === "promoter") {
+    const hero = imageRole === "hero";
+    return {
+      ok: true,
+      target: {
+        isGallery: false,
+        imageColumn: hero ? "heroImageUrl" : "logoUrl",
+        keyPrefix,
+        fileKind: hero ? "hero" : "logo",
+      },
+    };
+  }
+  if (targetType === "vendor") {
+    return {
+      ok: true,
+      target: { isGallery: false, imageColumn: "logoUrl", keyPrefix, fileKind: "logo" },
+    };
+  }
+  return {
+    ok: true,
+    target: { isGallery: false, imageColumn: "imageUrl", keyPrefix, fileKind: "image" },
+  };
 }
 
 export interface RunPipelineArgs {
@@ -122,7 +208,10 @@ export interface PipelineResponseBody {
   content_type: string;
   target_type: PipelineTargetType;
   target_id: string;
-  image_column: "imageUrl" | "logoUrl" | "heroImageUrl";
+  /** null for a gallery upload — it appends a row, it doesn't set a column. */
+  image_column: "imageUrl" | "logoUrl" | "heroImageUrl" | null;
+  /** OPE-211 — the `vendor_photos.id` created, for gallery uploads only. */
+  photo_id?: string;
   bytes_stored: number;
   bytes_removed_by_exif_strip: number;
   exif_segments_stripped: number;
@@ -237,16 +326,11 @@ export async function runUploadPipeline(args: RunPipelineArgs): Promise<Pipeline
     };
   }
 
-  // OPE-33 — vendor → logoUrl; promoter → logoUrl or heroImageUrl per imageRole;
-  // event/venue → imageUrl.
-  const imageColumn: "imageUrl" | "logoUrl" | "heroImageUrl" =
-    targetType === "vendor"
-      ? "logoUrl"
-      : targetType === "promoter"
-        ? imageRole === "hero"
-          ? "heroImageUrl"
-          : "logoUrl"
-        : "imageUrl";
+  const resolved = resolveImageTarget(targetType, imageRole ?? "logo");
+  if (!resolved.ok) {
+    return { ok: false, status: 400, body: { error: resolved.error } };
+  }
+  const { isGallery, imageColumn } = resolved.target;
 
   // Phase 2a EXIF strip (JPEG only)
   let bytesRemovedByExifStrip = 0;
@@ -260,17 +344,7 @@ export async function runUploadPipeline(args: RunPipelineArgs): Promise<Pipeline
     exifSegmentsStripped = stripResult.segmentsStripped;
   }
 
-  const keyPrefix =
-    targetType === "event"
-      ? "events"
-      : targetType === "vendor"
-        ? "vendors"
-        : targetType === "promoter"
-          ? "promoters"
-          : "venues";
-  // OPE-33 — promoter uploads land under promoters/<id>/{logo|hero}-<ts>.
-  const fileKind =
-    targetType === "vendor" ? "logo" : targetType === "promoter" ? imageRole : "image";
+  const { keyPrefix, fileKind } = resolved.target;
   const timestamp = Date.now();
   const baseKey = `${keyPrefix}/${targetId}/${fileKind}-${timestamp}`;
   const originalKey = `${baseKey}.${ext}`;
@@ -372,9 +446,32 @@ export async function runUploadPipeline(args: RunPipelineArgs): Promise<Pipeline
   }
 
   const url = `${CDN_BASE}/${finalKey}`;
+  let photoId: string | undefined;
 
   try {
-    if (targetType === "event") {
+    if (isGallery) {
+      // OPE-211 — APPEND, never overwrite. New photos land at the end of the
+      // gallery: one past the current max sort_order for this vendor.
+      const [maxRow] = await db
+        .select({ max: sql<number | null>`MAX(${vendorPhotos.sortOrder})` })
+        .from(vendorPhotos)
+        .where(eq(vendorPhotos.vendorId, targetId));
+      const now = new Date();
+      photoId = crypto.randomUUID();
+      await db.insert(vendorPhotos).values({
+        id: photoId,
+        vendorId: targetId,
+        photoUrl: url,
+        caption,
+        altText: null,
+        sortOrder: (maxRow?.max ?? -1) + 1,
+        photoType: "other",
+        isFeatured: false,
+        uploadedBy: actorId,
+        createdAt: now,
+        updatedAt: now,
+      });
+    } else if (targetType === "event") {
       await db.update(events).set({ imageUrl: url }).where(eq(events.id, targetId));
       await recomputeEventCompleteness(db, targetId);
     } else if (targetType === "vendor") {
@@ -421,6 +518,7 @@ export async function runUploadPipeline(args: RunPipelineArgs): Promise<Pipeline
       target_type: targetType,
       target_id: targetId,
       image_column: imageColumn,
+      ...(photoId ? { photo_id: photoId } : {}),
       bytes_stored: finalBytesCount,
       bytes_removed_by_exif_strip: bytesRemovedByExifStrip,
       exif_segments_stripped: exifSegmentsStripped,
