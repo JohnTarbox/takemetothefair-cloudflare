@@ -366,6 +366,28 @@ export function judgeNameLookup(
 }
 
 /**
+ * OPE-214 — the cursor for the next `missing_only` page, or null when drained.
+ *
+ * KEYSET, not offset, and that choice is the whole fix. The candidate set
+ * MUTATES as we work: a venue we successfully pin stops matching
+ * `latitude IS NULL` and leaves. Under `LIMIT/OFFSET` that shifts every later
+ * row left, so `OFFSET 25` after a page that wrote 20 rows silently SKIPS 20
+ * venues — the drain "finishes" having never looked at them. A keyset cursor
+ * (`WHERE id > :cursor ORDER BY id`) can't be shifted by a row leaving the set.
+ *
+ * It also fixes the original stall for free: an outcome that doesn't write
+ * (`insufficient-address`, `not-a-point`, `low-confidence`, `no-match`) keeps
+ * `latitude IS NULL` and would match the filter forever, but its id is now
+ * BEHIND the cursor, so it is never handed out twice.
+ *
+ * A full page means "there may be more"; a short page means drained. Returning
+ * a cursor on a short page would just cost the caller one empty round-trip.
+ */
+export function nextCursor(rows: Array<{ id: string }>, limit: number): string | null {
+  return rows.length === limit && rows.length > 0 ? rows[rows.length - 1].id : null;
+}
+
+/**
  * OPE-215 — should the caller store this outcome's pin?
  *
  * `force` overrides the CONFIDENCE verdict and nothing else. It cannot conjure

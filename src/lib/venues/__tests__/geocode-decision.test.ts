@@ -4,6 +4,7 @@ import {
   judge,
   judgeNameLookup,
   nameOverlap,
+  nextCursor,
   shouldWrite,
   forcedOutcome,
   hasSufficientAddress,
@@ -483,6 +484,31 @@ describe("judgeNameLookup", () => {
   it("matches city/state case- and punctuation-insensitively", () => {
     const out = judgeNameLookup(tanglewood(), place({ city: "LENOX", state: "ma" }));
     expect(out.status).toBe("ok");
+  });
+});
+
+// OPE-214 — missing_only handed back the same non-writing rows forever.
+describe("nextCursor", () => {
+  const page = (...ids: string[]) => ids.map((id) => ({ id }));
+
+  it("returns the last id of a full page — there may be more", () => {
+    expect(nextCursor(page("a", "b", "c"), 3)).toBe("c");
+  });
+
+  it("returns null on a short page — drained, so the loop terminates", () => {
+    // This IS the termination guarantee: a caller looping until null stops.
+    expect(nextCursor(page("a", "b"), 3)).toBeNull();
+  });
+
+  it("returns null on an empty page", () => {
+    expect(nextCursor([], 25)).toBeNull();
+  });
+
+  it("advances past a page of entirely unfixable rows", () => {
+    // The original stall: 25 insufficient-address rows keep latitude NULL and
+    // re-match the filter every call. The cursor moves anyway, because it keys
+    // on the last id EXAMINED, not on what happened to it.
+    expect(nextCursor(page("v1", "v2", "v3"), 3)).toBe("v3");
   });
 });
 
