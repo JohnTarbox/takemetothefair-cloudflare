@@ -1,6 +1,7 @@
 /**
  * OPE-207 — `venues_geocode`: fill venues.latitude/longitude/google_place_id
- * from a venue's stored address.
+ * from a venue's stored address, or (OPE-213) from a name+city+state Places
+ * text search when it has no address — which back-fills the address too.
  *
  * Thin proxy to `POST /api/admin/venues/geocode-venues` on the main app. The
  * Google Places client lives in `src/lib/google-maps.ts` and the MCP Worker is
@@ -36,11 +37,15 @@ export function registerVenuesGeocodeTool(server: McpServer, auth: AuthContext, 
 
   server.tool(
     "venues_geocode",
-    "Geocode venues from their stored address, filling latitude/longitude/google_place_id/google_maps_url. " +
+    "Geocode venues, filling latitude/longitude/google_place_id/google_maps_url. Uses the venue's stored " +
+      "street address when it has one; a venue with NO address but a name + city + state (Tanglewood, MASS " +
+      "MoCA) is looked up BY NAME via a Places text search, which also back-fills the missing street " +
+      "address. The outcome record reports which method produced the pin ('address' or 'name'). " +
       "Pass venue_id (single), venue_ids (batch, max 25), or missing_only:true to work through venues that " +
       "have no coordinates. Non-destructive: a venue that already has coords returns 'already-geocoded' and " +
-      "is skipped unless force:true. A low-confidence match (multiple candidates, partial match, or a " +
-      "city-centroid 'APPROXIMATE' pin) is reported with its candidate address and NOT written — re-run with " +
+      "is skipped unless force:true. A low-confidence match (multiple candidates, partial match, a " +
+      "city-centroid 'APPROXIMATE' pin, or — on the name path — a hit whose city/state/name disagrees with " +
+      "the row) is reported with its candidate address and NOT written — re-run with " +
       "force:true to store a candidate you have reviewed and believe is right: it returns status 'forced' " +
       "(keeping the reason the gate objected) and is logged to admin_actions. force only overrides the " +
       "confidence verdict — it never stores an 'insufficient-address' or 'no-match' venue, because there is " +
