@@ -99,6 +99,12 @@ export type ReplyKind =
   // tip to send full-size attachments so EXIF (GPS + timestamp) survives.
   | "photo-intake-ack"
   | "photo-intake-held"
+  // OPE-203 — photos arrived from an authenticated, trusted sender, but we
+  // could not pin WHICH fair they came from (no GPS/date, no geocoded venue in
+  // range, nothing running that day, or two fairs at once). Distinct from
+  // `photo-intake-held`, which means the SENDER wasn't trusted. This one asks
+  // John to name the fair; that one tells him the mail was quarantined.
+  | "photo-intake-unresolved"
   // UR1 Phase 1 (2026-06-04) — problem-report intake ack. Reassures the
   // sender that the report landed AND that operators get HIGH-priority
   // visibility when the report co-occurs with an active outage.
@@ -184,6 +190,20 @@ export interface HandlerEnv {
   SLACK_WEBHOOK_URL_TECHNICAL?: string;
   ALERT_EMAIL_TECHNICAL?: string;
   EMAIL_JOBS?: Queue;
+  /**
+   * OPE-203 — R2 bucket holding the inbound attachments captured at receive
+   * time (`inbound-attachments/<group>/...`, written by
+   * email-handler.ts:captureAttachments). Read by `photo-intake` to pull EXIF
+   * GPS + DateTimeOriginal off the ORIGINAL bytes.
+   *
+   * This binding was already present at runtime before being declared here:
+   * the workflow's dispatch step passes `this.env` wholesale, and the workflow
+   * Env has always carried VENDOR_ASSETS. HandlerEnv is a narrower view, so
+   * the object was reachable but invisible to the type — same as
+   * EMAIL_JOBS/SLACK_WEBHOOK_URL_TECHNICAL. Declaring it changes nothing at
+   * runtime. Optional to match the workflow Env.
+   */
+  VENDOR_ASSETS?: R2Bucket;
 }
 
 /**
