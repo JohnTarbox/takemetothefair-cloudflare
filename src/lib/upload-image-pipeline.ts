@@ -32,7 +32,7 @@ import { eq, sql } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 
 import * as schema from "@/lib/db/schema";
-import { events, vendors, venues, promoters, vendorPhotos } from "@/lib/db/schema";
+import { events, vendors, venues, promoters, vendorPhotos, eventPhotos } from "@/lib/db/schema";
 import { logError } from "@/lib/logger";
 import { recomputeEventCompleteness } from "@/lib/completeness";
 import {
@@ -69,11 +69,11 @@ export type PipelineTargetType = "event" | "vendor" | "venue" | "promoter";
  * OPE-33/OPE-34 — "logo" / "hero" select a promoter COLUMN (`promoters.logo_url`
  * vs `hero_image_url`); other targets have one image column each and ignore it.
  *
- * OPE-211 — "gallery" is different in kind: it APPENDS a `vendor_photos` row
- * instead of overwriting a scalar column. Every role before it was
- * last-write-wins by design, which is exactly why vendors could never have more
- * than one picture. Only `target_type: "vendor"` accepts it today; OPE-212 adds
- * `event` when `event_photos` lands.
+ * OPE-211/212 — "gallery" is different in kind: it APPENDS a `{vendor,event}_photos`
+ * row instead of overwriting a scalar column. Every role before it was
+ * last-write-wins by design, which is exactly why an entity could never have
+ * more than one picture. Accepted for `vendor` and `event`; venue/promoter have
+ * no gallery table and are refused.
  */
 export type PipelineImageRole = "logo" | "hero" | "gallery";
 
@@ -83,7 +83,7 @@ export interface PipelineEnv {
 
 /** Where an upload lands: which column (if any), and the R2 key shape. */
 export interface ImageTarget {
-  /** Append a `vendor_photos` row instead of setting a scalar column. */
+  /** Append a `{vendor,event}_photos` row instead of setting a scalar column. */
   isGallery: boolean;
   /** null for a gallery upload — there is no column to set. */
   imageColumn: "imageUrl" | "logoUrl" | "heroImageUrl" | null;
@@ -118,16 +118,17 @@ export function resolveImageTarget(
           : "venues";
 
   if (imageRole === "gallery") {
-    // Vendor-only today. OPE-212 adds "event" once event_photos exists — until
-    // then an event gallery upload has nowhere to land, so refuse loudly rather
-    // than silently clobber events.image_url.
-    if (targetType !== "vendor") {
+    // vendor → vendor_photos (OPE-211); event → event_photos (OPE-212).
+    // venue/promoter have no gallery table, so refuse loudly rather than
+    // silently clobber their single image column.
+    if (targetType !== "vendor" && targetType !== "event") {
       return {
         ok: false,
-        error: `image_role "gallery" is only supported for target_type "vendor" (got "${targetType}")`,
+        error: `image_role "gallery" is only supported for target_type "vendor" or "event" (got "${targetType}")`,
       };
     }
-    // Under photos/ so a gallery object can never collide with the single logo.
+    // Under photos/ so a gallery object can never collide with the single
+    // logo/hero object for the same entity.
     return {
       ok: true,
       target: { isGallery: true, imageColumn: null, keyPrefix, fileKind: "photos/photo" },
@@ -450,27 +451,43 @@ export async function runUploadPipeline(args: RunPipelineArgs): Promise<Pipeline
 
   try {
     if (isGallery) {
-      // OPE-211 — APPEND, never overwrite. New photos land at the end of the
-      // gallery: one past the current max sort_order for this vendor.
-      const [maxRow] = await db
-        .select({ max: sql<number | null>`MAX(${vendorPhotos.sortOrder})` })
-        .from(vendorPhotos)
-        .where(eq(vendorPhotos.vendorId, targetId));
+      // OPE-211/212 — APPEND, never overwrite. A new photo lands at the end of
+      // the gallery: one past the current max sort_order for this entity. The
+      // two tables are column-identical, so the only difference is which FK the
+      // row is keyed on — keep it that way.
       const now = new Date();
       photoId = crypto.randomUUID();
-      await db.insert(vendorPhotos).values({
+      const common = {
         id: photoId,
-        vendorId: targetId,
         photoUrl: url,
         caption,
         altText: null,
-        sortOrder: (maxRow?.max ?? -1) + 1,
         photoType: "other",
         isFeatured: false,
         uploadedBy: actorId,
         createdAt: now,
         updatedAt: now,
-      });
+      };
+      if (targetType === "event") {
+        const [maxRow] = await db
+          .select({ max: sql<number | null>`MAX(${eventPhotos.sortOrder})` })
+          .from(eventPhotos)
+          .where(eq(eventPhotos.eventId, targetId));
+        await db
+          .insert(eventPhotos)
+          .values({ ...common, eventId: targetId, sortOrder: (maxRow?.max ?? -1) + 1 });
+        // A gallery photo isn't the hero, but it is event imagery — the
+        // completeness score counts it the same way the hero path does.
+        await recomputeEventCompleteness(db, targetId);
+      } else {
+        const [maxRow] = await db
+          .select({ max: sql<number | null>`MAX(${vendorPhotos.sortOrder})` })
+          .from(vendorPhotos)
+          .where(eq(vendorPhotos.vendorId, targetId));
+        await db
+          .insert(vendorPhotos)
+          .values({ ...common, vendorId: targetId, sortOrder: (maxRow?.max ?? -1) + 1 });
+      }
     } else if (targetType === "event") {
       await db.update(events).set({ imageUrl: url }).where(eq(events.id, targetId));
       await recomputeEventCompleteness(db, targetId);

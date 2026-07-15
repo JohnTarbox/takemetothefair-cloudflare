@@ -802,9 +802,52 @@ export const vendorPhotos = sqliteTable(
   })
 );
 
-/** Photo types for `vendor_photos.photo_type` (and OPE-212's event_photos). */
+/** Photo types for `vendor_photos.photo_type`. */
 export const VENDOR_PHOTO_TYPES = ["booth", "product", "owner", "other"] as const;
 export type VendorPhotoType = (typeof VENDOR_PHOTO_TYPES)[number];
+
+/**
+ * Event gallery photos — OPE-212 (drizzle/0161, 2026-07-15).
+ *
+ * Column-for-column a mirror of `vendor_photos` (OPE-211) keyed on `event_id`.
+ * Keep them in step: the shared upload pipeline dispatches on entity type, not
+ * on a bespoke shape per table, so a divergence here means a special case there.
+ *
+ * `events.image_url` stays the canonical hero. `is_featured` marks the gallery's
+ * own lead photo; it does NOT replace image_url, and OPE-204/205's
+ * "hero-if-blank" writes still target image_url.
+ *
+ * No `thumb_url` — same reason as vendor_photos: one master per image, every
+ * size derived at render time via /cdn-cgi/image.
+ */
+export const eventPhotos = sqliteTable(
+  "event_photos",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    eventId: text("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    photoUrl: text("photo_url").notNull(),
+    caption: text("caption"),
+    altText: text("alt_text"),
+    sortOrder: integer("sort_order").notNull().default(0),
+    /** midway | vendors | food | stage | other — TS-only (EVENT_PHOTO_TYPES). */
+    photoType: text("photo_type").notNull().default("other"),
+    isFeatured: integer("is_featured", { mode: "boolean" }).notNull().default(false),
+    uploadedBy: text("uploaded_by"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => ({
+    eventSortIdx: index("idx_event_photos_event_sort").on(t.eventId, t.sortOrder),
+  })
+);
+
+/** Photo types for `event_photos.photo_type` — what a fairgoer sees, not a booth. */
+export const EVENT_PHOTO_TYPES = ["midway", "vendors", "food", "stage", "other"] as const;
+export type EventPhotoType = (typeof EVENT_PHOTO_TYPES)[number];
 
 // Entity claims — OPE-63 (drizzle/0144, 2026-07-02). The KEYSTONE claim-program
 // table. One row per attempt by a user to claim an entity (vendor, promoter, or

@@ -72,7 +72,7 @@ export function registerUploadImageBytesTool(server: McpServer, auth: AuthContex
         .optional()
         .describe(
           "Which image slot to write. 'logo' (default) / 'hero' apply to target_type 'promoter' — a small square avatar vs a full-bleed banner — and are ignored for other targets. " +
-            "'gallery' is vendor-only and APPENDS a gallery photo (a vendor_photos row) instead of overwriting the single logo; the response returns its photo_id. Use it to add booth/product shots without clobbering the brand logo."
+            "'gallery' works for target_type 'vendor' or 'event' and APPENDS a gallery photo (a vendor_photos / event_photos row) instead of overwriting the single logo/hero; the response returns its photo_id. Use it to add booth, product or fair-scene shots without clobbering the brand logo or the event hero."
         ),
       caption: z
         .string()
