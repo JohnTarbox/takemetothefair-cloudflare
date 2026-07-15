@@ -27,6 +27,13 @@ export type GeocodeStatus =
   | "forced"
   | "already-geocoded"
   | "insufficient-address"
+  /**
+   * The venue's own name says it has no single fixed location (OPE-219), so no
+   * pin is correct and none is asked for. Distinct from `insufficient-address`
+   * (data missing) and `low-confidence` (a candidate worth reviewing) — there
+   * is nothing to research and nothing to force.
+   */
+  | "not-a-point"
   | "no-match"
   | "low-confidence"
   | "error";
@@ -104,6 +111,43 @@ export function hasNameLookupInputs(v: VenueForGeocode): boolean {
   return Boolean(v.name?.trim() && v.city?.trim() && v.state?.trim());
 }
 
+/**
+ * Does the venue's own name declare it has no single fixed location? (OPE-219)
+ *
+ * "Framingham Parks (Rotating)", "Various Studios (Somerville)" — these rows say
+ * outright that the event moves. No pin is correct for them, so grading Google's
+ * answer is the wrong question: the signal was never in Google's reply, it was
+ * in our name all along. On the OPE-213 run both of these matched an office and
+ * stored a wrong pin, because every other signal (right city, right state,
+ * plausible name) agreed.
+ *
+ * Kept deliberately narrow. `multiple` alone would reject a real "Multiple
+ * Sclerosis Society Hall", so it only counts in the phrase "multiple
+ * locations/venues/sites".
+ */
+const NON_POINT_NAME =
+  /\b(?:rotating|various|varies|tbd)\b|\bmultiple\s+(?:locations?|venues?|sites?)\b/i;
+
+export function isNonPointVenue(v: VenueForGeocode): boolean {
+  return NON_POINT_NAME.test(v.name ?? "");
+}
+
+/**
+ * Google's candidate is a business in an office suite (OPE-219).
+ *
+ * For a park / green / downtown / course venue, a suite number is strong
+ * evidence the text search matched the ORGANIZATION that runs the place rather
+ * than the place: "Falmouth Road Race Course" → `205 Worcester Ct Ste B-4`
+ * (the race office), "Downtown Wallingford" → `220 N Colony Rd Ste D` (an
+ * association office). Objective, and it catches the two cases name-matching
+ * provably cannot — an office named after the event it runs scores 1.0 on any
+ * name metric.
+ *
+ * Reported as low-confidence rather than refused outright: a small venue really
+ * can live in a suite, so this stays reviewable and forceable.
+ */
+const OFFICE_SUITE = /\b(?:ste|suite|unit)\b/i;
+
 export function isAlreadyGeocoded(v: VenueForGeocode): boolean {
   return v.latitude !== null && v.longitude !== null;
 }
@@ -121,6 +165,20 @@ export function preflight(v: VenueForGeocode, force: boolean): GeocodeOutcome | 
       before,
       after: { lat: v.latitude, lng: v.longitude, place_id: null },
       status: "already-geocoded",
+    };
+  }
+  // OPE-219 — refuse to GUESS a pin for a venue that says it has none. Scoped
+  // to the name path on purpose: an operator who typed a street address made a
+  // deliberate choice and we respect it; this only blocks inventing a location
+  // for a row whose name declares the event moves.
+  if (!hasSufficientAddress(v) && isNonPointVenue(v)) {
+    return {
+      venue_id: v.id,
+      name: v.name,
+      before,
+      after: { lat: null, lng: null, place_id: null },
+      status: "not-a-point",
+      error: "venue name declares no fixed location — no pin is correct",
     };
   }
   // Only give up when NEITHER path is viable. A venue with no street address
@@ -214,7 +272,18 @@ export function nameOverlap(a: string, b: string, ignore?: string): number {
   return shared / Math.min(ta.size, tb.size);
 }
 
-/** Below this, Google's answer isn't plausibly the venue we asked for. */
+/**
+ * Below this, Google's answer isn't plausibly the venue we asked for.
+ *
+ * DO NOT raise this to catch the org-office case (OPE-219 §2, considered and
+ * rejected): "Framingham Parks (Rotating)" vs "Framingham Parks & Recreation"
+ * scores exactly 0.50 (one shared token, min-set 2) — but so does the CORRECT
+ * "Memorial Boulevard, Bristol" vs Google's "Memorial Blvd", because
+ * `boulevard` and `blvd` are different tokens. A plain abbreviation lands on
+ * the identical score as the failure, so no threshold separates them. The
+ * org-office case is caught by `isNonPointVenue` + `OFFICE_SUITE` instead,
+ * which key on evidence the score can't see.
+ */
 const NAME_OVERLAP_MIN = 0.5;
 
 /**
@@ -270,6 +339,12 @@ export function judgeNameLookup(
   // repeating it corroborates nothing.
   if (place.name && nameOverlap(v.name, place.name, v.city ?? "") < NAME_OVERLAP_MIN) {
     reasons.push(`name mismatch (got "${place.name}")`);
+  }
+
+  // OPE-219 — a suite number means Google matched a business. For the venues on
+  // this path (parks, greens, downtowns) that's the org's office, not the place.
+  if (place.formattedAddress && OFFICE_SUITE.test(place.formattedAddress)) {
+    reasons.push("candidate is an office suite — likely the organization, not the venue");
   }
 
   if (reasons.length > 0) {
