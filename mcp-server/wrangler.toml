@@ -35,6 +35,19 @@ ENRICHMENT_DRY_RUN = "true"
 # "true". Shipped OFF (OPE-6); flip to "true" here + redeploy, or override in
 # the dashboard, when replies are cleared to go live.
 EMAIL_REPLY_ENABLED = "false"
+# OPE-204 — booth-photo vision gate. When "true", a fair-resolved photos@ email
+# runs each photo through the vision model (@cf/meta/llama-3.2-11b-vision-instruct)
+# and STAGES what it identifies to admin_actions + flagged_for_review for
+# operator review. It creates NO vendors, event links, or hero images — that
+# auto-write tail is Milestone B and needs its own go (OPE-6).
+# Shipped OFF: it spends Workers AI on every inbound photo, and nobody has
+# measured the model's accuracy on real booth photos yet — the staged rows are
+# how we measure it before any write exists.
+# ⚠️ PREREQUISITE before flipping this to "true": the vision model needs a
+# ONE-TIME per-account Meta license acceptance or every call fails —
+#   curl https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/ai/run/@cf/meta/llama-3.2-11b-vision-instruct \
+#     -X POST -H "Authorization: Bearer $TOKEN" -d '{"prompt":"agree"}'
+PHOTO_VISION_ENABLED = "false"
 # INTERNAL_API_KEY is set via `wrangler secret put INTERNAL_API_KEY`
 # Inbound-email failures (parse / extract / submit) get forwarded here.
 # Must be a verified destination address in Cloudflare Email Routing —

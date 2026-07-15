@@ -204,6 +204,19 @@ export interface HandlerEnv {
    * runtime. Optional to match the workflow Env.
    */
   VENDOR_ASSETS?: R2Bucket;
+  /**
+   * OPE-204 — Workers AI binding, used by `photo-intake` to vision-identify
+   * booths. Same story as VENDOR_ASSETS: already present at runtime (the
+   * workflow Env declares `AI?: Ai`), merely undeclared on this narrower view.
+   */
+  AI?: { run(model: string, input: Record<string, unknown>): Promise<unknown> };
+  /**
+   * OPE-204 / OPE-6 gate. Booth identification runs ONLY when this equals
+   * "true". Default OFF: it spends Workers AI on every inbound photo and stages
+   * rows for review. Enable per John's go, after he's seen the model's accuracy
+   * on real booth photos.
+   */
+  PHOTO_VISION_ENABLED?: string;
 }
 
 /**
