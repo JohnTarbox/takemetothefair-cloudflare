@@ -24,18 +24,26 @@ export const dynamic = "force-dynamic";
  * REPORTED, not written: "better a flagged blank than a wrong pin."
  *
  * Non-destructive by default: existing coordinates are never silently
- * overwritten (`force: true` opts in).
+ * overwritten, and a low-confidence pin is reported rather than stored.
+ *
+ * `force: true` opts into BOTH overrides — re-geocoding an already-pinned
+ * venue, and storing a low-confidence candidate the operator has reviewed
+ * (OPE-215; before that fix `force` reached `preflight` only, so the documented
+ * escape hatch silently did nothing). A forced write is reported as `forced`,
+ * never as a clean `ok`, and leaves an `admin_actions` row.
  */
 import { NextResponse } from "next/server";
 import { withInternalKey } from "@/lib/api/with-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
-import { venues } from "@/lib/db/schema";
+import { venues, adminActions } from "@/lib/db/schema";
 import { eq, inArray, isNull, and } from "drizzle-orm";
 import { geocodeAddressDetailed } from "@/lib/google-maps";
 import { logError } from "@/lib/logger";
 import {
   preflight,
   judge,
+  shouldWrite,
+  forcedOutcome,
   type GeocodeOutcome,
   type VenueForGeocode,
 } from "@/lib/venues/geocode-decision";
@@ -140,9 +148,11 @@ export const POST = withInternalKey(
           v.zip ?? undefined,
           apiKey
         );
-        const outcome = judge(v, detail);
+        let outcome = judge(v, detail);
 
-        if (outcome.status === "ok" && detail) {
+        if (shouldWrite(outcome, force) && detail) {
+          if (outcome.status === "low-confidence") outcome = forcedOutcome(outcome, detail);
+
           const updates: Record<string, unknown> = {
             latitude: detail.lat,
             longitude: detail.lng,
@@ -153,6 +163,25 @@ export const POST = withInternalKey(
           // Fill a blank zip from the geocode, but never overwrite a stored one.
           if (!v.zip && detail.zip) updates.zip = detail.zip;
           await db.update(venues).set(updates).where(eq(venues.id, v.id));
+
+          // A pin that beat the confidence gate by override has to stay
+          // answerable once this response is gone — OPE-203 attributes photos
+          // on it for as long as it sits in the row.
+          if (outcome.status === "forced") {
+            await db.insert(adminActions).values({
+              action: "venue.geocode.forced",
+              actorUserId: null, // internal-key route: no session user
+              targetType: "venue",
+              targetId: v.id,
+              payloadJson: JSON.stringify({
+                reason: outcome.error,
+                candidate: outcome.candidate,
+                lat: detail.lat,
+                lng: detail.lng,
+              }),
+              createdAt: new Date(),
+            });
+          }
         }
         results.push(outcome);
       } catch (error) {
