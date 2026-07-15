@@ -41,8 +41,10 @@ export function registerVenuesGeocodeTool(server: McpServer, auth: AuthContext, 
       "street address when it has one; a venue with NO address but a name + city + state (Tanglewood, MASS " +
       "MoCA) is looked up BY NAME via a Places text search, which also back-fills the missing street " +
       "address. The outcome record reports which method produced the pin ('address' or 'name'). " +
-      "Pass venue_id (single), venue_ids (batch, max 25), or missing_only:true to work through venues that " +
-      "have no coordinates. Non-destructive: a venue that already has coords returns 'already-geocoded' and " +
+      "Pass venue_id (single), venue_ids (batch, max 25), or missing_only:true to page through venues that " +
+      "have no coordinates — missing_only returns a next_cursor; pass it back as after_id and repeat until " +
+      "next_cursor is null, which means drained. " +
+      "Non-destructive: a venue that already has coords returns 'already-geocoded' and " +
       "is skipped unless force:true. A low-confidence match (multiple candidates, partial match, a " +
       "city-centroid 'APPROXIMATE' pin, or — on the name path — a hit whose city/state/name disagrees with " +
       "the row) is reported with its candidate address and NOT written — re-run with " +
@@ -62,7 +64,17 @@ export function registerVenuesGeocodeTool(server: McpServer, auth: AuthContext, 
       missing_only: z
         .boolean()
         .optional()
-        .describe("With no ids: work through venues that have no coordinates (capped at 25)."),
+        .describe(
+          "With no ids: work through venues that have no coordinates (capped at 25). Pages by keyset — " +
+            "pass the response's next_cursor back as after_id and repeat until next_cursor is null."
+        ),
+      after_id: z
+        .string()
+        .optional()
+        .describe(
+          "Keyset cursor for missing_only: resume after this venue id. Pass the previous response's " +
+            "next_cursor. Omit to start from the beginning."
+        ),
       limit: z
         .number()
         .min(1)
@@ -115,6 +127,7 @@ export function registerVenuesGeocodeTool(server: McpServer, auth: AuthContext, 
             venue_id: params.venue_id ?? undefined,
             venue_ids: params.venue_ids ?? undefined,
             missing_only: params.missing_only ?? undefined,
+            after_id: params.after_id ?? undefined,
             limit: params.limit ?? undefined,
             force: params.force ?? false,
           }),

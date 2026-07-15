@@ -46,7 +46,7 @@ import { NextResponse } from "next/server";
 import { withInternalKey } from "@/lib/api/with-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { venues, adminActions } from "@/lib/db/schema";
-import { eq, inArray, isNull, and } from "drizzle-orm";
+import { eq, inArray, isNull, and, gt } from "drizzle-orm";
 import { geocodeAddressDetailed, lookupPlace } from "@/lib/google-maps";
 import { logError } from "@/lib/logger";
 import {
@@ -54,6 +54,7 @@ import {
   judge,
   judgeNameLookup,
   hasSufficientAddress,
+  nextCursor,
   shouldWrite,
   forcedOutcome,
   type GeocodePin,
@@ -64,7 +65,8 @@ import {
 /**
  * Hard cap per call. Each venue costs one Google round-trip (8s timeout) plus a
  * pacing delay, and this route runs on the 100s edge budget — 25 × ~1s is a
- * comfortable fit while 233 in one shot is not. The caller pages.
+ * comfortable fit while 233 in one shot is not. The caller pages via
+ * `after_id` / `next_cursor` (OPE-214).
  *
  * The OPE-213 name path is pricier: `lookupPlace` also fetches a photo URL for
  * a hit that has photos, so budget ~2 round-trips per addressless venue. Still
@@ -82,6 +84,11 @@ interface Body {
   force?: boolean;
   /** With no ids: geocode venues missing coordinates (capped at MAX_PER_CALL). */
   missing_only?: boolean;
+  /**
+   * OPE-214 — keyset cursor for `missing_only`: resume after this venue id.
+   * Pass back the `next_cursor` from the previous response; omit to start.
+   */
+  after_id?: string;
   limit?: number;
 }
 
@@ -123,10 +130,21 @@ export const POST = withInternalKey(
         .from(venues)
         .where(inArray(venues.id, ids.slice(0, limit)));
     } else if (body.missing_only) {
+      // OPE-214 — keyset paging. The ORDER BY is not cosmetic: without a stable
+      // order the cursor is meaningless, and without the cursor a non-writing
+      // outcome matches this same filter on every call and can be handed back
+      // forever (the original stall).
       rows = await db
         .select(cols)
         .from(venues)
-        .where(and(isNull(venues.latitude), isNull(venues.longitude)))
+        .where(
+          and(
+            isNull(venues.latitude),
+            isNull(venues.longitude),
+            body.after_id ? gt(venues.id, body.after_id) : undefined
+          )
+        )
+        .orderBy(venues.id)
         .limit(limit);
     } else {
       return NextResponse.json(
@@ -264,6 +282,10 @@ export const POST = withInternalKey(
       return acc;
     }, {});
 
-    return NextResponse.json({ force, examined: results.length, summary, results });
+    // OPE-214 — only `missing_only` pages; an explicit id list is already the
+    // caller's own cursor. Loop until this comes back null.
+    const next_cursor = body.missing_only ? nextCursor(rows, limit) : null;
+
+    return NextResponse.json({ force, examined: results.length, summary, next_cursor, results });
   }
 );
