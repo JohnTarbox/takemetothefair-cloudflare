@@ -46,7 +46,12 @@ export type EmailIntent =
   // can also tag misrouted reports landing on `support@` as
   // problem_report when the body matches problem-language keywords
   // ("broken", "doesn't work", "error", "404", "page won't load").
-  | "problem_report";
+  | "problem_report"
+  // OPE-202 — on-site fair PHOTO submissions (booth shots + general scenes)
+  // to photos@. Separate lane from submit@ (which treats every attachment as
+  // an event poster). Milestone 1 is receive + auth/trust gate + attachment
+  // capture + ack; the vendor-write tail is downstream (OPE-204).
+  | "photo_intake";
 
 const INTENT_MAP: Record<string, EmailIntent> = {
   "submit@meetmeatthefair.com": "submit",
@@ -59,7 +64,39 @@ const INTENT_MAP: Record<string, EmailIntent> = {
   // Routing rules in CF dashboard for both addresses → mcp Worker.
   "report@meetmeatthefair.com": "problem_report",
   "feedback@meetmeatthefair.com": "problem_report",
+  // OPE-202 — photo intake. NB: add the CF Email Routing rule
+  // photos@meetmeatthefair.com → meetmeatthefair-mcp Worker (dashboard step).
+  "photos@meetmeatthefair.com": "photo_intake",
 };
+
+/**
+ * Strip an RFC 5233 sub-address (`local+tag@domain` → `local@domain`) so
+ * plus-addressed mail resolves to the base address's intent. OPE-202 relies on
+ * this so `photos+<event-slug>@` still routes to `photo_intake`.
+ */
+function stripPlusSegment(address: string): string {
+  const at = address.indexOf("@");
+  if (at < 0) return address;
+  const local = address.slice(0, at);
+  const plus = local.indexOf("+");
+  return plus < 0 ? address : local.slice(0, plus) + address.slice(at);
+}
+
+/**
+ * Extract the `+tag` sub-address segment from a recipient, or null when there
+ * is none. OPE-202: `photos+summer-fair-2026@…` → `summer-fair-2026`, captured
+ * as an explicit event hint for the downstream fair-resolver (OPE-203).
+ */
+export function parsePlusSegment(toAddress: string): string | null {
+  const addr = toAddress.toLowerCase().trim();
+  const at = addr.indexOf("@");
+  if (at < 0) return null;
+  const local = addr.slice(0, at);
+  const plus = local.indexOf("+");
+  if (plus < 0) return null;
+  const seg = local.slice(plus + 1).trim();
+  return seg.length > 0 ? seg : null;
+}
 
 /**
  * Map a classifier intent to a workflow-dispatch intent. The workflow's
@@ -102,7 +139,7 @@ export function toWorkflowIntent(intent: EmailIntent): EmailIntent {
  * never throws, always returns a valid intent.
  */
 export function resolveIntent(toAddress: string): EmailIntent {
-  const normalized = toAddress.toLowerCase().trim();
+  const normalized = stripPlusSegment(toAddress.toLowerCase().trim());
   return INTENT_MAP[normalized] ?? "unknown";
 }
 
@@ -120,5 +157,9 @@ export function resolveIntent(toAddress: string): EmailIntent {
  * handler. The workflow can't forward later.
  */
 export function shouldForwardToAdmin(intent: EmailIntent): boolean {
-  return intent !== "submit";
+  // `submit` lands as a PENDING event in D1 (forwarding would duplicate).
+  // OPE-202 `photo_intake` is likewise processed server-side + captured to R2;
+  // forwarding a batch of full-size photos back to the admin's own Gmail (the
+  // usual sender) is circular noise — the admin sees them in the inbound viewer.
+  return intent !== "submit" && intent !== "photo_intake";
 }

@@ -24,6 +24,8 @@
  */
 
 import type { InboundEmail } from "@takemetothefair/db-schema";
+import type { SenderTrustTier } from "../intent-classifier.js";
+import type { EmailAuthVerdict } from "../email-auth.js";
 
 /** Discriminated tag matched by buildReply in email-reply-builder.ts.
  *  null means "send no auto-reply" (used by `unknown` catch-all). */
@@ -90,6 +92,13 @@ export type ReplyKind =
   | "press-ack"
   | "unsubscribe-ack"
   | "source-suggestion-ack"
+  // OPE-202 photo-intake lane acks. `photo-intake-ack` — an authenticated,
+  // trusted sender: "received N photos", eligible for downstream vendor
+  // processing. `photo-intake-held` — auth-fail or untrusted sender: received +
+  // held for review, NOT eligible for auto-write. Both include the operational
+  // tip to send full-size attachments so EXIF (GPS + timestamp) survives.
+  | "photo-intake-ack"
+  | "photo-intake-held"
   // UR1 Phase 1 (2026-06-04) — problem-report intake ack. Reassures the
   // sender that the report landed AND that operators get HIGH-priority
   // visibility when the report co-occurs with an active outage.
@@ -185,6 +194,12 @@ export interface HandlerEnv {
  */
 export interface HandlerCtx {
   sessionId: string;
+  /** OPE-202 — the sender's trust tier + email-auth verdict, computed once in
+   *  the entrypoint (email-handler.ts) and threaded through the workflow so a
+   *  handler can gate on "authenticated + trusted" without re-deriving. Default
+   *  "unknown"/"unknown" for handlers/paths that don't set them. */
+  senderTrust: SenderTrustTier;
+  emailAuth: EmailAuthVerdict;
 }
 
 /** Standardized signature for every handler. Throws on failure;

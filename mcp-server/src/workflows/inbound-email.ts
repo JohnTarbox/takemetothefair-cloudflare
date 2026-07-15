@@ -61,6 +61,8 @@ import { inboundEmails, adminActions, events } from "../schema.js";
 import { logError } from "../logger.js";
 import { classifyDomainTier, isHigherTier, classifyDedupTier } from "@takemetothefair/utils";
 import type { EmailIntent } from "../email-intents.js";
+import type { SenderTrustTier } from "../intent-classifier.js";
+import type { EmailAuthVerdict } from "../email-auth.js";
 import type { HandlerFn, HandlerResult, ReplyKind } from "../email-handlers/types.js";
 import { handle as handleCorrection } from "../email-handlers/correction.js";
 import { handle as handleSupport } from "../email-handlers/support.js";
@@ -70,6 +72,7 @@ import { handle as handleUnsubscribe } from "../email-handlers/unsubscribe.js";
 import { handle as handleUnknown } from "../email-handlers/unknown.js";
 import { handle as handleSpam } from "../email-handlers/spam.js";
 import { handle as handleSourceSuggestion } from "../email-handlers/source-suggestion.js";
+import { handle as handlePhotoIntake } from "../email-handlers/photo-intake.js";
 import { extractAllUrls, type AttachmentRef } from "../email-handler.js";
 import {
   submitFetch,
@@ -94,6 +97,12 @@ import { seedDiscoveryCandidate } from "../goodwill/seed-discovery.js";
 export type InboundEmailParams = {
   messageRowId: string;
   intent: EmailIntent;
+  // OPE-202 — sender trust tier + email-auth verdict, computed in the entrypoint
+  // and threaded to the per-intent handler via HandlerCtx. Optional for
+  // backward-compat with any in-flight instance created before this field
+  // existed; the run() reader defaults them to "unknown".
+  senderTrust?: SenderTrustTier;
+  emailAuth?: EmailAuthVerdict;
 };
 
 /**
@@ -206,6 +215,8 @@ const HANDLERS: Record<Exclude<EmailIntent, "submit" | "new_event">, HandlerFn> 
   multi: handleUnknown, // parent row of a multi-intent split; children carry the real intent
   // UR1 Phase 1 (2026-06-04) — report@ / feedback@ → problem_reports table
   problem_report: handleProblemReport,
+  // OPE-202 — photos@ intake lane (receive + auth/trust gate + ack; no writes).
+  photo_intake: handlePhotoIntake,
 };
 
 /** Map an error message thrown by a submit-leg or handler to a user-
@@ -265,6 +276,11 @@ interface AdminDecision {
 export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailParams> {
   async run(event: WorkflowEvent<InboundEmailParams>, step: WorkflowStep) {
     const { messageRowId, intent } = event.payload;
+    // OPE-202 — sender trust + email-auth verdict, threaded to the handler via
+    // HandlerCtx. Default "unknown" for any instance created before these
+    // params existed (backward-compat).
+    const senderTrust: SenderTrustTier = event.payload.senderTrust ?? "unknown";
+    const emailAuth: EmailAuthVerdict = event.payload.emailAuth ?? "unknown";
     const sessionId = event.instanceId;
 
     // ───── Step 1: mark-processing ──────────────────────────────────
@@ -343,7 +359,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             // HANDLERS key lookup is safe.
             return await HANDLERS[intent as Exclude<EmailIntent, "submit" | "new_event">](
               this.env,
-              { sessionId },
+              { sessionId, senderTrust, emailAuth },
               rows[0]
             );
           }

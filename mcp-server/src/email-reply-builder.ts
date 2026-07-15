@@ -399,6 +399,37 @@ A team member will follow up shortly with media materials. If your inquiry is ti
 
 ${SIGN_OFF}`;
     }
+    // OPE-202 — photo-intake acks. photoCount + eventHint come from the
+    // photo_intake handler; the EXIF tip is on both so senders learn to send
+    // full-size attachments (GPS + timestamp survive) for the fair-resolver.
+    case "photo-intake-ack": {
+      const n = Number(params.photoCount ?? 0);
+      const hint = (params.eventHint as string | undefined) ?? "";
+      const noun = n === 1 ? "photo" : "photos";
+      const hintLine = hint ? `\n\nWe noted the event hint "${hint}" from your address.` : "";
+      return `Thanks — we received ${n} ${noun} for Meet Me at the Fair.${hintLine}
+
+We'll match them to the fair and get to work; you'll hear back with a summary of what we did.
+
+Tip: for best results, send photos at ACTUAL/FULL size as attachments (not resized or inline) — that preserves the location + timestamp we use to identify which fair they're from.
+
+${SUPPORT_LINE}
+
+${SIGN_OFF}`;
+    }
+    case "photo-intake-held": {
+      const n = Number(params.photoCount ?? 0);
+      const noun = n === 1 ? "photo" : "photos";
+      return `Thanks — we received ${n} ${noun} for Meet Me at the Fair, and they're held for our team to review.
+
+Because we couldn't automatically verify this message came from a recognized sender, we won't process the photos automatically — a person will take a look.
+
+Tip: for best results, send photos at ACTUAL/FULL size as attachments (not resized or inline) so the location + timestamp are preserved.
+
+${SUPPORT_LINE}
+
+${SIGN_OFF}`;
+    }
     case "unsubscribe-ack": {
       return `You've been unsubscribed.
 

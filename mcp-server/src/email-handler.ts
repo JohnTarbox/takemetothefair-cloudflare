@@ -51,7 +51,7 @@ import {
 } from "./intent-classifier.js";
 import { hasMultiIntentOrSpecialSignal, isReplyToOurThread } from "./intent-fastpath.js";
 import { isDenylistedHost } from "./url-denylist.js";
-import { parseEmailAuth } from "./email-auth.js";
+import { parseEmailAuth, type EmailAuthVerdict } from "./email-auth.js";
 import { isNonActionableSender } from "./email-handlers/audit-sender.js";
 
 // ---------------------------------------------------------------------------
@@ -77,7 +77,13 @@ export interface EmailHandlerEnv {
   /** The InboundEmailWorkflow binding. Uses the global Workflow type
    *  from @cloudflare/workers-types so the retention / id options on
    *  .create() stay in sync with the platform's actual signature. */
-  INBOUND_EMAIL: Workflow<{ messageRowId: string; intent: EmailIntent }>;
+  INBOUND_EMAIL: Workflow<{
+    messageRowId: string;
+    intent: EmailIntent;
+    // OPE-202 — threaded to the per-intent handler via HandlerCtx.
+    senderTrust?: SenderTrustTier;
+    emailAuth?: EmailAuthVerdict;
+  }>;
   /** Workers AI binding for the intent classifier. Optional so unit
    *  tests + non-AI environments can omit it; missing → classifier
    *  silently skipped, address-based routing only. */
@@ -534,7 +540,10 @@ export async function handleInboundEmail(
       const r = routing.routed[i];
       try {
         const instance = await env.INBOUND_EMAIL.create({
-          params: { messageRowId: rowId, intent: r.intent },
+          // OPE-202 — thread the sender trust tier + email-auth verdict computed
+          // above so the per-intent handler (e.g. photo_intake) can gate on
+          // "authenticated + trusted" without re-deriving.
+          params: { messageRowId: rowId, intent: r.intent, senderTrust, emailAuth },
           retention: { successRetention: "7 days", errorRetention: "7 days" },
         });
         workflowInstanceIds.push(instance.id);
