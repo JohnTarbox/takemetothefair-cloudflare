@@ -1,166 +1,38 @@
+/**
+ * MCP `create_or_link_vendor` — a thin adapter over the shared write tail in
+ * `@takemetothefair/vendor-linking`. The dedup → create → link → audit logic
+ * lives in that package (one copy, also called by the app); this file is just
+ * the tool contract (Zod), MCP result shape, and the two cosmetic side-effects
+ * (IndexNow ping + post-create enrichment enqueue) that are MCP-runtime-specific.
+ */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { and, eq, isNull, like } from "drizzle-orm";
-import { adminActions, eventDays, eventVendors, events, users, vendors } from "../schema.js";
 import {
   PARTICIPATION_TYPE_ENUM,
   PAYMENT_STATUS_ENUM,
-  PUBLIC_VENDOR_STATUSES,
-  VALID_TRANSITIONS,
   VENDOR_STATUS_ENUM,
-  appendSlugSegment,
-  createSlug,
-  escapeLike,
   jsonContent,
   logEnrichment,
-  parseLocation,
   publicUrlFor,
   recomputeVendorCompleteness,
   sanitizeProse,
   triggerIndexNow,
-  type Slug,
 } from "../helpers.js";
-import { combinedSimilarity, getVendorComparisonString } from "@takemetothefair/utils";
+import {
+  createOrLinkVendor,
+  DEDUP_STRATEGY_VALUES,
+  type CreateOrLinkVendorInput,
+} from "@takemetothefair/vendor-linking";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 import type { VendorEnrichmentMessage } from "../enrichment/dispatch.js";
-
-const PUBLIC_VENDOR_SET = new Set<string>(PUBLIC_VENDOR_STATUSES);
 
 interface Env {
   MAIN_APP?: { fetch: typeof fetch };
   MAIN_APP_URL?: string;
   INTERNAL_API_KEY?: string;
-  /** I1 Trigger 1 (2026-06-13) — post-create enrichment enqueue. Optional so
-   *  dev / unconfigured environments degrade gracefully; the nightly cron is
-   *  the safety net (a freshly-created never-attempted vendor with a website
-   *  is already in the cron's selection pool), so this is a latency
-   *  optimization, not a correctness dependency. */
   VENDOR_ENRICHMENT?: { send: (msg: VendorEnrichmentMessage) => Promise<unknown> };
-  /** Operator dry-run switch, mirrored from the cron/queue path. "false"
-   *  flips off the Phase-1 dry-run default. */
   ENRICHMENT_DRY_RUN?: string;
-}
-
-const DEDUP_STRATEGY_VALUES = ["strict", "fuzzy", "skip"] as const;
-const FUZZY_THRESHOLD = 0.92;
-const FUZZY_CANDIDATE_CAP = 200;
-const REDIRECT_CHAIN_MAX_DEPTH = 5;
-
-type VendorRow = {
-  id: string;
-  businessName: string;
-  vendorType: string | null;
-  redirectToVendorId: string | null;
-  slug: Slug;
-};
-
-/**
- * Resolve a vendor row through any redirect_to_vendor_id chain. Returns the
- * canonical row (one with redirectToVendorId === null) or throws on cycle
- * detection beyond the max depth.
- */
-async function resolveRedirectChain(db: Db, startRow: VendorRow): Promise<VendorRow> {
-  let current = startRow;
-  const visited = new Set<string>([current.id]);
-  for (let depth = 0; depth < REDIRECT_CHAIN_MAX_DEPTH; depth++) {
-    if (!current.redirectToVendorId) return current;
-    if (visited.has(current.redirectToVendorId)) {
-      throw new Error(`alias_cycle_detected: vendor ${current.id} → ${current.redirectToVendorId}`);
-    }
-    visited.add(current.redirectToVendorId);
-    const next = await db
-      .select({
-        id: vendors.id,
-        businessName: vendors.businessName,
-        vendorType: vendors.vendorType,
-        redirectToVendorId: vendors.redirectToVendorId,
-        slug: vendors.slug,
-      })
-      .from(vendors)
-      .where(eq(vendors.id, current.redirectToVendorId))
-      .limit(1);
-    if (next.length === 0) {
-      // Dangling pointer — treat as canonical (no further follow possible).
-      return current;
-    }
-    current = next[0];
-  }
-  throw new Error(
-    `alias_cycle_detected: redirect chain exceeded max depth ${REDIRECT_CHAIN_MAX_DEPTH}`
-  );
-}
-
-/**
- * Fuzzy candidate scan. Narrows the search via a LIKE prefix on the first
- * normalized token, then ranks the remaining set with combinedSimilarity.
- * Caps the in-memory set at FUZZY_CANDIDATE_CAP to bound CPU on large tables.
- */
-async function findFuzzyMatch(
-  db: Db,
-  businessName: string,
-  vendorType: string | null | undefined
-): Promise<{ row: VendorRow; score: number } | null> {
-  // Pre-narrow via LIKE on a stem of the input. This is heuristic — if the
-  // candidate-side has a different first word (e.g. "The X" vs "X"), the LIKE
-  // misses it. Acceptable for the speedup; admins can always pass
-  // dedup_strategy: "strict" or re-run search separately.
-  const stem = businessName
-    .toLowerCase()
-    .replace(/[^a-z0-9 ]/g, " ")
-    .trim()
-    .split(/\s+/)
-    .filter((t) => t.length >= 3)[0];
-
-  const filters = [isNull(vendors.deletedAt)];
-  if (stem) {
-    filters.push(like(vendors.businessName, `%${escapeLike(stem)}%`));
-  }
-
-  const candidates = await db
-    .select({
-      id: vendors.id,
-      businessName: vendors.businessName,
-      vendorType: vendors.vendorType,
-      redirectToVendorId: vendors.redirectToVendorId,
-      slug: vendors.slug,
-    })
-    .from(vendors)
-    .where(and(...filters))
-    .limit(FUZZY_CANDIDATE_CAP);
-
-  if (candidates.length === 0) return null;
-
-  const target = getVendorComparisonString({ businessName, vendorType: vendorType ?? null });
-  let best: { row: VendorRow; score: number } | null = null;
-
-  for (const candidate of candidates) {
-    const candidateStr = getVendorComparisonString({
-      businessName: candidate.businessName,
-      vendorType: candidate.vendorType,
-    });
-    const score = combinedSimilarity(target, candidateStr, 0.6, FUZZY_THRESHOLD);
-    if (score < FUZZY_THRESHOLD) continue;
-    if (!best || score > best.score) {
-      best = { row: candidate, score };
-      continue;
-    }
-    if (score === best.score) {
-      // Tie-break 1: exact prefix match on businessName.
-      const candidateExact = candidate.businessName.toLowerCase() === businessName.toLowerCase();
-      const bestExact = best.row.businessName.toLowerCase() === businessName.toLowerCase();
-      if (candidateExact && !bestExact) {
-        best = { row: candidate, score };
-        continue;
-      }
-      // Tie-break 2: lower id.
-      if (candidate.id < best.row.id) {
-        best = { row: candidate, score };
-      }
-    }
-  }
-
-  return best;
 }
 
 export function registerCreateOrLinkVendorTool(
@@ -236,322 +108,67 @@ export function registerCreateOrLinkVendorTool(
         ),
     },
     async (params) => {
-      // Runtime defaults + sanitization. Zod handles these at the boundary in
-      // production, but the test harness invokes handlers directly and bypasses
-      // the schema — so we mirror update_vendor_status's pattern of belt-and-
-      // suspenders defaulting here. sanitizeProse is idempotent so re-applying
-      // is safe even when Zod already ran.
-      const businessName = sanitizeProse(params.business_name);
-      const vendorType = params.type != null ? sanitizeProse(params.type) : null;
-      const description = params.description != null ? sanitizeProse(params.description) : null;
-      const productsClean = Array.isArray(params.products)
-        ? params.products.map((p: string) => sanitizeProse(p))
-        : null;
-      const status = (params.status ?? "CONFIRMED") as (typeof VENDOR_STATUS_ENUM)[number];
-      const paymentStatus = (params.payment_status ??
-        "NOT_REQUIRED") as (typeof PAYMENT_STATUS_ENUM)[number];
-      const participationType = (params.participation_type ??
-        "EXHIBITOR") as (typeof PARTICIPATION_TYPE_ENUM)[number];
-      const dedupStrategy =
-        (params.dedup_strategy as (typeof DEDUP_STRATEGY_VALUES)[number] | undefined) ?? "fuzzy";
       const deferSearchPing = params.defer_search_ping ?? true;
 
-      if (businessName.length === 0) {
-        return {
-          content: [{ type: "text", text: "business_name is empty after sanitization." }],
-          isError: true,
-        };
+      const input: CreateOrLinkVendorInput = {
+        eventId: params.event_id,
+        businessName: params.business_name,
+        type: params.type ?? null,
+        status: params.status,
+        description: params.description ?? null,
+        products: params.products ?? null,
+        location: params.location ?? null,
+        website: params.website ?? null,
+        contactEmail: params.contact_email ?? null,
+        contactPhone: params.contact_phone ?? null,
+        logoUrl: params.logo_url ?? null,
+        dedupStrategy: params.dedup_strategy,
+        boothInfo: params.booth_info ?? null,
+        paymentStatus: params.payment_status,
+        participationType: params.participation_type,
+        eventDayId: params.event_day_id ?? null,
+      };
+
+      const result = await createOrLinkVendor(db, input, {
+        actorUserId: auth.userId,
+        recomputeVendorCompleteness,
+        logEnrichment,
+      });
+
+      if (!result.ok) {
+        return { content: [{ type: "text", text: result.error }], isError: true };
       }
 
-      // 1. Event resolve
-      const eventRows = await db
-        .select({ id: events.id, slug: events.slug, name: events.name })
-        .from(events)
-        .where(eq(events.id, params.event_id))
-        .limit(1);
-      if (eventRows.length === 0) {
-        return {
-          content: [{ type: "text", text: `Event not found: ${params.event_id}` }],
-          isError: true,
-        };
-      }
-      const event = eventRows[0];
-
-      // 2. Dedup
-      let matched: { row: VendorRow; score: number | null } | null = null;
-      if (dedupStrategy !== "skip") {
-        if (dedupStrategy === "strict") {
-          // Case-insensitive exact match. SQLite default collation is binary,
-          // so LOWER(TRIM(...)) on both sides is needed.
-          const strictRows = await db
-            .select({
-              id: vendors.id,
-              businessName: vendors.businessName,
-              vendorType: vendors.vendorType,
-              redirectToVendorId: vendors.redirectToVendorId,
-              slug: vendors.slug,
-            })
-            .from(vendors)
-            .where(and(eq(vendors.businessName, businessName), isNull(vendors.deletedAt)))
-            .limit(1);
-          if (strictRows.length > 0) {
-            matched = { row: strictRows[0], score: 1 };
-          }
-        } else {
-          // fuzzy
-          const found = await findFuzzyMatch(db, businessName, vendorType);
-          if (found) matched = { row: found.row, score: found.score };
-        }
-
-        // Redirect chain resolution.
-        if (matched) {
-          try {
-            const canonical = await resolveRedirectChain(db, matched.row);
-            matched = { row: canonical, score: matched.score };
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            return {
-              content: [{ type: "text", text: msg }],
-              isError: true,
-            };
-          }
-        }
-      }
-
-      let vendorId: string;
-      let vendorSlug: Slug;
-      let was_created = false;
-      const matchedExisting = matched
-        ? { name: matched.row.businessName, similarity_score: matched.score }
-        : null;
-
-      // 3. Create new vendor if no match
-      if (matched) {
-        vendorId = matched.row.id;
-        vendorSlug = matched.row.slug;
-      } else {
-        const baseSlug = createSlug(businessName);
-        if (!baseSlug) {
-          return {
-            content: [
-              { type: "text", text: "Could not generate a valid slug from the business name." },
-            ],
-            isError: true,
-          };
-        }
-
-        let finalSlug: Slug = baseSlug;
-        let suffix = 0;
-        while (true) {
-          const candidate = suffix > 0 ? appendSlugSegment(baseSlug, suffix) : baseSlug;
-          const slugCheck = await db
-            .select({ id: vendors.id })
-            .from(vendors)
-            .where(eq(vendors.slug, candidate))
-            .limit(1);
-          if (slugCheck.length === 0) {
-            finalSlug = candidate;
-            break;
-          }
-          suffix++;
-          if (suffix > 20) {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: "Too many slug collisions. Try a more unique business name.",
-                },
-              ],
-              isError: true,
-            };
-          }
-        }
-
-        const placeholderEmail = `pending+${finalSlug}@meetmeatthefair.com`;
-        const userId = crypto.randomUUID();
-        await db.insert(users).values({
-          id: userId,
-          email: placeholderEmail,
-          role: "VENDOR",
-        });
-
-        const loc = params.location ? parseLocation(params.location) : { city: null, state: null };
-
-        vendorId = crypto.randomUUID();
-        await db.insert(vendors).values({
-          id: vendorId,
-          userId,
-          businessName,
-          slug: finalSlug,
-          vendorType,
-          description,
-          products: productsClean ? JSON.stringify(productsClean) : "[]",
-          website: params.website ?? null,
-          contactEmail: params.contact_email ?? null,
-          contactPhone: params.contact_phone ?? null,
-          logoUrl: params.logo_url ?? null,
-          city: loc.city,
-          state: loc.state,
-        });
-
-        await recomputeVendorCompleteness(db, vendorId);
-        await logEnrichment(db, {
-          targetType: "vendor",
-          targetId: vendorId,
-          source: "mcp_create",
-          status: "success",
-          actorUserId: auth.userId,
-          notes: "MCP create_or_link_vendor (new vendor)",
-        });
-
-        vendorSlug = finalSlug;
-        was_created = true;
-      }
-
-      // 4. UPSERT event_vendors
-      // K18 Phase 1 — resolve + validate optional per-occurrence scoping.
-      // `event_day_id` must (a) exist and (b) belong to the same event the
-      // link is being created on. Cross-event ids are a data-quality error
-      // and we reject before any write. NULL/omitted → series-wide.
-      const eventDayId = params.event_day_id ?? null;
-      if (eventDayId !== null) {
-        const dayRows = await db
-          .select({ id: eventDays.id, eventId: eventDays.eventId })
-          .from(eventDays)
-          .where(eq(eventDays.id, eventDayId))
-          .limit(1);
-        if (dayRows.length === 0) {
-          return {
-            content: [{ type: "text", text: `event_day_id not found: ${eventDayId}` }],
-            isError: true,
-          };
-        }
-        if (dayRows[0].eventId !== params.event_id) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: `event_day_id ${eventDayId} belongs to event ${dayRows[0].eventId}, not ${params.event_id}. Cross-event scoping is not allowed.`,
-              },
-            ],
-            isError: true,
-          };
-        }
-      }
-
-      // Dedup keys on (event_id, vendor_id, event_day_id). The partial-
-      // unique-index split in drizzle/0114 means a series-wide row and a
-      // per-day row for the same (event, vendor) pair are both allowed —
-      // so we look up by the FULL key, treating NULL as a distinct slot.
-      const linkRows = await db
-        .select({
-          id: eventVendors.id,
-          status: eventVendors.status,
-          paymentStatus: eventVendors.paymentStatus,
-          participationType: eventVendors.participationType,
-        })
-        .from(eventVendors)
-        .where(
-          and(
-            eq(eventVendors.eventId, params.event_id),
-            eq(eventVendors.vendorId, vendorId),
-            eventDayId === null
-              ? isNull(eventVendors.eventDayId)
-              : eq(eventVendors.eventDayId, eventDayId)
-          )
-        )
-        .limit(1);
-
-      let was_linked = false;
-      let was_already_linked = false;
-      let status_changed = false;
-      let eventVendorRowId: string;
-
-      if (linkRows.length === 0) {
-        eventVendorRowId = crypto.randomUUID();
-        await db.insert(eventVendors).values({
-          id: eventVendorRowId,
-          eventId: params.event_id,
-          vendorId,
-          status,
-          paymentStatus,
-          participationType,
-          boothInfo: params.booth_info ?? null,
-          eventDayId,
-        });
-        was_linked = true;
-      } else {
-        const existing = linkRows[0];
-        eventVendorRowId = existing.id;
-        was_already_linked = true;
-
-        const updates: Record<string, unknown> = {};
-
-        if (status !== existing.status) {
-          const allowed = VALID_TRANSITIONS[existing.status];
-          if (!allowed || !allowed.includes(status)) {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: `Invalid transition: ${existing.status} → ${status}. Allowed from ${existing.status}: ${(allowed || []).join(", ") || "none"}.`,
-                },
-              ],
-              isError: true,
-            };
-          }
-          updates.status = status;
-          status_changed = true;
-        }
-        // Only update payment_status when explicitly provided AND different,
-        // so a no-op call (same status, payment_status omitted) doesn't
-        // generate a phantom UPDATE with a defaulted value.
-        if (
-          params.payment_status !== undefined &&
-          params.payment_status !== existing.paymentStatus
-        ) {
-          updates.paymentStatus = params.payment_status;
-        }
-        // Same pattern for participation_type — only update when explicitly
-        // provided AND different from the existing value.
-        if (
-          params.participation_type !== undefined &&
-          params.participation_type !== existing.participationType
-        ) {
-          updates.participationType = params.participation_type;
-        }
-        if (params.booth_info !== undefined) {
-          updates.boothInfo = params.booth_info;
-        }
-
-        if (Object.keys(updates).length > 0) {
-          await db.update(eventVendors).set(updates).where(eq(eventVendors.id, existing.id));
-        }
-      }
-
-      // 5. Lifecycle hooks. When defer_search_ping is true the helper queues
-      //    rows in pending_search_pings instead of firing IndexNow inline;
-      //    flush_pending_search_pings drains the outbox into one batched call.
+      // Cosmetic side-effects — MCP-runtime-specific, driven by the core's flags.
+      // When defer_search_ping is true the helper queues rows in
+      // pending_search_pings instead of firing IndexNow inline.
       if (env) {
-        if (was_created) {
-          await triggerIndexNow(publicUrlFor("vendors", vendorSlug), env, "vendor-create-or-link", {
-            defer: deferSearchPing,
-            db,
-            entity: { type: "vendor", id: vendorId, slug: vendorSlug, action: "create" },
-          });
+        if (result.wasCreated) {
+          await triggerIndexNow(
+            publicUrlFor("vendors", result.vendorSlug),
+            env,
+            "vendor-create-or-link",
+            {
+              defer: deferSearchPing,
+              db,
+              entity: {
+                type: "vendor",
+                id: result.vendorId,
+                slug: result.vendorSlug,
+                action: "create",
+              },
+            }
+          );
 
-          // I1 Trigger 1 (2026-06-13) — kick a fill-empty enrichment pass for
-          // the freshly-created vendor so its contact fields get populated
-          // without waiting for the nightly cron. Fire-and-forget: a queue
-          // hiccup must never fail the create, and it doesn't need to — the
-          // cron is the safety net (a never-attempted vendor with a website is
-          // in its pool). dryRun mirrors the cron/queue convention exactly.
+          // I1 — kick a fill-empty enrichment pass for the fresh vendor so its
+          // contact fields populate without waiting for the nightly cron.
+          // Fire-and-forget: a queue hiccup must never fail the create.
           const website = params.website?.trim();
           if (website && env.VENDOR_ENRICHMENT) {
             try {
               await env.VENDOR_ENRICHMENT.send({
-                vendorId,
-                jobRunId: `postcreate-${vendorId}`,
+                vendorId: result.vendorId,
+                jobRunId: `postcreate-${result.vendorId}`,
                 dryRun: env.ENRICHMENT_DRY_RUN !== "false",
               });
             } catch {
@@ -559,51 +176,34 @@ export function registerCreateOrLinkVendorTool(
             }
           }
         }
-        if ((was_linked || status_changed) && PUBLIC_VENDOR_SET.has(status)) {
-          await triggerIndexNow(publicUrlFor("events", event.slug), env, "event-vendor-link", {
-            defer: deferSearchPing,
-            db,
-            entity: {
-              type: "event",
-              id: event.id,
-              slug: event.slug,
-              action: "update",
-            },
-          });
+        if (result.linkIsPublic) {
+          await triggerIndexNow(
+            publicUrlFor("events", result.eventSlug),
+            env,
+            "event-vendor-link",
+            {
+              defer: deferSearchPing,
+              db,
+              entity: {
+                type: "event",
+                id: params.event_id,
+                slug: result.eventSlug,
+                action: "update",
+              },
+            }
+          );
         }
       }
-
-      // 6. Audit log
-      await db.insert(adminActions).values({
-        action: "event_vendor.create_or_link",
-        actorUserId: auth.userId,
-        targetType: "event_vendor",
-        targetId: eventVendorRowId,
-        payloadJson: JSON.stringify({
-          event_id: params.event_id,
-          vendor_id: vendorId,
-          event_day_id: eventDayId,
-          was_created,
-          was_linked,
-          was_already_linked,
-          status_changed,
-          status,
-          payment_status: paymentStatus,
-          dedup_strategy: dedupStrategy,
-          matched_existing: matchedExisting,
-        }),
-        createdAt: new Date(),
-      });
 
       return {
         content: [
           jsonContent({
-            vendor_id: vendorId,
-            was_created,
-            was_linked,
-            was_already_linked,
-            status_changed,
-            matched_existing: matchedExisting,
+            vendor_id: result.vendorId,
+            was_created: result.wasCreated,
+            was_linked: result.wasLinked,
+            was_already_linked: result.wasAlreadyLinked,
+            status_changed: result.statusChanged,
+            matched_existing: result.matchedExisting,
           }),
         ],
       };
