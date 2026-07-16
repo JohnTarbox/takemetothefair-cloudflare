@@ -63,6 +63,29 @@ interface InboundBodyDetail {
   // OPE-187 — JSON string of [{key,name,mimeType,size}]; parsed for the
   // attachment previews/download links in the detail panel.
   attachmentRefs: string | null;
+  // OPE-205 §2 — booth identifications OPE-204's vision pipeline staged for
+  // this email. Empty for every non-photo email.
+  boothProposals?: BoothProposal[];
+  proposalEvent?: { id: string; name: string; slug: string } | null;
+}
+
+/** OPE-205 §2 — one staged booth identification awaiting review. */
+interface BoothProposal {
+  id: string;
+  createdAt: string;
+  eventId: string | null;
+  /** R2 key of the photo — matched back to its attachment index to preview it. */
+  photoKey: string | null;
+  photoName: string | null;
+  businessName: string | null;
+  website: string | null;
+  products: string[];
+  confidence: number | null;
+  rationale: string | null;
+  /** Milestone B WOULD have auto-written this one. */
+  wouldAutoWrite: boolean;
+  /** Why it was held back, when it wasn't a confident write. */
+  stageReason: string | null;
 }
 
 // OPE-187 — one stored inbound attachment.
@@ -1208,6 +1231,136 @@ export default function AdminInboundEmailsPage() {
                                                 Download
                                               </a>
                                             </div>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                );
+                              })()}
+
+                              {/* OPE-205 §2 — booth identifications OPE-204's vision
+                                  pipeline staged for review. These rows have existed
+                                  since OPE-204 shipped and nothing displayed them: an
+                                  identification John can't see is one he can't
+                                  correct, which is the entire point of staging rather
+                                  than auto-writing. Read-only for now — see the note
+                                  under the list. */}
+                              {(() => {
+                                const d = bodyDetail[row.id];
+                                if (!d || d === "loading" || d === "error") return null;
+                                const props = d.boothProposals ?? [];
+                                if (props.length === 0) return null;
+                                // The photo lives in R2; the authed attachments route
+                                // streams it BY INDEX, so map the proposal's key back
+                                // to its position rather than adding a second route.
+                                const atts = parseAttachmentRefs(d.attachmentRefs);
+                                const indexOfKey = (key: string | null) =>
+                                  key ? atts.findIndex((a) => a.key === key) : -1;
+                                return (
+                                  <div className="mt-3 pt-3 border-t border-border">
+                                    <span className="font-medium">
+                                      Booth identifications ({props.length})
+                                    </span>
+                                    {d.proposalEvent && (
+                                      <span className="ml-2 text-xs text-muted-foreground">
+                                        matched to{" "}
+                                        <a
+                                          href={`/events/${d.proposalEvent.slug}`}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="text-royal hover:underline"
+                                          onClick={(e) => e.stopPropagation()}
+                                        >
+                                          {d.proposalEvent.name}
+                                        </a>
+                                      </span>
+                                    )}
+                                    <div className="mt-2 flex flex-wrap gap-3">
+                                      {props.map((p) => {
+                                        const idx = indexOfKey(p.photoKey);
+                                        const src =
+                                          idx >= 0
+                                            ? `/api/admin/inbound-emails/${row.id}/attachments/${idx}`
+                                            : null;
+                                        return (
+                                          <div
+                                            key={p.id}
+                                            className="w-56 border border-border rounded p-2 bg-card"
+                                            onClick={(e) => e.stopPropagation()}
+                                          >
+                                            {src ? (
+                                              <a
+                                                href={src}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                              >
+                                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                                <img
+                                                  src={src}
+                                                  alt={
+                                                    p.businessName ?? p.photoName ?? "booth photo"
+                                                  }
+                                                  className="w-full h-32 object-contain bg-white border border-border rounded"
+                                                  loading="lazy"
+                                                />
+                                              </a>
+                                            ) : (
+                                              <div className="h-32 flex items-center justify-center bg-white border border-border rounded text-xs text-muted-foreground">
+                                                photo unavailable
+                                              </div>
+                                            )}
+                                            <div className="mt-1 text-sm font-medium break-words">
+                                              {p.businessName ?? (
+                                                <span className="text-muted-foreground italic">
+                                                  couldn&apos;t identify
+                                                </span>
+                                              )}
+                                            </div>
+                                            <div className="mt-1 flex flex-wrap items-center gap-1 text-xs">
+                                              {p.confidence !== null && (
+                                                <span className="text-muted-foreground">
+                                                  confidence {Math.round(p.confidence * 100)}%
+                                                </span>
+                                              )}
+                                              {p.wouldAutoWrite ? (
+                                                <span className="px-1 rounded bg-green-100 text-green-800">
+                                                  would auto-write
+                                                </span>
+                                              ) : (
+                                                <span className="px-1 rounded bg-amber-100 text-amber-800">
+                                                  held
+                                                </span>
+                                              )}
+                                            </div>
+                                            {p.stageReason && (
+                                              <div className="mt-1 text-xs text-amber-700">
+                                                {p.stageReason}
+                                              </div>
+                                            )}
+                                            {p.website && (
+                                              <a
+                                                href={p.website}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="mt-1 block text-xs text-royal hover:underline break-all"
+                                              >
+                                                {p.website}
+                                              </a>
+                                            )}
+                                            {p.products.length > 0 && (
+                                              <div className="mt-1 text-xs text-muted-foreground break-words">
+                                                {p.products.join(", ")}
+                                              </div>
+                                            )}
+                                            {p.rationale && (
+                                              <div
+                                                className="mt-1 text-xs text-muted-foreground italic break-words"
+                                                title={p.rationale}
+                                              >
+                                                “{p.rationale}”
+                                              </div>
+                                            )}
                                           </div>
                                         );
                                       })}
