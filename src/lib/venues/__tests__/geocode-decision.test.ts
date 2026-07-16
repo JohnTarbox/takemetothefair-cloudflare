@@ -7,6 +7,7 @@ import {
   nextCursor,
   shouldWrite,
   forcedOutcome,
+  duplicateOutcome,
   hasSufficientAddress,
   hasNameLookupInputs,
   isNonPointVenue,
@@ -509,6 +510,36 @@ describe("nextCursor", () => {
     // re-match the filter every call. The cursor moves anyway, because it keys
     // on the last id EXAMINED, not on what happened to it.
     expect(nextCursor(page("v1", "v2", "v3"), 3)).toBe("v3");
+  });
+});
+
+// OPE-228 — a place_id collision must surface as a merge candidate, not a raw
+// D1 UNIQUE-constraint traceback.
+describe("duplicateOutcome", () => {
+  const owner = { venue_id: "owner-1", name: "Downtown Cornish", slug: "downtown-cornish" };
+  const base = judge(venue(), detail());
+
+  it("re-labels to duplicate-with and attaches the owning venue", () => {
+    const out = duplicateOutcome(base, owner);
+    expect(out.status).toBe("duplicate-with");
+    expect(out.duplicate).toEqual(owner);
+  });
+
+  it("stores nothing — after is blank, so the caller can't write a second pin", () => {
+    // google_place_id is UNIQUE; a second row physically can't hold this Place.
+    expect(duplicateOutcome(base, owner).after).toEqual({ lat: null, lng: null, place_id: null });
+  });
+
+  it("names the owner and points at merge_venue", () => {
+    const out = duplicateOutcome(base, owner);
+    expect(out.error).toContain("Downtown Cornish");
+    expect(out.error).toContain("merge_venue");
+  });
+
+  it("is never writable — not even a forced low-confidence can override it", () => {
+    // shouldWrite only ever admits ok / low-confidence; duplicate-with is neither.
+    expect(shouldWrite(duplicateOutcome(base, owner), false)).toBe(false);
+    expect(shouldWrite(duplicateOutcome(base, owner), true)).toBe(false);
   });
 });
 

@@ -130,8 +130,11 @@ const SEARCH_FIELD_MASK = PLACE_FIELD_MASK.split(",")
  * Shared by lookupPlace and getPlaceById to avoid duplication.
  */
 async function parsePlaceObject(place: PlaceObject, apiKey: string): Promise<PlaceLookupResult> {
+  // OPE-228 — a component with no `types` array must not crash the walk. Google
+  // has returned typeless components; `c.types.includes` on one throws "Cannot
+  // read properties of undefined (reading 'includes')". Guard the array access.
   const getComponent = (type: string) =>
-    place.addressComponents?.find((c) => c.types.includes(type));
+    place.addressComponents?.find((c) => c.types?.includes(type));
   const streetNumber = getComponent("street_number")?.longText || "";
   const route = getComponent("route")?.longText || "";
   const streetAddress = [streetNumber, route].filter(Boolean).join(" ") || null;
@@ -227,7 +230,9 @@ export async function geocodeAddressDetailed(
     if (data.status !== "OK" || !data.results.length) return null;
 
     const result = data.results[0];
-    const zipComponent = result.address_components.find((c) => c.types.includes("postal_code"));
+    // OPE-228 — guard both the array and each component's `types` (a typeless
+    // component from Google would otherwise throw on `.includes`).
+    const zipComponent = result.address_components?.find((c) => c.types?.includes("postal_code"));
 
     return {
       lat: result.geometry.location.lat,

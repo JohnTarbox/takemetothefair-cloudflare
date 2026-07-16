@@ -34,6 +34,14 @@ export type GeocodeStatus =
    * is nothing to research and nothing to force.
    */
   | "not-a-point"
+  /**
+   * Google resolved this venue to a Place another venue already owns (OPE-228).
+   * `google_place_id` is UNIQUE, so storing it would violate the constraint —
+   * which usually means the two rows are the same real place. Reported as a
+   * merge candidate (see `duplicate`), not written, instead of leaking a raw
+   * D1 traceback.
+   */
+  | "duplicate-with"
   | "no-match"
   | "low-confidence"
   | "error";
@@ -65,6 +73,11 @@ export interface GeocodeOutcome {
    * evidence — a name-derived pin should stay re-reviewable.
    */
   method?: "address" | "name";
+  /**
+   * OPE-228 — set only on `duplicate-with`: the venue that already owns this
+   * Google Place. A ready-made `merge_venue` candidate.
+   */
+  duplicate?: { venue_id: string; name: string; slug: string };
 }
 
 /**
@@ -362,6 +375,29 @@ export function judgeNameLookup(
     after: { lat: place.lat, lng: place.lng, place_id: place.googlePlaceId },
     status: "ok",
     candidate,
+  };
+}
+
+/**
+ * OPE-228 — re-shape an outcome into `duplicate-with` when another venue already
+ * owns the Google Place we were about to store. Keeps the coords in `after` for
+ * context but the caller must NOT write them: `google_place_id` is UNIQUE, so a
+ * second row can't hold this Place, and identical coords on two rows is exactly
+ * the ambiguity (real duplicate vs coarse Places match) the analyst resolves
+ * with `merge_venue`. `force` intentionally does NOT override this — overwriting
+ * would need a destructive write to the OTHER venue's row, which geocoding must
+ * never do silently.
+ */
+export function duplicateOutcome(
+  outcome: GeocodeOutcome,
+  owner: { venue_id: string; name: string; slug: string }
+): GeocodeOutcome {
+  return {
+    ...outcome,
+    status: "duplicate-with",
+    after: { lat: null, lng: null, place_id: null },
+    error: `Google Place already held by "${owner.name}" (${owner.slug}). Merge with merge_venue rather than storing a second pin.`,
+    duplicate: owner,
   };
 }
 

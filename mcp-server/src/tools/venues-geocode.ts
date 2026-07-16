@@ -53,8 +53,10 @@ export function registerVenuesGeocodeTool(server: McpServer, auth: AuthContext, 
       "confidence verdict — it never stores an 'insufficient-address', 'no-match' or 'not-a-point' venue, " +
       "because there is no candidate to store. A venue whose NAME says it has no fixed location " +
       "('Framingham Parks (Rotating)', 'Various Studios') returns 'not-a-point' with no Google call at all — " +
-      "no pin is correct for it, so it is not forceable and needs no research. Returns a per-venue outcome " +
-      "record. Admin only.",
+      "no pin is correct for it, so it is not forceable and needs no research. If Google resolves the venue " +
+      "to a Place another venue already owns, it returns 'duplicate-with' (with the owning venue's id/name/" +
+      "slug in `duplicate`) instead of a raw DB error — a ready-made merge_venue candidate; not written even " +
+      "with force. Returns a per-venue outcome record. Admin only.",
     {
       venue_id: z.string().optional().describe("Geocode a single venue by id."),
       venue_ids: z
