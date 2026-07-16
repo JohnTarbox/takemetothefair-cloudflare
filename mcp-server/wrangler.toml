@@ -48,6 +48,11 @@ EMAIL_REPLY_ENABLED = "false"
 #   curl https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/ai/run/@cf/meta/llama-3.2-11b-vision-instruct \
 #     -X POST -H "Authorization: Bearer $TOKEN" -d '{"prompt":"agree"}'
 PHOTO_VISION_ENABLED = "false"
+# OPE-204 Milestone B — booth-photo AUTO-WRITE. Independent of vision above:
+# vision ON + this OFF = identify-only (every booth staged for review). Flip to
+# "true" ONLY after John's explicit go — it creates public vendor records + event
+# links + hero images automatically from an email (OPE-6 STOP-gate).
+PHOTO_AUTOWRITE_ENABLED = "false"
 # INTERNAL_API_KEY is set via `wrangler secret put INTERNAL_API_KEY`
 # Inbound-email failures (parse / extract / submit) get forwarded here.
 # Must be a verified destination address in Cloudflare Email Routing —

@@ -188,3 +188,82 @@ describe("runBoothPipeline — enabled", () => {
     expect(res.staged).toBe(1);
   });
 });
+
+// OPE-204 Milestone B — the auto-write routing. Gate is INDEPENDENT of vision.
+describe("runBoothPipeline — auto-write (Milestone B)", () => {
+  const enabledAW = (aiReply: unknown): BoothPipelineEnv => ({
+    AI: { run: vi.fn().mockResolvedValue(aiReply) },
+    VENDOR_ASSETS: bucket(),
+    PHOTO_VISION_ENABLED: "true",
+    PHOTO_AUTOWRITE_ENABLED: "true",
+    // No MAIN_APP_URL → hero-if-blank no-ops; the write itself still runs.
+  });
+
+  async function seedEventE1(db: Db) {
+    const { promoters, events } = await import("../src/schema.js");
+    await db
+      .insert(promoters)
+      .values({ id: "p1", companyName: "P", slug: "p" } as never)
+      .run?.();
+    await db.insert(events).values({
+      id: "e1",
+      name: "Cumberland Fair",
+      slug: "cumberland-fair",
+      promoterId: "p1",
+      status: "APPROVED",
+    } as never);
+  }
+
+  it("with vision ON but auto-write OFF, a high-confidence booth STAGES (identify-only)", async () => {
+    const { db } = createTestDb();
+    await seedEmail(db as unknown as Db);
+    // reply() is confidence 0.9 → "write" disposition, but auto-write is off.
+    const env: BoothPipelineEnv = {
+      AI: { run: vi.fn().mockResolvedValue(reply()) },
+      VENDOR_ASSETS: bucket(),
+      PHOTO_VISION_ENABLED: "true",
+    };
+    const res = await runBoothPipeline(env, db as unknown as Db, "ie1", "e1", photos);
+    expect(res.staged).toBe(1);
+    expect(res.autoWritten).toEqual([]);
+  });
+
+  it("with auto-write ON, a high-confidence booth AUTO-WRITES and does NOT stage", async () => {
+    const { db } = createTestDb();
+    await seedEmail(db as unknown as Db);
+    await seedEventE1(db as unknown as Db);
+    const res = await runBoothPipeline(
+      enabledAW(reply()),
+      db as unknown as Db,
+      "ie1",
+      "e1",
+      photos
+    );
+
+    expect(res.autoWritten).toHaveLength(1);
+    expect(res.autoWritten[0].wasCreated).toBe(true);
+    // It was auto-written, so it is NOT in the review queue.
+    expect(res.staged).toBe(0);
+    const proposals = db
+      .select()
+      .from(adminActions)
+      .where(eq(adminActions.action, BOOTH_PROPOSED_ACTION))
+      .all();
+    expect(proposals).toHaveLength(0);
+  });
+
+  it("with auto-write ON, a LOW-confidence booth still STAGES, not written", async () => {
+    const { db } = createTestDb();
+    await seedEmail(db as unknown as Db);
+    await seedEventE1(db as unknown as Db);
+    const res = await runBoothPipeline(
+      enabledAW(reply({ confidence: 0.4 })),
+      db as unknown as Db,
+      "ie1",
+      "e1",
+      photos
+    );
+    expect(res.autoWritten).toEqual([]);
+    expect(res.staged).toBe(1); // banner-behind-another-booth safety preserved
+  });
+});
