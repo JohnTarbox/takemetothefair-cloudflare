@@ -213,6 +213,73 @@ export function newsletterConfirmTemplate(args: { confirmUrl: string }): {
  * bottom (CAN-SPAM). `unsubscribeUrl` is per-recipient (signed token);
  * `viewInBrowserUrl` is the public /newsletter/{slug} page.
  */
+/**
+ * OPE-232 — the newsletter-branded shell, distinct from `baseLayout` (the
+ * transactional one). A digest wrapped in `baseLayout` looked like a password
+ * reset: navy/orange sans-serif around green/gold serif content, a duplicate
+ * subject `<h1>`, and the transactional "If you didn't expect this email…" line
+ * — wrong for an opt-in newsletter.
+ *
+ * This is green/gold Georgia serif end-to-end: a `#1f3a2d` masthead band with a
+ * gold eyebrow + wordmark, the caller's `contentHtml` on a cream body, and an
+ * on-brand footer. The compliant view-in-browser link and per-recipient
+ * unsubscribe (CAN-SPAM) are kept — only the visual shell changed.
+ *
+ * `wordmark` is parameterized so OPE-191's vendor "New This Week" digest reuses
+ * this exact shell with a different masthead (scope §3).
+ */
+function newsletterLayout(args: {
+  wordmark: string;
+  /** Optional dated subtitle under the wordmark, e.g. the issue subject. */
+  subtitle?: string;
+  body: string;
+  unsubscribeUrl: string;
+  viewInBrowserUrl: string;
+  mailing: string;
+}): string {
+  const { wordmark, subtitle, body, unsubscribeUrl, viewInBrowserUrl, mailing } = args;
+  return `<!doctype html>
+<html>
+  <body style="margin:0;padding:0;background:#FAF7F2;font-family:Georgia,'Times New Roman',serif;color:#2A2521;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#FAF7F2;">
+      <tr>
+        <td align="center" style="padding:24px 16px;">
+          <div style="width:100%;max-width:600px;text-align:center;font-size:12px;color:#8A8178;margin:0 0 12px;font-family:Georgia,'Times New Roman',serif;">
+            <a href="${viewInBrowserUrl}" style="color:#1f3a2d;">View this email in your browser</a>
+          </div>
+          <table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" style="max-width:600px;background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #E5DFD6;">
+            <tr>
+              <td style="background:#1f3a2d;padding:28px 32px;text-align:center;">
+                <div style="font-size:12px;letter-spacing:1.5px;text-transform:uppercase;color:#e8c86a;margin-bottom:8px;">New England's Fair &amp; Festival Almanac</div>
+                <div style="font-size:30px;line-height:1.1;font-weight:700;color:#ffffff;">${escapeHtmlText(wordmark)}</div>
+                ${
+                  subtitle
+                    ? `<div style="font-size:14px;color:#cbb87a;margin-top:8px;">${escapeHtmlText(subtitle)}</div>`
+                    : ""
+                }
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:32px;font-size:16px;line-height:1.55;color:#2A2521;">
+                ${body}
+                <div style="margin-top:28px;padding-top:16px;border-top:1px solid #E5DFD6;font-size:12px;line-height:1.6;color:#5c6b60;text-align:center;">
+                  <div style="color:#1f3a2d;font-weight:700;">Meet Me at the Fair</div>
+                  <div>One email a week — New England's fairs, festivals &amp; makers markets.</div>
+                  <div style="margin-top:8px;">
+                    <a href="${unsubscribeUrl}" style="color:#5c6b60;text-decoration:underline;">Unsubscribe</a>
+                  </div>
+                  <div style="margin-top:8px;color:#8A8178;">${escapeHtmlText(mailing)}</div>
+                </div>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`;
+}
+
 export function newsletterDigestTemplate(args: {
   subject: string;
   /** Rendered issue body HTML (the caller builds the event/vendor/featured slots). */
@@ -223,13 +290,19 @@ export function newsletterDigestTemplate(args: {
   viewInBrowserUrl: string;
   /** CAN-SPAM §5(a)(5) physical postal address. Falls back to a region line. */
   mailingAddress?: string;
+  /** Masthead wordmark; OPE-191's vendor digest overrides it. */
+  wordmark?: string;
 }): { subject: string; html: string; text: string } {
   const mailing = args.mailingAddress?.trim() || "Meet Me at the Fair, New England";
-  const viewLine = `<div style="text-align:center;font-size:12px;color:#8A8178;margin:0 0 16px;"><a href="${args.viewInBrowserUrl}" style="color:#1E2761;">View this email in your browser</a></div>`;
-  const unsubFooter = `<div style="margin-top:28px;padding-top:16px;border-top:1px solid #E5DFD6;font-size:12px;line-height:1.5;color:#8A8178;">You're receiving this because you subscribed to the Meet Me at the Fair weekend digest.<br><a href="${args.unsubscribeUrl}" style="color:#8A8178;text-decoration:underline;">Unsubscribe</a><br>${escapeHtmlText(mailing)}</div>`;
-  const html = baseLayout({
-    heading: args.subject,
-    body: `${viewLine}${args.contentHtml}${unsubFooter}`,
+  const html = newsletterLayout({
+    wordmark: args.wordmark?.trim() || "Weekend Fair Digest",
+    // The subject carries the date ("Weekend Fair Digest — July 12–13"); show it
+    // as a subtitle rather than a duplicate <h1> (scope §1).
+    subtitle: args.subject,
+    body: args.contentHtml,
+    unsubscribeUrl: args.unsubscribeUrl,
+    viewInBrowserUrl: args.viewInBrowserUrl,
+    mailing,
   });
 
   const bodyText =
