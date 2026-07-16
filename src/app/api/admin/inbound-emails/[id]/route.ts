@@ -21,6 +21,8 @@ import { eq, and, asc } from "drizzle-orm";
 
 /** Must match mcp-server/src/photo/booth-pipeline.ts:BOOTH_PROPOSED_ACTION. */
 const BOOTH_PROPOSED_ACTION = "vendor.photo_proposed";
+/** OPE-205 §2 write-half — resolution rows keyed to a proposal's id. */
+const BOOTH_RESOLVED_ACTION = "vendor.photo_resolved";
 
 /**
  * `website` is whatever the VISION MODEL read off a booth sign — untrusted text,
@@ -101,6 +103,25 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
     )
     .orderBy(asc(adminActions.createdAt));
 
+  // OPE-205 §2 — resolution rows (approve/reject) keyed to a proposal id, so
+  // the queue can show what's already been actioned and hide the buttons.
+  const resolvedRows =
+    proposalRows.length > 0
+      ? await db
+          .select({ targetId: adminActions.targetId, payloadJson: adminActions.payloadJson })
+          .from(adminActions)
+          .where(eq(adminActions.action, BOOTH_RESOLVED_ACTION))
+      : [];
+  const resolutionByProposal = new Map<string, string>();
+  for (const r of resolvedRows) {
+    try {
+      const p = JSON.parse(r.payloadJson ?? "{}") as { resolution?: string };
+      if (p.resolution) resolutionByProposal.set(r.targetId, p.resolution);
+    } catch {
+      /* skip malformed */
+    }
+  }
+
   const boothProposals = proposalRows.map((p) => {
     let payload: BoothProposalPayload = {};
     try {
@@ -124,6 +145,8 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
       // "would have been auto-written at Milestone B" vs "held for a reason".
       wouldAutoWrite: payload.would_auto_write === true,
       stageReason: payload.stage_reason ?? null,
+      // OPE-205 §2 — "approved" | "rejected" | null (unresolved).
+      resolution: resolutionByProposal.get(p.id) ?? null,
     };
   });
 
