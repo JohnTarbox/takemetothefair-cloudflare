@@ -98,10 +98,48 @@ describe("classifyBlogOutboundLink", () => {
     it("rejects root-only", () => {
       expect(classifyBlogOutboundLink("/")).toBeNull();
     });
+  });
 
-    it("rejects /events with no slug", () => {
-      expect(classifyBlogOutboundLink("/events")).toBeNull();
-      expect(classifyBlogOutboundLink("/events/")).toBeNull();
+  // OPE-229 — a listing prefix with no detail slug is a DIRECTORY click
+  // (previously classified as nothing, so directory CTAs were invisible).
+  describe("directory / filter-view links (OPE-229)", () => {
+    it("classifies /vendors?state=ME → VENDOR_DIRECTORY, keeping the filter", () => {
+      expect(classifyBlogOutboundLink("/vendors?state=ME")).toEqual({
+        targetType: "VENDOR_DIRECTORY",
+        targetSlug: "/vendors?state=ME",
+      });
+    });
+
+    it("classifies bare /events and /venues listings", () => {
+      expect(classifyBlogOutboundLink("/events")?.targetType).toBe("EVENT_DIRECTORY");
+      expect(classifyBlogOutboundLink("/events/")?.targetType).toBe("EVENT_DIRECTORY");
+      expect(classifyBlogOutboundLink("/venues?state=CT&category=Brewery")?.targetType).toBe(
+        "VENUE_DIRECTORY"
+      );
+    });
+
+    it("keeps the filter query on an absolute directory URL", () => {
+      // The absolute branch used to drop the query — /vendors?state=ME became a
+      // bare /vendors. It must survive.
+      expect(classifyBlogOutboundLink("https://meetmeatthefair.com/vendors?state=MA")).toEqual({
+        targetType: "VENDOR_DIRECTORY",
+        targetSlug: "/vendors?state=MA",
+      });
+    });
+
+    it("does NOT misclassify /vendorsxyz as a directory", () => {
+      expect(classifyBlogOutboundLink("/vendorsxyz")).toBeNull();
+    });
+
+    it("a detail link still beats the directory rule", () => {
+      expect(classifyBlogOutboundLink("/vendors/maine-cardworks")).toEqual({
+        targetType: "VENDOR",
+        targetSlug: "maine-cardworks",
+      });
+    });
+
+    it("blog listing is not a directory type (no BLOG_DIRECTORY)", () => {
+      expect(classifyBlogOutboundLink("/blog")).toBeNull();
     });
   });
 

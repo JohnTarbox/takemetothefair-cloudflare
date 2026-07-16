@@ -170,7 +170,17 @@ export function trackOutboundTicketClick(eventSlug: string, destinationUrl: stri
 /** Recognized internal-link target types for blog body click attribution.
  *  Mirrors the prefix list in BLOG_OUTBOUND_LINK_REGEX. Exported so the
  *  helper + the unit tests can share the union. */
-export type BlogOutboundTargetType = "EVENT" | "VENDOR" | "VENUE" | "BLOG";
+export type BlogOutboundTargetType =
+  | "EVENT"
+  | "VENDOR"
+  | "VENUE"
+  | "BLOG"
+  // OPE-229 — a link to a listing/directory view (e.g. /vendors?state=ME) vs a
+  // detail page. Wave-1 craft-fair posts used directory CTAs and were invisible
+  // in the meter because only detail links classified.
+  | "EVENT_DIRECTORY"
+  | "VENDOR_DIRECTORY"
+  | "VENUE_DIRECTORY";
 
 /** First path segment → target type. Matches the prefix-to-type contract
  *  the GA4 custom dimensions will be filtered on (see
@@ -180,6 +190,13 @@ const PREFIX_TO_TYPE: Record<string, BlogOutboundTargetType> = {
   vendors: "VENDOR",
   venues: "VENUE",
   blog: "BLOG",
+};
+
+/** OPE-229 — a listing prefix with no detail slug (a directory/filter view). */
+const DIRECTORY_TYPE: Record<string, BlogOutboundTargetType> = {
+  events: "EVENT_DIRECTORY",
+  vendors: "VENDOR_DIRECTORY",
+  venues: "VENUE_DIRECTORY",
 };
 
 /** Pure URL classifier — exported for unit tests. Returns null when the
@@ -200,16 +217,29 @@ export function classifyBlogOutboundLink(
       if (u.host !== "meetmeatthefair.com" && u.host !== "www.meetmeatthefair.com") {
         return null;
       }
-      return classifyBlogOutboundLink(u.pathname);
+      // Keep the query — a directory link's filters (?state=ME) live there, and
+      // dropping it would misclassify /vendors?state=ME as a bare /vendors.
+      return classifyBlogOutboundLink(u.pathname + u.search);
     } catch {
       return null;
     }
   }
+  // Detail page: a listing prefix followed by a /slug segment.
   const m = href.match(/^\/(events|vendors|venues|blog)\/([^/?#]+)/);
-  if (!m) return null;
-  const targetType = PREFIX_TO_TYPE[m[1]];
-  if (!targetType) return null;
-  return { targetType, targetSlug: m[2] };
+  if (m) {
+    const targetType = PREFIX_TO_TYPE[m[1]];
+    return targetType ? { targetType, targetSlug: m[2] } : null;
+  }
+  // OPE-229 — directory/filter view: the same listing prefix with NO detail
+  // slug, optionally carrying a query/hash (/vendors, /vendors?state=ME). The
+  // trailing `(?:[/?#]|$)` stops /vendorsxyz from matching. targetSlug carries
+  // the destination so the analyst can see which filter was clicked.
+  const d = href.match(/^\/(events|vendors|venues)(?:[/?#]|$)/);
+  if (d) {
+    const targetType = DIRECTORY_TYPE[d[1]];
+    return targetType ? { targetType, targetSlug: href } : null;
+  }
+  return null;
 }
 
 /** BC2 (Dev-Email-2026-06-08 §D, 2026-06-08) — blog → listing click
