@@ -19,6 +19,7 @@
     "@takemetothefair/site-fetch": "*",
     "@takemetothefair/utils": "*",
     "@takemetothefair/validation": "*",
+    "@takemetothefair/vendor-linking": "*",
     "agents": "^0.8.7",
     "drizzle-orm": "^0.38.3",
     "hono": "^4.12.9",
