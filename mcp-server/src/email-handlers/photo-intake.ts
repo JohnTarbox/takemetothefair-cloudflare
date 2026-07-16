@@ -376,6 +376,14 @@ export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> =
         distanceMiles: resolution.distanceMiles ?? null,
         boothsStaged: booths?.staged ?? 0,
         boothNames: booths?.identifiedNames ?? [],
+        // OPE-204 Milestone B — auto-created/linked vendors, itemized for the
+        // OPE-205 §1 reply (added vs already-linked vs couldn't-write).
+        autoCreated: (booths?.autoWritten ?? []).filter((a) => a.wasCreated).length,
+        autoLinked: (booths?.autoWritten ?? []).filter((a) => !a.wasCreated && !a.error).length,
+        autoFailed: (booths?.autoWritten ?? []).filter((a) => Boolean(a.error)).length,
+        autoWrittenNames: (booths?.autoWritten ?? [])
+          .filter((a) => !a.error)
+          .map((a) => a.businessName),
         // OPE-205 §3 — general fair scenery attached to the event's gallery.
         galleryAttached: booths?.galleryAttached ?? 0,
         galleryFailed: booths?.galleryFailed ?? 0,

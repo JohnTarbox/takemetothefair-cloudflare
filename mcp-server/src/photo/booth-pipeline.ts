@@ -33,6 +33,7 @@ import { eq } from "drizzle-orm";
 import type { Db } from "../db.js";
 import { identifyBooth, disposition, type VisionAi, type Disposition } from "./vision.js";
 import { attachGeneralPhotos } from "./general-photos.js";
+import { autoWriteBooths, type AutoWriteOutcome } from "./auto-write.js";
 
 /** Audit action for a staged booth identification. */
 export const BOOTH_PROPOSED_ACTION = "vendor.photo_proposed";
@@ -55,16 +56,22 @@ export interface PipelinePhoto {
 export interface BoothPipelineResult {
   /** Photos actually run through vision. */
   examined: number;
-  /** Identifications staged for review. */
+  /** Identifications staged for review (needs a human). */
   staged: number;
   /** General (non-booth) scenery — the input to the gallery attach below. */
   skipped: number;
-  /** Business names we'd write at Milestone B, for the reply. */
+  /** Business names staged OR auto-written, for the reply. */
   identifiedNames: string[];
   /** OPE-205 §3 — general photos attached to the event as gallery candidates. */
   galleryAttached: number;
   /** General photos we tried but couldn't attach. Reported, never swallowed. */
   galleryFailed: number;
+  /**
+   * OPE-204 Milestone B — booths auto-written (created/linked as CONFIRMED
+   * exhibitors) when PHOTO_AUTOWRITE_ENABLED is on. Empty in identify-only mode.
+   * These are the itemized sets OPE-205 §1's reply consumes.
+   */
+  autoWritten: AutoWriteOutcome[];
   /** Set when the gate is off — reported so a silent no-op is impossible. */
   disabledReason?: string;
 }
@@ -74,6 +81,14 @@ export interface BoothPipelineEnv {
   VENDOR_ASSETS?: R2Bucket;
   /** OPE-6 gate. Must equal "true" or the pipeline no-ops. Default OFF. */
   PHOTO_VISION_ENABLED?: string;
+  /**
+   * OPE-204 Milestone B gate — INDEPENDENT of PHOTO_VISION_ENABLED. With vision
+   * ON but this OFF, every booth (including high-confidence ones) is STAGED for
+   * review — the identify-only measurement mode. Only when this is "true" do the
+   * high-confidence booths auto-create vendors. Default OFF (customer-facing
+   * writes; STOP-gated per OPE-6).
+   */
+  PHOTO_AUTOWRITE_ENABLED?: string;
   /** OPE-205 §3 — needed to hand general photos to the main app's pipeline. */
   MAIN_APP?: { fetch: typeof fetch };
   MAIN_APP_URL?: string;
@@ -101,6 +116,7 @@ export async function runBoothPipeline(
     identifiedNames: [],
     galleryAttached: 0,
     galleryFailed: 0,
+    autoWritten: [],
   };
 
   // OPE-6 gate — default OFF, and say so rather than no-op silently.
@@ -132,12 +148,37 @@ export async function runBoothPipeline(
     }
   }
 
-  // Milestone A: everything identifiable is STAGED, including the
-  // would-auto-write cases. Their disposition is recorded in the payload so
-  // Milestone B can measure how many would have been written, and how many of
-  // those John actually accepts, BEFORE any write goes live.
-  const toStage = results.filter((r) => r.d.action !== "skip");
-  const skipped = results.length - toStage.length;
+  // Milestone B split: when auto-write is ON, the high-confidence "write"
+  // dispositions are auto-created and NOT staged (they need no review); the
+  // "stage" ones still go to the review queue. When auto-write is OFF, every
+  // non-skip disposition stages, exactly as Milestone A did (identify-only).
+  const autoWriteOn = env.PHOTO_AUTOWRITE_ENABLED === "true";
+  const nonSkip = results.filter((r) => r.d.action !== "skip");
+  const skipped = results.length - nonSkip.length;
+
+  const toAutoWrite = autoWriteOn ? nonSkip.filter((r) => r.d.action === "write") : [];
+  const toStage = autoWriteOn ? nonSkip.filter((r) => r.d.action !== "write") : nonSkip;
+
+  // Auto-write first (sequential, idempotent) — see auto-write.ts. Fail-soft:
+  // its failures land in the outcomes, never thrown, so staging still runs.
+  let autoWritten: AutoWriteOutcome[] = [];
+  if (toAutoWrite.length > 0) {
+    try {
+      autoWritten = await autoWriteBooths(
+        env,
+        db,
+        inboundEmailId,
+        eventId,
+        toAutoWrite.map((r) => ({
+          photoKey: r.photo.key,
+          photoName: r.photo.name,
+          id: r.d.identification,
+        }))
+      );
+    } catch {
+      autoWritten = [];
+    }
+  }
 
   const now = new Date();
   for (const { photo, d } of toStage) {
@@ -191,10 +232,12 @@ export async function runBoothPipeline(
     examined: results.length,
     staged: toStage.length,
     skipped,
-    identifiedNames: toStage
-      .map((r) => r.d.identification.businessName)
-      .filter((n): n is string => n !== null),
+    identifiedNames: [
+      ...toStage.map((r) => r.d.identification.businessName),
+      ...autoWritten.map((a) => a.businessName),
+    ].filter((n): n is string => Boolean(n)),
     galleryAttached: gallery.attached,
     galleryFailed: gallery.failed,
+    autoWritten,
   };
 }
