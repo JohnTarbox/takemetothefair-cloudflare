@@ -96,6 +96,22 @@ interface InboundAttachment {
   size: number;
 }
 
+/**
+ * OPE-205 §2 — a booth proposal's `website` is text the VISION MODEL read off a
+ * sign, so it is never trusted enough to put in an href unchecked: `javascript:`
+ * there would execute in an admin session. The API scheme-checks it too; this is
+ * the second layer, because the render site is where the damage happens.
+ */
+function safeHttpUrl(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  try {
+    const u = new URL(raw);
+    return u.protocol === "http:" || u.protocol === "https:" ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
 // OPE-187 — parse attachment_refs JSON defensively (bad/legacy rows → []).
 function parseAttachmentRefs(json: string | null | undefined): InboundAttachment[] {
   if (!json) return [];
@@ -1338,16 +1354,34 @@ export default function AdminInboundEmailsPage() {
                                                 {p.stageReason}
                                               </div>
                                             )}
-                                            {p.website && (
-                                              <a
-                                                href={p.website}
-                                                target="_blank"
-                                                rel="noopener noreferrer"
-                                                className="mt-1 block text-xs text-royal hover:underline break-all"
-                                              >
-                                                {p.website}
-                                              </a>
-                                            )}
+                                            {(() => {
+                                              // Model-read text — link it only if
+                                              // it's really http(s); otherwise show
+                                              // it as plain text so the reviewer
+                                              // still sees what the model claimed.
+                                              const href = safeHttpUrl(p.website);
+                                              if (href) {
+                                                return (
+                                                  <a
+                                                    href={href}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="mt-1 block text-xs text-royal hover:underline break-all"
+                                                  >
+                                                    {href}
+                                                  </a>
+                                                );
+                                              }
+                                              if (!p.website) return null;
+                                              return (
+                                                <div className="mt-1 text-xs text-muted-foreground break-all">
+                                                  {p.website}{" "}
+                                                  <span className="text-amber-700">
+                                                    (not a valid link)
+                                                  </span>
+                                                </div>
+                                              );
+                                            })()}
                                             {p.products.length > 0 && (
                                               <div className="mt-1 text-xs text-muted-foreground break-words">
                                                 {p.products.join(", ")}

@@ -22,6 +22,25 @@ import { eq, and, asc } from "drizzle-orm";
 /** Must match mcp-server/src/photo/booth-pipeline.ts:BOOTH_PROPOSED_ACTION. */
 const BOOTH_PROPOSED_ACTION = "vendor.photo_proposed";
 
+/**
+ * `website` is whatever the VISION MODEL read off a booth sign — untrusted text,
+ * not a validated URL. Rendered straight into an href it's a stored-XSS vector:
+ * a sign (or a sticker planted to be photographed) reading `javascript:…` would
+ * become a clickable link that executes in an ADMIN session. Scheme-check it
+ * here, at the boundary where model output enters the response, so no consumer
+ * has to remember to.
+ */
+function safeHttpUrl(raw: unknown): string | null {
+  if (typeof raw !== "string" || raw.length === 0) return null;
+  try {
+    const u = new URL(raw);
+    return u.protocol === "http:" || u.protocol === "https:" ? raw : null;
+  } catch {
+    // Not a parseable absolute URL — the model guessed at a bare domain or worse.
+    return null;
+  }
+}
+
 /** Payload shape written by the booth pipeline. All fields are best-effort. */
 interface BoothProposalPayload {
   event_id?: string;
@@ -97,7 +116,8 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
       photoKey: payload.photo_key ?? null,
       photoName: payload.photo_name ?? null,
       businessName: payload.business_name ?? null,
-      website: payload.website ?? null,
+      // Only ever emit an http(s) URL — see safeHttpUrl.
+      website: safeHttpUrl(payload.website),
       products: payload.products ?? [],
       confidence: payload.confidence ?? null,
       rationale: payload.rationale ?? null,

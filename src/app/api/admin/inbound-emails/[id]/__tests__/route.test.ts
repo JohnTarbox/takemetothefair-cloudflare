@@ -45,6 +45,7 @@ interface DetailBody {
     id: string;
     photoKey: string | null;
     businessName: string | null;
+    website: string | null;
     confidence: number | null;
     rationale: string | null;
     wouldAutoWrite: boolean;
@@ -161,5 +162,36 @@ describe("GET /api/admin/inbound-emails/[id] — booth proposals (OPE-205 §2)",
   it("404s an unknown email", async () => {
     emailRows = [];
     expect((await GET(req(), params)).status).toBe(404);
+  });
+
+  // `website` is text the VISION MODEL read off a booth sign — untrusted. It
+  // reaches an admin-page href, so a `javascript:` sign (or a sticker planted to
+  // be photographed) would execute in an admin session. Scheme-check at the
+  // boundary; the render site checks again.
+  describe("website scheme guard", () => {
+    const websiteOf = async (website: unknown) => {
+      proposalRows = [proposal({ business_name: "X", website })];
+      return (await detail()).boothProposals[0].website;
+    };
+
+    it("passes http and https through", async () => {
+      expect(await websiteOf("https://maple.example/shop")).toBe("https://maple.example/shop");
+      expect(await websiteOf("http://maple.example")).toBe("http://maple.example");
+    });
+
+    it("drops javascript: and other executable schemes", async () => {
+      expect(await websiteOf("javascript:alert(document.cookie)")).toBeNull();
+      expect(await websiteOf("JaVaScRiPt:alert(1)")).toBeNull();
+      expect(await websiteOf("data:text/html,<script>alert(1)</script>")).toBeNull();
+      expect(await websiteOf("vbscript:msgbox(1)")).toBeNull();
+      expect(await websiteOf("file:///etc/passwd")).toBeNull();
+    });
+
+    it("drops junk the model may emit instead of a URL", async () => {
+      expect(await websiteOf("maple.example")).toBeNull(); // bare domain, unparseable
+      expect(await websiteOf("")).toBeNull();
+      expect(await websiteOf(null)).toBeNull();
+      expect(await websiteOf(42)).toBeNull();
+    });
   });
 });
