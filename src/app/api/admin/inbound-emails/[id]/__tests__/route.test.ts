@@ -11,22 +11,29 @@ const authMock = vi.fn();
 let emailRows: unknown[] = [];
 let proposalRows: unknown[] = [];
 let eventRows: unknown[] = [];
+let resolvedRows: unknown[] = [];
 
 vi.mock("@/lib/auth", () => ({ auth: () => authMock() }));
 vi.mock("@/lib/cloudflare", () => ({
   getCloudflareDb: () => {
-    // Call order in the route: 1) the email (…limit), 2) the proposals
-    // (…orderBy), 3) the event name (…limit).
+    // Route order: 1) email (…limit), 2) proposals (…orderBy), 3) resolutions
+    // (awaits …where directly), 4) event (…limit).
     let call = 0;
     return {
       select: () => {
         call++;
+        const mine = call;
         return {
           from: () => ({
-            where: () => ({
-              limit: () => Promise.resolve(call === 1 ? emailRows : eventRows),
-              orderBy: () => Promise.resolve(proposalRows),
-            }),
+            where: () => {
+              // Awaiting `.where()` directly is the resolutions query (3rd).
+              const resolved = Promise.resolve(resolvedRows);
+              return {
+                then: (r: (v: unknown[]) => unknown) => resolved.then(r),
+                limit: () => Promise.resolve(mine === 1 ? emailRows : eventRows),
+                orderBy: () => Promise.resolve(proposalRows),
+              };
+            },
           }),
         };
       },
@@ -80,6 +87,7 @@ beforeEach(() => {
   authMock.mockReset();
   authMock.mockResolvedValue({ user: { role: "ADMIN" } });
   emailRows = [email];
+  resolvedRows = [];
   proposalRows = [];
   eventRows = [];
 });

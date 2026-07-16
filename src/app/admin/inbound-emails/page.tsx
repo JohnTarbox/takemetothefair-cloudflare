@@ -86,6 +86,8 @@ interface BoothProposal {
   wouldAutoWrite: boolean;
   /** Why it was held back, when it wasn't a confident write. */
   stageReason: string | null;
+  /** OPE-205 §2 — "approved" | "rejected" | null (still actionable). */
+  resolution: string | null;
 }
 
 // OPE-187 — one stored inbound attachment.
@@ -529,6 +531,47 @@ export default function AdminInboundEmailsPage() {
       setReclassifyError(err instanceof Error ? err.message : String(err));
     } finally {
       setReclassifying(null);
+    }
+  };
+
+  // OPE-205 §2 — approve/reject a staged booth identification. Approve runs the
+  // shared vendor write tail; both mark the proposal resolved. Re-fetches the
+  // detail (bypassing the cache) so the row reflects the new resolution.
+  const [resolvingProposal, setResolvingProposal] = useState<string | null>(null);
+  const [resolveError, setResolveError] = useState<string | null>(null);
+  // Per-proposal typed name for the "couldn't identify" approve path.
+  const [correctedNames, setCorrectedNames] = useState<Record<string, string>>({});
+  const handleResolveProposal = async (
+    emailId: string,
+    proposalId: string,
+    action: "approve" | "reject",
+    correctedName?: string
+  ) => {
+    setResolvingProposal(proposalId);
+    setResolveError(null);
+    try {
+      const res = await fetch(
+        `/api/admin/inbound-emails/${encodeURIComponent(emailId)}/booth-proposals/resolve`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ proposal_id: proposalId, action, corrected_name: correctedName }),
+        }
+      );
+      if (!res.ok) {
+        const b = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(b.error ?? `HTTP ${res.status}`);
+      }
+      // Force a fresh detail load (the loader caches by id otherwise).
+      const fresh = await fetch(`/api/admin/inbound-emails/${encodeURIComponent(emailId)}`);
+      if (fresh.ok) {
+        const j = (await fresh.json()) as InboundBodyDetail;
+        setBodyDetail((d) => ({ ...d, [emailId]: j }));
+      }
+    } catch (err) {
+      setResolveError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setResolvingProposal(null);
     }
   };
 
@@ -1395,10 +1438,77 @@ export default function AdminInboundEmailsPage() {
                                                 “{p.rationale}”
                                               </div>
                                             )}
+
+                                            {/* OPE-205 §2 — resolve controls. A
+                                                resolved proposal shows its state;
+                                                an open one gets Approve / Reject.
+                                                Approve of an unidentified photo
+                                                needs a typed name. */}
+                                            {p.resolution ? (
+                                              <div
+                                                className={`mt-2 text-xs font-medium ${p.resolution === "approved" ? "text-green-700" : "text-muted-foreground"}`}
+                                              >
+                                                {p.resolution === "approved"
+                                                  ? "✓ approved — vendor linked"
+                                                  : "✕ rejected"}
+                                              </div>
+                                            ) : (
+                                              <div className="mt-2 flex flex-col gap-1">
+                                                {!p.businessName && (
+                                                  <input
+                                                    type="text"
+                                                    placeholder="Type the business name…"
+                                                    className="text-xs border border-border rounded px-2 py-1 bg-background"
+                                                    value={correctedNames[p.id] ?? ""}
+                                                    onChange={(e) =>
+                                                      setCorrectedNames((m) => ({
+                                                        ...m,
+                                                        [p.id]: e.target.value,
+                                                      }))
+                                                    }
+                                                    onClick={(e) => e.stopPropagation()}
+                                                  />
+                                                )}
+                                                <div className="flex gap-2">
+                                                  <button
+                                                    type="button"
+                                                    disabled={resolvingProposal === p.id}
+                                                    className="text-xs px-2 py-1 rounded bg-green-100 text-green-800 hover:bg-green-200 disabled:opacity-50"
+                                                    onClick={(e) => {
+                                                      e.stopPropagation();
+                                                      handleResolveProposal(
+                                                        row.id,
+                                                        p.id,
+                                                        "approve",
+                                                        correctedNames[p.id]?.trim() || undefined
+                                                      );
+                                                    }}
+                                                  >
+                                                    {resolvingProposal === p.id ? "…" : "Approve"}
+                                                  </button>
+                                                  <button
+                                                    type="button"
+                                                    disabled={resolvingProposal === p.id}
+                                                    className="text-xs px-2 py-1 rounded bg-muted text-muted-foreground hover:bg-border disabled:opacity-50"
+                                                    onClick={(e) => {
+                                                      e.stopPropagation();
+                                                      handleResolveProposal(row.id, p.id, "reject");
+                                                    }}
+                                                  >
+                                                    Reject
+                                                  </button>
+                                                </div>
+                                              </div>
+                                            )}
                                           </div>
                                         );
                                       })}
                                     </div>
+                                    {resolveError && (
+                                      <div className="mt-2 text-xs text-red-600">
+                                        {resolveError}
+                                      </div>
+                                    )}
                                   </div>
                                 );
                               })()}
