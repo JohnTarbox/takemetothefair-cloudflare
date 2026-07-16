@@ -46,7 +46,7 @@ import { NextResponse } from "next/server";
 import { withInternalKey } from "@/lib/api/with-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { venues, adminActions } from "@/lib/db/schema";
-import { eq, inArray, isNull, and, gt } from "drizzle-orm";
+import { eq, inArray, isNull, and, gt, ne } from "drizzle-orm";
 import { geocodeAddressDetailed, lookupPlace } from "@/lib/google-maps";
 import { logError } from "@/lib/logger";
 import {
@@ -57,6 +57,7 @@ import {
   nextCursor,
   shouldWrite,
   forcedOutcome,
+  duplicateOutcome,
   type GeocodePin,
   type GeocodeOutcome,
   type VenueForGeocode,
@@ -214,6 +215,28 @@ export const POST = withInternalKey(
               // this fixes the root data gap, not just the coordinates.
               address: place.address,
             };
+          }
+        }
+
+        // OPE-228 — before writing, check whether another venue already owns
+        // this Google Place. `google_place_id` is UNIQUE, so the UPDATE would
+        // otherwise throw a raw D1 constraint traceback. Surfacing it as
+        // `duplicate-with` turns every collision into a `merge_venue` candidate.
+        if (shouldWrite(outcome, force) && pin?.placeId) {
+          const [owner] = await db
+            .select({ id: venues.id, name: venues.name, slug: venues.slug })
+            .from(venues)
+            .where(and(eq(venues.googlePlaceId, pin.placeId), ne(venues.id, v.id)))
+            .limit(1);
+          if (owner) {
+            outcome = duplicateOutcome(outcome, {
+              venue_id: owner.id,
+              name: owner.name,
+              slug: owner.slug,
+            });
+            results.push(outcome);
+            await new Promise((r) => setTimeout(r, PACE_MS));
+            continue;
           }
         }
 
