@@ -18,6 +18,7 @@ import { Card } from "@/components/ui/card";
 import { extractFirstImage } from "@/lib/markdown-utils";
 import { searchHelpArticles } from "@/lib/help-articles";
 import { logError } from "@/lib/logger";
+import { SearchResultsTracker } from "@/components/search/SearchResultsTracker";
 
 export const metadata: Metadata = {
   title: "Search Results | Meet Me at the Fair",
@@ -294,6 +295,12 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
+      {/* OPE-248 — emit view_search_results WITH results_count (incl. 0) from
+          this page. Without it the only event for a /search view is GA4's
+          Enhanced Measurement site-search auto-event, which carries
+          search_term but never results_count — so zero-result queries were
+          undetectable. This is a Server Component, hence the client child. */}
+      <SearchResultsTracker query={q} resultsCount={totalResults} />
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-navy">Search Results</h1>
         <p className="mt-2 text-muted-foreground">
