@@ -5,6 +5,7 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { newsletterIssues } from "@/lib/db/schema";
 import { desc, isNotNull } from "drizzle-orm";
 import { NewsletterSignup } from "@/components/layout/newsletter-signup";
+import { newsletterMastheadHtml } from "@/lib/newsletter-masthead";
 
 /**
  * OPE-170 — public newsletter archive. Reverse-chron list of SENT issues
@@ -53,7 +54,14 @@ export default async function NewsletterArchivePage() {
 
   return (
     <div className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8 py-12">
-      <h1 className="text-3xl font-bold text-foreground mb-2">Weekend Fair Digest</h1>
+      {/* OPE-234 — same shared masthead as the per-issue page and the email, so
+          the archive reads as the digest rather than a bare list. The band shows
+          the wordmark visually; the <h1> is sr-only to avoid duplicating it
+          on-screen while keeping a real heading for a11y + SEO. */}
+      <h1 className="sr-only">Weekend Fair Digest — Newsletter Archive</h1>
+      <div className="mb-6 overflow-hidden rounded-xl border border-border">
+        <div dangerouslySetInnerHTML={{ __html: newsletterMastheadHtml({}) }} />
+      </div>
       <p className="text-muted-foreground mb-8">
         Our weekly roundup of New England fairs, festivals, new vendors, and hidden gems. Read past
         issues below, or subscribe to get the next one in your inbox.

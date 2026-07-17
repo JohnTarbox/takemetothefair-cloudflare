@@ -77,6 +77,11 @@ export default [
         //   - src/app/admin/**/*.tsx — admin dashboards use hex for chart
         //     visualization colors (axes, plot lines) where Tailwind
         //     utilities don't fit the SVG attribute syntax.
+        //   - src/lib/newsletter-masthead.ts — email HTML. Mail clients
+        //     support neither CSS custom properties nor <style> blocks
+        //     (Gmail strips them), so the brand band MUST inline raw hex.
+        //     It is deliberately NOT theme-aware: the masthead is the
+        //     same green in the inbox and on the web archive (OPE-234).
         {
           selector: "Literal[value=/^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/]",
           message:
@@ -90,7 +95,7 @@ export default [
   // (not eslint-disable-line comments) keeps the allowlist auditable
   // in one place.
   {
-    files: ["src/app/global-error.tsx", "src/app/admin/**/*.tsx"],
+    files: ["src/app/global-error.tsx", "src/app/admin/**/*.tsx", "src/lib/newsletter-masthead.ts"],
     rules: {
       "no-restricted-syntax": [
         "error",
