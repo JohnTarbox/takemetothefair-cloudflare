@@ -5,6 +5,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { newsletterDigestTemplate } from "../templates";
+import { SOCIAL_LINKS } from "@/lib/social-links";
 
 const base = {
   subject: "Weekend Fair Digest — July 12–13",
@@ -72,5 +73,33 @@ describe("newsletterDigestTemplate — branded shell (OPE-232)", () => {
     const { html: h } = newsletterDigestTemplate({ ...base, wordmark: "<script>x</script>" });
     expect(h).not.toContain("<script>x</script>");
     expect(h).toContain("&lt;script&gt;");
+  });
+});
+
+describe("newsletterDigestTemplate — social footer (OPE-235)", () => {
+  const { html } = newsletterDigestTemplate(base);
+
+  it("shows both Facebook and Instagram, matching last week's issue", () => {
+    expect(html).toContain("https://facebook.com/meetmeatthefair");
+    expect(html).toContain("https://instagram.com/meet.me.at.the.fair");
+    expect(html).toContain(">Facebook</a>");
+    expect(html).toContain(">Instagram</a>");
+  });
+
+  it("renders every SOCIAL_LINKS entry, so a future platform needs no email edit", () => {
+    for (const s of SOCIAL_LINKS) {
+      expect(html).toContain(s.href);
+    }
+  });
+
+  it("uses text links, not inline <svg> — Gmail strips SVG and would show a gap", () => {
+    expect(html).not.toContain("<svg");
+    expect(html).not.toContain("<path");
+  });
+
+  it("the vendor digest inherits the same social footer (shared shell)", () => {
+    const vendor = newsletterDigestTemplate({ ...base, wordmark: "New This Week" });
+    expect(vendor.html).toContain("https://instagram.com/meet.me.at.the.fair");
+    expect(vendor.html).toContain("https://facebook.com/meetmeatthefair");
   });
 });
