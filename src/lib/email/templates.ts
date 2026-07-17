@@ -3,6 +3,7 @@
  * clients. Kept small deliberately — real brand templates can come later when
  * we decide on a template library (React Email, MJML, etc.).
  */
+import { SOCIAL_LINKS } from "@/lib/social-links";
 
 function baseLayout(args: {
   heading: string;
@@ -228,6 +229,24 @@ export function newsletterConfirmTemplate(args: { confirmUrl: string }): {
  * `wordmark` is parameterized so OPE-191's vendor "New This Week" digest reuses
  * this exact shell with a different masthead (scope §3).
  */
+/**
+ * OPE-235 — social links for the newsletter footer, sourced from SOCIAL_LINKS
+ * so the site footer, Organization `sameAs`, and email never drift apart.
+ *
+ * Rendered as TEXT links, not the SVG `iconPath` the site footer uses: Gmail
+ * strips inline <svg>, so an icon-only email footer is a blank gap for a large
+ * share of recipients. Returns "" when SOCIAL_LINKS is empty so the separator
+ * row never renders on its own.
+ */
+function renderNewsletterSocialLinks(): string {
+  if (SOCIAL_LINKS.length === 0) return "";
+  const links = SOCIAL_LINKS.map(
+    (s) =>
+      `<a href="${s.href}" style="color:#1f3a2d;text-decoration:underline;">${escapeHtmlText(s.name)}</a>`
+  ).join(' <span style="color:#C9C1B6;">&middot;</span> ');
+  return `<div style="margin-top:10px;">${links}</div>`;
+}
+
 function newsletterLayout(args: {
   wordmark: string;
   /** Optional dated subtitle under the wordmark, e.g. the issue subject. */
@@ -265,6 +284,7 @@ function newsletterLayout(args: {
                 <div style="margin-top:28px;padding-top:16px;border-top:1px solid #E5DFD6;font-size:12px;line-height:1.6;color:#5c6b60;text-align:center;">
                   <div style="color:#1f3a2d;font-weight:700;">Meet Me at the Fair</div>
                   <div>One email a week — New England's fairs, festivals &amp; makers markets.</div>
+                  ${renderNewsletterSocialLinks()}
                   <div style="margin-top:8px;">
                     <a href="${unsubscribeUrl}" style="color:#5c6b60;text-decoration:underline;">Unsubscribe</a>
                   </div>
