@@ -4,6 +4,7 @@
  * we decide on a template library (React Email, MJML, etc.).
  */
 import { SOCIAL_LINKS } from "@/lib/social-links";
+import { newsletterMastheadHtml } from "@/lib/newsletter-masthead";
 
 function baseLayout(args: {
   heading: string;
@@ -268,14 +269,8 @@ function newsletterLayout(args: {
           </div>
           <table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" style="max-width:600px;background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #E5DFD6;">
             <tr>
-              <td style="background:#1f3a2d;padding:28px 32px;text-align:center;">
-                <div style="font-size:12px;letter-spacing:1.5px;text-transform:uppercase;color:#e8c86a;margin-bottom:8px;">New England's Fair &amp; Festival Almanac</div>
-                <div style="font-size:30px;line-height:1.1;font-weight:700;color:#ffffff;">${escapeHtmlText(wordmark)}</div>
-                ${
-                  subtitle
-                    ? `<div style="font-size:14px;color:#cbb87a;margin-top:8px;">${escapeHtmlText(subtitle)}</div>`
-                    : ""
-                }
+              <td style="padding:0;">
+                ${newsletterMastheadHtml({ wordmark, subtitle })}
               </td>
             </tr>
             <tr>

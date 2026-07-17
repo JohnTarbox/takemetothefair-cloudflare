@@ -6,11 +6,17 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { newsletterIssues } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { NewsletterSignup } from "@/components/layout/newsletter-signup";
+import { newsletterMastheadHtml } from "@/lib/newsletter-masthead";
 
 /**
  * OPE-170 — public per-issue newsletter page. Renders the issue's stored HTML
  * (admin-authored via the send endpoint, OPE-169) inside the site chrome, with
  * a subscribe CTA. This is the target of the "view in browser" email link.
+ *
+ * OPE-234 — the branded masthead comes from the SAME shared source as the email
+ * (src/lib/newsletter-masthead.ts), so "view in browser" looks like the inbox.
+ * The stored `html` is inner body only, so rendering the masthead here does NOT
+ * double it in the email.
  */
 
 interface Props {
@@ -65,17 +71,27 @@ export default async function NewsletterIssuePage({ params }: Props) {
           ← All issues
         </Link>
       </div>
-      <h1 className="text-3xl font-bold text-foreground mb-1">{issue.subject}</h1>
-      {issue.sentAt && (
-        <p className="text-sm text-muted-foreground mb-8">{fmtDate(issue.sentAt)}</p>
-      )}
+      {/* The masthead carries the subject visually (as its subtitle), so a
+          visible <h1> would duplicate it. Keep a screen-reader-only one so the
+          page still has a real document heading for a11y + SEO — the masthead
+          wordmark is shared email markup and can't itself be an <h1>. */}
+      <h1 className="sr-only">{issue.subject}</h1>
 
-      {/* Stored issue HTML is admin-authored (send endpoint is admin-gated),
-          so it's trusted content — same posture as rendered blog bodies. */}
-      <article
-        className="rounded-xl border border-border bg-card p-6 sm:p-8"
-        dangerouslySetInnerHTML={{ __html: issue.html }}
-      />
+      {/* overflow-hidden clips the green band to the rounded top corners,
+          mirroring the email shell's border-radius:12px + overflow:hidden. */}
+      <div className="overflow-hidden rounded-xl border border-border bg-card">
+        {/* OPE-234 — same masthead source as the email; static, no user input. */}
+        <div
+          dangerouslySetInnerHTML={{ __html: newsletterMastheadHtml({ subtitle: issue.subject }) }}
+        />
+        {/* Stored issue HTML is admin-authored (send endpoint is admin-gated),
+            so it's trusted content — same posture as rendered blog bodies. */}
+        <article className="p-6 sm:p-8" dangerouslySetInnerHTML={{ __html: issue.html }} />
+      </div>
+
+      {issue.sentAt && (
+        <p className="mt-3 text-sm text-muted-foreground">Sent {fmtDate(issue.sentAt)}</p>
+      )}
 
       <div className="mt-10 border-t border-border pt-8">
         <h2 className="text-lg font-semibold text-foreground mb-3">
