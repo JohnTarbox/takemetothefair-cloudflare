@@ -3,6 +3,7 @@ import { blogPosts, events, eventSlugHistory, vendors, venues } from "@/lib/db/s
 import type { getCloudflareDb } from "@/lib/cloudflare";
 import { EVENT_LISTING_SLUGS } from "@/lib/constants";
 import { getSlugPrefixBounds, type Slug } from "@/lib/utils";
+import { chunkedInArray, D1_SAFE_IN_CHUNK } from "@takemetothefair/utils";
 
 /**
  * D1 caps each statement at 100 bound parameters. Every `inArray(col, slugs)`
@@ -12,8 +13,12 @@ import { getSlugPrefixBounds, type Slug } from "@/lib/utils";
  * (K42). Chunk every `IN (...)` lookup at 90 to leave headroom for the
  * non-list columns in the statement. Same bound-param family as MIG6 / the
  * event_days chunking (PR #200).
+ *
+ * OPE-241: this is now an alias of the shared `D1_SAFE_IN_CHUNK` — the value
+ * was independently rediscovered here first, and the shared constant adopted
+ * it. Kept as a named export because callers already import it.
  */
-export const CONTENT_LINK_INARRAY_CHUNK = 90;
+export const CONTENT_LINK_INARRAY_CHUNK = D1_SAFE_IN_CHUNK;
 
 // Match /blog/<slug> occurrences (hrefs, markdown links, bare text).
 const BLOG_LINK_RE = /\/blog\/([a-z0-9][a-z0-9-]*)(?=[^a-z0-9-]|$)/gi;
@@ -98,10 +103,16 @@ export async function findBrokenLinksInDb(
 ): Promise<string[]> {
   const referenced = extractBlogLinks(body);
   if (referenced.length === 0) return [];
-  const rows = await db
-    .select({ slug: blogPosts.slug })
-    .from(blogPosts)
-    .where(inArray(blogPosts.slug, referenced as Slug[]));
+  // OPE-241 — chunked: `referenced` is however many /blog/ links the author
+  // wrote, so a link-dense post blows D1's 100-bound-param cap. The sibling
+  // resolvers below already chunked; this one was missed and is called on
+  // every blog-post save (api/blog-posts POST + PATCH).
+  const rows = await chunkedInArray(
+    referenced as Slug[],
+    (batch) =>
+      db.select({ slug: blogPosts.slug }).from(blogPosts).where(inArray(blogPosts.slug, batch)),
+    CONTENT_LINK_INARRAY_CHUNK
+  );
   const known = new Set(rows.map((r) => r.slug.toLowerCase()));
   return referenced.filter((s) => !known.has(s));
 }

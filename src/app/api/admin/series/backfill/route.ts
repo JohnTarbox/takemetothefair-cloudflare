@@ -40,6 +40,7 @@ import {
   type SeriesGroup,
 } from "@/lib/series/group-events";
 import { selectCommittableGroups } from "@/lib/series/commit-selection";
+import { chunkedInArray } from "@takemetothefair/utils";
 
 // EH3 — non-public statuses are NOT occurrences and must be excluded from the
 // backfill grouping. Counting a REJECTED duplicate as a group member created
@@ -304,14 +305,16 @@ async function commitBackfill(
     .where(and(isNotNull(events.mergedInto), isNull(events.seriesId)));
   const tombstoneLinks: Array<{ tombstone: string; seriesId: string }> = [];
   if (tombstones.length > 0) {
+    // OPE-241 — chunked: `keeperIds` is derived from EVERY tombstoned event
+    // (the `tombstones` select has no limit), so it grows with total merge
+    // history and crosses D1's 100-bound-param cap as merges accumulate.
     const keeperIds = [...new Set(tombstones.map((t) => t.keeper).filter((k): k is string => !!k))];
-    const keeperSeries =
-      keeperIds.length > 0
-        ? await db
-            .select({ id: events.id, seriesId: events.seriesId })
-            .from(events)
-            .where(and(inArray(events.id, keeperIds), isNotNull(events.seriesId)))
-        : [];
+    const keeperSeries = await chunkedInArray(keeperIds, (batch) =>
+      db
+        .select({ id: events.id, seriesId: events.seriesId })
+        .from(events)
+        .where(and(inArray(events.id, batch), isNotNull(events.seriesId)))
+    );
     const keeperSeriesId = new Map(keeperSeries.map((k) => [k.id, k.seriesId as string]));
     const phaseB: unknown[] = [];
     for (const t of tombstones) {

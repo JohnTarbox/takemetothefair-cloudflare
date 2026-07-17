@@ -8,6 +8,7 @@ import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { entityClaims, vendors, promoters } from "@/lib/db/schema";
 import { decodeHtmlEntities } from "@/lib/utils";
+import { chunkedInArray } from "@takemetothefair/utils";
 
 export const dynamic = "force-dynamic";
 
@@ -62,20 +63,27 @@ async function getUserClaims(userId: string): Promise<ClaimRow[]> {
     ...new Set(claims.filter((c) => c.entityType === "PROMOTER").map((c) => c.entityId)),
   ];
 
+  // OPE-241 — chunked: this user's claims have no upstream limit, so the lists
+  // are bounded only by "nobody files 100+ claims". Cheap to make that
+  // structural; src/lib/claims/admin-review.ts already chunks this exact shape.
   const vendorById = new Map<string, { name: string; slug: string }>();
-  if (vendorIds.length > 0) {
-    const rows = await db
-      .select({ id: vendors.id, name: vendors.businessName, slug: vendors.slug })
-      .from(vendors)
-      .where(inArray(vendors.id, vendorIds));
+  {
+    const rows = await chunkedInArray(vendorIds, (batch) =>
+      db
+        .select({ id: vendors.id, name: vendors.businessName, slug: vendors.slug })
+        .from(vendors)
+        .where(inArray(vendors.id, batch))
+    );
     for (const r of rows) vendorById.set(r.id, { name: r.name, slug: r.slug as unknown as string });
   }
   const promoterById = new Map<string, { name: string; slug: string }>();
-  if (promoterIds.length > 0) {
-    const rows = await db
-      .select({ id: promoters.id, name: promoters.companyName, slug: promoters.slug })
-      .from(promoters)
-      .where(inArray(promoters.id, promoterIds));
+  {
+    const rows = await chunkedInArray(promoterIds, (batch) =>
+      db
+        .select({ id: promoters.id, name: promoters.companyName, slug: promoters.slug })
+        .from(promoters)
+        .where(inArray(promoters.id, batch))
+    );
     for (const r of rows)
       promoterById.set(r.id, { name: r.name, slug: r.slug as unknown as string });
   }

@@ -92,6 +92,9 @@ jobs:
       - name: Check D1 100-column join cap
         run: npx tsx scripts/check-d1-100col-joins.ts
 
+      - name: Check D1 100-bound-param cap (OPE-241 — unbounded inArray lists)
+        run: npx tsx scripts/check-d1-inarray-params.ts
+
       - name: Check event JSON-LD required fields (A10 — guards K46 'Missing field location')
         run: npx tsx scripts/check-event-jsonld-fields.ts
 

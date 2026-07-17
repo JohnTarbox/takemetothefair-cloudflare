@@ -423,6 +423,12 @@ export * from "./recurrence";
 // the MCP server's suggest_event ingest path can import it.
 export * from "./discovery-routing";
 
+// OPE-241 (2026-07-17): D1 100-bound-param cap remedy — chunkIds/chunkedInArray
+// for `inArray()` lists that scale with row count. Shared because the cap bites
+// the main app and the MCP Worker identically; scripts/check-d1-inarray-params.ts
+// treats these as the sanctioned safe form.
+export * from "./chunk-in-array";
+
 // K36 (2026-06-25): stateless one-click unsubscribe tokens. Shared so the MCP
 // Worker (footer render) and the main app (/unsubscribe verify) agree.
 export * from "./email-unsubscribe";

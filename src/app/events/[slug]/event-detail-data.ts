@@ -33,6 +33,7 @@ import { logError } from "@/lib/logger";
 import { buildEventTitle, buildEventMetaDescription } from "@/lib/seo-utils";
 import { cdnImage, OG_EVENT } from "@/lib/cdn-image";
 import { getSeriesLanding } from "@/lib/series/get-series-landing";
+import { chunkedInArray } from "@takemetothefair/utils";
 
 export async function getEvent(slug: string) {
   const db = getCloudflareDb();
@@ -94,20 +95,23 @@ export async function getEvent(slug: string) {
           .filter((v): v is string => v != null)
       )
     );
-    const parentRows =
-      vendorParentIds.length > 0
-        ? await db
-            .select({
-              id: vendors.id,
-              slug: vendors.slug,
-              role: vendors.role,
-              businessName: vendors.businessName,
-              displayName: vendors.displayName,
-              defaultChildDisplay: vendors.defaultChildDisplay,
-            })
-            .from(vendors)
-            .where(inArray(vendors.id, vendorParentIds))
-        : [];
+    // OPE-241 — chunked: `vendorParentIds` is the distinct brand parents across
+    // this event's vendors, with no upstream limit. A large fair with many
+    // branded exhibitors could cross D1's 100-bound-param cap and 500 a public
+    // event page. Results only build a Map below, so order doesn't matter.
+    const parentRows = await chunkedInArray(vendorParentIds, (batch) =>
+      db
+        .select({
+          id: vendors.id,
+          slug: vendors.slug,
+          role: vendors.role,
+          businessName: vendors.businessName,
+          displayName: vendors.displayName,
+          defaultChildDisplay: vendors.defaultChildDisplay,
+        })
+        .from(vendors)
+        .where(inArray(vendors.id, batch))
+    );
     const parentById = new Map(parentRows.map((p) => [p.id, p]));
 
     // Get event days (per-day schedule)

@@ -1,0 +1,38 @@
+# Known `inArray()` bind lists the guard flags but that are safe.
+#
+# Format matches check-d1-100col-joins.allowlist: one `repo-relative/path.ts`
+# per line, optionally `:<line>` to pin a single site. `#` starts a comment.
+#
+# Adding an entry accepts a latent 500. Prefer fixing the site:
+#   reads  → chunkedInArray(xs, (batch) => …inArray(col, batch)…)
+#   writes → for (const batch of chunkIds(xs)) { … }
+# both from @takemetothefair/utils.
+#
+# Add NEW entries only with an explicit reason (and an issue link if it's a
+# deferred fix rather than a genuine exception).
+#
+# ── The citation supersede-prior pattern (OPE-241) ───────────────────────
+#
+# All five sites below share one shape:
+#
+#     const priorActive = await db.select().from(eventDataCitations)
+#       .where(and(sameKeyFilter(event_id, field_name, year),
+#                  eq(eventDataCitations.state, "active")));
+#     …update(…).where(inArray(eventDataCitations.id, priorActive.map(r => r.id)))
+#
+# The guard flags them because that select has no `.limit()`. They are safe for
+# a reason the scanner cannot see: the rows are scoped to ONE
+# (event_id, field_name, year) key with state='active', and the supersede logic
+# itself maintains "at most one active citation per key" — the surrounding code
+# reads `priorActive[0]` on exactly that assumption. So the list is ~1 element,
+# not a row-count-scaled list, and chunking would add noise without removing
+# risk.
+#
+# If that invariant is ever broken (a writer inserting 'active' without
+# superseding), these become genuinely unbounded — fix the writer, then drop
+# these entries in favour of chunking.
+mcp-server/src/tools/admin-citations.ts:292
+mcp-server/src/tools/admin-citations.ts:495
+mcp-server/src/tools/admin-citations.ts:652
+mcp-server/src/tools/admin.ts:1369
+src/lib/goodwill/flip-event-field.ts:142
