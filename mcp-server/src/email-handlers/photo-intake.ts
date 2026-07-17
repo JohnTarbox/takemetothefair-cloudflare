@@ -39,6 +39,7 @@ import { and, eq, inArray, isNull, isNotNull, gte, lte } from "drizzle-orm";
 import type { HandlerFn, HandlerEnv, HandlerResult } from "./types.js";
 import { parsePlusSegment } from "../email-intents.js";
 import { logError } from "../logger.js";
+import { chunkedInArray } from "@takemetothefair/utils";
 import { runBoothPipeline, type BoothPipelineResult } from "../photo/booth-pipeline.js";
 import { parseExif, type ExifData } from "../photo/exif.js";
 import {
@@ -191,39 +192,46 @@ async function loadCandidateEvents(
   const lo = new Date(dayMs - MAX_EVENT_SPAN_DAYS * 86_400_000);
   const hi = new Date(dayMs + 86_400_000);
 
-  const rows = await db
-    .select({
-      id: events.id,
-      name: events.name,
-      slug: events.slug,
-      venueId: events.venueId,
-      startDate: events.startDate,
-      endDate: events.endDate,
-    })
-    .from(events)
-    .where(
-      and(
-        inArray(events.venueId, venueIds),
-        eq(events.status, "APPROVED"),
-        isNull(events.mergedInto),
-        gte(events.startDate, lo),
-        lte(events.startDate, hi)
+  // OPE-241 — chunked: `venueIds` is bounded by GEOGRAPHY (a radius), not by a
+  // query limit, so a dense metro can put 100+ venues in range and blow D1's
+  // 100-bound-param cap. Note the ~5 extra bound params from the status/date
+  // predicates below come out of the same 100 budget — that headroom is exactly
+  // why the default chunk is 90 rather than 100.
+  const rows = await chunkedInArray(venueIds, (batch) =>
+    db
+      .select({
+        id: events.id,
+        name: events.name,
+        slug: events.slug,
+        venueId: events.venueId,
+        startDate: events.startDate,
+        endDate: events.endDate,
+      })
+      .from(events)
+      .where(
+        and(
+          inArray(events.venueId, batch),
+          eq(events.status, "APPROVED"),
+          isNull(events.mergedInto),
+          gte(events.startDate, lo),
+          lte(events.startDate, hi)
+        )
       )
-    );
+  );
 
   if (rows.length === 0) return [];
 
   // event_days is authoritative (it encodes closures / vendor-only days);
   // events without per-day rows fall back to their start→end range.
-  const dayRows = await db
-    .select({ eventId: eventDays.eventId, date: eventDays.date })
-    .from(eventDays)
-    .where(
-      inArray(
-        eventDays.eventId,
-        rows.map((r) => r.id)
-      )
-    );
+  // OPE-241 — chunked for the same reason: one row per in-range event.
+  const dayRows = await chunkedInArray(
+    rows.map((r) => r.id),
+    (batch) =>
+      db
+        .select({ eventId: eventDays.eventId, date: eventDays.date })
+        .from(eventDays)
+        .where(inArray(eventDays.eventId, batch))
+  );
   const daysByEvent = new Map<string, string[]>();
   for (const d of dayRows) {
     const list = daysByEvent.get(d.eventId) ?? [];

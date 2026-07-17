@@ -27,6 +27,7 @@ import { eq, and, or, inArray, lt, isNull, isNotNull } from "drizzle-orm";
 import { events, adminActions, promoters } from "./schema.js";
 import { rolloverEventIfRecurring } from "./event-rollover.js";
 import { logError } from "./logger.js";
+import { chunkIds } from "@takemetothefair/utils";
 import type { Db } from "./db.js";
 
 /** Per-run bounds — keep the sweep within cron CPU/subrequest limits. */
@@ -258,21 +259,25 @@ export async function runOccurredTransitionSweep(
     const noPublicListIds = toEnqueue.filter((e) => e.publishesLists === false).map((e) => e.id);
     const needsResearchIds = toEnqueue.filter((e) => e.publishesLists !== false).map((e) => e.id);
 
-    if (noPublicListIds.length > 0) {
+    // OPE-241 — chunked writes: ROSTER_ENQUEUE_LIMIT is 200, i.e. ABOVE D1's
+    // 100-bound-param cap, so a full pass already throws "too many SQL
+    // variables" and loses the whole enqueue. chunkIds (not chunkedInArray)
+    // because these are UPDATEs — there are no rows to merge.
+    for (const batch of chunkIds(noPublicListIds)) {
       await db
         .update(events)
         .set({ vendorRosterStatus: "NO_PUBLIC_LIST", updatedAt: now })
-        .where(inArray(events.id, noPublicListIds));
-      result.rosterNoPublicList = noPublicListIds.length;
+        .where(inArray(events.id, batch));
     }
+    result.rosterNoPublicList = noPublicListIds.length;
 
-    if (needsResearchIds.length > 0) {
+    for (const batch of chunkIds(needsResearchIds)) {
       await db
         .update(events)
         .set({ vendorRosterStatus: "NEEDS_RESEARCH", updatedAt: now })
-        .where(inArray(events.id, needsResearchIds));
-      result.rosterEnqueued = needsResearchIds.length;
+        .where(inArray(events.id, batch));
     }
+    result.rosterEnqueued = needsResearchIds.length;
   } catch (error) {
     result.errors++;
     await logError(db, {

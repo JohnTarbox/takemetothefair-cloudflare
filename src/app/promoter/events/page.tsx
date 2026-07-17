@@ -13,6 +13,7 @@ import { eq, desc, inArray, sql } from "drizzle-orm";
 import { AddToCalendar } from "@/components/events/AddToCalendar";
 import { logError } from "@/lib/logger";
 import { PUBLIC_VENDOR_STATUSES } from "@/lib/constants";
+import { chunkedInArray } from "@takemetothefair/utils";
 
 const statusColors: Record<string, "default" | "success" | "warning" | "danger" | "info"> = {
   DRAFT: "default",
@@ -64,16 +65,21 @@ async function getPromoterEvents(userId: string): Promise<PromoterEvent[]> {
 
     const eventIds = rows.map((r) => r.events.id);
 
-    // One aggregated query for vendor counts across all this promoter's events
-    const counts = await db
-      .select({
-        eventId: eventVendors.eventId,
-        status: eventVendors.status,
-        n: sql<number>`count(*)`,
-      })
-      .from(eventVendors)
-      .where(inArray(eventVendors.eventId, eventIds))
-      .groupBy(eventVendors.eventId, eventVendors.status);
+    // Aggregated vendor counts across all this promoter's events.
+    // OPE-241 — chunked: `eventIds` is every event this promoter has ever
+    // created (no upstream limit), so a long-running promoter (a weekly market
+    // over a few seasons) crosses D1's 100-bound-param cap and this page 500s.
+    const counts = await chunkedInArray(eventIds, (batch) =>
+      db
+        .select({
+          eventId: eventVendors.eventId,
+          status: eventVendors.status,
+          n: sql<number>`count(*)`,
+        })
+        .from(eventVendors)
+        .where(inArray(eventVendors.eventId, batch))
+        .groupBy(eventVendors.eventId, eventVendors.status)
+    );
 
     const countByEvent = new Map<string, { applied: number; confirmed: number; total: number }>();
     // PUBLIC_VENDOR_STATUSES is the source of truth for "vendor is publicly

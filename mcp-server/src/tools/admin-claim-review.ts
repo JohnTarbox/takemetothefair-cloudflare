@@ -23,6 +23,7 @@ import { z } from "zod";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { entityClaims, vendors, promoters, users, userRoles, adminActions } from "../schema.js";
 import { jsonContent, decodeHtmlEntities } from "../helpers.js";
+import { chunkedInArray } from "@takemetothefair/utils";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 
@@ -122,32 +123,34 @@ export function registerClaimReviewTools(server: McpServer, db: Db, auth: AuthCo
       ];
       const userIds = [...new Set(page.map((r) => r.userId))];
 
+      // OPE-241 — chunked: LIST_LIMIT is 200, i.e. ABOVE D1's 100-bound-param
+      // cap, so these decorate lookups are not "latent" — a claim queue with
+      // >100 distinct vendors already throws "too many SQL variables" today.
       const vendorById = new Map<string, { name: string; slug: string }>();
-      if (vendorIds.length) {
-        const vrows = await db
+      const vrows = await chunkedInArray(vendorIds, (batch) =>
+        db
           .select({ id: vendors.id, name: vendors.businessName, slug: vendors.slug })
           .from(vendors)
-          .where(inArray(vendors.id, vendorIds));
-        for (const r of vrows)
-          vendorById.set(r.id, { name: r.name, slug: r.slug as unknown as string });
-      }
+          .where(inArray(vendors.id, batch))
+      );
+      for (const r of vrows)
+        vendorById.set(r.id, { name: r.name, slug: r.slug as unknown as string });
+
       const promoterById = new Map<string, { name: string; slug: string }>();
-      if (promoterIds.length) {
-        const prows = await db
+      const prows = await chunkedInArray(promoterIds, (batch) =>
+        db
           .select({ id: promoters.id, name: promoters.companyName, slug: promoters.slug })
           .from(promoters)
-          .where(inArray(promoters.id, promoterIds));
-        for (const r of prows)
-          promoterById.set(r.id, { name: r.name, slug: r.slug as unknown as string });
-      }
+          .where(inArray(promoters.id, batch))
+      );
+      for (const r of prows)
+        promoterById.set(r.id, { name: r.name, slug: r.slug as unknown as string });
+
       const userById = new Map<string, string>();
-      if (userIds.length) {
-        const urows = await db
-          .select({ id: users.id, email: users.email })
-          .from(users)
-          .where(inArray(users.id, userIds));
-        for (const r of urows) userById.set(r.id, r.email);
-      }
+      const urows = await chunkedInArray(userIds, (batch) =>
+        db.select({ id: users.id, email: users.email }).from(users).where(inArray(users.id, batch))
+      );
+      for (const r of urows) userById.set(r.id, r.email);
 
       const claims = page.map((r) => {
         const entity =

@@ -53,6 +53,7 @@ import { DetailPageTracker } from "@/components/DetailPageTracker";
 import { ScrollDepthTracker } from "@/components/ScrollDepthTracker";
 import {
   canonicalParentSlugFor,
+  chunkedInArray,
   displayVendorName,
   type DisplayableParent,
   type ParentDisplayInput,
@@ -454,29 +455,47 @@ async function getVendor(slug: string) {
       // would suppress.
       if (children.length > 0) {
         const childIds = children.map((c) => c.id);
-        const childEventRows = await db
-          .select({
-            id: events.id,
-            name: events.name,
-            slug: events.slug,
-            startDate: events.startDate,
-            endDate: events.endDate,
-            imageUrl: events.imageUrl,
-            venueName: venues.name,
-            venueCity: venues.city,
-            venueState: venues.state,
-          })
-          .from(eventVendors)
-          .innerJoin(events, eq(eventVendors.eventId, events.id))
-          .leftJoin(venues, eq(events.venueId, venues.id))
-          .where(
-            and(
-              inArray(eventVendors.vendorId, childIds),
-              isPublicVendorStatus(),
-              gte(events.endDate, new Date())
+        // OPE-241 — chunked: `childIds` is every LOCAL_OFFICE under this brand
+        // parent with no upstream limit, so a national brand with 100+ regional
+        // offices would blow D1's 100-bound-param cap and 500 this public page.
+        //
+        // NOTE the re-sort below: chunking returns each BATCH ordered, not the
+        // merged set, so the query's `orderBy(asc(startDate))` no longer holds
+        // once there is more than one batch. Sorting after the merge restores
+        // it — without this, the hub's event order would silently scramble for
+        // exactly the large brands this fix is for.
+        const childEventRows = await chunkedInArray(childIds, (batch) =>
+          db
+            .select({
+              id: events.id,
+              name: events.name,
+              slug: events.slug,
+              startDate: events.startDate,
+              endDate: events.endDate,
+              imageUrl: events.imageUrl,
+              venueName: venues.name,
+              venueCity: venues.city,
+              venueState: venues.state,
+            })
+            .from(eventVendors)
+            .innerJoin(events, eq(eventVendors.eventId, events.id))
+            .leftJoin(venues, eq(events.venueId, venues.id))
+            .where(
+              and(
+                inArray(eventVendors.vendorId, batch),
+                isPublicVendorStatus(),
+                gte(events.endDate, new Date())
+              )
             )
-          )
-          .orderBy(asc(events.startDate));
+            .orderBy(asc(events.startDate))
+        );
+        // NULLs first, matching SQLite's `ORDER BY startDate ASC` — so a
+        // single-batch result and a merged multi-batch result order identically.
+        childEventRows.sort((a, b) => {
+          if (a.startDate === null) return b.startDate === null ? 0 : -1;
+          if (b.startDate === null) return 1;
+          return a.startDate.getTime() - b.startDate.getTime();
+        });
         const seenIds = new Set<string>();
         for (const e of childEventRows) {
           if (seenIds.has(e.id)) continue;

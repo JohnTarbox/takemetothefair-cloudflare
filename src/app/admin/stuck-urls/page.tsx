@@ -36,6 +36,7 @@ import {
   type IndexState,
 } from "@/lib/gsc-index-state";
 import { unsafeSlug } from "@/lib/utils";
+import { chunkedInArray } from "@takemetothefair/utils";
 
 export const revalidate = 300;
 
@@ -130,21 +131,25 @@ async function loadClusters(): Promise<{
     // indexed — the bucket exists, just not actionable here).
     .filter((c) => c.indexState !== "indexed");
 
-  // Phase 2: state resolution for event detail URLs. One IN-list
-  // against `events.slug` covers the whole batch.
+  // Phase 2: state resolution for event detail URLs, chunked against
+  // `events.slug` (see OPE-241 note below).
   const eventSlugs = classified
     .filter((c) => c.bucket === "event" && c.detailSlug)
     .map((c) => unsafeSlug(c.detailSlug!));
 
+  // OPE-241 — chunked: `eventSlugs` comes from the un-limited inspection-state
+  // scan above, so it grows with the stuck-URL count and crosses D1's
+  // 100-bound-param cap. (The comment above once claimed "one IN-list covers
+  // the whole batch" — that is exactly the assumption the cap invalidates.)
   const stateBySlug = new Map<string, string | null>();
-  if (eventSlugs.length > 0) {
-    const eventStateRows = await db
+  const eventStateRows = await chunkedInArray(eventSlugs, (batch) =>
+    db
       .select({ slug: events.slug, stateCode: events.stateCode })
       .from(events)
-      .where(inArray(events.slug, eventSlugs));
-    for (const r of eventStateRows) {
-      stateBySlug.set(r.slug, r.stateCode);
-    }
+      .where(inArray(events.slug, batch))
+  );
+  for (const r of eventStateRows) {
+    stateBySlug.set(r.slug, r.stateCode);
   }
 
   // Phase 3: cluster. Key by (bucket, subkey).

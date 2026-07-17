@@ -10,6 +10,7 @@ import {
   promoters,
 } from "../schema.js";
 import { jsonContent, publicUrlFor } from "../helpers.js";
+import { chunkedInArray } from "@takemetothefair/utils";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 
@@ -153,36 +154,44 @@ async function loadEntityLabels(
 
   const result = new Map<string, { label: string; slug: string | null }>();
 
+  // OPE-241 — chunked: callers pass up to 500 rows (get_recommendation_rule
+  // hardcodes limit 500; get_recommendations' limit is zod .max(500)), so these
+  // label lookups are ALREADY over D1's 100-bound-param cap at current volumes,
+  // not merely latent. Order doesn't matter here — the results build a Map.
   if (byType.event?.size) {
-    const ids = [...byType.event];
-    const rows2 = await db
-      .select({ id: events.id, name: events.name, slug: events.slug })
-      .from(events)
-      .where(inArray(events.id, ids));
+    const rows2 = await chunkedInArray([...byType.event], (batch) =>
+      db
+        .select({ id: events.id, name: events.name, slug: events.slug })
+        .from(events)
+        .where(inArray(events.id, batch))
+    );
     for (const r of rows2) result.set(`event:${r.id}`, { label: r.name, slug: r.slug });
   }
   if (byType.vendor?.size) {
-    const ids = [...byType.vendor];
-    const rows2 = await db
-      .select({ id: vendors.id, name: vendors.businessName, slug: vendors.slug })
-      .from(vendors)
-      .where(inArray(vendors.id, ids));
+    const rows2 = await chunkedInArray([...byType.vendor], (batch) =>
+      db
+        .select({ id: vendors.id, name: vendors.businessName, slug: vendors.slug })
+        .from(vendors)
+        .where(inArray(vendors.id, batch))
+    );
     for (const r of rows2) result.set(`vendor:${r.id}`, { label: r.name, slug: r.slug });
   }
   if (byType.venue?.size) {
-    const ids = [...byType.venue];
-    const rows2 = await db
-      .select({ id: venues.id, name: venues.name, slug: venues.slug })
-      .from(venues)
-      .where(inArray(venues.id, ids));
+    const rows2 = await chunkedInArray([...byType.venue], (batch) =>
+      db
+        .select({ id: venues.id, name: venues.name, slug: venues.slug })
+        .from(venues)
+        .where(inArray(venues.id, batch))
+    );
     for (const r of rows2) result.set(`venue:${r.id}`, { label: r.name, slug: r.slug });
   }
   if (byType.promoter?.size) {
-    const ids = [...byType.promoter];
-    const rows2 = await db
-      .select({ id: promoters.id, name: promoters.companyName, slug: promoters.slug })
-      .from(promoters)
-      .where(inArray(promoters.id, ids));
+    const rows2 = await chunkedInArray([...byType.promoter], (batch) =>
+      db
+        .select({ id: promoters.id, name: promoters.companyName, slug: promoters.slug })
+        .from(promoters)
+        .where(inArray(promoters.id, batch))
+    );
     for (const r of rows2) result.set(`promoter:${r.id}`, { label: r.name, slug: r.slug });
   }
 
