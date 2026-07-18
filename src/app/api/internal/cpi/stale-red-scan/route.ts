@@ -7,7 +7,10 @@ import { getLatestKpiStates } from "@/lib/kpi-states";
 import { loadActionQueue } from "@/lib/analytics-overview/activity";
 import { enqueueEmail } from "@/lib/queues/producers";
 import { logError } from "@/lib/logger";
-import { faultSignatures } from "@/lib/db/schema";
+import { faultSignatures, indexnowSubmissions, pendingSearchPings } from "@/lib/db/schema";
+import { count, desc, eq, isNull } from "drizzle-orm";
+import { getIndexNowQuota, type BingEnv } from "@/lib/bing-webmaster";
+import { assessAllIntegrationSilence, type IntegrationActivity } from "@/lib/integration-silence";
 import {
   formatStaleRedDigest,
   selectStaleFaultReds,
@@ -40,6 +43,66 @@ function getRuntimeEnv(key: string): string | undefined {
   } catch {
     return process.env[key];
   }
+}
+
+/**
+ * OPE-243 — build the outbound-integration activity table the silence detector
+ * reads. Today: IndexNow (Bing). cf-email deliverability (OPE-177) and the Bing
+ * sitemap resubmit are the next slots — add a record here, no other change.
+ *
+ * IndexNow silence signal:
+ *   - lastSuccessAt : most recent indexnow_submissions row with status='success'
+ *     (NOT the most recent attempt — the pause writes `skipped` rows hourly, and
+ *     a skip is a deferral, never a success).
+ *   - shouldBeActive: there are unflushed pending_search_pings — i.e. real URLs
+ *     queued and waiting. Silence with an empty queue is legitimately idle.
+ *   - activeReason  : queue depth + Bing monthly quota remaining, for the digest.
+ */
+async function gatherIntegrationActivity(
+  db: Parameters<typeof loadActionQueue>[0]
+): Promise<IntegrationActivity[]> {
+  const [lastSuccess] = await db
+    .select({ timestamp: indexnowSubmissions.timestamp })
+    .from(indexnowSubmissions)
+    .where(eq(indexnowSubmissions.status, "success"))
+    .orderBy(desc(indexnowSubmissions.timestamp))
+    .limit(1);
+
+  const [pendingRow] = await db
+    .select({ n: count() })
+    .from(pendingSearchPings)
+    .where(isNull(pendingSearchPings.flushedAt));
+  const pendingCount = Number(pendingRow?.n ?? 0);
+
+  const [oldestPending] = await db
+    .select({ queuedAt: pendingSearchPings.queuedAt })
+    .from(pendingSearchPings)
+    .where(isNull(pendingSearchPings.flushedAt))
+    .orderBy(pendingSearchPings.queuedAt)
+    .limit(1);
+
+  let quotaNote = "quota unknown";
+  try {
+    const env = getCloudflareEnv() as unknown as BingEnv;
+    const quota = await getIndexNowQuota(env);
+    quotaNote = `Bing monthly quota ${quota.monthlyRemaining}/${quota.monthlyQuota} unspent`;
+  } catch {
+    // Quota is a nice-to-have detail for the digest body — never block the
+    // silence check on the Bing API being reachable.
+  }
+
+  return [
+    {
+      name: "IndexNow (Bing)",
+      refKey: "integration-silence:indexnow",
+      href: `${SITE_URL}/admin/analytics?tab=site-health`,
+      lastSuccessAt: lastSuccess?.timestamp ?? null,
+      silentSinceAt: oldestPending?.queuedAt ?? null,
+      // Only red when there's real queued work — an empty queue is idle, not silent.
+      shouldBeActive: pendingCount > 0,
+      activeReason: `${pendingCount} URL(s) queued and unsubmitted; ${quotaNote}`,
+    },
+  ];
 }
 
 export const POST = withInternalKey({ source: "cpi:stale-red-scan" }, async ({ db }) => {
@@ -81,7 +144,25 @@ export const POST = withInternalKey({ source: "cpi:stale-red-scan" }, async ({ d
       });
     }
 
-    const allReds = [...reds, ...faultReds];
+    // OPE-243 — merge outbound-integration SILENCE reds so a "0 successes while
+    // there's queued work" integration (IndexNow silent for 20 days behind
+    // Bing's rate latch) escalates through THIS digest instead of a warn log
+    // nobody reads. Defensive: any failure gathering integration state degrades
+    // to KPI + fault reds only, never breaking the existing scan.
+    let integrationReds: StaleRed[] = [];
+    try {
+      const integrations = await gatherIntegrationActivity(db);
+      integrationReds = assessAllIntegrationSilence(integrations, now);
+    } catch (err) {
+      await logError(db, {
+        level: "warn",
+        source: "cpi:stale-red-scan",
+        message: "integration-silence load failed; degrading to KPI + fault reds",
+        error: err,
+      });
+    }
+
+    const allReds = [...reds, ...faultReds, ...integrationReds];
 
     let sent = false;
     if (allReds.length > 0) {
