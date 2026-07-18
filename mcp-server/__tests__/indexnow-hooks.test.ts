@@ -95,6 +95,11 @@ function seedEvent(overrides: Partial<typeof events.$inferInsert> = {}) {
       slug: overrides.slug ?? "test-event",
       promoterId: overrides.promoterId ?? "promoter-1",
       status: "DRAFT",
+      // OPE-244 #3 — the approval gate refuses venue-less non-statewide events.
+      // These fixtures test IndexNow ping behavior, not the location gate, so
+      // mark them statewide (with a state) to keep them approvable.
+      isStatewide: true,
+      stateCode: "ME",
       ...overrides,
     })
     .run();
@@ -137,6 +142,29 @@ describe("update_event_status", () => {
     expect(mock.calls).toHaveLength(1);
     expect(mock.calls[0].source).toBe("event-create");
     expect(mock.calls[0].urls[0]).toContain("/events/test-event");
+  });
+
+  it("OPE-244 #3 — REFUSES APPROVED for a venue-less non-statewide event, no ping", async () => {
+    const id = seedEvent({ status: "DRAFT", isStatewide: false, stateCode: null, venueId: null });
+    const res = await adminServer.invoke("update_event_status", {
+      event_id: id,
+      status: "APPROVED",
+      defer_search_ping: false,
+    });
+    expect(res.isError).toBe(true);
+    expect(JSON.stringify(res.content)).toContain("no venue");
+    expect(mock.calls).toHaveLength(0); // blocked before the ping
+  });
+
+  it("OPE-244 #3 — ALLOWS APPROVED for a venue-less STATEWIDE event with a state", async () => {
+    const id = seedEvent({ status: "DRAFT", isStatewide: true, stateCode: "ME", venueId: null });
+    const res = await adminServer.invoke("update_event_status", {
+      event_id: id,
+      status: "APPROVED",
+      defer_search_ping: false,
+    });
+    expect(res.isError).toBeFalsy();
+    expect(mock.calls).toHaveLength(1);
   });
 
   it("DRAFT → TENTATIVE fires event-create (TENTATIVE is publicly visible)", async () => {

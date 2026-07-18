@@ -423,6 +423,11 @@ export * from "./recurrence";
 // the MCP server's suggest_event ingest path can import it.
 export * from "./discovery-routing";
 
+// OPE-244 (2026-07-18): the ingest gate — a venue-less non-statewide event can't
+// reach APPROVED (it would have no derivable Event.location). Shared by the admin
+// approve route and the MCP update_event_status tool so the invariant is single-source.
+export * from "./event-approval-gate";
+
 // OPE-241 (2026-07-17): D1 100-bound-param cap remedy — chunkIds/chunkedInArray
 // for `inArray()` lists that scale with row count. Shared because the cap bites
 // the main app and the MCP Worker identically; scripts/check-d1-inarray-params.ts

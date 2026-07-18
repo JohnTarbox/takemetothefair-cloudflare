@@ -46,7 +46,12 @@ import {
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 import { loadClassifications, gateUrlForField } from "../url-classification.js";
-import { areDatesContiguous, evaluateGates, normalizeEventDate } from "@takemetothefair/utils";
+import {
+  areDatesContiguous,
+  evaluateGates,
+  eventApprovalBlockReason,
+  normalizeEventDate,
+} from "@takemetothefair/utils";
 import {
   eventOutboxStatements,
   venueOutboxStatements,
@@ -448,6 +453,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           name: events.name,
           slug: events.slug,
           status: events.status,
+          venueId: events.venueId,
+          isStatewide: events.isStatewide,
+          stateCode: events.stateCode,
         })
         .from(events)
         .where(eq(events.id, params.event_id))
@@ -468,6 +476,16 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           content: [{ type: "text", text: `Event is already ${params.status}.` }],
           isError: true,
         };
+      }
+
+      // OPE-244 #3 — same ingest gate as the admin approve route: don't let a
+      // venue-less non-statewide event reach APPROVED (it would have no
+      // derivable Event.location). Only blocks the transition INTO APPROVED.
+      if (params.status === "APPROVED") {
+        const blockReason = eventApprovalBlockReason(event);
+        if (blockReason) {
+          return { content: [{ type: "text", text: blockReason }], isError: true };
+        }
       }
 
       await db
