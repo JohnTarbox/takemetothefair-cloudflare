@@ -68,6 +68,7 @@ export const hijackedDomainDetectionRule: RuleDefinition = {
     // SQL prefilter: any LIKE %like% on a non-deleted vendor with a non-null
     // description. JS refines below to enforce word-boundary / brand-suffix
     // requirements.
+    // eslint-disable-next-line no-restricted-syntax -- empty-safe: SPAM_TERMS is a non-empty hardcoded literal (+ length===0 early-return guard) (SQL OR-reducer, no neutral initial fragment)
     const termClauses = SPAM_TERMS.map(
       (t) => sql`LOWER(${vendors.description}) LIKE ${"%" + t.like.toLowerCase() + "%"}`
     ).reduce((acc, c) => sql`${acc} OR ${c}`);

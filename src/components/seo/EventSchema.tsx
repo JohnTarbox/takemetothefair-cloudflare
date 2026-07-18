@@ -214,7 +214,9 @@ export function EventSchema({
       .map((d) => parseWallClockInVenueZone(d.date, d.closeTime, venueTz))
       .filter((x): x is Date => x != null);
     if (starts.length > 0 && ends.length > 0) {
+      // eslint-disable-next-line no-restricted-syntax -- empty-safe: guarded by starts.length > 0 above (min-reduce, no natural initial value)
       const minStart = starts.reduce((a, b) => (a < b ? a : b));
+      // eslint-disable-next-line no-restricted-syntax -- empty-safe: guarded by ends.length > 0 above (max-reduce, no natural initial value)
       const maxEnd = ends.reduce((a, b) => (a > b ? a : b));
       const start = venueTz
         ? formatIsoInVenueZone(minStart, venueTz)

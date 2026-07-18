@@ -26,9 +26,11 @@ export const competitorUrlContaminationRule: RuleDefinition = {
 
     // Single OR predicate across all competitor domains, applied to both
     // events.ticket_url and vendors.website.
+    // eslint-disable-next-line no-restricted-syntax -- empty-safe: guarded by competitorList.length === 0 early-return above (SQL OR-reducer, no neutral initial fragment)
     const eventClauses = competitorList
       .map((d) => sql`LOWER(${events.ticketUrl}) LIKE ${"%" + d + "%"}`)
       .reduce((acc, c) => sql`${acc} OR ${c}`);
+    // eslint-disable-next-line no-restricted-syntax -- empty-safe: guarded by competitorList.length === 0 early-return above (SQL OR-reducer, no neutral initial fragment)
     const vendorClauses = competitorList
       .map((d) => sql`LOWER(${vendors.website}) LIKE ${"%" + d + "%"}`)
       .reduce((acc, c) => sql`${acc} OR ${c}`);
