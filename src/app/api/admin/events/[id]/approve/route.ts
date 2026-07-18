@@ -7,6 +7,7 @@ import { eq } from "drizzle-orm";
 import { logError } from "@/lib/logger";
 import { trackEventStatusChange } from "@/lib/server-analytics";
 import { notifyApprovalIfNeeded } from "@/lib/approval-notification";
+import { eventApprovalBlockReason } from "@takemetothefair/utils";
 
 export const POST = withAuth<{ id: string }>(
   { role: "ADMIN" },
@@ -14,6 +15,26 @@ export const POST = withAuth<{ id: string }>(
     const { id } = params;
 
     try {
+      // OPE-244 #3 — refuse to approve an event that would have no derivable
+      // Event.location (no venue AND not statewide). The admin can link a venue
+      // or mark it statewide, then re-approve — a one-step fix, not a dead end.
+      const [existing] = await db
+        .select({
+          venueId: events.venueId,
+          isStatewide: events.isStatewide,
+          stateCode: events.stateCode,
+        })
+        .from(events)
+        .where(eq(events.id, id))
+        .limit(1);
+      if (!existing) {
+        return NextResponse.json({ error: "Event not found" }, { status: 404 });
+      }
+      const blockReason = eventApprovalBlockReason(existing);
+      if (blockReason) {
+        return NextResponse.json({ error: blockReason, code: "no_location" }, { status: 422 });
+      }
+
       await db
         .update(events)
         .set({ status: "APPROVED", updatedAt: new Date() })
