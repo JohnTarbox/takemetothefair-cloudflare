@@ -50,14 +50,107 @@
  * logError() and swallowed — never thrown — so a single canary failure
  * doesn't trigger Cloudflare's cron retry.
  */
-import { inArray } from "drizzle-orm";
+import { and, count, eq, gte, inArray, lt } from "drizzle-orm";
 import { pageErrorCanaryState } from "@takemetothefair/db-schema";
+import { errorLogs } from "./schema.js";
 import type { Env } from "./index.js";
+import type { Db } from "./db.js";
 import { getDb } from "./db.js";
 import { logError } from "./logger.js";
 import { getErrorLogsBurstWindow } from "./error-logs-burst.js";
 
 const SLACK_BUDGET_MS = 5_000;
+
+/** OPE-252 — auto-decay: a canary-state row this stale whose source has had
+ *  zero matching errors in the window is a fixed-but-never-cleared alert (the
+ *  41-day-old getEvent/getVendor YELLOWs). Cleared automatically so no human
+ *  hand-DELETE is needed. */
+const CANARY_STATE_DECAY_DAYS = 14;
+
+/**
+ * OPE-252 — transient-D1 patterns. The 2026-07-13 outage failed the canary's
+ * own aggregate query with "D1_ERROR: Network connection lost" — a shared-fate
+ * blip that resolves on a retry. (Note: the main app's withD1Retry list does
+ * NOT include this string, so it wouldn't have helped even if importable.)
+ */
+const TRANSIENT_D1_PATTERNS = ["network connection lost", "internal error", "connection reset"];
+
+function isTransientD1Error(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  return TRANSIENT_D1_PATTERNS.some((p) => msg.includes(p));
+}
+
+/**
+ * OPE-252 — run `op`; on a TRANSIENT D1 error, log the first failure at `warn`
+ * and retry once after a short backoff. A non-transient error, or a second
+ * failure, propagates to the caller (which logs it at `error`). This stops a
+ * one-off scheduler blip from landing an `error` row indistinguishable from an
+ * app fault — and stops the canary going blind on the exact D1 wobble it exists
+ * to watch.
+ */
+async function retryOnceOnTransientD1<T>(
+  db: Db,
+  source: string,
+  label: string,
+  op: () => Promise<T>
+): Promise<T> {
+  try {
+    return await op();
+  } catch (err) {
+    if (!isTransientD1Error(err)) throw err;
+    await logError(db, {
+      level: "warn",
+      source,
+      message: `${label} hit a transient D1 error; retrying once`,
+      error: err,
+    });
+    await new Promise((r) => setTimeout(r, 250));
+    return await op(); // a second failure propagates → caller logs error
+  }
+}
+
+/**
+ * OPE-252 — clear canary-state rows older than the decay window whose source
+ * has had zero matching `error_logs` in that window (the underlying fault is
+ * gone). Logs one `info` receipt per decayed row. Failsoft: never throws — a
+ * decay hiccup must not block the canary's actual alerting job.
+ */
+async function decayStaleCanaryState(db: Db, source: string, now: Date): Promise<void> {
+  try {
+    const cutoff = new Date(now.getTime() - CANARY_STATE_DECAY_DAYS * 24 * 60 * 60_000);
+    const stale = await db
+      .select({ tier: pageErrorCanaryState.tier, source: pageErrorCanaryState.source })
+      .from(pageErrorCanaryState)
+      .where(lt(pageErrorCanaryState.lastAlertedAt, cutoff));
+    for (const row of stale) {
+      // Only decay when the fault is genuinely gone: zero matching error_logs
+      // for this source in the decay window. A row that's stale but still
+      // erroring stays put (the debounce logic re-alerts it).
+      const [recent] = await db
+        .select({ n: count() })
+        .from(errorLogs)
+        .where(and(eq(errorLogs.source, row.source), gte(errorLogs.timestamp, cutoff)));
+      if (Number(recent?.n ?? 0) > 0) continue;
+      await db
+        .delete(pageErrorCanaryState)
+        .where(
+          and(eq(pageErrorCanaryState.tier, row.tier), eq(pageErrorCanaryState.source, row.source))
+        );
+      await logError(db, {
+        level: "info",
+        source,
+        message: `canary-state decayed: ${row.tier} ${row.source} — no matching errors in ${CANARY_STATE_DECAY_DAYS}d`,
+      });
+    }
+  } catch (err) {
+    await logError(db, {
+      level: "warn",
+      source,
+      message: "canary-state decay failed (non-fatal; alerting unaffected)",
+      error: err,
+    });
+  }
+}
 
 /** The cron fires every 10 minutes; the window matches so each fire looks
  *  at the errors logged since the previous fire (no double-counting). */
@@ -158,6 +251,10 @@ export async function runScheduledPageErrorCanary(env: Env): Promise<void> {
   const windowStart = new Date(now.getTime() - WINDOW_MINUTES * 60_000);
   const db = getDb(env.DB);
 
+  // OPE-252 — self-hygiene: clear fixed-but-never-cleared canary rows first
+  // (failsoft; never blocks the alerting below).
+  await decayStaleCanaryState(db, SOURCE, now);
+
   // 1. Count + per-source breakdown over the window.
   // B2 (2026-06-04, REL1' §0) — refactored to call the shared
   // `getErrorLogsBurstWindow` helper (B1). The helper returns the full
@@ -170,15 +267,21 @@ export async function runScheduledPageErrorCanary(env: Env): Promise<void> {
   let totalCount: number;
   let bySource: Array<{ source: string | null; count: number }>;
   try {
-    const burst = await getErrorLogsBurstWindow(db, {
-      since: windowStart,
-      until: now,
-      sourcePattern: SOURCE_PATTERN,
-      // Minimum to track via this helper is YELLOW threshold; we rely on
-      // the existing decideTier() to actually decide what fires.
-      minCount: YELLOW_THRESHOLD,
-      topSourcesLimit: 5,
-    });
+    // OPE-252 — retry once on a transient D1 blip (the 2026-07-13 "Network
+    // connection lost" that blinded this canary during the exact window it
+    // watches). First transient failure logs `warn` inside the helper; a
+    // second failure falls through to the `error` log below.
+    const burst = await retryOnceOnTransientD1(db, SOURCE, "error_logs aggregate query", () =>
+      getErrorLogsBurstWindow(db, {
+        since: windowStart,
+        until: now,
+        sourcePattern: SOURCE_PATTERN,
+        // Minimum to track via this helper is YELLOW threshold; we rely on
+        // the existing decideTier() to actually decide what fires.
+        minCount: YELLOW_THRESHOLD,
+        topSourcesLimit: 5,
+      })
+    );
     totalCount = burst.totalErrors;
     bySource = burst.bySource;
   } catch (error) {
@@ -355,4 +458,9 @@ export const __test = {
   YELLOW_DEBOUNCE_MINUTES,
   WINDOW_MINUTES,
   SOURCE_PATTERN,
+  // OPE-252
+  isTransientD1Error,
+  retryOnceOnTransientD1,
+  decayStaleCanaryState,
+  CANARY_STATE_DECAY_DAYS,
 };
