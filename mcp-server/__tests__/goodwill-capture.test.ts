@@ -103,6 +103,9 @@ describe("captureDiscrepancy - write + idempotency", () => {
     expect(rows[0].fieldClass).toBe("date");
     expect(rows[0].detectedBy).toBe("self_consistency");
     expect(rows[0].resolutionStatus).toBe("open");
+    // OPE-245: scored at write time — never NULL on insert again.
+    expect(rows[0].outreachPriorityScore).not.toBeNull();
+    expect(rows[0].outreachPriorityScore).toBeGreaterThan(0);
   });
 
   it("dedups same (event, field, detected_by) within 24h", async () => {

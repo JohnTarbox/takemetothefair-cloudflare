@@ -50,6 +50,7 @@ import { runRosterResearchNotice } from "./roster-research-notice.js";
 import { runInboundExceptionNotice } from "./inbound-exception-notice.js";
 import { runPromoterEnrichmentNotice } from "./promoter-enrichment-notice.js";
 import { runScheduledSelfConsistencyCron } from "./goodwill/self-consistency-cron.js";
+import { runScheduledQueueRerank } from "./goodwill/queue-ranking.js";
 import { runScheduledGoodwillHealthCanary } from "./goodwill/health-canary.js";
 import { runScheduledHoldoutSampling } from "./goodwill/holdout-sampling.js";
 import { logError } from "./logger.js";
@@ -1616,6 +1617,15 @@ export default {
         // wrapped Db directly per [[feedback_drizzle_d1_unit_test_inject_db]].
         runScheduledStalePageRadar(getDb(env.DB)).then(() => undefined),
         runScheduledSelfConsistencyCron(getDb(env.DB)).then(() => undefined),
+        // OPE-245 (2026-07-17) — GW1d outreach-queue rank safety net. The
+        // ranker shipped in PR #317 but nothing on the capture path ever
+        // called it, so all 6,121 open discrepancies were NULL-scored from
+        // ship (a FAM-silent-no-op instance). captureDiscrepancy now scores at
+        // write time; this bounded onlyMissing pass catches anything that
+        // slips through so the all-NULL queue can't silently return. NOT a full
+        // view-count refresh (GW1d defers that) — processes ≈0 rows/night once
+        // write-time scoring holds. Cosmetic-failsoft like its siblings.
+        runScheduledQueueRerank(getDb(env.DB)).then(() => undefined),
         // GW1e (2026-06-02) — daily goodwill-health canary mirrors the
         // dedup-sweep-canary pattern from PR #306. Writes the snapshot,
         // dispatches RED on +1 open growth day-over-day, YELLOW on

@@ -23,7 +23,7 @@ import { jsonContent, sanitizeProse } from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 import { updateReliability } from "../goodwill/scoring.js";
-import { computeOutreachPriorityScore, rerankOpenQueueBatch } from "../goodwill/queue-ranking.js";
+import { initialCaptureScore, rerankOpenQueueBatch } from "../goodwill/queue-ranking.js";
 
 const FIELD_CLASS_VALUES = [
   "date",
@@ -254,15 +254,13 @@ export function registerDiscrepancyTools(server: McpServer, db: Db, auth: AuthCo
         }
       };
 
-      // Compute the initial outreach_priority_score from the inputs.
-      // The divergent-source reliability lookup happens in the rerank
-      // pass; for the initial insert we use a neutral 0.5 prior.
-      const initialScore = computeOutreachPriorityScore({
-        viewCount: null, // looked up in the rerank batch
-        divergentSourceReliability: null,
-        detectorConfidence: params.confidence ?? 0.9,
-        detectedAt: new Date(),
+      // Compute the initial outreach_priority_score. Shared with the automated
+      // capture path (OPE-245) via initialCaptureScore — neutral view-count /
+      // reliability priors; the rerank pass upgrades with the real view count.
+      const initialScore = initialCaptureScore({
         fieldClass: params.field_class,
+        confidence: params.confidence ?? 0.9,
+        detectedAt: new Date(),
       });
 
       await db.insert(eventDiscrepancies).values({
