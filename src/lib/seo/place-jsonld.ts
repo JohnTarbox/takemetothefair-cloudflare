@@ -18,6 +18,7 @@
  * `streetAddress` rather than emitting `null`.
  */
 import { displayVenueName } from "@/lib/venue-display";
+import { getStateName } from "@/lib/states";
 
 /** Venue fields the Place node reads. Superset-compatible with the event/venue rows. */
 export interface PlaceVenue {
@@ -47,6 +48,23 @@ export function buildPlaceJsonLd(
   fallbackStateCode?: string | null
 ): Record<string, unknown> {
   if (!venue) {
+    // OPE-244 #4 — a venue-less (statewide) event: emit an AdministrativeArea
+    // named for the state ("Maine" beats "Location to be announced") when we can
+    // resolve the code. AdministrativeArea is a schema.org Place subtype, so
+    // it's a valid Event `location`. Falls back to the generic Place only when
+    // there's no usable state code.
+    const stateName = getStateName(fallbackStateCode);
+    if (stateName) {
+      return {
+        "@type": "AdministrativeArea",
+        name: stateName,
+        address: {
+          "@type": "PostalAddress",
+          addressRegion: fallbackStateCode || undefined,
+          addressCountry: "US",
+        },
+      };
+    }
     return {
       "@type": "Place",
       name: "Location to be announced",
