@@ -56,11 +56,17 @@ export async function loadIndexNow(
   let total = 0;
   let success = 0;
   let failures = 0;
+  let deferred = 0;
   for (const r of todayRows) {
     total += r.c;
     if (r.status === "success") success += r.c;
     else if (r.status === "failure") failures += r.c;
+    // OPE-243: `skipped` = the circuit breaker deferred the submission (paused /
+    // 429-latched). A deferral is NOT a success — counting it as one is what let
+    // 20 days of silence read as green.
+    else if (r.status === "skipped") deferred += r.c;
   }
+  const attempts = success + failures; // rows where Bing was actually contacted
 
   let quota: BingIndexNowQuota | null = null;
   let quotaError: string | undefined;
@@ -74,8 +80,13 @@ export async function loadIndexNow(
 
   return {
     todaySubmissions: total,
-    todaySuccessRate: total > 0 ? success / total : 1,
+    // OPE-243: rate over ATTEMPTS (success+failure), not all rows. And when
+    // there were no attempts but deferrals piled up (breaker paused), that is
+    // NOT 100% success — it's a silent integration, so report 0. Only a truly
+    // idle day (no attempts, no deferrals) reads as healthy (1).
+    todaySuccessRate: attempts > 0 ? success / attempts : deferred > 0 ? 0 : 1,
     todayFailures: failures,
+    todayDeferred: deferred,
     quota,
     quotaError,
   };

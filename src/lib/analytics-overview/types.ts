@@ -72,8 +72,9 @@ export type SiteHealthCard = {
 
 export type IndexNowCard = {
   todaySubmissions: number;
-  todaySuccessRate: number; // 0..1
+  todaySuccessRate: number; // 0..1 — over attempts (success+failure); 0 when only deferrals (OPE-243)
   todayFailures: number;
+  todayDeferred: number; // OPE-243 — breaker-skipped (paused/latched) rows; deferral != success
   quota: BingIndexNowQuota | null;
   quotaError?: string;
 };
