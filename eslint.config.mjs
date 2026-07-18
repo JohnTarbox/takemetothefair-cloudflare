@@ -87,6 +87,21 @@ export default [
           message:
             "Raw hex color literals bypass the design system tokens (see src/app/globals.css). Use a Tailwind utility backed by a semantic token (bg-primary / text-foreground / bg-muted / etc.) or, for inline styles, var(--<token>) so dark-mode applies automatically. If this is a defensible escape hatch (chart viz, defensive inline styling above the root layout), file an allowlist override.",
         },
+        // OPE-242 (2026-07-17) — FAM-EMPTY-COLLECTION prevention. `arr.reduce(fn)`
+        // with NO initial value throws "Reduce of empty array with no initial
+        // value" the day `arr` is empty — a state-dependent crash that passes in
+        // dev/staging (table has rows) and only fires in prod on a cold-start
+        // empty table (OPE-58 was exactly this on /admin/vendor-claim-leaderboard).
+        // Pass an initial value (`.reduce(fn, 0)` / `.reduce(fn, {})`), or if the
+        // receiver is provably non-empty (literal array, or a length===0 guard
+        // above), disable this line with a one-line "// eslint-disable-next-line
+        // no-restricted-syntax — empty-safe because …" so the reviewer sees the
+        // justification. Highest-risk on server-rendered admin dashboards.
+        {
+          selector: "CallExpression[callee.property.name='reduce'][arguments.length=1]",
+          message:
+            "reduce() without an initial value throws on an empty array (FAM-EMPTY-COLLECTION, OPE-242). Pass an initial value, e.g. .reduce(fn, 0). If the array is provably non-empty, add `// eslint-disable-next-line no-restricted-syntax — empty-safe because <reason>`.",
+        },
       ],
     },
   },
@@ -113,6 +128,14 @@ export default [
             "JSXElement[openingElement.name.name=/^(button|a)$/] > JSXElement[openingElement.name.name='svg']",
           message:
             "Use IconButton (state changes) or IconLink (navigation) from @/components/ui/icon-button instead of raw <button><svg/>.",
+        },
+        // OPE-242 — re-declared here (FlatConfig replaces, not merges, the array)
+        // so admin dashboards — the HIGHEST-risk empty-collection surface — are
+        // still covered by the reduce-without-initial-value guard.
+        {
+          selector: "CallExpression[callee.property.name='reduce'][arguments.length=1]",
+          message:
+            "reduce() without an initial value throws on an empty array (FAM-EMPTY-COLLECTION, OPE-242). Pass an initial value, e.g. .reduce(fn, 0). If the array is provably non-empty, add `// eslint-disable-next-line no-restricted-syntax — empty-safe because <reason>`.",
         },
       ],
     },

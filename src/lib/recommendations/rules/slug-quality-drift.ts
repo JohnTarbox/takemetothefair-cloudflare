@@ -26,6 +26,7 @@ export const slugQualityDriftRule: RuleDefinition = {
   autoResolve: true,
   async run(db): Promise<ItemMatch[]> {
     // Build a SQL OR for trailing state-code suffixes
+    // eslint-disable-next-line no-restricted-syntax -- empty-safe: NE_STATE_SUFFIXES is a non-empty hardcoded literal (SQL OR-reducer, no neutral initial fragment)
     const stateSuffixOr = NE_STATE_SUFFIXES.map(
       (suf) => sql`LOWER(${events.slug}) LIKE ${"%" + suf}`
     ).reduce((acc, c) => sql`${acc} OR ${c}`);
