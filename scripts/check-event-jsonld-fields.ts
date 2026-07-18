@@ -58,8 +58,16 @@ require_("Place.address.addressCountry", placeAddr.addressCountry === "US");
 
 // A venueless event must STILL emit a Place (never a missing-location error).
 const placeFallback = buildPlaceJsonLd(null, "ME");
-require_("Place(null) still emits a Place", asObj(placeFallback)["@type"] === "Place");
+// OPE-244 #4 — a venue-less event with a known state now emits an
+// AdministrativeArea (a schema.org Place subtype, valid as Event.location);
+// without a state it stays a generic Place. Both satisfy Google's location req.
+require_(
+  "Place(null) emits a Place or AdministrativeArea",
+  ["Place", "AdministrativeArea"].includes(String(asObj(placeFallback)["@type"]))
+);
 require_("Place(null).name present", typeof asObj(placeFallback).name === "string");
+// The AdministrativeArea path is named for the state, not "to be announced".
+require_("Place(null,'ME').name is the state name", asObj(placeFallback).name === "Maine");
 
 // ── EventSeries template ────────────────────────────────────────────────────
 const series = buildEventSeriesJsonLd(

@@ -7,7 +7,7 @@
  * Source aggregator. The actual GSC sweep lives in src/lib/gsc-sweep.ts.
  */
 
-import { eq, and, isNull, or, sql, gte, desc } from "drizzle-orm";
+import { eq, and, isNull, or, sql, gte, desc, inArray } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import { healthIssues, healthIssueSnoozes, gscInspectionState } from "@/lib/db/schema";
 import * as schema from "@/lib/db/schema";
@@ -21,6 +21,19 @@ import { getSitemapStatus, type ScEnv } from "@/lib/search-console";
 type Db = DrizzleD1Database<typeof schema>;
 
 export type HealthSource = "BING_SCAN" | "BING_SITEMAP" | "GSC_SITEMAP" | "GSC_URL_INSPECTION";
+
+/**
+ * OPE-244 — the sources `collectFreshIssues` actually re-collects each refresh.
+ * The resolve loop below closes any OPEN row NOT in the fresh batch — so it may
+ * ONLY consider rows from these sources. `GSC_URL_INSPECTION` is produced by a
+ * SEPARATE path (`src/lib/gsc-sweep.ts`), never by `collectFreshIssues`, so
+ * including it here would auto-resolve every rich-result failure on every
+ * refresh without ever re-checking it (a page failing in Google would read as
+ * "resolved" within 24h). This is the A10 rich-results-signal-discarded family
+ * recurring by a new mechanism. Whenever a new source is added to
+ * `collectFreshIssues`, add it here too, or its rows will never auto-close.
+ */
+const COLLECTED_SOURCES: HealthSource[] = ["BING_SCAN", "BING_SITEMAP", "GSC_SITEMAP"];
 
 export type HealthSeverity = "ERROR" | "WARNING" | "NOTICE";
 
@@ -168,8 +181,14 @@ export async function refreshIssues(
   );
   const freshFingerprints = new Set(freshWithFp.map((f) => f.fingerprint));
 
-  // Pull current open issues
-  const openRows = await db.select().from(healthIssues).where(isNull(healthIssues.resolvedAt));
+  // Pull current open issues — ONLY for the sources this refresh re-collects
+  // (OPE-244). Rows from other sources (GSC_URL_INSPECTION, owned by gsc-sweep)
+  // must never be auto-resolved here just because they're absent from a batch
+  // that never contained them.
+  const openRows = await db
+    .select()
+    .from(healthIssues)
+    .where(and(isNull(healthIssues.resolvedAt), inArray(healthIssues.source, COLLECTED_SOURCES)));
   const openByFingerprint = new Map(openRows.map((r) => [r.fingerprint, r]));
 
   let inserted = 0;
