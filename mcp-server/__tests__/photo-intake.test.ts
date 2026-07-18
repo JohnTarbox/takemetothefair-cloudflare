@@ -10,6 +10,8 @@ import {
   handle as handlePhotoIntake,
   resolvePhotoEvent,
   slugCandidatesFromSubject,
+  eventSlugsFromSubjectUrl,
+  findEventBySubjectName,
 } from "../src/email-handlers/photo-intake.js";
 import { buildReply } from "../src/email-reply-builder.js";
 import type { HandlerCtx } from "../src/email-handlers/types.js";
@@ -78,7 +80,10 @@ describe("photo-intake handler gate (OPE-202/203)", () => {
     // OPE-203 behaviour change: OPE-202 ack'd everything from a trusted sender.
     // Now, with no override and no readable EXIF, we hold and ask rather than
     // imply we matched a fair.
-    const res = await handlePhotoIntake(envNoR2, ctx("pass", "trusted"), row());
+    // subject: null so the OPE-254 name-match stays query-free (the gate tests
+    // use a stub DB; the name-match path has its own real-SQLite coverage in
+    // the resolvePhotoEvent suite below).
+    const res = await handlePhotoIntake(envNoR2, ctx("pass", "trusted"), row({ subject: null }));
     expect(res.replyKind).toBe("photo-intake-unresolved");
     expect(res.replyParams?.holdReason).toBe("no-exif-gps");
     expect(res.resultingEventId).toBeNull();
@@ -89,6 +94,7 @@ describe("photo-intake handler gate (OPE-202/203)", () => {
       envNoR2,
       ctx("pass", "trusted"),
       row({
+        subject: null, // keep the gate test off the OPE-254 name-match DB path
         attachmentCount: 4,
         attachmentRefs: refs(["image/jpeg", "image/png", "application/pdf", "image/heic"]),
       })
@@ -105,6 +111,23 @@ describe("slugCandidatesFromSubject", () => {
     expect(slugCandidatesFromSubject("booth pics")).toEqual([]);
     expect(slugCandidatesFromSubject("Photos from the fair")).toEqual([]);
     expect(slugCandidatesFromSubject(null)).toEqual([]);
+  });
+});
+
+describe("eventSlugsFromSubjectUrl (OPE-254)", () => {
+  it("extracts the slug from a pasted /events/<slug> URL", () => {
+    expect(
+      eventSlugsFromSubjectUrl("Re: your photos — https://meetmeatthefair.com/events/fryeburg-fair")
+    ).toEqual(["fryeburg-fair"]);
+  });
+  it("is case-insensitive and finds multiple", () => {
+    expect(
+      eventSlugsFromSubjectUrl("/Events/Oxford-County-Fair and /events/skowhegan-state-fair")
+    ).toEqual(["oxford-county-fair", "skowhegan-state-fair"]);
+  });
+  it("yields nothing for prose with no /events/ URL", () => {
+    expect(eventSlugsFromSubjectUrl("booth pics from the fair")).toEqual([]);
+    expect(eventSlugsFromSubjectUrl(null)).toEqual([]);
   });
 });
 
@@ -198,6 +221,71 @@ describe("resolvePhotoEvent (OPE-203, real SQLite)", () => {
     expect(resolution.status).toBe("resolved");
     if (resolution.status !== "resolved") return;
     expect(resolution.method).toBe("exif");
+  });
+
+  it("resolves the fair NAMED in the subject prose, without reading EXIF (OPE-254)", async () => {
+    const { db } = createTestDb();
+    await seed(db as unknown as Db);
+    let exifRead = false;
+    const { resolution } = await resolvePhotoEvent(
+      db as unknown as Db,
+      [],
+      async () => {
+        exifRead = true;
+        return {};
+      },
+      "Great photos from the Fryeburg Fair last weekend!"
+    );
+    expect(resolution.status).toBe("resolved");
+    if (resolution.status !== "resolved") return;
+    expect(resolution.eventId).toBe("e1");
+    expect(resolution.method).toBe("override");
+    expect(exifRead).toBe(false); // named fair short-circuits before R2
+  });
+
+  it("prose naming no fair falls through to EXIF, not a wrong name match (OPE-254)", async () => {
+    const { db } = createTestDb();
+    await seed(db as unknown as Db);
+    const { resolution } = await resolvePhotoEvent(
+      db as unknown as Db,
+      [],
+      exifAt("2026-10-04"),
+      "here are some booth pics from the fair"
+    );
+    expect(resolution.status).toBe("resolved");
+    if (resolution.status !== "resolved") return;
+    expect(resolution.method).toBe("exif");
+  });
+
+  it("HOLDS when the subject names two independent fairs (ambiguous) (OPE-254)", async () => {
+    const { db } = createTestDb();
+    await seed(db as unknown as Db);
+    // A second APPROVED fair whose slug is also spelled out in the subject.
+    await db.insert(events).values({
+      id: "e2",
+      name: "Skowhegan State Fair",
+      slug: "skowhegan-state-fair" as never,
+      promoterId: "p1",
+      status: "APPROVED",
+      isStatewide: true,
+      stateCode: "ME",
+      startDate: new Date("2026-08-13T00:00:00Z"),
+      endDate: new Date("2026-08-22T00:00:00Z"),
+    } as never);
+    const { resolution } = await resolvePhotoEvent(
+      db as unknown as Db,
+      [],
+      async () => ({}), // no EXIF → an ambiguous name match must land as a hold
+      "Photos from the Fryeburg Fair and the Skowhegan State Fair"
+    );
+    expect(resolution).toMatchObject({ status: "held", reason: "no-exif-gps" });
+  });
+
+  it("findEventBySubjectName ignores a subject with no slug-able content", async () => {
+    const { db } = createTestDb();
+    await seed(db as unknown as Db);
+    expect(await findEventBySubjectName(db as unknown as Db, "!!! ...")).toBeNull();
+    expect(await findEventBySubjectName(db as unknown as Db, null)).toBeNull();
   });
 
   it("does not match a DRAFT/PENDING event — holds instead of attributing", async () => {

@@ -35,11 +35,11 @@
  */
 import { events, eventDays, venues } from "../schema.js";
 import { getDb, type Db } from "../db.js";
-import { and, eq, inArray, isNull, isNotNull, gte, lte } from "drizzle-orm";
+import { and, eq, inArray, isNull, isNotNull, gte, lte, sql } from "drizzle-orm";
 import type { HandlerFn, HandlerEnv, HandlerResult } from "./types.js";
 import { parsePlusSegment } from "../email-intents.js";
 import { logError } from "../logger.js";
-import { chunkedInArray } from "@takemetothefair/utils";
+import { chunkedInArray, createSlug } from "@takemetothefair/utils";
 import { runBoothPipeline, type BoothPipelineResult } from "../photo/booth-pipeline.js";
 import { parseExif, type ExifData } from "../photo/exif.js";
 import {
@@ -96,8 +96,10 @@ function countPhotos(attachmentRefs: string | null, attachmentCount: number): nu
 /**
  * Slug-shaped tokens in a subject line, e.g. "Booths at fryeburg-fair" →
  * ["fryeburg-fair"]. Deliberately strict (must contain a hyphen and be
- * otherwise slug-clean) so a normal English subject yields nothing and we fall
- * through to EXIF rather than fuzzy-matching prose to a fair.
+ * otherwise slug-clean). A normal English subject yields nothing HERE — the
+ * fair NAME buried in prose is picked up separately by `findEventBySubjectName`
+ * (OPE-254), which matches an event's own slug intact against the slugified
+ * subject rather than fuzzy-matching arbitrary prose.
  */
 export function slugCandidatesFromSubject(subject: string | null): string[] {
   if (!subject) return [];
@@ -107,6 +109,80 @@ export function slugCandidatesFromSubject(subject: string | null): string[] {
     if (token.includes("-") && /^[a-z0-9]+(?:-[a-z0-9]+)+$/.test(token)) out.add(token);
   }
   return [...out];
+}
+
+/**
+ * OPE-254 — pull an event slug out of a pasted `/events/<slug>` URL in the
+ * subject. John's documented way to correct a hold is to reply with the fair's
+ * page URL; that URL must resolve exactly, not fall through to EXIF. Returns the
+ * slug(s) found (usually 0 or 1) for the exact `findOverrideEvent` lookup.
+ */
+export function eventSlugsFromSubjectUrl(subject: string | null): string[] {
+  if (!subject) return [];
+  const out = new Set<string>();
+  // `/events/<slug>` anywhere in the subject; slug is our canonical charset.
+  for (const m of subject.matchAll(/\/events\/([a-z0-9][a-z0-9-]*)/gi)) {
+    out.add(m[1].toLowerCase().replace(/-+$/g, ""));
+  }
+  return [...out];
+}
+
+/** Shortest slug we will accept as a NAME match. Single-word slugs ("fair",
+ *  "expo") are far too broad to attribute photos on, so a name match must be a
+ *  multi-word slug (has a hyphen) of at least this length. */
+const MIN_NAME_SLUG_LEN = 8;
+
+/**
+ * OPE-254 — resolve the fair when its NAME (not a bare slug token) appears in
+ * the subject, e.g. "Photos from the Waterford World's Fair" → the event whose
+ * slug is `waterford-worlds-fair`.
+ *
+ * Safe-by-construction rather than fuzzy: we slugify the WHOLE subject and keep
+ * only APPROVED, non-tombstone events whose OWN slug appears intact as a
+ * substring of that subject-slug (`subjectSlug LIKE '%'||slug||'%'`). Because
+ * `createSlug` normalises punctuation/apostrophes/`&` identically on both sides,
+ * "World's" in the subject and the stored `worlds` slug line up. The length +
+ * hyphen guard blocks one-word slugs from matching prose.
+ *
+ * Ambiguity HOLDS (returns null): if the subject spells out two INDEPENDENT
+ * fair names (neither slug a substring of the other, e.g. "Fryeburg Fair and
+ * Skowhegan Fair"), we can't tell which and must ask — the same safe direction
+ * as no-GPS. A more-specific name that happens to contain a shorter one is not
+ * ambiguity: only the maximal (most specific) slug is kept.
+ */
+export async function findEventBySubjectName(
+  db: Db,
+  subject: string | null
+): Promise<{ id: string; name: string; slug: string } | null> {
+  if (!subject || !subject.trim()) return null;
+  const subjectSlug = createSlug(subject);
+  // createSlug of a subject with no slug-able characters is empty.
+  if (subjectSlug.length < MIN_NAME_SLUG_LEN) return null;
+
+  const rows = await db
+    .select({ id: events.id, name: events.name, slug: events.slug })
+    .from(events)
+    .where(
+      and(
+        eq(events.status, "APPROVED"),
+        isNull(events.mergedInto),
+        sql`length(${events.slug}) >= ${MIN_NAME_SLUG_LEN}`,
+        sql`${events.slug} LIKE '%-%'`,
+        // Event's own slug must appear intact inside the slugified subject.
+        // subjectSlug is [a-z0-9-] only, so it carries no LIKE wildcards.
+        sql`${subjectSlug} LIKE '%' || ${events.slug} || '%'`
+      )
+    );
+
+  if (rows.length === 0) return null;
+  // Keep only maximal matches: drop any slug that is a substring of another
+  // matched slug (the shorter, redundant spelling of the same name).
+  const maximal = rows.filter(
+    (r) => !rows.some((o) => o.slug !== r.slug && o.slug.includes(r.slug))
+  );
+  // Exactly one independent fair name in the subject → resolve. Two or more →
+  // genuinely ambiguous, hold and ask.
+  return maximal.length === 1 ? maximal[0] : null;
 }
 
 /** Read EXIF from the first image attachment that yields usable data.
@@ -274,12 +350,24 @@ async function findOverrideEvent(
 export async function resolvePhotoEvent(
   db: Db,
   overrideSlugs: string[],
-  readExifFn: () => Promise<ExifData>
+  readExifFn: () => Promise<ExifData>,
+  subject: string | null = null
 ): Promise<{ resolution: Resolution; exif: ExifData }> {
   const overrideEvent = await findOverrideEvent(db, overrideSlugs);
   if (overrideEvent) {
     return {
       resolution: resolveOccurrence({ overrideEvent, venues: [], events: [] }),
+      exif: {},
+    };
+  }
+
+  // OPE-254 — the fair NAMED in the subject (in prose, not as a bare slug)
+  // still beats EXIF/no-GPS-hold: John naming the fair is the documented
+  // override, and a subject that spells out the fair name IS naming it.
+  const namedEvent = await findEventBySubjectName(db, subject);
+  if (namedEvent) {
+    return {
+      resolution: resolveOccurrence({ overrideEvent: namedEvent, venues: [], events: [] }),
       exif: {},
     };
   }
@@ -343,14 +431,20 @@ export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> =
 
   const db = getDb(env.DB);
 
-  // Explicit override — plus-address first, then a slug in the subject.
+  // Explicit override — plus-address first, then a slug or pasted /events/<slug>
+  // URL in the subject. The fair NAMED in prose is handled inside
+  // resolvePhotoEvent (findEventBySubjectName), which needs the raw subject.
   const overrideSlugs = [
     ...(eventHint ? [eventHint] : []),
     ...slugCandidatesFromSubject(row.subject),
+    ...eventSlugsFromSubjectUrl(row.subject),
   ];
 
-  const { resolution, exif } = await resolvePhotoEvent(db, overrideSlugs, () =>
-    readExif(env, refs)
+  const { resolution, exif } = await resolvePhotoEvent(
+    db,
+    overrideSlugs,
+    () => readExif(env, refs),
+    row.subject
   );
 
   if (resolution.status === "resolved") {
