@@ -18,6 +18,8 @@ import { createTestDb, type TestDb, CapturingMcpServer } from "./setup-db.js";
 import {
   computeOutreachPriorityScore,
   rerankOpenQueueBatch,
+  runScheduledQueueRerank,
+  initialCaptureScore,
   QUEUE_RANK_WEIGHTS,
 } from "../src/goodwill/queue-ranking.js";
 import { registerDiscrepancyTools } from "../src/tools/admin-discrepancies.js";
@@ -197,6 +199,60 @@ describe("rerankOpenQueueBatch", () => {
     } else {
       expect(ranked[0].candidate).toBe(false);
     }
+  });
+
+  it("OPE-245: onlyMissing skips the already-scored fresh row", async () => {
+    // Default path re-ranks null-score OR >24h; onlyMissing must touch ONLY
+    // the null-score row, leaving the freshly-scored 0.5 row untouched.
+    const result = await rerankOpenQueueBatch(db, { limit: 100, onlyMissing: true });
+    expect(result.updated).toBe(1);
+    const fresh = await db
+      .select({ score: eventDiscrepancies.outreachPriorityScore })
+      .from(eventDiscrepancies)
+      .where(eq(eventDiscrepancies.id, "d-already-fresh"));
+    expect(fresh[0].score).toBe(0.5); // unchanged
+  });
+
+  it("OPE-245: runScheduledQueueRerank drains all missing scores", async () => {
+    const result = await runScheduledQueueRerank(db, { batchSize: 1, maxBatches: 5 });
+    expect(result.updated).toBe(1); // only d-needs-rank lacked a score
+    const remaining = await db
+      .select({ id: eventDiscrepancies.id })
+      .from(eventDiscrepancies)
+      .where(eq(eventDiscrepancies.outreachPriorityScore, null as unknown as number));
+    // No open row should still be null-scored.
+    const nulls = await db.select().from(eventDiscrepancies);
+    expect(nulls.every((r) => r.outreachPriorityScore !== null)).toBe(true);
+    expect(remaining.length).toBe(0);
+  });
+});
+
+describe("initialCaptureScore (OPE-245)", () => {
+  it("is non-null and in [0,1] — the whole point (no more NULL on insert)", () => {
+    const s = initialCaptureScore({ fieldClass: "date", confidence: 0.9, detectedAt: new Date() });
+    expect(s).toBeGreaterThan(0);
+    expect(s).toBeLessThanOrEqual(1);
+  });
+
+  it("matches computeOutreachPriorityScore with neutral view/reliability priors", () => {
+    const detectedAt = new Date();
+    const via = initialCaptureScore({ fieldClass: "venue", confidence: 0.7, detectedAt });
+    const direct = computeOutreachPriorityScore({
+      viewCount: null,
+      divergentSourceReliability: null,
+      detectorConfidence: 0.7,
+      detectedAt,
+      fieldClass: "venue",
+    });
+    expect(via).toBe(direct);
+  });
+
+  it("stays below the 0.6 candidate threshold without a view count", () => {
+    // By design: a discrepancy only becomes an outreach candidate once the
+    // event's traffic is factored in by the rerank pass. Highest-severity,
+    // freshest, most-confident case still can't cross 0.6 on priors alone.
+    const s = initialCaptureScore({ fieldClass: "date", confidence: 1, detectedAt: new Date() });
+    expect(s).toBeLessThan(0.6);
   });
 });
 

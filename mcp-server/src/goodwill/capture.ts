@@ -18,6 +18,9 @@ import { and, eq, gte } from "drizzle-orm";
 import { eventDiscrepancies } from "../schema.js";
 import type { Db } from "../db.js";
 import { logError } from "../logger.js";
+import { initialCaptureScore } from "./queue-ranking.js";
+
+const OUTREACH_CANDIDATE_THRESHOLD = 0.6;
 
 /** field_class enum (mirrors the SQL column). */
 export type FieldClass = "date" | "hours" | "venue" | "status" | "price" | "existence" | "name";
@@ -90,12 +93,25 @@ export async function captureDiscrepancy(
     if (existing.length > 0) return null;
 
     const id = crypto.randomUUID();
+    const detectedAt = new Date();
+    // OPE-245 — score at write time. Previously this insert set no
+    // outreach_priority_score (defaulting NULL) and outreachCandidate=false, so
+    // EVERY automated discrepancy (self_consistency / stale_page_radar /
+    // ingest_addverify / holdout_sample all funnel through here) was unranked
+    // from ship — the GW1d ranker existed but nothing on the capture path
+    // called it. Neutral view-count/reliability priors keep this a single
+    // INSERT; the batched rerank upgrades the score with real view counts.
+    const initialScore = initialCaptureScore({
+      fieldClass: args.fieldClass,
+      confidence: args.confidence,
+      detectedAt,
+    });
     await db.insert(eventDiscrepancies).values({
       id,
       eventId: args.eventId,
       fieldClass: args.fieldClass,
       detectedBy: args.detectedBy,
-      detectedAt: new Date(),
+      detectedAt,
       authoritativeValue: args.authoritativeValue ?? null,
       authoritativeSourceKey: args.authoritativeSourceKey ?? null,
       authoritativeSourceUrl: args.authoritativeSourceUrl ?? null,
@@ -105,7 +121,8 @@ export async function captureDiscrepancy(
       confidence: args.confidence ?? null,
       notes: args.notes ?? null,
       resolutionStatus: "open",
-      outreachCandidate: false,
+      outreachPriorityScore: initialScore,
+      outreachCandidate: initialScore >= OUTREACH_CANDIDATE_THRESHOLD,
     });
     return id;
   } catch (err) {

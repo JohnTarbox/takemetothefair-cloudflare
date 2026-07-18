@@ -123,6 +123,36 @@ export function computeOutreachPriorityScore(inputs: RankInputs): number {
 }
 
 /**
+ * OPE-245 — the write-time initial score, shared by every capture path
+ * (`captureDiscrepancy` for the automated detectors + the manual
+ * `create_discrepancy` MCP tool) so a discrepancy is NEVER inserted with a
+ * NULL score again. That NULL-on-insert was the whole bug: `captureDiscrepancy`
+ * set `outreachCandidate: false` and omitted the score, so all 6,121 open rows
+ * were unranked from ship.
+ *
+ * Uses neutral priors for the two inputs that need a DB read — `viewCount`
+ * (from `events`) and `divergentSourceReliability` (from `source_reliability`)
+ * — so the capture path stays a single INSERT with no extra round-trips on a
+ * hot cron path. The batched `rerankOpenQueueBatch` later upgrades the score
+ * with the real view count (a null-prior score can't cross the 0.6 candidate
+ * threshold on its own, by design — a discrepancy only becomes an outreach
+ * candidate once its event's traffic is factored in).
+ */
+export function initialCaptureScore(args: {
+  fieldClass: string | null | undefined;
+  confidence: number | null | undefined;
+  detectedAt: Date;
+}): number {
+  return computeOutreachPriorityScore({
+    viewCount: null, // upgraded by rerankOpenQueueBatch
+    divergentSourceReliability: null, // neutral prior until the learner has data
+    detectorConfidence: args.confidence,
+    detectedAt: args.detectedAt,
+    fieldClass: args.fieldClass,
+  });
+}
+
+/**
  * Batched re-rank for the open queue. Joins event_discrepancies →
  * events (for view_count) → source_reliability (for the divergent
  * source's accuracy score) and writes the computed score back into
@@ -144,10 +174,22 @@ const OUTREACH_CANDIDATE_THRESHOLD = 0.6;
 
 export async function rerankOpenQueueBatch(
   db: Db,
-  opts: { limit?: number } = {}
+  opts: { limit?: number; onlyMissing?: boolean } = {}
 ): Promise<RerankResult> {
   const limit = opts.limit ?? 200;
   const result: RerankResult = { scanned: 0, updated: 0, outreach_candidates: 0 };
+
+  // `onlyMissing` (OPE-245): score ONLY rows that lack a score. Used by the
+  // daily safety-net cron so it's a bounded catch-up (≈0 rows once write-time
+  // scoring is live), not a re-rank of the whole queue every night. The default
+  // (null-score OR detected >24h ago) is kept for the manual backfill/refresh
+  // via the rerank_outreach_queue tool.
+  const selection = opts.onlyMissing
+    ? sql`${eventDiscrepancies.outreachPriorityScore} IS NULL`
+    : sql`(
+        ${eventDiscrepancies.outreachPriorityScore} IS NULL
+        OR ${eventDiscrepancies.detectedAt} < unixepoch() - 86400
+      )`;
 
   const rows = await db
     .select({
@@ -161,39 +203,38 @@ export async function rerankOpenQueueBatch(
     })
     .from(eventDiscrepancies)
     .innerJoin(events, eq(eventDiscrepancies.eventId, events.id))
-    .where(
-      and(
-        eq(eventDiscrepancies.resolutionStatus, "open"),
-        // Only re-rank rows that don't already have a score, OR rows
-        // older than 1 day (so daily refresh picks them up).
-        sql`(
-          ${eventDiscrepancies.outreachPriorityScore} IS NULL
-          OR ${eventDiscrepancies.detectedAt} < unixepoch() - 86400
-        )`
-      )
-    )
+    .where(and(eq(eventDiscrepancies.resolutionStatus, "open"), selection))
+    // OPE-245: unscored rows first, so a bounded pass always makes progress on
+    // the actual gap before spending its budget re-refreshing scored rows.
+    .orderBy(sql`${eventDiscrepancies.outreachPriorityScore} IS NULL DESC`)
     .limit(limit);
 
   result.scanned = rows.length;
+  if (rows.length === 0) return result;
 
-  // Batch-resolve the divergent-source reliability scores for the
-  // (source_key, field_class, axis='accuracy') tuples we need.
+  // OPE-245: preload the (accuracy-axis) source_reliability table into a Map
+  // instead of one SELECT per row. The table is tiny (1 row at time of writing)
+  // and the divergent-source key set per batch is small, so a single read
+  // replaces up to `limit` reads — the N+1 that made a 500-row backfill risk
+  // the Worker subrequest budget. Key = `${sourceKey}::${fieldClass}`.
+  const reliabilityByKey = new Map<string, number>();
+  const allReliability = await db
+    .select({
+      sourceKey: sourceReliability.sourceKey,
+      fieldClass: sourceReliability.fieldClass,
+      score: sourceReliability.score,
+    })
+    .from(sourceReliability)
+    .where(eq(sourceReliability.axis, "accuracy"));
+  for (const r of allReliability) {
+    if (r.score != null) reliabilityByKey.set(`${r.sourceKey}::${r.fieldClass}`, r.score);
+  }
+
   for (const row of rows) {
-    let divergentScore: number | null = null;
-    if (row.divergentSourceKey) {
-      const reliabilityRow = await db
-        .select({ score: sourceReliability.score })
-        .from(sourceReliability)
-        .where(
-          and(
-            eq(sourceReliability.sourceKey, row.divergentSourceKey),
-            eq(sourceReliability.fieldClass, row.fieldClass),
-            eq(sourceReliability.axis, "accuracy")
-          )
-        )
-        .limit(1);
-      divergentScore = reliabilityRow[0]?.score ?? null;
-    }
+    const divergentScore =
+      row.divergentSourceKey != null
+        ? (reliabilityByKey.get(`${row.divergentSourceKey}::${row.fieldClass}`) ?? null)
+        : null;
 
     const score = computeOutreachPriorityScore({
       viewCount: row.viewCount,
@@ -217,4 +258,32 @@ export async function rerankOpenQueueBatch(
   }
 
   return result;
+}
+
+/**
+ * OPE-245 — daily maintenance: score any open discrepancy that slipped through
+ * write-time scoring. Loops bounded `onlyMissing` batches so a future capture
+ * path that forgets to score can't silently reintroduce the all-NULL queue.
+ *
+ * Deliberately NOT a full view-count refresh — the GW1d spec defers that until
+ * view counts stabilize. This is a safety net: once every capture path scores
+ * at write time, it processes ≈0 rows/night. Bounded by `maxBatches` so it
+ * can't run away on a bad day. Failsoft: the daily cron caller wraps this and a
+ * throw here would abort its Promise.all siblings.
+ */
+export async function runScheduledQueueRerank(
+  db: Db,
+  opts: { batchSize?: number; maxBatches?: number } = {}
+): Promise<RerankResult> {
+  const batchSize = opts.batchSize ?? 200;
+  const maxBatches = opts.maxBatches ?? 5;
+  const total: RerankResult = { scanned: 0, updated: 0, outreach_candidates: 0 };
+  for (let i = 0; i < maxBatches; i++) {
+    const batch = await rerankOpenQueueBatch(db, { limit: batchSize, onlyMissing: true });
+    total.scanned += batch.scanned;
+    total.updated += batch.updated;
+    total.outreach_candidates += batch.outreach_candidates;
+    if (batch.updated === 0) break; // drained
+  }
+  return total;
 }
