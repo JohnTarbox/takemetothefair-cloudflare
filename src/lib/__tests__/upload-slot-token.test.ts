@@ -189,6 +189,17 @@ describe("upload-slot-token", () => {
       const claims = await consumeUploadSlot(kv, issued.token);
       expect(claims).toMatchObject({ targetType: "promoter", imageRole: "hero" });
     });
+
+    it("round-trips an event GALLERY slot (OPE-254 — role must survive, not coerce to hero)", async () => {
+      const issued = await issueUploadSlot(kv, {
+        targetType: "event",
+        targetId: "event-1",
+        imageRole: "gallery",
+        issuedBy: "admin",
+      });
+      const claims = await consumeUploadSlot(kv, issued.token);
+      expect(claims).toMatchObject({ targetType: "event", imageRole: "gallery" });
+    });
   });
 
   describe("peekUploadSlot (test-only)", () => {
