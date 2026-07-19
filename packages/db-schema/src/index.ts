@@ -3023,6 +3023,20 @@ export const inboundEmails = sqliteTable(
      *  from rich-content extract failures (the AI just couldn't parse the
      *  layout). NULL on pre-K7 rows. Added drizzle/0094. */
     contentLengthChars: integer("content_length_chars"),
+    /** RFC 5322 `In-Reply-To` header, verbatim (e.g. `<abc@mail.gmail.com>`).
+     *  Parsed by PostalMime and, pre-OPE-254, consumed only by the intent
+     *  fast-path then dropped. Persisted now so a handler can thread a reply
+     *  back to the inbound it answers — specifically the photo-intake
+     *  reply→resolve path, which matches these ids against `message_id` of a
+     *  held `photo-intake-unresolved` parent. NULL when the sender sent none.
+     *  Added drizzle/0162. */
+    inReplyTo: text("in_reply_to"),
+    /** RFC 5322 `References` header, verbatim — the full space-separated
+     *  Message-ID chain of the thread. Our outbound reply sets
+     *  `References`=the inbound Message-ID (OPE-163), so a reply to it carries
+     *  the ORIGINAL inbound's id here even when `In-Reply-To` points at our
+     *  bounce. NULL when absent. Added drizzle/0162. */
+    emailReferences: text("email_references"),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   },
   (t) => [

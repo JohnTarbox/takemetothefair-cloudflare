@@ -52,6 +52,7 @@ import { unsafeSlug } from "../helpers.js";
 import { eq, isNotNull } from "drizzle-orm";
 import { combinedSimilarity } from "@takemetothefair/utils";
 import type { HandlerFn, HandlerResult } from "./types.js";
+import { resolveHeldPhotosFromReply } from "../photo/resolve-held-photos.js";
 
 const SLUG_URL_RE = /https?:\/\/(?:www\.)?meetmeatthefair\.com\/events\/([a-z0-9][a-z0-9-]*)/i;
 
@@ -63,8 +64,31 @@ const CANDIDATE_THRESHOLD = 0.75;
 /** Cap on candidates surfaced in admin_actions payload. */
 const MAX_CANDIDATES = 5;
 
-export const handle: HandlerFn = async (env, _ctx, row): Promise<HandlerResult> => {
+export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> => {
   const db = getDb(env.DB);
+
+  // OPE-254 Defect 2 — a reply naming the fair on a held photo-intake
+  // notification lands here as intent=correction. When it threads back to a
+  // held `photo-intake-unresolved` batch AND names a resolvable fair, resolve
+  // + attach those photos and reply with the outcome — no re-send needed.
+  // Returns null for everything else (normal corrections fall through).
+  const photo = await resolveHeldPhotosFromReply(env, db, ctx, row);
+  if (photo) {
+    return {
+      replyKind: "photo-intake-resolved",
+      replyParams: {
+        subject: row.subject ?? "",
+        resolvedEventName: photo.event.name,
+        resolvedEventSlug: photo.event.slug,
+        photoCount: photo.attached,
+        galleryAttached: photo.attached,
+        galleryFailed: photo.failed,
+        emailCount: photo.resolvedParents,
+      },
+      resultingEventId: photo.event.id,
+      status: "replied",
+    };
+  }
 
   const bodyForScan = `${row.subject ?? ""}\n${row.bodyTextExcerpt ?? ""}`;
   const slug = extractEventSlug(bodyForScan);

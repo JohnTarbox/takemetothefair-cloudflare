@@ -105,6 +105,12 @@ export type ReplyKind =
   // `photo-intake-held`, which means the SENDER wasn't trusted. This one asks
   // John to name the fair; that one tells him the mail was quarantined.
   | "photo-intake-unresolved"
+  // OPE-254 Defect 2 — a reply naming the fair resolved one or more held
+  // `photo-intake-unresolved` batches: photos were attached to the event
+  // gallery. Confirms the match + counts, so John knows the recovery worked
+  // without re-sending. Sent by the correction handler, not the photo-intake
+  // one, because the reply lands as intent=correction.
+  | "photo-intake-resolved"
   // UR1 Phase 1 (2026-06-04) — problem-report intake ack. Reassures the
   // sender that the report landed AND that operators get HIGH-priority
   // visibility when the report co-occurs with an active outage.

@@ -31,6 +31,7 @@ import { registerSendTestEmailTool } from "./tools/admin-send-test-email.js";
 import { registerSendNewsletterBroadcastTool } from "./tools/admin-send-newsletter-broadcast.js";
 import { registerCreateClaimInviteTool } from "./tools/admin-claim-invite.js";
 import { registerClaimReviewTools } from "./tools/admin-claim-review.js";
+import { registerResolveHeldPhotosTool } from "./tools/admin-resolve-held-photos.js";
 import { registerAnalyticsTools } from "./tools/analytics.js";
 import { registerBlogTools } from "./tools/blog.js";
 import { registerContentLinksTools } from "./tools/content-links.js";
@@ -55,7 +56,8 @@ import { runScheduledGoodwillHealthCanary } from "./goodwill/health-canary.js";
 import { runScheduledHoldoutSampling } from "./goodwill/holdout-sampling.js";
 import { logError } from "./logger.js";
 import { inboundEmails } from "./schema.js";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
+import { resolveHeldPhotoEmail } from "./photo/resolve-held-photos.js";
 import type { SchemaOrgSyncParams } from "./workflows/schema-org-sync.js";
 import type { RecommendationsScanParams } from "./workflows/recommendations-scan.js";
 import type { EventDateDriftParams } from "./workflows/event-date-drift.js";
@@ -326,6 +328,8 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
         // + list_claims / approve_claim / reject_claim (review queue).
         registerCreateClaimInviteTool(this.server, db, auth, this.env);
         registerClaimReviewTools(this.server, db, auth);
+        // OPE-254 (2026-07-18) — resolve_held_photos (recover held photo batches).
+        registerResolveHeldPhotosTool(this.server, db, auth, this.env);
         groups.admin = diff(before);
 
         before = snapshot();
@@ -590,6 +594,7 @@ async function handleLegacyMcpRequest(request: Request, env: Env): Promise<Respo
       registerSendNewsletterBroadcastTool(server, db, auth, env);
       registerCreateClaimInviteTool(server, db, auth, env);
       registerClaimReviewTools(server, db, auth);
+      registerResolveHeldPhotosTool(server, db, auth, env);
       registerAnalyticsTools(server, auth, env);
       registerBlogTools(server, db, auth, env);
       registerContentLinksTools(server, db, auth, env);
@@ -1188,6 +1193,58 @@ async function handleInternalApi(request: Request, env: Env, url: URL): Promise<
       status: 401,
       headers: { "Content-Type": "application/json" },
     });
+  }
+
+  // POST /api/admin/internal/photo-intake/resolve-held — OPE-254 rescue.
+  // The one-shot admin resolve for held `photo-intake-unresolved` batches whose
+  // fair is now known: attach each email's photos to `eventId`'s gallery and
+  // mark it resolved. Same shared core the reply→resolve handler uses; exists
+  // for the already-stranded batches whose original replies predate that
+  // handler. Idempotent per row via resulting_event_id.
+  if (
+    url.pathname === "/api/admin/internal/photo-intake/resolve-held" &&
+    request.method === "POST"
+  ) {
+    let body: { emailIds?: unknown; eventId?: unknown };
+    try {
+      body = (await request.json()) as typeof body;
+    } catch {
+      return jsonResponse({ error: "invalid_json" }, 400);
+    }
+    const eventId = typeof body.eventId === "string" ? body.eventId : "";
+    const emailIds = Array.isArray(body.emailIds)
+      ? body.emailIds.filter((s): s is string => typeof s === "string" && s.length > 0)
+      : [];
+    if (!eventId || emailIds.length === 0) {
+      return jsonResponse({ error: "eventId and non-empty emailIds[] required" }, 400);
+    }
+
+    const db = getDb(env.DB);
+    const rows = await db
+      .select({
+        id: inboundEmails.id,
+        attachmentRefs: inboundEmails.attachmentRefs,
+        resultingEventId: inboundEmails.resultingEventId,
+      })
+      .from(inboundEmails)
+      .where(inArray(inboundEmails.id, emailIds));
+    const byId = new Map(rows.map((r) => [r.id, r]));
+
+    const results: Array<Record<string, unknown>> = [];
+    let totalAttached = 0;
+    let totalFailed = 0;
+    for (const id of emailIds) {
+      const row = byId.get(id);
+      if (!row) {
+        results.push({ id, error: "not-found" });
+        continue;
+      }
+      const r = await resolveHeldPhotoEmail(env, db, row, eventId);
+      totalAttached += r.attached;
+      totalFailed += r.failed;
+      results.push({ id, ...r });
+    }
+    return jsonResponse({ eventId, totalAttached, totalFailed, results });
   }
 
   // POST /api/admin/internal/enqueue-email — proxy for Pages' enqueueEmail().
