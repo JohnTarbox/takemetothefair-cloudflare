@@ -31,6 +31,7 @@ import { registerSendTestEmailTool } from "./tools/admin-send-test-email.js";
 import { registerSendNewsletterBroadcastTool } from "./tools/admin-send-newsletter-broadcast.js";
 import { registerCreateClaimInviteTool } from "./tools/admin-claim-invite.js";
 import { registerClaimReviewTools } from "./tools/admin-claim-review.js";
+import { registerResolveHeldPhotosTool } from "./tools/admin-resolve-held-photos.js";
 import { registerAnalyticsTools } from "./tools/analytics.js";
 import { registerBlogTools } from "./tools/blog.js";
 import { registerContentLinksTools } from "./tools/content-links.js";
@@ -327,6 +328,8 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
         // + list_claims / approve_claim / reject_claim (review queue).
         registerCreateClaimInviteTool(this.server, db, auth, this.env);
         registerClaimReviewTools(this.server, db, auth);
+        // OPE-254 (2026-07-18) — resolve_held_photos (recover held photo batches).
+        registerResolveHeldPhotosTool(this.server, db, auth, this.env);
         groups.admin = diff(before);
 
         before = snapshot();
@@ -591,6 +594,7 @@ async function handleLegacyMcpRequest(request: Request, env: Env): Promise<Respo
       registerSendNewsletterBroadcastTool(server, db, auth, env);
       registerCreateClaimInviteTool(server, db, auth, env);
       registerClaimReviewTools(server, db, auth);
+      registerResolveHeldPhotosTool(server, db, auth, env);
       registerAnalyticsTools(server, auth, env);
       registerBlogTools(server, db, auth, env);
       registerContentLinksTools(server, db, auth, env);
