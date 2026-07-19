@@ -38,7 +38,7 @@ import {
   PIPELINE_MAX_BYTES,
   type PipelineTargetType,
 } from "@/lib/upload-image-pipeline";
-import { issueUploadSlot } from "@/lib/upload-slot-token";
+import { issueUploadSlot, type UploadImageRole } from "@/lib/upload-slot-token";
 
 interface SlotRequestBody {
   target_type?: string;
@@ -81,8 +81,13 @@ export async function POST(request: NextRequest) {
   const targetType = body.target_type as PipelineTargetType | undefined;
   const targetId = body.target_id;
   const caption = typeof body.caption === "string" ? body.caption.slice(0, 200) : null;
-  // OPE-33 — promoter logo-vs-hero target, fixed into the slot at mint time.
-  const imageRole: "logo" | "hero" = body.image_role === "hero" ? "hero" : "logo";
+  // Image slot fixed into the token at mint time. OPE-33 — promoter logo-vs-hero;
+  // OPE-212/OPE-254 — "gallery" appends an event_photos/vendor_photos row instead
+  // of overwriting the hero. Mirror upload-image-bytes' role parse: anything not
+  // "hero"/"gallery" falls back to "logo". (The prior code dropped "gallery" here,
+  // silently coercing a gallery upload into a hero/logo overwrite.)
+  const imageRole: UploadImageRole =
+    body.image_role === "hero" ? "hero" : body.image_role === "gallery" ? "gallery" : "logo";
 
   if (!targetType || !["event", "vendor", "venue", "promoter"].includes(targetType)) {
     return NextResponse.json(
