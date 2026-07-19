@@ -496,6 +496,29 @@ ${SUPPORT_LINE}
 
 ${SIGN_OFF}`;
     }
+    // OPE-254 Defect 2 — a reply naming the fair recovered one or more held
+    // photo batches; the photos were attached to the event gallery.
+    case "photo-intake-resolved": {
+      const name = (params.resolvedEventName as string | undefined) ?? "the fair";
+      const attached = Number(params.galleryAttached ?? 0);
+      const failed = Number(params.galleryFailed ?? 0);
+      const emails = Number(params.emailCount ?? 0);
+      const photoNoun = attached === 1 ? "photo" : "photos";
+      const batchNote =
+        emails > 1 ? ` from ${emails} of your earlier messages` : emails === 1 ? " you sent" : "";
+      const failedLine =
+        failed > 0
+          ? `\n\n(${failed} ${failed === 1 ? "photo" : "photos"} couldn't be attached — we'll take a look.)`
+          : "";
+
+      return `Got it — thanks for naming the fair. We matched the ${photoNoun}${batchNote} to ${name} and added ${attached} ${photoNoun} to that event's gallery.${failedLine}
+
+Nothing you need to do — no need to resend.
+
+${SUPPORT_LINE}
+
+${SIGN_OFF}`;
+    }
     case "unsubscribe-ack": {
       return `You've been unsubscribed.
 

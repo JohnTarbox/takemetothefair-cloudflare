@@ -55,7 +55,8 @@ import { runScheduledGoodwillHealthCanary } from "./goodwill/health-canary.js";
 import { runScheduledHoldoutSampling } from "./goodwill/holdout-sampling.js";
 import { logError } from "./logger.js";
 import { inboundEmails } from "./schema.js";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
+import { resolveHeldPhotoEmail } from "./photo/resolve-held-photos.js";
 import type { SchemaOrgSyncParams } from "./workflows/schema-org-sync.js";
 import type { RecommendationsScanParams } from "./workflows/recommendations-scan.js";
 import type { EventDateDriftParams } from "./workflows/event-date-drift.js";
@@ -1188,6 +1189,58 @@ async function handleInternalApi(request: Request, env: Env, url: URL): Promise<
       status: 401,
       headers: { "Content-Type": "application/json" },
     });
+  }
+
+  // POST /api/admin/internal/photo-intake/resolve-held — OPE-254 rescue.
+  // The one-shot admin resolve for held `photo-intake-unresolved` batches whose
+  // fair is now known: attach each email's photos to `eventId`'s gallery and
+  // mark it resolved. Same shared core the reply→resolve handler uses; exists
+  // for the already-stranded batches whose original replies predate that
+  // handler. Idempotent per row via resulting_event_id.
+  if (
+    url.pathname === "/api/admin/internal/photo-intake/resolve-held" &&
+    request.method === "POST"
+  ) {
+    let body: { emailIds?: unknown; eventId?: unknown };
+    try {
+      body = (await request.json()) as typeof body;
+    } catch {
+      return jsonResponse({ error: "invalid_json" }, 400);
+    }
+    const eventId = typeof body.eventId === "string" ? body.eventId : "";
+    const emailIds = Array.isArray(body.emailIds)
+      ? body.emailIds.filter((s): s is string => typeof s === "string" && s.length > 0)
+      : [];
+    if (!eventId || emailIds.length === 0) {
+      return jsonResponse({ error: "eventId and non-empty emailIds[] required" }, 400);
+    }
+
+    const db = getDb(env.DB);
+    const rows = await db
+      .select({
+        id: inboundEmails.id,
+        attachmentRefs: inboundEmails.attachmentRefs,
+        resultingEventId: inboundEmails.resultingEventId,
+      })
+      .from(inboundEmails)
+      .where(inArray(inboundEmails.id, emailIds));
+    const byId = new Map(rows.map((r) => [r.id, r]));
+
+    const results: Array<Record<string, unknown>> = [];
+    let totalAttached = 0;
+    let totalFailed = 0;
+    for (const id of emailIds) {
+      const row = byId.get(id);
+      if (!row) {
+        results.push({ id, error: "not-found" });
+        continue;
+      }
+      const r = await resolveHeldPhotoEmail(env, db, row, eventId);
+      totalAttached += r.attached;
+      totalFailed += r.failed;
+      results.push({ id, ...r });
+    }
+    return jsonResponse({ eventId, totalAttached, totalFailed, results });
   }
 
   // POST /api/admin/internal/enqueue-email — proxy for Pages' enqueueEmail().

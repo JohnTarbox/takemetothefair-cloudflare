@@ -434,6 +434,10 @@ export async function handleInboundEmail(
             routedToWorkflow: null,
             flaggedForReview: routing.flaggedForReview ? 1 : 0,
             parentEmailId: null,
+            // OPE-254 — persist threading headers so a handler can match a
+            // reply back to the inbound it answers (e.g. photo-intake resolve).
+            inReplyTo: parsed.inReplyTo ?? null,
+            emailReferences: parsed.references ?? null,
             createdAt: now,
           })
           .onConflictDoNothing()
@@ -501,6 +505,10 @@ export async function handleInboundEmail(
             routedToWorkflow: null,
             flaggedForReview: r.flaggedForReview ? 1 : 0,
             parentEmailId: parentRowId,
+            // OPE-254 — see multi-parent insert above. The correction reply
+            // that names a held photo's fair lands here (single-intent path).
+            inReplyTo: parsed.inReplyTo ?? null,
+            emailReferences: parsed.references ?? null,
             createdAt: now,
           })
           .onConflictDoNothing()

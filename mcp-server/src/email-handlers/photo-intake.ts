@@ -51,7 +51,7 @@ import {
   type Resolution,
 } from "../photo/resolve-occurrence.js";
 
-interface AttachmentRef {
+export interface AttachmentRef {
   key: string;
   name: string;
   mimeType: string;
@@ -68,7 +68,7 @@ const MILES_PER_DEG_LAT = 69;
  */
 const MAX_EVENT_SPAN_DAYS = 60;
 
-function parseRefs(attachmentRefs: string | null): AttachmentRef[] {
+export function parseRefs(attachmentRefs: string | null): AttachmentRef[] {
   if (!attachmentRefs) return [];
   try {
     const refs = JSON.parse(attachmentRefs) as AttachmentRef[];
@@ -78,7 +78,7 @@ function parseRefs(attachmentRefs: string | null): AttachmentRef[] {
   }
 }
 
-function imageRefs(refs: AttachmentRef[]): AttachmentRef[] {
+export function imageRefs(refs: AttachmentRef[]): AttachmentRef[] {
   return refs.filter(
     (r) => typeof r?.mimeType === "string" && r.mimeType.toLowerCase().startsWith("image/")
   );
@@ -325,7 +325,7 @@ async function loadCandidateEvents(
 }
 
 /** Look up an explicitly-named event (plus-address or subject slug). */
-async function findOverrideEvent(
+export async function findOverrideEvent(
   db: Db,
   slugs: string[]
 ): Promise<{ id: string; name: string; slug: string } | null> {

@@ -828,6 +828,9 @@ const SCHEMA_SQL = `
     extract_fail_reason TEXT,
     content_sha256_first16 TEXT,
     content_length_chars INTEGER,
+    -- OPE-254 (2026-07-18) — drizzle/0162 inbound reply threading headers.
+    in_reply_to TEXT,
+    email_references TEXT,
     created_at INTEGER NOT NULL
   );
 
