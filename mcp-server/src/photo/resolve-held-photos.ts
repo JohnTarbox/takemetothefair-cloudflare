@@ -155,12 +155,12 @@ export async function resolveHeldPhotoEmail(
     return { attached: res.attached, failed: res.failed, skipped: false };
   }
   // Nothing attached — leave unresolved so it can be retried after the cause
-  // (misconfigured bindings / missing R2 object) is fixed.
+  // (misconfigured bindings / missing R2 object / upload rejection) is fixed.
   return {
     attached: 0,
     failed: res.failed,
     skipped: false,
-    reason: res.disabledReason ?? "attach-failed",
+    reason: res.disabledReason ?? res.failures?.[0] ?? "attach-failed",
   };
 }
 

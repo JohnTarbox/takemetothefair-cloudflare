@@ -65,25 +65,28 @@ describe("attachGeneralPhotos", () => {
     expect(calls[0].url).toBe("https://app.test/api/admin/upload-image-bytes");
   });
 
-  it("counts a failed upload instead of dropping it", async () => {
-    // The reply has to be able to tell John a photo didn't land.
+  it("counts a failed upload instead of dropping it, and says WHY (status)", async () => {
+    // The reply has to be able to tell John a photo didn't land — and the
+    // failure reason has to say why (OPE-254: 500 here), not just a count.
     const { fn } = fetchStub(false);
     const r = await attachGeneralPhotos(env({ MAIN_APP: { fetch: fn as never } }), "e1", [photo()]);
-    expect(r).toEqual({ attached: 0, failed: 1 });
+    expect(r).toMatchObject({ attached: 0, failed: 1 });
+    expect(r.failures?.[0]).toContain("upload-500");
   });
 
-  it("counts a missing R2 object as failed, not attached", async () => {
+  it("counts a missing R2 object as failed, not attached, with a missing-object reason", async () => {
     const { fn } = fetchStub();
     const r = await attachGeneralPhotos(
       env({ VENDOR_ASSETS: bucket(false), MAIN_APP: { fetch: fn as never } }),
       "e1",
       [photo()]
     );
-    expect(r).toEqual({ attached: 0, failed: 1 });
+    expect(r).toMatchObject({ attached: 0, failed: 1 });
+    expect(r.failures?.[0]).toContain("missing-r2-object");
     expect(fn).not.toHaveBeenCalled();
   });
 
-  it("one bad photo does not sink the batch", async () => {
+  it("one bad photo does not sink the batch (thrown error captured)", async () => {
     let n = 0;
     const fn = vi.fn(async () => {
       n++;
@@ -94,6 +97,7 @@ describe("attachGeneralPhotos", () => {
       photo("a.jpg"),
       photo("b.jpg"),
     ]);
-    expect(r).toEqual({ attached: 1, failed: 1 });
+    expect(r).toMatchObject({ attached: 1, failed: 1 });
+    expect(r.failures?.some((f) => f.includes("threw:network"))).toBe(true);
   });
 });

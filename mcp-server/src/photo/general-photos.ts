@@ -47,6 +47,9 @@ export interface GeneralPhotoResult {
   attached: number;
   /** Photos we tried but couldn't attach — reported, never silently dropped. */
   failed: number;
+  /** Per-failure reason (missing R2 object, upload-<status>, threw-<msg>), so a
+   *  non-zero `failed` says WHY, not just how many. Empty on full success. */
+  failures?: string[];
   /** Set when the lane is unconfigured, so a no-op is never silent. */
   disabledReason?: string;
 }
@@ -79,12 +82,14 @@ export async function attachGeneralPhotos(
 
   let attached = 0;
   let failed = 0;
+  const failures: string[] = [];
 
   for (const photo of photos.slice(0, MAX_GENERAL_PHOTOS)) {
     try {
       const obj = await bucket.get(photo.key);
       if (!obj) {
         failed++;
+        failures.push(`missing-r2-object:${photo.key}`);
         continue;
       }
       const bytes = new Uint8Array(await obj.arrayBuffer());
@@ -107,12 +112,23 @@ export async function attachGeneralPhotos(
         ? await env.MAIN_APP.fetch(new Request(url, init))
         : await fetch(url, init);
 
-      if (res.ok) attached++;
-      else failed++;
-    } catch {
+      if (res.ok) {
+        attached++;
+      } else {
+        failed++;
+        // A short body snippet turns "failed=1" into an actionable cause
+        // (401 auth, 413 too-large, 400 content-type, 404 target).
+        const detail = await res
+          .text()
+          .then((t) => t.slice(0, 120))
+          .catch(() => "");
+        failures.push(`upload-${res.status}:${detail}`);
+      }
+    } catch (e) {
       failed++;
+      failures.push(`threw:${e instanceof Error ? e.message : String(e)}`.slice(0, 160));
     }
   }
 
-  return { attached, failed };
+  return failures.length > 0 ? { attached, failed, failures } : { attached, failed };
 }
