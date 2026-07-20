@@ -3722,3 +3722,57 @@ export function buildSyndicationOutboxValues(input: {
 export function eventSyndicationVersionBumpExpr() {
   return sql`${events.syndicationVersion} + 1`;
 }
+
+/**
+ * OPE-225 — photo-coverage rails. One row per (entity_type, entity_id), the
+ * single source of truth for image coverage, demand tier and URL health.
+ *
+ * There is exactly ONE writer (`refreshImageCoverageState`). The alternative —
+ * an `image_set_at` column on each of the five entity tables — would need
+ * stamping at ~108 image-write sites across both Workers, and a rail that is
+ * only wired at some of them under-reports silently forever.
+ *
+ * `image_set_at` therefore means "first OBSERVED with an image", granular to
+ * the scan cadence, and is NULL for rows that already had an image when the
+ * rail was installed (`baseline_had_image = 1`). See src/lib/photo-coverage/
+ * model.ts for the three reconciliation rules.
+ */
+export const imageCoverageState = sqliteTable(
+  "image_coverage_state",
+  {
+    entityType: text("entity_type", {
+      enum: ["EVENT", "VENDOR", "VENUE", "PROMOTER", "PERFORMER"],
+    }).notNull(),
+    entityId: text("entity_id").notNull(),
+    /** Denormalised for the queue payload so consumers need no second query. */
+    slug: text("slug").notNull(),
+    hasImage: integer("has_image", { mode: "boolean" }).notNull().default(false),
+    imageUrl: text("image_url"),
+    urlHealth: text("url_health", {
+      enum: ["MISSING", "OWNED", "HOTLINKED", "UNREACHABLE"],
+    })
+      .notNull()
+      .default("MISSING"),
+    /** First observation WITH an image, having previously had none. NULL = baseline. */
+    imageSetAt: integer("image_set_at", { mode: "timestamp" }),
+    baselineHadImage: integer("baseline_had_image", { mode: "boolean" }).notNull().default(false),
+    firstSeenAt: integer("first_seen_at", { mode: "timestamp" }).notNull(),
+    /** Rolling 28-day GSC impressions for this entity's canonical URL. */
+    demandImpressions: integer("demand_impressions").notNull().default(0),
+    demandTier: text("demand_tier", { enum: ["T1", "T2", "T3", "T4"] })
+      .notNull()
+      .default("T4"),
+    checkedAt: integer("checked_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.entityType, t.entityId] }),
+    // The demand-ranked backlog query: imageless, highest demand first.
+    index("idx_image_coverage_queue").on(t.hasImage, t.demandImpressions),
+    // Coverage-by-tier rollups.
+    index("idx_image_coverage_type_tier").on(t.entityType, t.demandTier),
+    // URL-health sweep (finding hotlinks / rechecking rot).
+    index("idx_image_coverage_health").on(t.urlHealth),
+  ]
+);
+
+export type ImageCoverageStateRow = typeof imageCoverageState.$inferSelect;
