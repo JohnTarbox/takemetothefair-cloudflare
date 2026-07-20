@@ -170,9 +170,17 @@ describe("POST /api/admin/newsletter/send — rendered HTML on a real test send 
     expect(html).toContain("View this email in your browser");
     // Per-recipient unsubscribe link present.
     expect(html).toContain("/api/newsletter/unsubscribe?token=");
-    // Gap 1 — branded newsletter footer (masthead brand line), not the bare
-    // transactional shell.
+    // Gap 1 — branded newsletter footer. NOTE: asserting "Weekend Fair Digest"
+    // here (as this test originally did) only proves the MASTHEAD shipped —
+    // it matched while the footer was still flat text on cream, which is how
+    // the 2026-07-20 ship read as verified and was reopened hours later. The
+    // footer is a distinct GREEN BAND, so assert the second band and that the
+    // CAN-SPAM set lives inside it.
     expect(html).toContain("Weekend Fair Digest");
+    expect(html.split("background:#1f3a2d").length - 1).toBe(2);
+    const footer = html.slice(html.lastIndexOf("background:#1f3a2d"));
+    expect(footer).toContain("/api/newsletter/unsubscribe?token=");
+    expect(footer).toContain("View this email in your browser");
     // Gap 3 — the ENV-sourced postal address renders, NOT the hardcoded fallback.
     expect(html).toContain("18 Main ST, Phillips, ME 04966");
     expect(html).not.toContain("Meet Me at the Fair, New England");
