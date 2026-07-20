@@ -42,6 +42,7 @@ import {
 } from "./inbound-email-stale-sweep.js";
 import { runScheduledDedupSweepCanary } from "./dedup-sweep-canary.js";
 import { runScheduledCpiStaleRedCanary } from "./cpi-stale-red-canary.js";
+import { runScheduledPhotoCoverageScan } from "./photo-coverage-canary.js";
 import { runScheduledCompletenessRecompute } from "./completeness-recompute-canary.js";
 import { runScheduledPageErrorCanary } from "./page-error-canary.js";
 import { runScheduledStandingFailureCanary } from "./standing-failure-canary.js";
@@ -1664,6 +1665,14 @@ export default {
         // signal can't sit silent for weeks (the IndexNow-dead-2-weeks case).
         // Failsoft by construction — logs + swallows, never throws.
         runScheduledCpiStaleRedCanary(env),
+        // OPE-225 (2026-07-20) — photo-coverage rails. Refreshes
+        // image_coverage_state for every live entity (coverage by demand tier,
+        // image_set_at first-observation, hotlink health) so the OPE-226
+        // scorecard and OPE-227 flywheel have numbers to stand on. Idempotent,
+        // so a retry is always safe. Guarded by the `image-coverage-scan`
+        // heartbeat probe — see the OPE-245 note below for why a rail with no
+        // caller is the failure mode this line exists to prevent.
+        runScheduledPhotoCoverageScan(env),
         // GW1b (analyst, 2026-06-02) — Goodwill Engine Phase 1 capture
         // hooks. Both consume the foundations from GW1a (drizzle/0101)
         // and emit event_discrepancies rows for GW1c/d/e to score and
