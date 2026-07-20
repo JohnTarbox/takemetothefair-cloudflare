@@ -35,6 +35,15 @@ jobs:
       - name: Run unit tests with coverage
         run: npm run test:coverage -- --run
 
+      # OPE-261 — the root vitest config only includes `src/**`, and no workflow
+      # ran the workspace packages, so all 18 test files under `packages/*`
+      # (14 in @takemetothefair/utils alone: recurrence, event-dates, venue-name,
+      # source-tier, …) had never executed in CI. They pass — but nothing was
+      # checking, which is the same "green means nothing was measured" shape
+      # this ticket exists to fix on the alerting side.
+      - name: Run workspace package tests (packages/*)
+        run: npm test --workspaces --if-present
+
   test-mcp-server:
     name: MCP Server Unit Tests
     runs-on: ubuntu-latest

@@ -443,3 +443,9 @@ export * from "./email-unsubscribe";
 // events.discontinuous_dates compute consecutiveness the same way — the flag is
 // just `!areDatesContiguous(dates)`, so display and storage never disagree.
 export * from "./date-contiguity";
+
+// OPE-261 (2026-07-20): operator-alert recipient lists. Shared because the
+// stale-red digest crosses BOTH deploy artifacts — the main app enqueues it and
+// the MCP Worker's cf-email consumer sends it — so a helper local to either one
+// would leave the other splitting differently (or not at all).
+export * from "./email-recipients";

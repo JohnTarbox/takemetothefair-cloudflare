@@ -219,4 +219,28 @@ describe("formatStaleRedDigest", () => {
     expect(digest.text).toContain("https://meetmeatthefair.com/admin/analytics");
     expect(digest.text).not.toContain("com//admin");
   });
+
+  it("does not prefix an already-absolute href (OPE-261 §4)", () => {
+    // The 2026-07-20 digest recovered from the inbound archive linked the
+    // IndexNow red as `https://meetmeatthefair.comhttps://www.bing.com/...`
+    // — the site base concatenated onto an absolute URL, so the operator's
+    // one actionable link did not resolve.
+    const reds = selectStaleReds(
+      [
+        entry("P0", 36 * 24, {
+          title: "IndexNow submissions failing",
+          href: "https://www.bing.com/webmasters",
+          refKey: "indexnow",
+        }),
+      ],
+      NOW
+    );
+    const digest = formatStaleRedDigest(reds, "https://meetmeatthefair.com");
+
+    expect(digest.text).toContain("https://www.bing.com/webmasters");
+    expect(digest.html).toContain('href="https://www.bing.com/webmasters"');
+    // The signature of the bug, in both parts.
+    expect(digest.text).not.toContain("comhttps");
+    expect(digest.html).not.toContain("comhttps");
+  });
 });
