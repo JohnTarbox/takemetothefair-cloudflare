@@ -116,6 +116,44 @@ describe("reconcileCoverageRow", () => {
     expect(t2.imageSetAt).toEqual(T1); // history preserved
   });
 
+  it("rule 4 — a MEASURED UNREACHABLE survives the daily scan (same URL)", () => {
+    // Without this, the nightly scan would re-derive health from the URL string
+    // and reset the rot sweep's verdict to OWNED within a day, so UNREACHABLE
+    // would never be visible and §4's rot flag would read permanently clean.
+    const dead = reconcileCoverageRow(null, obs({ imageUrl: "https://gone.test/a.jpg" }), T0);
+    const measured = { ...dead, urlHealth: "UNREACHABLE" as const, urlCheckedAt: T1 };
+    const after = reconcileCoverageRow(measured, obs({ imageUrl: "https://gone.test/a.jpg" }), T2);
+    expect(after.urlHealth).toBe("UNREACHABLE");
+    expect(after.urlCheckedAt).toEqual(T1); // round-robin clock not reset
+  });
+
+  it("rule 4 — a CHANGED url drops the stale verdict and re-queues for checking", () => {
+    const dead = reconcileCoverageRow(null, obs({ imageUrl: "https://gone.test/a.jpg" }), T0);
+    const measured = {
+      ...dead,
+      urlHealth: "UNREACHABLE" as const,
+      urlCheckedAt: T1,
+      urlStatusCode: 404,
+    };
+    const after = reconcileCoverageRow(
+      measured,
+      obs({ imageUrl: "https://cdn.meetmeatthefair.com/e/new.webp" }),
+      T2
+    );
+    // A brand-new URL has never been checked; carrying the old verdict would
+    // report a working image as dead.
+    expect(after.urlHealth).toBe("OWNED");
+    expect(after.urlCheckedAt).toBeNull();
+    expect(after.urlStatusCode).toBeNull();
+  });
+
+  it("rule 4 — losing the image entirely clears UNREACHABLE to MISSING", () => {
+    const dead = reconcileCoverageRow(null, obs({ imageUrl: "https://gone.test/a.jpg" }), T0);
+    const measured = { ...dead, urlHealth: "UNREACHABLE" as const, urlCheckedAt: T1 };
+    const after = reconcileCoverageRow(measured, obs({ imageUrl: null }), T2);
+    expect(after.urlHealth).toBe("MISSING");
+  });
+
   it("refreshes demand and re-tiers on every observation", () => {
     const t0 = reconcileCoverageRow(null, obs({ demandImpressions: 0 }), T0);
     expect(t0.demandTier).toBe("T4");
@@ -137,6 +175,8 @@ const row = (over: Partial<CoverageStateRow>): CoverageStateRow => ({
   demandImpressions: 0,
   demandTier: "T4",
   checkedAt: T0,
+  urlCheckedAt: null,
+  urlStatusCode: null,
   ...over,
 });
 

@@ -54,6 +54,8 @@ export async function GET(request: NextRequest) {
     demandImpressions: r.demandImpressions,
     demandTier: r.demandTier,
     checkedAt: r.checkedAt,
+    urlCheckedAt: r.urlCheckedAt,
+    urlStatusCode: r.urlStatusCode,
   }));
 
   const slugById = new Map(stored.map((r) => [`${r.entityType}:${r.entityId}`, r.slug]));

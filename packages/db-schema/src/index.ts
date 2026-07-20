@@ -3763,9 +3763,20 @@ export const imageCoverageState = sqliteTable(
       .notNull()
       .default("T4"),
     checkedAt: integer("checked_at", { mode: "timestamp" }).notNull(),
+    /**
+     * OPE-225 PR2 — when the ROT SWEEP last fetched this URL. Distinct from
+     * `checked_at` (stamped for every row by the daily coverage scan), because
+     * the budget-bound sweep round-robins over least-recently-FETCHED URLs and
+     * needs its own clock to do that.
+     */
+    urlCheckedAt: integer("url_checked_at", { mode: "timestamp" }),
+    /** HTTP status from that fetch. NULL = no HTTP response (DNS/TLS/timeout). */
+    urlStatusCode: integer("url_status_code"),
   },
   (t) => [
     primaryKey({ columns: [t.entityType, t.entityId] }),
+    // Sweep selection: imaged rows, least-recently-fetched (NULL) first.
+    index("idx_image_coverage_url_check").on(t.hasImage, t.urlCheckedAt),
     // The demand-ranked backlog query: imageless, highest demand first.
     index("idx_image_coverage_queue").on(t.hasImage, t.demandImpressions),
     // Coverage-by-tier rollups.

@@ -35,9 +35,14 @@ export type PhotoEntityType = (typeof PHOTO_ENTITY_TYPES)[number];
 /**
  * URL health (scope §4).
  *
- * `UNREACHABLE` is declared here but never produced by this module — proving a
- * URL rotted needs a live fetch, which belongs in the follow-up sweep. Naming
- * it now keeps the stored enum stable so the sweep doesn't require a migration.
+ * `MISSING` / `OWNED` / `HOTLINKED` are derived from the URL string alone.
+ * `UNREACHABLE` is a *measured* verdict — only the rot sweep (./rot.ts) can
+ * produce it, because proving a URL is dead needs a live fetch.
+ *
+ * That difference is why `reconcileCoverageRow` cannot simply re-derive health
+ * on every scan: doing so would overwrite a measured `UNREACHABLE` with a
+ * string-derived `OWNED` the very next day, and the rot flag would look
+ * permanently clean. See the preservation rule below.
  */
 export const IMAGE_URL_HEALTH = ["MISSING", "OWNED", "HOTLINKED", "UNREACHABLE"] as const;
 export type ImageUrlHealth = (typeof IMAGE_URL_HEALTH)[number];
@@ -109,6 +114,10 @@ export interface CoverageStateRow {
   demandImpressions: number;
   demandTier: DemandTier;
   checkedAt: Date;
+  /** When the rot sweep last fetched this URL. NULL = never checked. */
+  urlCheckedAt: Date | null;
+  /** HTTP status from that fetch; NULL for a network-level failure or no check. */
+  urlStatusCode: number | null;
 }
 
 /** What the scan observed for one entity right now. */
@@ -158,20 +167,40 @@ export function reconcileCoverageRow(
       demandImpressions: obs.demandImpressions,
       demandTier: demandTierFor(obs.demandImpressions),
       checkedAt: now,
+      urlCheckedAt: null,
+      urlStatusCode: null,
     };
   }
 
   const gainedImage = !prior.hasImage && nowHasImage;
+  const urlChanged = (prior.imageUrl ?? null) !== (obs.imageUrl ?? null);
+
+  /**
+   * Rule 4 — preserve a MEASURED verdict over a DERIVED one.
+   *
+   * The rot sweep is the only thing that can prove a URL is dead. Re-deriving
+   * health from the string on every scan would reset that verdict to
+   * OWNED/HOTLINKED within a day, so `UNREACHABLE` would never survive long
+   * enough to be seen and §4's rot flag would read permanently clean.
+   *
+   * A CHANGED url is different: it has never been checked, so it goes back to
+   * the derived classification and its check state is cleared, which also
+   * re-queues it at the front of the sweep (oldest-checked-first, NULL first).
+   */
+  const keepUnreachable = !urlChanged && prior.urlHealth === "UNREACHABLE" && nowHasImage;
+
   return {
     ...prior,
     hasImage: nowHasImage,
     imageUrl: obs.imageUrl ?? null,
-    urlHealth,
+    urlHealth: keepUnreachable ? "UNREACHABLE" : urlHealth,
     // rule 2 / rule 3
     imageSetAt: prior.imageSetAt ?? (gainedImage ? now : null),
     demandImpressions: obs.demandImpressions,
     demandTier: demandTierFor(obs.demandImpressions),
     checkedAt: now,
+    urlCheckedAt: urlChanged ? null : prior.urlCheckedAt,
+    urlStatusCode: urlChanged ? null : prior.urlStatusCode,
   };
 }
 
