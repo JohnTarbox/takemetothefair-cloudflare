@@ -6,6 +6,8 @@ import { getLatestKpiStates } from "@/lib/kpi-states";
 import { loadActionQueue } from "@/lib/analytics-overview/activity";
 import { cpiSignalFilings } from "@/lib/db/schema";
 import { logError } from "@/lib/logger";
+import { assessAllHeartbeat } from "@/lib/heartbeat";
+import type { ActionQueueEntry } from "@/lib/analytics-overview/types";
 import {
   DEFAULT_RATE_CAP_PER_RUN,
   isFileable,
@@ -44,7 +46,38 @@ export const POST = withInternalKey({ source: "cpi:fileable-signals" }, async ({
 
     const kpiStates = await getLatestKpiStates(db);
     const actionQueue = await loadActionQueue(db, kpiStates);
-    const fileable = actionQueue.filter((e) => isFileable(e, now));
+
+    // OPE-246 — inject silent first-evidence heartbeat probes into the auto-file
+    // rail so a "shipped but never executing" path is auto-PROPOSED as a defect
+    // OPE (not just nagged in the digest). A probe only becomes a StaleRed once
+    // silent past its window (≥72h), so these already satisfy isFileable; they're
+    // appended directly. Fingerprint = cpi:heartbeat:<probe> → reconcileFilings
+    // dedups them exactly like every other signal. Defensive: degrades to the
+    // action-queue signals if the heartbeat load fails.
+    let heartbeatFileable: ActionQueueEntry[] = [];
+    try {
+      const heartbeatReds = await assessAllHeartbeat(db, now);
+      heartbeatFileable = heartbeatReds.map((r) => ({
+        priority: r.priority,
+        source: "heartbeat",
+        title: r.title,
+        effort: "",
+        href: r.href,
+        firstDetectedAt: r.firstDetectedAt,
+        refKey: r.refKey.replace(/^heartbeat:/, ""), // → cpi:heartbeat:<probe>
+        hoursInRed: r.hoursInRed,
+        slaStatus: "red",
+      }));
+    } catch (err) {
+      await logError(db, {
+        level: "warn",
+        source: "cpi:fileable-signals",
+        message: "heartbeat load failed; degrading to action-queue signals",
+        error: err,
+      });
+    }
+
+    const fileable = [...actionQueue.filter((e) => isFileable(e, now)), ...heartbeatFileable];
 
     const rows = await db.select().from(cpiSignalFilings);
     const ledger: LedgerRow[] = rows.map((r) => ({

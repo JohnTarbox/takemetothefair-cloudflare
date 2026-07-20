@@ -39,6 +39,7 @@ import { loadCatalogGrowth, loadEnhancedProfileRevenue } from "./analytics-overv
 import { loadBlogCoverage, loadRecommendationsSummary } from "./analytics-overview/content";
 import { loadRenderFaultHealth } from "./analytics-overview/fault-health";
 import { loadQueueDrain } from "./analytics-overview/queue-drain";
+import { loadHeartbeat } from "./heartbeat";
 import {
   loadIndexNow,
   loadRecentErrors,
@@ -99,6 +100,7 @@ export async function loadOverviewSnapshot(
     timeToIndex,
     renderFaultHealth,
     queueDrain,
+    heartbeat,
     thisWeeksActions,
     kpiStrip90d,
     accountEngagement,
@@ -124,6 +126,7 @@ export async function loadOverviewSnapshot(
     loadTimeToIndex(db),
     loadRenderFaultHealth(db, days),
     loadQueueDrain(db),
+    loadHeartbeat(db),
     loadThisWeeksActions(db, lastWeekDate),
     loadKpiStrip90d(db, env),
     loadAccountEngagement(db, sinceDate, days),
@@ -158,6 +161,7 @@ export async function loadOverviewSnapshot(
     timeToIndex,
     renderFaultHealth,
     queueDrain,
+    heartbeat,
     thisWeeksActions,
     kpiStrip90d,
     accountEngagement,
