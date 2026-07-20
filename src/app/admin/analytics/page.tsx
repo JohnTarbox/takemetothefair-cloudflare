@@ -209,6 +209,13 @@ async function OverviewTab({ window }: { window: WindowKey }) {
         <RenderFaultHealthCardView snapshot={snapshot} />
       </div>
 
+      {/* OPE-247 — per-queue drain ratios (inflow vs outflow). A frozen queue
+          (backlog with 0 outflow/7d) turns red here AND escalates through the
+          OPE-75 stale-red digest. */}
+      <div className="mb-6">
+        <QueueDrainRatiosCardView snapshot={snapshot} />
+      </div>
+
       {/* §10.3 KPI quartet — site CTR, conversion rate, brand split, sitemap quality.
           State coloring (GREEN/YELLOW/RED) added in §6.3 — see kpiCardState helper. */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
@@ -1330,6 +1337,69 @@ function RenderFaultHealthCardView({ snapshot }: { snapshot: OverviewSnapshot })
             </div>
           ))}
         </dl>
+      </CardContent>
+    </Card>
+  );
+}
+
+// OPE-247 — per-queue drain ratios. One row per work queue: current depth,
+// trailing-7d inflow/outflow, and drain ratio (outflow÷inflow). A queue with a
+// backlog and zero outflow over 7d is FROZEN (red) — the failure this exists to
+// surface (the discrepancy queue grew to ~5,890 with 0 daily resolutions). The
+// card border/anchor matches the OPE-75 stale-red deep-link.
+function QueueDrainRatiosCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
+  const queues = snapshot.queueDrain.queues;
+  const anyFrozen = queues.some((q) => q.frozen);
+  const fmtRatio = (r: number | null) => (r === null ? "—" : r.toFixed(2));
+  return (
+    <Card id="queue-drain-ratios" className={`h-full ${anyFrozen ? "border-red-300" : ""}`}>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base flex items-center gap-2">
+          <AlertTriangle
+            className={`w-4 h-4 ${anyFrozen ? "text-red-600" : "text-muted-foreground"}`}
+          />
+          Queue drain ratios
+        </CardTitle>
+        <p className="text-xs text-muted-foreground">
+          inflow vs outflow per work queue · trailing 7d · frozen = backlog with 0 outflow/7d
+          (OPE-247)
+        </p>
+      </CardHeader>
+      <CardContent>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm tabular-nums">
+            <thead>
+              <tr className="text-xs uppercase tracking-wide text-muted-foreground">
+                <th className="text-left font-medium py-1">Queue</th>
+                <th className="text-right font-medium py-1">Depth</th>
+                <th className="text-right font-medium py-1">7d in</th>
+                <th className="text-right font-medium py-1">7d out</th>
+                <th className="text-right font-medium py-1">Drain</th>
+              </tr>
+            </thead>
+            <tbody>
+              {queues.map((q) => (
+                <tr
+                  key={q.queueName}
+                  className={`border-t ${q.frozen ? "bg-red-50 text-red-900" : ""}`}
+                >
+                  <td className="text-left py-1.5 pr-2">
+                    {q.label}
+                    {q.frozen && (
+                      <span className="ml-2 text-xs font-semibold text-red-600">FROZEN</span>
+                    )}
+                  </td>
+                  <td className="text-right py-1.5">{fmt(q.depth)}</td>
+                  <td className="text-right py-1.5">{fmt(q.inflow7d)}</td>
+                  <td className="text-right py-1.5">
+                    {q.outflow7d === null ? "—" : fmt(q.outflow7d)}
+                  </td>
+                  <td className="text-right py-1.5 font-semibold">{fmtRatio(q.drainRatio7d)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </CardContent>
     </Card>
   );

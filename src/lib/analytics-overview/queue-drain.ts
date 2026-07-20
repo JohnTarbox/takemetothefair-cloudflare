@@ -27,8 +27,9 @@ import { getCurrentIssues } from "@/lib/site-health";
 import { SITE_URL } from "@takemetothefair/constants";
 import type { AnyColumn, SQL } from "drizzle-orm";
 import type { SQLiteTable } from "drizzle-orm/sqlite-core";
+import { assessQueueFreeze, type QueueFlow } from "@/lib/queue-freeze";
 import type { Db } from "./shared";
-import type { QueueFlow } from "@/lib/queue-freeze";
+import type { QueueDrainCard } from "./types";
 
 const DAY_MS = 86_400_000;
 /** Deep-link the frozen-queue RED + tile share. */
@@ -269,6 +270,24 @@ export async function gatherQueueFlows(db: Db, now: Date): Promise<QueueDrainRow
   ];
 
   return Promise.all(specs);
+}
+
+/** Tile loader — live per-queue flow + a `frozen` flag (via the same detector
+ *  the alert uses, so the tile's red rows match the digest). */
+export async function loadQueueDrain(db: Db): Promise<QueueDrainCard> {
+  const now = new Date();
+  const flows = await gatherQueueFlows(db, now);
+  return {
+    queues: flows.map((f) => ({
+      queueName: f.queueName,
+      label: f.label,
+      depth: f.depth,
+      inflow7d: f.inflow7d,
+      outflow7d: f.outflow7d,
+      drainRatio7d: f.drainRatio7d,
+      frozen: assessQueueFreeze(f, now) !== null,
+    })),
+  };
 }
 
 /** UPSERT today's snapshot for each queue (idempotent on (queue_name, date)). */
