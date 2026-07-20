@@ -45,6 +45,15 @@ EMAIL_REPLY_ENABLED = "false"
 # send). Flip to "true" + redeploy, or override in the dashboard, to broadcast.
 NEWSLETTER_SEND_ENABLED = "false"
 
+# OPE-232 — CAN-SPAM physical postal address rendered in the newsletter footer.
+# The digest HTML is rendered in THIS (main-app) worker via
+# /api/admin/newsletter/send → newsletterDigestTemplate; MAILING_ADDRESS was only
+# set on the MCP worker, so the main-app render fell back to a generic placeholder.
+# Value matches the MCP worker's secret. NOTE: OPE-232 ticket prose said "20 Main
+# Street"; this matches the operator-set MCP value — confirm the legal address in
+# the review-first test render before the first real broadcast.
+MAILING_ADDRESS = "18 Main ST, Phillips, ME 04966"
+
 [[d1_databases]]
 binding = "DB"
 database_name = "takemetothefair-db"
