@@ -11,6 +11,8 @@ import { faultSignatures, indexnowSubmissions, pendingSearchPings } from "@/lib/
 import { count, desc, eq, isNull } from "drizzle-orm";
 import { getIndexNowQuota, type BingEnv } from "@/lib/bing-webmaster";
 import { assessAllIntegrationSilence, type IntegrationActivity } from "@/lib/integration-silence";
+import { assessAllQueueFreeze } from "@/lib/queue-freeze";
+import { gatherQueueFlows, persistQueueSnapshots } from "@/lib/analytics-overview/queue-drain";
 import {
   formatStaleRedDigest,
   selectStaleFaultReds,
@@ -162,7 +164,29 @@ export const POST = withInternalKey({ source: "cpi:stale-red-scan" }, async ({ d
       });
     }
 
-    const allReds = [...reds, ...faultReds, ...integrationReds];
+    // OPE-247 — merge frozen/slow-draining WORK-QUEUE reds (event discrepancies,
+    // the three enrichment-review queues, site-health, inbound exceptions) and
+    // persist today's drain snapshot for the /admin/analytics tile + trend. The
+    // failure this catches: the discrepancy queue grew to 5,890 with 0 daily
+    // resolutions and no tile showed it. Defensive: any failure degrades to the
+    // prior reds, never breaking the scan.
+    let queueReds: StaleRed[] = [];
+    try {
+      const flows = await gatherQueueFlows(db, now);
+      queueReds = assessAllQueueFreeze(flows, now);
+      // Persist AFTER assessing so the inbound queue's outflow delta reads the
+      // prior day's row, not today's.
+      await persistQueueSnapshots(db, flows, now);
+    } catch (err) {
+      await logError(db, {
+        level: "warn",
+        source: "cpi:stale-red-scan",
+        message: "queue-drain load failed; degrading to KPI + fault + integration reds",
+        error: err,
+      });
+    }
+
+    const allReds = [...reds, ...faultReds, ...integrationReds, ...queueReds];
 
     let sent = false;
     if (allReds.length > 0) {

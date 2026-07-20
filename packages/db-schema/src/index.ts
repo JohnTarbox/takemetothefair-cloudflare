@@ -2796,6 +2796,39 @@ export const dedupSweepSnapshots = sqliteTable(
   (t) => [uniqueIndex("idx_dedup_snapshot_date_surface").on(t.snapshotDate, t.surface)]
 );
 
+/**
+ * OPE-247 — per-queue drain-ratio daily snapshots. One row per work-queue per
+ * UTC day, written by the daily stale-red scan (same cadence + endpoint as the
+ * OPE-75 alert, so the tile, the persisted trend, and the frozen-queue RED all
+ * read the same numbers). The `(queue_name, snapshot_date)` unique index makes
+ * the daily write an idempotent UPSERT (safe re-run), and — for the inbound
+ * exception queue, whose outflow is NOT timestamp-derivable — lets outflow be
+ * recovered as a day-over-day depth delta from the prior row.
+ */
+export const queueDrainSnapshots = sqliteTable(
+  "queue_drain_snapshots",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    /** Stable queue key: event_discrepancies | vendor_enrichment |
+     *  promoter_enrichment | performer_enrichment | site_health | inbound_exceptions. */
+    queueName: text("queue_name").notNull(),
+    snapshotDate: text("snapshot_date").notNull(), // YYYY-MM-DD (UTC)
+    /** Current open/pending backlog. */
+    depth: integer("depth").notNull(),
+    /** Rows that entered the queue in the trailing 24h. */
+    inflow1d: integer("inflow_1d").notNull(),
+    /** Rows decided/closed in the trailing 24h. NULL when not yet computable
+     *  (inbound queue on its first snapshot — no prior row to delta against). */
+    outflow1d: integer("outflow_1d"),
+    /** Trailing-7d outflow ÷ inflow. NULL when inflow is 0 or outflow unknown. */
+    drainRatio7d: real("drain_ratio_7d"),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => [uniqueIndex("uq_queue_drain_date").on(t.queueName, t.snapshotDate)]
+);
+
 // Issue #326 — debounce state for the page-error Slack canary
 // (mcp-server/src/page-error-canary.ts). See drizzle/0103 for the
 // original rationale + drizzle/0105_page_error_canary_state_per_source.sql

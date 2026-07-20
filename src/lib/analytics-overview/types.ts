@@ -240,6 +240,22 @@ export type ActivityEntry = {
   actor?: string | null;
 };
 
+/** OPE-247 — one work queue's drain row for the /admin/analytics tile. */
+export type QueueDrainTileRow = {
+  queueName: string;
+  label: string;
+  depth: number;
+  inflow7d: number;
+  /** null = outflow not yet computable (inbound queue before snapshot history). */
+  outflow7d: number | null;
+  /** trailing-7d outflow ÷ inflow; null when inflow 0 or outflow unknown. */
+  drainRatio7d: number | null;
+  frozen: boolean;
+};
+export type QueueDrainCard = {
+  queues: QueueDrainTileRow[];
+};
+
 export type OverviewSnapshot = {
   window: WindowKey;
   generatedAt: Date;
@@ -263,6 +279,8 @@ export type OverviewSnapshot = {
   sitemapQuality: SitemapQualityCard;
   timeToIndex: TimeToIndexCard;
   renderFaultHealth: RenderFaultHealthCard;
+  /** OPE-247 — per-queue inflow/outflow/depth/drain-ratio. */
+  queueDrain: QueueDrainCard;
   thisWeeksActions: ThisWeeksActionsCard;
   kpiStrip90d: KpiSparklineStrip;
   // §6.3 additions
