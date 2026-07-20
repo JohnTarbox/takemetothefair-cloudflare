@@ -2829,6 +2829,30 @@ export const queueDrainSnapshots = sqliteTable(
   (t) => [uniqueIndex("uq_queue_drain_date").on(t.queueName, t.snapshotDate)]
 );
 
+/**
+ * OPE-246 — post-ship first-evidence heartbeat: the operator-settable
+ * enablement anchor per probe. Everything else about a probe (its evidence
+ * query, owner OPE, window) lives in code (src/lib/heartbeat/probes.ts) — this
+ * table holds only `enabled_at`, the ONE datum that changes without a deploy
+ * (e.g. the day a gated flag like PHOTO_AUTOWRITE_ENABLED flips on).
+ *
+ * A probe with `enabled_at IS NULL` is DORMANT — its silence is expected
+ * (nothing shipped/enabled yet), so it never fires a RED. The silence clock
+ * starts at max(enabled_at, last-evidence), mirroring OPE-243's `shouldBeActive`
+ * gate — so a deliberately-off feature is never a false alarm.
+ */
+export const heartbeatProbes = sqliteTable("heartbeat_probes", {
+  probeName: text("probe_name").primaryKey(),
+  /** Seconds-epoch when the probed path went live; NULL = dormant. */
+  enabledAt: integer("enabled_at", { mode: "timestamp" }),
+  note: text("note"),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
+export type HeartbeatProbeRow = typeof heartbeatProbes.$inferSelect;
+
 // Issue #326 — debounce state for the page-error Slack canary
 // (mcp-server/src/page-error-canary.ts). See drizzle/0103 for the
 // original rationale + drizzle/0105_page_error_canary_state_per_source.sql

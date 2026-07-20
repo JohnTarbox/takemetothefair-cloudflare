@@ -13,6 +13,7 @@ import { getIndexNowQuota, type BingEnv } from "@/lib/bing-webmaster";
 import { assessAllIntegrationSilence, type IntegrationActivity } from "@/lib/integration-silence";
 import { assessAllQueueFreeze } from "@/lib/queue-freeze";
 import { gatherQueueFlows, persistQueueSnapshots } from "@/lib/analytics-overview/queue-drain";
+import { assessAllHeartbeat } from "@/lib/heartbeat";
 import {
   formatStaleRedDigest,
   selectStaleFaultReds,
@@ -186,7 +187,23 @@ export const POST = withInternalKey({ source: "cpi:stale-red-scan" }, async ({ d
       });
     }
 
-    const allReds = [...reds, ...faultReds, ...integrationReds, ...queueReds];
+    // OPE-246 — merge post-ship first-evidence heartbeat reds: a shipped write/
+    // cron path that has gone SILENT (0 evidence rows past its window) escalates
+    // through this digest instead of a human noticing weeks later. Dormant/gated
+    // probes (enabled_at NULL) never fire. Defensive: degrades to the prior reds.
+    let heartbeatReds: StaleRed[] = [];
+    try {
+      heartbeatReds = await assessAllHeartbeat(db, now);
+    } catch (err) {
+      await logError(db, {
+        level: "warn",
+        source: "cpi:stale-red-scan",
+        message: "heartbeat load failed; degrading to KPI + fault + integration + queue reds",
+        error: err,
+      });
+    }
+
+    const allReds = [...reds, ...faultReds, ...integrationReds, ...queueReds, ...heartbeatReds];
 
     let sent = false;
     if (allReds.length > 0) {

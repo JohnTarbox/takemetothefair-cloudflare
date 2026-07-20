@@ -281,6 +281,8 @@ export type OverviewSnapshot = {
   renderFaultHealth: RenderFaultHealthCard;
   /** OPE-247 — per-queue inflow/outflow/depth/drain-ratio. */
   queueDrain: QueueDrainCard;
+  /** OPE-246 — post-ship first-evidence heartbeat probe status. */
+  heartbeat: import("@/lib/heartbeat").HeartbeatCard;
   thisWeeksActions: ThisWeeksActionsCard;
   kpiStrip90d: KpiSparklineStrip;
   // §6.3 additions
@@ -297,7 +299,9 @@ export type ActionQueueSla = "red" | "amber" | "green" | "none";
 /** §6.3 action-queue entry — one row in the prioritized action panel. */
 export type ActionQueueEntry = {
   priority: "P0" | "P1";
-  source: "kpi" | "recommendation";
+  /** OPE-246 — "heartbeat" entries are synthesized from silent first-evidence
+   *  probes and injected into the auto-file rail (fingerprint cpi:heartbeat:<probe>). */
+  source: "kpi" | "recommendation" | "heartbeat";
   title: string;
   effort: string;
   href: string;

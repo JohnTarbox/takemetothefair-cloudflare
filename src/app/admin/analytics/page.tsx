@@ -216,6 +216,13 @@ async function OverviewTab({ window }: { window: WindowKey }) {
         <QueueDrainRatiosCardView snapshot={snapshot} />
       </div>
 
+      {/* OPE-246 — post-ship first-evidence heartbeat. A probe that has gone
+          silent (0 evidence past its window) turns red here, escalates via the
+          OPE-75 digest, AND is auto-proposed as a defect OPE (OPE-76 rail). */}
+      <div className="mb-6">
+        <HeartbeatProbesCardView snapshot={snapshot} />
+      </div>
+
       {/* §10.3 KPI quartet — site CTR, conversion rate, brand split, sitemap quality.
           State coloring (GREEN/YELLOW/RED) added in §6.3 — see kpiCardState helper. */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
@@ -1395,6 +1402,70 @@ function QueueDrainRatiosCardView({ snapshot }: { snapshot: OverviewSnapshot }) 
                     {q.outflow7d === null ? "—" : fmt(q.outflow7d)}
                   </td>
                   <td className="text-right py-1.5 font-semibold">{fmtRatio(q.drainRatio7d)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// OPE-246 — post-ship first-evidence heartbeat probe status. One row per probed
+// execution path: owner OPE, when it last produced evidence, and whether it's
+// SILENT (past its window → red, escalates + auto-files) or DORMANT (not yet
+// enabled → grey, never fires). This is the surface for the "shipped but never
+// executing" class the framework catches.
+function HeartbeatProbesCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
+  const probes = snapshot.heartbeat.probes;
+  const anySilent = probes.some((p) => p.silent);
+  const rel = (ms: number | null) => {
+    if (ms === null) return "—";
+    const days = (Date.now() - ms) / 86_400_000;
+    if (days < 1) return `${Math.max(0, Math.round(days * 24))}h ago`;
+    return `${Math.round(days)}d ago`;
+  };
+  return (
+    <Card id="heartbeat-probes" className={`h-full ${anySilent ? "border-red-300" : ""}`}>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base flex items-center gap-2">
+          <AlertTriangle
+            className={`w-4 h-4 ${anySilent ? "text-red-600" : "text-muted-foreground"}`}
+          />
+          Post-ship heartbeat
+        </CardTitle>
+        <p className="text-xs text-muted-foreground">
+          first-evidence probes · SILENT = 0 evidence past the window (escalates + auto-files) ·
+          DORMANT = not yet enabled (OPE-246)
+        </p>
+      </CardHeader>
+      <CardContent>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm tabular-nums">
+            <thead>
+              <tr className="text-xs uppercase tracking-wide text-muted-foreground">
+                <th className="text-left font-medium py-1">Probe</th>
+                <th className="text-left font-medium py-1">Owner</th>
+                <th className="text-right font-medium py-1">Last evidence</th>
+                <th className="text-right font-medium py-1">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {probes.map((p) => (
+                <tr key={p.name} className={`border-t ${p.silent ? "bg-red-50 text-red-900" : ""}`}>
+                  <td className="text-left py-1.5 pr-2">{p.label}</td>
+                  <td className="text-left py-1.5 pr-2 text-muted-foreground">{p.ownerOpe}</td>
+                  <td className="text-right py-1.5">{p.enabled ? rel(p.lastEvidenceAt) : "—"}</td>
+                  <td className="text-right py-1.5 font-semibold">
+                    {!p.enabled ? (
+                      <span className="text-muted-foreground">dormant</span>
+                    ) : p.silent ? (
+                      <span className="text-red-600">SILENT</span>
+                    ) : (
+                      <span className="text-emerald-600">ok</span>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>

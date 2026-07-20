@@ -98,6 +98,18 @@ npm run db:studio              # Open Drizzle Studio
 `docs/bulk-mutation-discipline.md` — single-writer · idempotent · read-back-verified
 · rollback-planned. Cite it from any PR that ships a bulk mutation.
 
+**Post-ship first-evidence probe (OPE-246) — a probe row ships WITH the PR, like a
+migration.** The most-recurring defect class here is "shipped but silently not
+executing" (IndexNow dead 2wk, OCR silent no-op, GW1d never scored a row…). So:
+any PR that ships a **new writer / cron / queue / pipeline execution path** MUST add
+a heartbeat probe in the same PR — an entry in `HEARTBEAT_PROBES`
+(`src/lib/heartbeat.ts`) declaring the D1 evidence that path should keep producing
+
+- its window, and a `heartbeat_probes` seed row (`enabled_at` = ship date, or NULL
+  if gated behind a flag — a dormant probe never false-fires; set `enabled_at` the day
+  the flag flips). A silent probe escalates through the OPE-75 digest AND auto-proposes
+  a defect OPE via the OPE-76 rail. Treat the probe as part of the ship, not a follow-up.
+
 ## Critical: OpenNext (Workers) runtime — do NOT declare `runtime = "edge"`
 
 Post-OpenNext (2026-06-10), the entire Next.js app runs on the Cloudflare **Workers**
