@@ -4,7 +4,13 @@
  * we decide on a template library (React Email, MJML, etc.).
  */
 import { SOCIAL_LINKS } from "@/lib/social-links";
-import { newsletterMastheadHtml } from "@/lib/newsletter-masthead";
+import {
+  BAND_GREEN,
+  EYEBROW_GOLD,
+  ON_BAND_MUTED,
+  SUBTITLE_GOLD,
+  newsletterMastheadHtml,
+} from "@/lib/newsletter-masthead";
 
 function baseLayout(args: {
   heading: string;
@@ -239,13 +245,56 @@ export function newsletterConfirmTemplate(args: { confirmUrl: string }): {
  * share of recipients. Returns "" when SOCIAL_LINKS is empty so the separator
  * row never renders on its own.
  */
+/**
+ * Social links for the digest footer. Rendered ON the green band, so every
+ * colour here is a light-on-dark pair — the pre-OPE-232-reopen version used
+ * `#1f3a2d` (the band colour itself), which is invisible once the band exists.
+ */
 function renderNewsletterSocialLinks(): string {
   if (SOCIAL_LINKS.length === 0) return "";
   const links = SOCIAL_LINKS.map(
     (s) =>
-      `<a href="${s.href}" style="color:#1f3a2d;text-decoration:underline;">${escapeHtmlText(s.name)}</a>`
-  ).join(' <span style="color:#C9C1B6;">&middot;</span> ');
+      `<a href="${s.href}" style="color:${EYEBROW_GOLD};text-decoration:underline;">${escapeHtmlText(s.name)}</a>`
+  ).join(` <span style="color:${SUBTITLE_GOLD};">&middot;</span> `);
   return `<div style="margin-top:10px;">${links}</div>`;
+}
+
+/**
+ * The digest's branded footer band — the bookend to `newsletterMastheadHtml`.
+ *
+ * Shape mirrors the masthead deliberately (self-contained <table>, background
+ * on a <td>, inline styles): Outlook honours a background colour on <td>
+ * reliably and on <div> unreliably, which is why the previous flat-<div> footer
+ * could not simply have a `background` added to it.
+ *
+ * The view-in-browser link is DUPLICATED here rather than moved. The copy above
+ * the masthead is the conventional position and is the one that still works
+ * when the email renders badly; this one is the one a reader actually sees,
+ * because the eye lands on the branded chrome, not on a 12px line floating
+ * above it (OPE-232 reopen, 2026-07-20 — John and the analyst both missed it).
+ */
+function newsletterFooterHtml(args: {
+  unsubscribeUrl: string;
+  viewInBrowserUrl: string;
+  mailing: string;
+}): string {
+  const { unsubscribeUrl, viewInBrowserUrl, mailing } = args;
+  return `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border-collapse:collapse;">
+  <tr>
+    <td style="background:${BAND_GREEN};padding:24px 32px;text-align:center;font-family:Georgia,'Times New Roman',serif;font-size:12px;line-height:1.6;color:${ON_BAND_MUTED};">
+      <div style="font-size:16px;font-weight:700;color:#ffffff;">Meet Me at the Fair</div>
+      <div style="margin-top:4px;color:${SUBTITLE_GOLD};">One email a week — New England's fairs, festivals &amp; makers markets.</div>
+      ${renderNewsletterSocialLinks()}
+      <div style="margin-top:12px;">
+        <a href="${viewInBrowserUrl}" style="color:${EYEBROW_GOLD};text-decoration:underline;">View this email in your browser</a>
+      </div>
+      <div style="margin-top:8px;">
+        <a href="${unsubscribeUrl}" style="color:${ON_BAND_MUTED};text-decoration:underline;">Unsubscribe</a>
+      </div>
+      <div style="margin-top:8px;color:${ON_BAND_MUTED};">${escapeHtmlText(mailing)}</div>
+    </td>
+  </tr>
+</table>`;
 }
 
 function newsletterLayout(args: {
@@ -276,15 +325,11 @@ function newsletterLayout(args: {
             <tr>
               <td style="padding:32px;font-size:16px;line-height:1.55;color:#2A2521;">
                 ${body}
-                <div style="margin-top:28px;padding-top:16px;border-top:1px solid #E5DFD6;font-size:12px;line-height:1.6;color:#5c6b60;text-align:center;">
-                  <div style="color:#1f3a2d;font-weight:700;">Meet Me at the Fair</div>
-                  <div>One email a week — New England's fairs, festivals &amp; makers markets.</div>
-                  ${renderNewsletterSocialLinks()}
-                  <div style="margin-top:8px;">
-                    <a href="${unsubscribeUrl}" style="color:#5c6b60;text-decoration:underline;">Unsubscribe</a>
-                  </div>
-                  <div style="margin-top:8px;color:#8A8178;">${escapeHtmlText(mailing)}</div>
-                </div>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:0;">
+                ${newsletterFooterHtml({ unsubscribeUrl, viewInBrowserUrl, mailing })}
               </td>
             </tr>
           </table>

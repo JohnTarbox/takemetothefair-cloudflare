@@ -76,6 +76,52 @@ describe("newsletterDigestTemplate — branded shell (OPE-232)", () => {
   });
 });
 
+/**
+ * OPE-232 reopen (2026-07-20) — the footer must be a GREEN BAND mirroring the
+ * masthead, not on-brand-but-flat text on the cream body.
+ *
+ * These assert against the footer REGION, not the whole document, because the
+ * pre-fix suite passed while the band did not exist: `toContain("background:
+ * #1f3a2d")` was satisfied by the masthead alone, and `toContain(view-in-
+ * browser URL)` by the easily-missed line floating above the masthead. A
+ * whole-document assertion cannot tell those apart — the region slice can.
+ */
+describe("newsletterDigestTemplate — branded footer band (OPE-232 reopen)", () => {
+  const { html } = newsletterDigestTemplate(base);
+
+  /** Everything from the LAST green band onward — i.e. the footer band. */
+  const footer = html.slice(html.lastIndexOf("background:#1f3a2d"));
+
+  it("renders TWO green bands — masthead and footer bookend each other", () => {
+    expect(html.split("background:#1f3a2d").length - 1).toBe(2);
+  });
+
+  it("puts the band colour on a <td> (Outlook ignores it on a <div>)", () => {
+    expect(footer).toMatch(/^background:#1f3a2d[^<]*"[^>]*>/);
+    expect(html).toContain('<td style="background:#1f3a2d');
+  });
+
+  it("carries the whole CAN-SPAM set INSIDE the band, not above it", () => {
+    expect(footer).toContain(base.unsubscribeUrl);
+    expect(footer).toContain(base.mailingAddress);
+    expect(footer).toContain("Meet Me at the Fair");
+  });
+
+  it("duplicates view-in-browser into the band where the eye actually lands", () => {
+    expect(footer).toContain(base.viewInBrowserUrl);
+    // and the conventional copy above the masthead is still there, for the
+    // case where the email itself renders badly.
+    expect(html.split(base.viewInBrowserUrl).length - 1).toBeGreaterThanOrEqual(2);
+  });
+
+  it("never colours band text with the band colour itself (invisible text)", () => {
+    expect(footer).not.toContain("color:#1f3a2d");
+    // the flat footer's grey-on-cream tokens are unreadable on green
+    expect(footer).not.toContain("color:#5c6b60");
+    expect(footer).not.toContain("color:#8A8178");
+  });
+});
+
 describe("newsletterDigestTemplate — social footer (OPE-235)", () => {
   const { html } = newsletterDigestTemplate(base);
 

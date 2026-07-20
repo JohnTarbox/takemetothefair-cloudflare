@@ -24,10 +24,20 @@
  * content would render twice in the inbox.
  */
 
-/** Brand tokens, inlined because email cannot use CSS vars or a stylesheet. */
-const BAND_GREEN = "#1f3a2d";
-const EYEBROW_GOLD = "#e8c86a";
-const SUBTITLE_GOLD = "#cbb87a";
+/**
+ * Brand tokens, inlined because email cannot use CSS vars or a stylesheet.
+ *
+ * Exported so the digest's FOOTER band (`newsletterFooterHtml` in
+ * src/lib/email/templates.ts) renders from the same constants as this masthead
+ * band. OPE-232's acceptance is that the footer "mirrors the masthead
+ * treatment" — sharing the token makes that true by construction instead of by
+ * two hex literals that agree today and drift on the next palette tweak.
+ */
+export const BAND_GREEN = "#1f3a2d";
+export const EYEBROW_GOLD = "#e8c86a";
+export const SUBTITLE_GOLD = "#cbb87a";
+/** Muted cream for secondary text ON the green band (8.3:1 on BAND_GREEN). */
+export const ON_BAND_MUTED = "#D9D2C7";
 
 /** The fixed eyebrow line above the wordmark. */
 export const NEWSLETTER_EYEBROW = "New England's Fair & Festival Almanac";
