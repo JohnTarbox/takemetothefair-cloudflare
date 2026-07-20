@@ -42,7 +42,10 @@ import {
 } from "./inbound-email-stale-sweep.js";
 import { runScheduledDedupSweepCanary } from "./dedup-sweep-canary.js";
 import { runScheduledCpiStaleRedCanary } from "./cpi-stale-red-canary.js";
-import { runScheduledPhotoCoverageScan } from "./photo-coverage-canary.js";
+import {
+  runScheduledImageUrlHealthSweep,
+  runScheduledPhotoCoverageScan,
+} from "./photo-coverage-canary.js";
 import { runScheduledCompletenessRecompute } from "./completeness-recompute-canary.js";
 import { runScheduledPageErrorCanary } from "./page-error-canary.js";
 import { runScheduledStandingFailureCanary } from "./standing-failure-canary.js";
@@ -1673,6 +1676,12 @@ export default {
         // heartbeat probe — see the OPE-245 note below for why a rail with no
         // caller is the failure mode this line exists to prevent.
         runScheduledPhotoCoverageScan(env),
+        // OPE-225 PR2 — URL rot sweep. Round-robins the least-recently-checked
+        // image URLs (~60/run) and marks dead ones UNREACHABLE. Kept separate
+        // from the coverage scan above because this one makes outbound fetches
+        // to third-party hosts: a slow host must never delay the coverage
+        // numbers, and either can fail without taking the other down.
+        runScheduledImageUrlHealthSweep(env),
         // GW1b (analyst, 2026-06-02) — Goodwill Engine Phase 1 capture
         // hooks. Both consume the foundations from GW1a (drizzle/0101)
         // and emit event_discrepancies rows for GW1c/d/e to score and

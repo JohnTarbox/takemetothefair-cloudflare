@@ -206,6 +206,8 @@ export async function refreshImageCoverageState(
       demandImpressions: r.demandImpressions,
       demandTier: r.demandTier,
       checkedAt: r.checkedAt,
+      urlCheckedAt: r.urlCheckedAt,
+      urlStatusCode: r.urlStatusCode,
     });
   }
 
@@ -253,6 +255,8 @@ export async function refreshImageCoverageState(
         demandImpressions: next.demandImpressions,
         demandTier: next.demandTier,
         checkedAt: next.checkedAt,
+        urlCheckedAt: next.urlCheckedAt,
+        urlStatusCode: next.urlStatusCode,
       })
       .onConflictDoUpdate({
         target: [imageCoverageState.entityType, imageCoverageState.entityId],
@@ -265,6 +269,11 @@ export async function refreshImageCoverageState(
           demandImpressions: next.demandImpressions,
           demandTier: next.demandTier,
           checkedAt: next.checkedAt,
+          // Cleared by the model when the URL changed, so a new URL is
+          // re-queued at the front of the rot sweep; otherwise carried through
+          // untouched so the sweep's round-robin clock is not reset daily.
+          urlCheckedAt: next.urlCheckedAt,
+          urlStatusCode: next.urlStatusCode,
           // firstSeenAt and baselineHadImage are intentionally NOT updated —
           // they describe the entity's state when the rail first saw it and
           // must stay immutable for the before/after boundary to mean anything.

@@ -132,6 +132,18 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     lastEvidenceAt: (db) => maxTs(db, imageCoverageState, imageCoverageState.checkedAt),
   },
   {
+    // OPE-225 PR2 — the rot sweep. Evidence is the freshest url_checked_at:
+    // the sweep stamps it on EVERY row it checks, healthy or dead, so a stale
+    // max means the sweep stopped rather than that nothing rotted. Window is
+    // wider than the scan's because this one round-robins ~60 URLs a night.
+    name: "image-url-health-sweep",
+    ownerOpe: "OPE-225",
+    label: "Image URL rot sweep",
+    priority: "P1",
+    expectedWindowHours: 72,
+    lastEvidenceAt: (db) => maxTs(db, imageCoverageState, imageCoverageState.urlCheckedAt),
+  },
+  {
     name: "promoter-enrichment",
     ownerOpe: "OPE-36",
     label: "Promoter enrichment cron",

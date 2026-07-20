@@ -67,3 +67,61 @@ export async function runScheduledPhotoCoverageScan(env: Env): Promise<void> {
     });
   }
 }
+
+/**
+ * OPE-225 PR 2/2 — daily driver for the URL rot sweep.
+ *
+ * Separate from the coverage scan on purpose: the scan is pure D1 work and
+ * finishes fast, while this one makes up to `ROT_SWEEP_LIMIT` outbound fetches
+ * against third-party hosts. Keeping them apart means a slow or hostile image
+ * host can never delay the coverage numbers, and either can fail without
+ * taking the other down.
+ *
+ * Same failsoft contract: log and swallow, never throw into the cron.
+ */
+export async function runScheduledImageUrlHealthSweep(env: Env): Promise<void> {
+  const SOURCE = "mcp:schedule:image-url-health";
+  const sessionId = crypto.randomUUID();
+  const url = `${env.MAIN_APP_URL ?? "https://meetmeatthefair.com"}/api/internal/photo-coverage/url-health`;
+  const init: RequestInit = {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Internal-Key": env.INTERNAL_API_KEY ?? "",
+    },
+  };
+
+  try {
+    const response = env.MAIN_APP
+      ? await env.MAIN_APP.fetch(new Request(url, init))
+      : await fetch(url, init);
+    if (!response.ok) {
+      const body = (await response.text()).slice(0, 300);
+      await logError(env.DB, {
+        source: SOURCE,
+        message: "image URL health sweep returned non-2xx",
+        statusCode: response.status,
+        sessionId,
+        context: { url, status: response.status, bodyExcerpt: body },
+      });
+      return;
+    }
+    const result = (await response.json().catch(() => ({}))) as {
+      checked?: number;
+      unreachable?: number;
+      recovered?: number;
+    };
+    console.log(
+      `[cron] image-url-health checked=${result.checked ?? "?"} unreachable=${
+        result.unreachable ?? "?"
+      } recovered=${result.recovered ?? "?"}`
+    );
+  } catch (error) {
+    await logError(env.DB, {
+      source: SOURCE,
+      message: "image URL health sweep threw",
+      error,
+      sessionId,
+    });
+  }
+}
