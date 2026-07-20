@@ -16,19 +16,34 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
 
 const authMock = vi.fn();
-const enqueueEmailMock = vi.fn(async () => {});
+// OPE-232 — capture the enqueued job so the send-route test can assert on the
+// ACTUAL rendered HTML (footer + view-in-browser + env-sourced address), not the
+// template in isolation. The env-sourced address is the gap the isolated
+// template tests could never catch.
+const enqueueEmailMock = vi.fn(async (_job?: unknown) => {});
 const selectMock = vi.fn();
 let sendEnabled = "false";
+let mailingAddress: string | undefined = "18 Main ST, Phillips, ME 04966";
+// Real-send path upserts the issue row before enqueueing — no-op insert chain.
+const insertMock = vi.fn(() => ({
+  values: () => ({ onConflictDoUpdate: () => Promise.resolve() }),
+}));
 
 vi.mock("@/lib/auth", () => ({
   auth: () => authMock(),
   hasRole: (s: { user?: { role?: string } } | null, r: string) => s?.user?.role === r,
 }));
 vi.mock("@/lib/cloudflare", () => ({
-  getCloudflareDb: vi.fn(() => ({ select: selectMock })),
-  getCloudflareEnv: vi.fn(() => ({ NEWSLETTER_SEND_ENABLED: sendEnabled, AUTH_SECRET: "s" })),
+  getCloudflareDb: vi.fn(() => ({ select: selectMock, insert: insertMock })),
+  getCloudflareEnv: vi.fn(() => ({
+    NEWSLETTER_SEND_ENABLED: sendEnabled,
+    AUTH_SECRET: "s",
+    MAILING_ADDRESS: mailingAddress,
+  })),
 }));
-vi.mock("@/lib/queues/producers", () => ({ enqueueEmail: () => enqueueEmailMock() }));
+vi.mock("@/lib/queues/producers", () => ({
+  enqueueEmail: (job: unknown) => enqueueEmailMock(job),
+}));
 
 import { POST } from "../route";
 
@@ -49,7 +64,9 @@ beforeEach(() => {
   authMock.mockReset();
   enqueueEmailMock.mockClear();
   selectMock.mockReset();
+  insertMock.mockClear();
   sendEnabled = "false";
+  mailingAddress = "18 Main ST, Phillips, ME 04966";
 });
 
 describe("POST /api/admin/newsletter/send — guard rails (OPE-169)", () => {
@@ -129,5 +146,45 @@ describe("POST /api/admin/newsletter/send — preview_only (OPE-190)", () => {
     // test_recipient short-circuits recipient resolution — no D1 select at all.
     expect(selectMock).not.toHaveBeenCalled();
     expect(enqueueEmailMock).not.toHaveBeenCalled();
+  });
+});
+
+// OPE-232 — assert on the ACTUAL enqueued HTML, not the template in isolation.
+// This is the send-route integration test the reopened ticket asked for: the
+// isolated template tests passed while the real send dropped the env-sourced
+// mailing address (MAILING_ADDRESS was only set on the MCP worker, not the
+// main-app worker that renders). This catches that whole class.
+describe("POST /api/admin/newsletter/send — rendered HTML on a real test send (OPE-232)", () => {
+  const sendTest = () =>
+    call({ subject: "Weekend digest", content_html: "<p>hi</p>", test_recipient: "me@x.com" });
+  const enqueuedHtml = () =>
+    (enqueueEmailMock.mock.calls[0]?.[0] as { html: string } | undefined)?.html ?? "";
+
+  it("enqueues one job with the branded footer, view-in-browser, unsubscribe, and env MAILING_ADDRESS", async () => {
+    admin();
+    const res = await sendTest();
+    expect(res.status).toBe(200);
+    expect(enqueueEmailMock).toHaveBeenCalledTimes(1);
+    const html = enqueuedHtml();
+    // Gap 2 — view-in-browser link present + clickable.
+    expect(html).toContain("View this email in your browser");
+    // Per-recipient unsubscribe link present.
+    expect(html).toContain("/api/newsletter/unsubscribe?token=");
+    // Gap 1 — branded newsletter footer (masthead brand line), not the bare
+    // transactional shell.
+    expect(html).toContain("Weekend Fair Digest");
+    // Gap 3 — the ENV-sourced postal address renders, NOT the hardcoded fallback.
+    expect(html).toContain("18 Main ST, Phillips, ME 04966");
+    expect(html).not.toContain("Meet Me at the Fair, New England");
+  });
+
+  it("GUARD: when MAILING_ADDRESS is unset, the CAN-SPAM fallback is visible (the shipped bug)", async () => {
+    admin();
+    mailingAddress = undefined; // reproduce the main-app-worker-missing-binding state
+    await sendTest();
+    // This asserts the exact regression: no env → the generic placeholder. If a
+    // future change makes the env read work, THIS test flips and must be updated —
+    // which is the signal that the address wiring changed.
+    expect(enqueuedHtml()).toContain("Meet Me at the Fair, New England");
   });
 });
