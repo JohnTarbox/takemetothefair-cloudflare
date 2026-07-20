@@ -11,6 +11,7 @@
  */
 
 import type { ActionQueueEntry } from "@/lib/analytics-overview/types";
+import { resolveDigestHref } from "@takemetothefair/utils";
 
 export interface StaleRed {
   priority: "P0" | "P1";
@@ -145,7 +146,11 @@ export function formatStaleRedDigest(
   baseUrl: string
 ): { subject: string; text: string; html: string } {
   const n = reds.length;
-  const base = baseUrl.replace(/\/+$/, ""); // avoid a double slash before href
+  // OPE-261 §4 — hrefs are resolved, not concatenated. Signals whose href is
+  // already absolute (the IndexNow red links out to Bing Webmaster Tools)
+  // previously rendered as `https://meetmeatthefair.comhttps://…` and did not
+  // resolve at all.
+  const base = baseUrl.replace(/\/+$/, "");
   const subject = `⚠️ ${n} dashboard signal${n === 1 ? "" : "s"} stuck red`;
 
   const intro =
@@ -156,7 +161,8 @@ export function formatStaleRedDigest(
     "stale-red and keeps nagging until each signal is fixed.";
 
   const textLines = reds.map(
-    (r) => `• [${r.priority}] ${r.title} — red ${formatAge(r.hoursInRed)}\n  ${base}${r.href}`
+    (r) =>
+      `• [${r.priority}] ${r.title} — red ${formatAge(r.hoursInRed)}\n  ${resolveDigestHref(base, r.href)}`
   );
   const text = [intro, "", ...textLines, "", outro].join("\n");
 
@@ -164,7 +170,7 @@ export function formatStaleRedDigest(
     .map(
       (r) =>
         `<li><strong>[${r.priority}]</strong> ${r.title} — red ${formatAge(r.hoursInRed)} ` +
-        `(<a href="${base}${r.href}">open</a>)</li>`
+        `(<a href="${resolveDigestHref(base, r.href)}">open</a>)</li>`
     )
     .join("");
   const html = `<p>${intro}</p><ul>${htmlItems}</ul><p>${outro}</p>`;

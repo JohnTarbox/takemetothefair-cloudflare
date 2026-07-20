@@ -1,6 +1,7 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { logError } from "@/lib/logger";
 import { SITE_URL, SUPPORT_EMAIL } from "@takemetothefair/constants";
+import { formatRecipientsForLedger, normalizeRecipients } from "@takemetothefair/utils";
 import { emailSendLedger } from "@/lib/db/schema";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 
@@ -51,7 +52,9 @@ async function ledgerDirectSend(
     await db.insert(emailSendLedger).values({
       messageId: `direct-${crypto.randomUUID()}`,
       sentAt: new Date(),
-      recipient: args.to,
+      // OPE-261 — a multi-recipient alert records the full list, not just the
+      // first address.
+      recipient: formatRecipientsForLedger(args.to),
       source: args.source ?? null,
       subject: args.subject,
       status: outcome.status,
@@ -98,7 +101,9 @@ async function sendViaResend(
       },
       body: JSON.stringify({
         from,
-        to: args.to,
+        // OPE-261 — Resend's `to` accepts string[]; a comma-separated string
+        // would be one malformed address. Mirrors the cf-email queue path.
+        to: normalizeRecipients(args.to),
         subject: args.subject,
         html: args.html,
         text: args.text,

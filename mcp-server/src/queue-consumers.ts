@@ -18,6 +18,7 @@ import { indexnowSubmissions, emailSendLedger } from "./schema.js";
 import { ledgerEmailSend, wasEmailSent } from "./mailer.js";
 import { logError } from "./logger.js";
 import { captureDiscrepancy, type FieldClass, type DetectedBy } from "./goodwill/capture.js";
+import { formatRecipientsForLedger, normalizeRecipients } from "@takemetothefair/utils";
 
 const HOST = "meetmeatthefair.com";
 const REPORT_API_BASE = "https://api.indexnow.org/IndexNow";
@@ -137,7 +138,13 @@ type ConsumerEnv = {
 
 const DEFAULT_FROM = "Meet Me at the Fair <notify@meetmeatthefair.com>";
 
-async function sendViaCfEmail(
+/**
+ * Exported for tests. OPE-261 made the recipient handling load-bearing (a
+ * comma-separated `to` must reach the binding as an ARRAY, or the operator
+ * alert silently goes to one malformed address), and testing that through
+ * `handleEmailBatch` would require a full D1 mock for a three-line concern.
+ */
+export async function sendViaCfEmail(
   msg: EmailJobMessage,
   binding: SendEmail
 ): Promise<{ ok: true; messageId: string } | { ok: false; error: string }> {
@@ -146,9 +153,19 @@ async function sendViaCfEmail(
     const headers: Record<string, string> = {};
     if (msg.inReplyTo) headers["In-Reply-To"] = msg.inReplyTo;
     if (msg.references) headers["References"] = msg.references;
+    // OPE-261 — `to` may name SEVERAL operators (e.g. ALERT_EMAIL_TECHNICAL =
+    // "alert@…,jtarboxme@gmail.com"). The binding's builder overload takes
+    // `string | EmailAddress | (string | EmailAddress)[]`; a comma-separated
+    // STRING would be treated as one malformed address, so the split is
+    // load-bearing, not cosmetic. Single-recipient sends are unaffected —
+    // normalizeRecipients returns a 1-element array.
+    const recipients = normalizeRecipients(msg.to);
+    if (recipients.length === 0) {
+      return { ok: false, error: "no valid recipient in `to`" };
+    }
     const res = await binding.send({
       from: msg.from ?? DEFAULT_FROM,
-      to: msg.to,
+      to: recipients,
       subject: msg.subject,
       html: msg.html,
       text: msg.text,
@@ -224,7 +241,9 @@ export async function handleEmailBatch(
     if (m.body.source?.startsWith("reply:") && env.EMAIL_REPLY_ENABLED !== "true") {
       await ledgerEmailSend(db, {
         messageId: m.id,
-        recipient: m.body.to,
+        // OPE-261 — record the FULL list, not just the first address; a ledger
+        // that under-reports who was mailed is the same blindness class.
+        recipient: formatRecipientsForLedger(m.body.to),
         source: m.body.source,
         subject: m.body.subject,
         status: "stubbed",
@@ -246,7 +265,9 @@ export async function handleEmailBatch(
       // 'failed' attempt with 'sent'). ledgerEmailSend is best-effort.
       await ledgerEmailSend(db, {
         messageId: m.id,
-        recipient: m.body.to,
+        // OPE-261 — record the FULL list, not just the first address; a ledger
+        // that under-reports who was mailed is the same blindness class.
+        recipient: formatRecipientsForLedger(m.body.to),
         source: m.body.source,
         subject: m.body.subject,
         status: "sent",
@@ -264,7 +285,9 @@ export async function handleEmailBatch(
       // checks status='sent'); a later success upserts 'sent' over this row.
       await ledgerEmailSend(db, {
         messageId: m.id,
-        recipient: m.body.to,
+        // OPE-261 — record the FULL list, not just the first address; a ledger
+        // that under-reports who was mailed is the same blindness class.
+        recipient: formatRecipientsForLedger(m.body.to),
         source: m.body.source,
         subject: m.body.subject,
         status: "failed",
