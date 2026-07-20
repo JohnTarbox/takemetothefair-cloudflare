@@ -38,8 +38,24 @@ const stateRow = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
+/** The endpoint's response shape, only as far as these assertions need it. */
+interface CoverageBody {
+  scannedEntities: number;
+  lastScanAt: string | null;
+  byEntity: Array<{
+    entityType: string;
+    imageless: number;
+    byTier: Array<{ tier: string; total: number }>;
+  }>;
+  urlHealth: { owned: number; hotlinked: number };
+  imagelessByDemand: Array<{ entityId: string }>;
+}
+
 const call = (qs = "") =>
   GET(new Request(`https://x.test/api/admin/analytics/photo-coverage${qs}`) as never);
+
+const body = async (qs = ""): Promise<CoverageBody> =>
+  (await (await call(qs)).json()) as CoverageBody;
 
 beforeEach(() => {
   authorized = true;
@@ -58,14 +74,14 @@ describe("GET /api/admin/analytics/photo-coverage", () => {
       stateRow({ entityId: "b", demandImpressions: 800, demandTier: "T1" }),
       stateRow({ entityId: "c", demandImpressions: 700, demandTier: "T1" }),
     ];
-    const body = await (await call("?limit=1")).json();
+    const b = await body("?limit=1");
 
-    expect(body.imagelessByDemand).toHaveLength(1);
-    expect(body.imagelessByDemand[0].entityId).toBe("a"); // highest demand first
+    expect(b.imagelessByDemand).toHaveLength(1);
+    expect(b.imagelessByDemand[0].entityId).toBe("a"); // highest demand first
     // The headline numbers still see all three.
-    const events = body.byEntity.find((e: { entityType: string }) => e.entityType === "EVENT");
+    const events = b.byEntity.find((e) => e.entityType === "EVENT")!;
     expect(events.imageless).toBe(3);
-    expect(events.byTier.find((t: { tier: string }) => t.tier === "T1").total).toBe(3);
+    expect(events.byTier.find((t) => t.tier === "T1")!.total).toBe(3);
   });
 
   it("surfaces lastScanAt so stale numbers are distinguishable from live ones", async () => {
@@ -74,21 +90,21 @@ describe("GET /api/admin/analytics/photo-coverage", () => {
       stateRow({ entityId: "a", checkedAt: older }),
       stateRow({ entityId: "b", checkedAt: NOW }),
     ];
-    const body = await (await call()).json();
-    expect(body.lastScanAt).toBe(NOW.toISOString());
+    const b = await body();
+    expect(b.lastScanAt).toBe(NOW.toISOString());
   });
 
   it("reports an empty table as 0/0 rather than omitting entity types", async () => {
-    const body = await (await call()).json();
-    expect(body.scannedEntities).toBe(0);
-    expect(body.byEntity.map((e: { entityType: string }) => e.entityType)).toEqual([
+    const b = await body();
+    expect(b.scannedEntities).toBe(0);
+    expect(b.byEntity.map((e) => e.entityType)).toEqual([
       "EVENT",
       "VENDOR",
       "VENUE",
       "PROMOTER",
       "PERFORMER",
     ]);
-    expect(body.lastScanAt).toBeNull();
+    expect(b.lastScanAt).toBeNull();
   });
 
   it("counts hotlinked URLs for the §4 health signal", async () => {
@@ -96,8 +112,8 @@ describe("GET /api/admin/analytics/photo-coverage", () => {
       stateRow({ entityId: "a", hasImage: true, urlHealth: "HOTLINKED" }),
       stateRow({ entityId: "b", hasImage: true, urlHealth: "OWNED" }),
     ];
-    const body = await (await call()).json();
-    expect(body.urlHealth.hotlinked).toBe(1);
-    expect(body.urlHealth.owned).toBe(1);
+    const b = await body();
+    expect(b.urlHealth.hotlinked).toBe(1);
+    expect(b.urlHealth.owned).toBe(1);
   });
 });
