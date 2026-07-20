@@ -1325,6 +1325,45 @@ export function registerAnalyticsTools(server: McpServer, auth: AuthContext, env
     }
   );
 
+  // ── get_photo_coverage (OPE-225) ───────────────────────────────
+  server.tool(
+    "get_photo_coverage",
+    [
+      "Photo/image coverage rails (OPE-225) — the photo analog of",
+      "get_roster_coverage. Per entity type (EVENT/VENDOR/VENUE/PROMOTER/PERFORMER):",
+      "total, withImage, imageless, coveragePct, hotlinked, addedSinceBaseline, and a",
+      "`byTier` breakdown across demand tiers T1-T4 (28-day GSC impressions:",
+      "T1>=500, T2>=100, T3>=1, T4=no recorded demand). ALWAYS read byTier, not just",
+      "coveragePct — the finding that started this rail was that the six",
+      "highest-traffic events were all imageless while overall coverage looked fine.",
+      "Also returns `urlHealth` counts (owned vs hotlinked vs missing) and",
+      "`imagelessByDemand`, the demand-ranked backlog (highest search demand first)",
+      "for photo sourcing. `lastScanAt` is the freshest observation — if it is stale,",
+      "the numbers are stale too, so check it before quoting coverage. Optional",
+      "`limit` caps the backlog list (default 25, max 200); tier rollups always cover",
+      "every row. Read-only, admin only.",
+    ].join(" "),
+    { limit: z.number().int().min(1).max(200).optional() },
+    async ({ limit }) => {
+      try {
+        const qs = limit ? `?limit=${limit}` : "";
+        const data = await fetchAnalyticsJson(`/api/admin/analytics/photo-coverage${qs}`);
+        return { content: [jsonContent(data)] };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                error instanceof Error ? error.message : "Unknown error fetching photo coverage",
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
   // ── get_promoter_enrichment_coverage (OPE-35 Part 3 + OPE-38) ──
   server.tool(
     "get_promoter_enrichment_coverage",

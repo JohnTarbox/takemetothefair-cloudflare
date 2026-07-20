@@ -24,6 +24,7 @@ import {
   emailSendLedger,
   heartbeatProbes,
   inboundEmails,
+  imageCoverageState,
   promoterEnrichmentCandidates,
   vendorEnrichmentCandidates,
 } from "@/lib/db/schema";
@@ -116,6 +117,19 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     expectedWindowHours: 7 * 24,
     lastEvidenceAt: (db) =>
       maxTs(db, vendorEnrichmentCandidates, vendorEnrichmentCandidates.createdAt),
+  },
+  {
+    // OPE-225 — the photo-coverage rails' single writer. Evidence is the
+    // freshest `checked_at`: the scan touches EVERY live entity on each run, so
+    // a stale max means the scan itself stopped, not merely that no image
+    // changed. A probe keyed on image CHANGES would sit silent during a genuine
+    // no-change week and be indistinguishable from a dead scan.
+    name: "image-coverage-scan",
+    ownerOpe: "OPE-225",
+    label: "Photo-coverage scan",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: (db) => maxTs(db, imageCoverageState, imageCoverageState.checkedAt),
   },
   {
     name: "promoter-enrichment",
