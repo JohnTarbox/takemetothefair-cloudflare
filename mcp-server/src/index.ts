@@ -42,6 +42,7 @@ import {
 } from "./inbound-email-stale-sweep.js";
 import { runScheduledDedupSweepCanary } from "./dedup-sweep-canary.js";
 import { runScheduledCpiStaleRedCanary } from "./cpi-stale-red-canary.js";
+import { runScheduledCpiScanWatchdog } from "./cpi-scan-watchdog.js";
 import {
   runScheduledImageUrlHealthSweep,
   runScheduledPhotoCoverageScan,
@@ -1613,6 +1614,11 @@ export default {
       const jobRunId = `promoter-cron-${new Date(controller.scheduledTime)
         .toISOString()
         .slice(0, 10)}-${crypto.randomUUID().slice(0, 8)}`;
+      // OPE-259 — dead-man's switch for the 06:00 CPI scan, which skipped
+      // 2026-07-19 with nothing noticing. Deliberately on the 08:00 trigger and
+      // reading D1 directly: a probe watching the scan would be evaluated BY
+      // the scan, so it could only ever report green. See cpi-scan-watchdog.ts.
+      ctx.waitUntil(runScheduledCpiScanWatchdog(env).then(() => undefined));
       ctx.waitUntil(runScheduledPromoterEnrichment(env, jobRunId, controller.scheduledTime));
       return;
     }
