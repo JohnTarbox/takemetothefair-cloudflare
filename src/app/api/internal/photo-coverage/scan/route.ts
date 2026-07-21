@@ -4,6 +4,7 @@ import { withInternalKey } from "@/lib/api/with-auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { logError } from "@/lib/logger";
 import { refreshImageCoverageState } from "@/lib/photo-coverage/scan";
+import { loadCoverageState, persistPhotoCoverageSnapshot } from "@/lib/photo-effectiveness/load";
 
 /**
  * POST /api/internal/photo-coverage/scan  (OPE-225)
@@ -24,7 +25,34 @@ import { refreshImageCoverageState } from "@/lib/photo-coverage/scan";
 export const POST = withInternalKey(async () => {
   try {
     const db = getCloudflareDb();
-    const result = await refreshImageCoverageState(db, new Date());
+    const now = new Date();
+    const result = await refreshImageCoverageState(db, now);
+
+    /**
+     * OPE-226 — append today's coverage snapshot.
+     *
+     * `image_coverage_state` is overwritten in place every scan, so this is the
+     * only moment the day's coverage exists to be recorded; without it there is
+     * no trend to report, only a single point.
+     *
+     * Written even when the scan was INCOMPLETE, carrying `result.complete` so
+     * the trend can exclude the day. Skipping the write instead would leave a
+     * hole that reads as "coverage unchanged" — the failure mode this whole
+     * ticket family exists to stop. Fail-soft: a snapshot error must not turn a
+     * good scan into a failed one, so it is logged and the scan result stands.
+     */
+    let snapshot: { date: string; written: number } | null = null;
+    try {
+      const rows = await loadCoverageState(db);
+      snapshot = await persistPhotoCoverageSnapshot(db, rows, result.complete, now);
+    } catch (err) {
+      await logError(null, {
+        level: "warn",
+        source: "photo-coverage:scan",
+        message: "coverage snapshot write failed; scan result still stands",
+        error: err,
+      });
+    }
 
     // A PARTIAL scan must not report success. The first production run wrote
     // events + part of vendors and was killed before venues/promoters/
@@ -41,10 +69,13 @@ export const POST = withInternalKey(async () => {
           writtenByType: result.writtenByType,
         },
       });
-      return NextResponse.json({ success: false, incomplete: true, ...result }, { status: 500 });
+      return NextResponse.json(
+        { success: false, incomplete: true, snapshot, ...result },
+        { status: 500 }
+      );
     }
 
-    return NextResponse.json({ success: true, ...result });
+    return NextResponse.json({ success: true, snapshot, ...result });
   } catch (err) {
     // Surfaced, not swallowed: a scan that fails silently would leave the
     // coverage numbers frozen at their last good value and still look healthy.

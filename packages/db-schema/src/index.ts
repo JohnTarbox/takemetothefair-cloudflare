@@ -3787,3 +3787,61 @@ export const imageCoverageState = sqliteTable(
 );
 
 export type ImageCoverageStateRow = typeof imageCoverageState.$inferSelect;
+
+/**
+ * OPE-226 — daily photo-coverage snapshot: the history `image_coverage_state`
+ * deliberately does not keep.
+ *
+ * `image_coverage_state` is a CURRENT-STATE table — one upserted row per
+ * (entity_type, entity_id). That is right for "what needs a photo today", but
+ * it means yesterday's coverage is gone the moment the scan runs, so §1's
+ * "coverage trend by tier" and §4's "rot/hotlink counts, trended" cannot be
+ * answered from it at all. This is the append-only sibling that can.
+ *
+ * Grain is (date, entity_type, demand_tier) — the same slice the scorecard
+ * reports, so a trend read is one indexed scan with no re-aggregation.
+ *
+ * ## Why `scan_complete` is a column and not an afterthought
+ *
+ * The OPE-225 scan computes a `complete` flag but never persisted it, so a
+ * reader of the coverage table could not tell a whole scan from a truncated
+ * one. That is not hypothetical: the 2026-07-21 06:01Z run wrote events plus
+ * part of vendors and stopped — venues, promoters and performers were absent
+ * entirely, and `summarizeCoverage` renders an absent type as 0/0, which reads
+ * on a dashboard as "measured, and empty". Storing the flag alongside the
+ * numbers is what lets the scorecard say "not measured" instead of "0%".
+ *
+ * Rows from an incomplete scan ARE still written (with the flag false) rather
+ * than dropped: a gap in the series is itself the signal, and silently skipping
+ * the write would make a broken pipeline look like an unchanged metric.
+ */
+export const photoCoverageDaily = sqliteTable(
+  "photo_coverage_daily",
+  {
+    /** YYYY-MM-DD (UTC) of the scan. Upsert target, so a re-run replaces. */
+    date: text("date").notNull(),
+    entityType: text("entity_type", {
+      enum: ["EVENT", "VENDOR", "VENUE", "PROMOTER", "PERFORMER"],
+    }).notNull(),
+    demandTier: text("demand_tier", { enum: ["T1", "T2", "T3", "T4"] }).notNull(),
+    total: integer("total").notNull().default(0),
+    withImage: integer("with_image").notNull().default(0),
+    hotlinked: integer("hotlinked").notNull().default(0),
+    unreachable: integer("unreachable").notNull().default(0),
+    /** Rows carrying a non-null `image_set_at` — the lift-eligible population. */
+    addedSinceBaseline: integer("added_since_baseline").notNull().default(0),
+    /** False when the scan behind these numbers did not cover every type. */
+    scanComplete: integer("scan_complete", { mode: "boolean" }).notNull().default(false),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => [
+    primaryKey({ columns: [t.date, t.entityType, t.demandTier] }),
+    // The trend read: "series for entity type X, newest first".
+    index("idx_photo_coverage_daily_type_date").on(t.entityType, t.date),
+    index("idx_photo_coverage_daily_date").on(t.date),
+  ]
+);
+
+export type PhotoCoverageDailyRow = typeof photoCoverageDaily.$inferSelect;

@@ -25,6 +25,7 @@ import {
   heartbeatProbes,
   inboundEmails,
   imageCoverageState,
+  photoCoverageDaily,
   promoterEnrichmentCandidates,
   vendorEnrichmentCandidates,
 } from "@/lib/db/schema";
@@ -142,6 +143,21 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     priority: "P1",
     expectedWindowHours: 72,
     lastEvidenceAt: (db) => maxTs(db, imageCoverageState, imageCoverageState.urlCheckedAt),
+  },
+  {
+    // OPE-226 — the scorecard's snapshot writer, which runs inside the daily
+    // coverage scan. It gets its OWN probe rather than riding on the scan's
+    // because the two can fail independently: the snapshot write is fail-soft
+    // by design (a snapshot error must not fail a good scan), so it can be
+    // broken for weeks while `image-coverage-scan` stays green — and the only
+    // visible symptom would be a trend that stops moving, which looks exactly
+    // like a metric that legitimately did not change.
+    name: "photo-coverage-snapshot",
+    ownerOpe: "OPE-226",
+    label: "Photo-coverage daily snapshot",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: (db) => maxTs(db, photoCoverageDaily, photoCoverageDaily.updatedAt),
   },
   {
     name: "promoter-enrichment",
