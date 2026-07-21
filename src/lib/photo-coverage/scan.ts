@@ -11,6 +11,7 @@
 import { and, eq, gte, inArray, isNull, sql } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import { SITE_URL } from "@takemetothefair/constants";
+import { chunkIds } from "@takemetothefair/utils";
 import {
   events,
   gscSearchMetrics,
@@ -172,7 +173,26 @@ export interface ScanResult {
   newlyImaged: number;
   imageless: number;
   hotlinked: number;
+  /** Rows actually persisted, per entity type — the completeness evidence. */
+  writtenByType: Record<string, number>;
+  /** False when the write phase did not cover every entity type it loaded. */
+  complete: boolean;
 }
+
+/**
+ * Statements per `db.batch()` round trip.
+ *
+ * The first production run wrote ~6,400 rows with one `await db.insert()` each
+ * and was KILLED mid-loop — events and part of vendors landed; venues,
+ * promoters and performers never got written at all, and no error was logged
+ * because the isolate died rather than throwing. The coverage numbers looked
+ * plausible while two-thirds of the site was simply absent.
+ *
+ * D1's 100-bound-parameter cap is PER STATEMENT, not per batch, and each row
+ * here binds ~14 params — so batch size is bounded by round-trip cost, not the
+ * param cap. 100 statements/batch turns ~8,800 sequential awaits into ~88.
+ */
+const WRITE_BATCH_SIZE = 100;
 
 /**
  * Refresh `image_coverage_state` for every live entity.
@@ -218,7 +238,13 @@ export async function refreshImageCoverageState(
     newlyImaged: 0,
     imageless: 0,
     hotlinked: 0,
+    writtenByType: {},
+    complete: false,
   };
+
+  // Build every row first, then write in batches. Reconciliation is pure, so
+  // doing it up front costs nothing and keeps the write phase a tight loop.
+  const pending: Array<{ next: CoverageStateRow; slug: string }> = [];
 
   for (const e of entities) {
     const key = `${e.entityType}:${e.entityId}`;
@@ -240,46 +266,78 @@ export async function refreshImageCoverageState(
     if (!next.hasImage) result.imageless += 1;
     if (next.urlHealth === "HOTLINKED") result.hotlinked += 1;
 
-    await db
-      .insert(imageCoverageState)
-      .values({
-        entityType: next.entityType,
-        entityId: next.entityId,
-        slug: e.slug,
-        hasImage: next.hasImage,
-        imageUrl: next.imageUrl,
-        urlHealth: next.urlHealth,
-        imageSetAt: next.imageSetAt,
-        baselineHadImage: next.baselineHadImage,
-        firstSeenAt: next.firstSeenAt,
-        demandImpressions: next.demandImpressions,
-        demandTier: next.demandTier,
-        checkedAt: next.checkedAt,
-        urlCheckedAt: next.urlCheckedAt,
-        urlStatusCode: next.urlStatusCode,
-      })
-      .onConflictDoUpdate({
-        target: [imageCoverageState.entityType, imageCoverageState.entityId],
-        set: {
-          slug: e.slug,
+    pending.push({ next, slug: e.slug });
+  }
+
+  for (const chunk of chunkIds(pending, WRITE_BATCH_SIZE)) {
+    const statements = chunk.map(({ next, slug }) =>
+      db
+        .insert(imageCoverageState)
+        .values({
+          entityType: next.entityType,
+          entityId: next.entityId,
+          slug,
           hasImage: next.hasImage,
           imageUrl: next.imageUrl,
           urlHealth: next.urlHealth,
           imageSetAt: next.imageSetAt,
+          baselineHadImage: next.baselineHadImage,
+          firstSeenAt: next.firstSeenAt,
           demandImpressions: next.demandImpressions,
           demandTier: next.demandTier,
           checkedAt: next.checkedAt,
-          // Cleared by the model when the URL changed, so a new URL is
-          // re-queued at the front of the rot sweep; otherwise carried through
-          // untouched so the sweep's round-robin clock is not reset daily.
           urlCheckedAt: next.urlCheckedAt,
           urlStatusCode: next.urlStatusCode,
-          // firstSeenAt and baselineHadImage are intentionally NOT updated —
-          // they describe the entity's state when the rail first saw it and
-          // must stay immutable for the before/after boundary to mean anything.
-        },
-      });
+        })
+        .onConflictDoUpdate({
+          target: [imageCoverageState.entityType, imageCoverageState.entityId],
+          set: {
+            slug,
+            hasImage: next.hasImage,
+            imageUrl: next.imageUrl,
+            urlHealth: next.urlHealth,
+            imageSetAt: next.imageSetAt,
+            demandImpressions: next.demandImpressions,
+            demandTier: next.demandTier,
+            checkedAt: next.checkedAt,
+            // Cleared by the model when the URL changed, so a new URL is
+            // re-queued at the front of the rot sweep; otherwise carried through
+            // untouched so the sweep's round-robin clock is not reset daily.
+            urlCheckedAt: next.urlCheckedAt,
+            urlStatusCode: next.urlStatusCode,
+            // firstSeenAt and baselineHadImage are intentionally NOT updated —
+            // they describe the entity's state when the rail first saw it and
+            // must stay immutable for the before/after boundary to mean anything.
+          },
+        })
+    );
+
+    // drizzle-d1 types batch() as a non-empty tuple; chunkIds never yields an
+    // empty chunk, so the cast is safe and keeps the call site readable.
+    await db.batch(statements as unknown as Parameters<typeof db.batch>[0]);
+
+    for (const { next } of chunk) {
+      result.writtenByType[next.entityType] = (result.writtenByType[next.entityType] ?? 0) + 1;
+    }
   }
+
+  /**
+   * Completeness gate.
+   *
+   * The first run's real failure was not that it died — it is that it died
+   * QUIETLY, leaving a table that reported 46% event coverage while venues,
+   * promoters and performers were absent entirely. `summarizeCoverage` renders
+   * a missing type as 0/0, which reads as "measured and empty".
+   *
+   * So the scan now states whether it actually covered what it loaded. The
+   * caller logs and returns a non-200 when it did not, turning a silent partial
+   * into a visible failure.
+   */
+  const expectedTypes = new Set(entities.map((e) => e.entityType));
+  const writtenTotal = Object.values(result.writtenByType).reduce((a, b) => a + b, 0);
+  result.complete =
+    writtenTotal === entities.length &&
+    [...expectedTypes].every((t) => (result.writtenByType[t] ?? 0) > 0);
 
   return result;
 }

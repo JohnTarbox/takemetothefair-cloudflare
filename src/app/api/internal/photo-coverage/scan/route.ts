@@ -25,6 +25,25 @@ export const POST = withInternalKey(async () => {
   try {
     const db = getCloudflareDb();
     const result = await refreshImageCoverageState(db, new Date());
+
+    // A PARTIAL scan must not report success. The first production run wrote
+    // events + part of vendors and was killed before venues/promoters/
+    // performers — leaving coverage numbers that looked healthy for a table
+    // that was missing two-thirds of the site, with nothing logged because the
+    // isolate died rather than threw. Reporting 200 on that is the actual bug.
+    if (!result.complete) {
+      await logError(null, {
+        level: "error",
+        source: "photo-coverage:scan",
+        message: "image coverage scan INCOMPLETE — coverage numbers are not trustworthy",
+        context: {
+          scanned: result.scanned,
+          writtenByType: result.writtenByType,
+        },
+      });
+      return NextResponse.json({ success: false, incomplete: true, ...result }, { status: 500 });
+    }
+
     return NextResponse.json({ success: true, ...result });
   } catch (err) {
     // Surfaced, not swallowed: a scan that fails silently would leave the
