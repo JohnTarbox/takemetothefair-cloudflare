@@ -14,6 +14,7 @@ import { assessAllIntegrationSilence, type IntegrationActivity } from "@/lib/int
 import { assessAllQueueFreeze } from "@/lib/queue-freeze";
 import { gatherQueueFlows, persistQueueSnapshots } from "@/lib/analytics-overview/queue-drain";
 import { assessAllHeartbeat } from "@/lib/heartbeat";
+import { assessPhotoEffectiveness } from "@/lib/photo-effectiveness/load";
 import {
   formatStaleRedDigest,
   selectStaleFaultReds,
@@ -203,7 +204,33 @@ export const POST = withInternalKey({ source: "cpi:stale-red-scan" }, async ({ d
       });
     }
 
-    const allReds = [...reds, ...faultReds, ...integrationReds, ...queueReds, ...heartbeatReds];
+    // OPE-226 — merge photo-effectiveness regressions. The one that matters is
+    // the COMPLETENESS assertion, and it is not redundant with OPE-225's
+    // `image-coverage-scan` heartbeat probe: that probe reads max(checked_at),
+    // and a truncated scan still stamps checked_at on every row it DID write,
+    // so it reads fresh evidence and stays green while entire entity types go
+    // unmeasured. A liveness probe cannot see a partial write. Defensive:
+    // degrades to the prior reds.
+    let photoReds: StaleRed[] = [];
+    try {
+      photoReds = await assessPhotoEffectiveness(db, now);
+    } catch (err) {
+      await logError(db, {
+        level: "warn",
+        source: "cpi:stale-red-scan",
+        message: "photo-effectiveness load failed; degrading to the prior reds",
+        error: err,
+      });
+    }
+
+    const allReds = [
+      ...reds,
+      ...faultReds,
+      ...integrationReds,
+      ...queueReds,
+      ...heartbeatReds,
+      ...photoReds,
+    ];
 
     let sent = false;
     if (allReds.length > 0) {

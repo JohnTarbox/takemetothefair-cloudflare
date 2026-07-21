@@ -1364,6 +1364,59 @@ export function registerAnalyticsTools(server: McpServer, auth: AuthContext, env
     }
   );
 
+  // ── get_photo_effectiveness (OPE-226) ──────────────────────────
+  server.tool(
+    "get_photo_effectiveness",
+    [
+      "Photo-effectiveness scorecard (OPE-226) — 'are the photos actually working?',",
+      "the measurement counterpart to get_photo_coverage's 'who is missing one'.",
+      "Returns: `coverage` (coverage TREND by demand tier per entity type, with",
+      "deltaPp across the window), `lift` (the core metric), `jsonLdImagePct`, and",
+      "`health` (hotlinked/unreachable).",
+      "",
+      "READ THESE THREE FIELDS BEFORE QUOTING ANY NUMBER:",
+      "1. `unmeasuredTypes` — entity types absent from the newest snapshot. An",
+      "absent type is NOT 0% coverage, it was never measured; the two demand",
+      "opposite responses and a plain rollup renders them identically.",
+      "2. `scanComplete` / `incompleteDays` — false means the underlying scan",
+      "truncated and the percentages exclude whatever it never reached.",
+      "3. `lift.note` — the sample-size statement, in words. Quote it WITH the",
+      "lift figure, never the figure alone.",
+      "",
+      "`lift` is deliberately WITHIN-PAGE: each page's GSC CTR in the 28 days",
+      "before its own image_set_at vs the 28 days after, aggregated over pages",
+      "whose after-window has fully elapsed (`matured`). It is not a with-photo vs",
+      "without-photo comparison — the highest-traffic pages here are the imageless",
+      "ones, so a cross-sectional read is confounded and would argue against ever",
+      "adding a photo. Pages that already had an image when the rail was installed",
+      "are baseline (image_set_at NULL) and can never carry a lift claim, so",
+      "`eligible` starts at 0 and grows only as photos are added.",
+      "Optional `days` sets the trend window (default 90, max 365).",
+      "Read-only, admin only.",
+    ].join(" "),
+    { days: z.number().int().min(1).max(365).optional() },
+    async ({ days }) => {
+      try {
+        const qs = days ? `?days=${days}` : "";
+        const data = await fetchAnalyticsJson(`/api/admin/analytics/photo-effectiveness${qs}`);
+        return { content: [jsonContent(data)] };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                error instanceof Error
+                  ? error.message
+                  : "Unknown error fetching photo effectiveness",
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
   // ── get_promoter_enrichment_coverage (OPE-35 Part 3 + OPE-38) ──
   server.tool(
     "get_promoter_enrichment_coverage",
