@@ -212,10 +212,15 @@ export default async function PerformerDetailPage({ params }: Props) {
 
   const category = performer.actCategory ? CATEGORY_LABEL[performer.actCategory] : null;
   const homeBase = [performer.homeBaseCity, performer.homeBaseState].filter(Boolean).join(", ");
+  // OPE-263 — carry venue + stateCode through. This map previously dropped the
+  // venue the query had already loaded, which is why every performerIn Event
+  // node shipped without a `location` and failed Google Rich Results.
   const schemaEvents = [...performer.upcomingEvents, ...performer.pastEvents].map((e) => ({
     name: e.name,
     slug: e.slug,
     startDate: e.startDate,
+    venue: e.venue ?? null,
+    stateCode: e.stateCode ?? null,
   }));
 
   return (
