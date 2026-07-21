@@ -1681,13 +1681,12 @@ export default {
         // so a retry is always safe. Guarded by the `image-coverage-scan`
         // heartbeat probe — see the OPE-245 note below for why a rail with no
         // caller is the failure mode this line exists to prevent.
-        runScheduledPhotoCoverageScan(env),
-        // OPE-225 PR2 — URL rot sweep. Round-robins the least-recently-checked
-        // image URLs (~60/run) and marks dead ones UNREACHABLE. Kept separate
-        // from the coverage scan above because this one makes outbound fetches
-        // to third-party hosts: a slow host must never delay the coverage
-        // numbers, and either can fail without taking the other down.
-        runScheduledImageUrlHealthSweep(env),
+        // OPE-225 — coverage scan, THEN the rot sweep. Sequenced, not raced:
+        // as siblings in this Promise.all the sweep ran first against an empty
+        // table on day one and checked nothing (url_checked stayed 0). The
+        // sweep reads rows the scan writes, so it must follow it. Chained
+        // rather than merged so a sweep failure still cannot fail the scan.
+        runScheduledPhotoCoverageScan(env).then(() => runScheduledImageUrlHealthSweep(env)),
         // GW1b (analyst, 2026-06-02) — Goodwill Engine Phase 1 capture
         // hooks. Both consume the foundations from GW1a (drizzle/0101)
         // and emit event_discrepancies rows for GW1c/d/e to score and
