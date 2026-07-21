@@ -91,6 +91,7 @@ import { registerVenuesGeocodeTool } from "./venues-geocode.js";
 import { registerEmailSenderTools } from "./admin-email-senders.js";
 import { registerSalvageInboundEmailTool } from "./admin-salvage-inbound-email.js";
 import { registerOgImageSweepTool } from "./admin-og-image-sweep.js";
+import { registerCpiAutoFileTools } from "./admin-cpi-autofile.js";
 import { registerSourceQualityTool } from "./admin-source-quality.js";
 import { registerSourceReliabilityTool } from "./admin-source-reliability.js";
 import { registerDiscrepancyTools } from "./admin-discrepancies.js";
@@ -239,6 +240,8 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   // backlog item asked for.
   registerSalvageInboundEmailTool(server, auth, env);
   registerOgImageSweepTool(server, auth, env);
+  // OPE-259 — the missing consumer half of the OPE-76 auto-file rail.
+  registerCpiAutoFileTools(server, auth, env);
   registerSourceQualityTool(server, db, auth);
   // GW1c (2026-06-02): cross-link sibling to source-quality. Backed by
   // mcp-server/src/goodwill/scoring.ts which the GW1d resolve_discrepancy

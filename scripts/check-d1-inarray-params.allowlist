@@ -11,6 +11,14 @@
 # Add NEW entries only with an explicit reason (and an issue link if it's a
 # deferred fix rather than a genuine exception).
 #
+# ⚠️ Line pins DRIFT. A `:<line>` pin breaks the moment anything is inserted
+# above it in that file — the guard then reports a long-approved site as a
+# brand-new error, in a PR that never touched the query. (OPE-259 hit exactly
+# this: adding one import + one registration call to admin.ts moved the
+# citation supersede site from 1387 to 1390 and failed CI.) If a "new" error
+# names a file ALREADY listed here, at a line a few off the pinned one, check
+# for drift before believing it — then just update the number.
+#
 # ── The citation supersede-prior pattern (OPE-241) ───────────────────────
 #
 # All five sites below share one shape:
@@ -34,5 +42,5 @@
 mcp-server/src/tools/admin-citations.ts:292
 mcp-server/src/tools/admin-citations.ts:495
 mcp-server/src/tools/admin-citations.ts:652
-mcp-server/src/tools/admin.ts:1387
+mcp-server/src/tools/admin.ts:1390
 src/lib/goodwill/flip-event-field.ts:142
