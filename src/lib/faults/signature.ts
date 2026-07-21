@@ -46,6 +46,108 @@ export const NOISE_DENYLIST: readonly string[] = [
 ];
 
 /**
+ * OPE-251 — third-party shapes that are noise on ORDINARY routes but must never
+ * be suppressed on conversion/auth-critical ones.
+ *
+ * Why these are separate from NOISE_DENYLIST: entries there (chunk churn,
+ * offline fetch) are un-actionable everywhere. These are un-actionable only
+ * because they come from embeds we don't control — and the same *string* can be
+ * a real, revenue-blocking fault elsewhere.
+ *
+ * That distinction is not theoretical. `/register#script error.` was NOT noise:
+ * it was the CORS-masked form of the registration-blocking Turnstile throw
+ * (OPE-173). A flat, route-independent denylist for `script error.` would have
+ * suppressed the single most important client fault we have ever had.
+ *
+ * Why a denylist is needed at all: signatures are route-scoped, so a shape a
+ * human closed as noise on one route re-proposes on every new route it appears
+ * on — the ledger keeps re-litigating a decision already made.
+ */
+export const THIRD_PARTY_NOISE_DENYLIST: readonly string[] = [
+  // Third-party chat/embed widget. Closed as noise 2026-07-05, re-proposed on
+  // a /blog route 2026-07-06 — the case that filed OPE-251.
+  "object not found matching id",
+  // CORS-masked cross-origin throw. OPE-105's crossorigin=anonymous de-blinds
+  // OUR bundle host; scripts served by third parties (challenges.cloudflare.com)
+  // stay masked permanently, so this residue never goes to zero.
+  "script error.",
+  // Minified third-party null-derefs. Anchored on the `evaluating '<expr>'`
+  // tail because the leading "TypeError: null is not an object" prefix also
+  // appears in genuine app errors.
+  "evaluating 'b.parentnode'",
+  "evaluating 'o.id'",
+];
+
+/**
+ * Route prefixes where NOTHING is auto-suppressed (OPE-173).
+ *
+ * Conversion and auth paths: a suppressed fault here costs a signup or a claim,
+ * which is categorically worse than a triage slot spent on noise. When in
+ * doubt, add the route — the cost of a false candidate is minutes; the cost of
+ * a silenced one is a user who cannot register.
+ */
+export const NOISE_EXEMPT_ROUTE_PREFIXES: readonly string[] = [
+  "/register",
+  "/login",
+  "/signin",
+  "/signup",
+  "/claim",
+  "/verify",
+  "/reset-password",
+  "/vendor/apply",
+  "/checkout",
+];
+
+/** True when `route` is conversion/auth-critical and must never be auto-suppressed. */
+export function isNoiseExemptRoute(route: string | null | undefined): boolean {
+  if (!route) return false; // unknown route → not exempt (see classifyNoise)
+  const r = route.toLowerCase();
+  return NOISE_EXEMPT_ROUTE_PREFIXES.some(
+    (p) => r === p || r.startsWith(`${p}/`) || r.startsWith(`${p}?`)
+  );
+}
+
+export type NoiseReason = "always" | "third-party";
+
+export interface NoiseVerdict {
+  noise: boolean;
+  /** Which list matched — for the audit log and the suppressed-hits counter. */
+  reason: NoiseReason | null;
+  /** The denylist entry that matched, for the audit log. */
+  matched: string | null;
+}
+
+/**
+ * Route-aware noise classification (OPE-251).
+ *
+ * `NOISE_DENYLIST` suppresses everywhere. `THIRD_PARTY_NOISE_DENYLIST`
+ * suppresses everywhere EXCEPT conversion/auth routes, where the same shape
+ * stays a full candidate.
+ */
+export function classifyNoise(input: {
+  message: string | null | undefined;
+  route?: string | null;
+}): NoiseVerdict {
+  const { message, route } = input;
+  if (!message) return { noise: false, reason: null, matched: null };
+  const raw = message.toLowerCase();
+  const normalized = normalizeErrorClass(message);
+  const hits = (entry: string) => raw.includes(entry) || normalized.includes(entry);
+
+  const always = NOISE_DENYLIST.find(hits);
+  if (always) return { noise: true, reason: "always", matched: always };
+
+  const thirdParty = THIRD_PARTY_NOISE_DENYLIST.find(hits);
+  if (thirdParty) {
+    // The OPE-173 carve-out.
+    if (isNoiseExemptRoute(route)) return { noise: false, reason: null, matched: thirdParty };
+    return { noise: true, reason: "third-party", matched: thirdParty };
+  }
+
+  return { noise: false, reason: null, matched: null };
+}
+
+/**
  * Normalize a message into a durable error CLASS: lowercase, whitespace-collapsed,
  * with volatile per-occurrence tokens stripped so the class is stable across
  * occurrences. Removes quoted string literals, uuids, long hex ids, standalone
@@ -88,11 +190,8 @@ export function normalizeErrorClass(message: string | null | undefined): string 
  * volatile-token stripping. Nullish input is not noise (it falls back to digest
  * downstream).
  */
-export function isNoise(message: string | null | undefined): boolean {
-  if (!message) return false;
-  const raw = message.toLowerCase();
-  const normalized = normalizeErrorClass(message);
-  return NOISE_DENYLIST.some((entry) => raw.includes(entry) || normalized.includes(entry));
+export function isNoise(message: string | null | undefined, route?: string | null): boolean {
+  return classifyNoise({ message, route }).noise;
 }
 
 /**

@@ -4,7 +4,7 @@ import { and, desc, eq, gte, inArray } from "drizzle-orm";
 import { withInternalKey } from "@/lib/api/with-auth";
 import { errorLogs, faultSignatures } from "@/lib/db/schema";
 import { logError } from "@/lib/logger";
-import { computeSignature, isNoise, normalizeErrorClass } from "@/lib/faults/signature";
+import { classifyNoise, computeSignature, normalizeErrorClass } from "@/lib/faults/signature";
 import {
   reconcileFaults,
   type FaultLedgerRow,
@@ -101,9 +101,26 @@ export const POST = withInternalKey({ source: "faults:candidates" }, async ({ db
       .limit(MAX_ROWS);
 
     // Group the non-noise rows by signature.
+    //
+    // OPE-251: noise classification is now ROUTE-AWARE. Third-party embed
+    // shapes are suppressed on ordinary routes but stay full candidates on
+    // conversion/auth routes — `/register#script error.` was the CORS-masked
+    // registration-blocking Turnstile throw (OPE-173), not noise.
+    //
+    // Suppressed hits are COUNTED, never silently dropped: a denylist that
+    // hides a volume anomaly just moves the blindness somewhere else. The
+    // per-reason tallies ride out in the response and are logged once per run.
     const groups = new Map<string, Accum>();
+    const suppressed: Record<string, number> = {};
+    let suppressedTotal = 0;
     for (const r of rows) {
-      if (isNoise(r.message)) continue;
+      const verdict = classifyNoise({ message: r.message, route: r.route });
+      if (verdict.noise) {
+        const key = `${verdict.reason}:${verdict.matched}`;
+        suppressed[key] = (suppressed[key] ?? 0) + 1;
+        suppressedTotal += 1;
+        continue;
+      }
       const signature = computeSignature({
         route: r.route,
         message: r.message,
@@ -234,8 +251,22 @@ export const POST = withInternalKey({ source: "faults:candidates" }, async ({ db
     // classification so known fault shapes arrive pre-diagnosed. Pure + never
     // throws, so it can't break the response; kept at the endpoint boundary (the
     // reconcile core stays classification-agnostic).
+    // OPE-251 §4 — one info-level audit line per run (not per occurrence: a
+    // per-hit log would itself become the noise this ticket is removing).
+    if (suppressedTotal > 0) {
+      await logError(db, {
+        level: "info",
+        source: "faults:noise-denylist",
+        message: `auto-classified ${suppressedTotal} occurrence(s) as noise`,
+        context: { suppressedTotal, byPattern: suppressed },
+      });
+    }
+
     return NextResponse.json({
       ok: true,
+      // Visible in the response so a volume anomaly in SUPPRESSED traffic is
+      // still observable — suppression must not mean invisibility.
+      suppressed: { total: suppressedTotal, byPattern: suppressed },
       toEmit: result.toEmit.map((c) => ({
         ...c,
         classification: classifyFault({ errorClass: c.errorClass, route: c.route }),

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  classifyNoise,
   computeSignature,
   faultSigToken,
   isNoise,
@@ -104,5 +105,78 @@ describe("computeSignature", () => {
 describe("faultSigToken", () => {
   it("is `fault-sig:<signature>`", () => {
     expect(faultSigToken("/x#boom")).toBe("fault-sig:/x#boom");
+  });
+});
+
+/**
+ * OPE-251 — route-aware third-party denylist.
+ *
+ * The ledger kept re-litigating shapes a human had already closed, because
+ * signatures are route-scoped: closing `unknown#object not found…` as noise did
+ * nothing when the same shape reappeared on a /blog route.
+ *
+ * The carve-out is the part that must never regress. `/register#script error.`
+ * was NOT noise — it was the CORS-masked registration-blocking Turnstile throw
+ * (OPE-173). A flat denylist would have silenced the most important client
+ * fault we have had.
+ */
+describe("classifyNoise — route-aware third-party denylist (OPE-251)", () => {
+  it("suppresses the embed-widget shape that re-proposed on /blog", () => {
+    const v = classifyNoise({
+      message: "Object not found matching id:, methodName:update, paramCount:",
+      route: "/blog/your-complete-guide-to-maine-fairs-and-festivals-in-2026",
+    });
+    expect(v.noise).toBe(true);
+    expect(v.reason).toBe("third-party");
+  });
+
+  it("does NOT suppress the same shape on /register (the OPE-173 carve-out)", () => {
+    const v = classifyNoise({ message: "Script error.", route: "/register" });
+    expect(v.noise).toBe(false);
+  });
+
+  it("keeps the carve-out on every conversion/auth route", () => {
+    for (const route of ["/login", "/signup", "/claim/abc", "/verify", "/checkout"]) {
+      expect(classifyNoise({ message: "Script error.", route }).noise).toBe(false);
+    }
+  });
+
+  it("suppresses Script error. on an ordinary route", () => {
+    expect(classifyNoise({ message: "Script error.", route: "/events/topsham-fair" }).noise).toBe(
+      true
+    );
+  });
+
+  it("suppresses minified third-party null-derefs", () => {
+    expect(
+      classifyNoise({
+        message: "TypeError: null is not an object (evaluating 'b.parentNode')",
+        route: "/events/x",
+      }).noise
+    ).toBe(true);
+  });
+
+  it("still suppresses ALWAYS-noise everywhere, including /register", () => {
+    // Chunk churn is un-actionable even on a conversion route — the carve-out
+    // is only for third-party shapes that can mask a real fault.
+    const v = classifyNoise({ message: "Loading chunk 42 failed", route: "/register" });
+    expect(v.noise).toBe(true);
+    expect(v.reason).toBe("always");
+  });
+
+  it("treats an unknown route as non-exempt (suppressible)", () => {
+    expect(classifyNoise({ message: "Script error.", route: null }).noise).toBe(true);
+  });
+
+  it("does not suppress a genuine app error that merely mentions an object", () => {
+    expect(
+      classifyNoise({ message: "D1_ERROR: no such column: foo", route: "/events/x" }).noise
+    ).toBe(false);
+  });
+
+  it("reports which pattern matched, for the audit log and counter", () => {
+    expect(classifyNoise({ message: "Script error.", route: "/blog/x" }).matched).toBe(
+      "script error."
+    );
   });
 });
