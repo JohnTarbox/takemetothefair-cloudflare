@@ -2,11 +2,24 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, vendors, blogPosts } from "@/lib/db/schema";
-import { and, gte, eq, inArray, isNull, sql, desc } from "drizzle-orm";
+import {
+  and,
+  or,
+  gte,
+  eq,
+  inArray,
+  isNull,
+  sql,
+  desc,
+  type SQL,
+  type AnyColumn,
+} from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { withErrorHandler } from "@/lib/api-handler";
 import { searchHelpArticles } from "@/lib/help-articles";
 import { sanitizeLikeInput } from "@/lib/utils";
+import { expandEventSearchQuery } from "@/lib/search/query-expansion";
+import { levenshteinSimilarity } from "@takemetothefair/utils";
 import { logError } from "@/lib/logger";
 import {
   collectBrandParentIdsToLoad,
@@ -41,6 +54,34 @@ export const GET = withErrorHandler(async (request: Request) => {
   // rather than literal text.
   const searchTerm = `%${sanitizeLikeInput(q)}%`;
 
+  // OPE-281 — expand the query into structured match intent for the EVENTS
+  // section: event-type synonyms (fair⇄market⇄festival⇄show), category mapping
+  // ("arts and crafts" → Craft Fair/Art Show), and a trailing state token
+  // ("blueberry connecticut" → term "blueberry" + state CT). The other sections
+  // keep the plain substring match. If the query carries no distinctive text
+  // (e.g. only a state), fall back to the raw name LIKE.
+  const expanded = expandEventSearchQuery(q);
+  const like = (col: AnyColumn, term: string) =>
+    sql`LOWER(${col}) LIKE ${"%" + sanitizeLikeInput(term) + "%"}`;
+  const nameGroupClauses = expanded.nameTermGroups
+    .map((group) => or(...group.map((alt) => like(events.name, alt))))
+    .filter((c): c is SQL => c !== undefined);
+  const nameMatch = nameGroupClauses.length > 0 ? and(...nameGroupClauses) : undefined;
+  const categoryMatch =
+    expanded.categoryNames.length > 0
+      ? or(...expanded.categoryNames.map((c) => like(events.categories, c.toLowerCase())))
+      : undefined;
+  const eventTextPredicate: SQL =
+    nameMatch && categoryMatch
+      ? (or(nameMatch, categoryMatch) as SQL)
+      : (nameMatch ?? categoryMatch ?? sql`LOWER(${events.name}) LIKE LOWER(${searchTerm})`);
+  const eventsWhere = and(
+    isPublicEventStatus(),
+    gte(events.endDate, new Date()),
+    eventTextPredicate,
+    ...(expanded.stateCode ? [sql`UPPER(${venues.state}) = ${expanded.stateCode}`] : [])
+  );
+
   // Promise.allSettled (not Promise.all) so one failing section returns
   // empty for that section instead of 500-ing the whole response. Each
   // per-section failure logs to D1 at `warn` so we keep visibility on the
@@ -59,13 +100,7 @@ export const GET = withErrorHandler(async (request: Request) => {
       })
       .from(events)
       .leftJoin(venues, eq(events.venueId, venues.id))
-      .where(
-        and(
-          isPublicEventStatus(),
-          gte(events.endDate, new Date()),
-          sql`LOWER(${events.name}) LIKE LOWER(${searchTerm})`
-        )
-      )
+      .where(eventsWhere)
       .orderBy(events.startDate)
       .limit(5),
 
@@ -164,6 +199,68 @@ export const GET = withErrorHandler(async (request: Request) => {
   // Discriminated-union narrowing preserves the per-section query types
   // (the destructured `eventsSettled` is `PromiseSettledResult<T_events>`).
   const eventResults = eventsSettled.status === "fulfilled" ? eventsSettled.value : [];
+
+  // OPE-281 — zero-result fuzzy fallback for misspellings ("mrshfeild" →
+  // "Marshfield Fair"). Only fires when the structured match found nothing AND
+  // the query carries a distinctive term, so the bounded name scan stays a rare
+  // exception (matching the "zero-result is where we failed the user" signal).
+  let finalEventResults = eventResults;
+  const fuzzyTerms = expanded.coreTerms.filter((t) => t.length >= 5);
+  if (eventResults.length === 0 && fuzzyTerms.length > 0) {
+    try {
+      const candidates = await db
+        .select({
+          name: events.name,
+          slug: events.slug,
+          startDate: events.startDate,
+          endDate: events.endDate,
+          venueName: venues.name,
+          venueCity: venues.city,
+          venueState: venues.state,
+        })
+        .from(events)
+        .leftJoin(venues, eq(events.venueId, venues.id))
+        .where(
+          and(
+            isPublicEventStatus(),
+            gte(events.endDate, new Date()),
+            ...(expanded.stateCode ? [sql`UPPER(${venues.state}) = ${expanded.stateCode}`] : [])
+          )
+        )
+        .orderBy(events.startDate)
+        .limit(400);
+      // 0.7 catches the audit's canonical "mrshfeild" → "marshfield" (exactly
+      // 0.7 = 1 − 3/10). Restrict to coreTerms ≥ 5 chars so short tokens can't
+      // fuzzily collide; safe because this runs only after an exact-match miss.
+      const FUZZY_THRESHOLD = 0.7;
+      finalEventResults = candidates
+        .map((r) => {
+          const nameWords = r.name.toLowerCase().split(/\s+/).filter(Boolean);
+          let best = 0;
+          for (const term of fuzzyTerms) {
+            for (const w of nameWords) {
+              const s = levenshteinSimilarity(term, w, FUZZY_THRESHOLD);
+              if (s > best) best = s;
+            }
+          }
+          return { r, best };
+        })
+        .filter((x) => x.best >= FUZZY_THRESHOLD)
+        .sort((a, b) => b.best - a.best)
+        .slice(0, 5)
+        .map((x) => x.r);
+    } catch (err) {
+      await logError(db, {
+        message: "Search fuzzy fallback failed",
+        error: err,
+        source: "api/search",
+        request,
+        context: { q },
+        level: "warn",
+      });
+    }
+  }
+
   const venueResults = venuesSettled.status === "fulfilled" ? venuesSettled.value : [];
   const vendorResults = vendorsSettled.status === "fulfilled" ? vendorsSettled.value : [];
   const blogResults = blogSettled.status === "fulfilled" ? blogSettled.value : [];
@@ -272,7 +369,7 @@ export const GET = withErrorHandler(async (request: Request) => {
   const helpResults = searchHelpArticles(q);
 
   return NextResponse.json({
-    events: eventResults.map((e) => ({
+    events: finalEventResults.map((e) => ({
       name: e.name,
       slug: e.slug,
       startDate: e.startDate,
