@@ -16,6 +16,7 @@
  */
 
 import { WORKERS_AI_MODEL } from "@takemetothefair/constants";
+import { isListBrokerSolicitation } from "./email-handlers/solicitation-screen";
 import {
   CLASSIFIER_VERSION,
   DEFAULT_CONFIDENCE_THRESHOLD,
@@ -200,6 +201,33 @@ export async function classifyIntent(
   }
 
   const parsed = parseClassifierResponse(aiResponseText);
+
+  // OPE-278 — deterministic list-broker / attendee-list solicitation screen.
+  // The AI misread a "we have an attendee list for sale" pitch as new_event and
+  // created a duplicate event. A cheap textual backstop overrides it to spam so
+  // the entrypoint silently quarantines it BEFORE any workflow / event creation.
+  // Applied after the AI run so `fromAi` stays honest and the entrypoint's
+  // fromAi-gated spam quarantine fires. Confidence 0.98 > SPAM_QUARANTINE_THRESHOLD.
+  if (isListBrokerSolicitation(input.subject, input.bodyText)) {
+    const wasIntent = parsed[0]?.intent ?? "unknown";
+    return {
+      intents: [
+        {
+          intent: "spam",
+          subIntent: null,
+          confidence: 0.98,
+          rationale: `solicitation-screen: list-broker/attendee-list (classifier said ${wasIntent})`,
+          refUrl: null,
+          refEventClue: null,
+        },
+      ],
+      version: CLASSIFIER_VERSION,
+      fromAi: true,
+      startedAt,
+      finishedAt: Date.now(),
+    };
+  }
+
   return {
     intents: parsed,
     version: CLASSIFIER_VERSION,
