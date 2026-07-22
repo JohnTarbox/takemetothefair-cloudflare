@@ -122,6 +122,31 @@ describe("newsletterDigestTemplate — branded footer band (OPE-232 reopen)", ()
   });
 });
 
+describe("newsletterDigestTemplate — one-tap approve button (OPE-231)", () => {
+  const approveUrl = "https://meetmeatthefair.com/newsletter/approve?token=xyz";
+
+  it("renders the approve button ONLY when an approveUrl is passed", () => {
+    const withUrl = newsletterDigestTemplate({ ...base, approveUrl });
+    expect(withUrl.html).toContain(approveUrl);
+    expect(withUrl.html).toContain("Approve &amp; send to everyone");
+  });
+
+  it("omits the approve button entirely on a normal (broadcast) render", () => {
+    // The default `base` has no approveUrl — this is the shape every real
+    // broadcast uses, and it must never carry the button.
+    const { html } = newsletterDigestTemplate(base);
+    expect(html).not.toContain("Approve &amp; send to everyone");
+    expect(html).not.toContain("/newsletter/approve?token=");
+  });
+
+  it("does not disturb the two-band footer invariant", () => {
+    // The CTA uses a distinct action-green (#2e7d52), not the band green, so the
+    // OPE-232 masthead+footer band count stays at two even on a preview render.
+    const { html } = newsletterDigestTemplate({ ...base, approveUrl });
+    expect(html.split("background:#1f3a2d").length - 1).toBe(2);
+  });
+});
+
 describe("newsletterDigestTemplate — social footer (OPE-235)", () => {
   const { html } = newsletterDigestTemplate(base);
 

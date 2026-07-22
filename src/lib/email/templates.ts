@@ -297,6 +297,25 @@ function newsletterFooterHtml(args: {
 </table>`;
 }
 
+/**
+ * OPE-231 — the one-tap "Approve & send to everyone" banner. Rendered ONLY when
+ * an `approveUrl` is threaded through (the send route passes it on the PREVIEW
+ * send to John and never on a broadcast), so the button can only ever appear in
+ * the email John reviews, never in the copy subscribers receive. The link is a
+ * plain `<a>` to a confirmation page — no form, no side effect on load — so an
+ * inbox link pre-scanner that fetches it cannot trigger a send.
+ */
+function newsletterApproveBannerHtml(approveUrl: string): string {
+  return `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border-collapse:collapse;margin:0 0 24px;">
+  <tr>
+    <td style="background:#FBF3E4;border:1px solid ${EYEBROW_GOLD};border-radius:8px;padding:16px 20px;text-align:center;font-family:Georgia,'Times New Roman',serif;">
+      <div style="font-size:13px;color:#6B5B2E;margin:0 0 12px;">This is a preview. Approving sends this exact issue to the whole subscriber list.</div>
+      <a href="${approveUrl}" style="display:inline-block;background:#2e7d52;color:#ffffff;text-decoration:none;font-weight:700;font-size:15px;padding:12px 28px;border-radius:6px;">Approve &amp; send to everyone &rarr;</a>
+    </td>
+  </tr>
+</table>`;
+}
+
 function newsletterLayout(args: {
   wordmark: string;
   /** Optional dated subtitle under the wordmark, e.g. the issue subject. */
@@ -305,8 +324,11 @@ function newsletterLayout(args: {
   unsubscribeUrl: string;
   viewInBrowserUrl: string;
   mailing: string;
+  /** OPE-231 — preview-only approve link. Omitted on every broadcast. */
+  approveUrl?: string;
 }): string {
-  const { wordmark, subtitle, body, unsubscribeUrl, viewInBrowserUrl, mailing } = args;
+  const { wordmark, subtitle, body, unsubscribeUrl, viewInBrowserUrl, mailing, approveUrl } = args;
+  const approveBanner = approveUrl ? newsletterApproveBannerHtml(approveUrl) : "";
   return `<!doctype html>
 <html>
   <body style="margin:0;padding:0;background:#FAF7F2;font-family:Georgia,'Times New Roman',serif;color:#2A2521;">
@@ -324,7 +346,7 @@ function newsletterLayout(args: {
             </tr>
             <tr>
               <td style="padding:32px;font-size:16px;line-height:1.55;color:#2A2521;">
-                ${body}
+                ${approveBanner}${body}
               </td>
             </tr>
             <tr>
@@ -352,6 +374,8 @@ export function newsletterDigestTemplate(args: {
   mailingAddress?: string;
   /** Masthead wordmark; OPE-191's vendor digest overrides it. */
   wordmark?: string;
+  /** OPE-231 — one-tap approve link; set only on the preview to John. */
+  approveUrl?: string;
 }): { subject: string; html: string; text: string } {
   const mailing = args.mailingAddress?.trim() || "Meet Me at the Fair, New England";
   const html = newsletterLayout({
@@ -363,6 +387,7 @@ export function newsletterDigestTemplate(args: {
     unsubscribeUrl: args.unsubscribeUrl,
     viewInBrowserUrl: args.viewInBrowserUrl,
     mailing,
+    approveUrl: args.approveUrl,
   });
 
   const bodyText =

@@ -27,19 +27,16 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { withAuthorized } from "@/lib/api/with-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
-import { newsletterSubscribers, newsletterIssues, emailSuppressionList } from "@/lib/db/schema";
-import { enqueueEmail } from "@/lib/queues/producers";
-import { newsletterDigestTemplate } from "@/lib/email/templates";
+import { newsletterIssues } from "@/lib/db/schema";
+import { resolveUnsubscribeSecret } from "@/lib/email/newsletter-unsubscribe-token";
+import { resolveApproveSecret, signApproveToken } from "@/lib/email/newsletter-approve-token";
 import {
-  signUnsubscribeToken,
-  resolveUnsubscribeSecret,
-} from "@/lib/email/newsletter-unsubscribe-token";
+  enqueueNewsletterDigest,
+  selectBroadcastRecipients,
+} from "@/lib/email/newsletter-broadcast";
 import { getSiteUrl } from "@/lib/email/send";
 import { createSlug } from "@takemetothefair/utils";
-import { and, eq } from "drizzle-orm";
 
-const SOURCE = "newsletter:weekly-digest";
-const FROM = "Meet Me at the Fair <hello@meetmeatthefair.com>";
 // Cap the recipient list echoed back in a preview so a full-list pre-flight
 // doesn't return a multi-thousand-entry payload. The count is always exact.
 const PREVIEW_RECIPIENT_CAP = 200;
@@ -94,26 +91,10 @@ export const POST = withAuthorized(async ({ request, db }) => {
   const slug = `${createSlug(subject)}-${now.toISOString().slice(0, 10)}`.slice(0, 120);
   const viewInBrowserUrl = `${siteUrl}/newsletter/${slug}`;
 
-  // Resolve recipients (identical selection for preview and a real send).
-  let recipients: string[];
-  if (testRecipient) {
-    recipients = [testRecipient];
-  } else {
-    const subs = await db
-      .select({ email: newsletterSubscribers.email })
-      .from(newsletterSubscribers)
-      .where(
-        and(
-          eq(newsletterSubscribers.confirmed, true),
-          eq(newsletterSubscribers.unsubscribed, false)
-        )
-      );
-    const suppressedRows = await db
-      .select({ email: emailSuppressionList.email })
-      .from(emailSuppressionList);
-    const suppressed = new Set(suppressedRows.map((r) => r.email.toLowerCase()));
-    recipients = subs.map((s) => s.email).filter((e) => !suppressed.has(e.toLowerCase()));
-  }
+  // Resolve recipients (identical selection for preview and a real send). The
+  // broadcast selection is shared with the OPE-231 approve route so both honour
+  // the same suppression list.
+  const recipients = testRecipient ? [testRecipient] : await selectBroadcastRecipients(db);
 
   // OPE-190 — read-only preview. Return the resolved recipients + the issue
   // shape that WOULD be written, with zero side effects (no upsert, no enqueue,
@@ -157,30 +138,30 @@ export const POST = withAuthorized(async ({ request, db }) => {
     });
   const mailingAddress = env.MAILING_ADDRESS;
 
-  // Enqueue one send per recipient (the consumer sends + ledgers). Each carries
-  // its own signed unsubscribe URL.
-  let queued = 0;
-  for (const email of recipients) {
-    const token = await signUnsubscribeToken(email, secret);
-    const unsubscribeUrl = `${siteUrl}/api/newsletter/unsubscribe?token=${token}`;
-    const tpl = newsletterDigestTemplate({
-      subject,
-      contentHtml,
-      contentText,
-      unsubscribeUrl,
-      viewInBrowserUrl,
-      mailingAddress,
-    });
-    await enqueueEmail({
-      to: email,
-      subject: tpl.subject,
-      html: tpl.html,
-      text: tpl.text,
-      from: FROM,
-      source: SOURCE,
-    });
-    queued++;
+  // OPE-231 — mint the one-tap approve link, but ONLY for a preview (test) send:
+  // this is the email John reviews. A broadcast never carries it. Best-effort —
+  // if no approve secret is configured, the preview still sends, just without
+  // the button (John falls back to the manual approval path).
+  let approveUrl: string | undefined;
+  if (!isBroadcast) {
+    const approveSecret = resolveApproveSecret(env);
+    if (approveSecret) {
+      const approveToken = await signApproveToken(slug, approveSecret, now);
+      approveUrl = `${siteUrl}/newsletter/approve?token=${approveToken}`;
+    }
   }
+
+  const queued = await enqueueNewsletterDigest({
+    recipients,
+    subject,
+    contentHtml,
+    contentText,
+    viewInBrowserUrl,
+    siteUrl,
+    secret,
+    mailingAddress,
+    approveUrl,
+  });
 
   return NextResponse.json({
     success: true,
