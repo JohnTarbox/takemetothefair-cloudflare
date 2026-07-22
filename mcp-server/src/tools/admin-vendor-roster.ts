@@ -67,6 +67,18 @@ export function registerVendorRosterTools(server: McpServer, db: Db, auth: AuthC
       if (params.status === "PARTIAL" && params.offset === undefined) {
         warnings.push("PARTIAL set without an offset — the next run cannot resume precisely.");
       }
+      // OPE-264: a terminal status with no source_url is un-auditable — you can
+      // never re-verify where a HAS_ROSTER/NO_PUBLIC_LIST verdict came from. Warn
+      // (don't block: a roster may legitimately come from a non-URL source such
+      // as an attachment), mirroring the PARTIAL-without-offset soft check above.
+      if (
+        (params.status === "HAS_ROSTER" || params.status === "NO_PUBLIC_LIST") &&
+        !params.source_url
+      ) {
+        warnings.push(
+          `${params.status} set without a source_url — this terminal verdict cannot be audited or re-verified later.`
+        );
+      }
 
       const rows = params.event_id
         ? await db
