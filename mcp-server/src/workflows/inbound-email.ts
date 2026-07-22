@@ -2054,8 +2054,43 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           () => submitFetch(this.env, source.url)
         );
       } catch {
-        sourceFailures.push({ url: source.url, kind: "fetch-failed" });
-        continue;
+        // OPE-277 — parity with the single-source path (OPE-193): the multi-source
+        // fan-out never got the share-redirect recovery, so a share/redirect host
+        // (share.google / g.co / youtu.be / fb.me) that 429s server-side fetchers
+        // before emitting its `Location` died here as `fetch-failed`, losing real
+        // submissions (two lost 2026-07-19/20). Try ONE manual redirect hop with a
+        // browser UA and, if it resolves to a real page, fetch THAT instead.
+        // Strictly additive: any miss falls through to the unchanged fetch-failed.
+        let recovered: import("../email-handlers/submit.js").SubmitFetchResult | null = null;
+        if (isShareRedirectHost(source.url)) {
+          try {
+            const resolvedUrl = await step.do(
+              `${labelPrefix}/resolve-share-redirect`,
+              {
+                retries: { limit: 1, delay: "5 seconds", backoff: "constant" },
+                timeout: "20 seconds",
+              },
+              () => resolveShareRedirect(source.url)
+            );
+            if (resolvedUrl) {
+              recovered = await step.do(
+                `${labelPrefix}/fetch-resolved-url`,
+                {
+                  retries: { limit: 2, delay: "5 seconds", backoff: "exponential" },
+                  timeout: "30 seconds",
+                },
+                () => submitFetch(this.env, resolvedUrl)
+              );
+            }
+          } catch {
+            recovered = null;
+          }
+        }
+        if (!recovered) {
+          sourceFailures.push({ url: source.url, kind: "fetch-failed" });
+          continue;
+        }
+        fetched = recovered;
       }
       try {
         const extracted = await step.do(
@@ -2076,6 +2111,40 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         }
       } catch {
         sourceFailures.push({ url: source.url, kind: "extract-failed" });
+      }
+    }
+
+    // ── Phase A.5 (OPE-277): subject line as a last-resort source. ────
+    // When no source (URL fetch / body prose / attachment OCR) yielded an
+    // extractable event — e.g. a share-link that 429'd plus a body that is just
+    // that URL — the SUBJECT often still carries the event ("Maine Lobster
+    // Festival - A Seafood Festival - Rockland, Maine"). Run it through the same
+    // free-text extractor + minimum-fields gate as body prose. Gated on
+    // candidates.length === 0 so well-formed submissions never pay the extra AI
+    // call, and tagged as a body-provenance source (there is no distinct subject
+    // provenance in the citation union).
+    if (candidates.length === 0 && subject.trim().length > 0) {
+      try {
+        const extracted = await step.do(
+          "submit/subject/extract",
+          {
+            retries: { limit: 1, delay: "10 seconds", backoff: "constant" },
+            timeout: "30 seconds",
+          },
+          () => submitFreeTextExtract(this.env, subject)
+        );
+        for (const ev of extracted.events) {
+          const hasMinFields = !!ev.name && (!!ev.startDate || !!ev.venueName);
+          if (!hasMinFields) continue;
+          candidates.push({
+            extracted: { ...extracted, event: ev, events: [ev] },
+            fetchMethod: null,
+            fromAttachment: false,
+            source: { kind: "body", text: subject },
+          });
+        }
+      } catch {
+        // Subject carried nothing usable — fall through to the existing bounce.
       }
     }
 
