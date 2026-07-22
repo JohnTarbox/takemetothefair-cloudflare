@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { eq, and, like, inArray, isNull, sql } from "drizzle-orm";
+import { eq, and, like, inArray, isNull, sql, desc, asc } from "drizzle-orm";
 import {
   events,
   eventVendors,
@@ -313,6 +313,18 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .describe(
           "Filter for events where these fields are NULL/missing. E.g. ['venue_id','image_url'] returns events with no venue AND no image."
         ),
+      vendor_roster_status: z
+        .array(z.enum(["NEEDS_RESEARCH", "HAS_ROSTER", "NO_PUBLIC_LIST", "PARTIAL"]))
+        .optional()
+        .describe(
+          "OPE-13 rails: filter by vendor-roster research state (multi-valued OR). E.g. ['NEEDS_RESEARCH'] lists the un-researched drain queue; ['PARTIAL'] locates a crashed run's resume point. Each row returns vendor_roster_status / _checked_at / _source_url / _offset + vendor_count so the roster drain can select targets in ONE call instead of pre-checking events one at a time."
+        ),
+      sort: z
+        .enum(["end_date_desc", "end_date_asc", "start_date_desc", "start_date_asc"])
+        .optional()
+        .describe(
+          "Sort order. Default is insertion order. 'end_date_desc' surfaces most-recently-ended events first (the roster drain's 'most-recently-ended unresearched' priority)."
+        ),
       limit: z
         .number()
         .int()
@@ -346,6 +358,20 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           }
         }
       }
+      if (params.vendor_roster_status && params.vendor_roster_status.length > 0) {
+        // Index-backed by idx_events_vendor_roster_status (partial, IS NOT NULL).
+        conditions.push(inArray(events.vendorRosterStatus, params.vendor_roster_status));
+      }
+
+      // Default is insertion order (unchanged behaviour); an explicit sort lets the
+      // roster drain ask for "most-recently-ended unresearched" in one call.
+      const ORDER_BY = {
+        end_date_desc: desc(events.endDate),
+        end_date_asc: asc(events.endDate),
+        start_date_desc: desc(events.startDate),
+        start_date_asc: asc(events.startDate),
+      } as const;
+      const orderByClause = params.sort ? ORDER_BY[params.sort] : undefined;
 
       const limit = params.limit ?? 20;
       const offset = params.offset ?? 0;
@@ -367,18 +393,18 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           venueState: venues.state,
           promoterId: events.promoterId,
           promoterName: promoters.companyName,
+          vendorRosterStatus: events.vendorRosterStatus,
+          vendorRosterCheckedAt: events.vendorRosterCheckedAt,
+          vendorRosterSourceUrl: events.vendorRosterSourceUrl,
+          vendorRosterOffset: events.vendorRosterOffset,
         })
         .from(events)
         .leftJoin(venues, eq(events.venueId, venues.id))
         .leftJoin(promoters, eq(events.promoterId, promoters.id));
 
-      const eventRows =
-        conditions.length > 0
-          ? await query
-              .where(and(...conditions))
-              .limit(limit)
-              .offset(offset)
-          : await query.limit(limit).offset(offset);
+      const filtered = conditions.length > 0 ? query.where(and(...conditions)) : query;
+      const sorted = orderByClause ? filtered.orderBy(orderByClause) : filtered;
+      const eventRows = await sorted.limit(limit).offset(offset);
 
       // Batch-fetch vendor counts per event
       const eventIds = eventRows.map((e) => e.id);
@@ -419,6 +445,18 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         promoter: e.promoterName || "Unknown",
         categories: parseJsonArray(e.categories),
         vendors: vendorCounts[e.id] || { total: 0, applied: 0, confirmed: 0 },
+        // OPE-13/OPE-264 vendor-roster rails: surface the research state so the
+        // weekly drain can select targets by status without pre-checking each
+        // event via get_event_details. vendor_count = total linked applications
+        // (populated-but-NEEDS_RESEARCH rows are exactly the ones re-selected
+        // forever until they're stamped).
+        vendor_count: vendorCounts[e.id]?.total ?? 0,
+        vendor_roster_status: e.vendorRosterStatus ?? null,
+        vendor_roster_checked_at: e.vendorRosterCheckedAt
+          ? e.vendorRosterCheckedAt.toISOString()
+          : null,
+        vendor_roster_source_url: e.vendorRosterSourceUrl ?? null,
+        vendor_roster_offset: e.vendorRosterOffset ?? null,
       }));
 
       return {
