@@ -61,6 +61,16 @@ export const GET = withErrorHandler(async (request: Request) => {
   // keep the plain substring match. If the query carries no distinctive text
   // (e.g. only a state), fall back to the raw name LIKE.
   const expanded = expandEventSearchQuery(q);
+  // OPE-281 follow-up — an event is "current/upcoming" if its end date hasn't
+  // passed, OR (when end_date is NULL — 42 APPROVED start-date-only events) its
+  // start date is upcoming. The old bare `endDate >= now` silently hid every
+  // NULL-end event from search (e.g. the CT blueberry festivals the ticket
+  // expected). start_date is non-null on all such rows, so it's a safe fallback.
+  const nowDate = new Date();
+  const notEnded = or(
+    gte(events.endDate, nowDate),
+    and(isNull(events.endDate), gte(events.startDate, nowDate))
+  );
   const like = (col: AnyColumn, term: string) =>
     sql`LOWER(${col}) LIKE ${"%" + sanitizeLikeInput(term) + "%"}`;
   const nameGroupClauses = expanded.nameTermGroups
@@ -77,7 +87,7 @@ export const GET = withErrorHandler(async (request: Request) => {
       : (nameMatch ?? categoryMatch ?? sql`LOWER(${events.name}) LIKE LOWER(${searchTerm})`);
   const eventsWhere = and(
     isPublicEventStatus(),
-    gte(events.endDate, new Date()),
+    notEnded,
     eventTextPredicate,
     ...(expanded.stateCode ? [sql`UPPER(${venues.state}) = ${expanded.stateCode}`] : [])
   );
@@ -223,7 +233,7 @@ export const GET = withErrorHandler(async (request: Request) => {
         .where(
           and(
             isPublicEventStatus(),
-            gte(events.endDate, new Date()),
+            notEnded,
             ...(expanded.stateCode ? [sql`UPPER(${venues.state}) = ${expanded.stateCode}`] : [])
           )
         )
