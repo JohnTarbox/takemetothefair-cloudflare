@@ -138,10 +138,22 @@ export function buildEventTitle(event: {
   name: string;
   isStatewide?: boolean | null;
   stateCode?: string | null;
+  startDate?: Date | string | null;
   venue?: { city?: string | null; state?: string | null } | null;
 }): string {
-  const name = decodeHtmlEntities(event.name);
-  const nameLower = name.toLowerCase();
+  // OPE-266 — inject the event YEAR into the title. The top zero-click SERP
+  // queries are all "{event} {year}" / "{event} {year} dates" (Marshfield Fair
+  // 2026, Barnstable Fair 2026, …): the page ranks 4–10 but the title showed no
+  // year, so it failed the searcher's intent match. Additive + backward compat:
+  // no startDate → no year (existing callers/tests unchanged); skip when the
+  // name already carries the year (e.g. "…Weekend 2027").
+  const rawName = decodeHtmlEntities(event.name);
+  const nameLower = rawName.toLowerCase();
+  const year = event.startDate ? new Date(event.startDate).getUTCFullYear() : null;
+  const name =
+    year && Number.isFinite(year) && !nameLower.includes(String(year))
+      ? `${rawName} ${year}`
+      : rawName;
 
   // Statewide path
   if (event.isStatewide) {
