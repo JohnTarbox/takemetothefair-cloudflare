@@ -244,7 +244,11 @@ describe("initialCaptureScore (OPE-245)", () => {
       detectedAt,
       fieldClass: "venue",
     });
-    expect(via).toBe(direct);
+    // toBeCloseTo, not toBe: both paths recompute a recency factor from the wall
+    // clock (Date.now()) internally, so the two calls — microseconds apart — can
+    // differ by a float epsilon (seen in CI: 0.49 vs 0.4899999999935699). The
+    // assertion is that the two paths AGREE, not that IEEE floats are identical.
+    expect(via).toBeCloseTo(direct, 6);
   });
 
   it("stays below the 0.6 candidate threshold without a view count", () => {
