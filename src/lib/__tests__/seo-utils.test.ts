@@ -287,6 +287,55 @@ describe("buildEventTitle", () => {
     });
     expect(out).not.toContain("Meet Me at the Fair");
   });
+
+  // OPE-266 — inject the event year so the SERP title matches "{event} {year}"
+  // zero-click queries (Marshfield Fair 2026, Barnstable Fair 2026, …).
+  it("injects the startDate year into the title (Marshfield Fair 2026)", () => {
+    const out = buildEventTitle({
+      name: "Marshfield Fair",
+      startDate: new Date("2026-08-21T00:00:00Z"),
+      venue: { city: "Marshfield", state: "MA" },
+    });
+    // City + "ma" both appear in the name → existing logic suppresses the
+    // location suffix; the year is injected right after the name.
+    expect(out).toBe("Marshfield Fair 2026");
+  });
+
+  it("injects the year AND keeps the location suffix (Barnstable County Fair 2026)", () => {
+    const out = buildEventTitle({
+      name: "Barnstable County Fair",
+      startDate: new Date("2026-07-18T00:00:00Z"),
+      venue: { city: "Falmouth", state: "MA" },
+    });
+    expect(out).toBe("Barnstable County Fair 2026 · Falmouth, MA");
+  });
+
+  it("does not double the year when the name already carries it", () => {
+    const out = buildEventTitle({
+      name: "Vermont Maple Open House Weekend 2027",
+      startDate: new Date("2027-03-01T00:00:00Z"),
+    });
+    expect(out).toBe("Vermont Maple Open House Weekend 2027");
+    expect(out).not.toContain("2027 2027");
+  });
+
+  it("adds the year on a statewide event", () => {
+    const out = buildEventTitle({
+      name: "207 Beer Week",
+      isStatewide: true,
+      stateCode: "ME",
+      startDate: new Date("2026-05-04T00:00:00Z"),
+    });
+    expect(out).toBe("207 Beer Week 2026 · Statewide Maine");
+  });
+
+  it("is unchanged when no startDate is provided (backward compatible)", () => {
+    const out = buildEventTitle({
+      name: "Spring Craft Fair",
+      venue: { city: "Boston", state: "MA" },
+    });
+    expect(out).toBe("Spring Craft Fair · Boston, MA");
+  });
 });
 
 // ─── buildEventMetaDescription — Option 3 with quality gate hybrid ───
