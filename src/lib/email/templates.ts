@@ -316,6 +316,29 @@ function newsletterApproveBannerHtml(approveUrl: string): string {
 </table>`;
 }
 
+/**
+ * OPE-284 — the honest counterpart to the approve banner, rendered on a preview
+ * composed while `NEWSLETTER_SEND_ENABLED` is off.
+ *
+ * The defect this closes: the gate was checked only when the link was CLICKED,
+ * so a preview cheerfully rendered an active "Approve & send to everyone" button
+ * that the API would then refuse (John hit exactly that on 2026-07-23). An email
+ * must never offer an action the system will decline — so the gate is now read at
+ * COMPOSE time and the button is replaced by a statement of why it is unavailable.
+ * This copy is operator-facing: the approve banner only ever ships on the preview
+ * to John, never on a broadcast.
+ */
+function newsletterApproveDisabledBannerHtml(): string {
+  return `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border-collapse:collapse;margin:0 0 24px;">
+  <tr>
+    <td style="background:#F5F1EA;border:1px solid #D8D0C4;border-radius:8px;padding:16px 20px;text-align:center;font-family:Georgia,'Times New Roman',serif;">
+      <div style="font-size:13px;color:#6B6259;margin:0 0 8px;">This is a preview. <strong>Broadcast sending is currently disabled</strong>, so there is no approve button — approving would be refused.</div>
+      <div style="font-size:12px;color:#8A8178;">To arm the send, set <code>NEWSLETTER_SEND_ENABLED = "true"</code> in the main app's <code>wrangler.toml</code> and redeploy, then request a fresh preview.</div>
+    </td>
+  </tr>
+</table>`;
+}
+
 function newsletterLayout(args: {
   wordmark: string;
   /** Optional dated subtitle under the wordmark, e.g. the issue subject. */
@@ -326,9 +349,26 @@ function newsletterLayout(args: {
   mailing: string;
   /** OPE-231 — preview-only approve link. Omitted on every broadcast. */
   approveUrl?: string;
+  /** OPE-284 — preview composed while the broadcast gate is off: render the
+   *  disabled explanation instead of an unkeepable button. Ignored when
+   *  `approveUrl` is set (a live link always wins) and on broadcasts. */
+  approveDisabled?: boolean;
 }): string {
-  const { wordmark, subtitle, body, unsubscribeUrl, viewInBrowserUrl, mailing, approveUrl } = args;
-  const approveBanner = approveUrl ? newsletterApproveBannerHtml(approveUrl) : "";
+  const {
+    wordmark,
+    subtitle,
+    body,
+    unsubscribeUrl,
+    viewInBrowserUrl,
+    mailing,
+    approveUrl,
+    approveDisabled,
+  } = args;
+  const approveBanner = approveUrl
+    ? newsletterApproveBannerHtml(approveUrl)
+    : approveDisabled
+      ? newsletterApproveDisabledBannerHtml()
+      : "";
   return `<!doctype html>
 <html>
   <body style="margin:0;padding:0;background:#FAF7F2;font-family:Georgia,'Times New Roman',serif;color:#2A2521;">
@@ -376,6 +416,9 @@ export function newsletterDigestTemplate(args: {
   wordmark?: string;
   /** OPE-231 — one-tap approve link; set only on the preview to John. */
   approveUrl?: string;
+  /** OPE-284 — preview composed while the broadcast gate is off; renders the
+   *  disabled explanation in place of the approve button. */
+  approveDisabled?: boolean;
 }): { subject: string; html: string; text: string } {
   const mailing = args.mailingAddress?.trim() || "Meet Me at the Fair, New England";
   const html = newsletterLayout({
@@ -388,6 +431,7 @@ export function newsletterDigestTemplate(args: {
     viewInBrowserUrl: args.viewInBrowserUrl,
     mailing,
     approveUrl: args.approveUrl,
+    approveDisabled: args.approveDisabled,
   });
 
   const bodyText =

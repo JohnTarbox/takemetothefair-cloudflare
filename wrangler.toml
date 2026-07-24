@@ -41,9 +41,19 @@ CAL2_VIEWS = "true"
 EMAIL_REPLY_ENABLED = "false"
 # OPE-169 — newsletter BROADCAST gate. POST /api/admin/newsletter/send refuses a
 # real broadcast to the subscriber list unless this is "true" (a single-address
-# test_recipient send is always allowed). Shipped OFF (OPE-6 customer-facing mass
-# send). Flip to "true" + redeploy, or override in the dashboard, to broadcast.
-NEWSLETTER_SEND_ENABLED = "false"
+# test_recipient send is always allowed).
+#
+# OPE-284 — ARMED. John authorized go-live 2026-07-23. Sending still requires his
+# own click on the OPE-231 approve link; this flag only makes that click work.
+#
+# ⚠️ Do NOT "just override it in the dashboard" — a plain-text [vars] entry set in
+# the dashboard is WIPED by the next `wrangler deploy`, which re-applies this file.
+# That is exactly what happened here: the var was set in the dashboard ~07-13, the
+# 2026-07-16 broadcast went out on it (6 recipients, ledgered), a later deploy
+# silently reverted it to "false", and the 07-23 approve click hit "sending is
+# turned off". This file is the only durable home for the flag. (Secrets survive a
+# deploy; vars do not.)
+NEWSLETTER_SEND_ENABLED = "true"
 
 # OPE-232 — CAN-SPAM physical postal address rendered in the newsletter footer.
 # The digest HTML is rendered in THIS (main-app) worker via

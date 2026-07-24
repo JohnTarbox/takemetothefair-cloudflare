@@ -25,6 +25,7 @@ import {
   heartbeatProbes,
   inboundEmails,
   imageCoverageState,
+  newsletterIssues,
   photoCoverageDaily,
   promoterEnrichmentCandidates,
   vendorEnrichmentCandidates,
@@ -109,6 +110,27 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     expectedWindowHours: 21 * 24,
     lastEvidenceAt: (db) =>
       maxTs(db, inboundEmails, inboundEmails.receivedAt, eq(inboundEmails.intent, "submit")),
+  },
+  {
+    // OPE-284 — the newsletter broadcast path. Evidence is deliberately
+    // `newsletter_issues.sent_at`, NOT the send ledger: a `test_recipient`
+    // preview writes ledger rows with the same `newsletter:weekly-digest`
+    // source, so a ledger-keyed probe would go green on a preview to John while
+    // the list received nothing. `sent_at` is stamped only by a real broadcast
+    // (the send route's isBroadcast branch and the OPE-231 approve latch).
+    //
+    // Window is 21d, not 7d: a real send needs John's approve click, so a
+    // skipped week is normal operation, not a defect. Three silent weeks means
+    // the flow is broken — which is exactly the failure that hid here before
+    // (the gate silently reverted to "false" on a deploy and no one knew until
+    // an approve click failed).
+    name: "newsletter-broadcast",
+    ownerOpe: "OPE-284",
+    label: "Newsletter broadcast (real sends)",
+    priority: "P1",
+    expectedWindowHours: 21 * 24,
+    lastEvidenceAt: (db) =>
+      maxTs(db, newsletterIssues, newsletterIssues.sentAt, isNotNull(newsletterIssues.sentAt)),
   },
   {
     name: "vendor-enrichment",
