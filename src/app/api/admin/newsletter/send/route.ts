@@ -142,12 +142,25 @@ export const POST = withAuthorized(async ({ request, db }) => {
   // this is the email John reviews. A broadcast never carries it. Best-effort —
   // if no approve secret is configured, the preview still sends, just without
   // the button (John falls back to the manual approval path).
+  //
+  // OPE-284 — and only while the broadcast gate is ON. The gate used to be read
+  // exclusively at click time, so a preview composed with sending disabled still
+  // rendered an active "Approve & send to everyone" button that the API would
+  // then refuse — John hit precisely that on 2026-07-23. Reading the flag HERE
+  // makes the email honest at compose time; `approveDisabled` renders the reason
+  // in the button's place. A CTA built on a feature gate must check that gate at
+  // render time, not only at execution time.
   let approveUrl: string | undefined;
+  let approveDisabled = false;
   if (!isBroadcast) {
-    const approveSecret = resolveApproveSecret(env);
-    if (approveSecret) {
-      const approveToken = await signApproveToken(slug, approveSecret, now);
-      approveUrl = `${siteUrl}/newsletter/approve?token=${approveToken}`;
+    if (env.NEWSLETTER_SEND_ENABLED !== "true") {
+      approveDisabled = true;
+    } else {
+      const approveSecret = resolveApproveSecret(env);
+      if (approveSecret) {
+        const approveToken = await signApproveToken(slug, approveSecret, now);
+        approveUrl = `${siteUrl}/newsletter/approve?token=${approveToken}`;
+      }
     }
   }
 
@@ -161,6 +174,7 @@ export const POST = withAuthorized(async ({ request, db }) => {
     secret,
     mailingAddress,
     approveUrl,
+    approveDisabled,
   });
 
   return NextResponse.json({

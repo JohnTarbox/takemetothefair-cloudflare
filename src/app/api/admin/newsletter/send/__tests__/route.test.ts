@@ -196,3 +196,53 @@ describe("POST /api/admin/newsletter/send — rendered HTML on a real test send 
     expect(enqueuedHtml()).toContain("Meet Me at the Fair, New England");
   });
 });
+
+// OPE-284 — the approve CTA must honour NEWSLETTER_SEND_ENABLED at COMPOSE time,
+// not only when the link is clicked. Before this, a preview composed with the gate
+// off still rendered a live "Approve & send to everyone" button, and clicking it
+// landed on "Sending is turned off" (John, 2026-07-23). The email must never offer
+// an action the system will refuse.
+describe("POST /api/admin/newsletter/send — approve CTA checks the gate at compose time (OPE-284)", () => {
+  const sendPreview = () =>
+    call({ subject: "Weekend digest", content_html: "<p>hi</p>", test_recipient: "me@x.com" });
+  const enqueuedHtml = () =>
+    (enqueueEmailMock.mock.calls[0]?.[0] as { html: string } | undefined)?.html ?? "";
+
+  it("gate OFF → renders the disabled explanation and NO approve link", async () => {
+    admin();
+    sendEnabled = "false";
+    const res = await sendPreview();
+    expect(res.status).toBe(200);
+    const html = enqueuedHtml();
+    expect(html).toContain("Broadcast sending is currently disabled");
+    // The unkeepable promise must be gone — both the label and the live token URL.
+    expect(html).not.toContain("Approve &amp; send to everyone");
+    expect(html).not.toContain("/newsletter/approve?token=");
+  });
+
+  it("gate ON → renders the live approve button and no disabled copy", async () => {
+    admin();
+    sendEnabled = "true";
+    const res = await sendPreview();
+    expect(res.status).toBe(200);
+    const html = enqueuedHtml();
+    expect(html).toContain("Approve &amp; send to everyone");
+    expect(html).toContain("/newsletter/approve?token=");
+    expect(html).not.toContain("Broadcast sending is currently disabled");
+  });
+
+  it("SAFETY: a real broadcast carries neither the approve button nor the disabled banner", async () => {
+    admin();
+    sendEnabled = "true";
+    selectMock
+      .mockReturnValueOnce({
+        from: () => ({ where: () => Promise.resolve([{ email: "sub@x.com" }]) }),
+      })
+      .mockReturnValueOnce({ from: () => Promise.resolve([]) });
+    const res = await call({ subject: "Weekend digest", content_html: "<p>hi</p>" });
+    expect(res.status).toBe(200);
+    const html = enqueuedHtml();
+    expect(html).not.toContain("Approve &amp; send to everyone");
+    expect(html).not.toContain("Broadcast sending is currently disabled");
+  });
+});

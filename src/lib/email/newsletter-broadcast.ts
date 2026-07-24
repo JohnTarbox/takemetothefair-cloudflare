@@ -64,6 +64,13 @@ export async function enqueueNewsletterDigest(args: {
    * on a test/preview send. A broadcast call simply omits it.
    */
   approveUrl?: string;
+  /**
+   * OPE-284 — the preview was composed while `NEWSLETTER_SEND_ENABLED` was off,
+   * so the template renders why the approve button is absent instead of showing
+   * one the API would refuse. Same caller contract as `approveUrl`: previews
+   * only, never a broadcast.
+   */
+  approveDisabled?: boolean;
 }): Promise<number> {
   let queued = 0;
   for (const email of args.recipients) {
@@ -77,6 +84,7 @@ export async function enqueueNewsletterDigest(args: {
       viewInBrowserUrl: args.viewInBrowserUrl,
       mailingAddress: args.mailingAddress,
       approveUrl: args.approveUrl,
+      approveDisabled: args.approveDisabled,
     });
     await enqueueEmail({
       to: email,
