@@ -59,9 +59,12 @@ NEWSLETTER_SEND_ENABLED = "true"
 # The digest HTML is rendered in THIS (main-app) worker via
 # /api/admin/newsletter/send → newsletterDigestTemplate; MAILING_ADDRESS was only
 # set on the MCP worker, so the main-app render fell back to a generic placeholder.
-# Value matches the MCP worker's secret. NOTE: OPE-232 ticket prose said "20 Main
-# Street"; this matches the operator-set MCP value — confirm the legal address in
-# the review-first test render before the first real broadcast.
+# Value matches the MCP worker's secret.
+#
+# ✅ CONFIRMED BY JOHN 2026-07-24 (OPE-284): "18 Main ST, Phillips, ME 04966" is
+# the correct CAN-SPAM address. This supersedes the OPE-232 ticket prose, which
+# said "20 Main Street" — that was the ticket being wrong, not the config. The
+# question is settled; do not re-open it on the strength of the OPE-232 text.
 MAILING_ADDRESS = "18 Main ST, Phillips, ME 04966"
 
 [[d1_databases]]
