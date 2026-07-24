@@ -1548,6 +1548,29 @@ export default {
     console.warn(
       `[cron] firing for cron='${controller.cron}' at ${new Date(controller.scheduledTime).toISOString()}`
     );
+
+    // ── OPE-258 TEMPORARY DIAGNOSTIC — DELETE AFTER THE RUN ──────────────
+    // Log the SCHEDULED entrypoint's INTERNAL_API_KEY fingerprint (4-byte
+    // SHA-256 prefix + length, never the secret) so it can be compared against
+    // the fetch entrypoint's, which /api/diag/ope258 returns. Same value from
+    // both = the 401 is not an env divergence.
+    try {
+      const k = env.INTERNAL_API_KEY;
+      const d = k ? await crypto.subtle.digest("SHA-256", new TextEncoder().encode(k)) : null;
+      const fp = d
+        ? [...new Uint8Array(d)]
+            .slice(0, 4)
+            .map((b) => b.toString(16).padStart(2, "0"))
+            .join("")
+        : "absent";
+      await logError(env.DB ?? null, {
+        level: "info",
+        source: "ope258:scheduled-fp",
+        message: `scheduled entrypoint INTERNAL_API_KEY fp=${fp} len=${k?.length ?? 0} cron=${controller.cron}`,
+      });
+    } catch {
+      /* diagnostic only — never break the cron */
+    }
     if (controller.cron === "10 6 * * *") {
       // GW1.3 holdout-sampling cron — daily ~1% random sample of
       // high-trust source events re-checked against the live source
@@ -1790,6 +1813,64 @@ export default {
     // Public build-fingerprint endpoint — no auth, no MCP protocol. Any client
     // can curl this and compare gitSha to `git log` on the repo to verify they
     // are talking to the latest deployed bundle.
+    // ── OPE-258 TEMPORARY DIAGNOSTIC — DELETE AFTER THE RUN ────────────────
+    // Compares the fetch-entrypoint INTERNAL_API_KEY against the scheduled
+    // entrypoint's (logged separately) and performs a live auth probe against
+    // the main app FROM THIS ENTRYPOINT. Returns only a 4-byte SHA-256 prefix
+    // and a length — never the secret. Admin-token gated. The probe sends a
+    // deliberately invalid target_type so the main app's auth check (which runs
+    // BEFORE body validation) is the only thing exercised: 401 = auth rejected,
+    // 400 = auth accepted. Zero side effects either way.
+    if (url.pathname === "/api/diag/ope258") {
+      const diagAuth = await authenticateToken(getDb(env.DB), request.headers.get("Authorization"));
+      if (!diagAuth || diagAuth.role !== "ADMIN") {
+        return new Response(JSON.stringify({ error: "admin token required" }), {
+          status: 403,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      const fingerprint = async (s?: string) => {
+        if (!s) return { present: false as const };
+        const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
+        return {
+          present: true as const,
+          len: s.length,
+          fp: [...new Uint8Array(digest)]
+            .slice(0, 4)
+            .map((b) => b.toString(16).padStart(2, "0"))
+            .join(""),
+        };
+      };
+      let probe: Record<string, unknown>;
+      try {
+        const probeRes = await fetch(`${env.MAIN_APP_URL}/api/admin/upload-image-slot`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Internal-Key": env.INTERNAL_API_KEY ?? "",
+          },
+          body: JSON.stringify({ target_type: "__ope258_probe__", target_id: "__probe__" }),
+        });
+        probe = { status: probeRes.status, body: (await probeRes.text()).slice(0, 220) };
+      } catch (err) {
+        probe = { threw: String((err as Error)?.message ?? err) };
+      }
+      return new Response(
+        JSON.stringify(
+          {
+            entrypoint: "fetch",
+            key: await fingerprint(env.INTERNAL_API_KEY),
+            mainAppUrl: env.MAIN_APP_URL,
+            hasServiceBinding: Boolean(env.MAIN_APP),
+            probe,
+          },
+          null,
+          2
+        ),
+        { headers: { "Content-Type": "application/json" } }
+      );
+    }
+
     if (url.pathname === "/version" && request.method === "GET") {
       return new Response(
         JSON.stringify({
