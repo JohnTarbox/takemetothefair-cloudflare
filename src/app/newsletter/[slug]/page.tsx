@@ -6,7 +6,7 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { newsletterIssues } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { NewsletterSignup } from "@/components/layout/newsletter-signup";
-import { newsletterMastheadHtml } from "@/lib/newsletter-masthead";
+import { NEWSLETTER_NAME, newsletterMastheadHtml } from "@/lib/newsletter-masthead";
 
 /**
  * OPE-170 — public per-issue newsletter page. Renders the issue's stored HTML
@@ -48,7 +48,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   if (!issue) return { title: "Newsletter | Meet Me at the Fair" };
   return {
     title: `${issue.subject} | Meet Me at the Fair`,
-    description: "A past issue of the Meet Me at the Fair weekend digest.",
+    description: `A past issue of ${NEWSLETTER_NAME}, the Meet Me at the Fair weekly newsletter.`,
     alternates: { canonical: `https://meetmeatthefair.com/newsletter/${issue.slug}` },
     openGraph: { title: issue.subject, type: "article" },
   };

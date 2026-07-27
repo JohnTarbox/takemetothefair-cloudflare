@@ -2,10 +2,11 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { CheckCircle2, AlertCircle, Clock } from "lucide-react";
 import { NewsletterConfirmTracker } from "@/components/analytics/NewsletterConfirmTracker";
+import { NEWSLETTER_NAME } from "@/lib/newsletter-masthead";
 
 export const metadata: Metadata = {
   title: "Newsletter Confirmation | Meet Me at the Fair",
-  description: "Confirm your subscription to the Meet Me at the Fair weekend digest.",
+  description: `Confirm your subscription to ${NEWSLETTER_NAME}, the Meet Me at the Fair weekly newsletter.`,
   robots: { index: false, follow: false },
 };
 
@@ -25,7 +26,7 @@ const COPY_BY_STATUS: Record<string, StatusCopy> = {
     icon: CheckCircle2,
     iconClass: "text-green-600",
     heading: "You're confirmed",
-    body: "Thanks for confirming. You'll get our weekend digest of New England events, new vendors, and hidden gems in your inbox every Friday.",
+    body: `Thanks for confirming. You'll get ${NEWSLETTER_NAME} — New England events, new vendors, and hidden gems — in your inbox every Friday.`,
   },
   already_confirmed: {
     icon: CheckCircle2,

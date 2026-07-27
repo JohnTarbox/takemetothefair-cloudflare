@@ -1,5 +1,5 @@
 /**
- * OPE-232 — the Weekend Fair Digest must render in the NEWSLETTER shell, not
+ * OPE-232 — the digest must render in the NEWSLETTER shell, not
  * the transactional one. These assert the acceptance criteria directly against
  * the produced HTML so a regression to `baseLayout` is caught at build time.
  */
@@ -8,7 +8,7 @@ import { newsletterDigestTemplate } from "../templates";
 import { SOCIAL_LINKS } from "@/lib/social-links";
 
 const base = {
-  subject: "Weekend Fair Digest — July 12–13",
+  subject: "This Weekend at the Fair — Jul 12",
   contentHtml: "<p>Fryeburg Fair this weekend</p>",
   unsubscribeUrl: "https://meetmeatthefair.com/api/newsletter/unsubscribe?token=abc",
   viewInBrowserUrl: "https://meetmeatthefair.com/newsletter/2026-07-12",
@@ -27,8 +27,8 @@ describe("newsletterDigestTemplate — branded shell (OPE-232)", () => {
     expect(html).not.toContain(":#E8960C"); // transactional orange
   });
 
-  it("shows the Weekend Fair Digest masthead + almanac eyebrow", () => {
-    expect(html).toContain("Weekend Fair Digest");
+  it("shows the This Weekend at the Fair masthead + almanac eyebrow", () => {
+    expect(html).toContain("This Weekend at the Fair");
     expect(html).toContain("New England's Fair &amp; Festival Almanac");
   });
 
@@ -48,8 +48,8 @@ describe("newsletterDigestTemplate — branded shell (OPE-232)", () => {
   });
 
   it("carries the subject through as the dated subtitle and in the text part", () => {
-    expect(html).toContain("Weekend Fair Digest — July 12–13");
-    expect(text).toContain("Weekend Fair Digest — July 12–13");
+    expect(html).toContain("This Weekend at the Fair — Jul 12");
+    expect(text).toContain("This Weekend at the Fair — Jul 12");
     expect(text).toContain(base.unsubscribeUrl);
   });
 

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Mail, Check } from "lucide-react";
 import { trackFormSubmit } from "@/lib/analytics";
+import { NEWSLETTER_NAME } from "@/lib/newsletter-masthead";
 
 export function NewsletterSignup() {
   const [email, setEmail] = useState("");
@@ -37,10 +38,11 @@ export function NewsletterSignup() {
         htmlFor="newsletter-email"
         className="block text-sm font-medium text-footer-foreground"
       >
-        Weekend fair digest
+        {NEWSLETTER_NAME}
       </label>
       <p className="text-xs text-footer-foreground/70">
-        One email a week — events, new vendors, and hidden gems across New England.
+        One email a week — the best fairs and festivals across New England, plus new vendors and
+        hidden gems.
       </p>
       {status === "done" ? (
         <div className="inline-flex items-center gap-2 px-3 py-2 rounded-md bg-sage-50 text-sage-700 text-sm font-medium">

@@ -5,7 +5,7 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { newsletterIssues } from "@/lib/db/schema";
 import { desc, isNotNull } from "drizzle-orm";
 import { NewsletterSignup } from "@/components/layout/newsletter-signup";
-import { newsletterMastheadHtml } from "@/lib/newsletter-masthead";
+import { NEWSLETTER_NAME, newsletterMastheadHtml } from "@/lib/newsletter-masthead";
 
 /**
  * OPE-170 — public newsletter archive. Reverse-chron list of SENT issues
@@ -35,9 +35,8 @@ async function getSentIssues() {
 export async function generateMetadata(): Promise<Metadata> {
   const issues = await getSentIssues();
   return {
-    title: "Newsletter Archive | Meet Me at the Fair",
-    description:
-      "Past issues of the Meet Me at the Fair weekend digest — New England fairs, festivals, new vendors, and hidden gems. Read online and subscribe.",
+    title: `${NEWSLETTER_NAME} — Newsletter Archive | Meet Me at the Fair`,
+    description: `Past issues of ${NEWSLETTER_NAME}, the Meet Me at the Fair weekly newsletter — New England fairs, festivals, new vendors, and hidden gems. Read online and subscribe.`,
     alternates: { canonical: "https://meetmeatthefair.com/newsletter" },
     // Don't index an empty archive; index once there's at least one issue.
     robots: issues.length === 0 ? { index: false, follow: true } : undefined,
@@ -58,7 +57,7 @@ export default async function NewsletterArchivePage() {
           the archive reads as the digest rather than a bare list. The band shows
           the wordmark visually; the <h1> is sr-only to avoid duplicating it
           on-screen while keeping a real heading for a11y + SEO. */}
-      <h1 className="sr-only">Weekend Fair Digest — Newsletter Archive</h1>
+      <h1 className="sr-only">{NEWSLETTER_NAME} — Newsletter Archive</h1>
       <div className="mb-6 overflow-hidden rounded-xl border border-border">
         <div dangerouslySetInnerHTML={{ __html: newsletterMastheadHtml({}) }} />
       </div>

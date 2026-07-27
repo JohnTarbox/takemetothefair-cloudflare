@@ -7,6 +7,7 @@ import { SOCIAL_LINKS } from "@/lib/social-links";
 import {
   BAND_GREEN,
   EYEBROW_GOLD,
+  NEWSLETTER_NAME,
   ON_BAND_MUTED,
   SUBTITLE_GOLD,
   newsletterMastheadHtml,
@@ -199,16 +200,21 @@ export function newsletterConfirmTemplate(args: { confirmUrl: string }): {
   html: string;
   text: string;
 } {
+  // OPE-285 — name the product exactly as it will appear in their inbox. The
+  // confirmation email is the one place we can tell a subscriber the literal
+  // string to search for later, so it must match the masthead + subject.
+  const searchHint = `Every issue arrives with ${NEWSLETTER_NAME} in the subject line — search your inbox for that if you ever lose one.`;
   const html = baseLayout({
     heading: "Confirm your subscription",
-    body: `<p style="margin:0 0 12px;">Thanks for signing up for the Meet Me at the Fair weekend digest.</p>
+    body: `<p style="margin:0 0 12px;">Thanks for signing up for <strong>${NEWSLETTER_NAME}</strong>, the Meet Me at the Fair weekly newsletter.</p>
 <p style="margin:0 0 12px;">Click the button below to confirm your email and start receiving our weekly roundup of events, new vendors, and hidden gems across New England. The link is valid for 14 days.</p>
+<p style="margin:0 0 12px;">${searchHint}</p>
 <p style="margin:0 0 12px;">If you didn't sign up, you can ignore this email — without confirming, you won't be added to the list.</p>`,
     cta: { url: args.confirmUrl, label: "Confirm subscription" },
   });
-  const text = `Thanks for signing up for the Meet Me at the Fair weekend digest.\n\nClick the link below to confirm your email and start receiving our weekly roundup of events, new vendors, and hidden gems across New England. The link is valid for 14 days.\n\n${args.confirmUrl}\n\nIf you didn't sign up, you can ignore this email — without confirming, you won't be added to the list.`;
+  const text = `Thanks for signing up for ${NEWSLETTER_NAME}, the Meet Me at the Fair weekly newsletter.\n\nClick the link below to confirm your email and start receiving our weekly roundup of events, new vendors, and hidden gems across New England. The link is valid for 14 days.\n\n${args.confirmUrl}\n\n${searchHint}\n\nIf you didn't sign up, you can ignore this email — without confirming, you won't be added to the list.`;
   return {
-    subject: "Confirm your Meet Me at the Fair subscription",
+    subject: `Confirm your subscription to ${NEWSLETTER_NAME}`,
     html,
     text,
   };
@@ -421,10 +427,15 @@ export function newsletterDigestTemplate(args: {
   approveDisabled?: boolean;
 }): { subject: string; html: string; text: string } {
   const mailing = args.mailingAddress?.trim() || "Meet Me at the Fair, New England";
+  // OPE-285 — import the name, never re-type it. A literal here is exactly how
+  // the masthead drifted away from the broadcast subject. Resolved ONCE so the
+  // masthead and the plain-text footer can never disagree, and so the OPE-191
+  // vendor digest's override ("New This Week") flows to both.
+  const wordmark = args.wordmark?.trim() || NEWSLETTER_NAME;
   const html = newsletterLayout({
-    wordmark: args.wordmark?.trim() || "Weekend Fair Digest",
-    // The subject carries the date ("Weekend Fair Digest — July 12–13"); show it
-    // as a subtitle rather than a duplicate <h1> (scope §1).
+    wordmark,
+    // The subject carries the date ("This Weekend at the Fair — Jul 31"); show
+    // it as a subtitle rather than a duplicate <h1> (scope §1).
     subtitle: args.subject,
     body: args.contentHtml,
     unsubscribeUrl: args.unsubscribeUrl,
@@ -440,7 +451,7 @@ export function newsletterDigestTemplate(args: {
       .replace(/<[^>]+>/g, " ")
       .replace(/\s+/g, " ")
       .trim();
-  const text = `${args.subject}\n\nView this issue in your browser: ${args.viewInBrowserUrl}\n\n${bodyText}\n\n—\nYou're receiving this because you subscribed to the Meet Me at the Fair weekend digest.\nUnsubscribe: ${args.unsubscribeUrl}\n${mailing}`;
+  const text = `${args.subject}\n\nView this issue in your browser: ${args.viewInBrowserUrl}\n\n${bodyText}\n\n—\nYou're receiving this because you subscribed to ${wordmark}, the Meet Me at the Fair weekly newsletter.\nUnsubscribe: ${args.unsubscribeUrl}\n${mailing}`;
 
   return { subject: args.subject, html, text };
 }

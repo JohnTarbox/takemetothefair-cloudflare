@@ -1,5 +1,5 @@
 /**
- * OPE-234 — the Weekend Fair Digest masthead, as ONE piece of markup shared by
+ * OPE-234 — the "This Weekend at the Fair" masthead, as ONE piece of markup shared by
  * the digest email (`newsletterLayout` in src/lib/email/templates.ts) and the
  * public web archive (`/newsletter/[slug]`).
  *
@@ -39,11 +39,28 @@ export const SUBTITLE_GOLD = "#cbb87a";
 /** Muted cream for secondary text ON the green band (8.3:1 on BAND_GREEN). */
 export const ON_BAND_MUTED = "#D9D2C7";
 
-/** The fixed eyebrow line above the wordmark. */
+/**
+ * The fixed eyebrow line above the wordmark — a tagline, deliberately NOT a
+ * second product name (OPE-285).
+ */
 export const NEWSLETTER_EYEBROW = "New England's Fair & Festival Almanac";
 
-/** Default wordmark; the OPE-191 vendor digest overrides it ("New This Week"). */
-export const NEWSLETTER_WORDMARK = "Weekend Fair Digest";
+/**
+ * THE product name of the consumer newsletter — the single source of truth for
+ * every customer-facing surface that names it (masthead, /newsletter archive,
+ * footer signup box, double-opt-in confirmation, help articles).
+ *
+ * OPE-285: three names ran simultaneously ("Weekend Fair Digest" in the
+ * masthead/archive/signup, "This Weekend at the Fair" in the actual broadcast
+ * subject, the Almanac line as an umbrella banner) because this constant
+ * existed but its consumers re-declared the string as a literal instead of
+ * importing it. A constant nobody imports is just one more copy. Import this;
+ * never re-type the name.
+ */
+export const NEWSLETTER_NAME = "This Weekend at the Fair";
+
+/** Default masthead wordmark; the OPE-191 vendor digest overrides it ("New This Week"). */
+export const NEWSLETTER_WORDMARK = NEWSLETTER_NAME;
 
 function escapeHtmlText(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -52,7 +69,7 @@ function escapeHtmlText(s: string): string {
 /**
  * Render the masthead band.
  *
- * @param wordmark Big title line. Defaults to "Weekend Fair Digest".
+ * @param wordmark Big title line. Defaults to NEWSLETTER_NAME.
  * @param subtitle Optional dated line under it (the issue subject/date).
  */
 export function newsletterMastheadHtml(args: { wordmark?: string; subtitle?: string }): string {

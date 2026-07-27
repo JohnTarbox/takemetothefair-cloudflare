@@ -1,10 +1,11 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import { CheckCircle2, AlertCircle } from "lucide-react";
+import { NEWSLETTER_NAME } from "@/lib/newsletter-masthead";
 
 export const metadata: Metadata = {
   title: "Newsletter Unsubscribe | Meet Me at the Fair",
-  description: "Manage your subscription to the Meet Me at the Fair weekend digest.",
+  description: `Manage your subscription to ${NEWSLETTER_NAME}, the Meet Me at the Fair weekly newsletter.`,
   robots: { index: false, follow: false },
 };
 
@@ -24,7 +25,7 @@ const COPY_BY_STATUS: Record<string, StatusCopy> = {
     icon: CheckCircle2,
     iconClass: "text-green-600",
     heading: "You've been unsubscribed",
-    body: "You won't receive the weekend digest anymore. Sorry to see you go — you can re-subscribe any time from the footer of any page.",
+    body: `You won't receive ${NEWSLETTER_NAME} anymore. Sorry to see you go — you can re-subscribe any time from the footer of any page.`,
   },
   invalid: {
     icon: AlertCircle,
