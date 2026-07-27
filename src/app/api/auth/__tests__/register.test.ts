@@ -13,6 +13,9 @@ const mockDb = {
   where: vi.fn().mockReturnThis(),
   limit: vi.fn(),
   insert: vi.fn().mockReturnThis(),
+  // OPE-237's evidence write chains .onConflictDoNothing() off .values(); the
+  // other inserts await .values() directly. Returning a thenable that ALSO
+  // carries onConflictDoNothing satisfies both without a per-call branch.
   values: vi.fn(),
 };
 
@@ -139,7 +142,16 @@ describe("POST /api/auth/register", () => {
 
   it("successfully registers a vendor with businessName", async () => {
     mockDb.limit.mockResolvedValue([]);
-    mockDb.values.mockResolvedValue(undefined);
+    // A resolved promise that ALSO carries onConflictDoNothing: the plain
+    // inserts `await .values(...)`, while OPE-237's evidence insert chains
+    // `.onConflictDoNothing()` off it. Without the method the evidence write
+    // would throw into its fail-soft catch and this test would assert against
+    // a write that never actually completed.
+    mockDb.values.mockImplementation(() =>
+      Object.assign(Promise.resolve(undefined), {
+        onConflictDoNothing: () => Promise.resolve(undefined),
+      })
+    );
 
     const request = new NextRequest("http://localhost:3000/api/auth/register", {
       method: "POST",
@@ -157,11 +169,23 @@ describe("POST /api/auth/register", () => {
 
     expect(response.status).toBe(201);
     expect(data.user.role).toBe("VENDOR");
-    // user + user_roles + vendor + verificationTokens. The user_roles
-    // insert was added in the dual-role-foundation PR — it mirrors
-    // the primary role into the many-to-many table so dual-role
-    // checks via hasRole() / session.user.roles[] honor it.
-    expect(mockDb.insert).toHaveBeenCalledTimes(4);
+    // user + user_roles + vendor + verificationTokens + OPE-237 realness
+    // evidence. The user_roles insert was added in the dual-role-foundation
+    // PR — it mirrors the primary role into the many-to-many table so
+    // dual-role checks via hasRole() / session.user.roles[] honor it.
+    expect(mockDb.insert).toHaveBeenCalledTimes(5);
+
+    // OPE-237 — assert WHAT the extra insert is, not just that the count grew.
+    // A bare count bump would still pass if the evidence row silently stopped
+    // being written and something else started writing instead.
+    const evidence = mockDb.values.mock.calls
+      .map((c) => c[0] as Record<string, unknown>)
+      .find((row) => typeof row?.band === "string" && "corroboration" in row);
+    expect(evidence, "expected a vendor_claim_evidence row").toBeDefined();
+    expect(evidence!.businessName).toBe("My Vendor Business");
+    expect(evidence!.claimantEmail).toBe("vendor@example.com");
+    // Unchecked, not clean — and pessimistic until email verification lands.
+    expect(evidence!.corroboration).toBe("UNAVAILABLE");
   });
 
   it("successfully registers a promoter with companyName", async () => {

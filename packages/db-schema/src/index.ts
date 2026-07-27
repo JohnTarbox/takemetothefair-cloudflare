@@ -2503,6 +2503,70 @@ export const enrichmentLog = sqliteTable(
   ]
 );
 
+// OPE-237 (drizzle/0169) — vendor claim/registration realness evidence.
+//
+// One row per self-registered vendor listing, written at signup. Holds the
+// cheap local coherence signals plus (once the async pass runs) the
+// web-corroboration class and the combined realness score, so /admin/claims
+// shows a reviewer ranked evidence instead of a blank page.
+//
+// WHY IT KEYS ON REGISTRATION, NOT ON A CLAIM: the ticket assumed claims flow
+// through `claim/direct` + `claim/confirm`. Verified against prod 2026-07-27 —
+// those endpoints have logged ZERO admin_actions, ever. 13 of 14 `claimed=1`
+// vendors were minted by the register route in the same second as the claiming
+// user's account (the `else if (businessName)` self-registration branch). That
+// is the path with real traffic, and the ticket explicitly says to confirm the
+// live entry point before hooking the trigger.
+//
+// Nothing here is ever auto-applied to the public vendor row, and no score
+// auto-approves or auto-rejects. It ranks work for a human.
+export const vendorClaimEvidence = sqliteTable(
+  "vendor_claim_evidence",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    vendorId: text("vendor_id").notNull(),
+    /** The registrant. NOT an FK to keep the row as an audit tombstone if the account goes. */
+    userId: text("user_id"),
+    /** Registrant-supplied values, snapshotted at signup so later edits don't rewrite history. */
+    claimantName: text("claimant_name"),
+    claimantEmail: text("claimant_email"),
+    businessName: text("business_name").notNull(),
+    declaredWebsite: text("declared_website"),
+    /** JSON CoherenceSignals — the local pass, computed inline at registration. */
+    signals: text("signals").notNull().default("{}"),
+    /** STRONG | WEAK | NONE | UNAVAILABLE — set by the async corroboration pass. */
+    corroboration: text("corroboration", {
+      enum: ["STRONG", "WEAK", "NONE", "UNAVAILABLE"],
+    })
+      .notNull()
+      .default("UNAVAILABLE"),
+    /** Post-fetch URL / failure reason, for the reviewer to eyeball. */
+    corroborationDetail: text("corroboration_detail"),
+    /** 0-100. Recomputed when corroboration lands. */
+    score: integer("score").notNull().default(0),
+    /** LIKELY_REAL | NEEDS_REVIEW | SUSPECT */
+    band: text("band", { enum: ["LIKELY_REAL", "NEEDS_REVIEW", "SUSPECT"] })
+      .notNull()
+      .default("NEEDS_REVIEW"),
+    /** JSON string[] — the human-readable justification shown in the queue. */
+    reasons: text("reasons").notNull().default("[]"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    /** Set when the async corroboration pass completes; NULL = still pending. */
+    assessedAt: integer("assessed_at", { mode: "timestamp" }),
+    /** Operator triage, independent of the claim's own approve/reject. */
+    reviewedAt: integer("reviewed_at", { mode: "timestamp" }),
+    reviewedBy: text("reviewed_by"),
+  },
+  (t) => [
+    // One evidence row per vendor — the registration mints the listing once.
+    uniqueIndex("idx_vce_vendor").on(t.vendorId),
+    index("idx_vce_band").on(t.band),
+    index("idx_vce_created").on(t.createdAt),
+  ]
+);
+
 // I1 vendor-enrichment Worker (Dev-Brief-I1, 2026-06-13). Dry-run staging for
 // fill-empty-only contact fields extracted from a vendor's own website via
 // Browser Rendering. Proposals land here; the live `vendors` row is untouched

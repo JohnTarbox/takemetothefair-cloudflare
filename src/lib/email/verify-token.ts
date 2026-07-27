@@ -6,6 +6,7 @@ import {
   type ClaimEntityType,
 } from "@/lib/claims/resolve-claim-at-signup";
 import { approvePendingDomainMatchClaims } from "@/lib/claims/resolve-claim-in-wizard";
+import { rescoreEvidenceAfterVerification } from "@/lib/claims/claim-evidence";
 import type { Database } from "@/lib/db";
 
 /**
@@ -92,6 +93,25 @@ export async function validateAndConsumeVerificationToken(
     }
   } catch {
     // swallow — verification succeeded; claim approval is retryable out-of-band.
+  }
+
+  // OPE-237 — re-score the realness evidence now that inbox control is proven.
+  // The signup-time score is deliberately pessimistic (emailVerified is always
+  // false at that instant; verification lands minutes-to-hours later), so
+  // without this every self-registered vendor would sit permanently 25 points
+  // below its true score and over-report as NEEDS_REVIEW.
+  //
+  // Coherence only — no fetch. Verification is a user-facing round-trip and
+  // must not wait on someone else's web server; web corroboration is the
+  // admin-triggered pass.
+  //
+  // Best-effort, like the claim approval above: an advisory screen must never
+  // fail a verification.
+  try {
+    await rescoreEvidenceAfterVerification(db, record.identifier);
+  } catch {
+    // swallow — the evidence row keeps its pessimistic score; the reviewer
+    // still sees the (unverified) reason line, which is safe-by-default.
   }
 
   return { ok: true, email: record.identifier, approvedClaims };

@@ -12,6 +12,7 @@ import {
   type ClaimEntityType,
   type ResolveClaimAtSignupResult,
 } from "@/lib/claims/resolve-claim-at-signup";
+import { recordClaimEvidence } from "@/lib/claims/claim-evidence";
 import { parseGaClientId } from "@/lib/ga4-measurement-protocol";
 import {
   trackClaimAccountCreatedServer,
@@ -164,8 +165,9 @@ export async function POST(request: NextRequest) {
         claim = { outcome: res.outcome, entityType: res.entityType };
         claimResult = res;
       } else if (businessName) {
+        const vendorId = crypto.randomUUID();
         await db.insert(vendors).values({
-          id: crypto.randomUUID(),
+          id: vendorId,
           userId,
           businessName,
           slug: createSlug(businessName),
@@ -173,6 +175,36 @@ export async function POST(request: NextRequest) {
           claimedAt: new Date(),
           claimedBy: userId,
         });
+
+        // OPE-237 — realness screen. THIS is the live claim path: verified
+        // against prod 2026-07-27, the dedicated claim endpoints have logged
+        // zero actions ever, while 13 of 14 claimed vendors were minted right
+        // here. Runs inline because the coherence pass is pure string work with
+        // no network; fail-soft because a registration must never fail over an
+        // advisory screen. Persistent failure surfaces via the
+        // `vendor-claim-evidence` heartbeat probe rather than silently.
+        try {
+          await recordClaimEvidence(db, {
+            vendorId,
+            userId,
+            claimantName: name,
+            businessName,
+            email,
+            // Always false here — verification lands minutes-to-hours later and
+            // re-scores. The signup-time score is deliberately pessimistic.
+            emailVerified: false,
+            website: null,
+            description: null,
+          });
+        } catch (evidenceErr) {
+          await logError(db, {
+            level: "warn",
+            message: "OPE-237 realness screen failed at signup",
+            error: evidenceErr,
+            source: "api/auth/register:claim-evidence",
+            context: { vendorId, businessName },
+          });
+        }
       }
     }
 

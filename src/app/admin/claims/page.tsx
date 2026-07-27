@@ -12,6 +12,10 @@
  */
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { listReviewableClaims } from "@/lib/claims/admin-review";
+import {
+  listRegistrationEvidence,
+  type RegistrationEvidenceRow,
+} from "@/lib/claims/list-registration-evidence";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ClaimReviewActions } from "@/components/admin/ClaimReviewActions";
 
@@ -34,8 +38,24 @@ function listingHref(entityType: string, slug: string | null): string | null {
   return entityType === "VENDOR" ? `/vendors/${slug}` : `/promoters/${slug}`;
 }
 
+function bandClasses(band: string): string {
+  if (band === "SUSPECT") return "bg-red-50 text-red-800 border-red-300";
+  if (band === "LIKELY_REAL") return "bg-sage-50 text-sage-700 border-sage-200";
+  return "bg-amber-50 text-amber-800 border-amber-200";
+}
+
+function corroborationClasses(c: string): string {
+  if (c === "STRONG") return "bg-sage-50 text-sage-700 border-sage-200";
+  if (c === "WEAK") return "bg-red-50 text-red-800 border-red-300";
+  return "bg-muted text-muted-foreground border-border";
+}
+
 export default async function AdminClaimsPage() {
-  const claims = await listReviewableClaims(getCloudflareDb());
+  const db = getCloudflareDb();
+  const [claims, evidence] = await Promise.all([
+    listReviewableClaims(db),
+    listRegistrationEvidence(db),
+  ]);
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
@@ -152,7 +172,132 @@ export default async function AdminClaimsPage() {
           )}
         </CardContent>
       </Card>
+
+      <RegistrationEvidenceSection rows={evidence} />
     </div>
+  );
+}
+
+/**
+ * OPE-237 — registration realness screen.
+ *
+ * Sits below the claim queue rather than inside it because these are a
+ * different thing: a self-registered listing is authored, not claimed from
+ * someone. Conflating them is what made OPE-236 read as "7 bypassed claims"
+ * when it was 13 people creating their own listings. Worst band first.
+ */
+function RegistrationEvidenceSection({ rows }: { rows: RegistrationEvidenceRow[] }) {
+  const suspect = rows.filter((r) => r.band === "SUSPECT").length;
+  const unchecked = rows.filter((r) => r.corroboration === "UNAVAILABLE").length;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-sm font-semibold">
+          Registration realness screen{" "}
+          <span className="font-normal text-muted-foreground">
+            — self-registered vendor listings ({rows.length})
+          </span>
+        </CardTitle>
+        <p className="text-xs text-muted-foreground mt-1">
+          Automated screen run at signup: name/email coherence, spam fingerprints, and web
+          corroboration. Advisory only — nothing here approves, rejects, or publishes anything.{" "}
+          {suspect > 0 && <strong>{suspect} flagged SUSPECT. </strong>}
+          {unchecked > 0 && `${unchecked} not yet web-corroborated.`}
+        </p>
+      </CardHeader>
+      <CardContent className="p-0">
+        {rows.length === 0 ? (
+          <p className="p-6 text-sm text-muted-foreground">
+            No vendor self-registrations screened yet. New signups appear here automatically.
+          </p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-muted border-b border-border text-left text-muted-foreground">
+                <tr>
+                  <th className="px-4 py-2 font-medium">listing</th>
+                  <th className="px-4 py-2 font-medium">registrant</th>
+                  <th className="px-4 py-2 font-medium">band</th>
+                  <th className="px-4 py-2 font-medium text-right">score</th>
+                  <th className="px-4 py-2 font-medium">web</th>
+                  <th className="px-4 py-2 font-medium">why</th>
+                  <th className="px-4 py-2 font-medium">signed up</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.vendorId} className="border-b border-border align-top hover:bg-muted">
+                    <td className="px-4 py-3">
+                      <div className="font-medium text-foreground">
+                        {r.vendorSlug ? (
+                          <a
+                            href={`/vendors/${r.vendorSlug}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-royal hover:underline"
+                          >
+                            {r.businessName}
+                          </a>
+                        ) : (
+                          r.businessName
+                        )}
+                      </div>
+                      {r.spamFlags.length > 0 && (
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {r.spamFlags.map((f) => (
+                            <span
+                              key={f}
+                              className="inline-block px-2 py-0.5 rounded text-[10px] font-medium border bg-red-50 text-red-800 border-red-300"
+                            >
+                              {f.replace(/_/g, " ")}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-xs text-muted-foreground">
+                      <div className="font-mono break-all">{r.claimantEmail ?? "—"}</div>
+                      {r.claimantName && <div>{r.claimantName}</div>}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span
+                        className={`inline-block px-2 py-0.5 rounded text-[10px] font-medium border ${bandClasses(
+                          r.band
+                        )}`}
+                      >
+                        {r.band.replace(/_/g, " ")}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums text-foreground">{r.score}</td>
+                    <td className="px-4 py-3">
+                      <span
+                        className={`inline-block px-2 py-0.5 rounded text-[10px] font-medium border ${corroborationClasses(
+                          r.corroboration
+                        )}`}
+                        title={r.corroborationDetail ?? undefined}
+                      >
+                        {r.corroboration === "UNAVAILABLE" ? "not checked" : r.corroboration}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-xs text-muted-foreground max-w-[380px]">
+                      <ul className="list-disc pl-4 space-y-0.5">
+                        {r.reasons.map((reason) => (
+                          <li key={reason}>{reason}</li>
+                        ))}
+                      </ul>
+                    </td>
+                    <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">
+                      {r.createdAt ? r.createdAt.toISOString().slice(0, 10) : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

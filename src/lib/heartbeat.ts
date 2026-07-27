@@ -28,6 +28,7 @@ import {
   newsletterIssues,
   photoCoverageDaily,
   promoterEnrichmentCandidates,
+  vendorClaimEvidence,
   vendorEnrichmentCandidates,
 } from "@/lib/db/schema";
 import { SITE_URL } from "@takemetothefair/constants";
@@ -180,6 +181,24 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     priority: "P1",
     expectedWindowHours: 48,
     lastEvidenceAt: (db) => maxTs(db, photoCoverageDaily, photoCoverageDaily.updatedAt),
+  },
+  {
+    // OPE-237 — every vendor SELF-REGISTRATION must write a realness-evidence
+    // row. Evidence is created_at rather than assessed_at: created_at proves
+    // the inline write at signup fired, which is the part that can silently
+    // regress if the register route is refactored. assessed_at only moves when
+    // a registrant declares a website, so keying on it would read RED for a
+    // fortnight of perfectly healthy website-less craft-vendor signups.
+    //
+    // 30-day window: ~13 self-registrations in the 16 days to 2026-07-27, but
+    // signups are seasonal (they stop dead after fair season), so a tighter
+    // window would false-fire every quiet fortnight.
+    name: "vendor-claim-evidence",
+    ownerOpe: "OPE-237",
+    label: "Vendor registration realness screen",
+    priority: "P1",
+    expectedWindowHours: 30 * 24,
+    lastEvidenceAt: (db) => maxTs(db, vendorClaimEvidence, vendorClaimEvidence.createdAt),
   },
   {
     name: "promoter-enrichment",
