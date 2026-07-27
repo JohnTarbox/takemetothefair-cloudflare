@@ -287,7 +287,7 @@ Prefer a calendar? The events page offers month, week, day, year, and schedule (
 
 The search box finds events, vendors, and venues by name — try a town name ("Kingfield"), an event ("Moxie"), or a thing you're after ("jewelry").
 
-Want a weekly nudge instead? The **Weekend fair digest** (signup in the page footer) sends one email a week with events, new vendors, and hidden gems across New England.`;
+Want a weekly nudge instead? **This Weekend at the Fair** (signup in the page footer) sends one email a week with events, new vendors, and hidden gems across New England.`;
 
 const FAIRGOER_SAVE_EVENTS = `**Favorites:** with a free account, tap the favorite button on any event to build your personal list.
 
@@ -423,7 +423,7 @@ All six New England states: Maine, New Hampshire, Vermont, Massachusetts, Connec
 
 ### How do I stay in the loop?
 
-Subscribe to the Weekend fair digest (one email a week, footer signup), favorite events with a free account, or export event dates to your own calendar from any event page.`;
+Subscribe to This Weekend at the Fair (one email a week, footer signup), favorite events with a free account, or export event dates to your own calendar from any event page.`;
 
 // --- Glossary (placeholder; D1-backed version deferred to OPE-62) ----------
 

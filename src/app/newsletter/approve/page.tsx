@@ -7,6 +7,7 @@ import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { newsletterIssues } from "@/lib/db/schema";
 import { resolveApproveSecret, verifyApproveToken } from "@/lib/email/newsletter-approve-token";
 import { selectBroadcastRecipients } from "@/lib/email/newsletter-broadcast";
+import { NEWSLETTER_NAME } from "@/lib/newsletter-masthead";
 
 /**
  * OPE-231 — the confirm interstitial for the one-tap approve link.
@@ -18,7 +19,7 @@ import { selectBroadcastRecipients } from "@/lib/email/newsletter-broadcast";
  */
 export const metadata: Metadata = {
   title: "Approve Newsletter | Meet Me at the Fair",
-  description: "Approve and send the Weekend Fair Digest to subscribers.",
+  description: `Approve and send ${NEWSLETTER_NAME} to subscribers.`,
   robots: { index: false, follow: false },
 };
 

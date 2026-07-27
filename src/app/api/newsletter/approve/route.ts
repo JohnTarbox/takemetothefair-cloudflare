@@ -1,6 +1,6 @@
 export const dynamic = "force-dynamic";
 /**
- * OPE-231 — one-tap "Approve & send to everyone" for the Weekend Fair Digest.
+ * OPE-231 — one-tap "Approve & send to everyone" for the weekly newsletter.
  *
  * This endpoint performs a LIVE CUSTOMER BROADCAST of a previewed issue from a
  * tokenized link in John's inbox. Its safety rests on four things, all here:

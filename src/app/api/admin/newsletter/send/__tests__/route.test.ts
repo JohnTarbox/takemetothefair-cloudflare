@@ -176,7 +176,7 @@ describe("POST /api/admin/newsletter/send — rendered HTML on a real test send 
     // the 2026-07-20 ship read as verified and was reopened hours later. The
     // footer is a distinct GREEN BAND, so assert the second band and that the
     // CAN-SPAM set lives inside it.
-    expect(html).toContain("Weekend Fair Digest");
+    expect(html).toContain("This Weekend at the Fair");
     expect(html.split("background:#1f3a2d").length - 1).toBe(2);
     const footer = html.slice(html.lastIndexOf("background:#1f3a2d"));
     expect(footer).toContain("/api/newsletter/unsubscribe?token=");
