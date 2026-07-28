@@ -15,6 +15,8 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { SelfReportedFairs } from "@/components/vendors/SelfReportedFairs";
+import { listPublicSelfReported } from "@/lib/vendors/self-reported-events";
 import { decodeHtmlEntities, formatDateRange, unsafeSlug } from "@/lib/utils";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import {
@@ -769,6 +771,17 @@ export default async function VendorDetailPage({ params }: Props) {
   const isAdmin = session?.user?.role === "ADMIN";
   const isOwner = !!session?.user?.id && session.user.id === vendor.userId;
 
+  // OPE-239 — vendor-STATED fair appearances. Loaded separately from
+  // `vendor.eventVendors` and rendered in its own labeled section: these are
+  // assertions, not organizer-confirmed roster entries, and the two must never
+  // share a list. Fail-soft — an unverified extra must never 500 a profile.
+  let selfReportedFairs: Awaited<ReturnType<typeof listPublicSelfReported>> = [];
+  try {
+    selfReportedFairs = await listPublicSelfReported(getCloudflareDb(), vendor.id);
+  } catch {
+    selfReportedFairs = [];
+  }
+
   // Direct-claim eligibility (PR 1) — when the signed-in visitor's
   // verified email matches the vendor's contact_email, the CTA renders
   // a one-click claim button instead of the standard register-redirect.
@@ -1369,6 +1382,16 @@ export default async function VendorDetailPage({ params }: Props) {
                   </div>
                 )}
               </div>
+            )}
+
+            {/* OPE-239 — vendor-STATED appearances. Deliberately placed AFTER
+                the organizer-confirmed Upcoming/Past sections: confirmed facts
+                lead, assertions follow, and the two never share a list. */}
+            {!isNationalHub && (
+              <SelfReportedFairs
+                items={selfReportedFairs}
+                vendorName={vendor.displayName || vendor.businessName}
+              />
             )}
 
             {/* UX-A2 Part A — "Similar vendors nearby" module.

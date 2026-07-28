@@ -212,6 +212,7 @@ describe("scoreRealness — banding (OPE-237)", () => {
         claimantNameInBusiness: false,
         websiteProvided: true,
         spamFlags: ["injected_urls", "keyword_stuffing", "gibberish_business_name"],
+        selfReportedEventCount: 0,
       },
       "WEAK"
     );
@@ -237,5 +238,60 @@ describe("scoreRealness — banding (OPE-237)", () => {
     expect(Object.keys(r).sort()).toEqual(
       ["band", "corroboration", "reasons", "score", "signals"].sort()
     );
+  });
+});
+
+/**
+ * OPE-239 — vendor self-attested fair participation as a trust input.
+ *
+ * The rule that matters is ASYMMETRY: naming a fair helps, naming none must
+ * cost nothing. Our roster coverage is too sparse for silence to be evidence,
+ * so a penalty here would quietly punish honest vendors of events whose
+ * organizers simply never publish a list.
+ */
+describe("self-reported fair participation (OPE-239)", () => {
+  it("boosts a vendor who can name one of our fairs", () => {
+    const without = assessRealness(CD_CERAMICS, "NONE");
+    const with1 = assessRealness({ ...CD_CERAMICS, selfReportedEventCount: 1 }, "NONE");
+    expect(with1.score).toBeGreaterThan(without.score);
+    expect(with1.reasons.join(" ")).toContain("exhibited at");
+  });
+
+  it("naming NONE is not a penalty — the asymmetry the ticket requires", () => {
+    const zero = assessRealness({ ...CD_CERAMICS, selfReportedEventCount: 0 }, "NONE");
+    const absent = assessRealness(CD_CERAMICS, "NONE");
+    expect(zero.score).toBe(absent.score);
+    // and no reason line implies anything negative about having none
+    expect(zero.reasons.join(" ")).not.toContain("exhibited at");
+  });
+
+  it("rewards an established pattern but caps it — 20 ticks is not 20x one tick", () => {
+    const one = assessRealness({ ...CD_CERAMICS, selfReportedEventCount: 1 }, "NONE");
+    const three = assessRealness({ ...CD_CERAMICS, selfReportedEventCount: 3 }, "NONE");
+    const twenty = assessRealness({ ...CD_CERAMICS, selfReportedEventCount: 20 }, "NONE");
+    expect(three.score).toBeGreaterThan(one.score);
+    expect(twenty.score).toBe(three.score);
+  });
+
+  it("cannot rescue an obvious spam signup on its own", () => {
+    // Self-attestation is cheap to fabricate, so it must not outweigh spam
+    // fingerprints — a spammer ticking boxes stays SUSPECT.
+    const r = assessRealness(
+      {
+        claimantName: null,
+        businessName: "xkcdfgh",
+        email: "a1b2@mailinator.com",
+        emailVerified: false,
+        description: "buy now https://a.example https://b.example cheap cheap cheap",
+        selfReportedEventCount: 20,
+      },
+      "NONE"
+    );
+    expect(r.band).toBe("SUSPECT");
+  });
+
+  it("treats a negative count as zero rather than trusting the caller", () => {
+    const r = assessRealness({ ...CD_CERAMICS, selfReportedEventCount: -5 }, "NONE");
+    expect(r.signals.selfReportedEventCount).toBe(0);
   });
 });
