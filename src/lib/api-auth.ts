@@ -59,7 +59,78 @@ export async function bearerTokenMatches(request: Request): Promise<boolean> {
 export async function internalKeyMatches(request: Request): Promise<boolean> {
   const internalKey = request.headers.get("x-internal-key");
   const env = getCloudflareEnv() as unknown as Record<string, string | undefined>;
-  return timingSafeEqualString(internalKey, env.INTERNAL_API_KEY);
+  const expected = env.INTERNAL_API_KEY;
+  const ok = timingSafeEqualString(internalKey, expected);
+  if (!ok && internalKey) {
+    // OPE-258 — a caller that PRESENTED a key and was refused. Record why.
+    //
+    // This exists because OPE-258 burned three investigation cycles unable to
+    // answer one question: does the key arrive intact? Two prior probes
+    // fingerprinted the SENDER's env (identical across entrypoints) and still
+    // could not distinguish "header stripped in transit" from "header arrives
+    // but differs" from "receiver's own secret is missing". Those are three
+    // different bugs with three different fixes, and a bare 401 tells you
+    // none of them.
+    //
+    // Gated on `internalKey` being present so ordinary unauthenticated traffic
+    // and internet background noise never reach this path — only a caller that
+    // genuinely tried to authenticate.
+    void recordInternalKeyRefusal(request, internalKey, expected);
+  }
+  return ok;
+}
+
+/**
+ * Log a NON-SECRET forensic record of a refused internal-key request.
+ *
+ * Never logs either key. A short SHA-256 prefix is enough to answer "same value
+ * or different value?" — which is the only question that matters — while being
+ * useless to an attacker who obtains the logs.
+ *
+ * Fire-and-forget and fully swallowed: an auth check must never fail, slow
+ * down, or throw because its diagnostics did.
+ */
+async function recordInternalKeyRefusal(
+  request: Request,
+  presented: string,
+  expected: string | undefined
+): Promise<void> {
+  try {
+    const fp = async (v: string | undefined) => {
+      if (!v) return null;
+      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(v));
+      return Array.from(new Uint8Array(digest))
+        .slice(0, 4)
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("");
+    };
+    const url = new URL(request.url);
+    const { logError } = await import("@/lib/logger");
+    await logError(getCloudflareDb(), {
+      level: "warn",
+      source: "api-auth:internal-key-refused",
+      message: "X-Internal-Key presented but did not match",
+      statusCode: 401,
+      route: url.pathname,
+      context: {
+        method: request.method,
+        // Which caller — MCP stamps this per entrypoint (fetch/scheduled/
+        // queue/workflow/do). Its absence is itself informative: it means the
+        // caller predates the stamping or is not our MCP Worker.
+        callerEntrypoint: request.headers.get("x-mmatf-entrypoint") ?? "(unstamped)",
+        presentedLen: presented.length,
+        presentedFp: await fp(presented),
+        expectedPresent: !!expected,
+        expectedLen: expected?.length ?? 0,
+        expectedFp: await fp(expected),
+        // Cloudflare stamps this on Worker-issued subrequests; its presence
+        // distinguishes a cross-Worker call from an external client.
+        cfWorker: request.headers.get("cf-worker"),
+      },
+    });
+  } catch {
+    // Diagnostics must never break authentication.
+  }
 }
 
 /**

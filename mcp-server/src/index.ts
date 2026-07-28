@@ -33,6 +33,7 @@ import { registerCreateClaimInviteTool } from "./tools/admin-claim-invite.js";
 import { registerClaimReviewTools } from "./tools/admin-claim-review.js";
 import { registerResolveHeldPhotosTool } from "./tools/admin-resolve-held-photos.js";
 import { registerAnalyticsTools } from "./tools/analytics.js";
+import { mainAppFetch } from "./main-app-fetch.js";
 import { registerBlogTools } from "./tools/blog.js";
 import { registerContentLinksTools } from "./tools/content-links.js";
 import { handleInboundEmail, type ForwardableEmailMessage } from "./email-handler.js";
@@ -653,19 +654,15 @@ async function runMainAppSweep(
   path: string,
   format: (result: Record<string, unknown>) => string = (r) => JSON.stringify(r)
 ): Promise<void> {
-  const url = `https://meetmeatthefair.com${path}`;
-  const init: RequestInit = {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Internal-Key": env.INTERNAL_API_KEY ?? "",
-    },
-  };
   const sessionId = crypto.randomUUID();
   try {
-    const response = env.MAIN_APP
-      ? await env.MAIN_APP.fetch(new Request(url, init))
-      : await fetch(url, init);
+    // OPE-258 — shared caller: prefers the service binding, falls back to
+    // public fetch on a binding blip (the previous inline ternary had no
+    // fallback), and stamps the entrypoint so a future 401 names itself.
+    const response = await mainAppFetch(env, path, "scheduled", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
     if (!response.ok) {
       const text = (await response.text()).slice(0, 300);
       await logError(env.DB, {
