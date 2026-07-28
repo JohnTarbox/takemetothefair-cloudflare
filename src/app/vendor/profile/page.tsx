@@ -11,6 +11,7 @@ import type { PlaceLookupResult } from "@/lib/google-maps";
 import { WelcomeBanner } from "@/components/onboarding/welcome-banner";
 import { useAutosave, formatSavedAgo } from "@/lib/hooks/use-autosave";
 import { VendorClaimWidget } from "@/components/vendor/claim-widget";
+import { SelfReportedFairsEditor } from "@/components/vendor/SelfReportedFairsEditor";
 
 interface VendorProfile {
   id: string;
@@ -597,6 +598,15 @@ export default function VendorProfilePage() {
               </Button>
             </div>
           </form>
+        </CardContent>
+      </Card>
+
+      {/* OPE-239 — separate Card, and OUTSIDE the profile <form>: it saves to
+          its own endpoint, so nesting it would make the profile's Save button
+          submit it too (and a form-in-form is invalid HTML anyway). */}
+      <Card>
+        <CardContent className="py-6">
+          <SelfReportedFairsEditor />
         </CardContent>
       </Card>
     </div>

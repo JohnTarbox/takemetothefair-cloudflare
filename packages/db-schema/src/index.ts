@@ -2503,6 +2503,70 @@ export const enrichmentLog = sqliteTable(
   ]
 );
 
+// OPE-239 (drizzle/0170) — vendor SELF-ATTESTED event participation.
+//
+// "Which of our fairs have you sold at?" — the demand-side complement to every
+// roster-capture path we have (web backfill OPE-13/14/23, inbound-email rosters
+// OPE-176, booth photos OPE-204), all of which are supply-side and therefore
+// blind to the many organizers who publish no exhibitor list at all. The vendor
+// always knows where they exhibited.
+//
+// WHY A SEPARATE TABLE AND NOT AN `event_vendors.status` VALUE, WHICH IS WHAT
+// THE TICKET LITERALLY ASKED FOR:
+//
+// `event_vendors` has 52 consumers and the overwhelming majority do NOT filter
+// on `status` — public event pages, the schema.org performer/sponsor arrays,
+// CSV exports, roster-coverage metrics. Widening that enum would make every one
+// of those silently present an UNVERIFIED vendor self-claim as a roster entry.
+// That is exactly what the ticket forbids ("must not pollute get_roster_coverage
+// or organizer-confirmed rosters", "don't let self-attestation inflate roster
+// coverage") and exactly the enum-widening trap that has bitten this codebase
+// before. A separate table delivers "never conflated" BY CONSTRUCTION rather
+// than by auditing 40 call sites and hoping none regress.
+//
+// Positive-only, per the ticket: a link here BOOSTS a claim's trust signal;
+// its absence never penalizes (keep-all).
+export const vendorSelfReportedEvents = sqliteTable(
+  "vendor_self_reported_events",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    vendorId: text("vendor_id")
+      .notNull()
+      .references(() => vendors.id, { onDelete: "cascade" }),
+    eventId: text("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    /** Where the vendor told us — 'claim' (at signup) or 'profile' (editor). */
+    sourceContext: text("source_context", { enum: ["claim", "profile", "admin"] })
+      .notNull()
+      .default("profile"),
+    /**
+     * Operator triage of the assertion. SELF_REPORTED is the honest default and
+     * the only thing a vendor can set. CORROBORATED/DISPUTED are admin-only and
+     * exist so a reviewer's judgement has somewhere to live — they never
+     * promote the row into `event_vendors`; that stays an organizer's word.
+     */
+    status: text("status", { enum: ["SELF_REPORTED", "CORROBORATED", "DISPUTED"] })
+      .notNull()
+      .default("SELF_REPORTED"),
+    /** Optional vendor-supplied support (ticket §3) — feeds the OPE-204 booth path. */
+    evidenceNote: text("evidence_note"),
+    evidenceUrl: text("evidence_url"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    reviewedAt: integer("reviewed_at", { mode: "timestamp" }),
+    reviewedBy: text("reviewed_by"),
+  },
+  (t) => [
+    // One assertion per (vendor, event) — re-selecting the same fair is a no-op,
+    // not a duplicate. Makes the write idempotent.
+    uniqueIndex("idx_vsre_vendor_event").on(t.vendorId, t.eventId),
+    index("idx_vsre_vendor").on(t.vendorId),
+    index("idx_vsre_event").on(t.eventId),
+  ]
+);
+
 // OPE-237 (drizzle/0169) — vendor claim/registration realness evidence.
 //
 // One row per self-registered vendor listing, written at signup. Holds the

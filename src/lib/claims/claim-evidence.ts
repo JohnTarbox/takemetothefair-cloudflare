@@ -38,6 +38,7 @@
 import { eq } from "drizzle-orm";
 import { vendorClaimEvidence } from "@/lib/db/schema";
 import type { Db } from "@/lib/analytics-overview/shared";
+import { countSelfReportedForTrust } from "@/lib/vendors/self-reported-events";
 import {
   assessRealness,
   computeCoherenceSignals,
@@ -252,6 +253,17 @@ export async function rescoreEvidenceAfterVerification(
     .where(eq(vendorClaimEvidence.claimantEmail, email));
 
   for (const row of rows) {
+    // OPE-239 — fold in vendor-stated fair appearances. Positive-only: a
+    // non-zero count boosts the score, zero costs nothing. Read at scoring
+    // time rather than stored on the evidence row, so the number can never go
+    // stale relative to what the vendor has actually asserted.
+    let selfReportedEventCount = 0;
+    try {
+      selfReportedEventCount = await countSelfReportedForTrust(db, row.vendorId);
+    } catch {
+      // Advisory input — a failure here must not block the re-score.
+    }
+
     const result = scoreRealness(
       computeCoherenceSignals({
         claimantName: row.claimantName,
@@ -259,6 +271,7 @@ export async function rescoreEvidenceAfterVerification(
         email: row.claimantEmail ?? email,
         emailVerified: true,
         website: row.declaredWebsite,
+        selfReportedEventCount,
       }),
       // Preserve whatever the corroboration pass has (or hasn't) established.
       (row.corroboration ?? "UNAVAILABLE") as CorroborationClass

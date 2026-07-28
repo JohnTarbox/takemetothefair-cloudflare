@@ -58,6 +58,12 @@ export interface CoherenceInput {
   website?: string | null;
   /** Free-text profile description, if any — the spam surface. */
   description?: string | null;
+  /**
+   * OPE-239 — how many of our fairs this vendor says they've sold at.
+   * POSITIVE-ONLY: a non-zero count boosts the score; zero never penalizes,
+   * because our roster coverage is far too sparse for silence to be evidence.
+   */
+  selfReportedEventCount?: number;
 }
 
 /** The individual signals, each independently meaningful to a reviewer. */
@@ -74,6 +80,8 @@ export interface CoherenceSignals {
   websiteProvided: boolean;
   /** Spam fingerprints found in the free text. Any hit is a strong negative. */
   spamFlags: SpamFlag[];
+  /** OPE-239 — count of vendor-stated fair appearances. Never negative. */
+  selfReportedEventCount: number;
 }
 
 export type SpamFlag = "injected_urls" | "keyword_stuffing" | "gibberish_business_name";
@@ -273,6 +281,7 @@ export function computeCoherenceSignals(input: CoherenceInput): CoherenceSignals
     claimantNameInBusiness,
     websiteProvided: !!websiteDomain,
     spamFlags: detectSpam(input.businessName, input.description),
+    selfReportedEventCount: Math.max(0, input.selfReportedEventCount ?? 0),
   };
 }
 
@@ -292,6 +301,15 @@ const POINTS = {
   corroborationWeak: -15,
   /** Each spam fingerprint. Two hits alone are enough to reach SUSPECT. */
   spamFlag: -30,
+  /**
+   * OPE-239 — naming even one of our fairs is meaningful: a spammer has no
+   * reason to, and it is checkable against the event. Capped low and flat so a
+   * long list can't dominate a score built from independent signals — someone
+   * who ticks twenty boxes is not twenty times more real than someone who
+   * ticks one.
+   */
+  selfReportedAny: 10,
+  selfReportedSeveral: 5,
 } as const;
 
 /** Score >= this is LIKELY_REAL; below SUSPECT_BELOW is SUSPECT. */
@@ -355,6 +373,16 @@ export function scoreRealness(
     case "UNAVAILABLE":
       reasons.push("Web corroboration not checked — treat as unknown, not as clean");
       break;
+  }
+
+  if (signals.selfReportedEventCount > 0) {
+    score += POINTS.selfReportedAny;
+    let detail = `Names ${signals.selfReportedEventCount} of our fair(s) as one they've exhibited at`;
+    if (signals.selfReportedEventCount >= 3) {
+      score += POINTS.selfReportedSeveral;
+      detail += " (an established pattern, not a one-off)";
+    }
+    reasons.push(detail);
   }
 
   for (const flag of signals.spamFlags) {
