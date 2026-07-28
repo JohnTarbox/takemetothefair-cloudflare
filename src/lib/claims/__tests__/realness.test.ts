@@ -210,6 +210,7 @@ describe("scoreRealness — banding (OPE-237)", () => {
         emailDomainMatchesWebsite: false,
         freeMailProvider: false,
         claimantNameInBusiness: false,
+        emailMatchesClaimantName: false,
         websiteProvided: true,
         spamFlags: ["injected_urls", "keyword_stuffing", "gibberish_business_name"],
         selfReportedEventCount: 0,
@@ -293,5 +294,105 @@ describe("self-reported fair participation (OPE-239)", () => {
   it("treats a negative count as zero rather than trusting the caller", () => {
     const r = assessRealness({ ...CD_CERAMICS, selfReportedEventCount: -5 }, "NONE");
     expect(r.signals.selfReportedEventCount).toBe(0);
+  });
+});
+
+/**
+ * OPE-237 calibration fix (2026-07-28) — driven by the FIRST live signup.
+ *
+ * `Blaise Tardif` / `bntardif@gmail` / "Blaisbtwoodworking" scored 0 and was
+ * branded SUSPECT with three reason lines that each said "unknown", not
+ * "wrong". Nothing about the registrant was suspicious; the screen simply
+ * couldn't see two signals a human reads instantly, and then treated an absence
+ * of positives as evidence of guilt.
+ */
+const BLAISE: CoherenceInput = {
+  claimantName: "Blaise Tardif",
+  businessName: "Blaisbtwoodworking",
+  email: "bntardif@gmail.com",
+  emailVerified: false,
+  website: null,
+};
+
+describe("banding requires a real negative (OPE-237 calibration)", () => {
+  it("does NOT brand the first live signup SUSPECT — the shipped bug", () => {
+    const r = assessRealness(BLAISE, "UNAVAILABLE");
+    expect(r.band).not.toBe("SUSPECT");
+    expect(r.band).toBe("NEEDS_REVIEW");
+  });
+
+  it("an unverified, website-less, free-provider vendor is UNKNOWN, not suspect", () => {
+    // The modal legitimate craft vendor: 13 of 14 real claimed vendors look
+    // exactly like this in the window before they click verify.
+    const r = assessRealness(
+      {
+        claimantName: "Sam Rivera",
+        businessName: "Kewl Kandylz",
+        email: "srivera@gmail.com",
+        emailVerified: false,
+      },
+      "UNAVAILABLE"
+    );
+    expect(r.band).toBe("NEEDS_REVIEW");
+    // and every reason is an "unknown", never an accusation
+    expect(r.reasons.join(" ")).not.toContain("SPAM");
+  });
+
+  it("still reaches SUSPECT when a spam fingerprint IS present", () => {
+    const r = assessRealness(
+      {
+        claimantName: null,
+        businessName: "xkcdfgh",
+        email: "a1b2@mailinator.com",
+        emailVerified: false,
+        description: "buy now https://a.example https://b.example cheap cheap cheap",
+      },
+      "NONE"
+    );
+    expect(r.band).toBe("SUSPECT");
+  });
+
+  it("still reaches SUSPECT on a dead declared site — a WEAK corroboration counts", () => {
+    const r = assessRealness(
+      { claimantName: null, businessName: "Ghost Co", email: "x@x.com", emailVerified: false },
+      "WEAK"
+    );
+    expect(r.band).toBe("SUSPECT");
+  });
+});
+
+describe("name matching survives concatenation and elision (OPE-237 calibration)", () => {
+  it("matches Blaise -> Blaisbtwoodworking via a 5-char prefix", () => {
+    expect(computeCoherenceSignals(BLAISE).claimantNameInBusiness).toBe(true);
+  });
+
+  it("reads the registrant's own name in their email local part", () => {
+    // bntardif = initials + surname. A real person using a real address.
+    expect(computeCoherenceSignals(BLAISE).emailMatchesClaimantName).toBe(true);
+  });
+
+  it("does not let a short token match a coincidental substring", () => {
+    // "Mark" must not match "Market Fresh" — short tokens need a whole word.
+    const s = computeCoherenceSignals({
+      claimantName: "Mark Ellis",
+      businessName: "Market Fresh Produce",
+      email: "hello@gmail.com",
+      emailVerified: false,
+    });
+    expect(s.claimantNameInBusiness).toBe(false);
+  });
+
+  it("still matches a whole short token on a word boundary", () => {
+    const s = computeCoherenceSignals({
+      claimantName: "Mark Ellis",
+      businessName: "Mark Ellis Woodcraft",
+      email: "hello@gmail.com",
+      emailVerified: false,
+    });
+    expect(s.claimantNameInBusiness).toBe(true);
+  });
+
+  it("the CD Ceramics initials case still works", () => {
+    expect(computeCoherenceSignals(CD_CERAMICS).claimantNameInBusiness).toBe(true);
   });
 });

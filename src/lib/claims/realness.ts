@@ -77,6 +77,8 @@ export interface CoherenceSignals {
   freeMailProvider: boolean;
   /** The person's name is embedded in the business name (Colette Dewan → CD Ceramics). */
   claimantNameInBusiness: boolean;
+  /** The email local part carries the person's own name (Blaise Tardif → bntardif). */
+  emailMatchesClaimantName: boolean;
   websiteProvided: boolean;
   /** Spam fingerprints found in the free text. Any hit is a strong negative. */
   spamFlags: SpamFlag[];
@@ -184,6 +186,35 @@ function initials(s: string): string {
     .join("");
 }
 
+/**
+ * Minimum prefix length for a fuzzy name match.
+ *
+ * "Blaise Tardif" registered "Blaisbtwoodworking" — the business name elides
+ * the trailing 'e' AND runs every word together, so neither an exact token
+ * match nor a word-boundary initials match fires. Five characters is short
+ * enough to catch that and long enough that "Mark" doesn't match "Market".
+ */
+const NAME_PREFIX_MIN = 5;
+
+/**
+ * Does a personal-name token appear in a business name, allowing for the
+ * concatenation and truncation people actually use when naming a business?
+ *
+ * Tokens of >= NAME_PREFIX_MIN chars match on any prefix of that length, so
+ * "blaise" matches "blaisbtwoodworking" via "blais". Shorter tokens require a
+ * whole-word match, because a 3-4 char substring inside a longer word is
+ * coincidence more often than signal.
+ */
+function nameTokenAppearsIn(token: string, haystackLower: string, haystackRaw: string): boolean {
+  if (token.length >= NAME_PREFIX_MIN) {
+    for (let len = token.length; len >= NAME_PREFIX_MIN; len--) {
+      if (haystackLower.includes(token.slice(0, len))) return true;
+    }
+    return false;
+  }
+  return new RegExp(`\\b${token}\\b`, "i").test(haystackRaw);
+}
+
 function domainOf(value: string | null | undefined): string | null {
   if (!value) return null;
   const raw = value.trim();
@@ -270,8 +301,16 @@ export function computeCoherenceSignals(input: CoherenceInput): CoherenceSignals
   const bizLower = input.businessName.toLowerCase();
   const nameInitials = initials(claimantName);
   const claimantNameInBusiness =
-    (nameTokens.length > 0 && nameTokens.some((t) => bizLower.includes(t))) ||
+    nameTokens.some((t) => nameTokenAppearsIn(t, bizLower, input.businessName)) ||
     (nameInitials.length >= 2 && new RegExp(`\\b${nameInitials}\\b`, "i").test(input.businessName));
+
+  // OPE-237 calibration — the email carrying the registrant's OWN name is
+  // coherence too, and it is what a human reads first. "bntardif" for Blaise
+  // Tardif is a real person using a real address; the original screen scored it
+  // as nothing because the address didn't reference the BUSINESS.
+  const emailMatchesClaimantName = nameTokens.some((t) =>
+    nameTokenAppearsIn(t, localPart, localPart)
+  );
 
   return {
     emailVerified: input.emailVerified,
@@ -279,6 +318,7 @@ export function computeCoherenceSignals(input: CoherenceInput): CoherenceSignals
     emailDomainMatchesWebsite,
     freeMailProvider: FREE_MAIL_DOMAINS.has(emailDomain),
     claimantNameInBusiness,
+    emailMatchesClaimantName,
     websiteProvided: !!websiteDomain,
     spamFlags: detectSpam(input.businessName, input.description),
     selfReportedEventCount: Math.max(0, input.selfReportedEventCount ?? 0),
@@ -295,6 +335,7 @@ const POINTS = {
   emailDomainMatchesWebsite: 25,
   emailMatchesBusiness: 15,
   claimantNameInBusiness: 10,
+  emailMatchesClaimantName: 10,
   websiteProvided: 5,
   corroborationStrong: 30,
   /** Negative: a declared-but-dead presence is worse than none. */
@@ -312,7 +353,11 @@ const POINTS = {
   selfReportedSeveral: 5,
 } as const;
 
-/** Score >= this is LIKELY_REAL; below SUSPECT_BELOW is SUSPECT. */
+/**
+ * Score >= LIKELY_REAL_AT is LIKELY_REAL. Below SUSPECT_BELOW is SUSPECT *only
+ * when an actual negative signal is present* — see the banding note in
+ * scoreRealness for why absence alone must never reach SUSPECT.
+ */
 const LIKELY_REAL_AT = 60;
 const SUSPECT_BELOW = 20;
 
@@ -349,6 +394,11 @@ export function scoreRealness(
   if (signals.claimantNameInBusiness) {
     score += POINTS.claimantNameInBusiness;
     reasons.push("Registrant's own name appears in the business name");
+  }
+
+  if (signals.emailMatchesClaimantName) {
+    score += POINTS.emailMatchesClaimantName;
+    reasons.push("Email address carries the registrant's own name");
   }
 
   if (signals.websiteProvided) {
@@ -392,8 +442,25 @@ export function scoreRealness(
 
   score = Math.max(0, Math.min(100, score));
 
+  // SUSPECT requires an ACTUAL NEGATIVE, not merely an absence of positives.
+  //
+  // Shipped 2026-07-27 without this and the very first live signup proved it
+  // wrong: Blaise Tardif, a plausible woodworker on Gmail with no website who
+  // simply hadn't clicked the verification link yet, scored 0 and was branded
+  // SUSPECT — with three reason lines that each said "unknown", not "wrong".
+  // That is the modal legitimate craft vendor here (13 of 14 existing claimed
+  // vendors have exactly that shape), so the screen would have libelled almost
+  // every honest new registrant during the minutes-to-hours before they verify.
+  //
+  // "Nothing is known yet" and "something is wrong" are different states and
+  // must not share a band. NEEDS_REVIEW is the honest home for the first.
+  const hasNegativeSignal = signals.spamFlags.length > 0 || corroboration === "WEAK";
   const band: RealnessBand =
-    score >= LIKELY_REAL_AT ? "LIKELY_REAL" : score < SUSPECT_BELOW ? "SUSPECT" : "NEEDS_REVIEW";
+    score >= LIKELY_REAL_AT
+      ? "LIKELY_REAL"
+      : hasNegativeSignal && score < SUSPECT_BELOW
+        ? "SUSPECT"
+        : "NEEDS_REVIEW";
 
   return { score, band, signals, corroboration, reasons };
 }
