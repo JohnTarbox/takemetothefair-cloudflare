@@ -24,9 +24,21 @@ const enqueueEmailMock = vi.fn(async (_job?: unknown) => {});
 const selectMock = vi.fn();
 let sendEnabled = "false";
 let mailingAddress: string | undefined = "18 Main ST, Phillips, ME 04966";
-// Real-send path upserts the issue row before enqueueing — no-op insert chain.
+// Real-send path upserts the issue row before enqueueing. The chain CAPTURES
+// its arguments rather than discarding them: OPE-285 turns on what this upsert
+// writes to `sent_at`, and a mock that swallows the values can't see it.
+const insertedValues: Array<Record<string, unknown>> = [];
+const conflictSets: Array<Record<string, unknown>> = [];
 const insertMock = vi.fn(() => ({
-  values: () => ({ onConflictDoUpdate: () => Promise.resolve() }),
+  values: (v: Record<string, unknown>) => {
+    insertedValues.push(v);
+    return {
+      onConflictDoUpdate: (cfg: { set?: Record<string, unknown> }) => {
+        conflictSets.push(cfg?.set ?? {});
+        return Promise.resolve();
+      },
+    };
+  },
 }));
 
 vi.mock("@/lib/auth", () => ({
@@ -65,6 +77,8 @@ beforeEach(() => {
   enqueueEmailMock.mockClear();
   selectMock.mockReset();
   insertMock.mockClear();
+  insertedValues.length = 0;
+  conflictSets.length = 0;
   sendEnabled = "false";
   mailingAddress = "18 Main ST, Phillips, ME 04966";
 });
@@ -244,5 +258,82 @@ describe("POST /api/admin/newsletter/send — approve CTA checks the gate at com
     const html = enqueuedHtml();
     expect(html).not.toContain("Approve &amp; send to everyone");
     expect(html).not.toContain("Broadcast sending is currently disabled");
+  });
+});
+
+/**
+ * OPE-285 — `sent_at` is what puts an issue on the PUBLIC archive.
+ *
+ * The rule is one line in the route (`sentAt: isBroadcast ? now : null`) and it
+ * was, until now, entirely unpinned. That matters more than it looks: a preview
+ * that stamped `sent_at` would publish an unsent draft to /newsletter, and — the
+ * inverse — a reviewer looking at a stamped row cannot tell whether it was a
+ * real send or a leaked preview. That exact ambiguity cost a day of argument
+ * over the 2026-07-16 row, which the ledger ultimately proved was a genuine
+ * broadcast to six confirmed subscribers.
+ *
+ * So both directions are pinned, on both the insert and the on-conflict path.
+ */
+describe("sent_at is set ONLY by a real broadcast (OPE-285)", () => {
+  it("a test_recipient preview writes sent_at = null", async () => {
+    admin();
+    sendEnabled = "true"; // flag ON, so this can only be the test path deciding
+    await call({
+      subject: "This Weekend at the Fair — preview",
+      content_html: "<p>hi</p>",
+      test_recipient: "me@x.com",
+    });
+    expect(insertedValues).toHaveLength(1);
+    expect(insertedValues[0].sentAt).toBeNull();
+  });
+
+  it("a preview must not stamp sent_at when UPSERTING over an existing row", async () => {
+    // The subtler leak: re-previewing an issue whose slug already exists must
+    // leave any existing sent_at alone, so the on-conflict set must omit it.
+    admin();
+    sendEnabled = "true";
+    await call({
+      subject: "This Weekend at the Fair — preview",
+      content_html: "<p>hi</p>",
+      test_recipient: "me@x.com",
+    });
+    expect(conflictSets).toHaveLength(1);
+    expect(conflictSets[0]).not.toHaveProperty("sentAt");
+  });
+
+  it("a real broadcast DOES stamp sent_at, on both insert and conflict", async () => {
+    admin();
+    sendEnabled = "true";
+    selectMock
+      .mockReturnValueOnce({
+        from: () => ({ where: () => Promise.resolve([{ email: "sub@x.com" }]) }),
+      })
+      .mockReturnValueOnce({ from: () => Promise.resolve([]) });
+    const res = await call({
+      subject: "This Weekend at the Fair — Jul 31",
+      content_html: "<p>hi</p>",
+    });
+    expect(res.status).toBe(200);
+    expect(insertedValues[0].sentAt).toBeInstanceOf(Date);
+    expect(conflictSets[0]).toHaveProperty("sentAt");
+  });
+
+  it("a preview_only pre-flight writes NOTHING at all", async () => {
+    // Read-only by contract — it must not upsert an issue row, which would put
+    // a slug on the archive path before anyone approved anything.
+    admin();
+    sendEnabled = "true";
+    selectMock
+      .mockReturnValueOnce({
+        from: () => ({ where: () => Promise.resolve([{ email: "sub@x.com" }]) }),
+      })
+      .mockReturnValueOnce({ from: () => Promise.resolve([]) });
+    await call({
+      subject: "This Weekend at the Fair — dry run",
+      content_html: "<p>hi</p>",
+      preview_only: true,
+    });
+    expect(insertMock).not.toHaveBeenCalled();
+    expect(insertedValues).toHaveLength(0);
   });
 });
