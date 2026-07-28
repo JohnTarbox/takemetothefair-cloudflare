@@ -3,10 +3,13 @@ import { z } from "zod";
 import { jsonContent } from "../helpers.js";
 import { buildUtmUrl } from "../utm.js";
 import type { AuthContext } from "../auth.js";
+import { mainAppFetch } from "../main-app-fetch.js";
 
 interface Env {
   MAIN_APP_URL: string;
   INTERNAL_API_KEY: string;
+  /** OPE-258 — service binding to meetmeatthefair-app, preferred transport. */
+  MAIN_APP?: { fetch: (req: Request) => Promise<Response> };
 }
 
 export function registerAnalyticsTools(server: McpServer, auth: AuthContext, env?: Env) {
@@ -24,10 +27,10 @@ export function registerAnalyticsTools(server: McpServer, auth: AuthContext, env
         "Analytics requires MAIN_APP_URL and INTERNAL_API_KEY to be configured in the MCP server environment."
       );
     }
-    const response = await fetch(`${env.MAIN_APP_URL}${path}`, {
-      method: "GET",
-      headers: { "X-Internal-Key": env.INTERNAL_API_KEY },
-    });
+    // OPE-258 — go through the shared caller: service binding first (which
+    // bypasses the edge context that made this exact call 401 from the fetch
+    // handler), public fetch as fallback, entrypoint stamped either way.
+    const response = await mainAppFetch(env, path, "fetch", { method: "GET" });
     const text = await response.text();
     let parsed: unknown;
     try {
