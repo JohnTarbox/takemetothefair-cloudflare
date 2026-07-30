@@ -72,9 +72,30 @@ describe("classifyKpi", () => {
       expect(classifyKpi("conversion_rate", 0.09, STALE_HOURS(97))).toBe("STALE");
     });
 
-    it("sitemap_quality has 1h SLA — fast catalog turnover required", () => {
-      expect(classifyKpi("sitemap_quality", 0.9, 30 * 60)).toBe("GREEN");
-      expect(classifyKpi("sitemap_quality", 0.9, 2 * 3600)).toBe("STALE");
+    // OPE-295: was a 1h SLA, which fired on any quiet night and made STALE
+    // this KPI's dominant recorded state (84.7% of trailing-30d passes).
+    // Its age signal is max(vendors/events.updated_at) — content-edit
+    // cadence, not feed health — so the SLA must clear a normal weekend.
+    it("sitemap_quality has 72h SLA — tolerates normal content-edit gaps", () => {
+      expect(classifyKpi("sitemap_quality", 0.9, 2 * 3600)).toBe("GREEN");
+      expect(classifyKpi("sitemap_quality", 0.9, STALE_HOURS(41))).toBe("GREEN");
+      expect(classifyKpi("sitemap_quality", 0.9, STALE_HOURS(73))).toBe("STALE");
+    });
+
+    /**
+     * Calibration guard (OPE-295). The widest gap between content edits
+     * observed across 30d of production history was 40.5h — a weekend with
+     * no vendor or event touched. An SLA at or below that re-creates the
+     * false-P0 storm this issue fixed, and the CPI rail auto-files a P0
+     * ticket off the resulting STALE rows. Keep real headroom above it.
+     */
+    it("sitemap_quality SLA stays clear of the observed content-edit gap", () => {
+      const OBSERVED_MAX_EDIT_GAP_HOURS = 40.5;
+      expect(KPI_THRESHOLDS.sitemap_quality.staleSlaSeconds).toBeGreaterThan(
+        OBSERVED_MAX_EDIT_GAP_HOURS * 3600 * 1.5
+      );
+      // A full quiet weekend must not read as a broken feed.
+      expect(classifyKpi("sitemap_quality", 0.9, STALE_HOURS(48))).not.toBe("STALE");
     });
 
     it("time_to_index_h has 7d SLA — slow pipeline tolerance", () => {
