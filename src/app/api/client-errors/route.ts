@@ -4,7 +4,7 @@ import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { logError } from "@/lib/logger";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
-import { isKnownClientNoise } from "@/lib/client-error-filter";
+import { isKnownClientNoise, isThirdPartyInjectedError } from "@/lib/client-error-filter";
 import { computeSignature } from "@/lib/faults/signature";
 import { isDuplicateClientError, type DedupKv } from "@/lib/client-error-ingest-dedup";
 
@@ -143,6 +143,13 @@ export async function POST(request: Request) {
       reportedStatusCode: statusCode,
       componentStack,
       digest,
+      // OPE-301 — label-only. True when no frame names a source location,
+      // which means the throwing code wasn't served by us (extension /
+      // in-app-browser injection / eval). We still log the row in full; this
+      // just makes such a crash attributable instead of being triaged as a
+      // site defect. Nothing downstream is suppressed on it — whether the
+      // fault-proposal rail should skip these is the operator's call.
+      thirdParty: isThirdPartyInjectedError(stack) || undefined,
     },
   });
 
