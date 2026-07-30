@@ -46,9 +46,16 @@ export type KpiThreshold = {
    * happily reported 193% as GREEN against a near-empty denominator).
    *
    * SLA per source: GA4 finalization lag is ~24h, so 48h is the practical
-   * "still healthy" upper bound; GSC similar; D1 is real-time so 1h means
-   * "the catalog hasn't been touched, suspicious"; URL Inspection sweep
-   * runs daily so 7d covers the slow-moving time-to-index pipeline.
+   * "still healthy" upper bound; GSC similar; URL Inspection sweep runs
+   * daily so 7d covers the slow-moving time-to-index pipeline.
+   *
+   * Calibrate against the source's WRITE cadence, not its read latency.
+   * `sitemap_quality` was originally 1h on the reasoning "D1 is real-time,
+   * so an untouched catalog is suspicious" — but real-time reads say
+   * nothing about how often rows are *written*. Its age signal is
+   * `max(vendors.updated_at, events.updated_at)`, which only advances when
+   * someone edits content; no writer guarantees hourly movement, so any
+   * quiet night crossed the SLA. See the sitemap_quality entry below.
    */
   staleSlaSeconds: number;
 };
@@ -107,7 +114,25 @@ export const KPI_THRESHOLDS: Record<KpiName, KpiThreshold> = {
     actionDescription: "Raise ingestion quality bar; ship event-side gate",
     href: "/admin/recommendations",
     displayName: "Sitemap quality",
-    staleSlaSeconds: 1 * HOURS, // D1 is real-time; 1h = "catalog hasn't moved, suspicious"
+    // OPE-295 (2026-07-30): was 1h, which made STALE the DOMINANT state —
+    // 8,211 of 12,236 recorded states (67%) since 2026-05-23, and 84.7% of
+    // the trailing-30d computations (3,656/4,314), all while `value` sat
+    // unchanged at 0.6423. Unlike the GSC/GA4 KPIs there is no upstream
+    // feed here: the value is recomputed synchronously from D1 on every
+    // pass, so it can never be "stale" in the broken-feed sense the STALE
+    // card claims. The age signal is really "how long since anyone edited
+    // a vendor or event", which crosses 1h on any ordinary quiet night.
+    //
+    // 72h is set from measurement, not taste: the widest observed gap in
+    // 30d of production history is 40.5h (a weekend), and 0 computations
+    // exceeded 48h. 72h keeps a genuine "ingestion is completely dead"
+    // tripwire with ~1.8x headroom over the observed worst case.
+    //
+    // Note the 2026-06-06 "E — ALERT1" fix in kpi-alerts.ts suppressed the
+    // *alerts* from this same miscalibration but left the STALE rows in
+    // kpi_state_history — which is how the CPI rail, a different consumer
+    // reading state directly, re-reported it as a P0 seven weeks later.
+    staleSlaSeconds: 72 * HOURS,
   },
   time_to_index_h: {
     green: 24,
