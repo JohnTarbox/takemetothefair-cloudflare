@@ -47,6 +47,8 @@ const RESOLUTION_STATUS_VALUES = [
   "superseded_duplicate",
   // OPE-306 — closed because the OCCURRED lifecycle sweep owns the condition.
   "superseded_by_lifecycle",
+  // OPE-307 — closed because normalization already fixed the underlying date.
+  "superseded_by_normalization",
 ] as const;
 
 const RESOLUTION_SOURCE_VALUES = ["higher_tier", "post_event", "operator"] as const;
