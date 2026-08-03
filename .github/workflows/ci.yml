@@ -98,6 +98,9 @@ jobs:
       - name: Guard against edge runtime decls (forbidden under OpenNext)
         run: npx tsx scripts/check-no-edge-runtime.ts
 
+      - name: Guard that every outbound email send is ledgered (OPE-319)
+        run: npx tsx scripts/check-email-sends-ledgered.ts
+
       - name: Check D1 100-column join cap
         run: npx tsx scripts/check-d1-100col-joins.ts
 

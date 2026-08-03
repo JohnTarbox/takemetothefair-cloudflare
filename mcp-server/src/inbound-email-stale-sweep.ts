@@ -60,6 +60,7 @@ import { logError } from "./logger.js";
 import { inboundEmails } from "./schema.js";
 import type { EmailIntent } from "./email-intents.js";
 import { buildReply } from "./email-reply-builder.js";
+import { ledgerEmailSend } from "./mailer.js";
 
 const SOURCE = "mcp:inbound-email:stale-sweep";
 const DEFAULT_FROM = "Meet Me at the Fair <notify@meetmeatthefair.com>";
@@ -420,13 +421,31 @@ async function terminallyFailRow(
       headers["In-Reply-To"] = row.messageId;
       headers["References"] = row.messageId;
     }
-    await env.EMAIL.send({
+    const sendRes = await env.EMAIL.send({
       from: msg.from ?? DEFAULT_FROM,
       to: msg.to,
       subject: msg.subject,
       html: msg.html,
       text: msg.text,
       headers,
+    });
+    // OPE-319 — ledger it. This path sends via env.EMAIL DIRECTLY, bypassing
+    // the queue consumer, so it was invisible to email_send_ledger and hence to
+    // the admin Email viewer and to any audit of who we have contacted: the
+    // same gap OPE-151 closed for the workflow auto-reply, still open here.
+    // Found by scripts/check-email-sends-ledgered.ts, which now fails the build
+    // on a send site that doesn't record.
+    await ledgerEmailSend(db, {
+      messageId: `sweep-exceeded-${row.id}`,
+      recipient: msg.to,
+      source: "reply:sweep-exceeded",
+      subject: msg.subject,
+      status: "sent",
+      provider: "cf-email",
+      providerMessageId: sendRes?.messageId ?? null,
+      inboundEmailId: row.id,
+      bodyHtml: msg.html,
+      bodyText: msg.text,
     });
   } catch (err) {
     await logError(env.DB, {
