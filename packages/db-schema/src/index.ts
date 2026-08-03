@@ -3574,11 +3574,32 @@ export const eventDiscrepancies = sqliteTable("event_discrepancies", {
   }).notNull(),
   /** Epoch seconds — `mode: "timestamp"` convention. */
   detectedAt: integer("detected_at", { mode: "timestamp" }).notNull(),
+  /** OPE-305 — last time a detector re-observed this same condition while the
+   *  row was still open. `detected_at` stays the FIRST sighting so age/priority
+   *  keep their meaning; this answers "is it still true?" without a second row.
+   *  Backfilled to detected_at for pre-existing rows. */
+  lastSeenAt: integer("last_seen_at", { mode: "timestamp" }),
   /** 0..1 detector confidence. NULL when capture path doesn't compute it. */
   confidence: real("confidence"),
-  /** open | resolved_authoritative | resolved_divergent | self_resolved | dismissed */
+  /** open | resolved_authoritative | resolved_divergent | self_resolved |
+   *  dismissed | superseded_duplicate
+   *
+   *  OPE-305 added `superseded_duplicate`: a row that duplicates an already-open
+   *  (event_id, field_class, detected_by) condition. Deliberately NOT reused
+   *  `dismissed` — the data-health report counts dismissed-in-28d, and folding
+   *  6,574 cleanup rows into it would have moved that metric from ~50 to ~6,600.
+   *  Every consumer keys on specific values (`=== "open"`, `=== "dismissed"`,
+   *  `=== "resolved_authoritative"`), so a new value is counted in none of them,
+   *  which is the correct treatment for a duplicate: it carries no signal. */
   resolutionStatus: text("resolution_status", {
-    enum: ["open", "resolved_authoritative", "resolved_divergent", "self_resolved", "dismissed"],
+    enum: [
+      "open",
+      "resolved_authoritative",
+      "resolved_divergent",
+      "self_resolved",
+      "dismissed",
+      "superseded_duplicate",
+    ],
   })
     .notNull()
     .default("open"),

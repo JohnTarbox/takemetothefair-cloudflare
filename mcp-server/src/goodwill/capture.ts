@@ -2,19 +2,20 @@
  * Shared discrepancy-capture helpers for GW1b.
  *
  * Each capture path writes one `event_discrepancies` row tagged with
- * the `detected_by` source. All helpers are idempotent within a sane
- * window — re-running today's cron should NOT double-insert rows for
- * the same (event_id, field_class, detected_by) tuple within the same
- * day. We enforce that via an existence check before INSERT (cheaper
- * than a unique index, which would also need a stable composite key
- * that doesn't yet exist on the table).
+ * the `detected_by` source. All helpers are idempotent for as long as a
+ * row for the same (event_id, field_class, detected_by) tuple is still
+ * OPEN — re-running the cron refreshes `last_seen_at` on that row instead
+ * of inserting another (OPE-305; it was previously a 24h window, which
+ * re-filed persistent conditions daily). Enforced by an existence check
+ * before INSERT, cheaper than a unique index that would also need a
+ * stable composite key the table doesn't have.
  *
  * Helpers never throw. Failures are logged and the discrepancy is
  * dropped — the cron caller must remain alive for the rest of its
  * Promise.all siblings.
  */
 
-import { and, eq, gte } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { eventDiscrepancies } from "../schema.js";
 import type { Db } from "../db.js";
 import { logError } from "../logger.js";
@@ -62,22 +63,35 @@ export interface CaptureDiscrepancyArgs {
   notes?: string | null;
 }
 
-const ONE_DAY_SECS = 24 * 60 * 60;
-
 /**
- * Write one discrepancy row, idempotent within ~24h on
- * (event_id, field_class, detected_by). The dedupe window prevents the
- * daily cron from accumulating identical rows on every re-run.
+ * Write one discrepancy row, idempotent on (event_id, field_class,
+ * detected_by) for as long as a row for that tuple is still OPEN.
  *
- * Returns the inserted row id, or `null` when a same-tuple row already
- * exists within the window or the write failed.
+ * OPE-305: this used to dedupe only within a rolling ~24h window, which meant
+ * a *persistent* condition — an event whose end date has passed, a page that
+ * stays stale — was re-filed by the daily cron every single day, forever. On
+ * 2026-08-03 that was 6,574 duplicates in a 7,193-row queue (91.4%), with one
+ * condition present 40 times. An operator draining that queue saw the same
+ * finding over and over, which is what made the queue unusable.
+ *
+ * An open row already represents "this is wrong and nobody has dealt with it";
+ * a second identical row adds no information. So instead of inserting, we touch
+ * `last_seen_at` on the open row — the condition's recency is preserved without
+ * growing the queue. `detected_at` is deliberately left alone so age-based
+ * priority still measures how long the problem has gone unaddressed.
+ *
+ * Note this is keyed on OPEN specifically, not on existence: once an operator
+ * resolves or dismisses a row, the same condition recurring later is genuinely
+ * new information and files a fresh row.
+ *
+ * Returns the inserted row id, or `null` when an open same-tuple row already
+ * exists (its last_seen_at is refreshed) or the write failed.
  */
 export async function captureDiscrepancy(
   db: Db,
   args: CaptureDiscrepancyArgs
 ): Promise<string | null> {
   try {
-    const recencyCutoff = new Date(Date.now() - ONE_DAY_SECS * 1000);
     const existing = await db
       .select({ id: eventDiscrepancies.id })
       .from(eventDiscrepancies)
@@ -86,11 +100,18 @@ export async function captureDiscrepancy(
           eq(eventDiscrepancies.eventId, args.eventId),
           eq(eventDiscrepancies.fieldClass, args.fieldClass),
           eq(eventDiscrepancies.detectedBy, args.detectedBy),
-          gte(eventDiscrepancies.detectedAt, recencyCutoff)
+          eq(eventDiscrepancies.resolutionStatus, "open")
         )
       )
       .limit(1);
-    if (existing.length > 0) return null;
+    if (existing.length > 0) {
+      // Re-observed: refresh recency in place rather than filing a duplicate.
+      await db
+        .update(eventDiscrepancies)
+        .set({ lastSeenAt: new Date() })
+        .where(eq(eventDiscrepancies.id, existing[0].id));
+      return null;
+    }
 
     const id = crypto.randomUUID();
     const detectedAt = new Date();
@@ -112,6 +133,7 @@ export async function captureDiscrepancy(
       fieldClass: args.fieldClass,
       detectedBy: args.detectedBy,
       detectedAt,
+      lastSeenAt: detectedAt,
       authoritativeValue: args.authoritativeValue ?? null,
       authoritativeSourceKey: args.authoritativeSourceKey ?? null,
       authoritativeSourceUrl: args.authoritativeSourceUrl ?? null,

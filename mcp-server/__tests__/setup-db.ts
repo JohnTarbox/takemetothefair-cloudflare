@@ -303,6 +303,8 @@ const SCHEMA_SQL = `
     divergent_source_url TEXT,
     detected_by TEXT NOT NULL,
     detected_at INTEGER NOT NULL,
+    -- OPE-305 (drizzle/0171) — re-observation stamp for dedup-on-open.
+    last_seen_at INTEGER,
     confidence REAL,
     resolution_status TEXT NOT NULL DEFAULT 'open',
     resolved_value TEXT,
