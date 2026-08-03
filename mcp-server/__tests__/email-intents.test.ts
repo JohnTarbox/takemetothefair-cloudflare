@@ -3,6 +3,7 @@
  * No I/O, no mocks.
  */
 import { describe, expect, it } from "vitest";
+import { looksLikeGscMilestone } from "../src/email-handler.js";
 import {
   isPhotoOnlySubmission,
   resolveIntent,
@@ -161,5 +162,34 @@ describe("isPhotoOnlySubmission (OPE-315)", () => {
         bodyText: "",
       })
     ).toBe(true);
+  });
+});
+
+/**
+ * OPE-311 — GSC milestone pre-filter. Deliberately loose: the authoritative
+ * parse lives in the main app's parseGscMilestoneEmail, so a false positive
+ * costs one no-op request while a false negative loses a milestone date we
+ * cannot reconstruct later.
+ */
+describe("looksLikeGscMilestone (OPE-311)", () => {
+  it("matches mail straight from Google, whatever the subject", () => {
+    expect(looksLikeGscMilestone("sc-noreply@google.com", "Search Console update")).toBe(true);
+    expect(looksLikeGscMilestone("SC-NoReply@Google.com", "anything")).toBe(true);
+  });
+
+  it("matches a human-forwarded copy by subject shape", () => {
+    // Forwarding rewrites From but keeps the subject — this is how the 7K
+    // milestone actually reached us.
+    expect(
+      looksLikeGscMilestone("john@pimboat.com", "Fwd: Congrats on reaching 7K clicks in 28 days!")
+    ).toBe(true);
+    expect(
+      looksLikeGscMilestone("someone@example.com", "reaching 10,000 impressions in 28 days")
+    ).toBe(true);
+  });
+
+  it("ignores ordinary mail", () => {
+    expect(looksLikeGscMilestone("vendor@example.com", "Please add our craft fair")).toBe(false);
+    expect(looksLikeGscMilestone("john@pimboat.com", "clicks are up this week")).toBe(false);
   });
 });
