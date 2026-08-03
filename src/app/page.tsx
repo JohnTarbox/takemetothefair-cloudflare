@@ -109,6 +109,16 @@ async function getFeaturedEvents() {
   }
 }
 
+/**
+ * OPE-313 — "This Week" pool shape.
+ *
+ * The grid renders 4; the pool is deliberately wider so diversifyByCategory
+ * has room to mix types. STARTER_SLOTS is the share reserved for events
+ * actually opening inside the window, the rest for series already running.
+ */
+const WEEK_POOL_SIZE = 24;
+const WEEK_POOL_STARTER_SLOTS = 16;
+
 async function getWeekEvents() {
   const db = getCloudflareDb();
   try {
@@ -116,39 +126,88 @@ async function getWeekEvents() {
     // Match the /events?when=week filter exactly (now through the coming Sunday)
     // so the hero preview and its "See all" agree on what "this week" means.
     const horizon = whenWindowEnd("week", now)!;
-    // Narrow projection — see getFeaturedEvents above. Pull a WIDER pool than
-    // the 4 we render so diversifyByCategory() has room to mix event types
-    // (the soonest 4 are often all the same type, e.g. farmers markets).
-    const results = await db
-      .select(eventJoinProjection)
-      .from(events)
-      .leftJoin(venues, eq(events.venueId, venues.id))
-      .leftJoin(promoters, eq(events.promoterId, promoters.id))
-      .where(
-        and(
-          isPublicEventStatus(),
-          gte(events.endDate, now),
-          lte(events.startDate, horizon),
-          // OPE-48 — exclude season-long recurring events whose next actual
-          // event_days occurrence is beyond this week (label/date agreement).
-          hasOccurrenceInWindowOrUndated(now, horizon)
-        )
-      )
-      .orderBy(events.startDate)
-      .limit(24);
+    // Epoch SECONDS — events.start_date is `mode: "timestamp"`, so the sort
+    // key below must compare against seconds, not JS milliseconds.
+    const nowSec = Math.floor(now.getTime() / 1000);
+    // OPE-313 — two bounded pulls instead of one ordered pull.
+    //
+    // A plain `ORDER BY start_date ASC` sorted season-long series (farmers
+    // markets, May-start series) to the very top, because their start_date is
+    // months in the past. Measured on prod 2026-08-03: the eligible pool was
+    // 90 events — 47 already in progress (earliest start 2026-04-11) and 43
+    // starting this week — so the 47 filled all 24 pool slots and *zero*
+    // week-starters ever reached diversifyByCategory. An event actually
+    // opening this week (Cheshire Fair, APPROVED, hero present) could not
+    // appear in a section titled "This Week".
+    //
+    // Two things I checked against prod rather than assumed:
+    //   - the ticket's first suggested shape, sort key max(start_date, now),
+    //     does NOT fix it: an in-progress series clamps to exactly `now`,
+    //     which still sorts ahead of every starter (start_date > now). The
+    //     pool came back 0 starters under both the old and that ordering.
+    //   - a single starters-first ORDER BY + LIMIT is also wrong: with 43
+    //     starters the pool fills with starters alone, so a running series
+    //     never appears — the same bug pointed the other way.
+    //
+    // Hence an explicit quota, expressed as two LIMITed queries so each side's
+    // share is guaranteed by construction rather than by sort luck. Unused
+    // slots are donated to the other side below, so a quiet week still fills.
+    const poolWhere = (starters: boolean) =>
+      and(
+        isPublicEventStatus(),
+        gte(events.endDate, now),
+        lte(events.startDate, horizon),
+        // OPE-48 — exclude season-long recurring events whose next actual
+        // event_days occurrence is beyond this week (label/date agreement).
+        hasOccurrenceInWindowOrUndated(now, horizon),
+        // Undated rows count as starters, not as already-running.
+        starters
+          ? sql`COALESCE(${events.startDate}, ${nowSec}) >= ${nowSec}`
+          : sql`COALESCE(${events.startDate}, ${nowSec}) < ${nowSec}`
+      );
+    const selectPool = (starters: boolean, limit: number) =>
+      db
+        .select(eventJoinProjection)
+        .from(events)
+        .leftJoin(venues, eq(events.venueId, venues.id))
+        .leftJoin(promoters, eq(events.promoterId, promoters.id))
+        .where(poolWhere(starters))
+        .orderBy(events.startDate)
+        .limit(limit);
+    // Over-fetch each side so a shortfall on one can be covered by the other.
+    const [starterRows, inProgressRows] = await Promise.all([
+      selectPool(true, WEEK_POOL_SIZE),
+      selectPool(false, WEEK_POOL_SIZE),
+    ]);
     // Cast the narrow venue/promoter projection back to full row types so
     // the EventCard/EventList prop contract compiles unchanged. Sound
     // because every consumer field is present in the projection (same
     // pattern as src/app/events/[slug]/page.tsx).
     type FullVenue = typeof venues.$inferSelect;
     type FullPromoter = typeof promoters.$inferSelect;
-    const flat = results.map((r) => ({
-      ...r.events,
-      venue: r.venue as FullVenue,
-      promoter: r.promoter as FullPromoter,
-    }));
+    const flatten = (rows: typeof starterRows) =>
+      rows.map((r) => ({
+        ...r.events,
+        venue: r.venue as FullVenue,
+        promoter: r.promoter as FullPromoter,
+      }));
+    const starters = flatten(starterRows);
+    const inProgress = flatten(inProgressRows);
+    const pool = [
+      ...starters.slice(0, WEEK_POOL_STARTER_SLOTS),
+      ...inProgress.slice(0, WEEK_POOL_SIZE - WEEK_POOL_STARTER_SLOTS),
+    ];
+    // Donate unused slots to whichever side still has rows left over.
+    if (pool.length < WEEK_POOL_SIZE) {
+      const used = new Set(pool.map((e) => e.id));
+      pool.push(
+        ...[...starters, ...inProgress]
+          .filter((e) => !used.has(e.id))
+          .slice(0, WEEK_POOL_SIZE - pool.length)
+      );
+    }
     // Diversify by type, then keep only the 4 the grid renders.
-    const diversified = diversifyByCategory(flat, 4);
+    const diversified = diversifyByCategory(pool, 4);
     return await attachEventDayDates(db, diversified);
   } catch (e) {
     await logError(db, {
