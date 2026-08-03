@@ -1,6 +1,44 @@
 import { describe, expect, it } from "vitest";
 
-import { detectMagicBytes, resolveImageTarget } from "../upload-image-pipeline";
+import { detectMagicBytes, planUploadKeys, resolveImageTarget } from "../upload-image-pipeline";
+
+/**
+ * OPE-321 regression. A WebP upload returned HTTP 200, stamped logo_url, and
+ * served a 404 — because phase 2b wrote `<base>.webp` and then deleted "the
+ * original-extension sibling", which for WebP input is the very same key.
+ *
+ * This is the coverage the file's own header admitted was missing: the key
+ * arithmetic lived inside runUploadPipeline, which needs R2 + D1 + Image
+ * Resizing, so nothing tested it. Now it's a pure function and pinned.
+ */
+describe("planUploadKeys (OPE-321)", () => {
+  const BASE = "vendors/abc-123/logo-1785546547121";
+
+  it("WebP input: both keys collide, so the original must NOT be deleted", () => {
+    const plan = planUploadKeys(BASE, "webp");
+    expect(plan.originalKey).toBe(plan.webpKey);
+    expect(plan.deleteOriginalAfterTransform).toBe(false);
+  });
+
+  it.each(["jpg", "jpeg", "png", "gif"])(
+    "%s input: keys differ, so the original IS cleaned up",
+    (ext) => {
+      const plan = planUploadKeys(BASE, ext);
+      expect(plan.originalKey).not.toBe(plan.webpKey);
+      expect(plan.deleteOriginalAfterTransform).toBe(true);
+    }
+  );
+
+  it("never plans to delete the key it reports as final", () => {
+    // The invariant that actually matters: whatever we hand back to the
+    // caller must survive the cleanup step, for every extension.
+    for (const ext of ["webp", "jpg", "jpeg", "png", "gif", "avif"]) {
+      const { webpKey, originalKey, deleteOriginalAfterTransform } = planUploadKeys(BASE, ext);
+      const deleted = deleteOriginalAfterTransform ? originalKey : null;
+      expect(deleted).not.toBe(webpKey);
+    }
+  });
+});
 
 /**
  * Unit tests for the pure magic-byte sniff. The full runUploadPipeline

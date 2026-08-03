@@ -50,6 +50,26 @@ type Db = DrizzleD1Database<typeof schema> & { $client: D1Database };
 
 export const CDN_BASE = "https://cdn.meetmeatthefair.com";
 
+/**
+ * OPE-321 — plan the two R2 keys the pipeline writes, and whether the
+ * original is a distinct object that phase 2b should clean up.
+ *
+ * Extracted as a pure function because the bug it guards was unreachable by
+ * the existing tests: `runUploadPipeline` needs R2 + D1 + Image Resizing, so
+ * the key arithmetic had no coverage at all. For a WebP *input* the original
+ * extension IS "webp", making both keys the same string — and the old
+ * unconditional "delete the original-extension sibling" then deleted the
+ * object phase 2b had just written, returning 200 for a CDN 404.
+ */
+export function planUploadKeys(
+  baseKey: string,
+  ext: string
+): { originalKey: string; webpKey: string; deleteOriginalAfterTransform: boolean } {
+  const originalKey = `${baseKey}.${ext}`;
+  const webpKey = `${baseKey}.webp`;
+  return { originalKey, webpKey, deleteOriginalAfterTransform: originalKey !== webpKey };
+}
+
 export const PIPELINE_ALLOWED_TYPES = new Set([
   "image/jpeg",
   "image/jpg",
@@ -348,7 +368,7 @@ export async function runUploadPipeline(args: RunPipelineArgs): Promise<Pipeline
   const { keyPrefix, fileKind } = resolved.target;
   const timestamp = Date.now();
   const baseKey = `${keyPrefix}/${targetId}/${fileKind}-${timestamp}`;
-  const originalKey = `${baseKey}.${ext}`;
+  const { originalKey, webpKey, deleteOriginalAfterTransform } = planUploadKeys(baseKey, ext);
 
   try {
     await bucket.put(originalKey, bytes, {
@@ -397,7 +417,6 @@ export async function runUploadPipeline(args: RunPipelineArgs): Promise<Pipeline
       const originalUrl = `${CDN_BASE}/${originalKey}`;
       const transform = await transformViaCloudflare(originalUrl);
 
-      const webpKey = `${baseKey}.webp`;
       await bucket.put(webpKey, transform.bytes, {
         httpMetadata: { contentType: "image/webp" },
         customMetadata: {
@@ -411,16 +430,25 @@ export async function runUploadPipeline(args: RunPipelineArgs): Promise<Pipeline
 
       // Delete the original-extension sibling. Best-effort: an orphan
       // doesn't break anything user-facing but burns R2 storage.
-      try {
-        await bucket.delete(originalKey);
-      } catch (delErr) {
-        await logError(db, {
-          level: "warn",
-          message: "upload-image-pipeline: Phase 2b cleanup delete failed (non-fatal)",
-          error: delErr,
-          source: "upload-image-pipeline",
-          context: { originalKey, targetType, targetId, uploadSource },
-        });
+      //
+      // OPE-321 — ONLY when it IS a sibling. For a WebP *input*, `ext` is
+      // already "webp", so originalKey === webpKey and this delete removed
+      // the object phase 2b had just written. The handler then returned 200
+      // with a key that no longer existed and stamped logo_url in D1, so the
+      // CDN 404'd on a "successful" upload (4 of 5 Ellsworth heroes,
+      // 08-01→08-02). JPEG was unaffected only because ".jpg" !== ".webp".
+      if (deleteOriginalAfterTransform) {
+        try {
+          await bucket.delete(originalKey);
+        } catch (delErr) {
+          await logError(db, {
+            level: "warn",
+            message: "upload-image-pipeline: Phase 2b cleanup delete failed (non-fatal)",
+            error: delErr,
+            source: "upload-image-pipeline",
+            context: { originalKey, targetType, targetId, uploadSource },
+          });
+        }
       }
 
       finalKey = webpKey;
@@ -444,6 +472,37 @@ export async function runUploadPipeline(args: RunPipelineArgs): Promise<Pipeline
         context: { originalKey, targetType, targetId, uploadSource },
       });
     }
+  }
+
+  // OPE-321 poka-yoke — read back the key we are about to claim, BEFORE any
+  // D1 write. The self-delete bug above was invisible for two days precisely
+  // because a 200 response and a stamped logo_url were never checked against
+  // the bucket. Any future divergence between "what we put" and "what we
+  // report" now fails the upload instead of persisting a dead URL.
+  try {
+    const stored = await bucket.head(finalKey);
+    if (!stored) {
+      await logError(db, {
+        message: "upload-image-pipeline: post-write verify FAILED — reported key is absent in R2",
+        source: "upload-image-pipeline",
+        context: { finalKey, originalKey, phase2bStatus, targetType, targetId, uploadSource },
+      });
+      return {
+        ok: false,
+        status: 502,
+        body: { error: "Upload verification failed: stored object not found after write" },
+      };
+    }
+  } catch (e) {
+    // A HEAD failure is not proof the object is missing, so fail soft here —
+    // but record it, because a blind spot in the verifier is worth seeing.
+    await logError(db, {
+      level: "warn",
+      message: "upload-image-pipeline: post-write verify errored (proceeding)",
+      error: e,
+      source: "upload-image-pipeline",
+      context: { finalKey, targetType, targetId, uploadSource },
+    });
   }
 
   const url = `${CDN_BASE}/${finalKey}`;

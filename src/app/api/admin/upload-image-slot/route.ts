@@ -39,6 +39,7 @@ import {
   type PipelineTargetType,
 } from "@/lib/upload-image-pipeline";
 import { issueUploadSlot, type UploadImageRole } from "@/lib/upload-slot-token";
+import { SITE_URL } from "@takemetothefair/constants";
 
 interface SlotRequestBody {
   target_type?: string;
@@ -143,7 +144,28 @@ export async function POST(request: NextRequest) {
     maxBytes: PIPELINE_MAX_BYTES,
   });
 
-  const origin = new URL(request.url).origin;
+  // OPE-314 — do NOT trust `new URL(request.url).origin` as the PUBLIC host.
+  // When the MCP Worker mints a slot over the MAIN_APP service binding
+  // (OPE-258), OpenNext reconstructs request.url without a usable host and
+  // the origin came out as literally "https://undefined", so every minted
+  // upload_url had to be hand-edited before it would POST.
+  //
+  // The request origin is still honoured when it names a real host, so local
+  // dev and preview deploys keep working; anything else falls back to the
+  // canonical SITE_URL constant. Loudly logged rather than silently patched —
+  // a broken host means a binding/runtime assumption changed.
+  const requestOrigin = new URL(request.url).origin;
+  const requestHost = new URL(request.url).hostname;
+  const originIsUsable =
+    requestHost.length > 0 && requestHost !== "undefined" && requestHost !== "null";
+  if (!originIsUsable) {
+    await logError(db, {
+      message: `upload-image-slot: unusable request origin "${requestOrigin}" — falling back to SITE_URL`,
+      source: "upload-image-slot",
+      context: { requestUrl: request.url, fallback: SITE_URL },
+    });
+  }
+  const origin = originIsUsable ? requestOrigin : SITE_URL;
   const upload_url = `${origin}/api/admin/upload-image-direct/${slot.token}`;
 
   return NextResponse.json({
