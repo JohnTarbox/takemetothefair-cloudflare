@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/api/with-auth";
 import { events, venues, promoters, eventSchemaOrg } from "@/lib/db/schema";
 import { parseJsonLd } from "@/lib/schema-org";
+import { isUnfetchableSource } from "@takemetothefair/utils";
 import { eq } from "drizzle-orm";
 import { createSlug, dollarsToCents, appendSlugSegment, unsafeSlug } from "@/lib/utils";
 import { resolveUniqueEventSlug, insertEventDaysBatched } from "@/lib/events/insert-helpers";
@@ -264,7 +265,17 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
       // publisher) and labels the method as admin_manual.
       sourceDomain: classifySource("url-import", sourceUrl).sourceDomain,
       ingestionMethod: classifySource("url-import", sourceUrl).ingestionMethod ?? "admin_manual",
-      sourceUrl: sourceUrl || null,
+      // OPE-297 — an UNFETCHABLE source is recorded but never stored in the
+      // column the re-fetchers select on. Facebook pages are login-walled, so
+      // an FB URL in source_url would enrol the event in a retry loop that can
+      // only fail, growing the ~44% fail_fetch class (OPE-199) this lane exists
+      // to shrink. Both rescrape routes key on source_url — leaving it NULL
+      // makes exclusion structural rather than a flag someone must remember.
+      //
+      // Provenance is NOT lost: source_domain still gets its facebook.com
+      // bucket for the reliability learner (that column is not a fetch input),
+      // and the URL itself is preserved in the enrichment log below.
+      sourceUrl: sourceUrl && !isUnfetchableSource(sourceUrl) ? sourceUrl : null,
       sourceId: sourceUrl ? createSlug(sourceUrl) : newEventId,
       syncEnabled: false,
       lastSyncedAt: new Date(),
@@ -277,7 +288,11 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
       targetId: newEventId,
       source: "ai_workers",
       status: "success",
-      notes: sourceUrl ? `URL import: ${sourceUrl}` : "URL import",
+      notes: sourceUrl
+        ? isUnfetchableSource(sourceUrl)
+          ? `URL import (unfetchable source, not re-fetchable): ${sourceUrl}`
+          : `URL import: ${sourceUrl}`
+        : "URL import",
     });
 
     // Insert eventDays rows. D1 caps each statement at 100 bound parameters;

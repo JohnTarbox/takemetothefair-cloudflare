@@ -345,6 +345,8 @@ export function computeEventCompletenessScore(e: EventScoreInput): number {
   return score;
 }
 
+export * from "./ai-to-markdown";
+export * from "./unfetchable-source";
 export * from "./duplicates";
 
 export function formatPrice(minCents?: number | null, maxCents?: number | null): string {
