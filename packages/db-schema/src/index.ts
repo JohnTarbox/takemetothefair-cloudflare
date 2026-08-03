@@ -1269,6 +1269,18 @@ export const eventVendors = sqliteTable(
     // ON DELETE CASCADE — when an event_day is deleted, its date-scoped
     // vendor links go with it; series-wide (NULL) links are untouched.
     eventDayId: text("event_day_id").references(() => eventDays.id, { onDelete: "cascade" }),
+    // OPE-316 — per-LINK public visibility. A vendor may want participation
+    // RECORDED but not SHOWN (the LeafFilter case): the row keeps counting for
+    // admin roster views, coverage stats and analytics; it just renders nowhere
+    // public.
+    //
+    // Deliberately a column and NOT another `status` value. `status` is a
+    // workflow state with ~52 consumers, roughly 40 of which don't filter on
+    // it — widening that enum would silently expose hidden links through every
+    // unfiltered reader. A NOT NULL DEFAULT true column is invisible to every
+    // existing reader; only the public boundary (isPubliclyVisibleVendorLink)
+    // opts in.
+    publicVisible: integer("public_visible", { mode: "boolean" }).notNull().default(true),
     createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
     updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   },

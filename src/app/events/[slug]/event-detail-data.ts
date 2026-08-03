@@ -27,7 +27,7 @@ import {
 import { unsafeSlug } from "@/lib/utils";
 import { eventJoinProjection } from "@/lib/db/event-join-projection";
 import { isPublicEventStatus } from "@/lib/event-status";
-import { isPublicVendorStatus } from "@/lib/vendor-status";
+import { isPubliclyVisibleVendorLink } from "@/lib/vendor-status";
 import { resolveEventVendorTarget } from "@/lib/event-vendor-display";
 import { logError } from "@/lib/logger";
 import { buildEventTitle, buildEventMetaDescription } from "@/lib/seo-utils";
@@ -77,7 +77,7 @@ export async function getEvent(slug: string) {
       .where(
         and(
           eq(eventVendors.eventId, eventData.events.id),
-          isPublicVendorStatus(),
+          isPubliclyVisibleVendorLink(),
           isNull(vendors.deletedAt)
         )
       )

@@ -3,7 +3,7 @@
  * for the eventVendors application lifecycle.
  */
 
-import { inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { eventVendors } from "@/lib/db/schema";
 import {
   EVENT_VENDOR_STATUS,
@@ -20,6 +20,26 @@ import {
 /** Drizzle WHERE clause: status IN (APPROVED, CONFIRMED) */
 export function isPublicVendorStatus() {
   return inArray(eventVendors.status, [...PUBLIC_VENDOR_STATUSES]);
+}
+
+/**
+ * OPE-316 — the PUBLIC boundary for an event↔vendor link.
+ *
+ * Two independent questions, deliberately kept separate:
+ *   - isPublicVendorStatus() — is the link in a workflow state we'd ever show?
+ *   - publicVisible          — did this particular vendor ask to be hidden?
+ *
+ * A public surface needs BOTH. Admin roster views, coverage stats and analytics
+ * keep using isPublicVendorStatus() alone, so a hidden link still counts where
+ * the operator needs to see it — that's the LeafFilter requirement: recorded,
+ * not shown.
+ *
+ * Use this anywhere the result reaches an anonymous visitor, including
+ * schema.org emission — a hidden link leaking into JSON-LD is still a leak,
+ * and a less visible one.
+ */
+export function isPubliclyVisibleVendorLink() {
+  return and(isPublicVendorStatus(), eq(eventVendors.publicVisible, true));
 }
 
 // ---------------------------------------------------------------------------
@@ -59,21 +79,10 @@ export const VALID_TRANSITIONS: Record<EventVendorStatus, EventVendorStatus[]> =
     EVENT_VENDOR_STATUS.WITHDRAWN,
     EVENT_VENDOR_STATUS.CANCELLED,
   ],
-  [EVENT_VENDOR_STATUS.CONFIRMED]: [
-    EVENT_VENDOR_STATUS.WITHDRAWN,
-    EVENT_VENDOR_STATUS.CANCELLED,
-  ],
-  [EVENT_VENDOR_STATUS.REJECTED]: [
-    EVENT_VENDOR_STATUS.APPLIED,
-    EVENT_VENDOR_STATUS.INVITED,
-  ],
-  [EVENT_VENDOR_STATUS.WITHDRAWN]: [
-    EVENT_VENDOR_STATUS.APPLIED,
-    EVENT_VENDOR_STATUS.INTERESTED,
-  ],
-  [EVENT_VENDOR_STATUS.CANCELLED]: [
-    EVENT_VENDOR_STATUS.INVITED,
-  ],
+  [EVENT_VENDOR_STATUS.CONFIRMED]: [EVENT_VENDOR_STATUS.WITHDRAWN, EVENT_VENDOR_STATUS.CANCELLED],
+  [EVENT_VENDOR_STATUS.REJECTED]: [EVENT_VENDOR_STATUS.APPLIED, EVENT_VENDOR_STATUS.INVITED],
+  [EVENT_VENDOR_STATUS.WITHDRAWN]: [EVENT_VENDOR_STATUS.APPLIED, EVENT_VENDOR_STATUS.INTERESTED],
+  [EVENT_VENDOR_STATUS.CANCELLED]: [EVENT_VENDOR_STATUS.INVITED],
 };
 
 /** Returns true when transitioning from `from` to `to` is allowed. */
@@ -98,7 +107,10 @@ export const STATUS_LABELS: Record<EventVendorStatus, string> = {
   [EVENT_VENDOR_STATUS.CANCELLED]: "Cancelled",
 };
 
-export const STATUS_BADGE_VARIANTS: Record<EventVendorStatus, "default" | "success" | "warning" | "danger" | "info"> = {
+export const STATUS_BADGE_VARIANTS: Record<
+  EventVendorStatus,
+  "default" | "success" | "warning" | "danger" | "info"
+> = {
   [EVENT_VENDOR_STATUS.INVITED]: "info",
   [EVENT_VENDOR_STATUS.INTERESTED]: "default",
   [EVENT_VENDOR_STATUS.APPLIED]: "warning",
@@ -118,7 +130,10 @@ export const PAYMENT_STATUS_LABELS: Record<PaymentStatus, string> = {
   [PAYMENT_STATUS.OVERDUE]: "Overdue",
 };
 
-export const PAYMENT_STATUS_BADGE_VARIANTS: Record<PaymentStatus, "default" | "success" | "warning" | "danger"> = {
+export const PAYMENT_STATUS_BADGE_VARIANTS: Record<
+  PaymentStatus,
+  "default" | "success" | "warning" | "danger"
+> = {
   [PAYMENT_STATUS.NOT_REQUIRED]: "default",
   [PAYMENT_STATUS.PENDING]: "warning",
   [PAYMENT_STATUS.PAID]: "success",

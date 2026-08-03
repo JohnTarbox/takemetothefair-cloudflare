@@ -5,7 +5,7 @@ import { EventsView } from "@/components/events/events-view";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, promoters, eventVendors, vendors } from "@/lib/db/schema";
 import { eq, and, isNotNull, count, inArray, sql } from "drizzle-orm";
-import { isPublicVendorStatus } from "@/lib/vendor-status";
+import { isPubliclyVisibleVendorLink } from "@/lib/vendor-status";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { upcomingEndPredicate } from "@/lib/event-dates";
 import { attachEventDayDates } from "@/lib/event-days-attach";
@@ -98,7 +98,7 @@ async function getStateEvents(
         })
         .from(eventVendors)
         .innerJoin(vendors, eq(eventVendors.vendorId, vendors.id))
-        .where(and(inArray(eventVendors.eventId, batch), isPublicVendorStatus()));
+        .where(and(inArray(eventVendors.eventId, batch), isPubliclyVisibleVendorLink()));
       allEventVendors.push(...batchResults);
     }
   }
