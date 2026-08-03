@@ -576,6 +576,9 @@ const SCHEMA_SQL = `
     -- scoping. NULL = series-wide (today's behavior). Set = vendor on that
     -- specific event_day only.
     event_day_id TEXT,
+    -- OPE-316 (drizzle/0176) — per-link public visibility. DEFAULT 1 mirrors
+    -- the migration, so existing test rows stay visible exactly as before.
+    public_visible INTEGER NOT NULL DEFAULT 1,
     created_at INTEGER,
     updated_at INTEGER
   );
