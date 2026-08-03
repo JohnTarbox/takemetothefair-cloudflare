@@ -37,7 +37,12 @@ import { logError } from "./logger.js";
 import { getDb, type Db } from "./db.js";
 import { inboundEmails, inboundEmailSenders, users } from "./schema.js";
 import { eq, sql } from "drizzle-orm";
-import { resolveIntent, shouldForwardToAdmin, type EmailIntent } from "./email-intents.js";
+import {
+  isPhotoOnlySubmission,
+  resolveIntent,
+  shouldForwardToAdmin,
+  type EmailIntent,
+} from "./email-intents.js";
 import {
   classifyIntent,
   type AiBinding,
@@ -271,6 +276,34 @@ export async function handleInboundEmail(
     //     whose mail isn't a clean "pass" so prod can confirm header presence
     //     before we tighten the gate to require "pass".
     const emailAuth = parseEmailAuth(message.headers?.get("Authentication-Results"));
+
+    // 3b-iii. OPE-315 — a photo-only mail is a photo submission whatever
+    //     address it arrived at. John mailed two booth photos to submit@ with
+    //     no body; the event-extraction lane tried to read prose that wasn't
+    //     there, failed `no-url-prose-failed`, and replied "couldn't pull out
+    //     key fields", while the photo-intake lane sat unused because it is
+    //     keyed to photos@. Content shape beats recipient address here.
+    //
+    //     Gated on a trusted sender, per the ticket: photo intake writes to R2
+    //     and can attach vendor evidence, so an untrusted stranger must not be
+    //     able to reach it by sending an attachment to a public address. An
+    //     untrusted photo-only mail keeps its address-based intent exactly as
+    //     before.
+    let effectiveAddressIntent = addressIntent;
+    if (
+      addressIntent !== "photo_intake" &&
+      senderTrust === "trusted" &&
+      isPhotoOnlySubmission({ attachments: parsed.attachments, bodyText })
+    ) {
+      effectiveAddressIntent = "photo_intake";
+      await logError(env.DB, {
+        level: "info",
+        source: "email-handler:ope-315-photo-only",
+        message: `photo-only mail to ${toAddr} rerouted from ${addressIntent} to photo_intake`,
+        sessionId,
+        context: { from: fromAddr, to: toAddr, addressIntent, attachmentCount },
+      });
+    }
     if (senderTrust === "trusted" && emailAuth !== "pass") {
       await logError(env.DB, {
         level: emailAuth === "fail" ? "warn" : "info",
@@ -289,7 +322,7 @@ export async function handleInboundEmail(
     const routing = await computeRouting({
       env,
       sessionId,
-      addressIntent,
+      addressIntent: effectiveAddressIntent,
       senderTrust,
       emailAuth,
       toAddr,

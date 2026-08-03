@@ -144,6 +144,49 @@ export function resolveIntent(toAddress: string): EmailIntent {
 }
 
 /**
+ * OPE-315 — is this email *just photos*?
+ *
+ * Address-based routing sent a photo-only mail to submit@ down the event
+ * -extraction lane, which tried to read prose that wasn't there, failed with
+ * `no-url-prose-failed`, and replied "couldn't pull out key fields" — while the
+ * photo-intake lane sat idle because it is keyed to photos@. Someone mailing
+ * two booth photos from their phone got a rejection instead of "which fair?".
+ *
+ * The shape is unambiguous: at least one image attachment, and effectively no
+ * body. "Effectively" matters because phone mail is never truly empty — it
+ * carries a signature ("Sent from my iPhone") and a stray newline. Those are
+ * stripped before measuring.
+ *
+ * Deliberately conservative on both sides:
+ *   - a PDF-only mail is NOT photo-only; posters belong to the submit lane
+ *   - any real sentence of body text means the sender said something, so the
+ *     extraction lane should still get its chance
+ */
+const SIGNATURE_NOISE = [/^sent from my .*$/gim, /^get outlook for .*$/gim, /^sent via .*$/gim];
+
+/** Body length (after signature-stripping) still considered "no message". */
+const PHOTO_ONLY_MAX_BODY_CHARS = 40;
+
+export function isPhotoOnlySubmission(input: {
+  /** Matches postal-mime's Attachment subset — `mimeType`, same field the
+   *  receive-time R2 capture keys on. Kept structural so the helper stays
+   *  unit-testable without postal-mime. */
+  attachments: ReadonlyArray<{ mimeType?: string | null }> | null | undefined;
+  bodyText: string | null | undefined;
+}): boolean {
+  const images = (input.attachments ?? []).filter((a) =>
+    (a.mimeType ?? "").toLowerCase().startsWith("image/")
+  );
+  if (images.length === 0) return false;
+
+  let body = input.bodyText ?? "";
+  for (const re of SIGNATURE_NOISE) body = body.replace(re, "");
+  // Collapse whitespace so a body of only newlines/spaces reads as empty.
+  body = body.replace(/\s+/g, " ").trim();
+  return body.length <= PHOTO_ONLY_MAX_BODY_CHARS;
+}
+
+/**
  * Should the Worker's email() entrypoint call message.forward() to the
  * admin Gmail (SUBMIT_ADMIN_FORWARD env var)?
  *
