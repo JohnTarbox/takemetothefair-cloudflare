@@ -150,3 +150,39 @@ describe("evaluateGates — date-plausibility checks (analyst spec)", () => {
     expect(result.reasons).not.toContain("start_date_in_past");
   });
 });
+
+/**
+ * OPE-307 — the assumption migration 0173 rests on.
+ *
+ * The cleanup closes `start_date_timezone_confused` rows whose event is now
+ * noon-UTC anchored, on the grounds that the detector short-circuits there and
+ * would never re-file them. If that ever stopped being true, the cleanup would
+ * be closing live findings and they would silently re-open the next night.
+ *
+ * Pinning both sides: noon is clean, midnight-Eastern is not.
+ */
+describe("evaluateGates — timezone anchoring (OPE-307)", () => {
+  const base = {
+    name: "Test Fair",
+    description: null,
+    sourceUrl: "https://organizer.example/fair",
+  };
+
+  it("noon UTC is clean — the anchor normalizeEventDate produces", () => {
+    const result = evaluateGates({
+      ...base,
+      startDate: new Date("2026-09-01T12:00:00Z"),
+      endDate: new Date("2026-09-03T12:00:00Z"),
+    });
+    expect(result.reasons).not.toContain("start_date_timezone_confused");
+  });
+
+  it("midnight UTC still flags — the original symptom", () => {
+    const result = evaluateGates({
+      ...base,
+      startDate: new Date("2026-09-01T00:00:00Z"),
+      endDate: new Date("2026-09-03T00:00:00Z"),
+    });
+    expect(result.reasons).toContain("start_date_timezone_confused");
+  });
+});
