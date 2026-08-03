@@ -338,6 +338,114 @@ function pathFromGscPageKey(siteUrl: string, pageUrl: string): string {
   }
 }
 
+/**
+ * OPE-312 (audit A3) — TRUE property totals.
+ *
+ * `getSiteSearchQueries` computes `totals` by summing the rows it fetched, so
+ * with a rowLimit those "totals" are really "totals of the top N" — top-25
+ * numbers presented site-wide. A property with a long tail (ours) has most of
+ * its clicks outside any N, so the figure is not merely imprecise, it is
+ * systematically low and drifts with the row limit.
+ *
+ * Search Analytics returns real property totals when queried with NO
+ * dimensions: one row, aggregated over everything. That is the call this adds.
+ * Prefer it for any figure labelled "total"; keep the dimensioned pull for
+ * per-query and per-page breakdowns.
+ */
+export type SitePropertyTotals = {
+  dateRange: { startDate: string; endDate: string };
+  clicks: number;
+  impressions: number;
+  ctr: number;
+  position: number | null;
+};
+
+export async function getSitePropertyTotals(
+  env: ScEnv,
+  opts: { skipCache?: boolean; dateRange?: DateRangeInput; pathPrefix?: string } = {}
+): Promise<SitePropertyTotals> {
+  const siteUrl = resolveSiteUrl(env);
+  const kv = env.RATE_LIMIT_KV;
+  const range = resolveScRange(opts.dateRange, "last_28d");
+
+  // No `dimensions` key at all — this is what makes GSC aggregate the whole
+  // property instead of returning per-key rows.
+  const body: Record<string, unknown> = {
+    startDate: range.startDate,
+    endDate: range.endDate,
+  };
+
+  if (opts.pathPrefix) {
+    const base = siteUrl.startsWith("sc-domain:")
+      ? `https://${siteUrl.slice("sc-domain:".length)}`
+      : siteUrl.endsWith("/")
+        ? siteUrl.slice(0, -1)
+        : siteUrl;
+    body.dimensionFilterGroups = [
+      {
+        filters: [
+          { dimension: "page", operator: "contains", expression: `${base}${opts.pathPrefix}` },
+        ],
+      },
+    ];
+  }
+
+  const cacheKey = `sc:property-totals:${await hashRequest({ siteUrl, body })}`;
+  if (!opts.skipCache && kv) {
+    const cached = await kv.get<SitePropertyTotals>(cacheKey, "json");
+    if (cached) return cached;
+  }
+
+  const token = await getAccessToken(env, opts.skipCache ?? false);
+  const url = `${SC_API_BASE}/sites/${encodeURIComponent(siteUrl)}/searchAnalytics/query`;
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      signal: controller.signal,
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
+  if (!res.ok) {
+    const text = await res.text();
+    let detail = text.slice(0, 500);
+    try {
+      const parsed = JSON.parse(text) as { error?: { status?: string; message?: string } };
+      if (parsed?.error?.message)
+        detail = `${parsed.error.status ?? "ERROR"}: ${parsed.error.message}`;
+    } catch {
+      /* keep raw detail */
+    }
+    await recordScFailure("gsc-api", env, res.status, detail, res.url);
+    throw new ScApiError(res.status, detail);
+  }
+
+  const data = (await res.json()) as { rows?: GscApiRow[] };
+  // Un-dimensioned queries return exactly one row; zero rows means no data in
+  // the window (a new property, or a range before verification), which is a
+  // real zero rather than an error.
+  const row = data.rows?.[0];
+  const result: SitePropertyTotals = {
+    dateRange: { startDate: range.startDate, endDate: range.endDate },
+    clicks: row?.clicks ?? 0,
+    impressions: row?.impressions ?? 0,
+    ctr: row?.ctr ?? 0,
+    position: row?.position ?? null,
+  };
+
+  if (kv) {
+    await kv.put(cacheKey, JSON.stringify(result), { expirationTtl: REPORT_CACHE_TTL });
+  }
+  return result;
+}
+
 export async function getSiteSearchQueries(
   env: ScEnv,
   opts: {
