@@ -43,6 +43,7 @@ import {
   shouldForwardToAdmin,
   type EmailIntent,
 } from "./email-intents.js";
+import { mainAppFetch, type MainAppEnv } from "./main-app-fetch.js";
 import {
   classifyIntent,
   type AiBinding,
@@ -314,6 +315,60 @@ export async function handleInboundEmail(
         source: "email-handler:ws3e-auth-gate",
         context: { from: fromAddr, to: toAddr, emailAuth },
       });
+    }
+
+    // 3b-iv. OPE-311 (audit A1) — auto-ingest GSC click-milestone mail.
+    //
+    //     Google sends "Congrats on reaching NK clicks in 28 days" from
+    //     sc-noreply@google.com. Those carry the only record we get of a
+    //     milestone date, and until now each one was hand-entered as SQL (the
+    //     7K milestone was ingested by hand at the retro). Forwarded copies
+    //     arrive from a human address, so the subject shape is checked too.
+    //
+    //     The main-app endpoint owns the parse AND the idempotent upsert, so
+    //     this deliberately does NOT re-implement the subject regex here — it
+    //     hands over the raw subject/body and lets the single parser decide.
+    //     A non-milestone subject is simply parsed to null and ignored, which
+    //     is why ordinary sc-noreply mail still routes normally.
+    //
+    //     Fail-soft throughout: a milestone chart is not worth dropping an
+    //     inbound email over, so any error is logged and ingestion continues.
+    if (looksLikeGscMilestone(fromAddr, subject)) {
+      try {
+        const res = await mainAppFetch(
+          env as unknown as MainAppEnv,
+          "/api/admin/analytics/gsc-milestone-ingest",
+          "fetch",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              subject,
+              body: bodyText,
+              email_date: new Date().toISOString(),
+              note: `auto-ingested from inbound email (OPE-311), from=${fromAddr}`,
+            }),
+          }
+        );
+        await logError(env.DB, {
+          level: res.ok ? "info" : "warn",
+          source: "email-handler:ope-311-gsc-milestone",
+          message: res.ok
+            ? `GSC milestone email auto-ingested (status ${res.status})`
+            : `GSC milestone auto-ingest returned ${res.status}`,
+          sessionId,
+          context: { from: fromAddr, subject },
+        });
+      } catch (e) {
+        await logError(env.DB, {
+          level: "warn",
+          source: "email-handler:ope-311-gsc-milestone",
+          message: "GSC milestone auto-ingest failed (email still processed normally)",
+          error: e,
+          sessionId,
+          context: { from: fromAddr, subject },
+        });
+      }
     }
 
     // 3c. Compute the routing decision: maybe run the classifier, maybe
@@ -1360,3 +1415,17 @@ export async function insertAuditNoopRow(
 // Silence "imported but unused" for CLASSIFIER_VERSION — it's available
 // for callers that want to log the version separately.
 void CLASSIFIER_VERSION;
+
+/**
+ * OPE-311 — cheap pre-filter for GSC click-milestone mail.
+ *
+ * Two shapes, because the mail reaches us two ways: straight from Google, and
+ * forwarded by a human (which rewrites the From but keeps the subject). Kept
+ * loose on purpose — the authoritative parse lives in the main app's
+ * parseGscMilestoneEmail, and a false positive here costs one no-op request,
+ * whereas a false negative loses a milestone we cannot recover later.
+ */
+export function looksLikeGscMilestone(fromAddr: string, subject: string): boolean {
+  if (fromAddr.toLowerCase().includes("sc-noreply@google.com")) return true;
+  return /reaching\s+[\d.,]+\s*k?\s+(clicks|impressions)\s+in\s+\d+\s+days/i.test(subject);
+}
