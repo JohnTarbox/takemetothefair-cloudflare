@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ImageDropZone } from "./ImageDropZone";
 
 interface UrlInputStepProps {
   url: string;
@@ -76,11 +77,30 @@ export function UrlInputStep({
                 onChange={(e) => onManualPasteChange(e.target.checked)}
                 className="rounded border-border"
               />
-              I can&apos;t fetch the page - let me paste content
+              I can&apos;t fetch the page — paste text or drop a screenshot
             </label>
           </>
         ) : (
           <>
+            {/* OPE-297 — screenshot lane. Sits ABOVE the textarea because it
+                feeds it: OCR'd text lands in the box below for review, then the
+                existing Extract flow runs unchanged. */}
+            <div>
+              <Label>Drop or paste a screenshot</Label>
+              <div className="mt-1">
+                <ImageDropZone onTextExtracted={(text) => onPastedContentChange(text)} />
+              </div>
+            </div>
+
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center" aria-hidden="true">
+                <div className="w-full border-t border-border" />
+              </div>
+              <div className="relative flex justify-center">
+                <span className="bg-card px-2 text-xs text-muted-foreground">or paste text</span>
+              </div>
+            </div>
+
             <div>
               <Label htmlFor="pastedContent">Paste Page Content</Label>
               <textarea
