@@ -71,6 +71,7 @@ import { handle as handlePress } from "../email-handlers/press.js";
 import { handle as handleUnsubscribe } from "../email-handlers/unsubscribe.js";
 import { handle as handleUnknown } from "../email-handlers/unknown.js";
 import { handle as handleSpam } from "../email-handlers/spam.js";
+import { handle as handleNoop } from "../email-handlers/noop.js";
 import { handle as handleSourceSuggestion } from "../email-handlers/source-suggestion.js";
 import { handle as handlePhotoIntake } from "../email-handlers/photo-intake.js";
 import { extractAllUrls, type AttachmentRef } from "../email-handler.js";
@@ -217,6 +218,13 @@ const HANDLERS: Record<Exclude<EmailIntent, "submit" | "new_event">, HandlerFn> 
   problem_report: handleProblemReport,
   // OPE-202 — photos@ intake lane (receive + auth/trust gate + ack; no writes).
   photo_intake: handlePhotoIntake,
+  // OPE-317 — subscribe@ is fully handled at the email-handler entrypoint
+  // (the sender already has their confirmation email by the time the
+  // workflow runs), so there is nothing left to do and nothing to reply.
+  // Declared explicitly rather than mapped to handleUnknown, which would
+  // send the sender a "we couldn't understand this" reply after they had
+  // just successfully signed up.
+  newsletter_subscribe: handleNoop,
 };
 
 /** Map an error message thrown by a submit-leg or handler to a user-

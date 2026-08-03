@@ -1,3 +1,4 @@
+import { NewsletterSignupBlock } from "@/components/newsletter/newsletter-signup-block";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
@@ -546,6 +547,10 @@ export default async function BlogPostPage({ params }: Props) {
           </Card>
         </aside>
       </div>
+
+      {/* OPE-317 — a reader who finished a post is the warmest newsletter
+          prospect on the site. Same form, same double-opt-in. */}
+      <NewsletterSignupBlock source="blog-post" />
 
       {/* Related Events */}
       {relatedEvents.length > 0 && (

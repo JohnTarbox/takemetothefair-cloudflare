@@ -193,3 +193,31 @@ describe("looksLikeGscMilestone (OPE-311)", () => {
     expect(looksLikeGscMilestone("john@pimboat.com", "clicks are up this week")).toBe(false);
   });
 });
+
+/**
+ * OPE-317 — subscribe@ is a dedicated signup address John hands out at shows.
+ */
+describe("subscribe@ routing (OPE-317)", () => {
+  it("routes to newsletter_subscribe", () => {
+    expect(resolveIntent("subscribe@meetmeatthefair.com")).toBe("newsletter_subscribe");
+    expect(resolveIntent("SUBSCRIBE@MeetMeAtTheFair.com")).toBe("newsletter_subscribe");
+  });
+
+  it("is NOT forwarded to admin", () => {
+    // The sender gets their confirmation email server-side; forwarding every
+    // show-floor signup to the admin inbox would rebuild the noise the alert
+    // diet (OPE-308) just removed.
+    expect(shouldForwardToAdmin("newsletter_subscribe")).toBe(false);
+  });
+
+  it("does not disturb the neighbouring unsubscribe address", () => {
+    // One character apart in practice, opposite meanings — worth pinning.
+    expect(resolveIntent("unsubscribe@meetmeatthefair.com")).toBe("unsubscribe");
+  });
+
+  it("passes through toWorkflowIntent unchanged", () => {
+    // It has its own handler; collapsing it to "unknown" would reply
+    // "we couldn't understand this" to someone who just signed up.
+    expect(toWorkflowIntent("newsletter_subscribe")).toBe("newsletter_subscribe");
+  });
+});
