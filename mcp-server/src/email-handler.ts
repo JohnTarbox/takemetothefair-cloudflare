@@ -44,6 +44,7 @@ import {
   type EmailIntent,
 } from "./email-intents.js";
 import { mainAppFetch, type MainAppEnv } from "./main-app-fetch.js";
+import { handleNewsletterSubscribeEmail } from "./email-handlers/newsletter-subscribe.js";
 import {
   classifyIntent,
   type AiBinding,
@@ -369,6 +370,19 @@ export async function handleInboundEmail(
           context: { from: fromAddr, subject },
         });
       }
+    }
+
+    // 3b-v. OPE-317 — subscribe@ is handled entirely here. The sender gets the
+    //     normal confirmation email from the main app's subscribe endpoint, so
+    //     there is nothing for the classifier or the workflow to do, and
+    //     nothing to forward to admin (shouldForwardToAdmin excludes it).
+    //     Failsoft: a subscribe that doesn't reach the endpoint is logged and
+    //     the email still records normally, rather than throwing away the row.
+    if (effectiveAddressIntent === "newsletter_subscribe") {
+      await handleNewsletterSubscribeEmail(
+        env as unknown as MainAppEnv & { DB: D1Database },
+        fromAddr
+      );
     }
 
     // 3c. Compute the routing decision: maybe run the classifier, maybe

@@ -5,7 +5,15 @@ import { Mail, Check } from "lucide-react";
 import { trackFormSubmit } from "@/lib/analytics";
 import { NEWSLETTER_NAME } from "@/lib/newsletter-masthead";
 
-export function NewsletterSignup() {
+/**
+ * OPE-317 — `source` is a prop, not a constant.
+ *
+ * It was hardcoded "footer", which was fine while the footer was the only
+ * placement. With the same form on event pages, blog posts and archives, a
+ * fixed value would make every signup look like a footer signup and hide which
+ * surface actually converts — the one thing the growth target needs to know.
+ */
+export function NewsletterSignup({ source = "footer" }: { source?: string } = {}) {
   const [email, setEmail] = useState("");
   const [status, setStatus] = useState<"idle" | "submitting" | "done" | "error">("idle");
 
@@ -17,7 +25,7 @@ export function NewsletterSignup() {
       const res = await fetch("/api/newsletter/subscribe", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, source: "footer" }),
+        body: JSON.stringify({ email, source }),
       });
       setStatus(res.ok ? "done" : "error");
       // ENG1.3 (2026-06-09) — fire AFTER res.ok so failed POSTs don't
@@ -25,7 +33,7 @@ export function NewsletterSignup() {
       // GA4 event, so the beacon side mirrors to D1 (via the helper)
       // for immediate /admin/analytics visibility.
       if (res.ok) {
-        trackFormSubmit("newsletter", { source: "footer" });
+        trackFormSubmit("newsletter", { source });
       }
     } catch {
       setStatus("error");

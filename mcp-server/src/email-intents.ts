@@ -51,7 +51,11 @@ export type EmailIntent =
   // to photos@. Separate lane from submit@ (which treats every attachment as
   // an event poster). Milestone 1 is receive + auth/trust gate + attachment
   // capture + ack; the vendor-write tail is downstream (OPE-204).
-  | "photo_intake";
+  | "photo_intake"
+  // OPE-317 — a dedicated signup address John can hand out at shows. An
+  // inbound email to it subscribes the SENDER through the normal double
+  // opt-in, so the confirmation click still does the consenting.
+  | "newsletter_subscribe";
 
 const INTENT_MAP: Record<string, EmailIntent> = {
   "submit@meetmeatthefair.com": "submit",
@@ -60,6 +64,10 @@ const INTENT_MAP: Record<string, EmailIntent> = {
   "hello@meetmeatthefair.com": "support",
   "press@meetmeatthefair.com": "press",
   "unsubscribe@meetmeatthefair.com": "unsubscribe",
+  // OPE-317 — NB: add the CF Email Routing rule
+  // subscribe@meetmeatthefair.com → meetmeatthefair-mcp Worker (dashboard step),
+  // same as photos@ needed.
+  "subscribe@meetmeatthefair.com": "newsletter_subscribe",
   // UR1 Phase 1 — dedicated problem-report intake addresses. Add Email
   // Routing rules in CF dashboard for both addresses → mcp Worker.
   "report@meetmeatthefair.com": "problem_report",
@@ -204,5 +212,8 @@ export function shouldForwardToAdmin(intent: EmailIntent): boolean {
   // OPE-202 `photo_intake` is likewise processed server-side + captured to R2;
   // forwarding a batch of full-size photos back to the admin's own Gmail (the
   // usual sender) is circular noise — the admin sees them in the inbound viewer.
-  return intent !== "submit" && intent !== "photo_intake";
+  // OPE-317 `newsletter_subscribe` is fully handled server-side (the sender
+  // gets the confirmation email); forwarding every show-floor signup to the
+  // admin inbox would recreate the noise the alert diet just removed.
+  return intent !== "submit" && intent !== "photo_intake" && intent !== "newsletter_subscribe";
 }

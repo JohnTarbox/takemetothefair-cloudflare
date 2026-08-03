@@ -1,3 +1,4 @@
+import { NewsletterSignupBlock } from "@/components/newsletter/newsletter-signup-block";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
@@ -1131,6 +1132,10 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
                   </>
                 );
               })()}
+            {/* OPE-317 — signup where readers already are. Event pages are the
+                site's highest-traffic surface; the footer form they never
+                scroll to is the same form. */}
+            <NewsletterSignupBlock source="event-detail" />
           </main>
 
           <aside className="space-y-6">
