@@ -49,8 +49,10 @@ import {
   ScApiError,
   ScConfigError,
   getSiteSearchQueries,
+  getSitePropertyTotals,
   getSitemapStatus,
   type ScEnv,
+  type SitePropertyTotals,
   type SiteSearchQueriesResult,
   type SitemapStatus,
 } from "@/lib/search-console";
@@ -2852,6 +2854,9 @@ type GscLoad =
       ok: true;
       queries: SiteSearchQueriesResult | null;
       sitemaps: SitemapStatus | null;
+      /** OPE-312 (A3) — real property aggregate, distinct from `queries.totals`
+       *  which only ever sums the rows that pull returned. */
+      propertyTotals: SitePropertyTotals | null;
     }
   | { ok: false; kind: "config" | "api" | "unknown"; message: string };
 
@@ -2861,6 +2866,10 @@ async function loadGscData(): Promise<GscLoad> {
     const settled = await Promise.allSettled([
       getSiteSearchQueries(env, { rowLimit: 25 }),
       getSitemapStatus(env),
+      // OPE-312 (A3) — real property totals. The rowLimit-25 pull above can
+      // only ever sum its own 25 rows, so it must not feed a tile that says
+      // "total".
+      getSitePropertyTotals(env),
     ]);
     const firstFailure = settled.find((r) => r.status === "rejected");
     if (firstFailure && firstFailure.status === "rejected") {
@@ -2871,11 +2880,14 @@ async function loadGscData(): Promise<GscLoad> {
         return { ok: false, kind: "config", message: err.message };
       }
     }
-    const [queries, sitemaps] = settled.map((r) => (r.status === "fulfilled" ? r.value : null));
+    const [queries, sitemaps, propertyTotals] = settled.map((r) =>
+      r.status === "fulfilled" ? r.value : null
+    );
     return {
       ok: true,
       queries: (queries as SiteSearchQueriesResult | null) ?? null,
       sitemaps: (sitemaps as SitemapStatus | null) ?? null,
+      propertyTotals: (propertyTotals as SitePropertyTotals | null) ?? null,
     };
   } catch (error) {
     if (error instanceof ScConfigError) {
@@ -2947,7 +2959,7 @@ async function GoogleTab() {
       </>
     );
   }
-  const { queries, sitemaps } = result;
+  const { queries, sitemaps, propertyTotals } = result;
   const sitemapErrorCount = sitemaps?.sitemaps.reduce((acc, s) => acc + (s.errors ?? 0), 0) ?? 0;
   const sitemapWarningCount =
     sitemaps?.sitemaps.reduce((acc, s) => acc + (s.warnings ?? 0), 0) ?? 0;
@@ -2974,23 +2986,29 @@ async function GoogleTab() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
         <Card>
           <CardContent className="p-6">
+            {/* OPE-312 (A3) — property total, not the sum of the top 25. */}
             <p className="text-sm text-muted-foreground">Total clicks</p>
             <p className="text-2xl font-bold text-foreground mt-1 tabular-nums">
-              {fmt(queries?.totals.clicks ?? 0)}
+              {fmt(propertyTotals?.clicks ?? 0)}
             </p>
             <p className="text-xs text-muted-foreground mt-1">
-              {queries ? `${queries.dateRange.startDate} → ${queries.dateRange.endDate}` : "—"}
+              {propertyTotals
+                ? `${fmt(propertyTotals.impressions)} impressions · ${propertyTotals.dateRange.startDate} → ${propertyTotals.dateRange.endDate}`
+                : "—"}
             </p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-6">
-            <p className="text-sm text-muted-foreground">Unique queries</p>
+            {/* OPE-312 (A3) — this pull is rowLimit 25, so the tile says so
+                rather than implying a site-wide figure. */}
+            <p className="text-sm text-muted-foreground">Top-25 query clicks</p>
             <p className="text-2xl font-bold text-foreground mt-1 tabular-nums">
-              {fmt(queries?.totals.queries ?? 0)}
+              {fmt(queries?.totals.clicks ?? 0)}
             </p>
             <p className="text-xs text-muted-foreground mt-1">
-              {fmt(queries?.totals.impressions ?? 0)} impressions
+              {fmt(queries?.totals.queries ?? 0)} queries · {fmt(queries?.totals.impressions ?? 0)}{" "}
+              impressions
             </p>
           </CardContent>
         </Card>

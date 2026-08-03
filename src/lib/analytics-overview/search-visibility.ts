@@ -12,6 +12,7 @@ import {
   ScConfigError,
   getDailyClicks,
   getSiteSearchQueries,
+  getSitePropertyTotals,
   type ScEnv,
 } from "@/lib/search-console";
 import {
@@ -85,24 +86,29 @@ export async function loadSearchVisibility(
           const start = isoDaysAgo(3 + days);
           return { startDate: start, endDate: end };
         })();
-    // rowLimit drives totals: getSiteSearchQueries computes totals.clicks by
-    // summing the *returned* rows (after slice). Use 500 (API max) so the
-    // headline KPI captures essentially all clicks, not just the top query.
-    const result = await getSiteSearchQueries(env, { dateRange, rowLimit: 500 });
-    const current = result.totals.clicks;
+    // OPE-312 (audit A3) — read the headline from a TRUE property total.
+    //
+    // getSiteSearchQueries sums the rows it fetched, so its `totals` are really
+    // "totals of the top N". Raising rowLimit to the 500 API max narrowed the
+    // gap but could never close it: a long-tail property keeps clicks outside
+    // any N, so the headline was systematically low and moved whenever the row
+    // limit did. An un-dimensioned Search Analytics query returns the real
+    // property aggregate in one row — that is what a tile labelled "total"
+    // should show, and it is the same call the 7K-milestone analysis needed.
+    const totals = await getSitePropertyTotals(env, { dateRange });
+    const current = totals.clicks;
 
     // Previous window: roll the same number of days back.
     const priorEnd = isoFromDate(
-      new Date(Date.parse(`${result.dateRange.startDate}T00:00:00Z`) - 86400_000)
+      new Date(Date.parse(`${totals.dateRange.startDate}T00:00:00Z`) - 86400_000)
     );
     const priorStart = isoFromDate(
-      new Date(Date.parse(`${result.dateRange.startDate}T00:00:00Z`) - days * 86400_000)
+      new Date(Date.parse(`${totals.dateRange.startDate}T00:00:00Z`) - days * 86400_000)
     );
-    const priorResult = await getSiteSearchQueries(env, {
+    const priorTotals = await getSitePropertyTotals(env, {
       dateRange: { startDate: priorStart, endDate: priorEnd },
-      rowLimit: 500,
     });
-    const previous = priorResult.totals.clicks;
+    const previous = priorTotals.clicks;
 
     // BWT companion: best-effort. A failure here doesn't sink the whole card —
     // the GSC headline is the load-bearing signal.
