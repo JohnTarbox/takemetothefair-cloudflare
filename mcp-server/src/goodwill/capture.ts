@@ -158,6 +158,30 @@ export async function captureDiscrepancy(
 }
 
 /**
+ * OPE-306 (GATE-NOISE G2) — gate reasons that describe a LIFECYCLE state, not
+ * a data error, and therefore must not become discrepancies.
+ *
+ * `end_date_in_past` is true of every event that has simply finished. There is
+ * nothing for an operator to correct: the daily OCCURRED sweep
+ * (event-occurred-sweep.ts) already transitions APPROVED past-end events to
+ * OCCURRED, and `status` staying APPROVED afterwards is the correct end state —
+ * APPROVED is the moderation verdict, OCCURRED is the lifecycle position. They
+ * are different columns and both are right.
+ *
+ * Filing it as a discrepancy meant the queue accumulated a row for every event
+ * that had ever ended. Measured on prod 2026-08-03: 2,377 open
+ * `end_date_in_past` rows — a third of the entire 7,193-row queue — none of
+ * them actionable. (The retro counted 270; the gap is the OPE-305 duplicate
+ * explosion, ~9 copies of each distinct condition.)
+ *
+ * Kept as a set rather than folded into gateReasonToFieldClass because the two
+ * questions are genuinely different: that function answers "which field is
+ * this about?" (`end_date_in_past` really is about `date`), while this answers
+ * "is this a discrepancy at all?".
+ */
+const LIFECYCLE_OWNED_REASONS: ReadonlySet<string> = new Set(["end_date_in_past"]);
+
+/**
  * Map an `evaluateGates` reason code to a discrepancy `field_class`.
  * Centralized so the GW1b self-consistency cron and any future caller
  * agree on the taxonomy. Returns `null` for reason codes that don't
@@ -224,6 +248,8 @@ export async function captureSelfConsistencyDiscrepancy(
     confidence?: number | null;
   }
 ): Promise<string | null> {
+  if (LIFECYCLE_OWNED_REASONS.has(args.reason)) return null;
+
   const fieldClass = gateReasonToFieldClass(args.reason);
   if (!fieldClass) return null;
 

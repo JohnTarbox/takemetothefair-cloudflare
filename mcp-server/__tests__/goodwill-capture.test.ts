@@ -34,6 +34,9 @@ beforeEach(() => {
 describe("gateReasonToFieldClass", () => {
   it("maps date-family reasons to 'date'", () => {
     expect(gateReasonToFieldClass("start_date_timezone_confused")).toBe("date");
+    // Still "date" after OPE-306 — this function answers "which field is this
+    // about", not "should it be filed". The don't-file decision lives in
+    // LIFECYCLE_OWNED_REASONS and is covered below.
     expect(gateReasonToFieldClass("end_date_in_past")).toBe("date");
     expect(gateReasonToFieldClass("duration_too_long_for_scale")).toBe("date");
     expect(gateReasonToFieldClass("start_equals_deadline")).toBe("date");
@@ -269,6 +272,52 @@ describe("captureSelfConsistencyDiscrepancy", () => {
     expect(rows[0].fieldClass).toBe("date");
     expect(rows[0].divergentValue).toBe("start_date_timezone_confused");
     expect(rows[0].authoritativeSourceKey).toBe("organizer.example");
+  });
+
+  /**
+   * OPE-306 — end_date_in_past is a LIFECYCLE state, not a data error. Every
+   * event that has finished satisfies it, so filing it accumulated a row per
+   * ended event: 2,377 open rows on prod 2026-08-03, a third of the queue,
+   * none actionable. The OCCURRED sweep owns the transition.
+   */
+  it("emits NOTHING for end_date_in_past — the OCCURRED sweep owns it", async () => {
+    const id = await captureSelfConsistencyDiscrepancy(db, {
+      eventId: "evt-1",
+      reason: "end_date_in_past",
+      sourceUrl: "https://organizer.example/events/1",
+      authoritativeValue: "2026-01-01",
+    });
+    expect(id).toBeNull();
+    expect((await db.select().from(eventDiscrepancies)).length).toBe(0);
+  });
+
+  it("still emits for other date-family reasons", async () => {
+    // The suppression must be surgical: neighbouring date reasons are real
+    // discrepancies and must keep filing.
+    //
+    // One event per reason on purpose. OPE-305 dedupes on
+    // (event, field_class, detected_by) — NOT on the reason — so two date-class
+    // reasons for the SAME event legitimately collapse into one open row, and
+    // reusing evt-1 here would be measuring that dedup rather than this filter.
+    await db.insert(events).values({
+      id: "evt-2",
+      name: "Test Event 2",
+      slug: "test-event-2",
+      promoterId: "p-1",
+      status: "APPROVED",
+    });
+    const cases = [
+      { eventId: "evt-1", reason: "start_date_timezone_confused" },
+      { eventId: "evt-2", reason: "duration_too_long_for_scale" },
+    ];
+    for (const c of cases) {
+      expect(
+        await captureSelfConsistencyDiscrepancy(db, {
+          ...c,
+          sourceUrl: "https://organizer.example/events/1",
+        })
+      ).not.toBeNull();
+    }
   });
 
   it("returns null for source_tier_* reasons (no discrepancy emitted)", async () => {
