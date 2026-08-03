@@ -2440,6 +2440,25 @@ export const standingFailureState = sqliteTable("standing_failure_state", {
 // last notice (don't nag on an unchanged queue). lastNoticeDate is a UTC
 // YYYY-MM-DD string (matches the once-per-day comparison); lastQueueCount is the
 // producer-class NEEDS_RESEARCH count at the last fire (the change-detector).
+// OPE-308 (drizzle/0175, 2026-08-03) — weekly Monday inventory state.
+//
+// Holds LAST MONDAY's three counts so the summary can show a week-over-week
+// delta, which is the part an operator actually reads: "142" means little,
+// "142 (+37)" means something. Single row keyed by STATE_KEY in
+// mcp-server/src/weekly-inventory-notice.ts.
+//
+// last_sent_date doubles as the once-per-Monday guard — date-keyed rather than
+// elapsed-days so a missed week doesn't permanently shift the cadence.
+export const weeklyInventoryState = sqliteTable("weekly_inventory_state", {
+  id: text("id").primaryKey(),
+  /** YYYY-MM-DD of the last Monday a summary went out. */
+  lastSentDate: text("last_sent_date"),
+  rosterResearchCount: integer("roster_research_count"),
+  promoterEnrichmentCount: integer("promoter_enrichment_count"),
+  goodwillOpenCount: integer("goodwill_open_count"),
+  updatedAt: integer("updated_at", { mode: "timestamp" }),
+});
+
 export const rosterResearchNoticeState = sqliteTable("roster_research_notice_state", {
   id: text("id").primaryKey(),
   lastNoticeDate: text("last_notice_date").notNull(),

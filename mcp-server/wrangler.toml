@@ -22,6 +22,18 @@ database_id = "d449e416-3814-48a6-b9e8-b676333b2cdc"
 
 [vars]
 MAIN_APP_URL = "https://meetmeatthefair.com"
+# OPE-308 / OPE-261 — operator alert recipients.
+#
+# This var was set in the Cloudflare DASHBOARD on both Workers, and the two
+# values had DRIFTED: the main app had the OPE-261 multi-recipient list while
+# the MCP Worker still had a single address, so goodwill-canary,
+# promoter-enrichment, roster-research and standing-failure alerts all reached
+# exactly one person (verified in email_send_ledger, 14d).
+#
+# Declared here rather than in the dashboard because a dashboard [vars] value is
+# silently wiped by the next `wrangler deploy` (only secrets survive) — the
+# OPE-284 time bomb. Not a secret: these are our own operator addresses.
+ALERT_EMAIL_TECHNICAL = "alert@meetmeatthefair.com, jtarboxme@gmail.com"
 # I1 vendor-enrichment Worker (2026-06-13). Account id is non-secret; the
 # Browser-Rendering token is a Worker secret set via
 # `wrangler secret put CLOUDFLARE_BROWSER_RENDERING_TOKEN` (same value the main

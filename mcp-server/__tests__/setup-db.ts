@@ -291,6 +291,15 @@ const SCHEMA_SQL = `
   CREATE UNIQUE INDEX idx_goodwill_snapshot_date
     ON goodwill_health_snapshots(snapshot_date);
 
+  CREATE TABLE weekly_inventory_state (
+    id TEXT PRIMARY KEY,
+    last_sent_date TEXT,
+    roster_research_count INTEGER,
+    promoter_enrichment_count INTEGER,
+    goodwill_open_count INTEGER,
+    updated_at INTEGER
+  );
+
   CREATE TABLE event_discrepancies (
     id TEXT PRIMARY KEY,
     event_id TEXT NOT NULL,
