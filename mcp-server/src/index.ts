@@ -53,9 +53,9 @@ import { runScheduledPageErrorCanary } from "./page-error-canary.js";
 import { runScheduledStandingFailureCanary } from "./standing-failure-canary.js";
 import { runScheduledStalePageRadar } from "./goodwill/stale-page-radar.js";
 import { runOccurredTransitionSweep } from "./event-occurred-sweep.js";
-import { runRosterResearchNotice } from "./roster-research-notice.js";
+
 import { runInboundExceptionNotice } from "./inbound-exception-notice.js";
-import { runPromoterEnrichmentNotice } from "./promoter-enrichment-notice.js";
+import { runWeeklyInventoryNotice } from "./weekly-inventory-notice.js";
 import { runScheduledSelfConsistencyCron } from "./goodwill/self-consistency-cron.js";
 import { runScheduledQueueRerank } from "./goodwill/queue-ranking.js";
 import { runScheduledGoodwillHealthCanary } from "./goodwill/health-canary.js";
@@ -1733,15 +1733,12 @@ export default {
         // events into next year's TENTATIVE edition; Pass 2 backfills rolls for
         // already-OCCURRED recurring events. Cosmetic-failsoft by construction
         // (each row + each pass catches its own errors and logs to error_logs).
-        // OPE-15 (2026-06-29) — the research-queue notice is chained AFTER the
-        // sweep (not a sibling in this Promise.all) so it counts THIS run's
-        // Pass-3 enqueue. Server-side counts only; failsoft like the sweep.
-        // Tells the operator when the producer-class NEEDS_RESEARCH queue is
-        // non-empty so the interactive OPE-14 sweep can drain it (≤1/day,
-        // only on change). See mcp-server/src/roster-research-notice.ts.
-        runOccurredTransitionSweep(getDb(env.DB))
-          .then(() => runRosterResearchNotice(env))
-          .then(() => undefined),
+        // OPE-308 — the roster research-queue NOTICE no longer rides here.
+        // It, and the promoter-enrichment notice below, folded into the weekly
+        // Monday inventory (weekly-inventory-notice.ts): inventories answer
+        // "how big is the backlog", which has a weekly rhythm, and daily sends
+        // are how a channel stops being read. The sweep itself is unchanged.
+        runOccurredTransitionSweep(getDb(env.DB)).then(() => undefined),
         // OPE-17 (2026-06-29) — inbound-email exception rails. Reconciles
         // exception statuses (already-handled → salvaged; spam/unsubscribe →
         // reversible rejected) then notifies the operator when the human-triage
@@ -1749,12 +1746,11 @@ export default {
         // occurred-sweep, so it runs as its own failsoft sibling here. See
         // mcp-server/src/inbound-exception-notice.ts.
         runInboundExceptionNotice(env),
-        // OPE-37 (2026-07-01) — promoter-enrichment queue notice. Promoter analog
-        // of OPE-15/OPE-17: notifies the operator when the promoter
-        // NEEDS_ENRICHMENT queue (OPE-35 rails) is non-empty AND changed (≤1/day).
-        // Independent failsoft sibling — counts the whole promoters corpus, not
-        // this run's enqueue. See mcp-server/src/promoter-enrichment-notice.ts.
-        runPromoterEnrichmentNotice(env),
+        // OPE-308 — ONE Monday inventory replacing the daily queue notices
+        // (roster research + promoter enrichment + goodwill open count), with a
+        // week-over-week delta. Self-gates to Monday, so it is safe to call on
+        // the daily cron. Alarms are untouched and still push on condition.
+        runWeeklyInventoryNotice(env),
         // A3.2 / K43 (2026-06-25) — nightly blog-link integrity audit. Sweeps
         // every PUBLISHED post and reports internal /events,/vendors,/venues,
         // /blog links that no longer resolve (drift a slug rename/merge left
