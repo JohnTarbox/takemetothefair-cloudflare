@@ -3,7 +3,12 @@
  * No I/O, no mocks.
  */
 import { describe, expect, it } from "vitest";
-import { resolveIntent, shouldForwardToAdmin, toWorkflowIntent } from "../src/email-intents.js";
+import {
+  isPhotoOnlySubmission,
+  resolveIntent,
+  shouldForwardToAdmin,
+  toWorkflowIntent,
+} from "../src/email-intents.js";
 
 describe("resolveIntent — recognized addresses", () => {
   it("submit@ → submit", () => {
@@ -99,5 +104,62 @@ describe("toWorkflowIntent — classifier → workflow dispatch mapping", () => 
     expect(toWorkflowIntent("spam")).toBe("unknown");
     expect(toWorkflowIntent("unclear")).toBe("unknown");
     expect(toWorkflowIntent("multi")).toBe("unknown");
+  });
+});
+
+/**
+ * OPE-315 — a photo-only mail is a photo submission whatever address it
+ * arrived at. The live case: two booth photos mailed to submit@ with no body.
+ * The event-extraction lane tried to read prose that wasn't there, failed
+ * `no-url-prose-failed`, and replied "couldn't pull out key fields" — while
+ * the photo-intake lane sat unused because it is keyed to photos@.
+ */
+describe("isPhotoOnlySubmission (OPE-315)", () => {
+  const img = { mimeType: "image/jpeg" };
+
+  it("recognises the live case: images, empty body", () => {
+    expect(isPhotoOnlySubmission({ attachments: [img, img], bodyText: "" })).toBe(true);
+    expect(isPhotoOnlySubmission({ attachments: [img], bodyText: null })).toBe(true);
+  });
+
+  it("sees through phone signatures and stray whitespace", () => {
+    // Phone mail is never literally empty — this is what "no body" looks like
+    // in practice, and treating it as prose is what produced the rejection.
+    expect(
+      isPhotoOnlySubmission({ attachments: [img], bodyText: "\n\n Sent from my iPhone\n" })
+    ).toBe(true);
+    expect(isPhotoOnlySubmission({ attachments: [img], bodyText: "   \n\t  " })).toBe(true);
+  });
+
+  it("does NOT hijack a mail that actually says something", () => {
+    // The sender wrote a real submission and attached a poster — the
+    // extraction lane must still get it.
+    expect(
+      isPhotoOnlySubmission({
+        attachments: [img],
+        bodyText:
+          "Please add the Cheshire Fair, August 5-9 at the fairgrounds in Swanzey NH. Gates at 9am.",
+      })
+    ).toBe(false);
+  });
+
+  it("does NOT treat a PDF-only mail as photos — posters belong to submit", () => {
+    expect(
+      isPhotoOnlySubmission({ attachments: [{ mimeType: "application/pdf" }], bodyText: "" })
+    ).toBe(false);
+  });
+
+  it("requires an attachment at all", () => {
+    expect(isPhotoOnlySubmission({ attachments: [], bodyText: "" })).toBe(false);
+    expect(isPhotoOnlySubmission({ attachments: null, bodyText: "" })).toBe(false);
+  });
+
+  it("takes a mixed mail with any image as photo-only when there is no body", () => {
+    expect(
+      isPhotoOnlySubmission({
+        attachments: [{ mimeType: "application/pdf" }, img],
+        bodyText: "",
+      })
+    ).toBe(true);
   });
 });
