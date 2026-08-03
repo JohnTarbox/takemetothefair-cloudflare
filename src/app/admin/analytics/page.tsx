@@ -44,7 +44,6 @@ import {
   type BingTrafficStatsRow,
   type BingSitemap,
 } from "@/lib/bing-webmaster";
-import { getLatestReferringDomains } from "@/lib/bing-backlinks-store";
 import {
   ScApiError,
   ScConfigError,
@@ -2989,7 +2988,7 @@ async function GoogleTab() {
             {/* OPE-312 (A3) — property total, not the sum of the top 25. */}
             <p className="text-sm text-muted-foreground">Total clicks</p>
             <p className="text-2xl font-bold text-foreground mt-1 tabular-nums">
-              {fmt(propertyTotals?.clicks ?? 0)}
+              {propertyTotals ? fmt(propertyTotals.clicks) : <UnavailableBadge />}
             </p>
             <p className="text-xs text-muted-foreground mt-1">
               {propertyTotals
@@ -3004,11 +3003,12 @@ async function GoogleTab() {
                 rather than implying a site-wide figure. */}
             <p className="text-sm text-muted-foreground">Top-25 query clicks</p>
             <p className="text-2xl font-bold text-foreground mt-1 tabular-nums">
-              {fmt(queries?.totals.clicks ?? 0)}
+              {queries ? fmt(queries.totals.clicks) : <UnavailableBadge />}
             </p>
             <p className="text-xs text-muted-foreground mt-1">
-              {fmt(queries?.totals.queries ?? 0)} queries · {fmt(queries?.totals.impressions ?? 0)}{" "}
-              impressions
+              {queries
+                ? `${fmt(queries.totals.queries)} queries · ${fmt(queries.totals.impressions)} impressions`
+                : "—"}
             </p>
           </CardContent>
         </Card>
@@ -3018,7 +3018,7 @@ async function GoogleTab() {
             <p className="text-2xl font-bold text-foreground mt-1 tabular-nums">
               {fmt(indexedCount)} /{" "}
               <span className="text-base font-normal text-muted-foreground">
-                {fmt(sitemaps?.totals.submitted ?? 0)}
+                {sitemaps ? fmt(sitemaps.totals.submitted) : <UnavailableBadge />}
               </span>
             </p>
             <p className="text-xs text-muted-foreground mt-1">
@@ -3951,8 +3951,6 @@ async function BingTab() {
         </CardContent>
       </Card>
 
-      <ReferringDomainsSection />
-
       {/* ══ Block 5 — Actionable issues ══════════════════════════════════ */}
       <Card className="mt-6">
         <CardHeader>
@@ -3977,54 +3975,34 @@ async function BingTab() {
   );
 }
 
-// OPE-56 — referring domains imported from the BWT "Referring Domains" CSV
-// (Bing's API has no backlink data). Reads the most-recent snapshot from D1;
-// independent of the Bing API so it renders even before BWT search data lands.
-async function ReferringDomainsSection() {
-  const db = getCloudflareDb();
-  const rows = await getLatestReferringDomains(db);
-  const snapshotDate = rows[0]?.snapshotDate ?? null;
+// OPE-310 (audit A2) — the "Referring domains" card is gone.
+//
+// It was fed only by a manual BWT CSV import (Bing's API exposes no backlink
+// data). That feed never ran: bing_backlinks held 0 rows across 0 snapshots at
+// removal, so the card's entire production life was an empty table telling the
+// operator to go import a CSV. A5's liveness ping plus the API-fed Bing tiles
+// cover the real need. The store + import_bing_backlinks tool are untouched and
+// the card is resurrectable from git if a use appears.
 
+/**
+ * OPE-310 (audit A4) — "unavailable", never 0.
+ *
+ * loadGscData downgrades a per-endpoint failure to null so one outage doesn't
+ * blank the whole tab. The tiles then rendered `?? 0`, which states a fact we
+ * do not have: an API timeout looked exactly like a genuine zero-click week.
+ * Zero and unknown are different facts and must not share a rendering.
+ *
+ * Convention for the dashboard: when a fetch fails, show this badge. Reserve
+ * the number for a number we actually received.
+ */
+function UnavailableBadge({ reason }: { reason?: string }) {
   return (
-    <Card className="mt-6">
-      <CardHeader>
-        <CardTitle className="flex items-center justify-between gap-2">
-          <span>Referring domains</span>
-          {snapshotDate && (
-            <span className="text-xs font-normal text-muted-foreground tabular-nums">
-              Snapshot {snapshotDate}
-            </span>
-          )}
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="p-0">
-        <table className="w-full text-sm">
-          <thead className="bg-muted text-muted-foreground">
-            <tr>
-              <th className="text-left px-6 py-2 font-medium">Domain</th>
-              <th className="text-right px-6 py-2 font-medium">Backlinks</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {rows.length === 0 ? (
-              <tr>
-                <td colSpan={2} className="px-6 py-6 text-muted-foreground">
-                  No referring domains imported yet — import the BWT Referring Domains CSV via the
-                  import_bing_backlinks tool.
-                </td>
-              </tr>
-            ) : (
-              rows.map((row, i) => (
-                <tr key={`${row.domain}-${i}`}>
-                  <td className="px-6 py-2 text-foreground truncate max-w-md">{row.domain}</td>
-                  <td className="px-6 py-2 text-right tabular-nums">{fmt(row.count)}</td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </CardContent>
-    </Card>
+    <span
+      className="inline-flex items-center rounded-md bg-muted px-2 py-0.5 text-sm font-medium text-muted-foreground align-middle"
+      title={reason ?? "This figure could not be fetched — it is unknown, not zero."}
+    >
+      unavailable
+    </span>
   );
 }
 
