@@ -92,6 +92,13 @@ export function registerCreateOrLinkVendorTool(
         .describe(
           "Participation mode on the event_vendors link. EXHIBITOR = takes booth space (default); SPONSOR_ONLY = logo/program presence, no booth; SPONSOR_AND_EXHIBITOR = both (e.g. venue naming rights + a booth on the floor)."
         ),
+      public_visible: z
+        .boolean()
+        .optional()
+        .default(true)
+        .describe(
+          "OPE-316: set false when a vendor wants their participation RECORDED but not SHOWN (the LeafFilter case). The link still counts in admin roster views, coverage stats and analytics — it simply renders nowhere public, including schema.org JSON-LD. Defaults true; you almost never need to pass this."
+        ),
       defer_search_ping: z
         .boolean()
         .optional()
@@ -127,6 +134,7 @@ export function registerCreateOrLinkVendorTool(
         paymentStatus: params.payment_status,
         participationType: params.participation_type,
         eventDayId: params.event_day_id ?? null,
+        publicVisible: params.public_visible ?? true,
       };
 
       const result = await createOrLinkVendor(db, input, {

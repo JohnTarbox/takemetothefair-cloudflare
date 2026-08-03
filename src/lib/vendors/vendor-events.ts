@@ -7,7 +7,7 @@ import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "@/lib/db/schema";
 import { vendors, eventVendors, events, venues } from "@/lib/db/schema";
 import { eq, and, asc } from "drizzle-orm";
-import { isPublicVendorStatus } from "@/lib/vendor-status";
+import { isPubliclyVisibleVendorLink } from "@/lib/vendor-status";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { unsafeSlug } from "@/lib/utils";
 
@@ -91,7 +91,13 @@ export async function getVendorEventsData(db: Db, slug: string): Promise<VendorE
     .from(eventVendors)
     .leftJoin(events, eq(eventVendors.eventId, events.id))
     .leftJoin(venues, eq(events.venueId, venues.id))
-    .where(and(eq(eventVendors.vendorId, vendor.id), isPublicVendorStatus(), isPublicEventStatus()))
+    .where(
+      and(
+        eq(eventVendors.vendorId, vendor.id),
+        isPubliclyVisibleVendorLink(),
+        isPublicEventStatus()
+      )
+    )
     .orderBy(asc(events.startDate));
 
   const formattedEvents: VendorEventItem[] = eventResults

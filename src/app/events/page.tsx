@@ -35,7 +35,7 @@ import {
   asc,
   desc,
 } from "drizzle-orm";
-import { isPublicVendorStatus } from "@/lib/vendor-status";
+import { isPubliclyVisibleVendorLink } from "@/lib/vendor-status";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { attachEventDayDates } from "@/lib/event-days-attach";
 import { eventJoinProjection } from "@/lib/db/event-join-projection";
@@ -381,7 +381,7 @@ async function getEvents(
           })
           .from(eventVendors)
           .innerJoin(vendors, eq(eventVendors.vendorId, vendors.id))
-          .where(and(inArray(eventVendors.eventId, batch), isPublicVendorStatus()));
+          .where(and(inArray(eventVendors.eventId, batch), isPubliclyVisibleVendorLink()));
         allEventVendors.push(...batchResults);
       }
     }

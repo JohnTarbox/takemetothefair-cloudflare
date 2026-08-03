@@ -9,7 +9,7 @@ import {
   groupVendorsForListing,
   type GroupableVendor,
 } from "@/lib/vendor-listing-grouping";
-import { isPublicVendorStatus } from "@/lib/vendor-status";
+import { isPubliclyVisibleVendorLink } from "@/lib/vendor-status";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { upcomingEndPredicate } from "@/lib/event-dates";
 import { auth } from "@/lib/auth";
@@ -304,7 +304,7 @@ async function getVendors(searchParams: SearchParams, favoriteUserId?: string) {
         .where(
           and(
             inArray(eventVendors.vendorId, batch),
-            isPublicVendorStatus(),
+            isPubliclyVisibleVendorLink(),
             isPublicEventStatus(),
             // A2 (Dev backlog 2026-06-05): 24h end-of-day grace.
             upcomingEndPredicate(new Date())

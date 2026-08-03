@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, eventVendors, vendors } from "@/lib/db/schema";
 import { eq, and, inArray } from "drizzle-orm";
-import { isPublicVendorStatus } from "@/lib/vendor-status";
+import { isPubliclyVisibleVendorLink } from "@/lib/vendor-status";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { logError } from "@/lib/logger";
 import { unsafeSlug } from "@/lib/utils";
@@ -50,7 +50,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ slug
       })
       .from(eventVendors)
       .leftJoin(vendors, eq(eventVendors.vendorId, vendors.id))
-      .where(and(eq(eventVendors.eventId, event.id), isPublicVendorStatus()));
+      .where(and(eq(eventVendors.eventId, event.id), isPubliclyVisibleVendorLink()));
 
     const liveVendors = vendorResults.filter((v): v is typeof v & { id: string } => v.id !== null);
 

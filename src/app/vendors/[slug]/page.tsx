@@ -36,7 +36,7 @@ import { eq, ne, and, or, asc, desc, sql, isNull, inArray, gte } from "drizzle-o
 import { VendorGallery, type GalleryImage } from "@/components/vendors/VendorGallery";
 import { VendorContactForm } from "@/components/vendors/VendorContactForm";
 import { VendorMonogramLogo } from "@/components/vendors/VendorMonogramLogo";
-import { isPublicVendorStatus } from "@/lib/vendor-status";
+import { isPubliclyVisibleVendorLink } from "@/lib/vendor-status";
 import { parseVendorSocialLinks } from "@/lib/vendor-social";
 import { isVendorIndexable } from "@/lib/vendor-quality";
 import { parseJsonArray } from "@/types";
@@ -204,7 +204,7 @@ async function getVendor(slug: string) {
       .leftJoin(events, eq(eventVendors.eventId, events.id))
       .leftJoin(venues, eq(events.venueId, venues.id))
       .leftJoin(eventDays, eq(eventVendors.eventDayId, eventDays.id))
-      .where(and(eq(eventVendors.vendorId, vendor.vendors.id), isPublicVendorStatus()))
+      .where(and(eq(eventVendors.vendorId, vendor.vendors.id), isPubliclyVisibleVendorLink()))
       .orderBy(asc(events.startDate));
 
     // Aggregate by event.id: collapse multiple (event, vendor) links
@@ -485,7 +485,7 @@ async function getVendor(slug: string) {
             .where(
               and(
                 inArray(eventVendors.vendorId, batch),
-                isPublicVendorStatus(),
+                isPubliclyVisibleVendorLink(),
                 gte(events.endDate, new Date())
               )
             )

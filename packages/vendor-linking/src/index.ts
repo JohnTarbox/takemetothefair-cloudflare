@@ -83,6 +83,9 @@ export interface CreateOrLinkVendorInput {
   participationType?: ParticipationType;
   /** K18 — per-occurrence scoping. null/omitted → series-wide. */
   eventDayId?: string | null;
+  /** OPE-316 — false when participation is recorded but must not render
+   *  publicly (the LeafFilter case). Defaults true. */
+  publicVisible?: boolean;
 }
 
 /** DB-integrity side-effects each runtime supplies its own implementation of. */
@@ -418,6 +421,8 @@ export async function createOrLinkVendor(
       participationType,
       boothInfo: input.boothInfo ?? null,
       eventDayId,
+      // OPE-316 — defaults true; false records participation without showing it.
+      publicVisible: input.publicVisible ?? true,
     });
     wasLinked = true;
   } else {
