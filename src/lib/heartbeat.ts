@@ -27,7 +27,10 @@ import {
   imageCoverageState,
   newsletterIssues,
   photoCoverageDaily,
+  ga4DailyMetrics,
+  gscSearchMetrics,
   promoterEnrichmentCandidates,
+  recommendationScanState,
   vendorClaimEvidence,
   vendorEnrichmentCandidates,
 } from "@/lib/db/schema";
@@ -246,6 +249,49 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
         adminActions.createdAt,
         eq(adminActions.action, "vendor.photo_autowritten")
       ),
+  },
+  // ── OPE-309 (assurance audit A6 / A7) ──────────────────────────────
+  //
+  // Three genuinely PERIODIC feeds. All three are written by the 06:00Z daily
+  // cron and were last written 2026-08-03 06:00Z when these were added, so a
+  // 48h window tolerates exactly one missed run before going red — long enough
+  // that a single hiccup is not an alarm, short enough that a dead feed is
+  // caught the next morning.
+  //
+  // A6 called these the highest-blast-radius silent gap, and rightly: both
+  // metrics tables back KPI tiles, so if ingestion stops the tiles keep showing
+  // the last-known number indefinitely and nothing notices.
+  //
+  // NOTE — the audit also asked for a "fault-emitter" probe. Deliberately NOT
+  // added. fault_signatures.last_seen only advances WHEN A FAULT OCCURS, so a
+  // quiet period is indistinguishable from a dead emitter (it stood at 51.7h
+  // when this shipped, with nothing wrong). Probing it would rebuild the exact
+  // false-STALE pattern OPE-295 removed: a freshness SLA on a signal whose
+  // cadence is driven by events rather than a schedule. Probe periodic feeds;
+  // for event-driven ones, absence is not evidence.
+  {
+    name: "gsc-search-metrics-ingest",
+    ownerOpe: "OPE-309",
+    label: "GSC search-metrics ingest",
+    priority: "P0",
+    expectedWindowHours: 48,
+    lastEvidenceAt: (db) => maxTs(db, gscSearchMetrics, gscSearchMetrics.updatedAt),
+  },
+  {
+    name: "ga4-daily-metrics-ingest",
+    ownerOpe: "OPE-309",
+    label: "GA4 daily-metrics ingest",
+    priority: "P0",
+    expectedWindowHours: 48,
+    lastEvidenceAt: (db) => maxTs(db, ga4DailyMetrics, ga4DailyMetrics.updatedAt),
+  },
+  {
+    name: "recommendation-scan",
+    ownerOpe: "OPE-309",
+    label: "Recommendation scan (cron output)",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: (db) => maxTs(db, recommendationScanState, recommendationScanState.lastRunAt),
   },
 ];
 
