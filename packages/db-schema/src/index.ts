@@ -3582,7 +3582,7 @@ export const eventDiscrepancies = sqliteTable("event_discrepancies", {
   /** 0..1 detector confidence. NULL when capture path doesn't compute it. */
   confidence: real("confidence"),
   /** open | resolved_authoritative | resolved_divergent | self_resolved |
-   *  dismissed | superseded_duplicate
+   *  dismissed | superseded_duplicate | superseded_by_lifecycle
    *
    *  OPE-305 added `superseded_duplicate`: a row that duplicates an already-open
    *  (event_id, field_class, detected_by) condition. Deliberately NOT reused
@@ -3599,6 +3599,9 @@ export const eventDiscrepancies = sqliteTable("event_discrepancies", {
       "self_resolved",
       "dismissed",
       "superseded_duplicate",
+      // OPE-306 — an `end_date_in_past` row: a lifecycle state (the event
+      // finished), not a data error. The OCCURRED sweep owns that transition.
+      "superseded_by_lifecycle",
     ],
   })
     .notNull()
