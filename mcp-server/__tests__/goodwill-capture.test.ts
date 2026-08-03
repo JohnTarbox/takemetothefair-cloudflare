@@ -108,7 +108,7 @@ describe("captureDiscrepancy - write + idempotency", () => {
     expect(rows[0].outreachPriorityScore).toBeGreaterThan(0);
   });
 
-  it("dedups same (event, field, detected_by) within 24h", async () => {
+  it("dedups same (event, field, detected_by) while a row is OPEN", async () => {
     const id1 = await captureDiscrepancy(db, {
       eventId: "evt-1",
       fieldClass: "date",
@@ -123,6 +123,96 @@ describe("captureDiscrepancy - write + idempotency", () => {
     expect(id2).toBeNull();
     const rows = await db.select().from(eventDiscrepancies);
     expect(rows.length).toBe(1);
+  });
+
+  /**
+   * OPE-305 — the regression that filled the queue. Dedup used to expire after
+   * 24h, so a condition that stays true (an event past its end date, a page
+   * that stays stale) was re-filed by the daily cron every day forever: 6,574
+   * duplicates in a 7,193-row prod queue, one condition present 40 times.
+   *
+   * `detected_at` in the past is exactly what the old window keyed on, so a row
+   * aged past 24h is the precise shape that used to slip through.
+   */
+  it("does NOT re-file an OPEN row no matter how old it is", async () => {
+    const id1 = await captureDiscrepancy(db, {
+      eventId: "evt-1",
+      fieldClass: "date",
+      detectedBy: "self_consistency",
+    });
+    expect(id1).not.toBeNull();
+
+    // Age the row well past the old 24h dedupe window.
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    await db
+      .update(eventDiscrepancies)
+      .set({ detectedAt: thirtyDaysAgo })
+      .where(eq(eventDiscrepancies.id, id1!));
+
+    // Simulate a month of daily cron runs.
+    for (let i = 0; i < 30; i++) {
+      const dup = await captureDiscrepancy(db, {
+        eventId: "evt-1",
+        fieldClass: "date",
+        detectedBy: "self_consistency",
+      });
+      expect(dup).toBeNull();
+    }
+
+    const rows = await db.select().from(eventDiscrepancies);
+    expect(rows.length).toBe(1);
+    // First sighting preserved so age-based priority still means something.
+    // Compared at second granularity: the column is `mode: "timestamp"`, i.e.
+    // epoch SECONDS, so sub-second precision is truncated on round-trip.
+    expect(Math.floor(rows[0].detectedAt!.getTime() / 1000)).toBe(
+      Math.floor(thirtyDaysAgo.getTime() / 1000)
+    );
+    // ...while recency is carried on last_seen_at instead of a second row.
+    expect(rows[0].lastSeenAt).not.toBeNull();
+    expect(rows[0].lastSeenAt!.getTime()).toBeGreaterThan(thirtyDaysAgo.getTime());
+  });
+
+  it("DOES file again once the prior row is no longer open", async () => {
+    // A resolved condition recurring later is genuinely new information —
+    // the guard is keyed on OPEN, not on the tuple ever having existed.
+    const id1 = await captureDiscrepancy(db, {
+      eventId: "evt-1",
+      fieldClass: "date",
+      detectedBy: "self_consistency",
+    });
+    await db
+      .update(eventDiscrepancies)
+      .set({ resolutionStatus: "resolved_authoritative" })
+      .where(eq(eventDiscrepancies.id, id1!));
+
+    const id2 = await captureDiscrepancy(db, {
+      eventId: "evt-1",
+      fieldClass: "date",
+      detectedBy: "self_consistency",
+    });
+    expect(id2).not.toBeNull();
+    expect(id2).not.toBe(id1);
+    expect((await db.select().from(eventDiscrepancies)).length).toBe(2);
+  });
+
+  it("a superseded_duplicate row does not block a fresh capture", async () => {
+    const id1 = await captureDiscrepancy(db, {
+      eventId: "evt-1",
+      fieldClass: "date",
+      detectedBy: "self_consistency",
+    });
+    await db
+      .update(eventDiscrepancies)
+      .set({ resolutionStatus: "superseded_duplicate" })
+      .where(eq(eventDiscrepancies.id, id1!));
+
+    expect(
+      await captureDiscrepancy(db, {
+        eventId: "evt-1",
+        fieldClass: "date",
+        detectedBy: "self_consistency",
+      })
+    ).not.toBeNull();
   });
 
   it("does NOT dedup across different field_class", async () => {

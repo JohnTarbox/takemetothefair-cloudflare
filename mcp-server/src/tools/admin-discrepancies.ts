@@ -41,6 +41,10 @@ const RESOLUTION_STATUS_VALUES = [
   "resolved_divergent",
   "self_resolved",
   "dismissed",
+  // OPE-305 — a duplicate of an already-open condition, closed by the
+  // dedup-on-open cleanup. Filterable so an operator can audit what the
+  // cleanup swept without it polluting the dismissed/resolved metrics.
+  "superseded_duplicate",
 ] as const;
 
 const RESOLUTION_SOURCE_VALUES = ["higher_tier", "post_event", "operator"] as const;
