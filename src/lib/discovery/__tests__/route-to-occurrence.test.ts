@@ -28,7 +28,8 @@ const SCHEMA_SQL = `
     name TEXT,
     venue_id TEXT,
     start_date INTEGER,
-    rolled_from_event_id TEXT
+    rolled_from_event_id TEXT,
+    updated_at INTEGER
   );
   CREATE TABLE event_series (
     id TEXT PRIMARY KEY,

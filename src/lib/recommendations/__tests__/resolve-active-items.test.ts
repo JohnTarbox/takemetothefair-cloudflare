@@ -24,7 +24,8 @@ const SCHEMA_SQL = `
     slug TEXT NOT NULL UNIQUE,
     name TEXT,
     status TEXT,
-    promoter_id TEXT
+    promoter_id TEXT,
+    updated_at INTEGER
   );
   CREATE TABLE blog_posts (
     id TEXT PRIMARY KEY,
@@ -32,13 +33,15 @@ const SCHEMA_SQL = `
     title TEXT,
     body TEXT,
     author_id TEXT,
-    status TEXT
+    status TEXT,
+    updated_at INTEGER
   );
   CREATE TABLE vendors (
     id TEXT PRIMARY KEY,
     slug TEXT NOT NULL UNIQUE,
     business_name TEXT,
-    user_id TEXT
+    user_id TEXT,
+    updated_at INTEGER
   );
   CREATE TABLE event_slug_history (
     id TEXT PRIMARY KEY,

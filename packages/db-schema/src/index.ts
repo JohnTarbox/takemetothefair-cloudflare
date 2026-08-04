@@ -117,7 +117,26 @@ export const venues = sqliteTable(
     locale: text("locale").default("en-US").notNull(), // BCP 47 locale tag
     country: text("country").default("US").notNull(), // ISO 3166-1 alpha-2
     createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
-    updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    /**
+     * OPE-332 — `$onUpdateFn` is what makes this column trustworthy as an HTTP
+     * validator. Before it, updated_at was set only where a writer remembered:
+     * an audit found 36/58 event updates, 26/31 vendor, 16/17 promoter and 10/11
+     * venue updates never touched it — including imageUrl, venueId and geocode
+     * writes, all of which change the rendered page. A 304 built on that would
+     * have told Google "unchanged" after a hero image swap.
+     *
+     * Fixing the ~100 call sites would have fixed today and started rotting
+     * immediately. This fixes the type: every Drizzle update bumps it, and a
+     * future writer cannot forget. The one deliberate exception is the view-count
+     * increment, which goes through raw SQL precisely so page views don't
+     * invalidate the validator — see event-detail-data.ts.
+     *
+     * Fails safe in the right direction: an unnecessary bump costs one extra 200,
+     * a missed bump would serve stale content as fresh.
+     */
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .$defaultFn(() => new Date())
+      .$onUpdateFn(() => new Date()),
     // IMG1 §1b Phase 1 (2026-06-08) — per-image focal-point override.
     // Range 0.0–1.0 (0,0 = top-left, 1,1 = bottom-right). Default 0.5/0.5
     // = center, matching the pre-IMG1 dumb-crop behavior. Consumed by
@@ -160,7 +179,26 @@ export const promoters = sqliteTable("promoters", {
   contactPhone: text("contact_phone"),
   verified: integer("verified", { mode: "boolean" }).default(false),
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
-  updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  /**
+   * OPE-332 — `$onUpdateFn` is what makes this column trustworthy as an HTTP
+   * validator. Before it, updated_at was set only where a writer remembered:
+   * an audit found 36/58 event updates, 26/31 vendor, 16/17 promoter and 10/11
+   * venue updates never touched it — including imageUrl, venueId and geocode
+   * writes, all of which change the rendered page. A 304 built on that would
+   * have told Google "unchanged" after a hero image swap.
+   *
+   * Fixing the ~100 call sites would have fixed today and started rotting
+   * immediately. This fixes the type: every Drizzle update bumps it, and a
+   * future writer cannot forget. The one deliberate exception is the view-count
+   * increment, which goes through raw SQL precisely so page views don't
+   * invalidate the validator — see event-detail-data.ts.
+   *
+   * Fails safe in the right direction: an unnecessary bump costs one extra 200,
+   * a missed bump would serve stale content as fresh.
+   */
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .$defaultFn(() => new Date())
+    .$onUpdateFn(() => new Date()),
   // IMG1 §1b Phase 1 — focal point for crops. Applies to both logo_url and the
   // OPE-34 hero_image_url (operators may want focal-point on wide hero uploads).
   imageFocalX: real("image_focal_x").notNull().default(0.5),
@@ -451,7 +489,26 @@ export const events = sqliteTable(
       .notNull()
       .default(false),
     createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
-    updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    /**
+     * OPE-332 — `$onUpdateFn` is what makes this column trustworthy as an HTTP
+     * validator. Before it, updated_at was set only where a writer remembered:
+     * an audit found 36/58 event updates, 26/31 vendor, 16/17 promoter and 10/11
+     * venue updates never touched it — including imageUrl, venueId and geocode
+     * writes, all of which change the rendered page. A 304 built on that would
+     * have told Google "unchanged" after a hero image swap.
+     *
+     * Fixing the ~100 call sites would have fixed today and started rotting
+     * immediately. This fixes the type: every Drizzle update bumps it, and a
+     * future writer cannot forget. The one deliberate exception is the view-count
+     * increment, which goes through raw SQL precisely so page views don't
+     * invalidate the validator — see event-detail-data.ts.
+     *
+     * Fails safe in the right direction: an unnecessary bump costs one extra 200,
+     * a missed bump would serve stale content as fresh.
+     */
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .$defaultFn(() => new Date())
+      .$onUpdateFn(() => new Date()),
     // IMG1 §1b Phase 1 (2026-06-08) — per-image focal-point override.
     // Applies to image_url (the hero/card photo). See venues table for the
     // full comment. Cards + heroes read this and pass to cdnImage as
@@ -737,7 +794,26 @@ export const vendors = sqliteTable("vendors", {
     enum: ["inherit", "self", "brand_parent", "operator_parent", "both"],
   }),
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
-  updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  /**
+   * OPE-332 — `$onUpdateFn` is what makes this column trustworthy as an HTTP
+   * validator. Before it, updated_at was set only where a writer remembered:
+   * an audit found 36/58 event updates, 26/31 vendor, 16/17 promoter and 10/11
+   * venue updates never touched it — including imageUrl, venueId and geocode
+   * writes, all of which change the rendered page. A 304 built on that would
+   * have told Google "unchanged" after a hero image swap.
+   *
+   * Fixing the ~100 call sites would have fixed today and started rotting
+   * immediately. This fixes the type: every Drizzle update bumps it, and a
+   * future writer cannot forget. The one deliberate exception is the view-count
+   * increment, which goes through raw SQL precisely so page views don't
+   * invalidate the validator — see event-detail-data.ts.
+   *
+   * Fails safe in the right direction: an unnecessary bump costs one extra 200,
+   * a missed bump would serve stale content as fresh.
+   */
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .$defaultFn(() => new Date())
+    .$onUpdateFn(() => new Date()),
   // IMG1 §1b Phase 1 — applies to logo_url. See events table comment.
   imageFocalX: real("image_focal_x").notNull().default(0.5),
   imageFocalY: real("image_focal_y").notNull().default(0.5),
@@ -1041,7 +1117,26 @@ export const performers = sqliteTable("performers", {
   viewCount: integer("view_count").notNull().default(0),
   deletedAt: integer("deleted_at", { mode: "timestamp" }),
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
-  updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  /**
+   * OPE-332 — `$onUpdateFn` is what makes this column trustworthy as an HTTP
+   * validator. Before it, updated_at was set only where a writer remembered:
+   * an audit found 36/58 event updates, 26/31 vendor, 16/17 promoter and 10/11
+   * venue updates never touched it — including imageUrl, venueId and geocode
+   * writes, all of which change the rendered page. A 304 built on that would
+   * have told Google "unchanged" after a hero image swap.
+   *
+   * Fixing the ~100 call sites would have fixed today and started rotting
+   * immediately. This fixes the type: every Drizzle update bumps it, and a
+   * future writer cannot forget. The one deliberate exception is the view-count
+   * increment, which goes through raw SQL precisely so page views don't
+   * invalidate the validator — see event-detail-data.ts.
+   *
+   * Fails safe in the right direction: an unnecessary bump costs one extra 200,
+   * a missed bump would serve stale content as fresh.
+   */
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .$defaultFn(() => new Date())
+    .$onUpdateFn(() => new Date()),
 });
 
 // One row = one performance/set (an APPEARANCE), mirroring event_vendors. A
@@ -1680,7 +1775,26 @@ export const blogPosts = sqliteTable(
     viewCount: integer("view_count").notNull().default(0),
     featured: integer("featured", { mode: "boolean" }).notNull().default(false),
     createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
-    updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    /**
+     * OPE-332 — `$onUpdateFn` is what makes this column trustworthy as an HTTP
+     * validator. Before it, updated_at was set only where a writer remembered:
+     * an audit found 36/58 event updates, 26/31 vendor, 16/17 promoter and 10/11
+     * venue updates never touched it — including imageUrl, venueId and geocode
+     * writes, all of which change the rendered page. A 304 built on that would
+     * have told Google "unchanged" after a hero image swap.
+     *
+     * Fixing the ~100 call sites would have fixed today and started rotting
+     * immediately. This fixes the type: every Drizzle update bumps it, and a
+     * future writer cannot forget. The one deliberate exception is the view-count
+     * increment, which goes through raw SQL precisely so page views don't
+     * invalidate the validator — see event-detail-data.ts.
+     *
+     * Fails safe in the right direction: an unnecessary bump costs one extra 200,
+     * a missed bump would serve stale content as fresh.
+     */
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .$defaultFn(() => new Date())
+      .$onUpdateFn(() => new Date()),
   },
   (table) => [
     index("idx_blogposts_status_publishdate").on(table.status, table.publishDate),

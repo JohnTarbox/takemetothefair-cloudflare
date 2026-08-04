@@ -30,10 +30,15 @@ const SCHEMA_SQL = `
     slug TEXT NOT NULL,
     name TEXT NOT NULL DEFAULT '',
     promoter_id TEXT,
-    status TEXT NOT NULL DEFAULT 'APPROVED'
+    status TEXT NOT NULL DEFAULT 'APPROVED',
+    updated_at INTEGER
   );
-  CREATE TABLE vendors (id TEXT PRIMARY KEY, slug TEXT NOT NULL);
-  CREATE TABLE venues (id TEXT PRIMARY KEY, slug TEXT NOT NULL);
+  CREATE TABLE vendors (id TEXT PRIMARY KEY, slug TEXT NOT NULL,
+    updated_at INTEGER
+  );
+  CREATE TABLE venues (id TEXT PRIMARY KEY, slug TEXT NOT NULL,
+    updated_at INTEGER
+  );
   CREATE TABLE blog_posts (
     id TEXT PRIMARY KEY,
     slug TEXT NOT NULL,
