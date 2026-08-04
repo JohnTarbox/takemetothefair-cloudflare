@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 import {
   SITEMAP_BASE_URL,
   serializeSitemapIndex,
-  sitemapXmlHeaders,
+  conditionalXmlResponse,
   type SitemapIndexEntry,
 } from "@/lib/sitemap-xml";
 import { getSitemapTypeLastMod, type SitemapType } from "@/lib/sitemap-lastmod";
@@ -24,7 +24,7 @@ const CHILD_SITEMAPS: ReadonlyArray<{ file: string; type: SitemapType }> = [
   { file: "sitemap-performers.xml", type: "performers" }, // OPE-115
 ];
 
-export async function GET(): Promise<Response> {
+export async function GET(request: Request): Promise<Response> {
   const lastMods = await Promise.all(CHILD_SITEMAPS.map(({ type }) => getSitemapTypeLastMod(type)));
   const entries: SitemapIndexEntry[] = CHILD_SITEMAPS.map(({ file }, i) => {
     const entry: SitemapIndexEntry = { loc: `${SITEMAP_BASE_URL}/${file}` };
@@ -32,7 +32,14 @@ export async function GET(): Promise<Response> {
     if (lastMod) entry.lastmod = lastMod;
     return entry;
   });
-  return new Response(serializeSitemapIndex(entries), {
-    headers: sitemapXmlHeaders(3600),
+  // OPE-333 — the index's own Last-Modified is the newest of its children:
+  // if any child changed, the index's <lastmod> for it changed, so the index
+  // body changed too. Nulls (a type with no rows) drop out rather than
+  // becoming epoch 0, which would pin the index permanently stale.
+  const newest = lastMods.filter((d): d is Date => d instanceof Date);
+  return await conditionalXmlResponse({
+    request,
+    body: serializeSitemapIndex(entries),
+    lastModified: newest.length ? new Date(Math.max(...newest.map((d) => d.getTime()))) : null,
   });
 }

@@ -1,10 +1,12 @@
 export const dynamic = "force-dynamic";
+import { getSitemapTypeLastMod } from "@/lib/sitemap-lastmod";
 import { eq } from "drizzle-orm";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { venues } from "@/lib/db/schema";
 import {
   SITEMAP_BASE_URL,
   safeLastMod,
+  conditionalXmlResponse,
   serializeUrlset,
   sitemapXmlHeaders,
   type SitemapUrl,
@@ -24,10 +26,14 @@ async function buildVenueUrls(): Promise<SitemapUrl[]> {
   }));
 }
 
-export async function GET(): Promise<Response> {
+export async function GET(request: Request): Promise<Response> {
   try {
-    return new Response(serializeUrlset(await buildVenueUrls()), {
-      headers: sitemapXmlHeaders(3600),
+    // OPE-333 — emit ETag + Last-Modified and honour a conditional GET, so an
+    // unchanged sitemap costs a crawler a 304 instead of a full re-download.
+    return await conditionalXmlResponse({
+      request,
+      body: serializeUrlset(await buildVenueUrls()),
+      lastModified: await getSitemapTypeLastMod("venues"),
     });
   } catch (error) {
     console.error("sitemap-venues: D1 query failed", error);

@@ -4,12 +4,14 @@ export const dynamic = "force-dynamic";
  * that have at least one CONFIRMED appearance (so the page has public content —
  * we don't sitemap thin shells with no schedule). Linked from the sitemap index.
  */
+import { getSitemapTypeLastMod } from "@/lib/sitemap-lastmod";
 import { and, eq, isNull } from "drizzle-orm";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { performers, eventPerformers } from "@/lib/db/schema";
 import {
   SITEMAP_BASE_URL,
   safeLastMod,
+  conditionalXmlResponse,
   serializeUrlset,
   sitemapXmlHeaders,
   type SitemapUrl,
@@ -34,10 +36,14 @@ async function buildPerformerUrls(): Promise<SitemapUrl[]> {
   }));
 }
 
-export async function GET(): Promise<Response> {
+export async function GET(request: Request): Promise<Response> {
   try {
-    return new Response(serializeUrlset(await buildPerformerUrls()), {
-      headers: sitemapXmlHeaders(3600),
+    // OPE-333 — emit ETag + Last-Modified and honour a conditional GET, so an
+    // unchanged sitemap costs a crawler a 304 instead of a full re-download.
+    return await conditionalXmlResponse({
+      request,
+      body: serializeUrlset(await buildPerformerUrls()),
+      lastModified: await getSitemapTypeLastMod("performers"),
     });
   } catch (error) {
     console.error("sitemap-performers: D1 query failed", error);

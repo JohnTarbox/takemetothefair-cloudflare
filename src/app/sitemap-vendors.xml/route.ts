@@ -1,8 +1,10 @@
 export const dynamic = "force-dynamic";
+import { getSitemapTypeLastMod } from "@/lib/sitemap-lastmod";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import {
   SITEMAP_BASE_URL,
   safeLastMod,
+  conditionalXmlResponse,
   serializeUrlset,
   sitemapXmlHeaders,
   type SitemapUrl,
@@ -42,10 +44,14 @@ async function buildVendorUrls(): Promise<SitemapUrl[]> {
   });
 }
 
-export async function GET(): Promise<Response> {
+export async function GET(request: Request): Promise<Response> {
   try {
-    return new Response(serializeUrlset(await buildVendorUrls()), {
-      headers: sitemapXmlHeaders(3600),
+    // OPE-333 — emit ETag + Last-Modified and honour a conditional GET, so an
+    // unchanged sitemap costs a crawler a 304 instead of a full re-download.
+    return await conditionalXmlResponse({
+      request,
+      body: serializeUrlset(await buildVendorUrls()),
+      lastModified: await getSitemapTypeLastMod("vendors"),
     });
   } catch (error) {
     console.error("sitemap-vendors: D1 query failed", error);

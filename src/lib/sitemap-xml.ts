@@ -128,3 +128,75 @@ export function sitemapXmlHeaders(maxAgeSeconds = 3600): HeadersInit {
     "Cache-Control": `public, max-age=${maxAgeSeconds}, s-maxage=${maxAgeSeconds}`,
   };
 }
+
+/**
+ * OPE-333 — conditional-request (304) support for the sitemap routes.
+ *
+ * Google's crawl-budget guidance (updated 2026-07-22) asks for 304 so an
+ * unchanged resource isn't re-downloaded on every crawl. Sitemaps are the
+ * safest place to start: fetched constantly by Googlebot/Bingbot, entirely
+ * non-personalized, and already served `public` — so there is no cache-policy
+ * redesign and no risk of leaking a personalized body from a shared cache.
+ *
+ * Probe 2026-08-04: /sitemap.xml carried `cache-control: public, max-age=3600`
+ * but neither `Last-Modified` nor `ETag`, so a conditional GET had nothing to
+ * match on and could never short-circuit.
+ *
+ * Emits BOTH validators, and honours either:
+ *   - ETag / If-None-Match      — exact, catches any body change
+ *   - Last-Modified / If-Modified-Since — cheap, and what most crawlers send
+ *
+ * `If-None-Match` wins when both are present, per RFC 9110 §13.1.3: an ETag
+ * mismatch means the body genuinely differs, and second-resolution timestamps
+ * cannot see a change that happened within the same second.
+ */
+export async function conditionalXmlResponse(opts: {
+  request: Request;
+  body: string;
+  /** Newest underlying row. Null when unknown — then only the ETag validates. */
+  lastModified: Date | null;
+  maxAgeSeconds?: number;
+}): Promise<Response> {
+  const { request, body, lastModified, maxAgeSeconds = 3600 } = opts;
+
+  // Weak validator: the body is generated, so byte-equality is the right test
+  // and a hash of it is exact. W/ because two responses can be semantically
+  // equal without being byte-identical if serialization ever changes.
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body));
+  const etag = `W/"${Array.from(new Uint8Array(digest.slice(0, 16)))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("")}"`;
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/xml; charset=utf-8",
+    "Cache-Control": `public, max-age=${maxAgeSeconds}, s-maxage=${maxAgeSeconds}`,
+    ETag: etag,
+  };
+  if (lastModified) headers["Last-Modified"] = lastModified.toUTCString();
+
+  const ifNoneMatch = request.headers.get("If-None-Match");
+  if (ifNoneMatch) {
+    // A client may send a list; any member matching is a hit.
+    const matches = ifNoneMatch
+      .split(",")
+      .map((t) => t.trim())
+      .some((t) => t === etag || t === "*");
+    return matches ? new Response(null, { status: 304, headers }) : new Response(body, { headers });
+  }
+
+  const ifModifiedSince = request.headers.get("If-Modified-Since");
+  if (ifModifiedSince && lastModified) {
+    const since = Date.parse(ifModifiedSince);
+    // HTTP dates have second resolution, so compare at that granularity —
+    // otherwise a sub-second difference reads as "modified" on every request
+    // and the 304 path never fires.
+    if (
+      !Number.isNaN(since) &&
+      Math.floor(lastModified.getTime() / 1000) <= Math.floor(since / 1000)
+    ) {
+      return new Response(null, { status: 304, headers });
+    }
+  }
+
+  return new Response(body, { headers });
+}

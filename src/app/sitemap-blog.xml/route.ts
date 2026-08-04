@@ -1,10 +1,12 @@
 export const dynamic = "force-dynamic";
+import { getSitemapTypeLastMod } from "@/lib/sitemap-lastmod";
 import { eq } from "drizzle-orm";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { blogPosts } from "@/lib/db/schema";
 import {
   SITEMAP_BASE_URL,
   safeLastMod,
+  conditionalXmlResponse,
   serializeUrlset,
   sitemapXmlHeaders,
   type SitemapUrl,
@@ -69,10 +71,14 @@ async function buildBlogUrls(): Promise<SitemapUrl[]> {
   return [...postPages, ...tagPages];
 }
 
-export async function GET(): Promise<Response> {
+export async function GET(request: Request): Promise<Response> {
   try {
-    return new Response(serializeUrlset(await buildBlogUrls()), {
-      headers: sitemapXmlHeaders(3600),
+    // OPE-333 — emit ETag + Last-Modified and honour a conditional GET, so an
+    // unchanged sitemap costs a crawler a 304 instead of a full re-download.
+    return await conditionalXmlResponse({
+      request,
+      body: serializeUrlset(await buildBlogUrls()),
+      lastModified: await getSitemapTypeLastMod("blog"),
     });
   } catch (error) {
     console.error("sitemap-blog: D1 query failed", error);
