@@ -44,6 +44,7 @@ import {
   type EmailIntent,
 } from "./email-intents.js";
 import { mainAppFetch, type MainAppEnv } from "./main-app-fetch.js";
+import { routeToProject } from "./inbound/project-router.js";
 import { handleNewsletterSubscribeEmail } from "./email-handlers/newsletter-subscribe.js";
 import {
   classifyIntent,
@@ -260,7 +261,36 @@ export async function handleInboundEmail(
       return;
     }
 
-    // 3. Resolve address-based intent (always computed — used as
+    // 3. OPE-327 (D-1) — route to a PROJECT first, then to that project's
+    //    intent classifier.
+    //
+    //    Today MMATF is the only tenant with live inbound, so its mail routes
+    //    exactly as before and `resolveIntent` is unchanged — the regression
+    //    clause. What changes is that the assumption "every email is MMATF's"
+    //    is now written down and checked instead of implicit, so a second
+    //    project's mail can never be silently handled by MMATF's classifier.
+    //
+    //    UNROUTED is deliberately not a failure: it falls through to the same
+    //    `unknown` intent that already forwards to admin, so nothing is
+    //    dropped. Turning UNROUTED into a hold-and-ask reply is the next
+    //    increment; making the verdict VISIBLE is what this one buys.
+    // NB: named projectRouting, not routing — `routing` is already the
+    // intent-routing decision computed further down, and shadowing it here
+    // silently broke that call site until tsc caught it.
+    const projectRouting = routeToProject({
+      toAddress: toAddr,
+      fromAddress: fromAddr,
+      subject,
+    });
+    await logError(env.DB, {
+      level: "info",
+      source: "email-handler:ope-327-router",
+      message: `project routing: ${projectRouting.project} — ${projectRouting.reason}`,
+      sessionId,
+      context: { to: toAddr, project: projectRouting.project, basis: projectRouting.basis },
+    });
+
+    //    Resolve address-based intent (always computed — used as
     //    fallback when classifier confidence is below threshold).
     const addressIntent = resolveIntent(toAddr);
 
