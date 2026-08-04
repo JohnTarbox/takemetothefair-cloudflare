@@ -2468,6 +2468,17 @@ export const weeklyInventoryState = sqliteTable("weekly_inventory_state", {
   rosterResearchCount: integer("roster_research_count"),
   promoterEnrichmentCount: integer("promoter_enrichment_count"),
   goodwillOpenCount: integer("goodwill_open_count"),
+  /**
+   * OPE-308 — stale-red steady state. Two Workers write this row, so the column
+   * sets are deliberately DISJOINT: the main-app scan owns the two `current`
+   * columns, the MCP weekly inventory owns every snapshot column (including
+   * `staleRedCount`). Neither may write the other's, or one silently clobbers
+   * the other on its next upsert.
+   */
+  staleRedCurrent: integer("stale_red_current"),
+  staleRedCurrentAt: integer("stale_red_current_at", { mode: "timestamp" }),
+  /** Snapshot of `staleRedCurrent` at the last Monday send, for the Δ column. */
+  staleRedCount: integer("stale_red_count"),
   updatedAt: integer("updated_at", { mode: "timestamp" }),
 });
 

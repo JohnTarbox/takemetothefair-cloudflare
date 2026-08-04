@@ -6,6 +6,8 @@ import {
   selectStaleFaultReds,
   selectStaleReds,
   type FaultRedInput,
+  staleRedFingerprint,
+  type StaleRed,
 } from "@/lib/cpi/stale-reds";
 
 const NOW = new Date("2026-07-03T12:00:00.000Z");
@@ -242,5 +244,50 @@ describe("formatStaleRedDigest", () => {
     // The signature of the bug, in both parts.
     expect(digest.text).not.toContain("comhttps");
     expect(digest.html).not.toContain("comhttps");
+  });
+});
+
+describe("staleRedFingerprint (OPE-308)", () => {
+  const red = (refKey: string, hoursInRed: number): StaleRed =>
+    ({ refKey, hoursInRed }) as StaleRed;
+
+  it("is stable when the same reds persist, so a persistent red stops re-mailing", () => {
+    expect(staleRedFingerprint([red("a", 1), red("b", 2)])).toBe(
+      staleRedFingerprint([red("a", 1), red("b", 2)])
+    );
+  });
+
+  it("ignores hoursInRed — the clock advancing is NOT news", () => {
+    // The whole point: without this, every scan looks like a change and the
+    // daily mail comes back through the back door.
+    expect(staleRedFingerprint([red("a", 5)])).toBe(staleRedFingerprint([red("a", 300)]));
+  });
+
+  it("ignores ordering, so the digest's own sort cannot fake a change", () => {
+    expect(staleRedFingerprint([red("b", 1), red("a", 1)])).toBe(
+      staleRedFingerprint([red("a", 1), red("b", 1)])
+    );
+  });
+
+  it("changes when a NEW red appears — a new problem still pages", () => {
+    expect(staleRedFingerprint([red("a", 1), red("b", 1)])).not.toBe(
+      staleRedFingerprint([red("a", 1)])
+    );
+  });
+
+  it("changes when a red clears — recovery is news too", () => {
+    expect(staleRedFingerprint([red("a", 1)])).not.toBe(
+      staleRedFingerprint([red("a", 1), red("b", 1)])
+    );
+  });
+
+  it("does not collide across a swapped set of the same size", () => {
+    expect(staleRedFingerprint([red("a", 1), red("b", 1)])).not.toBe(
+      staleRedFingerprint([red("a", 1), red("c", 1)])
+    );
+  });
+
+  it("is empty for no reds, which is what lets the KV key be cleared", () => {
+    expect(staleRedFingerprint([])).toBe("");
   });
 });

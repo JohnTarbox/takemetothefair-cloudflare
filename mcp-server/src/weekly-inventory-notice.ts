@@ -38,6 +38,14 @@ export interface InventoryCounts {
   rosterResearch: number;
   promoterEnrichment: number;
   goodwillOpen: number;
+  /**
+   * OPE-308 — stale CPI reds still standing. NOT queried here: the main-app
+   * scan computes it (it owns the action-queue half, which this Worker cannot
+   * see) and parks it on the state row. Counting only the half visible from
+   * MCP would produce a number labelled "reds" that silently excludes some —
+   * worse than no number at all.
+   */
+  staleRed: number;
 }
 
 /**
@@ -70,6 +78,7 @@ export async function readInventoryCounts(db: Db): Promise<InventoryCounts> {
     rosterResearch: roster[0]?.n ?? 0,
     promoterEnrichment: promoter[0]?.n ?? 0,
     goodwillOpen: goodwill[0]?.n ?? 0,
+    staleRed: 0, // filled from the state row by the caller — see the note above
   };
 }
 
@@ -100,9 +109,14 @@ export async function runWeeklyInventoryNotice(env: Env): Promise<void> {
   const today = new Date();
   const todayIso = today.toISOString().slice(0, 10);
 
-  let prior: { lastSentDate: string | null; counts: InventoryCounts | null } = {
+  let prior: {
+    lastSentDate: string | null;
+    counts: InventoryCounts | null;
+    staleRedCurrent: number;
+  } = {
     lastSentDate: null,
     counts: null,
+    staleRedCurrent: 0,
   };
   try {
     const row = await db.query.weeklyInventoryState.findFirst({
@@ -111,10 +125,12 @@ export async function runWeeklyInventoryNotice(env: Env): Promise<void> {
     if (row) {
       prior = {
         lastSentDate: row.lastSentDate,
+        staleRedCurrent: row.staleRedCurrent ?? 0,
         counts: {
           rosterResearch: row.rosterResearchCount ?? 0,
           promoterEnrichment: row.promoterEnrichmentCount ?? 0,
           goodwillOpen: row.goodwillOpenCount ?? 0,
+          staleRed: row.staleRedCount ?? 0,
         },
       };
     }
@@ -137,6 +153,7 @@ export async function runWeeklyInventoryNotice(env: Env): Promise<void> {
   let counts: InventoryCounts;
   try {
     counts = await readInventoryCounts(db);
+    counts.staleRed = prior.staleRedCurrent;
   } catch (error) {
     await logError(env.DB, {
       source: SOURCE,
@@ -165,10 +182,17 @@ export async function runWeeklyInventoryNotice(env: Env): Promise<void> {
       prior: prior.counts?.goodwillOpen ?? null,
       href: "https://meetmeatthefair.com/admin/data-health",
     },
+    {
+      label: "CPI reds still standing",
+      current: counts.staleRed,
+      prior: prior.counts?.staleRed ?? null,
+      href: "https://meetmeatthefair.com/admin/analytics",
+    },
   ];
 
-  const total = counts.rosterResearch + counts.promoterEnrichment + counts.goodwillOpen;
-  const subject = `📋 MMATF Monday inventory — ${total} open across 3 queues`;
+  const total =
+    counts.rosterResearch + counts.promoterEnrichment + counts.goodwillOpen + counts.staleRed;
+  const subject = `📋 MMATF Monday inventory — ${total} open across ${rows.length} queues`;
   const textBody =
     `Backlog as of ${todayIso} (Δ vs last Monday):\n\n` +
     rows.map((r) => ` • ${r.label}: ${r.current} (${formatDelta(r.current, r.prior)})`).join("\n") +
@@ -227,6 +251,9 @@ export async function runWeeklyInventoryNotice(env: Env): Promise<void> {
         rosterResearchCount: counts.rosterResearch,
         promoterEnrichmentCount: counts.promoterEnrichment,
         goodwillOpenCount: counts.goodwillOpen,
+        // Snapshot only. `staleRedCurrent` belongs to the main-app scan and is
+        // deliberately absent from both branches of this upsert (OPE-308).
+        staleRedCount: counts.staleRed,
         updatedAt: new Date(),
       })
       .onConflictDoUpdate({
@@ -236,6 +263,7 @@ export async function runWeeklyInventoryNotice(env: Env): Promise<void> {
           rosterResearchCount: counts.rosterResearch,
           promoterEnrichmentCount: counts.promoterEnrichment,
           goodwillOpenCount: counts.goodwillOpen,
+          staleRedCount: counts.staleRed,
           updatedAt: new Date(),
         },
       });

@@ -2,12 +2,17 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { SITE_URL } from "@takemetothefair/constants";
 import { withInternalKey } from "@/lib/api/with-auth";
-import { getCloudflareEnv } from "@/lib/cloudflare";
+import { getCloudflareEnv, getCloudflareRateLimitKv } from "@/lib/cloudflare";
 import { getLatestKpiStates } from "@/lib/kpi-states";
 import { loadActionQueue } from "@/lib/analytics-overview/activity";
 import { enqueueEmail } from "@/lib/queues/producers";
 import { logError } from "@/lib/logger";
-import { faultSignatures, indexnowSubmissions, pendingSearchPings } from "@/lib/db/schema";
+import {
+  faultSignatures,
+  indexnowSubmissions,
+  pendingSearchPings,
+  weeklyInventoryState,
+} from "@/lib/db/schema";
 import { count, desc, eq, isNull } from "drizzle-orm";
 import { getIndexNowQuota, type BingEnv } from "@/lib/bing-webmaster";
 import { assessAllIntegrationSilence, type IntegrationActivity } from "@/lib/integration-silence";
@@ -19,8 +24,13 @@ import {
   formatStaleRedDigest,
   selectStaleFaultReds,
   selectStaleReds,
+  staleRedFingerprint,
   type StaleRed,
 } from "@/lib/cpi/stale-reds";
+
+/** OPE-308 — KV key holding the last-announced red set, so a persistent red
+ *  stops re-mailing daily. See the change-detection block below. */
+const STALE_RED_FINGERPRINT_KEY = "cpi:stale-red:last-fingerprint";
 
 /**
  * POST /api/internal/cpi/stale-red-scan  (OPE-75 — CPI Move 1)
@@ -232,8 +242,61 @@ export const POST = withInternalKey({ source: "cpi:stale-red-scan" }, async ({ d
       ...photoReds,
     ];
 
+    // OPE-308 — push on CHANGE, not on existence.
+    //
+    // This fired on `allReds.length > 0`, so a red that persists mailed the
+    // operator every single day: 27 sends across 27 days. That is the same
+    // "re-notify a persistent condition daily" pattern OPE-305 removed from the
+    // discrepancy queue, in a different system — and it is what turns a digest
+    // nobody can ignore into one nobody reads.
+    //
+    // A NEW red, or one clearing, is news and still pushes immediately. A red
+    // that is simply still red is inventory, and belongs in the Monday summary.
+    // The fingerprint is the sorted refKey set: it changes when the membership
+    // changes and not when hoursInRed ticks up, which is exactly the
+    // distinction between news and steady state.
+    const fingerprint = staleRedFingerprint(allReds);
+    const kv = getCloudflareRateLimitKv();
+    const lastFingerprint = kv ? await kv.get(STALE_RED_FINGERPRINT_KEY) : null;
+    const changed = fingerprint !== (lastFingerprint ?? "");
+
+    // When everything clears, forget the fingerprint — the next red to appear
+    // is genuinely new and must page, not be suppressed as "same as last time".
+    if (allReds.length === 0 && kv && lastFingerprint) {
+      await kv.delete(STALE_RED_FINGERPRINT_KEY);
+    }
+
+    // OPE-308 — record the steady state for Monday's inventory. This is the
+    // mitigation for pushing on change only: a red that persists for weeks would
+    // otherwise never be mentioned again after its first announcement.
+    //
+    // We write ONLY the two `current` columns. The MCP weekly inventory owns
+    // every snapshot column on this same row; writing outside our own set would
+    // clobber its Δ baseline on the next scan. Best-effort — the scan's job is
+    // the digest, and a bookkeeping failure must not fail it.
+    try {
+      await db
+        .insert(weeklyInventoryState)
+        .values({
+          id: "default",
+          staleRedCurrent: allReds.length,
+          staleRedCurrentAt: new Date(),
+        })
+        .onConflictDoUpdate({
+          target: weeklyInventoryState.id,
+          set: { staleRedCurrent: allReds.length, staleRedCurrentAt: new Date() },
+        });
+    } catch (err) {
+      await logError(db, {
+        level: "warn",
+        source: "cpi:stale-red-scan",
+        message: "steady-state write failed; digest unaffected",
+        error: err,
+      });
+    }
+
     let sent = false;
-    if (allReds.length > 0) {
+    if (allReds.length > 0 && changed) {
       const to = getRuntimeEnv("ALERT_EMAIL_TECHNICAL");
       if (to) {
         const digest = formatStaleRedDigest(allReds, SITE_URL);
@@ -247,6 +310,13 @@ export const POST = withInternalKey({ source: "cpi:stale-red-scan" }, async ({ d
             source: "cpi.stale-red",
           });
           sent = true;
+          // Only stamp after a SUCCESSFUL send: if the enqueue failed, the
+          // next scan should retry rather than treat this set as announced.
+          if (kv) {
+            await kv.put(STALE_RED_FINGERPRINT_KEY, fingerprint, {
+              expirationTtl: 30 * 24 * 60 * 60,
+            });
+          }
         } catch (err) {
           // Best-effort: a send failure must not fail the scan.
           await logError(db, {

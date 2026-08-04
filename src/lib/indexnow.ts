@@ -62,7 +62,12 @@ const MAX_RETRY_AFTER_MS = 5_000;
 // it — throttled — so a forgotten kill-switch doesn't sit silent again.
 const STALE_PAUSE_MS = 72 * 60 * 60 * 1000; // 3 days
 const STALE_ALERT_KEY = "indexnow:stale_pause_alerted_at";
-const STALE_ALERT_THROTTLE_MS = 24 * 60 * 60 * 1000; // at most one re-alert/day
+// OPE-308 — was 24h, which mailed a DAILY reminder about a state John set on
+// purpose. Its own text says "a throttled reminder, not a new failure", which
+// is the definition of inventory rather than an alarm, and it fired 22/22 days.
+// Weekly keeps the nag honest (the pause IS worth remembering) without joining
+// the daily stream; the Monday inventory carries the standing status.
+const STALE_ALERT_THROTTLE_MS = 7 * 24 * 60 * 60 * 1000; // at most one re-alert/week
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -404,7 +409,7 @@ async function maybeAlertStalePause(
       `IndexNow has been PAUSED for ~${days}d (since ${m[1]}) — 0 URLs submitted to Bing in ` +
       `that window. If Bing's per-host penalty has decayed, clear the kill-switch ` +
       `(kv delete indexnow:paused) and backfill via the resubmit_indexnow tool; otherwise ` +
-      `this is expected. This is a throttled reminder (≤1/day), not a new failure.`;
+      `this is expected. This is a throttled reminder (≤1/week — OPE-308), not a new failure.`;
     await logError(db, { level: "warn", source: "indexnow:health", message: msg });
 
     const to = getRuntimeEnv("ALERT_EMAIL_TECHNICAL");
