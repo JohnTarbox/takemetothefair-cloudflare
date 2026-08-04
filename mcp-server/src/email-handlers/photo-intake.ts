@@ -43,6 +43,7 @@ import { chunkedInArray, createSlug } from "@takemetothefair/utils";
 import { runBoothPipeline, type BoothPipelineResult } from "../photo/booth-pipeline.js";
 import { classifyPosterText, type PosterClassification } from "../photo/poster-classify.js";
 import { mainAppFetch, type MainAppEnv } from "../main-app-fetch.js";
+import { submitCheckDuplicate, submitEvent, submitExtract } from "./submit.js";
 import { parseExif, type ExifData } from "../photo/exif.js";
 import {
   resolveOccurrence,
@@ -466,6 +467,105 @@ async function classifyAsPoster(
   }
 }
 
+/**
+ * OPE-325 — stage a classified poster as a PENDING event.
+ *
+ * Runs the SUBMIT lane's chain, not a bespoke insert:
+ *
+ *   submitExtract       OCR text -> structured event (the same extractor the
+ *                       URL and pasted-prose paths use)
+ *   submitCheckDuplicate venue/city + date dedup, venue resolved server-side —
+ *                       the guard that caught the Winthrop duplicate
+ *   submitEvent         creates the event as PENDING
+ *
+ * Going through this chain rather than around it is the point. A naked insert
+ * from the photo lane would skip dedup and venue resolution, which is exactly
+ * how duplicate rows got in before. Here a poster for an event we already know
+ * about resolves to the existing row instead of creating a second one.
+ *
+ * PENDING, never APPROVED: OPE-204's "no public writes from an unmeasured
+ * classifier" holds because PENDING is not public. A wrong classification costs
+ * an operator one rejection in /admin/events, not a bad public listing.
+ *
+ * Fail-soft: any step failing returns an outcome the reply can explain, rather
+ * than throwing away an email we already told the sender we received.
+ */
+async function stagePosterAsPendingEvent(
+  env: HandlerEnv,
+  ocrText: string,
+  row: { id: string; fromAddress: string; subject: string | null }
+): Promise<{
+  outcome: "created" | "duplicate" | "failed";
+  eventId: string | null;
+  eventName: string | null;
+  detail?: string;
+}> {
+  try {
+    // No source URL — a poster has no page. submitExtract tolerates this; the
+    // submit schema only validates sourceUrl when present.
+    // Empty url + the free-text-shaped fetch result: this is the same shape
+    // the B2 pasted-prose path uses, where there is no page to have fetched.
+    const extracted = await submitExtract(
+      env,
+      {
+        url: "",
+        content: ocrText,
+        title: null,
+        description: null,
+        ogImage: null,
+        jsonLdSerialized: null,
+        fetchMethod: "standard",
+      },
+      ""
+    );
+    if (!extracted.event?.name) {
+      return {
+        outcome: "failed",
+        eventId: null,
+        eventName: null,
+        detail: "could not read an event out of the poster",
+      };
+    }
+
+    const dup = await submitCheckDuplicate(env, extracted);
+    if (dup.isDuplicate && dup.existingEventId) {
+      return {
+        outcome: "duplicate",
+        eventId: dup.existingEventId,
+        eventName: dup.existingEventName ?? extracted.event.name,
+        detail: dup.matchType,
+      };
+    }
+
+    const created = await submitEvent(env, extracted, row.fromAddress);
+    await logError(env.DB, {
+      level: "info",
+      source: "mcp:photo-intake:poster-staged",
+      message: `poster staged as PENDING event ${created.slug}`,
+      context: { messageRowId: row.id, eventId: created.id, eventName: created.eventName },
+    });
+    return {
+      outcome: "created",
+      eventId: created.id,
+      eventName: created.eventName,
+    };
+  } catch (err) {
+    await logError(env.DB, {
+      level: "warn",
+      source: "mcp:photo-intake:poster-staged",
+      message: "poster staging failed; sender still gets a reply",
+      error: err,
+      context: { messageRowId: row.id },
+    });
+    return {
+      outcome: "failed",
+      eventId: null,
+      eventName: null,
+      detail: "staging error",
+    };
+  }
+}
+
 const HOLD_ASK: Record<string, string> = {
   "no-exif-gps":
     "the photos have no GPS data (iPhones send HEIC or strip location when Location Services is off for the Camera, and most mail apps downsize attachments)",
@@ -571,29 +671,37 @@ export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> =
   // fair?" about a flyer for a fair that did not exist yet, so the happy path
   // could not complete and a human extracted it by hand.
   //
-  // Only the reply changes. No event is written, staged or otherwise — the
-  // photo lane has no dedup or venue-resolution path, and creating events here
-  // would bypass the guards the submit lane exists to enforce. The operator
-  // gets an actionable summary and drops the poster into the OPE-297 wizard,
-  // which does have those guards. That keeps OPE-204's "no public writes from
-  // an unmeasured classifier" true in the strongest form: no writes at all.
+  // John's ruling 2026-08-04: auto-create the PENDING event.
+  //
+  // My concern was that the photo lane has no dedup or venue-resolution path,
+  // so creating events here would bypass the guards the submit lane enforces.
+  // That is answered by ROUTING THROUGH those guards rather than around them:
+  // submitExtract -> submitCheckDuplicate -> submitEvent is the exact chain an
+  // emailed URL submission takes. The poster gets the same dedup (venue/city +
+  // date, not just name-Levenshtein) and the same venue resolution, and lands
+  // as PENDING — reviewed in /admin/events like every other submission.
+  //
+  // PENDING is the whole point: OPE-204's "no public writes from an unmeasured
+  // classifier" holds, because PENDING is not public. Nothing this classifier
+  // decides reaches a visitor without a human approving it.
   const poster = await classifyAsPoster(env, refs, row.id);
   if (poster && poster.classification.verdict === "POSTER") {
+    const staged = await stagePosterAsPendingEvent(env, poster.text, row);
     return {
       replyKind: "photo-intake-poster",
       replyParams: {
         subject: row.subject ?? "",
         photoCount,
-        // First non-empty line is, in practice, the event name on a poster.
-        posterHeadline:
-          poster.text
-            .split("\n")
-            .map((l) => l.trim())
-            .find((l) => l.length > 3) ?? "an event",
+        posterHeadline: staged.eventName ?? "an event",
         posterExcerpt: poster.text.replace(/\s+/g, " ").trim().slice(0, 400),
         classifyReason: poster.classification.reason,
+        staged: staged.outcome,
+        stagedDetail: staged.detail ?? "",
       },
-      resultingEventId: null,
+      // Links the inbound row to whatever it produced — a new PENDING event or
+      // the existing one it deduped against — so /admin/inbound-emails can show
+      // "resulted in" without a name+date JOIN.
+      resultingEventId: staged.eventId,
       status: "replied",
     };
   }
