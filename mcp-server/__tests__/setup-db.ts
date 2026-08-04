@@ -307,6 +307,9 @@ const SCHEMA_SQL = `
     roster_research_count INTEGER,
     promoter_enrichment_count INTEGER,
     goodwill_open_count INTEGER,
+    stale_red_current INTEGER,
+    stale_red_current_at INTEGER,
+    stale_red_count INTEGER,
     updated_at INTEGER
   );
 

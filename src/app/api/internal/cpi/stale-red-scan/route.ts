@@ -7,7 +7,12 @@ import { getLatestKpiStates } from "@/lib/kpi-states";
 import { loadActionQueue } from "@/lib/analytics-overview/activity";
 import { enqueueEmail } from "@/lib/queues/producers";
 import { logError } from "@/lib/logger";
-import { faultSignatures, indexnowSubmissions, pendingSearchPings } from "@/lib/db/schema";
+import {
+  faultSignatures,
+  indexnowSubmissions,
+  pendingSearchPings,
+  weeklyInventoryState,
+} from "@/lib/db/schema";
 import { count, desc, eq, isNull } from "drizzle-orm";
 import { getIndexNowQuota, type BingEnv } from "@/lib/bing-webmaster";
 import { assessAllIntegrationSilence, type IntegrationActivity } from "@/lib/integration-silence";
@@ -19,6 +24,7 @@ import {
   formatStaleRedDigest,
   selectStaleFaultReds,
   selectStaleReds,
+  staleRedFingerprint,
   type StaleRed,
 } from "@/lib/cpi/stale-reds";
 
@@ -249,10 +255,7 @@ export const POST = withInternalKey({ source: "cpi:stale-red-scan" }, async ({ d
     // The fingerprint is the sorted refKey set: it changes when the membership
     // changes and not when hoursInRed ticks up, which is exactly the
     // distinction between news and steady state.
-    const fingerprint = allReds
-      .map((r) => r.refKey)
-      .sort()
-      .join("|");
+    const fingerprint = staleRedFingerprint(allReds);
     const kv = getCloudflareRateLimitKv();
     const lastFingerprint = kv ? await kv.get(STALE_RED_FINGERPRINT_KEY) : null;
     const changed = fingerprint !== (lastFingerprint ?? "");
@@ -261,6 +264,35 @@ export const POST = withInternalKey({ source: "cpi:stale-red-scan" }, async ({ d
     // is genuinely new and must page, not be suppressed as "same as last time".
     if (allReds.length === 0 && kv && lastFingerprint) {
       await kv.delete(STALE_RED_FINGERPRINT_KEY);
+    }
+
+    // OPE-308 — record the steady state for Monday's inventory. This is the
+    // mitigation for pushing on change only: a red that persists for weeks would
+    // otherwise never be mentioned again after its first announcement.
+    //
+    // We write ONLY the two `current` columns. The MCP weekly inventory owns
+    // every snapshot column on this same row; writing outside our own set would
+    // clobber its Δ baseline on the next scan. Best-effort — the scan's job is
+    // the digest, and a bookkeeping failure must not fail it.
+    try {
+      await db
+        .insert(weeklyInventoryState)
+        .values({
+          id: "default",
+          staleRedCurrent: allReds.length,
+          staleRedCurrentAt: new Date(),
+        })
+        .onConflictDoUpdate({
+          target: weeklyInventoryState.id,
+          set: { staleRedCurrent: allReds.length, staleRedCurrentAt: new Date() },
+        });
+    } catch (err) {
+      await logError(db, {
+        level: "warn",
+        source: "cpi:stale-red-scan",
+        message: "steady-state write failed; digest unaffected",
+        error: err,
+      });
     }
 
     let sent = false;

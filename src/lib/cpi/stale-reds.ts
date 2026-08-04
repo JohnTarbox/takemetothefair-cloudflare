@@ -177,3 +177,25 @@ export function formatStaleRedDigest(
 
   return { subject, text, html };
 }
+
+/**
+ * OPE-308 — a stable identity for "which reds are currently red".
+ *
+ * The scan used to mail whenever `allReds.length > 0`, i.e. on EXISTENCE. A red
+ * that persisted therefore mailed the operator every day — the same
+ * "re-notify a persistent condition daily" pattern OPE-305 removed from the
+ * discrepancy queue. The fix is to push on CHANGE instead, and change is
+ * defined here.
+ *
+ * Deliberately the sorted refKey SET and nothing else: membership is the news.
+ * Including hoursInRed would make the fingerprint move every single scan (the
+ * clock always advances), which reintroduces the daily mail through the back
+ * door while looking like change detection. Sorting means the digest's own
+ * ordering cannot fake a change either.
+ */
+export function staleRedFingerprint(reds: Pick<StaleRed, "refKey">[]): string {
+  return reds
+    .map((r) => r.refKey)
+    .sort()
+    .join("|");
+}
