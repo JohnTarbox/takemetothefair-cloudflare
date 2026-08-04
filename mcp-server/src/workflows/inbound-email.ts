@@ -526,6 +526,14 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
               "already-exists",
               "extract-failed",
               "submit-failed",
+              // OPE-325 NOTE — "photo-intake-poster" is deliberately NOT here.
+              // No photo-lane reply kind carries the widget (ack / held /
+              // unresolved / resolved are all absent), and adding one of them
+              // alone would be an inconsistent behaviour change beyond the
+              // ticket. Recorded rather than left silent, because
+              // [[feedback_receipt_widget_allowlist_when_adding_reply_kinds]]
+              // exists precisely because new kinds get missed here by accident
+              // — this one was considered and declined.
             ];
             let params = paramsWithSubject;
             if (RECEIPT_WIDGET_KINDS.includes(replyKind)) {

@@ -483,6 +483,34 @@ ${SUPPORT_LINE}
 
 ${SIGN_OFF}`;
     }
+    // OPE-325 — the image announced an event rather than documenting one.
+    // Asking "which fair?" about a flyer for a fair that doesn't exist yet is
+    // unanswerable, which is exactly what happened with the Maynard poster.
+    case "photo-intake-poster": {
+      const headline = (params.posterHeadline as string | undefined) ?? "an event";
+      const excerpt = (params.posterExcerpt as string | undefined) ?? "";
+      const excerptBlock = excerpt ? `\n\nWhat we read:\n${excerpt}\n` : "";
+      const staged = (params.staged as string | undefined) ?? "failed";
+
+      // Say what actually happened. "Queued for review" when we staged nothing
+      // would be a small lie, and the sender would wait for something that
+      // isn't coming.
+      const outcomeLine =
+        staged === "created"
+          ? `We've added it as a pending listing for ${headline} — a reviewer will check the details before it goes live.`
+          : staged === "duplicate"
+            ? `We already have a listing for ${headline}, so we've matched your poster to it rather than creating a duplicate.`
+            : `We couldn't pull clean details out of it automatically, so we've passed it to a person to enter by hand.`;
+
+      return `Thanks — that looks like a poster announcing ${headline}, rather than photos from a fair that's already listed.
+
+${outcomeLine}${excerptBlock}
+If we've misread anything above, just reply with the correction and it'll reach the same reviewer.
+
+${SUPPORT_LINE}
+
+${SIGN_OFF}`;
+    }
     case "photo-intake-held": {
       const n = Number(params.photoCount ?? 0);
       const noun = n === 1 ? "photo" : "photos";
