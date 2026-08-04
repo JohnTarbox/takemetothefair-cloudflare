@@ -121,11 +121,17 @@ export async function getEvent(slug: string) {
       .where(eq(eventDays.eventId, eventData.events.id))
       .orderBy(eventDays.date);
 
-    // Increment view count
-    await db
-      .update(events)
-      .set({ viewCount: sql`${events.viewCount} + 1` })
-      .where(eq(events.id, eventData.events.id));
+    // Increment view count.
+    //
+    // RAW SQL DELIBERATELY (OPE-332). `events.updatedAt` now carries
+    // `$onUpdateFn`, so any Drizzle `.update(events)` also stamps updated_at —
+    // and updated_at is the HTTP validator for this page. Routing a per-view
+    // counter through Drizzle would therefore invalidate the validator on every
+    // single page view, so the 304 path could never fire. A view is not a
+    // content change; this is the one write that must not say it is.
+    await db.run(
+      sql`UPDATE events SET view_count = COALESCE(view_count, 0) + 1 WHERE id = ${eventData.events.id}`
+    );
 
     // venue/promoter are the lite projection from eventJoinProjection;
     // cast back to the schema row type so consumer prop types compile

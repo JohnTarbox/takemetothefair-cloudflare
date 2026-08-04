@@ -18,6 +18,13 @@ import {
   performerSlugHistory,
 } from "@/lib/db/schema";
 import { isPubliclyVisible, publicEventWhere, type EventLifecycle } from "@/lib/event-lifecycle";
+import {
+  buildEntityEtag,
+  hasSessionCookie,
+  isNotModified,
+  matchConditionalRoute,
+  type ConditionalEntityType,
+} from "@/lib/conditional-get";
 import { getHelpArticle } from "@/lib/help-articles";
 import { unsafeSlug } from "@/lib/utils";
 import { shouldSample, writeRequestSample } from "@/lib/request-sampling";
@@ -158,7 +165,7 @@ async function bearerMatchesEnv(
   return timingSafeEqualString(presented, expected);
 }
 
-export async function middleware(request: NextRequest) {
+async function handleRouting(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // ── /help/<slug>.md — raw-markdown twin of a help article (OPE-62) ──────
@@ -750,4 +757,164 @@ export async function middleware(request: NextRequest) {
       "Cache-Control": "public, max-age=300",
     },
   });
+}
+
+/**
+ * OPE-332 — HTTP conditional-request support, layered OVER the routing above.
+ *
+ * Deliberately a wrapper rather than an edit to each branch. `handleRouting`
+ * has ~15 separate exit points (per-entity slug-history walkers, status gates,
+ * the series canonicaliser, the keyfile). Threading a 304 check through all of
+ * them would mean getting every one right and keeping them right; wrapping the
+ * result means the check runs exactly once, after routing has decided.
+ *
+ * That ordering is the safety property. We only ever consider a 304 when
+ * routing produced a plain pass-through — so a pending event that routing
+ * 404s, or a renamed slug it 301s, can never be answered "nothing changed".
+ */
+export async function middleware(request: NextRequest) {
+  const response = await handleRouting(request);
+  return await applyConditionalGet(request, response);
+}
+
+/** Per-type lookup of the validator inputs. Slug is the public identity. */
+async function loadEntityMtime(
+  db: ReturnType<typeof drizzle>,
+  type: ConditionalEntityType,
+  slug: string
+): Promise<Date | null | undefined> {
+  const s = unsafeSlug(slug);
+  // `undefined` = no such row (leave routing's answer alone); `null` = found
+  // but no timestamp (still validatable — buildEntityEtag stamps it 0).
+  switch (type) {
+    case "event": {
+      const [r] = await db
+        .select({ u: events.updatedAt })
+        .from(events)
+        .where(eq(events.slug, s))
+        .limit(1);
+      return r ? r.u : undefined;
+    }
+    case "vendor": {
+      const [r] = await db
+        .select({ u: vendors.updatedAt })
+        .from(vendors)
+        .where(eq(vendors.slug, s))
+        .limit(1);
+      return r ? r.u : undefined;
+    }
+    case "venue": {
+      const [r] = await db
+        .select({ u: venues.updatedAt })
+        .from(venues)
+        .where(eq(venues.slug, s))
+        .limit(1);
+      return r ? r.u : undefined;
+    }
+    case "promoter": {
+      const [r] = await db
+        .select({ u: promoters.updatedAt })
+        .from(promoters)
+        .where(eq(promoters.slug, s))
+        .limit(1);
+      return r ? r.u : undefined;
+    }
+    case "performer": {
+      const [r] = await db
+        .select({ u: performers.updatedAt })
+        .from(performers)
+        .where(eq(performers.slug, s))
+        .limit(1);
+      return r ? r.u : undefined;
+    }
+    case "blog": {
+      const [r] = await db
+        .select({ u: blogPosts.updatedAt })
+        .from(blogPosts)
+        .where(eq(blogPosts.slug, s))
+        .limit(1);
+      return r ? r.u : undefined;
+    }
+  }
+}
+
+async function applyConditionalGet(
+  request: NextRequest,
+  response: NextResponse
+): Promise<NextResponse> {
+  // Only a plain pass-through is eligible. `x-middleware-next` is how
+  // NextResponse.next() marks itself, so a redirect, a rewrite, or a
+  // constructed body (the IndexNow keyfile) all fall out here untouched.
+  if (request.method !== "GET") return response;
+  if (!response.headers.has("x-middleware-next")) return response;
+
+  // Personalized chrome (UnverifiedBanner -> auth()) renders into EVERY page,
+  // so a signed-in request never gets a shared validator.
+  if (hasSessionCookie(request.headers.get("cookie"))) return response;
+
+  const matched = matchConditionalRoute(request.nextUrl.pathname);
+  if (!matched) return response;
+
+  let env: Record<string, unknown>;
+  try {
+    env = getCloudflareContext().env as unknown as Record<string, unknown>;
+  } catch {
+    return response;
+  }
+
+  const d1 = env.DB as D1Database | undefined;
+  if (!d1) return response;
+
+  let updatedAt: Date | null | undefined;
+  try {
+    updatedAt = await loadEntityMtime(drizzle(d1), matched.type, matched.slug);
+  } catch {
+    // A validator is an optimisation; never fail a page render for one.
+    return response;
+  }
+  if (updatedAt === undefined) return response;
+
+  const etag = buildEntityEtag(matched.type, matched.slug, updatedAt);
+
+  if (
+    isNotModified({
+      ifNoneMatch: request.headers.get("If-None-Match"),
+      ifModifiedSince: request.headers.get("If-Modified-Since"),
+      etag,
+      lastModified: updatedAt,
+    })
+  ) {
+    const headers = new Headers({ ETag: etag });
+    if (updatedAt) headers.set("Last-Modified", updatedAt.toUTCString());
+    applyPublicCachePolicy(env, headers);
+    // 304 carries no body, and must repeat the validator so the client can
+    // refresh its stored copy's freshness without another round trip.
+    return new NextResponse(null, { status: 304, headers });
+  }
+
+  response.headers.set("ETag", etag);
+  if (updatedAt) response.headers.set("Last-Modified", updatedAt.toUTCString());
+  applyPublicCachePolicy(env, response.headers);
+  return response;
+}
+
+/**
+ * The GATED half (ticket's explicit STOP).
+ *
+ * Emitting validators is additive and safe. Relaxing `no-store` changes how
+ * every public page is served and is customer-facing, so it ships OFF and John
+ * flips `CONDITIONAL_GET_PUBLIC_CACHE` in wrangler.toml — not in the dashboard,
+ * where a [vars] override is silently wiped by the next deploy (OPE-284).
+ *
+ * Worth being blunt about the consequence: while this is off, the 304 path
+ * above is largely inert, because a client told `no-store` has nothing stored
+ * to revalidate. The mechanism is real, the policy is what switches it on.
+ *
+ * `max-age=0, must-revalidate` when enabled: caches may STORE the response but
+ * must revalidate before every reuse. That is what creates the conditional
+ * request, while making it impossible to serve stale content.
+ */
+function applyPublicCachePolicy(env: Record<string, unknown>, headers: Headers): void {
+  if (String(env.CONDITIONAL_GET_PUBLIC_CACHE ?? "false") !== "true") return;
+  headers.set("Cache-Control", "public, max-age=0, must-revalidate");
 }

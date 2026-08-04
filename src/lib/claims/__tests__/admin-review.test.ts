@@ -30,7 +30,8 @@ const SCHEMA_SQL = `
     claimed INTEGER NOT NULL DEFAULT 0,
     claimed_at INTEGER,
     claimed_by TEXT,
-    deleted_at INTEGER
+    deleted_at INTEGER,
+    updated_at INTEGER
   );
   CREATE TABLE promoters (
     id TEXT PRIMARY KEY,
@@ -40,7 +41,8 @@ const SCHEMA_SQL = `
     contact_email TEXT,
     claimed INTEGER NOT NULL DEFAULT 0,
     claimed_at INTEGER,
-    claimed_by TEXT
+    claimed_by TEXT,
+    updated_at INTEGER
   );
   CREATE TABLE user_roles (
     id TEXT PRIMARY KEY,

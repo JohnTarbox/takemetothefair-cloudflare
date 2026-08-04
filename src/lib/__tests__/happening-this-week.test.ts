@@ -17,7 +17,8 @@ const SCHEMA_SQL = `
     id TEXT PRIMARY KEY,
     slug TEXT,
     start_date INTEGER,
-    end_date INTEGER
+    end_date INTEGER,
+    updated_at INTEGER
   );
   CREATE TABLE event_days (
     id TEXT PRIMARY KEY,

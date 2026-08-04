@@ -41,7 +41,8 @@ const SCHEMA_SQL = `
     slug TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'ACTIVE',
     city TEXT,
-    state TEXT
+    state TEXT,
+    updated_at INTEGER
   );
   CREATE TABLE promoters (
     id TEXT PRIMARY KEY,

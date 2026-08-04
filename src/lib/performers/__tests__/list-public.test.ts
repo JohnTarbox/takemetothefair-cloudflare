@@ -15,7 +15,8 @@ const SCHEMA_SQL = `
   CREATE TABLE performers (
     id TEXT PRIMARY KEY, name TEXT NOT NULL, slug TEXT NOT NULL,
     act_category TEXT, image_url TEXT, home_base_city TEXT, home_base_state TEXT,
-    verified INTEGER DEFAULT 0 NOT NULL, redirect_to_performer_id TEXT, deleted_at INTEGER
+    verified INTEGER DEFAULT 0 NOT NULL, redirect_to_performer_id TEXT, deleted_at INTEGER,
+    updated_at INTEGER
   );
 `;
 

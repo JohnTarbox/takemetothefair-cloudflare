@@ -29,7 +29,8 @@ const SCHEMA_SQL = `
     city TEXT NOT NULL DEFAULT '',
     state TEXT NOT NULL DEFAULT '',
     zip TEXT NOT NULL DEFAULT '',
-    status TEXT NOT NULL DEFAULT 'ACTIVE'
+    status TEXT NOT NULL DEFAULT 'ACTIVE',
+    updated_at INTEGER
   );
   CREATE TABLE admin_actions (
     id TEXT PRIMARY KEY,

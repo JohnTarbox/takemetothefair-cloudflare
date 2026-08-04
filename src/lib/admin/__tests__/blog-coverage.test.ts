@@ -23,7 +23,8 @@ const SCHEMA_SQL = `
     publish_date INTEGER,
     faqs TEXT,
     body TEXT,
-    tags TEXT
+    tags TEXT,
+    updated_at INTEGER
   );
   CREATE TABLE content_links (
     id TEXT PRIMARY KEY,

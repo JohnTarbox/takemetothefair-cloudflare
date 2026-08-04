@@ -13,13 +13,15 @@ const SCHEMA_SQL = `
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
     business_name TEXT NOT NULL,
-    slug TEXT NOT NULL
+    slug TEXT NOT NULL,
+    updated_at INTEGER
   );
   CREATE TABLE promoters (
     id TEXT PRIMARY KEY,
     user_id TEXT,
     company_name TEXT NOT NULL,
-    slug TEXT NOT NULL
+    slug TEXT NOT NULL,
+    updated_at INTEGER
   );
   CREATE TABLE entity_claims (
     id TEXT PRIMARY KEY,

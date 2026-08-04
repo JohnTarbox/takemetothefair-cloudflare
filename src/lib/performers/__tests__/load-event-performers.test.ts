@@ -12,7 +12,8 @@ import { loadEventPerformers } from "../load-event-performers";
 const SCHEMA_SQL = `
   CREATE TABLE performers (
     id TEXT PRIMARY KEY, name TEXT NOT NULL, slug TEXT NOT NULL, performer_type TEXT,
-    act_category TEXT, website TEXT, image_url TEXT, deleted_at INTEGER
+    act_category TEXT, website TEXT, image_url TEXT, deleted_at INTEGER,
+    updated_at INTEGER
   );
   CREATE TABLE event_performers (
     id TEXT PRIMARY KEY, event_id TEXT NOT NULL, performer_id TEXT NOT NULL,
