@@ -1,8 +1,9 @@
 export const dynamic = "force-dynamic";
+import { getSitemapTypeLastMod } from "@/lib/sitemap-lastmod";
 import {
   SITEMAP_BASE_URL,
+  conditionalXmlResponse,
   serializeUrlset,
-  sitemapXmlHeaders,
   type SitemapUrl,
 } from "@/lib/sitemap-xml";
 import { getCloudflareDb } from "@/lib/cloudflare";
@@ -212,7 +213,7 @@ function buildStaticUrls(): SitemapUrl[] {
   ];
 }
 
-export async function GET(): Promise<Response> {
+export async function GET(request: Request): Promise<Response> {
   const urls = buildStaticUrls();
   // OPE-170 — append each SENT newsletter issue (sent_at not null; test-only
   // records stay out of the index). Best-effort: the static URLs still serve if
@@ -236,7 +237,12 @@ export async function GET(): Promise<Response> {
   } catch {
     /* best-effort — static URLs still serve */
   }
-  return new Response(serializeUrlset(urls), {
-    headers: sitemapXmlHeaders(21600), // 6 hours
+  // OPE-333 — conditional support. maxAge stays 21600 (6h): static URLs change
+  // rarely, and shortening it here would trade away caching to gain 304s.
+  return await conditionalXmlResponse({
+    request,
+    body: serializeUrlset(urls),
+    lastModified: await getSitemapTypeLastMod("static"),
+    maxAgeSeconds: 21600,
   });
 }
