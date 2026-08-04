@@ -200,10 +200,12 @@ export default async function BlogPostPage({ params }: Props) {
   // so it counts regenerations, not raw views — a RELATIVE signal, fine for ranking.
   // Only published views count (skip admin draft previews).
   if (post.status === "PUBLISHED") {
-    await getCloudflareDb()
-      .update(blogPosts)
-      .set({ viewCount: sql`${blogPosts.viewCount} + 1` })
-      .where(eq(blogPosts.id, post.id));
+    // RAW SQL DELIBERATELY (OPE-332) — same reason as vendors/[slug]: going
+    // through Drizzle would stamp updated_at, which is both the HTTP validator
+    // and the sitemap <lastmod> for this post.
+    await getCloudflareDb().run(
+      sql`UPDATE blog_posts SET view_count = COALESCE(view_count, 0) + 1 WHERE id = ${post.id}`
+    );
   }
 
   const tags = JSON.parse(post.tags || "[]") as string[];

@@ -101,6 +101,9 @@ jobs:
       - name: Guard that every outbound email send is ledgered (OPE-319)
         run: npx tsx scripts/check-email-sends-ledgered.ts
 
+      - name: Guard that view counters bypass Drizzle (OPE-332)
+        run: npx tsx scripts/check-view-counters-raw-sql.ts
+
       - name: Check D1 100-column join cap
         run: npx tsx scripts/check-d1-100col-joins.ts
 
