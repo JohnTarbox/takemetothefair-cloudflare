@@ -72,6 +72,7 @@ import { handle as handleUnsubscribe } from "../email-handlers/unsubscribe.js";
 import { handle as handleUnknown } from "../email-handlers/unknown.js";
 import { handle as handleSpam } from "../email-handlers/spam.js";
 import { handle as handleNoop } from "../email-handlers/noop.js";
+import { recordCrossing, ref } from "../inbound/crossing-ledger.js";
 import { handle as handleSourceSuggestion } from "../email-handlers/source-suggestion.js";
 import { handle as handlePhotoIntake } from "../email-handlers/photo-intake.js";
 import { extractAllUrls, type AttachmentRef } from "../email-handler.js";
@@ -702,6 +703,30 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       { retries: { limit: 1, delay: "5 seconds", backoff: "constant" }, timeout: "5 seconds" },
       async () => {
         const db = getDb(this.env.DB);
+
+        // OPE-330 (D-4) — record the crossing this email just made. One row per
+        // transition turns "what happened to this email?" into a single indexed
+        // query, and makes a MISSING crossing detectable via the heartbeat probe
+        // (which joins inbound_emails against the ledger, rather than hunting
+        // for an absence).
+        //
+        // A held row records destination NULL deliberately: the absent
+        // destination IS the signal that work stopped at a membrane, which is
+        // the shape of every one of this summer's seven silent-boundary defects.
+        const isHold =
+          !caughtError &&
+          (result.replyKind === "photo-intake-unresolved" ||
+            result.replyKind === "photo-intake-held");
+        await recordCrossing(db, {
+          sourceRef: ref.inboundEmail(messageRowId),
+          destinationRef: result.resultingEventId ? ref.event(result.resultingEventId) : null,
+          crossingType: isHold ? "email_to_hold" : "email_to_ticket",
+          actor: "system",
+          notes: caughtError
+            ? `failed: ${caughtError.slice(0, 120)}`
+            : (result.replyKind ?? "no-reply"),
+        });
+
         await db
           .update(inboundEmails)
           .set({
