@@ -41,6 +41,8 @@ import { parsePlusSegment } from "../email-intents.js";
 import { logError } from "../logger.js";
 import { chunkedInArray, createSlug } from "@takemetothefair/utils";
 import { runBoothPipeline, type BoothPipelineResult } from "../photo/booth-pipeline.js";
+import { classifyPosterText, type PosterClassification } from "../photo/poster-classify.js";
+import { mainAppFetch, type MainAppEnv } from "../main-app-fetch.js";
 import { parseExif, type ExifData } from "../photo/exif.js";
 import {
   resolveOccurrence,
@@ -396,6 +398,74 @@ export async function resolvePhotoEvent(
 }
 
 /** Operator-facing explanation for each hold reason — quoted in the reply. */
+
+/**
+ * OPE-325 — OCR the first image and decide whether this is a POSTER.
+ *
+ * Runs only on the hold path (we could not identify a fair), so a normal
+ * "photos from the Cheshire Fair" email never pays for it. Reuses OPE-297's
+ * extract-image endpoint over the MAIN_APP service binding rather than a
+ * second vision model — one OCR pass, and the same code path the wizard uses.
+ *
+ * Every verdict is logged with its reason so classification precision is
+ * computable at a retro (OPE-204's rule: no public writes from an unmeasured
+ * classifier — and this one makes no writes at all, it only changes the reply).
+ *
+ * Fail-soft in every direction: no bucket, no binding, an OCR error, an empty
+ * read — all return null, and the caller falls through to the existing
+ * which-fair flow. The worst case is the behaviour we have today.
+ */
+async function classifyAsPoster(
+  env: HandlerEnv,
+  refs: AttachmentRef[],
+  messageRowId: string
+): Promise<{ classification: PosterClassification; text: string } | null> {
+  const bucket = env.VENDOR_ASSETS;
+  const images = imageRefs(refs);
+  if (!bucket || images.length === 0) return null;
+
+  try {
+    const obj = await bucket.get(images[0].key);
+    if (!obj) return null;
+    const bytes = await obj.arrayBuffer();
+
+    const form = new FormData();
+    form.append("images", new Blob([bytes]), images[0].name || "poster.jpg");
+    const res = await mainAppFetch(
+      env as unknown as MainAppEnv,
+      "/api/admin/import-url/extract-image",
+      "workflow",
+      { method: "POST", body: form }
+    );
+    if (!res.ok) return null;
+    const data = (await res.json().catch(() => ({}))) as { content?: string };
+    const text = data.content ?? "";
+
+    const classification = classifyPosterText(text);
+    await logError(env.DB, {
+      level: "info",
+      source: "mcp:photo-intake:poster-classify",
+      message: `poster classification: ${classification.verdict} — ${classification.reason}`,
+      context: {
+        messageRowId,
+        verdict: classification.verdict,
+        chars: classification.chars,
+        hasDate: classification.hasDate,
+      },
+    });
+    return { classification, text };
+  } catch (err) {
+    await logError(env.DB, {
+      level: "warn",
+      source: "mcp:photo-intake:poster-classify",
+      message: "poster classification failed; falling back to which-fair",
+      error: err,
+      context: { messageRowId },
+    });
+    return null;
+  }
+}
+
 const HOLD_ASK: Record<string, string> = {
   "no-exif-gps":
     "the photos have no GPS data (iPhones send HEIC or strip location when Location Services is off for the Camera, and most mail apps downsize attachments)",
@@ -492,6 +562,38 @@ export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> =
       },
       // The downstream OPE-204 vendor pipeline reads this off the row.
       resultingEventId: resolution.eventId,
+      status: "replied",
+    };
+  }
+
+  // OPE-325 — before holding, ask whether this is a poster ANNOUNCING an event
+  // rather than a photo FROM one. The Maynard case: the lane asked "which
+  // fair?" about a flyer for a fair that did not exist yet, so the happy path
+  // could not complete and a human extracted it by hand.
+  //
+  // Only the reply changes. No event is written, staged or otherwise — the
+  // photo lane has no dedup or venue-resolution path, and creating events here
+  // would bypass the guards the submit lane exists to enforce. The operator
+  // gets an actionable summary and drops the poster into the OPE-297 wizard,
+  // which does have those guards. That keeps OPE-204's "no public writes from
+  // an unmeasured classifier" true in the strongest form: no writes at all.
+  const poster = await classifyAsPoster(env, refs, row.id);
+  if (poster && poster.classification.verdict === "POSTER") {
+    return {
+      replyKind: "photo-intake-poster",
+      replyParams: {
+        subject: row.subject ?? "",
+        photoCount,
+        // First non-empty line is, in practice, the event name on a poster.
+        posterHeadline:
+          poster.text
+            .split("\n")
+            .map((l) => l.trim())
+            .find((l) => l.length > 3) ?? "an event",
+        posterExcerpt: poster.text.replace(/\s+/g, " ").trim().slice(0, 400),
+        classifyReason: poster.classification.reason,
+      },
+      resultingEventId: null,
       status: "replied",
     };
   }

@@ -483,6 +483,23 @@ ${SUPPORT_LINE}
 
 ${SIGN_OFF}`;
     }
+    // OPE-325 — the image announced an event rather than documenting one.
+    // Asking "which fair?" about a flyer for a fair that doesn't exist yet is
+    // unanswerable, which is exactly what happened with the Maynard poster.
+    case "photo-intake-poster": {
+      const headline = (params.posterHeadline as string | undefined) ?? "an event";
+      const excerpt = (params.posterExcerpt as string | undefined) ?? "";
+      const excerptBlock = excerpt ? `\n\nWhat we read:\n${excerpt}\n` : "";
+
+      return `Thanks — that looks like a poster announcing ${headline}, rather than photos from a fair that's already listed.
+
+We've queued it for review. Someone will check the details and add the event; the poster itself is kept with it as the source.${excerptBlock}
+If we've misread anything above, just reply with the correction and it'll go to the same reviewer.
+
+${SUPPORT_LINE}
+
+${SIGN_OFF}`;
+    }
     case "photo-intake-held": {
       const n = Number(params.photoCount ?? 0);
       const noun = n === 1 ? "photo" : "photos";

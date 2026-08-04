@@ -111,6 +111,11 @@ export type ReplyKind =
   // without re-sending. Sent by the correction handler, not the photo-intake
   // one, because the reply lands as intent=correction.
   | "photo-intake-resolved"
+  // OPE-325 — the image was a POSTER announcing an event, not a photo from
+  // one. Asking "which fair?" about a flyer for a fair that doesn't exist yet
+  // is unanswerable (the Maynard case), so this reply reports what the poster
+  // says and tells the sender it's queued for review instead.
+  | "photo-intake-poster"
   // UR1 Phase 1 (2026-06-04) — problem-report intake ack. Reassures the
   // sender that the report landed AND that operators get HIGH-priority
   // visibility when the report co-occurs with an active outage.
