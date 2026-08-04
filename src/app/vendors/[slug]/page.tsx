@@ -316,10 +316,14 @@ async function getVendor(slug: string) {
     // Increment view count (drizzle/0051). Mirrors events/[slug]/page.tsx pattern.
     // ISR cache provides implicit ~5-min dedup; absolute count undercounts but
     // relative ordering (used by claimed_ready_for_enhanced_upsell rule) is preserved.
-    await db
-      .update(vendors)
-      .set({ viewCount: sql`${vendors.viewCount} + 1` })
-      .where(eq(vendors.id, vendor.vendors.id));
+    // RAW SQL DELIBERATELY (OPE-332) — see scripts/check-view-counters-raw-sql.ts.
+    // vendors.updated_at carries `$onUpdateFn`, so any Drizzle `.update(vendors)`
+    // also stamps it. updated_at is this page's HTTP validator AND its sitemap
+    // <lastmod>, so counting a view through Drizzle would both kill the 304 path
+    // and tell Google every vendor changed on every view. A view is not an edit.
+    await db.run(
+      sql`UPDATE vendors SET view_count = COALESCE(view_count, 0) + 1 WHERE id = ${vendor.vendors.id}`
+    );
 
     // EH1 Phase 1 — load hierarchy context so render + canonical can resolve.
     // LOCAL_OFFICE → fetch the brand parent row (drives resolveVendorDisplay)
