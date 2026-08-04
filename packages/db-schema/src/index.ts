@@ -2471,6 +2471,30 @@ export const weeklyInventoryState = sqliteTable("weekly_inventory_state", {
   updatedAt: integer("updated_at", { mode: "timestamp" }),
 });
 
+// OPE-330 (drizzle/0177, 2026-08-04) — membrane-crossing ledger.
+//
+// One row per queue-to-queue transition of WORK. Separate from
+// email_send_ledger, which records outbound MESSAGES: different nouns, and
+// merging them would make "did we email this person" return internal
+// transitions too.
+//
+// source_ref/destination_ref are free-form (`inbound_email:<id>`,
+// `issue:OPE-330`) so a new source doesn't need a column. destination_ref is
+// NULL for a terminal hold — that absence is exactly what the probe looks for.
+export const membraneCrossings = sqliteTable("membrane_crossings", {
+  id: text("id").primaryKey(),
+  sourceRef: text("source_ref").notNull(),
+  destinationRef: text("destination_ref"),
+  /** email_to_ticket | email_to_hold | hold_to_resolve | review_to_rework | route_to_lane */
+  crossingType: text("crossing_type").notNull(),
+  /** system | agent | human */
+  actor: text("actor").notNull().default("system"),
+  notes: text("notes"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
 export const rosterResearchNoticeState = sqliteTable("roster_research_notice_state", {
   id: text("id").primaryKey(),
   lastNoticeDate: text("last_notice_date").notNull(),

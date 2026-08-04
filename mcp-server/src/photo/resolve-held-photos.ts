@@ -30,6 +30,7 @@
  */
 
 import { and, eq, inArray, isNull } from "drizzle-orm";
+import { recordCrossing, ref } from "../inbound/crossing-ledger.js";
 import type { InboundEmail } from "@takemetothefair/db-schema";
 import { inboundEmails } from "../schema.js";
 import type { Db } from "../db.js";
@@ -206,6 +207,18 @@ export async function resolveHeldPhotosFromReply(
       resolvedParents++;
       attached += r.attached;
       failed += r.failed;
+      // OPE-330 (D-4) — close the membrane. The held row recorded an
+      // email_to_hold crossing with a NULL destination; this is the matching
+      // exit, so the probe stops counting it as work stopped at a boundary.
+      // OPE-254's nine stranded photos are the reason this pair exists.
+      await recordCrossing(db, {
+        sourceRef: ref.inboundEmail(parent.id),
+        destinationRef: ref.event(event.id),
+        crossingType: "hold_to_resolve",
+        // A human named the fair in a reply; the system only carried it out.
+        actor: "human",
+        notes: `attached=${r.attached} failed=${r.failed}`,
+      });
     }
   }
   return { event, parentCount: parents.length, resolvedParents, attached, failed };

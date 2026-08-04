@@ -28,6 +28,7 @@ import {
   newsletterIssues,
   photoCoverageDaily,
   ga4DailyMetrics,
+  membraneCrossings,
   gscSearchMetrics,
   promoterEnrichmentCandidates,
   recommendationScanState,
@@ -292,6 +293,27 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     priority: "P1",
     expectedWindowHours: 48,
     lastEvidenceAt: (db) => maxTs(db, recommendationScanState, recommendationScanState.lastRunAt),
+  },
+  // ── OPE-330 (Demux D-4) ────────────────────────────────────────────
+  //
+  // The crossing ledger only helps if it is ALIVE. If recordCrossing silently
+  // stopped writing — a binding change, a schema drift — every boundary would
+  // go back to being invisible and nothing would say so. That is precisely the
+  // silent-boundary failure the ledger exists to end, so the ledger needs its
+  // own liveness check.
+  //
+  // 72h: inbound email is not daily, and a quiet weekend must not read as a
+  // dead writer. Note this probes the LEDGER, not the holds — "a hold with no
+  // exit" is a JOIN the operator runs against source_ref, not a silence signal,
+  // because a legitimately-open hold is indistinguishable from a stalled one
+  // by age alone.
+  {
+    name: "membrane-crossing-ledger",
+    ownerOpe: "OPE-330",
+    label: "Membrane-crossing ledger",
+    priority: "P1",
+    expectedWindowHours: 72,
+    lastEvidenceAt: (db) => maxTs(db, membraneCrossings, membraneCrossings.createdAt),
   },
 ];
 

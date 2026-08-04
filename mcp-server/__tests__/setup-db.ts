@@ -291,6 +291,16 @@ const SCHEMA_SQL = `
   CREATE UNIQUE INDEX idx_goodwill_snapshot_date
     ON goodwill_health_snapshots(snapshot_date);
 
+  CREATE TABLE membrane_crossings (
+    id TEXT PRIMARY KEY,
+    source_ref TEXT NOT NULL,
+    destination_ref TEXT,
+    crossing_type TEXT NOT NULL,
+    actor TEXT NOT NULL DEFAULT 'system',
+    notes TEXT,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch())
+  );
+
   CREATE TABLE weekly_inventory_state (
     id TEXT PRIMARY KEY,
     last_sent_date TEXT,
