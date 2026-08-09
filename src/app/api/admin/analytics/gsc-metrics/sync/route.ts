@@ -30,8 +30,13 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { requireAdminAuth } from "@/lib/api-auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
-import { gscSearchMetrics, ga4DailyMetrics, bingDailyMetrics } from "@/lib/db/schema";
-import { getSearchMetricsByDateQueryPage, type ScEnv } from "@/lib/search-console";
+import {
+  gscDailyTotals,
+  gscSearchMetrics,
+  ga4DailyMetrics,
+  bingDailyMetrics,
+} from "@/lib/db/schema";
+import { getDailyTotals, getSearchMetricsByDateQueryPage, type ScEnv } from "@/lib/search-console";
 import { getDailySiteTotals, type Ga4Env } from "@/lib/ga4";
 import { getTrafficStats, type BingEnv } from "@/lib/bing-webmaster";
 import { logError } from "@/lib/logger";
@@ -73,6 +78,51 @@ export async function POST(request: Request) {
   const env = getCloudflareEnv() as unknown as ScEnv & Ga4Env & BingEnv;
   const siteUrl = env.SC_SITE_URL?.trim() || "https://meetmeatthefair.com/";
   const now = new Date();
+
+  // OPE-345 — property-level daily totals, written from a DATE-dimensioned
+  // request. This is the only summable source: the (query, page) store below
+  // undercounts property totals by ~65% because GSC omits anonymized and
+  // long-tail rows from dimensioned responses. Both are synced here so they can
+  // never drift out of step with each other.
+  let totalsRows = 0;
+  let totalsError: string | null = null;
+  try {
+    const totals = await getDailyTotals(env, { startDate, endDate });
+    const stmts = totals.map((t) =>
+      db
+        .insert(gscDailyTotals)
+        .values({
+          siteUrl,
+          date: t.date,
+          clicks: t.clicks,
+          impressions: t.impressions,
+          ctr: t.ctr,
+          position: t.position,
+          updatedAt: now,
+        })
+        .onConflictDoUpdate({
+          target: [gscDailyTotals.siteUrl, gscDailyTotals.date],
+          set: {
+            clicks: t.clicks,
+            impressions: t.impressions,
+            ctr: t.ctr,
+            position: t.position,
+            updatedAt: now,
+          },
+        })
+    );
+    for (let i = 0; i < stmts.length; i += 50) {
+      const chunk = stmts.slice(i, i + 50);
+      if (chunk.length > 0) {
+        await db.batch(chunk as unknown as [(typeof chunk)[number], ...typeof chunk]);
+      }
+    }
+    totalsRows = totals.length;
+  } catch (err) {
+    // Isolated from the dimensioned sync below: one feed failing must not take
+    // out the other, or a bad day loses both the totals AND the detail.
+    totalsError = err instanceof Error ? err.message : String(err);
+  }
 
   let gscRows = 0;
   let gscError: string | null = null;
@@ -205,8 +255,11 @@ export async function POST(request: Request) {
   // 200 even on a partial failure: the per-feed error strings tell the cron
   // logger / operator what dropped, while the feed that succeeded is recorded.
   return NextResponse.json({
-    ok: gscError === null && ga4Error === null && bingError === null,
+    ok: gscError === null && ga4Error === null && bingError === null && totalsError === null,
     window: { startDate, endDate },
+    // OPE-345 — the summable feed, reported separately from the dimensioned one
+    // so a silent failure here is visible rather than hidden behind gsc.ok.
+    gscDailyTotals: { upserted: totalsRows, error: totalsError },
     gsc: { upserted: gscRows, error: gscError },
     ga4: { upserted: ga4Rows, error: ga4Error },
     bing: { upserted: bingRows, error: bingError },

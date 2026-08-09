@@ -30,6 +30,7 @@ import {
   photoCoverageDaily,
   ga4DailyMetrics,
   membraneCrossings,
+  gscDailyTotals,
   gscSearchMetrics,
   promoterEnrichmentCandidates,
   recommendationScanState,
@@ -98,6 +99,17 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     expectedWindowHours: 48,
     lastEvidenceAt: (db) =>
       maxTs(db, agentHeartbeats, agentHeartbeats.lastSeenAt, eq(agentHeartbeats.kind, "watchdog")),
+  },
+  {
+    // OPE-345 (A6 freshness) — the summable GSC feed. A gap here means the
+    // daily ingest stopped, which would otherwise leave every property-level
+    // number quietly frozen at a still-plausible value.
+    name: "gsc-daily-totals",
+    ownerOpe: "OPE-345",
+    label: "GSC property daily totals",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: (db) => maxTs(db, gscDailyTotals, gscDailyTotals.updatedAt),
   },
   {
     name: "photo-intake",

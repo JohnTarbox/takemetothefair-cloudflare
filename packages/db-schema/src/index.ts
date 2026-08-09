@@ -2080,6 +2080,19 @@ export const gscMonthlySummary = sqliteTable(
 // `ctr`/`position` are stored as GSC returns them (ctr is clicks/impressions;
 // position is the avg). siteUrl scopes by property (the GSC account also holds
 // the Maine Cardworks property — mirror the gsc_monthly_summary scoping rule).
+/**
+ * ⚠️ NOT SUMMABLE TO PROPERTY TOTALS (OPE-345).
+ *
+ * Rows are dimensioned by (query, page). GSC omits anonymized queries and the
+ * long tail from dimensioned responses, so summing these cells systematically
+ * undercounts. Measured for July 2026: SUM here gives 3,305 clicks against
+ * Google's own 9,370 — 64.7% missing. That gap is structural and does not close
+ * with a more complete sync.
+ *
+ * Use this table for RELATIVE, per-query or per-page work (trends for one query,
+ * comparing two pages). For "how many clicks did the site get", read
+ * `gscDailyTotals`, which comes from a date-dimensioned request.
+ */
 export const gscSearchMetrics = sqliteTable(
   "gsc_search_metrics",
   {
@@ -4214,4 +4227,28 @@ export const agentHeartbeats = sqliteTable(
   (table) => ({
     kindSeenIdx: index("idx_agent_heartbeats_kind_seen").on(table.kind, table.lastSeenAt),
   })
+);
+
+/**
+ * OPE-345 — property-level GSC totals, one row per (site, day).
+ *
+ * The summable counterpart to `gscSearchMetrics`. Filled from a request
+ * dimensioned by DATE only: grouping by date does not trigger the
+ * query-anonymization loss that makes the dimensioned table undercount by ~65%.
+ */
+export const gscDailyTotals = sqliteTable(
+  "gsc_daily_totals",
+  {
+    siteUrl: text("site_url").notNull().default("https://meetmeatthefair.com/"),
+    date: text("date").notNull(),
+    clicks: integer("clicks").notNull().default(0),
+    impressions: integer("impressions").notNull().default(0),
+    ctr: real("ctr").notNull().default(0),
+    position: real("position").notNull().default(0),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.siteUrl, t.date] }),
+    index("idx_gsc_daily_totals_date").on(t.date),
+  ]
 );

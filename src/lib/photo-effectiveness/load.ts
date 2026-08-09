@@ -243,6 +243,14 @@ export async function loadPageWindowSums(
   const urls = specs.map((s) => s.url);
   const oldest = specs.reduce((a, s) => (s.beforeFrom < a ? s.beforeFrom : a), specs[0].beforeFrom);
 
+  // OPE-345 — summing gsc_search_metrics is CORRECT here and must not be
+  // "fixed" to use gsc_daily_totals. This is a per-page before/after
+  // comparison: the anonymized rows GSC omits are missing from both sides
+  // equally, so the bias cancels in the delta. The daily-totals table has no
+  // page dimension and could not answer this question at all.
+  //
+  // What would be wrong is treating any of these numbers as an ABSOLUTE page
+  // click count. They are only meaningful against each other.
   type MetricRow = { page: string; date: string; clicks: number; impressions: number };
   const metrics: MetricRow[] = [];
   for (const batch of chunkIds(urls, GSC_PARAM_CHUNK)) {
