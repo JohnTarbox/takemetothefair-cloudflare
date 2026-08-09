@@ -93,6 +93,7 @@ import { registerSalvageInboundEmailTool } from "./admin-salvage-inbound-email.j
 import { registerOgImageSweepTool } from "./admin-og-image-sweep.js";
 import { registerCpiAutoFileTools } from "./admin-cpi-autofile.js";
 import { registerCrossingRecordTools } from "./admin-crossing-record.js";
+import { registerAgentHeartbeatTools } from "./admin-agent-heartbeat.js";
 import { registerSourceQualityTool } from "./admin-source-quality.js";
 import { registerSourceReliabilityTool } from "./admin-source-reliability.js";
 import { registerDiscrepancyTools } from "./admin-discrepancies.js";
@@ -244,6 +245,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   // OPE-259 — the missing consumer half of the OPE-76 auto-file rail.
   registerCpiAutoFileTools(server, auth, env);
   registerCrossingRecordTools(server, auth, env);
+  registerAgentHeartbeatTools(server, auth, env);
   registerSourceQualityTool(server, db, auth);
   // GW1c (2026-06-02): cross-link sibling to source-quality. Backed by
   // mcp-server/src/goodwill/scoring.ts which the GW1d resolve_discrepancy

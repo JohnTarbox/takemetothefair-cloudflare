@@ -301,6 +301,14 @@ const SCHEMA_SQL = `
     created_at INTEGER NOT NULL DEFAULT (unixepoch())
   );
 
+  CREATE TABLE agent_heartbeats (
+    id TEXT PRIMARY KEY,
+    agent_code TEXT NOT NULL UNIQUE,
+    kind TEXT NOT NULL DEFAULT 'agent',
+    last_seen_at INTEGER NOT NULL,
+    note TEXT
+  );
+
   CREATE TABLE weekly_inventory_state (
     id TEXT PRIMARY KEY,
     last_sent_date TEXT,
