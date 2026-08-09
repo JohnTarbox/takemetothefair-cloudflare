@@ -69,6 +69,16 @@ export async function POST(request: Request) {
     end_date?: string;
     skip_ga4?: boolean;
     skip_bing?: boolean;
+    /**
+     * OPE-345 backfill: write ONLY gsc_daily_totals and skip every other feed.
+     *
+     * Needed because a 16-month backfill through the normal path would also
+     * re-pull the (query, page) store — roughly 950k rows at ~59k/month — which
+     * is both pointless (that data is already there) and a good way to hit D1
+     * limits. The totals request returns one row per day, so the same window is
+     * a single cheap call.
+     */
+    totals_only?: boolean;
   };
   // Default incremental window: trailing 3-day GSC lag + re-upsert last few days.
   const startDate = body.start_date ?? isoDaysAgo(7);
@@ -124,57 +134,63 @@ export async function POST(request: Request) {
     totalsError = err instanceof Error ? err.message : String(err);
   }
 
+  // `skipDetail` short-circuits the three heavy feeds rather than throwing past
+  // them — a thrown skip would land in each catch and be reported as an error,
+  // making a deliberate backfill look like three failures.
+  const skipDetail = body.totals_only === true;
+
   let gscRows = 0;
   let gscError: string | null = null;
-  try {
-    const rows = await getSearchMetricsByDateQueryPage(env, { startDate, endDate });
-    const stmts = rows
-      .filter((r) => r.date && r.query && r.page)
-      .map((r) =>
-        db
-          .insert(gscSearchMetrics)
-          .values({
-            date: r.date,
-            query: r.query,
-            page: r.page,
-            clicks: r.clicks,
-            impressions: r.impressions,
-            ctr: r.ctr,
-            position: r.position,
-            siteUrl,
-            updatedAt: now,
-          })
-          .onConflictDoUpdate({
-            target: [
-              gscSearchMetrics.siteUrl,
-              gscSearchMetrics.date,
-              gscSearchMetrics.query,
-              gscSearchMetrics.page,
-            ],
-            set: {
+  if (!skipDetail)
+    try {
+      const rows = await getSearchMetricsByDateQueryPage(env, { startDate, endDate });
+      const stmts = rows
+        .filter((r) => r.date && r.query && r.page)
+        .map((r) =>
+          db
+            .insert(gscSearchMetrics)
+            .values({
+              date: r.date,
+              query: r.query,
+              page: r.page,
               clicks: r.clicks,
               impressions: r.impressions,
               ctr: r.ctr,
               position: r.position,
+              siteUrl,
               updatedAt: now,
-            },
-          })
-      );
-    await runBatched(db, stmts);
-    gscRows = stmts.length;
-  } catch (e) {
-    gscError = e instanceof Error ? e.message : String(e);
-    await logError(db, {
-      source: "app/api/admin/analytics/gsc-metrics/sync:gsc",
-      message: "GSC search-metrics sync failed",
-      error: e,
-      context: { startDate, endDate },
-    });
-  }
+            })
+            .onConflictDoUpdate({
+              target: [
+                gscSearchMetrics.siteUrl,
+                gscSearchMetrics.date,
+                gscSearchMetrics.query,
+                gscSearchMetrics.page,
+              ],
+              set: {
+                clicks: r.clicks,
+                impressions: r.impressions,
+                ctr: r.ctr,
+                position: r.position,
+                updatedAt: now,
+              },
+            })
+        );
+      await runBatched(db, stmts);
+      gscRows = stmts.length;
+    } catch (e) {
+      gscError = e instanceof Error ? e.message : String(e);
+      await logError(db, {
+        source: "app/api/admin/analytics/gsc-metrics/sync:gsc",
+        message: "GSC search-metrics sync failed",
+        error: e,
+        context: { startDate, endDate },
+      });
+    }
 
   let ga4Rows = 0;
   let ga4Error: string | null = null;
-  if (!body.skip_ga4) {
+  if (!body.skip_ga4 && !skipDetail) {
     try {
       const totals = await getDailySiteTotals(env, { startDate, endDate });
       const stmts = totals
@@ -219,7 +235,7 @@ export async function POST(request: Request) {
   // cached snapshot.
   let bingRows = 0;
   let bingError: string | null = null;
-  if (!body.skip_bing) {
+  if (!body.skip_bing && !skipDetail) {
     try {
       const series = await getTrafficStats(env, { skipCache: true });
       const stmts = series
