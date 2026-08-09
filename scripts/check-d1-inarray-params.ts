@@ -70,6 +70,8 @@ interface Violation {
 interface AllowEntry {
   path: string;
   line?: number;
+  /** Content pin: the flagged bind-list argument name, e.g. `ids`. */
+  arg?: string;
 }
 
 function loadAllowlist(): AllowEntry[] {
@@ -79,6 +81,15 @@ function loadAllowlist(): AllowEntry[] {
     for (const raw of src.split("\n")) {
       const trimmed = raw.split("#")[0].trim();
       if (!trimmed) continue;
+      // Three forms:
+      //   path            — whole file
+      //   path@argName    — CONTENT pin (preferred; survives line shifts)
+      //   path:123        — legacy LINE pin (brittle, see the header note)
+      if (trimmed.includes("@")) {
+        const [path, arg] = trimmed.split("@");
+        out.push({ path, arg });
+        continue;
+      }
       const [path, lineStr] = trimmed.split(":");
       const entry: AllowEntry = { path };
       if (lineStr !== undefined) entry.line = parseInt(lineStr, 10);
@@ -90,9 +101,18 @@ function loadAllowlist(): AllowEntry[] {
   }
 }
 
-function isAllowed(relPath: string, line: number, allowlist: AllowEntry[]): boolean {
+function isAllowed(relPath: string, line: number, arg: string, allowlist: AllowEntry[]): boolean {
   for (const entry of allowlist) {
     if (entry.path !== relPath) continue;
+    if (entry.arg !== undefined) {
+      // Content pin. Matches wherever the statement moves to, which is the
+      // point: four separate PRs have been failed by a pinned line drifting
+      // when unrelated code was inserted above it. Still scoped to one file
+      // AND one argument name, so an unbounded list under a different name is
+      // caught normally.
+      if (entry.arg === arg) return true;
+      continue;
+    }
     if (entry.line === undefined) return true;
     if (entry.line === line) return true;
   }
@@ -394,8 +414,8 @@ function main() {
     }
   }
 
-  const allowed = all.filter((v) => isAllowed(v.file, v.line, allowlist));
-  const fresh = all.filter((v) => !isAllowed(v.file, v.line, allowlist));
+  const allowed = all.filter((v) => isAllowed(v.file, v.line, v.arg, allowlist));
+  const fresh = all.filter((v) => !isAllowed(v.file, v.line, v.arg, allowlist));
 
   for (const v of fresh) {
     console.error(`ERROR ${v.file}:${v.line}  unbounded inArray bind list: ${v.arg}`);
