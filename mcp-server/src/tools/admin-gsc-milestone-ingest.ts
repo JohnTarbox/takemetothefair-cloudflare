@@ -16,6 +16,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { jsonContent } from "../helpers.js";
+import { mainAppFetch, type MainAppEnv } from "../main-app-fetch.js";
 import type { AuthContext } from "../auth.js";
 
 interface Env {
@@ -68,22 +69,30 @@ export function registerGscMilestoneIngestTool(server: McpServer, auth: AuthCont
         };
       }
 
-      const url = `${env.MAIN_APP_URL}/api/admin/analytics/gsc-milestone-ingest`;
+      // OPE-258 service binding, NOT a raw fetch to the public hostname.
+      // Measured 2026-08-09: the raw path 404s from this Worker even though the
+      // route answers 401 (i.e. exists) from outside — a Worker subrequest to
+      // its own zone's apex does not reach the main-app Worker. The binding
+      // bypasses zone routing entirely.
       let response: Response;
       try {
-        response = await fetch(url, {
-          method: "POST",
-          headers: {
-            "X-Internal-Key": env.INTERNAL_API_KEY,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            subject: params.subject,
-            body: params.body,
-            email_date: params.email_date,
-            note: params.note,
-          }),
-        });
+        response = await mainAppFetch(
+          env as unknown as MainAppEnv,
+          "/api/admin/analytics/gsc-milestone-ingest",
+          "fetch",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              subject: params.subject,
+              body: params.body,
+              email_date: params.email_date,
+              note: params.note,
+            }),
+          }
+        );
       } catch (e) {
         return {
           content: [

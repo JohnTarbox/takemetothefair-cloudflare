@@ -27,6 +27,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { jsonContent } from "../helpers.js";
+import { mainAppFetch, type MainAppEnv } from "../main-app-fetch.js";
 import type { AuthContext } from "../auth.js";
 
 interface Env {
@@ -52,10 +53,15 @@ async function postInternal(
 
   let response: Response;
   try {
-    response = await fetch(`${env.MAIN_APP_URL}${path}`, {
+    // OPE-258 service binding, NOT a raw fetch to the public hostname.
+    // Measured 2026-08-09: the raw path 404s from this Worker even though these
+    // routes answer 401 (i.e. exist) from outside — a Worker subrequest to its
+    // own zone's apex never reaches the main-app Worker. Every CPI tool here
+    // was dead because of it, silently, and the error hint below had been
+    // pointing at the wrong diagnosis (401) the whole time.
+    response = await mainAppFetch(env as unknown as MainAppEnv, path, "fetch", {
       method: "POST",
       headers: {
-        "X-Internal-Key": env.INTERNAL_API_KEY,
         "Content-Type": "application/json",
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -91,9 +97,14 @@ async function postInternal(
       payload: {
         error: response.status === 401 ? "unauthorized" : "http_error",
         status: response.status,
-        // Name the known cause so the next reader doesn't re-diagnose it.
+        // Name the known causes so the next reader doesn't re-diagnose them.
         ...(response.status === 401
           ? { hint: "See OPE-258 — internal POSTs 401 from the legacy mmatf_ fetch path." }
+          : {}),
+        ...(response.status === 404
+          ? {
+              hint: "404 here used to mean the raw public-hostname fetch never reached the main-app Worker; this now goes through the MAIN_APP service binding, so a 404 is a genuinely missing route.",
+            }
           : {}),
         body: parsed,
       },
