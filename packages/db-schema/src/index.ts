@@ -4252,3 +4252,32 @@ export const gscDailyTotals = sqliteTable(
     index("idx_gsc_daily_totals_date").on(t.date),
   ]
 );
+
+/**
+ * OPE-344 — Google's monthly "Search performance" email, parsed and stored as
+ * an EXTERNAL oracle for our own GSC ingest.
+ *
+ * Every internal figure derives from one API, so an ingest error is invisible
+ * from inside — nothing independent disagrees with it. A 65% undercount ran for
+ * months until a human hand-compared July's email.
+ *
+ * `raw_*` keep Google's own tokens because it rounds ("9.37K" is not exactly
+ * 9,370); that's what distinguishes a parse bug from Google's rounding later.
+ */
+export const gscMonthlyOracle = sqliteTable("gsc_monthly_oracle", {
+  /** YYYY-MM of the reported month. */
+  month: text("month").primaryKey(),
+  clicks: integer("clicks").notNull(),
+  impressions: integer("impressions").notNull(),
+  pagesWithFirstImpressions: integer("pages_with_first_impressions"),
+  rawClicks: text("raw_clicks"),
+  rawImpressions: text("raw_impressions"),
+  rawPages: text("raw_pages"),
+  emailDate: text("email_date").notNull(),
+  /** Our property-level total for the same month, recorded at ingest. */
+  apiClicks: integer("api_clicks"),
+  /** SUM of the dimensioned store — expected to diverge (OPE-345), kept as data. */
+  dimensionedClicks: integer("dimensioned_clicks"),
+  apiDivergence: real("api_divergence"),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+});

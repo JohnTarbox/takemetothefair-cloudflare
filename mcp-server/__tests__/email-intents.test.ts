@@ -171,6 +171,32 @@ describe("isPhotoOnlySubmission (OPE-315)", () => {
  * costs one no-op request while a false negative loses a milestone date we
  * cannot reconstruct later.
  */
+describe("looksLikeGscMilestone — monthly report forwards (OPE-344)", () => {
+  it("matches a forwarded monthly report, where the sender is no longer Google", () => {
+    // Mail direct from Google already matches on the address. This is the
+    // forward path — the OPE-311 lesson: a forwarded copy loses the sender, so
+    // the subject has to carry the match.
+    expect(
+      looksLikeGscMilestone(
+        "john@pimboat.com",
+        "Your July Search performance for meetmeatthefair.com"
+      )
+    ).toBe(true);
+    expect(
+      looksLikeGscMilestone(
+        "john@pimboat.com",
+        "Fwd: Your December Search performance for meetmeatthefair.com"
+      )
+    ).toBe(true);
+  });
+
+  it("does not fire on unrelated mail mentioning search performance loosely", () => {
+    expect(looksLikeGscMilestone("someone@example.com", "how is our search performance?")).toBe(
+      false
+    );
+  });
+});
+
 describe("looksLikeGscMilestone (OPE-311)", () => {
   it("matches mail straight from Google, whatever the subject", () => {
     expect(looksLikeGscMilestone("sc-noreply@google.com", "Search Console update")).toBe(true);

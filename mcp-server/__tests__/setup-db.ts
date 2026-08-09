@@ -301,6 +301,21 @@ const SCHEMA_SQL = `
     created_at INTEGER NOT NULL DEFAULT (unixepoch())
   );
 
+  CREATE TABLE gsc_monthly_oracle (
+    month TEXT PRIMARY KEY,
+    clicks INTEGER NOT NULL,
+    impressions INTEGER NOT NULL,
+    pages_with_first_impressions INTEGER,
+    raw_clicks TEXT,
+    raw_impressions TEXT,
+    raw_pages TEXT,
+    email_date TEXT NOT NULL,
+    api_clicks INTEGER,
+    dimensioned_clicks INTEGER,
+    api_divergence REAL,
+    updated_at INTEGER NOT NULL
+  );
+
   CREATE TABLE agent_heartbeats (
     id TEXT PRIMARY KEY,
     agent_code TEXT NOT NULL UNIQUE,

@@ -1471,5 +1471,13 @@ void CLASSIFIER_VERSION;
  */
 export function looksLikeGscMilestone(fromAddr: string, subject: string): boolean {
   if (fromAddr.toLowerCase().includes("sc-noreply@google.com")) return true;
-  return /reaching\s+[\d.,]+\s*k?\s+(clicks|impressions)\s+in\s+\d+\s+days/i.test(subject);
+  // Milestone congrats mail.
+  if (/reaching\s+[\d.,]+\s*k?\s+(clicks|impressions)\s+in\s+\d+\s+days/i.test(subject)) {
+    return true;
+  }
+  // OPE-344 — the monthly "Search performance" report, when a human forwards it
+  // and the sender is therefore no longer sc-noreply. Mail direct from Google
+  // already matched on the address above; this is only the forward path, which
+  // is the OPE-311 lesson (forwarded copies lose the sender).
+  return /Your\s+\w+\s+Search performance/i.test(subject);
 }
