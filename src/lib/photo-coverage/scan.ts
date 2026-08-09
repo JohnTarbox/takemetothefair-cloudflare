@@ -148,6 +148,13 @@ export async function loadDemandByUrl(
   const cutoff = new Date(now.getTime() - DEMAND_WINDOW_DAYS * 86_400_000)
     .toISOString()
     .slice(0, 10);
+  // OPE-345 — summing gsc_search_metrics is CORRECT here. This ranks pages by
+  // relative demand; the anonymized rows GSC omits are missing from every page
+  // alike, so the ORDER is unaffected. gsc_daily_totals has no page dimension
+  // and could not answer this at all.
+  //
+  // These are NOT absolute impression counts, and must not be surfaced as such
+  // — property-level figures come from gsc_daily_totals.
   const out = new Map<string, number>();
 
   for (let i = 0; i < urls.length; i += GSC_PARAM_CHUNK) {
