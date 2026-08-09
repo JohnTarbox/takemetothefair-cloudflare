@@ -67,7 +67,11 @@ const STALE_ALERT_KEY = "indexnow:stale_pause_alerted_at";
 // is the definition of inventory rather than an alarm, and it fired 22/22 days.
 // Weekly keeps the nag honest (the pause IS worth remembering) without joining
 // the daily stream; the Monday inventory carries the standing status.
-const STALE_ALERT_THROTTLE_MS = 7 * 24 * 60 * 60 * 1000; // at most one re-alert/week
+export const STALE_ALERT_THROTTLE_MS = 7 * 24 * 60 * 60 * 1000; // at most one re-alert/week
+
+/** KV TTL for the throttle stamp. MUST outlive the throttle window — see the
+ *  put() call and the invariant test in indexnow.test.ts. */
+export const STALE_ALERT_TTL_SECONDS = Math.ceil(STALE_ALERT_THROTTLE_MS / 1000) + 24 * 60 * 60;
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -402,7 +406,14 @@ async function maybeAlertStalePause(
 
     const last = await kv.get(STALE_ALERT_KEY);
     if (last && Date.now() - Number(last) < STALE_ALERT_THROTTLE_MS) return; // throttled
-    await kv.put(STALE_ALERT_KEY, String(Date.now()), { expirationTtl: 60 * 60 * 48 });
+    // TTL must OUTLIVE the throttle window, or the throttle silently resets when
+    // the key expires and the alert resumes at the TTL's cadence instead of the
+    // throttle's. That is exactly what shipped in #817: the window moved 24h -> 7d
+    // but this TTL stayed at 48h, so the "weekly" reminder kept arriving every two
+    // days. Derived from the constant now, so the two cannot drift apart again.
+    await kv.put(STALE_ALERT_KEY, String(Date.now()), {
+      expirationTtl: STALE_ALERT_TTL_SECONDS,
+    });
 
     const days = Math.floor(ageMs / (24 * 60 * 60 * 1000));
     const msg =

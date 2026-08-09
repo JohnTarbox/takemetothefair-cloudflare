@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { pingIndexNow, indexNowUrlFor } from "../indexnow";
+import {
+  pingIndexNow,
+  indexNowUrlFor,
+  STALE_ALERT_THROTTLE_MS,
+  STALE_ALERT_TTL_SECONDS,
+} from "../indexnow";
 import { SITE_HOSTNAME } from "@takemetothefair/constants";
 
 // Tests cover:
@@ -547,5 +552,21 @@ describe("pingIndexNow — REL7 suppression", () => {
 
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(result).toMatchObject({ ok: true, attempted: 0, deferred: false });
+  });
+});
+
+describe("stale-pause alert throttle (OPE-308 regression)", () => {
+  it("keeps the KV stamp alive LONGER than the throttle window", () => {
+    // The bug this pins: #817 moved the throttle 24h -> 7d but left the KV TTL
+    // at 48h. The stamp expired, the "when did I last alert?" read returned
+    // null, and the throttle reset — so the "weekly" reminder kept arriving
+    // every two days. A throttle whose memory is shorter than its window is not
+    // a throttle, and nothing about the code looked wrong.
+    expect(STALE_ALERT_TTL_SECONDS * 1000).toBeGreaterThan(STALE_ALERT_THROTTLE_MS);
+  });
+
+  it("does not overshoot so far that a cleared pause stays remembered for months", () => {
+    // Headroom, not a second window: one throttle period plus a day.
+    expect(STALE_ALERT_TTL_SECONDS * 1000).toBeLessThan(STALE_ALERT_THROTTLE_MS * 2);
   });
 });
