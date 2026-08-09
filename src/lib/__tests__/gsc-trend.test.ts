@@ -27,6 +27,17 @@ const SCHEMA_SQL = `
     site_url TEXT NOT NULL DEFAULT 'https://meetmeatthefair.com/',
     updated_at INTEGER NOT NULL DEFAULT 0
   );
+
+  CREATE TABLE gsc_daily_totals (
+    site_url TEXT NOT NULL DEFAULT 'https://meetmeatthefair.com/',
+    date TEXT NOT NULL,
+    clicks INTEGER NOT NULL DEFAULT 0,
+    impressions INTEGER NOT NULL DEFAULT 0,
+    ctr REAL NOT NULL DEFAULT 0,
+    position REAL NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (site_url, date)
+  );
 `;
 
 const PAGE_A = "https://meetmeatthefair.com/events/a";
@@ -50,6 +61,14 @@ function seed(
     .run(date, query, page, clicks, impressions, position);
 }
 
+function seedTotal(date: string, clicks: number, impressions: number, position: number) {
+  raw
+    .prepare(
+      `INSERT INTO gsc_daily_totals (date, clicks, impressions, position) VALUES (?, ?, ?, ?)`
+    )
+    .run(date, clicks, impressions, position);
+}
+
 beforeEach(() => {
   raw = new Database(":memory:");
   raw.exec(SCHEMA_SQL);
@@ -63,43 +82,65 @@ beforeEach(() => {
   seed("2026-06-02", "festival", PAGE_A, 4, 20, 3.0);
   // Day 3: zero-click day (CTR must be 0, not NaN).
   seed("2026-06-03", "fair", PAGE_A, 0, 5, 12.0);
+
+  // OPE-345 — property totals live in their own table and are DELIBERATELY
+  // larger than the dimensioned rows above. That gap is the whole point: GSC
+  // omits anonymized and long-tail rows from dimensioned responses, so the
+  // property total genuinely exceeds the sum of the cells. Seeding them equal
+  // would make a regression to the old summing behaviour invisible.
+  seedTotal("2026-06-01", 9, 300, 7.7);
+  seedTotal("2026-06-02", 12, 60, 3.0);
+  seedTotal("2026-06-03", 1, 15, 12.0);
 });
 
-describe("getGscTrend", () => {
-  it("returns a daily series ordered by date with summed clicks/impressions", async () => {
-    const { series } = await getGscTrend(db as never);
+describe("getGscTrend — property level (OPE-345)", () => {
+  it("reads gsc_daily_totals, NOT the sum of dimensioned rows", async () => {
+    // The defect this pins: summing the dimensioned store gave 3,305 clicks for
+    // July 2026 against Google's own 9,370 — a 64.7% undercount that no amount
+    // of sync completeness fixes, because GSC never sends those rows.
+    const { series, source } = await getGscTrend(db as never);
+    expect(source).toBe("gsc_daily_totals");
     expect(series.map((p) => p.date)).toEqual(["2026-06-01", "2026-06-02", "2026-06-03"]);
-    expect(series[0]).toMatchObject({ clicks: 3, impressions: 100 });
-    expect(series[1]).toMatchObject({ clicks: 4, impressions: 20 });
-    expect(series[2]).toMatchObject({ clicks: 0, impressions: 5 });
+    expect(series[0]).toMatchObject({ clicks: 9, impressions: 300 }); // not 3/100
+    expect(series[1]).toMatchObject({ clicks: 12, impressions: 60 }); // not 4/20
   });
 
-  it("computes impression-weighted average position (not a naive row average)", async () => {
-    const { series } = await getGscTrend(db as never);
-    // Naive avg of 5.0 and 8.0 would be 6.5; weighted by impressions it's 7.7.
-    expect(series[0].position).toBeCloseTo(7.7, 5);
-    expect(series[1].position).toBeCloseTo(3.0, 5);
-  });
-
-  it("computes per-day CTR and yields 0 (not NaN) on a zero-impression-safe path", async () => {
-    const { series } = await getGscTrend(db as never);
-    expect(series[0].ctr).toBeCloseTo(0.03, 5); // 3/100
-    expect(series[2].ctr).toBe(0); // 0 clicks / 5 impressions
-  });
-
-  it("totals roll up the whole window with weighted position", async () => {
+  it("totals roll up the property table with impression-weighted position", async () => {
     const { totals } = await getGscTrend(db as never);
-    // clicks 3+4+0=7, impr 100+20+5=125
-    // weighted pos numerator = 7.7*100 + 3*20 + 12*5 = 770+60+60 = 890 → /125 = 7.12
-    expect(totals).toMatchObject({ clicks: 7, impressions: 125, days: 3 });
-    expect(totals.ctr).toBeCloseTo(7 / 125, 5);
+    // clicks 9+12+1=22, impr 300+60+15=375
+    // weighted pos = (7.7*300 + 3*60 + 12*15)/375 = (2310+180+180)/375 = 7.12
+    expect(totals).toMatchObject({ clicks: 22, impressions: 375, days: 3 });
+    expect(totals.ctr).toBeCloseTo(22 / 375, 5);
     expect(totals.position).toBeCloseTo(7.12, 5);
   });
 
-  it("filters by exact query", async () => {
-    const { series, totals } = await getGscTrend(db as never, { query: "fair" });
+  it("yields 0 rather than NaN when a day has no impressions", async () => {
+    raw.prepare(`DELETE FROM gsc_daily_totals`).run();
+    seedTotal("2026-06-04", 0, 0, 0);
+    const { series } = await getGscTrend(db as never);
+    expect(series[0].ctr).toBe(0);
+  });
+});
+
+describe("getGscTrend", () => {
+  it("filters by exact query — still the dimensioned store, correctly", async () => {
+    // Scoped to one query, the omitted rows are OTHER queries, so summing the
+    // dimensioned table is right and the totals table cannot answer at all.
+    const scoped = await getGscTrend(db as never, { query: "fair" });
+    expect(scoped.source).toBe("gsc_search_metrics");
+    const { series, totals } = scoped;
     expect(series.map((p) => p.date)).toEqual(["2026-06-01", "2026-06-03"]);
     expect(totals.clicks).toBe(3); // festival's 4 clicks excluded
+  });
+
+  it("still computes impression-weighted position on the dimensioned path", async () => {
+    // Kept from the pre-OPE-345 suite: scoped reads still sum (query,page)
+    // cells, and a naive average of 5.0 and 8.0 (6.5) would be wrong — weighted
+    // by impressions it is 7.7. Moving the property path off this table must not
+    // quietly retire the check for the path that still uses it.
+    const { series } = await getGscTrend(db as never, { query: "fair" });
+    expect(series[0].position).toBeCloseTo(7.7, 5);
+    expect(series[0].ctr).toBeCloseTo(0.03, 5); // 3 clicks / 100 impressions
   });
 
   it("filters by page as a path suffix of the stored full URL", async () => {
@@ -115,11 +156,12 @@ describe("getGscTrend", () => {
     expect(series[0]).toMatchObject({ clicks: 1, impressions: 90 });
   });
 
-  it("filters by an inclusive date window", async () => {
-    const { series } = await getGscTrend(db as never, {
+  it("filters by an inclusive date window (property level)", async () => {
+    const { series, source } = await getGscTrend(db as never, {
       startDate: "2026-06-02",
       endDate: "2026-06-02",
     });
+    expect(source).toBe("gsc_daily_totals");
     expect(series.map((p) => p.date)).toEqual(["2026-06-02"]);
   });
 

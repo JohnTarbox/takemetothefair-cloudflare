@@ -446,6 +446,82 @@ export async function getSitePropertyTotals(
   return result;
 }
 
+export type GscDailyTotal = {
+  date: string;
+  clicks: number;
+  impressions: number;
+  ctr: number;
+  position: number;
+};
+
+/**
+ * Per-day property totals — the summable counterpart to the (query, page)
+ * dimensioned store (OPE-345).
+ *
+ * `dimensions: ["date"]` and NOTHING else. That distinction is the entire
+ * point: grouping by query makes GSC drop anonymized and long-tail rows, which
+ * is why SUM(gsc_search_metrics) came in 64.7% under Google's own July figure.
+ * Grouping by date alone does not trigger that loss.
+ *
+ * Deliberately uncached: the only caller is the daily ingest (and its backfill),
+ * both of which want fresh numbers and run rarely. A cache here would mostly
+ * serve stale rows into a table whose whole job is being trustworthy.
+ */
+export async function getDailyTotals(
+  env: ScEnv,
+  opts: { startDate: string; endDate: string }
+): Promise<GscDailyTotal[]> {
+  const siteUrl = resolveSiteUrl(env);
+  const token = await getAccessToken(env, false);
+  const url = `${SC_API_BASE}/sites/${encodeURIComponent(siteUrl)}/searchAnalytics/query`;
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      signal: controller.signal,
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        startDate: opts.startDate,
+        endDate: opts.endDate,
+        dimensions: ["date"],
+        // One row per day; 2000 covers >5 years, far past GSC's ~16-month
+        // retention, so this can never silently truncate a backfill.
+        rowLimit: 2000,
+      }),
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
+  if (!res.ok) {
+    const text = await res.text();
+    let detail = text.slice(0, 500);
+    try {
+      const parsed = JSON.parse(text) as { error?: { status?: string; message?: string } };
+      if (parsed?.error?.message)
+        detail = `${parsed.error.status ?? "ERROR"}: ${parsed.error.message}`;
+    } catch {
+      /* keep raw detail */
+    }
+    await recordScFailure("gsc-api", env, res.status, detail, res.url);
+    throw new ScApiError(res.status, detail);
+  }
+
+  const data = (await res.json()) as { rows?: GscApiRow[] };
+  return (data.rows ?? [])
+    .map((r) => ({
+      date: String(r.keys?.[0] ?? ""),
+      clicks: r.clicks ?? 0,
+      impressions: r.impressions ?? 0,
+      ctr: r.ctr ?? 0,
+      position: r.position ?? 0,
+    }))
+    .filter((r) => r.date !== "");
+}
+
 export async function getSiteSearchQueries(
   env: ScEnv,
   opts: {
