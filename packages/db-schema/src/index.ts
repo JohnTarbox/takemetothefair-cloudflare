@@ -4182,3 +4182,36 @@ export const photoCoverageDaily = sqliteTable(
 );
 
 export type PhotoCoverageDailyRow = typeof photoCoverageDaily.$inferSelect;
+
+/**
+ * OPE-348 — agent-liveness heartbeats, written ONLY by agent sessions.
+ *
+ * The quota outage of 2026-08-05→09 killed every scheduled agent session for
+ * four days with no alert, because all our dead-man detection ran on the same
+ * Anthropic account. The fix is a Cloudflare-cron watchdog, and a watchdog
+ * needs a signal that goes stale exactly when the agent layer dies.
+ *
+ * `admin_actions` is NOT that signal: it kept receiving rows all through the
+ * outage, and every one was written by a Cloudflare cron.
+ *
+ * `kind` separates the two writers. Agents write kind='agent'; the watchdog
+ * stamps kind='watchdog' so its own execution is provable. The freshness query
+ * MUST filter to kind='agent' — including the watchdog's stamps would make the
+ * table look alive whenever the watchdog runs, which is precisely the failure
+ * this table exists to prevent.
+ */
+export const agentHeartbeats = sqliteTable(
+  "agent_heartbeats",
+  {
+    id: text("id").primaryKey(),
+    /** e.g. "developer-claude-code", or "watchdog:agent-silence". */
+    agentCode: text("agent_code").notNull().unique(),
+    /** 'agent' | 'watchdog' */
+    kind: text("kind").notNull().default("agent"),
+    lastSeenAt: integer("last_seen_at", { mode: "timestamp" }).notNull(),
+    note: text("note"),
+  },
+  (table) => ({
+    kindSeenIdx: index("idx_agent_heartbeats_kind_seen").on(table.kind, table.lastSeenAt),
+  })
+);

@@ -23,6 +23,7 @@ import {
   eventDiscrepancies,
   emailSendLedger,
   heartbeatProbes,
+  agentHeartbeats,
   inboundEmails,
   imageCoverageState,
   newsletterIssues,
@@ -80,6 +81,24 @@ async function maxTs(
  * DORMANT via a null `enabled_at` — it can't false-fire until John flips the flag.
  */
 export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
+  {
+    // OPE-348 — proof the agent-silence watchdog is ITSELF executing.
+    //
+    // The watchdog's normal output is silence, so "no alert" is indistinguishable
+    // from "the watchdog is dead" — which is the same shape as the outage it
+    // exists to catch, one level up. It therefore stamps a run row on EVERY run
+    // (kind='watchdog'), and this probe watches that stamp.
+    //
+    // Deliberately NOT watching kind='agent' rows: those going stale is the
+    // condition the watchdog reports, not a defect in the watchdog.
+    name: "agent-silence-watchdog",
+    ownerOpe: "OPE-348",
+    label: "Agent-silence watchdog (Cloudflare cron)",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: (db) =>
+      maxTs(db, agentHeartbeats, agentHeartbeats.lastSeenAt, eq(agentHeartbeats.kind, "watchdog")),
+  },
   {
     name: "photo-intake",
     ownerOpe: "OPE-202",

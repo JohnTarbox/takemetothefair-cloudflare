@@ -43,6 +43,7 @@ import {
 } from "./inbound-email-stale-sweep.js";
 import { runScheduledDedupSweepCanary } from "./dedup-sweep-canary.js";
 import { runScheduledCpiStaleRedCanary } from "./cpi-stale-red-canary.js";
+import { runAgentSilenceWatchdog } from "./agent-silence-watchdog.js";
 import { runScheduledCpiScanWatchdog } from "./cpi-scan-watchdog.js";
 import {
   runScheduledImageUrlHealthSweep,
@@ -1616,6 +1617,13 @@ export default {
       // reading D1 directly: a probe watching the scan would be evaluated BY
       // the scan, so it could only ever report green. See cpi-scan-watchdog.ts.
       ctx.waitUntil(runScheduledCpiScanWatchdog(env).then(() => undefined));
+      // OPE-348 (URGENT) — agent-layer dead-man switch. Same reasoning as the
+      // CPI watchdog above, one level up: during the 2026-08-05→09 quota outage
+      // EVERY scheduled agent session died and nothing noticed, because every
+      // check we had ran on the same Anthropic account. This one runs on
+      // Cloudflare compute and the Cloudflare email queue, so it survives the
+      // failure it exists to detect.
+      ctx.waitUntil(runAgentSilenceWatchdog(env));
       ctx.waitUntil(runScheduledPromoterEnrichment(env, jobRunId, controller.scheduledTime));
       return;
     }
