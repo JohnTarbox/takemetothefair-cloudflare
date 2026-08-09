@@ -19,10 +19,11 @@ import {
   parseGscMonthlyOracleEmail,
   divergence,
   API_DIVERGENCE_ALARM,
+  monthBounds,
   type GscMonthlyOracle,
 } from "@/lib/gsc-monthly-oracle";
 import { gscDailyTotals, gscMonthlyOracle, gscSearchMetrics } from "@/lib/db/schema";
-import { and, gte, lte, sql } from "drizzle-orm";
+import { and, gte, lt, sql } from "drizzle-orm";
 import { logError } from "@/lib/logger";
 import { enqueueEmail } from "@/lib/queues/producers";
 
@@ -122,21 +123,19 @@ export async function POST(request: Request) {
  */
 async function ingestMonthlyOracle(oracle: GscMonthlyOracle) {
   const db = getCloudflareDb();
-  const monthStart = `${oracle.month}-01`;
-  // Last day of the month without date arithmetic on month lengths: the first
-  // of the next month, minus a day, expressed as a string bound.
-  const [y, m] = oracle.month.split("-").map(Number);
-  const nextMonth = m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, "0")}-01`;
+  // EXCLUSIVE upper bound — see monthBounds. `<= firstOfNextMonth` leaks one
+  // extra day and quietly inflates the comparison.
+  const { start: monthStart, endExclusive } = monthBounds(oracle.month);
 
   const [apiRow] = await db
     .select({ clicks: sql<number>`coalesce(sum(${gscDailyTotals.clicks}), 0)` })
     .from(gscDailyTotals)
-    .where(and(gte(gscDailyTotals.date, monthStart), lte(gscDailyTotals.date, nextMonth)));
+    .where(and(gte(gscDailyTotals.date, monthStart), lt(gscDailyTotals.date, endExclusive)));
 
   const [dimRow] = await db
     .select({ clicks: sql<number>`coalesce(sum(${gscSearchMetrics.clicks}), 0)` })
     .from(gscSearchMetrics)
-    .where(and(gte(gscSearchMetrics.date, monthStart), lte(gscSearchMetrics.date, nextMonth)));
+    .where(and(gte(gscSearchMetrics.date, monthStart), lt(gscSearchMetrics.date, endExclusive)));
 
   const apiClicks = Number(apiRow?.clicks ?? 0);
   const dimensionedClicks = Number(dimRow?.clicks ?? 0);

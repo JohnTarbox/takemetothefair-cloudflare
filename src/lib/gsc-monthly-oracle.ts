@@ -182,3 +182,23 @@ export function divergence(ours: number, oracle: number): number {
  * and never alarmed on, or this would cry wolf every single month.
  */
 export const API_DIVERGENCE_ALARM = 0.1;
+
+/**
+ * Inclusive start and EXCLUSIVE end for a YYYY-MM month.
+ *
+ * Exclusive end, because the obvious `<= firstOfNextMonth` silently includes
+ * the 1st of the following month. That shipped: July's comparison read 9,982
+ * clicks instead of 9,374 (and 3,576 instead of 3,305 on the dimensioned side)
+ * because one extra day leaked in. It stayed under the 10% alarm, so nothing
+ * flagged it — a wrong number that is only slightly wrong is the kind that
+ * survives.
+ */
+export function monthBounds(month: string): { start: string; endExclusive: string } {
+  const [y, m] = month.split("-").map(Number);
+  const nextY = m === 12 ? y + 1 : y;
+  const nextM = m === 12 ? 1 : m + 1;
+  return {
+    start: `${month}-01`,
+    endExclusive: `${nextY}-${String(nextM).padStart(2, "0")}-01`,
+  };
+}

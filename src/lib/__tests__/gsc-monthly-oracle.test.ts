@@ -10,6 +10,7 @@ import {
   parseGscMonthlyOracleEmail,
   resolveOracleMonth,
   divergence,
+  monthBounds,
 } from "@/lib/gsc-monthly-oracle";
 
 /** Real July body, trimmed. Note: value BEFORE label, and "Clicks (web)"
@@ -256,6 +257,24 @@ describe("resolveOracleMonth", () => {
 
   it("returns null for a non-month word", () => {
     expect(resolveOracleMonth("Quarterly", new Date("2026-08-04T00:00:00Z"))).toBeNull();
+  });
+});
+
+describe("monthBounds", () => {
+  it("uses an EXCLUSIVE upper bound so the next month's 1st never leaks in", () => {
+    // The bug this pins actually shipped: `<= '2026-08-01'` pulled August 1st
+    // into July's comparison, reading 9,982 clicks instead of 9,374. It stayed
+    // under the 10% alarm, so nothing flagged it — slightly-wrong numbers are
+    // the ones that survive.
+    expect(monthBounds("2026-07")).toEqual({ start: "2026-07-01", endExclusive: "2026-08-01" });
+  });
+
+  it("rolls the year over for December", () => {
+    expect(monthBounds("2026-12")).toEqual({ start: "2026-12-01", endExclusive: "2027-01-01" });
+  });
+
+  it("zero-pads single-digit months on both ends", () => {
+    expect(monthBounds("2026-09")).toEqual({ start: "2026-09-01", endExclusive: "2026-10-01" });
   });
 });
 
