@@ -133,7 +133,17 @@ export const POST = withAuthorized(async ({ request, db }) => {
   // still resolves for the view-in-browser link.
   await db
     .insert(newsletterIssues)
-    .values({ slug, subject, html: contentHtml, sentAt: isBroadcast ? now : null, createdAt: now })
+    // OPE-359 — explicit even though 'weekend' is the column default. Relying on
+    // a default means the value is invisible at the call site, and this is the
+    // writer whose audience must never drift.
+    .values({
+      slug,
+      subject,
+      html: contentHtml,
+      audience: "weekend",
+      sentAt: isBroadcast ? now : null,
+      createdAt: now,
+    })
     .onConflictDoUpdate({
       target: newsletterIssues.slug,
       set: { subject, html: contentHtml, ...(isBroadcast ? { sentAt: now } : {}) },

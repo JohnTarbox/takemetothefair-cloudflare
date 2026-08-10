@@ -127,6 +127,16 @@ describe("refusal 2 — VENDOR_DIGEST_SEND_ENABLED is off", () => {
     expect(insertedValues[0]).toMatchObject({ sentAt: null });
   });
 
+  it("stamps audience='vendor' so it can never reach the PUBLIC archive (OPE-359)", async () => {
+    // Found by mutation: removing the audience stamp failed nothing, and the
+    // column defaults to 'weekend' — so a composer that forgot would write a
+    // vendor issue as a consumer one and publish it at /newsletter. The default
+    // is deliberately the safe direction for OTHER writers; for this one the
+    // value must be explicit and asserted.
+    await call();
+    expect(insertedValues[0]).toMatchObject({ audience: "vendor" });
+  });
+
   it("leaves sent_at NULL, so the archive never claims it was broadcast", async () => {
     // OPE-285's invariant: sent_at means a real broadcast happened.
     await call();
