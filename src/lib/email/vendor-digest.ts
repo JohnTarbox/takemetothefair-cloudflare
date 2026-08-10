@@ -16,8 +16,21 @@ export interface VendorDigestEvent {
   slug: string;
   /** null → the date is unset (shown as "Dates TBC"). */
   startDate: Date | null;
-  /** TENTATIVE lifecycle → flag "Dates TBC" even if a date exists. */
-  isTentative: boolean;
+  /** Multi-day shows render a range; null → single day. */
+  endDate: Date | null;
+  /**
+   * OPE-360 — whether the DATES are uncertain. Previously this was
+   * `isTentative`, keyed off `status === 'TENTATIVE'`, which was wrong:
+   * TENTATIVE conflates "we don't know the dates" with "record not yet
+   * promoted / needs enrichment". Celebrate Craft Holiday Fair is TENTATIVE
+   * only because it lacks an image and a price — its dates are confirmed and
+   * independently verified against the organiser's site — yet the digest told
+   * exhibitors "Dates TBC", undercutting the runway-to-apply value that is the
+   * entire point of this newsletter.
+   *
+   * Now keyed off date certainty alone.
+   */
+  datesUnconfirmed: boolean;
   categories: string[];
   commercialVendorsAllowed: boolean | null;
   estimatedAttendance: number | null;
@@ -65,11 +78,31 @@ export function resolveApplyLink(e: VendorDigestEvent): string {
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-/** "Sat, Aug 15, 2026" (UTC), or "Dates TBC" for tentative / dateless. */
+const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/** "Sat, Nov 21" — weekday included because a vendor plans around weekends. */
+function dayLabel(d: Date): string {
+  return `${DAYS[d.getUTCDay()]}, ${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`;
+}
+
+/**
+ * "Sat, Nov 21 – Sun, Nov 22, 2026" · "Sat, Nov 21, 2026" · "Dates TBC".
+ *
+ * "Dates TBC" now means exactly what it says: the dates are not confirmed, or
+ * there is no start date at all. An event can be TENTATIVE and still have firm
+ * dates (see `datesUnconfirmed`).
+ */
 export function formatShowDate(e: VendorDigestEvent): string {
-  if (e.isTentative || !e.startDate) return "Dates TBC";
-  const d = e.startDate;
-  return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}, ${d.getUTCFullYear()}`;
+  if (e.datesUnconfirmed || !e.startDate) return "Dates TBC";
+  const start = e.startDate;
+  const year = start.getUTCFullYear();
+  const end = e.endDate;
+  // Same-day end dates are common in the data; render those as a single day
+  // rather than "Nov 21 – Nov 21".
+  if (end && end.getTime() > start.getTime()) {
+    return `${dayLabel(start)} – ${dayLabel(end)}, ${end.getUTCFullYear()}`;
+  }
+  return `${dayLabel(start)}, ${year}`;
 }
 
 /** "in 3 weeks" / "in 5 months" — the runway-to-apply chip. */
@@ -99,7 +132,7 @@ function fitLine(e: VendorDigestEvent): string | null {
 
 function card(e: VendorDigestEvent, now: Date): string {
   const apply = resolveApplyLink(e);
-  const lead = leadTimeLabel(e.isTentative ? null : e.startDate, now);
+  const lead = leadTimeLabel(e.datesUnconfirmed ? null : e.startDate, now);
   const chips = [
     crowdSignal(e),
     e.indoorOutdoor ? e.indoorOutdoor.toLowerCase() : null,

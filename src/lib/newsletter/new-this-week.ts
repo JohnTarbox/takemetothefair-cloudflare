@@ -7,7 +7,7 @@
  * alone let 2 dead events through in testing (per the ticket). We gate on the
  * date directly.
  *
- * TENTATIVE events are included (surfaced as "Dates TBC") — a vendor still wants
+ * TENTATIVE events are included — a vendor still wants
  * runway on a show whose dates aren't locked.
  */
 import { and, desc, eq, gte, inArray, or } from "drizzle-orm";
@@ -34,12 +34,33 @@ export function weekAgo(now: Date): Date {
  * (nearest start date), so the strongest time-pressure opportunity leads — a
  * dateless/tentative show sorts last. Caller passes `now` (cron-injected).
  */
+/**
+ * OPE-360 — are this event's DATES uncertain?
+ *
+ * Pure, exported, and taking the whole row on purpose: the bug was that this
+ * decision read `status`, and the only way to pin "status must not influence
+ * the answer" is to hand a function both fields and assert it ignores one.
+ *
+ * `dates_confirmed` defaults to TRUE in the schema, so `=== false` is the
+ * deliberate test — only an explicit "we are not sure" marks a show TBC. A NULL
+ * (older row, never set) is treated as confirmed, matching the column default.
+ */
+export function datesAreUnconfirmed(row: {
+  datesConfirmed: boolean | null;
+  status?: string | null;
+  lifecycleStatus?: string | null;
+}): boolean {
+  return row.datesConfirmed === false;
+}
+
 export async function selectNewThisWeekEvents(db: Db, now: Date): Promise<VendorDigestEvent[]> {
   const rows = await db
     .select({
       name: events.name,
       slug: events.slug,
       startDate: events.startDate,
+      endDate: events.endDate,
+      datesConfirmed: events.datesConfirmed,
       status: events.status,
       lifecycleStatus: events.lifecycleStatus,
       categories: events.categories,
@@ -73,7 +94,12 @@ export async function selectNewThisWeekEvents(db: Db, now: Date): Promise<Vendor
     name: r.name,
     slug: r.slug,
     startDate: r.startDate ?? null,
-    isTentative: r.status === "TENTATIVE" || r.lifecycleStatus === "TENTATIVE",
+    endDate: r.endDate ?? null,
+    // OPE-360 — date certainty, NOT approval status. `dates_confirmed` defaults
+    // to true in the schema, so `=== false` is the deliberate test: only an
+    // explicit "we are not sure" marks a show TBC. A dateless event is caught by
+    // the `!startDate` branch in the formatter.
+    datesUnconfirmed: datesAreUnconfirmed(r),
     categories: parseJsonArray(r.categories),
     commercialVendorsAllowed: r.commercialVendorsAllowed ?? null,
     estimatedAttendance: r.estimatedAttendance ?? null,

@@ -18,7 +18,8 @@ const ev = (over: Partial<VendorDigestEvent> = {}): VendorDigestEvent => ({
   name: "Fryeburg Fair",
   slug: "fryeburg-fair",
   startDate: new Date("2026-10-04T00:00:00Z"),
-  isTentative: false,
+  endDate: null,
+  datesUnconfirmed: false,
   categories: ["Agricultural", "Craft"],
   commercialVendorsAllowed: true,
   estimatedAttendance: 150000,
@@ -57,10 +58,52 @@ describe("resolveApplyLink — chain application → source → promoter → eve
 });
 
 describe("formatShowDate / leadTimeLabel", () => {
-  it("shows the date, or 'Dates TBC' for a tentative or dateless show", () => {
-    expect(formatShowDate(ev())).toBe("Oct 4, 2026");
-    expect(formatShowDate(ev({ isTentative: true }))).toBe("Dates TBC");
+  it("shows the date with its weekday, or 'Dates TBC' when dates are unconfirmed", () => {
+    // OPE-360 — weekday included: a vendor plans around weekends, and
+    // "Sun, Oct 4" answers the question "Oct 4, 2026" leaves open.
+    expect(formatShowDate(ev())).toBe("Sun, Oct 4, 2026");
+    expect(formatShowDate(ev({ datesUnconfirmed: true }))).toBe("Dates TBC");
     expect(formatShowDate(ev({ startDate: null }))).toBe("Dates TBC");
+  });
+
+  it("renders a multi-day show as a RANGE", () => {
+    // The acceptance case: Celebrate Craft Holiday Fair, Nov 21–22 2026.
+    expect(
+      formatShowDate(
+        ev({
+          startDate: new Date("2026-11-21T00:00:00Z"),
+          endDate: new Date("2026-11-22T00:00:00Z"),
+        })
+      )
+    ).toBe("Sat, Nov 21 – Sun, Nov 22, 2026");
+  });
+
+  it("does NOT render 'Nov 21 – Nov 21' when the end date equals the start", () => {
+    // Same-day end dates are common in the data.
+    expect(
+      formatShowDate(
+        ev({
+          startDate: new Date("2026-11-21T00:00:00Z"),
+          endDate: new Date("2026-11-21T00:00:00Z"),
+        })
+      )
+    ).toBe("Sat, Nov 21, 2026");
+  });
+
+  it("a TENTATIVE show with CONFIRMED dates renders its real dates", () => {
+    // The reported bug. Celebrate Craft Holiday Fair is TENTATIVE only because
+    // it lacks an image and a price; its dates are confirmed and verified
+    // against the organiser's own site. Telling exhibitors "Dates TBC" destroys
+    // the runway-to-apply value this newsletter exists to deliver.
+    expect(
+      formatShowDate(
+        ev({
+          startDate: new Date("2026-11-21T00:00:00Z"),
+          endDate: new Date("2026-11-22T00:00:00Z"),
+          datesUnconfirmed: false, // TENTATIVE status is irrelevant here
+        })
+      )
+    ).toBe("Sat, Nov 21 – Sun, Nov 22, 2026");
   });
 
   it("labels lead time in days / weeks / months", () => {
@@ -88,8 +131,8 @@ describe("renderVendorDigestContent", () => {
     expect(html).toContain("/events/fryeburg-fair");
   });
 
-  it("shows Dates TBC in the glance table for tentative shows", () => {
-    const html = renderVendorDigestContent([ev({ isTentative: true })], NOW) ?? "";
+  it("still shows Dates TBC for a show whose dates really are unconfirmed", () => {
+    const html = renderVendorDigestContent([ev({ datesUnconfirmed: true })], NOW) ?? "";
     expect(html).toContain("Dates TBC");
   });
 
