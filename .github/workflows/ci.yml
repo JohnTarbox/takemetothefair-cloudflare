@@ -144,11 +144,17 @@ jobs:
       - name: Seed database
         run: npx tsx scripts/seed.ts
 
+      # OPE-361 — webkit as well as chromium. The /register mobile-layout bug was
+      # reported on an iPhone and desktop-width Chromium testing could not see
+      # it; the mobile-safari project (iPhone 13 profile) is what covers that
+      # class now, and a project CI never runs is not coverage.
       - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install --with-deps chromium webkit
 
+      # mobile-safari is testMatch-scoped to *-mobile-*.spec.ts, so this adds
+      # ~8 tests rather than a fourth full pass of the suite.
       - name: Run E2E tests
-        run: npm run test:e2e -- --project=chromium
+        run: npm run test:e2e -- --project=chromium --project=mobile-safari
         env:
           CI: true
           AUTH_SECRET: ci-test-secret-at-least-32-characters-long

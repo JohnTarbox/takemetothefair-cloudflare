@@ -7,9 +7,7 @@ const authenticatedPatterns = [
 ];
 
 // Patterns to exclude from local runs (no PLAYWRIGHT_BASE_URL)
-const localIgnore = process.env.PLAYWRIGHT_BASE_URL
-  ? []
-  : ["**/smoke.spec.ts"];
+const localIgnore = process.env.PLAYWRIGHT_BASE_URL ? [] : ["**/smoke.spec.ts"];
 
 export default defineConfig({
   testDir: "./e2e",
@@ -58,13 +56,32 @@ export default defineConfig({
       use: { ...devices["Desktop Safari"] },
       testIgnore: [...authenticatedPatterns, "**/auth.setup.ts", ...localIgnore],
     },
-  ],
-  ...(!process.env.PLAYWRIGHT_BASE_URL ? {
-    webServer: {
-      command: "npm run dev",
-      url: "http://localhost:3000",
-      reuseExistingServer: !process.env.CI,
-      timeout: 120 * 1000,
+
+    // OPE-361 — iOS Safari on a real iPhone profile.
+    //
+    // The /register bug was reported by a customer on an iPhone and could not be
+    // reproduced by desktop-width testing. Desktop Safari shares WebKit, but not
+    // the mobile viewport, deviceScaleFactor, touch flags or iOS user-agent —
+    // and this was a responsive-layout fault, i.e. exactly the class those
+    // settings decide.
+    //
+    // Deliberately scoped to mobile-layout specs rather than the whole suite:
+    // running every e2e test a fourth time buys little and slows CI, while the
+    // layout specs are the ones with a device-specific failure mode.
+    {
+      name: "mobile-safari",
+      use: { ...devices["iPhone 13"] },
+      testMatch: ["**/*-mobile-*.spec.ts"],
     },
-  } : {}),
+  ],
+  ...(!process.env.PLAYWRIGHT_BASE_URL
+    ? {
+        webServer: {
+          command: "npm run dev",
+          url: "http://localhost:3000",
+          reuseExistingServer: !process.env.CI,
+          timeout: 120 * 1000,
+        },
+      }
+    : {}),
 });
