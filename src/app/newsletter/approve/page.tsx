@@ -138,7 +138,9 @@ export default async function NewsletterApprovePage({ searchParams }: Props) {
   if (issue.sentAt) return <ResultView copy={resultCopy("already_sent")} />;
   if (env.NEWSLETTER_SEND_ENABLED !== "true") return <ResultView copy={resultCopy("disabled")} />;
 
-  const recipientCount = (await selectBroadcastRecipients(db)).length;
+  // "weekend" — this confirm screen belongs to the attendee digest. The vendor
+  // digest has its own Monday sender and never routes through here.
+  const recipientCount = (await selectBroadcastRecipients(db, "weekend")).length;
 
   // Valid + pending + enabled → the confirm form. The POST (not this GET) sends.
   return (
