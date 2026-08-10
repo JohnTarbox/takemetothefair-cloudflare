@@ -103,12 +103,22 @@ export const POST = withAuthorized(async ({ request, db }) => {
       slug,
       subject,
       html: contentHtml,
+      // OPE-359 — the discriminator that keeps this out of the public consumer
+      // archive. Set on BOTH branches of the upsert: an issue composed while the
+      // send flag was off, then re-composed later, must not silently revert to
+      // the 'weekend' default and surface publicly.
+      audience: "vendor",
       sentAt: isBroadcast ? now : null,
       createdAt: now,
     })
     .onConflictDoUpdate({
       target: newsletterIssues.slug,
-      set: { subject, html: contentHtml, ...(isBroadcast ? { sentAt: now } : {}) },
+      set: {
+        subject,
+        html: contentHtml,
+        audience: "vendor",
+        ...(isBroadcast ? { sentAt: now } : {}),
+      },
     });
 
   if (recipients.length === 0) {

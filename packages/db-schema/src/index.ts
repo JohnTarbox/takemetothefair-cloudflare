@@ -1609,12 +1609,27 @@ export const newsletterIssues = sqliteTable(
     subject: text("subject").notNull(),
     html: text("html").notNull(),
     sentAt: integer("sent_at", { mode: "timestamp" }),
+    /**
+     * OPE-359 — which audience this issue was written for: 'weekend' (public
+     * consumer digest) or 'vendor' ("New This Week").
+     *
+     * The public /newsletter archive filters on this. Default 'weekend' is
+     * chosen so that a writer who forgets to set it produces the SAFE outcome —
+     * an issue missing from the vendor archive — rather than leaking a vendor
+     * issue into the public consumer listing.
+     */
+    audience: text("audience").notNull().default("weekend"),
     createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   },
   (table) => ({
     sentAtIdx: index("idx_newsletter_issues_sent_at").on(table.sentAt),
+    audienceIdx: index("idx_newsletter_issues_audience").on(table.audience, table.sentAt),
   })
 );
+
+/** The newsletter audiences. Mirrors NEWSLETTER_LISTS (OPE-191). */
+export const NEWSLETTER_AUDIENCES = ["weekend", "vendor"] as const;
+export type NewsletterAudience = (typeof NEWSLETTER_AUDIENCES)[number];
 
 /**
  * Content link index. Maintained by `syncContentLinks` whenever a blog post

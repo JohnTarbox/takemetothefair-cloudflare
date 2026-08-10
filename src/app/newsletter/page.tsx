@@ -3,7 +3,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { newsletterIssues } from "@/lib/db/schema";
-import { desc, isNotNull } from "drizzle-orm";
+import { and, desc, eq, isNotNull } from "drizzle-orm";
 import { NewsletterSignup } from "@/components/layout/newsletter-signup";
 import { NEWSLETTER_NAME, newsletterMastheadHtml } from "@/lib/newsletter-masthead";
 
@@ -24,7 +24,9 @@ async function getSentIssues() {
         sentAt: newsletterIssues.sentAt,
       })
       .from(newsletterIssues)
-      .where(isNotNull(newsletterIssues.sentAt))
+      // OPE-359 — consumer issues ONLY. Without this the vendor "New This Week"
+      // digest appears in the public archive the moment it is first broadcast.
+      .where(and(isNotNull(newsletterIssues.sentAt), eq(newsletterIssues.audience, "weekend")))
       .orderBy(desc(newsletterIssues.sentAt))
       .limit(200);
   } catch {
