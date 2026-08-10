@@ -144,18 +144,29 @@ function RegisterForm() {
     // "invisible" is invalid here and threw on init, blocking registration). If
     // the sitekey is an invisible/managed widget it auto-issues a token; if it's
     // interactive it shows a checkbox in the (now visible) container below.
-    turnstileWidgetId.current = window.turnstile.render(turnstileContainerRef.current, {
-      sitekey: turnstileSiteKey,
-      callback: (token: string) => {
-        setTurnstileToken(token);
-      },
-      "expired-callback": () => {
-        setTurnstileToken("");
-      },
-      "error-callback": () => {
-        setTurnstileToken("");
-      },
-    });
+    // OPE-361 §4 — defence in depth, NOT the fix for the reported bug (that was
+    // layout). `render()` throwing here would propagate out of an effect and hit
+    // the error boundary, blanking a page whose whole job is signup — and
+    // OPE-173 is a real instance of this call throwing on a bad param. Catching
+    // it leaves the form usable and merely tokenless: submit then fails the
+    // server-side check with a message, instead of the page vanishing.
+    try {
+      turnstileWidgetId.current = window.turnstile.render(turnstileContainerRef.current, {
+        sitekey: turnstileSiteKey,
+        callback: (token: string) => {
+          setTurnstileToken(token);
+        },
+        "expired-callback": () => {
+          setTurnstileToken("");
+        },
+        "error-callback": () => {
+          setTurnstileToken("");
+        },
+      });
+    } catch (err) {
+      console.error("Turnstile render failed; form stays usable", err);
+      turnstileWidgetId.current = null;
+    }
 
     setTurnstileReady(true);
   }, [turnstileSiteKey]);
@@ -346,10 +357,6 @@ function RegisterForm() {
         />
       )}
 
-      {/* OPE-173 — Turnstile widget container. Visible so an interactive/managed
-          challenge is solvable; an invisible-mode sitekey renders nothing here. */}
-      <div ref={turnstileContainerRef} className="flex justify-center" />
-
       <Card className="w-full max-w-md">
         <CardHeader>
           <h1 className="text-2xl font-bold text-center text-foreground">Create an Account</h1>
@@ -480,6 +487,24 @@ function RegisterForm() {
               </span>
             </label>
 
+            {/* OPE-361 — Turnstile lives INSIDE the card, immediately above the
+                submit button.
+
+                It used to be a SIBLING of <Card>, and the page wrapper is a
+                flex container: `flex items-center justify-center` defaults to
+                flex-direction:row. While the container was empty it had zero
+                width and the card looked centred; the moment Turnstile injected
+                its ~300px iframe the row became [widget][form], centred as a
+                group. On a ~390px iPhone the ~750px row overflowed and pushed
+                the form off-screen — a real vendor (2026-08-10) reported the
+                signup form "disappears".
+
+                Placing it here fixes the layout AND removes the sibling
+                relationship, so no future change to the wrapper can recreate
+                this. min-h reserves the widget's height so its late mount does
+                not shift the button under the user's finger (CLS). */}
+            <div ref={turnstileContainerRef} className="flex justify-center min-h-[65px] w-full" />
+
             <Button
               type="submit"
               className="w-full"
@@ -565,7 +590,11 @@ function RegisterForm() {
 
 export default function RegisterPage() {
   return (
-    <div className="min-h-[80vh] flex items-center justify-center px-4 py-12">
+    // OPE-361 — flex-col, not the default row. The Turnstile widget now lives
+    // inside the card so this is belt-and-braces, but a bare `flex` here is what
+    // turned a late-mounting sibling into an off-screen form, and the next
+    // person to add a sibling should get a stacked layout by default.
+    <div className="min-h-[80vh] flex flex-col items-center justify-center px-4 py-12">
       <Suspense
         fallback={<div className="w-full max-w-md h-[600px] bg-muted rounded-xl animate-pulse" />}
       >
