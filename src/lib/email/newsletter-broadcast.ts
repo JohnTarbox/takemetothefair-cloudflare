@@ -22,6 +22,12 @@ import { signUnsubscribeToken } from "@/lib/email/newsletter-unsubscribe-token";
 type Db = DrizzleD1Database<Record<string, unknown>>;
 
 export const NEWSLETTER_SOURCE = "newsletter:weekly-digest";
+/** OPE-191 — the vendor digest's own ledger source. Distinct from the attendee
+ *  digest's so "did the vendor digest go out this week?" is answerable from
+ *  email_send_ledger. Sharing one source made the two indistinguishable, which
+ *  a post-send check caught: the first vendor test landed under
+ *  `newsletter:weekly-digest` and was invisible as a vendor send. */
+export const VENDOR_DIGEST_SOURCE = "newsletter:vendor-digest";
 export const NEWSLETTER_FROM = "Meet Me at the Fair <hello@meetmeatthefair.com>";
 
 /**
@@ -84,6 +90,12 @@ export async function enqueueNewsletterDigest(args: {
   secret: string;
   mailingAddress?: string;
   /**
+   * OPE-191 — ledger source. Defaults to the attendee digest's. The vendor
+   * digest passes VENDOR_DIGEST_SOURCE so the two are separable in
+   * email_send_ledger; without it, neither digest's cadence is checkable.
+   */
+  source?: string;
+  /**
    * OPE-231 — the one-tap approve button, threaded straight to the template.
    * The SAFETY rule (a broadcast must never carry it) is enforced by the
    * callers: the approve route never sets it, and the send route sets it only
@@ -118,7 +130,7 @@ export async function enqueueNewsletterDigest(args: {
       html: tpl.html,
       text: tpl.text,
       from: NEWSLETTER_FROM,
-      source: NEWSLETTER_SOURCE,
+      source: args.source ?? NEWSLETTER_SOURCE,
     });
     queued++;
   }

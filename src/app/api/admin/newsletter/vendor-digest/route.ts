@@ -28,6 +28,7 @@ import { resolveUnsubscribeSecret } from "@/lib/email/newsletter-unsubscribe-tok
 import {
   selectBroadcastRecipients,
   enqueueNewsletterDigest,
+  VENDOR_DIGEST_SOURCE,
 } from "@/lib/email/newsletter-broadcast";
 import { selectNewThisWeekEvents } from "@/lib/newsletter/new-this-week";
 import { renderVendorDigestContent } from "@/lib/email/vendor-digest";
@@ -137,6 +138,7 @@ export const POST = withAuthorized(async ({ request, db }) => {
     siteUrl,
     secret,
     mailingAddress: env.MAILING_ADDRESS,
+    source: VENDOR_DIGEST_SOURCE,
   });
 
   return NextResponse.json({
