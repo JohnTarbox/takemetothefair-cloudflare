@@ -138,9 +138,14 @@ new_sqlite_classes = ["MeetMeAtTheFairMCP"]
 # "0 7 * * *"     → I1 vendor-enrichment nightly sweep (≤100 vendors). Fires
 #                   after the 06:00/06:10 heavy batch so Browser-Rendering
 #                   fetches don't contend with the recommendations/GSC work.
+# "0 11 * * 1"   → OPE-191 Monday vendor digest ("New This Week"). 11:00 UTC is
+#                   07:00 EDT, the time John asked for; it lands 06:00 during EST.
+#                   A dedicated trigger rather than a day-gate on an existing
+#                   daily cron, because those fire at 06:00-08:00 UTC — i.e. the
+#                   small hours in ET, which is not when you send a newsletter.
 # "0 8 * * *"     → OPE-36 promoter-enrichment nightly sweep (≤50 promoters),
 #                   staggered 1h after the vendor sweep to space Browser-Rendering.
-crons = ["0 6 * * *", "10 6 * * *", "*/10 * * * *", "0 * * * *", "0 7 * * *", "0 8 * * *"]
+crons = ["0 6 * * *", "10 6 * * *", "*/10 * * * *", "0 * * * *", "0 7 * * *", "0 8 * * *", "0 11 * * 1"]
 
 # Cloudflare Email Service — outbound sending binding (public beta).
 # Replaced Resend HTTP integration in the EMAIL_JOBS consumer. Without
