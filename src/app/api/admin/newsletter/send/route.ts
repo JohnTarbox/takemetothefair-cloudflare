@@ -94,7 +94,9 @@ export const POST = withAuthorized(async ({ request, db }) => {
   // Resolve recipients (identical selection for preview and a real send). The
   // broadcast selection is shared with the OPE-231 approve route so both honour
   // the same suppression list.
-  const recipients = testRecipient ? [testRecipient] : await selectBroadcastRecipients(db);
+  const recipients = testRecipient
+    ? [testRecipient]
+    : await selectBroadcastRecipients(db, "weekend");
 
   // OPE-190 — read-only preview. Return the resolved recipients + the issue
   // shape that WOULD be written, with zero side effects (no upsert, no enqueue,

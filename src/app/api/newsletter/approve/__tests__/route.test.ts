@@ -37,11 +37,17 @@ function mockIssue(row: { subject: string; html: string; sentAt: Date | null } |
   });
 }
 
-/** Mock the recipient + suppression selects used by selectBroadcastRecipients. */
+/** Mock the recipient + suppression selects used by selectBroadcastRecipients.
+ *  The recipient query gained an innerJoin (OPE-191 list dimension), so the
+ *  chain is from() -> innerJoin() -> where(). */
 function mockRecipients(emails: string[]) {
+  const resolveEmails = () => Promise.resolve(emails.map((email) => ({ email })));
   selectMock
     .mockReturnValueOnce({
-      from: () => ({ where: () => Promise.resolve(emails.map((email) => ({ email }))) }),
+      from: () => ({
+        innerJoin: () => ({ where: resolveEmails }),
+        where: resolveEmails,
+      }),
     })
     .mockReturnValueOnce({ from: () => Promise.resolve([]) });
 }

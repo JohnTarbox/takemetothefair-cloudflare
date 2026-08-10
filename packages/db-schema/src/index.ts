@@ -4281,3 +4281,35 @@ export const gscMonthlyOracle = sqliteTable("gsc_monthly_oracle", {
   apiDivergence: real("api_divergence"),
   updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
 });
+
+/**
+ * OPE-191 — which audience list(s) a subscriber belongs to.
+ *
+ * A junction rather than a column on `newsletterSubscribers`, because that
+ * table's `email` is UNIQUE: a column could never represent one address on both
+ * the attendee and vendor digests, which is the whole point.
+ *
+ * The global `newsletterSubscribers.unsubscribed` flag still overrides
+ * everything — a one-click unsubscribe means "stop all mail", and no list row
+ * can resurrect someone. `unsubscribedAt` here is the narrower "leave this
+ * list only".
+ */
+export const newsletterListSubscriptions = sqliteTable(
+  "newsletter_list_subscriptions",
+  {
+    id: text("id").primaryKey(),
+    subscriberId: text("subscriber_id").notNull(),
+    /** 'weekend' (attendee digest) | 'vendor' (New This Week). */
+    list: text("list").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    unsubscribedAt: integer("unsubscribed_at", { mode: "timestamp" }),
+  },
+  (t) => [
+    uniqueIndex("idx_newsletter_list_subs_unique").on(t.subscriberId, t.list),
+    index("idx_newsletter_list_subs_list").on(t.list),
+  ]
+);
+
+/** The audience lists that exist. Adding one is a value here plus a sender. */
+export const NEWSLETTER_LISTS = ["weekend", "vendor"] as const;
+export type NewsletterList = (typeof NEWSLETTER_LISTS)[number];

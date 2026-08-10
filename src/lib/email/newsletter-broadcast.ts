@@ -7,9 +7,14 @@
 // copy is precisely how two send paths drift until one of them stops honouring
 // the suppression list. Both callers now share these functions.
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
-import { newsletterSubscribers, emailSuppressionList } from "@/lib/db/schema";
+import {
+  newsletterSubscribers,
+  newsletterListSubscriptions,
+  emailSuppressionList,
+  type NewsletterList,
+} from "@/lib/db/schema";
 import { enqueueEmail } from "@/lib/queues/producers";
 import { newsletterDigestTemplate } from "@/lib/email/templates";
 import { signUnsubscribeToken } from "@/lib/email/newsletter-unsubscribe-token";
@@ -20,17 +25,38 @@ export const NEWSLETTER_SOURCE = "newsletter:weekly-digest";
 export const NEWSLETTER_FROM = "Meet Me at the Fair <hello@meetmeatthefair.com>";
 
 /**
- * The eligible broadcast list: confirmed, not unsubscribed, minus every address
- * on the suppression list. This is the ONLY definition of "the list" — the
- * approve route and the send route both call it, so a hard bounce suppressed in
- * one place is honoured everywhere.
+ * The eligible broadcast list for ONE audience: confirmed, not globally
+ * unsubscribed, actively subscribed to `list`, minus every suppressed address.
+ * This is the ONLY definition of "the list" — the approve route and the send
+ * route both call it, so a hard bounce suppressed in one place is honoured
+ * everywhere.
+ *
+ * `list` is REQUIRED on purpose (OPE-191). Making it optional, with "all
+ * confirmed subscribers" as the fallback, would mean a caller that forgets it
+ * mails the wrong audience — and the failure is invisible, because a send to
+ * too many people looks exactly like a successful send. The 0182 backfill
+ * enrolled every existing confirmed subscriber in `weekend`, so the attendee
+ * digest keeps precisely the audience it had.
+ *
+ * The global `unsubscribed` flag is checked as well as the per-list one: an
+ * unsubscribe must mean "stop all mail", and a stale list row must never be
+ * able to resurrect someone.
  */
-export async function selectBroadcastRecipients(db: Db): Promise<string[]> {
+export async function selectBroadcastRecipients(db: Db, list: NewsletterList): Promise<string[]> {
   const subs = await db
     .select({ email: newsletterSubscribers.email })
     .from(newsletterSubscribers)
+    .innerJoin(
+      newsletterListSubscriptions,
+      eq(newsletterListSubscriptions.subscriberId, newsletterSubscribers.id)
+    )
     .where(
-      and(eq(newsletterSubscribers.confirmed, true), eq(newsletterSubscribers.unsubscribed, false))
+      and(
+        eq(newsletterSubscribers.confirmed, true),
+        eq(newsletterSubscribers.unsubscribed, false),
+        eq(newsletterListSubscriptions.list, list),
+        isNull(newsletterListSubscriptions.unsubscribedAt)
+      )
     );
   const suppressedRows = await db
     .select({ email: emailSuppressionList.email })

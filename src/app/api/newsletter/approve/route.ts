@@ -112,7 +112,7 @@ export async function POST(request: NextRequest) {
     // We own the latch — broadcast the stored issue. If enqueue throws partway,
     // sent_at is already set (the issue won't double-send); the partial failure
     // is logged, consistent with the existing broadcast path's best-effort send.
-    const recipients = await selectBroadcastRecipients(db);
+    const recipients = await selectBroadcastRecipients(db, "weekend");
     const siteUrl = getSiteUrl();
     const queued = await enqueueNewsletterDigest({
       recipients,

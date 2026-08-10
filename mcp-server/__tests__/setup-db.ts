@@ -301,6 +301,15 @@ const SCHEMA_SQL = `
     created_at INTEGER NOT NULL DEFAULT (unixepoch())
   );
 
+  CREATE TABLE newsletter_list_subscriptions (
+    id TEXT PRIMARY KEY,
+    subscriber_id TEXT NOT NULL,
+    list TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    unsubscribed_at INTEGER,
+    UNIQUE (subscriber_id, list)
+  );
+
   CREATE TABLE gsc_monthly_oracle (
     month TEXT PRIMARY KEY,
     clicks INTEGER NOT NULL,

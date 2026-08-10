@@ -118,7 +118,11 @@ describe("POST /api/admin/newsletter/send — preview_only (OPE-190)", () => {
     // First select → confirmed subscribers; second select → suppression list.
     selectMock
       .mockReturnValueOnce({
+        // OPE-191: from() -> innerJoin() -> where().
         from: () => ({
+          innerJoin: () => ({
+            where: () => Promise.resolve([{ email: "a@x.com" }, { email: "b@x.com" }]),
+          }),
           where: () => Promise.resolve([{ email: "a@x.com" }, { email: "b@x.com" }]),
         }),
       })
@@ -250,7 +254,11 @@ describe("POST /api/admin/newsletter/send — approve CTA checks the gate at com
     sendEnabled = "true";
     selectMock
       .mockReturnValueOnce({
-        from: () => ({ where: () => Promise.resolve([{ email: "sub@x.com" }]) }),
+        // OPE-191: the recipient query is now from() -> innerJoin() -> where().
+        from: () => ({
+          innerJoin: () => ({ where: () => Promise.resolve([{ email: "sub@x.com" }]) }),
+          where: () => Promise.resolve([{ email: "sub@x.com" }]),
+        }),
       })
       .mockReturnValueOnce({ from: () => Promise.resolve([]) });
     const res = await call({ subject: "Weekend digest", content_html: "<p>hi</p>" });
@@ -306,7 +314,11 @@ describe("sent_at is set ONLY by a real broadcast (OPE-285)", () => {
     sendEnabled = "true";
     selectMock
       .mockReturnValueOnce({
-        from: () => ({ where: () => Promise.resolve([{ email: "sub@x.com" }]) }),
+        // OPE-191: the recipient query is now from() -> innerJoin() -> where().
+        from: () => ({
+          innerJoin: () => ({ where: () => Promise.resolve([{ email: "sub@x.com" }]) }),
+          where: () => Promise.resolve([{ email: "sub@x.com" }]),
+        }),
       })
       .mockReturnValueOnce({ from: () => Promise.resolve([]) });
     const res = await call({
@@ -325,7 +337,11 @@ describe("sent_at is set ONLY by a real broadcast (OPE-285)", () => {
     sendEnabled = "true";
     selectMock
       .mockReturnValueOnce({
-        from: () => ({ where: () => Promise.resolve([{ email: "sub@x.com" }]) }),
+        // OPE-191: the recipient query is now from() -> innerJoin() -> where().
+        from: () => ({
+          innerJoin: () => ({ where: () => Promise.resolve([{ email: "sub@x.com" }]) }),
+          where: () => Promise.resolve([{ email: "sub@x.com" }]),
+        }),
       })
       .mockReturnValueOnce({ from: () => Promise.resolve([]) });
     await call({
