@@ -29,7 +29,10 @@ CLOUDFLARE_ACCOUNT_ID = "e6011e48b7014ef83c77e3c767dac6cf"
 # the vendor list. While "false" the cron still runs every Monday: it composes
 # the issue and persists it at /newsletter/<slug> for review, but mails nobody.
 # That is the OPE-6 STOP-gate made structural rather than a note in a ticket.
-VENDOR_DIGEST_SEND_ENABLED = "false"
+# GO-LIVE 2026-08-10 (OPE-358) — John-authorized pilot. The vendor list is
+# reconciled to exactly three addresses: john@pimboat.com, colors@symdak.com,
+# jdcronin01@gmail.com. First live send Mon 2026-08-17 07:00 EDT.
+VENDOR_DIGEST_SEND_ENABLED = "true"
 # OPE-332 — relax `no-store` on anonymous public detail pages so conditional
 # requests (304) can actually happen. GATED: this changes how every public page
 # is served, so it ships OFF and only John flips it. Must live HERE, not in the
