@@ -48,8 +48,8 @@ vi.mock("@/lib/email/newsletter-broadcast", async (orig) => {
   return {
     ...actual,
     selectBroadcastRecipients: () => selectRecipientsMock(),
-    enqueueNewsletterDigest: async (args: { recipients: string[] }) => {
-      for (const r of args.recipients) await enqueueEmailMock({ to: r });
+    enqueueNewsletterDigest: async (args: { recipients: string[]; source?: string }) => {
+      for (const r of args.recipients) await enqueueEmailMock({ to: r, source: args.source });
       return args.recipients.length;
     },
   };
@@ -154,7 +154,10 @@ describe("refusal 3 — test_recipient", () => {
     await call({ test_recipient: "me@example.com" });
     expect(selectRecipientsMock).not.toHaveBeenCalled();
     expect(enqueueEmailMock).toHaveBeenCalledTimes(1);
-    expect(enqueueEmailMock).toHaveBeenCalledWith({ to: "me@example.com" });
+    expect(enqueueEmailMock).toHaveBeenCalledWith({
+      to: "me@example.com",
+      source: "newsletter:vendor-digest",
+    });
   });
 
   it("a test send does NOT stamp sent_at", async () => {
@@ -166,7 +169,21 @@ describe("refusal 3 — test_recipient", () => {
     broadcastEnabled = "true";
     await call({ test_recipient: "me@example.com" });
     expect(selectRecipientsMock).not.toHaveBeenCalled();
-    expect(enqueueEmailMock).toHaveBeenCalledWith({ to: "me@example.com" });
+    expect(enqueueEmailMock).toHaveBeenCalledWith({
+      to: "me@example.com",
+      source: "newsletter:vendor-digest",
+    });
+  });
+
+  it("ledgers under its OWN source, not the attendee digest's", async () => {
+    // Found by checking the ledger after the first real test send: it landed
+    // under `newsletter:weekly-digest`, making a vendor send indistinguishable
+    // from an attendee one — so "did the vendor digest go out?" was
+    // unanswerable from the ledger.
+    await call({ test_recipient: "me@example.com" });
+    expect(enqueueEmailMock).toHaveBeenCalledWith(
+      expect.objectContaining({ source: "newsletter:vendor-digest" })
+    );
   });
 });
 
