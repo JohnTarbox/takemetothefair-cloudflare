@@ -33,7 +33,7 @@ import { registerCreateClaimInviteTool } from "./tools/admin-claim-invite.js";
 import { registerClaimReviewTools } from "./tools/admin-claim-review.js";
 import { registerResolveHeldPhotosTool } from "./tools/admin-resolve-held-photos.js";
 import { registerAnalyticsTools } from "./tools/analytics.js";
-import { mainAppFetch } from "./main-app-fetch.js";
+import { mainAppFetch, type MainAppEnv } from "./main-app-fetch.js";
 import { registerBlogTools } from "./tools/blog.js";
 import { registerContentLinksTools } from "./tools/content-links.js";
 import { handleInboundEmail, type ForwardableEmailMessage } from "./email-handler.js";
@@ -1605,6 +1605,41 @@ export default {
       ctx.waitUntil(runScheduledVendorEnrichment(env, jobRunId, controller.scheduledTime));
       return;
     }
+    // OPE-191 §4 — Monday vendor digest. The main app owns the compose+send
+    // (selection query, template, recipient rules, issue persistence all live
+    // there); duplicating any of it here is how two senders drift until one
+    // stops honouring the suppression list.
+    if (controller.cron === "0 11 * * 1") {
+      ctx.waitUntil(
+        (async () => {
+          try {
+            const res = await mainAppFetch(
+              env as unknown as MainAppEnv,
+              "/api/admin/newsletter/vendor-digest",
+              "scheduled",
+              { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }
+            );
+            const payload = await res.text();
+            console.log(`[cron] vendor-digest → ${res.status} ${payload.slice(0, 300)}`);
+            if (!res.ok) {
+              await logError(env.DB, {
+                source: "mcp:schedule:vendor-digest",
+                message: `vendor digest returned ${res.status}`,
+                context: { body: payload.slice(0, 500) },
+              });
+            }
+          } catch (error) {
+            await logError(env.DB, {
+              source: "mcp:schedule:vendor-digest",
+              message: "vendor digest call failed",
+              error,
+            });
+          }
+        })()
+      );
+      return;
+    }
+
     if (controller.cron === "0 8 * * *") {
       // OPE-36 — nightly promoter-enrichment sweep (staggered 1h after vendors).
       // Selects ≤50 NEEDS_ENRICHMENT promoters, enqueues one job each; the queue

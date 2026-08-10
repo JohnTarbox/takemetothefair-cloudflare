@@ -25,6 +25,11 @@ binding = "AI"
 # CLOUDFLARE_BROWSER_RENDERING_TOKEN. Used by import-url/fetch escalation.
 [vars]
 CLOUDFLARE_ACCOUNT_ID = "e6011e48b7014ef83c77e3c767dac6cf"
+# OPE-191 — flip to "true" to let the Monday vendor digest actually BROADCAST to
+# the vendor list. While "false" the cron still runs every Monday: it composes
+# the issue and persists it at /newsletter/<slug> for review, but mails nobody.
+# That is the OPE-6 STOP-gate made structural rather than a note in a ticket.
+VENDOR_DIGEST_SEND_ENABLED = "false"
 # OPE-332 — relax `no-store` on anonymous public detail pages so conditional
 # requests (304) can actually happen. GATED: this changes how every public page
 # is served, so it ships OFF and only John flips it. Must live HERE, not in the
