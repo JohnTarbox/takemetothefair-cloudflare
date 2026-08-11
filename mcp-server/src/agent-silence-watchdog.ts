@@ -68,6 +68,63 @@ export interface SilenceVerdict {
 }
 
 /**
+ * Drill controls (OPE-348 rework, 2026-08-11).
+ *
+ * An alarm that has only ever reported "ok" is not a proven alarm — it is an
+ * untested one, and this ticket exists precisely because every previous
+ * dead-man check reported healthy through a four-day blackout. So the positive
+ * case has to be exercisable on demand.
+ *
+ * The deliberate choice here is to inject ONLY a clock and a threshold. The
+ * read, the decision, the message, the enqueue and the delivery are the same
+ * lines production runs — there is no drill-only branch in the alerting path,
+ * so a passing drill is evidence about the real code rather than about a
+ * parallel test harness. It also means the drill needs no write access to
+ * `agent_heartbeats`: rehearsing the alarm never touches production data.
+ */
+export interface WatchdogRunOptions {
+  /**
+   * Injected clock. Production passes nothing and uses the real time; a drill
+   * passes a future instant so the real freshness maths runs against the real
+   * rows currently in the table.
+   */
+  now?: Date;
+  /**
+   * Threshold override. Used by drills to isolate one half of the check —
+   * e.g. an enormous threshold suppresses the silence alarm so the newsletter
+   * tripwire can be rehearsed on its own.
+   */
+  thresholdMs?: number;
+  /**
+   * Rehearsal. Two effects, both load-bearing for safety:
+   *  - the subject gets a `[DRILL]` prefix, so a rehearsal can never be
+   *    mistaken for a genuine outage in the operator's inbox;
+   *  - the run-stamp is SKIPPED, so a drill never overwrites the watchdog's own
+   *    liveness row — that row is the OPE-246 first-evidence trail, and a drill
+   *    writing `note='alerted'` into it would corrupt exactly the evidence this
+   *    ticket is trying to establish.
+   */
+  drill?: boolean;
+  /** Compute and report the verdict without enqueuing anything. */
+  dryRun?: boolean;
+}
+
+/** What a run decided and did — returned so a drill can be reported honestly. */
+export interface WatchdogRunResult {
+  silent: boolean;
+  newsletterMissing: boolean;
+  /** True only when a message was actually handed to the queue. */
+  alerted: boolean;
+  subject: string | null;
+  recipients: string | null;
+  newestSeenAt: string | null;
+  staleHours: number | null;
+  agentCode: string | null;
+  drill: boolean;
+  dryRun: boolean;
+}
+
+/**
  * Pure decision, so the threshold behaviour is testable without a clock or a DB.
  *
  * A table with NO agent rows at all reports silent=false, deliberately. Before
@@ -107,9 +164,14 @@ export function decideNewsletterMissing(
  * Daily liveness check. Never throws — a watchdog that can crash is one that
  * stops watching, and this one has no watcher of its own.
  */
-export async function runAgentSilenceWatchdog(env: Env): Promise<void> {
+export async function runAgentSilenceWatchdog(
+  env: Env,
+  options: WatchdogRunOptions = {}
+): Promise<WatchdogRunResult> {
   const db = getDb(env.DB);
-  const now = new Date();
+  const now = options.now ?? new Date();
+  const drill = options.drill === true;
+  const dryRun = options.dryRun === true;
 
   let newest: { agentCode: string; lastSeenAt: Date } | null = null;
   try {
@@ -129,10 +191,21 @@ export async function runAgentSilenceWatchdog(env: Env): Promise<void> {
       message: "[agent-silence] heartbeat read failed",
       error,
     });
-    return;
+    return {
+      silent: false,
+      newsletterMissing: false,
+      alerted: false,
+      subject: null,
+      recipients: null,
+      newestSeenAt: null,
+      staleHours: null,
+      agentCode: null,
+      drill,
+      dryRun,
+    };
   }
 
-  const verdict = decideSilence(newest, now);
+  const verdict = decideSilence(newest, now, options.thresholdMs);
 
   // Newsletter tripwire — a separate question from agent liveness, because the
   // compose can fail on its own while everything else runs.
@@ -152,6 +225,10 @@ export async function runAgentSilenceWatchdog(env: Env): Promise<void> {
     });
   }
 
+  let alerted = false;
+  let subject: string | null = null;
+  const recipients = env.ALERT_EMAIL_TECHNICAL ?? null;
+
   if (verdict.silent || newsletterMissing) {
     const lines: string[] = [];
     if (verdict.silent) {
@@ -166,11 +243,33 @@ export async function runAgentSilenceWatchdog(env: Env): Promise<void> {
         "Newsletter: no issue composed in the last 30h on a Friday — this week's send is at risk."
       );
     }
-    const subject = verdict.silent
-      ? `🚨 Agent layer silent for ${verdict.staleHours}h`
-      : "🚨 Newsletter not composed this week";
+    // The `[DRILL]` prefix is the ONLY textual difference between a rehearsal
+    // and the real thing. Sending an unmarked "agent layer silent" alarm while
+    // the agent layer is demonstrably alive would manufacture a false alarm in
+    // the operator's real inbox — the thing that trains people to ignore the
+    // alert. One token of honesty is cheaper than that.
+    subject =
+      (drill ? "[DRILL] " : "") +
+      (verdict.silent
+        ? `🚨 Agent layer silent for ${verdict.staleHours}h`
+        : "🚨 Newsletter not composed this week");
 
     const to = env.ALERT_EMAIL_TECHNICAL;
+    if (dryRun) {
+      console.log(`[cron] agent-silence dry-run — would alert: ${subject} → ${to ?? "(unset)"}`);
+      return {
+        silent: verdict.silent,
+        newsletterMissing,
+        alerted: false,
+        subject,
+        recipients,
+        newestSeenAt: verdict.newestSeenAt?.toISOString() ?? null,
+        staleHours: verdict.staleHours,
+        agentCode: verdict.agentCode,
+        drill,
+        dryRun,
+      };
+    }
     if (to && env.EMAIL_JOBS) {
       try {
         await env.EMAIL_JOBS.send({
@@ -180,6 +279,7 @@ export async function runAgentSilenceWatchdog(env: Env): Promise<void> {
           html: `<p><strong>${subject}</strong></p>${lines.map((l) => `<p>${l}</p>`).join("")}<p style="color:#666;font-size:12px">Sent by the Cloudflare watchdog, which has no Anthropic dependency.</p>`,
           source: "agent-silence-watchdog",
         });
+        alerted = true;
         console.log(`[cron] agent-silence ALERT sent — ${subject}`);
       } catch (error) {
         await logError(env.DB, {
@@ -204,6 +304,27 @@ export async function runAgentSilenceWatchdog(env: Env): Promise<void> {
   // Stamp our own run LAST, so a crash above never looks like a healthy run.
   // This row is the OPE-246 evidence that the watchdog itself is executing —
   // without it, a silently-dead watchdog is indistinguishable from a quiet one.
+  //
+  // A DRILL never stamps. The row carries an injected clock and a synthetic
+  // verdict, so writing it would push the watchdog's own `last_seen_at` into
+  // the future and record `note='alerted'` for an outage that did not happen —
+  // corrupting precisely the evidence trail this ticket exists to establish.
+  // Rehearsing the alarm must leave no trace in the data it watches.
+  if (drill) {
+    return {
+      silent: verdict.silent,
+      newsletterMissing,
+      alerted,
+      subject,
+      recipients,
+      newestSeenAt: verdict.newestSeenAt?.toISOString() ?? null,
+      staleHours: verdict.staleHours,
+      agentCode: verdict.agentCode,
+      drill,
+      dryRun,
+    };
+  }
+
   try {
     await db
       .insert(agentHeartbeats)
@@ -225,4 +346,17 @@ export async function runAgentSilenceWatchdog(env: Env): Promise<void> {
       error,
     });
   }
+
+  return {
+    silent: verdict.silent,
+    newsletterMissing,
+    alerted,
+    subject,
+    recipients,
+    newestSeenAt: verdict.newestSeenAt?.toISOString() ?? null,
+    staleHours: verdict.staleHours,
+    agentCode: verdict.agentCode,
+    drill,
+    dryRun,
+  };
 }

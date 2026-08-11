@@ -1,10 +1,19 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import { eq } from "drizzle-orm";
 import {
   decideSilence,
   decideNewsletterMissing,
   SILENCE_THRESHOLD_MS,
   NEWSLETTER_LOOKBACK_MS,
+  runAgentSilenceWatchdog,
 } from "../src/agent-silence-watchdog.js";
+import { createTestDb } from "./setup-db.js";
+import { agentHeartbeats, newsletterIssues } from "../src/schema.js";
+
+// getDb() is module-level in the watchdog, so the seam has to be the module.
+// Hoisted holder because vi.mock's factory runs before beforeEach.
+const harness = vi.hoisted(() => ({ db: null as any }));
+vi.mock("../src/db.js", () => ({ getDb: () => harness.db }));
 
 const at = (iso: string) => new Date(iso);
 const hoursAgo = (now: Date, h: number) => new Date(now.getTime() - h * 60 * 60 * 1000);
@@ -105,5 +114,162 @@ describe("decideNewsletterMissing (OPE-348)", () => {
 
   it("fires when no issue has ever been composed", () => {
     expect(decideNewsletterMissing(friday, null)).toBe(true);
+  });
+});
+
+/**
+ * OPE-348 rework (2026-08-11) — the drill.
+ *
+ * The analyst returned this ticket for one reason: the alarm had only ever
+ * reported "ok". These tests cover the positive case end-to-end through the
+ * real function — read, decide, compose, enqueue — because the pure-function
+ * tests above prove the maths and say nothing about whether an email is
+ * actually produced.
+ */
+describe("runAgentSilenceWatchdog drill mode (OPE-348)", () => {
+  let db: any;
+  let sent: any[];
+  let env: any;
+
+  const seedHeartbeat = async (agentCode: string, kind: string, lastSeenAt: Date) =>
+    db.insert(agentHeartbeats).values({ id: crypto.randomUUID(), agentCode, kind, lastSeenAt });
+
+  beforeEach(() => {
+    ({ db: harness.db } = createTestDb());
+    db = harness.db;
+    sent = [];
+    env = {
+      DB: {} as any,
+      EMAIL_JOBS: {
+        send: async (m: any) => {
+          sent.push(m);
+        },
+      },
+      ALERT_EMAIL_TECHNICAL: "alert@meetmeatthefair.com, jtarboxme@gmail.com",
+    };
+  });
+
+  it("produces a real alert when the clock is pushed past the threshold", async () => {
+    // The heartbeat is genuinely fresh; only the clock moves. This is the
+    // induced-silence case the ticket's acceptance criterion names.
+    const realNow = at("2026-08-11T14:07:00Z");
+    await seedHeartbeat("developer-claude-code", "agent", realNow);
+
+    const result = await runAgentSilenceWatchdog(env, {
+      now: new Date(realNow.getTime() + 48 * 60 * 60 * 1000),
+      drill: true,
+      dryRun: false,
+    });
+
+    expect(result.silent).toBe(true);
+    expect(result.staleHours).toBe(48);
+    expect(result.alerted).toBe(true);
+    expect(sent).toHaveLength(1);
+    // Recipients must reach the queue as the FULL operator list (OPE-261).
+    expect(sent[0].to).toBe("alert@meetmeatthefair.com, jtarboxme@gmail.com");
+    expect(sent[0].source).toBe("agent-silence-watchdog");
+    expect(sent[0].text).toContain("developer-claude-code");
+  });
+
+  it("marks the subject so a rehearsal is never mistaken for a real outage", async () => {
+    await seedHeartbeat("developer-claude-code", "agent", at("2026-08-11T14:07:00Z"));
+    const result = await runAgentSilenceWatchdog(env, {
+      now: at("2026-08-13T14:07:00Z"),
+      drill: true,
+      dryRun: false,
+    });
+    expect(result.subject).toBe("[DRILL] 🚨 Agent layer silent for 48h");
+    expect(sent[0].subject.startsWith("[DRILL] ")).toBe(true);
+  });
+
+  it("defaults to dry-run: an unqualified drill mails nobody", async () => {
+    await seedHeartbeat("developer-claude-code", "agent", at("2026-08-11T14:07:00Z"));
+    const result = await runAgentSilenceWatchdog(env, {
+      now: at("2026-08-13T14:07:00Z"),
+      drill: true,
+      dryRun: true,
+    });
+    // It still reports what it WOULD have done — a dry run that hides the
+    // verdict would be useless for checking the alarm before firing it.
+    expect(result.silent).toBe(true);
+    expect(result.subject).toBe("[DRILL] 🚨 Agent layer silent for 48h");
+    expect(result.alerted).toBe(false);
+    expect(sent).toHaveLength(0);
+  });
+
+  it("leaves the watchdog's own evidence row untouched", async () => {
+    // The run-stamp is the OPE-246 proof that the watchdog executes. A drill
+    // writing into it would push last_seen_at into the future and record
+    // note='alerted' for an outage that never happened.
+    const stamp = at("2026-08-11T08:00:59Z");
+    await seedHeartbeat("watchdog:agent-silence", "watchdog", stamp);
+    await seedHeartbeat("developer-claude-code", "agent", at("2026-08-11T14:07:00Z"));
+
+    await runAgentSilenceWatchdog(env, {
+      now: at("2026-08-13T14:07:00Z"),
+      drill: true,
+      dryRun: false,
+    });
+
+    const [row] = await db
+      .select()
+      .from(agentHeartbeats)
+      .where(eq(agentHeartbeats.agentCode, "watchdog:agent-silence"));
+    expect(row.lastSeenAt.toISOString()).toBe(stamp.toISOString());
+    expect(row.note).toBeNull();
+  });
+
+  it("a production run (no options) DOES stamp its own execution", async () => {
+    // The complement of the test above — proving the skip is drill-only and
+    // the real cron still leaves its evidence.
+    await seedHeartbeat("developer-claude-code", "agent", new Date());
+    await runAgentSilenceWatchdog(env);
+
+    const [row] = await db
+      .select()
+      .from(agentHeartbeats)
+      .where(eq(agentHeartbeats.agentCode, "watchdog:agent-silence"));
+    expect(row).toBeDefined();
+    expect(row.note).toBe("ok");
+    expect(sent).toHaveLength(0);
+  });
+
+  it("an enormous threshold isolates the newsletter tripwire from the silence alarm", async () => {
+    // Rehearsing the newsletter half on its own: the agents are fine, the
+    // compose is not. Without the threshold override both fire at once and the
+    // drill proves nothing about which branch produced the mail.
+    await seedHeartbeat("developer-claude-code", "agent", at("2026-08-11T14:07:00Z"));
+    await db.insert(newsletterIssues).values({
+      id: crypto.randomUUID(),
+      slug: "issue-2026-08-10",
+      subject: "Weekend picks",
+      html: "<p>hi</p>",
+      audience: "weekend",
+      createdAt: at("2026-08-10T02:00:18Z"),
+    });
+
+    const result = await runAgentSilenceWatchdog(env, {
+      now: at("2026-08-14T06:00:00Z"), // a Friday
+      thresholdMs: Number.MAX_SAFE_INTEGER,
+      drill: true,
+      dryRun: false,
+    });
+
+    expect(result.silent).toBe(false);
+    expect(result.newsletterMissing).toBe(true);
+    expect(result.subject).toBe("[DRILL] 🚨 Newsletter not composed this week");
+    expect(sent).toHaveLength(1);
+  });
+
+  it("stays silent on a normal day — the negative case still holds", async () => {
+    await seedHeartbeat("developer-claude-code", "agent", at("2026-08-11T14:07:00Z"));
+    const result = await runAgentSilenceWatchdog(env, {
+      now: at("2026-08-11T16:00:00Z"),
+      drill: true,
+      dryRun: false,
+    });
+    expect(result.silent).toBe(false);
+    expect(result.alerted).toBe(false);
+    expect(sent).toHaveLength(0);
   });
 });

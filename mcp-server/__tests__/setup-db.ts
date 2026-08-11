@@ -310,6 +310,19 @@ const SCHEMA_SQL = `
     UNIQUE (subscriber_id, list)
   );
 
+  -- OPE-348: the agent-silence watchdog's newsletter tripwire reads this to
+  -- answer "was an issue composed this week?". Without the table the read
+  -- throws, the watchdog swallows it, and the tripwire silently tests nothing.
+  CREATE TABLE newsletter_issues (
+    id TEXT PRIMARY KEY,
+    slug TEXT NOT NULL UNIQUE,
+    subject TEXT NOT NULL,
+    html TEXT NOT NULL,
+    sent_at INTEGER,
+    audience TEXT NOT NULL DEFAULT 'weekend',
+    created_at INTEGER
+  );
+
   CREATE TABLE gsc_monthly_oracle (
     month TEXT PRIMARY KEY,
     clicks INTEGER NOT NULL,
