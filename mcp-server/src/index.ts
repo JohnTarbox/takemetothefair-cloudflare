@@ -1198,56 +1198,6 @@ async function handleInternalApi(request: Request, env: Env, url: URL): Promise<
     });
   }
 
-  // POST /api/admin/internal/agent-silence/drill — OPE-348 fire drill.
-  //
-  // Why a permanent endpoint rather than a one-off script: this watchdog is the
-  // last line of defence, and until 2026-08-11 it had only ever reported "ok".
-  // An alarm whose positive case has never been exercised is an assumption, not
-  // a control — which is the exact failure this ticket was filed about, since
-  // every previous dead-man check also reported healthy right through the
-  // four-day blackout. Keeping the drill in the codebase means the alarm can be
-  // re-proven after any refactor, instead of waiting for a real outage to find
-  // out it broke.
-  //
-  // It injects only a clock and a threshold. Everything downstream — the
-  // heartbeat read, the verdict, the message, the queue enqueue, the consumer,
-  // the ledger row, the delivery — is the same code the 08:00Z cron runs, so a
-  // green drill is evidence about production and not about a mock. `drill:true`
-  // marks the subject and suppresses the run-stamp, so a rehearsal can neither
-  // be mistaken for a real outage nor corrupt the watchdog's own evidence row.
-  if (url.pathname === "/api/admin/internal/agent-silence/drill" && request.method === "POST") {
-    let body: { nowIso?: unknown; thresholdHours?: unknown; send?: unknown };
-    try {
-      body = (await request.json()) as typeof body;
-    } catch {
-      return jsonResponse({ error: "invalid_json" }, 400);
-    }
-
-    let now: Date | undefined;
-    if (body.nowIso !== undefined) {
-      if (typeof body.nowIso !== "string" || Number.isNaN(Date.parse(body.nowIso))) {
-        return jsonResponse({ error: "nowIso must be an ISO-8601 timestamp" }, 400);
-      }
-      now = new Date(body.nowIso);
-    }
-
-    let thresholdMs: number | undefined;
-    if (body.thresholdHours !== undefined) {
-      if (typeof body.thresholdHours !== "number" || !Number.isFinite(body.thresholdHours)) {
-        return jsonResponse({ error: "thresholdHours must be a finite number" }, 400);
-      }
-      thresholdMs = body.thresholdHours * 60 * 60 * 1000;
-    }
-
-    // Default to dry-run. A drill mails real operators, so the destructive
-    // reading of an ambiguous request is the wrong default: `send` must be
-    // spelled out, and a bare curl can only ever report what it WOULD do.
-    const dryRun = body.send !== true;
-
-    const result = await runAgentSilenceWatchdog(env, { now, thresholdMs, drill: true, dryRun });
-    return jsonResponse(result);
-  }
-
   // POST /api/admin/internal/photo-intake/resolve-held — OPE-254 rescue.
   // The one-shot admin resolve for held `photo-intake-unresolved` batches whose
   // fair is now known: attach each email's photos to `eventId`'s gallery and

@@ -32,7 +32,18 @@ import { desc, eq } from "drizzle-orm";
 import { agentHeartbeats, newsletterIssues } from "./schema.js";
 import { getDb } from "./db.js";
 import { logError } from "./logger.js";
-import type { Env } from "./index.js";
+/**
+ * Only the bindings this watchdog actually touches. Narrower than the Worker's
+ * full `Env` on purpose: the drill is invoked from the MCP tool layer, whose
+ * env is typed as a subset, and widening that to the whole Env — or casting —
+ * would hide whether `DB` is really bound at the call site. A structural type
+ * makes the caller prove it.
+ */
+export interface WatchdogEnv {
+  DB: D1Database;
+  EMAIL_JOBS?: Queue;
+  ALERT_EMAIL_TECHNICAL?: string;
+}
 
 const SOURCE = "mcp:schedule:agent-silence-watchdog";
 
@@ -165,7 +176,7 @@ export function decideNewsletterMissing(
  * stops watching, and this one has no watcher of its own.
  */
 export async function runAgentSilenceWatchdog(
-  env: Env,
+  env: WatchdogEnv,
   options: WatchdogRunOptions = {}
 ): Promise<WatchdogRunResult> {
   const db = getDb(env.DB);
