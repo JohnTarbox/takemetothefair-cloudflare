@@ -1970,6 +1970,57 @@ export const healthIssues = sqliteTable(
 );
 
 /**
+ * OPE-368 (R4, drizzle/0185) — drafts refused by the EMAIL_REPLY_ENABLED gate.
+ *
+ * A refused reply used to return `disabled:true` and discard the prose. The
+ * attempt was invisible to every detector we run, and the work was simply lost.
+ * This is the waiting room: the draft survives, the refusal is countable, and
+ * an operator has something to act on.
+ */
+export const pendingEmailReplies = sqliteTable(
+  "pending_email_replies",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    inboundEmailId: text("inbound_email_id").notNull(),
+    toAddress: text("to_address").notNull(),
+    subject: text("subject"),
+    bodyText: text("body_text").notNull(),
+    /** Agent code or admin user id — so "which lane keeps hitting this" is answerable. */
+    requestedBy: text("requested_by"),
+    requestedAt: integer("requested_at", { mode: "timestamp" }).notNull(),
+    /** pending | approved | discarded | sent. See PENDING_REPLY_STATUS. */
+    status: text("status").notNull().default("pending"),
+    reviewedBy: text("reviewed_by"),
+    reviewedAt: integer("reviewed_at", { mode: "timestamp" }),
+    reviewNote: text("review_note"),
+    sentMessageId: text("sent_message_id"),
+  },
+  (table) => [
+    index("idx_pending_email_replies_status").on(table.status, table.requestedAt),
+    index("idx_pending_email_replies_inbound").on(table.inboundEmailId),
+  ]
+);
+
+/**
+ * OPE-368 — `approved` is deliberately distinct from `sent`.
+ *
+ * An admin approving a draft records the human decision. Delivery still
+ * respects EMAIL_REPLY_ENABLED: routing around an operator's stop-gate from
+ * inside the very feature that gate exists to stop would encode exactly the
+ * wrong lesson. Approved drafts go out when John flips the flag, not before.
+ */
+export const PENDING_REPLY_STATUS = {
+  PENDING: "pending",
+  APPROVED: "approved",
+  DISCARDED: "discarded",
+  SENT: "sent",
+} as const;
+
+export type PendingReplyStatus = (typeof PENDING_REPLY_STATUS)[keyof typeof PENDING_REPLY_STATUS];
+
+/**
  * OPE-373 — the closure reasons, ordered by strength of evidence.
  *
  * `no_longer_detected` is deliberately the weakest and is never to be read as

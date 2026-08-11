@@ -15,7 +15,15 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
-import { inboundEmails, emailSuppressionList, adminActions } from "@/lib/db/schema";
+import {
+  inboundEmails,
+  emailSuppressionList,
+  adminActions,
+  pendingEmailReplies,
+} from "@/lib/db/schema";
+// OPE-368 — shared with the MCP tool so both refusal sites behave identically.
+import { buildRefusedReply, refusedReplyMessage } from "@takemetothefair/utils";
+import { logError } from "@/lib/logger";
 import { enqueueEmail } from "@/lib/queues/producers";
 import { eq } from "drizzle-orm";
 
@@ -42,17 +50,15 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   }
 
   const env = getCloudflareEnv() as unknown as Record<string, string | undefined>;
-  if (env.EMAIL_REPLY_ENABLED !== "true") {
-    return NextResponse.json(
-      {
-        error: "reply_disabled",
-        message:
-          "Reply sending is disabled (EMAIL_REPLY_ENABLED != 'true'). Nothing was sent. An operator must enable it before replies can go out.",
-      },
-      { status: 409 }
-    );
-  }
+  const replyEnabled = env.EMAIL_REPLY_ENABLED === "true";
 
+  // OPE-368 (R4): the gate check MOVED below body parsing.
+  //
+  // It used to refuse here, before the request body was ever read — so the
+  // operator's prose was discarded before anything had even looked at it. You
+  // cannot preserve a draft you never parsed. The refusal itself is unchanged
+  // and still happens before any send; only the ordering moved, so there is a
+  // draft to keep.
   const { id } = await params;
   let payload: Body;
   try {
@@ -104,6 +110,53 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
   const subject = (subjectOverride || `Re: ${row.subject || "your message"}`).slice(0, 200);
   const html = htmlOverride || textToHtml(bodyText);
+
+  // OPE-368 (R4) — the gate, now with the draft in hand. Same refusal, same
+  // 409; the difference is that the operator's answer survives it and becomes
+  // a reviewable item instead of vanishing.
+  if (!replyEnabled) {
+    const draftId = crypto.randomUUID();
+    const record = buildRefusedReply(
+      {
+        inboundEmailId: row.id,
+        toAddress: row.fromAddress,
+        subject,
+        bodyText,
+        requestedBy: session.user.id ?? "admin",
+      },
+      new Date(),
+      draftId
+    );
+    try {
+      await db.insert(pendingEmailReplies).values(record);
+    } catch (error) {
+      await logError(db, {
+        level: "error",
+        source: "email:reply-gate",
+        message: "[OPE-368] refused reply — FAILED to persist draft",
+        error,
+        context: { inboundEmailId: row.id },
+      });
+      return NextResponse.json(
+        {
+          error: "reply_disabled",
+          message:
+            "Reply sending is disabled AND the draft could not be saved. Copy your text before retrying.",
+        },
+        { status: 409 }
+      );
+    }
+    await logError(db, {
+      level: "warn",
+      source: "email:reply-gate",
+      message: `[OPE-368] reply refused (EMAIL_REPLY_ENABLED != true) — draft ${draftId} saved for review`,
+      context: { inboundEmailId: row.id, draftId, toAddress: row.fromAddress },
+    });
+    return NextResponse.json(
+      { error: "reply_disabled", draftId, message: refusedReplyMessage(draftId) },
+      { status: 409 }
+    );
+  }
 
   await enqueueEmail({
     to: row.fromAddress,
