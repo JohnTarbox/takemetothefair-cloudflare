@@ -20,7 +20,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
-import { inboundEmails, adminActions } from "../schema.js";
+import { inboundEmails, adminActions, pendingEmailReplies } from "../schema.js";
+// OPE-368 — shared with the admin route so both refusal sites behave identically.
+import { buildRefusedReply, refusedReplyMessage } from "@takemetothefair/utils";
+import { logError } from "../logger.js";
 import { jsonContent } from "../helpers.js";
 import { isEmailSuppressed } from "./admin-send-vendor-email.js";
 import type { Db } from "../db.js";
@@ -90,12 +93,85 @@ export async function handleReplyToInbound(
   args: ReplyArgs
 ): Promise<ReplyResult> {
   // OPE-6 gate — refuse to send unless explicitly enabled.
+  //
+  // OPE-368 (R4): refusing is correct; DISCARDING was not. This branch used to
+  // return a message and drop the composed prose on the floor, writing nothing
+  // anywhere — so "an agent tried to answer a waiting customer and was refused"
+  // was invisible to every detector we run. It surfaced on 2026-08-10 only
+  // because a human was in the loop at the time.
+  //
+  // The draft is now preserved and the refusal is countable. The gate still
+  // refuses: whether it opens is John's call alone, and this ticket does not
+  // touch the flag.
   if (!deps.replyEnabled) {
+    // Resolve the recipient so the saved draft is actionable on its own. Best
+    // effort — a draft we cannot address is still worth keeping over losing the
+    // operator's answer entirely.
+    let toAddress = "(unknown)";
+    try {
+      const [target] = await db
+        .select({ fromAddress: inboundEmails.fromAddress })
+        .from(inboundEmails)
+        .where(eq(inboundEmails.id, args.inboundEmailId))
+        .limit(1);
+      if (target?.fromAddress) toAddress = target.fromAddress;
+    } catch {
+      /* keep the placeholder — never lose the draft over a lookup */
+    }
+
+    const draftId = crypto.randomUUID();
+    const record = buildRefusedReply(
+      {
+        inboundEmailId: args.inboundEmailId,
+        toAddress,
+        subject: args.subject ?? null,
+        bodyText: args.body,
+        requestedBy: deps.actorUserId,
+      },
+      new Date(),
+      draftId
+    );
+
+    try {
+      await db.insert(pendingEmailReplies).values(record);
+    } catch (error) {
+      // If even the draft cannot be saved, say so loudly rather than implying
+      // it was kept — a false promise of preservation is worse than none.
+      await logError(db, {
+        level: "error",
+        source: "email:reply-gate",
+        message: "[OPE-368] refused reply — FAILED to persist draft",
+        error,
+        context: { inboundEmailId: args.inboundEmailId, actor: deps.actorUserId },
+      });
+      return {
+        ok: false,
+        reason: "disabled",
+        message:
+          "Reply sending is disabled AND the draft could not be saved. Copy your text before " +
+          "retrying — it has not been preserved.",
+      };
+    }
+
+    // The fault record. error_logs, not the discrepancy queue: error_logs is
+    // what the existing dashboards and the email-stub sweep already read, and
+    // a refusal is an operational fault rather than a data disagreement.
+    await logError(db, {
+      level: "warn",
+      source: "email:reply-gate",
+      message: `[OPE-368] reply refused (EMAIL_REPLY_ENABLED != true) — draft ${draftId} saved for review`,
+      context: {
+        inboundEmailId: args.inboundEmailId,
+        draftId,
+        actor: deps.actorUserId,
+        toAddress,
+      },
+    });
+
     return {
       ok: false,
       reason: "disabled",
-      message:
-        'Reply sending is disabled. Set EMAIL_REPLY_ENABLED="true" on the MCP Worker to enable. Nothing was sent.',
+      message: refusedReplyMessage(draftId),
     };
   }
   if (!deps.emailJobs) {

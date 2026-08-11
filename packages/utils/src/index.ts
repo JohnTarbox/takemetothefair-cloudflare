@@ -384,6 +384,9 @@ export * from "./blog-faq-coherence";
 // reliability scoring can read clean columns rather than parse free-form
 // labels at query time. Analyst backlog Item 1 (2026-05-26).
 export * from "./source-classification";
+// OPE-368 (R4) — shared refusal behaviour for the EMAIL_REPLY_ENABLED gate,
+// used by BOTH the MCP tool and the admin route so they cannot drift.
+export * from "./pending-reply";
 
 // Venue-name ingest helper (DQ2 — backlog row, 2026-06-04). Coerces
 // address-as-name at write time on every venue-create path so the public
