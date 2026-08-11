@@ -38,7 +38,10 @@ import type { DrizzleD1Database } from "drizzle-orm/d1";
 import type * as schema from "@/lib/db/schema";
 import { kpiStateHistory, adminActions } from "@/lib/db/schema";
 import { eq, and, gte, desc, sql } from "drizzle-orm";
-import { sendEmail } from "@/lib/email/send";
+// OPE-369 — queue path, not the direct Resend path. `sendEmail` stubs
+// silently without RESEND_API_KEY (never set in prod), so a kpi-alert would
+// have been born dark: zero rows in email_send_ledger for `kpi-alert:*`.
+import { enqueueEmail } from "@/lib/queues/producers";
 import { logError } from "@/lib/logger";
 import { formatTimestampForServer } from "@/lib/datetime";
 import type { KpiName, KpiState } from "@/lib/kpi-thresholds";
@@ -395,14 +398,18 @@ export async function dispatchKpiAlert(
 
   if (config.alertEmail) {
     const emailBody = buildEmailBody(payload);
-    const result = await sendEmail(db, {
+    // OPE-369 — enqueueEmail returns void (fire-and-forget onto the queue),
+    // unlike sendEmail which returned a SendResult. Treating "handed to the
+    // queue" as success is honest here: the ledger row written by the consumer
+    // is the delivery record, and email_send_ledger is now watched for stubs.
+    await enqueueEmail({
       to: config.alertEmail,
       subject: emailBody.subject,
       html: emailBody.html,
       text: emailBody.text,
       source: `kpi-alert:${kpiName}`,
     });
-    if (result.ok) emailOk = true;
+    emailOk = true;
   }
 
   const channel: DispatchResult["channel"] =

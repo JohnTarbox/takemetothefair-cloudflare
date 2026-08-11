@@ -24,6 +24,7 @@ import {
   blogPosts,
   gscInspectionState,
   healthIssues,
+  emailSendLedger,
   eventSlugHistory,
   vendorSlugHistory,
   timeToIndexLog,
@@ -173,6 +174,66 @@ export function severityForCoverage(coverage: string | null, verdict: string): s
 function expireDaysFrom(env: { SITE_HEALTH_EXPIRE_DAYS?: string }): number {
   const raw = Number(env.SITE_HEALTH_EXPIRE_DAYS);
   return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_EXPIRE_DAYS;
+}
+
+/**
+ * OPE-369 — surface stubbed sends where a human will actually see them.
+ *
+ * `email_send_ledger.status='stubbed'` means the send was never attempted: the
+ * direct `sendEmail()` path falls back to a stub whenever RESEND_API_KEY is
+ * unset, which it has never been in production. All 26 `indexnow:health` rows
+ * across a full month are stubbed, so the alert warning us that an integration
+ * had gone silent was itself silent — discoverable only by querying the ledger
+ * by status, which is exactly how it was eventually found.
+ *
+ * A regression sweep for this already existed at `/api/admin/email-stub-check`
+ * and NOTHING has ever called it. It is referenced in one comment and nowhere
+ * else. That is the whole defect in miniature: the detector was built and never
+ * wired, so it could not report the failure it was written for.
+ *
+ * ── Why this reports into health_issues rather than by email ────────────────
+ * Because the broken channel IS email. Alerting about undelivered mail by
+ * sending mail is the mistake of announcing a fire over the intercom that is on
+ * fire. `health_issues` is durable, is now bucketed and re-verified (OPE-373),
+ * and is read without depending on the thing under test.
+ *
+ * Uses the shared fingerprint helper, so the row auto-closes on the first sweep
+ * that finds a clean window — the same open/resolve lifecycle as every other
+ * health issue, no bespoke state.
+ */
+export async function checkStubbedSends(
+  db: Db,
+  now: Date,
+  result: SweepResult,
+  windowHours = 48
+): Promise<number> {
+  const cutoff = new Date(now.getTime() - windowHours * 3600 * 1000);
+  const stubbed = await db
+    .select({ source: emailSendLedger.source, subject: emailSendLedger.subject })
+    .from(emailSendLedger)
+    .where(and(eq(emailSendLedger.status, "stubbed"), gte(emailSendLedger.sentAt, cutoff)));
+
+  const fp = await fingerprintFor("EMAIL_DELIVERY", "EMAIL_SEND_STUBBED", "ledger");
+  const sources = [...new Set(stubbed.map((r) => r.source).filter(Boolean))];
+
+  await recordHealthIssue(
+    db,
+    {
+      fp,
+      source: "EMAIL_DELIVERY",
+      issueType: "EMAIL_SEND_STUBBED",
+      // ERROR, not WARNING: a stubbed send is mail an operator believes was
+      // delivered and was not. Every other severity judgement in this file is
+      // about pages; this one is about someone not being told something.
+      severity: "ERROR",
+      url: `${HOST}/admin/analytics`,
+      message: `${stubbed.length} email(s) stubbed (never sent) in the last ${windowHours}h — sources: ${sources.join(", ") || "n/a"}`,
+      failing: stubbed.length > 0,
+      now,
+    },
+    result
+  );
+  return stubbed.length;
 }
 
 /**
@@ -722,6 +783,9 @@ export async function runSweep(
   // and a queue where identical messages sit at different severities purely by
   // row age is not readable.
   await refreshOpenSeverities(db);
+  // OPE-369 — a send recorded as stubbed was never attempted; surface it here
+  // rather than by email, since email is the channel under suspicion.
+  await checkStubbedSends(db, now, result);
   await reverifyOpenIssues(db, now, result);
   await expireUndetectedIssues(
     db,

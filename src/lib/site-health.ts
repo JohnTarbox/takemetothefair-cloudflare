@@ -20,7 +20,20 @@ import { getSitemapStatus, type ScEnv } from "@/lib/search-console";
 
 type Db = DrizzleD1Database<typeof schema>;
 
-export type HealthSource = "BING_SCAN" | "BING_SITEMAP" | "GSC_SITEMAP" | "GSC_URL_INSPECTION";
+export type HealthSource =
+  | "BING_SCAN"
+  | "BING_SITEMAP"
+  | "GSC_SITEMAP"
+  | "GSC_URL_INSPECTION"
+  /**
+   * OPE-369 — a send recorded `status='stubbed'` was never attempted. Produced
+   * by `checkStubbedSends` in gsc-sweep.ts, NOT by `collectFreshIssues`, so it
+   * is deliberately absent from COLLECTED_SOURCES below: including it there
+   * would auto-resolve the row on every refresh without anyone re-checking the
+   * ledger, which is the trap that comment describes. It closes through its own
+   * `recordHealthIssue(failing:false)` on the first clean window instead.
+   */
+  | "EMAIL_DELIVERY";
 
 /**
  * OPE-244 — the sources `collectFreshIssues` actually re-collects each refresh.

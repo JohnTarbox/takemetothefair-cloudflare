@@ -13,17 +13,29 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const MOCK_ENV: Record<string, string | undefined> = {};
 vi.mock("@/lib/cloudflare", () => ({
   getCloudflareEnv: () => MOCK_ENV,
+  // OPE-369 — alerts now go through enqueueEmail, whose sync fallback resolves
+  // a db handle. Never reached here (the producer is mocked below), but the
+  // module-level import must exist.
+  getCloudflareDb: () => ({}),
 }));
 
-// Mock sendEmail so we can assert email-routing without touching Resend.
+// OPE-369 — the assertion target moved from sendEmail to enqueueEmail.
+// kpi-alert:* used the DIRECT sendEmail path, which stubs silently whenever
+// RESEND_API_KEY is unset (never set in prod), so these alerts were born dark:
+// zero rows in email_send_ledger for any `kpi-alert:*` source, ever. Asserting
+// on sendEmail would now pass while delivering nothing.
+//
 // vi.hoisted lets us declare the spy at the top of the (hoisted) module-
 // init order; standard `const` declarations get evicted by vi.mock's
 // hoisting and produce a TDZ error.
 const { sendEmailSpy } = vi.hoisted(() => ({
-  sendEmailSpy: vi.fn(async () => ({ ok: true, provider: "stub" as const })),
+  sendEmailSpy: vi.fn(async () => undefined),
+}));
+vi.mock("@/lib/queues/producers", () => ({
+  enqueueEmail: sendEmailSpy,
 }));
 vi.mock("@/lib/email/send", () => ({
-  sendEmail: sendEmailSpy,
+  sendEmail: vi.fn(async () => ({ ok: true, provider: "stub" as const })),
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -219,8 +231,8 @@ describe("dispatchKpiAlert — RED transitions", () => {
     });
     expect(result.dispatched).toBe(true);
     expect(result.channel).toBe("both");
+    // enqueueEmail takes a single args object (no db handle).
     expect(sendEmailSpy).toHaveBeenCalledWith(
-      expect.anything(),
       expect.objectContaining({ to: "ops@example.com", source: "kpi-alert:site_ctr" })
     );
   });
