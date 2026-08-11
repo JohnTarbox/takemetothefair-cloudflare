@@ -113,6 +113,11 @@ const PUBLIC_VENDOR_SET = new Set<string>(PUBLIC_VENDOR_STATUSES);
 interface Env {
   MAIN_APP_URL: string;
   INTERNAL_API_KEY: string;
+  /** OPE-348 — the agent-silence drill runs the watchdog in-process, so it
+   *  needs the D1 binding and the operator alert list. Optional because the
+   *  tool refuses (rather than throws) when they are absent. */
+  DB?: D1Database;
+  ALERT_EMAIL_TECHNICAL?: string;
   /** EMAIL_JOBS queue producer for the approval-notification hook on
    *  PENDING/TENTATIVE → APPROVED transitions in update_event_status.
    *  Optional so dev / unconfigured environments degrade gracefully. */
