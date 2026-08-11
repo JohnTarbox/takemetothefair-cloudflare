@@ -1,10 +1,14 @@
 export const dynamic = "force-dynamic";
 import { getSitemapTypeLastMod } from "@/lib/sitemap-lastmod";
-import { and, count, gte, isNotNull, eq } from "drizzle-orm";
+import { and, count, isNotNull } from "drizzle-orm";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { SITEMAP_MIN_COMPLETENESS } from "@/lib/completeness";
-import { events, eventSeries } from "@/lib/db/schema";
+import { events } from "@/lib/db/schema";
 import { isPublicEventStatus } from "@/lib/event-status";
+import {
+  getIndexableEventRows,
+  canonicalEventPath,
+  seriesLandingPath,
+} from "@/lib/sitemap/indexable-events";
 import { upcomingEndPredicate } from "@/lib/event-dates";
 import {
   SITEMAP_BASE_URL,
@@ -25,26 +29,12 @@ async function buildEventUrls(): Promise<SitemapUrl[]> {
   const now = new Date();
 
   const [eventRows, futureCountRow, allCountRow] = await Promise.all([
-    db
-      .select({
-        slug: events.slug,
-        updatedAt: events.updatedAt,
-        startDate: events.startDate,
-        endDate: events.endDate,
-        // EH3 P2.4 — when set, the event is a series occurrence; emit its
-        // canonical Option-A /events/<series>/<year> URL instead of the legacy
-        // slug. leftJoin → NULL for every event until the P1 backfill (inert).
-        seriesSlug: eventSeries.canonicalSlug,
-      })
-      .from(events)
-      .leftJoin(eventSeries, eq(events.seriesId, eventSeries.id))
-      .where(
-        and(
-          isPublicEventStatus(),
-          isNotNull(events.startDate),
-          gte(events.completenessScore, SITEMAP_MIN_COMPLETENESS)
-        )
-      ),
+    // OPE-372 — the eligibility gate and the URL rule both live in
+    // indexable-events.ts now, so the GSC inspection sweep asks Google about
+    // exactly the URLs we publish here. When these were two queries they
+    // diverged on URL shape, completeness threshold and start-date, and the
+    // sweep spent months filing our own 301s as site-health defects.
+    getIndexableEventRows(db),
     db
       .select({ count: count() })
       .from(events)
@@ -60,7 +50,6 @@ async function buildEventUrls(): Promise<SitemapUrl[]> {
     const isPast = event.endDate && new Date(event.endDate) < now;
     if (event.seriesSlug) {
       // Occurrence → canonical /events/<series>/<year>; collect its landing.
-      const year = event.startDate ? new Date(event.startDate).getUTCFullYear() : null;
       // Landing lastModified = the most recent occurrence updatedAt.
       const prev = seriesLandings.get(event.seriesSlug) ?? null;
       seriesLandings.set(
@@ -68,8 +57,7 @@ async function buildEventUrls(): Promise<SitemapUrl[]> {
         event.updatedAt && (!prev || event.updatedAt > prev) ? event.updatedAt : prev
       );
       return {
-        // year is always present (startDate is NOT NULL via the WHERE gate).
-        url: `${SITEMAP_BASE_URL}/events/${event.seriesSlug}/${year}`,
+        url: `${SITEMAP_BASE_URL}${canonicalEventPath(event)}`,
         lastModified: safeLastMod(event.updatedAt),
         changeFrequency: isPast ? "yearly" : "weekly",
         // Locked §8.3 — bias toward current/future occurrences.
@@ -78,7 +66,7 @@ async function buildEventUrls(): Promise<SitemapUrl[]> {
     }
     // Standalone event → its own slug (today's behavior, unchanged).
     return {
-      url: `${SITEMAP_BASE_URL}/events/${event.slug}`,
+      url: `${SITEMAP_BASE_URL}${canonicalEventPath(event)}`,
       lastModified: safeLastMod(event.updatedAt),
       changeFrequency: isPast ? "monthly" : "weekly",
       priority: isPast ? 0.5 : 0.7,
@@ -87,7 +75,7 @@ async function buildEventUrls(): Promise<SitemapUrl[]> {
 
   // One landing entry per series that has ≥1 sitemap-eligible occurrence.
   const seriesPages: SitemapUrl[] = [...seriesLandings.entries()].map(([slug, lastMod]) => ({
-    url: `${SITEMAP_BASE_URL}/events/${slug}`,
+    url: `${SITEMAP_BASE_URL}${seriesLandingPath(slug)}`,
     lastModified: safeLastMod(lastMod),
     changeFrequency: "weekly",
     priority: 0.8,
