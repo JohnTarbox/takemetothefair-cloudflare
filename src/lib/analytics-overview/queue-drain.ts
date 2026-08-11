@@ -15,6 +15,7 @@
 import { and, count, eq, gte, isNotNull, lt, sql } from "drizzle-orm";
 import {
   eventDiscrepancies,
+  supportObligations,
   vendorEnrichmentCandidates,
   promoterEnrichmentCandidates,
   performerEnrichmentCandidates,
@@ -261,7 +262,7 @@ async function inboundExceptionFlow(db: Db, now: Date): Promise<QueueDrainRow> {
   };
 }
 
-/** Compute live flow for all six queues. Never throws per-queue — a failure in
+/** Compute live flow for all seven queues. Never throws per-queue — a failure in
  *  one returns a depth-0 placeholder so the others still render/alert. */
 export async function gatherQueueFlows(db: Db, now: Date): Promise<QueueDrainRow[]> {
   const enrichment = (
@@ -316,6 +317,18 @@ export async function gatherQueueFlows(db: Db, now: Date): Promise<QueueDrainRow
     ),
     siteHealthFlow(db, now),
     inboundExceptionFlow(db, now),
+    // OPE-365 (R1) — people owed a human response. Distinct from
+    // inbound_exceptions, which counts classifier UNCERTAINTY: that queue has
+    // held depth 33 with outflow_1d=0 while a real customer's blocker passed
+    // through unrecorded because the classifier was confident about it.
+    timestampQueueFlow(db, now, {
+      queueName: "support_obligations",
+      label: "Support obligations (human owes a reply)",
+      table: supportObligations,
+      createdCol: supportObligations.openedAt,
+      decidedCol: supportObligations.closedAt,
+      openWhere: eq(supportObligations.status, "open"),
+    }),
   ];
 
   return Promise.all(specs);
