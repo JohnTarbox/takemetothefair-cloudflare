@@ -176,6 +176,42 @@ function expireDaysFrom(env: { SITE_HEALTH_EXPIRE_DAYS?: string }): number {
 }
 
 /**
+ * OPE-373 — re-stamp severity on open rows from the current taxonomy.
+ *
+ * Severity is written once, at insert. So shipping `severityForCoverage` only
+ * changed rows created after the deploy: immediately afterwards production held
+ * 211 open rows on the OLD taxonomy and exactly 1 on the new one, which makes
+ * the bucketed report worse than useless — it would show two rows with the same
+ * `message` at different severities purely by age.
+ *
+ * Deliberately re-derived through the SAME function the insert path uses rather
+ * than a parallel SQL CASE. A backfill that reimplements the rule is how the two
+ * copies drift, which is precisely the defect OPE-372 was about.
+ *
+ * Pure and cheap — no network, no GSC quota, decided entirely from `message`.
+ */
+export async function refreshOpenSeverities(db: Db): Promise<number> {
+  const open = await db
+    .select({ id: healthIssues.id, message: healthIssues.message, severity: healthIssues.severity })
+    .from(healthIssues)
+    .where(isNull(healthIssues.resolvedAt));
+
+  let updated = 0;
+  for (const row of open) {
+    // Rich-result rows carry a "FAIL: ..." message rather than a GSC coverage
+    // state; pass the verdict through so they keep resolving to ERROR.
+    const next = severityForCoverage(
+      row.message,
+      row.message?.startsWith("FAIL") ? "FAIL" : "NEUTRAL"
+    );
+    if (next === row.severity) continue;
+    await db.update(healthIssues).set({ severity: next }).where(eq(healthIssues.id, row.id));
+    updated++;
+  }
+  return updated;
+}
+
+/**
  * OPE-373 — resolve open rows whose condition our own server disproves.
  *
  * Only touches locally-decidable classes (noindex / 5xx / 404). Anything the
@@ -682,6 +718,10 @@ export async function runSweep(
   // what the scan has stopped observing. Order matters: re-verify first, so a
   // row we can prove fixed closes as `verified_fixed` rather than aging out as
   // the much weaker `no_longer_detected`.
+  // Re-stamp severity first: the bucketed report groups on (message, severity),
+  // and a queue where identical messages sit at different severities purely by
+  // row age is not readable.
+  await refreshOpenSeverities(db);
   await reverifyOpenIssues(db, now, result);
   await expireUndetectedIssues(
     db,
