@@ -455,3 +455,8 @@ export * from "./date-contiguity";
 // the MCP Worker's cf-email consumer sends it — so a helper local to either one
 // would leave the other splitting differently (or not at all).
 export * from "./email-recipients";
+
+// OPE-365 (R1) — "does a human owe this person a response?" Pure so the
+// decision can be replayed against real production rows without running the
+// inbound Workflow.
+export * from "./support-obligation";

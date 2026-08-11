@@ -1970,6 +1970,59 @@ export const healthIssues = sqliteTable(
 );
 
 /**
+ * OPE-365 (R1, drizzle/0186) — "a human owes this person a response".
+ *
+ * Distinct from `inbound_emails.flagged_for_review`, which records classifier
+ * UNCERTAINTY. Conflating the two inverted the outcome: the clearer a customer
+ * described their problem, the higher the confidence, and the less likely
+ * anyone saw it.
+ */
+export const supportObligations = sqliteTable(
+  "support_obligations",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    /** UNIQUE — makes the writer and the backfill idempotent by construction. */
+    inboundEmailId: text("inbound_email_id").notNull().unique(),
+    fromAddress: text("from_address").notNull(),
+    subject: text("subject"),
+    /**
+     * Recorded, NEVER used to decide whether to open the record. Kept so the
+     * inversion this table fixes stays measurable.
+     */
+    classifiedConfidence: real("classified_confidence"),
+    openedAt: integer("opened_at", { mode: "timestamp" }).notNull(),
+    /** See SUPPORT_OBLIGATION_STATUS. */
+    status: text("status").notNull().default("open"),
+    closedAt: integer("closed_at", { mode: "timestamp" }),
+    closedBy: text("closed_by"),
+    closeNote: text("close_note"),
+  },
+  (table) => [index("idx_support_obligations_status").on(table.status, table.openedAt)]
+);
+
+/**
+ * OPE-365 — `answered` and `not_an_obligation` stay distinct on purpose.
+ *
+ * Collapsing them into "closed" makes a drained queue and an ignored queue look
+ * identical, which is the exact failure sitting in inbound_exceptions today
+ * (depth 33, outflow_1d 0, drain_ratio_7d 0).
+ */
+export const SUPPORT_OBLIGATION_STATUS = {
+  OPEN: "open",
+  /** A human replied. The obligation was real and is discharged. */
+  ANSWERED: "answered",
+  /** Cold outreach, vendor spam — no reply was owed. */
+  NOT_AN_OBLIGATION: "not_an_obligation",
+  /** Same person, same thread, already tracked elsewhere. */
+  DUPLICATE: "duplicate",
+} as const;
+
+export type SupportObligationStatus =
+  (typeof SUPPORT_OBLIGATION_STATUS)[keyof typeof SUPPORT_OBLIGATION_STATUS];
+
+/**
  * OPE-368 (R4, drizzle/0185) — drafts refused by the EMAIL_REPLY_ENABLED gate.
  *
  * A refused reply used to return `disabled:true` and discard the prose. The

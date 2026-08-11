@@ -96,6 +96,7 @@ import { registerCrossingRecordTools } from "./admin-crossing-record.js";
 import { registerAgentHeartbeatTools } from "./admin-agent-heartbeat.js";
 import { registerSiteHealthSweepTool } from "./admin-site-health-sweep.js";
 import { registerPendingReplyTools } from "./admin-pending-replies.js";
+import { registerSupportObligationTools } from "./admin-support-obligations.js";
 import { registerGscBackfillTools } from "./admin-gsc-backfill.js";
 import { registerVendorDigestTools } from "./admin-vendor-digest.js";
 import { registerSourceQualityTool } from "./admin-source-quality.js";
@@ -257,6 +258,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   registerAgentHeartbeatTools(server, auth, env);
   registerSiteHealthSweepTool(server, auth, env);
   registerPendingReplyTools(server, db, auth);
+  registerSupportObligationTools(server, db, auth);
   registerGscBackfillTools(server, auth, env);
   registerVendorDigestTools(server, auth, env);
   registerSourceQualityTool(server, db, auth);
