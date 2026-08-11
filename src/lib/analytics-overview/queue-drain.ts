@@ -41,6 +41,19 @@ export interface QueueDrainRow extends QueueFlow {
   /** null only for the inbound queue before it has a prior snapshot. */
   outflow1d: number | null;
   drainRatio7d: number | null;
+  /**
+   * OPE-373 — open depth split by defect class, most numerous first.
+   *
+   * The Monday inventory has reported `site_health: 324` since it was built and
+   * that number has never once been actionable, because it summed populations
+   * that demand completely different responses: a 5xx someone must fix today,
+   * a page Google merely chose not to index, and (until OPE-372) URLs we never
+   * published at all. A single total across incommensurable buckets is not a
+   * measurement, it is an average of apples and Tuesdays.
+   *
+   * Only populated for queues where the split is meaningful; undefined elsewhere.
+   */
+  buckets?: Array<{ label: string; count: number; severity: string }>;
 }
 
 function utcDate(now: Date): string {
@@ -139,6 +152,27 @@ async function siteHealthFlow(db: Db, now: Date): Promise<QueueDrainRow> {
     return acc == null || h > acc ? h : acc;
   }, null);
 
+  // OPE-373 item 3 — report by bucket, never as a bare total. Grouped on the
+  // `message` (GSC coverage state), which is the field that actually determines
+  // what, if anything, a human should do about the row.
+  const byMessage = new Map<string, { count: number; severity: string }>();
+  for (const issue of open) {
+    const key = issue.message ?? issue.issueType ?? "(unclassified)";
+    const prev = byMessage.get(key);
+    byMessage.set(key, {
+      count: (prev?.count ?? 0) + 1,
+      // Worst severity wins within a bucket, so a mixed bucket cannot be
+      // read as calmer than its most serious member.
+      severity:
+        severityRank(issue.severity) > severityRank(prev?.severity)
+          ? issue.severity
+          : (prev?.severity ?? issue.severity),
+    });
+  }
+  const buckets = [...byMessage.entries()]
+    .map(([label, v]) => ({ label, count: v.count, severity: v.severity }))
+    .sort((a, b) => b.count - a.count);
+
   return {
     queueName: "site_health",
     label: "Site-health issues",
@@ -152,7 +186,22 @@ async function siteHealthFlow(db: Db, now: Date): Promise<QueueDrainRow> {
     inflow1d,
     outflow1d,
     drainRatio7d: ratio(outflow7d, inflow7d),
+    buckets,
   };
+}
+
+/** ERROR > WARNING > INFO > anything else. Used to pick a bucket's severity. */
+function severityRank(severity: string | undefined): number {
+  switch ((severity ?? "").toUpperCase()) {
+    case "ERROR":
+      return 3;
+    case "WARNING":
+      return 2;
+    case "INFO":
+      return 1;
+    default:
+      return 0;
+  }
 }
 
 /** Inbound exception queue (`flagged_for_review=1`). Outflow is not

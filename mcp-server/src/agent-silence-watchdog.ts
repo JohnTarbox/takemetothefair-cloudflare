@@ -124,6 +124,8 @@ export interface WatchdogRunOptions {
 export interface WatchdogRunResult {
   silent: boolean;
   newsletterMissing: boolean;
+  /** OPE-348 follow-up — composed but never delivered. */
+  newsletterUnsent: boolean;
   /** True only when a message was actually handed to the queue. */
   alerted: boolean;
   subject: string | null;
@@ -172,6 +174,37 @@ export function decideNewsletterMissing(
 }
 
 /**
+ * The tripwire's second half (OPE-348 follow-up, John-approved 2026-08-11).
+ *
+ * `decideNewsletterMissing` watches COMPOSE. That leaves a real hole: an issue
+ * composed and never sent passes it silently, and this is not hypothetical —
+ * on 2026-08-11 production held two composed issues with `sent_at = NULL`
+ * (`e9dfc329`, created 08-10, and `e6c2496c`, created 07-20).
+ *
+ * The ticket asked for a tripwire because "the customer-facing send deserves a
+ * dedicated one", and compose is not the customer-facing event. A subscriber
+ * cannot read a draft.
+ *
+ * Separate from the compose check rather than folded into it, because the two
+ * failures have different causes and different fixes: compose failing means the
+ * agent layer did not run; send failing means the agent ran and the delivery
+ * path broke. Merging them would produce an alert that cannot tell you which.
+ */
+export function decideNewsletterUnsent(
+  now: Date,
+  latestIssue: { createdAt: Date; sentAt: Date | null } | null,
+  lookbackMs: number = NEWSLETTER_LOOKBACK_MS
+): boolean {
+  if (now.getUTCDay() !== FRIDAY) return false;
+  if (!latestIssue) return false; // the compose check owns "nothing exists"
+  // Only complain once the issue has had a fair chance to go out. Composed
+  // this morning and not yet sent is normal; composed and still unsent past
+  // the lookback is the failure.
+  if (now.getTime() - latestIssue.createdAt.getTime() <= lookbackMs) return false;
+  return latestIssue.sentAt === null;
+}
+
+/**
  * Daily liveness check. Never throws — a watchdog that can crash is one that
  * stops watching, and this one has no watcher of its own.
  */
@@ -205,6 +238,7 @@ export async function runAgentSilenceWatchdog(
     return {
       silent: false,
       newsletterMissing: false,
+      newsletterUnsent: false,
       alerted: false,
       subject: null,
       recipients: null,
@@ -221,13 +255,19 @@ export async function runAgentSilenceWatchdog(
   // Newsletter tripwire — a separate question from agent liveness, because the
   // compose can fail on its own while everything else runs.
   let newsletterMissing = false;
+  let newsletterUnsent = false;
   try {
     const [issue] = await db
-      .select({ createdAt: newsletterIssues.createdAt })
+      .select({ createdAt: newsletterIssues.createdAt, sentAt: newsletterIssues.sentAt })
       .from(newsletterIssues)
       .orderBy(desc(newsletterIssues.createdAt))
       .limit(1);
     newsletterMissing = decideNewsletterMissing(now, issue?.createdAt ?? null);
+    // OPE-348 follow-up — composed is not sent. A subscriber cannot read a draft.
+    newsletterUnsent = decideNewsletterUnsent(
+      now,
+      issue?.createdAt ? { createdAt: issue.createdAt, sentAt: issue.sentAt ?? null } : null
+    );
   } catch (error) {
     await logError(env.DB, {
       source: SOURCE,
@@ -240,7 +280,7 @@ export async function runAgentSilenceWatchdog(
   let subject: string | null = null;
   const recipients = env.ALERT_EMAIL_TECHNICAL ?? null;
 
-  if (verdict.silent || newsletterMissing) {
+  if (verdict.silent || newsletterMissing || newsletterUnsent) {
     const lines: string[] = [];
     if (verdict.silent) {
       lines.push(
@@ -254,6 +294,12 @@ export async function runAgentSilenceWatchdog(
         "Newsletter: no issue composed in the last 30h on a Friday — this week's send is at risk."
       );
     }
+    if (newsletterUnsent) {
+      lines.push(
+        "Newsletter: this week's issue was COMPOSED but never sent (sent_at is null). " +
+          "The compose ran; the delivery did not. Subscribers have received nothing."
+      );
+    }
     // The `[DRILL]` prefix is the ONLY textual difference between a rehearsal
     // and the real thing. Sending an unmarked "agent layer silent" alarm while
     // the agent layer is demonstrably alive would manufacture a false alarm in
@@ -263,7 +309,9 @@ export async function runAgentSilenceWatchdog(
       (drill ? "[DRILL] " : "") +
       (verdict.silent
         ? `🚨 Agent layer silent for ${verdict.staleHours}h`
-        : "🚨 Newsletter not composed this week");
+        : newsletterMissing
+          ? "🚨 Newsletter not composed this week"
+          : "🚨 Newsletter composed but NOT SENT");
 
     const to = env.ALERT_EMAIL_TECHNICAL;
     if (dryRun) {
@@ -271,6 +319,7 @@ export async function runAgentSilenceWatchdog(
       return {
         silent: verdict.silent,
         newsletterMissing,
+        newsletterUnsent,
         alerted: false,
         subject,
         recipients,
@@ -325,6 +374,7 @@ export async function runAgentSilenceWatchdog(
     return {
       silent: verdict.silent,
       newsletterMissing,
+      newsletterUnsent,
       alerted,
       subject,
       recipients,
@@ -361,6 +411,7 @@ export async function runAgentSilenceWatchdog(
   return {
     silent: verdict.silent,
     newsletterMissing,
+    newsletterUnsent,
     alerted,
     subject,
     recipients,

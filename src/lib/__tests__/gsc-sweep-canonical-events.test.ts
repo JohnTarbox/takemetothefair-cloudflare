@@ -50,7 +50,7 @@ const SCHEMA_SQL = `
   CREATE TABLE health_issues (
     id TEXT PRIMARY KEY, fingerprint TEXT UNIQUE, source TEXT, issue_type TEXT,
     severity TEXT, url TEXT, message TEXT, first_detected_at INTEGER,
-    last_detected_at INTEGER, resolved_at INTEGER
+    last_detected_at INTEGER, resolved_at INTEGER, resolution_reason TEXT
   );
 `;
 
