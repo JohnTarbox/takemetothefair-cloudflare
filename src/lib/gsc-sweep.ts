@@ -18,6 +18,7 @@ import { eq, and, gte, asc, desc, isNull, or, like, sql } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import {
   events,
+  eventSeries,
   venues,
   promoters,
   blogPosts,
@@ -35,6 +36,12 @@ import { inspectUrl, ScApiError, ScConfigError, type ScEnv } from "@/lib/search-
 import { fingerprintFor } from "@/lib/site-health";
 import { summarizeRichResults } from "@/lib/gsc-rich-results";
 import { getIndexableVendorRows } from "@/lib/sitemap/indexable-vendors";
+import {
+  getIndexableEventRows,
+  getCanonicalEventUrlSet,
+  canonicalEventPath,
+  collectCanonicalEventPaths,
+} from "@/lib/sitemap/indexable-events";
 
 type Db = DrizzleD1Database<typeof schema>;
 
@@ -165,7 +172,14 @@ async function recordHealthIssue(
 }
 
 /** Build the prioritized list of URLs to inspect this sweep. */
-export async function pickUrls(db: Db, batchSize: number): Promise<string[]> {
+export async function pickUrls(
+  db: Db,
+  batchSize: number,
+  /** OPE-372 — the canonical allow-list. Optional so existing callers and tests
+   *  keep working; runSweep passes the set it already computed rather than
+   *  paying for the same query twice. */
+  precomputedCanonicalEventUrls?: Set<string>
+): Promise<string[]> {
   const oneDayAgo = new Date(Date.now() - 86400 * 1000);
   const sixHoursAgo = new Date(Date.now() - 6 * 3600 * 1000);
 
@@ -233,17 +247,34 @@ export async function pickUrls(db: Db, batchSize: number): Promise<string[]> {
     .limit(PER_TYPE);
   addByPrefix("/blog/", blogSample);
 
-  const eventSample = await db
-    .select({ slug: events.slug })
-    .from(events)
-    .leftJoin(
-      gscInspectionState,
-      eq(gscInspectionState.url, sql`${HOST} || '/events/' || ${events.slug}`)
-    )
-    .where(publicEventWhere())
-    .orderBy(asc(gscInspectionState.lastInspectedAt))
-    .limit(PER_TYPE);
-  addByPrefix("/events/", eventSample);
+  // OPE-372 — events now come from the SAME gate + URL rule the sitemap uses,
+  // so we never ask Google about a URL we don't publish. Previously this built
+  // `/events/<slug>` straight off the events table, which for a series
+  // occurrence is the legacy flat URL that 301s to the canonical nested one —
+  // 48 of our open "Page with redirect" health issues were the sweep filing our
+  // own working canonicalisation as a defect.
+  //
+  // Same JS-side ordering the vendor block below uses and for the same reason:
+  // the canonical URL isn't a column, so it can't be joined on in SQL.
+  const canonicalEventUrls =
+    precomputedCanonicalEventUrls ??
+    new Set(
+      [...collectCanonicalEventPaths(await getIndexableEventRows(db))].map((p) => `${HOST}${p}`)
+    );
+
+  if (canonicalEventUrls.size > 0) {
+    const inspectedEvent = await db
+      .select({ url: gscInspectionState.url, last: gscInspectionState.lastInspectedAt })
+      .from(gscInspectionState)
+      .where(like(gscInspectionState.url, `${HOST}/events/%`));
+    const lastByEventUrl = new Map(
+      inspectedEvent.map((r) => [r.url, r.last ? r.last.getTime() : 0])
+    );
+    const eventUrls = [...canonicalEventUrls]
+      .sort((a, b) => (lastByEventUrl.get(a) ?? 0) - (lastByEventUrl.get(b) ?? 0))
+      .slice(0, PER_TYPE);
+    for (const u of eventUrls) guaranteed.add(u);
+  }
 
   // Vendors: reuse the sitemap's exact indexable gate so we never inspect a
   // noindex vendor (false-positive noise). The tier filter runs in TS, so we
@@ -298,14 +329,23 @@ export async function pickUrls(db: Db, batchSize: number): Promise<string[]> {
     for (const r of stale) if (addFiller(r.url)) break;
   }
 
-  // Tier 2: recently-published events
+  // Tier 2: recently-published events. OPE-372 — filtered through the canonical
+  // set, so a recently-touched event that the sitemap withholds (low
+  // completeness, no start date) is not inspected either.
   if (filler.size < fillerBudget) {
     const recentEvents = await db
-      .select({ slug: events.slug })
+      .select({
+        slug: events.slug,
+        seriesSlug: eventSeries.canonicalSlug,
+        startDate: events.startDate,
+      })
       .from(events)
+      .leftJoin(eventSeries, eq(events.seriesId, eventSeries.id))
       .where(and(publicEventWhere(), gte(events.updatedAt, oneDayAgo)));
     for (const e of recentEvents) {
-      if (addFiller(`${HOST}/events/${e.slug}`)) break;
+      const url = `${HOST}${canonicalEventPath(e)}`;
+      if (!canonicalEventUrls.has(url)) continue;
+      if (addFiller(url)) break;
     }
   }
 
@@ -360,15 +400,11 @@ export async function pickUrls(db: Db, batchSize: number): Promise<string[]> {
     }
   }
 
-  // Tier 3 fallback: seed from active events/venues if state is sparse
+  // Tier 3 fallback: seed from active events/venues if state is sparse.
+  // OPE-372 — seed from the canonical set rather than re-deriving from slugs.
   if (filler.size < fillerBudget) {
-    const activeEvents = await db
-      .select({ slug: events.slug })
-      .from(events)
-      .where(publicEventWhere())
-      .limit(fillerBudget - filler.size);
-    for (const e of activeEvents) {
-      if (addFiller(`${HOST}/events/${e.slug}`)) break;
+    for (const u of canonicalEventUrls) {
+      if (addFiller(u)) break;
     }
   }
   if (filler.size < fillerBudget) {
@@ -382,7 +418,76 @@ export async function pickUrls(db: Db, batchSize: number): Promise<string[]> {
     }
   }
 
-  return [...guaranteed, ...filler];
+  // OPE-372 — the choke point. Fixing the three constructors above is NOT
+  // sufficient on its own: Tier 1 (stale non-OK), Tier 2c (IndexNow-submitted)
+  // and Tier 3 (round-robin oldest) all read URLs back out of
+  // `gsc_inspection_state` / `time_to_index_log`, which are already full of the
+  // legacy flat `/events/<slug>-<year>` URLs written before this fix. Without
+  // this filter those tiers would keep feeding the old URLs straight back in
+  // and the queue would keep refilling — the fix would be wired into three of
+  // six paths.
+  //
+  // Scoped to `/events/` deliberately. We have a canonical allow-list for
+  // events; we do not have one for venues/promoters/blog, and silently dropping
+  // those would be a different bug. Non-event URLs pass through untouched.
+  const isNonCanonicalEventUrl = (u: string) =>
+    u.startsWith(`${HOST}/events/`) && !canonicalEventUrls.has(u);
+
+  return [...guaranteed, ...filler].filter((u) => !isNonCanonicalEventUrl(u));
+}
+
+/**
+ * OPE-372 — close the health issues the old constructors manufactured.
+ *
+ * "Stop creating them" is only half the ticket: 81 rows were already open, and
+ * a fix that leaves them there means the queue keeps misreporting. They cannot
+ * self-heal through the normal path, because that path resolves an issue when a
+ * later inspection comes back OK — and these URLs are now (correctly) never
+ * inspected again, so their rows would sit open forever.
+ *
+ * Deliberately narrow, because #761 shipped a resolve loop that closed every
+ * GSC issue indiscriminately and had to be fixed. Three conjunctive conditions:
+ * the row is `GSC_INSPECTION_NON_OK`, its URL is under `/events/`, and that URL
+ * is absent from the canonical allow-list. A genuinely-broken canonical event
+ * URL stays open, as do all vendor/venue/promoter/blog rows.
+ *
+ * Runs each sweep rather than as a one-shot migration so it stays correct the
+ * next time canonicalisation changes shape.
+ */
+export async function resolveNonCanonicalEventIssues(
+  db: Db,
+  canonicalEventUrls: Set<string>,
+  now: Date
+): Promise<number> {
+  const open = await db
+    .select({ id: healthIssues.id, url: healthIssues.url })
+    .from(healthIssues)
+    .where(
+      and(
+        eq(healthIssues.issueType, "GSC_INSPECTION_NON_OK"),
+        isNull(healthIssues.resolvedAt),
+        like(healthIssues.url, `${HOST}/events/%`)
+      )
+    );
+
+  const stale = open.filter((r) => r.url && !canonicalEventUrls.has(r.url));
+  let resolved = 0;
+  for (const row of stale) {
+    await db
+      .update(healthIssues)
+      .set({
+        resolvedAt: now,
+        // `health_issues` has no resolution_status column (that is
+        // event_discrepancies), so the reason goes in `message`. Stamping it
+        // matters: a row that just goes quiet is indistinguishable from one
+        // Google later approved, and the next person auditing this queue
+        // deserves to know these were withdrawn, not fixed.
+        message: "OPE-372: withdrawn — non-canonical URL, never published in the sitemap",
+      })
+      .where(eq(healthIssues.id, row.id));
+    resolved++;
+  }
+  return resolved;
 }
 
 /** Run a single sweep batch. */
@@ -400,10 +505,20 @@ export async function runSweep(
     errors: [],
   };
 
-  const urls = await pickUrls(db, batchSize);
-  if (urls.length === 0) return result;
+  // OPE-372 — computed once and used twice: to pick canonical URLs only, and to
+  // withdraw the health issues the old non-canonical URLs manufactured.
+  const canonicalEventUrls = await getCanonicalEventUrlSet(db, HOST);
+
+  const urls = await pickUrls(db, batchSize, canonicalEventUrls);
 
   const now = new Date();
+
+  // Runs before the early return: the 81 legacy rows must be withdrawn even on
+  // a sweep that inspects nothing (quota exhausted, empty pick). Tying cleanup
+  // to "we had work to do" is how backlogs outlive their cause.
+  result.resolvedIssues += await resolveNonCanonicalEventIssues(db, canonicalEventUrls, now);
+
+  if (urls.length === 0) return result;
 
   for (const url of urls) {
     const path = pathFromUrl(url);

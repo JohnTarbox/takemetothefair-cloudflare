@@ -34,7 +34,19 @@ const SCHEMA_SQL = `
     status TEXT NOT NULL DEFAULT 'APPROVED',
     lifecycle_status TEXT NOT NULL DEFAULT 'SCHEDULED',
     venue_id TEXT,
-    updated_at INTEGER
+    updated_at INTEGER,
+    -- OPE-372: the sweep now derives event URLs from the sitemap's gate, which
+    -- reads these three. Defaults keep every pre-existing fixture in this file
+    -- eligible (completeness 80 clears the sitemap's 40 floor, series_id NULL
+    -- means "standalone" → /events/<slug>, the shape these tests assert).
+    completeness_score INTEGER DEFAULT 80,
+    start_date INTEGER DEFAULT 1790000000,
+    end_date INTEGER,
+    series_id TEXT
+  );
+  CREATE TABLE event_series (
+    id TEXT PRIMARY KEY,
+    canonical_slug TEXT NOT NULL
   );
   CREATE TABLE venues (
     id TEXT PRIMARY KEY,
@@ -108,6 +120,11 @@ afterEach(() => {
   raw.close();
 });
 
+/** A published, sitemap-eligible standalone event (OPE-372 canonical set). */
+function seedEvent(id: string, slug: string) {
+  raw.prepare(`INSERT INTO events (id, slug) VALUES (?, ?)`).run(id, slug);
+}
+
 function seedSubmission(url: string, submittedIso: string, firstCrawlIso: string | null) {
   raw
     .prepare(
@@ -125,6 +142,19 @@ function seedSubmission(url: string, submittedIso: string, firstCrawlIso: string
 
 describe("REL5 — pickUrls surfaces unresolved time_to_index_log URLs", () => {
   it("includes submitted-but-unresolved URLs and excludes resolved ones", async () => {
+    // OPE-372: `unresolved-a`/`-b` must correspond to PUBLISHED events now —
+    // the sweep only inspects event URLs the sitemap advertises.
+    //
+    // COVERAGE NOTE, stated rather than glossed: `resolved` is deliberately left
+    // WITHOUT an events row, so two independent filters now exclude it (the
+    // tier's own `first_crawl_at IS NULL` gate, and the OPE-372 canonical
+    // filter). This assertion therefore no longer isolates the former. It can't:
+    // any event canonical enough to reach Tier 2c is also eligible for the
+    // guaranteed per-type sample, which would pick it regardless of crawl state.
+    // Isolating that gate needs a direct test of the tier rather than of
+    // `pickUrls`; noted in the PR as a real gap, not a resolved one.
+    seedEvent("u-a", "unresolved-a");
+    seedEvent("u-b", "unresolved-b");
     seedSubmission(`${HOST}/events/unresolved-a`, "2026-06-01T00:00:00Z", null);
     seedSubmission(`${HOST}/events/unresolved-b`, "2026-06-02T00:00:00Z", null);
     // Already resolved — must NOT be re-picked by this tier.
@@ -134,6 +164,18 @@ describe("REL5 — pickUrls surfaces unresolved time_to_index_log URLs", () => {
     expect(urls).toContain(`${HOST}/events/unresolved-a`);
     expect(urls).toContain(`${HOST}/events/unresolved-b`);
     expect(urls).not.toContain(`${HOST}/events/resolved`);
+  });
+
+  it("skips a submitted event URL we no longer publish (OPE-372)", async () => {
+    // The behaviour change made explicit rather than incidental. A URL sitting
+    // in time_to_index_log with no published event behind it can only ever come
+    // back "not indexed", and filing that as a site-health defect is the exact
+    // noise OPE-372 removed. Its time-to-index is meaningless anyway — we are
+    // not advertising the page.
+    seedSubmission(`${HOST}/events/withdrawn-event`, "2026-06-01T00:00:00Z", null);
+
+    const urls = await pickUrls(db as never, 200);
+    expect(urls).not.toContain(`${HOST}/events/withdrawn-event`);
   });
 
   it("skips non-own-host URLs in the log (the inspector resolves a path on our property)", async () => {
@@ -205,7 +247,10 @@ describe("A10/A11 — per-page-type guaranteed coverage", () => {
   // coverage must survive regardless of how full the Tier-1 filler is.
   it("does NOT truncate per-type coverage when Tier 1 (stale) is full at batchSize=8", async () => {
     // 8 stale (non-OK) event rows — exactly fills the default batch budget.
+    // OPE-372: each needs a published event behind it, or the canonical filter
+    // drops it and this stops testing what OPE-91 meant it to test.
     for (let i = 0; i < 8; i++) {
+      seedEvent(`stale-e${i}`, `stale-${i}`);
       raw
         .prepare(
           `INSERT INTO gsc_inspection_state (url, last_inspected_at, last_verdict) VALUES (?, ?, 'FAIL')`
