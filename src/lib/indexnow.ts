@@ -33,7 +33,12 @@ import {
   AUTO_PAUSE_AFTER_429_STREAK,
   AUTO_PAUSE_REASON,
 } from "@/lib/indexnow-breaker";
-import { sendEmail } from "@/lib/email/send";
+// OPE-369 — these alerts go through the QUEUE (cf-email), not the direct
+// Resend path. `sendEmail` stubs silently whenever RESEND_API_KEY is unset,
+// which it has never been in production: all 26 `indexnow:health` sends were
+// recorded `status='stubbed'`, i.e. never attempted. enqueueEmail reaches the
+// cf-email consumer that delivers the other 341 sends in the ledger.
+import { enqueueEmail } from "@/lib/queues/producers";
 import { logError } from "@/lib/logger";
 
 const HOST = SITE_HOSTNAME;
@@ -372,7 +377,7 @@ async function sendIndexNowAutoPauseAlert(db: Db, consec: number): Promise<void>
     });
     return;
   }
-  await sendEmail(db, {
+  await enqueueEmail({
     to,
     subject: "🚨 IndexNow auto-paused after a sustained Bing 429 streak",
     text,
@@ -425,7 +430,7 @@ async function maybeAlertStalePause(
 
     const to = getRuntimeEnv("ALERT_EMAIL_TECHNICAL");
     if (to) {
-      await sendEmail(db, {
+      await enqueueEmail({
         to,
         subject: `⚠️ IndexNow still paused after ~${days} days`,
         text: msg,
