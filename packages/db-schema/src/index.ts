@@ -1953,12 +1953,44 @@ export const healthIssues = sqliteTable(
     firstDetectedAt: integer("first_detected_at", { mode: "timestamp" }).notNull(),
     lastDetectedAt: integer("last_detected_at", { mode: "timestamp" }).notNull(),
     resolvedAt: integer("resolved_at", { mode: "timestamp" }),
+    /**
+     * OPE-373 (drizzle/0184) — HOW the row closed. See HEALTH_RESOLUTION_REASON.
+     * `resolved_at` alone cannot distinguish "we proved it is fixed" from "we
+     * stopped seeing it", and treating those as the same fact is how a blind
+     * spot reads as a recovery. NULL on rows resolved before the migration —
+     * their reason is genuinely unknown and guessing would defeat the purpose.
+     */
+    resolutionReason: text("resolution_reason"),
   },
   (table) => [
     index("idx_health_issues_source").on(table.source, table.lastDetectedAt),
     index("idx_health_issues_open").on(table.resolvedAt),
+    index("idx_health_issues_resolution_reason").on(table.resolutionReason, table.resolvedAt),
   ]
 );
+
+/**
+ * OPE-373 — the closure reasons, ordered by strength of evidence.
+ *
+ * `no_longer_detected` is deliberately the weakest and is never to be read as
+ * recovery: it means the scan stopped observing the row, which is as consistent
+ * with our having gone blind as with the problem having gone away.
+ */
+export const HEALTH_RESOLUTION_REASON = {
+  /** We fetched the live URL and the condition is provably gone. */
+  VERIFIED_FIXED: "verified_fixed",
+  /** Google's inspection returned PASS/SUCCESS. */
+  PASSED_INSPECTION: "passed_inspection",
+  /** A legitimate 301 to an already-indexed URL (isRedirectToIndexed). */
+  LEGITIMATE_REDIRECT: "legitimate_redirect",
+  /** Never should have been raised — e.g. OPE-372's non-canonical URLs. */
+  WITHDRAWN: "withdrawn",
+  /** The scan stopped seeing it. Absence of evidence, not evidence of fix. */
+  NO_LONGER_DETECTED: "no_longer_detected",
+} as const;
+
+export type HealthResolutionReason =
+  (typeof HEALTH_RESOLUTION_REASON)[keyof typeof HEALTH_RESOLUTION_REASON];
 
 export const healthIssueSnoozes = sqliteTable("health_issue_snoozes", {
   fingerprint: text("fingerprint").primaryKey(),

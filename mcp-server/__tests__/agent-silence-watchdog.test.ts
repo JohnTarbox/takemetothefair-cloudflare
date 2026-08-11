@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import {
   decideSilence,
   decideNewsletterMissing,
+  decideNewsletterUnsent,
   SILENCE_THRESHOLD_MS,
   NEWSLETTER_LOOKBACK_MS,
   runAgentSilenceWatchdog,
@@ -114,6 +115,53 @@ describe("decideNewsletterMissing (OPE-348)", () => {
 
   it("fires when no issue has ever been composed", () => {
     expect(decideNewsletterMissing(friday, null)).toBe(true);
+  });
+});
+
+describe("decideNewsletterUnsent — composed is not sent (OPE-348 follow-up)", () => {
+  const friday = at("2026-08-14T06:00:00Z");
+
+  it("fires when the issue exists but was never delivered", () => {
+    // Not hypothetical: on 2026-08-11 production held e9dfc329 (created 08-10)
+    // and e6c2496c (07-20), both with sent_at NULL. The compose tripwire is
+    // silent on both, because compose is not the customer-facing event —
+    // a subscriber cannot read a draft.
+    expect(
+      decideNewsletterUnsent(friday, { createdAt: at("2026-08-10T02:00:18Z"), sentAt: null })
+    ).toBe(true);
+  });
+
+  it("stays quiet once the issue has actually gone out", () => {
+    expect(
+      decideNewsletterUnsent(friday, {
+        createdAt: at("2026-08-10T02:00:18Z"),
+        sentAt: at("2026-08-10T02:07:00Z"),
+      })
+    ).toBe(false);
+  });
+
+  it("gives a fresh compose time to send before complaining", () => {
+    // Composed 00:42Z this morning, not yet sent at 06:00Z — that is the normal
+    // gap between compose and send, not a failure.
+    expect(
+      decideNewsletterUnsent(friday, { createdAt: at("2026-08-14T00:42:00Z"), sentAt: null })
+    ).toBe(false);
+  });
+
+  it("leaves 'nothing exists at all' to the compose check", () => {
+    // Two distinct faults with two distinct causes: nothing composed means the
+    // agent layer did not run; composed-but-unsent means it ran and delivery
+    // broke. One alert reporting both could not tell you which.
+    expect(decideNewsletterUnsent(friday, null)).toBe(false);
+  });
+
+  it("only runs on Friday", () => {
+    expect(
+      decideNewsletterUnsent(at("2026-08-13T06:00:00Z"), {
+        createdAt: at("2026-08-01T00:00:00Z"),
+        sentAt: null,
+      })
+    ).toBe(false);
   });
 });
 

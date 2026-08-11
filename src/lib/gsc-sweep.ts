@@ -14,7 +14,7 @@
  * as Bing-sourced issues.
  */
 
-import { eq, and, gte, asc, desc, isNull, or, like, sql } from "drizzle-orm";
+import { eq, and, gte, lt, asc, desc, isNull, or, like, sql } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import {
   events,
@@ -35,6 +35,8 @@ import { SITE_URL } from "@takemetothefair/constants";
 import { inspectUrl, ScApiError, ScConfigError, type ScEnv } from "@/lib/search-console";
 import { fingerprintFor } from "@/lib/site-health";
 import { summarizeRichResults } from "@/lib/gsc-rich-results";
+import { reverifyHealthIssue } from "@/lib/site-health-reverify";
+import { HEALTH_RESOLUTION_REASON } from "@takemetothefair/db-schema";
 import { getIndexableVendorRows } from "@/lib/sitemap/indexable-vendors";
 import {
   getIndexableEventRows,
@@ -110,6 +112,164 @@ interface SweepResult {
   resolvedIssues: number;
   skipped: number;
   errors: string[];
+  /** OPE-373 — closures broken out by reason. A single total cannot tell
+   *  "we proved it fixed" from "we stopped looking", and those are the two
+   *  facts that matter most when reading this queue. */
+  resolvedByReason?: Record<string, number>;
+}
+
+/**
+ * OPE-373 — how many scan cycles of not being seen before a row is expired.
+ *
+ * The sweep runs daily, so 21 days is three weeks of the scan never once
+ * re-observing the condition. Chosen rather than something tighter because the
+ * rotation is slow by design: ~2,200 sitemap URLs against ~50-60 inspected per
+ * run means a given URL comes round roughly monthly, and a shorter window would
+ * expire rows that are merely waiting their turn — closing them as "no longer
+ * detected" when the truth is "not yet re-checked". That mistake is worse than
+ * a stale row, because it manufactures a false recovery.
+ *
+ * Override with SITE_HEALTH_EXPIRE_DAYS.
+ */
+export const DEFAULT_EXPIRE_DAYS = 21;
+
+/**
+ * OPE-373 item 4 — severity by ACTIONABILITY, not by GSC's verdict string.
+ *
+ * Before: `verdict === "FAIL" ? "ERROR" : "WARNING"`, which is a restatement of
+ * what Google said rather than a judgement about what we should do. It put a
+ * self-healed transient 5xx and a page nobody can fix at the same level, and
+ * flagged our own correct 301 as a WARNING.
+ *
+ * The three levels mean:
+ *   ERROR   the page is broken for users right now — someone should act today
+ *   WARNING we did something wrong that we can fix (a page we publish is
+ *           noindex'd, or 404s)
+ *   INFO    Google's indexing choice, or a crawl-lag artefact. Real signal in
+ *           aggregate, but there is no per-URL action, so it must not compete
+ *           for attention with the two above.
+ */
+export function severityForCoverage(coverage: string | null, verdict: string): string {
+  const c = (coverage ?? "").toLowerCase().replace(/[‘’‛ʼ]/g, "'");
+  if (c.includes("server error")) return "ERROR";
+  if (c.includes("not found (404)") || c.includes("soft 404")) return "ERROR";
+  if (c.includes("excluded by 'noindex' tag")) return "WARNING";
+  if (c.includes("blocked by robots.txt")) return "WARNING";
+  // "Crawled – currently not indexed", "Discovered – currently not indexed",
+  // "URL is unknown to Google", "Page with redirect", "Alternate page with
+  // canonical" — all descriptions of Google's own state, not defects we can
+  // action per-URL.
+  if (
+    c.includes("currently not indexed") ||
+    c.includes("unknown to google") ||
+    c.includes("page with redirect") ||
+    c.includes("alternate page")
+  ) {
+    return "INFO";
+  }
+  return verdict === "FAIL" ? "ERROR" : "WARNING";
+}
+
+function expireDaysFrom(env: { SITE_HEALTH_EXPIRE_DAYS?: string }): number {
+  const raw = Number(env.SITE_HEALTH_EXPIRE_DAYS);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_EXPIRE_DAYS;
+}
+
+/**
+ * OPE-373 — resolve open rows whose condition our own server disproves.
+ *
+ * Only touches locally-decidable classes (noindex / 5xx / 404). Anything the
+ * origin cannot settle is left alone: a 200 from us says nothing about whether
+ * Google chose to index a page, so "Crawled – currently not indexed" and
+ * friends stay with GSC and the expiry path.
+ *
+ * Bounded per run because each row is a live HTTP fetch and the sweep shares
+ * Cloudflare's request budget with the GSC calls.
+ */
+export async function reverifyOpenIssues(
+  db: Db,
+  now: Date,
+  result: SweepResult,
+  opts: { limit?: number; fetchImpl?: typeof fetch } = {}
+): Promise<number> {
+  const limit = opts.limit ?? 40;
+  const open = await db
+    .select({ id: healthIssues.id, url: healthIssues.url, message: healthIssues.message })
+    .from(healthIssues)
+    .where(
+      and(eq(healthIssues.issueType, "GSC_INSPECTION_NON_OK"), isNull(healthIssues.resolvedAt))
+    )
+    .orderBy(asc(healthIssues.lastDetectedAt))
+    .limit(limit);
+
+  let resolved = 0;
+  for (const row of open) {
+    if (!row.url) continue;
+    const outcome = await reverifyHealthIssue(row.url, row.message, {
+      fetchImpl: opts.fetchImpl,
+    });
+    // Undecidable leaves the row open — a check we could not perform is not
+    // evidence of recovery.
+    if (!outcome.decidable || outcome.stillFailing) continue;
+
+    await db
+      .update(healthIssues)
+      .set({
+        resolvedAt: now,
+        resolutionReason: HEALTH_RESOLUTION_REASON.VERIFIED_FIXED,
+        message: `${row.message} — resolved: ${outcome.detail}`,
+      })
+      .where(eq(healthIssues.id, row.id));
+    resolved++;
+  }
+  if (resolved > 0) {
+    result.resolvedIssues += resolved;
+    result.resolvedByReason = {
+      ...result.resolvedByReason,
+      [HEALTH_RESOLUTION_REASON.VERIFIED_FIXED]:
+        (result.resolvedByReason?.[HEALTH_RESOLUTION_REASON.VERIFIED_FIXED] ?? 0) + resolved,
+    };
+  }
+  return resolved;
+}
+
+/**
+ * OPE-373 — expire rows the scan has stopped observing.
+ *
+ * Closed as `no_longer_detected`, NEVER as fixed. The distinction is the whole
+ * point of the reason column: this closure is consistent with the problem
+ * having gone away AND with our having gone blind to it, and a reader must be
+ * able to tell that apart from a verified recovery.
+ */
+export async function expireUndetectedIssues(
+  db: Db,
+  now: Date,
+  expireDays: number,
+  result: SweepResult
+): Promise<number> {
+  const cutoff = new Date(now.getTime() - expireDays * 86400 * 1000);
+  const stale = await db
+    .select({ id: healthIssues.id })
+    .from(healthIssues)
+    .where(and(isNull(healthIssues.resolvedAt), lt(healthIssues.lastDetectedAt, cutoff)));
+
+  let resolved = 0;
+  for (const row of stale) {
+    await db
+      .update(healthIssues)
+      .set({ resolvedAt: now, resolutionReason: HEALTH_RESOLUTION_REASON.NO_LONGER_DETECTED })
+      .where(eq(healthIssues.id, row.id));
+    resolved++;
+  }
+  if (resolved > 0) {
+    result.resolvedIssues += resolved;
+    result.resolvedByReason = {
+      ...result.resolvedByReason,
+      [HEALTH_RESOLUTION_REASON.NO_LONGER_DETECTED]:
+        (result.resolvedByReason?.[HEALTH_RESOLUTION_REASON.NO_LONGER_DETECTED] ?? 0) + resolved,
+    };
+  }
+  return resolved;
 }
 
 /**
@@ -477,11 +637,9 @@ export async function resolveNonCanonicalEventIssues(
       .update(healthIssues)
       .set({
         resolvedAt: now,
-        // `health_issues` has no resolution_status column (that is
-        // event_discrepancies), so the reason goes in `message`. Stamping it
-        // matters: a row that just goes quiet is indistinguishable from one
-        // Google later approved, and the next person auditing this queue
-        // deserves to know these were withdrawn, not fixed.
+        // OPE-373 added the reason column; these are WITHDRAWN, not fixed —
+        // the row should never have been raised at all.
+        resolutionReason: HEALTH_RESOLUTION_REASON.WITHDRAWN,
         message: "OPE-372: withdrawn — non-canonical URL, never published in the sitemap",
       })
       .where(eq(healthIssues.id, row.id));
@@ -503,6 +661,7 @@ export async function runSweep(
     resolvedIssues: 0,
     skipped: 0,
     errors: [],
+    resolvedByReason: {},
   };
 
   // OPE-372 — computed once and used twice: to pick canonical URLs only, and to
@@ -513,10 +672,23 @@ export async function runSweep(
 
   const now = new Date();
 
-  // Runs before the early return: the 81 legacy rows must be withdrawn even on
-  // a sweep that inspects nothing (quota exhausted, empty pick). Tying cleanup
-  // to "we had work to do" is how backlogs outlive their cause.
+  // All three maintenance passes run BEFORE the early return: they must happen
+  // even on a sweep that inspects nothing (quota exhausted, empty pick). Tying
+  // cleanup to "we had work to do" is how backlogs outlive their cause — and
+  // the GSC-quota case is exactly when the queue is least trustworthy.
   result.resolvedIssues += await resolveNonCanonicalEventIssues(db, canonicalEventUrls, now);
+
+  // OPE-373 — ask our own server about the classes it can settle, then expire
+  // what the scan has stopped observing. Order matters: re-verify first, so a
+  // row we can prove fixed closes as `verified_fixed` rather than aging out as
+  // the much weaker `no_longer_detected`.
+  await reverifyOpenIssues(db, now, result);
+  await expireUndetectedIssues(
+    db,
+    now,
+    expireDaysFrom(env as unknown as { SITE_HEALTH_EXPIRE_DAYS?: string }),
+    result
+  );
 
   if (urls.length === 0) return result;
 
@@ -553,8 +725,23 @@ export async function runSweep(
       // issue is auto-closed and no new noise row is created.
       const isLegitimateRedirect =
         verdict !== "PASS" && verdict !== "SUCCESS" ? await isRedirectToIndexed(db, url) : false;
+
+      // OPE-373 — our own server outranks a stale GSC verdict for the classes
+      // it can settle. A GSC verdict describes Google's LAST CRAWL: 110 open
+      // rows said "Excluded by 'noindex'" for pages that serve 200 with no
+      // noindex at all, because those vendors were enriched out of MENTION tier
+      // after Google last looked. Without this the row is re-created on every
+      // sweep — resolving them alone would refill by morning.
+      const locallyDisproven =
+        !isLegitimateRedirect && verdict !== "PASS" && verdict !== "SUCCESS"
+          ? await (async () => {
+              const outcome = await reverifyHealthIssue(url, coverage ?? verdict);
+              return outcome.decidable && !outcome.stillFailing;
+            })()
+          : false;
+
       const effectivelyPassing =
-        verdict === "PASS" || verdict === "SUCCESS" || isLegitimateRedirect;
+        verdict === "PASS" || verdict === "SUCCESS" || isLegitimateRedirect || locallyDisproven;
 
       if (!effectivelyPassing) {
         const [existing] = await db
@@ -579,7 +766,7 @@ export async function runSweep(
             fingerprint: fp,
             source: "GSC_URL_INSPECTION",
             issueType,
-            severity: verdict === "FAIL" ? "ERROR" : "WARNING",
+            severity: severityForCoverage(coverage, verdict),
             url,
             message: coverage ?? verdict,
             firstDetectedAt: now,
@@ -588,8 +775,15 @@ export async function runSweep(
           result.newIssues++;
         }
       } else {
-        // Effectively passing (real PASS/SUCCESS, or legitimate 301-to-indexed)
-        // — close any open issue for this URL.
+        // Effectively passing — close any open issue for this URL, recording
+        // WHICH of the three routes settled it (OPE-373). "Google finally said
+        // PASS" and "our own server disproves Google's stale verdict" are
+        // different facts and a reader needs to tell them apart.
+        const reason = locallyDisproven
+          ? HEALTH_RESOLUTION_REASON.VERIFIED_FIXED
+          : isLegitimateRedirect
+            ? HEALTH_RESOLUTION_REASON.LEGITIMATE_REDIRECT
+            : HEALTH_RESOLUTION_REASON.PASSED_INSPECTION;
         const [existing] = await db
           .select()
           .from(healthIssues)
@@ -598,9 +792,13 @@ export async function runSweep(
         if (existing) {
           await db
             .update(healthIssues)
-            .set({ resolvedAt: now })
+            .set({ resolvedAt: now, resolutionReason: reason })
             .where(eq(healthIssues.id, existing.id));
           result.resolvedIssues++;
+          result.resolvedByReason = {
+            ...result.resolvedByReason,
+            [reason]: (result.resolvedByReason?.[reason] ?? 0) + 1,
+          };
         }
       }
 

@@ -37,7 +37,10 @@ const SCHEMA_SQL = `
     message TEXT,
     first_detected_at INTEGER NOT NULL,
     last_detected_at INTEGER NOT NULL,
-    resolved_at INTEGER
+    resolved_at INTEGER,
+    -- OPE-373 (drizzle/0184) — closure reason, so "we proved it fixed" is
+    -- distinguishable from "we stopped seeing it".
+    resolution_reason TEXT
   );
   CREATE TABLE health_issue_snoozes (
     fingerprint TEXT PRIMARY KEY,
