@@ -791,12 +791,14 @@ async function runScheduledFaultCandidatesEmit(env: Env): Promise<void> {
  * surface without an operator click. Failsoft via runMainAppSweep.
  */
 async function runScheduledSiteHealthRefresh(env: Env): Promise<void> {
-  await runMainAppSweep(
-    env,
-    "site-health refresh",
-    "/api/admin/site-health/refresh",
-    (r) => `inserted=${r.inserted ?? "?"} updated=${r.updated ?? "?"} resolved=${r.resolved ?? "?"}`
-  );
+  await runMainAppSweep(env, "site-health refresh", "/api/admin/site-health/refresh", (r) => {
+    const d = (r.data ?? r) as Record<string, unknown>;
+    const failed = (d.failedSources as string[] | undefined) ?? [];
+    return (
+      `inserted=${d.inserted ?? "?"} updated=${d.updated ?? "?"} resolved=${d.resolved ?? "?"}` +
+      ` failedSources=${failed.length ? failed.join("|") : "none"}`
+    );
+  });
 }
 
 /**
@@ -833,6 +835,23 @@ async function runScheduledGa4LivenessCheck(env: Env): Promise<void> {
     "/api/admin/ga4-liveness",
     (r) =>
       `status=${r.status} maxDate=${r.maxDataDate ?? "null"} consecutive=${r.consecutiveFailures} alertFired=${r.alertFired}`
+  );
+}
+
+/**
+ * OPE-309 A5 — daily Bing Webmaster API liveness check, the Bing analogue of
+ * the GA4 check above. Pings GetCrawlStats (read-only; it cannot reach IndexNow
+ * or the OPE-243 breaker) and classifies freshness from the newest crawl-stats
+ * day. Escalation reaches John through the `bing-liveness` heartbeat probe
+ * rather than the admin_actions row, which nothing reads.
+ */
+async function runScheduledBingLivenessCheck(env: Env): Promise<void> {
+  await runMainAppSweep(
+    env,
+    "bing liveness check",
+    "/api/admin/bing-liveness",
+    (r) =>
+      `status=${r.status} maxDate=${r.maxDataDate ?? "null"} consecutive=${r.consecutiveFailures} alertFired=${r.alertFired} reachable=${r.reachable}`
   );
 }
 
@@ -1681,6 +1700,7 @@ export default {
         runScheduledSiteHealthRefresh(env),
         runScheduledTimeToIndexSweep(env),
         runScheduledGa4LivenessCheck(env),
+        runScheduledBingLivenessCheck(env),
         // A12 (analyst 2026-06-26) — durable GSC+GA4 search-performance
         // time-series. Incremental daily upsert; first-run 16-month backfill
         // is driven out-of-band by scripts/gsc-backfill.ts. Failsoft via

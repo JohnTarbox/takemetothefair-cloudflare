@@ -47,6 +47,17 @@ const SCHEMA_SQL = `
     snoozed_until INTEGER NOT NULL,
     snoozed_by TEXT NOT NULL
   );
+  -- OPE-309 (drizzle/0187) — refreshIssues now stamps proof-of-execution on
+  -- every completed run, so the real-SQLite harness needs the table too.
+  CREATE TABLE site_health_refresh_state (
+    id TEXT PRIMARY KEY,
+    last_run_at INTEGER,
+    last_inserted INTEGER NOT NULL DEFAULT 0,
+    last_updated INTEGER NOT NULL DEFAULT 0,
+    last_resolved INTEGER NOT NULL DEFAULT 0,
+    last_failed_sources INTEGER NOT NULL DEFAULT 0,
+    last_failed_source_names TEXT
+  );
 `;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -96,5 +107,34 @@ describe("refreshIssues resolve scoping (OPE-244)", () => {
     await refreshIssues(db, {} as never, {} as never);
     const [bing] = await db.select().from(healthIssues).where(eq(healthIssues.id, "bing-scan"));
     expect(bing.resolvedAt).not.toBeNull(); // BING_SCAN is re-collected; absent = fixed
+  });
+
+  // OPE-309 — the same family by a third mechanism. OPE-244 fixed "a source we
+  // never collect"; this is "a source we tried to collect and COULDN'T". Both
+  // arrive at the resolve loop as an absence, and only one of them means fixed.
+  it("does NOT resolve a collected-source row when that collector THREW", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const bingWebmaster = await import("@/lib/bing-webmaster");
+    vi.mocked(bingWebmaster.getSiteScanIssues).mockRejectedValueOnce(new Error("Bing 503"));
+
+    const result = await refreshIssues(db, {} as never, {} as never);
+
+    const [bing] = await db.select().from(healthIssues).where(eq(healthIssues.id, "bing-scan"));
+    expect(bing.resolvedAt).toBeNull(); // an outage is not a repair
+    expect(result.failedSources).toContain("BING_SCAN");
+    warnSpy.mockRestore();
+  });
+
+  it("stamps proof-of-execution on a run that writes no issue rows", async () => {
+    // The production case: all collectors clean, nothing inserted or updated.
+    // Without this stamp the heartbeat probe has no evidence to read.
+    await refreshIssues(db, {} as never, {} as never);
+    const [stamp] = await db
+      .select()
+      .from(schema.siteHealthRefreshState)
+      .where(eq(schema.siteHealthRefreshState.id, "default"));
+    expect(stamp).toBeDefined();
+    expect(stamp.lastRunAt).toBeInstanceOf(Date);
+    expect(stamp.lastFailedSources).toBe(0);
   });
 });
