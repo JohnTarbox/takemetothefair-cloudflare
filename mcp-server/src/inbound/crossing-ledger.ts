@@ -71,4 +71,15 @@ export const ref = {
   issue: (key: string) => `issue:${key}`,
   hold: (id: string) => `hold:${id}`,
   lane: (name: string) => `lane:${name}`,
+  /**
+   * OPE-366 — a support email's destination is an OBLIGATION, not an event.
+   *
+   * Before this, `inbound-email.ts` could only ever write an event ref, so
+   * every `support-ack` crossing recorded `destination_ref = NULL` even after
+   * R1 (OPE-365) started opening a durable `support_obligations` row for it.
+   * That made the NULL a **sensor gap**, not a dead-end — and a detector built
+   * on `destination_ref IS NULL` would have alarmed forever on work that had
+   * in fact been handed off correctly.
+   */
+  supportObligation: (id: string) => `support_obligation:${id}`,
 };

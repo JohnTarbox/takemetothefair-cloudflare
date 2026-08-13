@@ -163,6 +163,17 @@ export interface HandlerResult {
    *  event id; anything else → null. Workflow writes this to
    *  inbound_emails.resulting_event_id at mark-done. */
   resultingEventId?: string | null;
+  /**
+   * OPE-366 — where this email's work actually LANDED, when that destination
+   * is not an event.
+   *
+   * The workflow's crossing write derived its destination solely from
+   * `resultingEventId`, which meant any handler whose output is a non-event
+   * record (a support obligation, and anything similar later) was recorded as
+   * having crossed into nothing. A handler that creates a durable destination
+   * names it here; the workflow prefers it over the event fallback.
+   */
+  crossingDestinationRef?: string | null;
   /** Which fetch path produced the URL content. Only set for submit intent;
    *  null/undefined for other intents (no fetch happens). Persisted to
    *  inbound_emails.fetch_method at mark-done. See drizzle/0078. */

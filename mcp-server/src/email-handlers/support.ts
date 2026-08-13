@@ -20,12 +20,20 @@ import { supportObligations } from "../schema.js";
 import { decideObligation, extractEmailAddress } from "@takemetothefair/utils";
 import { isEmailSuppressed } from "../tools/admin-send-vendor-email.js";
 import { logError } from "../logger.js";
+// OPE-366 — the handler names its own crossing destination; see types.ts.
+import { ref } from "../inbound/crossing-ledger.js";
 import type { HandlerFn, HandlerResult } from "./types.js";
 
 const SOURCE = "mcp:email-handler:support";
 
 export const handle: HandlerFn = async (env, _ctx, row): Promise<HandlerResult> => {
   const db = getDb(env.DB);
+
+  // OPE-366 — the ref for the crossing ledger, so this handler's destination is
+  // recorded instead of reading as a dead-end. Stays null when no obligation is
+  // owed (suppressed sender, non-obligating decision) — which is a genuine
+  // "crossed into nothing" and SHOULD look like one.
+  let obligationRef: string | null = null;
 
   try {
     const fromAddress = row.fromAddress ?? "";
@@ -60,6 +68,17 @@ export const handle: HandlerFn = async (env, _ctx, row): Promise<HandlerResult> 
         // Workflows are at-least-once; without this a retried step would open a
         // second obligation for the same person and inflate the queue depth.
         .onConflictDoNothing();
+
+      // Read the id back rather than reusing the one generated above: on a
+      // Workflow retry the insert is a no-op and the row that EXISTS is the one
+      // the ledger must point at. Using the freshly-minted uuid would write a
+      // crossing whose destination does not resolve.
+      const [obligation] = await db
+        .select({ id: supportObligations.id })
+        .from(supportObligations)
+        .where(eq(supportObligations.inboundEmailId, row.id))
+        .limit(1);
+      if (obligation) obligationRef = ref.supportObligation(obligation.id);
     }
   } catch (error) {
     // Never fail the ack over bookkeeping. A customer receiving no
@@ -79,6 +98,9 @@ export const handle: HandlerFn = async (env, _ctx, row): Promise<HandlerResult> 
     replyKind: "support-ack",
     replyParams: { subject: row.subject ?? "" },
     status: "replied",
+    // OPE-366 — null here is meaningful, not missing: it says no obligation was
+    // owed, so the crossing genuinely terminated nowhere.
+    crossingDestinationRef: obligationRef,
   };
 };
 

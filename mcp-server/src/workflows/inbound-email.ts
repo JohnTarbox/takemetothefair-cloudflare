@@ -717,9 +717,16 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           !caughtError &&
           (result.replyKind === "photo-intake-unresolved" ||
             result.replyKind === "photo-intake-held");
+        // OPE-366 — a handler that produced a NON-event destination names it
+        // itself. Before this, the destination was derived solely from
+        // `resultingEventId`, so a support email that R1 correctly handed off
+        // to a `support_obligations` row still recorded NULL — a sensor gap
+        // that reads identically to a dead-end.
         await recordCrossing(db, {
           sourceRef: ref.inboundEmail(messageRowId),
-          destinationRef: result.resultingEventId ? ref.event(result.resultingEventId) : null,
+          destinationRef:
+            result.crossingDestinationRef ??
+            (result.resultingEventId ? ref.event(result.resultingEventId) : null),
           crossingType: isHold ? "email_to_hold" : "email_to_ticket",
           actor: "system",
           notes: caughtError
