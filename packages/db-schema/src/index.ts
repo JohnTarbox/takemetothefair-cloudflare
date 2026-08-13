@@ -2777,6 +2777,16 @@ export const weeklyInventoryState = sqliteTable("weekly_inventory_state", {
   staleRedCurrentAt: integer("stale_red_current_at", { mode: "timestamp" }),
   /** Snapshot of `staleRedCurrent` at the last Monday send, for the Δ column. */
   staleRedCount: integer("stale_red_count"),
+  /**
+   * OPE-366 (drizzle/0189) — snapshot of the unterminated-crossing depth at the
+   * last Monday send, for the Δ column. An MCP-owned snapshot column, per the
+   * disjoint-ownership note above.
+   *
+   * Nullable with no backfill: the first send after this migration genuinely
+   * has no prior week to compare against, and `formatDelta` already renders
+   * that as "—". Seeding a 0 would invent a delta on the first run.
+   */
+  unterminatedCrossingsCount: integer("unterminated_crossings_count"),
   updatedAt: integer("updated_at", { mode: "timestamp" }),
 });
 

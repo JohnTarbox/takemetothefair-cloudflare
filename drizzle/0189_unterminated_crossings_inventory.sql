@@ -1,0 +1,39 @@
+-- OPE-366 (R2) — the membrane-crossing ledger gets a reader.
+--
+-- OPE-330 built the half that OBSERVES: every queue-to-queue transition writes
+-- a row. What was missing is the half that NOTICES. Ten of twelve
+-- `email_to_ticket` crossings carried destination_ref = NULL and sat in a table
+-- with no reader, no alarm, and no place in any inventory. Same shape as the
+-- GSC undercount: the evidence was in the database the whole time, and only an
+-- external oracle surfaced it.
+--
+-- This column is the Δ snapshot for the standing Monday inventory line, so the
+-- depth is reported every week whether or not it is zero. A zero the operator
+-- SEES being reported is the point — the defect being closed is precisely that
+-- a real number existed and nobody was looking at it.
+--
+-- MCP-owned, per the disjoint-ownership rule already documented on this table:
+-- the main-app scan owns the `*_current` columns, the MCP weekly inventory owns
+-- every snapshot column. Neither writes the other's, or one clobbers the other
+-- on its next upsert.
+--
+-- Nullable with NO backfill, deliberately. The first send after this migration
+-- genuinely has no prior week to compare against, and `formatDelta` already
+-- renders a null prior as "—". Seeding 0 would manufacture a delta on the first
+-- run and make a first observation look like a week of no change.
+--
+-- ── A note on what this counts, recorded because it was NOT obvious ────────
+--
+-- Measured 2026-08-13, before writing the detector: 8 of the 10 NULL rows were
+-- `support-ack`, and R1 (OPE-365) had ALREADY given those emails a real durable
+-- destination — a support_obligations row. The ledger could not record it,
+-- because the workflow derived its destination solely from resultingEventId.
+-- Those NULLs were a SENSOR GAP, not a dead-end.
+--
+-- A detector shipped against the raw signal would have alarmed forever on work
+-- that was correctly handed off — the same defect shape as the GA4 liveness
+-- alarm (97 rows, 96 alerts, green unreachable by construction). So the sensor
+-- gap is fixed in the same change (`ref.supportObligation`), and the historical
+-- rows are backfilled from the obligations that already exist. From here, a
+-- NULL destination means what it says.
+ALTER TABLE weekly_inventory_state ADD COLUMN unterminated_crossings_count INTEGER;

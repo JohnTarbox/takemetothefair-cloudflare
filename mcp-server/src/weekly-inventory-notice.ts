@@ -27,6 +27,7 @@ import type { Env } from "./index.js";
 import { getDb, type Db } from "./db.js";
 import { logError } from "./logger.js";
 import { weeklyInventoryState } from "./schema.js";
+import { countUnterminatedCrossings } from "./inbound/unterminated-crossings.js";
 
 const SOURCE = "mcp:schedule:weekly-inventory";
 const STATE_KEY = "default";
@@ -46,6 +47,13 @@ export interface InventoryCounts {
    * worse than no number at all.
    */
   staleRed: number;
+  /**
+   * OPE-366 — crossings that entered a membrane and never came out, older than
+   * the age threshold. A standing line even at zero: the whole defect this
+   * closes is that the number existed and nobody was looking at it, so "0" has
+   * to be something the operator SEES being reported, not an absence.
+   */
+  unterminatedCrossings: number;
 }
 
 /**
@@ -53,7 +61,11 @@ export interface InventoryCounts {
  * deliberately the SAME conditions, so the weekly number is comparable with
  * what the operator has been reading, not a subtly different one.
  */
-export async function readInventoryCounts(db: Db): Promise<InventoryCounts> {
+export async function readInventoryCounts(
+  db: Db,
+  opts: { now?: Date; unterminatedAgeHours?: number } = {}
+): Promise<InventoryCounts> {
+  const now = opts.now ?? new Date();
   const [roster, promoter, goodwill] = await Promise.all([
     db
       .select({ n: sql<number>`count(*)` })
@@ -74,11 +86,18 @@ export async function readInventoryCounts(db: Db): Promise<InventoryCounts> {
       .from(eventDiscrepancies)
       .where(eq(eventDiscrepancies.resolutionStatus, "open")),
   ]);
+  // OPE-366 — queried here (not parked on the state row like staleRed) because
+  // membrane_crossings lives in this Worker's D1 and is fully visible from MCP.
+  const unterminated = await countUnterminatedCrossings(db, now, {
+    ageHours: opts.unterminatedAgeHours,
+  });
+
   return {
     rosterResearch: roster[0]?.n ?? 0,
     promoterEnrichment: promoter[0]?.n ?? 0,
     goodwillOpen: goodwill[0]?.n ?? 0,
     staleRed: 0, // filled from the state row by the caller — see the note above
+    unterminatedCrossings: unterminated,
   };
 }
 
@@ -111,7 +130,13 @@ export async function runWeeklyInventoryNotice(env: Env): Promise<void> {
 
   let prior: {
     lastSentDate: string | null;
-    counts: InventoryCounts | null;
+    /**
+     * Prior counts are individually nullable, unlike the current ones. A column
+     * added later has no history, and `formatDelta` renders a null prior as
+     * "—". Typing this as `InventoryCounts` would force a 0 and fabricate a
+     * delta on the first send after each new line is added.
+     */
+    counts: { [K in keyof InventoryCounts]: number | null } | null;
     staleRedCurrent: number;
   } = {
     lastSentDate: null,
@@ -131,6 +156,9 @@ export async function runWeeklyInventoryNotice(env: Env): Promise<void> {
           promoterEnrichment: row.promoterEnrichmentCount ?? 0,
           goodwillOpen: row.goodwillOpenCount ?? 0,
           staleRed: row.staleRedCount ?? 0,
+          // OPE-366 — null (never snapshotted) must stay null so the Δ renders
+          // as "—" rather than a fabricated ±0 on the first send.
+          unterminatedCrossings: row.unterminatedCrossingsCount ?? null,
         },
       };
     }
@@ -188,10 +216,23 @@ export async function runWeeklyInventoryNotice(env: Env): Promise<void> {
       prior: prior.counts?.staleRed ?? null,
       href: "https://meetmeatthefair.com/admin/analytics",
     },
+    {
+      // OPE-366 — work that entered a membrane and never came out. Listed even
+      // at zero: the defect being closed is that this number existed and had
+      // no reader, so a visible 0 is the deliverable, not noise.
+      label: "Unterminated crossings",
+      current: counts.unterminatedCrossings,
+      prior: prior.counts?.unterminatedCrossings ?? null,
+      href: "https://meetmeatthefair.com/admin/data-health",
+    },
   ];
 
   const total =
-    counts.rosterResearch + counts.promoterEnrichment + counts.goodwillOpen + counts.staleRed;
+    counts.rosterResearch +
+    counts.promoterEnrichment +
+    counts.goodwillOpen +
+    counts.staleRed +
+    counts.unterminatedCrossings;
   const subject = `📋 MMATF Monday inventory — ${total} open across ${rows.length} queues`;
   const textBody =
     `Backlog as of ${todayIso} (Δ vs last Monday):\n\n` +
@@ -251,6 +292,7 @@ export async function runWeeklyInventoryNotice(env: Env): Promise<void> {
         rosterResearchCount: counts.rosterResearch,
         promoterEnrichmentCount: counts.promoterEnrichment,
         goodwillOpenCount: counts.goodwillOpen,
+        unterminatedCrossingsCount: counts.unterminatedCrossings,
         // Snapshot only. `staleRedCurrent` belongs to the main-app scan and is
         // deliberately absent from both branches of this upsert (OPE-308).
         staleRedCount: counts.staleRed,
@@ -263,6 +305,7 @@ export async function runWeeklyInventoryNotice(env: Env): Promise<void> {
           rosterResearchCount: counts.rosterResearch,
           promoterEnrichmentCount: counts.promoterEnrichment,
           goodwillOpenCount: counts.goodwillOpen,
+          unterminatedCrossingsCount: counts.unterminatedCrossings,
           staleRedCount: counts.staleRed,
           updatedAt: new Date(),
         },
