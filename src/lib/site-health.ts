@@ -9,7 +9,12 @@
 
 import { eq, and, isNull, or, sql, gte, desc, inArray } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
-import { healthIssues, healthIssueSnoozes, gscInspectionState } from "@/lib/db/schema";
+import {
+  healthIssues,
+  healthIssueSnoozes,
+  gscInspectionState,
+  siteHealthRefreshState,
+} from "@/lib/db/schema";
 import * as schema from "@/lib/db/schema";
 import {
   getSiteScanIssues,
@@ -89,10 +94,27 @@ interface NormalizedIssue {
   message: string | null;
 }
 
+/** What one collection pass produced, and which providers failed producing it.
+ *
+ *  `failedSources` exists because an empty result is ambiguous and the resolve
+ *  loop in `refreshIssues` treats absence as proof of repair. A provider that
+ *  THREW contributes zero issues, exactly like a provider reporting a clean
+ *  site — so without this the next refresh would mark every open row for that
+ *  source resolved, on the strength of an outage. That is the OPE-244
+ *  false-resolve family recurring by a third mechanism (a failed collector
+ *  rather than a non-collected source), and the same shape as the rule that
+ *  absence of positives is not a negative. */
+interface CollectResult {
+  issues: NormalizedIssue[];
+  failedSources: HealthSource[];
+}
+
 /** Pull fresh issues from every source. Each provider failure is contained so
- *  a single transient outage doesn't blank the whole panel. */
-async function collectFreshIssues(bingEnv: BingEnv, scEnv: ScEnv): Promise<NormalizedIssue[]> {
+ *  a single transient outage doesn't blank the whole panel — and is REPORTED,
+ *  so the caller can tell "clean" from "silent". */
+async function collectFreshIssues(bingEnv: BingEnv, scEnv: ScEnv): Promise<CollectResult> {
   const issues: NormalizedIssue[] = [];
+  const failedSources: HealthSource[] = [];
 
   // Bing Site Scan
   try {
@@ -122,6 +144,7 @@ async function collectFreshIssues(bingEnv: BingEnv, scEnv: ScEnv): Promise<Norma
     }
   } catch (error) {
     console.warn("[site-health] BING_SCAN failed:", error);
+    failedSources.push("BING_SCAN");
   }
 
   // Bing sitemap status — extract any non-Success entries
@@ -140,6 +163,7 @@ async function collectFreshIssues(bingEnv: BingEnv, scEnv: ScEnv): Promise<Norma
     }
   } catch (error) {
     console.warn("[site-health] BING_SITEMAP failed:", error);
+    failedSources.push("BING_SITEMAP");
   }
 
   // GSC sitemap status — surface warnings + errors as issues
@@ -167,9 +191,10 @@ async function collectFreshIssues(bingEnv: BingEnv, scEnv: ScEnv): Promise<Norma
     }
   } catch (error) {
     console.warn("[site-health] GSC_SITEMAP failed:", error);
+    failedSources.push("GSC_SITEMAP");
   }
 
-  return issues;
+  return { issues, failedSources };
 }
 
 /** Reconcile a fresh batch of issues with the persisted snapshot.
@@ -181,8 +206,13 @@ export async function refreshIssues(
   db: Db,
   bingEnv: BingEnv,
   scEnv: ScEnv
-): Promise<{ inserted: number; updated: number; resolved: number }> {
-  const fresh = await collectFreshIssues(bingEnv, scEnv);
+): Promise<{
+  inserted: number;
+  updated: number;
+  resolved: number;
+  failedSources: HealthSource[];
+}> {
+  const { issues: fresh, failedSources } = await collectFreshIssues(bingEnv, scEnv);
   const now = new Date();
 
   // Pre-compute fingerprints for the fresh batch
@@ -231,15 +261,48 @@ export async function refreshIssues(
     }
   }
 
-  // Resolve open issues no longer present in the fresh batch
+  // Resolve open issues no longer present in the fresh batch — but ONLY for
+  // sources that actually answered this run. A source whose collector threw
+  // contributed zero issues, which is indistinguishable from a clean report;
+  // closing its rows on that basis would record "fixed" when what happened was
+  // "we could not look".
+  const failed = new Set<HealthSource>(failedSources);
   for (const row of openRows) {
+    if (failed.has(row.source as HealthSource)) continue;
     if (!freshFingerprints.has(row.fingerprint)) {
       await db.update(healthIssues).set({ resolvedAt: now }).where(eq(healthIssues.id, row.id));
       resolved++;
     }
   }
 
-  return { inserted, updated, resolved };
+  // Proof of execution (OPE-309 A7/A8). Stamped on EVERY completed run,
+  // including the all-clear runs that write no issue rows at all — which, in
+  // production, is every run. Without this the heartbeat probe would have no
+  // evidence to read and a dead cron would be invisible.
+  await db
+    .insert(siteHealthRefreshState)
+    .values({
+      id: "default",
+      lastRunAt: now,
+      lastInserted: inserted,
+      lastUpdated: updated,
+      lastResolved: resolved,
+      lastFailedSources: failedSources.length,
+      lastFailedSourceNames: failedSources.length ? failedSources.join(",") : null,
+    })
+    .onConflictDoUpdate({
+      target: siteHealthRefreshState.id,
+      set: {
+        lastRunAt: now,
+        lastInserted: inserted,
+        lastUpdated: updated,
+        lastResolved: resolved,
+        lastFailedSources: failedSources.length,
+        lastFailedSourceNames: failedSources.length ? failedSources.join(",") : null,
+      },
+    });
+
+  return { inserted, updated, resolved, failedSources };
 }
 
 /** List currently-open issues with snooze state attached. Optionally filter

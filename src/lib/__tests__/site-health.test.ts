@@ -318,10 +318,19 @@ describe("refreshIssues", () => {
       where: vi.fn(async () => openRows),
     };
 
+    // Drizzle's .values() returns a thenable builder, so it can be either
+    // awaited directly (the health_issues inserts) or chained into
+    // .onConflictDoUpdate() (the site_health_refresh_state upsert). The mock
+    // has to be both, or the run-state stamp looks like a crash.
     const makeInsertChain = () => {
       const chain = {
-        values: vi.fn(async (v: unknown) => {
+        values: vi.fn((v: unknown) => {
           inserts.push(v);
+          const built = {
+            onConflictDoUpdate: vi.fn(async () => undefined),
+            then: (resolve: (value: undefined) => unknown) => resolve(undefined),
+          };
+          return built;
         }),
       };
       return chain;
@@ -367,7 +376,7 @@ describe("refreshIssues", () => {
       {} as Parameters<typeof refreshIssues>[2]
     );
 
-    expect(result).toEqual({ inserted: 0, updated: 0, resolved: 0 });
+    expect(result).toEqual({ inserted: 0, updated: 0, resolved: 0, failedSources: [] });
   });
 
   it("contains a single source's failure without breaking the panel", async () => {
@@ -420,5 +429,83 @@ describe("refreshIssues", () => {
     // Fresh GSC issue → inserted = 1. The stale open row → resolved = 1.
     expect(result.inserted).toBe(1);
     expect(result.resolved).toBe(1);
+  });
+
+  // ── OPE-309 A7/A8 — proof of execution ──────────────────────────────
+  //
+  // In production this is the ONLY output the refresh produces: BING_SCAN /
+  // BING_SITEMAP / GSC_SITEMAP have never written a health_issues row, because
+  // Bing reports no crawl issues and every sitemap reads Success. If the
+  // all-clear run stopped stamping, a dead cron would be invisible.
+  it("stamps run state even when every source is clean and nothing is written", async () => {
+    getSiteScanIssuesMock.mockResolvedValue([]);
+    getBingSitemapsMock.mockResolvedValue([]);
+    getSitemapStatusMock.mockResolvedValue({ sitemaps: [] });
+
+    const db = makeRefreshDb([]);
+    await refreshIssues(
+      db as unknown as Parameters<typeof refreshIssues>[0],
+      {} as Parameters<typeof refreshIssues>[1],
+      {} as Parameters<typeof refreshIssues>[2]
+    );
+
+    const stamp = db.__inserts.find(
+      (i): i is { id: string; lastRunAt: Date; lastFailedSources: number } =>
+        typeof i === "object" && i !== null && (i as { id?: unknown }).id === "default"
+    );
+    expect(stamp).toBeDefined();
+    expect(stamp!.lastRunAt).toBeInstanceOf(Date);
+    expect(stamp!.lastFailedSources).toBe(0);
+  });
+
+  // ── OPE-309 — the false-resolve guard ───────────────────────────────
+  //
+  // The pair below is the whole point: identical open row, identical empty
+  // fresh batch, and the ONLY difference is whether the collector threw or
+  // answered. "We could not look" must not be recorded as "fixed".
+  it("does NOT resolve a source's rows when that source's collector threw", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    getSiteScanIssuesMock.mockRejectedValue(new Error("Bing 503"));
+    getBingSitemapsMock.mockResolvedValue([]);
+    getSitemapStatusMock.mockResolvedValue({ sitemaps: [] });
+
+    const db = makeRefreshDb([
+      { id: "id-1", fingerprint: "fp-bing", source: "BING_SCAN", issueType: "X", url: null },
+    ]);
+    const result = await refreshIssues(
+      db as unknown as Parameters<typeof refreshIssues>[0],
+      {} as Parameters<typeof refreshIssues>[1],
+      {} as Parameters<typeof refreshIssues>[2]
+    );
+
+    expect(result.resolved).toBe(0);
+    expect(result.failedSources).toContain("BING_SCAN");
+
+    const stamp = db.__inserts.find(
+      (i): i is { id: string; lastFailedSourceNames: string } =>
+        typeof i === "object" && i !== null && (i as { id?: unknown }).id === "default"
+    );
+    expect(stamp!.lastFailedSourceNames).toBe("BING_SCAN");
+    warnSpy.mockRestore();
+  });
+
+  it("DOES resolve the same row when the collector answers cleanly", async () => {
+    // The complement — proves the guard above keys on the failure, not on the
+    // emptiness of the batch.
+    getSiteScanIssuesMock.mockResolvedValue([]);
+    getBingSitemapsMock.mockResolvedValue([]);
+    getSitemapStatusMock.mockResolvedValue({ sitemaps: [] });
+
+    const db = makeRefreshDb([
+      { id: "id-1", fingerprint: "fp-bing", source: "BING_SCAN", issueType: "X", url: null },
+    ]);
+    const result = await refreshIssues(
+      db as unknown as Parameters<typeof refreshIssues>[0],
+      {} as Parameters<typeof refreshIssues>[1],
+      {} as Parameters<typeof refreshIssues>[2]
+    );
+
+    expect(result.resolved).toBe(1);
+    expect(result.failedSources).toEqual([]);
   });
 });

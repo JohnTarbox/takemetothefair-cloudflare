@@ -3403,6 +3403,69 @@ export const ga4LivenessLog = sqliteTable(
   (t) => [index("idx_ga4_liveness_log_checked_at").on(t.checkedAt)]
 );
 
+// OPE-309 A5 (drizzle/0187, 2026-08-12) — Bing Webmaster API liveness.
+//
+// Same shape as ga4_liveness_log, with the calibration corrected: `status` is
+// classified from seconds past the END of the newest crawl-stats day, not its
+// midnight. See src/lib/bing-liveness.ts for why — ga4_liveness_log's 97 rows
+// are 100% `degraded` because of that off-by-one-day anchor.
+//
+// `error` is a genuinely new column, not present on the GA4 table: an
+// unreachable API and a stale feed have different owners (our credential vs
+// Bing's pipeline) and collapsing them into one null date, as GA4 does, throws
+// away the only field that says which.
+export const bingLivenessLog = sqliteTable(
+  "bing_liveness_log",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    checkedAt: integer("checked_at", { mode: "timestamp" }).notNull(),
+    // 'green' = data ≤24h past its day-end; 'degraded' ≤48h; 'critical' beyond
+    // that OR unreachable.
+    status: text("status", { enum: ["green", "degraded", "critical"] }).notNull(),
+    // YYYY-MM-DD of the newest GetCrawlStats row; null when unreachable/empty.
+    maxDataDate: text("max_data_date"),
+    dataAgeSeconds: integer("data_age_seconds"),
+    consecutiveFailures: integer("consecutive_failures").notNull().default(0),
+    // 1 when this row's check triggered an admin_actions bing.liveness_alert.
+    alertFired: integer("alert_fired").notNull().default(0),
+    // Truncated failure detail when the API call threw. Null on a reachable check.
+    error: text("error"),
+  },
+  (t) => [index("idx_bing_liveness_log_checked_at").on(t.checkedAt)]
+);
+
+export type BingLivenessLogRow = typeof bingLivenessLog.$inferSelect;
+
+// OPE-309 A7/A8 (drizzle/0187, 2026-08-12) — proof-of-execution for the daily
+// site-health refresh.
+//
+// `refreshIssues` writes health_issues rows, so the obvious probe is "how
+// fresh is the newest row". That probe would be wrong, and prod says so: the
+// three sources it owns (BING_SCAN / BING_SITEMAP / GSC_SITEMAP) have produced
+// ZERO rows in the table's entire life — not because the cron is dead, but
+// because Bing genuinely reports no crawl issues and all 8 sitemaps read
+// Success. A healthy site produces no rows, forever.
+//
+// The run is periodic even though its OUTPUT is event-driven, so the run is
+// what gets stamped. "It executed" and "it found something" are different
+// questions and only the first is a liveness signal — the same reason the
+// fault-emitter output probe was declined on this ticket.
+//
+// Single row keyed id='default', mirroring recommendation_scan_state.
+export const siteHealthRefreshState = sqliteTable("site_health_refresh_state", {
+  id: text("id").primaryKey(),
+  lastRunAt: integer("last_run_at", { mode: "timestamp" }),
+  lastInserted: integer("last_inserted").notNull().default(0),
+  lastUpdated: integer("last_updated").notNull().default(0),
+  lastResolved: integer("last_resolved").notNull().default(0),
+  /** Count of collectors that threw on the last run (0 = all sources spoke). */
+  lastFailedSources: integer("last_failed_sources").notNull().default(0),
+  /** Comma-separated names of the sources that failed, for operator triage. */
+  lastFailedSourceNames: text("last_failed_source_names"),
+});
+
+export type SiteHealthRefreshStateRow = typeof siteHealthRefreshState.$inferSelect;
+
 // Inbound email persistence — drizzle/0072. Every message received by
 // the MCP Worker's email() entrypoint gets a row here, driving the
 // InboundEmailWorkflow's status state machine and providing an

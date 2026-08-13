@@ -20,9 +20,11 @@
 import { eq, isNotNull, sql } from "drizzle-orm";
 import {
   adminActions,
+  bingLivenessLog,
   eventDiscrepancies,
   emailSendLedger,
   heartbeatProbes,
+  siteHealthRefreshState,
   agentHeartbeats,
   inboundEmails,
   imageCoverageState,
@@ -338,6 +340,61 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
   // exit" is a JOIN the operator runs against source_ref, not a silence signal,
   // because a legitimately-open hold is indistinguishable from a stalled one
   // by age alone.
+  // ── OPE-309 (assurance audit A5) ───────────────────────────────────
+  //
+  // Evidence is the freshest GREEN check, not the freshest check. That single
+  // choice makes ONE probe answer both questions that matter:
+  //   - Bing has been unhealthy for 2+ days  → no new green rows → RED
+  //   - the prober itself stopped running    → no new green rows → RED
+  // Both demand the same operator move (go look at Bing), and the log row
+  // carries `status`/`error` so which one it is takes a single query.
+  //
+  // Keying on checked_at instead would be the classic verify-by-echo mistake:
+  // the check would keep stamping rows saying "critical" every morning and the
+  // probe would call that healthy, because something was still writing.
+  //
+  // 48h matches BING_ALERT_AFTER_CONSECUTIVE=2 on a daily cron, so the probe
+  // and the streak counter cross their thresholds together instead of
+  // disagreeing about when Bing is in trouble.
+  //
+  // P0 per the ticket's "consecutive-failure P0 escalation". Note this rail —
+  // assessAllHeartbeat → StaleRed → OPE-75 digest — is deliberately NOT the
+  // admin_actions row the GA4 original writes: nothing reads admin_actions as
+  // an alert channel, which is why ga4.liveness_alert has fired 96 times since
+  // 2026-05-07 without ever reaching anyone.
+  {
+    name: "bing-liveness",
+    ownerOpe: "OPE-309",
+    label: "Bing Webmaster API liveness",
+    priority: "P0",
+    expectedWindowHours: 48,
+    lastEvidenceAt: (db) =>
+      maxTs(db, bingLivenessLog, bingLivenessLog.checkedAt, eq(bingLivenessLog.status, "green")),
+  },
+  // ── OPE-309 (assurance audit A7/A8, third instance) ─────────────────
+  //
+  // The site-health refresh, probed on its RUN rather than its output.
+  //
+  // Measured before choosing: BING_SCAN / BING_SITEMAP / GSC_SITEMAP — the
+  // three sources this cron owns — have written ZERO rows across the entire
+  // life of `health_issues` (639 rows, all GSC_URL_INSPECTION + 1
+  // EMAIL_DELIVERY). Not a dead cron: Bing's GetCrawlIssues genuinely returns
+  // [] and all 8 sitemaps report Success. A healthy site produces no issue
+  // rows, indefinitely.
+  //
+  // So an output-freshness probe here would sit permanently RED on a perfectly
+  // working feed — the same false-STALE pattern declined for the fault emitter
+  // on this very ticket. The distinction is that the fault emitter's RUN is
+  // event-driven too, whereas this one is a daily cron: the run is periodic
+  // even though the output is not, so the run is what gets stamped and read.
+  {
+    name: "site-health-refresh",
+    ownerOpe: "OPE-309",
+    label: "Site-health refresh (cron output)",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: (db) => maxTs(db, siteHealthRefreshState, siteHealthRefreshState.lastRunAt),
+  },
   {
     name: "membrane-crossing-ledger",
     ownerOpe: "OPE-330",
