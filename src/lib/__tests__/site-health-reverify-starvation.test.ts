@@ -49,6 +49,16 @@ function makeDb() {
   return drizzle(sqlite, { schema });
 }
 
+/**
+ * The better-sqlite3 driver runs these queries identically to D1 — that is the
+ * point of using it — but the two Drizzle instances are not nominally
+ * assignable. The sibling suites widen the whole variable to `any`; this keeps
+ * the cast local and named, so seeding still gets real types and only the call
+ * boundary is loosened.
+ */
+const asDb = (db: ReturnType<typeof makeDb>) =>
+  db as unknown as Parameters<typeof reverifyOpenIssues>[0];
+
 /** `n` open rows, oldest-scanned first, all decidable-noindex unless overridden. */
 function seed(
   db: ReturnType<typeof makeDb>,
@@ -112,7 +122,7 @@ describe("OPE-382 — decidability filter", () => {
 
     // limit 3 = exactly the number of undecidable rows. Without the filter they
     // fill the batch and NOTHING resolves; with it, both decidable rows fit.
-    const resolved = await reverifyOpenIssues(db, new Date(), emptyResult(), {
+    const resolved = await reverifyOpenIssues(asDb(db), new Date(), emptyResult(), {
       fetchImpl,
       limit: 3,
     });
@@ -151,13 +161,13 @@ describe("OPE-382 — starvation: the tail gets serviced", () => {
     }) as unknown as typeof fetch;
 
     // Run 1 — limit 3, so only the head is attempted.
-    await reverifyOpenIssues(db, new Date(1_000_000), emptyResult(), { fetchImpl, limit: 3 });
+    await reverifyOpenIssues(asDb(db), new Date(1_000_000), emptyResult(), { fetchImpl, limit: 3 });
     seen.push(wave);
     wave = [];
 
     // Run 2 — the head is still open (still 500ing) but its cursor advanced, so
     // this run MUST see the tail. Pre-fix it saw the identical three rows.
-    await reverifyOpenIssues(db, new Date(2_000_000), emptyResult(), { fetchImpl, limit: 3 });
+    await reverifyOpenIssues(asDb(db), new Date(2_000_000), emptyResult(), { fetchImpl, limit: 3 });
     seen.push(wave);
 
     expect(seen[0].every((u) => u.includes("/blog/stuck-"))).toBe(true);
@@ -180,7 +190,7 @@ describe("OPE-382 — starvation: the tail gets serviced", () => {
     const fetchImpl = vi.fn(
       async () => new Response("", { status: 503 })
     ) as unknown as typeof fetch;
-    await reverifyOpenIssues(db, new Date(5_000_000), emptyResult(), { fetchImpl });
+    await reverifyOpenIssues(asDb(db), new Date(5_000_000), emptyResult(), { fetchImpl });
 
     const [row] = await db
       .select({
