@@ -26,7 +26,9 @@ const SCHEMA_SQL = `
   CREATE TABLE health_issues (
     id TEXT PRIMARY KEY, fingerprint TEXT UNIQUE, source TEXT, issue_type TEXT,
     severity TEXT, url TEXT, message TEXT, first_detected_at INTEGER,
-    last_detected_at INTEGER, resolved_at INTEGER, resolution_reason TEXT
+    last_detected_at INTEGER, resolved_at INTEGER, resolution_reason TEXT,
+    -- OPE-382 (drizzle/0188) — re-verify cursor; the pass selects on it.
+    last_reverified_at INTEGER
   );
   CREATE TABLE email_send_ledger (
     message_id TEXT PRIMARY KEY, recipient TEXT, source TEXT, subject TEXT,

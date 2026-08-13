@@ -1,0 +1,59 @@
+-- OPE-382 — give the re-verify pass a cursor of its own, so it round-robins
+-- instead of re-fetching the same head of the queue every run.
+--
+-- OPE-373 shipped the re-verify pass and it works: it closes rows as
+-- `verified_fixed` when our own origin disproves the recorded condition. What it
+-- could not do was REACH most of them.
+--
+-- Measured in production 2026-08-13, before writing this:
+--
+--   open GSC_INSPECTION_NON_OK rows ............................ 159
+--     locally decidable (noindex 67 + 5xx 2) ...................  69
+--     NOT decidable by our origin ..............................  90
+--       "URL is unknown to Google" .............................  43
+--       "Crawled - currently not indexed" ......................  23
+--       "Discovered - currently not indexed" ...................  19
+--       "Alternate page with proper canonical tag" .............   5
+--
+--   the two 5xx rows the ticket is about, by queue position:
+--     /blog/quechee-hot-air-balloon-…  rank  80  (last_detected 2026-08-03)
+--     /blog/vermont-maple-products-…   rank 107  (last_detected 2026-08-07)
+--
+-- The pass selects `ORDER BY last_detected_at ASC LIMIT 40`. Both 5xx rows sit
+-- far beyond 40, so they had never been fetched even once — and both serve HTTP
+-- 200 today, so they would have closed on first contact.
+--
+-- Two distinct faults produced that, and only one of them is about batch size:
+--
+--  1. WRONG SORT KEY. `last_detected_at` is a property of the SCAN, not of
+--     re-verify. A row re-verify cannot close keeps its position forever, so the
+--     same 40 rows are re-fetched every run while everything behind them starves.
+--     Of the oldest 40, 33 were classes our origin can never settle — the budget
+--     was being spent almost entirely on rows that cannot move.
+--
+--  2. NO DECIDABILITY FILTER. 90 of 159 open rows are facts about Google's index
+--     that a 200 from us cannot contradict. Fetching them proves nothing and
+--     costs the run its HTTP budget — which is also why
+--     `run_site_health_sweep(batch_size=0)` timed out at 60s: the maintenance
+--     passes run before the early return, so even a zero-inspection sweep still
+--     performed 40 sequential live fetches.
+--
+-- This column fixes (1); the query fixes (2). Together the candidate pool drops
+-- 159 -> 69 and a 40-row batch covers the entire decidable backlog in two runs.
+--
+-- Nullable with no backfill, deliberately. NULL means "never attempted", and
+-- SQLite sorts NULLs FIRST in ASC — so on the first run after this migration
+-- every open row is ahead of every attempted one, which is exactly the ordering
+-- that reaches the starved tail. Backfilling a timestamp would erase that
+-- distinction and re-create the starvation on day one.
+--
+-- Note this is stamped on every ATTEMPT, not on every resolution. That is the
+-- whole mechanism: a row that stays open because it is genuinely still broken
+-- must still advance the cursor, or a single permanently-500ing page recreates
+-- the head-of-line block that this migration exists to remove.
+ALTER TABLE health_issues ADD COLUMN last_reverified_at INTEGER;
+
+-- Serves the re-verify pick directly: open rows (resolved_at IS NULL), ordered
+-- by oldest attempt first.
+CREATE INDEX IF NOT EXISTS idx_health_issues_reverify
+  ON health_issues(resolved_at, last_reverified_at);
