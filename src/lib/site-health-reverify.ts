@@ -58,6 +58,28 @@ function normalizeMessage(message: string | null): string {
     .trim();
 }
 
+/**
+ * OPE-382 — the same decidability rule, expressed as SQL-matchable substrings.
+ *
+ * `reverifyOpenIssues` must not pull rows it can never settle: 90 of the 159 open
+ * rows measured 2026-08-13 were GSC-index facts our origin cannot contradict, and
+ * fetching them spent the run's whole HTTP budget proving nothing.
+ *
+ * These deliberately omit the parenthetical and the apostrophe from
+ * `LOCALLY_DECIDABLE` above — GSC emits a curly apostrophe (`Excluded by ‘noindex’
+ * tag`), and a quote character inside a SQL LIKE is exactly the fragility
+ * `normalizeMessage` exists to absorb. Matching on the quote-free stem keeps the
+ * filter robust without duplicating the normaliser into SQL.
+ *
+ * Kept honest by a test asserting every LOCALLY_DECIDABLE value contains its probe
+ * and that `classifyMessage` agrees — so adding a class here without teaching the
+ * classifier (or vice versa) fails rather than silently narrowing the queue.
+ */
+export const LOCALLY_DECIDABLE_SQL_PROBES = ["noindex", "server error", "not found"] as const;
+
+/** The canonical messages the probes must keep matching. Exported for that test. */
+export const LOCALLY_DECIDABLE_MESSAGES = LOCALLY_DECIDABLE;
+
 /** Which locally-decidable class is this, if any? */
 export function classifyMessage(message: string | null): keyof typeof LOCALLY_DECIDABLE | null {
   const m = normalizeMessage(message);

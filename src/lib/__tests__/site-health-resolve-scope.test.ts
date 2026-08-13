@@ -40,7 +40,9 @@ const SCHEMA_SQL = `
     resolved_at INTEGER,
     -- OPE-373 (drizzle/0184) — closure reason, so "we proved it fixed" is
     -- distinguishable from "we stopped seeing it".
-    resolution_reason TEXT
+    resolution_reason TEXT,
+    -- OPE-382 (drizzle/0188) — re-verify cursor; the pass selects on it.
+    last_reverified_at INTEGER
   );
   CREATE TABLE health_issue_snoozes (
     fingerprint TEXT PRIMARY KEY,

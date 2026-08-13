@@ -1961,11 +1961,31 @@ export const healthIssues = sqliteTable(
      * their reason is genuinely unknown and guessing would defeat the purpose.
      */
     resolutionReason: text("resolution_reason"),
+    /**
+     * OPE-382 (drizzle/0188) — when re-verify last ATTEMPTED this row, set
+     * whatever the attempt concluded.
+     *
+     * The re-verify batch used to order by `last_detected_at`, which is a
+     * property of the SCAN, not of re-verify. A row re-verify cannot close
+     * (undecidable, or decidable-and-genuinely-still-broken) keeps its position
+     * forever, so the same head of the queue is re-fetched every run while the
+     * rest starves. Measured 2026-08-13: the two 5xx rows sat at ranks 80 and
+     * 107 behind a 40-row limit and had never once been fetched.
+     *
+     * Ordering by this column instead makes the pass a round-robin: every open
+     * row is visited within ceil(open / limit) runs, because an attempt advances
+     * the cursor even when it resolves nothing. NULL sorts first in SQLite ASC,
+     * so rows never yet attempted go to the front — which is the behaviour we
+     * want on the migration's first run.
+     */
+    lastReverifiedAt: integer("last_reverified_at", { mode: "timestamp" }),
   },
   (table) => [
     index("idx_health_issues_source").on(table.source, table.lastDetectedAt),
     index("idx_health_issues_open").on(table.resolvedAt),
     index("idx_health_issues_resolution_reason").on(table.resolutionReason, table.resolvedAt),
+    // OPE-382 — serves the re-verify pick: open rows, oldest attempt first.
+    index("idx_health_issues_reverify").on(table.resolvedAt, table.lastReverifiedAt),
   ]
 );
 

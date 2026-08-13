@@ -14,7 +14,7 @@
  * as Bing-sourced issues.
  */
 
-import { eq, and, gte, lt, asc, desc, isNull, or, like, sql } from "drizzle-orm";
+import { eq, and, gte, lt, asc, desc, isNull, or, like, sql, inArray } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import {
   events,
@@ -36,7 +36,7 @@ import { SITE_URL } from "@takemetothefair/constants";
 import { inspectUrl, ScApiError, ScConfigError, type ScEnv } from "@/lib/search-console";
 import { fingerprintFor } from "@/lib/site-health";
 import { summarizeRichResults } from "@/lib/gsc-rich-results";
-import { reverifyHealthIssue } from "@/lib/site-health-reverify";
+import { reverifyHealthIssue, LOCALLY_DECIDABLE_SQL_PROBES } from "@/lib/site-health-reverify";
 import { HEALTH_RESOLUTION_REASON } from "@takemetothefair/db-schema";
 import { getIndexableVendorRows } from "@/lib/sitemap/indexable-vendors";
 import {
@@ -133,6 +133,17 @@ interface SweepResult {
  * Override with SITE_HEALTH_EXPIRE_DAYS.
  */
 export const DEFAULT_EXPIRE_DAYS = 21;
+
+/**
+ * OPE-382 — how many re-verify fetches run at once.
+ *
+ * These are requests to our OWN origin, so the ceiling is Cloudflare's subrequest
+ * budget and our own tolerance, not a third party's rate limit. 8 turns a 40-row
+ * batch into 5 waves instead of 40 sequential round-trips, which is what brought
+ * `run_site_health_sweep(batch_size=0)` back inside the 60s MCP budget. Kept
+ * modest deliberately: this runs alongside the GSC calls in the same invocation.
+ */
+const REVERIFY_CONCURRENCY = 8;
 
 /**
  * OPE-373 item 4 — severity by ACTIONABILITY, not by GSC's verdict string.
@@ -287,36 +298,85 @@ export async function reverifyOpenIssues(
   db: Db,
   now: Date,
   result: SweepResult,
-  opts: { limit?: number; fetchImpl?: typeof fetch } = {}
+  opts: { limit?: number; fetchImpl?: typeof fetch; concurrency?: number } = {}
 ): Promise<number> {
   const limit = opts.limit ?? 40;
+  const concurrency = opts.concurrency ?? REVERIFY_CONCURRENCY;
+
+  // OPE-382 — only pull rows this pass can actually settle. 90 of the 159 open
+  // rows measured 2026-08-13 were GSC-index facts ("URL is unknown to Google",
+  // "Crawled - currently not indexed") that a 200 from our origin cannot
+  // contradict; fetching them spent the budget proving nothing and starved the
+  // decidable tail behind them.
+  const decidable = or(
+    ...LOCALLY_DECIDABLE_SQL_PROBES.map((probe) =>
+      like(sql`lower(${healthIssues.message})`, `%${probe}%`)
+    )
+  );
+
   const open = await db
     .select({ id: healthIssues.id, url: healthIssues.url, message: healthIssues.message })
     .from(healthIssues)
     .where(
-      and(eq(healthIssues.issueType, "GSC_INSPECTION_NON_OK"), isNull(healthIssues.resolvedAt))
+      and(
+        eq(healthIssues.issueType, "GSC_INSPECTION_NON_OK"),
+        isNull(healthIssues.resolvedAt),
+        decidable
+      )
     )
-    .orderBy(asc(healthIssues.lastDetectedAt))
+    // OPE-382 — order by OUR cursor, not by the scan's `last_detected_at`.
+    // Sorting by when the scan last saw a row means a row we cannot close keeps
+    // its place forever and the same head is re-fetched every run; that is how
+    // the two 5xx rows sat at ranks 80 and 107 behind a limit of 40 and were
+    // never once fetched. NULL (never attempted) sorts first in SQLite ASC.
+    .orderBy(asc(healthIssues.lastReverifiedAt), asc(healthIssues.lastDetectedAt))
     .limit(limit);
 
-  let resolved = 0;
-  for (const row of open) {
-    if (!row.url) continue;
-    const outcome = await reverifyHealthIssue(row.url, row.message, {
-      fetchImpl: opts.fetchImpl,
-    });
-    // Undecidable leaves the row open — a check we could not perform is not
-    // evidence of recovery.
-    if (!outcome.decidable || outcome.stillFailing) continue;
+  // Bounded-concurrency fetches. Previously 40 sequential live HTTP requests ran
+  // even on a sweep that inspected nothing (the maintenance passes run before
+  // the early return), which is what made `run_site_health_sweep(batch_size=0)`
+  // exceed both the 60s MCP and 180s edge budgets.
+  const outcomes: { id: string; message: string | null; fixed: boolean; detail: string }[] = [];
+  for (let i = 0; i < open.length; i += concurrency) {
+    const slice = open.slice(i, i + concurrency);
+    const settled = await Promise.all(
+      slice.map(async (row) => {
+        if (!row.url) return null;
+        const outcome = await reverifyHealthIssue(row.url, row.message, {
+          fetchImpl: opts.fetchImpl,
+        });
+        // Undecidable leaves the row open — a check we could not perform is not
+        // evidence of recovery.
+        const fixed = outcome.decidable && !outcome.stillFailing;
+        return { id: row.id, message: row.message, fixed, detail: outcome.detail };
+      })
+    );
+    for (const s of settled) if (s) outcomes.push(s);
+  }
 
+  // Stamp the cursor for EVERY row we attempted, whatever the verdict. A row
+  // that stays open because it is genuinely still broken must still advance, or
+  // one permanently-500ing page rebuilds the head-of-line block this fixes.
+  // Chunked well under D1's 100-parameter statement limit.
+  const attempted = outcomes.map((o) => o.id);
+  for (let i = 0; i < attempted.length; i += 50) {
+    await db
+      .update(healthIssues)
+      .set({ lastReverifiedAt: now })
+      .where(inArray(healthIssues.id, attempted.slice(i, i + 50)));
+  }
+
+  let resolved = 0;
+  for (const outcome of outcomes) {
+    if (!outcome.fixed) continue;
     await db
       .update(healthIssues)
       .set({
         resolvedAt: now,
         resolutionReason: HEALTH_RESOLUTION_REASON.VERIFIED_FIXED,
-        message: `${row.message} — resolved: ${outcome.detail}`,
+        message: `${outcome.message} — resolved: ${outcome.detail}`,
       })
-      .where(eq(healthIssues.id, row.id));
+      .where(eq(healthIssues.id, outcome.id));
     resolved++;
   }
   if (resolved > 0) {
