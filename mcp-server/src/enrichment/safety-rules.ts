@@ -12,6 +12,11 @@
  * flag set blocks Phase-2 auto-merge by construction.
  */
 import { sanitizeScrapedDescription } from "@takemetothefair/utils";
+// OPE-376 — imported, not re-implemented. This file already carries its OWN
+// `isPlaceholderEmail` (line ~124) which is NOT the same rule as extract.ts's
+// version of that name; two divergent implementations behind one identifier is
+// a trap, and adding a third copy for phones would deepen it.
+import { isPlaceholderPhone } from "./extract.js";
 import type {
   CandidateFlag,
   DomainProblem,
@@ -340,6 +345,13 @@ export function buildEnrichmentResult(
     const acState = AREA_CODE_STATE[ac];
     if (acState && vendor.state && acState !== vendor.state.toUpperCase()) {
       flags.push("area_code_mismatch");
+    }
+    // OPE-376 — well-formed is not the same as real. Flagged rather than
+    // dropped (the ticket's explicit preference): the number came from the
+    // vendor's own site, so a human seeing "this business publishes a fake
+    // phone" is more useful than the candidate silently disappearing.
+    if (isPlaceholderPhone(ex.phone.value)) {
+      flags.push("placeholder_phone");
     }
     push("contact_phone", ex.phone.value, null, ex.phone.method, ex.phone.confidence, flags);
   }

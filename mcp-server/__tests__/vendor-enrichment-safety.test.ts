@@ -280,7 +280,11 @@ describe("I1 safety rules — 12 known 6/3 catches reproduce as flags", () => {
   it("POSITIVE CONTROL: clean LocalBusiness → fields proposed with NO flags", () => {
     const html = jsonLd({
       "@type": "LocalBusiness",
-      telephone: "(207) 555-0100",
+      // OPE-376: was `(207) 555-0100` — the reserved FICTIONAL block (555-01xx).
+      // A positive control certifying "no flags on a clean site" cannot use a
+      // number the placeholder rule is specifically designed to catch, or it
+      // asserts the opposite of what it claims.
+      telephone: "(207) 265-2400",
       email: "hello@kingfieldwoodworks.com",
       sameAs: ["https://www.facebook.com/kingfieldwoodworks"],
       address: { streetAddress: "1 Main St", addressLocality: "Kingfield", addressRegion: "ME" },
@@ -449,7 +453,11 @@ describe("I1 dispatcher integration", () => {
     restore = mockFetchHtml(
       jsonLd({
         "@type": "LocalBusiness",
-        telephone: "(207) 555-7777",
+        // OPE-376: was `(207) 555-7777` — 555 exchange AND repeated digits. This
+        // test asserts the auto-merge path writes un-flagged fills to a LIVE
+        // vendor, so the fixture must be a number that is legitimately
+        // un-flagged; otherwise it encoded "auto-merge a fake phone" as correct.
+        telephone: "(207) 265-4318",
         email: "team@mergeco.com",
         address: { addressLocality: "Bangor", addressRegion: "ME" },
       })
@@ -466,7 +474,7 @@ describe("I1 dispatcher integration", () => {
       .select({ p: vendors.contactPhone, e: vendors.contactEmail, city: vendors.city })
       .from(vendors)
       .where(eq(vendors.id, id));
-    expect(v.p).toBe("(207) 555-7777"); // un-flagged fill applied
+    expect(v.p).toBe("(207) 265-4318"); // un-flagged fill applied
     expect(v.e).toBe("team@mergeco.com");
     expect(v.city).toBe("Portland"); // conflict NOT applied
     // The flagged city candidate remains pending for manual review.
@@ -475,5 +483,43 @@ describe("I1 dispatcher integration", () => {
       .from(vendorEnrichmentCandidates)
       .where(eq(vendorEnrichmentCandidates.vendorId, id));
     expect(pending.some((c) => c.proposedField === "city" && c.decision === "pending")).toBe(true);
+  });
+});
+
+/**
+ * OPE-376 — the unit test on `isPlaceholderPhone` proves the RULE. This proves
+ * the rule is actually WIRED: a fake number in a vendor's JSON-LD has to come
+ * out the other end of buildEnrichmentResult carrying the flag. Without this,
+ * deleting the call site in safety-rules.ts would leave the unit tests green.
+ */
+describe("OPE-376 — a fictitious phone reaches the human lane, flagged", () => {
+  it("flags (508) 555-9876 from JSON-LD instead of staging it clean", () => {
+    const html = jsonLd({
+      "@type": "LocalBusiness",
+      name: "CJ Pickering Enterprises",
+      telephone: "(508) 555-9876", // live prod candidate #6419, conf 0.90
+    });
+    const r = run(
+      html,
+      vendor({ businessName: "CJ Pickering Enterprises", state: "MA" }),
+      "https://www.cjpickeringent.com/"
+    );
+
+    const phone = r.candidates.find((c) => c.field === "contact_phone");
+    // FLAGGED, not dropped — the ticket's explicit preference, and different
+    // from placeholder_email, which is discarded outright.
+    expect(phone, "the candidate must survive so a human sees it").toBeTruthy();
+    expect(phone!.flags).toContain("placeholder_phone");
+  });
+
+  it("does not flag a genuine number from the same path", () => {
+    const html = jsonLd({
+      "@type": "LocalBusiness",
+      name: "Saco River Brewing",
+      telephone: "(603) 547-3442",
+    });
+    const r = run(html, vendor({ businessName: "Saco River Brewing" }), "https://sacoriver.com");
+    const phone = r.candidates.find((c) => c.field === "contact_phone");
+    expect(phone!.flags).not.toContain("placeholder_phone");
   });
 });

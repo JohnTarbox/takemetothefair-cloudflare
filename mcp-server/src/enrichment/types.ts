@@ -59,6 +59,11 @@ export type CandidateFlag =
   | "business_closed"
   | "non_business_website"
   | "placeholder_email"
+  // OPE-376: a well-FORMED but fictitious phone (555 exchange, repeated or
+  // sequential digits). FLAGGED, not dropped — unlike placeholder_email —
+  // because a phone is the vendor's own published value and a human should see
+  // that their site is serving template residue, rather than have it vanish.
+  | "placeholder_phone"
   // I3 (2026-06-16): extracted email's domain doesn't match the vendor's own
   // website domain — stage it but flag for review (it may be the real contact,
   // or a scraped third-party address; a human decides). Distinct from
