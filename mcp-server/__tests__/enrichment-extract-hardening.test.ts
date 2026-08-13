@@ -10,6 +10,7 @@ import {
   extractVendorContact,
   normalizePhone,
   isPlaceholderEmail,
+  isPlaceholderPhone,
   emailHasDomainAffinity,
 } from "../src/enrichment/extract.js";
 
@@ -144,5 +145,54 @@ describe("OPE-249 #6 — multi-location address disambiguation", () => {
     expect(out.address?.value).toBe("111 Mass Ave");
     expect(out.city?.value).toBe("North Adams");
     expect(out.state?.value).toBe("MA");
+  });
+});
+
+/**
+ * OPE-376 — the 7th defect class. `normalizePhone` proves a number is
+ * well-FORMED; nothing proved it was real, so template residue staged clean at
+ * confidence 0.90 straight from a vendor's own JSON-LD.
+ *
+ * Both specimens below are live prod rows read 2026-08-13, still `pending`.
+ */
+describe("OPE-376 — placeholder-phone denylist", () => {
+  it("rejects the two fictitious numbers found staged clean in prod", () => {
+    // vendor_enrichment_candidates #6419, CJ Pickering Enterprises, conf 0.90,
+    // flags none — the row this ticket was filed on.
+    expect(isPlaceholderPhone("(508) 555-9876")).toBe(true);
+    // The one the ticket did not know about: 555 AREA code as well.
+    expect(isPlaceholderPhone("(555) 555-5555")).toBe(true);
+  });
+
+  it("still passes normalizePhone — which is exactly why this guard is needed", () => {
+    // If normalizePhone rejected these, the denylist would be redundant. It
+    // does not: they are perfectly well-formed NANP numbers.
+    expect(normalizePhone("(508) 555-9876")).toBe("(508) 555-9876");
+    expect(normalizePhone("(555) 555-5555")).toBe("(555) 555-5555");
+  });
+
+  it("exempts 555-1212 — real directory assistance, not a fake", () => {
+    expect(isPlaceholderPhone("(508) 555-1212")).toBe(false);
+  });
+
+  it("catches sequential and repeated subscriber digits", () => {
+    // 234-5678 is well-formed (NXX starts 2) and DOES reach the denylist.
+    expect(isPlaceholderPhone("(603) 234-5678")).toBe(true);
+    expect(isPlaceholderPhone("(603) 876-5432")).toBe(true); // descending
+    expect(isPlaceholderPhone("(603) 222-2222")).toBe(true); // repeated
+  });
+
+  it("leaves genuine numbers alone", () => {
+    // Real vendor numbers from the OPE-249 corpus above.
+    expect(isPlaceholderPhone("(603) 547-3442")).toBe(false);
+    expect(isPlaceholderPhone("(207) 892-9606")).toBe(false);
+    expect(isPlaceholderPhone("(603) 446-3326")).toBe(false);
+  });
+
+  it("treats a non-canonical value as placeholder rather than clean", () => {
+    // Mirrors isPlaceholderEmail's handling of a malformed address: if we
+    // cannot read it, it must never stage as a verified contact.
+    expect(isPlaceholderPhone("call us!")).toBe(true);
+    expect(isPlaceholderPhone("")).toBe(true);
   });
 });

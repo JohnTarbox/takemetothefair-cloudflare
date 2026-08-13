@@ -120,6 +120,63 @@ export function normalizePhone(raw: string): string | null {
   return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
 }
 
+/**
+ * OPE-376 (OPE-249 class, 7th) — true when a canonical phone is fictitious.
+ *
+ * `normalizePhone` only proves a number is well-FORMED, and well-formed is not
+ * the same as real. `(508) 555-9876` satisfies `^[2-9]\d{2}[2-9]\d{6}$`
+ * perfectly and staged clean at confidence 0.90 from a site's own JSON-LD —
+ * almost certainly template residue the vendor never replaced.
+ *
+ * Measured in prod 2026-08-13: two such candidates, both still `pending` —
+ * `(508) 555-9876` and `(555) 555-5555`. Nothing fake has reached a live vendor
+ * page yet, which is exactly why this wants to ship before OPE-374 raises the
+ * auto-merge threshold and removes the human who is currently catching them.
+ *
+ * `555-1212` is deliberately exempt: it is real directory assistance, and a
+ * blanket NXX=555 rule would reject a genuine number.
+ */
+const DIRECTORY_ASSISTANCE_LINE = "1212";
+
+/** Ascending or descending consecutive run, e.g. 2345678 / 8765432. */
+function isSequentialRun(digits: string): boolean {
+  let asc = true;
+  let desc = true;
+  for (let i = 1; i < digits.length; i++) {
+    const delta = digits.charCodeAt(i) - digits.charCodeAt(i - 1);
+    if (delta !== 1) asc = false;
+    if (delta !== -1) desc = false;
+  }
+  return asc || desc;
+}
+
+export function isPlaceholderPhone(canonical: string): boolean {
+  const digits = canonical.replace(/\D/g, "");
+  // Not a canonical 10-digit number → never stage it clean. Mirrors
+  // isPlaceholderEmail's treatment of a malformed address.
+  if (digits.length !== 10) return true;
+
+  const npa = digits.slice(0, 3);
+  const nxx = digits.slice(3, 6);
+  const line = digits.slice(6);
+
+  // A 555 AREA code is not assignable to subscribers at all.
+  if (npa === "555") return true;
+  // 555 as the exchange is the reserved fictional block (555-01xx) plus the
+  // stock fakes everyone writes (555-9876, 555-1234).
+  if (nxx === "555" && line !== DIRECTORY_ASSISTANCE_LINE) return true;
+
+  const subscriber = nxx + line;
+  // 555-5555, 222-2222 — one digit repeated. (000-0000 and 111-1111 never
+  // reach here; normalizePhone rejects an NXX starting 0 or 1. Kept anyway so
+  // this function is correct standalone, not only downstream of that guard.)
+  if (/^(\d)\1{6}$/.test(subscriber)) return true;
+  // 234-5678 IS well-formed and DOES reach here, so this check earns its place.
+  if (isSequentialRun(subscriber)) return true;
+
+  return false;
+}
+
 /** OPE-249 #4 — true when this address is site-builder/placeholder residue. */
 export function isPlaceholderEmail(email: string): boolean {
   const e = decodeUrlAndEntities(email).toLowerCase().trim();
