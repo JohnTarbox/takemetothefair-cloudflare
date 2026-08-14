@@ -888,8 +888,26 @@ async function runScheduledPendingPingsFlush(env: Env): Promise<void> {
   const sessionId = crypto.randomUUID();
   try {
     const { getDb } = await import("./db.js");
-    const { claimAndFlush } = await import("./pending-pings.js");
+    const { claimAndFlush, prunePendingPings } = await import("./pending-pings.js");
+    const { searchPingRetentionDays } = await import("@takemetothefair/constants");
     const db = getDb(env.DB);
+
+    // OPE-370 — prune BEFORE flushing. The retention window is a decision that
+    // already existed (John, 2026-07-18: discard >7d at breaker-clear); applying
+    // it continuously means the flush never wastes a batch slot on a row we had
+    // already condemned. Pruning after would submit rows on their way out.
+    //
+    // Deliberately does NOT touch the circuit breaker and submits nothing —
+    // breaker-clear is John-owned per OPE-243.
+    const retentionDays = searchPingRetentionDays(
+      env as unknown as { SEARCH_PING_RETENTION_DAYS?: string }
+    );
+    const pruned = await prunePendingPings(db, new Date(), retentionDays);
+    // Logged every run, including zero: the point of the prune is that the
+    // discard is VISIBLE. A silent delete is the defect class this repo keeps
+    // finding, so "pruned=0" is a deliberate line, not noise.
+    console.log(`[cron] pending-pings prune — pruned=${pruned} retentionDays=${retentionDays}`);
+
     const result = await claimAndFlush(db, env, {
       entityType: "all",
       maxAgeSeconds: 3600,
