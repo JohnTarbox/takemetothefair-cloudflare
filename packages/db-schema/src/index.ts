@@ -2198,46 +2198,14 @@ export const gscMilestoneEmails = sqliteTable(
   ]
 );
 
-// B2 (Dev backlog 2026-06-05): GSC monthly performance snapshots — the
-// longer-window counterpart to gsc_milestone_emails. Stores month-over-
-// month rollups Google emails as the "How your site performed in <month>"
-// report (clicks/impressions/CTR plus optional device split). Reproduced
-// in repo from an out-of-band prod create the same way K10 did for
-// gsc_milestone_emails — see drizzle/0108_gsc_monthly_summary.sql.
+// OPE-310 (A9, drizzle/0190) — `gsc_monthly_summary` was DROPPED 2026-08-14,
+// authorized by John. It was a false affordance: a table nothing read, that a
+// future operator might reasonably have kept hand-filling.
 //
-// May 2026 row seeded so far (668 clicks / 40.1K impressions / 1.67% CTR).
-// Nothing populates this automatically yet; rows added manually as Google
-// sends the emails. A future cron / inbox parser could snapshot
-// programmatically.
-export const gscMonthlySummary = sqliteTable(
-  "gsc_monthly_summary",
-  {
-    id: integer("id").primaryKey({ autoIncrement: true }),
-    yearMonth: text("year_month").notNull(),
-    clicks: integer("clicks").notNull(),
-    impressions: integer("impressions").notNull(),
-    ctr: real("ctr").notNull(),
-    pagesWithFirstImpressions: integer("pages_with_first_impressions"),
-    desktopClicks: integer("desktop_clicks"),
-    mobileClicks: integer("mobile_clicks"),
-    tabletClicks: integer("tablet_clicks"),
-    siteUrl: text("site_url").notNull().default("https://meetmeatthefair.com/"),
-    source: text("source").notNull().default("google_search_console_email"),
-    note: text("note"),
-    // SECONDS-epoch (unixepoch() in SQL default) per
-    // [[reference_drizzle_timestamp_mode_is_seconds]] — matches the
-    // gscMilestoneEmails sibling's createdAt shape.
-    createdAt: integer("created_at", { mode: "timestamp" })
-      .notNull()
-      .$defaultFn(() => new Date()),
-  },
-  (t) => [
-    // UNIQUE on (siteUrl, yearMonth) — one monthly row per property per
-    // month; re-receiving a duplicate Google email or re-running a
-    // backfill is idempotent. Mirrors drizzle/0108.
-    uniqueIndex("idx_gsc_monthly_unique").on(t.siteUrl, t.yearMonth),
-  ]
-);
+// Its two hand-transcribed rows (May 2026 Google + Bing monthly emails) are
+// archived verbatim in the OPE-310 thread before the drop, because they came
+// from EMAIL and could not be re-fetched. The live home for those figures is
+// now the OPE-344 GSC-oracle ingest (`ingest_gsc_milestone_email`).
 
 // A12 (drizzle/0131, analyst 2026-06-26) — GSC Search Analytics time-series.
 // The live `searchAnalytics/query` feed (src/lib/search-console.ts) is fetched
