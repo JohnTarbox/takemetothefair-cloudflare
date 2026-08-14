@@ -579,3 +579,40 @@ export function computePerformerEnrichment(
 
   return { status, coverage, coverageJson: JSON.stringify(coverage) };
 }
+
+// ---------------------------------------------------------------------------
+// OPE-370 — search-ping retention
+// ---------------------------------------------------------------------------
+
+/**
+ * How long an un-submitted IndexNow ping stays worth submitting.
+ *
+ * John ruled on 2026-07-18 that anything older than 7 days gets discarded at
+ * breaker-clear time, on SEO-recency grounds. Lives here, in the shared
+ * constants package, because BOTH the prune (mcp-server) and the OPE-243 §1
+ * drain read it — two independent copies of "7" would drift, and the drain
+ * submitting a window the prune has already emptied is a silent no-op.
+ *
+ * MEASURED, not inherited (prod, 2026-08-13). Depth is NOT the constraint:
+ *
+ *   unflushed total ....... 7,764   (oldest 2026-06-14)
+ *   within 30 days ...........  910
+ *   within 14 days ...........  101
+ *   within  7 days ............  45   <- a 7-day window prunes 99.4%
+ *
+ * Recent enqueue is ~6-7 rows/day, so steady-state depth at 7 days is ~45-50
+ * rows. Even a 30-day window holds under 1,000 — comfortably inside a single
+ * 10,000-URL IndexNow batch. So the window should be chosen on SEO value
+ * alone; queue size does not argue for any particular figure.
+ *
+ * Kept at 7 because that is the standing ruling and recency is the right
+ * criterion. Widening it would cost essentially nothing operationally — noted
+ * on OPE-370 as a decision available to John, not taken unilaterally.
+ */
+export const SEARCH_PING_RETENTION_DAYS = 7;
+
+/** Env override, so the window is tunable without a deploy-time code change. */
+export function searchPingRetentionDays(env: { SEARCH_PING_RETENTION_DAYS?: string }): number {
+  const raw = Number(env.SEARCH_PING_RETENTION_DAYS);
+  return Number.isFinite(raw) && raw > 0 ? raw : SEARCH_PING_RETENTION_DAYS;
+}

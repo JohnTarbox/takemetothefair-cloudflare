@@ -46,6 +46,44 @@ export interface EnqueueArgs {
   action: PingAction;
 }
 
+/**
+ * OPE-370 — drop un-submitted pings that have aged out of usefulness.
+ *
+ * The queue was accumulating rows we had ALREADY decided to throw away: John's
+ * 2026-07-18 ruling discards anything over 7 days at breaker-clear, and the
+ * breaker has been engaged since June, so essentially the whole queue was
+ * pre-condemned. Measured 2026-08-13: 7,764 unflushed rows, of which 45 were
+ * within 7 days. The depth read like a backlog while being 99.4% garbage.
+ *
+ * Applying the existing decision continuously — rather than once, later —
+ * makes the number mean something again.
+ *
+ * Only touches UNFLUSHED rows. A flushed row is a historical record of a
+ * submission that actually happened, and deleting those would destroy the
+ * audit trail rather than tidy a queue.
+ *
+ * Returns the count so the caller can log it: a queue that quietly deletes is
+ * its own small silence-class risk, which is the whole family of defect this
+ * codebase keeps rediscovering.
+ */
+export async function prunePendingPings(db: Db, now: Date, retentionDays: number): Promise<number> {
+  const cutoff = new Date(now.getTime() - retentionDays * 86400 * 1000);
+  const doomed = await db
+    .select({ id: pendingSearchPings.id })
+    .from(pendingSearchPings)
+    .where(and(isNull(pendingSearchPings.flushedAt), lt(pendingSearchPings.queuedAt, cutoff)));
+  if (doomed.length === 0) return 0;
+
+  // Deleted by the same predicate rather than by the id list: an id-based
+  // DELETE would need chunking under D1's 100-parameter cap, and re-running the
+  // predicate is both cheaper and idempotent.
+  await db
+    .delete(pendingSearchPings)
+    .where(and(isNull(pendingSearchPings.flushedAt), lt(pendingSearchPings.queuedAt, cutoff)));
+
+  return doomed.length;
+}
+
 export async function enqueuePendingPing(db: Db, args: EnqueueArgs): Promise<void> {
   await db.insert(pendingSearchPings).values({
     entityType: args.entityType,

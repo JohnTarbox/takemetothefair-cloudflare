@@ -271,6 +271,23 @@ describe("runAgentSilenceWatchdog drill mode (OPE-348)", () => {
     // The complement of the test above — proving the skip is drill-only and
     // the real cron still leaves its evidence.
     await seedHeartbeat("developer-claude-code", "agent", new Date());
+    // OPE-370 drive-by: this test ran on the REAL clock and asserted no mail was
+    // sent, so it failed every FRIDAY — `decideNewsletterMissing` is Friday-only,
+    // and with no issue seeded the tripwire fired and produced the very alert the
+    // assertion forbids. Caught 2026-08-14 (a Friday); it would have gone red in
+    // CI on any Friday run and had nothing to do with the watchdog's stamping.
+    //
+    // Seeding this week's issue satisfies the newsletter branch on every weekday,
+    // so the test now isolates what it claims to test: that a production run
+    // stamps its own execution and alarms nothing.
+    await db.insert(newsletterIssues).values({
+      id: crypto.randomUUID(),
+      slug: "issue-current-week",
+      subject: "Weekend picks",
+      html: "<p>hi</p>",
+      audience: "weekend",
+      createdAt: new Date(),
+    });
     await runAgentSilenceWatchdog(env);
 
     const [row] = await db
