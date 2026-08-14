@@ -1,0 +1,41 @@
+-- OPE-310 (A9) — drop the orphaned `gsc_monthly_summary` table.
+--
+-- AUTHORIZED BY JOHN, 2026-08-04 ("A9 drop AUTHORIZE"), clearing the stop-gate
+-- a prior run raised on this exact migration. Recorded here because a DROP is
+-- irreversible and the authorization must travel with the change, not live only
+-- in a ticket thread.
+--
+-- ── Why the earlier run stopped, and why the stop was right ────────────────
+--
+-- The ticket described this table as orphaned, "no writer, no reader". The CODE
+-- half was true — nothing outside the schema definition referenced it. But it
+-- held TWO rows, and they were not machine-generated:
+--
+--   2026-05  google  668 clicks / 40,100 impressions / 1,340 pages w. first
+--                    impressions / desktop 235 · mobile 418 · tablet 15
+--   2026-05  bing    1,100 clicks / 20,500 impressions (MoM +2450% clicks)
+--
+-- Both were hand-transcribed from the monthly Search Console / Bing Webmaster
+-- EMAILS, with provenance notes recording the rounding ("40.1K", "1.1K") and
+-- coverage ("Web search type only. US 660 of 668 clicks."). They cannot be
+-- re-fetched from any API.
+--
+-- "No reader" and "no data" are different claims. Treating them as one is how a
+-- cleanup migration quietly becomes a data loss, so raising it was correct.
+--
+-- ── What preserves them now ────────────────────────────────────────────────
+--
+-- Both rows are archived VERBATIM, every column including the notes, in the
+-- OPE-310 thread (comment 159c6b39, 2026-08-14). That comment is the restore
+-- path: re-creating the table and re-inserting from it is mechanical. The
+-- archive was written BEFORE this migration ran, not after.
+--
+-- Superseding rail: the monthly-email figures now have a live home in the
+-- OPE-344 GSC-oracle ingest (`ingest_gsc_milestone_email`), so this table is a
+-- false affordance — a place a future operator might reasonably put data that
+-- nothing would ever read.
+--
+-- IF NOT EXISTS is deliberate: this migration must be safe to re-run against a
+-- database where it has already been applied (local, preview, a replayed
+-- migration chain). A bare DROP would throw on the second pass.
+DROP TABLE IF EXISTS gsc_monthly_summary;
