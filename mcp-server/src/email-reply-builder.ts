@@ -373,9 +373,38 @@ ${SUPPORT_LINE}
 ${SIGN_OFF}`;
     }
     case "support-ack": {
-      return `Thanks for reaching out to Meet Me at the Fair!
+      // OPE-367 (R3) — copy approved by John 2026-08-13, submission pointer
+      // dropped on his call.
+      //
+      // The previous version made a promise nothing kept ("our team will get
+      // back to you soon") and gave event-submission instructions to everyone —
+      // including Katie, who was reporting that our signup page was unusable on
+      // her phone. Compliant, purposeful, and useless to the recipient.
+      //
+      // What is deliberately ABSENT, and must stay absent until it is true:
+      //
+      //  - No promise of a human reply. R1 (OPE-365) now opens a
+      //    `support_obligations` row, but measured 2026-08-13 that queue held
+      //    20 open at a 21-day average against 2 answered. The record exists;
+      //    the draining does not. Promising a response would rebuild the exact
+      //    defect this rewrite removes, one layer deeper. When the queue is
+      //    actually drained, this copy can be upgraded — and should be.
+      //  - No submission instructions. They were the only concrete advice and
+      //    were irrelevant to the intent that matters most here.
+      //
+      // NOT branched on `classified_sub_intent`: it is NULL on 100% of support
+      // emails (26/26, checked in prod). Branching on it would have produced
+      // code that looks intent-aware and behaves identically for everyone.
+      //
+      // "You can reply to this email" is true in the direction that matters —
+      // EMAIL_REPLY_ENABLED gates US replying OUT, not the customer replying
+      // IN; an inbound reply arrives and is logged like any other message. It
+      // deliberately stops short of implying a response will follow.
+      return `Thanks for writing to Meet Me at the Fair.
 
-We've received your message and our team will get back to you soon. For event submissions, you can also use submit@meetmeatthefair.com directly.
+We've received your message and logged it. This is an automatic reply — it hasn't been read by a person yet.
+
+If you're reporting something that isn't working, it helps to know which page you were on and what device you were using. You can reply to this email; it reaches the same place.
 
 ${SIGN_OFF}`;
     }

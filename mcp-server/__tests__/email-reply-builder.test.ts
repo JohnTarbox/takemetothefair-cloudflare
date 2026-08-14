@@ -233,9 +233,40 @@ describe("buildReply — new intent acks", () => {
     expect(msg.text).toMatch(/correction|team will review/i);
   });
 
-  it("support-ack acknowledges and points at submit@ for events", () => {
-    const msg = buildReply("support-ack", "a@x.com", { subject: "question" });
-    expect(msg.text).toMatch(/submit@meetmeatthefair\.com/);
+  // OPE-367 (R3) — the NEGATIVE assertions are the point of this test. The old
+  // copy was compliant and useless: it promised a reply nothing tracked, and
+  // gave event-submission instructions to someone reporting a broken page.
+  describe("support-ack (OPE-367)", () => {
+    const msg = () => buildReply("support-ack", "a@x.com", { subject: "question" });
+
+    it("does NOT promise a human response", () => {
+      // `support_obligations` held 20 open at a 21-day average when this
+      // shipped. Promising a reply would rebuild the very defect R3 removed.
+      expect(msg().text).not.toMatch(/get back to you|will respond|hear from us/i);
+    });
+
+    it("does NOT give event-submission instructions", () => {
+      // Irrelevant to the intent that matters most here — a broken site.
+      expect(msg().text).not.toMatch(/submit@meetmeatthefair\.com/);
+    });
+
+    it("says plainly that no person has read it yet", () => {
+      expect(msg().text).toMatch(/hasn't been read by a person/i);
+    });
+
+    it("asks for the detail that makes a bug report actionable", () => {
+      // Page + device is exactly what was missing from the OPE-361 report.
+      expect(msg().text).toMatch(/which page/i);
+      expect(msg().text).toMatch(/device/i);
+    });
+
+    it("keeps the reply-to-us escape hatch without implying a response", () => {
+      expect(msg().text).toMatch(/reply to this email/i);
+    });
+
+    it("carries no exclamation-mark cheer", () => {
+      expect(msg().text).not.toContain("!");
+    });
   });
 
   it("press-ack mentions media materials without committing to a URL", () => {
