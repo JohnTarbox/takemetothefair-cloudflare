@@ -93,6 +93,18 @@ type EmailJobMessage = {
    *  their next reply lands back correlated. */
   inReplyTo?: string;
   references?: string;
+  /**
+   * OPE-385 — RFC 8058 one-click unsubscribe headers.
+   *
+   * INERT UNTIL A PRODUCER SETS THEM. Shipped as plumbing first, deliberately:
+   * whether CF Email Sending ACCEPTS these headers is an open empirical
+   * question, and the failure mode is a hard send rejection, not a warning
+   * (see the `Message-ID` note in sendViaBinding). Wiring them onto the
+   * newsletter path before proving acceptance would risk the Monday vendor
+   * go-live, so the first deploy carries the capability and no caller.
+   */
+  listUnsubscribe?: string;
+  listUnsubscribePost?: string;
 };
 
 type IndexNowMessage = {
@@ -153,6 +165,19 @@ export async function sendViaCfEmail(
     const headers: Record<string, string> = {};
     if (msg.inReplyTo) headers["In-Reply-To"] = msg.inReplyTo;
     if (msg.references) headers["References"] = msg.references;
+    // OPE-385 — RFC 8058 one-click unsubscribe.
+    //
+    // ⚠️ CF Email Sending enforces a HEADER ALLOWLIST and rejects a
+    // non-allowlisted custom header outright — it auto-generates `Message-ID`
+    // and errors with "custom header 'Message-ID' is not allowed" if you set
+    // it. That once killed EVERY auto-reply (root-caused 2026-05-20, commit
+    // 0121d6d). So a header that looks harmless can hard-fail the send.
+    //
+    // VERDICT ON THESE TWO: see the completion note on OPE-385 — established by
+    // a real test send rather than assumed, which is why these are threaded
+    // through the message rather than hardcoded at a call site.
+    if (msg.listUnsubscribe) headers["List-Unsubscribe"] = msg.listUnsubscribe;
+    if (msg.listUnsubscribePost) headers["List-Unsubscribe-Post"] = msg.listUnsubscribePost;
     // OPE-261 — `to` may name SEVERAL operators (e.g. ALERT_EMAIL_TECHNICAL =
     // "alert@…,jtarboxme@gmail.com"). The binding's builder overload takes
     // `string | EmailAddress | (string | EmailAddress)[]`; a comma-separated
