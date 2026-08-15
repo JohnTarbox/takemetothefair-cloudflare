@@ -77,6 +77,10 @@ export function registerResolveHeldPhotosTool(
           id: inboundEmails.id,
           attachmentRefs: inboundEmails.attachmentRefs,
           resultingEventId: inboundEmails.resultingEventId,
+          // OPE-403 — the skip decision keys off what was STORED, not off which
+          // fair was decided. Omitting this made the rescue tool skip exactly
+          // the acked-but-unstored rows it exists to recover.
+          photosStored: inboundEmails.photosStored,
         })
         .from(inboundEmails)
         .where(inArray(inboundEmails.id, params.email_ids));

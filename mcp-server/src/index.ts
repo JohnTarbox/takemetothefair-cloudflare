@@ -1265,6 +1265,10 @@ async function handleInternalApi(request: Request, env: Env, url: URL): Promise<
         id: inboundEmails.id,
         attachmentRefs: inboundEmails.attachmentRefs,
         resultingEventId: inboundEmails.resultingEventId,
+        // OPE-403 — the skip decision keys off what was STORED, not off which
+        // fair was decided. Omitting this made the rescue endpoint skip exactly
+        // the acked-but-unstored rows it exists to recover.
+        photosStored: inboundEmails.photosStored,
       })
       .from(inboundEmails)
       .where(inArray(inboundEmails.id, emailIds));

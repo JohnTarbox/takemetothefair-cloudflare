@@ -29,7 +29,7 @@
  * sent two) finds no unresolved parents and no-ops.
  */
 
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, isNotNull } from "drizzle-orm";
 import { recordCrossing, ref } from "../inbound/crossing-ledger.js";
 import type { InboundEmail } from "@takemetothefair/db-schema";
 import { inboundEmails } from "../schema.js";
@@ -99,6 +99,32 @@ export async function findHeldPhotoParents(
 }
 
 /**
+ * OPE-403 — photo intakes that ran the attach path and stored nothing.
+ *
+ * The blind spot this closes: these rows are `reply_kind='photo-intake-ack'`,
+ * `status='replied'`, with `resulting_event_id` set. Every existing queue reads
+ * that as finished. They are not — the photos are nowhere.
+ *
+ * Selects on `photos_stored = 0` rather than on a reply_kind, deliberately: the
+ * defect is defined by what was STORED, and keying on reply_kind would miss the
+ * next variant of it the same way this one was missed. Rows with `photos_stored`
+ * NULL are excluded — NULL is "the attach path never ran here", which is true of
+ * every non-photo email in the table.
+ *
+ * These already know their event, so draining one is a re-attach, not a
+ * re-identify — pass `row.resultingEventId` straight to `resolveHeldPhotoEmail`.
+ */
+export async function findUnstoredPhotoIntakes(db: Db, limit = 50): Promise<InboundEmail[]> {
+  const rows = await db
+    .select()
+    .from(inboundEmails)
+    .where(and(eq(inboundEmails.photosStored, 0), isNotNull(inboundEmails.resultingEventId)))
+    .orderBy(desc(inboundEmails.receivedAt))
+    .limit(limit);
+  return rows as InboundEmail[];
+}
+
+/**
  * Which fair the reply names — URL, slug, or the fair name in prose. Reuses the
  * OPE-254 Defect-1 subject helpers, applied to the reply's subject AND body
  * (John's replies were "The fair is the Waterford Worlds Fair" and a pasted
@@ -120,6 +146,34 @@ export async function resolveTargetEventFromReply(
   );
 }
 
+/**
+ * OPE-403 — has this email's photos ALREADY been attached?
+ *
+ * This used to be `Boolean(row.resultingEventId)`, which is not that question.
+ * `resulting_event_id` records which fair we DECIDED the photos are from; the
+ * matcher sets it whether or not a single byte reached `event_photos`. So every
+ * acked-but-unstored row read as "already resolved" and a rescue run would have
+ * skipped exactly the rows it was needed for.
+ *
+ * Migration-aware on purpose, and this is the part that must not be simplified:
+ *
+ *   photos_stored NOT NULL → authoritative. 0 means tried-and-stored-nothing,
+ *                            which is precisely a row we SHOULD attach.
+ *   photos_stored IS NULL  → pre-OPE-403 row. We have no count, so fall back to
+ *                            the legacy proxy.
+ *
+ * Dropping that fallback and testing `photosStored > 0` alone would treat every
+ * historical successfully-resolved row (count NULL, event set) as unattached and
+ * re-attach its photos — and `attachGeneralPhotos` is NOT dedup'd, so that
+ * duplicates gallery rows. The NULL branch is a correctness guard, not legacy
+ * politeness.
+ */
+export function alreadyAttached(
+  row: Pick<InboundEmail, "resultingEventId" | "photosStored">
+): boolean {
+  return row.photosStored != null ? row.photosStored > 0 : Boolean(row.resultingEventId);
+}
+
 export interface HeldPhotoResolveResult {
   attached: number;
   failed: number;
@@ -137,10 +191,10 @@ export interface HeldPhotoResolveResult {
 export async function resolveHeldPhotoEmail(
   env: GeneralPhotoEnv,
   db: Db,
-  row: Pick<InboundEmail, "id" | "attachmentRefs" | "resultingEventId">,
+  row: Pick<InboundEmail, "id" | "attachmentRefs" | "resultingEventId" | "photosStored">,
   eventId: string
 ): Promise<HeldPhotoResolveResult> {
-  if (row.resultingEventId) {
+  if (alreadyAttached(row)) {
     return { attached: 0, failed: 0, skipped: true, reason: "already-resolved" };
   }
   const photos = generalPhotosFromRefs(row.attachmentRefs);
@@ -151,10 +205,22 @@ export async function resolveHeldPhotoEmail(
   if (res.attached > 0) {
     await db
       .update(inboundEmails)
-      .set({ resultingEventId: eventId })
+      .set({
+        resultingEventId: eventId,
+        // OPE-403 — record the COUNT, not just the decision. This is what makes
+        // a later run's skip decision a fact rather than an inference.
+        photosStored: res.attached,
+      })
       .where(eq(inboundEmails.id, row.id));
     return { attached: res.attached, failed: res.failed, skipped: false };
   }
+  // OPE-403 — the attach path ran and stored nothing. Record the 0 so the
+  // reconciliation sweep can see it; leaving it NULL would read as "never
+  // tried" and hide a row that genuinely needs another pass.
+  await db
+    .update(inboundEmails)
+    .set({ photosStored: 0, flaggedForReview: 1 })
+    .where(eq(inboundEmails.id, row.id));
   // Nothing attached — leave unresolved so it can be retried after the cause
   // (misconfigured bindings / missing R2 object / upload rejection) is fixed.
   return {

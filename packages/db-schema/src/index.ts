@@ -3527,6 +3527,27 @@ export const inboundEmails = sqliteTable(
      *  - `reply_kind = 'already-exists'` → the EXISTING event matched
      *  NULL when no event is involved (no-url, extract-failed, etc.). */
     resultingEventId: text("resulting_event_id"),
+    /**
+     * OPE-403 — how many of this email's photos actually reached `event_photos`.
+     *
+     * `resulting_event_id` answers "which fair did we decide these are from",
+     * and it was being read as "the photos are on the site". Those are different
+     * facts, and on 2026-08-15 they disagreed for five emails: the fair was
+     * matched correctly, the sender was told so, and zero rows were written
+     * because `PHOTO_VISION_ENABLED="false"` short-circuits the attach path.
+     *
+     * NULL vs 0 is the load-bearing distinction and must not be collapsed:
+     *   NULL — the attach path was never reached for this row (every pre-
+     *          migration row, and every non-photo intent). Says nothing.
+     *   0    — the attach path RAN and stored nothing. This is the defect state:
+     *          a row that looks complete, is not, and needs draining.
+     *   N    — N `event_photos` rows exist because of this email.
+     *
+     * Backfilling 0 over the NULLs would erase exactly that distinction and make
+     * every historical non-photo email look like a failed photo attach, so this
+     * ships nullable with no backfill.
+     */
+    photosStored: integer("photos_stored"),
     /** Idempotency marker for the "your submission was salvaged" admin-
      *  triggered notification (Item 19 / drizzle/0091). Set by
      *  src/lib/salvage-notification.ts after the EMAIL_JOBS push so

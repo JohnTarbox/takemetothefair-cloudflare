@@ -881,6 +881,7 @@ const SCHEMA_SQL = `
     message_id TEXT,
     reply_kind TEXT,
     resulting_event_id TEXT,
+    photos_stored INTEGER,
     fetch_method TEXT,
     extraction_method TEXT,
     classified_intent TEXT,
