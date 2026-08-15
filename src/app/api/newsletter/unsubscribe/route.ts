@@ -27,9 +27,16 @@ function redirectTo(status: string) {
   });
 }
 
-export async function GET(request: NextRequest) {
-  const token = new URL(request.url).searchParams.get("token") ?? "";
-  if (!token) return redirectTo("missing_token");
+/**
+ * The actual unsubscribe. Shared by GET (a human clicking the footer link) and
+ * POST (RFC 8058 one-click, fired by the mail client with no human present),
+ * so the two can never drift into disagreeing about what unsubscribing means.
+ *
+ * Returns the status string; each caller shapes its own response, because the
+ * two protocols want very different ones — see POST below.
+ */
+async function performUnsubscribe(token: string): Promise<string> {
+  if (!token) return "missing_token";
 
   const env = getCloudflareEnv() as unknown as Record<string, string | undefined>;
   const secret = resolveUnsubscribeSecret(env);
@@ -40,25 +47,66 @@ export async function GET(request: NextRequest) {
       message: "Newsletter unsubscribe: no signing secret configured",
       source: "api/newsletter/unsubscribe",
     });
-    return redirectTo("server_error");
+    return "server_error";
   }
 
   try {
     const email = await verifyUnsubscribeToken(token, secret);
-    if (!email) return redirectTo("invalid");
+    if (!email) return "invalid";
     // Idempotent — affects 0 rows if the address isn't on the list; still "ok"
     // so we never reveal subscription status.
     await db
       .update(newsletterSubscribers)
       .set({ unsubscribed: true })
       .where(eq(newsletterSubscribers.email, email));
-    return redirectTo("ok");
+    return "ok";
   } catch (e) {
     await logError(db, {
       message: "Newsletter unsubscribe endpoint threw",
       error: e,
       source: "api/newsletter/unsubscribe",
     });
-    return redirectTo("server_error");
+    return "server_error";
   }
+}
+
+export async function GET(request: NextRequest) {
+  const token = new URL(request.url).searchParams.get("token") ?? "";
+  return redirectTo(await performUnsubscribe(token));
+}
+
+/**
+ * OPE-385 — RFC 8058 one-click unsubscribe.
+ *
+ * Gmail and Yahoo POST here directly when the user hits the "Unsubscribe"
+ * affordance the mail client renders from our `List-Unsubscribe` header. The
+ * body is `List-Unsubscribe=One-Click`.
+ *
+ * This route was GET-only until now. Advertising `List-Unsubscribe-Post`
+ * against a GET-only handler would have made every one-click attempt 405 —
+ * strictly worse than shipping no header, because the mail provider records
+ * the failure against our sending reputation and the user's unsubscribe simply
+ * does not happen.
+ *
+ * Three deliberate differences from GET:
+ *
+ *  - NO REDIRECT. There is no browser to follow a 303; RFC 8058 wants a plain
+ *    2xx. The status is returned as a short body for log-readability only.
+ *  - NO CONFIRMATION STEP, by design and by spec. "One-click" means the POST
+ *    itself is the confirmation.
+ *  - 200 EVEN ON A BAD TOKEN. A 4xx would make a mail provider retry or flag
+ *    the endpoint as broken, and an expired/garbled token is not something the
+ *    recipient can fix. The one case that DOES return 500 is `server_error`,
+ *    because a missing signing secret is ours to fix and should be retried.
+ */
+export async function POST(request: NextRequest) {
+  // Token travels in the query string — the URL we put in the header carries
+  // it, and RFC 8058 reserves the POST BODY for `List-Unsubscribe=One-Click`.
+  const token = new URL(request.url).searchParams.get("token") ?? "";
+  const status = await performUnsubscribe(token);
+
+  return new NextResponse(status, {
+    status: status === "server_error" ? 500 : 200,
+    headers: { "Content-Type": "text/plain" },
+  });
 }

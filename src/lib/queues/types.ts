@@ -25,6 +25,17 @@ export type EmailJobMessage = {
    *  email-jobs consumer (sendViaCfEmail → headers). */
   inReplyTo?: string;
   references?: string;
+  /**
+   * OPE-385 — RFC 8058 one-click unsubscribe. Bulk/newsletter sends only;
+   * transactional mail must NOT carry these (an unsubscribe affordance on a
+   * password reset is nonsense, and mail providers read it as list mail).
+   *
+   * Consumed by the MCP email-jobs consumer (sendViaBinding → headers).
+   * CF Email Sending's acceptance of both was verified by probe 2026-08-15,
+   * not assumed — its allowlist hard-fails unknown headers.
+   */
+  listUnsubscribe?: string;
+  listUnsubscribePost?: string;
 };
 
 /** A request to ping IndexNow for one or more URLs. */

@@ -29,6 +29,15 @@ export interface SendEmailArgs {
    *  the queue path (EmailJobMessage) to the CF-email consumer. */
   inReplyTo?: string;
   references?: string;
+  /**
+   * OPE-385 — RFC 8058 one-click unsubscribe headers, set on bulk/newsletter
+   * sends only. Verified 2026-08-15 that CF Email Sending ACCEPTS both (its
+   * allowlist rejects unknown headers with a hard send failure, so this had to
+   * be established by a real probe, not assumed). Forwarded through
+   * EmailJobMessage to the CF-email consumer; Resend passes them through too.
+   */
+  listUnsubscribe?: string;
+  listUnsubscribePost?: string;
 }
 
 /**

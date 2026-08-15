@@ -131,6 +131,19 @@ export async function enqueueNewsletterDigest(args: {
       text: tpl.text,
       from: NEWSLETTER_FROM,
       source: args.source ?? NEWSLETTER_SOURCE,
+      // OPE-385 — RFC 8058 one-click unsubscribe.
+      //
+      // Deliberately set HERE, on the shared rail, not in either composer.
+      // Both audiences (weekend + vendor) enqueue through this function, so
+      // both inherit it by construction. Putting it in the composers would be
+      // two copies that drift — exactly how OPE-359's audience bug happened.
+      //
+      // Reuses `unsubscribeUrl` — the SAME per-recipient signed token the
+      // footer link uses. One mechanism, one target: a recipient can never be
+      // offered a header and a footer that disagree about what they unsubscribe
+      // from, and there is no second token type to expire or leak.
+      listUnsubscribe: `<${unsubscribeUrl}>`,
+      listUnsubscribePost: "List-Unsubscribe=One-Click",
     });
     queued++;
   }
