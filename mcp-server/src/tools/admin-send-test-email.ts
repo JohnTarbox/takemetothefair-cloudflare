@@ -29,7 +29,15 @@ import {
   FROM,
   type SendVendorEmailEnv,
 } from "./admin-send-vendor-email.js";
+import { SITE_URL } from "@takemetothefair/constants";
 
+/**
+ * NOTE (OPE-385): this is a LOCAL re-declaration of the queue message shape —
+ * `queue-consumers.ts` has its own `EmailJobMessage`, and the two are not
+ * linked. Adding a field to one and not the other produces a message the
+ * consumer silently ignores, with no type error at either end. Kept in sync by
+ * hand here; worth unifying if a third copy ever appears.
+ */
 interface EmailJobMessage {
   to: string;
   subject: string;
@@ -37,6 +45,9 @@ interface EmailJobMessage {
   text: string;
   from?: string;
   source: string;
+  /** OPE-385 — RFC 8058 one-click unsubscribe; see queue-consumers.ts. */
+  listUnsubscribe?: string;
+  listUnsubscribePost?: string;
 }
 
 // Pragmatic "looks like an email" check — the consumer / CF Email binding is the
@@ -76,6 +87,15 @@ export function registerSendTestEmailTool(
         .describe("Free-form subject (provide with `body` instead of template_id)."),
       body: z.string().min(1).optional().describe("Free-form plain-text body."),
       html: z.string().optional().describe("Optional free-form HTML body."),
+      probe_list_unsubscribe: z
+        .boolean()
+        .optional()
+        .describe(
+          "OPE-385 probe: attach RFC 8058 List-Unsubscribe + List-Unsubscribe-Post headers. " +
+            "CF Email Sending enforces a header allowlist and REJECTS non-allowlisted headers " +
+            "with a hard send failure, so this answers empirically whether one-click unsubscribe " +
+            "is possible on the CF transport. A failed send here is the ANSWER, not a bug."
+        ),
       vars: z
         .record(z.string(), z.string())
         .optional()
@@ -144,6 +164,23 @@ export function registerSendTestEmailTool(
         }
       );
 
+      // OPE-385 — opt-in probe for the RFC 8058 headers.
+      //
+      // This exists because "does CF Email Sending accept List-Unsubscribe?"
+      // cannot be answered by reading docs or code: the allowlist rejects
+      // non-allowlisted headers with a hard send failure, and the only way to
+      // know which side of the line these fall on is to send one and look.
+      //
+      // Deliberately on the TEST path and nowhere else. Proving it here costs
+      // one email to an address we own; proving it on the newsletter path
+      // would risk the live vendor digest.
+      const oneClickHeaders = params.probe_list_unsubscribe
+        ? {
+            listUnsubscribe: `<${SITE_URL}/api/newsletter/unsubscribe?token=ope385-probe>, <mailto:unsubscribe@meetmeatthefair.com>`,
+            listUnsubscribePost: "List-Unsubscribe=One-Click",
+          }
+        : {};
+
       const msg: EmailJobMessage = {
         to: params.to_address,
         subject: `[TEST] ${rendered.subject}`.slice(0, 200),
@@ -151,6 +188,7 @@ export function registerSendTestEmailTool(
         html: rendered.html,
         from: FROM,
         source: "email:test",
+        ...oneClickHeaders,
       };
       await env.EMAIL_JOBS.send(msg);
 
