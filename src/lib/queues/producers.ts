@@ -63,6 +63,10 @@ export async function enqueueEmail(args: SendEmailArgs & { source: string }): Pr
       inboundEmailId: args.inboundEmailId,
       inReplyTo: args.inReplyTo,
       references: args.references,
+      // OPE-385 — one-click unsubscribe. Forwarded, not synthesised here: the
+      // caller owns the per-recipient signed token.
+      listUnsubscribe: args.listUnsubscribe,
+      listUnsubscribePost: args.listUnsubscribePost,
     };
     await env.EMAIL_JOBS.send(msg);
     return;

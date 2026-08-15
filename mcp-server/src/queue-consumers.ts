@@ -173,9 +173,15 @@ export async function sendViaCfEmail(
     // it. That once killed EVERY auto-reply (root-caused 2026-05-20, commit
     // 0121d6d). So a header that looks harmless can hard-fail the send.
     //
-    // VERDICT ON THESE TWO: see the completion note on OPE-385 — established by
-    // a real test send rather than assumed, which is why these are threaded
-    // through the message rather than hardcoded at a call site.
+    // ✅ VERDICT (probe, 2026-08-15): CF Email Sending ACCEPTS both
+    // `List-Unsubscribe` and `List-Unsubscribe-Post`. Established by a real
+    // send with the headers attached — `email_send_ledger` recorded
+    // status='sent', no error — NOT by reading docs. Recorded here next to the
+    // Message-ID note so nobody re-derives it, and so the contrast is visible:
+    // Message-ID is rejected, these two are not. The allowlist is per-header,
+    // not a blanket ban on custom headers.
+    //
+    // Consequence: no Resend migration is needed for one-click unsubscribe.
     if (msg.listUnsubscribe) headers["List-Unsubscribe"] = msg.listUnsubscribe;
     if (msg.listUnsubscribePost) headers["List-Unsubscribe-Post"] = msg.listUnsubscribePost;
     // OPE-261 — `to` may name SEVERAL operators (e.g. ALERT_EMAIL_TECHNICAL =
