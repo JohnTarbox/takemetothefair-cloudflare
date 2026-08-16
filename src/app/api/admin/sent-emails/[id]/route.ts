@@ -33,6 +33,12 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
       inboundEmailId: emailSendLedger.inboundEmailId,
       bodyHtml: emailSendLedger.bodyHtml,
       bodyText: emailSendLedger.bodyText,
+      // OPE-177 — downstream delivery outcome + the SMTP/bounce detail behind
+      // it, so "she never got it" is answerable from the one row an operator
+      // already opens. NULL = no delivery event seen (not a failure claim).
+      deliveryStatus: emailSendLedger.deliveryStatus,
+      deliveryUpdatedAt: emailSendLedger.deliveryUpdatedAt,
+      deliveryDetail: emailSendLedger.deliveryDetail,
     })
     .from(emailSendLedger)
     .where(eq(emailSendLedger.messageId, id))

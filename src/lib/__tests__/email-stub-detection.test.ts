@@ -33,7 +33,9 @@ const SCHEMA_SQL = `
   CREATE TABLE email_send_ledger (
     message_id TEXT PRIMARY KEY, recipient TEXT, source TEXT, subject TEXT,
     status TEXT, provider TEXT, provider_message_id TEXT, error TEXT,
-    inbound_email_id TEXT, body_html TEXT, body_text TEXT, sent_at INTEGER
+    inbound_email_id TEXT, body_html TEXT, body_text TEXT, sent_at INTEGER,
+    -- OPE-177 (drizzle/0193) — delivery outcome columns.
+    delivery_status TEXT, delivery_updated_at INTEGER, delivery_detail TEXT
   );
 `;
 

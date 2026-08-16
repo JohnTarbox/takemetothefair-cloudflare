@@ -23,6 +23,7 @@ import {
   bingLivenessLog,
   eventDiscrepancies,
   emailSendLedger,
+  emailDeliveryEvents,
   heartbeatProbes,
   siteHealthRefreshState,
   agentHeartbeats,
@@ -195,6 +196,30 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     expectedWindowHours: 72,
     lastEvidenceAt: (db) =>
       maxTs(db, emailSendLedger, emailSendLedger.sentAt, eq(emailSendLedger.status, "sent")),
+  },
+  {
+    // OPE-177 — proof the Email Sending event subscription is still publishing.
+    //
+    // Distinct from the `email-send` probe directly above, which watches that we
+    // still SEND. That one stayed green for the entire failure this ticket is
+    // about: three verification emails went out, all recorded 'sent', and none
+    // arrived. Sending was never the problem — knowing what happened next was.
+    //
+    // A dead subscription is invisible by construction: no events arrive, no
+    // error is raised, and every ledger row simply keeps reading 'sent' with a
+    // NULL delivery_status. That is indistinguishable from "our mail is fine"
+    // unless something watches for the silence.
+    //
+    // 72h window: at ~15 sends/day every day produces delivered events, so three
+    // silent days is a fault, not a quiet weekend. Dormant (enabled_at NULL in
+    // drizzle/0193) until the subscription exists — a probe enabled ahead of its
+    // producer just teaches the operator to ignore reds.
+    name: "email-delivery-events",
+    ownerOpe: "OPE-177",
+    label: "Email delivery events (CF subscription)",
+    priority: "P1",
+    expectedWindowHours: 72,
+    lastEvidenceAt: (db) => maxTs(db, emailDeliveryEvents, emailDeliveryEvents.receivedAt),
   },
   {
     name: "inbound-submit",

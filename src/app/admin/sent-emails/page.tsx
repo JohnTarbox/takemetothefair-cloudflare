@@ -31,7 +31,13 @@ interface SentEmailRow {
   error: string | null;
   inboundEmailId: string | null;
   inbound: { fromAddress: string; subject: string | null } | null;
+  /** OPE-177 — what happened AFTER the provider accepted the message. NULL for
+   *  every send before the CF event subscription existed, and for stub sends. */
+  deliveryStatus: DeliveryStatus | null;
+  deliveryUpdatedAt: string | null;
 }
+
+type DeliveryStatus = "delivered" | "deferred" | "bounced" | "failed" | "rejected" | "complained";
 
 type StatusFilter = "all" | "sent" | "failed" | "stubbed";
 
@@ -39,6 +45,20 @@ const STATUS_VARIANT: Record<SentEmailRow["status"], "success" | "danger" | "war
   sent: "success",
   failed: "danger",
   stubbed: "warning",
+};
+
+// OPE-177 — `sent` is green because the provider ACCEPTED it, which is all it
+// ever meant. This second badge is the part a human actually cares about: it is
+// the difference between "we handed it over" and "she got it". A row with no
+// delivery badge is not a failure — it is a message we have no delivery signal
+// for, which is what every row looked like before this shipped.
+const DELIVERY_VARIANT: Record<DeliveryStatus, "success" | "danger" | "warning"> = {
+  delivered: "success",
+  deferred: "warning",
+  bounced: "danger",
+  failed: "danger",
+  rejected: "danger",
+  complained: "danger",
 };
 
 export default function SentEmailsPage() {
@@ -241,6 +261,19 @@ export default function SentEmailsPage() {
                           <p className="mt-1 text-xs text-terracotta max-w-xs break-words">
                             {r.error}
                           </p>
+                        )}
+                        {r.deliveryStatus && (
+                          <Badge
+                            variant={DELIVERY_VARIANT[r.deliveryStatus]}
+                            className="mt-1 text-xs"
+                            title={
+                              r.deliveryUpdatedAt
+                                ? `Delivery event applied ${new Date(r.deliveryUpdatedAt).toLocaleString()}`
+                                : undefined
+                            }
+                          >
+                            {r.deliveryStatus}
+                          </Badge>
                         )}
                       </td>
                       <td className="px-3 py-2 whitespace-nowrap text-xs text-muted-foreground">

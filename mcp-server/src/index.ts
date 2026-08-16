@@ -1487,6 +1487,7 @@ import {
   handleIndexNowBatch,
   handleDiscrepancyBatch,
 } from "./queue-consumers.js";
+import { handleEmailDeliveryBatch, type EmailSendingEvent } from "./email-delivery.js";
 import { handleSyndicationBatch } from "./syndication/dispatch.js";
 import type { SyndicationChangeMessage } from "@takemetothefair/utils";
 import { handleEnrichmentBatch, type VendorEnrichmentMessage } from "./enrichment/dispatch.js";
@@ -1544,6 +1545,14 @@ export default {
       // OPE-36 — per-promoter pre-extraction: fetch site, stage fill-empty-only
       // candidates (dry-run) or auto-apply confident fills. Per-message ack/retry.
       await handlePromoterEnrichmentBatch(batch as MessageBatch<PromoterEnrichmentMessage>, env);
+      return;
+    }
+    if (batch.queue === "email-delivery-events") {
+      // OPE-177 — Cloudflare Email Sending lifecycle events (delivered /
+      // deferred / bounced / failed / rejected / complained) for the
+      // meetmeatthefair.com sending domain. The producer is an account-level
+      // event subscription, not this codebase. Per-message ack/retry.
+      await handleEmailDeliveryBatch(batch as MessageBatch<EmailSendingEvent>, env, getDb(env.DB));
       return;
     }
     // Unknown queue — log to D1 so it's queryable later (silent acking
