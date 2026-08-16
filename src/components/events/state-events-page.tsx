@@ -17,6 +17,8 @@ import { STATES, STATE_BY_SLUG } from "@/lib/states";
 import { countUpcomingEventsByState } from "@/lib/queries";
 import { buildStateTitle, buildStateMetaDescription } from "@/lib/seo-utils";
 import { FAQPageSchema } from "@/components/seo/FAQPageSchema";
+import { FacetNav } from "@/components/events/facet-nav";
+import { stateHasFacets } from "@/lib/events/facets";
 import {
   buildStateIntro,
   buildStateFaq,
@@ -404,6 +406,11 @@ export async function StateEventsPage({ stateSlug, searchParams }: StateEventsPa
           </p>
         </div>
       )}
+
+      {/* OPE-395 — entry point into the facet mesh. Gated on the state actually
+          having facet routes: month and type facets are DEFINED for every state,
+          so rendering this unconditionally would link Maine to a dozen 404s. */}
+      {stateHasFacets(stateSlug) && <FacetNav stateSlug={stateSlug} stateName={state.name} />}
 
       <div className="mt-8 bg-muted rounded-lg p-6 text-center border border-border">
         <h3 className="text-lg font-semibold text-foreground mb-2">

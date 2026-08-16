@@ -29,6 +29,7 @@ import { buildPerformerInEvents } from "../src/lib/performers/performer-in-jsonl
 import { buildEventSeriesJsonLd } from "../src/lib/series/series-schema-org";
 import { extractHelpFaqItems } from "../src/lib/help-faq";
 import { HELP_ARTICLES } from "../src/lib/help-articles";
+import { resolveFacet, allFacetSlugs, facetUrl, FACET_STATES } from "../src/lib/events/facets";
 
 const failures: string[] = [];
 function require_(label: string, cond: unknown) {
@@ -372,6 +373,51 @@ for (const reg of REGISTERED_EVENT_EMITTERS) {
   );
 }
 
+// ── OPE-395: facet pages feed ItemList + BreadcrumbList ────────────────────
+//
+// Every facet contributes its label to a BreadcrumbList `name` and its URL to
+// the breadcrumb `item` and the CollectionPage `url`. An empty label or a
+// malformed URL is the "block present, field empty" failure this script exists
+// to catch — and on a facet page it would be silent, because the block still
+// renders and still validates as JSON.
+//
+// The facet pages deliberately emit NO @type:Event (the OPE-390 guardrail);
+// that half is already enforced by the REGISTERED_EVENT_EMITTERS scan above,
+// which fails if any unregistered file starts emitting one.
+const facetNow = new Date();
+let facetsChecked = 0;
+for (const stateSlug of FACET_STATES) {
+  const slugs = allFacetSlugs(stateSlug);
+  require_(`facet registry for ${stateSlug} is empty`, slugs.length > 0);
+  for (const slug of slugs) {
+    const facet = resolveFacet(stateSlug, slug, facetNow);
+    require_(`facet ${stateSlug}/${slug} does not resolve`, facet !== null);
+    if (!facet) continue;
+    facetsChecked++;
+    require_(
+      `facet ${stateSlug}/${slug} has an empty label (breadcrumb name)`,
+      !!facet.label.trim()
+    );
+    require_(
+      `facet ${stateSlug}/${slug} has an empty blurb (ItemList description)`,
+      !!facet.blurb.trim()
+    );
+    const url = facetUrl(stateSlug, slug);
+    require_(
+      `facet ${stateSlug}/${slug} builds a malformed canonical URL: ${url}`,
+      /^https:\/\/meetmeatthefair\.com\/events\/[a-z-]+\/[a-z-]+$/.test(url)
+    );
+    // A month/weekend facet without a resolved window would render an H1 with
+    // "undefined" as the year.
+    if (facet.kind === "month" || facet.kind === "weekend") {
+      require_(
+        `facet ${stateSlug}/${slug} is a ${facet.kind} with no resolved window`,
+        !!facet.window && facet.window.end.getTime() > facet.window.start.getTime()
+      );
+    }
+  }
+}
+
 if (failures.length > 0) {
   console.error("FAIL: event JSON-LD is missing required fields:");
   for (const f of failures) console.error(`  ✗ ${f}`);
@@ -387,7 +433,8 @@ if (warnings.length > 0) {
 }
 console.log(
   "OK: Place + EventSeries JSON-LD emit all required fields (name, startDate, location); " +
-    `Help FAQPage has ${helpFaqItems.length} populated Q&A pairs + task-guide Article headline/description present.` +
+    `Help FAQPage has ${helpFaqItems.length} populated Q&A pairs + task-guide Article headline/description present; ` +
+    `${facetsChecked} facet pages resolve with populated breadcrumb/ItemList fields and emit no Event node.` +
     (warnings.length === 0 ? " WARNING-set fields all present on the populated fixture." : "")
 );
 process.exit(0);
