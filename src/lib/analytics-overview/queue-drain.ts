@@ -262,6 +262,84 @@ async function inboundExceptionFlow(db: Db, now: Date): Promise<QueueDrainRow> {
   };
 }
 
+/**
+ * OPE-387 — inbound emails paused for an admin decision (`status='waiting'`).
+ *
+ * `waiting` is not an error state, it is the human-in-the-loop pause the
+ * inbound workflow enters for `correction` / `press` / `claim_request`: the
+ * handler ran, `mark-waiting` set the status, and the workflow is hibernating on
+ * `waitForEvent("admin-decision", 7 days)`.
+ *
+ * The defect it was invisible to: **nothing counted it**. The inbound exception
+ * queue above tracks `flagged_for_review=1` only, and a waiting row is not
+ * flagged. So a real customer correction (Paradise City Arts, 2026-08-13 —
+ * wrong festival dates on a live listing) sat in a queue with no depth, no age
+ * and no owner. After 7 days `waitForEvent` times out, `decision` falls through
+ * as null, and the sender gets a GENERIC ACK — the correction silently never
+ * happens, which is the "reports success, does nothing" family.
+ *
+ * Unlike its sibling this reports `oldestOpenAgeHours`, and that is the point:
+ * depth alone cannot show a row approaching a 168-hour cliff, and the cliff is
+ * where the data loss occurs.
+ */
+async function inboundAwaitingDecisionFlow(db: Db, now: Date): Promise<QueueDrainRow> {
+  const d = (days: number) => new Date(now.getTime() - days * DAY_MS);
+  const waiting = eq(inboundEmails.status, "waiting");
+  const [depth, inflow1d, inflow7d, inflow14d, oldest] = await Promise.all([
+    cnt(db, inboundEmails, waiting),
+    cnt(db, inboundEmails, and(waiting, gte(inboundEmails.receivedAt, d(1)))),
+    cnt(db, inboundEmails, and(waiting, gte(inboundEmails.receivedAt, d(7)))),
+    cnt(db, inboundEmails, and(waiting, gte(inboundEmails.receivedAt, d(14)))),
+    db
+      .select({ oldest: sql<number | null>`min(${inboundEmails.receivedAt})` })
+      .from(inboundEmails)
+      .where(waiting),
+  ]);
+
+  const oldestSec = oldest[0]?.oldest ?? null;
+  const oldestOpenAgeHours =
+    oldestSec != null ? (now.getTime() / 1000 - Number(oldestSec)) / 3600 : null;
+
+  const prior = await db
+    .select({
+      depth: queueDrainSnapshots.depth,
+      outflow1d: queueDrainSnapshots.outflow1d,
+      snapshotDate: queueDrainSnapshots.snapshotDate,
+    })
+    .from(queueDrainSnapshots)
+    .where(
+      and(
+        eq(queueDrainSnapshots.queueName, "inbound_awaiting_decision"),
+        lt(queueDrainSnapshots.snapshotDate, utcDate(now))
+      )
+    )
+    .orderBy(sql`${queueDrainSnapshots.snapshotDate} desc`)
+    .limit(14);
+
+  const outflow1d = prior.length > 0 ? Math.max(0, prior[0].depth + inflow1d - depth) : null;
+  const sumStored = (n: number): number | null => {
+    const rows = prior.slice(0, n).filter((r) => r.outflow1d != null);
+    if (rows.length === 0) return null;
+    const stored = rows.reduce((s, r) => s + (r.outflow1d as number), 0);
+    return stored + (outflow1d ?? 0);
+  };
+
+  return {
+    queueName: "inbound_awaiting_decision",
+    label: "Inbound awaiting admin decision",
+    href: QUEUE_DRAIN_HREF,
+    depth,
+    inflow7d,
+    outflow7d: sumStored(6),
+    inflow14d,
+    outflow14d: sumStored(13),
+    oldestOpenAgeHours,
+    inflow1d,
+    outflow1d,
+    drainRatio7d: ratio(sumStored(6), inflow7d),
+  };
+}
+
 /** Compute live flow for all seven queues. Never throws per-queue — a failure in
  *  one returns a depth-0 placeholder so the others still render/alert. */
 export async function gatherQueueFlows(db: Db, now: Date): Promise<QueueDrainRow[]> {
@@ -317,6 +395,12 @@ export async function gatherQueueFlows(db: Db, now: Date): Promise<QueueDrainRow
     ),
     siteHealthFlow(db, now),
     inboundExceptionFlow(db, now),
+    // OPE-387 — inbound emails paused on `waitForEvent("admin-decision")`.
+    // Distinct from BOTH neighbours: inbound_exceptions counts classifier
+    // UNCERTAINTY, support_obligations counts a promised human reply. This
+    // counts a workflow literally hibernating for a decision — confidently
+    // classified, handler ran, and invisible in every existing queue until now.
+    inboundAwaitingDecisionFlow(db, now),
     // OPE-365 (R1) — people owed a human response. Distinct from
     // inbound_exceptions, which counts classifier UNCERTAINTY: that queue has
     // held depth 33 with outflow_1d=0 while a real customer's blocker passed
