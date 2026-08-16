@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import Link from "next/link";
 import Script from "next/script";
 import {
@@ -25,7 +25,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { DailyScheduleInput, type EventDayInput } from "@/components/events/DailyScheduleInput";
-import { trackEvent, trackFormSubmit } from "@/lib/analytics";
+import {
+  trackEvent,
+  trackFormSubmit,
+  trackFunnelView,
+  trackFunnelInteracted,
+  trackFunnelSubmitted,
+} from "@/lib/analytics";
 import type { ExtractedEventData, FieldConfidence } from "@/lib/url-import/types";
 
 type WizardStep =
@@ -196,6 +202,24 @@ export default function SuggestEventPage() {
 
   // Get the Turnstile site key from environment
   const turnstileSiteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
+
+  // OPE-364 — funnel step 1. Once per mount; `submit_view` vs
+  // `submit_form_interacted` is the "did anyone who landed here manage to touch
+  // the form" ratio that a views-and-conversions funnel cannot express.
+  useEffect(() => {
+    trackFunnelView("submit");
+  }, []);
+
+  // OPE-364 — funnel step 2, latched to first touch. A ref rather than state:
+  // latching must not re-render a wizard mid-typing, and the beacon is rate
+  // limited to 60/hour per anonymous client, so re-firing would drop the very
+  // steps being measured.
+  const interactionTracked = useRef(false);
+  const markInteracted = useCallback(() => {
+    if (interactionTracked.current) return;
+    interactionTracked.current = true;
+    trackFunnelInteracted("submit");
+  }, []);
 
   // Initialize Turnstile widget
   const initTurnstile = useCallback(() => {
@@ -489,6 +513,11 @@ export default function SuggestEventPage() {
       trackFormSubmit("suggest_event_public", {
         event_name: extractedData.name || undefined,
       });
+      // OPE-364 — the submit funnel's terminal step, beaconed to D1.
+      // `trackFormSubmit` above only beacons the newsletter/vendor_claim
+      // audiences (suggest is GA4-only), so without this the funnel's last step
+      // would read zero in D1 forever while GA4 showed submissions.
+      trackFunnelSubmitted("submit");
     } catch {
       setError("Failed to submit event. Please try again.");
       resetTurnstile();
@@ -583,7 +612,17 @@ export default function SuggestEventPage() {
   };
 
   return (
-    <div className="max-w-3xl mx-auto px-4 py-8">
+    // OPE-364 — funnel interaction latched at the CONTAINER via capture phase.
+    //
+    // This is a multi-step wizard with ~15 scattered onChange handlers; editing
+    // each one would be 15 chances to miss one, and any field added later would
+    // silently not count. `onFocusCapture` sees every descendant field
+    // regardless, including ones that do not exist yet.
+    //
+    // Focus rather than change: OPE-361's fault was that the control could not
+    // be REACHED. A user who taps into a field and gives up has still proved the
+    // form was usable, and that is the distinction this step exists to draw.
+    <div className="max-w-3xl mx-auto px-4 py-8" onFocusCapture={markInteracted}>
       {/* Turnstile Script */}
       {turnstileSiteKey && (
         <Script

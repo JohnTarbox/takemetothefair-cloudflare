@@ -554,3 +554,43 @@ export function trackClaimView(entityType: "VENDOR" | "PROMOTER", entitySlug: st
   trackEvent("claim_view", params);
   sendBeacon("claim_view", "funnel", { entityType, entitySlug });
 }
+
+// ── OPE-364: per-step funnel instrumentation ────────────────────────────────
+//
+// OPE-361 broke mobile /register outright and the conversion KPI could not see
+// it — OPE-59 already had the claim funnel at 1 per 5,289, and a rate already
+// at ~0 cannot fall. These emit the intermediate steps so a break localises to
+// one edge of the funnel instead of vanishing into an aggregate.
+//
+// `form_interacted` is the one that matters: OPE-361's signature is "page
+// viewed, form never touched", because the form was off-screen. Views and
+// submissions alone cannot separate "nobody wanted to" from "nobody could".
+//
+// Beacon-only, deliberately. These are low-volume funnel steps that need to be
+// queryable in D1 today; routing them through GA4 as well would add a custom-
+// dimension registration dependency (docs/bc2-ga4-custom-dimensions.md) for no
+// extra answer. Device class is added SERVER-SIDE from the User-Agent in
+// /api/analytics/track — never sent from here, so it cannot be spoofed or
+// forgotten.
+
+/** Fire once when a funnel's entry page renders. */
+export function trackFunnelView(funnel: "register" | "submit") {
+  sendBeacon(`${funnel}_view`, "funnel");
+}
+
+/**
+ * Fire ONCE on the user's first real interaction with a funnel form.
+ *
+ * Callers must debounce to first-touch — this is a per-session step count, not
+ * a keystroke counter, and the beacon is rate-limited at 60/hour per anonymous
+ * client (see funnel-steps.ts). Re-firing per keystroke would exhaust that
+ * budget and start dropping the very steps we are trying to measure.
+ */
+export function trackFunnelInteracted(funnel: "register" | "claim" | "submit") {
+  sendBeacon(`${funnel}_form_interacted`, "funnel");
+}
+
+/** Fire when the funnel's form is actually submitted by the user. */
+export function trackFunnelSubmitted(funnel: "register" | "submit") {
+  sendBeacon(`${funnel}_submitted`, "funnel");
+}
