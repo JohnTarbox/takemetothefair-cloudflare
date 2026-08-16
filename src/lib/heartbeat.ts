@@ -123,6 +123,34 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       maxTs(db, inboundEmails, inboundEmails.receivedAt, eq(inboundEmails.intent, "photo_intake")),
   },
   {
+    // OPE-403 — proof the lane still RECORDS what it stored.
+    //
+    // The probe directly above watches `intent='photo_intake'` arrivals, and it
+    // stayed green through the 2026-08-15 loss: five emails arrived, were acked
+    // as matched, and stored nothing. Arrivals were never the problem.
+    //
+    // The reconciliation in `photo-intake-reconcile.ts` catches the WRONG
+    // outcome (`photos_stored = 0`). This probe catches the case that
+    // reconciliation is blind to: the write disappearing entirely. If a refactor
+    // drops the `photosStored` update, no row is ever 0, the reconciliation sees
+    // a clean table and reports healthy — which is precisely the shape of the
+    // original defect, one level up. Liveness and reconciliation are not
+    // redundant here; each is the other's blind spot.
+    //
+    // NOT gated: the count is written whenever a photo email with attachments is
+    // processed, regardless of PHOTO_VISION_ENABLED. A 0 written while the gate
+    // is off is evidence the lane is working as designed, not evidence of a gap.
+    name: "photo-intake-storage-record",
+    ownerOpe: "OPE-403",
+    label: "Photo-intake storage accounting",
+    priority: "P1",
+    // Matches the sibling probe: this lane is seasonal and genuinely quiet for
+    // weeks at a time, so a tighter window would page for winter, not for a bug.
+    expectedWindowHours: 30 * 24,
+    lastEvidenceAt: (db) =>
+      maxTs(db, inboundEmails, inboundEmails.receivedAt, isNotNull(inboundEmails.photosStored)),
+  },
+  {
     name: "ocr-attachment",
     ownerOpe: "OPE-68",
     label: "Attachment OCR/extract",

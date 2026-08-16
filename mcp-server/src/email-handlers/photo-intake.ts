@@ -33,7 +33,7 @@
  * that promotes a booth photo to a hero has to strip. Reading here is
  * in-memory and transient.
  */
-import { events, eventDays, venues } from "../schema.js";
+import { events, eventDays, venues, inboundEmails } from "../schema.js";
 import { getDb, type Db } from "../db.js";
 import { and, eq, inArray, isNull, isNotNull, gte, lte, sql } from "drizzle-orm";
 import type { HandlerFn, HandlerEnv, HandlerResult } from "./types.js";
@@ -566,6 +566,53 @@ async function stagePosterAsPendingEvent(
   }
 }
 
+/**
+ * OPE-403 — what the attach path actually DID with the sender's photos.
+ *
+ * The bug this exists to make impossible: `runBoothPipeline` returns a
+ * `disabledReason` when it declines to run (`PHOTO_VISION_ENABLED != "true"`,
+ * or a missing AI/R2 binding), the caller never read it, and the ack went out
+ * naming the fair as though the photos had landed. Both facts were already in
+ * memory at the call site; neither reached the sender.
+ *
+ * Pure and exported so the "we stored nothing and here is why" branch is
+ * testable without an R2 binding, a vision model, or a live email.
+ *
+ * `blockedReason` is non-null ONLY when the sender attached images and none of
+ * them reached `event_photos`. It is the single predicate the reply, the
+ * review flag, and the reconciliation sweep all key off, so they can never
+ * disagree about whether this email is finished.
+ */
+export interface PhotoStorageOutcome {
+  /** Image attachments the sender actually sent. */
+  offered: number;
+  /** Rows written to `event_photos` for this email. */
+  stored: number;
+  /** Why `stored` is 0 despite `offered > 0`; null when nothing is wrong. */
+  blockedReason: string | null;
+}
+
+export function describePhotoStorage(
+  offered: number,
+  booths: BoothPipelineResult | null
+): PhotoStorageOutcome {
+  const stored = booths?.galleryAttached ?? 0;
+  // No images on the mail (or some landed): nothing to explain.
+  if (offered === 0 || stored > 0) return { offered, stored, blockedReason: null };
+
+  // Photos arrived and none were stored. Every branch names a cause — "we do
+  // not know" is itself a reportable answer, and is never silence.
+  const blockedReason =
+    booths === null
+      ? "the photo pipeline errored before it could attach anything"
+      : (booths.disabledReason ??
+        (booths.galleryFailed > 0
+          ? `${booths.galleryFailed} photo upload${booths.galleryFailed === 1 ? "" : "s"} failed`
+          : "the attach path ran, stored nothing, and reported no reason"));
+
+  return { offered, stored, blockedReason };
+}
+
 const HOLD_ASK: Record<string, string> = {
   "no-exif-gps":
     "the photos have no GPS data (iPhones send HEIC or strip location when Location Services is off for the Camera, and most mail apps downsize attachments)",
@@ -632,6 +679,45 @@ export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> =
       });
     }
 
+    // OPE-403 — record what actually reached `event_photos`, and make the row
+    // drainable when the answer is "nothing".
+    //
+    // `resultingEventId` below says which fair we DECIDED these are from. It was
+    // being read — by the ack, and by resolve-held-photos' idempotency guard —
+    // as "the photos are on the site". On 2026-08-15 those two facts disagreed
+    // for five emails and nothing in the system noticed. They are now recorded
+    // separately, so nothing downstream has to infer one from the other.
+    const storage = describePhotoStorage(imageRefs(refs).length, booths);
+    if (storage.offered > 0) {
+      // Written whenever the attach path was REACHED, success or not. The 0 is
+      // the point: NULL means "never tried", 0 means "tried and stored nothing",
+      // and only the second is a defect the sweep should surface.
+      await db
+        .update(inboundEmails)
+        .set({
+          photosStored: storage.stored,
+          // Nothing landed → this email is not finished, whatever the ack says.
+          // Same marker the booth staging path uses, so it surfaces in the
+          // existing /admin/inbound-emails review queue rather than a new one.
+          ...(storage.blockedReason ? { flaggedForReview: 1 } : {}),
+        })
+        .where(eq(inboundEmails.id, row.id));
+
+      if (storage.blockedReason) {
+        await logError(env.DB, {
+          level: "warn",
+          source: "mcp:photo-intake:photos-unstored",
+          message: `photo intake matched a fair but stored 0 of ${storage.offered} photos: ${storage.blockedReason}`,
+          context: {
+            messageRowId: row.id,
+            eventId: resolution.eventId,
+            offered: storage.offered,
+            reason: storage.blockedReason,
+          },
+        });
+      }
+    }
+
     return {
       replyKind: "photo-intake-ack",
       replyParams: {
@@ -659,6 +745,11 @@ export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> =
         // OPE-205 §3 — general fair scenery attached to the event's gallery.
         galleryAttached: booths?.galleryAttached ?? 0,
         galleryFailed: booths?.galleryFailed ?? 0,
+        // OPE-403 — the ack MUST state the storage outcome. Passing the reason
+        // (not just the count) is what stops the reply from implying a
+        // publication that did not happen.
+        photosStored: storage.stored,
+        photosStorageBlocked: storage.blockedReason,
       },
       // The downstream OPE-204 vendor pipeline reads this off the row.
       resultingEventId: resolution.eventId,

@@ -20,6 +20,7 @@ import { assessAllQueueFreeze } from "@/lib/queue-freeze";
 import { gatherQueueFlows, persistQueueSnapshots } from "@/lib/analytics-overview/queue-drain";
 import { assessAllHeartbeat } from "@/lib/heartbeat";
 import { assessPhotoEffectiveness } from "@/lib/photo-effectiveness/load";
+import { assessPhotoIntakeStorage } from "@/lib/photo-intake-reconcile";
 import {
   formatStaleRedDigest,
   selectStaleFaultReds,
@@ -233,6 +234,25 @@ export const POST = withInternalKey({ source: "cpi:stale-red-scan" }, async ({ d
       });
     }
 
+    // OPE-403 — merge the photo-intake storage reconciliation. Same reasoning as
+    // the OPE-226 block above, one lane over: the `photo-intake` heartbeat probe
+    // reads max(received_at) and stayed GREEN through the 2026-08-15 failure,
+    // because the emails kept arriving — it is the write at the far end that
+    // stopped. A liveness probe cannot see a partial write, so this compares
+    // what we acknowledged against what we stored. Defensive: degrades to the
+    // prior reds.
+    let photoIntakeReds: StaleRed[] = [];
+    try {
+      photoIntakeReds = await assessPhotoIntakeStorage(db, now);
+    } catch (err) {
+      await logError(db, {
+        level: "warn",
+        source: "cpi:stale-red-scan",
+        message: "photo-intake reconciliation failed; degrading to the prior reds",
+        error: err,
+      });
+    }
+
     const allReds = [
       ...reds,
       ...faultReds,
@@ -240,6 +260,7 @@ export const POST = withInternalKey({ source: "cpi:stale-red-scan" }, async ({ d
       ...queueReds,
       ...heartbeatReds,
       ...photoReds,
+      ...photoIntakeReds,
     ];
 
     // OPE-308 — push on CHANGE, not on existence.

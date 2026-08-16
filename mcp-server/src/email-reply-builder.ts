@@ -475,10 +475,29 @@ ${SIGN_OFF}`;
             }. These are held for review — nothing has been added to the site yet.`
           : "";
 
+      // OPE-403 — say what happened to the PHOTOS, not just which fair we
+      // matched. This reply used to stop after "Matched by:", and a submitter
+      // reasonably read that as "they're on the site". On 2026-08-15 that was
+      // false five times: the fair was matched correctly and zero photos were
+      // stored, because the attach path is gated off.
+      //
+      // Deliberately makes no promise about WHEN. The row is flagged for review
+      // and surfaced by the reconciliation sweep, so "queued for review" is a
+      // fact something actually keeps — unlike the support-ack OPE-367 had to
+      // rewrite for promising a follow-up nothing tracked. Anything stronger
+      // than "queued" would be that same mistake in a new lane.
+      const stored = Number(params.photosStored ?? 0);
+      const storageBlocked = (params.photosStorageBlocked as string | null | undefined) ?? null;
+      const storageLine = storageBlocked
+        ? `\n\nNot published yet: ${n === 1 ? "this photo is" : "these photos are"} queued for review and ${n === 1 ? "is" : "are"} not on the site.`
+        : stored > 0
+          ? `\n\nAdded to the fair's photo gallery: ${stored} ${stored === 1 ? "photo" : "photos"}.`
+          : "";
+
       return `Thanks — we received ${n} ${noun} for Meet Me at the Fair.${hintLine}
 
 Matched to: ${matchedName}${dateLine}${whereLine}
-Matched by: ${method}${boothLine}
+Matched by: ${method}${boothLine}${storageLine}
 
 If that's not the right fair, reply and tell us which one — or resend to photos+<event-slug>@meetmeatthefair.com to name it explicitly.
 
