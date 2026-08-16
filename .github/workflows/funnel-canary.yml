@@ -1,0 +1,57 @@
+name: Funnel Canary
+
+# OPE-363 — prove a human can actually USE register / claim / submit on mobile.
+#
+# Daily at 11:00 UTC (07:00 ET) — early enough that a break introduced by a
+# previous-day deploy is found before the day's traffic, and daily rather than
+# hourly because the fault class is "a deploy changed the layout", which happens
+# at deploy cadence, not continuously.
+#
+# NOTE the contrast with production-verify.yml, which sets `continue-on-error:
+# true` and therefore can never go red. This one is allowed to fail — a canary
+# that cannot fail is not a canary.
+on:
+  schedule:
+    - cron: "0 11 * * *"
+  workflow_dispatch:
+
+jobs:
+  canary:
+    name: Funnel canary (production, mobile + desktop)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      # WebKit for the iPhone profile, Chromium for Pixel 5 + desktop control.
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps webkit chromium
+
+      - name: Run funnel canary against production
+        env:
+          # Against the served surface, never a preview — OPE-321.
+          PLAYWRIGHT_BASE_URL: https://meetmeatthefair.com
+          # Lets the spec stamp its result to D1. Absent => the spec skips
+          # stamping rather than failing, so a missing secret degrades to
+          # "no dead-man signal" and the heartbeat probe reds within 48h.
+          INTERNAL_API_KEY: ${{ secrets.INTERNAL_API_KEY }}
+        run: npx playwright test funnel-canary.spec.ts --project=mobile-safari --project=mobile-android --project=canary-desktop
+
+      - name: Upload traces and screenshots
+        uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: funnel-canary
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 14
