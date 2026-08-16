@@ -43,6 +43,10 @@ interface SenderSummary {
   // noEventOk.
   dedupHits: number;
   noUrl: number;
+  /** OPE-407 — messages that arrived with no attachment, no body and no
+   *  subject. Split out of `noUrl`, where they were indistinguishable from
+   *  genuine URL-less prose submissions and so uncountable. */
+  emptyMessage: number;
   extractFailed: number;
   submitFailed: number;
   noEventOk: number;
@@ -69,6 +73,7 @@ async function computeSenderSummaries(db: Db, limit: number): Promise<SenderSumm
       failed: sql<number>`SUM(CASE WHEN ${inboundEmails.status} = 'failed' THEN 1 ELSE 0 END)`,
       dedupHits: sql<number>`SUM(CASE WHEN ${inboundEmails.replyKind} = 'already-exists' THEN 1 ELSE 0 END)`,
       noUrl: sql<number>`SUM(CASE WHEN ${inboundEmails.replyKind} = 'no-url' THEN 1 ELSE 0 END)`,
+      emptyMessage: sql<number>`SUM(CASE WHEN ${inboundEmails.replyKind} = 'empty-message' THEN 1 ELSE 0 END)`,
       extractFailed: sql<number>`SUM(CASE WHEN ${inboundEmails.replyKind} = 'extract-failed' THEN 1 ELSE 0 END)`,
       submitFailed: sql<number>`SUM(CASE WHEN ${inboundEmails.replyKind} = 'submit-failed' THEN 1 ELSE 0 END)`,
       firstSeen: sql<number>`MIN(${inboundEmails.receivedAt})`,
@@ -143,6 +148,7 @@ async function computeSenderSummaries(db: Db, limit: number): Promise<SenderSumm
         approvalRate: eventsCreated > 0 ? approved / eventsCreated : null,
         dedupHits: i.dedupHits,
         noUrl: i.noUrl,
+        emptyMessage: i.emptyMessage,
         extractFailed: i.extractFailed,
         submitFailed: i.submitFailed,
         noEventOk: i.replied - eventsCreated,

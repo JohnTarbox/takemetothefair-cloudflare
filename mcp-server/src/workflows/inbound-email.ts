@@ -75,6 +75,12 @@ import { handle as handleNoop } from "../email-handlers/noop.js";
 import { recordCrossing, ref } from "../inbound/crossing-ledger.js";
 import { handle as handleSourceSuggestion } from "../email-handlers/source-suggestion.js";
 import { handle as handlePhotoIntake } from "../email-handlers/photo-intake.js";
+import {
+  isContentFreeEmail,
+  assessContentFreeBurst,
+  countContentFreeBurst,
+  BURST_DEBOUNCE_SECONDS,
+} from "../email-handlers/empty-message.js";
 import { extractAllUrls, type AttachmentRef } from "../email-handler.js";
 import {
   submitFetch,
@@ -341,51 +347,130 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     // its NULL couldn't be read as "routing didn't happen." Derive it up front
     // from the resolved intent so mark-done can persist it on every path
     // (including a caught dispatch error, where the intended route is still known).
-    const routedToWorkflow =
+    let routedToWorkflow =
       intent === "submit" || intent === "new_event" ? "submit-pipeline" : `handler:${intent}`;
 
-    try {
-      if (intent === "submit" || intent === "new_event") {
-        result = await this.runSubmitPipeline(step, messageRowId);
-      } else {
-        result = await step.do(
-          "dispatch",
-          {
-            retries: { limit: 2, delay: "10 seconds", backoff: "constant" },
-            timeout: "30 seconds",
-          },
-          async () => {
-            const db = getDb(this.env.DB);
-            const rows = await db
-              .select()
-              .from(inboundEmails)
-              .where(eq(inboundEmails.id, messageRowId))
-              .limit(1);
-            if (rows.length === 0) {
-              throw new NonRetryableError(`inbound_emails row not found: ${messageRowId}`);
-            }
-            // intent is narrowed away from submit | new_event here, so
-            // HANDLERS key lookup is safe.
-            return await HANDLERS[intent as Exclude<EmailIntent, "submit" | "new_event">](
-              this.env,
-              { sessionId, senderTrust, emailAuth },
-              rows[0]
-            );
-          }
-        );
+    // ───── OPE-407: content-free short-circuit, ahead of every intent ─────
+    //
+    // A message with no attachment, no body and no subject has nothing for any
+    // handler to work with, and each lane was failing it in its own polite way:
+    // submit@ answered `no-url` ("send us a link"), photos@ answered "we
+    // received 0 photos". Both are true and neither tells the sender the thing
+    // that matters — that the email left their device carrying nothing, so the
+    // photos are still on the phone and can be re-sent right now.
+    //
+    // It sits BEFORE dispatch rather than inside the two handlers because the
+    // fact is about the message, not the intent: any future lane inherits it,
+    // and there is no second place to keep in sync.
+    const contentFree = await step.do(
+      "empty-message/detect",
+      { retries: { limit: 2, delay: "5 seconds", backoff: "constant" }, timeout: "10 seconds" },
+      async () => {
+        const db = getDb(this.env.DB);
+        const rows = await db
+          .select({
+            fromAddress: inboundEmails.fromAddress,
+            subject: inboundEmails.subject,
+            bodyTextExcerpt: inboundEmails.bodyTextExcerpt,
+            attachmentCount: inboundEmails.attachmentCount,
+            receivedAt: inboundEmails.receivedAt,
+            rawSize: inboundEmails.rawSize,
+          })
+          .from(inboundEmails)
+          .where(eq(inboundEmails.id, messageRowId))
+          .limit(1);
+        const row = rows[0];
+        if (
+          !row ||
+          !isContentFreeEmail({
+            bodyText: row.bodyTextExcerpt,
+            subject: row.subject,
+            attachmentCount: row.attachmentCount,
+            rawSize: row.rawSize,
+          })
+        ) {
+          return null;
+        }
+        const { isLeader } = await assessContentFreeBurst(db, {
+          id: messageRowId,
+          fromAddress: row.fromAddress,
+          receivedAt: row.receivedAt,
+        });
+        // Milliseconds, not a Date: a step's return value crosses the
+        // Serializable<T> boundary.
+        return { isLeader, fromAddress: row.fromAddress, receivedAtMs: row.receivedAt.getTime() };
       }
-    } catch (err) {
-      caughtError = err instanceof Error ? err.message : String(err);
-      result = {
-        replyKind: errorToReplyKind(intent, caughtError),
-        status: "replied",
-      };
-      await logError(this.env.DB, {
-        source: SOURCE,
-        message: `dispatch failed for intent=${intent}`,
-        sessionId,
-        context: { messageRowId, intent, error: caughtError },
-      });
+    );
+
+    if (contentFree) {
+      routedToWorkflow = "short-circuit:empty-message";
+      if (contentFree.isLeader) {
+        // Wait out the burst before speaking for it. The alternative — reply
+        // immediately — means telling the sender "one email arrived empty"
+        // while five more are still in flight.
+        await step.sleep("empty-message/debounce", `${BURST_DEBOUNCE_SECONDS} seconds`);
+        const emptyCount = await step.do(
+          "empty-message/count",
+          { retries: { limit: 2, delay: "5 seconds", backoff: "constant" }, timeout: "10 seconds" },
+          async () =>
+            countContentFreeBurst(getDb(this.env.DB), {
+              fromAddress: contentFree.fromAddress,
+              receivedAt: new Date(contentFree.receivedAtMs),
+            })
+        );
+        result = { replyKind: "empty-message", replyParams: { emptyCount }, status: "replied" };
+      } else {
+        // A follower: classified and countable, but silent. `status='replied'`
+        // is deliberate — the BURST was replied to, and the number of mails we
+        // actually sent is answerable from email_send_ledger, which is the
+        // source of truth for sends. Inventing a terminal status here would
+        // widen an enum read across the inbound sweeps for a cosmetic gain.
+        result = { replyKind: "empty-message", status: "replied", suppressReply: true };
+      }
+    } else {
+      try {
+        if (intent === "submit" || intent === "new_event") {
+          result = await this.runSubmitPipeline(step, messageRowId);
+        } else {
+          result = await step.do(
+            "dispatch",
+            {
+              retries: { limit: 2, delay: "10 seconds", backoff: "constant" },
+              timeout: "30 seconds",
+            },
+            async () => {
+              const db = getDb(this.env.DB);
+              const rows = await db
+                .select()
+                .from(inboundEmails)
+                .where(eq(inboundEmails.id, messageRowId))
+                .limit(1);
+              if (rows.length === 0) {
+                throw new NonRetryableError(`inbound_emails row not found: ${messageRowId}`);
+              }
+              // intent is narrowed away from submit | new_event here, so
+              // HANDLERS key lookup is safe.
+              return await HANDLERS[intent as Exclude<EmailIntent, "submit" | "new_event">](
+                this.env,
+                { sessionId, senderTrust, emailAuth },
+                rows[0]
+              );
+            }
+          );
+        }
+      } catch (err) {
+        caughtError = err instanceof Error ? err.message : String(err);
+        result = {
+          replyKind: errorToReplyKind(intent, caughtError),
+          status: "replied",
+        };
+        await logError(this.env.DB, {
+          source: SOURCE,
+          message: `dispatch failed for intent=${intent}`,
+          sessionId,
+          context: { messageRowId, intent, error: caughtError },
+        });
+      }
     }
 
     // ───── Optional: human-in-the-loop pause (correction/press) ─────
@@ -447,7 +532,10 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     // 3 retries, workflow errored without reaching mark-done. The
     // Message-ID is now CF-auto-generated (see below) but the wrapper
     // stays as defense-in-depth for any future env.EMAIL.send rejection.
-    if (result.replyKind !== null) {
+    // OPE-407 — `suppressReply` is NOT the same as `replyKind: null`. A
+    // suppressed row keeps its reply_kind (so it stays countable) and simply
+    // isn't the message that speaks for its burst.
+    if (result.replyKind !== null && !result.suppressReply) {
       const replyKind = result.replyKind;
       const replyParams = result.replyParams ?? {};
       try {
@@ -527,6 +615,12 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
               "already-exists",
               "extract-failed",
               "submit-failed",
+              // OPE-407 NOTE — "empty-message" is deliberately NOT here, and
+              // was considered rather than forgotten (per
+              // [[feedback_receipt_widget_allowlist_when_adding_reply_kinds]]).
+              // The widget asks "was this what you wanted?", which is
+              // incoherent when we are telling someone their message arrived
+              // empty: the answer is always no, and it is not about us.
               // OPE-325 NOTE — "photo-intake-poster" is deliberately NOT here.
               // No photo-lane reply kind carries the widget (ack / held /
               // unresolved / resolved are all absent), and adding one of them

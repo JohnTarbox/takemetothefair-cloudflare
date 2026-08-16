@@ -52,6 +52,13 @@ export type ReplyKind =
   // widgets are a follow-up.
   | "ok-multi"
   | "no-url"
+  // OPE-407 — the message arrived carrying nothing: no attachment, no
+  // meaningful body, no usable subject. Distinct from `no-url`, which is a
+  // claim about a body that contains no link; these have no body to inspect.
+  // Six of them in 48 seconds on 2026-08-15 were six booth photos whose
+  // attachment never left the phone, and each got a `no-url` reply that gave
+  // the sender no reason to suspect anything had gone wrong on their end.
+  | "empty-message"
   // Fired when the submission had no real event URL but DID include
   // prose event details in the body, the B2 free-text extractor ran,
   // and the result didn't carry enough fields (name + start_date or
@@ -158,6 +165,17 @@ export interface HandlerResult {
   replyKind: ReplyKind | null;
   replyParams?: ReplyParams;
   status: FinalStatus;
+  /**
+   * OPE-407 — record the outcome but send no mail.
+   *
+   * Distinct from `replyKind: null`, and the distinction is the whole point:
+   * null means "there is no outcome worth naming", so `inbound_emails.reply_kind`
+   * stays NULL and the row is invisible to any count. A suppressed row is fully
+   * classified and countable — it just isn't the one that speaks. Used for the
+   * followers of a content-free burst, where six messages are one mistake and
+   * deserve one notice.
+   */
+  suppressReply?: boolean;
   /** Event this submission resolved against. Dual-purpose, keyed by
    *  replyKind: 'ok' → new event id; 'already-exists' → matched existing
    *  event id; anything else → null. Workflow writes this to
