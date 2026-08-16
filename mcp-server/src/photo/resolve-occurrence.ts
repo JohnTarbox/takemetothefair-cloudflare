@@ -38,7 +38,19 @@ export type HoldReason =
   | "no-exif-date"
   | "no-venue-in-radius"
   | "no-event-on-date"
-  | "ambiguous-multiple-events";
+  | "ambiguous-multiple-events"
+  /**
+   * OPE-404 — resolution itself threw, so we never reached a verdict.
+   *
+   * Distinct from every reason above: those are answers ("we looked and could
+   * not tell"), this one is "we could not look". Conflating them would report a
+   * broken query to the sender as if their photo lacked GPS, and would hide a
+   * real fault behind ordinary-looking hold traffic.
+   *
+   * Not produced by `resolveOccurrence` — only by the handler's catch, when the
+   * lookup faults. A photo must never be lost to a query error.
+   */
+  | "resolver-error";
 
 export type Resolution =
   | {
