@@ -9,6 +9,7 @@ import {
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { newsletterIssues } from "@/lib/db/schema";
 import { desc, isNotNull } from "drizzle-orm";
+import { indexableFacetUrls } from "@/lib/events/facet-query";
 
 const NOW = () => new Date();
 
@@ -236,6 +237,26 @@ export async function GET(request: Request): Promise<Response> {
     }
   } catch {
     /* best-effort — static URLs still serve */
+  }
+  // OPE-395 — facet pages (/events/{state}/{month|region|type|this-weekend}).
+  // ONLY those currently deep enough to be indexable: the page itself serves
+  // `noindex` below the floor, and listing such a URL here would ask Google to
+  // index a page that asks not to be. The counts come from the same predicate
+  // builder the page uses, so the two cannot disagree.
+  try {
+    const db = getCloudflareDb();
+    for (const facet of await indexableFacetUrls(db, NOW())) {
+      urls.push({
+        url: facet.url,
+        lastModified: NOW(),
+        // Month and weekend pages turn over with the calendar; region and type
+        // pages change only as inventory arrives.
+        changeFrequency: facet.kind === "weekend" || facet.kind === "month" ? "daily" : "weekly",
+        priority: 0.7,
+      });
+    }
+  } catch {
+    /* best-effort — the rest of the sitemap still serves */
   }
   // OPE-333 — conditional support. maxAge stays 21600 (6h): static URLs change
   // rarely, and shortening it here would trade away caching to gain 304s.
