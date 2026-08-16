@@ -797,7 +797,31 @@ const SCHEMA_SQL = `
     inbound_email_id TEXT,
     provider TEXT,
     body_html TEXT,
-    body_text TEXT
+    body_text TEXT,
+    -- OPE-177 — downstream delivery outcome, separate from status (which
+    -- stays the send-attempt outcome; see drizzle/0193).
+    delivery_status TEXT,
+    delivery_updated_at INTEGER,
+    delivery_detail TEXT
+  );
+
+  -- OPE-177 — raw CF Email Sending lifecycle events, stored before matching.
+  CREATE TABLE email_delivery_events (
+    event_id TEXT PRIMARY KEY,
+    event_type TEXT NOT NULL,
+    status TEXT NOT NULL,
+    provider_message_id TEXT,
+    recipient TEXT,
+    sender TEXT,
+    subject TEXT,
+    terminal INTEGER,
+    smtp_status_code TEXT,
+    smtp_response TEXT,
+    bounce_type TEXT,
+    bounce_classification TEXT,
+    event_timestamp INTEGER,
+    received_at INTEGER NOT NULL,
+    ledger_message_id TEXT
   );
 
   CREATE TABLE email_suppression_list (

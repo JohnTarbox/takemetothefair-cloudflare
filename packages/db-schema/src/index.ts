@@ -2470,12 +2470,98 @@ export const emailSendLedger = sqliteTable(
     // viewer shows full content (not just metadata). Inline; admin-gated read.
     bodyHtml: text("body_html"),
     bodyText: text("body_text"),
+    // OPE-177 — DOWNSTREAM delivery outcome, from the Cloudflare Email Sending
+    // event subscription. Deliberately a SEPARATE column from `status`, which
+    // stays the outcome of the send ATTEMPT.
+    //
+    // The ticket asked to widen `status` to include delivered/bounced/…. The
+    // consumer audit it also asked for says do not: `wasEmailSent()` treats
+    // status !== 'sent' as "not sent yet" and would RE-SEND a real email once a
+    // delivery event overwrote the row, and the `email-send` heartbeat probe
+    // filters on the same literal and would go dark. One column cannot carry
+    // both facts. Full reasoning in drizzle/0193.
+    //
+    // NULL means "no delivery event seen yet" — the state of every row written
+    // before the subscription existed, and of any provider that publishes no
+    // events (stub sends). It is not a claim of non-delivery.
+    deliveryStatus: text("delivery_status", {
+      enum: ["delivered", "deferred", "bounced", "failed", "rejected", "complained"],
+    }),
+    /** When the most recent delivery event for this message was applied. */
+    deliveryUpdatedAt: integer("delivery_updated_at", { mode: "timestamp" }),
+    /** JSON: { smtpStatusCode, smtpResponse, bounceType, bounceClassification }
+     *  from the newest applied event — enough for an operator to read WHY
+     *  without joining email_delivery_events. */
+    deliveryDetail: text("delivery_detail"),
   },
   (table) => [
     index("idx_email_send_ledger_sent_at").on(table.sentAt),
     index("idx_email_send_ledger_recipient").on(table.recipient),
     index("idx_email_send_ledger_inbound").on(table.inboundEmailId),
     index("idx_email_send_ledger_status").on(table.status),
+    // OPE-177 — the delivery-event consumer looks a row up by this on every
+    // message. Without the index that is a full scan of the ledger per event.
+    index("idx_email_send_ledger_provider_message_id").on(table.providerMessageId),
+    index("idx_email_send_ledger_delivery_status").on(table.deliveryStatus),
+  ]
+);
+
+// OPE-177 — raw Cloudflare Email Sending lifecycle events, one row per event,
+// stored BEFORE any attempt to match them to a ledger row.
+//
+// Why a table and not a straight UPDATE into email_send_ledger:
+//
+//   1. The join key is unproven. We store `provider_message_id` as the RFC 5322
+//      Message-ID the binding returns (`<abc@meetmeatthefair.com>`); the event
+//      payload's `messageId` is documented with a different shape
+//      (`0101018f7d0c4d9a-msg-deadbeef`). If they turn out not to correspond, an
+//      update-only design writes nothing, logs nothing, and looks exactly like
+//      "no mail bounced" — the same silent-no-op class this codebase keeps
+//      hitting. Landing the event first makes ingestion observable regardless of
+//      whether matching works.
+//   2. `event_id` is a natural idempotency key. Queues are at-least-once, so the
+//      same event redelivers; INSERT .. ON CONFLICT DO NOTHING makes reprocessing
+//      free rather than double-counting a bounce.
+//   3. A message has MANY events (deferred → deferred → bounced). The ledger row
+//      holds the latest state; the history lives here.
+//
+// `ledgerMessageId` NULL means unmatched — either the id spaces differ, or the
+// send predates the ledger. Unmatched rows are the reconciliation surface.
+export const emailDeliveryEvents = sqliteTable(
+  "email_delivery_events",
+  {
+    /** payload.eventId — Cloudflare's unique id for this event. */
+    eventId: text("event_id").primaryKey(),
+    /** Full event type, e.g. 'cf.email.sending.message.bounced'. */
+    eventType: text("event_type").notNull(),
+    /** payload.delivery.status — delivered | deferred | bounced | failed |
+     *  rejected | complained. Not enum-typed: an unrecognized status from a
+     *  future schema version must still be stored, not rejected. */
+    status: text("status").notNull(),
+    providerMessageId: text("provider_message_id"),
+    recipient: text("recipient"),
+    sender: text("sender"),
+    subject: text("subject"),
+    /** payload.terminal — false for a deferral that will be retried. */
+    terminal: integer("terminal", { mode: "boolean" }),
+    smtpStatusCode: text("smtp_status_code"),
+    smtpResponse: text("smtp_response"),
+    /** payload.bounce.type — 'hard' | 'soft'. Only 'hard' suppresses. */
+    bounceType: text("bounce_type"),
+    bounceClassification: text("bounce_classification"),
+    /** metadata.eventTimestamp — when Cloudflare observed it. */
+    eventTimestamp: integer("event_timestamp", { mode: "timestamp" }),
+    /** When WE consumed it. Drives the heartbeat probe: this is the column that
+     *  proves the subscription is still publishing. */
+    receivedAt: integer("received_at", { mode: "timestamp" }).notNull(),
+    /** email_send_ledger.message_id this event was matched to; NULL = unmatched. */
+    ledgerMessageId: text("ledger_message_id"),
+  },
+  (table) => [
+    index("idx_email_delivery_events_received_at").on(table.receivedAt),
+    index("idx_email_delivery_events_provider_message_id").on(table.providerMessageId),
+    index("idx_email_delivery_events_recipient").on(table.recipient),
+    index("idx_email_delivery_events_status").on(table.status),
   ]
 );
 

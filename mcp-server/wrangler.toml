@@ -316,6 +316,24 @@ max_batch_timeout = 30
 max_retries = 3
 dead_letter_queue = "promoter-enrichment-dlq"
 
+# OPE-177 email-delivery-events (2026-08-16). Cloudflare Email Sending
+# lifecycle events for the meetmeatthefair.com sending domain. The PRODUCER is
+# an account-level event subscription created outside this repo (Queues →
+# Subscriptions), so this consumer is correct-and-idle until that exists.
+#
+# Each message is a few D1 statements, no external calls, so a larger batch and
+# a relaxed timeout are free: nothing downstream waits on a delivery event in
+# real time. max_retries is the standard 3; a message that cannot be parsed
+# after three tries is a schema change, which is exactly what the DLQ is for.
+# Queue + DLQ created 2026-08-16 (`wrangler queues create …`) BEFORE this block
+# was added — a dangling dead_letter_queue reference fails `wrangler deploy`.
+[[queues.consumers]]
+queue = "email-delivery-events"
+max_batch_size = 25
+max_batch_timeout = 15
+max_retries = 3
+dead_letter_queue = "email-delivery-events-dlq"
+
 # Cloudflare Workflows — durable multi-step jobs that survive Worker
 # restarts. WorkflowEntrypoint subclasses live in src/workflows/ and
 # must be exported from the Worker entry (src/index.ts) for Cloudflare

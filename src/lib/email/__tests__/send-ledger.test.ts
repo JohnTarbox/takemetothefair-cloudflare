@@ -23,7 +23,10 @@ const SCHEMA_SQL = `
     message_id TEXT PRIMARY KEY, sent_at INTEGER NOT NULL, recipient TEXT,
     source TEXT, provider_message_id TEXT, status TEXT NOT NULL DEFAULT 'sent',
     error TEXT, subject TEXT, inbound_email_id TEXT, provider TEXT,
-    body_html TEXT, body_text TEXT
+    body_html TEXT, body_text TEXT,
+    -- OPE-177 (drizzle/0193) — downstream delivery outcome. Separate from
+    -- status, which stays the send-ATTEMPT outcome these tests assert on.
+    delivery_status TEXT, delivery_updated_at INTEGER, delivery_detail TEXT
   );
 `;
 

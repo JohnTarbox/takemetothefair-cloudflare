@@ -67,6 +67,13 @@ export async function GET(request: NextRequest) {
       providerMessageId: emailSendLedger.providerMessageId,
       error: emailSendLedger.error,
       inboundEmailId: emailSendLedger.inboundEmailId,
+      // OPE-177 — what happened AFTER the provider accepted it. NULL means no
+      // delivery event has been seen for this message, which is the state of
+      // every row sent before the event subscription existed; it is not a claim
+      // that the mail failed. Selected here because a delivery signal nobody can
+      // read from the Sent viewer is a delivery signal nobody has.
+      deliveryStatus: emailSendLedger.deliveryStatus,
+      deliveryUpdatedAt: emailSendLedger.deliveryUpdatedAt,
     })
     .from(emailSendLedger)
     .where(and(...conditions))

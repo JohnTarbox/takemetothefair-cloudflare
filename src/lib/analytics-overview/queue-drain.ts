@@ -12,8 +12,10 @@
  * is recovered as a day-over-day depth delta from the persisted snapshots — and
  * stays `null` (→ no RED, tile shows "pending history") until a prior row exists.
  */
-import { and, count, eq, gte, isNotNull, isNull, lt, sql } from "drizzle-orm";
+import { and, count, eq, gte, inArray, isNotNull, isNull, like, lt, sql } from "drizzle-orm";
 import {
+  emailSendLedger,
+  emailDeliveryEvents,
   eventDiscrepancies,
   supportObligations,
   vendorEnrichmentCandidates,
@@ -342,6 +344,96 @@ async function inboundAwaitingDecisionFlow(db: Db, now: Date): Promise<QueueDrai
 }
 
 /**
+ * OPE-177 — auth/verification mail that did NOT reach the recipient.
+ *
+ * The case this exists for: a vendor registered, asked for the confirmation
+ * email three times, got none, and emailed support. All three sends read
+ * `status='sent'` with no error, because `sent` has only ever meant "the
+ * provider accepted it". Her account sat unverifiable and nothing anywhere
+ * counted the failure — there was no failure to count, only an absence.
+ *
+ * Depth = auth-source sends whose delivery event says the recipient never got
+ * it (bounced / rejected / failed). Not deferred: a deferral is mid-retry and
+ * counting it would flag mail that arrives twenty minutes later.
+ *
+ * ── The window is SELF-GATING, and that is the load-bearing part ────────────
+ * Every send predating the event subscription has `delivery_status = NULL`,
+ * which is "no signal", NOT "undelivered". A naive query would therefore report
+ * every historical row as a failure on day one and be muted by the end of the
+ * week. So the window starts at the FIRST delivery event we ever received: no
+ * events yet → empty window → depth 0 by construction, no false alarm, and the
+ * queue starts reporting real numbers the moment the subscription goes live
+ * without anyone flipping anything.
+ *
+ * `oldestOpenAgeHours` is meaningful here: a bounced verification email is a
+ * person who cannot finish signing up, and the age is how long they have been
+ * stuck.
+ */
+export async function undeliveredAuthEmailFlow(db: Db, now: Date): Promise<QueueDrainRow> {
+  const d = (days: number) => new Date(now.getTime() - days * DAY_MS);
+
+  const [firstEvent] = await db
+    .select({ t: sql<number | null>`min(${emailDeliveryEvents.receivedAt})` })
+    .from(emailDeliveryEvents);
+  const since = firstEvent?.t != null ? new Date(Number(firstEvent.t) * 1000) : null;
+
+  // No delivery events have ever arrived — the subscription does not exist yet
+  // (or has never fired). Report an honest empty queue rather than an alarm.
+  if (!since) {
+    return {
+      queueName: "undelivered_auth_email",
+      label: "Auth email that did not arrive",
+      href: QUEUE_DRAIN_HREF,
+      depth: 0,
+      inflow7d: 0,
+      outflow7d: null,
+      inflow14d: 0,
+      outflow14d: null,
+      oldestOpenAgeHours: null,
+      inflow1d: 0,
+      outflow1d: null,
+      drainRatio7d: null,
+    };
+  }
+
+  const undelivered = and(
+    gte(emailSendLedger.sentAt, since),
+    like(emailSendLedger.source, "auth.%"),
+    inArray(emailSendLedger.deliveryStatus, ["bounced", "rejected", "failed"])
+  );
+  const [depth, inflow1d, inflow7d, inflow14d, oldest] = await Promise.all([
+    cnt(db, emailSendLedger, undelivered),
+    cnt(db, emailSendLedger, and(undelivered, gte(emailSendLedger.sentAt, d(1)))),
+    cnt(db, emailSendLedger, and(undelivered, gte(emailSendLedger.sentAt, d(7)))),
+    cnt(db, emailSendLedger, and(undelivered, gte(emailSendLedger.sentAt, d(14)))),
+    db
+      .select({ oldest: sql<number | null>`min(${emailSendLedger.sentAt})` })
+      .from(emailSendLedger)
+      .where(undelivered),
+  ]);
+
+  const oldestSec = oldest[0]?.oldest ?? null;
+  return {
+    queueName: "undelivered_auth_email",
+    label: "Auth email that did not arrive",
+    href: QUEUE_DRAIN_HREF,
+    depth,
+    inflow7d,
+    // Nothing "drains" these today: the operator affordance (resend / mark
+    // verified) is scope 4 of OPE-177 and is not built. Reporting a computed
+    // outflow would imply a workflow that does not exist.
+    outflow7d: null,
+    inflow14d,
+    outflow14d: null,
+    oldestOpenAgeHours:
+      oldestSec != null ? (now.getTime() / 1000 - Number(oldestSec)) / 3600 : null,
+    inflow1d,
+    outflow1d: null,
+    drainRatio7d: null,
+  };
+}
+
+/**
  * OPE-408 — venues with no coordinates.
  *
  * `venues_geocode` shipped (OPE-207) "for batch backfill AND every future new
@@ -482,6 +574,10 @@ export async function gatherQueueFlows(db: Db, now: Date): Promise<QueueDrainRow
     // OPE-408 — coverage gap, not a work queue: rows nobody has to action, but
     // whose depth+age is the only visible signal that geocoding has drifted.
     venuesMissingCoordsFlow(db, now),
+    // OPE-177 — verification mail that provably did not arrive. Reads 0 until
+    // the CF Email Sending subscription publishes its first event (the window
+    // starts there), so it cannot cry wolf on historical NULLs.
+    undeliveredAuthEmailFlow(db, now),
     // OPE-365 (R1) — people owed a human response. Distinct from
     // inbound_exceptions, which counts classifier UNCERTAINTY: that queue has
     // held depth 33 with outflow_1d=0 while a real customer's blocker passed
