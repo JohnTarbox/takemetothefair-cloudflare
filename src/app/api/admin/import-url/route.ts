@@ -16,7 +16,7 @@ import { parseDateOnly } from "@/lib/datetime";
 import { normalizeEventDate } from "@/lib/event-dates";
 import { areDatesContiguous } from "@takemetothefair/utils";
 import { getCloudflareEnv } from "@/lib/cloudflare";
-import { geocodeAddress } from "@/lib/google-maps";
+import { geocodeNewVenue } from "@/lib/venues/geocode-one";
 import { loadClassifications, gateUrlForField } from "@/lib/url-classification";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 import { evaluateGates } from "@/lib/event-date-gates";
@@ -108,28 +108,20 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
       venueId = newVenueId;
       newVenueSlug = finalVenueSlug;
 
-      // Auto-geocode the new venue
-      try {
-        const cfEnv = getCloudflareEnv();
-        const geo = await geocodeAddress(
-          venueOption.address || "",
-          venueOption.city || "",
-          venueOption.state || "",
-          undefined,
-          cfEnv.GOOGLE_MAPS_API_KEY
-        );
-        if (geo) {
-          const geoUpdates: Record<string, unknown> = {
-            latitude: geo.lat,
-            longitude: geo.lng,
-            updatedAt: new Date(),
-          };
-          if (geo.zip) geoUpdates.zip = geo.zip;
-          await db.update(venues).set(geoUpdates).where(eq(venues.id, newVenueId));
-        }
-      } catch {
-        // Non-blocking: venue still created without coordinates
-      }
+      // OPE-408 — routed through the CONFIDENCE GATE.
+      //
+      // This block used to call `geocodeAddress`, which drops `locationType` and
+      // stores Google's top hit unconditionally. Google's fallback for a miss is a
+      // CITY CENTROID (`APPROXIMATE`) — a confident-looking pin that can sit miles
+      // from a rural fairground's gate, which then silently mis-attributes photos.
+      // The geocode-venues route has refused those since OPE-207 ("better a flagged
+      // blank than a wrong pin") and OPE-219 exists because forcing them produced
+      // four wrong pins that had to be reverted. This ingest path never had that
+      // gate, so it was writing exactly what the sweep refuses.
+      //
+      // geocodeNewVenue applies preflight + judge and never throws, so the venue is
+      // still created if Google is slow or the answer is untrustworthy.
+      await geocodeNewVenue(db, newVenueId, getCloudflareEnv().GOOGLE_MAPS_API_KEY);
     }
     // For type === "none", venueId remains null
 

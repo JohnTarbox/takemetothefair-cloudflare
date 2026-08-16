@@ -12,7 +12,7 @@ import { logError } from "@/lib/logger";
 import { recomputeEventCompleteness } from "@/lib/completeness";
 import { logEnrichment } from "@/lib/enrichment-log";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
-import { geocodeAddress } from "@/lib/google-maps";
+import { geocodeNewVenue } from "@/lib/venues/geocode-one";
 import {
   loadClassifications,
   gateUrlForField,
@@ -108,28 +108,20 @@ async function findOrCreateVenue(
     status: "ACTIVE",
   });
 
-  // Auto-geocode the new venue
-  try {
-    const cfEnv = getCloudflareEnv();
-    const geo = await geocodeAddress(
-      scrapedVenue.streetAddress || "",
-      scrapedVenue.city || "",
-      scrapedVenue.state || "ME",
-      scrapedVenue.zip || undefined,
-      cfEnv.GOOGLE_MAPS_API_KEY
-    );
-    if (geo) {
-      const geoUpdates: Record<string, unknown> = {
-        latitude: geo.lat,
-        longitude: geo.lng,
-        updatedAt: new Date(),
-      };
-      if (!scrapedVenue.zip && geo.zip) geoUpdates.zip = geo.zip;
-      await db.update(venues).set(geoUpdates).where(eq(venues.id, newVenueId));
-    }
-  } catch {
-    // Non-blocking: venue still created without coordinates
-  }
+  // OPE-408 — routed through the CONFIDENCE GATE.
+  //
+  // This block used to call `geocodeAddress`, which drops `locationType` and
+  // stores Google's top hit unconditionally. Google's fallback for a miss is a
+  // CITY CENTROID (`APPROXIMATE`) — a confident-looking pin that can sit miles
+  // from a rural fairground's gate, which then silently mis-attributes photos.
+  // The geocode-venues route has refused those since OPE-207 ("better a flagged
+  // blank than a wrong pin") and OPE-219 exists because forcing them produced
+  // four wrong pins that had to be reverted. This ingest path never had that
+  // gate, so it was writing exactly what the sweep refuses.
+  //
+  // geocodeNewVenue applies preflight + judge and never throws, so the venue is
+  // still created if Google is slow or the answer is untrustworthy.
+  await geocodeNewVenue(db, newVenueId, getCloudflareEnv().GOOGLE_MAPS_API_KEY);
 
   return { id: newVenueId, newSlug: finalSlug };
 }
