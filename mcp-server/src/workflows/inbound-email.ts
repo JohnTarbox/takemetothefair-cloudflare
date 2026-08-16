@@ -88,7 +88,7 @@ import {
 } from "../email-handlers/submit.js";
 import { recordSourceCitations } from "../email-handlers/pipeline-citations.js";
 import { computeFillEmptyProposals } from "../email-handlers/enrich-proposal.js";
-import { detectRosterNames } from "../email-handlers/roster-detect.js";
+import { detectRosterEntries, type RosterEntry } from "../email-handlers/roster-detect.js";
 import { isShareRedirectHost, resolveShareRedirect } from "../email-handlers/share-redirect.js";
 import { toMarkdownWithRetry } from "../email-handlers/ocr-retry.js";
 import { buildReply } from "../email-reply-builder.js";
@@ -827,52 +827,9 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
 
     const subject = rowSnapshot.subject ?? "";
 
-    // OPE-176 — roster capture (STAGE FOR REVIEW; John's call 2026-07-13). Detect
-    // an exhibitor/vendor roster in the body and flag the email for operator
-    // review instead of dropping it. Runs for EVERY submit email BEFORE the
-    // branch returns, so it also catches roster-carrying emails whose event
-    // extraction fails (the Art-in-the-Park evidence was no-url-prose-failed).
-    // Stage-for-review: we do NOT create or link any vendor — an operator applies
-    // the roster by hand from /admin/inbound-emails. Failsoft; never blocks the
-    // pipeline. Reads full body_text (bodyTextExcerpt is capped at 500 chars).
-    await step.do(
-      "submit/roster-capture",
-      { retries: { limit: 1, delay: "5 seconds", backoff: "constant" }, timeout: "5 seconds" },
-      async () => {
-        try {
-          const db = getDb(this.env.DB);
-          const [row] = await db
-            .select({ bodyText: inboundEmails.bodyText })
-            .from(inboundEmails)
-            .where(eq(inboundEmails.id, messageRowId))
-            .limit(1);
-          const roster = detectRosterNames(row?.bodyText ?? null);
-          if (roster.length === 0) return;
-          await db.insert(adminActions).values({
-            action: "roster.detected",
-            actorUserId: null,
-            targetType: "inbound_email",
-            targetId: messageRowId,
-            payloadJson: JSON.stringify({
-              count: roster.length,
-              names: roster,
-              fromAddress: rowSnapshot.fromAddress,
-            }),
-            createdAt: new Date(),
-          });
-          await db
-            .update(inboundEmails)
-            .set({ flaggedForReview: 1 })
-            .where(eq(inboundEmails.id, messageRowId));
-        } catch (err) {
-          await logError(getDb(this.env.DB), {
-            source: "mcp:workflow:roster-capture",
-            message: "roster capture failed",
-            error: err,
-          });
-        }
-      }
-    );
+    // OPE-176 roster capture MOVED (OPE-405) — it now runs after `ocr-attachments`
+    // below, so it can read a roster that arrived as a PDF instead of body prose.
+    // See the `submit/roster-capture` step further down.
 
     // ───── OPE-55 Phase 1: unified multi-source fan-out ─────────────
     // Historically the three branches below were MUTUALLY EXCLUSIVE:
@@ -927,6 +884,106 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         () => this.ocrAttachments(refsJson)
       );
     }
+
+    // ───── OPE-176 roster capture, now attachment-aware (OPE-405) ──────────
+    //
+    // STAGE FOR REVIEW ONLY (John's call 2026-07-13): no vendor is created or
+    // linked here. An operator applies the roster by hand from
+    // /admin/inbound-emails. Fail-soft; never blocks the pipeline.
+    //
+    // Moved below `ocr-attachments` deliberately. It used to run earlier and read
+    // ONLY `body_text`, so a roster that arrived as a PDF was invisible — while
+    // the OCR'd text of that very PDF was being computed a few lines later and
+    // used solely for EVENT extraction. The chamber's 34-spot Winthrop artist
+    // list sat unread for 12 days that way, with the event showing 0 vendors.
+    //
+    // It also returned silently on zero, which is why nobody noticed. Now every
+    // outcome is logged with what was examined and why it was empty — OPE-189's
+    // lesson that an unlogged no-op survives indefinitely.
+    await step.do(
+      "submit/roster-capture",
+      { retries: { limit: 1, delay: "5 seconds", backoff: "constant" }, timeout: "10 seconds" },
+      async () => {
+        const db = getDb(this.env.DB);
+        try {
+          const [row] = await db
+            .select({ bodyText: inboundEmails.bodyText })
+            .from(inboundEmails)
+            .where(eq(inboundEmails.id, messageRowId))
+            .limit(1);
+
+          // Body first (the OPE-176 shape), then each OCR'd attachment. First
+          // source with a confident roster wins; a placement PDF and a body list
+          // are the same roster twice, not two rosters.
+          const candidates: Array<{ source: string; text: string }> = [
+            { source: "body", text: row?.bodyText ?? "" },
+            ...attachmentSources.map((s, i) => ({
+              source: `attachment:${i}`,
+              text: s.kind === "attachment" ? s.text : "",
+            })),
+          ];
+
+          let found: { source: string; entries: RosterEntry[] } | null = null;
+          for (const c of candidates) {
+            const entries = detectRosterEntries(c.text);
+            if (entries.length > 0) {
+              found = { source: c.source, entries };
+              break;
+            }
+          }
+
+          // Logged on BOTH outcomes. "0 names from 2 attachments" is the line
+          // that would have surfaced this in a day instead of twelve.
+          await logError(db, {
+            level: "info",
+            source: "mcp:workflow:roster-capture",
+            message: found
+              ? `roster detected: ${found.entries.length} entries from ${found.source}`
+              : `no roster detected across ${candidates.length} source(s)`,
+            context: {
+              messageRowId,
+              attachmentCount: rowSnapshot.attachmentCount,
+              ocrSources: attachmentSources.length,
+              bodyChars: (row?.bodyText ?? "").length,
+              matchedSource: found?.source ?? null,
+              entryCount: found?.entries.length ?? 0,
+            },
+          });
+
+          if (!found) return;
+
+          await db.insert(adminActions).values({
+            action: "roster.detected",
+            actorUserId: null,
+            targetType: "inbound_email",
+            targetId: messageRowId,
+            payloadJson: JSON.stringify({
+              count: found.entries.length,
+              source: found.source,
+              // `names` kept for the existing operator view; `entries` carries the
+              // booth number + craft, which is what makes a personal-name roster
+              // reconcilable against the map later.
+              names: found.entries.map((e) => e.name),
+              entries: found.entries,
+              fromAddress: rowSnapshot.fromAddress,
+            }),
+            createdAt: new Date(),
+          });
+          await db
+            .update(inboundEmails)
+            .set({ flaggedForReview: 1 })
+            .where(eq(inboundEmails.id, messageRowId));
+        } catch (err) {
+          await logError(db, {
+            source: "mcp:workflow:roster-capture",
+            message: "roster capture failed",
+            error: err,
+            context: { messageRowId },
+          });
+        }
+      }
+    );
+
     if (attachmentSources.length > 0) {
       const sources: SubmitSource[] = [];
       // Body-linked URLs first (URL-first ordering — richer provenance wins the
