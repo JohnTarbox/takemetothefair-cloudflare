@@ -4,15 +4,17 @@
  */
 import type { Metadata } from "next";
 import { StateFacetPage, getFacetMetadata } from "@/components/events/state-facet-page";
-import { allFacetSlugs } from "@/lib/events/facets";
 
 export const revalidate = 300;
 
 const STATE_SLUG = "connecticut";
 
-export function generateStaticParams() {
-  return allFacetSlugs(STATE_SLUG).map((facet) => ({ facet }));
-}
+// Deliberately NO generateStaticParams. These pages read D1 in both
+// generateMetadata and the body, and prerendering them would run those queries
+// at BUILD time, where no Cloudflare binding exists — failing the build, or
+// worse, baking empty pages that look fine until someone counts the events.
+// ISR at revalidate=300 gets the same caching with none of that: the first
+// request renders against the live database, the rest are served from cache.
 
 export async function generateMetadata({
   params,
