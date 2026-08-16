@@ -19,7 +19,12 @@ import { classifySource } from "@/lib/source-classification";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 import { autoLinkVenue, deriveStateFromText } from "@/lib/venue-matching";
 import { normalizeEventDate } from "@/lib/event-dates";
-import { areDatesContiguous } from "@takemetothefair/utils";
+import {
+  areDatesContiguous,
+  isUnusableEventName,
+  isLikelyImageUrl,
+  isPlaceholderUrl,
+} from "@takemetothefair/utils";
 import { maybeRouteToOccurrence } from "@/lib/discovery/route-to-occurrence";
 import { submitEventSchema } from "./schema";
 
@@ -104,9 +109,45 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    // OPE-411 — a name that cannot be an event name must never become a slug.
+    //
+    // A 2026-08-04 submission arrived with name="Facebook" (the platform the
+    // submitter found it on) and minted `/event/facebook`. It was caught only
+    // because it happened to sit in PENDING where a human looked.
+    //
+    // Two different answers, because there are two different callers:
+    //
+    //   - An interactive submitter is AT THE FORM and can fix it in five
+    //     seconds. Telling them beats accepting junk and quietly holding it,
+    //     and it is the only branch that can actually improve the data.
+    //   - An internal caller (the MCP email pipeline) has nobody at a keyboard.
+    //     Rejecting there would DROP a real submission because one field was
+    //     wrong, so it is held for review instead — with the submitted string
+    //     preserved in the description, since the point is that a human can see
+    //     what was actually sent.
+    const nameIsUnusable = isUnusableEventName(data.name);
+    if (nameIsUnusable && !isInternal) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            'Please enter the event\'s own name (for example "Northeast Egg & Art Expo 2026") — not the website or app where you found it.',
+        },
+        { status: 400 }
+      );
+    }
+
+    // Held internal submissions get a placeholder that reads as unfinished to
+    // anyone who sees it, rather than a confident wrong name.
+    const effectiveName = nameIsUnusable
+      ? `Untitled submission${data.venueCity ? ` — ${data.venueCity}` : ""}${
+          data.startDate ? ` (${data.startDate})` : ""
+        }`
+      : data.name;
+
     // Generate event slug. WS2a — shared prefix-range resolver (was a
     // per-candidate while-loop; now `base-2` first on collision, not `base-1`).
-    const eventSlug = createSlug(data.name);
+    const eventSlug = createSlug(effectiveName);
     const finalEventSlug = await resolveUniqueEventSlug(db, eventSlug);
 
     // Parse dates. Normalize bare YYYY-MM-DD (and YYYY-MM-DDT00:00:00Z) to
@@ -120,17 +161,21 @@ export async function POST(request: NextRequest) {
     const startDate = normalizeEventDate(data.startDate ?? null);
     const endDate = normalizeEventDate(data.endDate ?? null);
 
-    // Build description with location info if provided
-    let description = data.description || `${data.name} - suggested by the community`;
+    // Build description. The `Location:` block is appended LATER, and only if
+    // the venue fails to resolve — see the venue auto-link below.
+    let description = data.description || `${effectiveName} - suggested by the community`;
+    if (nameIsUnusable) {
+      // Preserve exactly what was submitted. The reviewer's first question is
+      // "what did they actually send?", and an unusable name is often the only
+      // clue to where the event came from.
+      description += `\n\nSubmitted event name: "${data.name.trim()}" — held for review (not a usable event name).`;
+    }
+    const locationParts: string[] = [];
     if (data.venueName || data.venueCity) {
-      const locationParts: string[] = [];
       if (data.venueName) locationParts.push(data.venueName);
       if (data.venueAddress) locationParts.push(data.venueAddress);
       if (data.venueCity) locationParts.push(data.venueCity);
       if (data.venueState) locationParts.push(data.venueState);
-      if (locationParts.length > 0 && !description.includes(locationParts[0])) {
-        description += `\n\nLocation: ${locationParts.join(", ")}`;
-      }
     }
 
     // Determine status: vendor submissions get TENTATIVE (publicly visible),
@@ -152,7 +197,7 @@ export async function POST(request: NextRequest) {
     // submissions to PENDING if a name/date pattern fires. (PENDING submissions
     // already hit PENDING — gate just adds the trace flags.)
     const gateResult = evaluateGates({
-      name: data.name,
+      name: effectiveName,
       sourceUrl: data.sourceUrl ?? null,
       sourceName,
       startDate,
@@ -174,6 +219,13 @@ export async function POST(request: NextRequest) {
     if (startDate && startDate.getTime() < Date.now()) {
       gateRoute = "PENDING_REVIEW";
       if (!gateReasons.includes("past_date")) gateReasons.push("past_date");
+    }
+
+    // OPE-411 — an unusable name is never publishable, whatever the source.
+    // Vendor submissions would otherwise land TENTATIVE (publicly visible).
+    if (nameIsUnusable) {
+      gateRoute = "PENDING_REVIEW";
+      if (!gateReasons.includes("unusable_name")) gateReasons.push("unusable_name");
     }
 
     const eventStatus = gateRoute === "PENDING_REVIEW" ? "PENDING" : baseEventStatus;
@@ -200,6 +252,31 @@ export async function POST(request: NextRequest) {
       urlClassifications
     );
 
+    // OPE-411 — three field-level sanity checks the domain classifier does not
+    // make. It answers "is this an aggregator?"; these answer "is this value
+    // even the KIND of thing this column holds?"
+    //
+    // 1. image_url must be an image. `https://crafters-choice-llc.square.site/`
+    //    reached the column and renders as a broken <img> on the card and in the
+    //    OG tag.
+    // 2. A non-image URL is not thrown away — if it is the only ticket-ish URL
+    //    we have, it is far more likely to be the organizer's ticketing page
+    //    (which is exactly what that Square URL was) than an image.
+    // 3. Placeholder URLs (`example.com/buy-tickets` is live in prod today) are
+    //    dropped rather than stored as a link a real visitor will click.
+    const submittedImageUrl = data.imageUrl?.trim() || null;
+    const sanitizedImageUrl = isLikelyImageUrl(submittedImageUrl) ? submittedImageUrl : null;
+    const nonImageAsTicketUrl =
+      submittedImageUrl && !sanitizedImageUrl && !isPlaceholderUrl(submittedImageUrl)
+        ? submittedImageUrl
+        : null;
+    const finalTicketUrl =
+      gatedTicketUrl && !isPlaceholderUrl(gatedTicketUrl)
+        ? gatedTicketUrl
+        : (nonImageAsTicketUrl ?? null);
+    const finalApplicationUrl =
+      gatedApplicationUrl && !isPlaceholderUrl(gatedApplicationUrl) ? gatedApplicationUrl : null;
+
     // Venue auto-link: if the caller provided a venue NAME but no
     // venue_id (the common case for email/community submissions where
     // AI extraction returned a venue string), try to resolve it
@@ -223,6 +300,23 @@ export async function POST(request: NextRequest) {
       // any state we already had (extracted/AI) when no venue matched.
       resolvedStateCode = result.stateCode ?? resolvedStateCode;
     }
+    // OPE-411 — append the `Location:` block ONLY when the venue did not
+    // resolve.
+    //
+    // This block was never the submitter's prose: the route writes it so the
+    // address is not lost when `autoLinkVenue` conservatively declines to match.
+    // That is worth doing — but it ran unconditionally and BEFORE the match was
+    // attempted, so 29 of 52 community/email rows carry a location paragraph
+    // that is already on their linked venue record. Duplicated into the public
+    // description, the meta description, and the search index.
+    //
+    // Now it is what it was meant to be: a fallback for the unresolved case,
+    // where it is the only surviving record of where the event is and an
+    // operator needs to read it.
+    if (locationParts.length > 0 && !resolvedVenueId && !description.includes(locationParts[0])) {
+      description += `\n\nLocation: ${locationParts.join(", ")}`;
+    }
+
     // Last resort: if we still don't have a state, scan the description
     // for a single NE-state mention. One unique state → use it. Multiple
     // (or none) → keep null and let admin fill in.
@@ -310,7 +404,7 @@ export async function POST(request: NextRequest) {
     // series_id: until then any findDuplicate hit has no series, so this returns
     // routed:false and we fall through to the standalone insert below unchanged.
     const occRoute = await maybeRouteToOccurrence(db, {
-      name: data.name,
+      name: effectiveName,
       startDate: effectiveStartDate,
       endDate: effectiveEndDate,
       venueId: resolvedVenueId,
@@ -327,7 +421,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({
           success: true,
           routed: "occurrence",
-          event: { id: r.occurrenceId, slug: r.slug, name: data.name },
+          event: { id: r.occurrenceId, slug: r.slug, name: effectiveName },
           year: r.year,
         });
       }
@@ -336,7 +430,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({
           success: true,
           routed: "occurrence_exists",
-          event: { id: r.existingEventId, name: data.name },
+          event: { id: r.existingEventId, name: effectiveName },
           year: r.year,
         });
       }
@@ -348,7 +442,7 @@ export async function POST(request: NextRequest) {
     const newEventId = crypto.randomUUID();
     await db.insert(events).values({
       id: newEventId,
-      name: data.name,
+      name: effectiveName,
       slug: finalEventSlug,
       description,
       promoterId: COMMUNITY_PROMOTER_ID,
@@ -365,17 +459,29 @@ export async function POST(request: NextRequest) {
         effectiveEventDays && effectiveEventDays.length > 0
           ? computePublicDates(effectiveEventDays).publicEndDate
           : effectiveEndDate,
-      datesConfirmed: effectiveStartDate !== null,
+      // OPE-411 — a start date being PRESENT is not the same as a date being
+      // CONFIRMED, and this line conflated them: 45 of the 52 community/email
+      // rows in prod claim confirmed dates and nothing confirmed any of them.
+      // `dates_confirmed` drives "these dates are verified" downstream, so a
+      // user submission must start at false and be raised by an operator or a
+      // verified source. A vendor submission is already TENTATIVE-lifecycle for
+      // exactly this reason.
+      datesConfirmed: false,
       categories: JSON.stringify(
         Array.isArray(data.categories) && data.categories.length > 0
           ? data.categories
-          : (inferCategoriesFromName(data.name) ?? ["Event"])
+          : (inferCategoriesFromName(effectiveName) ?? ["Event"])
       ),
       tags: JSON.stringify(tagList),
-      ticketUrl: gatedTicketUrl,
+      ticketUrl: finalTicketUrl,
       ticketPriceMinCents: dollarsToCents(data.ticketPriceMin),
       ticketPriceMaxCents: dollarsToCents(data.ticketPriceMax),
-      imageUrl: data.imageUrl || null,
+      // OPE-411 — only a URL that is actually an image. The case that produced
+      // this ticket stored `https://crafters-choice-llc.square.site/` (the
+      // organizer's ticketing site) in image_url, which renders as a broken
+      // <img> on the card and the OG tag. A non-image URL is dropped here and
+      // preserved as ticket_url below when nothing better is present.
+      imageUrl: sanitizedImageUrl,
       status: eventStatus,
       gateFlags: gateFlagsJson,
       lifecycleStatus: eventLifecycle,
@@ -398,7 +504,7 @@ export async function POST(request: NextRequest) {
       indoorOutdoor: data.indoorOutdoor ?? null,
       estimatedAttendance: data.estimatedAttendance ?? null,
       eventScale: data.eventScale ?? null,
-      applicationUrl: gatedApplicationUrl,
+      applicationUrl: finalApplicationUrl,
       // OPE-198 — vendor-application deadline (date-only) + apply instructions.
       applicationDeadline: normalizeEventDate(data.applicationDeadline ?? null),
       applicationInstructions: data.applicationInstructions ?? null,
@@ -486,7 +592,7 @@ export async function POST(request: NextRequest) {
       event: {
         id: newEventId,
         slug: finalEventSlug,
-        name: data.name,
+        name: effectiveName,
       },
     });
   } catch (error) {

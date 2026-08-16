@@ -25,6 +25,8 @@ import {
   classifySource,
   normalizeEventDate,
   decideDiscoveryRouting,
+  isUnusableEventName,
+  isPlaceholderUrl,
 } from "@takemetothefair/utils";
 import { EVENT_CATEGORIES, PRIMARY_AUDIENCE, PUBLIC_ACCESS } from "@takemetothefair/constants";
 import { logError } from "../logger.js";
@@ -722,9 +724,23 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
         });
       }
 
+      // OPE-411 — refuse to mint a slug from a name that cannot be an event
+      // name. This is the SECOND ingest path that creates events from user
+      // submissions (the first is /api/suggest-event/submit); the check is
+      // shared so a submission cannot simply arrive through the other door.
+      //
+      // No caller here is a human at a form, so this holds rather than rejects:
+      // an MCP submission dropped for one bad field is a submission lost.
+      const nameIsUnusable = isUnusableEventName(params.name);
+      const effectiveName = nameIsUnusable
+        ? `Untitled submission${params.venue_city ? ` — ${params.venue_city}` : ""}${
+            params.start_date ? ` (${params.start_date})` : ""
+          }`
+        : params.name;
+
       // Generate unique slug — use canonical createSlug to match main-app and create_venue
       // (avoids the divergence that produced duplicate venues — see issue #120)
-      const baseSlug = createSlug(params.name);
+      const baseSlug = createSlug(effectiveName);
       let finalSlug = baseSlug;
       let suffix = 0;
       while (true) {
@@ -1094,17 +1110,23 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
       const eventId = crypto.randomUUID();
       await db.insert(events).values({
         id: eventId,
-        name: params.name,
+        name: effectiveName,
         slug: finalSlug,
         description,
         promoterId: eventPromoterId,
         venueId,
         startDate,
         endDate,
-        datesConfirmed: startDate !== null,
+        // OPE-411 — a start date being PRESENT is not a date being CONFIRMED.
+        // 45 of 52 community/email rows in prod claim confirmed dates and
+        // nothing confirmed any of them. User submissions start at false.
+        datesConfirmed: false,
         categories: JSON.stringify(categoriesToStore),
         tags: JSON.stringify(["community-suggestion", "vendor-submission"]),
-        ticketUrl: gatedTicketUrl,
+        // OPE-411 — the domain classifier answers "is this an aggregator?"; it
+        // does not catch `https://example.com/buy-tickets`, which is live in
+        // prod today on a real listing.
+        ticketUrl: gatedTicketUrl && !isPlaceholderUrl(gatedTicketUrl) ? gatedTicketUrl : null,
         status: eventStatus,
         gateFlags: gateFlagsJson,
         // TAX1 Phase 1 — undefined params let the column defaults
