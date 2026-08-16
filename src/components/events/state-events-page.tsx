@@ -16,6 +16,13 @@ import { getStateColors } from "@/lib/state-colors";
 import { STATES, STATE_BY_SLUG } from "@/lib/states";
 import { countUpcomingEventsByState } from "@/lib/queries";
 import { buildStateTitle, buildStateMetaDescription } from "@/lib/seo-utils";
+import { FAQPageSchema } from "@/components/seo/FAQPageSchema";
+import {
+  buildStateIntro,
+  buildStateFaq,
+  STATE_FAQ_MIN_ITEMS,
+  type StateInventory,
+} from "@/lib/state-page-content";
 
 export const STATE_MAP: Record<string, { code: string; name: string }> = {
   maine: { code: "ME", name: "Maine" },
@@ -194,6 +201,71 @@ export async function getStateMetadata(stateSlug: string): Promise<Metadata> {
   };
 }
 
+/**
+ * OPE-394 — whole-state inventory for the editorial + FAQ layer.
+ *
+ * Separate from `getStateEvents`, which returns ONE PAGE (30 rows). Deriving
+ * "fair season" from a page would describe the first 30 events by date, not the
+ * year — a confident sentence about the wrong data. This aggregates across the
+ * state instead.
+ *
+ * One grouped scan plus one distinct-town count. Categories are a JSON array
+ * column, so they are tallied in memory over the same rows rather than with a
+ * SQL json_each join — the row count here is a state's upcoming events
+ * (hundreds), not the whole table.
+ */
+async function getStateInventory(stateCode: string): Promise<StateInventory> {
+  const db = getCloudflareDb();
+  const conditions = [
+    isPublicEventStatus(),
+    eq(events.stateCode, stateCode),
+    isNotNull(events.startDate),
+    upcomingEndPredicate(new Date()),
+  ];
+
+  const rows = await db
+    .select({
+      startDate: events.startDate,
+      categories: events.categories,
+      city: venues.city,
+    })
+    .from(events)
+    .leftJoin(venues, eq(events.venueId, venues.id))
+    .where(and(...conditions));
+
+  const countsByMonth = new Array(12).fill(0) as number[];
+  const catTally = new Map<string, number>();
+  const towns = new Set<string>();
+
+  for (const r of rows) {
+    if (r.startDate instanceof Date) countsByMonth[r.startDate.getUTCMonth()] += 1;
+    if (r.city) towns.add(r.city.trim().toLowerCase());
+    try {
+      const cats = r.categories ? (JSON.parse(r.categories) as unknown) : [];
+      if (Array.isArray(cats)) {
+        for (const c of cats) {
+          if (typeof c === "string" && c.trim()) {
+            const key = c.trim();
+            catTally.set(key, (catTally.get(key) ?? 0) + 1);
+          }
+        }
+      }
+    } catch {
+      // A malformed categories blob is a data problem, not a reason to drop the
+      // whole intro. Skip the row's categories and keep its month/town.
+    }
+  }
+
+  const topCategories = [...catTally.entries()].sort((a, b) => b[1] - a[1]).map(([name]) => name);
+
+  return {
+    upcomingCount: rows.length,
+    countsByMonth,
+    topCategories,
+    townCount: towns.size,
+  };
+}
+
 interface StateEventsPageProps {
   stateSlug: string;
   searchParams: { page?: string; includePast?: string };
@@ -210,6 +282,16 @@ export async function StateEventsPage({ stateSlug, searchParams }: StateEventsPa
   const totalPages = Math.ceil(total / limit);
   const colors = getStateColors(state.code);
 
+  // OPE-394 — editorial + FAQ layer, derived from the WHOLE state's calendar.
+  const year = new Date().getFullYear();
+  const inventory = await getStateInventory(state.code);
+  const intro = buildStateIntro(state.name, inventory, year);
+  const faq = buildStateFaq(state.name, inventory, year);
+  // Below the floor we emit NEITHER the block nor the JSON-LD. A thin FAQ is
+  // what "Crawled — currently not indexed" is made of, and the epic names that
+  // as its own guardrail.
+  const showFaq = faq.length >= STATE_FAQ_MIN_ITEMS;
+
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
       <ItemListSchema
@@ -225,6 +307,7 @@ export async function StateEventsPage({ stateSlug, searchParams }: StateEventsPa
         asCollectionPage
         pageUrl={`https://meetmeatthefair.com/events/${stateSlug}`}
       />
+      {showFaq && <FAQPageSchema items={faq} />}
       <BreadcrumbSchema
         items={[
           { name: "Home", url: "https://meetmeatthefair.com" },
@@ -240,15 +323,29 @@ export async function StateEventsPage({ stateSlug, searchParams }: StateEventsPa
             <MapPin className={`w-5 h-5 ${colors.icon}`} />
           </div>
           <div>
+            {/* OPE-394 — H1 now matches the head term exactly, with a rolling
+                year, mirroring the <title> that was already retargeted in May.
+                The competitor holds 4 SERP slots on this term with H1/title/
+                domain all reading the same phrase; ours read "Fairs & Festivals
+                in Massachusetts" — inverted and yearless — while the title said
+                otherwise. The friendly phrasing survives as the subhead below,
+                per the ticket. */}
             <h1 className="text-3xl font-bold text-foreground">
-              Fairs & Festivals in {state.name}
+              {state.name} Fairs &amp; Festivals {year}
             </h1>
+            <p className="text-sm text-muted-foreground">Fairs &amp; Festivals in {state.name}</p>
           </div>
         </div>
         <p className="mt-2 text-muted-foreground">
           Browse {total} {includePast ? "" : "upcoming "}fairs, festivals, craft shows, and markets
           across {state.name}.
         </p>
+        {/* OPE-394 — editorial layer. Every sentence is derived from the
+            state's live calendar (counts, month distribution, towns); nothing
+            about any fair's hours, prices or admission is asserted, per the
+            ticket's grounding rule. */}
+        <p className="mt-3 max-w-3xl text-sm leading-relaxed text-muted-foreground">{intro}</p>
+
         <nav className="mt-4 text-sm text-muted-foreground" aria-label="Breadcrumb">
           <Link href="/" className="hover:text-navy">
             Home
@@ -334,6 +431,29 @@ export async function StateEventsPage({ stateSlug, searchParams }: StateEventsPa
             vendors.
           </p>
         </div>
+      )}
+
+      {/* OPE-394 — the FAQ must be VISIBLE, not just structured data.
+          Google requires FAQPage content to be present on the page for the
+          rich result; JSON-LD alone earns nothing and would be a schema claim
+          about content a visitor cannot see. Rendered as native <details> so it
+          needs no client JS and is expanded-readable by a crawler. */}
+      {showFaq && (
+        <section className="mt-12 border-t border-border pt-8" aria-labelledby="state-faq-heading">
+          <h2 id="state-faq-heading" className="text-xl font-bold text-foreground">
+            {state.name} fairs &amp; festivals — common questions
+          </h2>
+          <dl className="mt-4 space-y-3">
+            {faq.map((item) => (
+              <div key={item.question} className="rounded-lg border border-border p-4">
+                <dt className="font-semibold text-foreground">{item.question}</dt>
+                <dd className="mt-1 text-sm leading-relaxed text-muted-foreground">
+                  {item.answer}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </section>
       )}
     </div>
   );
