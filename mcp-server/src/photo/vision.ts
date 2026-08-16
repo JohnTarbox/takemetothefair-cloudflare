@@ -145,45 +145,14 @@ function cleanString(v: unknown, max = 200): string | null {
 }
 
 /**
- * Parse the model's reply into a BoothIdentification.
+ * Map an already-parsed reply object onto a BoothIdentification.
  *
- * Pure + total — exported so the parsing contract is unit-testable without an
- * AI binding, and so a garbage reply degrades to UNIDENTIFIED (→ staged for
- * review) instead of throwing inside the inbound workflow.
+ * Shared by BOTH entry shapes — the object Workers AI hands back directly, and
+ * the object we dig out of a string reply. Deliberately one implementation: two
+ * copies of this mapping could disagree about the `general` → drop-the-name
+ * rule, which is the rule that stops scenery carrying a vendor into a write.
  */
-export function parseVisionReply(raw: unknown): BoothIdentification {
-  // Workers AI response shape varies by model: some return a string, some
-  // { response: string }, and a non-string `.response` once crashed the email
-  // entrypoint outright (OPE-189). Coerce defensively, exactly as
-  // intent-classifier.ts does.
-  const text =
-    typeof raw === "string"
-      ? raw
-      : typeof (raw as { response?: unknown })?.response === "string"
-        ? (raw as { response: string }).response
-        : "";
-  // OPE-403 follow-up — each bail says WHICH one it was. "empty-text" means the
-  // model gave us nothing (or a shape we don't coerce); "no-json-span" means it
-  // answered in prose; "json-parse-failed" means it tried JSON and malformed it.
-  // Three different fixes, previously indistinguishable.
-  if (!text.trim()) return unidentified(`empty-text raw=${describeRawShape(raw)}`);
-
-  // Models often wrap JSON in prose or a ```json fence despite instructions.
-  // Take the outermost {...} span rather than trusting the whole string.
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start === -1 || end === -1 || end <= start) {
-    return unidentified(`no-json-span text="${text.trim().slice(0, 120)}"`);
-  }
-
-  let obj: Record<string, unknown>;
-  try {
-    obj = JSON.parse(text.slice(start, end + 1)) as Record<string, unknown>;
-  } catch (e) {
-    return unidentified(`json-parse-failed ${e instanceof Error ? e.message : String(e)}`);
-  }
-  if (!obj || typeof obj !== "object") return unidentified("parsed-not-an-object");
-
+function fromParsedObject(obj: Record<string, unknown>): BoothIdentification {
   const rawKind = typeof obj.kind === "string" ? obj.kind.toLowerCase().trim() : "";
   const kind: BoothKind =
     rawKind === "booth" ? "booth" : rawKind === "general" ? "general" : "unclear";
@@ -207,6 +176,85 @@ export function parseVisionReply(raw: unknown): BoothIdentification {
     confidence: clamp01(obj.confidence),
     rationale: cleanString(obj.rationale, 300) ?? "",
   };
+}
+
+/**
+ * Parse the model's reply into a BoothIdentification.
+ *
+ * Pure + total — exported so the parsing contract is unit-testable without an
+ * AI binding, and so a garbage reply degrades to UNIDENTIFIED (→ staged for
+ * review) instead of throwing inside the inbound workflow.
+ */
+export function parseVisionReply(raw: unknown): BoothIdentification {
+  // Workers AI response shape varies by model: some return a string, some
+  // { response: string }, and a non-string `.response` once crashed the email
+  // entrypoint outright (OPE-189). Coerce defensively, exactly as
+  // intent-classifier.ts does.
+  const respField = (raw as { response?: unknown })?.response;
+
+  // ── Workers AI returns an ALREADY-PARSED object for this model ────────────
+  //
+  // Measured against prod 2026-08-16, not assumed:
+  //   result keys            → ['response','tool_calls','usage']
+  //   typeof result.response → 'object'
+  //   result.response        → {"kind":"booth","business_name":"Petal & Pearl",…}
+  //
+  // The platform parses JSON replies for us now. This function predates that
+  // and accepted ONLY a string `.response`, so a perfectly good identification
+  // fell through to text="" and was reported as "the model returned nothing
+  // usable" — twice, on real photos, before the failure reasons added in this
+  // ticket made the shape visible.
+  //
+  // Note the trap in the older comment below: OPE-189 hardened against a
+  // non-string `.response` CRASHING us. It never considered that a non-string
+  // `.response` might be the actual answer. Defending against a shape is not
+  // the same as understanding it.
+  //
+  // Arrays are excluded deliberately — `typeof [] === "object"`, and a JSON
+  // array is not the object contract this parser reads.
+  if (respField && typeof respField === "object" && !Array.isArray(respField)) {
+    const o = respField as Record<string, unknown>;
+    // An object carrying NONE of our fields is a shape we do not understand,
+    // and must say so. But an object with `kind` is a REAL verdict — including
+    // `kind:"unclear"`, which is the model correctly declining. Marking that as
+    // a failure would make every honest "I can't tell" look like a bug and
+    // re-create exactly the noise this ticket removed.
+    const known = ["kind", "business_name", "website", "products", "confidence", "rationale"];
+    if (!known.some((k) => k in o)) {
+      return unidentified(`unrecognized-object-shape keys=${Object.keys(o).slice(0, 6).join(",")}`);
+    }
+    return fromParsedObject(o);
+  }
+
+  // Older/other models return a string (possibly wrapped in prose or a fence).
+  // Workers AI response shape varies by model: some return a string, some
+  // { response: string }, and a non-string `.response` once crashed the email
+  // entrypoint outright (OPE-189). Coerce defensively, exactly as
+  // intent-classifier.ts does.
+  const text = typeof raw === "string" ? raw : typeof respField === "string" ? respField : "";
+  // OPE-403 follow-up — each bail says WHICH one it was. "empty-text" means the
+  // model gave us nothing (or a shape we don't coerce); "no-json-span" means it
+  // answered in prose; "json-parse-failed" means it tried JSON and malformed it.
+  // Three different fixes, previously indistinguishable.
+  if (!text.trim()) return unidentified(`empty-text raw=${describeRawShape(raw)}`);
+
+  // Models often wrap JSON in prose or a ```json fence despite instructions.
+  // Take the outermost {...} span rather than trusting the whole string.
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start === -1 || end === -1 || end <= start) {
+    return unidentified(`no-json-span text="${text.trim().slice(0, 120)}"`);
+  }
+
+  let obj: Record<string, unknown>;
+  try {
+    obj = JSON.parse(text.slice(start, end + 1)) as Record<string, unknown>;
+  } catch (e) {
+    return unidentified(`json-parse-failed ${e instanceof Error ? e.message : String(e)}`);
+  }
+  if (!obj || typeof obj !== "object") return unidentified("parsed-not-an-object");
+
+  return fromParsedObject(obj);
 }
 
 /**
