@@ -19,7 +19,7 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { truncateAtBoundary } from "@/lib/seo/truncate-meta";
-import { STATE_MAP } from "@/components/events/state-events-page";
+import { STATES, STATE_BY_SLUG } from "@/lib/states";
 import { countFacetEvents, getFacetEvents } from "@/lib/events/facet-query";
 import {
   resolveFacet,
@@ -30,6 +30,18 @@ import {
 } from "@/lib/events/facets";
 
 const PAGE_SIZE = 30;
+
+/**
+ * Resolve a state slug to its code and display name.
+ *
+ * Reads `@/lib/states` rather than the state page's own STATE_MAP: importing
+ * that module would pull the whole StateEventsPage server component, and its
+ * queries, into every facet page's module graph for the sake of two strings.
+ */
+function lookupState(stateSlug: string): { code: string; name: string } | null {
+  const code = STATE_BY_SLUG[stateSlug];
+  return code ? { code, name: STATES[code].name } : null;
+}
 
 /** Human phrasing for each facet kind, used in the <title>, H1 and intro. */
 function headline(facet: ResolvedFacet, stateName: string): string {
@@ -93,7 +105,7 @@ const KIND_ICON: Record<FacetKind, typeof CalendarDays> = {
  * cheap COUNT and add a way for the robots tag to disagree with the listing.
  */
 export async function getFacetMetadata(stateSlug: string, facetSlug: string): Promise<Metadata> {
-  const state = STATE_MAP[stateSlug];
+  const state = lookupState(stateSlug);
   const now = new Date();
   const facet = state ? resolveFacet(stateSlug, facetSlug, now) : null;
   if (!state || !facet) {
@@ -147,7 +159,7 @@ interface StateFacetPageProps {
 }
 
 export async function StateFacetPage({ stateSlug, facetSlug, searchParams }: StateFacetPageProps) {
-  const state = STATE_MAP[stateSlug];
+  const state = lookupState(stateSlug);
   const now = new Date();
   const facet = state ? resolveFacet(stateSlug, facetSlug, now) : null;
   // An unrecognised segment is always a mistake, never an empty listing. A
