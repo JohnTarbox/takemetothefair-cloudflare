@@ -71,7 +71,29 @@ export default defineConfig({
     {
       name: "mobile-safari",
       use: { ...devices["iPhone 13"] },
-      testMatch: ["**/*-mobile-*.spec.ts"],
+      // OPE-363 — also carries the funnel canary, which is a mobile-layout
+      // concern by nature. Added explicitly rather than by widening the glob:
+      // the glob is what keeps the other 3× suite runs off this project.
+      testMatch: ["**/*-mobile-*.spec.ts", "**/funnel-canary.spec.ts"],
+    },
+    // OPE-363 — an Android-class profile alongside iOS.
+    //
+    // Not redundant with mobile-safari: OPE-361 presented DIFFERENTLY on the two
+    // engines — the form was pushed past the right edge on iPhone but merely
+    // shoved right on Android. A canary that only ran WebKit would have seen one
+    // of those two symptoms and could have been "fixed" against the wrong one.
+    // Chromium engine, Android viewport/UA/touch flags.
+    {
+      name: "mobile-android",
+      use: { ...devices["Pixel 5"] },
+      testMatch: ["**/*-mobile-*.spec.ts", "**/funnel-canary.spec.ts"],
+    },
+    // Desktop control. If a canary check fails on mobile AND here, the fault is
+    // not responsive layout and the triage should start somewhere else.
+    {
+      name: "canary-desktop",
+      use: { ...devices["Desktop Chrome"] },
+      testMatch: ["**/funnel-canary.spec.ts"],
     },
   ],
   ...(!process.env.PLAYWRIGHT_BASE_URL

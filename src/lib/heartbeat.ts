@@ -114,6 +114,34 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     lastEvidenceAt: (db) => maxTs(db, gscDailyTotals, gscDailyTotals.updatedAt),
   },
   {
+    // OPE-363 — proof the synthetic funnel canary is still RUNNING.
+    //
+    // The CI job going red says "the canary ran and failed". Nothing says "the
+    // canary stopped running" — a deleted schedule, an expired token or a
+    // disabled workflow all look identical to a healthy green week. That is the
+    // exact shape of the 2026-08-05→09 outage, where every dead-man check ran on
+    // the thing it was watching.
+    //
+    // Watches kind='canary' explicitly, NOT the whole table: the agent-silence
+    // probe above filters kind='watchdog', and agent rows are kind='agent'. One
+    // table, three independent liveness questions, each pinned to its own kind.
+    //
+    // 48h against a daily schedule — one missed run is a blip (a runner outage,
+    // a rate limit), two is a pattern.
+    name: "funnel-canary",
+    ownerOpe: "OPE-363",
+    label: "Synthetic funnel canary (register/claim/submit, mobile)",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        agentHeartbeats,
+        agentHeartbeats.lastSeenAt,
+        eq(agentHeartbeats.agentCode, "canary:funnel")
+      ),
+  },
+  {
     name: "photo-intake",
     ownerOpe: "OPE-202",
     label: "Photo-intake lane",
