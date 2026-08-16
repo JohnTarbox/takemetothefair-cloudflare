@@ -18,6 +18,7 @@ import { FacetNav } from "@/components/events/facet-nav";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
+import { truncateAtBoundary } from "@/lib/seo/truncate-meta";
 import { STATE_MAP } from "@/components/events/state-events-page";
 import { countFacetEvents, getFacetEvents } from "@/lib/events/facet-query";
 import {
@@ -41,6 +42,37 @@ function headline(facet: ResolvedFacet, stateName: string): string {
       return `Fairs & Festivals in ${facet.label}, ${stateName}`;
     case "type":
       return `${facet.label} in ${stateName}`;
+  }
+}
+
+/**
+ * The SERP snippet.
+ *
+ * Written per kind rather than by lower-casing the H1: "32 upcoming
+ * massachusetts fairs & festivals in august 2026" is what that shortcut
+ * produces, and a lower-cased proper noun in a search result reads as broken.
+ * Truncated on a word boundary at Google's ~155-character display limit.
+ */
+function metaDescription(facet: ResolvedFacet, stateName: string, total: number): string {
+  const tail =
+    total > 0
+      ? `${total} listed, with dates, venues and details.`
+      : `Check back as organisers publish their dates.`;
+  switch (facet.kind) {
+    case "month":
+      return truncateAtBoundary(
+        `Every fair, festival, craft show and market on the ${stateName} calendar for ${facet.label} ${facet.window!.start.getUTCFullYear()} — ${tail}`
+      );
+    case "weekend":
+      return truncateAtBoundary(
+        `What's on in ${stateName} this weekend — fairs, festivals, craft shows and markets. ${tail}`
+      );
+    case "region":
+      return truncateAtBoundary(
+        `Fairs, festivals, craft shows and markets in ${facet.label}, ${stateName} — ${tail}`
+      );
+    case "type":
+      return truncateAtBoundary(`${facet.label} across ${stateName} — ${tail}`);
   }
 }
 
@@ -74,10 +106,7 @@ export async function getFacetMetadata(stateSlug: string, facetSlug: string): Pr
   const indexable = isFacetIndexable(facet, total);
 
   const title = `${headline(facet, state.name)} | Meet Me at the Fair`;
-  const description =
-    total > 0
-      ? `${total} upcoming ${headline(facet, state.name).toLowerCase()} — dates, venues and details, updated daily.`
-      : `Upcoming ${headline(facet, state.name).toLowerCase()} on Meet Me at the Fair. Check back as organisers publish their dates.`;
+  const description = metaDescription(facet, state.name, total);
   const canonical = facetUrl(stateSlug, facetSlug);
 
   return {
