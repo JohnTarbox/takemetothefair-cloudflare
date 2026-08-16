@@ -272,6 +272,37 @@ ${attachmentNote}${SUPPORT_LINE}
 
 ${SIGN_OFF}`;
     }
+    case "empty-message": {
+      // OPE-407. Two rules govern this copy, both learned from the case that
+      // produced it:
+      //
+      //   1. Say what we OBSERVED, not what they did. The sender's phone failed
+      //      to attach the photo; a stranger reading "you forgot to attach
+      //      something" has been told they made a mistake we cannot actually
+      //      verify they made. "arrived with nothing in it" is true either way.
+      //   2. Name the count when it is a batch, so six failed sends read as one
+      //      event to fix rather than one they might dismiss as a fluke.
+      const count = Number(params.emptyCount ?? 1);
+      const opening =
+        count > 1
+          ? `We received ${count} emails from you in the last few minutes, and each one arrived with nothing in it — no attachment, no text, no subject.`
+          : `Your email arrived with nothing in it — no attachment, no text, no subject.`;
+      const advice =
+        count > 1
+          ? "If you were sending photos, they did not make it out of your mail app. Sending them again — a couple at a time, and waiting for each to finish uploading before hitting send — usually does it."
+          : "If you were sending a photo or a flyer, it did not attach. Sending it again usually works; waiting for the upload to finish before hitting send helps if you are on a phone.";
+      return `Thanks for emailing Meet Me at the Fair!
+
+${opening}
+
+${advice}
+
+If you meant to send event details as text, just reply with the event name, date, and location (or a link) and we'll take it from there.
+
+${SUPPORT_LINE}
+
+${SIGN_OFF}`;
+    }
     case "no-url-prose-failed": {
       // Used when classifier said free_text (no URL) AND extractor ran on
       // the body AND the result didn't carry enough fields. The user did
