@@ -31,6 +31,57 @@ describe("parseVisionReply", () => {
     expect(id.products).toEqual(["maple syrup", "candy"]);
   });
 
+  // ── The 2026-08-16 production shape ───────────────────────────────────────
+  //
+  // Workers AI returns an ALREADY-PARSED object for this model. Measured, not
+  // assumed: result.response = {"kind":"booth","business_name":"Petal & Pearl",
+  // "confidence":1}. The parser accepted only a STRING response, so two real
+  // photos were reported as "the model returned nothing usable" while a perfect
+  // identification sat in the reply.
+  it("accepts an already-parsed OBJECT response (the live prod shape)", () => {
+    const id = parseVisionReply({
+      response: { kind: "booth", business_name: "Petal & Pearl", confidence: 1 },
+      tool_calls: [],
+      usage: { total_tokens: 6468 },
+    });
+    expect(id.kind).toBe("booth");
+    expect(id.businessName).toBe("Petal & Pearl");
+    expect(id.confidence).toBe(1);
+    expect(id.failureReason).toBeUndefined();
+  });
+
+  it("applies the same rules to an object response as to a string one", () => {
+    // The general → drop-the-name rule is what stops scenery carrying a vendor
+    // into a write. It must not depend on which shape the model replied in.
+    const id = parseVisionReply({
+      response: { kind: "general", business_name: "Petal & Pearl", confidence: 0.9 },
+    });
+    expect(id.kind).toBe("general");
+    expect(id.businessName).toBeNull();
+  });
+
+  it("does not treat an ARRAY response as a parsed object", () => {
+    // typeof [] === "object"; an array is not this parser's contract.
+    expect(parseVisionReply({ response: [1, 2, 3] }).failureReason).toBeTruthy();
+  });
+
+  it("names an object carrying none of our fields", () => {
+    const out = parseVisionReply({ response: { nested: true } });
+    expect(out.failureReason).toContain("unrecognized-object-shape");
+    expect(out.failureReason).toContain("nested");
+  });
+
+  it("a genuine kind:'unclear' verdict is NOT marked as a failure", () => {
+    // The model declining is a real answer. Flagging it would make every honest
+    // "I can't tell" look like a parse bug — the noise this ticket removed.
+    const out = parseVisionReply({
+      response: { kind: "unclear", rationale: "sign is blurry and side-on" },
+    });
+    expect(out.kind).toBe("unclear");
+    expect(out.rationale).toContain("blurry");
+    expect(out.failureReason).toBeUndefined();
+  });
+
   it("accepts a bare string response as well as {response}", () => {
     // Workers AI response shape varies by model (OPE-189).
     expect(parseVisionReply(JSON.stringify(boothJson)).businessName).toBe("Maple Hollow Farm");
