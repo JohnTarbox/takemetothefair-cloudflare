@@ -142,10 +142,31 @@ const MIN_NAME_SLUG_LEN = 8;
  *
  * Safe-by-construction rather than fuzzy: we slugify the WHOLE subject and keep
  * only APPROVED, non-tombstone events whose OWN slug appears intact as a
- * substring of that subject-slug (`subjectSlug LIKE '%'||slug||'%'`). Because
- * `createSlug` normalises punctuation/apostrophes/`&` identically on both sides,
- * "World's" in the subject and the stored `worlds` slug line up. The length +
- * hyphen guard blocks one-word slugs from matching prose.
+ * substring of that subject-slug. Because `createSlug` normalises
+ * punctuation/apostrophes/`&` identically on both sides, "World's" in the
+ * subject and the stored `worlds` slug line up. The length + hyphen guard blocks
+ * one-word slugs from matching prose.
+ *
+ * ── Why `instr()` and NOT `LIKE '%'||slug||'%'` (OPE-404) ───────────────────
+ * The LIKE form threw `SQLITE_ERROR: LIKE or GLOB pattern too complex` and
+ * killed the whole email — `status='failed'`, photo lost.
+ *
+ * The trap is which side is the PATTERN. `subjectSlug LIKE '%'||slug||'%'` makes
+ * the pattern out of the **event slug column**, evaluated per row, so the email
+ * had nothing to do with it. Measured on prod 2026-08-16: D1 caps a LIKE pattern
+ * at **50 characters** (50 passes, 52 throws), and **114 of 1426 approved events
+ * have a slug longer than 48**. Any full scan therefore hit one and threw —
+ * deterministically, not intermittently.
+ *
+ * The subject only decided whether the query ran at all: the `< MIN_NAME_SLUG_LEN`
+ * bail above meant short subjects ("PMI", "MV", null) returned before the query
+ * and survived. So this matcher had **never once succeeded in production** — which
+ * is the "naming the fair doesn't fire" symptom reported on OPE-254.
+ *
+ * `instr(subjectSlug, slug) > 0` is exactly equivalent here (slug is `[a-z0-9-]`,
+ * so it carries no LIKE wildcards to honour) and has no pattern-length limit.
+ * Do NOT "restore" the LIKE form, and do not fix this by capping slug length —
+ * that would silently make long-slug events unmatchable instead of erroring.
  *
  * Ambiguity HOLDS (returns null): if the subject spells out two INDEPENDENT
  * fair names (neither slug a substring of the other, e.g. "Fryeburg Fair and
@@ -172,8 +193,10 @@ export async function findEventBySubjectName(
         sql`length(${events.slug}) >= ${MIN_NAME_SLUG_LEN}`,
         sql`${events.slug} LIKE '%-%'`,
         // Event's own slug must appear intact inside the slugified subject.
-        // subjectSlug is [a-z0-9-] only, so it carries no LIKE wildcards.
-        sql`${subjectSlug} LIKE '%' || ${events.slug} || '%'`
+        // instr(), not LIKE — see the OPE-404 note in this function's docblock.
+        // The LIKE form built its PATTERN from this column and blew D1's 50-char
+        // pattern limit on the 114 approved events with slugs over 48 chars.
+        sql`instr(${subjectSlug}, ${events.slug}) > 0`
       )
     );
 
@@ -655,6 +678,11 @@ const HOLD_ASK: Record<string, string> = {
   "no-venue-in-radius": "no venue we have geocoded is within range of where the photos were taken",
   "no-event-on-date": "we know the venue, but no approved fair was running there on that date",
   "ambiguous-multiple-events": "more than one approved fair was running at that venue that day",
+  // OPE-404 — deliberately does NOT blame the photo. The sender did nothing
+  // wrong; our lookup faulted. Telling them their photo lacked GPS would send
+  // them to re-shoot it, which fixes nothing.
+  "resolver-error":
+    "something went wrong on our side while looking up the fair — your photos are safe and held",
 };
 
 export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> => {
@@ -692,12 +720,42 @@ export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> =
     ...eventSlugsFromSubjectUrl(row.subject),
   ];
 
-  const { resolution, exif } = await resolvePhotoEvent(
-    db,
-    overrideSlugs,
-    () => readExif(env, refs),
-    row.subject
-  );
+  // OPE-404 — resolution must never kill the email.
+  //
+  // A `SQLITE_ERROR` from the subject matcher propagated out of the handler and
+  // the workflow marked the row `status='failed'` with no recovery path. Two
+  // photos died that way (Belgrade Lakes 2026-08-10 was still lost five days
+  // later). Identifying the fair is a BEST-EFFORT step: not knowing which fair a
+  // photo belongs to is the ordinary hold case we already handle well, so any
+  // failure here degrades to that instead of destroying the email.
+  //
+  // Deliberately catching broadly. The specific bug is fixed above, but the
+  // point of this guard is the class — a photo we have in hand must not be lost
+  // to any future query fault in a step whose whole job is a lookup.
+  let resolution: Resolution;
+  let exif: ExifData;
+  try {
+    ({ resolution, exif } = await resolvePhotoEvent(
+      db,
+      overrideSlugs,
+      () => readExif(env, refs),
+      row.subject
+    ));
+  } catch (e) {
+    await logError(env.DB, {
+      level: "error",
+      source: "mcp:photo-intake:resolve-failed",
+      message: "fair resolution threw; holding the photo instead of failing the email",
+      error: e,
+      context: { messageRowId: row.id, subject: row.subject },
+    });
+    resolution = {
+      status: "held",
+      reason: "resolver-error",
+      detail: e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200),
+    };
+    exif = {};
+  }
 
   if (resolution.status === "resolved") {
     // OPE-204 Milestone A — identify the booths and STAGE them for review.

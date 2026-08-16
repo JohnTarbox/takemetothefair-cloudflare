@@ -288,6 +288,86 @@ describe("resolvePhotoEvent (OPE-203, real SQLite)", () => {
     expect(await findEventBySubjectName(db as unknown as Db, null)).toBeNull();
   });
 
+  // ── OPE-404: the LIKE-pattern-length fault ────────────────────────────────
+  //
+  // The query used `subjectSlug LIKE '%' || events.slug || '%'`, which builds
+  // the PATTERN out of the slug column. D1 caps a LIKE pattern at 50 chars
+  // (measured: 50 passes, 52 throws) and 114 of 1426 approved events have a
+  // slug over 48, so any full scan threw SQLITE_ERROR and killed the email.
+  //
+  // The subject only decided whether the query ran at all — short subjects bail
+  // before it. So this matcher never once succeeded in production.
+  it("survives an event whose slug exceeds D1's 50-char LIKE pattern limit", async () => {
+    const { db } = createTestDb();
+    await seed(db as unknown as Db);
+
+    // 68 chars — the real longest approved slug in prod on 2026-08-16.
+    const longSlug = "the-great-northern-agricultural-exposition-and-craft-festival-annual";
+    expect(longSlug.length).toBeGreaterThan(48);
+    await db.update(events).set({ slug: longSlug }).where(eq(events.id, "e1"));
+
+    // Must not throw. Under the old LIKE form this raised SQLITE_ERROR.
+    await expect(
+      findEventBySubjectName(db as unknown as Db, "Photos from the Cheshire Fair")
+    ).resolves.toBeNull();
+  });
+
+  it("still matches a fair NAMED in the subject (the behaviour that never worked)", async () => {
+    const { db } = createTestDb();
+    await seed(db as unknown as Db);
+    await db.update(events).set({ slug: "waterford-worlds-fair" }).where(eq(events.id, "e1"));
+
+    const hit = await findEventBySubjectName(
+      db as unknown as Db,
+      "Photos from the Waterford World's Fair"
+    );
+    // createSlug normalises the apostrophe on both sides, so "World's" lines up
+    // with the stored `worlds`.
+    expect(hit?.slug).toBe("waterford-worlds-fair");
+  });
+
+  // ⚠️ The three behavioural tests around this one CANNOT catch a regression.
+  //
+  // They run on better-sqlite3, whose SQLITE_LIMIT_LIKE_PATTERN_LENGTH is the
+  // 50000 default; D1's is 50. The original LIKE form passes all of them
+  // locally and throws in production — which is exactly how this shipped and
+  // survived a full test suite. Documenting that limitation and moving on would
+  // let it rot, so the actual guard is a source assertion: the pattern must
+  // never again be built by concatenating a COLUMN into a LIKE.
+  it("never rebuilds a LIKE pattern out of a column (the D1 50-char trap)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync(
+      new URL("../src/email-handlers/photo-intake.ts", import.meta.url),
+      "utf8"
+    );
+    // Strip comments first. The docblock above deliberately QUOTES the bad form
+    // so the next reader understands the trap; a guard that cannot tell code
+    // from prose would forbid documenting it, which is worse than the bug.
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+
+    // Matches `LIKE '%' || ${...}` — a pattern whose length is data-dependent.
+    // A literal pattern like `LIKE '%-%'` is fine and must stay allowed.
+    const columnBuiltLike = /LIKE\s*'%'\s*\|\|/;
+    expect(columnBuiltLike.test(code)).toBe(false);
+    expect(code).toContain("instr(");
+  });
+
+  it("a long slug is skipped, not matched, and does not block shorter matches", async () => {
+    // The wrong fix would be capping slug length in SQL, which silently makes
+    // long-slug events unmatchable. instr() has no limit, so a long slug is
+    // still eligible — it simply has to genuinely appear in the subject.
+    const { db } = createTestDb();
+    await seed(db as unknown as Db);
+    const longSlug = "the-great-northern-agricultural-exposition-and-craft-festival-annual";
+    await db.update(events).set({ slug: longSlug }).where(eq(events.id, "e1"));
+
+    const hit = await findEventBySubjectName(
+      db as unknown as Db,
+      "The Great Northern Agricultural Exposition and Craft Festival Annual"
+    );
+    expect(hit?.slug).toBe(longSlug);
+  });
+
   it("does not match a DRAFT/PENDING event — holds instead of attributing", async () => {
     const { db } = createTestDb();
     await seed(db as unknown as Db);
