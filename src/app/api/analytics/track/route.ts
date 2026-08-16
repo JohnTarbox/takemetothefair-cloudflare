@@ -11,6 +11,7 @@ import {
   sendGa4MeasurementProtocol,
 } from "@/lib/ga4-measurement-protocol";
 import { trackClaimViewServer } from "@/lib/analytics/claim-funnel";
+import { classifyDevice, NEW_FUNNEL_STEP_NAMES } from "@/lib/analytics/funnel-steps";
 
 const MAX_BODY_BYTES = 4_000;
 const MAX_PROPERTY_BYTES = 2_000;
@@ -55,6 +56,15 @@ const ALLOWED_EVENT_NAMES = [
   // as claim_view_server (ad-block-resilient). The three deeper claim-funnel
   // conversions fire from pure server routes, not this beacon.
   "claim_view",
+  // OPE-364 — per-step funnel instrumentation. The `*_form_interacted` steps
+  // are the point of the ticket: OPE-361's signature is "page viewed, form
+  // never touched", and a funnel counting only views and submissions cannot
+  // tell "nobody wanted to" from "nobody could".
+  //
+  // Kept in sync with FUNNEL_STEPS in src/lib/analytics/funnel-steps.ts — a
+  // test asserts every registered step is allowlisted here, so the read path
+  // and the write path cannot drift apart silently.
+  ...NEW_FUNNEL_STEP_NAMES,
 ] as const;
 
 // ENG1.8 — outbound-click event names mirrored to GA4 server-side via the
@@ -119,11 +129,25 @@ export async function POST(request: Request) {
   const session = await auth();
   const userId = session?.user?.id;
 
+  // OPE-364 — device class is derived SERVER-SIDE and merged LAST, so it
+  // overrides anything a caller sent under the same keys.
+  //
+  // Two reasons it is not a client-supplied property: a caller can spoof or
+  // simply forget it (analytics_events already has rows with empty props — see
+  // OPE-389 on newsletter_confirm), and the request header is free and always
+  // present. Applied to EVERY beacon event, not just funnel steps, so the
+  // dimension exists for anything we later want to slice.
+  //
+  // OPE-361 was mobile-only and presented differently on iOS vs Android; an
+  // undimensioned funnel would have shown a modest dip diluted by desktop
+  // traffic, which is how it stayed invisible.
+  const { device, os } = classifyDevice(request.headers.get("user-agent"));
+
   const db = getCloudflareDb();
   await trackServerEvent(db, {
     eventName: parsed.data.name,
     eventCategory: parsed.data.category,
-    properties: parsed.data.properties,
+    properties: { ...(parsed.data.properties ?? {}), device, os },
     userId,
     source: "client_beacon",
   });

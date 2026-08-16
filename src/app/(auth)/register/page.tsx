@@ -10,7 +10,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { FormErrorSummary } from "@/components/ui/form-error-summary";
-import { trackEvent, trackClaimView } from "@/lib/analytics";
+import {
+  trackEvent,
+  trackClaimView,
+  trackFunnelView,
+  trackFunnelInteracted,
+  trackFunnelSubmitted,
+} from "@/lib/analytics";
 import { type FieldErrors, validateAll, validateField } from "@/lib/validations/field-errors";
 
 // Client-side schema mirrors the server registerSchema but adds the
@@ -191,7 +197,35 @@ function RegisterForm() {
     }
   }, [initTurnstile, turnstileSiteKey]);
 
+  // OPE-364 — funnel step 1. Fires once per mount, so `register_view` divided
+  // by `register_form_interacted` answers "did anyone who landed here manage to
+  // touch the form", which is exactly the question OPE-361 needed asked.
+  useEffect(() => {
+    trackFunnelView("register");
+  }, []);
+
+  // OPE-364 — funnel step 2, the one that would have caught OPE-361.
+  //
+  // Latched to FIRST touch only. The beacon is rate-limited to 60 events/hour
+  // per anonymous client; emitting per keystroke would exhaust that budget and
+  // start dropping the very steps being measured. A ref, not state, so latching
+  // costs no re-render.
+  const interactionTracked = useRef(false);
+  const markInteracted = useCallback(() => {
+    if (interactionTracked.current) return;
+    interactionTracked.current = true;
+    trackFunnelInteracted("register");
+    // The CLAIM funnel runs through this same form: OPE-66 beacons `claim_view`
+    // here when the visit arrives from a "Claim this listing" CTA. So a claim
+    // visitor's first touch is simultaneously a register interaction and a claim
+    // interaction, and both funnels need the step or the claim funnel keeps the
+    // exact gap OPE-361 fell through. Emitted only in claim context, so the
+    // register funnel's own numbers are unaffected.
+    if (claimSlug) trackFunnelInteracted("claim");
+  }, [claimSlug]);
+
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    markInteracted();
     setFormData((prev) => ({
       ...prev,
       [e.target.name]: e.target.value,
@@ -219,6 +253,13 @@ function RegisterForm() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+
+    // OPE-364 — funnel step 3. Emitted on the user's ATTEMPT, before any
+    // validation or Turnstile gate, so `register_form_interacted` ->
+    // `register_submitted` measures "did they get as far as trying". A step
+    // that only fired on success would hide a form that cannot be submitted —
+    // the same blind spot as counting views and conversions alone.
+    trackFunnelSubmitted("register");
 
     // OPE-150 — never let the user submit into the unsolvable server-side
     // "complete the security check" dead-end when the widget can't exist.
