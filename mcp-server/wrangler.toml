@@ -55,11 +55,25 @@ EMAIL_REPLY_ENABLED = "false"
 # Shipped OFF: it spends Workers AI on every inbound photo, and nobody has
 # measured the model's accuracy on real booth photos yet — the staged rows are
 # how we measure it before any write exists.
-# ⚠️ PREREQUISITE before flipping this to "true": the vision model needs a
-# ONE-TIME per-account Meta license acceptance or every call fails —
+# ✅ PREREQUISITE SATISFIED 2026-08-16 (OPE-403). The vision model needs a
+# ONE-TIME per-account Meta license acceptance or every call fails. Accepted on
+# account e6011e48b7014ef83c77e3c767dac6cf — do NOT re-run this; it is done:
 #   curl https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/ai/run/@cf/meta/llama-3.2-11b-vision-instruct \
 #     -X POST -H "Authorization: Bearer $TOKEN" -d '{"prompt":"agree"}'
-PHOTO_VISION_ENABLED = "false"
+# Verified two ways, because the agree-call succeeding only proves THAT request
+# was accepted: the agree call returned success, and a separate ordinary prompt
+# afterwards also served (0.79 neurons). The second is the one that proves it.
+#
+# ⚠️ Do not "fix" this by editing [vars] in the Cloudflare dashboard — a
+# dashboard var is wiped by the next `wrangler deploy`. This file is the source
+# of truth for the flag; only secrets survive a deploy.
+#
+# Turned ON 2026-08-16 by John's explicit authorization, AFTER OPE-403's rails
+# shipped (407f1caf / #858) — deliberately in that order. Before those rails, a
+# failure here stored nothing and still sent a cheerful "Matched to: <fair>" ack.
+# Now a zero-store records photos_stored=0, flags the row for review, and raises
+# a P0 in the OPE-75 digest. The rails are what make this flip observable.
+PHOTO_VISION_ENABLED = "true"
 # OPE-204 Milestone B — booth-photo AUTO-WRITE. Independent of vision above:
 # vision ON + this OFF = identify-only (every booth staged for review). Flip to
 # "true" ONLY after John's explicit go — it creates public vendor records + event
