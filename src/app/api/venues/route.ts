@@ -1,6 +1,8 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { getCloudflareDb } from "@/lib/cloudflare";
+import { getCloudflareEnv } from "@/lib/cloudflare";
+import { geocodeNewVenue } from "@/lib/venues/geocode-one";
 import { venues } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
@@ -127,6 +129,13 @@ export async function POST(request: Request) {
       parking: body.parking ?? null,
       status: "ACTIVE",
     });
+
+    // OPE-408 — geocode at creation. The public venue-create path had no
+    // geocoding at all, so every venue born here started with NULL coordinates
+    // and silently broke photo matching, distance/near-me and map surfaces
+    // until a human swept by hand. Never fatal: geocodeNewVenue swallows every
+    // fault, and the nightly sweep is the retry.
+    await geocodeNewVenue(db, venueId, getCloudflareEnv().GOOGLE_MAPS_API_KEY);
 
     const [newVenue] = await db
       .select({

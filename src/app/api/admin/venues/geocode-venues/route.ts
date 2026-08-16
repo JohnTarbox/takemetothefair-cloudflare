@@ -45,20 +45,12 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { withInternalKey } from "@/lib/api/with-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
-import { venues, adminActions } from "@/lib/db/schema";
-import { eq, inArray, isNull, and, gt, ne } from "drizzle-orm";
-import { geocodeAddressDetailed, lookupPlace } from "@/lib/google-maps";
+import { venues } from "@/lib/db/schema";
+import { inArray, isNull, and, gt } from "drizzle-orm";
 import { logError } from "@/lib/logger";
+import { geocodeVenueRow } from "@/lib/venues/geocode-one";
 import {
-  preflight,
-  judge,
-  judgeNameLookup,
-  hasSufficientAddress,
   nextCursor,
-  shouldWrite,
-  forcedOutcome,
-  duplicateOutcome,
-  type GeocodePin,
   type GeocodeOutcome,
   type VenueForGeocode,
 } from "@/lib/venues/geocode-decision";
@@ -169,116 +161,13 @@ export const POST = withInternalKey(
     }
 
     for (const v of rows) {
-      // Cheap outcomes first — no Google call for these.
-      const pre = preflight(v, force);
-      if (pre) {
-        results.push(pre);
-        continue;
-      }
-
+      // OPE-408 — the per-venue decision + write now lives in
+      // src/lib/venues/geocode-one.ts, because venue CREATION needs the exact
+      // same confidence gate. It had been inline here only, which is why five
+      // hardening passes (OPE-213/214/215/219/228) improved the sweep and left
+      // every newly-created venue ungeocoded. One gate, two callers.
       try {
-        // Which API can answer for this venue is a property of the row, not a
-        // caller choice: a street address goes to the Geocoding API, a bare
-        // name+city+state to a Places text search (OPE-213). preflight() has
-        // already guaranteed at least one path is viable.
-        let outcome: GeocodeOutcome;
-        let pin: GeocodePin | null = null;
-
-        if (hasSufficientAddress(v)) {
-          const detail = await geocodeAddressDetailed(
-            v.address ?? "",
-            v.city ?? "",
-            v.state ?? "",
-            v.zip ?? undefined,
-            apiKey
-          );
-          outcome = judge(v, detail);
-          if (detail) {
-            pin = {
-              lat: detail.lat,
-              lng: detail.lng,
-              placeId: detail.placeId,
-              zip: detail.zip,
-              address: null, // the geocode path had an address already
-            };
-          }
-        } else {
-          const place = await lookupPlace(v.name, v.city ?? "", v.state ?? "", apiKey);
-          outcome = judgeNameLookup(v, place);
-          if (place && place.lat != null && place.lng != null) {
-            pin = {
-              lat: place.lat,
-              lng: place.lng,
-              placeId: place.googlePlaceId,
-              zip: place.zip,
-              // The text search returns the street address we were missing —
-              // this fixes the root data gap, not just the coordinates.
-              address: place.address,
-            };
-          }
-        }
-
-        // OPE-228 — before writing, check whether another venue already owns
-        // this Google Place. `google_place_id` is UNIQUE, so the UPDATE would
-        // otherwise throw a raw D1 constraint traceback. Surfacing it as
-        // `duplicate-with` turns every collision into a `merge_venue` candidate.
-        if (shouldWrite(outcome, force) && pin?.placeId) {
-          const [owner] = await db
-            .select({ id: venues.id, name: venues.name, slug: venues.slug })
-            .from(venues)
-            .where(and(eq(venues.googlePlaceId, pin.placeId), ne(venues.id, v.id)))
-            .limit(1);
-          if (owner) {
-            outcome = duplicateOutcome(outcome, {
-              venue_id: owner.id,
-              name: owner.name,
-              slug: owner.slug,
-            });
-            results.push(outcome);
-            await new Promise((r) => setTimeout(r, PACE_MS));
-            continue;
-          }
-        }
-
-        if (shouldWrite(outcome, force) && pin) {
-          if (outcome.status === "low-confidence") outcome = forcedOutcome(outcome, pin);
-
-          const updates: Record<string, unknown> = {
-            latitude: pin.lat,
-            longitude: pin.lng,
-            updatedAt: new Date(),
-          };
-          // A null placeId would build a "place_id:null" URL — skip both.
-          if (pin.placeId) {
-            updates.googlePlaceId = pin.placeId;
-            updates.googleMapsUrl = `https://www.google.com/maps/place/?q=place_id:${pin.placeId}`;
-          }
-          // Fill blanks from the geocode, but never overwrite what's stored.
-          if (!v.zip && pin.zip) updates.zip = pin.zip;
-          if (!v.address?.trim() && pin.address) updates.address = pin.address;
-          await db.update(venues).set(updates).where(eq(venues.id, v.id));
-
-          // A pin that beat the confidence gate by override has to stay
-          // answerable once this response is gone — OPE-203 attributes photos
-          // on it for as long as it sits in the row.
-          if (outcome.status === "forced") {
-            await db.insert(adminActions).values({
-              action: "venue.geocode.forced",
-              actorUserId: null, // internal-key route: no session user
-              targetType: "venue",
-              targetId: v.id,
-              payloadJson: JSON.stringify({
-                reason: outcome.error,
-                candidate: outcome.candidate,
-                method: outcome.method,
-                lat: pin.lat,
-                lng: pin.lng,
-              }),
-              createdAt: new Date(),
-            });
-          }
-        }
-        results.push(outcome);
+        results.push(await geocodeVenueRow(db, v, apiKey, force));
       } catch (error) {
         // One venue's failure must not tank the batch (scope §5).
         await logError(db, {

@@ -2,6 +2,7 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/api/with-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
+import { geocodeNewVenue } from "@/lib/venues/geocode-one";
 import { venues } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
@@ -83,6 +84,17 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
       parking: data.parking,
       status: data.status,
     });
+
+    // OPE-408 — geocode at creation. `venues_geocode` shipped "for every future
+    // new venue" (OPE-207) and was never wired here, so venues born from this
+    // path had NULL coordinates until someone swept by hand: 0% missing in
+    // Jan–Apr, 52% by August. A venue with no pin silently breaks photo
+    // matching, distance/near-me and any map surface.
+    //
+    // Awaited but never fatal: geocodeNewVenue swallows every fault, so Google
+    // being slow or down cannot fail a venue insert. A missed pin is recovered
+    // by the nightly sweep; a failed insert loses the submission.
+    await geocodeNewVenue(db, venueId, getCloudflareEnv().GOOGLE_MAPS_API_KEY);
 
     const [newVenue] = await db.select().from(venues).where(eq(venues.id, venueId)).limit(1);
 

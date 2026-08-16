@@ -12,7 +12,7 @@
  * is recovered as a day-over-day depth delta from the persisted snapshots — and
  * stays `null` (→ no RED, tile shows "pending history") until a prior row exists.
  */
-import { and, count, eq, gte, isNotNull, lt, sql } from "drizzle-orm";
+import { and, count, eq, gte, isNotNull, isNull, lt, sql } from "drizzle-orm";
 import {
   eventDiscrepancies,
   supportObligations,
@@ -22,6 +22,7 @@ import {
   healthIssues,
   healthIssueSnoozes,
   inboundEmails,
+  venues,
   queueDrainSnapshots,
 } from "@/lib/db/schema";
 import { getCurrentIssues } from "@/lib/site-health";
@@ -340,6 +341,83 @@ async function inboundAwaitingDecisionFlow(db: Db, now: Date): Promise<QueueDrai
   };
 }
 
+/**
+ * OPE-408 — venues with no coordinates.
+ *
+ * `venues_geocode` shipped (OPE-207) "for batch backfill AND every future new
+ * venue"; only the backfill half was wired, so pins appeared only when a human
+ * remembered. Missing-coords went 0% (Jan–Apr) -> 52% (Aug), and that curve is
+ * not decaying data quality — it is TIME SINCE THE LAST MANUAL SWEEP.
+ *
+ * The failure was not that geocoding broke. It was that nobody could see it
+ * drifting, which is why this belongs in the inventory rather than in a
+ * one-off report: a venue with no pin silently breaks photo matching,
+ * distance/near-me and every map surface.
+ *
+ * `oldestOpenAgeHours` is the load-bearing column. Depth alone cannot separate
+ * "25 venues created today, sweep runs at 08:30" from "25 venues that have sat
+ * unpinned since May" — the first is healthy, the second is the drift.
+ *
+ * Outflow is a snapshot delta: geocoding fills columns in place and stamps no
+ * "geocoded_at", so there is no timestamp to count. Null until history exists.
+ */
+async function venuesMissingCoordsFlow(db: Db, now: Date): Promise<QueueDrainRow> {
+  const d = (days: number) => new Date(now.getTime() - days * DAY_MS);
+  const missing = and(isNull(venues.latitude), isNull(venues.longitude));
+  const [depth, inflow1d, inflow7d, inflow14d, oldest] = await Promise.all([
+    cnt(db, venues, missing),
+    cnt(db, venues, and(missing, gte(venues.createdAt, d(1)))),
+    cnt(db, venues, and(missing, gte(venues.createdAt, d(7)))),
+    cnt(db, venues, and(missing, gte(venues.createdAt, d(14)))),
+    db
+      .select({ oldest: sql<number | null>`min(${venues.createdAt})` })
+      .from(venues)
+      .where(missing),
+  ]);
+
+  const oldestSec = oldest[0]?.oldest ?? null;
+  const oldestOpenAgeHours =
+    oldestSec != null ? (now.getTime() / 1000 - Number(oldestSec)) / 3600 : null;
+
+  const prior = await db
+    .select({
+      depth: queueDrainSnapshots.depth,
+      outflow1d: queueDrainSnapshots.outflow1d,
+      snapshotDate: queueDrainSnapshots.snapshotDate,
+    })
+    .from(queueDrainSnapshots)
+    .where(
+      and(
+        eq(queueDrainSnapshots.queueName, "venues_missing_coords"),
+        lt(queueDrainSnapshots.snapshotDate, utcDate(now))
+      )
+    )
+    .orderBy(sql`${queueDrainSnapshots.snapshotDate} desc`)
+    .limit(14);
+
+  const outflow1d = prior.length > 0 ? Math.max(0, prior[0].depth + inflow1d - depth) : null;
+  const sumStored = (n: number): number | null => {
+    const rows = prior.slice(0, n).filter((r) => r.outflow1d != null);
+    if (rows.length === 0) return null;
+    return rows.reduce((s, r) => s + (r.outflow1d as number), 0) + (outflow1d ?? 0);
+  };
+
+  return {
+    queueName: "venues_missing_coords",
+    label: "Venues missing coordinates",
+    href: QUEUE_DRAIN_HREF,
+    depth,
+    inflow7d,
+    outflow7d: sumStored(6),
+    inflow14d,
+    outflow14d: sumStored(13),
+    oldestOpenAgeHours,
+    inflow1d,
+    outflow1d,
+    drainRatio7d: ratio(sumStored(6), inflow7d),
+  };
+}
+
 /** Compute live flow for all seven queues. Never throws per-queue — a failure in
  *  one returns a depth-0 placeholder so the others still render/alert. */
 export async function gatherQueueFlows(db: Db, now: Date): Promise<QueueDrainRow[]> {
@@ -401,6 +479,9 @@ export async function gatherQueueFlows(db: Db, now: Date): Promise<QueueDrainRow
     // counts a workflow literally hibernating for a decision — confidently
     // classified, handler ran, and invisible in every existing queue until now.
     inboundAwaitingDecisionFlow(db, now),
+    // OPE-408 — coverage gap, not a work queue: rows nobody has to action, but
+    // whose depth+age is the only visible signal that geocoding has drifted.
+    venuesMissingCoordsFlow(db, now),
     // OPE-365 (R1) — people owed a human response. Distinct from
     // inbound_exceptions, which counts classifier UNCERTAINTY: that queue has
     // held depth 33 with outflow_1d=0 while a real customer's blocker passed

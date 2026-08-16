@@ -653,7 +653,10 @@ async function runMainAppSweep(
   env: Env,
   label: string,
   path: string,
-  format: (result: Record<string, unknown>) => string = (r) => JSON.stringify(r)
+  format: (result: Record<string, unknown>) => string = (r) => JSON.stringify(r),
+  // OPE-408 — some sweeps need arguments (geocode wants `missing_only`).
+  // Optional so every existing caller is byte-for-byte unchanged.
+  body?: Record<string, unknown>
 ): Promise<void> {
   const sessionId = crypto.randomUUID();
   try {
@@ -663,6 +666,7 @@ async function runMainAppSweep(
     const response = await mainAppFetch(env, path, "scheduled", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      ...(body ? { body: JSON.stringify(body) } : {}),
     });
     if (!response.ok) {
       const text = (await response.text()).slice(0, 300);
@@ -1636,6 +1640,35 @@ export default {
       );
       return;
     }
+    if (controller.cron === "30 8 * * *") {
+      // OPE-408 — nightly venue-geocode safety net.
+      //
+      // Creation-path geocoding (src/lib/venues/geocode-one.ts) is now wired
+      // into the main-app venue writers, but two writers live in THIS worker
+      // (create_venue, event-ingest inline resolve) and a future writer could
+      // forget again — which is exactly how OPE-207's "every future new venue"
+      // went unwired for months. A sweep keyed on the CONDITION (latitude IS
+      // NULL) rather than on call sites covers every writer, including ones
+      // that do not exist yet.
+      //
+      // 08:30 UTC: after the 08:00 promoter-enrichment sweep so the two do not
+      // contend for the main app. `missing_only` pages via the OPE-214 cursor,
+      // and non-writing outcomes (low-confidence, non-point) do not stall it.
+      ctx.waitUntil(
+        runMainAppSweep(
+          env,
+          "venue geocode",
+          "/api/admin/venues/geocode-venues",
+          (r) => {
+            const results = Array.isArray(r.results) ? r.results : [];
+            const ok = results.filter((x) => (x as { status?: string }).status === "ok").length;
+            return `attempted=${results.length} written=${ok} next_cursor=${r.next_cursor ?? "none"}`;
+          },
+          { missing_only: true }
+        )
+      );
+    }
+
     if (controller.cron === "0 7 * * *") {
       // I1 (2026-06-13) — nightly vendor-enrichment sweep. Selects ≤100
       // population-1 vendors and enqueues one job each; the queue consumer does
