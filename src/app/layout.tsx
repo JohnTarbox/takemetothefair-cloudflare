@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Fraunces, Inter } from "next/font/google";
+import localFont from "next/font/local";
 import "./globals.css";
 import { Providers } from "@/components/layout/providers";
 import { Header } from "@/components/layout/header";
@@ -9,17 +9,56 @@ import { WebVitals } from "@/components/WebVitals";
 import { ErrorAnalyticsBridge } from "@/components/ErrorAnalyticsBridge";
 import { OrganizationSchema } from "@/components/seo/OrganizationSchema";
 
-const fraunces = Fraunces({
-  subsets: ["latin"],
+/**
+ * Fonts are SELF-HOSTED, not fetched from Google at build time.
+ *
+ * `next/font/google` downloads the font files during `next build`. That makes
+ * every production build depend on fonts.googleapis.com being reachable from
+ * the CI runner, and when it is not the build fails outright — it broke three
+ * builds in a single day (#863, #867, #870) with `nextFontError`, each costing a
+ * full rebuild. A font is a static asset that changes maybe once a year; making
+ * it a build-time network call trades a permanent fragility for nothing.
+ *
+ * These are the same files Google serves, downloaded once and committed:
+ * the latin-subset VARIABLE woff2 for each family, which is what
+ * `subsets: ["latin"]` was already requesting. One variable file covers the
+ * whole weight range, so it replaces the four static Fraunces instances the
+ * previous config pulled (400/500/600/700) and is smaller than their sum.
+ *
+ * `adjustFontFallback` is set explicitly because `next/font/google` was doing
+ * it for us: it derives size-adjust metrics for a fallback face so text does
+ * not reflow when the webfont swaps in. Dropping it would have quietly
+ * regressed CLS on every page — the kind of side effect that does not show up
+ * in a build log.
+ *
+ * Both families are SIL OFL 1.1; see `src/app/fonts/OFL.txt`.
+ */
+const fraunces = localFont({
+  src: "./fonts/fraunces-latin-var.woff2",
   variable: "--font-display",
   display: "swap",
-  weight: ["400", "500", "600", "700"],
+  weight: "400 700",
+  style: "normal",
+  adjustFontFallback: "Times New Roman",
+  fallback: ["Georgia", "Cambria", "Times New Roman", "serif"],
 });
 
-const inter = Inter({
-  subsets: ["latin"],
+const inter = localFont({
+  src: "./fonts/inter-latin-var.woff2",
   variable: "--font-sans",
   display: "swap",
+  weight: "100 900",
+  style: "normal",
+  adjustFontFallback: "Arial",
+  fallback: [
+    "system-ui",
+    "-apple-system",
+    "Segoe UI",
+    "Roboto",
+    "Helvetica Neue",
+    "Arial",
+    "sans-serif",
+  ],
 });
 
 export const metadata: Metadata = {
