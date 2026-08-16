@@ -84,7 +84,11 @@ export const UNIDENTIFIED: BoothIdentification = {
  * because this lands in a log line and an admin_actions payload, not a report.
  */
 export function unidentified(failureReason: string): BoothIdentification {
-  return { ...UNIDENTIFIED, failureReason: failureReason.slice(0, 200) };
+  // 500, not 200: at 200 a retried reason (two causes plus the quoted reply)
+  // was itself being cut, so the log could not be distinguished from the very
+  // truncation it was reporting. A diagnostic that clips its own evidence at
+  // the interesting point is worse than no diagnostic.
+  return { ...UNIDENTIFIED, failureReason: failureReason.slice(0, 500) };
 }
 
 /** A compact description of an unexpected reply, for the failure reason.
@@ -243,7 +247,11 @@ export function parseVisionReply(raw: unknown): BoothIdentification {
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
   if (start === -1 || end === -1 || end <= start) {
-    return unidentified(`no-json-span text="${text.trim().slice(0, 120)}"`);
+    // Quote generously AND state the true length. On the first live occurrence
+    // the quote stopped at 120 chars mid-word, which looked exactly like the
+    // model being cut off — the log's own limit was mistaken for the evidence.
+    const t = text.trim();
+    return unidentified(`no-json-span len=${t.length} text="${t.slice(0, 240)}"`);
   }
 
   let obj: Record<string, unknown>;
@@ -264,11 +272,11 @@ export function parseVisionReply(raw: unknown): BoothIdentification {
  * the photo is staged for review rather than sinking the inbound workflow
  * (the OPE-189 lesson — a handler that throws kills the whole email).
  */
-export async function identifyBooth(ai: VisionAi, bytes: Uint8Array): Promise<BoothIdentification> {
+async function runOnce(ai: VisionAi, bytes: number[]): Promise<BoothIdentification> {
   try {
     const raw = await ai.run(VISION_MODEL, {
       // The binding expects a plain byte array, not a Uint8Array/ArrayBuffer.
-      image: Array.from(bytes),
+      image: bytes,
       prompt: VISION_PROMPT,
       max_tokens: MAX_TOKENS,
     });
@@ -280,6 +288,48 @@ export async function identifyBooth(ai: VisionAi, bytes: Uint8Array): Promise<Bo
     // arrived as the same "returned nothing usable".
     return unidentified(`ai-run-threw: ${e instanceof Error ? e.message : String(e)}`);
   }
+}
+
+/**
+ * Identify one booth photo, retrying ONCE on an unusable reply.
+ *
+ * ── Why a retry, measured rather than guessed (OPE-403, 2026-08-16) ─────────
+ * The model emits malformed output intermittently. Same photo, same prompt,
+ * same `max_tokens: 384`, two calls:
+ *
+ *   prod  → unterminated JSON string, cut mid-token ("…\"hand-cro")
+ *   probe → complete parsed object, completion_tokens 56, confidence 1,
+ *           business_name "Mountain View Crochet Studio"
+ *
+ * So this is NOT the token cap (56 ≪ 384) and NOT the image. Cloudflare returns
+ * a parsed OBJECT when the model's JSON is valid and the raw STRING when it is
+ * not, which is why one photo produced `response=object` and the next
+ * `no-json-span` — two symptoms, one intermittent cause.
+ *
+ * A retry is the honest fix. The alternative — a lenient parser that closes
+ * dangling braces — would invent structure the model never emitted, on a path
+ * whose output becomes a public factual claim about a real business. Rerunning
+ * costs ~30 neurons (a fraction of a cent) and asks the model again rather than
+ * guessing what it meant.
+ *
+ * Only retried when the FIRST attempt failed to parse. A genuine verdict —
+ * including `kind:"unclear"`, the model declining — carries no `failureReason`
+ * and is returned as-is, so a decisive "I can't tell" never costs a second call.
+ */
+export async function identifyBooth(ai: VisionAi, bytes: Uint8Array): Promise<BoothIdentification> {
+  // Convert once: `Array.from` on a multi-MB photo is not free, and a retry
+  // must not pay for it twice.
+  const arr = Array.from(bytes);
+
+  const first = await runOnce(ai, arr);
+  if (!first.failureReason) return first;
+
+  const second = await runOnce(ai, arr);
+  if (!second.failureReason) return second;
+
+  // Both failed. Report the SECOND reason but say it was retried, so a
+  // persistent fault reads differently from a one-off in the logs.
+  return unidentified(`${second.failureReason} (retried once; first: ${first.failureReason})`);
 }
 
 /**

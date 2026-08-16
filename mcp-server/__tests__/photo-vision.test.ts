@@ -189,6 +189,55 @@ describe("identifyBooth", () => {
     expect(input.prompt).toContain("business_name");
   });
 
+  // ── Retry on an unusable reply (OPE-403, 2026-08-16) ──────────────────────
+  //
+  // The model emits malformed output intermittently: same photo, same prompt,
+  // same cap produced an unterminated JSON string in prod and a complete parsed
+  // object on the very next call (completion_tokens 56, well under the 384 cap).
+
+  it("retries once when the first reply is unparseable, and uses the good one", async () => {
+    const run = vi
+      .fn()
+      .mockResolvedValueOnce({ response: '{"kind":"booth","business_name":"Mountain Vi' })
+      .mockResolvedValueOnce({
+        response: { kind: "booth", business_name: "Mountain View Crochet Studio", confidence: 1 },
+      });
+    const out = await identifyBooth({ run }, new Uint8Array([1, 2, 3]));
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(out.businessName).toBe("Mountain View Crochet Studio");
+    expect(out.failureReason).toBeUndefined();
+  });
+
+  it("does NOT retry a decisive verdict — declining is an answer, not a failure", async () => {
+    // kind:"unclear" is the model correctly saying it cannot tell. Retrying it
+    // would double the cost of every genuinely ambiguous photo.
+    const run = vi.fn().mockResolvedValue({ response: { kind: "unclear", rationale: "blurry" } });
+    const out = await identifyBooth({ run }, new Uint8Array([1]));
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(out.kind).toBe("unclear");
+  });
+
+  it("reports BOTH reasons when the retry also fails", async () => {
+    // A persistent fault must read differently from a one-off.
+    const run = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("first boom"))
+      .mockResolvedValueOnce({ response: "still not json" });
+    const out = await identifyBooth({ run }, new Uint8Array([1]));
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(out.failureReason).toContain("retried once");
+    expect(out.failureReason).toContain("first boom");
+  });
+
+  it("converts the image bytes once, not per attempt", async () => {
+    // Array.from on a multi-MB photo is not free; a retry must not pay twice.
+    const run = vi.fn().mockResolvedValue({ response: "nope" });
+    await identifyBooth({ run }, new Uint8Array([1, 2, 3]));
+    const [, a] = run.mock.calls[0];
+    const [, b] = run.mock.calls[1];
+    expect(a.image).toBe(b.image); // same array instance
+  });
+
   it("names the thrown error rather than swallowing it (OPE-403 follow-up)", async () => {
     // A binding that rejects — model not enabled, unsupported input, quota — is
     // a different problem from a reply we failed to parse, and both used to
