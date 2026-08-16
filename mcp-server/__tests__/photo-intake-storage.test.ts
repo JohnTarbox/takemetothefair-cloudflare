@@ -18,6 +18,7 @@ import { describe, expect, it } from "vitest";
 import { describePhotoStorage } from "../src/email-handlers/photo-intake.js";
 import { alreadyAttached } from "../src/photo/resolve-held-photos.js";
 import { buildReply } from "../src/email-reply-builder.js";
+import { parseVisionReply } from "../src/photo/vision.js";
 import type { BoothPipelineResult } from "../src/photo/booth-pipeline.js";
 
 /** A pipeline result with everything zeroed; each test overrides what it means. */
@@ -30,6 +31,7 @@ function pipeline(over: Partial<BoothPipelineResult> = {}): BoothPipelineResult 
     galleryAttached: 0,
     galleryFailed: 0,
     autoWritten: [],
+    visionFailures: [],
     ...over,
   };
 }
@@ -75,7 +77,7 @@ describe("describePhotoStorage", () => {
   });
 
   it("never returns a silent zero — a reasonless no-op still says so", () => {
-    // The whole defect class: stored 0 and explained nothing.
+    // The whole defect class: landed nowhere and explained nothing.
     const out = describePhotoStorage(1, pipeline());
     expect(out.blockedReason).not.toBeNull();
     expect(out.blockedReason).toContain("no reason");
@@ -85,6 +87,108 @@ describe("describePhotoStorage", () => {
     const out = describePhotoStorage(3, pipeline({ galleryAttached: 1, galleryFailed: 2 }));
     expect(out.stored).toBe(1);
     expect(out.blockedReason).toBeNull();
+  });
+
+  // ── The false-positive found on the first live photo, 2026-08-16 ──────────
+  //
+  // The original predicate was `stored === 0`, i.e. "did a gallery row appear".
+  // Only the "general fair scene" bucket becomes a gallery row; a photo
+  // identified as a BOOTH is staged for review and correctly produces zero. So
+  // the happy path would have raised a P0 while the system behaved perfectly.
+
+  it("a STAGED booth is accounted for — no alarm, even with zero gallery rows", () => {
+    const out = describePhotoStorage(1, pipeline({ examined: 1, staged: 1 }));
+    expect(out.stored).toBe(0); // correct: booths never go to the gallery
+    expect(out.accountedFor).toBe(1);
+    expect(out.blockedReason).toBeNull(); // the regression this pins
+  });
+
+  it("an AUTO-WRITTEN booth is accounted for", () => {
+    const out = describePhotoStorage(
+      1,
+      pipeline({
+        examined: 1,
+        autoWritten: [{ businessName: "Hilltop Pottery", wasCreated: true }],
+      })
+    );
+    expect(out.accountedFor).toBe(1);
+    expect(out.blockedReason).toBeNull();
+  });
+
+  it("an auto-write that ERRORED does not count as accounted for", () => {
+    // A failed write is not a destination. Counting it would re-hide the bug.
+    const out = describePhotoStorage(
+      1,
+      pipeline({ examined: 1, autoWritten: [{ businessName: "X", error: "insert failed" }] })
+    );
+    expect(out.accountedFor).toBe(0);
+    expect(out.blockedReason).not.toBeNull();
+  });
+
+  it("names the vision failure when photos landed nowhere", () => {
+    // The live 2026-08-16 shape, minus the staging: vision gave up AND nothing
+    // was staged. Previously this said only "reported no reason".
+    const out = describePhotoStorage(
+      1,
+      pipeline({ examined: 1, visionFailures: ["ai-run-threw: 5007 unsupported input"] })
+    );
+    expect(out.blockedReason).toContain("vision produced nothing usable");
+    expect(out.blockedReason).toContain("ai-run-threw");
+  });
+
+  it("the gate being off still outranks a vision failure as the explanation", () => {
+    // If vision never ran, "the gate is off" is the actionable cause; a
+    // downstream symptom would send the reader to the wrong place.
+    const out = describePhotoStorage(
+      1,
+      pipeline({ disabledReason: 'PHOTO_VISION_ENABLED is not "true"', visionFailures: ["x"] })
+    );
+    expect(out.blockedReason).toContain("PHOTO_VISION_ENABLED");
+  });
+});
+
+describe("parseVisionReply — five failures that used to look identical", () => {
+  // On the first live photo the lane logged "vision model returned nothing
+  // usable" and we could not tell whether the model errored, replied in an
+  // unexpected shape, or replied in prose. Three different fixes.
+
+  it("empty reply says empty-text AND describes the raw shape", () => {
+    const out = parseVisionReply({ result: "oops" });
+    expect(out.kind).toBe("unclear");
+    expect(out.failureReason).toContain("empty-text");
+    // The shape is the actionable half: it tells you which key to read.
+    expect(out.failureReason).toContain("response=absent");
+  });
+
+  it("prose with no JSON says no-json-span and quotes the start", () => {
+    const out = parseVisionReply({ response: "I'm sorry, I can't identify this image." });
+    expect(out.failureReason).toContain("no-json-span");
+    expect(out.failureReason).toContain("I'm sorry");
+  });
+
+  it("malformed JSON says json-parse-failed", () => {
+    const out = parseVisionReply({ response: '{"kind": "booth",,,}' });
+    expect(out.failureReason).toContain("json-parse-failed");
+  });
+
+  it("a null reply is described, not silently coerced", () => {
+    expect(parseVisionReply(null).failureReason).toContain("null");
+  });
+
+  it("a SUCCESSFUL parse carries no failureReason", () => {
+    // The field must stay absent on success, or every staged booth would look
+    // like a failure in admin_actions.
+    const out = parseVisionReply({
+      response: '{"kind":"booth","business_name":"Hilltop Pottery","confidence":0.9}',
+    });
+    expect(out.kind).toBe("booth");
+    expect(out.businessName).toBe("Hilltop Pottery");
+    expect(out.failureReason).toBeUndefined();
+  });
+
+  it("truncates a runaway reason — it lands in a log line, not a report", () => {
+    const out = parseVisionReply({ response: "x".repeat(5000) });
+    expect(out.failureReason!.length).toBeLessThanOrEqual(200);
   });
 });
 

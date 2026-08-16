@@ -586,31 +586,66 @@ async function stagePosterAsPendingEvent(
 export interface PhotoStorageOutcome {
   /** Image attachments the sender actually sent. */
   offered: number;
-  /** Rows written to `event_photos` for this email. */
+  /** Rows written to `event_photos` for this email. Gallery only. */
   stored: number;
-  /** Why `stored` is 0 despite `offered > 0`; null when nothing is wrong. */
+  /**
+   * Photos that reached SOME durable, drainable destination: a gallery row, a
+   * staged booth proposal, or an auto-written vendor link.
+   *
+   * This, not `stored`, is the alarm predicate — see below.
+   */
+  accountedFor: number;
+  /** Why NOTHING happened to the photos; null when something did. */
   blockedReason: string | null;
 }
 
+/**
+ * ⚠️ Corrected 2026-08-16, after the first live photo. The original version
+ * keyed the alarm on `stored === 0`, i.e. "did a gallery row appear".
+ *
+ * That is the wrong fact. Only the classifier's **"general fair scene"** bucket
+ * goes to the gallery; a photo identified as a BOOTH is routed to
+ * `admin_actions` for review and correctly produces zero gallery rows. So a
+ * confidently-identified booth — the happy path — would have raised a P0
+ * saying "stored 0 photos" while the system did exactly the right thing.
+ *
+ * That is the same mistake this ticket exists to fix, committed while fixing
+ * it: reasoning about a proxy (`gallery rows`) instead of the fact anyone cares
+ * about (`did the photo end up anywhere a human can act on`). Recorded rather
+ * than quietly patched, because the shape of the error is the lesson.
+ *
+ * The real harm is a photo that lands NOWHERE. That is what `accountedFor`
+ * measures, and it is what the reply, the review flag, and the reconciliation
+ * sweep now all key off, so they cannot disagree.
+ */
 export function describePhotoStorage(
   offered: number,
   booths: BoothPipelineResult | null
 ): PhotoStorageOutcome {
   const stored = booths?.galleryAttached ?? 0;
-  // No images on the mail (or some landed): nothing to explain.
-  if (offered === 0 || stored > 0) return { offered, stored, blockedReason: null };
+  const staged = booths?.staged ?? 0;
+  const autoWritten = (booths?.autoWritten ?? []).filter((a) => !a.error).length;
+  const accountedFor = stored + staged + autoWritten;
 
-  // Photos arrived and none were stored. Every branch names a cause — "we do
-  // not know" is itself a reportable answer, and is never silence.
+  // No images on the mail, or the photos went somewhere: nothing to explain.
+  if (offered === 0 || accountedFor > 0) {
+    return { offered, stored, accountedFor, blockedReason: null };
+  }
+
+  // Photos arrived and landed nowhere. Every branch names a cause — "we do not
+  // know" is itself a reportable answer, and is never silence.
+  const visionFailures = booths?.visionFailures ?? [];
   const blockedReason =
     booths === null
       ? "the photo pipeline errored before it could attach anything"
       : (booths.disabledReason ??
-        (booths.galleryFailed > 0
-          ? `${booths.galleryFailed} photo upload${booths.galleryFailed === 1 ? "" : "s"} failed`
-          : "the attach path ran, stored nothing, and reported no reason"));
+        (visionFailures.length > 0
+          ? `vision produced nothing usable — ${visionFailures[0]}`
+          : booths.galleryFailed > 0
+            ? `${booths.galleryFailed} photo upload${booths.galleryFailed === 1 ? "" : "s"} failed`
+            : "the attach path ran, stored nothing, and reported no reason"));
 
-  return { offered, stored, blockedReason };
+  return { offered, stored, accountedFor, blockedReason };
 }
 
 const HOLD_ASK: Record<string, string> = {
@@ -707,12 +742,32 @@ export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> =
         await logError(env.DB, {
           level: "warn",
           source: "mcp:photo-intake:photos-unstored",
-          message: `photo intake matched a fair but stored 0 of ${storage.offered} photos: ${storage.blockedReason}`,
+          message: `photo intake matched a fair but ${storage.offered} photo(s) landed nowhere: ${storage.blockedReason}`,
           context: {
             messageRowId: row.id,
             eventId: resolution.eventId,
             offered: storage.offered,
             reason: storage.blockedReason,
+          },
+        });
+      }
+
+      // Logged even when the photos WERE accounted for. A vision failure that
+      // still stages is not a lost photo — but it is a degraded classifier, and
+      // it is invisible in the row itself (a staged proposal looks the same
+      // whether the model identified a booth or gave up). Separate source from
+      // the unstored warn above so the two can be counted independently.
+      const visionFailures = booths?.visionFailures ?? [];
+      if (visionFailures.length > 0) {
+        await logError(env.DB, {
+          level: "warn",
+          source: "mcp:photo-intake:vision-failed",
+          message: `vision produced nothing usable for ${visionFailures.length} of ${storage.offered} photo(s)`,
+          context: {
+            messageRowId: row.id,
+            eventId: resolution.eventId,
+            failures: visionFailures.slice(0, 5),
+            accountedFor: storage.accountedFor,
           },
         });
       }
