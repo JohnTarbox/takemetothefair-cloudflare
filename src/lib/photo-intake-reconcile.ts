@@ -50,13 +50,31 @@ export interface UnstoredPhotoIntakes {
 }
 
 export async function loadUnstoredPhotoIntakes(db: Db): Promise<UnstoredPhotoIntakes> {
+  // OPE-403 follow-up — `photos_stored = 0` alone OVER-REPORTS.
+  //
+  // Only the classifier's "general fair scene" bucket becomes a gallery row. A
+  // photo identified as a BOOTH is routed to `admin_actions` for review and
+  // correctly produces zero gallery rows, so keying purely on `photos_stored=0`
+  // would raise a P0 on the happy path. Exclude any email that produced a booth
+  // proposal — those photos are accounted for and drainable.
+  //
+  // NOT EXISTS against admin_actions rather than a new column: the staging row
+  // already carries `target_id = inbound_emails.id`, so the fact is recorded and
+  // does not need to be recorded twice (and two copies could disagree).
   const [r] = await db
     .select({
       n: sql<number | null>`count(*)`,
       oldest: sql<number | null>`min(${inboundEmails.receivedAt})`,
     })
     .from(inboundEmails)
-    .where(sql`${inboundEmails.photosStored} = 0`);
+    .where(
+      sql`${inboundEmails.photosStored} = 0
+          AND NOT EXISTS (
+            SELECT 1 FROM admin_actions aa
+            WHERE aa.target_id = ${inboundEmails.id}
+              AND aa.action = 'vendor.photo_proposed'
+          )`
+    );
 
   const count = Number(r?.n ?? 0);
   return {

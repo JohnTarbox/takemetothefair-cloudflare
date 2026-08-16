@@ -74,6 +74,15 @@ export interface BoothPipelineResult {
   autoWritten: AutoWriteOutcome[];
   /** Set when the gate is off — reported so a silent no-op is impossible. */
   disabledReason?: string;
+  /**
+   * OPE-403 follow-up — per-photo vision failure reasons, when the model
+   * produced nothing usable. Empty when every photo identified cleanly.
+   *
+   * The gate returning a `disabledReason` covers "vision never ran". This
+   * covers the other half: vision ran and failed, which previously surfaced
+   * only as `confidence: 0` with an unactionable rationale string.
+   */
+  visionFailures: string[];
 }
 
 export interface BoothPipelineEnv {
@@ -117,6 +126,7 @@ export async function runBoothPipeline(
     galleryAttached: 0,
     galleryFailed: 0,
     autoWritten: [],
+    visionFailures: [],
   };
 
   // OPE-6 gate — default OFF, and say so rather than no-op silently.
@@ -197,6 +207,10 @@ export async function runBoothPipeline(
         products: id.products,
         confidence: id.confidence,
         rationale: id.rationale,
+        // OPE-403 follow-up — which of the five UNIDENTIFIED paths produced
+        // this, when it was a failure. Absent on a successful identification.
+        // Without it, "vision model returned nothing usable" is unactionable.
+        failure_reason: id.failureReason ?? null,
         // "write" here means Milestone B WOULD have auto-written this one.
         would_auto_write: d.action === "write",
         stage_reason: d.action === "stage" ? d.reason : null,
@@ -239,5 +253,10 @@ export async function runBoothPipeline(
     galleryAttached: gallery.attached,
     galleryFailed: gallery.failed,
     autoWritten,
+    // Named per photo so one bad frame in a batch is distinguishable from a
+    // systemic failure (e.g. every photo returning `ai-run-threw`).
+    visionFailures: results
+      .map((r) => r.d.identification.failureReason)
+      .filter((f): f is string => Boolean(f)),
   };
 }

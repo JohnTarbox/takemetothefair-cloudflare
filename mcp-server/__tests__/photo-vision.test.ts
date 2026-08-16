@@ -79,14 +79,47 @@ describe("parseVisionReply", () => {
   });
 
   // A garbage reply must degrade, never throw — it's inside the inbound workflow.
-  it("returns UNIDENTIFIED for unusable replies", () => {
-    expect(parseVisionReply("")).toEqual(UNIDENTIFIED);
-    expect(parseVisionReply(null)).toEqual(UNIDENTIFIED);
-    expect(parseVisionReply({ response: "I cannot help with that." })).toEqual(UNIDENTIFIED);
-    expect(parseVisionReply({ response: "{ not json" })).toEqual(UNIDENTIFIED);
-    // Non-string .response is the exact shape that crashed the entrypoint (OPE-189).
-    expect(parseVisionReply({ response: { nested: true } })).toEqual(UNIDENTIFIED);
-    expect(parseVisionReply({ response: 42 })).toEqual(UNIDENTIFIED);
+  //
+  // OPE-403 follow-up: these now also carry a `failureReason` naming WHICH path
+  // bailed. Asserted with `toMatchObject` against the identification fields
+  // rather than `toEqual(UNIDENTIFIED)`, because exact equality would forbid the
+  // diagnostic the first live photo proved we needed — the old assertion
+  // actively locked in "every failure looks identical".
+  const unusable = { kind: "unclear", businessName: null, confidence: 0 };
+
+  it("degrades to unclear for unusable replies, and says why", () => {
+    for (const raw of [
+      "",
+      null,
+      { response: "I cannot help with that." },
+      { response: "{ not json" },
+      // Non-string .response is the exact shape that crashed the entrypoint (OPE-189).
+      { response: { nested: true } },
+      { response: 42 },
+    ]) {
+      const out = parseVisionReply(raw);
+      expect(out).toMatchObject(unusable);
+      expect(out.failureReason).toBeTruthy();
+    }
+  });
+
+  it("distinguishes prose from malformed JSON from an unreadable shape", () => {
+    expect(parseVisionReply({ response: "I cannot help." }).failureReason).toContain(
+      "no-json-span"
+    );
+    // No closing brace → there is no JSON span to even attempt, so this is
+    // no-json-span too. Malformed JSON needs BOTH braces present.
+    expect(parseVisionReply({ response: "{ not json" }).failureReason).toContain("no-json-span");
+    expect(parseVisionReply({ response: '{"kind":"booth",,,}' }).failureReason).toContain(
+      "json-parse-failed"
+    );
+    expect(parseVisionReply({ response: 42 }).failureReason).toContain("empty-text");
+  });
+
+  // Pinned: the shared constant itself must stay clean, so a successful parse
+  // spreading from it never inherits a stale reason.
+  it("the UNIDENTIFIED constant carries no failureReason", () => {
+    expect(UNIDENTIFIED.failureReason).toBeUndefined();
   });
 });
 
@@ -105,9 +138,23 @@ describe("identifyBooth", () => {
     expect(input.prompt).toContain("business_name");
   });
 
-  it("returns UNIDENTIFIED when the model throws (never sinks the batch)", async () => {
+  it("names the thrown error rather than swallowing it (OPE-403 follow-up)", async () => {
+    // A binding that rejects — model not enabled, unsupported input, quota — is
+    // a different problem from a reply we failed to parse, and both used to
+    // arrive as the same "returned nothing usable".
+    const ai: VisionAi = { run: vi.fn().mockRejectedValue(new Error("5007 unsupported input")) };
+    const out = await identifyBooth(ai, new Uint8Array([1]));
+    expect(out.kind).toBe("unclear");
+    expect(out.failureReason).toContain("ai-run-threw");
+    expect(out.failureReason).toContain("5007 unsupported input");
+  });
+
+  it("degrades instead of throwing when the model fails (never sinks the batch)", async () => {
+    // The load-bearing property: identifyBooth resolves, so one bad frame
+    // cannot take down the inbound-email workflow for the whole batch.
     const ai: VisionAi = { run: vi.fn().mockRejectedValue(new Error("model unavailable")) };
-    await expect(identifyBooth(ai, new Uint8Array([1]))).resolves.toEqual(UNIDENTIFIED);
+    const out = await identifyBooth(ai, new Uint8Array([1]));
+    expect(out).toMatchObject({ kind: "unclear", businessName: null, confidence: 0 });
   });
 });
 

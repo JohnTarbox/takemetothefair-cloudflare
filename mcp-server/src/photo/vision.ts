@@ -53,6 +53,20 @@ export interface BoothIdentification {
   confidence: number;
   /** Short reason — surfaced to the operator when staging for review. */
   rationale: string;
+  /**
+   * OPE-403 follow-up — WHICH failure produced an UNIDENTIFIED result.
+   *
+   * `UNIDENTIFIED` was returned from five different places (the `ai.run` catch,
+   * empty text, no JSON braces, a JSON parse error, a non-object) and all five
+   * emitted the identical rationale string. On the first live photo after
+   * enabling vision the lane logged "vision model returned nothing usable" and
+   * we could not tell whether the model had errored, replied in an unexpected
+   * shape, or replied with prose — three problems with three different fixes.
+   *
+   * That is the same defect this ticket is about (a fail-soft path discarding
+   * its reason), one layer down. Undefined on a successful parse.
+   */
+  failureReason?: string;
 }
 
 /** A total failure to identify. Callers stage/skip rather than write. */
@@ -64,6 +78,27 @@ export const UNIDENTIFIED: BoothIdentification = {
   confidence: 0,
   rationale: "vision model returned nothing usable",
 };
+
+/**
+ * UNIDENTIFIED, but saying which of the five paths got us here. Truncated
+ * because this lands in a log line and an admin_actions payload, not a report.
+ */
+export function unidentified(failureReason: string): BoothIdentification {
+  return { ...UNIDENTIFIED, failureReason: failureReason.slice(0, 200) };
+}
+
+/** A compact description of an unexpected reply, for the failure reason.
+ *  Never the full body — a vision reply can be hundreds of tokens of prose. */
+export function describeRawShape(raw: unknown): string {
+  if (raw === null) return "null";
+  if (typeof raw === "string") return `string(${raw.length})`;
+  if (typeof raw !== "object") return typeof raw;
+  const keys = Object.keys(raw as object)
+    .slice(0, 6)
+    .join(",");
+  const resp = (raw as { response?: unknown }).response;
+  return `object{${keys}} response=${resp === undefined ? "absent" : typeof resp}`;
+}
 
 export const VISION_PROMPT = `You are looking at ONE photograph taken at a public agricultural fair or craft show.
 
@@ -127,21 +162,27 @@ export function parseVisionReply(raw: unknown): BoothIdentification {
       : typeof (raw as { response?: unknown })?.response === "string"
         ? (raw as { response: string }).response
         : "";
-  if (!text.trim()) return UNIDENTIFIED;
+  // OPE-403 follow-up — each bail says WHICH one it was. "empty-text" means the
+  // model gave us nothing (or a shape we don't coerce); "no-json-span" means it
+  // answered in prose; "json-parse-failed" means it tried JSON and malformed it.
+  // Three different fixes, previously indistinguishable.
+  if (!text.trim()) return unidentified(`empty-text raw=${describeRawShape(raw)}`);
 
   // Models often wrap JSON in prose or a ```json fence despite instructions.
   // Take the outermost {...} span rather than trusting the whole string.
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
-  if (start === -1 || end === -1 || end <= start) return UNIDENTIFIED;
+  if (start === -1 || end === -1 || end <= start) {
+    return unidentified(`no-json-span text="${text.trim().slice(0, 120)}"`);
+  }
 
   let obj: Record<string, unknown>;
   try {
     obj = JSON.parse(text.slice(start, end + 1)) as Record<string, unknown>;
-  } catch {
-    return UNIDENTIFIED;
+  } catch (e) {
+    return unidentified(`json-parse-failed ${e instanceof Error ? e.message : String(e)}`);
   }
-  if (!obj || typeof obj !== "object") return UNIDENTIFIED;
+  if (!obj || typeof obj !== "object") return unidentified("parsed-not-an-object");
 
   const rawKind = typeof obj.kind === "string" ? obj.kind.toLowerCase().trim() : "";
   const kind: BoothKind =
@@ -184,8 +225,12 @@ export async function identifyBooth(ai: VisionAi, bytes: Uint8Array): Promise<Bo
       max_tokens: MAX_TOKENS,
     });
     return parseVisionReply(raw);
-  } catch {
-    return UNIDENTIFIED;
+  } catch (e) {
+    // OPE-403 follow-up — this used to swallow the error whole. An AI binding
+    // that rejects (model not enabled, unsupported input shape, quota) is a
+    // completely different problem from a reply we failed to parse, and both
+    // arrived as the same "returned nothing usable".
+    return unidentified(`ai-run-threw: ${e instanceof Error ? e.message : String(e)}`);
   }
 }
 
