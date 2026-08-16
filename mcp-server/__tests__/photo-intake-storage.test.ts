@@ -187,8 +187,12 @@ describe("parseVisionReply — five failures that used to look identical", () =>
   });
 
   it("truncates a runaway reason — it lands in a log line, not a report", () => {
+    // Cap raised 200 → 500 on 2026-08-16: at 200 a retried reason (two causes
+    // plus the quoted reply) was clipped at the interesting point, so the log
+    // could not be told apart from the truncation it was reporting.
     const out = parseVisionReply({ response: "x".repeat(5000) });
-    expect(out.failureReason!.length).toBeLessThanOrEqual(200);
+    expect(out.failureReason!.length).toBeLessThanOrEqual(500);
+    expect(out.failureReason!.length).toBeGreaterThan(200);
   });
 });
 
