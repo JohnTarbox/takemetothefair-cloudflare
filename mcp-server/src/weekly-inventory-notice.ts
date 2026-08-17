@@ -22,7 +22,7 @@
  * longer exists. Reported here as inventory; still able to shout on real growth.
  */
 import { and, eq, isNull, sql } from "drizzle-orm";
-import { events, promoters, eventDiscrepancies } from "./schema.js";
+import { events, promoters, eventDiscrepancies, tunableThresholds } from "./schema.js";
 import type { Env } from "./index.js";
 import { getDb, type Db } from "./db.js";
 import { logError } from "./logger.js";
@@ -98,6 +98,75 @@ export async function readInventoryCounts(
     goodwillOpen: goodwill[0]?.n ?? 0,
     staleRed: 0, // filled from the state row by the caller — see the note above
     unterminatedCrossings: unterminated,
+  };
+}
+
+/**
+ * OPE-413 — the waiting-submissions block.
+ *
+ * Deliberately NOT another row in the counts table above. Those rows are
+ * internal queues where a number is the whole story; this one has named members
+ * of the public on the other end, and "pending_submissions: 9" hides the only
+ * facts that matter — WHO is waiting, HOW LONG, and which rows can no longer be
+ * approved at all because the fair already happened.
+ *
+ * Oldest first, addresses included, per the acceptance.
+ */
+export interface WaitingSubmission {
+  name: string;
+  ageDays: number;
+  suggesterEmail: string | null;
+  startDatePassed: boolean;
+}
+
+export async function readWaitingSubmissions(
+  db: Db,
+  now: Date = new Date()
+): Promise<{ slaHours: number; waiting: WaitingSubmission[]; expired: WaitingSubmission[] }> {
+  // Reads the SAME `tunable_thresholds` row the main app reads. One threshold,
+  // two runtimes — a second copy of the number would drift the first time
+  // somebody tuned one of them.
+  let slaHours = 48;
+  try {
+    const [t] = await db
+      .select({ value: tunableThresholds.value })
+      .from(tunableThresholds)
+      .where(eq(tunableThresholds.key, "pending_submission_sla_hours"))
+      .limit(1);
+    if (typeof t?.value === "number" && t.value > 0) slaHours = t.value;
+  } catch {
+    /* fall back to the published promise */
+  }
+
+  const todayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+
+  const rows = await db
+    .select({
+      name: events.name,
+      createdAt: events.createdAt,
+      startDate: events.startDate,
+      suggesterEmail: events.suggesterEmail,
+    })
+    .from(events)
+    .where(and(eq(events.status, "PENDING"), isNull(events.mergedInto)))
+    .orderBy(events.createdAt);
+
+  const shape = (r: (typeof rows)[number]): WaitingSubmission => ({
+    name: r.name,
+    ageDays: r.createdAt ? (now.getTime() - r.createdAt.getTime()) / 86_400_000 : 0,
+    suggesterEmail: r.suggesterEmail ?? null,
+    startDatePassed: r.startDate != null && r.startDate < todayStart,
+  });
+
+  const all = rows.map(shape);
+  return {
+    slaHours,
+    // A person is waiting AND we are past the promise.
+    waiting: all.filter(
+      (r) => !r.startDatePassed && r.suggesterEmail && r.ageDays * 24 >= slaHours
+    ),
+    // Cannot be approved as-is at any age — a separate decision, not deeper backlog.
+    expired: all.filter((r) => r.startDatePassed),
   };
 }
 
@@ -234,9 +303,30 @@ export async function runWeeklyInventoryNotice(env: Env): Promise<void> {
     counts.staleRed +
     counts.unterminatedCrossings;
   const subject = `📋 MMATF Monday inventory — ${total} open across ${rows.length} queues`;
+  // OPE-413 — people waiting, listed by name and age rather than counted.
+  const submissions = await readWaitingSubmissions(db, today).catch(() => null);
+  const waitingText =
+    submissions && (submissions.waiting.length > 0 || submissions.expired.length > 0)
+      ? `\n\nSubmissions waiting past the ${submissions.slaHours}h review promise` +
+        (submissions.waiting.length > 0
+          ? `:\n` +
+            submissions.waiting
+              .map(
+                (w) =>
+                  ` • ${Math.floor(w.ageDays)}d — ${w.name} — ${w.suggesterEmail ?? "no address"}`
+              )
+              .join("\n")
+          : `: none`) +
+        (submissions.expired.length > 0
+          ? `\n\n⚠️ Past their event date — cannot be approved as-is, need a decision:\n` +
+            submissions.expired.map((w) => ` • ${Math.floor(w.ageDays)}d — ${w.name}`).join("\n")
+          : "")
+      : "";
+
   const textBody =
     `Backlog as of ${todayIso} (Δ vs last Monday):\n\n` +
     rows.map((r) => ` • ${r.label}: ${r.current} (${formatDelta(r.current, r.prior)})`).join("\n") +
+    waitingText +
     `\n\nThis replaces the daily queue notices — alarms still push on condition.\n`;
   const htmlBody =
     `<p><strong>📋 MMATF Monday inventory</strong> — backlog as of ${todayIso}.</p>` +

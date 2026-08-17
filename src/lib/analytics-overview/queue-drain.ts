@@ -16,6 +16,7 @@ import { and, count, eq, gte, inArray, isNotNull, isNull, like, lt, sql } from "
 import {
   emailSendLedger,
   emailDeliveryEvents,
+  events,
   eventDiscrepancies,
   supportObligations,
   vendorEnrichmentCandidates,
@@ -344,6 +345,71 @@ async function inboundAwaitingDecisionFlow(db: Db, now: Date): Promise<QueueDrai
 }
 
 /**
+ * OPE-413 — the PENDING submissions queue.
+ *
+ * Every other queue in this inventory is internal. This one is different in
+ * kind: a stalled row is a promise broken to a named member of the public, and
+ * several rows sat here until the fair they described had already happened.
+ * It reached 138 days with nobody watching, which is precisely the drainage-vs-
+ * detection blindness OPE-247 named.
+ *
+ * `oldestOpenAgeHours` is the load-bearing column, as it was for OPE-408: depth
+ * alone cannot separate "9 submissions arrived this week" from "9 submissions
+ * have been sitting since May", and only the second is a failure.
+ *
+ * Outflow IS computable here, unlike some siblings — a submission leaves the
+ * queue by changing status, and `updated_at` is a reliable change signal since
+ * OPE-308 (2026-08-04). Before that date it was not, so the window is
+ * deliberately the trailing one rather than all-time.
+ */
+async function pendingSubmissionsFlow(db: Db, now: Date): Promise<QueueDrainRow> {
+  const d = (days: number) => new Date(now.getTime() - days * DAY_MS);
+  const isPending = and(eq(events.status, "PENDING"), isNull(events.mergedInto));
+  const leftQueue = (since: Date) =>
+    cnt(
+      db,
+      events,
+      and(
+        sql`${events.status} != 'PENDING'`,
+        gte(events.updatedAt, since),
+        sql`${events.sourceName} IN ('community-suggestion','email-submission','vendor-submission')`
+      )
+    );
+
+  const [depth, inflow1d, inflow7d, inflow14d, outflow1d, outflow7d, outflow14d, oldest] =
+    await Promise.all([
+      cnt(db, events, isPending),
+      cnt(db, events, and(isPending, gte(events.createdAt, d(1)))),
+      cnt(db, events, and(isPending, gte(events.createdAt, d(7)))),
+      cnt(db, events, and(isPending, gte(events.createdAt, d(14)))),
+      leftQueue(d(1)),
+      leftQueue(d(7)),
+      leftQueue(d(14)),
+      db
+        .select({ oldest: sql<number | null>`min(${events.createdAt})` })
+        .from(events)
+        .where(isPending),
+    ]);
+
+  const oldestSec = oldest[0]?.oldest ?? null;
+  return {
+    queueName: "pending_submissions",
+    label: "Submissions awaiting review (people waiting)",
+    href: QUEUE_DRAIN_HREF,
+    depth,
+    inflow7d,
+    outflow7d,
+    inflow14d,
+    outflow14d,
+    oldestOpenAgeHours:
+      oldestSec != null ? (now.getTime() / 1000 - Number(oldestSec)) / 3600 : null,
+    inflow1d,
+    outflow1d,
+    drainRatio7d: ratio(outflow7d, inflow7d),
+  };
+}
+
+/**
  * OPE-177 — auth/verification mail that did NOT reach the recipient.
  *
  * The case this exists for: a vendor registered, asked for the confirmation
@@ -574,6 +640,9 @@ export async function gatherQueueFlows(db: Db, now: Date): Promise<QueueDrainRow
     // OPE-408 — coverage gap, not a work queue: rows nobody has to action, but
     // whose depth+age is the only visible signal that geocoding has drifted.
     venuesMissingCoordsFlow(db, now),
+    // OPE-413 — the only queue in this list with members of the public waiting
+    // on the other end. Reached 138 days unwatched.
+    pendingSubmissionsFlow(db, now),
     // OPE-177 — verification mail that provably did not arrive. Reads 0 until
     // the CF Email Sending subscription publishes its first event (the window
     // starts there), so it cannot cry wolf on historical NULLs.
