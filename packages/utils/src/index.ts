@@ -437,6 +437,7 @@ export * from "./discovery-routing";
 // reach APPROVED (it would have no derivable Event.location). Shared by the admin
 // approve route and the MCP update_event_status tool so the invariant is single-source.
 export * from "./event-approval-gate";
+export * from "./event-merged-tombstone-gate";
 
 // OPE-241 (2026-07-17): D1 100-bound-param cap remedy — chunkIds/chunkedInArray
 // for `inArray()` lists that scale with row count. Shared because the cap bites
