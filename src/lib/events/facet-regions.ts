@@ -124,6 +124,12 @@ export const STATE_REGIONS: Record<string, Record<string, RegionDef>> = {
         "holyoke",
         "huntington",
         "leverett",
+        // OPE-421 — Littleville is a VILLAGE of Chester, not a municipality,
+        // so `venues.city = "Littleville"` (correct data) matched no region.
+        // Added here rather than rewriting the venue row to "Chester":
+        // corrupting a correct value to satisfy a lookup is backwards, and
+        // village->town aliasing is OPE-425's job. Same region as chester.
+        "littleville",
         "longmeadow",
         "ludlow",
         "middlefield",
