@@ -119,6 +119,32 @@ export async function GET(request: Request, { params }: { params: Promise<{ slug
       (v) => v.slug
     );
 
+    // OPE-410 — alphabetical by the name the page actually RENDERS.
+    //
+    // The obvious fix is `ORDER BY COALESCE(display_name, business_name)` on the
+    // SQL query, and it would be wrong here. The client renders `displayName`,
+    // which at this point is `target.name` — the BRAND-RESOLVED name from
+    // resolveEventVendorTarget, not the raw column. For a vendor displayed under
+    // its brand parent the two differ, so a SQL sort would order by a string the
+    // visitor never sees. `dedupeByResolvedSlug` then collapses rows after that,
+    // which can leave gaps in any pre-sorted sequence.
+    //
+    // Sorting here — after resolution and dedupe — is the first point where the
+    // displayed name exists. Still one sort, still server-side (the ticket's
+    // actual requirement); the client component is untouched. The route returns
+    // the full list with no limit/offset, so there is no pagination to destabilise.
+    //
+    // localeCompare with sensitivity:"base" gives the case-insensitive ordering
+    // `COLLATE NOCASE` would have, and additionally sorts accented names where a
+    // byte comparison would strand them after "Z".
+    resolved.sort((a, b) =>
+      (a.displayName ?? a.businessName ?? "").localeCompare(
+        b.displayName ?? b.businessName ?? "",
+        "en",
+        { sensitivity: "base" }
+      )
+    );
+
     return NextResponse.json({
       event: {
         id: event.id,
