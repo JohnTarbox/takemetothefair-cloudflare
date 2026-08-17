@@ -873,6 +873,15 @@ const SCHEMA_SQL = `
     created_at INTEGER NOT NULL
   );
 
+  -- OPE-413 — operator-tunable thresholds (drizzle/0196).
+  CREATE TABLE tunable_thresholds (
+    key TEXT PRIMARY KEY,
+    value REAL NOT NULL,
+    unit TEXT NOT NULL,
+    note TEXT,
+    updated_at INTEGER NOT NULL
+  );
+
   CREATE TABLE email_suppression_list (
     email TEXT PRIMARY KEY,
     reason TEXT,

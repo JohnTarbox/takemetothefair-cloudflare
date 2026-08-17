@@ -4807,3 +4807,33 @@ export const marketPlayerSerpRanks = sqliteTable(
     index("idx_market_player_serp_query").on(t.query, t.checkedAt),
   ]
 );
+
+/**
+ * OPE-413 — operator-tunable thresholds, readable and writable without a deploy.
+ *
+ * The alternative is a constant in code, and the failure mode of a constant is
+ * specific: the moment the real-world number disagrees with it, the choice is
+ * between shipping a deploy and living with an alert that is wrong. What
+ * actually happens is the third option — the alert gets ignored.
+ *
+ * Deliberately generic key/value rather than a column per threshold
+ * (`goodwill_config`'s single-row shape), because the next tunable should cost
+ * an INSERT rather than a migration.
+ *
+ * `unit` is stored, not implied. A bare `48` in a config table is the kind of
+ * number that gets read as days a year later by someone who was not here.
+ */
+export const tunableThresholds = sqliteTable("tunable_thresholds", {
+  /** Stable identifier, e.g. 'pending_submission_sla_hours'. */
+  key: text("key").primaryKey(),
+  value: real("value").notNull(),
+  /** 'hours' | 'days' | 'ratio' | 'count' — never omitted. */
+  unit: text("unit").notNull(),
+  /** What this governs and what changing it does, for whoever edits it next. */
+  note: text("note"),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
+export type TunableThreshold = typeof tunableThresholds.$inferSelect;
