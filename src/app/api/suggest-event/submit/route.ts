@@ -4,7 +4,13 @@ import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { events, promoters, eventSchemaOrg } from "@/lib/db/schema";
 import { parseJsonLd } from "@/lib/schema-org";
 import { eq } from "drizzle-orm";
-import { createSlug, computePublicDates, dollarsToCents, unsafeSlug } from "@/lib/utils";
+import {
+  createSlug,
+  computePublicDates,
+  dollarsToCents,
+  unsafeSlug,
+  formatDateRange,
+} from "@/lib/utils";
 import { resolveUniqueEventSlug, insertEventDaysBatched } from "@/lib/events/insert-helpers";
 import { logError } from "@/lib/logger";
 import { recomputeEventCompleteness } from "@/lib/completeness";
@@ -27,6 +33,7 @@ import {
 } from "@takemetothefair/utils";
 import { maybeRouteToOccurrence } from "@/lib/discovery/route-to-occurrence";
 import { submitEventSchema } from "./schema";
+import { sendSubmissionReceivedAck } from "@/lib/email/submission-received";
 
 const PUBLIC_EVENT_SET = new Set<string>(PUBLIC_EVENT_STATUSES);
 
@@ -585,6 +592,41 @@ export async function POST(request: NextRequest) {
     if (PUBLIC_EVENT_SET.has(eventStatus)) {
       const cfEnv = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
       await pingIndexNow(db, indexNowUrlFor("events", finalEventSlug), cfEnv, "event-create");
+    }
+
+    // OPE-412 — the receipt the submitter never got.
+    //
+    // Runs AFTER the event is safely written and never throws: a submission
+    // must succeed even when its acknowledgment cannot be sent. Losing an email
+    // is a small harm; losing the event somebody typed in is the failure this
+    // whole path exists to prevent.
+    //
+    // The outcome is LOGGED rather than dropped, because "we chose not to send"
+    // (gate off, suppressed, rate-limited) and "we tried and failed" are
+    // different facts, and a fail-soft path that records neither is how a
+    // silent no-op survives for months.
+    const ackOutcome = await sendSubmissionReceivedAck(
+      db,
+      getCloudflareEnv() as unknown as {
+        EMAIL_JOBS?: Queue<unknown>;
+        SUBMISSION_ACK_ENABLED?: string;
+      },
+      {
+        toEmail: data.suggesterEmail,
+        eventName: effectiveName,
+        eventId: newEventId,
+        whenText: effectiveStartDate ? formatDateRange(effectiveStartDate, effectiveEndDate) : null,
+        whereText:
+          [data.venueName, data.venueCity, resolvedStateCode].filter(Boolean).join(", ") || null,
+      }
+    );
+    if (ackOutcome !== "sent" && ackOutcome !== "skipped:no-email") {
+      await logError(db, {
+        level: "info",
+        message: `submission-received ack not sent: ${ackOutcome}`,
+        source: "suggest-event-submit",
+        context: { eventId: newEventId, outcome: ackOutcome },
+      });
     }
 
     return NextResponse.json({
