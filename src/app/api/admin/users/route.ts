@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/api/with-auth";
 import { users, promoters, vendors } from "@/lib/db/schema";
-import { notInArray, isNotNull } from "drizzle-orm";
+import { notInArray, isNotNull, ne } from "drizzle-orm";
 import { logError } from "@/lib/logger";
 
 export const GET = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
@@ -52,7 +52,14 @@ export const GET = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
       return NextResponse.json(userList);
     }
 
-    // Return all users
+    // Return users. OPE-292 — placeholder OWNER accounts are excluded by
+    // default: 6,741 of 6,950 rows are `pending+<slug>@` rows minted by the
+    // vendor/promoter creation tools, and listing them makes the ~209 real
+    // people unfindable. Pass ?includePlaceholders=1 to see them, since they
+    // are legitimate rows an admin occasionally needs to inspect.
+    const includePlaceholders =
+      new URL(request.url).searchParams.get("includePlaceholders") === "1";
+
     const userList = await db
       .select({
         id: users.id,
@@ -63,8 +70,12 @@ export const GET = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
         // OPE-177 — surface verification state so the admin list can show a
         // "mark verified" affordance for stuck accounts.
         emailVerified: users.emailVerified,
+        // OPE-292 — so the caller can tell what it is looking at rather than
+        // inferring from the email shape.
+        origin: users.origin,
       })
       .from(users)
+      .where(includePlaceholders ? undefined : ne(users.origin, "ingestion"))
       .orderBy(users.email);
 
     return NextResponse.json(userList);

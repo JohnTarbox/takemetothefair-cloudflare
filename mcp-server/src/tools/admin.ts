@@ -2285,6 +2285,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       await db.insert(users).values({
         id: userId,
         email: placeholderEmail,
+        // OPE-292 — this is a placeholder OWNER row, not a registration.
+        // Marked explicitly so user counts can exclude it without relying on
+        // the `pending+` email convention, which nothing enforces.
+        origin: "ingestion",
         role: "VENDOR",
       });
 
@@ -3893,6 +3897,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       await db.insert(users).values({
         id: userId,
         email: placeholderEmail,
+        // OPE-292 — this is a placeholder OWNER row, not a registration.
+        // Marked explicitly so user counts can exclude it without relying on
+        // the `pending+` email convention, which nothing enforces.
+        origin: "ingestion",
         role: "PROMOTER",
       });
 

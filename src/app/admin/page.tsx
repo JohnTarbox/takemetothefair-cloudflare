@@ -3,7 +3,7 @@ import { Calendar, MapPin, Store, Users, Clock, UserPlus, BarChart3 } from "luci
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, vendors, promoters, users, eventVendors } from "@/lib/db/schema";
-import { eq, count, and } from "drizzle-orm";
+import { and, count, eq, ne } from "drizzle-orm";
 import { isPublicVendorStatus } from "@/lib/vendor-status";
 import { upcomingEndPredicate } from "@/lib/event-dates";
 import { eventJoinProjection, eventVenueJoinProjection } from "@/lib/db/event-join-projection";
@@ -29,7 +29,10 @@ async function getStats() {
       db.select({ count: count() }).from(venues),
       db.select({ count: count() }).from(vendors),
       db.select({ count: count() }).from(promoters),
-      db.select({ count: count() }).from(users),
+      // OPE-292 — real people only. 6,741 of 6,950 rows are placeholder OWNER
+      // accounts minted by the vendor/promoter creation tools, so an unfiltered
+      // count reports ~33x the real figure on the admin dashboard.
+      db.select({ count: count() }).from(users).where(ne(users.origin, "ingestion")),
       db.select({ count: count() }).from(eventVendors).where(isPublicVendorStatus()),
     ]);
 
