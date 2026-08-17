@@ -824,6 +824,55 @@ const SCHEMA_SQL = `
     ledger_message_id TEXT
   );
 
+  -- OPE-414 — market-player register (drizzle/0194).
+  CREATE TABLE market_players (
+    id TEXT PRIMARY KEY,
+    domain TEXT NOT NULL,
+    name TEXT,
+    relationship TEXT NOT NULL DEFAULT 'neutral',
+    org_class TEXT NOT NULL DEFAULT 'unknown',
+    type TEXT,
+    geo_scope TEXT,
+    owner TEXT,
+    registered_at INTEGER,
+    business_model TEXT,
+    pricing TEXT,
+    tech_stack TEXT,
+    has_schema INTEGER,
+    has_llms_txt INTEGER,
+    threat_level TEXT,
+    threat_trend TEXT,
+    status TEXT NOT NULL DEFAULT 'unknown',
+    notes TEXT,
+    last_checked_at INTEGER,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE UNIQUE INDEX idx_market_players_domain ON market_players(domain);
+
+  CREATE TABLE market_player_snapshots (
+    id TEXT PRIMARY KEY,
+    player_id TEXT NOT NULL,
+    event_count INTEGER,
+    ne_event_count INTEGER,
+    search_visibility REAL,
+    notes TEXT,
+    source_url TEXT,
+    snapshot_at INTEGER NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE market_player_serp_ranks (
+    id TEXT PRIMARY KEY,
+    player_id TEXT NOT NULL,
+    query TEXT NOT NULL,
+    market TEXT,
+    position INTEGER,
+    ranking_url TEXT,
+    checked_at INTEGER NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+
   CREATE TABLE email_suppression_list (
     email TEXT PRIMARY KEY,
     reason TEXT,

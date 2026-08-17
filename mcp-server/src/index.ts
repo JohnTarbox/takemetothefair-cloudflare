@@ -17,6 +17,7 @@ import { registerUserTools } from "./tools/user.js";
 import { registerVendorTools } from "./tools/vendor.js";
 import { registerPromoterTools } from "./tools/promoter.js";
 import { registerAdminTools } from "./tools/admin.js";
+import { registerMarketPlayerTools } from "./tools/admin-market-players.js";
 import { registerAdminProblemReportTools } from "./tools/admin-problem-reports.js";
 import { correlateProblemReportCore } from "./problem-reports/correlate.js";
 import { registerMergeEntitiesTools } from "./tools/admin-merge-entities.js";
@@ -311,6 +312,9 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
         registerAdminTools(this.server, db, auth, this.env);
         // UR1 C5 (2026-06-04) — problem-report triage tools.
         registerAdminProblemReportTools(this.server, db);
+        // OPE-414 — market-player register (competitors, aggregators, and the
+        // civic citation sources that are deliberately NOT competitors).
+        registerMarketPlayerTools(this.server, db, auth);
         // DQ1 follow-up (2026-06-05) — merge_venue + merge_promoter.
         registerMergeEntitiesTools(this.server, db, auth);
         // EH1 Phase 1 (2026-06-05) — set_vendor_relationship + set_vendor_display_policy + set_vendor_alias.
