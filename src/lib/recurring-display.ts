@@ -22,6 +22,10 @@ const DAY_NAMES = [
 ] as const;
 
 export type Cadence =
+  /** OPE-442 — a plain contiguous run (Thu→Sun), interval of exactly 1 day.
+   *  Distinct from `everyNDays` because it is not a cadence at all: nobody
+   *  describes a four-day fair as happening "every 1 days". */
+  | { kind: "contiguous"; days: number }
   | { kind: "weekly"; dayOfWeek: string }
   | { kind: "biweekly"; dayOfWeek: string }
   | { kind: "everyNDays"; days: number }
@@ -64,6 +68,13 @@ export function inferCadence(dates: ReadonlyArray<string>): Cadence {
   if (allSame && intervals[0] === 14 && sameDayOfWeek) {
     return { kind: "biweekly", dayOfWeek: dow };
   }
+  // OPE-442 — check the contiguous case BEFORE the generic everyNDays branch.
+  // A 1-day interval is a run, not a cadence: it produced the ungrammatical
+  // "Every 1 days — 4 dates" on every multi-day fair. Same distinction OPE-47
+  // drew for the "Daily" label, surfacing in a different string.
+  if (allSame && intervals[0] === 1) {
+    return { kind: "contiguous", days: parsed.length };
+  }
   if (allSame && intervals[0] > 0) {
     return { kind: "everyNDays", days: intervals[0] };
   }
@@ -80,6 +91,12 @@ export function inferCadence(dates: ReadonlyArray<string>): Cadence {
 export function cadenceLabel(c: Cadence, count: number): string | null {
   switch (c.kind) {
     case "single":
+      return null;
+    // OPE-442 — omit the line entirely. The block directly above already
+    // renders the full range ("Thu, Aug 13, 2026 - Sun, Aug 16, 2026"), so a
+    // cadence line here restates it in worse words and costs comprehension.
+    // Returning null uses the same caller path "single" already relies on.
+    case "contiguous":
       return null;
     case "weekly":
       return `Every ${c.dayOfWeek} — ${count} dates`;
