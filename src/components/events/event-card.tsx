@@ -11,6 +11,7 @@ import { formatDate, formatDateRange, formatPrice } from "@/lib/utils";
 import { formatDistance } from "@/lib/geo";
 import { parseJsonArray } from "@/types";
 import { nextOccurrence, showsNextOccurrence } from "@/lib/event-occurrence";
+import { relativeTimeLabel, type RelativeTimeTone } from "@/lib/events/relative-time-label";
 import { formatAudienceBadge } from "@/lib/event-audience";
 import type { events, venues, promoters } from "@/lib/db/schema";
 import { AddToCalendar } from "./AddToCalendar";
@@ -31,6 +32,15 @@ type VendorSummary = {
   slug: string;
   logoUrl: string | null;
   vendorType: string | null;
+};
+
+/** OPE-396 — tone → pill colour. Keyed on the label's `tone` field rather than
+ *  on its text, so editing the copy cannot silently change the styling. */
+const FRESHNESS_VARIANT: Record<RelativeTimeTone, "success" | "warning" | "info" | "default"> = {
+  live: "success",
+  imminent: "warning",
+  upcoming: "info",
+  past: "default",
 };
 
 interface EventCardProps {
@@ -138,6 +148,20 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
     a.getUTCMonth() === b.getUTCMonth() &&
     a.getUTCDate() === b.getUTCDate();
   const endsToday = displayEndDate ? sameUTCDay(new Date(displayEndDate), new Date()) : false;
+  // OPE-396 — relative-time freshness label. Computed from the same
+  // publicStart/publicEnd + event_days the date line uses, so the pill and the
+  // date underneath it can never disagree.
+  //
+  // Rendered as part of the server output (this is a client component, but Next
+  // still server-renders it), so it is crawlable — the acceptance requires the
+  // label not be JS-only.
+  const freshness = relativeTimeLabel({
+    startDate: displayStartDate,
+    endDate: displayEndDate,
+    datesConfirmed: event.datesConfirmed,
+    eventDayDates: event.eventDayDates,
+  });
+
   const dateLabel = showNextOccurrence
     ? occurrence!.isToday
       ? "Today"
@@ -286,6 +310,21 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
           />
         </div>
         <div className="p-4">
+          {freshness && (
+            <Badge
+              variant={FRESHNESS_VARIANT[freshness.tone]}
+              className="mb-1.5"
+              // A hedged label says "expected"; the tooltip says why, so the
+              // wording stays short without hiding that the dates are unverified.
+              title={
+                freshness.hedged
+                  ? "Dates as submitted — not yet confirmed with the organizer"
+                  : undefined
+              }
+            >
+              {freshness.text}
+            </Badge>
+          )}
           <h3 className="font-semibold text-lg text-foreground line-clamp-2">{event.name}</h3>
           <div className="mt-2 space-y-1 text-sm text-muted-foreground">
             <div className="flex items-center justify-between">
