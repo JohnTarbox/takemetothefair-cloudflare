@@ -48,7 +48,12 @@ describe("tokenize", () => {
   });
 
   it("lowercases and collapses non-alphanumerics", () => {
-    expect(tokenize("Newport Int'l Boat-Show!")).toEqual(["newport", "int", "l", "boat", "show"]);
+    // OPE-434 — the stray "l" from `Int'l` is now dropped. Punctuation is
+    // replaced with spaces before splitting, so possessives and initialisms
+    // shatter into single letters ("Martha's" → martha + s, "W.I.H.A." → w,i,h)
+    // and those fragments matched almost every word via the substring rule.
+    // Single-character tokens are meaningless here and are filtered out.
+    expect(tokenize("Newport Int'l Boat-Show!")).toEqual(["newport", "int", "boat", "show"]);
   });
 
   it("returns empty array for input that is all stopwords/years/punctuation", () => {
