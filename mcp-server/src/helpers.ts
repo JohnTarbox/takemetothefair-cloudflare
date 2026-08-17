@@ -405,26 +405,114 @@ const STOP_WORDS = new Set(["the", "a", "an", "of", "at", "in", "and", "for", "t
 const YEAR_RE = /^(19|20)\d{2}$/;
 const ORDINAL_RE = /^\d+(st|nd|rd|th)$/i;
 
+/**
+ * OPE-434 — minimum token length.
+ *
+ * Punctuation is replaced with spaces before splitting, so possessives and
+ * initialisms shatter into single letters: "Martha's" → ["martha", "s"] and
+ * "W.I.H.A." → ["w", "i", "h", "a"]. Those fragments carry no meaning, and
+ * combined with the substring rule below they matched almost everything —
+ * `martha` contains `h`, `vineyard`/`agricultural`/`fair` all contain `i`, and
+ * `s` is inside `strawberry`. That scored "W.I.H.A. Strawberry Festival" a
+ * perfect 1.0 against "Martha's Vineyard Agricultural Fair", above the real
+ * Martha's Vineyard row at 0.800.
+ *
+ * They also poisoned the SQL pre-filter in search_events, which ORs a
+ * `LIKE '%<token>%'` per token: `%s%` matches nearly every row in the catalog,
+ * so the candidate set blew past the 200-row cap and the genuine matches were
+ * sliced out before scoring ever ran. That is why they were absent entirely
+ * rather than merely mis-ranked.
+ */
+const MIN_TOKEN_LEN = 2;
+
+/**
+ * Shortest token allowed to match by PREFIX rather than exact equality.
+ * Keeps the useful cases ("fair"/"fairgrounds", "art"/"artisan",
+ * "market"/"markets") while stopping a 2-letter fragment from matching a long
+ * word that merely starts with it.
+ */
+const MIN_PREFIX_LEN = 3;
+
+/**
+ * OPE-434 — tokens that appear across a large share of the catalog and so
+ * carry almost no discriminating signal. Down-weighted rather than dropped:
+ * "Fair" is still evidence, just weak evidence, and dropping it outright would
+ * make a query of nothing but generic words score 0 against everything.
+ */
+const GENERIC_TOKENS = new Set([
+  "fair",
+  "fairs",
+  "festival",
+  "festivals",
+  "craft",
+  "crafts",
+  "annual",
+  "show",
+  "shows",
+  "market",
+  "markets",
+  "expo",
+  "event",
+  "events",
+]);
+
+const GENERIC_WEIGHT = 0.25;
+const NORMAL_WEIGHT = 1;
+
+function tokenWeight(t: string): number {
+  return GENERIC_TOKENS.has(t) ? GENERIC_WEIGHT : NORMAL_WEIGHT;
+}
+
 export function tokenize(text: string): string[] {
   return text
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, " ")
     .split(/\s+/)
-    .filter((t) => t.length > 0 && !STOP_WORDS.has(t) && !YEAR_RE.test(t) && !ORDINAL_RE.test(t));
+    .filter(
+      (t) =>
+        t.length >= MIN_TOKEN_LEN && !STOP_WORDS.has(t) && !YEAR_RE.test(t) && !ORDINAL_RE.test(t)
+    );
 }
 
-/** Score how well `query` matches `target` by keyword overlap (0.0–1.0).
- *  A query token matches if it is a substring of any target token or vice-versa. */
+/**
+ * Does query token `q` match target token `t`?
+ *
+ * PREFIX containment, not substring. The old rule was bidirectional
+ * `includes()`, which matched any word sitting anywhere inside another — so
+ * "agricultural" matched "cultural" and scored "Johnny Appleseed Arts and
+ * Cultural Festival" as a candidate duplicate of "Martha's Vineyard
+ * Agricultural Fair". Word interiors are not evidence of relatedness.
+ *
+ * Prefixes are: they absorb plurals and suffixes ("market"/"markets",
+ * "art"/"artisan", "fair"/"fairgrounds") without ever matching mid-word. The
+ * shorter token must still clear MIN_PREFIX_LEN, otherwise a 2-letter fragment
+ * would match every word starting with it.
+ */
+function tokensMatch(q: string, t: string): boolean {
+  if (q === t) return true;
+  if (Math.min(q.length, t.length) < MIN_PREFIX_LEN) return false;
+  return t.startsWith(q) || q.startsWith(t);
+}
+
+/**
+ * Score how well `query` matches `target` by weighted keyword overlap (0.0–1.0).
+ *
+ * 1.0 means every query token is present in the target, so a near-identical
+ * name is the only way to reach it — which is what makes the number usable as
+ * a confidence signal by the dedup callers that rely on this tool.
+ */
 export function fuzzyTokenScore(query: string, target: string): number {
   const qTokens = tokenize(query);
   const tTokens = tokenize(target);
   if (qTokens.length === 0) return 0;
 
-  let matched = 0;
+  let matchedWeight = 0;
+  let totalWeight = 0;
   for (const q of qTokens) {
-    if (tTokens.some((t) => t.includes(q) || q.includes(t))) {
-      matched++;
-    }
+    const w = tokenWeight(q);
+    totalWeight += w;
+    if (tTokens.some((t) => tokensMatch(q, t))) matchedWeight += w;
   }
-  return matched / qTokens.length;
+  if (totalWeight === 0) return 0;
+  return matchedWeight / totalWeight;
 }

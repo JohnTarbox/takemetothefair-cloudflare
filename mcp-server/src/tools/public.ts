@@ -109,8 +109,16 @@ export function registerPublicTools(server: McpServer, db: Db) {
         const tokens = tokenize(params.query);
         if (tokens.length > 0) {
           const tokenLikes = tokens.map((t) => like(events.name, `%${escapeLike(t)}%`));
-          // OR — match any token. The JS scorer then ranks by fraction of
-          // tokens that match.
+          // OPE-434 superset invariant: enabling fuzzy must never DROP a row
+          // that exact matching would have returned. The token ORs alone don't
+          // guarantee that — the candidate set is capped at `sqlLimit` with no
+          // ordering, so an exact match can be sliced out before scoring. ORing
+          // the whole-query LIKE (the exact-mode predicate) in keeps it in the
+          // candidate set, and it scores 1.0 because every query token is
+          // present in the name by construction.
+          tokenLikes.push(like(events.name, `%${escapeLike(params.query)}%`));
+          // OR — match any token. The JS scorer then ranks by weighted fraction
+          // of tokens that match.
           const fuzzyOr = tokenLikes.length === 1 ? tokenLikes[0] : or(...tokenLikes);
           if (fuzzyOr) conditions.push(fuzzyOr);
         }
