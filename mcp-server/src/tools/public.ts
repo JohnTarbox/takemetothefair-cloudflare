@@ -171,6 +171,39 @@ export function registerPublicTools(server: McpServer, db: Db) {
       // Fuzzy reorders results, so SQL offset is meaningless — apply in JS instead
       const sqlOffset = params.fuzzy ? 0 : offset;
 
+      // OPE-434 followup — make the over-fetch slice the BEST rows, not an
+      // arbitrary 200.
+      //
+      // The token pre-filter is an OR, so a query containing a common word
+      // ("fair", "festival") still matches hundreds of rows. `sqlLimit` then
+      // truncated that set with NO `ORDER BY`, i.e. in whatever order SQLite
+      // scanned — so a near-identical row could be cut before the JS scorer
+      // ever saw it. That is why "Martha's Vineyard Fair" returned the 2026
+      // edition but not the 2027 one: both score 1.0, but only one survived
+      // the slice.
+      //
+      // Ordering by how many query tokens the name contains puts the strongest
+      // candidates at the front, so truncation drops the weakest instead of a
+      // random selection. Cheap: a handful of LIKEs per row, and it only runs
+      // on the fuzzy path.
+      const fuzzyOrder =
+        params.query && params.fuzzy
+          ? (() => {
+              const toks = tokenize(params.query!);
+              if (toks.length === 0) return null;
+              // Whole-query match counts double — an exact substring is the
+              // strongest possible signal and must never be truncated away.
+              const terms = [
+                sql`(CASE WHEN ${events.name} LIKE ${`%${escapeLike(params.query!)}%`} THEN 2 ELSE 0 END)`,
+                ...toks.map(
+                  (t) =>
+                    sql`(CASE WHEN ${events.name} LIKE ${`%${escapeLike(t)}%`} THEN 1 ELSE 0 END)`
+                ),
+              ];
+              return sql.join(terms, sql` + `);
+            })()
+          : null;
+
       const query = db
         .select({
           id: events.id,
@@ -194,10 +227,11 @@ export function registerPublicTools(server: McpServer, db: Db) {
         .leftJoin(venues, eq(events.venueId, venues.id))
         .leftJoin(promoters, eq(events.promoterId, promoters.id))
         .where(and(...conditions))
-        .limit(sqlLimit)
-        .offset(sqlOffset);
+        .$dynamic();
 
-      const rows = await query;
+      if (fuzzyOrder) query.orderBy(sql`${fuzzyOrder} DESC`);
+
+      const rows = await query.limit(sqlLimit).offset(sqlOffset);
 
       // Post-filter by category (stored as JSON, can't filter in SQL)
       let results = rows;
