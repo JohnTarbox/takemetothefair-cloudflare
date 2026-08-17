@@ -166,14 +166,46 @@ export async function POST(request: Request) {
           });
         }
       } catch (error) {
-        results.errors.push(
-          `${event.name}: ${error instanceof Error ? error.message : "Unknown error"}`
-        );
+        const message = error instanceof Error ? error.message : "Unknown error";
+
+        // OPE-424 — record the failure DURABLY.
+        //
+        // Until now an unreachable source produced only a string in
+        // `results.errors`, returned in the HTTP response and then gone. The
+        // success and no-change branches both write (lastSyncedAt, and success
+        // additionally writes enrichment_log), so afterwards there was no way
+        // to tell "the organizer's site is unreachable" from "we re-synced and
+        // nothing had changed". That is the FAM-EXTERNAL-DEFERRAL shape from
+        // OPE-243: *unreachable* and *nothing changed* indistinguishable from
+        // the outside — and it is how ~12 organizer-own sites could go
+        // permanently unfetchable while their aggregator-derived data sat on
+        // the page looking confident.
+        //
+        // enrichment_log already models this (source + status='failure'), so
+        // the durable surface exists; the error path simply never used it.
+        // Best-effort: a logging failure must not abort the remaining events
+        // in the sweep.
+        try {
+          await logEnrichment(db, {
+            targetType: "event",
+            targetId: event.id,
+            source: "scraper",
+            status: "failure",
+            notes: `rescrape-events sweep — source unreachable or unparseable: ${message}`.slice(
+              0,
+              500
+            ),
+          });
+        } catch {
+          /* best-effort — never lose the rest of the sweep over a log write */
+        }
+
+        results.errors.push(`${event.name}: ${message}`);
         results.details.push({
           id: event.id,
           name: event.name,
           status: "error",
-          error: error instanceof Error ? error.message : "Unknown error",
+          error: message,
         });
       }
     }
