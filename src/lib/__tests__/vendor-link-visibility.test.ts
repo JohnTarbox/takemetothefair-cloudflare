@@ -19,9 +19,13 @@ const read = (p: string) => readFileSync(resolve(ROOT, p), "utf8");
 /** Surfaces whose output reaches an anonymous visitor. */
 const PUBLIC_SURFACES = [
   "src/app/events/[slug]/event-detail-data.ts",
-  "src/app/events/page.tsx",
-  "src/app/events/past/page.tsx",
-  "src/app/vendors/page.tsx",
+  // OPE-420 — these three moved into `(listing)` route groups so their
+  // `loading.tsx` Suspense boundary no longer covers the sibling `[slug]`
+  // routes (a boundary there froze the HTTP status at 200 on bogus slugs).
+  // Route groups do not change URLs; only these source paths moved.
+  "src/app/events/(listing)/page.tsx",
+  "src/app/events/(listing)/past/page.tsx",
+  "src/app/vendors/(listing)/page.tsx",
   "src/app/vendors/[slug]/page.tsx",
   "src/app/api/events/[slug]/vendors/route.ts",
   "src/components/events/state-events-page.tsx",
