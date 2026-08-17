@@ -13,6 +13,8 @@ export type TestDb = ReturnType<typeof drizzle<typeof schema>>;
 
 const SCHEMA_SQL = `
   CREATE TABLE users (
+    -- OPE-292 — mirrors the users.origin column; NOT NULL with a default.
+    origin TEXT NOT NULL DEFAULT 'registration',
     id TEXT PRIMARY KEY,
     email TEXT NOT NULL UNIQUE,
     password_hash TEXT,

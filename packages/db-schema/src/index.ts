@@ -18,6 +18,31 @@ export const users = sqliteTable("users", {
     .$defaultFn(() => crypto.randomUUID()),
   email: text("email").notNull().unique(),
   passwordHash: text("password_hash"),
+  /**
+   * OPE-292 — how this row came to exist.
+   *
+   * `ingestion` rows are placeholder OWNER accounts minted by the vendor /
+   * promoter creation tools (`pending+<slug>@meetmeatthefair.com`). They are
+   * correct and intentional — an entity needs an owner — but they are NOT
+   * registrations, and they outnumber real people ~32:1 (6,741 of 6,950 as of
+   * 2026-08-17). Any metric that counts `users` without excluding them reports
+   * roughly 33x the real figure.
+   *
+   * Before this column the only way to tell them apart was
+   * `email LIKE 'pending+%@meetmeatthefair.com'` — a convention nothing
+   * enforced and nothing documented as load-bearing. OPE-177 scope #3 (alert on
+   * unconfirmed verification emails) would have fired constantly from day one,
+   * because placeholders are permanently and correctly `email_verified = NULL`;
+   * that was caught by accident rather than by the schema.
+   *
+   * Defaults to `registration` so a real signup that forgets to set it is
+   * counted as a person — the safe direction. A placeholder that forgets is
+   * merely miscounted, whereas a person marked `ingestion` would vanish from
+   * every user surface.
+   */
+  origin: text("origin", { enum: ["registration", "ingestion", "invite"] })
+    .notNull()
+    .default("registration"),
   name: text("name"),
   // Primary role — kept for back-compat with the ~100 existing
   // `session.user.role === X` consumers. The canonical source of truth

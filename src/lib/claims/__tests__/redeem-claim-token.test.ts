@@ -20,6 +20,8 @@ import { vendors, users, userRoles, entityClaims, claimTokens } from "../../db/s
 
 const SCHEMA_SQL = `
   CREATE TABLE users (
+    -- OPE-292 — mirrors the users.origin column; NOT NULL with a default.
+    origin TEXT NOT NULL DEFAULT 'registration',
     id TEXT PRIMARY KEY,
     email TEXT NOT NULL,
     password_hash TEXT,
