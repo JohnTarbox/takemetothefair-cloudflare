@@ -621,9 +621,21 @@ export async function gatherQueueFlows(db: Db, now: Date): Promise<QueueDrainRow
       promoterEnrichmentCandidates.reviewedAt,
       promoterEnrichmentCandidates.decision
     ),
+    // OPE-375 — the zero here is BY DESIGN, and the label has to say so.
+    //
+    // Its two neighbours are fed by scheduled selectors (select-candidates.ts,
+    // promoter-select.ts) and a queue each; performer enrichment has NEITHER —
+    // no selector, no `performer-enrichment` queue, and `performer-dispatch.ts`
+    // is reachable only through the manual `enrich_performer` MCP tool. The
+    // table has held 0 candidates in any state, ever, against 249 performers.
+    //
+    // So a bare "0" sitting beside vendor's +28/day read as "drained and
+    // healthy" when it actually meant "nothing has ever produced into this".
+    // That ambiguity IS the defect — an absence reported as health. The label
+    // now carries the distinction the number cannot.
     enrichment(
       "performer_enrichment",
-      "Performer enrichment review",
+      "Performer enrichment review (manual only — no scheduled producer)",
       performerEnrichmentCandidates,
       performerEnrichmentCandidates.createdAt,
       performerEnrichmentCandidates.reviewedAt,
