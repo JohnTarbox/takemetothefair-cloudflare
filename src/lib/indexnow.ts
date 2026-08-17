@@ -40,6 +40,13 @@ import {
 // cf-email consumer that delivers the other 341 sends in the ledger.
 import { enqueueEmail } from "@/lib/queues/producers";
 import { logError } from "@/lib/logger";
+// OPE-447 — outage duration, anchored to the last submission Bing accepted
+// rather than to our own pause flag.
+import {
+  getIndexNowOutage,
+  describeIndexNowOutage,
+  advanceIndexNowOutageAnchor,
+} from "@/lib/indexnow-outage";
 
 const HOST = SITE_HOSTNAME;
 const INDEXNOW_ENDPOINT = "https://api.indexnow.org/indexnow";
@@ -280,6 +287,17 @@ async function recordIndexNowSuccess(db: Db, urls: string[], at: Date): Promise<
   } catch (err) {
     console.error("[IndexNow] Failed to record per-URL last-success:", err);
   }
+
+  // OPE-447 — advance the durable outage anchor. Done HERE rather than at the
+  // two call sites because both success branches (single-URL GET and batched
+  // POST) already funnel through this function; wiring it at one of them would
+  // leave the other silently un-anchored
+  // ([[feedback_fix_wired_into_one_of_two_parallel_paths]]).
+  //
+  // It cannot rely on `indexnow_submissions` alone: recordSubmission prunes
+  // that table at 30 days, so during a longer outage the last success row is
+  // guaranteed to vanish and the age would revert to the seeded floor.
+  await advanceIndexNowOutageAnchor(db, at);
 }
 
 /**
@@ -421,9 +439,19 @@ async function maybeAlertStalePause(
     });
 
     const days = Math.floor(ageMs / (24 * 60 * 60 * 1000));
+
+    // OPE-447 — the pause age is NOT the severity number. It restarts every
+    // time the operator lifts the pause to probe Bing and re-engages it on a
+    // 429, which happened three times and made a 65-day outage report as "6
+    // days". Lead with the outage duration, which is anchored to the last
+    // submission Bing actually accepted and so cannot be disturbed by our own
+    // flag. The pause age stays, labelled, because "did I forget to lift this"
+    // is still a real question.
+    const outage = await getIndexNowOutage(db);
+    const severity = describeIndexNowOutage(outage, days);
+
     const msg =
-      `IndexNow has been PAUSED for ~${days}d (since ${m[1]}) — 0 URLs submitted to Bing in ` +
-      `that window. If Bing's per-host penalty has decayed, clear the kill-switch ` +
+      `${severity} If Bing's per-host penalty has decayed, clear the kill-switch ` +
       `(kv delete indexnow:paused) and backfill via the resubmit_indexnow tool; otherwise ` +
       `this is expected. This is a throttled reminder (≤1/week — OPE-308), not a new failure.`;
     await logError(db, { level: "warn", source: "indexnow:health", message: msg });
@@ -432,7 +460,9 @@ async function maybeAlertStalePause(
     if (to) {
       await enqueueEmail({
         to,
-        subject: `⚠️ IndexNow still paused after ~${days} days`,
+        // Subject carries the OUTAGE figure — it is what a glance at the inbox
+        // should convey, and it is the number that decides escalation.
+        subject: `⚠️ IndexNow: no successful submission in ${outage.days} days`,
         text: msg,
         html: `<p>${msg}</p>`,
         source: "indexnow:health",
