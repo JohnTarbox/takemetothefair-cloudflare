@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { eq, and, or, gte, lte, like, inArray, isNull, sql } from "drizzle-orm";
+import { eq, and, or, gte, lte, like, inArray, isNull, sql, desc } from "drizzle-orm";
 import {
   events,
   venues,
@@ -9,6 +9,10 @@ import {
   eventDays,
   promoters,
   eventSeries,
+  eventSlugHistory,
+  vendorSlugHistory,
+  venueSlugHistory,
+  promoterSlugHistory,
 } from "../schema.js";
 import { PRIMARY_AUDIENCE, PUBLIC_ACCESS } from "@takemetothefair/constants";
 import {
@@ -29,6 +33,62 @@ import {
   type VendorDisplayInput,
 } from "@takemetothefair/utils";
 import type { Db } from "../db.js";
+import type { SQLiteColumn } from "drizzle-orm/sqlite-core";
+import type { SQL } from "drizzle-orm";
+
+/**
+ * OPE-438 — walk a `*_slug_history` table to the current slug, mirroring what
+ * the web routes in src/middleware.ts already do.
+ *
+ * Before this, an old slug 404'd on the MCP surface while the web route served
+ * a 301. The two disagreed about whether a URL existed, and the MCP tool is the
+ * one an agent reaches for — so the natural post-merge check ("does the old
+ * slug resolve now?") returned "Event not found" and read as a FAILED merge,
+ * which `merge_events`'s own success message tells the caller to run.
+ *
+ * Generic over the four history tables (event / vendor / venue / promoter):
+ * they share an identical `oldSlug` / `newSlug` / `changedAt` shape, and fixing
+ * only the event surface would leave three known-divergent siblings behind —
+ * the one-of-N-paths trap.
+ *
+ * Same safety properties as the middleware walker, for the same reason: a merge
+ * can chain slugs, and OPE-423 proved a cycle is reachable in production (a
+ * resurrected tombstone left two history rows keyed through one slug). Hence
+ * the `seen` set and the hop cap rather than trusting the data to be a clean
+ * chain.
+ *
+ * Returns the terminal slug, or null when the input has no history.
+ */
+interface SlugHistoryTable {
+  oldSlug: SQLiteColumn;
+  newSlug: SQLiteColumn;
+  changedAt: SQLiteColumn;
+}
+
+async function resolveSlugHistory(
+  db: Db,
+  table: SlugHistoryTable,
+  requested: string
+): Promise<string | null> {
+  let cursor = requested;
+  const seen = new Set<string>([cursor]);
+  for (let hop = 0; hop < 5; hop++) {
+    // `as never` on .from() is needed because the four history tables are
+    // structurally identical but nominally distinct; the projection is then
+    // read back through an explicit cast rather than Drizzle's inference.
+    const rows = (await db
+      .select({ newSlug: table.newSlug })
+      .from(table as never)
+      .where(eq(table.oldSlug, unsafeSlug(cursor)))
+      .orderBy(desc(table.changedAt))
+      .limit(1)) as Array<{ newSlug: string }>;
+    const next = rows[0]?.newSlug;
+    if (!next || seen.has(next)) break;
+    cursor = next;
+    seen.add(cursor);
+  }
+  return cursor === requested ? null : cursor;
+}
 
 export function registerPublicTools(server: McpServer, db: Db) {
   // ── search_events ──────────────────────────────────────────────
@@ -293,51 +353,75 @@ export function registerPublicTools(server: McpServer, db: Db) {
       slug: z.string().describe("Event slug (URL-friendly name)"),
     },
     async ({ slug }) => {
-      const rows = await db
-        .select({
-          id: events.id,
-          name: events.name,
-          slug: events.slug,
-          description: events.description,
-          startDate: events.startDate,
-          endDate: events.endDate,
-          datesConfirmed: events.datesConfirmed,
-          categories: events.categories,
-          tags: events.tags,
-          ticketUrl: events.ticketUrl,
-          ticketPriceMin: events.ticketPriceMinCents,
-          ticketPriceMax: events.ticketPriceMaxCents,
-          imageUrl: events.imageUrl,
-          status: events.status,
-          commercialVendorsAllowed: events.commercialVendorsAllowed,
-          venueId: events.venueId,
-          venueName: venues.name,
-          venueAddress: venues.address,
-          venueCity: venues.city,
-          venueState: venues.state,
-          venueZip: venues.zip,
-          promoterId: events.promoterId,
-          promoterName: promoters.companyName,
-          promoterSlug: promoters.slug,
-          promoterWebsite: promoters.website,
-          // OPE-13 — roster-research state, so the analyst sweep can read the
-          // current status before deciding whether to (re)research this event.
-          vendorRosterStatus: events.vendorRosterStatus,
-          vendorRosterCheckedAt: events.vendorRosterCheckedAt,
-          vendorRosterSourceUrl: events.vendorRosterSourceUrl,
-          vendorRosterOffset: events.vendorRosterOffset,
-        })
-        .from(events)
-        .leftJoin(venues, eq(events.venueId, venues.id))
-        .leftJoin(promoters, eq(events.promoterId, promoters.id))
-        .where(and(eq(events.slug, unsafeSlug(slug)), publicEventWhere()))
-        .limit(1);
+      // OPE-438 — extracted so the slug-history fallback below can re-run the
+      // identical projection instead of duplicating this select list, which is
+      // how the two copies would drift.
+      const eventDetailQuery = (s: string) =>
+        db
+          .select({
+            id: events.id,
+            name: events.name,
+            slug: events.slug,
+            description: events.description,
+            startDate: events.startDate,
+            endDate: events.endDate,
+            datesConfirmed: events.datesConfirmed,
+            categories: events.categories,
+            tags: events.tags,
+            ticketUrl: events.ticketUrl,
+            ticketPriceMin: events.ticketPriceMinCents,
+            ticketPriceMax: events.ticketPriceMaxCents,
+            imageUrl: events.imageUrl,
+            status: events.status,
+            commercialVendorsAllowed: events.commercialVendorsAllowed,
+            venueId: events.venueId,
+            venueName: venues.name,
+            venueAddress: venues.address,
+            venueCity: venues.city,
+            venueState: venues.state,
+            venueZip: venues.zip,
+            promoterId: events.promoterId,
+            promoterName: promoters.companyName,
+            promoterSlug: promoters.slug,
+            promoterWebsite: promoters.website,
+            // OPE-13 — roster-research state, so the analyst sweep can read the
+            // current status before deciding whether to (re)research this event.
+            vendorRosterStatus: events.vendorRosterStatus,
+            vendorRosterCheckedAt: events.vendorRosterCheckedAt,
+            vendorRosterSourceUrl: events.vendorRosterSourceUrl,
+            vendorRosterOffset: events.vendorRosterOffset,
+          })
+          .from(events)
+          .leftJoin(venues, eq(events.venueId, venues.id))
+          .leftJoin(promoters, eq(events.promoterId, promoters.id))
+          .where(and(eq(events.slug, unsafeSlug(s)), publicEventWhere()))
+          .limit(1);
 
-      if (rows.length === 0) {
+      const rows = await eventDetailQuery(slug);
+
+      // OPE-438 — fall back to event_slug_history, like the web route does.
+      //
+      // Before this, an old slug 404'd here while /events/<old-slug> served a
+      // 301 to the keeper. The two surfaces disagreed about whether a URL
+      // existed, and the MCP tool is the one an agent reaches for — so the
+      // natural post-merge check ("does the old slug resolve now?") returned
+      // "Event not found" and read as a FAILED merge. `merge_events`'s own
+      // success message tells the caller to run exactly that check.
+      let resolvedVia: string | null = null;
+      let resolved = rows;
+      if (resolved.length === 0) {
+        const target = await resolveSlugHistory(db, eventSlugHistory, slug);
+        if (target) {
+          resolved = await eventDetailQuery(target);
+          if (resolved.length > 0) resolvedVia = target;
+        }
+      }
+
+      if (resolved.length === 0) {
         return { content: [{ type: "text", text: "Event not found." }], isError: true };
       }
 
-      const event = rows[0];
+      const event = resolved[0];
 
       // Count approved/confirmed vendors. DQ6 (OPE-13): innerJoin vendors +
       // isNull(deletedAt) so the count excludes soft-deleted vendors and stays
@@ -370,6 +454,15 @@ export function registerPublicTools(server: McpServer, db: Db) {
           jsonContent({
             name: event.name,
             slug: event.slug,
+            // OPE-438 — tell the caller HOW this resolved.
+            //
+            // Present only on a redirect, so a direct hit stays visually clean.
+            // The distinction is load-bearing after a merge: a DIRECT hit on the
+            // duplicate's original slug means the tombstone was never renamed —
+            // i.e. the half-completed merge of OPE-423, where a row kept
+            // `merged_into` while still live under its own slug. Resolving
+            // silently would hide exactly the state the caller is checking for.
+            ...(resolvedVia ? { requested_slug: slug, resolved_via_slug_history: true } : {}),
             description: event.description,
             dates: formatDateRange(event.startDate, event.endDate),
             datesConfirmed: event.datesConfirmed,
@@ -715,32 +808,47 @@ export function registerPublicTools(server: McpServer, db: Db) {
         ? eq(venues.id, params.id)
         : eq(venues.slug, unsafeSlug(params.slug!));
 
-      const rows = await db
-        .select({
-          id: venues.id,
-          name: venues.name,
-          slug: venues.slug,
-          address: venues.address,
-          city: venues.city,
-          state: venues.state,
-          zip: venues.zip,
-          latitude: venues.latitude,
-          longitude: venues.longitude,
-          capacity: venues.capacity,
-          amenities: venues.amenities,
-          contactEmail: venues.contactEmail,
-          contactPhone: venues.contactPhone,
-          website: venues.website,
-          description: venues.description,
-          imageUrl: venues.imageUrl,
-          googleMapsUrl: venues.googleMapsUrl,
-          googleRating: venues.googleRating,
-          status: venues.status,
-          createdAt: venues.createdAt,
-        })
-        .from(venues)
-        .where(condition)
-        .limit(1);
+      const detailQuery = (cond: SQL) =>
+        db
+          .select({
+            id: venues.id,
+            name: venues.name,
+            slug: venues.slug,
+            address: venues.address,
+            city: venues.city,
+            state: venues.state,
+            zip: venues.zip,
+            latitude: venues.latitude,
+            longitude: venues.longitude,
+            capacity: venues.capacity,
+            amenities: venues.amenities,
+            contactEmail: venues.contactEmail,
+            contactPhone: venues.contactPhone,
+            website: venues.website,
+            description: venues.description,
+            imageUrl: venues.imageUrl,
+            googleMapsUrl: venues.googleMapsUrl,
+            googleRating: venues.googleRating,
+            status: venues.status,
+            createdAt: venues.createdAt,
+          })
+          .from(venues)
+          .where(cond)
+          .limit(1);
+
+      let rows = await detailQuery(condition);
+
+      // OPE-438 — slug-history fallback, matching the web route and
+      // get_event_details. Only when a SLUG was supplied: an id miss is a
+      // genuine miss, and there is no history to walk for it.
+      let resolvedVia: string | null = null;
+      if (rows.length === 0 && params.slug) {
+        const target = await resolveSlugHistory(db, venueSlugHistory, params.slug);
+        if (target) {
+          rows = await detailQuery(eq(venues.slug, unsafeSlug(target)));
+          if (rows.length > 0) resolvedVia = target;
+        }
+      }
 
       if (rows.length === 0) {
         return { content: [{ type: "text", text: "Venue not found." }], isError: true };
@@ -759,6 +867,12 @@ export function registerPublicTools(server: McpServer, db: Db) {
       return {
         content: [
           jsonContent({
+            // OPE-438 — present only on a redirect, so a direct hit stays
+            // clean. The distinction matters after a merge: a DIRECT hit on
+            // the old slug means the tombstone was never renamed.
+            ...(resolvedVia
+              ? { requested_slug: params.slug, resolved_via_slug_history: true }
+              : {}),
             id: venue.id,
             name: venue.name,
             slug: venue.slug,
@@ -805,41 +919,56 @@ export function registerPublicTools(server: McpServer, db: Db) {
         ? eq(vendors.id, params.id)
         : eq(vendors.slug, unsafeSlug(params.slug!));
 
-      const rows = await db
-        .select({
-          id: vendors.id,
-          businessName: vendors.businessName,
-          // EH2.1 — display_name override (drizzle/0121).
-          displayName: vendors.displayName,
-          slug: vendors.slug,
-          description: vendors.description,
-          vendorType: vendors.vendorType,
-          products: vendors.products,
-          website: vendors.website,
-          logoUrl: vendors.logoUrl,
-          verified: vendors.verified,
-          commercial: vendors.commercial,
-          contactName: vendors.contactName,
-          contactEmail: vendors.contactEmail,
-          contactPhone: vendors.contactPhone,
-          city: vendors.city,
-          state: vendors.state,
-          createdAt: vendors.createdAt,
-          // EH1 hierarchy + relationship model (drizzle/0106 + 0107).
-          // Surfaced here so operators can verify hierarchy state with a
-          // single read instead of inferring from migration UPDATE filters.
-          role: vendors.role,
-          brandParentVendorId: vendors.brandParentVendorId,
-          operatorParentVendorId: vendors.operatorParentVendorId,
-          aliasOfVendorId: vendors.aliasOfVendorId,
-          relationshipType: vendors.relationshipType,
-          defaultChildDisplay: vendors.defaultChildDisplay,
-          displayOverridePermitted: vendors.displayOverridePermitted,
-          displayMode: vendors.displayMode,
-        })
-        .from(vendors)
-        .where(condition)
-        .limit(1);
+      const detailQuery = (cond: SQL) =>
+        db
+          .select({
+            id: vendors.id,
+            businessName: vendors.businessName,
+            // EH2.1 — display_name override (drizzle/0121).
+            displayName: vendors.displayName,
+            slug: vendors.slug,
+            description: vendors.description,
+            vendorType: vendors.vendorType,
+            products: vendors.products,
+            website: vendors.website,
+            logoUrl: vendors.logoUrl,
+            verified: vendors.verified,
+            commercial: vendors.commercial,
+            contactName: vendors.contactName,
+            contactEmail: vendors.contactEmail,
+            contactPhone: vendors.contactPhone,
+            city: vendors.city,
+            state: vendors.state,
+            createdAt: vendors.createdAt,
+            // EH1 hierarchy + relationship model (drizzle/0106 + 0107).
+            // Surfaced here so operators can verify hierarchy state with a
+            // single read instead of inferring from migration UPDATE filters.
+            role: vendors.role,
+            brandParentVendorId: vendors.brandParentVendorId,
+            operatorParentVendorId: vendors.operatorParentVendorId,
+            aliasOfVendorId: vendors.aliasOfVendorId,
+            relationshipType: vendors.relationshipType,
+            defaultChildDisplay: vendors.defaultChildDisplay,
+            displayOverridePermitted: vendors.displayOverridePermitted,
+            displayMode: vendors.displayMode,
+          })
+          .from(vendors)
+          .where(cond)
+          .limit(1);
+
+      let rows = await detailQuery(condition);
+
+      // OPE-438 — slug-history fallback, matching the web route and
+      // get_event_details. Only when a SLUG was supplied: an id miss is a
+      // genuine miss, and there is no history to walk for it.
+      let resolvedVia: string | null = null;
+      if (rows.length === 0 && params.slug) {
+        const target = await resolveSlugHistory(db, vendorSlugHistory, params.slug);
+        if (target) {
+          rows = await detailQuery(eq(vendors.slug, unsafeSlug(target)));
+          if (rows.length > 0) resolvedVia = target;
+        }
+      }
 
       if (rows.length === 0) {
         return { content: [{ type: "text", text: "Vendor not found." }], isError: true };
@@ -931,6 +1060,12 @@ export function registerPublicTools(server: McpServer, db: Db) {
       return {
         content: [
           jsonContent({
+            // OPE-438 — present only on a redirect, so a direct hit stays
+            // clean. The distinction matters after a merge: a DIRECT hit on
+            // the old slug means the tombstone was never renamed.
+            ...(resolvedVia
+              ? { requested_slug: params.slug, resolved_via_slug_history: true }
+              : {}),
             id: vendor.id,
             businessName: vendor.businessName,
             // EH2.1 — display_name override + computed surface name.
@@ -989,21 +1124,36 @@ export function registerPublicTools(server: McpServer, db: Db) {
         ? eq(promoters.id, params.id)
         : eq(promoters.slug, unsafeSlug(params.slug!));
 
-      const rows = await db
-        .select({
-          id: promoters.id,
-          companyName: promoters.companyName,
-          slug: promoters.slug,
-          description: promoters.description,
-          website: promoters.website,
-          socialLinks: promoters.socialLinks,
-          logoUrl: promoters.logoUrl,
-          verified: promoters.verified,
-          createdAt: promoters.createdAt,
-        })
-        .from(promoters)
-        .where(condition)
-        .limit(1);
+      const detailQuery = (cond: SQL) =>
+        db
+          .select({
+            id: promoters.id,
+            companyName: promoters.companyName,
+            slug: promoters.slug,
+            description: promoters.description,
+            website: promoters.website,
+            socialLinks: promoters.socialLinks,
+            logoUrl: promoters.logoUrl,
+            verified: promoters.verified,
+            createdAt: promoters.createdAt,
+          })
+          .from(promoters)
+          .where(cond)
+          .limit(1);
+
+      let rows = await detailQuery(condition);
+
+      // OPE-438 — slug-history fallback, matching the web route and
+      // get_event_details. Only when a SLUG was supplied: an id miss is a
+      // genuine miss, and there is no history to walk for it.
+      let resolvedVia: string | null = null;
+      if (rows.length === 0 && params.slug) {
+        const target = await resolveSlugHistory(db, promoterSlugHistory, params.slug);
+        if (target) {
+          rows = await detailQuery(eq(promoters.slug, unsafeSlug(target)));
+          if (rows.length > 0) resolvedVia = target;
+        }
+      }
 
       if (rows.length === 0) {
         return { content: [{ type: "text", text: "Promoter not found." }], isError: true };
@@ -1026,6 +1176,12 @@ export function registerPublicTools(server: McpServer, db: Db) {
       return {
         content: [
           jsonContent({
+            // OPE-438 — present only on a redirect, so a direct hit stays
+            // clean. The distinction matters after a merge: a DIRECT hit on
+            // the old slug means the tombstone was never renamed.
+            ...(resolvedVia
+              ? { requested_slug: params.slug, resolved_via_slug_history: true }
+              : {}),
             id: promoter.id,
             companyName: promoter.companyName,
             slug: promoter.slug,
