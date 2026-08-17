@@ -4632,3 +4632,159 @@ export const newsletterListSubscriptions = sqliteTable(
 /** The audience lists that exist. Adding one is a value here plus a sender. */
 export const NEWSLETTER_LISTS = ["weekend", "vendor"] as const;
 export type NewsletterList = (typeof NEWSLETTER_LISTS)[number];
+
+// ─── OPE-414 — market-player register ────────────────────────────────────────
+//
+// A small, queryable register of external sites that list the same events we
+// do, so landscape intel stops living as prose in session notes and becomes
+// something you can trend.
+//
+// ⚠️ The table is `market_players`, NOT `competitors`, and that is a
+// correctness decision rather than a naming preference. visitmaine.com,
+// downtownbangor.com and maine.gov list our events too — but they are
+// government/nonprofit/civic bodies, which makes them potential CITATION
+// SOURCES AND PARTNERS, not businesses competing for our vendors and revenue.
+// A table called `competitors` would have quietly asserted the opposite about
+// every row in it, and the first person to read it would have inherited that
+// mistake. Hence two orthogonal axes on every row:
+//
+//   orgClass     — what the organization IS   (for_profit / nonprofit / …)
+//   relationship — what they are TO US        (competitor / partner / …)
+//
+// They are deliberately not collapsed into one field: a for-profit site can be
+// an aggregator we happily syndicate to, and a nonprofit can still compete for
+// the same search results.
+
+/** What the organization is. */
+export const MARKET_PLAYER_ORG_CLASSES = [
+  "for_profit",
+  "nonprofit",
+  "government",
+  "individual",
+  "unknown",
+] as const;
+export type MarketPlayerOrgClass = (typeof MARKET_PLAYER_ORG_CLASSES)[number];
+
+/** What they are to us. Our posture, not their nature. */
+export const MARKET_PLAYER_RELATIONSHIPS = [
+  "competitor",
+  "aggregator",
+  "partner",
+  "citation_source",
+  "neutral",
+] as const;
+export type MarketPlayerRelationship = (typeof MARKET_PLAYER_RELATIONSHIPS)[number];
+
+export const MARKET_PLAYER_THREAT_LEVELS = ["none", "low", "medium", "high"] as const;
+export const MARKET_PLAYER_THREAT_TRENDS = ["rising", "steady", "falling", "unknown"] as const;
+export const MARKET_PLAYER_STATUSES = ["active", "dormant", "dead", "unknown"] as const;
+
+export const marketPlayers = sqliteTable(
+  "market_players",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    /** Registrable domain, lowercased, no scheme or www. The upsert key — one
+     *  row per site, so re-running a seed or a monthly sweep is idempotent. */
+    domain: text("domain").notNull(),
+    name: text("name"),
+    relationship: text("relationship", { enum: MARKET_PLAYER_RELATIONSHIPS })
+      .notNull()
+      .default("neutral"),
+    orgClass: text("org_class", { enum: MARKET_PLAYER_ORG_CLASSES }).notNull().default("unknown"),
+    /** Free text: 'directory', 'ticketing', 'blog', 'tourism board', … */
+    type: text("type"),
+    /** Free text: 'ME', 'New England', 'national'. */
+    geoScope: text("geo_scope"),
+    owner: text("owner"),
+    /** Domain registration date, when known — an old domain with thin content
+     *  reads very differently from a new one. */
+    registeredAt: integer("registered_at", { mode: "timestamp" }),
+    businessModel: text("business_model"),
+    pricing: text("pricing"),
+    techStack: text("tech_stack"),
+    /** Nullable on purpose: NULL = "not checked", 0 = "checked, absent". The
+     *  distinction is the whole point of a register that gets re-swept. */
+    hasSchema: integer("has_schema", { mode: "boolean" }),
+    hasLlmsTxt: integer("has_llms_txt", { mode: "boolean" }),
+    threatLevel: text("threat_level", { enum: MARKET_PLAYER_THREAT_LEVELS }),
+    threatTrend: text("threat_trend", { enum: MARKET_PLAYER_THREAT_TRENDS }),
+    status: text("status", { enum: MARKET_PLAYER_STATUSES }).notNull().default("unknown"),
+    notes: text("notes"),
+    lastCheckedAt: integer("last_checked_at", { mode: "timestamp" }),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .notNull()
+      .$onUpdateFn(() => new Date()),
+  },
+  (t) => [
+    uniqueIndex("idx_market_players_domain").on(t.domain),
+    index("idx_market_players_relationship").on(t.relationship),
+    index("idx_market_players_org_class").on(t.orgClass),
+    index("idx_market_players_threat").on(t.threatLevel),
+  ]
+);
+
+/**
+ * Append-only metric observations. One row per look, never updated — the trend
+ * IS the data, and overwriting a previous count in place would destroy the only
+ * thing this table exists to show.
+ */
+export const marketPlayerSnapshots = sqliteTable(
+  "market_player_snapshots",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    playerId: text("player_id").notNull(),
+    /** Total events listed on the site, when countable. */
+    eventCount: integer("event_count"),
+    /** Of those, how many are in New England — the overlap that matters to us. */
+    neEventCount: integer("ne_event_count"),
+    /** Whatever visibility proxy the observer used; unit lives in `notes`,
+     *  because a number whose unit is implied becomes uncomparable within a
+     *  month of the person who took it moving on. */
+    searchVisibility: real("search_visibility"),
+    notes: text("notes"),
+    /** Where the observation came from, so a surprising number is auditable. */
+    sourceUrl: text("source_url"),
+    snapshotAt: integer("snapshot_at", { mode: "timestamp" }).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    index("idx_market_player_snapshots_player").on(t.playerId, t.snapshotAt),
+    index("idx_market_player_snapshots_at").on(t.snapshotAt),
+  ]
+);
+
+/**
+ * SERP positions, normalized one row per (query, market, observation) rather
+ * than a JSON blob per player — so "who ranks for 'craft fairs in Bangor'
+ * across everyone, over time" is a plain query instead of a fan-out through
+ * JSON.
+ */
+export const marketPlayerSerpRanks = sqliteTable(
+  "market_player_serp_ranks",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    playerId: text("player_id").notNull(),
+    /** The search query exactly as issued. */
+    query: text("query").notNull(),
+    /** Geographic market the query was issued for, e.g. 'Bangor, ME'. NULL =
+     *  national/ungeotargeted. */
+    market: text("market"),
+    /** 1-based SERP position. NULL = looked and did not find it in range,
+     *  which is a real and different observation from "not checked". */
+    position: integer("position"),
+    rankingUrl: text("ranking_url"),
+    checkedAt: integer("checked_at", { mode: "timestamp" }).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    index("idx_market_player_serp_player").on(t.playerId, t.checkedAt),
+    index("idx_market_player_serp_query").on(t.query, t.checkedAt),
+  ]
+);
