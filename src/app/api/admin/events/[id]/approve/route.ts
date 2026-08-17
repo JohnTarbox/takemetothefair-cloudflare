@@ -7,7 +7,7 @@ import { eq } from "drizzle-orm";
 import { logError } from "@/lib/logger";
 import { trackEventStatusChange } from "@/lib/server-analytics";
 import { notifyApprovalIfNeeded } from "@/lib/approval-notification";
-import { eventApprovalBlockReason } from "@takemetothefair/utils";
+import { eventApprovalBlockReason, mergedTombstoneBlockReason } from "@takemetothefair/utils";
 
 export const POST = withAuth<{ id: string }>(
   { role: "ADMIN" },
@@ -23,12 +23,25 @@ export const POST = withAuth<{ id: string }>(
           venueId: events.venueId,
           isStatewide: events.isStatewide,
           stateCode: events.stateCode,
+          // OPE-423 — needed by the tombstone gate below.
+          mergedInto: events.mergedInto,
         })
         .from(events)
         .where(eq(events.id, id))
         .limit(1);
       if (!existing) {
         return NextResponse.json({ error: "Event not found" }, { status: 404 });
+      }
+      // OPE-423 — never re-approve a merged tombstone. The MCP tool was the
+      // surface that actually did this in production, but this route can reach
+      // the same state with one click, so the rule lives in both. Same shared
+      // definition, because app and MCP are separate builds.
+      const tombstoneReason = mergedTombstoneBlockReason(existing, { nextStatus: "APPROVED" });
+      if (tombstoneReason) {
+        return NextResponse.json(
+          { error: tombstoneReason, code: "merged_tombstone" },
+          { status: 422 }
+        );
       }
       const blockReason = eventApprovalBlockReason(existing);
       if (blockReason) {

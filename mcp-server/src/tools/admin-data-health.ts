@@ -19,7 +19,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { desc, eq, gte, sql } from "drizzle-orm";
-import { eventDiscrepancies, goodwillHealthSnapshots, adminActions } from "../schema.js";
+import { eventDiscrepancies, goodwillHealthSnapshots, adminActions, events } from "../schema.js";
 import { jsonContent } from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
@@ -125,6 +125,38 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
         .orderBy(desc(goodwillHealthSnapshots.snapshotDate))
         .limit(trendDays);
 
+      // ── OPE-423 invariant: tombstoned AND live ───────────────
+      // A row with `merged_into` set must be REJECTED. Anything else means a
+      // merged duplicate is back in the public index, competing with its own
+      // keeper on the same venue and dates.
+      //
+      // This is reported as a LIST, not a count. The one real occurrence
+      // (`bar-harbor-fall-craft-fair-2026`, resurrected 2026-06-25) survived
+      // seven weeks because nothing named it — and a bare "1" in a report is
+      // not actionable at 06:00 on a Monday. The ids are what an operator
+      // needs to fix it.
+      //
+      // Capped at 20: if this is ever more than a handful, the count is the
+      // story and the list is noise. `violation_count` carries the true total
+      // so a truncated list can never read as the whole problem
+      // ([[feedback_absence_of_positives_is_not_a_negative]]).
+      const tombstoneViolations = await db
+        .select({
+          id: events.id,
+          slug: events.slug,
+          name: events.name,
+          status: events.status,
+          merged_into: events.mergedInto,
+        })
+        .from(events)
+        .where(sql`${events.mergedInto} IS NOT NULL AND ${events.status} <> 'REJECTED'`)
+        .limit(20);
+
+      const [tombstoneViolationCount] = await db
+        .select({ count: sql<number>`count(*)` })
+        .from(events)
+        .where(sql`${events.mergedInto} IS NOT NULL AND ${events.status} <> 'REJECTED'`);
+
       // ── Build the response ───────────────────────────────────
       const today = trend[0];
       const phase1Metrics = {
@@ -161,6 +193,13 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
             })),
             phase1_metrics: phase1Metrics,
             phase2_pending_metrics: phase2PendingMetrics,
+            // OPE-423. `violations` is capped at 20; `violation_count` is the
+            // real total, so a truncated list never reads as the whole set.
+            merged_tombstone_invariant: {
+              rule: "events.merged_into IS NOT NULL implies status = 'REJECTED'",
+              violation_count: Number(tombstoneViolationCount?.count ?? 0),
+              violations: tombstoneViolations,
+            },
             snapshot_trend: trend,
           }),
         ],

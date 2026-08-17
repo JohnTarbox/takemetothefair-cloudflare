@@ -50,6 +50,7 @@ import {
   areDatesContiguous,
   evaluateGates,
   eventApprovalBlockReason,
+  mergedTombstoneBlockReason,
   normalizeEventDate,
 } from "@takemetothefair/utils";
 import {
@@ -516,6 +517,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           venueId: events.venueId,
           isStatewide: events.isStatewide,
           stateCode: events.stateCode,
+          // OPE-423: needed by the tombstone gate below. This tool is the
+          // path that actually resurrected a merged event in production.
+          mergedInto: events.mergedInto,
         })
         .from(events)
         .where(eq(events.id, params.event_id))
@@ -536,6 +540,16 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           content: [{ type: "text", text: `Event is already ${params.status}.` }],
           isError: true,
         };
+      }
+
+      // OPE-423 — refuse to resurrect a merged tombstone. On 2026-06-25 this
+      // exact tool took a row that had been cleanly merged 24 days earlier and
+      // set it REJECTED → APPROVED, putting a duplicate of its own keeper back
+      // into the index for seven weeks. Checked BEFORE the approval gate below
+      // because it applies to every target status, not just APPROVED.
+      const tombstoneReason = mergedTombstoneBlockReason(event, { nextStatus: params.status });
+      if (tombstoneReason) {
+        return { content: [{ type: "text", text: tombstoneReason }], isError: true };
       }
 
       // OPE-244 #3 — same ingest gate as the admin approve route: don't let a
@@ -1038,6 +1052,29 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }
 
       const event = eventRows[0];
+
+      // OPE-423 — a merged tombstone keeps its parked `…-merged-<id8>` slug so
+      // the original URL stays free for the keeper's 301. Renaming it takes
+      // that URL back and silently un-does the merge; that is the second half
+      // of what happened on 2026-06-25 (status_change re-approved, then this
+      // tool renamed the slug back one call later). Editing other fields on a
+      // tombstone stays allowed — it is an audit record, and correcting a fact
+      // on it never makes it public.
+      // Mirrors the tri-case slug resolution below, so a name edit that lands
+      // on the SAME slug is not blocked — only a write that would actually
+      // move the URL is.
+      const prospectiveSlug =
+        params.slug !== undefined
+          ? createSlug(params.slug)
+          : params.name !== undefined
+            ? createSlug(params.name)
+            : null;
+      const tombstoneReason = mergedTombstoneBlockReason(event, {
+        slugChange: prospectiveSlug !== null && prospectiveSlug !== event.slug,
+      });
+      if (tombstoneReason) {
+        return { content: [{ type: "text", text: tombstoneReason }], isError: true };
+      }
 
       // Statewide requires a state code. If the caller flips is_statewide=true
       // without supplying state_code AND the existing row has no state_code,
