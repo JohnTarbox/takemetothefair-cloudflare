@@ -64,6 +64,11 @@ import type { EmailIntent } from "../email-intents.js";
 import type { SenderTrustTier } from "../intent-classifier.js";
 import type { EmailAuthVerdict } from "../email-auth.js";
 import type { HandlerFn, HandlerResult, ReplyKind } from "../email-handlers/types.js";
+// OPE-431 — one definition of "may this event URL go in an email".
+import {
+  alreadyExistsBullet,
+  publicEventUrlIfVisible,
+} from "../email-handlers/public-event-url.js";
 import { handle as handleCorrection } from "../email-handlers/correction.js";
 import { handle as handleSupport } from "../email-handlers/support.js";
 import { handle as handleProblemReport } from "../email-handlers/problem-report.js";
@@ -1786,7 +1791,13 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           replyParams: {
             subject,
             eventName: dedup.existingEventName ?? extracted.event.name,
-            eventUrl: `https://meetmeatthefair.com/events/${dedup.existingEventSlug}`,
+            // OPE-431 — the template already gates this on status, but building
+            // a URL you may not be allowed to send is the fragile half of that
+            // arrangement: it only stays safe while every reader remembers to
+            // re-check. Gate it at construction too, so the unusable value is
+            // never in the params at all.
+            eventUrl:
+              publicEventUrlIfVisible(dedup.existingEventSlug, dedup.existingEventStatus) ?? "",
             matchType: dedup.matchType ?? "exact_url",
             existingEventStatus: dedup.existingEventStatus ?? "",
           },
@@ -1822,9 +1833,12 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           eventName: submittedMedium.eventName,
           eventSlug: submittedMedium.slug,
           candidateName: dedup.existingEventName ?? "an existing event",
-          candidateUrl: dedup.existingEventSlug
-            ? `https://meetmeatthefair.com/events/${dedup.existingEventSlug}`
-            : "",
+          // OPE-431 — a FOURTH unguarded link, found while fixing the other
+          // three: this template renders candidateUrl unconditionally, so a
+          // PENDING match produced a 404 here too. The template already
+          // degrades to name-only on an empty string.
+          candidateUrl:
+            publicEventUrlIfVisible(dedup.existingEventSlug, dedup.existingEventStatus) ?? "",
           matchType: dedup.matchType ?? "",
         },
         status: "replied",
@@ -1920,6 +1934,9 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       eventName: string;
       kind: "created" | "already-exists" | "submit-failed";
       eventSlug?: string;
+      /** OPE-431 — matched row's status. Required before the bullet may link
+       *  the public URL; a PENDING/REJECTED slug 404s. */
+      eventStatus?: string;
       eventId?: string;
     }
     const outcomes: EventOutcome[] = [];
@@ -1947,6 +1964,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             eventName: dedup.existingEventName ?? childEvent.name,
             kind: "already-exists",
             eventSlug: dedup.existingEventSlug,
+            eventStatus: dedup.existingEventStatus,
             eventId: dedup.existingEventId,
           });
           continue;
@@ -1994,7 +2012,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           case "created":
             return `✅ "${o.eventName}" — pending review`;
           case "already-exists":
-            return `✅ "${o.eventName}" — already in our directory: https://meetmeatthefair.com/events/${o.eventSlug}`;
+            // OPE-431 — links only when the matched row is actually public.
+            return alreadyExistsBullet(o.eventName, o.eventSlug, o.eventStatus);
           case "submit-failed":
             return `❌ Couldn't save "${o.eventName}" — our team will follow up`;
         }
@@ -2512,6 +2531,9 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       kind: "created" | "already-exists" | "submit-failed" | "extract-failed" | "fetch-failed";
       eventName?: string;
       eventSlug?: string;
+      /** OPE-431 — matched row's status. Required before the bullet may link
+       *  the public URL; a PENDING/REJECTED slug 404s. */
+      eventStatus?: string;
       url?: string;
     }
     const outcomes: SourceOutcome[] = [];
@@ -2536,6 +2558,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             kind: "already-exists",
             eventName: dedup.existingEventName ?? extracted.event.name,
             eventSlug: dedup.existingEventSlug,
+            eventStatus: dedup.existingEventStatus,
             url: sourceUrl || undefined,
           });
           // OPE-69 — the candidate deduped into an existing event: attach THIS
@@ -2639,7 +2662,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           case "created":
             return `✅ "${o.eventName}" — pending review`;
           case "already-exists":
-            return `✅ "${o.eventName}" — already in our directory: https://meetmeatthefair.com/events/${o.eventSlug}`;
+            // OPE-431 — links only when the matched row is actually public.
+            return alreadyExistsBullet(o.eventName, o.eventSlug, o.eventStatus);
           case "extract-failed":
             return o.url
               ? `❌ Couldn't extract event details from ${o.url}`
@@ -2713,6 +2737,9 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       kind: "created" | "already-exists" | "extract-failed" | "fetch-failed" | "submit-failed";
       eventName?: string;
       eventSlug?: string;
+      /** OPE-431 — matched row's status. Required before the bullet may link
+       *  the public URL; a PENDING/REJECTED slug 404s. */
+      eventStatus?: string;
       eventId?: string;
     }
     const outcomes: UrlOutcome[] = [];
@@ -2754,6 +2781,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             kind: "already-exists",
             eventName: dedup.existingEventName ?? extracted.event.name,
             eventSlug: dedup.existingEventSlug,
+            eventStatus: dedup.existingEventStatus,
             eventId: dedup.existingEventId,
           });
           continue;
@@ -2797,7 +2825,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           case "created":
             return `✅ "${o.eventName}" — pending review`;
           case "already-exists":
-            return `✅ "${o.eventName}" — already in our directory: https://meetmeatthefair.com/events/${o.eventSlug}`;
+            // OPE-431 — links only when the matched row is actually public.
+            return alreadyExistsBullet(o.eventName, o.eventSlug, o.eventStatus);
           case "extract-failed":
             return `❌ Couldn't extract event details from ${o.url}`;
           case "fetch-failed":

@@ -234,7 +234,15 @@ describe("OPE-55 multi-source fan-out", () => {
     expect(result.replyKind).toBe("ok-multi");
     // One created bullet + one already-exists bullet.
     expect(result.replyParams?.eventCount).toBe(2);
-    expect(String(result.replyParams?.resultsText)).toContain("already in our directory");
+    // OPE-431 — this is the INTRA-BATCH case: the body candidate matched a row
+    // this same email created seconds earlier, which is PENDING. It previously
+    // claimed "already in our directory" and linked /events/<slug>, so the
+    // submitter got a 404 on a row that had never been published. A match that
+    // is not publicly visible must say so and must not link.
+    const text = String(result.replyParams?.resultsText);
+    expect(text).toContain("it's in review");
+    expect(text).not.toContain("already in our directory");
+    expect(text).not.toContain("meetmeatthefair.com/events/");
   });
 
   it("isolates a per-source failure — the other sources still create", async () => {
