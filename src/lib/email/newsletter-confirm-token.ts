@@ -122,7 +122,14 @@ export async function consumeNewsletterConfirmationToken(
     .update(newsletterSubscribers)
     .set({
       confirmed: true,
+      // OPE-389 — stamped in the SAME write as the flag. A separate write could
+      // leave `confirmed=1` with a NULL timestamp if it failed, which is the
+      // unobservable state this ticket exists to remove.
+      confirmedAt: new Date(),
       unsubscribed: false,
+      // Re-opt-in: clear the previous unsubscribe stamp so it always describes
+      // the CURRENT state rather than a stale earlier cycle.
+      unsubscribedAt: null,
       confirmationTokenHash: null,
       confirmationExpires: null,
     })

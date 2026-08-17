@@ -1,0 +1,47 @@
+-- OPE-389 — record WHEN the newsletter flags flipped, not just whether.
+--
+-- `newsletter_subscribers.confirmed` recorded that someone double-opted-in but
+-- not when, so time-to-confirm was unmeasurable. Both possible sources failed:
+-- the 0→1 flip left no trace, and the `newsletter_confirm` analytics rows carry
+-- no email and no user_id, so they cannot be joined back to a subscriber.
+--
+-- The registration path has always done this correctly — `users.email_verified`
+-- is a timestamp, and that is precisely what lets a threshold be LEARNED from
+-- an observed distribution instead of guessed. The newsletter path had no
+-- equivalent, so it could be neither tuned nor reported on.
+--
+-- ---------------------------------------------------------------------------
+-- No backfill, and the reason is measured rather than assumed
+-- ---------------------------------------------------------------------------
+--
+-- The ticket asked to attempt a backfill from `analytics_events` and predicted
+-- it would not be joinable. Measured against prod 2026-08-17:
+--
+--   newsletter_subscribers WHERE confirmed = 1     23
+--   analytics_events 'newsletter_confirm'          21
+--   …of those, with non-empty properties            1
+--   …of that one, carrying an email or user_id      0   ← {"device":"mobile","os":"ios"}
+--
+-- So ZERO of the 21 confirm events can be attributed to a subscriber. There is
+-- no signal to recover the real confirmation times from, and inventing them
+-- would corrupt the exact distribution this column exists to measure — the
+-- first analysis to run would be computing statistics over fabricated data
+-- while believing it was observed. Historical rows therefore stay NULL, which
+-- reads honestly as "confirmed before this column existed".
+--
+-- ---------------------------------------------------------------------------
+-- unsubscribed_at ships alongside, because it has the same gap and 3 writers
+-- ---------------------------------------------------------------------------
+--
+-- Scope item 4 said to mirror the pattern only if trivial. It was: both
+-- unsubscribe writers are single `.set()` calls. Worth noting there are TWO of
+-- them — the API route AND the inbound-email handler (someone replying
+-- "unsubscribe") — so stamping only the obvious one would have made the column
+-- silently right about half of all unsubscribes, which is worse than not having
+-- it. The confirm path CLEARS unsubscribed_at on re-opt-in, so the value always
+-- describes the current state rather than a stale earlier cycle.
+--
+-- A column with no writer is the anti-pattern the ticket explicitly warned
+-- against. All three writers ship in the same change as these columns.
+ALTER TABLE newsletter_subscribers ADD COLUMN confirmed_at INTEGER;
+ALTER TABLE newsletter_subscribers ADD COLUMN unsubscribed_at INTEGER;

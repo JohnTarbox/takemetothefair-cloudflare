@@ -27,7 +27,9 @@ export const handle: HandlerFn = async (env, _ctx, row): Promise<HandlerResult> 
   const db = getDb(env.DB);
   await db
     .update(newsletterSubscribers)
-    .set({ unsubscribed: true })
+    // OPE-389 — the email-reply unsubscribe path. Its sibling is the API route
+    // (src/app/api/newsletter/unsubscribe/route.ts); both stamp the time.
+    .set({ unsubscribed: true, unsubscribedAt: new Date() })
     .where(sql`LOWER(${newsletterSubscribers.email}) = LOWER(${row.fromAddress})`);
   return {
     replyKind: "unsubscribe-ack",

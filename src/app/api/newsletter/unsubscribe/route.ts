@@ -57,7 +57,10 @@ async function performUnsubscribe(token: string): Promise<string> {
     // so we never reveal subscription status.
     await db
       .update(newsletterSubscribers)
-      .set({ unsubscribed: true })
+      // OPE-389 — one of TWO unsubscribe writers; the other is the inbound-email
+      // handler (mcp-server/src/email-handlers/unsubscribe.ts). Both stamp the
+      // time, or the column would be silently right only half the time.
+      .set({ unsubscribed: true, unsubscribedAt: new Date() })
       .where(eq(newsletterSubscribers.email, email));
     return "ok";
   } catch (e) {

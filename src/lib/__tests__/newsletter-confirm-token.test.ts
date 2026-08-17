@@ -28,6 +28,9 @@ const SCHEMA_SQL = `
     confirmed INTEGER NOT NULL DEFAULT 0,
     unsubscribed INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER,
+    -- OPE-389 (drizzle/0195)
+    confirmed_at INTEGER,
+    unsubscribed_at INTEGER,
     confirmation_token_hash TEXT,
     confirmation_expires INTEGER
   );
@@ -234,5 +237,75 @@ describe("end-to-end signup flow", () => {
           .get("real@example.com") as { confirmed: number }
       ).confirmed
     ).toBe(1);
+  });
+});
+
+/**
+ * OPE-389 — the column alone is not the deliverable.
+ *
+ * The ticket names the anti-pattern explicitly: a column with no writer. So the
+ * test that matters is not "does confirmed_at exist" but "does confirming
+ * actually stamp it, in the SAME write as the flag" — a separate write could
+ * leave confirmed=1 with a NULL timestamp if it failed, which is precisely the
+ * unobservable state this work removes.
+ */
+describe("OPE-389 — confirm stamps the time, not just the flag", () => {
+  it("writes confirmed=1 AND a real confirmed_at together", async () => {
+    await seedRow("timed@example.com");
+    const before = Date.now();
+    const { rawToken } = await issueNewsletterConfirmationToken(db, "timed@example.com");
+    const result = await consumeNewsletterConfirmationToken(db, rawToken);
+    expect(result.ok).toBe(true);
+
+    const row = sqlite
+      .prepare("SELECT confirmed, confirmed_at FROM newsletter_subscribers WHERE email = ?")
+      .get("timed@example.com") as { confirmed: number; confirmed_at: number | null };
+
+    expect(row.confirmed).toBe(1);
+    expect(row.confirmed_at).not.toBeNull();
+    // Seconds-epoch, and actually "now" rather than a placeholder.
+    const stampedMs = (row.confirmed_at as number) * 1000;
+    expect(stampedMs).toBeGreaterThanOrEqual(before - 2000);
+    expect(stampedMs).toBeLessThanOrEqual(Date.now() + 2000);
+  });
+
+  it("makes time-to-confirm computable, which is the whole point", async () => {
+    // created_at is what confirmed_at gets subtracted from downstream.
+    const created = Math.floor(Date.now() / 1000) - 3600; // an hour ago
+    sqlite
+      .prepare(
+        "INSERT INTO newsletter_subscribers (id, email, confirmed, unsubscribed, created_at) VALUES (?, ?, 0, 0, ?)"
+      )
+      .run(crypto.randomUUID(), "elapsed@example.com", created);
+
+    const { rawToken } = await issueNewsletterConfirmationToken(db, "elapsed@example.com");
+    await consumeNewsletterConfirmationToken(db, rawToken);
+
+    const row = sqlite
+      .prepare(
+        "SELECT (confirmed_at - created_at) AS seconds_to_confirm FROM newsletter_subscribers WHERE email = ?"
+      )
+      .get("elapsed@example.com") as { seconds_to_confirm: number };
+    expect(row.seconds_to_confirm).toBeGreaterThanOrEqual(3595);
+    expect(row.seconds_to_confirm).toBeLessThan(3700);
+  });
+
+  it("re-opt-in clears a stale unsubscribed_at rather than leaving it", async () => {
+    // Otherwise a resubscribed reader carries an unsubscribe timestamp forever
+    // and every "when did they leave" query answers for a cycle that ended.
+    sqlite
+      .prepare(
+        "INSERT INTO newsletter_subscribers (id, email, confirmed, unsubscribed, unsubscribed_at) VALUES (?, ?, 0, 1, ?)"
+      )
+      .run(crypto.randomUUID(), "returning@example.com", Math.floor(Date.now() / 1000) - 86400);
+
+    const { rawToken } = await issueNewsletterConfirmationToken(db, "returning@example.com");
+    await consumeNewsletterConfirmationToken(db, rawToken);
+
+    const row = sqlite
+      .prepare("SELECT unsubscribed, unsubscribed_at FROM newsletter_subscribers WHERE email = ?")
+      .get("returning@example.com") as { unsubscribed: number; unsubscribed_at: number | null };
+    expect(row.unsubscribed).toBe(0);
+    expect(row.unsubscribed_at).toBeNull();
   });
 });
