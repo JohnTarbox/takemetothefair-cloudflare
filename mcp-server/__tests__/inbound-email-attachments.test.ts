@@ -239,7 +239,14 @@ describe("OPE-68 attachment OCR → pipeline", () => {
     expect(created).toEqual(["Spring Fair"]);
     expect(submitBodies).toHaveLength(1);
     expect(result.replyKind).toBe("ok-multi");
-    expect(String(result.replyParams?.resultsText)).toContain("already in our directory");
+    // OPE-431 — intra-batch dedup: the poster candidate matched the row the
+    // body created moments earlier, which is PENDING. Claiming "already in our
+    // directory" and linking /events/<slug> sent a member of the public to a
+    // 404 on a row that had never been published.
+    const text = String(result.replyParams?.resultsText);
+    expect(text).toContain("it's in review");
+    expect(text).not.toContain("already in our directory");
+    expect(text).not.toContain("meetmeatthefair.com/events/");
   });
 
   it("a poster that OCRs to empty markdown yields no source and no crash (falls to no-url)", async () => {

@@ -14,6 +14,8 @@
  */
 
 import type { ReplyKind, ReplyParams } from "./email-handlers/types.js";
+// OPE-431 — one definition of "may this event URL go in an email".
+import { isEmailableEventStatus } from "./email-handlers/public-event-url.js";
 
 interface EmailJobMessage {
   to: string;
@@ -399,7 +401,11 @@ ${SIGN_OFF}`;
       const eventName = (params.eventName as string | undefined) ?? "this event";
       const eventUrl = (params.eventUrl as string | undefined) ?? null;
       const existingStatus = (params.existingEventStatus as string | undefined) ?? "";
-      const isPubliclyVisible = existingStatus === "APPROVED" || existingStatus === "CONFIRMED";
+      // OPE-431 — this check predates the ticket and was correct here; it was
+      // the two ok-multi renderers in the workflow that lacked it. Routed
+      // through the shared helper now so all three share ONE definition and a
+      // fourth caller can't reintroduce the gap.
+      const isPubliclyVisible = isEmailableEventStatus(existingStatus);
       const urlLine =
         eventUrl && isPubliclyVisible ? `\n\nYou can see our listing here: ${eventUrl}\n` : "";
       const reviewLine = !isPubliclyVisible
