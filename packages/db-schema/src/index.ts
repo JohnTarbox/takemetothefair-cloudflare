@@ -1575,6 +1575,25 @@ export const newsletterSubscribers = sqliteTable(
     confirmed: integer("confirmed", { mode: "boolean" }).default(false).notNull(),
     unsubscribed: integer("unsubscribed", { mode: "boolean" }).default(false).notNull(),
     createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    // OPE-389 — WHEN the flags flipped, not just whether.
+    //
+    // `confirmed` recorded that someone double-opted-in but not when, so
+    // time-to-confirm was unmeasurable: the 0→1 flip left no trace, and the
+    // `newsletter_confirm` analytics rows carry empty properties and no email,
+    // so they cannot be joined back to a subscriber either. The registration
+    // path got this right years earlier — `users.email_verified` is a timestamp,
+    // which is exactly what lets a threshold be learned from the observed
+    // distribution instead of guessed.
+    //
+    // NULL on a confirmed row means "confirmed before this column existed",
+    // and stays NULL: there is no joinable signal to recover the real time from,
+    // and a fabricated timestamp would corrupt the very distribution the column
+    // exists to measure.
+    confirmedAt: integer("confirmed_at", { mode: "timestamp" }),
+    /** Set by BOTH unsubscribe paths — the API route and the inbound-email
+     *  handler. Cleared on re-opt-in, so it always means "the CURRENT
+     *  unsubscribe", never a stale one from a previous cycle. */
+    unsubscribedAt: integer("unsubscribed_at", { mode: "timestamp" }),
     // SHA-256 hex digest of the random 32-byte confirmation token. The raw
     // token only exists in the confirmation email URL — see
     // src/lib/email/newsletter-confirm-token.ts. NULL once the subscription
