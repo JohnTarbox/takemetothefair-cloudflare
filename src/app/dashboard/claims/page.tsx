@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { entityClaims, vendors, promoters } from "@/lib/db/schema";
+import { entityClaims, vendors, promoters, performers } from "@/lib/db/schema";
 import { decodeHtmlEntities } from "@/lib/utils";
 import { chunkedInArray } from "@takemetothefair/utils";
 
@@ -24,7 +24,9 @@ const STATUS_STYLES: Record<DisplayStatus, string> = {
 
 interface ClaimRow {
   id: string;
-  entityType: "VENDOR" | "PROMOTER" | "VENUE";
+  // OPE-318 — PERFORMER claims appear here too; a claimant who cannot see their
+  // own pending claim has no way to tell it from one that was never filed.
+  entityType: "VENDOR" | "PROMOTER" | "VENUE" | "PERFORMER";
   entityName: string | null;
   entitySlug: string | null;
   status: DisplayStatus;
@@ -62,6 +64,9 @@ async function getUserClaims(userId: string): Promise<ClaimRow[]> {
   const promoterIds = [
     ...new Set(claims.filter((c) => c.entityType === "PROMOTER").map((c) => c.entityId)),
   ];
+  const performerIds = [
+    ...new Set(claims.filter((c) => c.entityType === "PERFORMER").map((c) => c.entityId)),
+  ];
 
   // OPE-241 — chunked: this user's claims have no upstream limit, so the lists
   // are bounded only by "nobody files 100+ claims". Cheap to make that
@@ -88,13 +93,27 @@ async function getUserClaims(userId: string): Promise<ClaimRow[]> {
       promoterById.set(r.id, { name: r.name, slug: r.slug as unknown as string });
   }
 
+  const performerById = new Map<string, { name: string; slug: string }>();
+  {
+    const rows = await chunkedInArray(performerIds, (batch) =>
+      db
+        .select({ id: performers.id, name: performers.name, slug: performers.slug })
+        .from(performers)
+        .where(inArray(performers.id, batch))
+    );
+    for (const r of rows)
+      performerById.set(r.id, { name: r.name, slug: r.slug as unknown as string });
+  }
+
   return claims.map((c) => {
     const entity =
       c.entityType === "VENDOR"
         ? vendorById.get(c.entityId)
         : c.entityType === "PROMOTER"
           ? promoterById.get(c.entityId)
-          : undefined;
+          : c.entityType === "PERFORMER"
+            ? performerById.get(c.entityId)
+            : undefined;
     return {
       id: c.id,
       entityType: c.entityType,
@@ -110,6 +129,7 @@ function publicHref(row: ClaimRow): string | null {
   if (!row.entitySlug) return null;
   if (row.entityType === "VENDOR") return `/vendors/${row.entitySlug}`;
   if (row.entityType === "PROMOTER") return `/promoters/${row.entitySlug}`;
+  if (row.entityType === "PERFORMER") return `/performers/${row.entitySlug}`;
   return null;
 }
 

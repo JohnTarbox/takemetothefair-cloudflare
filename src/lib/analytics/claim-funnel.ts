@@ -30,7 +30,11 @@
  */
 import { sendGa4MeasurementProtocol } from "@/lib/ga4-measurement-protocol";
 
-export type ClaimEntityType = "VENDOR" | "PROMOTER";
+// OPE-318 — PERFORMER added. The dimension below was a two-way ternary, so a
+// performer claim would have been reported to GA4 as a PROMOTER claim: not a
+// missing number but a wrong one, which is worse, and invisible because the
+// funnel would still look complete.
+export type ClaimEntityType = "VENDOR" | "PROMOTER" | "PERFORMER";
 
 /**
  * Verification-ladder rungs (spec §4). EMAIL_MATCH / EVIDENCE are live today;
@@ -61,7 +65,7 @@ export function isSmokeTestEntityId(entityId: string): boolean {
  * outbound-click convention (`entity_type: "event"`).
  */
 function entityTypeDim(entityType: ClaimEntityType): string {
-  return entityType === "VENDOR" ? "vendor" : "promoter";
+  return entityType.toLowerCase();
 }
 
 interface ClaimEventArgs {

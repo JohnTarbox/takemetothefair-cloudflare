@@ -27,14 +27,26 @@
  */
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Database } from "@/lib/db";
-import { vendors, promoters, users, userRoles, entityClaims, adminActions } from "@/lib/db/schema";
+import {
+  vendors,
+  promoters,
+  performers,
+  users,
+  userRoles,
+  entityClaims,
+  adminActions,
+} from "@/lib/db/schema";
 import { decodeHtmlEntities } from "@/lib/utils";
 import { enqueueEmail } from "@/lib/queues/producers";
 import { claimDecisionTemplate } from "@/lib/email/templates";
 import { getSiteUrl } from "@/lib/email/send";
 import { insertClaimApprovedNotification } from "@/lib/claims/notify-approved";
 
-export type ReviewEntityType = "VENDOR" | "PROMOTER";
+/** OPE-318 — PERFORMER joins the reviewable set. Widening this type is the
+ *  point of the change: the queue filter below is what decides whether a claim
+ *  is ever seen by a human, so a performer claim that is not in this union is a
+ *  claim that silently never resolves. */
+export type ReviewEntityType = "VENDOR" | "PROMOTER" | "PERFORMER";
 
 export interface ReviewableClaim {
   id: string;
@@ -110,7 +122,7 @@ export async function listReviewableClaims(db: Database): Promise<ReviewableClai
     .where(
       and(
         inArray(entityClaims.status, ["PENDING", "DISPUTED"]),
-        inArray(entityClaims.entityType, ["VENDOR", "PROMOTER"])
+        inArray(entityClaims.entityType, ["VENDOR", "PROMOTER", "PERFORMER"])
       )
     )
     .orderBy(desc(entityClaims.createdAt));
@@ -122,6 +134,9 @@ export async function listReviewableClaims(db: Database): Promise<ReviewableClai
   ];
   const promoterIds = [
     ...new Set(claims.filter((c) => c.entityType === "PROMOTER").map((c) => c.entityId)),
+  ];
+  const performerIds = [
+    ...new Set(claims.filter((c) => c.entityType === "PERFORMER").map((c) => c.entityId)),
   ];
   const userIds = [...new Set(claims.map((c) => c.claimantUserId))];
 
@@ -146,6 +161,17 @@ export async function listReviewableClaims(db: Database): Promise<ReviewableClai
       promoterById.set(r.id, { name: r.name, slug: r.slug as unknown as string });
   }
 
+  const performerById = new Map<string, { name: string; slug: string }>();
+  for (const ids of chunk(performerIds)) {
+    if (ids.length === 0) continue;
+    const rows = await db
+      .select({ id: performers.id, name: performers.name, slug: performers.slug })
+      .from(performers)
+      .where(inArray(performers.id, ids));
+    for (const r of rows)
+      performerById.set(r.id, { name: r.name, slug: r.slug as unknown as string });
+  }
+
   const userById = new Map<string, { email: string; name: string | null }>();
   for (const ids of chunk(userIds)) {
     if (ids.length === 0) continue;
@@ -158,7 +184,7 @@ export async function listReviewableClaims(db: Database): Promise<ReviewableClai
 
   // Per-entity attempt counts: COUNT(*) grouped by (entity_type, entity_id).
   const attemptCounts = new Map<string, number>();
-  const allIds = [...vendorIds, ...promoterIds];
+  const allIds = [...vendorIds, ...promoterIds, ...performerIds];
   for (const ids of chunk(allIds)) {
     if (ids.length === 0) continue;
     const rows = await db
@@ -176,7 +202,11 @@ export async function listReviewableClaims(db: Database): Promise<ReviewableClai
   return claims.map((c) => {
     const entityType = c.entityType as ReviewEntityType;
     const entity =
-      entityType === "VENDOR" ? vendorById.get(c.entityId) : promoterById.get(c.entityId);
+      entityType === "VENDOR"
+        ? vendorById.get(c.entityId)
+        : entityType === "PERFORMER"
+          ? performerById.get(c.entityId)
+          : promoterById.get(c.entityId);
     const claimant = userById.get(c.claimantUserId);
     return {
       id: c.id,
@@ -220,6 +250,27 @@ async function loadEntity(
       })
       .from(vendors)
       .where(eq(vendors.id, entityId))
+      .limit(1);
+    if (!row) return undefined;
+    return { ...row, slug: row.slug as unknown as string };
+  }
+  // OPE-318 — EXPLICIT, not an else-fallthrough. This function previously ended
+  // in a bare `else` meaning "promoter", which is safe with two values and a
+  // landmine with three: adding PERFORMER would have silently looked the
+  // performer's id up in the promoters table, and the ownership grant below
+  // would have WRITTEN to it. TypeScript cannot catch that, because an `else`
+  // has no type to check.
+  if (entityType === "PERFORMER") {
+    const [row] = await db
+      .select({
+        userId: performers.userId,
+        claimed: performers.claimed,
+        name: performers.name,
+        slug: performers.slug,
+        contactEmail: performers.contactEmail,
+      })
+      .from(performers)
+      .where(eq(performers.id, entityId))
       .limit(1);
     if (!row) return undefined;
     return { ...row, slug: row.slug as unknown as string };
@@ -316,7 +367,14 @@ export async function approveClaim(
   if (claim.status !== "PENDING" && claim.status !== "DISPUTED") {
     return { ok: false, reason: "not_reviewable" };
   }
-  if (claim.entityType !== "VENDOR" && claim.entityType !== "PROMOTER") {
+  // OPE-318 — the gate that decides what can be approved at all. PERFORMER is
+  // now claimable; VENUE still is not (it has no claim funnel), so this stays a
+  // deliberate allow-list rather than becoming "anything but VENUE".
+  if (
+    claim.entityType !== "VENDOR" &&
+    claim.entityType !== "PROMOTER" &&
+    claim.entityType !== "PERFORMER"
+  ) {
     return { ok: false, reason: "unsupported_entity" };
   }
   const entityType = claim.entityType;
@@ -343,6 +401,15 @@ export async function approveClaim(
       .update(vendors)
       .set({ userId: claim.userId, claimed: true, claimedAt: now, claimedBy: claim.userId })
       .where(and(eq(vendors.id, claim.entityId), eq(vendors.claimed, false)));
+  } else if (entityType === "PERFORMER") {
+    // OPE-318 — same guarded, idempotent shape as its siblings. Explicit rather
+    // than falling through to the promoters branch, which is what the old
+    // two-value `else` would have done: granted a performer's page to a user by
+    // writing the promoters table.
+    await db
+      .update(performers)
+      .set({ userId: claim.userId, claimed: true, claimedAt: now, claimedBy: claim.userId })
+      .where(and(eq(performers.id, claim.entityId), eq(performers.claimed, false)));
   } else {
     await db
       .update(promoters)
@@ -351,10 +418,20 @@ export async function approveClaim(
   }
 
   // Grant the entity role (idempotent).
-  await db
-    .insert(userRoles)
-    .values({ userId: claim.userId, role: entityType, grantedAt: now, grantedBy: actorUserId })
-    .onConflictDoNothing();
+  //
+  // OPE-318 — NOT for performers. `userRoles.role` has no PERFORMER value and
+  // there is no /performer/* portal (see performer-claim-approval.ts, which made
+  // the same call for the admin-grant path). Inserting role:"PERFORMER" would
+  // put a value in the table that nothing authorizes against — a permission that
+  // reads as real and grants nothing, which is worse than its absence.
+  // Performer ownership lives on performers.user_id + claimed, exactly as the
+  // existing admin-grant tool records it.
+  if (entityType !== "PERFORMER") {
+    await db
+      .insert(userRoles)
+      .values({ userId: claim.userId, role: entityType, grantedAt: now, grantedBy: actorUserId })
+      .onConflictDoNothing();
+  }
 
   // Mark the claim APPROVED.
   await db
@@ -431,8 +508,14 @@ export async function rejectClaim(
   if (claim.status !== "PENDING" && claim.status !== "DISPUTED") {
     return { ok: false, reason: "not_reviewable" };
   }
-  if (claim.entityType !== "VENDOR" && claim.entityType !== "PROMOTER") {
-    // Same guard as approve — VENUE has no claim funnel, treat as not reviewable.
+  if (
+    claim.entityType !== "VENDOR" &&
+    claim.entityType !== "PROMOTER" &&
+    claim.entityType !== "PERFORMER"
+  ) {
+    // Same allow-list as approve — VENUE has no claim funnel. A claim that can
+    // be approved but not REJECTED would strand every performer claim an admin
+    // declines, so both guards move together.
     return { ok: false, reason: "not_reviewable" };
   }
   const entityType = claim.entityType;

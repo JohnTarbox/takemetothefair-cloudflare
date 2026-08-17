@@ -5,7 +5,10 @@ import { Button } from "@/components/ui/button";
 import { CheckCircle2, AlertCircle } from "lucide-react";
 
 interface Props {
-  entityType: "VENDOR" | "PROMOTER";
+  // OPE-318 — performers claim through this evidence path rather than the
+  // wizard: the wizard's instant-approval grants a userRoles role, and there is
+  // no PERFORMER role or portal to grant.
+  entityType: "VENDOR" | "PROMOTER" | "PERFORMER";
   slug: string;
   entityName: string;
 }

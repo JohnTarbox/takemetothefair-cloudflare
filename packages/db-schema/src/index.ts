@@ -937,7 +937,16 @@ export const entityClaims = sqliteTable(
     id: text("id")
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
-    entityType: text("entity_type", { enum: ["VENDOR", "PROMOTER", "VENUE"] }).notNull(),
+    // OPE-318 — PERFORMER added. This enum is TypeScript-only: drizzle/0144
+    // declares the column as plain TEXT with no CHECK, so widening it is not a
+    // migration. That also means the DB will happily store a value no consumer
+    // handles, which is why the widening audit is on the READERS (see
+    // src/lib/claims/admin-review.ts, whose queue filter would otherwise have
+    // hidden every performer claim from review — a claim nobody can see is a
+    // claim that never resolves).
+    entityType: text("entity_type", {
+      enum: ["VENDOR", "PROMOTER", "VENUE", "PERFORMER"],
+    }).notNull(),
     entityId: text("entity_id").notNull(), // polymorphic — NO FK (see comment above)
     userId: text("user_id")
       .notNull()
@@ -979,7 +988,12 @@ export const claimTokens = sqliteTable(
     id: text("id")
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
-    entityType: text("entity_type", { enum: ["VENDOR", "PROMOTER", "VENUE"] }).notNull(),
+    // OPE-318 — PERFORMER added alongside entity_claims. These two enums are
+    // independent and must move together: an invite token that cannot carry
+    // PERFORMER would mint a link the redemption path then refuses.
+    entityType: text("entity_type", {
+      enum: ["VENDOR", "PROMOTER", "VENUE", "PERFORMER"],
+    }).notNull(),
     entityId: text("entity_id").notNull(), // polymorphic — NO FK
     // Nullable: a cold invite has no account yet — filled at redemption.
     userId: text("user_id").references(() => users.id, { onDelete: "cascade" }),

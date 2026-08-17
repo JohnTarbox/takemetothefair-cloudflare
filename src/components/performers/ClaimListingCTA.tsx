@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Sparkles } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { decodeHtmlEntities } from "@/lib/utils";
@@ -30,9 +31,23 @@ export function ClaimListingCTA({ performerName, performerSlug, eligibleForDirec
           <p className="text-sm text-stone-700 mt-1">
             {eligibleForDirectClaim
               ? `Your account email matches the contact email on this listing — you can confirm ownership in one click.`
-              : `Claim ${decoded} to manage your bio, photo, links, and appearance schedule. Sign in with the email on file for this act to claim it in one click, or contact us to verify ownership another way.`}
+              : `Claim ${decoded} to manage your bio, photo, links, and appearance schedule. If your account email matches the one on file you can claim it in one click — otherwise tell us how you are connected and a person will review it.`}
           </p>
-          {eligibleForDirectClaim && <DirectClaimButton performerSlug={performerSlug} />}
+          {eligibleForDirectClaim ? (
+            <DirectClaimButton performerSlug={performerSlug} />
+          ) : (
+            // OPE-318 — the branch that used to dead-end. It said "contact us to
+            // verify ownership another way" and gave no way: no link, no form,
+            // no address. Anyone whose email did not happen to match the listing
+            // simply had nowhere to go, which for a harvested act with no
+            // contact_email on file is EVERYONE. This is that route.
+            <Link
+              href={`/claim/performer/${performerSlug}`}
+              className="mt-3 inline-block rounded-md bg-navy px-4 py-2 text-sm font-medium text-white hover:opacity-90"
+            >
+              Claim this page
+            </Link>
+          )}
         </div>
       </CardContent>
     </Card>
