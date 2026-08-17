@@ -1,14 +1,17 @@
 /**
  * Producer-side helpers — enqueue messages from the main app.
  *
- * Both helpers fall back to a synchronous direct call when the queue binding
- * isn't available (local dev, miniflare without queues configured). That
- * keeps every code path testable end-to-end without forcing developers to
- * wire up `wrangler queues` locally.
+ * `enqueueIndexNow` falls back to a synchronous direct ping when the queue
+ * binding isn't available (local dev, miniflare without queues configured),
+ * which keeps that path testable without wiring up `wrangler queues` locally.
+ *
+ * `enqueueEmail` does NOT. Its synchronous fallback was removed in OPE-445
+ * because it routed to an unconfigured Resend and stubbed silently — see the
+ * note on that function. Email now throws rather than pretending to send.
  */
 
 import { getCloudflareEnv, getCloudflareDb } from "@/lib/cloudflare";
-import { sendEmail, type SendEmailArgs } from "@/lib/email/send";
+import { type SendEmailArgs } from "@/lib/email/send";
 import { pingIndexNow } from "@/lib/indexnow";
 import { logError } from "@/lib/logger";
 import type {
@@ -33,25 +36,40 @@ const MCP_DEFAULT_URL = "https://mcp.meetmeatthefair.com";
 
 /**
  * Enqueue an email for async delivery via the queue consumer (MCP worker).
- * Falls back to a synchronous Resend call when the queue binding is absent
- * (local dev / queue misconfiguration / dev preview environments).
+ *
+ * Two transports, tried in order: the direct `EMAIL_JOBS` binding, then an
+ * HTTP proxy to the MCP Worker. If neither is available this THROWS — it does
+ * not fall back to a synchronous send.
+ *
+ * OPE-445 removed that fallback. It called `sendEmail` → Resend, and
+ * `RESEND_API_KEY` is configured nowhere, so it always took its stub branch:
+ * an `email_send_ledger` row with `status='stubbed'`, `error=NULL`, and a
+ * normal return. Indistinguishable from success to every caller. That is how
+ * 26 consecutive `indexnow:health` alerts were lost over a month (OPE-369).
+ *
+ * Do NOT reintroduce a silent fallback here, and do NOT route new senders
+ * through `sendEmail` directly to "avoid the queue" — that is the same dark
+ * path by another name. If you need delivery confirmation, read
+ * `email_send_ledger` (and `delivery_status`, since OPE-177).
  *
  * Returns immediately on the queue path — the caller should NOT `await`
- * delivery. If the producer needs delivery confirmation (rare for
- * transactional email), use `sendEmail` directly.
- *
- * The fall-through `sendEmail` call still goes through the existing stub +
- * Resend code path, so behavior is identical when no queue is wired up.
+ * delivery.
  */
 export async function enqueueEmail(args: SendEmailArgs & { source: string }): Promise<void> {
   const env = getCloudflareEnv() as unknown as QueueEnv;
 
-  // Path 1: direct queue binding. Works when the caller is a Worker that
-  // owns the producer binding (the MCP server, for example). Cloudflare
-  // Pages does NOT wire [[queues.producers]] from wrangler.toml to the
-  // runtime queue registry — even when deployment_configs.queue_producers
-  // is populated. Confirmed 2026-05-24 by querying the queue's actual
-  // producer list. So this path silently no-ops on Pages.
+  // Path 1: direct queue binding — the NORMAL path on this stack.
+  //
+  // OPE-445 corrected this comment. It used to end "so this path silently
+  // no-ops on Pages", which was true of the pre-2026-06-10 Pages deployment
+  // and has been wrong ever since the OpenNext cutover: we run as the
+  // `meetmeatthefair-app` Worker, where `[[queues.producers]]` in wrangler.toml
+  // IS a first-class binding.
+  //
+  // The stale wording was not cosmetic — the OPE-369 author recorded nearly
+  // abandoning a correct fix because of it ("had I trusted the comment I would
+  // have concluded my own fix was a no-op"). A comment that would have caused a
+  // working change to be reverted is a defect in its own right.
   if (env.EMAIL_JOBS) {
     const msg: EmailJobMessage = {
       to: args.to,
@@ -89,13 +107,13 @@ export async function enqueueEmail(args: SendEmailArgs & { source: string }): Pr
         body: JSON.stringify(args),
       });
       if (res.ok) return;
-      // Non-2xx — fall through to the sync sendEmail() so we at least log
-      // a stub row instead of dropping the message silently.
+      // Non-2xx — no transport left. Log it here, then fall through to the
+      // throw below (OPE-445): there is no longer a silent stub fallback.
       const db = getCloudflareDb();
       await logError(db, {
         level: "warn",
         source: "queues:producers:enqueue-email",
-        message: "MCP proxy returned non-2xx; falling back to sync sendEmail",
+        message: "MCP proxy returned non-2xx; no transport left, enqueueEmail will throw",
         context: {
           status: res.status,
           callerSource: args.source,
@@ -106,18 +124,48 @@ export async function enqueueEmail(args: SendEmailArgs & { source: string }): Pr
       await logError(db, {
         level: "warn",
         source: "queues:producers:enqueue-email",
-        message: "MCP proxy fetch threw; falling back to sync sendEmail",
+        message: "MCP proxy fetch threw; no transport left, enqueueEmail will throw",
         error: e,
         context: { callerSource: args.source },
       });
     }
   }
 
-  // Path 3: synchronous sendEmail fallback. Logs internally on failure
-  // (resend success/error or stub-warn when no key). Propagate `source`
-  // so a stub-fallback row in error_logs identifies the original caller.
+  // OPE-445 — Path 3 used to be a synchronous `sendEmail()` fallback. It has
+  // been removed, because it could not send and did not say so.
+  //
+  // `sendEmail` routes to Resend, and `RESEND_API_KEY` is set NOWHERE — not in
+  // wrangler.toml, not .env.example, not as a Worker secret. So that path has
+  // always taken its stub branch: it wrote an `email_send_ledger` row with
+  // `status='stubbed'` and `error=NULL`, then returned normally. To every
+  // caller that looked exactly like a successful send.
+  //
+  // That is how `indexnow:health` produced 26 consecutive stubbed alerts
+  // between 2026-07-10 and 2026-08-10 (OPE-369). The alert that warns us an
+  // integration has gone silent was itself silent for a month, and the ledger
+  // row it left behind looked benign.
+  //
+  // Deleting the call outright would be worse: reaching here would then return
+  // quietly having done nothing at all. So this fails LOUDLY instead — an
+  // error-level log (durable, written at the moment of failure rather than
+  // discovered by a later sweep) and a throw.
+  //
+  // Reaching this point means BOTH real paths are unavailable: no EMAIL_JOBS
+  // binding AND no working MCP proxy. On Workers that is a genuine
+  // misconfiguration, not a routine fallback.
   const db = getCloudflareDb();
-  await sendEmail(db, { ...args, source: args.source });
+  const detail =
+    `enqueueEmail could not reach any working transport: ` +
+    `EMAIL_JOBS binding ${env.EMAIL_JOBS ? "present" : "absent"}, ` +
+    `INTERNAL_API_KEY ${env.INTERNAL_API_KEY ? "present (proxy failed)" : "absent"}. ` +
+    `Mail was NOT sent.`;
+  await logError(db, {
+    level: "error",
+    source: "queues:producers:enqueue-email",
+    message: detail,
+    context: { callerSource: args.source, to: args.to, subject: args.subject },
+  });
+  throw new Error(`${detail} (source: ${args.source})`);
 }
 
 /**
