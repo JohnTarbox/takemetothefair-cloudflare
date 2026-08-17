@@ -244,8 +244,19 @@ function RecurringScheduleView({
                   key={day.id}
                   className={`flex items-start text-sm ${day.vendorOnly && showVendorDays === "badge" ? "text-amber-700" : ""}`}
                 >
+                  {/* OPE-442 — `w-28` (7rem) was narrower than "Thu, Aug 13, 2026:",
+                      so the date wrapped onto four lines and its last fragment
+                      collided with the notes column: "2026:at 9 PM", with no
+                      separating space. It read as corrupted data rather than a
+                      layout bug.
+
+                      `whitespace-nowrap` is the actual fix — it removes the wrap
+                      that created the collision. `shrink-0` stops flex squeezing
+                      the cell back below its content, and `pr-3` guarantees a gap
+                      even at the narrowest viewport. `min-w-` keeps the old
+                      column alignment for short dates instead of ragged rows. */}
                   <span
-                    className={`w-28 ${day.vendorOnly && showVendorDays === "badge" ? "text-amber-600" : "text-muted-foreground"}`}
+                    className={`min-w-28 shrink-0 whitespace-nowrap pr-3 ${day.vendorOnly && showVendorDays === "badge" ? "text-amber-600" : "text-muted-foreground"}`}
                   >
                     {formatDateShort(day.date)}
                     {showHours ? ":" : ""}
