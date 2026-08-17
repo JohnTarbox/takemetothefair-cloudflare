@@ -98,3 +98,28 @@ export function isHoldExpired(
 ): boolean {
   return receivedAt.getTime() < holdExpiryCutoff(now, days).getTime();
 }
+
+/**
+ * OPE-357 — the `reply_kind` that marks an inbound row as an OPEN HOLD: we
+ * asked this sender which project their mail was for, and are waiting.
+ *
+ * There is no separate holds table on purpose. A hold IS an inbound email we
+ * answered with a question, and `inbound_emails` already stores the sender, the
+ * time, and the reply we sent. A second table would be a second source of truth
+ * for the same fact, and the two would disagree the first time one write failed.
+ */
+export const UNROUTED_HOLD_REPLY_KIND = "unrouted-hold-ask" as const;
+
+/**
+ * Why a hold was NOT asked. Recorded rather than inferred, because "we chose
+ * not to ask" and "we tried and failed" look identical in an empty outbox.
+ */
+export type HoldSuppressionReason =
+  /** Sender is at or over their ceiling. */
+  | "rate-limit"
+  /** UNROUTED_ASK_ENABLED is not "true" — the OPE-6 STOP-gate on mailing
+   *  strangers. The mail is still stored, queued and forwarded to admin. */
+  | "flag-off"
+  /** The sender is on the blocked list. There is no ceiling to consult: we have
+   *  already decided not to correspond with them at all. */
+  | "blocked-sender";

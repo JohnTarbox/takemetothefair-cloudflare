@@ -47,6 +47,12 @@ ENRICHMENT_DRY_RUN = "true"
 # "true". Shipped OFF (OPE-6); flip to "true" here + redeploy, or override in
 # the dashboard, when replies are cleared to go live.
 EMAIL_REPLY_ENABLED = "false"
+# OPE-357 — STOP-gate on asking UNROUTED (unknown) senders which project they
+# meant. Separate from EMAIL_REPLY_ENABLED on purpose: enabling ordinary replies
+# must never silently start mailing strangers as a side effect. Flip to "true"
+# only with John's explicit approval (OPE-6). While "false" the mail is still
+# stored, queued and forwarded to admin — only the question is withheld.
+UNROUTED_ASK_ENABLED = "false"
 # OPE-204 — booth-photo vision gate. When "true", a fair-resolved photos@ email
 # runs each photo through the vision model (@cf/meta/llama-3.2-11b-vision-instruct)
 # and STAGES what it identifies to admin_actions + flagged_for_review for

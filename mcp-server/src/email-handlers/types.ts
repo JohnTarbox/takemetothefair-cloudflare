@@ -59,6 +59,12 @@ export type ReplyKind =
   // attachment never left the phone, and each got a `no-url` reply that gave
   // the sender no reason to suspect anything had gone wrong on their end.
   | "empty-message"
+  // OPE-357 (Demux D-1b) — the project router could not place this email and the
+  // OPE-327 guard allowed a question. We asked the sender WHICH project/fair they
+  // meant rather than telling them we could not understand them. The row carrying
+  // this kind IS the open hold: there is no separate holds table, and the
+  // per-sender ceiling counts these within the 14-day expiry window.
+  | "unrouted-hold-ask"
   // Fired when the submission had no real event URL but DID include
   // prose event details in the body, the B2 free-text extractor ran,
   // and the result didn't carry enough fields (name + start_date or

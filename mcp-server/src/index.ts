@@ -95,6 +95,18 @@ interface Env {
   // Cloudflare Queues — producer side. Same bindings as the main app, so
   // MCP tools can enqueue work to the same consumer (this Worker, below).
   EMAIL_JOBS?: Queue;
+  /**
+   * OPE-357 — the STOP-gate on mailing STRANGERS.
+   *
+   * Deliberately separate from EMAIL_REPLY_ENABLED. That flag governs replies to
+   * people who wrote to a lane we understood; this one governs asking someone we
+   * could not place "which fair did you mean?". Sharing a flag would mean the day
+   * somebody enables ordinary replies, we also silently start mailing unknown
+   * senders — a customer-facing behaviour change nobody asked for, arriving as a
+   * side effect. When not "true" the mail is still stored, queued and forwarded
+   * to admin; only the outbound question is withheld.
+   */
+  UNROUTED_ASK_ENABLED?: string;
   INDEXNOW_PINGS?: Queue;
   // GW1.1 (2026-06-03) — ingest_addverify discrepancy capture. Producer
   // here is used by the /api/admin/internal/enqueue-discrepancy proxy

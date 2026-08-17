@@ -303,6 +303,25 @@ ${SUPPORT_LINE}
 
 ${SIGN_OFF}`;
     }
+    case "unrouted-hold-ask": {
+      // OPE-357. The rule OPE-327 laid down: when we cannot place an email, the
+      // answer must be a QUESTION, never a terminal "we could not understand
+      // your message". A stranger who wrote to us for the first time and got a
+      // dead end has no way to know a single missing word was the problem.
+      //
+      // Deliberately does NOT name our internal routing, projects, or the fact
+      // that a router failed — that is our plumbing, not their concern. It asks
+      // the one thing that unblocks them.
+      return `Thanks for emailing Meet Me at the Fair!
+
+We want to make sure this reaches the right place, and your message did not mention which fair or event it is about.
+
+Could you reply with the name of the fair or event (and the town, if you know it)? If you were sending photos, a link, or vendor details, just reply to this email and include them again — everything you already sent is saved and waiting.
+
+${SUPPORT_LINE}
+
+${SIGN_OFF}`;
+    }
     case "no-url-prose-failed": {
       // Used when classifier said free_text (no URL) AND extractor ran on
       // the body AND the result didn't carry enough fields. The user did

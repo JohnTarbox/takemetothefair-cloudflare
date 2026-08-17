@@ -54,7 +54,7 @@
 
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { NonRetryableError } from "cloudflare:workflows";
-import { eq } from "drizzle-orm";
+import { and, eq, gte, sql } from "drizzle-orm";
 import { getDb } from "../db.js";
 import { ledgerEmailSend } from "../mailer.js";
 import { inboundEmails, adminActions, events } from "../schema.js";
@@ -73,6 +73,13 @@ import { handle as handleUnknown } from "../email-handlers/unknown.js";
 import { handle as handleSpam } from "../email-handlers/spam.js";
 import { handle as handleNoop } from "../email-handlers/noop.js";
 import { recordCrossing, ref } from "../inbound/crossing-ledger.js";
+import { routeToProject } from "../inbound/project-router.js";
+import {
+  decideUnroutedHold,
+  holdExpiryCutoff,
+  UNROUTED_HOLD_REPLY_KIND,
+  type HoldSuppressionReason,
+} from "../inbound/unrouted-hold.js";
 import { handle as handleSourceSuggestion } from "../email-handlers/source-suggestion.js";
 import { handle as handlePhotoIntake } from "../email-handlers/photo-intake.js";
 import {
@@ -147,6 +154,17 @@ type Env = {
    *  the attachment bytes here at receive-time; the OCR step reads them back.
    *  Optional so tests / non-R2 envs can omit it. */
   VENDOR_ASSETS?: R2Bucket;
+  /**
+   * OPE-357 — STOP-gate on asking an UNROUTED (unplaceable) sender which project
+   * they meant.
+   *
+   * ⚠️ Load-bearing, and NOT redundant with EMAIL_REPLY_ENABLED. That flag is
+   * enforced by the EMAIL_JOBS queue consumer on `reply:*` sources; this workflow
+   * sends through `env.EMAIL` DIRECTLY and never touches that consumer, so it is
+   * not covered by it. While this is not "true" the mail is still stored, queued
+   * and forwarded to admin — only the outbound question is withheld.
+   */
+  UNROUTED_ASK_ENABLED?: string;
 };
 
 const SOURCE = "mcp:workflow:inbound-email";
@@ -402,7 +420,108 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       }
     );
 
-    if (contentFree) {
+    // ───── OPE-357 (Demux D-1b): hold-and-ask on the UNROUTED path ─────
+    //
+    // OPE-327 shipped the DECISION (per-sender ceiling + 14-day expiry) and
+    // wired it to nothing — `decideUnroutedHold` had full test coverage and
+    // zero production callers. This is the wiring.
+    //
+    // The rule it enforces, from OPE-327: when we cannot place an email, the
+    // answer must be a QUESTION, never a terminal "we could not understand your
+    // message". OPE-315 and OPE-325 each fixed that one lane at a time; doing it
+    // at the router makes the dead end structurally unavailable.
+    //
+    // `routeToProject` is recomputed here rather than threaded down from the
+    // entrypoint: it is pure over (to, from, subject), all three of which are on
+    // the row, so recomputing costs nothing and avoids carrying handler state
+    // through a durable workflow boundary where it would need serializing.
+    const unrouted = await step.do(
+      "unrouted/decide-hold",
+      { retries: { limit: 2, delay: "5 seconds", backoff: "constant" }, timeout: "10 seconds" },
+      async () => {
+        const db = getDb(this.env.DB);
+        const rows = await db
+          .select({
+            fromAddress: inboundEmails.fromAddress,
+            toAddress: inboundEmails.toAddress,
+            subject: inboundEmails.subject,
+          })
+          .from(inboundEmails)
+          .where(eq(inboundEmails.id, messageRowId))
+          .limit(1);
+        const row = rows[0];
+        if (!row) return null;
+        const projectRouting = routeToProject({
+          toAddress: row.toAddress ?? "",
+          fromAddress: row.fromAddress,
+          subject: row.subject ?? "",
+        });
+        if (projectRouting.project !== "UNROUTED") return null;
+
+        // Open holds = rows we already asked about, still inside the expiry
+        // window. Expired ones are excluded HERE, in the query, exactly as
+        // unrouted-hold.ts requires — counting them would silence a sender who
+        // was noisy a month ago, forever.
+        const cutoff = holdExpiryCutoff(new Date());
+        const [held] = await db
+          .select({ n: sql<number>`count(*)` })
+          .from(inboundEmails)
+          .where(
+            and(
+              eq(inboundEmails.fromAddress, row.fromAddress),
+              eq(inboundEmails.replyKind, UNROUTED_HOLD_REPLY_KIND),
+              gte(inboundEmails.receivedAt, cutoff)
+            )
+          );
+        const openHoldCount = Number(held?.n ?? 0);
+        // A BLOCKED sender is never asked anything. The hold module has no tier
+        // for them — its three tiers are about how much benefit of the doubt to
+        // give, and "none" is not on that scale. Mapping them onto `unknown`
+        // would mail someone we have explicitly decided not to correspond with.
+        if (senderTrust === "blocked") {
+          await logError(this.env.DB, {
+            level: "info",
+            source: "mcp:unrouted-hold",
+            message: "UNROUTED hold decision: blocked-sender (no question sent)",
+            sessionId,
+            context: { messageRowId, from: row.fromAddress },
+          });
+          return { ask: false, suppression: "blocked-sender" as const };
+        }
+        // `watchlist` maps to the UNKNOWN ceiling (2), never the trusted one
+        // (10) — the cautious direction. Defaulting the other way would hand the
+        // largest allowance to the senders we trust least.
+        const holdTrust = senderTrust === "trusted" ? "trusted" : "unknown";
+        const decision = decideUnroutedHold({ senderTrust: holdTrust, openHoldCount });
+        const flagOn = this.env.UNROUTED_ASK_ENABLED === "true";
+        const suppression: HoldSuppressionReason | null =
+          decision.action === "suppress" ? "rate-limit" : flagOn ? null : "flag-off";
+
+        await logError(this.env.DB, {
+          level: "info",
+          source: "mcp:unrouted-hold",
+          message: `UNROUTED hold decision: ${suppression ?? "ask"}`,
+          sessionId,
+          context: {
+            messageRowId,
+            from: row.fromAddress,
+            senderTrust,
+            openHoldCount,
+            limit: decision.limit,
+            reason: decision.reason,
+            suppression,
+          },
+        });
+        return { ask: suppression === null, suppression };
+      }
+    );
+
+    if (unrouted?.ask) {
+      // The row carrying this reply_kind IS the open hold — it is what the
+      // ceiling counts next time this sender writes.
+      routedToWorkflow = "short-circuit:unrouted-hold-ask";
+      result = { replyKind: UNROUTED_HOLD_REPLY_KIND, status: "replied" };
+    } else if (contentFree) {
       routedToWorkflow = "short-circuit:empty-message";
       if (contentFree.isLeader) {
         // Wait out the burst before speaking for it. The alternative — reply
