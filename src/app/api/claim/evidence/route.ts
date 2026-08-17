@@ -4,7 +4,7 @@ import { z } from "zod";
 import { and, eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { vendors, promoters, entityClaims, problemReports } from "@/lib/db/schema";
+import { vendors, promoters, performers, entityClaims, problemReports } from "@/lib/db/schema";
 import { unsafeSlug } from "@/lib/utils";
 import { parseGaClientId } from "@/lib/ga4-measurement-protocol";
 import { trackClaimVerificationAttemptedServer } from "@/lib/analytics/claim-funnel";
@@ -24,7 +24,8 @@ import { logError } from "@/lib/logger";
  * review. Approval happens later via the admin claim queue (OPE-65).
  */
 const bodySchema = z.object({
-  entityType: z.enum(["VENDOR", "PROMOTER"]),
+  // OPE-318 — PERFORMER joins the claimable set.
+  entityType: z.enum(["VENDOR", "PROMOTER", "PERFORMER"]),
   slug: z.string().min(1),
   evidence: z.string().min(1, "Please describe how you're connected.").max(4000),
 });
@@ -59,6 +60,14 @@ export async function POST(request: NextRequest) {
         .limit(1);
       entityId = row?.id;
       if (row) entityName = row.businessName;
+    } else if (entityType === "PERFORMER") {
+      const [row] = await db
+        .select({ id: performers.id, name: performers.name })
+        .from(performers)
+        .where(eq(performers.slug, unsafeSlug(slug)))
+        .limit(1);
+      entityId = row?.id;
+      if (row) entityName = row.name;
     } else {
       const [row] = await db
         .select({ id: promoters.id, companyName: promoters.companyName })

@@ -29,6 +29,7 @@ import { z } from "zod";
 import { and, eq, isNull } from "drizzle-orm";
 import {
   vendors,
+  performers,
   promoters,
   claimTokens,
   adminActions,
@@ -102,7 +103,18 @@ function paragraphsToHtml(text: string): string {
  * `redeemClaimToken`. `role` pre-selects the register role; `claim` pre-selects
  * the listing by slug.
  */
-function inviteUrl(entityType: "VENDOR" | "PROMOTER", slug: string, rawToken: string): string {
+function inviteUrl(
+  entityType: "VENDOR" | "PROMOTER" | "PERFORMER",
+  slug: string,
+  rawToken: string
+): string {
+  // OPE-318 — performers land on their own claim page, NOT the register funnel's
+  // `role=` path. `role=PERFORMER` would be a role that does not exist
+  // (userRoles has no such value), so the link would carry an instruction the
+  // register route cannot honour.
+  if (entityType === "PERFORMER") {
+    return `${PUBLIC_HOST}/claim/performer/${encodeURIComponent(slug)}?invite=${rawToken}`;
+  }
   return `${PUBLIC_HOST}/register?role=${entityType}&claim=${encodeURIComponent(slug)}&invite=${rawToken}`;
 }
 
@@ -138,12 +150,15 @@ export function registerCreateClaimInviteTool(
 
   server.tool(
     "create_claim_invite",
-    "Cold-contact claim invite (OPE-67). Mint a single-use, 14-day INVITE_TOKEN for an UNCLAIMED vendor or promoter listing and email its contact address a magic link into the claim/register funnel. Idempotent: if an unexpired invite already exists for the same (entity, email) it is a no-op (created:false, reason:active_invite_exists). Honors the suppression list (suppressed:true, nothing sent/minted). Does NOT write an entity_claims row (deferred to redemption — entity_claims.user_id is NOT NULL). The raw token is emailed only, never returned. For vendors, records a vendor_outreach_attempts touch. Admin only.",
+    "Cold-contact claim invite (OPE-67; OPE-318 added PERFORMER). Mint a single-use, 14-day INVITE_TOKEN for an UNCLAIMED vendor, promoter or performer listing and email its contact address a magic link into the claim/register funnel. Idempotent: if an unexpired invite already exists for the same (entity, email) it is a no-op (created:false, reason:active_invite_exists). Honors the suppression list (suppressed:true, nothing sent/minted). Does NOT write an entity_claims row (deferred to redemption — entity_claims.user_id is NOT NULL). The raw token is emailed only, never returned. For vendors, records a vendor_outreach_attempts touch. Admin only.",
     {
       entity_type: z
-        .enum(["VENDOR", "PROMOTER"])
+        .enum(["VENDOR", "PROMOTER", "PERFORMER"])
         .describe("Which listing kind to invite the contact to claim."),
-      entity_id: z.string().min(1).describe("ID of the vendor/promoter row. Must be unclaimed."),
+      entity_id: z
+        .string()
+        .min(1)
+        .describe("ID of the vendor/promoter/performer row. Must be unclaimed."),
       email: z
         .string()
         .email()
@@ -181,6 +196,23 @@ export function registerCreateClaimInviteTool(
           })
           .from(vendors)
           .where(and(eq(vendors.id, entity_id), isNull(vendors.deletedAt)))
+          .limit(1);
+        entity = row ? { ...row, slug: row.slug as unknown as string } : undefined;
+      } else if (entity_type === "PERFORMER") {
+        // OPE-318 — explicit branch. The old two-value `else` meant "promoter",
+        // so a performer id would have been looked up in the promoters table and
+        // reported as not found — or worse, matched a promoter sharing the id
+        // space and invited a stranger to claim the wrong listing.
+        const [row] = await db
+          .select({
+            id: performers.id,
+            name: performers.name,
+            slug: performers.slug,
+            contactEmail: performers.contactEmail,
+            claimed: performers.claimed,
+          })
+          .from(performers)
+          .where(and(eq(performers.id, entity_id), isNull(performers.deletedAt)))
           .limit(1);
         entity = row ? { ...row, slug: row.slug as unknown as string } : undefined;
       } else {

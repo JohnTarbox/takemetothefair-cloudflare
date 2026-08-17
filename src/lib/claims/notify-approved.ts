@@ -14,14 +14,26 @@ export async function insertClaimApprovedNotification(
   db: Database,
   args: {
     userId: string;
-    entityType: "VENDOR" | "PROMOTER";
+    // OPE-318 — PERFORMER included. A claimant who is approved and told nothing
+    // is the same silence the claim rail exists to end.
+    entityType: "VENDOR" | "PROMOTER" | "PERFORMER";
     entitySlug: string;
     entityName?: string | null;
   }
 ): Promise<void> {
   try {
     const name = args.entityName?.trim() || "your listing";
-    const portal = args.entityType === "VENDOR" ? "/vendor/profile" : "/promoter/events";
+    // Explicit rather than a two-way ternary: performers have NO portal yet
+    // (no PERFORMER role, no /performer/* area — see performer-claim-approval.ts),
+    // so they are sent to their own public page, which is the thing they just
+    // gained control of. Sending them to /promoter/events — which the old
+    // ternary would have done — is a link to somebody else's dashboard.
+    const portal =
+      args.entityType === "VENDOR"
+        ? "/vendor/profile"
+        : args.entityType === "PERFORMER"
+          ? `/performers/${args.entitySlug}`
+          : "/promoter/events";
     await db.insert(notifications).values({
       id: crypto.randomUUID(),
       userId: args.userId,
