@@ -76,7 +76,7 @@
  * behavior change that needs its own audit + PR.
  */
 
-import { and, eq, gte, lte, sql } from "drizzle-orm";
+import { and, asc, eq, gte, isNull, lte, sql } from "drizzle-orm";
 import type { Database } from "@/lib/db";
 import { events, venues } from "@/lib/db/schema";
 import { autoLinkVenue } from "@/lib/venue-matching";
@@ -145,6 +145,67 @@ export type FindDuplicateResult =
     };
 
 /**
+ * OPE-432 — a merge tombstone is not a duplicate candidate.
+ *
+ * `merge_events` does not delete the losing row. It renames the slug to
+ * `<orig>-merged-<id8>`, writes `event_slug_history`, sets `status='REJECTED'`
+ * and `merged_into=<keeper>`, and leaves the row as an audit tombstone whose
+ * only remaining job is to 301 to the keeper. It is a redirect, not an event.
+ *
+ * Returning one as a duplicate hands the submitter a URL that redirects away
+ * from the row they were just told they duplicated. Reproduced live while
+ * entering the missing 2028 Martha's Vineyard edition: `suggest_event` refused
+ * it against a row whose slug was already
+ * `marthas-vineyard-agricultural-fair-2026-merged-4acbfcb3`, and an operator
+ * had to pass `force_create: true` to enter a legitimate event.
+ *
+ * Measured in prod 2026-08-18: 48 tombstones, 46 carrying a `source_url`
+ * across 44 distinct URLs, 23 of them future-dated — i.e. inside the ±7d
+ * window stages 2–4 match on.
+ *
+ * ── Why this keys on `merged_into` and NOT on `status='REJECTED'` ──
+ *
+ * The ticket asked for both. Excluding every REJECTED row would be a worse
+ * defect than the one being fixed: OPE-278 exists to stop attendee-list and
+ * list-broker spam from being classified `new_event` and creating events, and
+ * the rows an operator rejects are exactly what that produces. Blind dedup to
+ * them and previously-rejected spam becomes re-creatable on every resubmission,
+ * with nothing left to match against.
+ *
+ * A REJECTED-but-not-merged row is also still a real record of a real
+ * submission — unlike a tombstone, which by construction describes an event
+ * that lives at a different id. So it stays matchable, and the thing that was
+ * actually wrong about it (telling a submitter their event is "already in our
+ * directory" when it was rejected) is fixed where the message is written; the
+ * result already carries `status` for exactly that purpose.
+ *
+ * A status predicate here would also trip the OPE-437 guard in
+ * `dedup-sees-nonpublic-events.test.ts`, which asserts this file applies no
+ * status filter so dedup can keep seeing PENDING rows. That guard is right,
+ * and `merged_into` is orthogonal to it.
+ */
+const notAMergeTombstone = () => isNull(events.mergedInto);
+
+/**
+ * OPE-432 — a deterministic winner when a window holds several live events.
+ *
+ * Every stage below is `limit(1)` over a set that routinely has more than one
+ * row, and none of them ordered it, so which event a submitter was told they
+ * duplicated depended on SQLite's scan order. That is the same defect class
+ * OPE-454 fixed in stage 1 ("returned an ARBITRARY row"), still present in
+ * stages 2–4. Prod holds 98 (venue, ±7d) windows containing more than one
+ * candidate row, 49 of them future-dated.
+ *
+ * APPROVED first — a published event is the one a submitter can actually go
+ * and look at, and the one whose URL is worth returning. `id` breaks the
+ * remaining tie so repeated calls agree with each other.
+ */
+const bestMatchFirst = [
+  sql`CASE WHEN ${events.status} = 'APPROVED' THEN 0 ELSE 1 END`,
+  asc(events.id),
+];
+
+/**
  * Run the 4-stage dedup match against the supplied candidate. Returns
  * the first hit, or { isDuplicate: false } when nothing matches.
  */
@@ -186,9 +247,11 @@ export async function findDuplicate(
           and(
             eq(events.sourceUrl, input.sourceUrl),
             gte(events.startDate, minDate!),
-            lte(events.startDate, maxDate!)
+            lte(events.startDate, maxDate!),
+            notAMergeTombstone()
           )
         )
+        .orderBy(...bestMatchFirst)
         .limit(1);
       if (sameUrlAndDate.length > 0) {
         return {
@@ -206,7 +269,8 @@ export async function findDuplicate(
     const sameUrl = await db
       .select(eventColumns)
       .from(events)
-      .where(eq(events.sourceUrl, input.sourceUrl))
+      .where(and(eq(events.sourceUrl, input.sourceUrl), notAMergeTombstone()))
+      .orderBy(...bestMatchFirst)
       .limit(2);
 
     if (sameUrl.length > 0) {
@@ -268,9 +332,11 @@ export async function findDuplicate(
           and(
             eq(events.venueId, resolvedVenueId),
             gte(events.startDate, windowStart),
-            lte(events.startDate, windowEnd)
+            lte(events.startDate, windowEnd),
+            notAMergeTombstone()
           )
         )
+        .orderBy(...bestMatchFirst)
         .limit(1);
       if (venueMatch.length > 0) {
         return {
@@ -305,9 +371,11 @@ export async function findDuplicate(
             sql`LOWER(${venues.city}) = LOWER(${normalizedCity})`,
             eq(venues.state, normalizedState),
             gte(events.startDate, windowStart),
-            lte(events.startDate, windowEnd)
+            lte(events.startDate, windowEnd),
+            notAMergeTombstone()
           )
         )
+        .orderBy(...bestMatchFirst)
         .limit(1);
       if (cityStateMatch.length > 0) {
         return {
@@ -333,7 +401,14 @@ export async function findDuplicate(
         sourceUrl: events.sourceUrl,
       })
       .from(events)
-      .where(and(gte(events.startDate, windowStart), lte(events.startDate, windowEnd)));
+      .where(
+        and(
+          gte(events.startDate, windowStart),
+          lte(events.startDate, windowEnd),
+          notAMergeTombstone()
+        )
+      )
+      .orderBy(...bestMatchFirst);
     for (const ev of similarEvents) {
       if (!ev.name) continue;
       const existingNormalized = normalizeName(ev.name);
