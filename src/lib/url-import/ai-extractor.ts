@@ -9,6 +9,7 @@ import { withTimeout } from "@/lib/fetch-timeout";
 import { EVENT_CATEGORIES } from "@/lib/constants";
 import { groundDateInSource } from "./date-grounding";
 import { WORKERS_AI_MODEL } from "@takemetothefair/constants";
+import { repairFlattenedEditions } from "./deterministic/repair-editions";
 
 // Logging: diagnostic output here uses console.warn so it surfaces in
 // `wrangler tail` for an admin running an import while still satisfying the
@@ -407,7 +408,45 @@ export async function extractMultipleEvents(
 /**
  * Parse AI response expecting an array of events
  */
+/**
+ * Parse the model's response, then restore any published edition it flattened.
+ *
+ * The two steps are separate on purpose. Parsing is about reading what the
+ * model said; the repair is about comparing that against what the page said,
+ * and the page wins on dates. Keeping the repair here — rather than inside the
+ * per-candidate `sanitizeEventData` — is what makes it possible at all: the
+ * decision needs ALL the candidates at once, because the question is "how many
+ * distinct years do these cover between them", which no single candidate can
+ * answer.
+ */
 function parseMultiEventResponse(
+  response: AiTextGenerationOutput,
+  metadata: PageMetadata,
+  sourceText = ""
+): ExtractedEvent[] {
+  const parsed = parseMultiEventResponseRaw(response, metadata, sourceText);
+
+  const { events, repairedYears } = repairFlattenedEditions(
+    parsed,
+    sourceText,
+    (year) => `repaired-${year}-${Math.random().toString(36).slice(2, 8)}`
+  );
+
+  if (repairedYears.length > 0) {
+    // Loud on purpose. These rows are sourced from the page's own date table,
+    // but they were assembled by us rather than emitted by the extractor, and
+    // a reviewer looking at an unexpected 2029 row deserves to find out why
+    // from the logs rather than by guessing.
+    console.warn(
+      `[AI Extractor Multi] OPE-432 — extraction flattened the edition table; ` +
+        `restored ${repairedYears.length} edition(s) from the source: ${repairedYears.join(", ")}`
+    );
+  }
+
+  return events;
+}
+
+function parseMultiEventResponseRaw(
   response: AiTextGenerationOutput,
   metadata: PageMetadata,
   // OPE-432 — the fetched page text, so an extracted date can be checked

@@ -142,10 +142,24 @@ describe("wired into extractMultipleEvents", () => {
       ]),
     });
     const { events } = await extractMultipleEvents(ai, MV_PAGE, md);
-    expect(events).toHaveLength(1);
-    expect(events[0].startDate).toBeNull();
-    expect(events[0].endDate).toBeNull(); // end rides with start
-    expect(events[0].name).toContain("Martha's Vineyard");
+
+    // The grounding rule this test was written for still holds: the invented
+    // 2024 range is gone, and no event on this page carries it.
+    expect(events.map((e) => e.startDate)).not.toContain("2024-08-15");
+    expect(events.every((e) => e.name?.includes("Martha's Vineyard"))).toBe(true);
+
+    // The count changed with OPE-432's repair pass, and the change is the
+    // point rather than a side effect. Grounding leaves the candidate with no
+    // date at all; the page publishes four editions, so all four are restored
+    // from the source table instead of one dateless row being written.
+    expect(events).toHaveLength(5);
+    expect(events.some((e) => e.startDate === null)).toBe(true);
+    expect(events.map((e) => e.startDate).filter(Boolean)).toEqual([
+      "2026-08-13",
+      "2027-08-12",
+      "2028-08-10",
+      "2029-08-09",
+    ]);
   });
 
   it("keeps a date the page really prints", async () => {
@@ -159,8 +173,22 @@ describe("wired into extractMultipleEvents", () => {
       ]),
     });
     const { events } = await extractMultipleEvents(ai, MV_PAGE, md);
-    expect(events[0].startDate).toBe("2028-08-10");
-    expect(events[0].endDate).toBe("2028-08-13");
+
+    // Grounding keeps the model's 2028 dates — that is what this test is for.
+    // It is no longer events[0] because OPE-432 restores the three editions
+    // the model omitted and orders the result by date, so assert on the row
+    // rather than on its position.
+    const y2028 = events.find((e) => e.startDate === "2028-08-10");
+    expect(y2028).toBeDefined();
+    expect(y2028!.endDate).toBe("2028-08-13");
+
+    // …and the omitted editions come back rather than being silently lost.
+    expect(events.map((e) => e.startDate)).toEqual([
+      "2026-08-13",
+      "2027-08-12",
+      "2028-08-10",
+      "2029-08-09",
+    ]);
   });
 
   it("keeps every edition of the multi-year table", async () => {
