@@ -208,7 +208,7 @@ describe("OPE-55 multi-source fan-out", () => {
     expect(bodySubmit?.sourceUrl).toBeUndefined();
   });
 
-  it("creates only 1 event when the SAME event is in body AND a URL (sequential dedup)", async () => {
+  it("creates only 1 event when the SAME event is in body AND a URL (in-batch cluster)", async () => {
     const row: RowSnapshot = {
       parsedUrl: "https://ex.test/a",
       fromAddress: "alice@example.com",
@@ -223,26 +223,40 @@ describe("OPE-55 multi-source fan-out", () => {
       urlEvents: { "https://ex.test/a": [{ name: "Spring Fair", startDate: "2026-05-05" }] },
       bodyEvents: [{ name: "Spring Fair", startDate: "2026-05-05", venueName: "Town Green" }],
     });
-    const { step } = makeStep(row);
+    const { step, labels } = makeStep(row);
     const wf = makeWorkflow();
 
     const result = await wf.runSubmitPipeline(step, "row-1");
 
-    // URL created first; body candidate dedups against the now-existing row.
     expect(created).toEqual(["Spring Fair"]);
     expect(submitBodies).toHaveLength(1);
-    expect(result.replyKind).toBe("ok-multi");
-    // One created bullet + one already-exists bullet.
-    expect(result.replyParams?.eventCount).toBe(2);
-    // OPE-431 — this is the INTRA-BATCH case: the body candidate matched a row
-    // this same email created seconds earlier, which is PENDING. It previously
-    // claimed "already in our directory" and linked /events/<slug>, so the
-    // submitter got a 404 on a row that had never been published. A match that
-    // is not publicly visible must say so and must not link.
-    const text = String(result.replyParams?.resultsText);
-    expect(text).toContain("it's in review");
-    expect(text).not.toContain("already in our directory");
-    expect(text).not.toContain("meetmeatthefair.com/events/");
+
+    // OPE-378 / OPE-458 — the two candidates are now collapsed BEFORE the
+    // fan-out, so this takes the single-event path.
+    //
+    // It used to create the URL candidate, then let the body candidate dedup
+    // against the row the same email had made seconds earlier, and report BOTH
+    // — "created 1" plus "already exists 1" — for one event the sender sent
+    // once. Every bullet was individually true and the total was a fiction.
+    // Worse, the intra-batch match is PENDING, so the second bullet had to
+    // carefully explain that the thing we just told them we created is "in
+    // review". Collapsing first removes the need for any of that.
+    expect(result.replyKind).not.toBe("ok-multi");
+    expect(result.replyParams?.eventCount ?? 1).toBe(1);
+
+    // The merge is a gap-fill, not a pick-one: the body candidate wins on
+    // richness (it has the venue) and still inherits the URL candidate's
+    // provenance, so `source_url` survives the collapse.
+    expect(submitBodies[0].name).toBe("Spring Fair");
+    expect(submitBodies[0].venueName).toBe("Town Green");
+    expect(submitBodies[0].sourceUrl).toBe("https://ex.test/a");
+
+    // The folded-away source still gets its own citation row on the survivor's
+    // event. Collapsing the EVENT must not collapse the PROVENANCE — "two
+    // independent sources agreed on this date" is precisely what OPE-69's
+    // per-source citations exist to record, and it would be silently lost if
+    // the loser simply vanished.
+    expect(labels.some((l) => l.includes("cite-merged["))).toBe(true);
   });
 
   it("isolates a per-source failure — the other sources still create", async () => {

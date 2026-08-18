@@ -214,7 +214,7 @@ describe("OPE-68 attachment OCR → pipeline", () => {
     expect(labels).toContain("submit/poster-hero");
   });
 
-  it("dedups the poster event against the SAME event in the body → 1 event", async () => {
+  it("collapses the poster event and the SAME event in the body → 1 event", async () => {
     const row: RowSnapshot = {
       parsedUrl: null,
       fromAddress: "alice@example.com",
@@ -235,16 +235,25 @@ describe("OPE-68 attachment OCR → pipeline", () => {
 
     const result = await wf.runSubmitPipeline(step, "row-1");
 
-    // One created; the second source dedups against the now-existing row.
     expect(created).toEqual(["Spring Fair"]);
     expect(submitBodies).toHaveLength(1);
-    expect(result.replyKind).toBe("ok-multi");
-    // OPE-431 — intra-batch dedup: the poster candidate matched the row the
-    // body created moments earlier, which is PENDING. Claiming "already in our
-    // directory" and linking /events/<slug> sent a member of the public to a
-    // 404 on a row that had never been published.
-    const text = String(result.replyParams?.resultsText);
-    expect(text).toContain("it's in review");
+
+    // OPE-378 / OPE-458 — the poster and the prose describe one fair, and are
+    // now collapsed before the fan-out instead of racing each other into the
+    // catalog. Previously the body created the row and the poster candidate
+    // deduped against it seconds later, producing a two-bullet reply for a
+    // single event — one bullet of which had to explain that the event we had
+    // just announced was "in review".
+    expect(result.replyKind).not.toBe("ok-multi");
+
+    // The survivor still carries the poster, so the reply keeps the "we read
+    // your attachment" signal and the hero image is still set. This is the
+    // salvage path: whichever candidate wins on richness, the flyer follows it.
+    expect(result.replyParams?.attachmentsRead).toBe(true);
+    expect(result.replyParams?.attachmentEventsCreated).toBe(1);
+
+    // And there is no intra-batch "already exists" bullet left to mis-link.
+    const text = String(result.replyParams?.resultsText ?? "");
     expect(text).not.toContain("already in our directory");
     expect(text).not.toContain("meetmeatthefair.com/events/");
   });
