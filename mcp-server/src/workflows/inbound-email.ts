@@ -112,6 +112,8 @@ import { recordSourceCitations } from "../email-handlers/pipeline-citations.js";
 import { bodyHasProseSubstance } from "../email-handlers/body-prose-substance.js";
 import { countOutcomes } from "../email-handlers/outcome-counts.js";
 import { clusterSubmissionCandidates } from "../email-handlers/cluster-candidates.js";
+import { classifySourceStaleness, sourceDomainOf } from "../email-handlers/stale-source.js";
+import { recordSourceStale } from "../goodwill/scoring.js";
 import { computeFillEmptyProposals } from "../email-handlers/enrich-proposal.js";
 import { detectRosterEntries, type RosterEntry } from "../email-handlers/roster-detect.js";
 import { isShareRedirectHost, resolveShareRedirect } from "../email-handlers/share-redirect.js";
@@ -2696,6 +2698,83 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       candidates.push(...survivors);
     }
 
+    // ── Phase A.95 (OPE-458 scope 2): is the SOURCE stale, not the events? ──
+    //
+    // The per-event past-date guard (scope 1) already refuses to file a
+    // 26-month-old candidate as current. But told one at a time, "this event is
+    // in the past" is a fact about the event. Told about EVERY candidate a page
+    // produced, the same fact is about the PAGE — and that is the one the
+    // submitter can actually act on. They cannot un-hold a past event; they can
+    // tell us the organizer's page has not been touched since 2024.
+    //
+    // Runs after clustering so a collapsed duplicate is not counted twice as
+    // evidence, and before Phase B so the single-event path gets the note too.
+    const staleDomains: string[] = [];
+    {
+      const byUrl = new Map<string, typeof candidates>();
+      for (const c of candidates) {
+        if (c.source.kind !== "url") continue;
+        const url = c.extracted.url || c.source.url;
+        if (!url) continue;
+        const bucket = byUrl.get(url);
+        if (bucket) bucket.push(c);
+        else byUrl.set(url, [c]);
+      }
+      for (const [url, group] of byUrl) {
+        const verdict = classifySourceStaleness(
+          group.map((c) => ({ startDate: c.extracted.event.startDate })),
+          Date.now()
+        );
+        if (!verdict.stale) continue;
+        const domain = sourceDomainOf(url);
+        console.warn(
+          `[submit/stale-source] ${domain ?? url}: ${verdict.reason} (row ${messageRowId})`
+        );
+        if (domain && !staleDomains.includes(domain)) staleDomains.push(domain);
+      }
+    }
+    if (staleDomains.length > 0) {
+      // Reaches the REVIEWER. Flag rather than block: the events may still be
+      // real, they are simply the wrong year, and a human deciding that is a
+      // better outcome than either publishing or discarding them silently.
+      //
+      // Best-effort, like every other telemetry write in this workflow. A
+      // review flag and a reliability counter must never be able to fail a
+      // submission that otherwise succeeded — the submitter's events matter
+      // more than our bookkeeping about them, and the note still reaches them
+      // either way because it rides on `staleDomains`, not on this write.
+      try {
+        await step.do(
+          "submit/stale-source/mark",
+          { retries: { limit: 2, delay: "5 seconds", backoff: "constant" }, timeout: "10 seconds" },
+          async () => {
+            const db = getDb(this.env.DB);
+            await db
+              .update(inboundEmails)
+              .set({ flaggedForReview: 1 })
+              .where(eq(inboundEmails.id, messageRowId));
+            // Marks the DOMAIN, so a source that does this repeatedly becomes
+            // visible as a pattern rather than as N unrelated submissions.
+            // `source_reliability.n_stale` has existed since GW1 and nothing
+            // has ever written it; this is its first writer.
+            let marked = 0;
+            for (const d of staleDomains) {
+              if (await recordSourceStale(db, d)) marked++;
+            }
+            return { flagged: true, domains: staleDomains, marked };
+          }
+        );
+      } catch (err) {
+        await logError(getDb(this.env.DB), {
+          level: "warn",
+          source: "mcp:workflow:stale-source",
+          message: "stale-source marking failed; submission unaffected",
+          error: err,
+          context: { messageRowId, staleDomains },
+        }).catch(() => {});
+      }
+    }
+
     // ── Phase B: N=1 collapse → existing single-event rich reply. ─────
     if (candidates.length === 1 && sourceFailures.length === 0) {
       const only = candidates[0];
@@ -2744,7 +2823,17 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             ...(res.replyParams ?? {}),
             attachmentsRead: true,
             attachmentEventsCreated: 1,
+            ...(staleDomains.length > 0 ? { staleSourceDomains: staleDomains } : {}),
           },
+        };
+      }
+      // OPE-458 scope 2 — reaches the SUBMITTER. Threaded here rather than at
+      // each reply kind, because the note is about the source they sent, not
+      // about which outcome we reached.
+      if (staleDomains.length > 0) {
+        return {
+          ...res,
+          replyParams: { ...(res.replyParams ?? {}), staleSourceDomains: staleDomains },
         };
       }
       return res;
@@ -2945,6 +3034,9 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         // OPE-68 — outcome-aware attachment signal for the reply builder.
         attachmentsRead: attachmentEventsCreated > 0,
         attachmentEventsCreated,
+        // OPE-458 scope 2 — the note that distinguishes "your events are in the
+        // past" from "the page you sent has not been updated".
+        ...(staleDomains.length > 0 ? { staleSourceDomains: staleDomains } : {}),
       },
       status: "replied",
       resultingEventId: firstCreatedEventId,

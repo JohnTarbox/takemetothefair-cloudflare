@@ -70,9 +70,11 @@ export function buildReply(
   const replySubject = `Re: ${subjectIn || "your message"}`.slice(0, 200);
 
   const baseText = renderText(kind, params);
+  // OPE-458 scope 2 — before the widget, so the sign-off still lands last.
+  const withStaleNote = appendStaleSourceNote(baseText, params);
   // Phase D.3 widget: append a "was this what you wanted?" block when
   // the workflow's send-reply step issued a receipt-moment token.
-  const text = appendReceiptWidget(baseText, params);
+  const text = appendReceiptWidget(withStaleNote, params);
   const html = `<p>${escapeHtml(text).replace(/\n\n/g, "</p><p>").replace(/\n/g, "<br>")}</p>`;
 
   return {
@@ -82,6 +84,40 @@ export function buildReply(
     html,
     source: `email:${kind}`,
   };
+}
+
+/**
+ * OPE-458 scope 2 — tell the sender their SOURCE looks stale, not just that
+ * their events landed in the past.
+ *
+ * Applied to every reply kind rather than written into each one, because the
+ * observation is about the page they sent us and is equally true whether we
+ * created one event, several, or none.
+ *
+ * Says what we saw and asks; it does not assert the page is abandoned. We read
+ * one page once, and the organizer may simply publish late. And it never
+ * proposes a corrected year — if the page does not say 2026, guessing 2026 is
+ * the fabrication OPE-433 and this ticket both forbid.
+ */
+function appendStaleSourceNote(baseText: string, params: ReplyParams): string {
+  const domains = params.staleSourceDomains;
+  if (!Array.isArray(domains) || domains.length === 0) return baseText;
+  const list = domains.filter((d): d is string => typeof d === "string" && d.length > 0);
+  if (list.length === 0) return baseText;
+
+  const subject =
+    list.length === 1 ? list[0] : `${list.slice(0, -1).join(", ")} and ${list[list.length - 1]}`;
+  const note =
+    `\n\nOne thing worth flagging: every date we could read from ${subject} has already ` +
+    `passed, which usually means the page hasn't been updated for this year rather than ` +
+    `that the events are over. We've held these for a human to look at instead of ` +
+    `publishing them with old dates — and we haven't guessed at new ones. If you have ` +
+    `this year's dates, just reply with them and we'll get the listing right.`;
+
+  // Keep the sign-off last, same splice the receipt widget uses.
+  const splitIdx = baseText.lastIndexOf("\n— ");
+  if (splitIdx === -1) return `${baseText}${note}`;
+  return `${baseText.slice(0, splitIdx)}${note}${baseText.slice(splitIdx)}`;
 }
 
 function appendReceiptWidget(baseText: string, params: ReplyParams): string {
