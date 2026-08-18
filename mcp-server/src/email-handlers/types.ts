@@ -52,6 +52,12 @@ export type ReplyKind =
   // widgets are a follow-up.
   | "ok-multi"
   | "no-url"
+  // OPE-453 — a URL WAS parsed and stored on the row; we just couldn't use it.
+  // Distinct from `no-url`, which asserts the sender omitted a link. Sending
+  // `no-url` here tells a contributor they forgot the link they demonstrably
+  // sent, and puts the fault on them for a failure that is ours. The two are
+  // different claims about WHOSE mistake it was, so they get different copy.
+  | "unfetchable-url"
   // OPE-407 — the message arrived carrying nothing: no attachment, no
   // meaningful body, no usable subject. Distinct from `no-url`, which is a
   // claim about a body that contains no link; these have no body to inspect.

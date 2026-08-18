@@ -274,6 +274,31 @@ ${attachmentNote}${SUPPORT_LINE}
 
 ${SIGN_OFF}`;
     }
+    case "unfetchable-url": {
+      // OPE-453. Same rule the `empty-message` copy below is built on: say what
+      // we OBSERVED, not what they did.
+      //
+      // `no-url` says "we couldn't find a link in your message." When a URL is
+      // sitting in `inbound_emails.parsed_url`, that sentence is false, and it
+      // is false in the direction that blames the sender for our failure. One
+      // contributor received it eight times across five weeks for a link they
+      // included every single time.
+      //
+      // So: name the URL we actually tried (they can see we had it), take the
+      // failure, and ask for the thing that would genuinely help — the
+      // destination page — rather than re-asking for a link they already sent.
+      const tried = typeof params.attemptedUrl === "string" ? params.attemptedUrl : null;
+      const triedLine = tried ? `The link we tried was:\n  ${tried}\n\n` : "";
+      return `Thanks for emailing Meet Me at the Fair!
+
+We found a link in your message but couldn't read the event details from it — some links (shorteners, redirects, and pages that need JavaScript) don't open for us.
+
+${triedLine}If you can, reply with the event's own page — the fair's website, a ticket page, or the organizer's post — and we'll take it from there. The date and town in a plain sentence works too.
+
+${SUPPORT_LINE}
+
+${SIGN_OFF}`;
+    }
     case "empty-message": {
       // OPE-407. Two rules govern this copy, both learned from the case that
       // produced it:
