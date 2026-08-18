@@ -66,6 +66,15 @@ export interface BoothPipelineResult {
   galleryAttached: number;
   /** General photos we tried but couldn't attach. Reported, never swallowed. */
   galleryFailed: number;
+  /** OPE-469 — true when nothing was written. Absent on a live run. */
+  dryRun?: boolean;
+  /**
+   * OPE-469 — business names auto-write WOULD have created, had this not been a
+   * dry run. Distinct from `identifiedNames`, which on a live run covers both
+   * staged and auto-written; here the two are kept apart so a replay can say
+   * which path each photo was heading for.
+   */
+  wouldAutoWrite?: string[];
   /**
    * OPE-204 Milestone B — booths auto-written (created/linked as CONFIRMED
    * exhibitors) when PHOTO_AUTOWRITE_ENABLED is on. Empty in identify-only mode.
@@ -111,12 +120,29 @@ export interface BoothPipelineEnv {
  * skipped rather than throwing. This runs inside the inbound-email workflow and
  * must never sink an email over a bad JPEG.
  */
+export interface BoothPipelineOptions {
+  /**
+   * OPE-469 — classify without writing anything.
+   *
+   * Everything above the write points is already read-only: an R2 read and a
+   * vision call per photo. `dryRun` stops the function there and reports what
+   * the write half WOULD have done, so a stored attachment can be replayed as a
+   * test without staging a booth, attaching a gallery photo, or flipping
+   * `flagged_for_review` on a live row.
+   *
+   * It is a real exercise of the pipeline, not a simulation of one — the same
+   * bytes, the same model, the same dispositions. Only the writes are withheld.
+   */
+  dryRun?: boolean;
+}
+
 export async function runBoothPipeline(
   env: BoothPipelineEnv,
   db: Db,
   inboundEmailId: string,
   eventId: string,
-  photos: PipelinePhoto[]
+  photos: PipelinePhoto[],
+  options: BoothPipelineOptions = {}
 ): Promise<BoothPipelineResult> {
   const empty: BoothPipelineResult = {
     examined: 0,
@@ -168,6 +194,41 @@ export async function runBoothPipeline(
 
   const toAutoWrite = autoWriteOn ? nonSkip.filter((r) => r.d.action === "write") : [];
   const toStage = autoWriteOn ? nonSkip.filter((r) => r.d.action !== "write") : nonSkip;
+
+  // OPE-469 — the dry-run boundary. Everything above this line reads (R2 +
+  // vision); everything below writes (auto-write, admin_actions staging,
+  // flagged_for_review, gallery attach). Returning here is what makes a replay
+  // safe to run against a live row.
+  //
+  // The counts reported are what the write half WOULD produce, derived from the
+  // same `toStage` / `toAutoWrite` split the writes use — not re-derived, so
+  // the report cannot drift from the behaviour it predicts.
+  if (options.dryRun) {
+    const generalCount = results.filter((r) => r.d.action === "skip").length;
+    return {
+      examined: results.length,
+      staged: toStage.length,
+      skipped,
+      identifiedNames: toStage
+        .map((r) => r.d.identification.businessName)
+        .concat(toAutoWrite.map((r) => r.d.identification.businessName ?? ""))
+        .filter((n): n is string => Boolean(n)),
+      // Reported as "would attach". `attachGeneralPhotos` can still fail on a
+      // real run, so this is an upper bound rather than a promise — which is
+      // why a replay compares against the recorded outcome instead of asserting
+      // equality with it.
+      galleryAttached: generalCount,
+      galleryFailed: 0,
+      autoWritten: [],
+      visionFailures: results
+        .map((r) => r.d.identification.failureReason)
+        .filter((f): f is string => Boolean(f)),
+      dryRun: true,
+      wouldAutoWrite: toAutoWrite
+        .map((r) => r.d.identification.businessName)
+        .filter((n): n is string => Boolean(n)),
+    };
+  }
 
   // Auto-write first (sequential, idempotent) — see auto-write.ts. Fail-soft:
   // its failures land in the outcomes, never thrown, so staging still runs.
