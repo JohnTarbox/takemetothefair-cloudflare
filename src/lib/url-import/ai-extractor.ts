@@ -7,6 +7,7 @@ import type {
 } from "./types";
 import { withTimeout } from "@/lib/fetch-timeout";
 import { EVENT_CATEGORIES } from "@/lib/constants";
+import { groundDateInSource } from "./date-grounding";
 import { WORKERS_AI_MODEL } from "@takemetothefair/constants";
 
 // Logging: diagnostic output here uses console.warn so it surfaces in
@@ -391,7 +392,11 @@ export async function extractMultipleEvents(
   console.warn("[AI Extractor Multi] Raw AI response:", responseText.substring(0, 2000));
 
   // Parse the response as array
-  const events = parseMultiEventResponse(response as AiTextGenerationOutput, metadata);
+  const events = parseMultiEventResponse(
+    response as AiTextGenerationOutput,
+    metadata,
+    truncatedContent
+  );
   const confidence = calculateMultiEventConfidence(events, metadata);
 
   console.warn("[AI Extractor Multi] Parsed", events.length, "events");
@@ -404,7 +409,11 @@ export async function extractMultipleEvents(
  */
 function parseMultiEventResponse(
   response: AiTextGenerationOutput,
-  metadata: PageMetadata
+  metadata: PageMetadata,
+  // OPE-432 — the fetched page text, so an extracted date can be checked
+  // against the source it supposedly came from. Optional: callers that have no
+  // source (tests, metadata-only fallbacks) simply skip the check.
+  sourceText = ""
 ): ExtractedEvent[] {
   const responseText = responseToText(response);
 
@@ -419,7 +428,7 @@ function parseMultiEventResponse(
     if (arrayMatch) {
       const parsed = JSON.parse(arrayMatch[0]);
       if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed.map((item, index) => sanitizeEventData(item, index, metadata));
+        return parsed.map((item, index) => sanitizeEventData(item, index, metadata, sourceText));
       }
     }
 
@@ -429,12 +438,12 @@ function parseMultiEventResponse(
       const parsed = JSON.parse(objectMatch[0]);
       // Check if it's a single event object (has name field)
       if (parsed.name || parsed.title) {
-        return [sanitizeEventData(parsed, 0, metadata)];
+        return [sanitizeEventData(parsed, 0, metadata, sourceText)];
       }
       // Check if it's an object with an events array
       if (parsed.events && Array.isArray(parsed.events)) {
         return parsed.events.map((item: unknown, index: number) =>
-          sanitizeEventData(item as Record<string, unknown>, index, metadata)
+          sanitizeEventData(item as Record<string, unknown>, index, metadata, sourceText)
         );
       }
     }
@@ -452,7 +461,8 @@ function parseMultiEventResponse(
 function sanitizeEventData(
   item: Record<string, unknown>,
   index: number,
-  metadata: PageMetadata
+  metadata: PageMetadata,
+  sourceText = ""
 ): ExtractedEvent {
   // Get the raw start/end dates (may contain time)
   const rawStartDate = item.startDate || item.start_date || item.date;
@@ -480,13 +490,41 @@ function sanitizeEventData(
     if (specificDates.length === 0) specificDates = null;
   }
 
+  // OPE-432 — refuse a date the source does not support.
+  //
+  // This page (marthasvineyardagriculturalsociety.org/the-fair) publishes an
+  // explicit 2026-2029 table and the extractor produced a row dated 2024-08-15.
+  // "2024" appears nowhere on it. A fabricated date is well-formed, passes
+  // every schema check, and looks exactly like a real one — the source text is
+  // the only place it can be caught.
+  //
+  // Only a PAST year absent from the source is dropped. A future year that is
+  // absent is a plausible implicit-year inference (plenty of pages print
+  // "August 15-18" with no year), and rejecting those would lose real
+  // submissions. The asymmetry is deliberate: a wrong future date is visible on
+  // the listing and an operator can fix it, whereas a fabricated past date is
+  // silently filtered out of every forward-looking view and nobody ever sees it.
+  const sanitizedStart = sanitizeDate(rawStartDate);
+  const sanitizedEnd = sanitizeDate(rawEndDate);
+  const startGrounding = groundDateInSource(sanitizedStart, sourceText, new Date().getFullYear());
+  if (startGrounding.verdict === "fabricated") {
+    console.warn(
+      `[AI Extractor] dropping ungrounded start date ${sanitizedStart}: ${startGrounding.reason}`
+    );
+  }
+  const groundedStart = startGrounding.verdict === "fabricated" ? null : sanitizedStart;
+  // The end date rides with the start: keeping an end without its start would
+  // leave a half-dated row that reads as a data-entry slip rather than a
+  // rejected extraction.
+  const groundedEnd = startGrounding.verdict === "fabricated" ? null : sanitizedEnd;
+
   const event: ExtractedEvent = {
     _extractId: `event-${index}-${Date.now()}`,
     _selected: true, // Default to selected
     name: sanitizeString(item.name || item.title),
     description: sanitizeString(item.description, 2000),
-    startDate: sanitizeDate(rawStartDate),
-    endDate: sanitizeDate(rawEndDate),
+    startDate: groundedStart,
+    endDate: groundedEnd,
     startTime,
     endTime,
     hoursVaryByDay: item.hoursVaryByDay === true || item.hours_vary_by_day === true,
