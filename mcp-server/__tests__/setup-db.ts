@@ -947,6 +947,23 @@ const SCHEMA_SQL = `
     flushed_batch_id TEXT
   );
 
+  -- OPE-433 scope 4 — provenance for venues + event_days (drizzle/0208).
+  CREATE TABLE entity_data_citations (
+    id TEXT PRIMARY KEY,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    field_name TEXT NOT NULL,
+    value TEXT NOT NULL,
+    source_url TEXT NOT NULL,
+    source_name TEXT,
+    source_type TEXT NOT NULL,
+    confidence REAL,
+    state TEXT NOT NULL DEFAULT 'active',
+    notes TEXT,
+    created_by TEXT,
+    created_at INTEGER NOT NULL
+  );
+
   CREATE TABLE event_data_citations (
     id TEXT PRIMARY KEY,
     event_id TEXT NOT NULL,
