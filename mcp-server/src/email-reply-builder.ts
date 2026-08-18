@@ -183,11 +183,20 @@ ${SIGN_OFF}`;
       const overflowLine = overflowed
         ? "\n\nNote: your email had more than 10 URLs — we processed the first 10. Reply with the remaining URLs and we'll handle those too."
         : "";
+      // OPE-460 scope 4 — only promise a review when there is something to
+      // review. `count` is now events that landed (created + already-exists,
+      // see countOutcomes), so a submission where every source failed reports 0
+      // — and following that with "our team will review pending submissions
+      // within 24 hours" would promise work on nothing.
+      //
+      // Removing a line that does not apply, not new copy. Also worth not
+      // adding a second unmet 24-hour promise while /suggest-event's own is
+      // standing at 0-of-6 met.
+      const reviewLine =
+        count > 0 ? "\n\nOur team will review pending submissions within 24 hours." : "";
       return `Thanks for submitting ${count} event${count === 1 ? "" : "s"} to Meet Me at the Fair!
 
-${resultsText}
-
-Our team will review pending submissions within 24 hours.${overflowLine}
+${resultsText}${reviewLine}${overflowLine}
 
 ${SUPPORT_LINE}
 

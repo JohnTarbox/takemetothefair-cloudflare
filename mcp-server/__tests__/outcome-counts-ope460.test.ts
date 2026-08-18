@@ -21,6 +21,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { countOutcomes, type OutcomeKind } from "../src/email-handlers/outcome-counts.js";
+import { buildReply } from "../src/email-reply-builder.js";
 
 const o = (kind: OutcomeKind) => ({ kind });
 
@@ -94,5 +95,55 @@ describe("what counts as landed", () => {
     ];
     const c = countOutcomes(outcomes);
     expect(c.landed + c.failed).toBe(c.attempted);
+  });
+});
+
+/**
+ * OPE-460 scope 4 — the review promise must not outlive the thing being
+ * reviewed.
+ *
+ * Fixing the count created a new absurdity: an email where every source failed
+ * now honestly reports 0 events, and the very next line used to promise "our
+ * team will review pending submissions within 24 hours". Nothing is pending.
+ *
+ * This removes a line that does not apply rather than writing new copy — and
+ * it matters that we do not add a second unmet 24-hour promise while
+ * /suggest-event's own stands at 0-of-6 met.
+ */
+describe("the review promise is conditional", () => {
+  const render = (params: Record<string, unknown>) =>
+    buildReply("ok-multi", "someone@example.com", params as never).text;
+
+  it("omits the 24-hour promise when nothing landed", () => {
+    const text = render({
+      subject: "MV 1",
+      eventCount: 0,
+      resultsText: "❌ Couldn't fetch https://example.test/",
+    });
+    expect(text).toContain("0 events");
+    expect(text).not.toContain("within 24 hours");
+  });
+
+  it("keeps the promise when something did land", () => {
+    const text = render({
+      subject: "MV 2",
+      eventCount: 3,
+      resultsText: '✅ "Vineyard Artisans Summer Festival" — pending review',
+    });
+    expect(text).toContain("within 24 hours");
+  });
+
+  it("still renders the overflow note without the review line", () => {
+    // The two are independent; an all-failed overflow email must not lose its
+    // overflow explanation just because nothing landed.
+    const text = render({ subject: "x", eventCount: 0, resultsText: "❌ nope", overflowed: true });
+    expect(text).not.toContain("within 24 hours");
+    expect(text).toContain("more than 10 URLs");
+  });
+
+  it("uses the singular for exactly one event", () => {
+    expect(render({ subject: "x", eventCount: 1, resultsText: "✅ one" })).toContain(
+      "submitting 1 event to"
+    );
   });
 });
