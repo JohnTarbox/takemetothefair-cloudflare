@@ -386,6 +386,41 @@ export function isFacetIndexable(facet: ResolvedFacet, eventCount: number): bool
   return eventCount >= facet.minEvents;
 }
 
+/**
+ * OPE-470 — which question the depth floor is asking.
+ *
+ * `forward`   how much is LEFT in this window. Correct for month and weekend:
+ *             a March page with four events is UNFINISHED, and indexing it now
+ *             means indexing a page that misrepresents March.
+ * `rolling12` does this place host fairs AT ALL, measured over a full year.
+ *             Correct for region and type, where the window is the calendar
+ *             rather than the page.
+ *
+ * The bug this splits apart: region facets shared the forward count, so a
+ * SUMMER REGION MEASURED IN MID-AUGUST looked thin. The Berkshires host 12
+ * events in calendar 2026, ten of them May–August; counted forward from
+ * 2026-08-16 it read 5 and went `noindex`. Cape Cod reads 12 forward against 45
+ * rolling; MDI 9 against 22; Rangeley 2 against 11.
+ *
+ * It is the same defect OPE-395 already refused one level down, in the other
+ * dimension: that ticket declined to key month facets on `start_date`'s month
+ * because a May–October market would vanish from the September page. The region
+ * gate asked "what is left this year?" where it meant "what happens here?".
+ *
+ * ⚠️ The compounding risk is worse than the miscount. A page noindexed
+ * August→spring and indexable only May→July can spend its whole eligible
+ * window waiting for re-inclusion — and with the IndexNow path latched
+ * (OPE-447), re-inclusion runs on organic crawl timing alone. A seasonally
+ * flapping `noindex` may never index at all, which is worse than either steady
+ * state. A rolling window is what removes the flap, by construction: an annual
+ * fair stays inside a sliding 12 months, so its contribution does not blink.
+ */
+export type FacetDepthBasis = "forward" | "rolling12";
+
+export function facetDepthBasis(kind: FacetKind): FacetDepthBasis {
+  return kind === "region" || kind === "type" ? "rolling12" : "forward";
+}
+
 /** Canonical absolute URL for a facet page. */
 export function facetUrl(stateSlug: string, facetSlug: string): string {
   return `https://meetmeatthefair.com/events/${stateSlug}/${facetSlug}`;
