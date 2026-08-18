@@ -511,7 +511,26 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
           venueId: eventVenueId,
           startDate: normalizedStart,
           endDate: normalizedEnd,
-          datesConfirmed: eventData.datesConfirmed ?? (eventData.startDate ? true : false),
+          // OPE-433 — having a date is not the same as having confirmed it.
+          //
+          // This line derived confirmation from whether a startDate had been
+          // parsed at all, so every scraped row that got a date asserted the
+          // date was confirmed.
+          // That is the mechanism behind the headline number: of 1,373 live
+          // events claiming `dates_confirmed`, 1,245 have no citation — and the
+          // two lanes fed by this importer are the worst offenders
+          // (aggregator_import 280/284, direct_scrape 401/420).
+          //
+          // It is also why flipping the DDL default would have changed nothing
+          // here: this lane never relied on the default, it stated `true`
+          // outright.
+          //
+          // Now: unconfirmed unless the caller explicitly says otherwise. The
+          // caller is the only party that can know whether a human or an
+          // organizer stood behind the date. `annual_rollover` and the vendor
+          // tool already hardcode `false` and are the reference behaviour
+          // (rollover: 121 events, exactly 1 claiming confirmation).
+          datesConfirmed: eventData.datesConfirmed ?? false,
           categories: JSON.stringify(["Fair", "Festival"]),
           tags: JSON.stringify(["imported", eventData.sourceName]),
           ticketUrl: gateUrlForField(

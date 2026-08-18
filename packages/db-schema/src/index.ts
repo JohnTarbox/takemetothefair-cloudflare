@@ -325,7 +325,23 @@ export const events = sqliteTable(
     endDate: integer("end_date", { mode: "timestamp" }),
     publicStartDate: integer("public_start_date", { mode: "timestamp" }),
     publicEndDate: integer("public_end_date", { mode: "timestamp" }),
-    datesConfirmed: integer("dates_confirmed", { mode: "boolean" }).default(true),
+    /**
+     * OPE-433 — defaults to FALSE. Confidence is a claim, and a claim needs a
+     * claimant: the writer must state it.
+     *
+     * The old `DEFAULT true` meant a row asserted confirmed dates simply by
+     * existing. Note this was NOT the main source of the 1,245 uncited
+     * "confirmed" rows — the bulk importers stated `true` outright, deriving it
+     * from `startDate !== null` — but leaving the default permissive keeps the
+     * hazard alive for the next writer who forgets.
+     *
+     * Changing this default does NOT rewrite existing rows, and SQLite keeps
+     * the old default on the live table until it is rebuilt; every insert path
+     * now names the value explicitly (guarded by
+     * scripts/check-events-insert-confidence.ts), so the default is a backstop
+     * rather than the mechanism.
+     */
+    datesConfirmed: integer("dates_confirmed", { mode: "boolean" }).default(false),
     recurrenceRule: text("recurrence_rule"),
     categories: text("categories").default("[]"),
     tags: text("tags").default("[]"),
@@ -364,7 +380,12 @@ export const events = sqliteTable(
     ingestionMethod: text("ingestion_method"), // enum (see comment above)
     sourceUrl: text("source_url"), // URL of the event on the source site
     sourceId: text("source_id"), // Unique identifier from the source (e.g., slug or ID)
-    syncEnabled: integer("sync_enabled", { mode: "boolean" }).default(true),
+    /**
+     * OPE-433 — defaults to FALSE. This is clobber PERMISSION: it lets a later
+     * importer overwrite this row. Granting that by default meant a promoter's
+     * own listing could be silently overwritten by a scraper run.
+     */
+    syncEnabled: integer("sync_enabled", { mode: "boolean" }).default(false),
     lastSyncedAt: integer("last_synced_at", { mode: "timestamp" }),
     // Discontinuous dates: when true, eventDays hold arbitrary (non-contiguous) dates
     discontinuousDates: integer("discontinuous_dates", { mode: "boolean" }).default(false),

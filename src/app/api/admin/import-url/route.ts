@@ -217,7 +217,11 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
       endDate,
       publicStartDate: startDate,
       publicEndDate: endDate,
-      datesConfirmed: event.datesConfirmed ?? startDate !== null,
+      // OPE-433 — presence of a parsed date is not confirmation of it. This
+      // read `startDate !== null`, so any URL import that managed to parse a
+      // date claimed the date was confirmed. See the sibling note in
+      // /api/admin/import.
+      datesConfirmed: event.datesConfirmed ?? false,
       // OPE-47 (2026-07): a specificDates list is discontinuous ONLY when the
       // dates aren't a gap-free daily run — a cadence-expanded weekly market
       // (every Saturday) → true; a contiguous multi-day fair the AI happened

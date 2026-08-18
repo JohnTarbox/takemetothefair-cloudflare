@@ -110,6 +110,9 @@ jobs:
       - name: Check D1 100-bound-param cap (OPE-241 — unbounded inArray lists)
         run: npx tsx scripts/check-d1-inarray-params.ts
 
+      - name: Check events inserts state their confidence (OPE-433)
+        run: npx tsx scripts/check-events-insert-confidence.ts
+
       - name: Check Turnstile render params (OPE-250 — size enum + sitekey)
         run: npx tsx scripts/check-turnstile-params.ts
 
