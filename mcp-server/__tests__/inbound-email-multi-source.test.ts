@@ -169,6 +169,20 @@ beforeEach(() => {
   vi.spyOn(console, "warn").mockImplementation(() => {});
 });
 
+/** N days from now as `YYYY-MM-DD`.
+ *
+ * Fixture dates here are RELATIVE on purpose. The literals that used to sit in
+ * these tests ("2026-05-05", "2026-07-04") were comfortably in the future when
+ * they were written and have since rotted into the past — which now trips
+ * OPE-458's stale-source detector, so the fixture starts exercising a code path
+ * it never meant to, for a reason that has nothing to do with what it asserts.
+ * A relative date cannot rot. Use a literal only when the date itself is the
+ * subject of the test.
+ */
+function futureDate(days: number): string {
+  return new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
 describe("OPE-55 multi-source fan-out", () => {
   it("creates N events for N DISTINCT events across body + URL", async () => {
     // Body mentions a distinct event AND links a URL describing another.
@@ -182,10 +196,15 @@ describe("OPE-55 multi-source fan-out", () => {
         "Please add Riverside Fair happening June 1 2026 at Riverside Park. " +
         "Our other event is at https://ex.test/a — thanks!",
     };
+    // Dates are computed forward from the real clock, not hardcoded. The
+    // literals that used to sit here ("2026-05-05") were comfortably in the
+    // future when written and have since rotted into the past, which now trips
+    // OPE-458's stale-source detector — a fixture failing for a reason that has
+    // nothing to do with what it tests. Relative dates cannot rot.
     const { created, submitBodies } = installFetch({
-      urlEvents: { "https://ex.test/a": [{ name: "Downtown Fair", startDate: "2026-05-05" }] },
+      urlEvents: { "https://ex.test/a": [{ name: "Downtown Fair", startDate: futureDate(60) }] },
       bodyEvents: [
-        { name: "Riverside Fair", startDate: "2026-06-01", venueName: "Riverside Park" },
+        { name: "Riverside Fair", startDate: futureDate(90), venueName: "Riverside Park" },
       ],
     });
     const { step, labels } = makeStep(row);
@@ -220,8 +239,8 @@ describe("OPE-55 multi-source fan-out", () => {
     };
     // Both the URL and the body describe the SAME event name.
     const { created, submitBodies } = installFetch({
-      urlEvents: { "https://ex.test/a": [{ name: "Spring Fair", startDate: "2026-05-05" }] },
-      bodyEvents: [{ name: "Spring Fair", startDate: "2026-05-05", venueName: "Town Green" }],
+      urlEvents: { "https://ex.test/a": [{ name: "Spring Fair", startDate: futureDate(30) }] },
+      bodyEvents: [{ name: "Spring Fair", startDate: futureDate(30), venueName: "Town Green" }],
     });
     const { step, labels } = makeStep(row);
     const wf = makeWorkflow();
@@ -271,7 +290,7 @@ describe("OPE-55 multi-source fan-out", () => {
     };
     const { created, submitBodies } = installFetch({
       failFetch: ["/bad"],
-      urlEvents: { "https://ex.test/good": [{ name: "Good Fair", startDate: "2026-07-10" }] },
+      urlEvents: { "https://ex.test/good": [{ name: "Good Fair", startDate: futureDate(45) }] },
       bodyEvents: [], // the accompanying prose has no event of its own
     });
     const { step } = makeStep(row);
@@ -298,7 +317,7 @@ describe("OPE-55 multi-source fan-out", () => {
         "Hi there! Could you please add my event to your wonderful calendar? Link: https://ex.test/a. Thank you so much!",
     };
     const { created, submitBodies } = installFetch({
-      urlEvents: { "https://ex.test/a": [{ name: "Town Fair", startDate: "2026-08-01" }] },
+      urlEvents: { "https://ex.test/a": [{ name: "Town Fair", startDate: futureDate(60) }] },
       bodyEvents: [], // pleasantry → no event
     });
     const { step, labels } = makeStep(row);
@@ -329,7 +348,7 @@ describe("OPE-55 backward-compat — single-source fast paths unchanged", () => 
       bodyTextExcerpt: "",
     };
     const { created, submitBodies } = installFetch({
-      urlEvents: { "https://ex.test/a": [{ name: "Solo Fair", startDate: "2026-09-01" }] },
+      urlEvents: { "https://ex.test/a": [{ name: "Solo Fair", startDate: futureDate(75) }] },
     });
     const { step, labels } = makeStep(row);
     const wf = makeWorkflow();
@@ -357,7 +376,7 @@ describe("OPE-55 backward-compat — single-source fast paths unchanged", () => 
     };
     const { created, submitBodies } = installFetch({
       bodyEvents: [
-        { name: "Autumn Market", startDate: "2026-10-12", venueName: "Village Commons" },
+        { name: "Autumn Market", startDate: futureDate(90), venueName: "Village Commons" },
       ],
     });
     const { step, labels } = makeStep(row);
@@ -391,7 +410,7 @@ describe("OPE-55 backward-compat — single-source fast paths unchanged", () => 
     const { created } = installFetch({
       // If the pipeline wrongly fetched the signature URL it would 500.
       failFetch: ["/signature"],
-      bodyEvents: [{ name: "Winter Fest", startDate: "2026-12-06", venueName: "Grange Hall" }],
+      bodyEvents: [{ name: "Winter Fest", startDate: futureDate(105), venueName: "Grange Hall" }],
     });
     const { step, labels } = makeStep(row);
     const wf = makeWorkflow();

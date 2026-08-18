@@ -179,6 +179,20 @@ beforeEach(() => {
   vi.spyOn(console, "warn").mockImplementation(() => {});
 });
 
+/** N days from now as `YYYY-MM-DD`.
+ *
+ * Fixture dates here are RELATIVE on purpose. The literals that used to sit in
+ * these tests ("2026-05-05", "2026-07-04") were comfortably in the future when
+ * they were written and have since rotted into the past — which now trips
+ * OPE-458's stale-source detector, so the fixture starts exercising a code path
+ * it never meant to, for a reason that has nothing to do with what it asserts.
+ * A relative date cannot rot. Use a literal only when the date itself is the
+ * subject of the test.
+ */
+function futureDate(days: number): string {
+  return new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
 describe("OPE-68 attachment OCR → pipeline", () => {
   it("creates a PENDING event from an OCR'd poster and sets the hero + signal", async () => {
     const row: RowSnapshot = {
@@ -191,7 +205,7 @@ describe("OPE-68 attachment OCR → pipeline", () => {
       bodyTextExcerpt: "see attached", // < 20 chars → no body source
     };
     const { created, heroUploads } = installFetch({
-      bodyEvents: [{ name: "Flyer Fest", startDate: "2026-07-04", venueName: "City Park" }],
+      bodyEvents: [{ name: "Flyer Fest", startDate: futureDate(45), venueName: "City Park" }],
     });
     const { wf, toMarkdownCalls } = makeWorkflow({
       markdown: "Flyer Fest happening July 4 2026 at City Park — vendors welcome!",
@@ -228,7 +242,7 @@ describe("OPE-68 attachment OCR → pipeline", () => {
     };
     // Both the body source and the attachment source extract the SAME event.
     const { created, submitBodies } = installFetch({
-      bodyEvents: [{ name: "Spring Fair", startDate: "2026-05-05", venueName: "Town Green" }],
+      bodyEvents: [{ name: "Spring Fair", startDate: futureDate(30), venueName: "Town Green" }],
     });
     const { wf } = makeWorkflow({ markdown: "Spring Fair May 5 2026 Town Green" });
     const { step } = makeStep(row);
