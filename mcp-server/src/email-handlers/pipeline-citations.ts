@@ -114,6 +114,78 @@ function sourceIdentity(
 }
 
 /**
+ * OPE-457 scope 2 — `source_type` must describe HOW the value was obtained,
+ * not which inbox it arrived through.
+ *
+ * Everything from this pipeline used to be `user_submitted`, which is true of
+ * the *submission* and false of the *value*. It matters because OPE-433 grades
+ * trust by lane: a value scraped off a third-party page is `direct_scrape` and
+ * belongs in a less-trusted lane than something the sender typed. Labelling
+ * scrape output as user submission promotes it into a lane the confidence rules
+ * will treat as better evidence than it is.
+ */
+type CitationSourceType = (typeof eventDataCitations.$inferInsert)["sourceType"];
+
+function sourceTypeFor(kind: CitationSource["kind"]): CitationSourceType {
+  switch (kind) {
+    case "url":
+      // We fetched a page and read the value off it — NOT the sender's claim.
+      //
+      // The ticket asked for `direct_scrape`; this table's enum does not have
+      // it (official_website | news_article | press_release | social_media |
+      // user_submitted | other), and inventing a value would fail the column
+      // constraint. `official_website` would over-claim — we cannot tell
+      // generically whether a linked page is the organizer's own site.
+      //
+      // `other` is the honest bucket, and it buys the thing that actually
+      // matters here: scraped values become DISTINGUISHABLE from typed ones, so
+      // OPE-433 can grade them differently. Nothing ranks source_type today, so
+      // separating the lanes is the whole ask.
+      return "other";
+    case "attachment":
+    case "body":
+      // The sender supplied these bytes directly — genuinely user_submitted.
+      return "user_submitted";
+  }
+}
+
+/**
+ * OPE-457 scope 5 — refuse a citation the source provably cannot support.
+ *
+ * The specimen: a body containing only `https://vineyardartisans.com/` produced
+ * a `start_date` citation of `2024-06-15` attributed to that body. The body has
+ * no digits in it at all. The attribution is internally consistent — the body
+ * source did emit the value — but the claim "this body says 2024-06-15" is
+ * checkable, and false.
+ *
+ * Deliberately narrow. Only DATE fields, only BODY/ATTACHMENT sources, and only
+ * when the supporting text contains no 4-digit year at all. A body that
+ * mentions any year is left alone: partial-date prose ("the fair returns in
+ * August") is normal, and this guard must not become a second extractor.
+ *
+ * Returns the offending field names, so the caller can log what it refused
+ * rather than silently dropping rows.
+ */
+export function contradictedDateFields(
+  fields: ReadonlyArray<{ fieldName: string; value: string }>,
+  sourceKind: CitationSource["kind"],
+  supportingText: string
+): string[] {
+  if (sourceKind === "url") return []; // the page is the evidence; we did not keep its text
+  // No supporting text supplied → INERT. Absence of the body is not evidence
+  // that the body lacked a date; firing here would drop good citations from
+  // every caller that simply does not pass the text. (Caught by the existing
+  // pipeline-citations tests, which omit it.)
+  const text = (supportingText ?? "").trim();
+  if (text.length === 0) return [];
+  const hasAnyYear = /(?<!\d)(\d{4})(?!\d)/.test(text);
+  if (hasAnyYear) return [];
+  return fields
+    .filter((f) => f.fieldName === "start_date" || f.fieldName === "end_date")
+    .map((f) => f.fieldName);
+}
+
+/**
  * Record one `event_data_citations` row per tracked, non-empty field on
  * `extracted.event`, attributed to `source`. Returns the number of rows
  * inserted (0 when nothing was citeable or every row was already present).
@@ -128,6 +200,9 @@ export async function recordSourceCitations(
     extracted: ExtractedForCitations;
     source: CitationSource;
     fromAddress: string;
+    /** OPE-457 — the text a body/attachment citation claims to rest on, used
+     *  by the contradiction guard. Omitted → guard is inert. */
+    supportingText?: string;
   }
 ): Promise<number> {
   const { eventId, extracted, source, fromAddress } = args;
@@ -166,7 +241,7 @@ export async function recordSourceCitations(
       year: null,
       sourceUrl,
       sourceName,
-      sourceType: "user_submitted",
+      sourceType: sourceTypeFor(source.kind),
       confidence: confidenceToScore(extracted.fieldConfidence?.[f.confKey]),
       state: "active",
       createdBy: null,
@@ -174,6 +249,24 @@ export async function recordSourceCitations(
   }
 
   if (rows.length === 0) return 0;
-  await db.insert(eventDataCitations).values(rows);
-  return rows.length;
+
+  // OPE-457 scope 5 — drop date citations the supporting text cannot support.
+  // Dropped rather than thrown: the event already exists and the NAME citation
+  // is still good provenance, so failing the whole write would lose real
+  // information to punish a bad neighbour.
+  const contradicted = contradictedDateFields(
+    rows.map((r) => ({ fieldName: r.fieldName as string, value: String(r.value) })),
+    source.kind,
+    args.supportingText ?? ""
+  );
+  const keep = rows.filter((r) => !contradicted.includes(r.fieldName as string));
+  if (contradicted.length > 0) {
+    console.warn(
+      `[pipeline-citations] refusing ${contradicted.length} date citation(s) on event ${eventId}: ` +
+        `attributed to a ${source.kind} source whose text contains no year (${contradicted.join(", ")})`
+    );
+  }
+  if (keep.length === 0) return 0;
+  await db.insert(eventDataCitations).values(keep);
+  return keep.length;
 }

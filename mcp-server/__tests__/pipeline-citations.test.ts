@@ -70,9 +70,14 @@ describe("recordSourceCitations", () => {
     expect(byField.get("name")?.sourceUrl).toBe("https://fryeburgfair.org/schedule");
     expect(byField.get("name")?.sourceName).toBe("fryeburgfair.org");
     expect(byField.get("start_date")?.value).toBe("2026-10-04");
-    // All email-pipeline citations use "user_submitted" + active.
+    // OPE-457 — a URL source is now `other`, NOT `user_submitted`. The sender
+    // submitted the LINK; they did not assert the values, we read them off a
+    // third-party page. Keeping both lanes under one label made scraped output
+    // indistinguishable from a sender's own claim, which is exactly the
+    // distinction OPE-433 grades trust by. (`direct_scrape` is not in this
+    // table's enum; `other` is the honest bucket that is available.)
     for (const r of rows) {
-      expect(r.sourceType).toBe("user_submitted");
+      expect(r.sourceType).toBe("other");
       expect(r.state).toBe("active");
       expect(r.year).toBeNull();
       expect(r.createdBy).toBeNull();
