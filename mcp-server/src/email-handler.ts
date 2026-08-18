@@ -746,6 +746,19 @@ function cleanUrl(raw: string): string | null {
   try {
     const p = new URL(u);
     if (p.protocol !== "http:" && p.protocol !== "https:") return null;
+    // OPE-459 — a dotless host is not a reachable public URL, and in practice
+    // means the string was cut off mid-host. `https://gomarthasvineyard.com/…`
+    // truncated at a body-length boundary becomes `https://go`, which `new URL`
+    // parses perfectly happily as host `go` — so a real regional events
+    // calendar was replaced by a fetch of `https://go/` that could only ever
+    // fail, and did, silently.
+    //
+    // The root cause was fixed upstream (the caller now reads the full body,
+    // not the 500-char preview). This stays as the cheap general guard: any
+    // future truncation, anywhere, is rejected here rather than turned into a
+    // plausible-looking request. `localhost` and intranet hosts are not valid
+    // submission sources either, so nothing legitimate is lost.
+    if (!p.hostname.includes(".")) return null;
     return p.toString();
   } catch {
     return null;
