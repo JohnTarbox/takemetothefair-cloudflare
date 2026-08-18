@@ -111,6 +111,7 @@ import {
 import { recordSourceCitations } from "../email-handlers/pipeline-citations.js";
 import { bodyHasProseSubstance } from "../email-handlers/body-prose-substance.js";
 import { countOutcomes } from "../email-handlers/outcome-counts.js";
+import { clusterSubmissionCandidates } from "../email-handlers/cluster-candidates.js";
 import { computeFillEmptyProposals } from "../email-handlers/enrich-proposal.js";
 import { detectRosterEntries, type RosterEntry } from "../email-handlers/roster-detect.js";
 import { isShareRedirectHost, resolveShareRedirect } from "../email-handlers/share-redirect.js";
@@ -2395,6 +2396,41 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     }
   }
 
+  /**
+   * OPE-378 / OPE-458 — record provenance for the sources Phase A.9 folded away.
+   *
+   * A collapsed sibling created no event, but it was a real, independent source
+   * that asserted these values. Its citation rows belong on the survivor's
+   * event: that coexistence is exactly the "N sources agreed on this date"
+   * signal, and it is the only thing that survives the collapse.
+   *
+   * Best-effort throughout, like every other citation write here — the event
+   * exists whether or not provenance lands.
+   */
+  private async recordMergedSiblingCitations(
+    step: WorkflowStep,
+    labelPrefix: string,
+    eventId: string,
+    siblings: ReadonlyArray<{
+      source: SubmitSource;
+      extracted: import("../email-handlers/submit.js").SubmitExtractResult;
+    }>,
+    fromAddress: string,
+    emailBody: string
+  ): Promise<void> {
+    for (let i = 0; i < siblings.length; i++) {
+      await this.recordCitationsBestEffort(
+        step,
+        `${labelPrefix}/cite-merged[${i}]`,
+        eventId,
+        siblings[i].extracted,
+        siblings[i].source,
+        fromAddress,
+        emailBody
+      );
+    }
+  }
+
   private async runMultiSourcePipeline(
     step: WorkflowStep,
     sources: SubmitSource[],
@@ -2420,6 +2456,16 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       // OPE-69 — the originating source, threaded into Phase C so per-source
       // event_data_citations rows can be attributed (url / body / attachment).
       source: SubmitSource;
+      // OPE-378 / OPE-458 — candidates Phase A.9 folded into THIS one. They no
+      // longer produce their own event (that was the over-split defect), but
+      // they were still independent sources that cited these fields, so their
+      // provenance is recorded against the survivor's event. Dropping it would
+      // trade the over-split defect for a silent loss of the "N sources agreed"
+      // signal OPE-69 exists to capture.
+      mergedSiblings?: Array<{
+        source: SubmitSource;
+        extracted: import("../email-handlers/submit.js").SubmitExtractResult;
+      }>;
     }
     interface SourceFailure {
       url: string;
@@ -2575,6 +2621,81 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       }
     }
 
+    // ── Phase A.9 (OPE-378 / OPE-458): collapse in-flight siblings. ───
+    //
+    // Every phase above emits candidates independently — body prose, each URL,
+    // each attachment, the subject — and nothing has yet asked whether two of
+    // them are the same event. Phase C's dedup runs each candidate against the
+    // CATALOG, never against its own batch, and cannot cover this even in
+    // principle: `findDuplicate` bails on a candidate with no parseable start
+    // date, so the Vineyard pair (one dated, one not, six seconds apart) was
+    // mutually invisible and the second landed with a `-2` slug.
+    //
+    // Collapsing BEFORE Phase B is deliberate — a submission that clusters back
+    // down to one candidate now takes the N=1 path and gets the rich
+    // single-event reply, instead of a "we created 2 events" list that was
+    // never true.
+    const clusterInput = candidates.map((c, idx) => ({
+      idx,
+      name: c.extracted.event.name,
+      startDate: c.extracted.event.startDate,
+      endDate: c.extracted.event.endDate,
+      venueName: c.extracted.event.venueName,
+      description: c.extracted.event.description,
+      imageKey: c.imageKey,
+      url: c.extracted.url,
+    }));
+    const cluster = clusterSubmissionCandidates(clusterInput);
+    if (cluster.collapsed.length > 0) {
+      // Salvage what the loser carried and the winner does not. Without this,
+      // a poster-sourced candidate can lose to a richer URL-sourced one and
+      // take the flyer with it — which IS OPE-378 defect 5, just relocated.
+      for (const c of cluster.collapsed) {
+        const winner = candidates[cluster.kept[c.intoIndex].idx];
+        const loser = candidates[c.candidate.idx];
+        if (!winner.imageKey && loser.imageKey) {
+          winner.imageKey = loser.imageKey;
+          winner.fromAttachment = true;
+        }
+        // Gap-fill, never overwrite. The survivor won on richness, but a loser
+        // routinely carries a field the winner lacks — the URL candidate has
+        // `source_url`, the body candidate has the venue — and keeping only one
+        // of them is how a merge quietly loses data. Same discipline
+        // `merge_events` applies to its source-* fields.
+        //
+        // Safe for provenance: `sourceIdentity` derives a body/attachment
+        // citation from the SENDER, not from `extracted.url`, so filling the
+        // URL in cannot make a body-sourced citation claim it read a page.
+        if (!winner.extracted.url && loser.extracted.url) {
+          winner.extracted = { ...winner.extracted, url: loser.extracted.url };
+        }
+        const wEvent = winner.extracted.event as unknown as Record<string, unknown>;
+        const lEvent = loser.extracted.event as unknown as Record<string, unknown>;
+        for (const k of Object.keys(lEvent)) {
+          const have = wEvent[k];
+          const isEmpty = have === null || have === undefined || have === "";
+          const incoming = lEvent[k];
+          if (isEmpty && incoming !== null && incoming !== undefined && incoming !== "") {
+            wEvent[k] = incoming;
+          }
+        }
+        (winner.mergedSiblings ??= []).push({
+          source: loser.source,
+          extracted: loser.extracted,
+        });
+      }
+      // warn, not log: a collapse means the extractor emitted the same event
+      // more than once, which is worth seeing in the tail even when the outcome
+      // is correct. (Also the only console level this repo's lint allows.)
+      console.warn(
+        `[submit/cluster] ${candidates.length} candidates -> ${cluster.kept.length}: ` +
+          cluster.collapsed.map((c) => `"${c.candidate.name}" -> "${c.intoName}"`).join("; ")
+      );
+      const survivors = cluster.kept.map((k) => candidates[k.idx]);
+      candidates.length = 0;
+      candidates.push(...survivors);
+    }
+
     // ── Phase B: N=1 collapse → existing single-event rich reply. ─────
     if (candidates.length === 1 && sourceFailures.length === 0) {
       const only = candidates[0];
@@ -2592,6 +2713,19 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       // hero (image attachments only) and thread the outcome-aware signal so
       // the reply says "we read your poster" instead of the old "we don't
       // process attachments" copy.
+      // OPE-378 / OPE-458 — this lone candidate may BE a cluster: if Phase A.9
+      // folded siblings into it, their provenance still belongs on the event
+      // (whether it was created here or matched an existing row).
+      if (only.mergedSiblings?.length && res.resultingEventId) {
+        await this.recordMergedSiblingCitations(
+          step,
+          "submit/single",
+          res.resultingEventId,
+          only.mergedSiblings,
+          fromAddress,
+          emailBody
+        );
+      }
       const created =
         !!res.resultingEventId &&
         (res.replyKind === "ok" || res.replyKind === "ok-medium" || res.replyKind === "ok-low");
@@ -2664,6 +2798,16 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
               fromAddress,
               emailBody
             );
+            if (cand.mergedSiblings?.length) {
+              await this.recordMergedSiblingCitations(
+                step,
+                `${labelPrefix}/keeper`,
+                dedup.existingEventId,
+                cand.mergedSiblings,
+                fromAddress,
+                emailBody
+              );
+            }
           }
           continue;
         }
@@ -2693,6 +2837,16 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           fromAddress,
           emailBody
         );
+        if (cand.mergedSiblings?.length) {
+          await this.recordMergedSiblingCitations(
+            step,
+            labelPrefix,
+            submitted.id,
+            cand.mergedSiblings,
+            fromAddress,
+            emailBody
+          );
+        }
         // OPE-68 — attachment-sourced created event: count it + (image only)
         // set the stored poster as the event hero, best-effort.
         if (cand.fromAttachment) {
