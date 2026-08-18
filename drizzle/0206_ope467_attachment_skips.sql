@@ -1,0 +1,23 @@
+-- OPE-467 — record WHY an inbound attachment was not stored.
+--
+-- `attachment_count` says what arrived; `attachment_refs` says what we kept.
+-- On submit@ they disagreed on 30% of attachments and nothing reported it. The
+-- gap was found by hand-diffing two columns, three months after it started.
+--
+-- The capture filters are mostly CORRECT — we genuinely do not want a 40 MB
+-- .mov or a signature GIF. The defect is that every one of them was a bare
+-- `continue`, so a deliberate skip and a real loss looked identical from the
+-- outside. This column is the difference.
+--
+-- Holds a JSON array of { index, name, mimeType, size, reason }, reason being
+-- over-count-cap | unsupported-type | too-large | empty | put-failed. NULL
+-- means nothing was skipped, or the row predates this column.
+--
+-- Deliberately NOT backfilled. The dispositions for existing rows were never
+-- recorded and cannot be recovered — postal-mime's parse is long gone and the
+-- raw MIME was never persisted. Inventing a reason would put a fabricated
+-- explanation in the one column that exists to be trusted. The pre-2026-07-03
+-- rows are a separate matter entirely: `captureAttachments` did not exist until
+-- commit 9de7b361 (OPE-68), so those stored zero because there was no capture,
+-- not because anything filtered them.
+ALTER TABLE inbound_emails ADD COLUMN attachment_skips TEXT;
