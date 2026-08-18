@@ -24,6 +24,7 @@ import {
   goodwillHealthSnapshots,
   adminActions,
   events,
+  eventSeries,
   inboundEmails,
 } from "../schema.js";
 import { jsonContent } from "../helpers.js";
@@ -163,6 +164,40 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
         .from(events)
         .where(sql`${events.mergedInto} IS NOT NULL AND ${events.status} <> 'REJECTED'`);
 
+      // ── OPE-423 invariant 2: a series canonical pointing at a tombstone ──
+      //
+      // Found by executing this ticket's own merge. `merge_events` tombstoned
+      // the duplicate and inserted the slug-history 301, but never looked at
+      // `event_series`. The pair shared a series whose `canonical_slug` was the
+      // DUPLICATE's slug, so afterwards the keeper 301'd to the series canonical
+      // and the canonical 301'd back to the keeper — a redirect loop that made a
+      // 1,214-view APPROVED page unreachable and returned 301 forever.
+      //
+      // The write path is fixed (merge-operations.ts repoints the canonical in
+      // the same batch). This is the check that would have caught it, and the
+      // one that catches whatever writes `event_series` next: the defect was
+      // never that one function forgot, it was that nothing was watching.
+      //
+      // Same list-not-count shape as the invariant above, for the same reason.
+      const seriesCanonicalViolations = await db
+        .select({
+          series_id: eventSeries.id,
+          canonical_slug: eventSeries.canonicalSlug,
+          event_id: events.id,
+          event_status: events.status,
+          merged_into: events.mergedInto,
+        })
+        .from(eventSeries)
+        .innerJoin(events, eq(events.slug, eventSeries.canonicalSlug))
+        .where(sql`${events.mergedInto} IS NOT NULL`)
+        .limit(20);
+
+      const [seriesCanonicalViolationCount] = await db
+        .select({ count: sql<number>`count(*)` })
+        .from(eventSeries)
+        .innerJoin(events, eq(events.slug, eventSeries.canonicalSlug))
+        .where(sql`${events.mergedInto} IS NOT NULL`);
+
       // OPE-452 — an email that ARRIVED with content and landed with none.
       //
       // The reported specimen turned out to be captured fine (2,318 chars), but
@@ -250,6 +285,12 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
               rule: "events.merged_into IS NOT NULL implies status = 'REJECTED'",
               violation_count: Number(tombstoneViolationCount?.count ?? 0),
               violations: tombstoneViolations,
+            },
+            // OPE-423 invariant 2 — see the comment at the query.
+            series_canonical_invariant: {
+              rule: "event_series.canonical_slug must not name an event with merged_into set",
+              violation_count: Number(seriesCanonicalViolationCount?.count ?? 0),
+              violations: seriesCanonicalViolations,
             },
             // OPE-452. Same capped-list-plus-true-total shape as the
             // tombstone check above, so a truncated list never reads as the

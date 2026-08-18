@@ -10,6 +10,7 @@ import {
   eventDays,
   eventDataCitations,
   eventSlugHistory,
+  eventSeries,
   contentLinks,
   adminActions,
 } from "@/lib/db/schema";
@@ -843,6 +844,30 @@ async function mergeEvents(
   // exclusion + chunked PK transfer.
   transferred.favorites = await transferFavorites(db, "EVENT", primaryId, duplicateId);
 
+  // OPE-423 — repoint any event_series whose canonical_slug names the slug we
+  // are about to tombstone.
+  //
+  // Found the hard way, executing this ticket's own merge: the Bar Harbor pair
+  // shared a series whose `canonical_slug` was the DUPLICATE's slug. After the
+  // merge, an event in that series still 301'd to the series canonical, and the
+  // canonical's slug now 301'd back to the keeper via the history row inserted
+  // three lines below — a redirect loop on the keeper, which had 1,214 views.
+  // The keeper returned 301 forever and was unreachable until the series row
+  // was repaired by hand.
+  //
+  // This is the same shape as OPE-182 (event edits not propagating to the
+  // denormalized series landing row), which was fixed for EDITS and left open
+  // for MERGES — the one operation that guarantees the old slug stops working.
+  //
+  // Only the slug is repointed, and only when it names the duplicate exactly.
+  // The series' denormalized name/description/promoter are NOT touched: which
+  // of two merged events should describe the series is a judgement, and
+  // guessing it silently is how a venue ends up published as the organizer.
+  const seriesToRepoint = await db
+    .select({ id: eventSeries.id })
+    .from(eventSeries)
+    .where(eq(eventSeries.canonicalSlug, originalDupSlug));
+
   // K3 Steps 1-3 + cleanup, in one db.batch so the slug rename + history
   // insert + status update are atomic. Order matters: the rename must
   // commit BEFORE the history row is inserted, so eventSlugHistory's
@@ -878,6 +903,15 @@ async function mergeEvents(
       .update(events)
       .set({ status: "REJECTED", mergedInto: primaryId, updatedAt: new Date() })
       .where(eq(events.id, duplicateId)),
+    // Step 4 (OPE-423): repoint the series canonical off the slug that is
+    // about to stop resolving. In the SAME batch as the rename, so the loop
+    // described above cannot exist even momentarily.
+    ...seriesToRepoint.map((row) =>
+      db
+        .update(eventSeries)
+        .set({ canonicalSlug: unsafeSlug(keeper.slug), updatedAt: new Date() })
+        .where(eq(eventSeries.id, row.id))
+    ),
     // Step 5: admin_actions audit row.
     db.insert(adminActions).values({
       action: "event.merge",
@@ -889,6 +923,7 @@ async function mergeEvents(
         duplicateSlugOriginal: originalDupSlug,
         duplicateSlugRenamed: renamedDupSlug,
         keeperSlug: keeper.slug,
+        seriesCanonicalRepointed: seriesToRepoint.map((r) => r.id),
         transferred,
       }),
       createdAt: new Date(),
