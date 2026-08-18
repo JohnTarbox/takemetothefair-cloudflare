@@ -224,6 +224,28 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
         .where(sql`${inboundEmails.attachmentCount} > 0`)
         .groupBy(inboundEmails.toAddress);
 
+      // ── OPE-294: hotlinked images, so the trend is answerable ────────
+      //
+      // The acceptance asks that `health.hotlinked` "trends down and stays
+      // down". It has been trending UP: venue hotlinks 172 → 173 and event
+      // hotlinks 28 → 51 between the ticket being filed (2026-07-28) and
+      // 2026-08-18, the newest arriving that same day. Nothing reported that,
+      // which is why it took a re-measurement by hand to notice.
+      //
+      // Counted here rather than judged: this reports the population, it does
+      // not act on it. Whether the existing rows are re-hosted, attributed, or
+      // dropped is John's licensing decision, and re-hosting may be MORE
+      // restricted than hotlinking.
+      const hotlinkedImages = await db
+        .select({
+          venues_google_places: sql<number>`(SELECT count(*) FROM venues WHERE image_url LIKE '%googleusercontent.com%')`,
+          venues_third_party: sql<number>`(SELECT count(*) FROM venues WHERE image_url IS NOT NULL AND image_url <> '' AND image_url NOT LIKE 'https://cdn.meetmeatthefair.com%' AND image_url NOT LIKE '/%')`,
+          venues_owned: sql<number>`(SELECT count(*) FROM venues WHERE image_url LIKE 'https://cdn.meetmeatthefair.com%' OR image_url LIKE '/%')`,
+          events_third_party: sql<number>`(SELECT count(*) FROM events WHERE image_url IS NOT NULL AND image_url <> '' AND image_url NOT LIKE 'https://cdn.meetmeatthefair.com%' AND image_url NOT LIKE '/%')`,
+          events_owned: sql<number>`(SELECT count(*) FROM events WHERE image_url LIKE 'https://cdn.meetmeatthefair.com%' OR image_url LIKE '/%')`,
+        })
+        .from(sql`(SELECT 1)`);
+
       // OPE-452 — an email that ARRIVED with content and landed with none.
       //
       // The reported specimen turned out to be captured fine (2,318 chars), but
@@ -323,6 +345,10 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
               ...r,
               unaccounted: Number(r.claimed) - Number(r.stored) - Number(r.skipped),
             })),
+            // OPE-294 — the hotlink population, so "trends down" is checkable
+            // rather than asserted. `venues_google_places` is the subset with a
+            // licensing question attached.
+            hotlinked_images: hotlinkedImages[0] ?? null,
             // OPE-423 invariant 2 — see the comment at the query.
             series_canonical_invariant: {
               rule: "event_series.canonical_slug must not name an event with merged_into set",
