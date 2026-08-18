@@ -508,6 +508,7 @@ export async function handleInboundEmail(
     //     email sends elsewhere. Runs AFTER the spam-quarantine early-return so
     //     junk attachments are never stored.
     let attachmentRefsJson: string | null = null;
+    let attachmentSkipsJson: string | null = null;
     if (attachmentCount > 0) {
       try {
         // Derive a stable, path-safe group id from the Message-ID so a
@@ -520,8 +521,42 @@ export async function handleInboundEmail(
               .slice(0, 80)
           : "";
         const groupId = safeMsgId || crypto.randomUUID();
-        const refs = await captureAttachments(env.VENDOR_ASSETS, groupId, parsed.attachments);
+        const { refs, skipped } = await captureAttachments(
+          env.VENDOR_ASSETS,
+          groupId,
+          parsed.attachments
+        );
         if (refs.length > 0) attachmentRefsJson = JSON.stringify(refs);
+        if (skipped.length > 0) attachmentSkipsJson = JSON.stringify(skipped);
+
+        // OPE-467 — the invariant. Every attachment we were handed is either
+        // stored or explained; anything else means a part went missing between
+        // `attachment_count` and both records, which is a genuine capture fault
+        // rather than a policy decision.
+        //
+        // Warn-only by design. The alternative is failing ingestion over an
+        // accounting discrepancy, which would throw away the email as well as
+        // the attachment. `[[feedback_suppressing_alert_does_not_fix_state]]`
+        // cuts the other way here: the state IS recorded now (in
+        // attachment_skips), so this line is the alert, not a substitute for a
+        // fix. The OPE-464 `extract.attachment_lost` emitter reads this shape.
+        const accountedFor = refs.length + skipped.length;
+        if (accountedFor !== attachmentCount) {
+          await logError(env.DB, {
+            level: "warn",
+            source: SOURCE,
+            message: `attachment accounting mismatch: claimed ${attachmentCount}, stored ${refs.length}, skipped ${skipped.length}`,
+            sessionId,
+            context: {
+              from: fromAddr,
+              to: toAddr,
+              attachmentCount,
+              stored: refs.length,
+              skipped: skipped.length,
+              faultSignature: `extract.attachment_lost:${attachmentCount - accountedFor}`,
+            },
+          }).catch(() => {});
+        }
       } catch (err) {
         await logError(env.DB, {
           level: "warn",
@@ -573,6 +608,7 @@ export async function handleInboundEmail(
             parsedUrl,
             attachmentCount,
             attachmentRefs: attachmentRefsJson,
+            attachmentSkips: attachmentSkipsJson,
             rawSize: message.rawSize,
             error: null,
             messageId,
@@ -641,6 +677,7 @@ export async function handleInboundEmail(
             parsedUrl: r.refUrl ?? parsedUrl,
             attachmentCount,
             attachmentRefs: attachmentRefsJson,
+            attachmentSkips: attachmentSkipsJson,
             rawSize: message.rawSize,
             error: null,
             // Single-intent rows carry messageId for dedup; child rows
@@ -893,16 +930,64 @@ function attachmentBytes(content: ArrayBuffer | Uint8Array | string): Uint8Array
 }
 
 /**
- * Persist inbound image/PDF attachments to R2 and return their refs.
+ * Why an attachment we were handed did not end up in R2.
+ *
+ * OPE-467 — every one of these was previously a bare `continue`. The filters
+ * are mostly CORRECT (we do not want a 40 MB .mov or a signature GIF), but an
+ * unrecorded filter is indistinguishable from a bug: the defect sat live for
+ * three months and was found by hand-diffing `attachment_count` against
+ * `attachment_refs`.
+ */
+export type AttachmentSkipReason =
+  /** Past ATTACHMENT_MAX_COUNT. The sender's later attachments are simply gone. */
+  | "over-count-cap"
+  /** Not image/* or application/pdf — a .docx roster, a calendar invite, a .eml. */
+  | "unsupported-type"
+  /** Over ATTACHMENT_MAX_BYTES. */
+  | "too-large"
+  /** Zero-length or undecodable content. */
+  | "empty"
+  /** The R2 put threw. The only reason here that is unambiguously a fault. */
+  | "put-failed";
+
+export interface AttachmentSkip {
+  /** Position in the ORIGINAL attachment list, so a skip can be lined up
+   *  against the stored keys (which embed the same index). */
+  index: number;
+  name: string;
+  mimeType: string;
+  size: number;
+  reason: AttachmentSkipReason;
+}
+
+export interface AttachmentCapture {
+  refs: AttachmentRef[];
+  skipped: AttachmentSkip[];
+}
+
+/**
+ * Persist inbound image/PDF attachments to R2 and report what happened to
+ * every one of them.
  *
  * Purely best-effort: every R2 put is individually try/caught so a single
  * failed attachment doesn't abort the rest, and a missing bucket binding
- * (tests / non-R2 envs) short-circuits to an empty result. Callers wrap the
- * whole thing in their own try/catch too — this helper never throws.
+ * (tests / non-R2 envs) short-circuits. Callers wrap the whole thing in their
+ * own try/catch too — this helper never throws.
  *
  * Only `image/*` and `application/pdf` attachments are stored, within a
  * per-attachment size cap (ATTACHMENT_MAX_BYTES) and a total-count cap
- * (ATTACHMENT_MAX_COUNT). Non-media attachments are skipped.
+ * (ATTACHMENT_MAX_COUNT).
+ *
+ * ── OPE-467: it returns the skips, and that is the point ─────────────────
+ *
+ * The filters did not change. What changed is that they now say so. The
+ * function's contract is that `refs.length + skipped.length` equals the number
+ * of attachments handed in — so "we kept fewer than arrived" becomes a
+ * checkable statement instead of a subtraction somebody has to think to do.
+ *
+ * Returning a bare `AttachmentRef[]` was the actual defect: it made discarding
+ * the disposition the path of least resistance, which is exactly what every
+ * caller did. Hence no convenience overload that throws the skips away.
  *
  * Exported for unit tests.
  */
@@ -910,38 +995,55 @@ export async function captureAttachments(
   bucket: R2Bucket | undefined,
   groupId: string,
   attachments: CapturableAttachment[] | undefined
-): Promise<AttachmentRef[]> {
-  if (!bucket || !attachments || attachments.length === 0) return [];
+): Promise<AttachmentCapture> {
   const refs: AttachmentRef[] = [];
+  const skipped: AttachmentSkip[] = [];
+  if (!attachments || attachments.length === 0) return { refs, skipped };
+
   let stored = 0;
   for (let i = 0; i < attachments.length; i++) {
-    if (stored >= ATTACHMENT_MAX_COUNT) break;
     const a = attachments[i];
-    const mime = (a.mimeType || "").toLowerCase();
-    const isImage = mime.startsWith("image/");
-    const isPdf = mime === "application/pdf";
-    if (!isImage && !isPdf) continue;
-    const bytes = attachmentBytes(a.content);
-    if (!bytes || bytes.byteLength > ATTACHMENT_MAX_BYTES) continue;
+    const mimeType = a.mimeType || "application/octet-stream";
     const name = sanitizeAttachmentName(a.filename, i);
+    const bytes = attachmentBytes(a.content);
+    const note = (reason: AttachmentSkipReason) =>
+      skipped.push({ index: i, name, mimeType, size: bytes?.byteLength ?? 0, reason });
+
+    // No bucket binding (tests / non-R2 envs): nothing can be stored, but the
+    // sender still sent these, so they are reported rather than vanishing.
+    if (!bucket) {
+      note("put-failed");
+      continue;
+    }
+    if (stored >= ATTACHMENT_MAX_COUNT) {
+      note("over-count-cap");
+      continue;
+    }
+    const mime = mimeType.toLowerCase();
+    if (!mime.startsWith("image/") && mime !== "application/pdf") {
+      note("unsupported-type");
+      continue;
+    }
+    if (!bytes) {
+      note("empty");
+      continue;
+    }
+    if (bytes.byteLength > ATTACHMENT_MAX_BYTES) {
+      note("too-large");
+      continue;
+    }
     const key = `inbound-attachments/${groupId}/${i}-${name}`;
     try {
-      await bucket.put(key, bytes, {
-        httpMetadata: { contentType: a.mimeType || "application/octet-stream" },
-      });
-      refs.push({
-        key,
-        name,
-        mimeType: a.mimeType || "application/octet-stream",
-        size: bytes.byteLength,
-      });
+      await bucket.put(key, bytes, { httpMetadata: { contentType: mimeType } });
+      refs.push({ key, name, mimeType, size: bytes.byteLength });
       stored++;
     } catch {
-      // Best-effort: a failed put for one attachment must not block the
-      // others or the ingestion flow. Skip and continue.
+      // A failed put for one attachment must not block the others or the
+      // ingestion flow — but it is now recorded rather than swallowed.
+      note("put-failed");
     }
   }
-  return refs;
+  return { refs, skipped };
 }
 
 // ---------------------------------------------------------------------------

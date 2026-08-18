@@ -1005,6 +1005,7 @@ const SCHEMA_SQL = `
     attachment_count INTEGER NOT NULL DEFAULT 0,
     -- OPE-68 (2026-07-03) — drizzle/0146 poster/PDF attachment refs (JSON).
     attachment_refs TEXT,
+    attachment_skips TEXT,
     raw_size INTEGER,
     error TEXT,
     message_id TEXT,

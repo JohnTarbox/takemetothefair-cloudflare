@@ -198,6 +198,32 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
         .innerJoin(events, eq(events.slug, eventSeries.canonicalSlug))
         .where(sql`${events.mergedInto} IS NOT NULL`);
 
+      // ── OPE-467: claimed vs stored vs skipped, per lane ──────────────
+      //
+      // This defect ran for three months and was found by hand-diffing
+      // `attachment_count` against `attachment_refs`. The acceptance criterion
+      // is that nobody has to do that again.
+      //
+      // Reported per `to_address` because the lane split is what made the
+      // original report legible — though note the diagnosis it suggested was
+      // wrong: there is ONE capture path, called before intent routing, so a
+      // lane difference is a difference in what people SEND, not in code.
+      //
+      // `unaccounted` is the only number here that is a fault. A skip is a
+      // policy decision now that it is recorded; a part that is neither stored
+      // nor explained is a part that went missing.
+      const attachmentCapture = await db
+        .select({
+          lane: inboundEmails.toAddress,
+          emails: sql<number>`count(*)`,
+          claimed: sql<number>`coalesce(sum(${inboundEmails.attachmentCount}), 0)`,
+          stored: sql<number>`coalesce(sum((length(coalesce(${inboundEmails.attachmentRefs}, '')) - length(replace(coalesce(${inboundEmails.attachmentRefs}, ''), '"key"', ''))) / 5), 0)`,
+          skipped: sql<number>`coalesce(sum((length(coalesce(${inboundEmails.attachmentSkips}, '')) - length(replace(coalesce(${inboundEmails.attachmentSkips}, ''), '"reason"', ''))) / 8), 0)`,
+        })
+        .from(inboundEmails)
+        .where(sql`${inboundEmails.attachmentCount} > 0`)
+        .groupBy(inboundEmails.toAddress);
+
       // OPE-452 — an email that ARRIVED with content and landed with none.
       //
       // The reported specimen turned out to be captured fine (2,318 chars), but
@@ -286,6 +312,17 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
               violation_count: Number(tombstoneViolationCount?.count ?? 0),
               violations: tombstoneViolations,
             },
+            // OPE-467 — claimed vs stored vs skipped per lane. `unaccounted`
+            // is the fault number; a recorded skip is a policy decision.
+            //
+            // ⚠️ Rows received before 2026-07-03 will always show unaccounted:
+            // `captureAttachments` did not exist until commit 9de7b361
+            // (OPE-68), so those attachments were never filtered — there was
+            // nothing to filter them. Not backfillable; the raw MIME is gone.
+            attachment_capture: attachmentCapture.map((r) => ({
+              ...r,
+              unaccounted: Number(r.claimed) - Number(r.stored) - Number(r.skipped),
+            })),
             // OPE-423 invariant 2 — see the comment at the query.
             series_canonical_invariant: {
               rule: "event_series.canonical_slug must not name an event with merged_into set",

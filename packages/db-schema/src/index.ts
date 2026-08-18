@@ -3961,6 +3961,19 @@ export const inboundEmails = sqliteTable(
      *  image/PDF attachments OR the best-effort R2 capture failed. Added
      *  drizzle/0146. */
     attachmentRefs: text("attachment_refs"),
+    /** OPE-467 — JSON array of `AttachmentSkip` for parts we were handed and
+     *  did NOT store, each with a reason (over-count-cap / unsupported-type /
+     *  too-large / empty / put-failed). Added drizzle/0206.
+     *
+     *  The filters themselves are mostly correct; the defect was that they were
+     *  silent, so `attachment_count` exceeding `attachment_refs` was
+     *  indistinguishable from data loss and sat unnoticed for three months.
+     *  The invariant this exists to make checkable:
+     *
+     *      attachment_count === len(attachment_refs) + len(attachment_skips)
+     *
+     *  NULL means nothing was skipped (or the row predates this column). */
+    attachmentSkips: text("attachment_skips"),
     rawSize: integer("raw_size"),
     error: text("error"),
     /** RFC 5322 Message-ID extracted by PostalMime. Used to dedup
