@@ -11,7 +11,8 @@
  * generator divergence in [[project_event_insert_paths]].
  *
  * Match-stage order (first hit wins):
- *   1. exact_url       — events.source_url equality
+ *   1. exact_url       — events.source_url equality AND dates agree
+ *      series_url      — events.source_url equality, dates DISAGREE
  *   2. venue_date      — autoLinkVenue resolves a venueId; existing
  *                        events at that venue within ±dateWindowDays
  *   3. city_state_date — venues.city + venues.state join; existing
@@ -22,6 +23,48 @@
  * Each stage that hits returns the existing event + matchType. No
  * hit → { isDuplicate: false }. Caller decides what to do with the
  * result (route reply, enrich, flag PENDING, log audit).
+ *
+ * ── OPE-454: a shared source_url means SAME SOURCE, not SAME EVENT ──
+ *
+ * Stage 1 used to be `where(source_url = ?) limit 1`, short-circuiting
+ * before any date comparison and returning an ARBITRARY row. For a series
+ * promoter who lists every show on one `/shows` page, that made each
+ * edition a "duplicate" of its siblings. Two legitimate 2027 Paradise City
+ * shows — different cities, a year apart — were both refused against a
+ * November 2026 event whose only commonality was the URL.
+ *
+ * Measured 2026-08-17: **738 of 1,748 events carrying a source_url (42%)
+ * share it with at least one other event**, across 195 URLs; the worst
+ * single URL is on 53 events. So this was not an edge case — a large
+ * fraction of the catalog sits in the collision zone.
+ *
+ * The tell that this was a semantic confusion rather than a threshold bug:
+ * `maybeRouteToOccurrence` (src/lib/discovery/route-to-occurrence.ts)
+ * deliberately depends on stage 1 matching ACROSS years, and reads it
+ * correctly — same URL + different year ⇒ a new occurrence of the same
+ * series. The creation paths read the identical signal as "same event" and
+ * refuse. One signal, two incompatible meanings.
+ *
+ * So the split is by meaning, not by strictness:
+ *
+ *   exact_url  — same URL AND the dates agree (or there is no candidate
+ *                date and the URL identifies exactly one event). This
+ *                really is the same event. Still a blocking duplicate.
+ *   series_url — same URL, dates disagree (or the URL is a directory page
+ *                on 2+ events, so it cannot identify which). Same source,
+ *                different edition. NOT a blocking duplicate.
+ *
+ * `series_url` still returns `isDuplicate: true` so the series-routing
+ * consumer keeps working unchanged. Blocking is expressed by the separate
+ * `identifiesSameEvent` flag: a consumer that has not been taught about
+ * `series_url` keeps TODAY's behavior (over-refusing) rather than newly
+ * creating duplicates — the fail-safe direction for a dedup guard.
+ *
+ * Note the ticket's suggested rule ("a URL on 2+ events is a directory
+ * page") would NOT have fixed the reported case: at the moment of refusal
+ * only ONE Paradise City event carried that URL, so the count was 1 and the
+ * rule would not have fired. The date comparison is what does the work; the
+ * 2+ count only covers the undated case.
  *
  * Deferred to a follow-up PR (per the K2 plan): rewire the
  * suggest_event / update_event MCP tools (vendor.ts:772-788,
@@ -57,7 +100,24 @@ export interface FindDuplicateInput {
   nameThreshold?: number;
 }
 
-export type MatchType = "exact_url" | "venue_date" | "city_state_date" | "similar_name_date";
+export type MatchType =
+  | "exact_url"
+  | "series_url"
+  | "venue_date"
+  | "city_state_date"
+  | "similar_name_date";
+
+/**
+ * OPE-454 — the match types that identify the SAME EVENT, and so should
+ * block creation. `series_url` identifies the same SOURCE only.
+ *
+ * Exported so consumers express the decision by asking this question rather
+ * than by re-listing match types, which is how the four call sites drifted
+ * apart in the first place.
+ */
+export function identifiesSameEvent(matchType: MatchType): boolean {
+  return matchType !== "series_url";
+}
 
 export interface ExistingEvent {
   id: string;
@@ -74,6 +134,13 @@ export type FindDuplicateResult =
       isDuplicate: true;
       matchType: MatchType;
       similarity?: number; // only on similar_name_date
+      /**
+       * OPE-454 — true when the match means "this is the same event"
+       * (blocking); false when it only means "this came from the same
+       * source page" (`series_url`). Mirrors `identifiesSameEvent(matchType)`
+       * and is surfaced on the result so a caller cannot forget to ask.
+       */
+      identifiesSameEvent: boolean;
       existingEvent: ExistingEvent;
     };
 
@@ -88,42 +155,84 @@ export async function findDuplicate(
   const dateWindowDays = input.dateWindowDays ?? 7;
   const nameThreshold = input.nameThreshold ?? 0.85;
 
-  // ── Stage 1: exact source_url match ──────────────────────────────
+  // The date window is computed BEFORE stage 1 (OPE-454) because stage 1
+  // now needs it: a shared source_url only means "same event" when the
+  // dates also agree. Previously stage 1 ran first and returned before any
+  // date was parsed, which is precisely how a different-year edition became
+  // a duplicate of its sibling.
+  const dateRangeMs = dateWindowDays * 24 * 60 * 60 * 1000;
+  const eventDate = input.startDate ? new Date(input.startDate) : null;
+  const haveDate = eventDate !== null && !isNaN(eventDate.getTime());
+  const minDate = haveDate ? new Date(eventDate.getTime() - dateRangeMs) : null;
+  const maxDate = haveDate ? new Date(eventDate.getTime() + dateRangeMs) : null;
+
+  const eventColumns = {
+    id: events.id,
+    slug: events.slug,
+    name: events.name,
+    startDate: events.startDate,
+    status: events.status,
+    sourceUrl: events.sourceUrl,
+  };
+
+  // ── Stage 1: source_url — same event (exact_url) vs same source (series_url) ──
   if (input.sourceUrl) {
-    const exactMatch = await db
-      .select({
-        id: events.id,
-        slug: events.slug,
-        name: events.name,
-        startDate: events.startDate,
-        status: events.status,
-        sourceUrl: events.sourceUrl,
-      })
+    // 1a. Same URL *and* the dates agree → genuinely the same event.
+    if (haveDate) {
+      const sameUrlAndDate = await db
+        .select(eventColumns)
+        .from(events)
+        .where(
+          and(
+            eq(events.sourceUrl, input.sourceUrl),
+            gte(events.startDate, minDate!),
+            lte(events.startDate, maxDate!)
+          )
+        )
+        .limit(1);
+      if (sameUrlAndDate.length > 0) {
+        return {
+          isDuplicate: true,
+          matchType: "exact_url",
+          identifiesSameEvent: true,
+          existingEvent: toExisting(sameUrlAndDate[0]),
+        };
+      }
+    }
+
+    // 1b. Same URL, dates disagree (or no candidate date). `limit(2)` is
+    // enough to answer "is this URL on more than one event?" without
+    // dragging back all 53 rows of the worst offender.
+    const sameUrl = await db
+      .select(eventColumns)
       .from(events)
       .where(eq(events.sourceUrl, input.sourceUrl))
-      .limit(1);
-    if (exactMatch.length > 0) {
+      .limit(2);
+
+    if (sameUrl.length > 0) {
+      // An undated candidate against a URL that names exactly ONE event is
+      // the original intent of this stage — a re-submission of the same
+      // page with a date we failed to parse. Nothing contradicts it, so it
+      // stays a blocking duplicate.
+      const unambiguousUndated = !haveDate && sameUrl.length === 1;
       return {
         isDuplicate: true,
-        matchType: "exact_url",
-        existingEvent: toExisting(exactMatch[0]),
+        matchType: unambiguousUndated ? "exact_url" : "series_url",
+        identifiesSameEvent: unambiguousUndated,
+        existingEvent: toExisting(sameUrl[0]),
       };
     }
   }
 
   // No startDate → no place/name matching is meaningful. Stages 2-4
   // all need a date window.
-  if (!input.startDate) {
+  if (!haveDate || minDate === null || maxDate === null) {
     return { isDuplicate: false };
   }
-
-  const eventDate = new Date(input.startDate);
-  if (isNaN(eventDate.getTime())) {
-    return { isDuplicate: false };
-  }
-  const dateRangeMs = dateWindowDays * 24 * 60 * 60 * 1000;
-  const minDate = new Date(eventDate.getTime() - dateRangeMs);
-  const maxDate = new Date(eventDate.getTime() + dateRangeMs);
+  // Re-bound as non-null for stages 2-4. `haveDate` is a plain boolean, so
+  // TypeScript cannot narrow minDate/maxDate through it on its own.
+  const windowStart: Date = minDate;
+  const windowEnd: Date = maxDate;
 
   // ── Stages 2a + 2b: place + date ─────────────────────────────────
   const hasPlaceSignal = !!input.venueName || !!(input.venueCity && input.venueState);
@@ -158,8 +267,8 @@ export async function findDuplicate(
         .where(
           and(
             eq(events.venueId, resolvedVenueId),
-            gte(events.startDate, minDate),
-            lte(events.startDate, maxDate)
+            gte(events.startDate, windowStart),
+            lte(events.startDate, windowEnd)
           )
         )
         .limit(1);
@@ -167,6 +276,7 @@ export async function findDuplicate(
         return {
           isDuplicate: true,
           matchType: "venue_date",
+          identifiesSameEvent: true,
           existingEvent: toExisting(venueMatch[0]),
         };
       }
@@ -194,8 +304,8 @@ export async function findDuplicate(
             // disagree on capitalization ("Winthrop" vs "winthrop").
             sql`LOWER(${venues.city}) = LOWER(${normalizedCity})`,
             eq(venues.state, normalizedState),
-            gte(events.startDate, minDate),
-            lte(events.startDate, maxDate)
+            gte(events.startDate, windowStart),
+            lte(events.startDate, windowEnd)
           )
         )
         .limit(1);
@@ -203,6 +313,7 @@ export async function findDuplicate(
         return {
           isDuplicate: true,
           matchType: "city_state_date",
+          identifiesSameEvent: true,
           existingEvent: toExisting(cityStateMatch[0]),
         };
       }
@@ -222,7 +333,7 @@ export async function findDuplicate(
         sourceUrl: events.sourceUrl,
       })
       .from(events)
-      .where(and(gte(events.startDate, minDate), lte(events.startDate, maxDate)));
+      .where(and(gte(events.startDate, windowStart), lte(events.startDate, windowEnd)));
     for (const ev of similarEvents) {
       if (!ev.name) continue;
       const existingNormalized = normalizeName(ev.name);
@@ -231,6 +342,7 @@ export async function findDuplicate(
         return {
           isDuplicate: true,
           matchType: "similar_name_date",
+          identifiesSameEvent: true,
           similarity: sim,
           existingEvent: toExisting(ev),
         };

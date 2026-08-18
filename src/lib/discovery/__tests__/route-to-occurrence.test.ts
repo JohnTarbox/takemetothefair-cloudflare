@@ -78,9 +78,14 @@ function seedMatched(opts: {
   }
 }
 
-const dupHit = (id: string) => ({
+// OPE-454 — matchType is a parameter now because this consumer must keep
+// routing on `series_url` (same source page, different year), which is the
+// exact signal a new series occurrence is made of. `identifiesSameEvent` is
+// false there; routing must NOT gate on it — only the creation paths do.
+const dupHit = (id: string, matchType: "exact_url" | "series_url" = "exact_url") => ({
   isDuplicate: true as const,
-  matchType: "exact_url" as const,
+  matchType,
+  identifiesSameEvent: matchType !== "series_url",
   existingEvent: { id, slug: "s", name: "n", startDate: null, status: "APPROVED", sourceUrl: null },
 });
 

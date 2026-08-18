@@ -365,6 +365,19 @@ export function classifyDedupTier(matchType: string): DedupTier {
   if (matchType === "exact_url" || matchType === "venue_date") {
     return "high";
   }
+  // OPE-454 — `series_url` is deliberately NOT high. It means "same source
+  // page, different edition" (a series promoter listing every show on one
+  // `/shows` URL), so routing it to already-exists would tell a submitter
+  // their genuinely-new edition is already in the directory and create
+  // nothing. It landed on medium by accident, via the unknown-string default
+  // below; naming it here makes that a decision instead of a coincidence, and
+  // the test pins it.
+  //
+  // Medium is the right tier rather than "no match at all": the sibling is
+  // still worth an operator's eye, and medium creates the event.
+  if (matchType === "series_url") {
+    return "medium";
+  }
   // city_state_date, similar_name_date — both surface for operator
   // review rather than auto-routing to already-exists. Unknown strings
   // fall to medium too: safer to PENDING-with-tag than to silently

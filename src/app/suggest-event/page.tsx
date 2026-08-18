@@ -66,7 +66,14 @@ interface ExtractResponse {
 interface DuplicateCheckResponse {
   success: boolean;
   isDuplicate?: boolean;
-  matchType?: "exact_url" | "similar_name_date";
+  matchType?: "exact_url" | "series_url" | "similar_name_date";
+  /**
+   * OPE-454 — false when the match only means "same source page" (an
+   * organizer's /shows URL listing every edition). Gate the duplicate warning
+   * on THIS, not on `isDuplicate`, or a submitter adding next year's edition
+   * is told their event already exists.
+   */
+  identifiesSameEvent?: boolean;
   similarity?: number;
   existingEvent?: {
     id: string;
@@ -383,7 +390,11 @@ export default function SuggestEventPage() {
       });
       const data = (await res.json()) as DuplicateCheckResponse;
 
-      if (data.isDuplicate && data.existingEvent) {
+      // `identifiesSameEvent !== false` rather than `=== true`: an older
+      // main-app deploy omits the field, and the safe reading of "absent" is
+      // the pre-OPE-454 behavior (warn) rather than silently skipping the
+      // duplicate check entirely.
+      if (data.isDuplicate && data.existingEvent && data.identifiesSameEvent !== false) {
         setDuplicateEvent(data.existingEvent);
         setDuplicateMatchType(data.matchType || null);
         // Stay on duplicate-check step to show warning

@@ -16,8 +16,8 @@
  *
  * Per-stage logic (what CAN disagree, given the stage's match constraints):
  *
- *   - `exact_url` → nothing. Same source URL means same source; the
- *     route never calls this comparator on stage 1 matches.
+ *   - `exact_url` / `series_url` → nothing. Same source URL means same
+ *     source; the route never calls this comparator on stage 1 matches.
  *   - `venue_date` → `date` (within-window dates can still differ
  *     exactly) and/or `name` (no name gate in stage 2). Venue agrees
  *     by definition (same venueId).
@@ -121,7 +121,7 @@ const NAME_SIM_THRESHOLD = 0.85;
  * existing event the dedup matched. Pure — no I/O, no clock reads.
  *
  * Returns an empty array on no disagreement (sources concur). Returns
- * an empty array on `matchType === 'exact_url'` (same source by
+ * an empty array on `matchType === 'exact_url' | 'series_url'` (same source by
  * definition; the route shouldn't call this for stage 1, but be safe).
  */
 export function compareForIngest(
@@ -129,7 +129,12 @@ export function compareForIngest(
   candidate: IngestCandidate,
   existing: IngestExistingEvent
 ): IngestDiscrepancy[] {
-  if (matchType === "exact_url") return [];
+  // OPE-454 — `series_url` joins `exact_url` here. Both mean "same source
+  // page"; neither asserts the two rows describe the same event, so there is
+  // no field-level disagreement to record. Emitting discrepancies for a
+  // series_url match would file a "date differs" row for every sibling
+  // edition of a series, which is the expected state, not a defect.
+  if (matchType === "exact_url" || matchType === "series_url") return [];
 
   const out: IngestDiscrepancy[] = [];
 

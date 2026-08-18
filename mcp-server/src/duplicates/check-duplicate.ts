@@ -42,7 +42,12 @@ export interface CheckDuplicateInput {
   venueState?: string | null;
 }
 
-export type MatchType = "exact_url" | "venue_date" | "city_state_date" | "similar_name_date";
+export type MatchType =
+  | "exact_url"
+  | "series_url"
+  | "venue_date"
+  | "city_state_date"
+  | "similar_name_date";
 
 export interface ExistingEventDuplicate {
   id: string;
@@ -59,6 +64,13 @@ export type CheckDuplicateResult =
       isDuplicate: true;
       matchType: MatchType;
       similarity?: number;
+      /**
+       * OPE-454 — false when the match only proves the two rows came from the
+       * same source page (`series_url`), which is the normal state for every
+       * edition of a series listed on one `/shows` URL. Callers that BLOCK
+       * creation must gate on this, not on `isDuplicate`.
+       */
+      identifiesSameEvent: boolean;
       existingEvent: ExistingEventDuplicate;
     };
 
@@ -137,6 +149,7 @@ export function parseResponse(data: unknown): CheckDuplicateResult {
   if (!existing || !matchType) return { isDuplicate: false };
   if (
     matchType !== "exact_url" &&
+    matchType !== "series_url" &&
     matchType !== "venue_date" &&
     matchType !== "city_state_date" &&
     matchType !== "similar_name_date"
@@ -150,6 +163,13 @@ export function parseResponse(data: unknown): CheckDuplicateResult {
   const result: CheckDuplicateResult = {
     isDuplicate: true,
     matchType,
+    // Prefer the field the route sends; fall back to deriving it from the
+    // match type so an older main-app deploy (which does not send the field)
+    // still yields correct semantics rather than defaulting to "blocking".
+    identifiesSameEvent:
+      typeof obj.identifiesSameEvent === "boolean"
+        ? obj.identifiesSameEvent
+        : matchType !== "series_url",
     existingEvent: {
       id: String(existing.id ?? ""),
       slug: String(existing.slug ?? ""),
