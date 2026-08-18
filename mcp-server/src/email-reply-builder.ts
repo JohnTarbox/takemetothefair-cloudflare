@@ -692,6 +692,23 @@ Your email address has been removed from our newsletter. You won't receive furth
 
 ${SIGN_OFF}`;
     }
+    case "unsubscribe-unclear": {
+      // OPE-466 — we were routed here as an unsubscribe, but nothing the sender
+      // wrote asks to be removed. Do not assert a state change that did not
+      // happen; give them one unambiguous action instead.
+      //
+      // "UNSUBSCRIBE" is the instruction on purpose: it is one of the phrases
+      // the handler's own matcher accepts, so following this reply is
+      // guaranteed to work. And because a quoted transcript is stripped before
+      // matching, quoting THIS message back does not count as asking.
+      return `We got your message, but we couldn't tell what you'd like us to do.
+
+It reached the address we use for unsubscribe requests, so we want to be careful: we have NOT changed anything about your subscription.
+
+If you'd like to stop receiving our newsletter, just reply with the single word UNSUBSCRIBE and we'll take care of it right away. If you meant something else, reply and tell us — a real person reads these.
+
+${SIGN_OFF}`;
+    }
     case "source-suggestion-ack": {
       const host = (params.suggestedHost as string | undefined) ?? "";
       const informalUsageCount = Number(params.informalUsageCount ?? 0);

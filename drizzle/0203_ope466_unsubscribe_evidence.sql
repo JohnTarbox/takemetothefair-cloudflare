@@ -1,0 +1,11 @@
+-- OPE-466 — record WHY a subscriber was unsubscribed.
+--
+-- `unsubscribed` and `unsubscribed_at` say that it happened and when, and
+-- nothing says on what basis. The inbound-email path writes the flag off a
+-- classifier verdict alone, so a disputed removal ("I never asked to be taken
+-- off your list") has no answer available.
+--
+-- Nullable and unbackfilled by design: NULL means "removed before this column
+-- existed", which is the truth. Inventing a reason for the existing rows would
+-- put fabricated evidence in the one column meant to be trustworthy.
+ALTER TABLE newsletter_subscribers ADD COLUMN unsubscribe_evidence TEXT;

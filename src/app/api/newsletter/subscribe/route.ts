@@ -59,7 +59,13 @@ export async function POST(request: NextRequest) {
         if (existing.unsubscribed) {
           await db
             .update(newsletterSubscribers)
-            .set({ unsubscribed: false })
+            // OPE-466 — clear the whole unsubscribe record, not just the flag.
+            // The schema documents `unsubscribedAt` as "cleared on re-opt-in,
+            // so it always means the CURRENT unsubscribe" — which was not true:
+            // this path reset the flag and left the timestamp behind, so a
+            // re-subscribed address read as unsubscribed-in-the-past forever.
+            // The evidence column would have inherited the same staleness.
+            .set({ unsubscribed: false, unsubscribedAt: null, unsubscribeEvidence: null })
             .where(eq(newsletterSubscribers.email, email));
         }
       } else {

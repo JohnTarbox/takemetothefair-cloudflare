@@ -1672,6 +1672,14 @@ export const newsletterSubscribers = sqliteTable(
      *  handler. Cleared on re-opt-in, so it always means "the CURRENT
      *  unsubscribe", never a stale one from a previous cycle. */
     unsubscribedAt: integer("unsubscribed_at", { mode: "timestamp" }),
+    /** OPE-466 — WHY, not just whether and when. The inbound-email path writes
+     *  the flag off a classifier verdict alone, so a disputed removal had no
+     *  answer available. Holds the phrase the sender actually wrote (e.g.
+     *  "unsubscribe", "remove me") or a short marker for the deliberate paths
+     *  ("one-click", "api"). NULL on rows unsubscribed before this existed —
+     *  left NULL rather than backfilled, since a fabricated reason in the one
+     *  column meant to be trustworthy is worse than an honest blank. */
+    unsubscribeEvidence: text("unsubscribe_evidence"),
     // SHA-256 hex digest of the random 32-byte confirmation token. The raw
     // token only exists in the confirmation email URL — see
     // src/lib/email/newsletter-confirm-token.ts. NULL once the subscription
