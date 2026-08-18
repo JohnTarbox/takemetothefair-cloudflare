@@ -38,7 +38,12 @@ import { sendSubmissionReceivedAck } from "@/lib/email/submission-received";
 const PUBLIC_EVENT_SET = new Set<string>(PUBLIC_EVENT_STATUSES);
 
 // The stable ID for the Community Suggestions promoter
-const COMMUNITY_PROMOTER_ID = "system-community-suggestions";
+// OPE-458 — COMMUNITY_PROMOTER_ID now lives beside the resolver that falls
+// back to it, so the placeholder and the rules that avoid it stay together.
+import {
+  COMMUNITY_PROMOTER_ID,
+  resolvePromoterForSource,
+} from "@/lib/promoters/resolve-from-source";
 
 export async function POST(request: NextRequest) {
   // Internal callers (MCP Worker email handler, future cross-service hooks)
@@ -470,6 +475,29 @@ export async function POST(request: NextRequest) {
       // insert (safe default — better a standalone row than a dropped submission).
     }
 
+    // OPE-458 scope 3 — resolve the owning promoter instead of defaulting every
+    // submission to the community placeholder.
+    //
+    // Four events named "Vineyard Artisans …" were created from
+    // vineyardartisans.com while a promoter of exactly that name already owned
+    // two of its other festivals. OPE-201 normalizes the VENUE on auto-created
+    // events; nothing ever did the same for the promoter.
+    //
+    // Fails closed: an ambiguous or absent match keeps COMMUNITY_PROMOTER_ID.
+    // A wrong owner is invisibly incorrect (it publishes on someone else's
+    // page); the placeholder is merely visibly incomplete.
+    let resolvedPromoterId: string = COMMUNITY_PROMOTER_ID;
+    try {
+      const owner = await resolvePromoterForSource(db, {
+        sourceUrl: data.sourceUrl ?? null,
+        eventName: effectiveName,
+      });
+      if (owner) resolvedPromoterId = owner.promoterId;
+    } catch {
+      // Never fail a submission over ownership enrichment — the placeholder is
+      // a correct, reviewable answer.
+    }
+
     // Create the event
     const newEventId = crypto.randomUUID();
     await db.insert(events).values({
@@ -477,7 +505,7 @@ export async function POST(request: NextRequest) {
       name: effectiveName,
       slug: finalEventSlug,
       description,
-      promoterId: COMMUNITY_PROMOTER_ID,
+      promoterId: resolvedPromoterId,
       venueId: resolvedVenueId,
       stateCode: resolvedStateCode,
       startDate: effectiveStartDate,
