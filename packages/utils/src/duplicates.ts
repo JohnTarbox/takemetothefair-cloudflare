@@ -317,16 +317,42 @@ export function normalizeVendorName(name: string | null | undefined): string {
   return tokens.join(" ").trim();
 }
 
+/**
+ * The string vendor dedup scores. **Name only** — `vendorType` is deliberately
+ * NOT part of it (OPE-451).
+ *
+ * It used to append the type, which meant a category disagreement could drag a
+ * BYTE-IDENTICAL name under the ≥0.92 threshold. Live on 2026-08-17: "Salvage
+ * Sistas" existed as `Maker`; a roster backfill supplied `Baby/Child`; the
+ * names matched exactly, the scorer compared `"salvage sistas Baby/Child"` to
+ * `"salvage sistas Maker"`, and a duplicate row was minted.
+ *
+ * That is structurally hostile to the roster-backfill workload, which is where
+ * most vendors come from: a backfill assigns every exhibitor the SHOW's
+ * category while the existing row carries whatever a previous pass assigned, so
+ * category disagreement is the normal case, not the exception.
+ *
+ * Worse, the same string feeds `/api/admin/duplicates` — the sweep that exists
+ * to surface these pairs for an operator. So the defect also blinded the tool
+ * that would have caught it, which is why the duplicates accumulated unseen
+ * until someone read a roster by hand.
+ *
+ * A category can corroborate but must never veto: two vendors with the same
+ * name and different types are overwhelmingly one vendor filed twice, not two
+ * businesses. Since it can only ever subtract here, it is simply gone.
+ *
+ * The parameter is kept in the signature (ignored) so the many call sites that
+ * pass a whole vendor row keep compiling and reading naturally.
+ */
 export function getVendorComparisonString(vendor: {
   businessName: string | null;
+  /** Accepted and IGNORED — see above. Present so callers can pass a row. */
   vendorType?: string | null;
 }): string {
-  const parts: string[] = [];
-  // DQ6 (OPE-13) — normalize the business name first so &/and, dash, entity,
-  // and legal-form variants compare equal before the ≥0.92 similarity test.
-  if (vendor.businessName) parts.push(normalizeVendorName(vendor.businessName));
-  if (vendor.vendorType) parts.push(vendor.vendorType);
-  return parts.join(" ").trim() || "unknown";
+  // DQ6 (OPE-13) — normalize so &/and, dash, entity, and legal-form variants
+  // compare equal before the ≥0.92 similarity test.
+  if (!vendor.businessName) return "unknown";
+  return normalizeVendorName(vendor.businessName) || "unknown";
 }
 
 export function getPromoterComparisonString(promoter: { companyName: string | null }): string {
