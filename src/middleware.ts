@@ -8,6 +8,7 @@ import {
   events,
   eventSeries,
   eventSlugHistory,
+  seriesSlugHistory,
   blogPosts,
   blogSlugHistory,
   venues,
@@ -317,6 +318,66 @@ async function handleRouting(request: NextRequest) {
   // Status check (REJECTED → 410, non-public → 404) and slug-rename 301
   // redirect via event_slug_history. Runs before ISR cache so a REJECTED
   // event can't continue serving as cached 200 HTML.
+  // ── /events/<series-slug>/<year> — the occurrence form ─────────────
+  //
+  // OPE-471. The single-segment walker below bails on any path containing a
+  // "/", so a retired series slug in the OCCURRENCE form would never have been
+  // redirected even once `series_slug_history` existed. The ticket asks for
+  // both forms, and this is the one that would have been missed silently.
+  //
+  // Deliberately narrow: exactly two segments, the second exactly four digits.
+  // Anything else falls through to the routes that already handle it.
+  {
+    const rest = pathname.startsWith("/events/") ? pathname.slice("/events/".length) : "";
+    const parts = rest.split("/");
+    if (parts.length === 2 && /^\d{4}$/.test(parts[1])) {
+      const [seriesSlug, year] = parts;
+      const d1 = env.DB as D1Database | undefined;
+      if (d1) {
+        const db = drizzle(d1);
+        try {
+          const [live] = await db
+            .select({ id: eventSeries.id })
+            .from(eventSeries)
+            .where(eq(eventSeries.canonicalSlug, unsafeSlug(seriesSlug)))
+            .limit(1);
+          // Only walk history on a MISS — a live series renders normally.
+          if (!live) {
+            let cursor = seriesSlug;
+            const seen = new Set<string>([cursor]);
+            for (let hop = 0; hop < 5; hop++) {
+              const [h] = await db
+                .select({ newSlug: seriesSlugHistory.newSlug })
+                .from(seriesSlugHistory)
+                .where(eq(seriesSlugHistory.oldSlug, unsafeSlug(cursor)))
+                .orderBy(desc(seriesSlugHistory.changedAt))
+                .limit(1);
+              if (!h || seen.has(h.newSlug)) break;
+              cursor = h.newSlug;
+              seen.add(cursor);
+            }
+            if (cursor !== seriesSlug) {
+              const [target] = await db
+                .select({ id: eventSeries.id })
+                .from(eventSeries)
+                .where(eq(eventSeries.canonicalSlug, unsafeSlug(cursor)))
+                .limit(1);
+              if (target) {
+                const url = request.nextUrl.clone();
+                // Keep the year: a reader asking for the 2026 edition should
+                // land on the 2026 edition, not the hub.
+                url.pathname = `/events/${cursor}/${year}`;
+                return NextResponse.redirect(url, 301);
+              }
+            }
+          }
+        } catch {
+          // DB error — let the page handler take over.
+        }
+      }
+    }
+  }
+
   if (pathname.startsWith("/events/")) {
     const slug = pathname.slice("/events/".length);
     // Skip empty slug, sub-paths, and the static state/category sub-routes
@@ -408,6 +469,49 @@ async function handleRouting(request: NextRequest) {
           return NextResponse.redirect(url, 301);
         }
       }
+      // OPE-471 — the SERIES leg of the same question.
+      //
+      // `/events/<slug>` serves two shapes: an event detail page and an
+      // evergreen series hub (Option A, deliberate). The event walk above
+      // covers the first; a retired SERIES slug had no redirect path at all,
+      // because `series_slug_history` did not exist until drizzle/0209.
+      //
+      // That matters because the hubs due for retirement are the ranking
+      // assets: `/events/the-big-e-eastern-states-exposition-ma` holds 19
+      // clicks and 2,434 impressions at position 5.1 while its clean twin is
+      // unknown to Google. Retiring it without a 301 would spend that.
+      //
+      // Same 5-hop cap and `seen` set as the event walk — a slug that moved
+      // twice needs following, and a cycle must not hang the request.
+      let seriesCursor = slug;
+      const seriesSeen = new Set<string>([seriesCursor]);
+      for (let hop = 0; hop < 5; hop++) {
+        const [historyRow] = await db
+          .select({ newSlug: seriesSlugHistory.newSlug })
+          .from(seriesSlugHistory)
+          .where(eq(seriesSlugHistory.oldSlug, unsafeSlug(seriesCursor)))
+          .orderBy(desc(seriesSlugHistory.changedAt))
+          .limit(1);
+        if (!historyRow || seriesSeen.has(historyRow.newSlug)) break;
+        seriesCursor = historyRow.newSlug;
+        seriesSeen.add(seriesCursor);
+      }
+      if (seriesCursor !== slug) {
+        // Only 301 to a series that still exists — otherwise the redirect
+        // lands on a 404, which is worse than the 404 it replaced because it
+        // also burns a hop.
+        const [targetSeries] = await db
+          .select({ id: eventSeries.id })
+          .from(eventSeries)
+          .where(eq(eventSeries.canonicalSlug, unsafeSlug(seriesCursor)))
+          .limit(1);
+        if (targetSeries) {
+          const url = request.nextUrl.clone();
+          url.pathname = `/events/${seriesCursor}`;
+          return NextResponse.redirect(url, 301);
+        }
+      }
+
       // Fall through — the page renderer's notFound() will display the
       // "Event Not Found" UI (cached 200 under ISR; acceptable for
       // genuinely-unknown slugs that have no rename history).
