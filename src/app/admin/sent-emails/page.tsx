@@ -61,6 +61,39 @@ const DELIVERY_VARIANT: Record<DeliveryStatus, "success" | "danger" | "warning">
   complained: "danger",
 };
 
+/**
+ * OPE-461 — give the preview iframe a stylesheet so long lines wrap.
+ *
+ * `srcDoc` renders our email HTML with the iframe's default UA styles and
+ * nothing else. Ordinary prose wraps fine there, but an unbreakable token has
+ * nowhere to break, so a single long URL pushes the whole document sideways and
+ * the operator has to scroll horizontally to read the rest of the message. Our
+ * own replies are the worst case: every receipt-widget link is a ~90-character
+ * feedback URL with no spaces in it.
+ *
+ * `overflow-wrap: anywhere` handles those, and `word-break: break-word` covers
+ * older engines. The rest is just making the preview legible at a glance.
+ *
+ * The <pre> fallback beneath already carried `whitespace-pre-wrap break-words`,
+ * which is why the text and raw-HTML views never showed this — only the
+ * rendered tab did.
+ *
+ * Style only. `sandbox=""` keeps scripts disabled, and the email HTML is still
+ * inserted exactly as sent — the operator must see what the customer received,
+ * so nothing here rewrites the body itself.
+ */
+function wrapEmailPreview(bodyHtml: string): string {
+  const style = `<style>
+    html,body{margin:0;padding:12px;background:#fff;}
+    body{font:13px/1.5 ui-sans-serif,system-ui,sans-serif;color:#111;
+         overflow-wrap:anywhere;word-break:break-word;}
+    img{max-width:100%;height:auto;}
+    table{max-width:100%;}
+    a{color:#1d4ed8;}
+  </style>`;
+  return `${style}${bodyHtml}`;
+}
+
 export default function SentEmailsPage() {
   const [rows, setRows] = useState<SentEmailRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -340,7 +373,7 @@ export default function SentEmailsPage() {
                                   <iframe
                                     sandbox=""
                                     title="Rendered email body"
-                                    srcDoc={d.bodyHtml}
+                                    srcDoc={wrapEmailPreview(d.bodyHtml)}
                                     className="w-full h-96 bg-white border border-border rounded"
                                   />
                                 ) : (
