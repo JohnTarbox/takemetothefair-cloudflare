@@ -110,6 +110,7 @@ import {
 } from "../email-handlers/submit.js";
 import { recordSourceCitations } from "../email-handlers/pipeline-citations.js";
 import { bodyHasProseSubstance } from "../email-handlers/body-prose-substance.js";
+import { countOutcomes } from "../email-handlers/outcome-counts.js";
 import { computeFillEmptyProposals } from "../email-handlers/enrich-proposal.js";
 import { detectRosterEntries, type RosterEntry } from "../email-handlers/roster-detect.js";
 import { isShareRedirectHost, resolveShareRedirect } from "../email-handlers/share-redirect.js";
@@ -2086,7 +2087,11 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       replyKind: "ok-multi",
       replyParams: {
         subject,
-        eventCount: outcomes.length,
+        // OPE-460 — count EVENTS, not attempts. `outcomes` mixes created /
+        // already-exists with three failure kinds, so this headline used to
+        // include every failed fetch — the reply said "6 events" directly above
+        // five ❌ lines explaining that five of them did not work.
+        eventCount: countOutcomes(outcomes).landed,
         resultsText,
         hasAttachments,
         // Multi-event fan-out doesn't overflow at the URL-extraction layer
@@ -2756,7 +2761,11 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       replyKind: "ok-multi",
       replyParams: {
         subject,
-        eventCount: outcomes.length,
+        // OPE-460 — count EVENTS, not attempts. `outcomes` mixes created /
+        // already-exists with three failure kinds, so this headline used to
+        // include every failed fetch — the reply said "6 events" directly above
+        // five ❌ lines explaining that five of them did not work.
+        eventCount: countOutcomes(outcomes).landed,
         resultsText,
         hasAttachments,
         overflowed,
@@ -2915,7 +2924,11 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       replyKind: "ok-multi",
       replyParams: {
         subject,
-        eventCount: outcomes.length,
+        // OPE-460 — count EVENTS, not attempts. `outcomes` mixes created /
+        // already-exists with three failure kinds, so this headline used to
+        // include every failed fetch — the reply said "6 events" directly above
+        // five ❌ lines explaining that five of them did not work.
+        eventCount: countOutcomes(outcomes).landed,
         resultsText,
         hasAttachments,
         overflowed,
