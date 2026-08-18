@@ -1,0 +1,69 @@
+-- OPE-450 — make "rejected BECAUSE it duplicated K" a lookup, not an inference.
+--
+-- Cites docs/bulk-mutation-discipline.md — single-writer · idempotent ·
+-- read-back-verified · rollback-planned.
+--
+-- ---------------------------------------------------------------------------
+-- What happened
+-- ---------------------------------------------------------------------------
+--
+-- A shell event lifted from a marketing newsletter's boilerplate footer was
+-- rejected by hand on 2026-07-28. The same newsletter template produced the
+-- same shell again on 2026-08-17 and it was created a second time, against a
+-- candidate a human had already ruled on. Detection was not the failure —
+-- `possible_duplicate_of` was stamped BOTH times. Nothing consulted the prior
+-- adjudication.
+--
+-- ---------------------------------------------------------------------------
+-- Measured 2026-08-18 — and it reframes the fix the ticket proposed
+-- ---------------------------------------------------------------------------
+--
+-- The ticket's scope 1 proposes keying the check on
+-- `possible_duplicate_of = K AND status = 'REJECTED'`. Across the WHOLE events
+-- table, `possible_duplicate_of` is non-null on exactly **2 rows** — both
+-- shells from this one incident. A check keyed on it would catch the reported
+-- case and essentially nothing else.
+--
+-- The durable signal is (normalized name, start_date) plus a prior REJECTED
+-- row. Keyed that way, the "recreated after a rejection" shape has occurred
+-- **5 times**, not once:
+--
+--   New England Made Autumn Show 2026   rejected 07-28 → recreated 08-17
+--   Bar Harbor Holiday Craft Fair 2026  rejected 01-27 → recreated 08-14
+--   Vermont Sheep & Wool Festival 2026  rejected 05-05 → recreated 06-01
+--   Bonny Eagle Craft Fair 2026         rejected 04-29 → recreated 05-02
+--   Hopkinton State Fair 2026           rejected 04-24 → recreated 05-02
+--
+-- Every one of the five recreations was re-rejected by hand — five human
+-- decisions re-spent on decisions already made.
+--
+-- (Care is needed reading that number: 12 (name, date) groups contain both an
+-- APPROVED and a REJECTED row, but in 7 of them the approved row came FIRST and
+-- the duplicate was rejected afterwards. That is the system working, not this
+-- defect. Only the 5 above have a create that POSTDATES a rejection.)
+--
+-- ---------------------------------------------------------------------------
+-- Why a column
+-- ---------------------------------------------------------------------------
+--
+-- `admin_actions(action='event.status_change')` records only previous_status /
+-- new_status / slug. "Rejected because duplicate of K" is not recoverable from
+-- it, which is precisely why any pre-create check would have to INFER intent
+-- from `possible_duplicate_of` — a field that means "a matcher suspected this",
+-- not "a human decided this". Those are different claims, and only the second
+-- one should be allowed to suppress a future submission.
+--
+-- Nullable, no default: absent means "not rejected as a duplicate", which is
+-- true of every existing row. There is nothing to backfill — the two rows that
+-- carry `possible_duplicate_of` were both merged on 2026-08-17, and inventing
+-- an adjudication record for them after the fact would be fabricating a human
+-- decision that this column exists to represent faithfully.
+--
+-- Rollback: DROP COLUMN, or simply stop reading it — nothing else depends on it
+-- and no existing behaviour changes when it is NULL.
+
+ALTER TABLE events ADD COLUMN rejected_as_duplicate_of TEXT REFERENCES events(id);
+
+CREATE INDEX IF NOT EXISTS idx_events_rejected_as_duplicate_of
+  ON events(rejected_as_duplicate_of)
+  WHERE rejected_as_duplicate_of IS NOT NULL;

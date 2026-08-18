@@ -509,6 +509,12 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .describe(
           "REL4: defaults TRUE — the IndexNow ping is queued to pending_search_pings and drained in one batched call by the hourly cron, not fired inline. Pass false only when this single write needs immediate indexing."
         ),
+      rejected_as_duplicate_of: z
+        .string()
+        .optional()
+        .describe(
+          "OPE-450 — when rejecting BECAUSE this row duplicates another, the keeper's event id. Records the adjudication as a fact instead of leaving it inferrable only from the matcher's guess. Omit and it is filled from `possible_duplicate_of` automatically when that is set, so the common case needs nothing extra. Ignored unless status is REJECTED."
+        ),
     },
     async (params) => {
       const eventRows = await db
@@ -523,6 +529,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           // OPE-423: needed by the tombstone gate below. This tool is the
           // path that actually resurrected a merged event in production.
           mergedInto: events.mergedInto,
+          // OPE-450: the matcher's guess, used as the default adjudication
+          // target when an operator rejects without naming one.
+          possibleDuplicateOf: events.possibleDuplicateOf,
         })
         .from(events)
         .where(eq(events.id, params.event_id))
@@ -565,9 +574,29 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         }
       }
 
+      // OPE-450 — record WHY, not just what. A rejection that is really "this
+      // duplicates K" is the one case a future submission of the same candidate
+      // must be able to consult, and until now it was unrecoverable:
+      // admin_actions stores only previous/new status.
+      //
+      // Defaulted from possible_duplicate_of so the common path costs the
+      // operator nothing — but only ever on a REJECTED transition, because the
+      // column means "a human ruled this a duplicate", and no other transition
+      // carries that meaning.
+      const rejectedAsDuplicateOf =
+        params.status === "REJECTED"
+          ? (params.rejected_as_duplicate_of ?? event.possibleDuplicateOf ?? null)
+          : null;
+
       await db
         .update(events)
-        .set({ status: params.status, updatedAt: new Date() })
+        .set({
+          status: params.status,
+          updatedAt: new Date(),
+          // Only written on a REJECTED transition; leaving it untouched
+          // otherwise preserves the record if the row is later re-rejected.
+          ...(params.status === "REJECTED" ? { rejectedAsDuplicateOf } : {}),
+        })
         .where(eq(events.id, event.id));
 
       // Audit log — material status transitions need to land in admin_actions
@@ -582,6 +611,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           previous_status: previousStatus,
           new_status: params.status,
           slug: event.slug,
+          // OPE-450 — so get_event_lifecycle_history can show the keeper a row
+          // was rejected against without a second query.
+          ...(rejectedAsDuplicateOf ? { rejected_as_duplicate_of: rejectedAsDuplicateOf } : {}),
         }),
         createdAt: new Date(),
       });
