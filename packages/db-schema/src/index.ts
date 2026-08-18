@@ -428,6 +428,24 @@ export const events = sqliteTable(
     // only once that wiring exists. Self-FK at SQL level per the
     // parentEmailId convention.
     possibleDuplicateOf: text("possible_duplicate_of"),
+    /**
+     * OPE-450 (drizzle/0202) — the keeper this row was rejected AGAINST, set
+     * when a human rejects it as a duplicate. Distinct from
+     * `possibleDuplicateOf` above, and the distinction is the whole point:
+     *
+     *   possible_duplicate_of  — a MATCHER suspected this. A guess.
+     *   rejected_as_duplicate_of — a HUMAN decided this. An adjudication.
+     *
+     * Only the second may be allowed to suppress a future submission. Before
+     * this column, "rejected because duplicate of K" was unrecoverable —
+     * `admin_actions(event.status_change)` stores only previous/new status —
+     * so any pre-create check had to infer intent from the matcher's guess.
+     *
+     * NULL on every pre-existing row, and deliberately not backfilled:
+     * inventing an adjudication record after the fact would fabricate exactly
+     * the human decision this column exists to represent faithfully.
+     */
+    rejectedAsDuplicateOf: text("rejected_as_duplicate_of"),
     // K27 (drizzle/0124, 2026-06-15) — auto-rollover provenance pointer. Set on
     // a TENTATIVE next-occurrence edition created by rolloverEventIfRecurring()
     // when its source event transitions to OCCURRED. Points at the source (the

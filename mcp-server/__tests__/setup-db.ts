@@ -162,6 +162,7 @@ const SCHEMA_SQL = `
     -- K2 part 5 (drizzle/0096, analyst, 2026-05-31) — possible-duplicate
     -- pointer for MEDIUM-confidence dedup matches.
     possible_duplicate_of TEXT,
+    rejected_as_duplicate_of TEXT,
     -- K27 (drizzle/0124, 2026-06-15) — auto-rollover provenance pointer.
     rolled_from_event_id TEXT,
     -- UX-R1 / C1 (drizzle/0098, analyst 2026-06-01 EVE) — post-ingest operator-

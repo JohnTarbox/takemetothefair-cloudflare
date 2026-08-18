@@ -78,6 +78,13 @@ export function registerEventLifecycleTools(
           lifecycleStatus: events.lifecycleStatus,
           startDate: events.startDate,
           endDate: events.endDate,
+          // OPE-450 — the keeper this row was rejected AGAINST, when a human
+          // ruled it a duplicate. Surfaced in current_state because it is the
+          // question you actually have when you open the history of a REJECTED
+          // row ("rejected... against what?"), and admin_actions alone could
+          // never answer it.
+          rejectedAsDuplicateOf: events.rejectedAsDuplicateOf,
+          possibleDuplicateOf: events.possibleDuplicateOf,
         })
         .from(events)
         .where(eq(events.id, event_id))
@@ -269,6 +276,13 @@ export function registerEventLifecycleTools(
           previousEndDate: events.previousEndDate,
           startDate: events.startDate,
           endDate: events.endDate,
+          // OPE-450 — the keeper this row was rejected AGAINST, when a human
+          // ruled it a duplicate. Surfaced in current_state because it is the
+          // question you actually have when you open the history of a REJECTED
+          // row ("rejected... against what?"), and admin_actions alone could
+          // never answer it.
+          rejectedAsDuplicateOf: events.rejectedAsDuplicateOf,
+          possibleDuplicateOf: events.possibleDuplicateOf,
         })
         .from(events)
         .where(eq(events.id, event_id))
@@ -354,6 +368,13 @@ export function registerEventLifecycleTools(
               end_date: eventRow.endDate?.toISOString() ?? null,
               previous_start_date: eventRow.previousStartDate?.toISOString() ?? null,
               previous_end_date: eventRow.previousEndDate?.toISOString() ?? null,
+              // OPE-450. The two are NOT interchangeable and are reported
+              // separately on purpose: `possible_duplicate_of` is a matcher's
+              // suspicion, `rejected_as_duplicate_of` is a human's decision.
+              // Only the latter should ever be allowed to suppress a future
+              // submission of the same candidate.
+              rejected_as_duplicate_of: eventRow.rejectedAsDuplicateOf ?? null,
+              possible_duplicate_of: eventRow.possibleDuplicateOf ?? null,
             },
             timeline,
             timeline_entry_count: timeline.length,
