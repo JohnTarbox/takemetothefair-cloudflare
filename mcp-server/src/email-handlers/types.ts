@@ -110,6 +110,13 @@ export type ReplyKind =
   | "support-ack"
   | "press-ack"
   | "unsubscribe-ack"
+  // OPE-466 — classified `unsubscribe`, but the sender's own text (quoted
+  // transcript and our own footer removed) contains no request to be removed.
+  // Nobody is unsubscribed on this path; the reply says we could not tell and
+  // how to be certain. Distinct from `unsubscribe-ack` because the two make
+  // OPPOSITE claims about whether a state change happened, and conflating them
+  // is what let a classifier verdict alone remove a subscriber.
+  | "unsubscribe-unclear"
   | "source-suggestion-ack"
   // OPE-202 photo-intake lane acks. `photo-intake-ack` — an authenticated,
   // trusted sender: "received N photos", eligible for downstream vendor

@@ -60,7 +60,14 @@ async function performUnsubscribe(token: string): Promise<string> {
       // OPE-389 — one of TWO unsubscribe writers; the other is the inbound-email
       // handler (mcp-server/src/email-handlers/unsubscribe.ts). Both stamp the
       // time, or the column would be silently right only half the time.
-      .set({ unsubscribed: true, unsubscribedAt: new Date() })
+      // OPE-466 — and both stamp the EVIDENCE, for the same reason. This path
+      // needs no phrase matching: arriving here means a signed link was
+      // followed, which is the least ambiguous request there is.
+      .set({
+        unsubscribed: true,
+        unsubscribedAt: new Date(),
+        unsubscribeEvidence: "signed-unsubscribe-link",
+      })
       .where(eq(newsletterSubscribers.email, email));
     return "ok";
   } catch (e) {
