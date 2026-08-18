@@ -1,0 +1,46 @@
+state	alias	canonical_slug	alias_type	note
+# OPE-425 — hand-verified aliases for place names our venue data uses that the
+# Census place file does NOT contain.
+#
+# This file is deliberately SMALL and deliberately hand-written, which is the
+# opposite of the rule for `ne-locations.tsv`. The distinction matters:
+#
+#   the UNIVERSE must be complete and machine-sourced — a partial municipality
+#   list fails silently and drops inventory nobody notices;
+#
+#   the ALIASES are a mapping from OUR OWN messy strings onto that universe.
+#   There is no authoritative file for "what did a submitter mean when they
+#   typed Oquossoc", so every row here is a judgement, and the honest way to
+#   hold judgements is one per line where a reviewer can check them.
+#
+# Census does not carry these: Oquossoc and Hyannis are not CDPs in the 2023
+# place file at all, and several of the rest are postal names rather than
+# statistical places. Verified individually against the town they sit in.
+#
+# ⚠️ NOT listed here, on purpose — left for the OPE-421 report rather than
+# resolved on a guess:
+#   MA Cape Cod    — a region, not a municipality. The venue row IS the defect.
+#
+# (CT Mystic is not here either, but for the opposite reason: it straddles
+# Stonington and Groton, so a hand-picked parent would be wrong half the time —
+# and it turns out not to need one, because Census carries "Mystic CDP" as a
+# statistical place in its own right. It resolves from the universe file.)
+#
+ME	oquossoc	me-rangeley	village	Village of Rangeley. Splits an 11-event market across two rows.
+ME	northeast harbor	me-mount-desert	village	Village of Mount Desert.
+ME	south paris	me-paris	village	Village of Paris.
+ME	lisbon falls	me-lisbon	village	Village of Lisbon.
+ME	cumberland center	me-cumberland	village	Village of Cumberland.
+ME	kittery point	me-kittery	village	Village of Kittery.
+ME	east waterboro	me-waterboro	village	Village of Waterboro.
+ME	north waterford	me-waterford	village	Village of Waterford.
+ME	west newfield	me-newfield	village	Village of Newfield.
+MA	hyannis	ma-barnstable	village	Village of Barnstable; not a CDP in the 2023 place file.
+MA	north easton	ma-easton	village	Village of Easton.
+MA	broolkine	ma-brookline	misspelling	Transposition of Brookline. Feeds OPE-421.
+NH	manchaster	nh-manchester	misspelling	Transposition of Manchester. Feeds OPE-421.
+RI	north scituate	ri-scituate	village	Village of Scituate.
+RI	riverside	ri-east-providence	village	Village of East Providence.
+RI	west kingston	ri-south-kingstown	village	Village of South Kingstown.
+VT	east thetford	vt-thetford	village	Village of Thetford.
+VT	west dover	vt-dover	village	Village of Dover.
