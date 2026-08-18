@@ -4,6 +4,7 @@ import { z } from "zod";
 import { eq } from "drizzle-orm";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { users, passwordResetTokens } from "@/lib/db/schema";
+import { isPlaceholderEmail, PLACEHOLDER_REFUSAL } from "@/lib/auth/placeholder-account";
 import { logError } from "@/lib/logger";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { getSiteUrl } from "@/lib/email/send";
@@ -34,6 +35,21 @@ export async function POST(request: NextRequest) {
     }
 
     const email = parsed.data.email.toLowerCase().trim();
+    // OPE-293 — never mint a reset token for an ingestion placeholder.
+    //
+    // This is the path that would give a placeholder a credential: the token is
+    // mailed to `user.email`, i.e. to `pending+<slug>@meetmeatthefair.com`, and
+    // completing the reset makes the ordinary credentials login work. Refused
+    // before the lookup so no token row is written and no mail is enqueued.
+    //
+    // The caller sees no difference — this endpoint already returns an
+    // identical payload whether or not the address is known, which is the
+    // behaviour that keeps it from being an account-existence oracle.
+    if (isPlaceholderEmail(email)) {
+      console.warn(`[forgot-password] refused — ${PLACEHOLDER_REFUSAL}`);
+      return GENERIC_OK;
+    }
+
     const user = await db.query.users.findFirst({
       where: eq(users.email, email),
     });
