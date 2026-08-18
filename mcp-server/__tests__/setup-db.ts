@@ -701,6 +701,31 @@ const SCHEMA_SQL = `
     created_by TEXT
   );
 
+  CREATE TABLE promoter_outreach_attempts (
+    id TEXT PRIMARY KEY,
+    promoter_id TEXT NOT NULL,
+    event_id TEXT,
+    channel TEXT NOT NULL DEFAULT 'email',
+    to_address TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    body_text TEXT NOT NULL,
+    reason TEXT,
+    status TEXT NOT NULL DEFAULT 'queued',
+    requested_by TEXT,
+    created_at INTEGER NOT NULL,
+    sent_at INTEGER,
+    outcome_at INTEGER,
+    inbound_email_id TEXT,
+    provider_message_id TEXT,
+    follow_up_of TEXT
+  );
+
+  -- OPE-384 — "never double-ask" is enforced by the DATABASE, so the tests
+  -- must carry the index or they would prove the guard works when it doesn't.
+  CREATE UNIQUE INDEX idx_promoter_outreach_one_open_per_event
+    ON promoter_outreach_attempts(event_id)
+    WHERE event_id IS NOT NULL AND status IN ('queued', 'sent');
+
   CREATE TABLE enrichment_log (
     id TEXT PRIMARY KEY,
     target_type TEXT NOT NULL,

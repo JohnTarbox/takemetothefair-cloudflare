@@ -33,6 +33,7 @@ import {
   photoCoverageDaily,
   ga4DailyMetrics,
   membraneCrossings,
+  promoterOutreachAttempts,
   gscDailyTotals,
   gscSearchMetrics,
   promoterEnrichmentCandidates,
@@ -483,6 +484,32 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     priority: "P1",
     expectedWindowHours: 72,
     lastEvidenceAt: (db) => maxTs(db, membraneCrossings, membraneCrossings.createdAt),
+  },
+  {
+    // OPE-384 stage 1 — promoter confirmation outreach.
+    //
+    // ⚠️ Ships DORMANT (`enabled_at` NULL). `PROMOTER_OUTREACH_ENABLED` is
+    // "false" until John approves the organizer-facing copy, and a probe that
+    // fired while the capability was deliberately switched off would be pure
+    // noise. Set `enabled_at` the day the flag flips — that is the whole
+    // convention the OPE-246 rule describes for gated ships.
+    //
+    // Watches `created_at`, not `sent_at`, on purpose. The row is written
+    // BEFORE the send and survives a gated refusal, so this measures "is the
+    // capability being exercised at all" rather than "is mail going out" —
+    // which is the question that distinguishes a dead rail from a paused one.
+    name: "promoter-outreach-attempts",
+    ownerOpe: "OPE-384",
+    label: "Promoter confirmation outreach",
+    // P1 like every other probe. This is less urgent than a dead GSC feed, and
+    // the type offers only P0/P1 — widening the union to say so would reach
+    // into the alerting pipeline for a cosmetic gain. Once enabled, a silent
+    // outreach rail IS the shipped-but-never-executing class, so P1 is not a
+    // misfit; the long 14-day window carries the "this is slower-moving"
+    // signal instead.
+    priority: "P1",
+    expectedWindowHours: 14 * 24,
+    lastEvidenceAt: (db) => maxTs(db, promoterOutreachAttempts, promoterOutreachAttempts.createdAt),
   },
 ];
 

@@ -41,6 +41,17 @@ ALERT_EMAIL_TECHNICAL = "alert@meetmeatthefair.com, jtarboxme@gmail.com"
 # "false" stages to vendor_enrichment_candidates only (the Phase-1 default).
 # Set ENRICHMENT_DRY_RUN = "false" to enable Phase-2 auto-merge of un-flagged fills.
 CLOUDFLARE_ACCOUNT_ID = "e6011e48b7014ef83c77e3c767dac6cf"
+# OPE-384 stage 1 — promoter direct outreach. Ships OFF.
+#
+# Organizer-facing copy needs John's approval before a single real send, so the
+# capability lands gated. A refused send is NOT discarded: `send_promoter_email`
+# still writes its `promoter_outreach_attempts` row with status='queued', so the
+# ask survives the refusal and is drainable the day this flips (the OPE-368
+# lesson — a gated send must be recoverable).
+#
+# Declared here, not in the dashboard: a dashboard [vars] value is silently
+# wiped by the next `wrangler deploy`.
+PROMOTER_OUTREACH_ENABLED = "false"
 ENRICHMENT_DRY_RUN = "true"
 # OPE-163 — customer-facing reply send gate. reply_to_inbound_email (and the
 # forthcoming /admin/inbound-emails compose UI) refuse to send unless this is

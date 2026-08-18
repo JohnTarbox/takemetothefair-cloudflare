@@ -3347,6 +3347,78 @@ export const vendorOutreachAttempts = sqliteTable(
   ]
 );
 
+/**
+ * OPE-384 stage 1 — one row per attempt to ask an organizer to confirm their
+ * own event's details (drizzle/0205).
+ *
+ * See the migration for the full rationale. The three departures from
+ * `vendorOutreachAttempts` worth knowing at the call site:
+ *
+ *  - the message itself is stored (`subject` + `bodyText`), because a reply is
+ *    only interpretable against the ask that produced it;
+ *  - `toAddress` is stored as sent, so a later `contact_email` edit cannot
+ *    rewrite who we actually wrote to;
+ *  - `queued` is a real status. A send refused by `PROMOTER_OUTREACH_ENABLED`
+ *    keeps its prose and becomes drainable when the flag flips (OPE-368's
+ *    lesson: a gated send must be recoverable, not discarded at refusal).
+ *
+ * A partial unique index on `(event_id) WHERE status IN ('queued','sent')`
+ * makes "never double-ask" an invariant of the table rather than a convention
+ * of whichever caller happens to check first.
+ */
+export const promoterOutreachAttempts = sqliteTable(
+  "promoter_outreach_attempts",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    promoterId: text("promoter_id")
+      .notNull()
+      .references(() => promoters.id, { onDelete: "cascade" }),
+    /** Null when the ask is about the organizer generally, not one event. */
+    eventId: text("event_id").references(() => events.id, { onDelete: "set null" }),
+    channel: text("channel", { enum: ["email", "phone", "in_person", "other"] })
+      .notNull()
+      .default("email"),
+    /** The address as sent — history, not a live lookup. */
+    toAddress: text("to_address").notNull(),
+    subject: text("subject").notNull(),
+    bodyText: text("body_text").notNull(),
+    /** Why the event was flagged; stage 2's trigger queue fills this. */
+    reason: text("reason"),
+    status: text("status", {
+      enum: ["queued", "sent", "replied", "confirmed", "no_response", "bounced", "refused"],
+    })
+      .notNull()
+      .default("queued"),
+    requestedBy: text("requested_by"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    sentAt: integer("sent_at", { mode: "timestamp" }),
+    outcomeAt: integer("outcome_at", { mode: "timestamp" }),
+    /** The inbound that closed it (stage 4). */
+    inboundEmailId: text("inbound_email_id"),
+    providerMessageId: text("provider_message_id"),
+    /** Self-FK — the single capped follow-up. */
+    followUpOf: text("follow_up_of"),
+  },
+  (t) => [
+    index("idx_promoter_outreach_promoter").on(t.promoterId),
+    index("idx_promoter_outreach_status").on(t.status, t.createdAt),
+    index("idx_promoter_outreach_event").on(t.eventId),
+  ]
+);
+
+/**
+ * OPE-384 — statuses in which an attempt is still OPEN, i.e. we are waiting on
+ * the organizer. Exported so the suppression check and the partial unique index
+ * cannot drift apart; if you add a status here, add it to the index in
+ * drizzle/0205 too.
+ *
+ * `replied` is NOT open: they answered, and whether the answer resolved the
+ * question is `confirmed`'s job, not a reason to keep asking.
+ */
+export const OPEN_PROMOTER_OUTREACH_STATUSES = ["queued", "sent"] as const;
+
 // §10.2 per-URL time-to-index cycle tracking (drizzle/0057). One row per
 // IndexNow submission; firstCrawlAt + lagSeconds are populated by the sweep
 // that joins against gscInspectionState.lastCrawlTime. Powers §10.3 median.
