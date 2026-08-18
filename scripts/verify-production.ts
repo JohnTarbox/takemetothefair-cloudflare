@@ -630,6 +630,63 @@ async function main() {
     await browser.close();
   }
 
+  // ── Static asset caching (OPE-476) ─────────────────────────
+  //
+  // Informational rather than gating: this workflow runs weekly with
+  // `continue-on-error: true`. The gate is scripts/check-static-asset-cache.ts
+  // in ci.yml, which fails the PR that edits `public/_headers`. This confirms
+  // the rule survives the round trip through the build into Workers Static
+  // Assets — which the source guard, reading only the repo, cannot see.
+  console.log("\n--- Static asset caching ---");
+  try {
+    // Discover a real hashed asset from the served HTML rather than hardcoding
+    // one: every filename under /_next/static/ changes on each build, so a
+    // literal path would 404 the day after it was written.
+    const html = await (await fetch(BASE_URL)).text();
+    const assetPath = /\/_next\/static\/[\w./-]+\.(?:js|css|woff2)/.exec(html)?.[0];
+
+    if (!assetPath) {
+      warn("Static asset cache header", "No /_next/static/ asset found in homepage HTML to probe");
+    } else {
+      const assetUrl = `${BASE_URL}${assetPath}`;
+      const cc = (await fetch(assetUrl, { method: "HEAD" })).headers.get("cache-control") ?? "";
+      const maxAge = Number(/max-age=(\d+)/.exec(cc)?.[1] ?? 0);
+
+      if (/\bimmutable\b/.test(cc) && maxAge >= 31_536_000) {
+        pass("Static asset cache header", `${assetPath} -> ${cc}`);
+      } else if (/must-revalidate/.test(cc) && maxAge === 0) {
+        // The exact Workers Static Assets default — i.e. `_headers` is not
+        // reaching this prefix at all, which is the OPE-476 regression.
+        fail(
+          "Static asset cache header",
+          `${assetPath} -> "${cc}" — the Workers Static Assets default. The ` +
+            `/_next/static/* rule in public/_headers is not being applied.`
+        );
+      } else {
+        fail(
+          "Static asset cache header",
+          `${assetPath} -> "${cc}" (expected immutable, max-age >= 1y)`
+        );
+      }
+
+      // The other half of the invariant, and the more dangerous direction:
+      // HTML is not content-addressed, so a long cache there would pin a stale
+      // page in browsers with no way to invalidate it.
+      const htmlCc =
+        (await fetch(`${BASE_URL}/about`, { method: "HEAD" })).headers.get("cache-control") ?? "";
+      if (/\bimmutable\b/.test(htmlCc)) {
+        fail("Page HTML is not immutable", `/about -> "${htmlCc}" — HTML must stay revalidatable`);
+      } else {
+        pass("Page HTML is not immutable", `/about -> ${htmlCc || "(no cache-control)"}`);
+      }
+    }
+  } catch (err) {
+    warn(
+      "Static asset cache header",
+      `Probe failed: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+
   // ── Print Results ──────────────────────────────────────────
   console.log("\n" + "=".repeat(70));
   console.log("PRODUCTION VERIFICATION RESULTS");

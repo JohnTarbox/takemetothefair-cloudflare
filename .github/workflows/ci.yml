@@ -119,6 +119,9 @@ jobs:
       - name: Check event JSON-LD required fields (A10 — guards K46 'Missing field location')
         run: npx tsx scripts/check-event-jsonld-fields.ts
 
+      - name: Check /_next/static keeps its immutable cache header (OPE-476)
+        run: npx tsx scripts/check-static-asset-cache.ts
+
   e2e:
     name: E2E Tests
     runs-on: ubuntu-latest
