@@ -109,6 +109,7 @@ import {
   type SubmitFetchResult,
 } from "../email-handlers/submit.js";
 import { recordSourceCitations } from "../email-handlers/pipeline-citations.js";
+import { bodyHasProseSubstance } from "../email-handlers/body-prose-substance.js";
 import { computeFillEmptyProposals } from "../email-handlers/enrich-proposal.js";
 import { detectRosterEntries, type RosterEntry } from "../email-handlers/roster-detect.js";
 import { isShareRedirectHost, resolveShareRedirect } from "../email-handlers/share-redirect.js";
@@ -1113,7 +1114,16 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     // behavior/replies/tests are byte-for-byte unchanged.
     const bodyTextRaw = rowSnapshot.bodyTextExcerpt ?? "";
     const isFreeTextIntent = rowSnapshot.classifiedSubIntent === "free_text";
-    const bodyHasSubstance = stripSignature(bodyTextRaw).trim().length > 20;
+    // OPE-457 — measure PROSE, not raw length. `"https://vineyardartisans.com/"`
+    // is 29 chars and used to clear this bar, so a body that was nothing but a
+    // URL was handed to the LLM as an independent prose source. It invented
+    // three festivals with 2024 dates, and the citation layer faithfully
+    // recorded them as coming from the email body — which they did.
+    //
+    // The URL is already its own `kind: "url"` source in the same list, so
+    // body-extracting it can contribute nothing that source does not. Cutting
+    // it removes hallucination surface without trading away any recall.
+    const bodyHasSubstance = bodyHasProseSubstance(stripSignature(bodyTextRaw));
     const bodyUrls = extractAllUrls(bodyTextRaw, "", 10);
 
     // ───── OPE-68: OCR poster/PDF attachments into extra submit sources ─────
@@ -2330,7 +2340,10 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     eventId: string,
     extracted: import("../email-handlers/submit.js").SubmitExtractResult,
     source: SubmitSource,
-    fromAddress: string
+    fromAddress: string,
+    // OPE-457 — the text a body/attachment citation rests on, for the
+    // contradiction guard. Only meaningful for non-url sources.
+    supportingText?: string
   ): Promise<void> {
     try {
       await step.do(
@@ -2342,6 +2355,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             extracted,
             source,
             fromAddress,
+            supportingText,
           });
           return { inserted };
         }
@@ -2623,7 +2637,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
               dedup.existingEventId,
               extracted,
               cand.source,
-              fromAddress
+              fromAddress,
+              emailBody
             );
           }
           continue;
@@ -2651,7 +2666,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           submitted.id,
           extracted,
           cand.source,
-          fromAddress
+          fromAddress,
+          emailBody
         );
         // OPE-68 — attachment-sourced created event: count it + (image only)
         // set the stored poster as the event hero, best-effort.
