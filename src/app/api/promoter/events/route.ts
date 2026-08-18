@@ -170,6 +170,18 @@ export async function POST(request: NextRequest) {
       stateCode: resolvedStateCode,
       isStatewide: isStatewide ?? false,
       promoterId: promoter.id,
+      // OPE-433 — named explicitly rather than inherited from the DDL default.
+      //
+      // A promoter entering their OWN event is the strongest provenance we
+      // have, so `true` is right here — but it must be a decision the writer
+      // states, not a default it silently picks up. Every other insert path
+      // names these; these two were the only ones that did not.
+      //
+      // `syncEnabled: false` is the more consequential half: a promoter's own
+      // data must not be clobbered by a later scraper run. Inheriting `true`
+      // meant an importer could overwrite the organizer's own listing.
+      datesConfirmed: true,
+      syncEnabled: false,
       startDate: normalizeEventDate(startDate),
       endDate: normalizeEventDate(endDate),
       publicStartDate,

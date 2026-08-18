@@ -206,6 +206,9 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
       publicStartDate,
       publicEndDate,
       datesConfirmed: data.datesConfirmed,
+      // OPE-433 — stated, not inherited. An admin creating an event by hand is
+      // authoring first-party data; a later importer must not overwrite it.
+      syncEnabled: data.syncEnabled ?? false,
       discontinuousDates: data.discontinuousDates || false,
       categories: JSON.stringify(data.categories),
       tags: JSON.stringify(data.tags),
