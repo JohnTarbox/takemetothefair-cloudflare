@@ -25,6 +25,7 @@ import { classifySource } from "@/lib/source-classification";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 import { autoLinkVenue, deriveStateFromText } from "@/lib/venue-matching";
 import { normalizeEventDate } from "@/lib/event-dates";
+import { groundNameInSources } from "@/lib/url-import/name-grounding";
 import {
   areDatesContiguous,
   isUnusableEventName,
@@ -431,6 +432,27 @@ export async function POST(request: NextRequest) {
       if (!gateReasons.includes("past_date")) gateReasons.push("past_date");
     }
 
+    // OPE-378 — a name token that appears in no source is a fabrication.
+    //
+    // One submission produced "28th Annual Holiday Craft Fair" from a body that
+    // never says "Holiday". Every other word was genuinely there; one added
+    // token, plausible for a November craft fair, changed what the event is.
+    //
+    // Flagged rather than rewritten: a name is human-facing, and deleting a
+    // word from it can produce something worse than the embellishment. This
+    // routes it to the review queue that already exists. Grounding is checked
+    // against EVERY text we saw (description carries the submitted prose), so a
+    // name legitimately drawn from a flyer is not accused.
+    const nameGrounding = groundNameInSources(effectiveName, [
+      description ?? null,
+      data.name ?? null,
+      data.sourceUrl ?? null,
+    ]);
+    if (nameGrounding.shouldFlag && !gateReasons.includes("ungrounded_name")) {
+      gateReasons.push("ungrounded_name");
+      gateRoute = "PENDING_REVIEW";
+    }
+
     const eventStatus = gateRoute === "PENDING_REVIEW" ? "PENDING" : baseEventStatus;
     const gateFlagsJson = gateReasons.length > 0 ? JSON.stringify(gateReasons) : null;
 
@@ -577,7 +599,13 @@ export async function POST(request: NextRequest) {
       // EDITION that needs web-confirmation → OCCURRED in the review/analyst
       // lane (the headless worker can't web-confirm), not an upcoming event.
       // Operator triage queue at /admin/events?flagged=1.
-      flaggedForReview: anyHoursUnknown || gateReasons.includes("past_date") ? 1 : 0,
+      flaggedForReview:
+        anyHoursUnknown ||
+        gateReasons.includes("past_date") ||
+        // OPE-378 — an invented name reads perfectly, so it needs a human.
+        gateReasons.includes("ungrounded_name")
+          ? 1
+          : 0,
     });
 
     await recomputeEventCompleteness(db, newEventId);
