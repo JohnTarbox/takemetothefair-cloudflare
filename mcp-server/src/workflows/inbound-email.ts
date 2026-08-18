@@ -1112,7 +1112,26 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     // body-only B2 path below run. Pure single-source cases (exactly one
     // URL, or body only) fall through to the EXISTING fast paths so their
     // behavior/replies/tests are byte-for-byte unchanged.
-    const bodyTextRaw = rowSnapshot.bodyTextExcerpt ?? "";
+    // OPE-459 — read the FULL body, not the 500-char preview.
+    //
+    // This one line caused both halves of that ticket. `bodyTextExcerpt` is a
+    // 500-character admin preview (BODY_EXCERPT_LEN); `bodyText` is the real
+    // body, already capped at 50k by the handler. Multi-source URL extraction
+    // ran on the preview, so for email "MV 1":
+    //
+    //   • the 5th link was cut mid-string at char 500 — `https://gomarthas…`
+    //     became the literal text `https://go`, which `new URL()` happily
+    //     parses as host `go`, producing the reported `https://go/`. There is
+    //     no regex mangling a `go`-prefixed host; the string was simply
+    //     truncated.
+    //   • the four links that followed were never seen at all, which read as a
+    //     "silent cap at 5 URLs". There is no URL cap at 5 — `extractAllUrls`
+    //     is called with cap 10. They were just past character 500.
+    //
+    // The row snapshot has selected `bodyText` since OPE-174 for exactly this
+    // reason, and the comment on that select already warns the excerpt is "only
+    // a 500-char preview" — the free-text path used it, this path did not.
+    const bodyTextRaw = rowSnapshot.bodyText ?? rowSnapshot.bodyTextExcerpt ?? "";
     const isFreeTextIntent = rowSnapshot.classifiedSubIntent === "free_text";
     // OPE-457 — measure PROSE, not raw length. `"https://vineyardartisans.com/"`
     // is 29 chars and used to clear this bar, so a body that was nothing but a
