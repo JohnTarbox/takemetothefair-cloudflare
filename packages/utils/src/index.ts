@@ -467,6 +467,11 @@ export * from "./email-recipients";
 // inbound Workflow.
 export * from "./support-obligation";
 
+// OPE-433 scope 4 — provenance for venues and event_days, the two tables that
+// carry none and where the fabricated-fact defects actually cluster. Pure: it
+// builds and filters citation rows; each codebase owns its own insert.
+export * from "./entity-citation";
+
 // OPE-433 scope 5 — venue and event_day writes must be answerable. Pure: it
 // builds the audit payload and decides whether one is worth writing; each
 // codebase owns its own insert into admin_actions.

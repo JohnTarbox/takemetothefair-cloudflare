@@ -12,8 +12,13 @@
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import { and, eq, gt, lt, or } from "drizzle-orm";
 import * as schema from "@/lib/db/schema";
-import { eventDays, events } from "@/lib/db/schema";
+import { eventDays, events, entityDataCitations } from "@/lib/db/schema";
 import { recordMutation } from "@/lib/audit/record-mutation";
+import {
+  buildEntityCitations,
+  toCitationFields,
+  type CitationSourceType,
+} from "@takemetothefair/utils";
 import { findUniqueSlug, getSlugPrefixBounds, unsafeSlug, type Slug } from "@/lib/utils";
 
 type Db = DrizzleD1Database<typeof schema>;
@@ -48,15 +53,39 @@ export async function insertEventDaysBatched(
   eventId: string,
   days: EventDayInput[] | null | undefined,
   /**
-   * OPE-433 scope 5 — who is creating these days.
+   * OPE-433 scope 5 — WHO is creating these days.
    *
-   * Optional, and the audit is skipped when absent. That is deliberate: an
-   * anonymous audit row records that something happened and still cannot say
-   * what, which is the specimen's failure with extra steps. Callers that know
-   * their identity should pass it; the guard in
+   * Optional, and the audit is skipped when absent. Deliberate: an anonymous
+   * audit row records that something happened and still cannot say what, which
+   * is the specimen's failure with extra steps. Callers that know their
+   * identity should pass it; the guard in
    * `scripts/check-venue-day-writes-audited.ts` makes the omission visible.
    */
-  actor?: string
+  actor?: string,
+  /**
+   * OPE-433 scope 4 — WHERE these hours came from, when the caller knows.
+   *
+   * `event_days` is where BOTH logged fabricated-fact instances live: MDI's
+   * invented 10-5/10-4/10-3 hours against a published flat 9-4, and OPE-411's
+   * 09:00–18:00 rows. A day row that cannot say where its hours came from is
+   * indistinguishable from one somebody made up, which is why they were made
+   * up for months without anyone being able to tell.
+   *
+   * Optional on purpose. A caller with no real source passes nothing and
+   * records nothing — absence is the honest value, and inventing a source to
+   * satisfy a required argument would be the very failure this closes.
+   *
+   * `actor` and `source` are separate questions and are kept separate: an
+   * admin typing hours by hand HAS an actor and no source; an importer has
+   * both; a migration has a source and no person.
+   */
+  source?: {
+    sourceUrl: string;
+    sourceName?: string | null;
+    sourceType: CitationSourceType;
+    confidence?: number | null;
+    createdBy?: string | null;
+  }
 ): Promise<void> {
   if (!days || days.length === 0) return;
   const rows = days.map((day) => ({
@@ -73,14 +102,9 @@ export async function insertEventDaysBatched(
     await db.insert(eventDays).values(rows.slice(i, i + EVENT_DAYS_BATCH_SIZE));
   }
 
-  // OPE-433 scope 5 — `event_days` is where BOTH logged fabricated-fact
-  // instances live: MDI's invented 10-5/10-4/10-3 hours against a published
-  // flat 9-4, and OPE-411's 09:00–18:00 rows. Neither could be traced to a
-  // writer, because day rows were created with nothing recording who.
-  //
-  // One row per day rather than one for the batch: the question that gets
-  // asked later is "where did THIS day's hours come from", and a batch-level
-  // entry cannot answer it.
+  // OPE-433 scope 5 — WHO. One row per day rather than one for the batch: the
+  // question asked later is "where did THIS day's hours come from", and a
+  // batch-level entry cannot answer it.
   if (actor) {
     for (const r of rows) {
       await recordMutation(db, {
@@ -92,6 +116,34 @@ export async function insertEventDaysBatched(
         note: `event ${eventId}`,
       });
     }
+  }
+
+  // OPE-433 scope 4 — WHERE FROM.
+  if (!source?.sourceUrl) return;
+  // Best-effort, and chunked to the same D1 parameter ceiling as the rows
+  // themselves. Provenance must never be able to fail an insert that already
+  // succeeded — the days are worth more than the note about them.
+  try {
+    const now = new Date();
+    const cites = rows.flatMap((r) =>
+      buildEntityCitations(
+        "EVENT_DAY",
+        r.id,
+        toCitationFields({
+          date: r.date,
+          openTime: r.openTime,
+          closeTime: r.closeTime,
+          notes: r.notes,
+        }),
+        source,
+        now
+      )
+    );
+    for (let i = 0; i < cites.length; i += EVENT_DAYS_BATCH_SIZE) {
+      await db.insert(entityDataCitations).values(cites.slice(i, i + EVENT_DAYS_BATCH_SIZE));
+    }
+  } catch {
+    // Additive. The day rows are already stored.
   }
 }
 
