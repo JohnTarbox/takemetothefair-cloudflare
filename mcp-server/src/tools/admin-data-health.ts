@@ -19,7 +19,13 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { desc, eq, gte, sql } from "drizzle-orm";
-import { eventDiscrepancies, goodwillHealthSnapshots, adminActions, events } from "../schema.js";
+import {
+  eventDiscrepancies,
+  goodwillHealthSnapshots,
+  adminActions,
+  events,
+  inboundEmails,
+} from "../schema.js";
 import { jsonContent } from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
@@ -157,6 +163,51 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
         .from(events)
         .where(sql`${events.mergedInto} IS NOT NULL AND ${events.status} <> 'REJECTED'`);
 
+      // OPE-452 — an email that ARRIVED with content and landed with none.
+      //
+      // The reported specimen turned out to be captured fine (2,318 chars), but
+      // the check it implied is worth having, because an empty body is
+      // indistinguishable from a genuinely content-free email — and OPE-407's
+      // detector will cheerfully tell a sender "your message was empty" on the
+      // strength of exactly this row shape. A false statement about the
+      // customer's own words is the worst thing that surface can say.
+      //
+      // Keyed on raw_size, which is recorded at receive time before any
+      // parsing: substantial bytes in, nothing stored, is a capture fault
+      // rather than a quiet blank.
+      //
+      // Excerpt-bearing rows are deliberately EXCLUDED. 177 rows have a NULL
+      // body_text/body_html but a populated excerpt — that is the full-body
+      // storage gap (OPE-156's territory), not lost content, and folding the
+      // two together would report 179 losses where there are 2.
+      const emptyCaptureRows = await db
+        .select({
+          id: inboundEmails.id,
+          receivedAt: inboundEmails.receivedAt,
+          fromAddress: inboundEmails.fromAddress,
+          subject: inboundEmails.subject,
+          rawSize: inboundEmails.rawSize,
+        })
+        .from(inboundEmails)
+        .where(
+          sql`COALESCE(LENGTH(${inboundEmails.bodyText}), 0) = 0
+              AND COALESCE(LENGTH(${inboundEmails.bodyHtml}), 0) = 0
+              AND COALESCE(LENGTH(${inboundEmails.bodyTextExcerpt}), 0) = 0
+              AND COALESCE(${inboundEmails.rawSize}, 0) > 2000`
+        )
+        .orderBy(sql`${inboundEmails.receivedAt} DESC`)
+        .limit(20);
+
+      const [emptyCaptureCount] = await db
+        .select({ count: sql<number>`count(*)` })
+        .from(inboundEmails)
+        .where(
+          sql`COALESCE(LENGTH(${inboundEmails.bodyText}), 0) = 0
+              AND COALESCE(LENGTH(${inboundEmails.bodyHtml}), 0) = 0
+              AND COALESCE(LENGTH(${inboundEmails.bodyTextExcerpt}), 0) = 0
+              AND COALESCE(${inboundEmails.rawSize}, 0) > 2000`
+        );
+
       // ── Build the response ───────────────────────────────────
       const today = trend[0];
       const phase1Metrics = {
@@ -199,6 +250,20 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
               rule: "events.merged_into IS NOT NULL implies status = 'REJECTED'",
               violation_count: Number(tombstoneViolationCount?.count ?? 0),
               violations: tombstoneViolations,
+            },
+            // OPE-452. Same capped-list-plus-true-total shape as the
+            // tombstone check above, so a truncated list never reads as the
+            // whole set.
+            inbound_body_capture: {
+              rule: "raw_size > 2KB implies SOME body captured (text, html, or excerpt)",
+              violation_count: Number(emptyCaptureCount?.count ?? 0),
+              violations: emptyCaptureRows.map((r) => ({
+                id: r.id,
+                received_at: r.receivedAt,
+                from: r.fromAddress,
+                subject: r.subject,
+                raw_size: r.rawSize,
+              })),
             },
             snapshot_trend: trend,
           }),

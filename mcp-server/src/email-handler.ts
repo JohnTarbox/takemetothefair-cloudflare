@@ -34,6 +34,7 @@
 
 import PostalMime, { type Email } from "postal-mime";
 import { logError } from "./logger.js";
+import { stripQuotedReply } from "./email-handlers/strip-quoted-reply.js";
 import { getDb, type Db } from "./db.js";
 import { inboundEmails, inboundEmailSenders, users } from "./schema.js";
 import { eq, sql } from "drizzle-orm";
@@ -470,7 +471,26 @@ export async function handleInboundEmail(
     // 6. Pick URL from body (used by `submit` / `new_event` intent
     //    only, but stored unconditionally so the row is self-contained
     //    for future intents).
-    const parsedUrl = pickPrimaryUrl(bodyText, bodyHtml);
+    // OPE-452 — pick the URL from the sender's NEW text, not from the quoted
+    // copy of our own outbound reply beneath it.
+    //
+    // Emma Welford's reply carried three organizer-confirmed dates and no URL
+    // whatsoever, yet the row recorded
+    // `https://meetmeatthefair.com/promoters/paradise-city-arts-festivals` —
+    // a link that appears only inside the quote of what WE sent her. On any
+    // reply, the more helpful our original message was, the more of our own
+    // links there are to misattribute to the person answering us.
+    //
+    // Falls back to the full body when there is no quoted region, when the
+    // quote belongs to a FORWARD (there the quoted text is the submission), or
+    // when the sender bottom-posted — see stripQuotedReply.
+    const newText = stripQuotedReply(bodyText);
+    const quotedReplyStripped = newText !== bodyText;
+    // When a quoted reply was removed, the HTML alternative still contains that
+    // same quote and cannot be stripped as cheaply — so it is not consulted.
+    // The honest result for a reply whose new text carries no link is NO url,
+    // which is exactly Emma's case: she sent three dates and zero URLs.
+    const parsedUrl = pickPrimaryUrl(newText, quotedReplyStripped ? "" : bodyHtml);
 
     // 6b. Capture Message-ID for dedup. RFC 5322 §3.6.4 guarantees a
     //     globally unique value when present; absence is a real signal
