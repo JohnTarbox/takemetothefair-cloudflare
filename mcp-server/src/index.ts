@@ -21,6 +21,7 @@ import { registerMarketPlayerTools } from "./tools/admin-market-players.js";
 import { registerAdminProblemReportTools } from "./tools/admin-problem-reports.js";
 import { correlateProblemReportCore } from "./problem-reports/correlate.js";
 import { registerMergeEntitiesTools } from "./tools/admin-merge-entities.js";
+import { registerMergeVendorTool } from "./tools/admin-merge-vendor.js";
 import { registerVendorHierarchyTools } from "./tools/admin-vendor-hierarchy.js";
 import { registerVendorRosterTools } from "./tools/admin-vendor-roster.js";
 import { registerSyndicationTools } from "./tools/admin-syndication.js";
@@ -329,6 +330,7 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
         registerMarketPlayerTools(this.server, db, auth);
         // DQ1 follow-up (2026-06-05) — merge_venue + merge_promoter.
         registerMergeEntitiesTools(this.server, db, auth);
+        registerMergeVendorTool(this.server, db, auth);
         // EH1 Phase 1 (2026-06-05) — set_vendor_relationship + set_vendor_display_policy + set_vendor_alias.
         registerVendorHierarchyTools(this.server, db, auth);
         // OPE-13 (2026-06-28) — set_vendor_roster_status (analyst sweep write path).
@@ -607,6 +609,7 @@ async function handleLegacyMcpRequest(request: Request, env: Env): Promise<Respo
       registerAdminTools(server, db, auth, env);
       registerAdminProblemReportTools(server, db);
       registerMergeEntitiesTools(server, db, auth);
+      registerMergeVendorTool(server, db, auth);
       registerVendorHierarchyTools(server, db, auth);
       registerVendorRosterTools(server, db, auth);
       registerEnrichVendorTool(server, db, auth, env);
