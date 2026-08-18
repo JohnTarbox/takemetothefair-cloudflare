@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/api/with-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { events, contentLinks, blogPosts, venues } from "@/lib/db/schema";
+import { attachEventToSeries } from "@/lib/series/resolve-or-create-series";
 import { eq, and, sql, inArray } from "drizzle-orm";
 import { createSlug, computePublicDates, dollarsToCents, unsafeSlug } from "@/lib/utils";
 import { resolveUniqueEventSlug, insertEventDaysBatched } from "@/lib/events/insert-helpers";
@@ -236,6 +237,16 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
       applicationUrl: data.applicationUrl,
       applicationInstructions: data.applicationInstructions,
       walkInsAllowed: data.walkInsAllowed,
+    });
+
+    // OPE-472 — attach to a series parent at write time. `event_series`
+    // minted nothing between 2026-06-30 and this fix, so every event from
+    // this path was born without a hub. Best-effort, after the insert: the
+    // event is durable and the parent is an enhancement.
+    await attachEventToSeries(db, eventId, {
+      name: data.name,
+      venueId: data.venueId,
+      promoterId: data.promoterId,
     });
 
     await recomputeEventCompleteness(db, eventId);

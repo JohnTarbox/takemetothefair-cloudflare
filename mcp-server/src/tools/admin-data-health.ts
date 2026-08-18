@@ -224,6 +224,31 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
         .where(sql`${inboundEmails.attachmentCount} > 0`)
         .groupBy(inboundEmails.toAddress);
 
+      // ── OPE-472: the three series invariants ─────────────────────────
+      //
+      // `event_series` was backfilled once and went inert. The newest series
+      // row was created 2026-06-30, and 170 of the 172 events created since
+      // 2026-07-01 have `series_id` NULL — seven weeks in which every new
+      // event was born without a hub and nothing said so.
+      //
+      // Reported from day one, per the ticket, and NOT enforced as a UNIQUE
+      // constraint: `series_duplicate_parent` has 126 live violations (OPE-473),
+      // so a constraint could not ship and would hard-fail legitimate writes.
+      // An invariant that reports is the thing that can exist today.
+      //
+      // `series_single_event` is a WATCH, not a failure — a fair with one
+      // recorded edition is normal, and only becomes interesting if the number
+      // stops falling as editions accumulate.
+      const [seriesInvariants] = await db
+        .select({
+          orphan_live_events: sql<number>`(SELECT count(*) FROM events WHERE series_id IS NULL AND status IN ('APPROVED','TENTATIVE') AND merged_into IS NULL)`,
+          orphan_events_since_jul: sql<number>`(SELECT count(*) FROM events WHERE series_id IS NULL AND created_at >= unixepoch('2026-07-01'))`,
+          duplicate_parents: sql<number>`(SELECT count(*) FROM (SELECT lower(trim(name)) AS n, venue_id FROM event_series WHERE venue_id IS NOT NULL GROUP BY n, venue_id HAVING count(*) > 1))`,
+          single_event_series: sql<number>`(SELECT count(*) FROM (SELECT s.id FROM event_series s JOIN events e ON e.series_id = s.id GROUP BY s.id HAVING count(e.id) = 1))`,
+          newest_series_created: sql<string>`(SELECT max(date(created_at, 'unixepoch')) FROM event_series)`,
+        })
+        .from(sql`(SELECT 1)`);
+
       // OPE-452 — an email that ARRIVED with content and landed with none.
       //
       // The reported specimen turned out to be captured fine (2,318 chars), but
@@ -323,6 +348,11 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
               ...r,
               unaccounted: Number(r.claimed) - Number(r.stored) - Number(r.skipped),
             })),
+            // OPE-472 — series parentage. `orphan_events_since_jul` is the
+            // one that says whether the write-path fix is actually holding:
+            // it should stop growing the day it ships, while the live-orphan
+            // backlog is a separate (backfill) question.
+            series_invariants: seriesInvariants ?? null,
             // OPE-423 invariant 2 — see the comment at the query.
             series_canonical_invariant: {
               rule: "event_series.canonical_slug must not name an event with merged_into set",

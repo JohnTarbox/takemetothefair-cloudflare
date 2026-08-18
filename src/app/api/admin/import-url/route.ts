@@ -2,6 +2,7 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/api/with-auth";
 import { events, venues, promoters, eventSchemaOrg } from "@/lib/db/schema";
+import { attachEventToSeries } from "@/lib/series/resolve-or-create-series";
 import { parseJsonLd } from "@/lib/schema-org";
 import { isUnfetchableSource } from "@takemetothefair/utils";
 import { eq } from "drizzle-orm";
@@ -275,6 +276,15 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
       sourceId: sourceUrl ? createSlug(sourceUrl) : newEventId,
       syncEnabled: false,
       lastSyncedAt: new Date(),
+    });
+
+    // OPE-472 — attach to a series parent at write time. `event_series`
+    // minted nothing between 2026-06-30 and this fix, so every event from
+    // this path was born without a hub. Best-effort, after the insert: the
+    // event is durable and the parent is an enhancement.
+    await attachEventToSeries(db, newEventId, {
+      name: event.name,
+      venueId: venueId,
     });
 
     await recomputeEventCompleteness(db, newEventId);

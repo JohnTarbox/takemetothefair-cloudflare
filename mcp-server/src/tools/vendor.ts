@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { eq, and, or, sql } from "drizzle-orm";
 import { vendors, events, eventVendors, promoters, venues } from "../schema.js";
+import { attachEventToSeries } from "../series/resolve-or-create-series.js";
 import {
   parseJsonArray,
   formatDateRange,
@@ -1175,6 +1176,19 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
         syncEnabled: false,
         lastSyncedAt: new Date(),
         submittedByUserId: auth.userId,
+      });
+
+      // OPE-472 — attach to a series parent at write time.
+      //
+      // `event_series` minted nothing between 2026-06-30 and this fix, so
+      // every event from this tool was born without a hub — invisible to the
+      // evergreen landing model and unreachable from any sibling edition.
+      // After the insert, best-effort: the event is already durable and the
+      // parent is an enhancement.
+      await attachEventToSeries(db, eventId, {
+        name: effectiveName,
+        venueId,
+        promoterId: eventPromoterId,
       });
 
       // IndexNow: TENTATIVE is publicly visible; ping for the new event and
