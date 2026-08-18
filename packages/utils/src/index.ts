@@ -466,3 +466,8 @@ export * from "./email-recipients";
 // decision can be replayed against real production rows without running the
 // inbound Workflow.
 export * from "./support-obligation";
+
+// OPE-433 scope 5 — venue and event_day writes must be answerable. Pure: it
+// builds the audit payload and decides whether one is worth writing; each
+// codebase owns its own insert into admin_actions.
+export * from "./mutation-audit";

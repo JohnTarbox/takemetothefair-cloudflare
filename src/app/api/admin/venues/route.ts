@@ -9,6 +9,7 @@ import { createSlug } from "@/lib/utils";
 import { getVenuesWithEventCounts, findVenueByGooglePlaceId } from "@/lib/queries";
 import { venueCreateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
+import { recordMutation } from "@/lib/audit/record-mutation";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 
 export const GET = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
@@ -26,7 +27,7 @@ export const GET = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
   }
 });
 
-export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
+export const POST = withAuth({ role: "ADMIN" }, async ({ request, db, session }) => {
   // Validate request body
   const validation = await validateRequestBody(request, venueCreateSchema);
   if (!validation.success) {
@@ -83,6 +84,18 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
       accessibility: data.accessibility,
       parking: data.parking,
       status: data.status,
+    });
+
+    // OPE-433 scope 5 — who created this venue. Before this, a venue simply
+    // appeared and nothing said whether an admin, an importer or an agent put
+    // it there.
+    await recordMutation(db, {
+      entityType: "venue",
+      entityId: venueId,
+      verb: "create",
+      actor: session.user.id,
+      after: { name: data.name, address: data.address, city: data.city, state: data.state },
+      note: "admin venue create",
     });
 
     // OPE-408 — geocode at creation. `venues_geocode` shipped "for every future

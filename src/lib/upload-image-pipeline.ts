@@ -34,6 +34,7 @@ import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "@/lib/db/schema";
 import { events, vendors, venues, promoters, vendorPhotos, eventPhotos } from "@/lib/db/schema";
 import { logError } from "@/lib/logger";
+import { recordMutation } from "@/lib/audit/record-mutation";
 import { recomputeEventCompleteness } from "@/lib/completeness";
 import {
   stripExifFromJpeg,
@@ -561,6 +562,19 @@ export async function runUploadPipeline(args: RunPipelineArgs): Promise<Pipeline
         .where(eq(promoters.id, targetId));
     } else {
       await db.update(venues).set({ imageUrl: url }).where(eq(venues.id, targetId));
+      // OPE-433 scope 5 — a venue's published image changing is visible to
+      // every visitor, and this path is reachable from several upload surfaces.
+      // `actorId ?? uploadSource` because an unattended upload still has an
+      // identity (the surface it came through) even when no user is attached.
+      await recordMutation(db, {
+        entityType: "venue",
+        entityId: targetId,
+        verb: "update",
+        actor: actorId ?? uploadSource,
+        before: { imageUrl: null },
+        after: { imageUrl: url },
+        note: `image upload via ${uploadSource}`,
+      });
     }
   } catch (e) {
     await logError(db, {

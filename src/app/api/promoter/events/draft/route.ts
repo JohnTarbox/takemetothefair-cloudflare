@@ -6,6 +6,7 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { promoters, events, eventDays } from "@/lib/db/schema";
 import { createSlug, computePublicDates, dollarsToCents } from "@/lib/utils";
 import { resolveUniqueEventSlug, insertEventDaysBatched } from "@/lib/events/insert-helpers";
+import { recordMutation } from "@/lib/audit/record-mutation";
 import { validateRequestBody, promoterEventCreateSchema } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 import { parseDateOnly } from "@/lib/datetime";
@@ -147,8 +148,19 @@ export async function POST(request: NextRequest) {
 
       // Replace event days wholesale — simpler than diffing.
       // WS2a — shared D1-safe batched insert (was an inline unbatched insert).
+      // OPE-433 scope 5 — a promoter replacing their own day set wholesale.
+      // The DELETE is what makes this indistinguishable from a fabrication
+      // afterwards: the old rows are gone, so only the audit says the hours
+      // were REPLACED rather than invented.
+      await recordMutation(db, {
+        entityType: "event_day",
+        entityId: existingId,
+        verb: "delete",
+        actor: session.user.id,
+        note: `promoter day-set replace on event ${existingId}`,
+      });
       await db.delete(eventDays).where(eq(eventDays.eventId, existingId));
-      await insertEventDaysBatched(db, existingId, eventDaysInput);
+      await insertEventDaysBatched(db, existingId, eventDaysInput, session.user.id);
 
       return NextResponse.json({
         id: existingId,

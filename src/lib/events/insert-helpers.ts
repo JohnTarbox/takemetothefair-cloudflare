@@ -13,6 +13,7 @@ import type { DrizzleD1Database } from "drizzle-orm/d1";
 import { and, eq, gt, lt, or } from "drizzle-orm";
 import * as schema from "@/lib/db/schema";
 import { eventDays, events } from "@/lib/db/schema";
+import { recordMutation } from "@/lib/audit/record-mutation";
 import { findUniqueSlug, getSlugPrefixBounds, unsafeSlug, type Slug } from "@/lib/utils";
 
 type Db = DrizzleD1Database<typeof schema>;
@@ -45,7 +46,17 @@ export interface EventDayInput {
 export async function insertEventDaysBatched(
   db: Db,
   eventId: string,
-  days: EventDayInput[] | null | undefined
+  days: EventDayInput[] | null | undefined,
+  /**
+   * OPE-433 scope 5 — who is creating these days.
+   *
+   * Optional, and the audit is skipped when absent. That is deliberate: an
+   * anonymous audit row records that something happened and still cannot say
+   * what, which is the specimen's failure with extra steps. Callers that know
+   * their identity should pass it; the guard in
+   * `scripts/check-venue-day-writes-audited.ts` makes the omission visible.
+   */
+  actor?: string
 ): Promise<void> {
   if (!days || days.length === 0) return;
   const rows = days.map((day) => ({
@@ -60,6 +71,27 @@ export async function insertEventDaysBatched(
   }));
   for (let i = 0; i < rows.length; i += EVENT_DAYS_BATCH_SIZE) {
     await db.insert(eventDays).values(rows.slice(i, i + EVENT_DAYS_BATCH_SIZE));
+  }
+
+  // OPE-433 scope 5 — `event_days` is where BOTH logged fabricated-fact
+  // instances live: MDI's invented 10-5/10-4/10-3 hours against a published
+  // flat 9-4, and OPE-411's 09:00–18:00 rows. Neither could be traced to a
+  // writer, because day rows were created with nothing recording who.
+  //
+  // One row per day rather than one for the batch: the question that gets
+  // asked later is "where did THIS day's hours come from", and a batch-level
+  // entry cannot answer it.
+  if (actor) {
+    for (const r of rows) {
+      await recordMutation(db, {
+        entityType: "event_day",
+        entityId: r.id,
+        verb: "create",
+        actor,
+        after: { date: r.date, openTime: r.openTime, closeTime: r.closeTime },
+        note: `event ${eventId}`,
+      });
+    }
   }
 }
 

@@ -65,6 +65,7 @@ import {
   computePromoterEnrichment,
 } from "@takemetothefair/constants";
 import { dollarsToCents } from "../helpers.js";
+import { recordMutation } from "../audit/record-mutation.js";
 import { notifyApprovalIfNeeded } from "../approval-notification.js";
 import { registerCreateOrLinkVendorTool } from "./admin-create-or-link-vendor.js";
 import { registerEnrichmentReviewTools } from "./admin-enrichment-review.js";
@@ -1653,6 +1654,18 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
 
         venueUpdates.updatedAt = new Date();
         await db.update(venues).set(venueUpdates).where(eq(venues.id, venue.id));
+        // OPE-433 scope 5 — a venue edited as a SIDE EFFECT of an event update.
+        // This is the least expected way a published venue changes, so it is
+        // the one most worth naming.
+        await recordMutation(db, {
+          entityType: "venue",
+          entityId: venue.id,
+          verb: "update",
+          actor: auth.userId ?? "mcp:update_event",
+          before: venuePreviousValues,
+          after: venueNewValues,
+          note: "venue renamed via update_event",
+        });
 
         venueUpdateResult = {
           venue_id: venue.id,
@@ -2872,6 +2885,23 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         await db.update(venues).set(updates).where(eq(venues.id, venue.id));
       }
 
+      // OPE-433 scope 5 — `update_venue` over MCP. An agent holding the admin
+      // token can change a published venue, and before this there was nothing
+      // separating that from a cron sweep or an importer — the three
+      // indistinguishable candidates in the ticket's specimen.
+      //
+      // One record for both branches: the syndication fan-out changes how the
+      // write is issued, not what changed.
+      await recordMutation(db, {
+        entityType: "venue",
+        entityId: venue.id,
+        verb: "update",
+        actor: auth.userId ?? "mcp:update_venue",
+        before: venue as unknown as Record<string, unknown>,
+        after: updates,
+        note: "mcp update_venue",
+      });
+
       // IndexNow: distinguish first-publish (INACTIVE→ACTIVE) from material
       // edits on already-ACTIVE venues so analytics can attribute pings.
       if (env) {
@@ -3038,6 +3068,15 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
 
       const venueId = crypto.randomUUID();
 
+      // OPE-433 scope 5 — who created this venue over MCP.
+      await recordMutation(db, {
+        entityType: "venue",
+        entityId: venueId,
+        verb: "create",
+        actor: auth.userId ?? "mcp:create_venue",
+        after: { name: effectiveName },
+        note: "mcp create_venue",
+      });
       await db.insert(venues).values({
         id: venueId,
         // DQ2-coerced values from above — never write back the raw
@@ -3132,6 +3171,15 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         };
       }
 
+      // OPE-433 scope 5 — recorded BEFORE the delete; afterwards there is
+      // nothing left to describe.
+      await recordMutation(db, {
+        entityType: "venue",
+        entityId: venue_id,
+        verb: "delete",
+        actor: auth.userId ?? "mcp:delete_venue",
+        note: "mcp delete_venue",
+      });
       await db.delete(venues).where(eq(venues.id, venue_id));
 
       return {
@@ -4378,6 +4426,16 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       // the columns nullable. Flag the parent event for triage when
       // either time landed unknown.
 
+      // OPE-433 scope 5 — `event_days` is where both logged fabricated-fact
+      // instances live, and this tool is how an agent writes one.
+      await recordMutation(db, {
+        entityType: "event_day",
+        entityId: dayId,
+        verb: "create",
+        actor: auth.userId ?? "mcp:create_event_day",
+        after: { date: params.date, openTime, closeTime },
+        note: `mcp create_event_day on event ${params.event_id}`,
+      });
       await db
         .insert(eventDays)
         .values({
@@ -4556,6 +4614,18 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         await db.update(eventDays).set(updates).where(eq(eventDays.id, params.day_id));
       }
 
+      // OPE-433 scope 5 — one record for both branches: the syndication
+      // fan-out changes how the write is issued, not what changed.
+      await recordMutation(db, {
+        entityType: "event_day",
+        entityId: params.day_id,
+        verb: "update",
+        actor: auth.userId ?? "mcp:update_event_day",
+        before: dayRows[0] as unknown as Record<string, unknown>,
+        after: updates,
+        note: "mcp update_event_day",
+      });
+
       // Recompute public date range on parent event
       const allDays = await db
         .select({ date: eventDays.date, vendorOnly: eventDays.vendorOnly })
@@ -4598,6 +4668,14 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }
 
       const eventId = dayRows[0].eventId;
+      // OPE-433 scope 5 — recorded before the row is gone.
+      await recordMutation(db, {
+        entityType: "event_day",
+        entityId: params.day_id,
+        verb: "delete",
+        actor: auth.userId ?? "mcp:delete_event_day",
+        note: `mcp delete_event_day on event ${eventId}`,
+      });
       await db.delete(eventDays).where(eq(eventDays.id, params.day_id));
 
       // Recompute public date range on parent event

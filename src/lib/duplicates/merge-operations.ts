@@ -214,6 +214,10 @@ async function mergeVenues(
           eq(userFavorites.favoritableId, duplicateId)
         )
       ),
+    // AUDIT-EXEMPT: the merge writes its own `venue.merge` admin_actions row
+    // below, naming both ids. A per-write audit here would double-count one
+    // operator action as two events and make the log harder to read, not
+    // easier — which is the opposite of what OPE-433 scope 5 is for.
     db.delete(venues).where(eq(venues.id, duplicateId)),
   ]);
 
@@ -724,12 +728,17 @@ async function mergeEvents(
     const BATCH_SIZE = 50;
     for (let i = 0; i < dates.length; i += BATCH_SIZE) {
       const batch = dates.slice(i, i + BATCH_SIZE);
+      // AUDIT-EXEMPT: colliding day rows removed as part of a merge, which
+      // records its own `event.merge` row with both ids and the transfer
+      // counts. Auditing each day separately would bury that one fact under N.
       await db
         .delete(eventDays)
         .where(and(eq(eventDays.eventId, duplicateId), inArray(eventDays.date, batch)));
     }
   }
   // Transfer the duplicate's remaining (non-colliding) days to the keeper.
+  // AUDIT-EXEMPT: same merge, same reason — this is a re-parenting, not an
+  // edit to any day's published content.
   await db.update(eventDays).set({ eventId: primaryId }).where(eq(eventDays.eventId, duplicateId));
 
   await db
