@@ -56,7 +56,7 @@
  * rows can be distinguished from rows scored under the new prior set.
  */
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { eventDiscrepancies, sourceReliability, sources, sourceTypePriors } from "../schema.js";
 import type { Db } from "../db.js";
 import { logError } from "../logger.js";
@@ -187,7 +187,13 @@ async function upsertCell(
   const newBeta = priorBeta + args.deltaBeta;
   const newNChecks = (existing[0]?.nChecks ?? 0) + args.deltaAlpha + args.deltaBeta;
   const newNAgreed = (existing[0]?.nAgreed ?? 0) + args.deltaAlpha;
-  const newNStale = existing[0]?.nStale ?? 0; // stale is incremented elsewhere by holdout sampling
+  // Carried forward, never derived from an accuracy observation. Staleness is
+  // written by `recordSourceStale` below (OPE-458 scope 2) — the comment that
+  // used to sit here claimed holdout sampling incremented it, and nothing ever
+  // did: `n_stale` was read and re-written unchanged on every path since GW1
+  // shipped. It is a separate column precisely so "this source is out of date"
+  // does not get folded into "this source is inaccurate".
+  const newNStale = existing[0]?.nStale ?? 0;
   const newScore = newAlpha / (newAlpha + newBeta);
   const newConfidence = confidenceFromChecks(newNChecks);
 
@@ -324,6 +330,52 @@ export async function updateReliability(
       error: err,
     });
     return { decision: "skipped_db_error", cellsTouched: 0 };
+  }
+}
+
+/**
+ * OPE-458 scope 2 — record that a source served nothing but stale dates.
+ *
+ * Increments `n_stale` for the source's `(date, accuracy)` cell, creating the
+ * cell with its cold-start priors first if this is the domain's first sighting.
+ *
+ * **Deliberately does not move alpha/beta.** A page frozen at 2024 is not a
+ * source that disagrees with us — it is a source that has stopped being
+ * updated, and the schema already separates those with its own counter. Folding
+ * staleness into the accuracy score would make a dormant organizer site look
+ * like a lying one, and would make the two indistinguishable afterwards.
+ *
+ * Best-effort: a reliability counter must never fail a submission.
+ */
+export async function recordSourceStale(db: Db, sourceKey: string): Promise<boolean> {
+  try {
+    // Zero deltas: ensures the cell exists with proper priors without claiming
+    // an accuracy observation we did not make.
+    await upsertCell(db, {
+      sourceKey,
+      fieldClass: "date",
+      axis: "accuracy",
+      deltaAlpha: 0,
+      deltaBeta: 0,
+    });
+    await db
+      .update(sourceReliability)
+      .set({ nStale: sql`${sourceReliability.nStale} + 1`, lastUpdated: new Date() })
+      .where(
+        and(
+          eq(sourceReliability.sourceKey, sourceKey),
+          eq(sourceReliability.fieldClass, "date"),
+          eq(sourceReliability.axis, "accuracy")
+        )
+      );
+    return true;
+  } catch (err) {
+    await logError(db, {
+      source: "mcp:goodwill:scoring",
+      message: `recordSourceStale failed for source=${sourceKey}`,
+      error: err,
+    }).catch(() => {});
+    return false;
   }
 }
 

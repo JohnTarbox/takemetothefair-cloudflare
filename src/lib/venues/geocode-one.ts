@@ -28,7 +28,8 @@
  * The batch route now calls this too, so there is one gate, not two.
  */
 import { and, eq, ne } from "drizzle-orm";
-import { venues, adminActions } from "@/lib/db/schema";
+import { venues, adminActions, entityDataCitations } from "@/lib/db/schema";
+import { buildEntityCitations, toCitationFields } from "@takemetothefair/utils";
 import { geocodeAddressDetailed, lookupPlace } from "@/lib/google-maps";
 import {
   preflight,
@@ -145,6 +146,50 @@ export async function geocodeVenueRow(
     if (!v.zip && pin.zip) updates.zip = pin.zip;
     if (!v.address?.trim() && pin.address) updates.address = pin.address;
     await db.update(venues).set(updates).where(eq(venues.id, v.id));
+
+    // OPE-433 scope 4 — attribute what Google told us.
+    //
+    // This is the exact write the ticket's live specimen describes: a Martha's
+    // Vineyard venue mutated in production at 04:00:20Z with city normalised,
+    // address filled and lat/long set, and NOTHING recording what did it — so a
+    // geocode sweep, an agent, and the mafa.org importer were indistinguishable
+    // from the evidence.
+    //
+    // The values are attributable, so they get attributed. Best-effort: a
+    // provenance row must never be able to fail a geocode that already
+    // succeeded, and the pin is more valuable than the note about it.
+    try {
+      const cited = buildEntityCitations(
+        "VENUE",
+        v.id,
+        toCitationFields({
+          latitude: pin.lat,
+          longitude: pin.lng,
+          ...(updates.zip !== undefined ? { zip: updates.zip } : {}),
+          ...(updates.address !== undefined ? { address: updates.address } : {}),
+        }),
+        {
+          // The Place id is the stable identity of what Google matched; the
+          // generic API endpoint would attribute every venue on earth to one
+          // URL and make the column useless for telling two pins apart.
+          sourceUrl: pin.placeId
+            ? `https://www.google.com/maps/place/?q=place_id:${pin.placeId}`
+            : "https://maps.googleapis.com/maps/api/geocode/json",
+          sourceName: "Google Maps Geocoding",
+          sourceType: "other",
+          // `outcome.status` is the confidence gate's own verdict, so the
+          // citation carries the same judgement the write was made under
+          // rather than a number invented here.
+          confidence: outcome.status === "ok" ? 0.9 : 0.6,
+          notes: `geocode:${outcome.status}${outcome.method ? `:${outcome.method}` : ""}`,
+          createdBy: "venues_geocode",
+        },
+        new Date()
+      );
+      if (cited.length > 0) await db.insert(entityDataCitations).values(cited);
+    } catch {
+      // Provenance is additive. The coordinates are already stored.
+    }
 
     // A pin that beat the confidence gate by override must stay answerable
     // once the response is gone — OPE-203 attributes photos on it for as long

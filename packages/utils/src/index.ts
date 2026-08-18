@@ -466,3 +466,8 @@ export * from "./email-recipients";
 // decision can be replayed against real production rows without running the
 // inbound Workflow.
 export * from "./support-obligation";
+
+// OPE-433 scope 4 — provenance for venues and event_days, the two tables that
+// carry none and where the fabricated-fact defects actually cluster. Pure: it
+// builds and filters citation rows; each codebase owns its own insert.
+export * from "./entity-citation";

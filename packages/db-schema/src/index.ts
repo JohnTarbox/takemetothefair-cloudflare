@@ -113,6 +113,12 @@ export const venues = sqliteTable(
     city: text("city").notNull(),
     state: text("state").notNull(),
     zip: text("zip").notNull(),
+    /** OPE-425 — resolved canonical municipality (drizzle/0207). Nullable and
+     *  backfilled by alias match; the rows that do NOT resolve are the report
+     *  that feeds OPE-421 (`city` holding a venue name rather than a town).
+     *  Prefer this over the free-text `city` for any grouping, coverage
+     *  denominator or region facet. */
+    locationId: text("location_id"),
     latitude: real("latitude"),
     longitude: real("longitude"),
     capacity: integer("capacity"),
@@ -1982,6 +1988,68 @@ export const eventVendorsRelations = relations(eventVendors, ({ one }) => ({
   vendor: one(vendors, { fields: [eventVendors.vendorId], references: [vendors.id] }),
 }));
 
+/**
+ * OPE-433 scope 4 — field-level provenance for `venues` and `event_days`
+ * (drizzle/0208).
+ *
+ * Same shape as {@link eventDataCitations}, addressed by `(entityType,
+ * entityId)` instead of a foreign key to one table.
+ *
+ * ── Why a sibling rather than generalising the existing table ────────────
+ *
+ * Generalising `event_data_citations` would mean making `event_id` nullable
+ * and adding an entity key, putting all 72 existing references and 6 modules on
+ * the hook — including `dates-confirmed-basis.ts`, which scope 1 just wired the
+ * confidence flag to. A widening that silently changes what an existing query
+ * counts is the enum-widening failure this repo already has a lesson for, and
+ * the reward would be one fewer table. If the two are ever unified it should be
+ * a deliberate migration with the consumers audited, not a side effect of
+ * adding venue provenance.
+ *
+ * `entityType` deliberately excludes `EVENT`: events have their own table, and
+ * accepting them here would create two answers to one question.
+ *
+ * ⚠️ Not backfilled. Where a source is unrecoverable, absence is the correct
+ * record — inventing one is the fabricated-fact failure this ticket exists to
+ * close.
+ */
+export const entityDataCitations = sqliteTable(
+  "entity_data_citations",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    entityType: text("entity_type", { enum: ["VENUE", "EVENT_DAY"] }).notNull(),
+    entityId: text("entity_id").notNull(),
+    fieldName: text("field_name").notNull(),
+    value: text("value").notNull(),
+    sourceUrl: text("source_url").notNull(),
+    sourceName: text("source_name"),
+    sourceType: text("source_type", {
+      enum: [
+        "official_website",
+        "news_article",
+        "press_release",
+        "social_media",
+        "user_submitted",
+        "other",
+      ],
+    }).notNull(),
+    confidence: real("confidence"),
+    state: text("state", { enum: ["active", "superseded", "rejected", "stale"] })
+      .notNull()
+      .default("active"),
+    notes: text("notes"),
+    createdBy: text("created_by"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    index("idx_entity_citations_entity").on(t.entityType, t.entityId),
+    index("idx_entity_citations_field").on(t.entityType, t.entityId, t.fieldName),
+    index("idx_entity_citations_state").on(t.state, t.createdAt),
+  ]
+);
+
 export const eventDataCitationsRelations = relations(eventDataCitations, ({ one }) => ({
   event: one(events, { fields: [eventDataCitations.eventId], references: [events.id] }),
   createdByUser: one(users, {
@@ -3347,9 +3415,202 @@ export const vendorOutreachAttempts = sqliteTable(
   ]
 );
 
+/**
+ * OPE-384 stage 1 — one row per attempt to ask an organizer to confirm their
+ * own event's details (drizzle/0205).
+ *
+ * See the migration for the full rationale. The three departures from
+ * `vendorOutreachAttempts` worth knowing at the call site:
+ *
+ *  - the message itself is stored (`subject` + `bodyText`), because a reply is
+ *    only interpretable against the ask that produced it;
+ *  - `toAddress` is stored as sent, so a later `contact_email` edit cannot
+ *    rewrite who we actually wrote to;
+ *  - `queued` is a real status. A send refused by `PROMOTER_OUTREACH_ENABLED`
+ *    keeps its prose and becomes drainable when the flag flips (OPE-368's
+ *    lesson: a gated send must be recoverable, not discarded at refusal).
+ *
+ * A partial unique index on `(event_id) WHERE status IN ('queued','sent')`
+ * makes "never double-ask" an invariant of the table rather than a convention
+ * of whichever caller happens to check first.
+ */
+export const promoterOutreachAttempts = sqliteTable(
+  "promoter_outreach_attempts",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    promoterId: text("promoter_id")
+      .notNull()
+      .references(() => promoters.id, { onDelete: "cascade" }),
+    /** Null when the ask is about the organizer generally, not one event. */
+    eventId: text("event_id").references(() => events.id, { onDelete: "set null" }),
+    channel: text("channel", { enum: ["email", "phone", "in_person", "other"] })
+      .notNull()
+      .default("email"),
+    /** The address as sent — history, not a live lookup. */
+    toAddress: text("to_address").notNull(),
+    subject: text("subject").notNull(),
+    bodyText: text("body_text").notNull(),
+    /** Why the event was flagged; stage 2's trigger queue fills this. */
+    reason: text("reason"),
+    status: text("status", {
+      enum: ["queued", "sent", "replied", "confirmed", "no_response", "bounced", "refused"],
+    })
+      .notNull()
+      .default("queued"),
+    requestedBy: text("requested_by"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    sentAt: integer("sent_at", { mode: "timestamp" }),
+    outcomeAt: integer("outcome_at", { mode: "timestamp" }),
+    /** The inbound that closed it (stage 4). */
+    inboundEmailId: text("inbound_email_id"),
+    providerMessageId: text("provider_message_id"),
+    /** Self-FK — the single capped follow-up. */
+    followUpOf: text("follow_up_of"),
+  },
+  (t) => [
+    index("idx_promoter_outreach_promoter").on(t.promoterId),
+    index("idx_promoter_outreach_status").on(t.status, t.createdAt),
+    index("idx_promoter_outreach_event").on(t.eventId),
+  ]
+);
+
+/**
+ * OPE-384 — statuses in which an attempt is still OPEN, i.e. we are waiting on
+ * the organizer. Exported so the suppression check and the partial unique index
+ * cannot drift apart; if you add a status here, add it to the index in
+ * drizzle/0205 too.
+ *
+ * `replied` is NOT open: they answered, and whether the answer resolved the
+ * question is `confirmed`'s job, not a reason to keep asking.
+ */
+export const OPEN_PROMOTER_OUTREACH_STATUSES = ["queued", "sent"] as const;
+
 // §10.2 per-URL time-to-index cycle tracking (drizzle/0057). One row per
 // IndexNow submission; firstCrawlAt + lagSeconds are populated by the sweep
 // that joins against gscInspectionState.lastCrawlTime. Powers §10.3 median.
+/**
+ * OPE-425 — the canonical New England place universe (drizzle/0207).
+ *
+ * Seeded from Census by `scripts/build-locations-seed.mjs`, whose output
+ * `data/ne-locations.tsv` is committed. The script refuses to emit a seed whose
+ * per-state municipality counts do not reconcile against published totals,
+ * because a partial locations list fails SILENTLY — the hand-assembled 92-row
+ * list that prompted the ticket would have dropped 30% of our Maine inventory
+ * without erroring once.
+ *
+ * `id` is the Census GEOID rather than a UUID, so a re-seed updates in place
+ * and every row is traceable to its source record.
+ */
+export const locations = sqliteTable(
+  "locations",
+  {
+    /** Census GEOID. */
+    id: text("id").primaryKey(),
+    state: text("state").notNull(),
+    county: text("county"),
+    name: text("name").notNull(),
+    type: text("type", {
+      enum: ["city", "town", "plantation", "unorganized_territory", "village_cdp"],
+    }).notNull(),
+    /** Set for villages/CDPs belonging to a municipality. NULL from the seed —
+     *  Census carries no CDP→MCD containment, and a guessed parent is exactly
+     *  the plausible-but-unsourced value this project keeps getting bitten by. */
+    parentLocationId: text("parent_location_id"),
+    population: integer("population"),
+    /** Beside every figure, so vintages are never silently mixed. */
+    populationYear: integer("population_year"),
+    latitude: real("latitude"),
+    longitude: real("longitude"),
+    canonicalSlug: text("canonical_slug").notNull(),
+    source: text("source").notNull(),
+    lastVerifiedAt: integer("last_verified_at", { mode: "timestamp" }),
+  },
+  (t) => [
+    index("idx_locations_state_name").on(t.state, t.name),
+    index("idx_locations_parent").on(t.parentLocationId),
+    uniqueIndex("idx_locations_slug").on(t.canonicalSlug),
+  ]
+);
+
+/**
+ * OPE-425 — every other way a place gets written down.
+ *
+ * This is what makes `locations` joinable against data we already hold: our
+ * venue rows use village and postal names heavily (Oquossoc → Rangeley,
+ * Northeast Harbor → Mount Desert, South Paris → Paris), and a
+ * municipality-only list does not match them. Also the home of "L/A", "MDI",
+ * "The County", and outright misspellings.
+ */
+export const locationAliases = sqliteTable(
+  "location_aliases",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    locationId: text("location_id")
+      .notNull()
+      .references(() => locations.id, { onDelete: "cascade" }),
+    alias: text("alias").notNull(),
+    state: text("state").notNull(),
+    aliasType: text("alias_type", {
+      enum: ["village", "historic", "abbreviation", "misspelling", "postal"],
+    }).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    // One spelling resolves to one place PER STATE — Portland is a city in ME
+    // and a town in CT; Richmond is a town in both ME and RI.
+    uniqueIndex("idx_location_aliases_unique").on(t.state, t.alias),
+    index("idx_location_aliases_location").on(t.locationId),
+  ]
+);
+
+/**
+ * OPE-425 — region membership, many-to-many on purpose.
+ *
+ * Regions overlap and are contested (is Brunswick Midcoast or Greater
+ * Portland?), so a scalar `region` column would be wrong the day it shipped.
+ * `isPrimary` gives a facet page a default without forcing a false exclusive
+ * choice.
+ *
+ * ⚠️ Seeded EMPTY — region boundaries are John's call, and the useful ones
+ * (Midcoast, Downeast, The County, Lakes Region) do not follow county lines.
+ */
+export const locationRegions = sqliteTable(
+  "location_regions",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    locationId: text("location_id")
+      .notNull()
+      .references(() => locations.id, { onDelete: "cascade" }),
+    regionSlug: text("region_slug").notNull(),
+    regionLabel: text("region_label").notNull(),
+    isPrimary: integer("is_primary").notNull().default(0),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    uniqueIndex("idx_location_regions_unique").on(t.locationId, t.regionSlug),
+    index("idx_location_regions_slug").on(t.regionSlug),
+  ]
+);
+
+/** OPE-425 — ZIPs are their own table: one town has several, and Waterville
+ *  and Winslow share 04901, so neither direction is a scalar. */
+export const locationZips = sqliteTable(
+  "location_zips",
+  {
+    locationId: text("location_id")
+      .notNull()
+      .references(() => locations.id, { onDelete: "cascade" }),
+    zip: text("zip").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.locationId, t.zip] }), index("idx_location_zips_zip").on(t.zip)]
+);
+
 export const timeToIndexLog = sqliteTable(
   "time_to_index_log",
   {

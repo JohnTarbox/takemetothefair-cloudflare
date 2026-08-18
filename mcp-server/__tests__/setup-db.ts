@@ -35,6 +35,8 @@ const SCHEMA_SQL = `
     city TEXT NOT NULL DEFAULT '',
     state TEXT NOT NULL DEFAULT '',
     zip TEXT NOT NULL DEFAULT '',
+    -- OPE-425 — resolved canonical municipality (drizzle/0207).
+    location_id TEXT,
     latitude REAL,
     longitude REAL,
     capacity INTEGER,
@@ -701,6 +703,31 @@ const SCHEMA_SQL = `
     created_by TEXT
   );
 
+  CREATE TABLE promoter_outreach_attempts (
+    id TEXT PRIMARY KEY,
+    promoter_id TEXT NOT NULL,
+    event_id TEXT,
+    channel TEXT NOT NULL DEFAULT 'email',
+    to_address TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    body_text TEXT NOT NULL,
+    reason TEXT,
+    status TEXT NOT NULL DEFAULT 'queued',
+    requested_by TEXT,
+    created_at INTEGER NOT NULL,
+    sent_at INTEGER,
+    outcome_at INTEGER,
+    inbound_email_id TEXT,
+    provider_message_id TEXT,
+    follow_up_of TEXT
+  );
+
+  -- OPE-384 — "never double-ask" is enforced by the DATABASE, so the tests
+  -- must carry the index or they would prove the guard works when it doesn't.
+  CREATE UNIQUE INDEX idx_promoter_outreach_one_open_per_event
+    ON promoter_outreach_attempts(event_id)
+    WHERE event_id IS NOT NULL AND status IN ('queued', 'sent');
+
   CREATE TABLE enrichment_log (
     id TEXT PRIMARY KEY,
     target_type TEXT NOT NULL,
@@ -920,6 +947,23 @@ const SCHEMA_SQL = `
     queued_at INTEGER NOT NULL,
     flushed_at INTEGER,
     flushed_batch_id TEXT
+  );
+
+  -- OPE-433 scope 4 — provenance for venues + event_days (drizzle/0208).
+  CREATE TABLE entity_data_citations (
+    id TEXT PRIMARY KEY,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    field_name TEXT NOT NULL,
+    value TEXT NOT NULL,
+    source_url TEXT NOT NULL,
+    source_name TEXT,
+    source_type TEXT NOT NULL,
+    confidence REAL,
+    state TEXT NOT NULL DEFAULT 'active',
+    notes TEXT,
+    created_by TEXT,
+    created_at INTEGER NOT NULL
   );
 
   CREATE TABLE event_data_citations (

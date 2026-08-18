@@ -37,7 +37,13 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "@/lib/db/schema";
-import { events, eventDataCitations } from "@/lib/db/schema";
+import {
+  events,
+  eventDataCitations,
+  entityDataCitations,
+  venues,
+  eventDays,
+} from "@/lib/db/schema";
 
 type Db = DrizzleD1Database<typeof schema>;
 
@@ -160,4 +166,56 @@ export function summarizeDatesConfirmed(report: DatesConfirmedReport): string | 
     `${report.confirmedUncited} of ${report.claimsConfirmed} live events assert confirmed ` +
     `dates with no citation behind the claim (${pct}%).${worstNote}`
   );
+}
+
+/**
+ * OPE-433 scope 4 + 6 — provenance coverage for the two tables that had none.
+ *
+ * The events half of this ticket asks "how many live events assert confirmed
+ * dates with no evidence?" — 1,245 when it was filed. This is the same question
+ * for `venues` and `event_days`, which could not be asked at all before
+ * `entity_data_citations` existed, because there was nowhere for the evidence
+ * to live.
+ *
+ * Reported as raw counts rather than a share, deliberately. Coverage starts at
+ * zero and rises only as new writes flow through the cited paths — nothing is
+ * backfilled, because inventing a source for an existing row is the
+ * fabricated-fact failure this ticket exists to close. A percentage against a
+ * denominator of every historical row would read as a grade when it is really a
+ * measure of how long the feature has been on.
+ */
+export interface EntityProvenanceCoverage {
+  entityType: "VENUE" | "EVENT_DAY";
+  /** Rows of this type in the table. */
+  total: number;
+  /** Rows with at least one active citation on any field. */
+  withCitation: number;
+}
+
+export async function getEntityProvenanceCoverage(db: Db): Promise<EntityProvenanceCoverage[]> {
+  const [venueTotal] = await db.select({ n: sql<number>`count(*)` }).from(venues);
+  const [dayTotal] = await db.select({ n: sql<number>`count(*)` }).from(eventDays);
+
+  const cited = await db
+    .select({
+      entityType: entityDataCitations.entityType,
+      n: sql<number>`count(DISTINCT ${entityDataCitations.entityId})`,
+    })
+    .from(entityDataCitations)
+    .where(eq(entityDataCitations.state, "active"))
+    .groupBy(entityDataCitations.entityType);
+
+  const byType = new Map(cited.map((r) => [r.entityType, Number(r.n)]));
+  return [
+    {
+      entityType: "VENUE" as const,
+      total: Number(venueTotal?.n ?? 0),
+      withCitation: byType.get("VENUE") ?? 0,
+    },
+    {
+      entityType: "EVENT_DAY" as const,
+      total: Number(dayTotal?.n ?? 0),
+      withCitation: byType.get("EVENT_DAY") ?? 0,
+    },
+  ];
 }
