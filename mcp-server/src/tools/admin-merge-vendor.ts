@@ -64,6 +64,19 @@ import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 import { jsonContent, unsafeSlug } from "../helpers.js";
 
+/**
+ * D1 caps a statement at 100 bound parameters (OPE-241), so every `inArray`
+ * here is chunked. Not theoretical for this tool: a busy vendor can carry more
+ * than 100 event links, and the merge would fail at exactly the moment it is
+ * most needed. CI's bound-param guard caught this before it shipped.
+ */
+const BIND_CHUNK = 90;
+function chunk<T>(items: T[], size = BIND_CHUNK): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
 /** Rows on the duplicate that would collide with the keeper's existing links. */
 async function planEventVendorTransfer(db: Db, keeperId: string, duplicateId: string) {
   const dupLinks = await db
@@ -287,14 +300,14 @@ export function registerMergeVendorTool(server: McpServer, db: Db, auth: AuthCon
       // the tombstone is LAST. D1 has no interactive transaction here, so the
       // safe failure mode is "some rows transferred, duplicate still live"
       // (a re-run finishes the job) rather than "duplicate dead, rows orphaned".
-      if (plan.transferable.length > 0) {
+      for (const batch of chunk(plan.transferable)) {
         await db
           .update(eventVendors)
           .set({ vendorId: keeperId })
-          .where(inArray(eventVendors.id, plan.transferable));
+          .where(inArray(eventVendors.id, batch));
       }
-      if (plan.colliding.length > 0) {
-        await db.delete(eventVendors).where(inArray(eventVendors.id, plan.colliding));
+      for (const batch of chunk(plan.colliding)) {
+        await db.delete(eventVendors).where(inArray(eventVendors.id, batch));
       }
 
       await Promise.all([
@@ -357,37 +370,40 @@ export function registerMergeVendorTool(server: McpServer, db: Db, auth: AuthCon
         const already = new Set(keeperFavourites.map((f) => f.userId));
         const movable = dupFavourites.filter((f) => !already.has(f.userId)).map((f) => f.id);
         const droppable = dupFavourites.filter((f) => already.has(f.userId)).map((f) => f.id);
-        if (movable.length > 0) {
+        for (const batch of chunk(movable)) {
           await db
             .update(userFavorites)
             .set({ favoritableId: keeperId })
-            .where(inArray(userFavorites.id, movable));
+            .where(inArray(userFavorites.id, batch));
         }
-        if (droppable.length > 0) {
-          await db.delete(userFavorites).where(inArray(userFavorites.id, droppable));
+        for (const batch of chunk(droppable)) {
+          await db.delete(userFavorites).where(inArray(userFavorites.id, batch));
         }
       }
 
       // Repoint other vendors' pointers off the tombstone.
       if (childRefs.length > 0) {
-        const ids = childRefs.map((c) => c.id);
+        // No id list needed: each `eq` already selects exactly the rows pointing
+        // at the duplicate through that column. Carrying an `inArray` of the
+        // pre-read ids as well was redundant AND unbounded — it would have blown
+        // D1's 100-parameter cap on a vendor with many children.
         await Promise.all([
           db
             .update(vendors)
             .set({ brandParentVendorId: keeperId })
-            .where(and(inArray(vendors.id, ids), eq(vendors.brandParentVendorId, duplicateId))),
+            .where(eq(vendors.brandParentVendorId, duplicateId)),
           db
             .update(vendors)
             .set({ operatorParentVendorId: keeperId })
-            .where(and(inArray(vendors.id, ids), eq(vendors.operatorParentVendorId, duplicateId))),
+            .where(eq(vendors.operatorParentVendorId, duplicateId)),
           db
             .update(vendors)
             .set({ aliasOfVendorId: keeperId })
-            .where(and(inArray(vendors.id, ids), eq(vendors.aliasOfVendorId, duplicateId))),
+            .where(eq(vendors.aliasOfVendorId, duplicateId)),
           db
             .update(vendors)
             .set({ redirectToVendorId: keeperId })
-            .where(and(inArray(vendors.id, ids), eq(vendors.redirectToVendorId, duplicateId))),
+            .where(eq(vendors.redirectToVendorId, duplicateId)),
         ]);
       }
 
