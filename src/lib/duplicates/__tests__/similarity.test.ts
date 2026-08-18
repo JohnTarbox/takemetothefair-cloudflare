@@ -344,9 +344,21 @@ describe("getVendorComparisonString", () => {
     expect(getVendorComparisonString(vendor)).toBe("food");
   });
 
-  it("appends vendor type unchanged after the normalized name", () => {
+  it("IGNORES vendor type (OPE-451)", () => {
+    // This assertion is inverted from what it used to be. Appending the type
+    // let a category disagreement drag a byte-identical NAME under the ≥0.92
+    // threshold: "Salvage Sistas" existed as `Maker`, a roster backfill passed
+    // `Baby/Child`, and a duplicate vendor row was created. A category can
+    // corroborate but must never veto an exact name match.
     const vendor = { businessName: "Food Co", vendorType: "FOOD" };
-    expect(getVendorComparisonString(vendor)).toBe("food FOOD");
+    expect(getVendorComparisonString(vendor)).toBe("food");
+  });
+
+  it("scores two identical names with different types as identical", () => {
+    // The reported pair, at the level the scorer actually sees.
+    expect(getVendorComparisonString({ businessName: "Salvage Sistas", vendorType: "Maker" })).toBe(
+      getVendorComparisonString({ businessName: "Salvage Sistas", vendorType: "Baby/Child" })
+    );
   });
 
   it("handles null vendor type", () => {

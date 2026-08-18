@@ -166,10 +166,15 @@ describe("new vendor + new link", () => {
 describe("dedup_strategy: 'strict'", () => {
   it("matches case-insensitive exact business name and skips creation", async () => {
     const eid = seedEvent();
+    // OPE-451 — the seed and the lookup used to be BYTE-IDENTICAL ("Acme
+    // Catering Co" both sides), so this test never exercised case at all and
+    // passed happily while `strict` was `eq(business_name, ?)`. That vacuity is
+    // how a case-SENSITIVE "case-insensitive" match survived to duplicate
+    // "Time to Be Candle Company" in production. Now the case actually differs.
     seedVendor({ id: "existing", businessName: "Acme Catering Co", slug: "acme-catering" });
     const { payload } = await invoke({
       event_id: eid,
-      business_name: "Acme Catering Co",
+      business_name: "ACME CATERING co",
       dedup_strategy: "strict",
     });
     expect(payload?.was_created).toBe(false);
@@ -177,12 +182,35 @@ describe("dedup_strategy: 'strict'", () => {
     expect(payload?.was_linked).toBe(true);
   });
 
-  it("near-match with different punctuation does NOT match in strict mode", async () => {
+  it("matches across a trailing legal form — Co. vs Co (OPE-451 scope 4)", async () => {
+    // Inverted from what it asserted before. `strict` now normalizes the name
+    // (entities, dash family, &/and, trailing LLC/Inc./Co) before comparing,
+    // which `fuzzy` had done since DQ6/OPE-13 and strict never did — hence real
+    // pairs like "Center Street Soap Co." / "Center Street Soap Company"
+    // sitting in the catalog as two rows.
+    //
+    // The asymmetry justifies it: strict only decides LINK-vs-CREATE. Linking a
+    // roster entry to an existing same-named vendor is low-harm and reversible;
+    // minting a duplicate is the harm this ticket exists to stop.
     const eid = seedEvent();
     seedVendor({ id: "existing", businessName: "Acme Catering Co.", slug: "acme-catering" });
     const { payload } = await invoke({
       event_id: eid,
       business_name: "Acme Catering Co",
+      dedup_strategy: "strict",
+    });
+    expect(payload?.was_created).toBe(false);
+    expect(payload?.vendor_id).toBe("existing");
+  });
+
+  it("still does NOT match a genuinely different name in strict mode", async () => {
+    // The boundary: normalization must not become a similarity match by the
+    // back door. `strict` still means the same name.
+    const eid = seedEvent();
+    seedVendor({ id: "existing", businessName: "Acme Catering Co.", slug: "acme-catering" });
+    const { payload } = await invoke({
+      event_id: eid,
+      business_name: "Acme Cakes Co",
       dedup_strategy: "strict",
     });
     expect(payload?.was_created).toBe(true);

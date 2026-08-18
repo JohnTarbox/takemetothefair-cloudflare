@@ -59,7 +59,9 @@ export function registerCreateOrLinkVendorTool(
         .max(100)
         .transform(sanitizeProse)
         .optional()
-        .describe("Vendor category (used for new-vendor creation and fuzzy-match weighting)"),
+        .describe(
+          "Vendor category, used when CREATING a new vendor. It is not part of dedup matching (OPE-451): a category disagreement used to veto a byte-identical name, which duplicated vendors on every roster backfill, since a backfill assigns the show's category while the existing row carries whatever a previous pass assigned."
+        ),
       status: z
         .enum(VENDOR_STATUS_ENUM)
         .optional()
@@ -77,7 +79,7 @@ export function registerCreateOrLinkVendorTool(
         .optional()
         .default("fuzzy")
         .describe(
-          "How to look for an existing vendor. 'strict' = case-insensitive exact match; 'fuzzy' = Levenshtein+Jaccard ≥ 0.92; 'skip' = no dedup, always create."
+          "How to look for an existing vendor. 'strict' = case-insensitive exact match on the name, after folding HTML entities, dash variants, &/and, and trailing legal forms (LLC/Inc./Co); 'fuzzy' = Levenshtein+Jaccard ≥ 0.92 on the name alone; 'skip' = no dedup, always create. Neither strategy considers `type`."
         ),
       booth_info: z.string().max(200).optional(),
       payment_status: z

@@ -18,7 +18,7 @@
  * (`wasCreated`, `linkIsPublic`, `vendorSlug`, `eventSlug`) and each adapter fires
  * those its own way. The core's job is the data, not the notifications.
  */
-import { and, eq, isNull, like } from "drizzle-orm";
+import { and, eq, isNull, like, sql } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "@takemetothefair/db-schema";
 import {
@@ -27,6 +27,7 @@ import {
   sanitizeProse,
   combinedSimilarity,
   getVendorComparisonString,
+  normalizeVendorName,
   type Slug,
 } from "@takemetothefair/utils";
 import {
@@ -167,14 +168,67 @@ async function resolveRedirectChain(db: VendorLinkDb, startRow: VendorRow): Prom
 }
 
 /**
- * Fuzzy candidate scan: narrow via a LIKE stem, then rank with combinedSimilarity.
- * Caps the in-memory set to bound CPU on large tables.
+ * `strict` — "case-insensitive exact match", which is what the tool has always
+ * documented and, until OPE-451, not what it did.
+ *
+ * It was `eq(vendors.businessName, businessName)`: a raw, case-SENSITIVE,
+ * byte-for-byte comparison. Live on 2026-08-17 a roster page printed "Time to
+ * Be Candle Company" while the row held "Time To Be Candle Company"; one
+ * capital letter produced a duplicate vendor. `strict` is the strategy callers
+ * are told to fall back to when `fuzzy` misbehaves, so its failing quietly is
+ * the worst possible place for this.
+ *
+ * Two passes, both cheap:
+ *
+ *  1. `lower(business_name) = lower(?)` — the literal documented contract, and
+ *     the one that fixes the reported case.
+ *  2. A stem-narrowed scan compared on `normalizeVendorName`, which folds HTML
+ *     entities, the Unicode dash family, `&`↔`and`, and trailing legal forms
+ *     (`LLC`, `Inc.`, `Co`). This is OPE-451 scope 4: the normalizer already
+ *     existed for `fuzzy` (DQ6/OPE-13) and strict simply never used it, so
+ *     "Center Street Soap Co." and "Center Street Soap Company" were two rows.
+ *
+ * Still EXACT after normalization — no similarity threshold — so `strict`
+ * keeps meaning "the same name", not "a similar name".
  */
-async function findFuzzyMatch(
+export async function findStrictMatch(
   db: VendorLinkDb,
-  businessName: string,
-  vendorType: string | null | undefined
-): Promise<{ row: VendorRow; score: number } | null> {
+  businessName: string
+): Promise<VendorRow | null> {
+  const caseInsensitive = await db
+    .select({
+      id: vendors.id,
+      businessName: vendors.businessName,
+      vendorType: vendors.vendorType,
+      redirectToVendorId: vendors.redirectToVendorId,
+      slug: vendors.slug,
+    })
+    .from(vendors)
+    .where(
+      and(sql`lower(${vendors.businessName}) = lower(${businessName})`, isNull(vendors.deletedAt))
+    )
+    .limit(1);
+  if (caseInsensitive.length > 0) return caseInsensitive[0];
+
+  const normalizedTarget = normalizeVendorName(businessName);
+  if (!normalizedTarget) return null;
+
+  const candidates = await selectStemCandidates(db, businessName);
+  // Deterministic on ties: lowest id wins, so a repeated backfill links the
+  // same row every time instead of alternating between two duplicates.
+  let bestId: VendorRow | null = null;
+  for (const candidate of candidates) {
+    if (normalizeVendorName(candidate.businessName) !== normalizedTarget) continue;
+    if (!bestId || candidate.id < bestId.id) bestId = candidate;
+  }
+  return bestId;
+}
+
+/**
+ * Shared LIKE-stem narrowing used by both dedup strategies. Caps the in-memory
+ * set to bound CPU on large tables.
+ */
+async function selectStemCandidates(db: VendorLinkDb, businessName: string): Promise<VendorRow[]> {
   const stem = businessName
     .toLowerCase()
     .replace(/[^a-z0-9 ]/g, " ")
@@ -185,7 +239,7 @@ async function findFuzzyMatch(
   const filters = [isNull(vendors.deletedAt)];
   if (stem) filters.push(like(vendors.businessName, `%${escapeLike(stem)}%`));
 
-  const candidates = await db
+  return db
     .select({
       id: vendors.id,
       businessName: vendors.businessName,
@@ -196,7 +250,18 @@ async function findFuzzyMatch(
     .from(vendors)
     .where(and(...filters))
     .limit(FUZZY_CANDIDATE_CAP);
+}
 
+/**
+ * Fuzzy candidate scan: narrow via a LIKE stem, then rank with combinedSimilarity.
+ * Caps the in-memory set to bound CPU on large tables.
+ */
+export async function findFuzzyMatch(
+  db: VendorLinkDb,
+  businessName: string,
+  vendorType: string | null | undefined
+): Promise<{ row: VendorRow; score: number } | null> {
+  const candidates = await selectStemCandidates(db, businessName);
   if (candidates.length === 0) return null;
 
   const target = getVendorComparisonString({ businessName, vendorType: vendorType ?? null });
@@ -267,18 +332,8 @@ export async function createOrLinkVendor(
   let matched: { row: VendorRow; score: number | null } | null = null;
   if (dedupStrategy !== "skip") {
     if (dedupStrategy === "strict") {
-      const strictRows = await db
-        .select({
-          id: vendors.id,
-          businessName: vendors.businessName,
-          vendorType: vendors.vendorType,
-          redirectToVendorId: vendors.redirectToVendorId,
-          slug: vendors.slug,
-        })
-        .from(vendors)
-        .where(and(eq(vendors.businessName, businessName), isNull(vendors.deletedAt)))
-        .limit(1);
-      if (strictRows.length > 0) matched = { row: strictRows[0], score: 1 };
+      const strictRow = await findStrictMatch(db, businessName);
+      if (strictRow) matched = { row: strictRow, score: 1 };
     } else {
       const found = await findFuzzyMatch(db, businessName, vendorType);
       if (found) matched = { row: found.row, score: found.score };
