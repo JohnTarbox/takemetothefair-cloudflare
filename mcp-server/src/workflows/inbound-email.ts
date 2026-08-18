@@ -64,6 +64,10 @@ import type { EmailIntent } from "../email-intents.js";
 import type { SenderTrustTier } from "../intent-classifier.js";
 import type { EmailAuthVerdict } from "../email-auth.js";
 import type { HandlerFn, HandlerResult, ReplyKind } from "../email-handlers/types.js";
+import {
+  chooseNoUrlReplyKind,
+  violatesNoUrlInvariant,
+} from "../email-handlers/no-url-reply-kind.js";
 // OPE-431 — one definition of "may this event URL go in an email".
 import {
   alreadyExistsBullet,
@@ -660,7 +664,9 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     // suppressed row keeps its reply_kind (so it stays countable) and simply
     // isn't the message that speaks for its burst.
     if (result.replyKind !== null && !result.suppressReply) {
-      const replyKind = result.replyKind;
+      // OPE-453 — `let`, not `const`: the invariant guard immediately before the
+      // send may downgrade `no-url` to `unfetchable-url` when parsed_url is set.
+      let replyKind = result.replyKind;
       const replyParams = result.replyParams ?? {};
       try {
         await step.do(
@@ -689,6 +695,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
                 fromAddress: inboundEmails.fromAddress,
                 subject: inboundEmails.subject,
                 messageId: inboundEmails.messageId,
+                // OPE-453 — needed by the reply-kind invariant guard below.
+                parsedUrl: inboundEmails.parsedUrl,
               })
               .from(inboundEmails)
               .where(eq(inboundEmails.id, messageRowId))
@@ -736,6 +744,13 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
               // you wanted?" feedback widget. Per memory feedback note on
               // RECEIPT_WIDGET_KINDS missing from PR-E.
               "no-url-prose-failed",
+              // OPE-453 — `unfetchable-url` IS here, deliberately: it is the
+              // direct replacement for `no-url` on rows that carry a parsed URL,
+              // so omitting it would silently strip the widget from the very
+              // population this ticket is about. The widget's question stays
+              // coherent — "I meant something else" and "cancel" are both real
+              // answers when we tried a link and got nowhere.
+              "unfetchable-url",
               "already-exists",
               "extract-failed",
               "submit-failed",
@@ -812,6 +827,30 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
                   context: { messageRowId, replyKind },
                 });
               }
+            }
+
+            // OPE-453 — last line of defence on the reply-kind invariant.
+            //
+            // The chooser (chooseNoUrlReplyKind) makes this state unreachable
+            // from the two branches that select the no-URL family. This catches
+            // a THIRD path added later that hand-rolls a kind — which is exactly
+            // how the defect arose the first time. Checked here, immediately
+            // before the send, because that is the last moment the pairing can
+            // still be stopped.
+            //
+            // Downgrade, don't drop: `unfetchable-url` is true whenever a URL is
+            // on the row, so the sender still gets an accurate reply rather than
+            // silence. Sending nothing would trade a wrong answer for no answer.
+            if (violatesNoUrlInvariant(replyKind, rows[0].parsedUrl)) {
+              await logError(this.env.DB, {
+                level: "error",
+                source: SOURCE,
+                message: `reply-kind invariant violated: '${replyKind}' chosen while parsed_url is set — downgraded to 'unfetchable-url'`,
+                sessionId,
+                context: { messageRowId, replyKind, parsedUrl: rows[0].parsedUrl },
+              });
+              replyKind = "unfetchable-url";
+              if (rows[0].parsedUrl) params = { ...params, attemptedUrl: rows[0].parsedUrl };
             }
 
             const msg = buildReply(replyKind, rows[0].fromAddress, params);
@@ -1328,10 +1367,23 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           // /admin/inbound-emails.
         }
       }
-      const replyKind: ReplyKind = attemptedProse ? "no-url-prose-failed" : "no-url";
+      // OPE-453 — this branch is reached when there is no URL **or** when the
+      // classifier said `free_text` (the GH #244 override, which deliberately
+      // ignores a signature/footer link for ROUTING). That override is right,
+      // but the reply copy then asserted the link did not exist. When
+      // `parsed_url` is populated, "we couldn't find a link" is simply false —
+      // and false in the direction that blames the sender for our failure.
+      const replyKind: ReplyKind = chooseNoUrlReplyKind({
+        parsedUrl: rowSnapshot.parsedUrl,
+        attemptedProse,
+      });
       return {
         replyKind,
-        replyParams: { subject, hasAttachments: rowSnapshot.attachmentCount > 0 },
+        replyParams: {
+          subject,
+          hasAttachments: rowSnapshot.attachmentCount > 0,
+          ...(rowSnapshot.parsedUrl ? { attemptedUrl: rowSnapshot.parsedUrl } : {}),
+        },
         status: "replied",
         // OPE-174 — record why we bounced so URL-less submissions are visible in
         // source-quality telemetry (was NULL on this branch before).
@@ -2638,7 +2690,13 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     // to the soft prose/no-url ask instead.
     if (outcomes.length === 0) {
       return {
-        replyKind: hasAttachments ? "no-url-prose-failed" : "no-url",
+        // OPE-453 — no URL reached this path at all (every candidate failed
+        // cleanUrl or none existed), so the no-URL family is honest here. Routed
+        // through the shared chooser anyway so there is ONE place that decides.
+        replyKind: chooseNoUrlReplyKind({
+          parsedUrl: null,
+          attemptedProse: hasAttachments,
+        }),
         replyParams: { subject, hasAttachments },
         status: "replied",
         // OPE-174 — same telemetry gap as the single-source no-URL branch: record
