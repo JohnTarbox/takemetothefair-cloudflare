@@ -12,7 +12,12 @@
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import { and, eq, gt, lt, or } from "drizzle-orm";
 import * as schema from "@/lib/db/schema";
-import { eventDays, events } from "@/lib/db/schema";
+import { eventDays, events, entityDataCitations } from "@/lib/db/schema";
+import {
+  buildEntityCitations,
+  toCitationFields,
+  type CitationSourceType,
+} from "@takemetothefair/utils";
 import { findUniqueSlug, getSlugPrefixBounds, unsafeSlug, type Slug } from "@/lib/utils";
 
 type Db = DrizzleD1Database<typeof schema>;
@@ -45,7 +50,28 @@ export interface EventDayInput {
 export async function insertEventDaysBatched(
   db: Db,
   eventId: string,
-  days: EventDayInput[] | null | undefined
+  days: EventDayInput[] | null | undefined,
+  /**
+   * OPE-433 scope 4 — where these hours came from, when the caller knows.
+   *
+   * `event_days` is the table with no provenance at all, and it is where BOTH
+   * logged fabricated-fact instances live: MDI's invented 10-5/10-4/10-3 hours
+   * against a published flat 9-4, and OPE-411's 09:00–18:00 rows. A day row
+   * that cannot say where its hours came from is indistinguishable from one
+   * somebody made up, which is why they were made up for months without anyone
+   * being able to tell.
+   *
+   * Optional on purpose. A caller with no real source passes nothing and
+   * records nothing — absence is the honest value, and inventing a source to
+   * satisfy a required argument would be the very failure this closes.
+   */
+  source?: {
+    sourceUrl: string;
+    sourceName?: string | null;
+    sourceType: CitationSourceType;
+    confidence?: number | null;
+    createdBy?: string | null;
+  }
 ): Promise<void> {
   if (!days || days.length === 0) return;
   const rows = days.map((day) => ({
@@ -60,6 +86,33 @@ export async function insertEventDaysBatched(
   }));
   for (let i = 0; i < rows.length; i += EVENT_DAYS_BATCH_SIZE) {
     await db.insert(eventDays).values(rows.slice(i, i + EVENT_DAYS_BATCH_SIZE));
+  }
+
+  if (!source?.sourceUrl) return;
+  // Best-effort, and chunked to the same D1 parameter ceiling as the rows
+  // themselves. Provenance must never be able to fail an insert that already
+  // succeeded — the days are worth more than the note about them.
+  try {
+    const now = new Date();
+    const cites = rows.flatMap((r) =>
+      buildEntityCitations(
+        "EVENT_DAY",
+        r.id,
+        toCitationFields({
+          date: r.date,
+          openTime: r.openTime,
+          closeTime: r.closeTime,
+          notes: r.notes,
+        }),
+        source,
+        now
+      )
+    );
+    for (let i = 0; i < cites.length; i += EVENT_DAYS_BATCH_SIZE) {
+      await db.insert(entityDataCitations).values(cites.slice(i, i + EVENT_DAYS_BATCH_SIZE));
+    }
+  } catch {
+    // Additive. The day rows are already stored.
   }
 }
 

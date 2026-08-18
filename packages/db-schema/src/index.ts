@@ -1988,6 +1988,68 @@ export const eventVendorsRelations = relations(eventVendors, ({ one }) => ({
   vendor: one(vendors, { fields: [eventVendors.vendorId], references: [vendors.id] }),
 }));
 
+/**
+ * OPE-433 scope 4 — field-level provenance for `venues` and `event_days`
+ * (drizzle/0208).
+ *
+ * Same shape as {@link eventDataCitations}, addressed by `(entityType,
+ * entityId)` instead of a foreign key to one table.
+ *
+ * ── Why a sibling rather than generalising the existing table ────────────
+ *
+ * Generalising `event_data_citations` would mean making `event_id` nullable
+ * and adding an entity key, putting all 72 existing references and 6 modules on
+ * the hook — including `dates-confirmed-basis.ts`, which scope 1 just wired the
+ * confidence flag to. A widening that silently changes what an existing query
+ * counts is the enum-widening failure this repo already has a lesson for, and
+ * the reward would be one fewer table. If the two are ever unified it should be
+ * a deliberate migration with the consumers audited, not a side effect of
+ * adding venue provenance.
+ *
+ * `entityType` deliberately excludes `EVENT`: events have their own table, and
+ * accepting them here would create two answers to one question.
+ *
+ * ⚠️ Not backfilled. Where a source is unrecoverable, absence is the correct
+ * record — inventing one is the fabricated-fact failure this ticket exists to
+ * close.
+ */
+export const entityDataCitations = sqliteTable(
+  "entity_data_citations",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    entityType: text("entity_type", { enum: ["VENUE", "EVENT_DAY"] }).notNull(),
+    entityId: text("entity_id").notNull(),
+    fieldName: text("field_name").notNull(),
+    value: text("value").notNull(),
+    sourceUrl: text("source_url").notNull(),
+    sourceName: text("source_name"),
+    sourceType: text("source_type", {
+      enum: [
+        "official_website",
+        "news_article",
+        "press_release",
+        "social_media",
+        "user_submitted",
+        "other",
+      ],
+    }).notNull(),
+    confidence: real("confidence"),
+    state: text("state", { enum: ["active", "superseded", "rejected", "stale"] })
+      .notNull()
+      .default("active"),
+    notes: text("notes"),
+    createdBy: text("created_by"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    index("idx_entity_citations_entity").on(t.entityType, t.entityId),
+    index("idx_entity_citations_field").on(t.entityType, t.entityId, t.fieldName),
+    index("idx_entity_citations_state").on(t.state, t.createdAt),
+  ]
+);
+
 export const eventDataCitationsRelations = relations(eventDataCitations, ({ one }) => ({
   event: one(events, { fields: [eventDataCitations.eventId], references: [events.id] }),
   createdByUser: one(users, {
