@@ -235,8 +235,9 @@ export async function POST(request: NextRequest) {
       if (!gateReasons.includes("unusable_name")) gateReasons.push("unusable_name");
     }
 
-    const eventStatus = gateRoute === "PENDING_REVIEW" ? "PENDING" : baseEventStatus;
-    const gateFlagsJson = gateReasons.length > 0 ? JSON.stringify(gateReasons) : null;
+    // NOTE: `eventStatus` / `gateFlagsJson` are derived AFTER effectiveStartDate
+    // is known (see the OPE-458 re-check below), because a discontinuous
+    // submission's real start date is not settled at this point.
     const tagList: string[] =
       data.source === "vendor"
         ? ["community-suggestion", "vendor-submission"]
@@ -403,6 +404,30 @@ export async function POST(request: NextRequest) {
       effectiveStartDate = normalizeEventDate(sortedDates[0]);
       effectiveEndDate = normalizeEventDate(sortedDates[sortedDates.length - 1]);
     }
+
+    // OPE-458 — re-run the past-date gate against the date we are ABOUT TO
+    // STORE, not the one we were handed.
+    //
+    // The guard ~180 lines up runs on `startDate`. For a discontinuous
+    // submission the stored start date is recomputed from `event_days` right
+    // above, so a submission whose dates arrive only as `specificDates` was
+    // gated on a null (or unrelated) value and then persisted with a past one.
+    //
+    // Live specimen: `3fbf9829` "Vineyard Artisans Festivals", start 2024-06-15,
+    // four event_days spanning 2024-06-15 → 2024-12-08, `gate_flags = NULL`.
+    // Its two siblings from the same email had no event_days, took the ordinary
+    // path, and were gated correctly — which is exactly why this was invisible:
+    // the gate demonstrably works, on the rows that reach it.
+    //
+    // Idempotent: `past_date` is only appended when absent, so a row already
+    // gated above is unchanged.
+    if (effectiveStartDate && effectiveStartDate.getTime() < Date.now()) {
+      gateRoute = "PENDING_REVIEW";
+      if (!gateReasons.includes("past_date")) gateReasons.push("past_date");
+    }
+
+    const eventStatus = gateRoute === "PENDING_REVIEW" ? "PENDING" : baseEventStatus;
+    const gateFlagsJson = gateReasons.length > 0 ? JSON.stringify(gateReasons) : null;
 
     // K34 / EH3 P3.3b — if this submission is really a new EDITION of an
     // existing event that belongs to a SERIES (different year), attach it as an
