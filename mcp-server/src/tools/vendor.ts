@@ -1003,33 +1003,48 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
             // the suggestion is never silently lost.
           }
 
-          return {
-            content: [
-              jsonContent({
-                created: false,
-                reason: "potential_duplicates_found",
-                match_type: dupe.matchType,
-                similarity: dupe.similarity,
-                message: `Found an existing event matching on \`${dupe.matchType}\`. Use force_create: true to create anyway.`,
-                possible_duplicates: [
-                  {
-                    id: dupe.existingEvent.id,
-                    name: dupe.existingEvent.name,
-                    slug: dupe.existingEvent.slug,
-                    dates: formatDateRange(dupe.existingEvent.startDate, null),
-                    status: dupe.existingEvent.status,
+          // OPE-454 — only BLOCK when the match identifies the same event.
+          // A `series_url` match proves the two rows came off the same source
+          // page, which for a series promoter's `/shows` URL is true of every
+          // sibling edition. Blocking on it refused two legitimate 2027
+          // Paradise City shows against a November 2026 one, and taught the
+          // operator that `force_create: true` is the routine escape — which
+          // is how a real duplicate gets waved through later.
+          //
+          // Note the series-occurrence routing above still runs for these:
+          // "same source page, different year" is the STRONGEST signal we have
+          // that this is a new edition, so a series_url match is exactly what
+          // that path wants. We only decline to refuse when it doesn't route.
+          if (dupe.identifiesSameEvent) {
+            return {
+              content: [
+                jsonContent({
+                  created: false,
+                  reason: "potential_duplicates_found",
+                  match_type: dupe.matchType,
+                  similarity: dupe.similarity,
+                  message: `Found an existing event matching on \`${dupe.matchType}\`. Use force_create: true to create anyway.`,
+                  possible_duplicates: [
+                    {
+                      id: dupe.existingEvent.id,
+                      name: dupe.existingEvent.name,
+                      slug: dupe.existingEvent.slug,
+                      dates: formatDateRange(dupe.existingEvent.startDate, null),
+                      status: dupe.existingEvent.status,
+                    },
+                  ],
+                  suggested_event: {
+                    name: params.name,
+                    venue_id: venueId,
+                    venue_name: venueResult?.name || params.venue_name,
+                    start_date: params.start_date,
+                    end_date: params.end_date,
                   },
-                ],
-                suggested_event: {
-                  name: params.name,
-                  venue_id: venueId,
-                  venue_name: venueResult?.name || params.venue_name,
-                  start_date: params.start_date,
-                  end_date: params.end_date,
-                },
-              }),
-            ],
-          };
+                }),
+              ],
+            };
+          }
+          // series_url and unroutable → fall through and create normally.
         }
       }
 

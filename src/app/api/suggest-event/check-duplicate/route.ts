@@ -78,9 +78,12 @@ export async function POST(request: NextRequest) {
     // 0 rows since GW1.1 shipped (the daily self_consistency + stale_page_radar
     // crons were unaffected — they run in the MCP Worker's scheduled context).
     //
-    // Stage 1 (exact_url) is skipped at the comparator boundary; we
-    // additionally early-skip here to avoid a wasted PK lookup.
-    if (result.matchType !== "exact_url" && validation.data.sourceUrl) {
+    // Stage 1 (exact_url AND OPE-454's series_url) is skipped at the
+    // comparator boundary; we additionally early-skip here to avoid a wasted
+    // PK lookup. Asking the comparator instead of re-listing the stage-1
+    // types keeps this in step with compareForIngest.
+    const isStageOne = result.matchType === "exact_url" || result.matchType === "series_url";
+    if (!isStageOne && validation.data.sourceUrl) {
       const work = enqueueDiscrepanciesAsync(
         result.matchType,
         result.existingEvent.id,
@@ -106,6 +109,10 @@ export async function POST(request: NextRequest) {
       success: true,
       isDuplicate: true,
       matchType: result.matchType,
+      // OPE-454 — the wire contract has to carry the MEANING, not just the
+      // label, or every remote consumer re-derives "is series_url blocking?"
+      // and they drift. False only for `series_url`.
+      identifiesSameEvent: result.identifiesSameEvent,
       ...(result.matchType === "similar_name_date" && result.similarity !== undefined
         ? { similarity: Math.round(result.similarity * 100) }
         : {}),

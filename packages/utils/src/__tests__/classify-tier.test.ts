@@ -23,6 +23,19 @@ describe("classifyDedupTier", () => {
     expect(classifyDedupTier("similar_name_date")).toBe("medium");
   });
 
+  it("treats series_url as MEDIUM, not HIGH (OPE-454)", () => {
+    // `series_url` means "same source page, different edition" — a series
+    // promoter listing every show on one /shows URL. HIGH would send an
+    // already-exists reply for a genuinely new edition and create nothing,
+    // which is exactly what the email pipeline must not do: there is no
+    // operator on that path to pass force_create.
+    //
+    // It reached MEDIUM by accident via the unknown-string default. Pinned
+    // here so a future reshuffle of the branch order can't quietly make it
+    // HIGH.
+    expect(classifyDedupTier("series_url")).toBe("medium");
+  });
+
   it("treats unknown match types as MEDIUM (safer default)", () => {
     // Defensive: an unrecognized matchType shouldn't auto-route to
     // already-exists. PENDING + possible_duplicate_of tag is safer.
