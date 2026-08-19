@@ -1,0 +1,20 @@
+-- OPE-456 — record HOW a milestone's reached_date was obtained.
+--
+-- Row 18 stored 2026-08-15's milestone as 2026-08-17. Not, as first supposed,
+-- because the ingest substituted `email_date` — it never does. The parser took
+-- the FIRST date in a forwarded body, which is the forward header's date, not
+-- Google's "On Aug 15, 2026 … reached 12K".
+--
+-- Both are real parses. What distinguishes them is WHICH SENTENCE they came
+-- from, and until now nothing recorded that — so a value read from the forward
+-- header was indistinguishable from one read from Google's own claim.
+--
+--   anchored    from a line that states the milestone ("… reached …")
+--   unanchored  the first date anywhere in the body — trustworthy on mail
+--               straight from Google, not on a forward
+--
+-- NULL on every existing row: they predate the distinction and we cannot
+-- retroactively know which sentence they came from. NULL means "unknown", not
+-- "anchored" — and the correction path treats it as the weaker value precisely
+-- so a later, anchored parse is allowed to supersede it.
+ALTER TABLE gsc_milestone_emails ADD COLUMN reached_date_source TEXT;

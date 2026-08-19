@@ -2386,6 +2386,13 @@ export const gscMilestoneEmails = sqliteTable(
     // Google's cited impact date — nullable because not every milestone
     // email includes one explicitly.
     reachedDate: text("reached_date"),
+    /**
+     * OPE-456 — `anchored` | `unanchored` | NULL(unknown, pre-dates the column).
+     * Which sentence the date came from. An unanchored parse on a forwarded
+     * email is the forward header's date, not Google's; the correction path
+     * lets an anchored value supersede a weaker one but never the reverse.
+     */
+    reachedDateSource: text("reached_date_source"),
     emailDate: text("email_date").notNull(),
     siteUrl: text("site_url").notNull().default("https://meetmeatthefair.com/"),
     source: text("source").notNull().default("google_search_console_email"),
