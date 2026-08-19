@@ -26,7 +26,10 @@ import {
   events,
   eventSeries,
   inboundEmails,
+  gscDailyTotals,
+  gscMilestoneEmails,
 } from "../schema.js";
+import { deriveCrossings, auditStoredDates } from "@takemetothefair/utils";
 import { jsonContent } from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
@@ -311,6 +314,45 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
         promoter_reply_response_rate: "Awaiting Phase 2 promoter-reply data",
       };
 
+      // ── OPE-456 invariant: a stored milestone date we cannot derive ─────
+      //
+      // The 12,000-click milestone was stored as 2026-08-17 — the date John
+      // FORWARDED the mail — when Google's own body said Aug 15. The auto-ingest
+      // (OPE-311) stamps `email_date: new Date()` at processing time, and
+      // `reached_date` absorbed it. It was corrected by hand after deriving the
+      // real crossing from our own `gsc_daily_totals`.
+      //
+      // OPE-456 shipped that derivation as a tested pure function and **nothing
+      // called it**. So the arithmetic that catches this class existed while the
+      // class stayed uncaught — which is the OPE-246 defect shape, in a ticket
+      // about a silently-wrong date. This is its caller.
+      //
+      // `differs` is the fault. `underivable` is not: our daily totals only go
+      // back so far, and a threshold crossed before the series starts genuinely
+      // cannot be derived — reporting that as a violation would train the
+      // reader to ignore the check.
+      const milestoneRows = await db
+        .select({
+          threshold: gscMilestoneEmails.threshold,
+          reachedDate: gscMilestoneEmails.reachedDate,
+        })
+        .from(gscMilestoneEmails)
+        .where(eq(gscMilestoneEmails.metric, "clicks"));
+
+      const dailyRows = await db
+        .select({ date: gscDailyTotals.date, clicks: gscDailyTotals.clicks })
+        .from(gscDailyTotals);
+
+      const milestoneAudit = auditStoredDates(
+        milestoneRows.map((r) => ({ threshold: r.threshold, reachedDate: r.reachedDate })),
+        deriveCrossings(
+          dailyRows.map((d) => ({ date: d.date, clicks: d.clicks })),
+          milestoneRows.map((r) => r.threshold),
+          28
+        )
+      );
+      const milestoneDrift = milestoneAudit.filter((a) => a.verdict === "differs");
+
       return {
         content: [
           jsonContent({
@@ -368,6 +410,16 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
                 subject: r.subject,
                 raw_size: r.rawSize,
               })),
+            },
+            // OPE-456 — stored milestone dates checked against our OWN daily
+            // totals. `drift` is the fault; `underivable` counts are reported
+            // separately so a short history never reads as a defect.
+            gsc_milestone_date_drift: {
+              rule: "gsc_milestone_emails.reached_date must match the derived 28-day crossing from gsc_daily_totals",
+              violation_count: milestoneDrift.length,
+              violations: milestoneDrift,
+              underivable_count: milestoneAudit.filter((a) => a.verdict === "underivable").length,
+              audited: milestoneAudit.length,
             },
             snapshot_trend: trend,
           }),
