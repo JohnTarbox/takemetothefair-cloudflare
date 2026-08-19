@@ -12,6 +12,7 @@ import {
   formatDateRange,
 } from "@/lib/utils";
 import { resolveUniqueEventSlug, insertEventDaysBatched } from "@/lib/events/insert-helpers";
+import { attachEventToSeries } from "@/lib/series/resolve-or-create-series";
 import { logError } from "@/lib/logger";
 import { recomputeEventCompleteness } from "@/lib/completeness";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
@@ -618,6 +619,23 @@ export async function POST(request: NextRequest) {
     // 582f3156 had 16 — so the loop is required, not optional.
     // WS2a — shared D1-safe batched insert (was an inline chunk loop).
     await insertEventDaysBatched(db, newEventId, effectiveEventDays);
+
+    // OPE-472 — attach to a series parent at write time.
+    //
+    // This is the highest-volume unparented path: `event_series` has minted
+    // nothing since 2026-06-30, and 170 of the 172 events created since
+    // 2026-07-01 were born with `series_id` NULL. Attaching here is what stops
+    // that number growing; the existing backlog is a separate (backfill)
+    // question and is not touched.
+    //
+    // After the insert, not inside it: the event is already durable, and the
+    // parent is an enhancement. A series failure must never cost a submission.
+    await attachEventToSeries(db, newEventId, {
+      name: effectiveName,
+      venueId: resolvedVenueId,
+      promoterId: resolvedPromoterId,
+      description,
+    });
 
     // Store schema.org data if JSON-LD was provided
     if (data.jsonLd) {

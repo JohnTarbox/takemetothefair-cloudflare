@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { promoters, events, venues } from "@/lib/db/schema";
+import { attachEventToSeries } from "@/lib/series/resolve-or-create-series";
 import { eventVenueJoinProjection } from "@/lib/db/event-join-projection";
 import { eq, desc } from "drizzle-orm";
 import { createSlug, computePublicDates, dollarsToCents } from "@/lib/utils";
@@ -204,6 +205,16 @@ export async function POST(request: NextRequest) {
       applicationUrl,
       applicationInstructions,
       walkInsAllowed,
+    });
+
+    // OPE-472 — attach to a series parent at write time. `event_series`
+    // minted nothing between 2026-06-30 and this fix, so every event from
+    // this path was born without a hub. Best-effort, after the insert: the
+    // event is durable and the parent is an enhancement.
+    await attachEventToSeries(db, eventId, {
+      name: name,
+      venueId: venueId,
+      promoterId: promoter.id,
     });
 
     await recomputeEventCompleteness(db, eventId);
