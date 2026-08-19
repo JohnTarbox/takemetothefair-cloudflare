@@ -35,6 +35,7 @@ import { registerSendNewsletterBroadcastTool } from "./tools/admin-send-newslett
 import { registerCreateClaimInviteTool } from "./tools/admin-claim-invite.js";
 import { registerClaimReviewTools } from "./tools/admin-claim-review.js";
 import { registerResolveHeldPhotosTool } from "./tools/admin-resolve-held-photos.js";
+import { registerReplayInboundAttachmentTool } from "./tools/admin-replay-inbound-attachment.js";
 import { registerAnalyticsTools } from "./tools/analytics.js";
 import { mainAppFetch, type MainAppEnv } from "./main-app-fetch.js";
 import { registerBlogTools } from "./tools/blog.js";
@@ -357,6 +358,11 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
         registerClaimReviewTools(this.server, db, auth);
         // OPE-254 (2026-07-18) — resolve_held_photos (recover held photo batches).
         registerResolveHeldPhotosTool(this.server, db, auth, this.env);
+        // OPE-469 (2026-08-18) — replay_inbound_attachment. Re-runs a RETAINED
+        // attachment through the real pipeline, dry-run by default, so the
+        // photo lane can be tested against the 87 stored originals instead of
+        // by attending a fair.
+        registerReplayInboundAttachmentTool(this.server, db, auth, this.env);
         groups.admin = diff(before);
 
         before = snapshot();
