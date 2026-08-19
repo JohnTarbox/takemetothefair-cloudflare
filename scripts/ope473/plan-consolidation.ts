@@ -147,12 +147,25 @@ if (mode === "report") {
     console.log("");
     console.log(`-- ${p.keeper.name}  (keeper: ${p.keeper.slug}, rule: ${p.rule})`);
     for (const d of p.dupes) {
+      // Both writes are guarded on the keeper still existing.
+      //
+      // `series_slug_history.series_id` REFERENCES `event_series(id)`, so on a
+      // database where the keeper is absent the bare INSERT raises FOREIGN KEY
+      // constraint failed and aborts the WHOLE migration. That is not
+      // hypothetical — it failed CI's "Initialize D1 database" step, which
+      // applies every migration to an EMPTY local D1.
+      //
+      // The same guard also covers a real prod risk: if a keeper were deleted
+      // between planning and running, an unguarded run would abort partway
+      // through rather than skipping the one stale pair.
       console.log(
         `INSERT OR IGNORE INTO series_slug_history (id, series_id, old_slug, new_slug, changed_at, changed_by) ` +
-          `VALUES (lower(hex(randomblob(16))), '${p.keeper.id}', '${d.slug}', '${p.keeper.slug}', unixepoch(), 'ope-473');`
+          `SELECT lower(hex(randomblob(16))), '${p.keeper.id}', '${d.slug}', '${p.keeper.slug}', unixepoch(), 'ope-473' ` +
+          `WHERE EXISTS (SELECT 1 FROM event_series WHERE id = '${p.keeper.id}');`
       );
       console.log(
-        `UPDATE events SET series_id = '${p.keeper.id}', updated_at = unixepoch() WHERE series_id = '${d.id}';`
+        `UPDATE events SET series_id = '${p.keeper.id}', updated_at = unixepoch() ` +
+          `WHERE series_id = '${d.id}' AND EXISTS (SELECT 1 FROM event_series WHERE id = '${p.keeper.id}');`
       );
       console.log(`DELETE FROM event_series WHERE id = '${d.id}';`);
     }
