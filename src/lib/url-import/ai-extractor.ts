@@ -10,6 +10,7 @@ import { EVENT_CATEGORIES } from "@/lib/constants";
 import { groundDateInSource } from "./date-grounding";
 import { WORKERS_AI_MODEL } from "@takemetothefair/constants";
 import { repairFlattenedEditions } from "./deterministic/repair-editions";
+import { parseHoursBlock } from "./deterministic/hours-block";
 
 // Logging: diagnostic output here uses console.warn so it surfaces in
 // `wrangler tail` for an admin running an import while still satisfying the
@@ -426,8 +427,26 @@ function parseMultiEventResponse(
 ): ExtractedEvent[] {
   const parsed = parseMultiEventResponseRaw(response, metadata, sourceText);
 
+  // OPE-479 — a published hours block is machine-readable, and the model was
+  // dropping it entirely. Parsed from the SOURCE, not from the model's output,
+  // for the same reason the edition table is: the page is the authority, and
+  // the model has already demonstrated it does not carry this content through.
+  //
+  // Attached to every candidate — an hours block on a multi-edition page states
+  // the fair's operating pattern, not one edition's. It stays reviewable rather
+  // than auto-written; see the note on `dayHours` in types.ts.
+  const dayHours = parseHoursBlock(sourceText);
+  const withHours = dayHours.length > 0 ? parsed.map((e) => ({ ...e, dayHours })) : parsed;
+
+  if (dayHours.length > 0) {
+    console.warn(
+      `[AI Extractor Multi] OPE-479 — parsed a published hours block: ` +
+        `${dayHours.length} day(s) with gate hours. Surfaced for review, not written.`
+    );
+  }
+
   const { events, repairedYears } = repairFlattenedEditions(
-    parsed,
+    withHours,
     sourceText,
     (year) => `repaired-${year}-${Math.random().toString(36).slice(2, 8)}`
   );
