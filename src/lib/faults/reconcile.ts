@@ -99,6 +99,25 @@ export type LedgerUpsert =
   | { op: "touch"; signature: string; lastSeen: number; count: number }
   | { op: "regress"; signature: string; lastSeen: number; count: number };
 
+/**
+ * A group that cleared noise classification and produced a signature, but failed
+ * BOTH eligibility gates while having no ledger row — so it was discarded.
+ *
+ * OPE-488: this used to be a bare `continue`. The scan then reported
+ * "15 signatures" and emitted nothing, with no way to tell whether the emitter
+ * was broken, gated, or simply looking at genuinely quiet traffic. Two tickets
+ * (OPE-488, OPE-485) were filed on that ambiguity. A discard that nobody counts
+ * is indistinguishable from an outage, so it is counted now.
+ */
+export interface SubThresholdDrop {
+  signature: string;
+  route: string | null;
+  errorClass: string;
+  count: number;
+  distinctSessions: number;
+  lastSeen: number;
+}
+
 export interface ReconcileFaultsResult {
   /** NEW faults to file this run (within the batch cap). */
   toEmit: FaultCandidate[];
@@ -110,6 +129,9 @@ export interface ReconcileFaultsResult {
   deferred: FaultCandidate[];
   /** The ledger mutations the endpoint should apply. */
   upserts: LedgerUpsert[];
+  /** Groups discarded for clearing neither gate and having no ledger row
+   *  (OPE-488). Reported, never silently dropped. */
+  subThreshold: SubThresholdDrop[];
 }
 
 /** faultSigToken inlined (avoids a cross-module dep in the pure core). */
@@ -127,7 +149,8 @@ function safeNum(value: unknown, fallback: number): number {
  *
  * Threshold gate: a signature is eligible only if
  *   `count >= minCount || distinctSessions >= minSessions`.
- * Sub-threshold AND not in the ledger → ignored entirely (one-offs self-suppress).
+ * Sub-threshold AND not in the ledger → not filed, but RECORDED in `subThreshold`
+ *   (OPE-488) so the discard is countable rather than invisible.
  * Sub-threshold BUT already in the ledger → still `touch`ed (never dropped).
  *
  * Per signature:
@@ -164,6 +187,7 @@ export function reconcileFaults(
   const existingActive: FaultLedgerRow[] = [];
   const upserts: LedgerUpsert[] = [];
   const candidates: FaultCandidate[] = [];
+  const subThreshold: SubThresholdDrop[] = [];
 
   for (const g of Array.isArray(grouped) ? grouped : []) {
     // Guard unparseable input — a bad group must not abort the scan.
@@ -181,8 +205,22 @@ export function reconcileFaults(
 
     if (!row) {
       // Never seen before. Emit only if it cleared the threshold — a true
-      // one-off (sub-threshold, no ledger row) is ignored entirely.
-      if (!eligible) continue;
+      // one-off (sub-threshold, no ledger row) is not filed.
+      //
+      // OPE-488: RECORD the drop rather than vanishing it. The endpoint surfaces
+      // the tally, so "N signatures in, 0 candidates out" is explained by data
+      // instead of being read as a dead emitter.
+      if (!eligible) {
+        subThreshold.push({
+          signature: g.signature,
+          route,
+          errorClass,
+          count: groupCount,
+          distinctSessions: groupSessions,
+          lastSeen: groupLast,
+        });
+        continue;
+      }
       candidates.push({
         signature: g.signature,
         route,
@@ -282,5 +320,5 @@ export function reconcileFaults(
     }
   });
 
-  return { toEmit, existing: existingActive, regressions, deferred, upserts };
+  return { toEmit, existing: existingActive, regressions, deferred, upserts, subThreshold };
 }

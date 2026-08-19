@@ -183,3 +183,67 @@ describe("reconcileFaults", () => {
     ).not.toThrow();
   });
 });
+
+/**
+ * OPE-488 — the sub-threshold bucket.
+ *
+ * Before this, a group that cleared noise classification but failed both gates
+ * was discarded with a bare `continue`. The scan then reported "15 signatures"
+ * and emitted nothing, and two tickets were filed reading that as a dead
+ * emitter. The discard is now countable.
+ */
+describe("reconcileFaults — sub-threshold accounting (OPE-488)", () => {
+  it("records a sub-threshold group instead of vanishing it", () => {
+    const g = group("/a#boom", { count: 1, distinctSessions: 1 });
+    const r = reconcileFaults([g], [], NOW);
+
+    expect(r.toEmit).toHaveLength(0);
+    expect(r.deferred).toHaveLength(0);
+    expect(r.existing).toHaveLength(0);
+    expect(r.upserts).toHaveLength(0);
+    // The point of the ticket: it is visible.
+    expect(r.subThreshold).toHaveLength(1);
+    expect(r.subThreshold[0]).toMatchObject({
+      signature: "/a#boom",
+      count: 1,
+      distinctSessions: 1,
+    });
+  });
+
+  it("accounts for EVERY group — no signature falls out of all buckets", () => {
+    const groups = [
+      group("/hot#boom", { count: 9, distinctSessions: 4 }), // eligible → toEmit
+      group("/cold-a#boom", { count: 1, distinctSessions: 1 }), // sub-threshold
+      group("/cold-b#boom", { count: 2, distinctSessions: 1 }), // sub-threshold
+      group("/known#boom", { count: 1, distinctSessions: 1 }), // sub-threshold BUT in ledger
+    ];
+    const r = reconcileFaults(groups, [ledgerRow("/known#boom", "filed")], NOW);
+
+    const accounted =
+      r.toEmit.length +
+      r.regressions.length +
+      r.existing.length +
+      r.deferred.length +
+      r.subThreshold.length;
+    expect(accounted).toBe(groups.length);
+    expect(r.toEmit.map((c) => c.signature)).toEqual(["/hot#boom"]);
+    expect(r.subThreshold.map((d) => d.signature).sort()).toEqual(["/cold-a#boom", "/cold-b#boom"]);
+    // A sub-threshold group already in the ledger is still touched, never dropped.
+    expect(r.existing.map((e) => e.signature)).toEqual(["/known#boom"]);
+  });
+
+  it("leaves subThreshold empty when every group clears a gate", () => {
+    const r = reconcileFaults([group("/a#boom"), group("/b#boom")], [], NOW);
+    expect(r.subThreshold).toEqual([]);
+    expect(r.toEmit).toHaveLength(2);
+  });
+
+  it("the distinctSessions gate alone can make a low-count fault eligible", () => {
+    // The widespread-but-low-volume shape the OR-clause exists for. This is the
+    // gate that OPE-488 found was dead in production, because the endpoint fed
+    // it a constant 1 derived from the route.
+    const r = reconcileFaults([group("/a#boom", { count: 1, distinctSessions: 2 })], [], NOW);
+    expect(r.subThreshold).toHaveLength(0);
+    expect(r.toEmit).toHaveLength(1);
+  });
+});

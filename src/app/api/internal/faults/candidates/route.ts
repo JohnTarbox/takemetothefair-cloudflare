@@ -55,21 +55,41 @@ const EMIT_HEARTBEAT_SOURCE = "mcp:fault-signatures-emit";
 const toMs = (d: Date | null): number | null => (d ? d.getTime() : null);
 
 /**
- * Best-effort session-ish key for distinct-session counting: a session/pathname
- * from the row's `context` JSON, else the row `url`. Null when nothing usable.
+ * Best-effort session key for distinct-session counting. Null when the row
+ * carries nothing that actually identifies a SESSION.
+ *
+ * OPE-488 — this deliberately no longer falls back to `pathname` / `path` /
+ * `url`. Those are ROUTE identity, and the signature is already route-scoped
+ * (`route#errorClass`), so every row in a group shared one value and
+ * `distinctSessions` was structurally 1 for the entire client-error lane.
+ *
+ * That silently killed the escape hatch it feeds. `reconcileFaults` gates on
+ * `count >= minCount || distinctSessions >= minSessions`; the second clause
+ * exists to catch a fault that is LOW-VOLUME PER ROUTE BUT WIDESPREAD — which is
+ * precisely the shape of a chunk/bundle fault hitting 49 routes once each. A
+ * constant 1 meant it could never fire, so eligibility silently collapsed to the
+ * count gate alone.
+ *
+ * Returning null is the honest answer: the caller already degrades to the
+ * occurrence count when a group has no usable session key, which is the
+ * documented intent. Client rows in prod carry only `errorType` / `pathname` /
+ * `reportedUrl`, so today this returns null for that lane — a real measurement
+ * of "we cannot distinguish sessions", not a fabricated 1.
  */
 function sessionKeyFor(contextJson: string | null, url: string | null): string | null {
   if (contextJson) {
     try {
       const ctx = JSON.parse(contextJson) as Record<string, unknown>;
-      const candidate =
-        ctx.sessionId ?? ctx.session ?? ctx.sid ?? ctx.pathname ?? ctx.path ?? ctx.url;
+      const candidate = ctx.sessionId ?? ctx.session ?? ctx.sid;
       if (typeof candidate === "string" && candidate) return candidate;
     } catch {
-      // Malformed context JSON → fall through to url.
+      // Malformed context JSON → no session key.
     }
   }
-  return url && url.length > 0 ? url : null;
+  // `url` is the INGEST endpoint for client reports (every row reads
+  // ".../api/client-errors"), so it never distinguished sessions either.
+  void url;
+  return null;
 }
 
 interface Accum {
@@ -236,14 +256,25 @@ export const POST = withInternalKey({ source: "faults:candidates" }, async ({ db
     await logError(db, {
       level: "info",
       source: EMIT_HEARTBEAT_SOURCE,
-      message: `fault emit: scanned ${rows.length} render rows → ${grouped.length} signatures; toEmit=${result.toEmit.length} regressions=${result.regressions.length} existing=${result.existing.length} deferred=${result.deferred.length}`,
+      // OPE-488 — `suppressed` and `subThreshold` are in the message because the
+      // old line accounted for only a fraction of what it scanned: "70 rows → 15
+      // signatures; toEmit=0 ... existing=1" left 14 signatures unaccounted for,
+      // and read as a dead emitter to two separate readers. Every scanned row now
+      // lands in a named bucket.
+      message:
+        `fault emit: scanned ${rows.length} render rows → ${grouped.length} signatures ` +
+        `(noise-suppressed ${suppressedTotal}); toEmit=${result.toEmit.length} ` +
+        `regressions=${result.regressions.length} existing=${result.existing.length} ` +
+        `deferred=${result.deferred.length} subThreshold=${result.subThreshold.length}`,
       context: {
         scanned: rows.length,
         signatures: grouped.length,
+        suppressed: suppressedTotal,
         toEmit: result.toEmit.length,
         regressions: result.regressions.length,
         existing: result.existing.length,
         deferred: result.deferred.length,
+        subThreshold: result.subThreshold.length,
       },
     });
 
@@ -276,6 +307,15 @@ export const POST = withInternalKey({ source: "faults:candidates" }, async ({ db
         classification: classifyFault({ errorClass: c.errorClass, route: c.route }),
       })),
       deferred: result.deferred,
+      // OPE-488 — the discarded-but-real groups, so a consumer can tell "quiet
+      // traffic" from "everything fell just under the gate". Capped: this is a
+      // diagnostic tally, not a work queue.
+      subThreshold: {
+        total: result.subThreshold.length,
+        top: [...result.subThreshold]
+          .sort((a, b) => b.count - a.count || b.lastSeen - a.lastSeen)
+          .slice(0, 10),
+      },
       // The agent only needs enough to recognise an already-known fault.
       existing: result.existing.map((r) => ({
         signature: r.signature,

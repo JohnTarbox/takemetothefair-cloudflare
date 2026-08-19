@@ -27,6 +27,7 @@ import {
   heartbeatProbes,
   siteHealthRefreshState,
   agentHeartbeats,
+  errorLogs,
   inboundEmails,
   imageCoverageState,
   newsletterIssues,
@@ -378,13 +379,35 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
   // metrics tables back KPI tiles, so if ingestion stops the tiles keep showing
   // the last-known number indefinitely and nothing notices.
   //
-  // NOTE — the audit also asked for a "fault-emitter" probe. Deliberately NOT
-  // added. fault_signatures.last_seen only advances WHEN A FAULT OCCURS, so a
-  // quiet period is indistinguishable from a dead emitter (it stood at 51.7h
-  // when this shipped, with nothing wrong). Probing it would rebuild the exact
-  // false-STALE pattern OPE-295 removed: a freshness SLA on a signal whose
-  // cadence is driven by events rather than a schedule. Probe periodic feeds;
-  // for event-driven ones, absence is not evidence.
+  // NOTE — the audit also asked for a "fault-emitter" probe watching
+  // `fault_signatures.last_seen`. Still deliberately NOT added, and the reasoning
+  // stands: that column only advances WHEN A FAULT OCCURS, so a quiet period is
+  // indistinguishable from a dead emitter (it stood at 51.7h when this shipped,
+  // with nothing wrong). Probing it would rebuild the exact false-STALE pattern
+  // OPE-295 removed — a freshness SLA on a signal whose cadence is driven by
+  // events rather than a schedule.
+  //
+  // OPE-488 found the probe that IS sound, by applying that same rule instead of
+  // overturning it. The emitter writes one `mcp:fault-signatures-emit` info row
+  // per RUN, hourly, whether or not it finds anything. That signal is
+  // schedule-driven, so absence genuinely is evidence — the distinction this note
+  // already drew. Probe the run, never the yield.
+  //
+  // Why it was worth adding: on 2026-08-19 the ledger had not moved in ~50h and
+  // two tickets were filed asserting the emitter had stopped. It had not — it ran
+  // every hour on schedule, and the ledger was quiet because ChunkLoadError is on
+  // the curated NOISE_DENYLIST by design. This probe answers "did it run?"
+  // definitively, so that question never again has to be inferred from the ledger.
+  {
+    name: "fault-emitter-run",
+    ownerOpe: "OPE-488",
+    label: "Render-fault emitter run (hourly cron)",
+    priority: "P1",
+    // Hourly cron; 6h tolerates a few missed fires without crying wolf.
+    expectedWindowHours: 6,
+    lastEvidenceAt: (db) =>
+      maxTs(db, errorLogs, errorLogs.timestamp, eq(errorLogs.source, "mcp:fault-signatures-emit")),
+  },
   {
     name: "gsc-search-metrics-ingest",
     ownerOpe: "OPE-309",
