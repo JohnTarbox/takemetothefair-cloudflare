@@ -1,0 +1,42 @@
+[
+  {
+    "event_id": "e62cc863-ce9b-4004-8039-04e208b0ef4e",
+    "event_slug": "maine-pottery-tour-2026-1",
+    "event_name": "Maine Pottery Tour 2026",
+    "status": "APPROVED",
+    "start_date": "2026-05-02",
+    "end_date": "2026-05-03",
+    "series_id_before": "3108923d4c7d956a3aa4c5f2e82f873d",
+    "series_id_after": "0e1e7676767e411db8f13de2c373f53d"
+  },
+  {
+    "event_id": "b4248709-c30b-48a1-b98c-f2fc2638af3c",
+    "event_slug": "fiber-festival-of-new-england-2026-1",
+    "event_name": "Fiber Festival of New England 2026",
+    "status": "REJECTED",
+    "start_date": "2026-11-07",
+    "series_id_before": "6884cba94c324736cecaedd4a3f9d958",
+    "series_id_after": "552356339b94afb0ba442aa702e68132"
+  },
+  {
+    "event_id": "89c4b711-887d-4e72-ad9a-b00e7d9b92b7",
+    "event_slug": "maine-pottery-tour-2026",
+    "event_name": "Maine Pottery Tour 2026",
+    "status": "REJECTED",
+    "start_date": "2026-05-02",
+    "end_date": "2026-05-03",
+    "series_id_before": "0e1e7676767e411db8f13de2c373f53d",
+    "series_id_after": "0e1e7676767e411db8f13de2c373f53d",
+    "_note": "UNCHANGED — already the keeper's child. Listed so the map covers every event touching either group."
+  },
+  {
+    "event_id": "8c4d6e89-06d6-4bbc-b44d-d00c93933591",
+    "event_slug": "fiber-festival-of-new-england-2026",
+    "event_name": "Fiber Festival of New England 2026",
+    "status": "APPROVED",
+    "start_date": "2026-11-07",
+    "series_id_before": "552356339b94afb0ba442aa702e68132",
+    "series_id_after": "552356339b94afb0ba442aa702e68132",
+    "_note": "UNCHANGED — already the keeper's child."
+  }
+]
