@@ -84,6 +84,10 @@ function seedMatched(opts: {
 // false there; routing must NOT gate on it — only the creation paths do.
 const dupHit = (id: string, matchType: "exact_url" | "series_url" = "exact_url") => ({
   isDuplicate: true as const,
+  // OPE-477 — findDuplicate now reports which stages could not evaluate, so
+  // "no match" is distinguishable from "never checked". A hit fixture has
+  // nothing skipped.
+  stagesSkipped: [],
   matchType,
   identifiesSameEvent: matchType !== "series_url",
   existingEvent: { id, slug: "s", name: "n", startDate: null, status: "APPROVED", sourceUrl: null },
@@ -97,7 +101,7 @@ describe("maybeRouteToOccurrence", () => {
   });
 
   it("returns routed:false when findDuplicate finds nothing", async () => {
-    mockFindDup.mockResolvedValue({ isDuplicate: false });
+    mockFindDup.mockResolvedValue({ isDuplicate: false, stagesSkipped: [] });
     const res = await maybeRouteToOccurrence(db as never, {
       startDate: new Date("2027-08-01T00:00:00Z"),
     });
@@ -224,7 +228,7 @@ describe("maybeRouteToOccurrence — cross-year series match by name + venue", (
   it("does NOT route an ambiguous match (two series at the venue both normalize-match)", async () => {
     seedSeriesEvent("ser-a", "Acme Fair", "ea", "Acme Fair", "venueX", "2026-08-01T00:00:00Z");
     seedSeriesEvent("ser-b", "Acme Fair", "eb", "Acme Fair", "venueX", "2025-08-01T00:00:00Z");
-    mockFindDup.mockResolvedValue({ isDuplicate: false });
+    mockFindDup.mockResolvedValue({ isDuplicate: false, stagesSkipped: [] });
     const res = await maybeRouteToOccurrence(db as never, {
       name: "Acme Fair",
       venueId: "venueX",
@@ -244,7 +248,7 @@ describe("maybeRouteToOccurrence — cross-year series match by name + venue", (
       "venueX",
       "2026-08-01T00:00:00Z"
     );
-    mockFindDup.mockResolvedValue({ isDuplicate: false });
+    mockFindDup.mockResolvedValue({ isDuplicate: false, stagesSkipped: [] });
     const res = await maybeRouteToOccurrence(db as never, {
       name: "Cheshire Fair",
       venueId: "venueX",

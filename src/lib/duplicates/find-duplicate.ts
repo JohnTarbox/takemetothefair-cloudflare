@@ -81,6 +81,7 @@ import type { Database } from "@/lib/db";
 import { events, venues } from "@/lib/db/schema";
 import { autoLinkVenue } from "@/lib/venue-matching";
 import { normalizeName } from "@/lib/duplicates/normalize-name";
+import { nameContainmentMatch } from "@/lib/duplicates/name-containment";
 
 export interface FindDuplicateInput {
   /** Original-source URL of the candidate. Exact-match shortcut. */
@@ -105,7 +106,10 @@ export type MatchType =
   | "series_url"
   | "venue_date"
   | "city_state_date"
-  | "similar_name_date";
+  | "similar_name_date"
+  // OPE-477 — the venue-less fallback. Only reachable when BOTH venue stages
+  // were inert, so it never widens matching for a candidate that had a venue.
+  | "name_containment_date";
 
 /**
  * OPE-454 — the match types that identify the SAME EVENT, and so should
@@ -119,6 +123,24 @@ export function identifiesSameEvent(matchType: MatchType): boolean {
   return matchType !== "series_url";
 }
 
+/**
+ * OPE-477 — which stages could not evaluate for this candidate.
+ *
+ * The defect this names: a stage with a missing input returned nothing, and
+ * "nothing" was indistinguishable from "checked and cleared". A caller that
+ * blocks on `isDuplicate` alone cannot tell whether dedup ran on four stages or
+ * on one. Now it can.
+ *
+ * Reported on BOTH result shapes deliberately — a hit on a weak stage while the
+ * strong ones were blind is still worth knowing about.
+ */
+export type SkippedStage =
+  | "exact_url:no-source-url"
+  | "venue_date:venue-unresolved"
+  | "city_state_date:no-city-state"
+  | "similar_name_date:no-name"
+  | "all:no-date";
+
 export interface ExistingEvent {
   id: string;
   slug: string;
@@ -129,9 +151,10 @@ export interface ExistingEvent {
 }
 
 export type FindDuplicateResult =
-  | { isDuplicate: false }
+  | { isDuplicate: false; stagesSkipped: SkippedStage[] }
   | {
       isDuplicate: true;
+      stagesSkipped: SkippedStage[];
       matchType: MatchType;
       similarity?: number; // only on similar_name_date
       /**
@@ -142,6 +165,8 @@ export type FindDuplicateResult =
        */
       identifiesSameEvent: boolean;
       existingEvent: ExistingEvent;
+      /** OPE-477 — set on `name_containment_date`: the tokens that matched. */
+      sharedTokens?: string[];
     };
 
 /**
@@ -227,6 +252,13 @@ export async function findDuplicate(
   const minDate = haveDate ? new Date(eventDate.getTime() - dateRangeMs) : null;
   const maxDate = haveDate ? new Date(eventDate.getTime() + dateRangeMs) : null;
 
+  // OPE-477 — every stage that could not evaluate, so "no match" is
+  // distinguishable from "never checked".
+  const stagesSkipped: SkippedStage[] = [];
+  if (!input.sourceUrl) stagesSkipped.push("exact_url:no-source-url");
+  if (!input.name) stagesSkipped.push("similar_name_date:no-name");
+  if (!haveDate) stagesSkipped.push("all:no-date");
+
   const eventColumns = {
     id: events.id,
     slug: events.slug,
@@ -256,6 +288,7 @@ export async function findDuplicate(
       if (sameUrlAndDate.length > 0) {
         return {
           isDuplicate: true,
+          stagesSkipped,
           matchType: "exact_url",
           identifiesSameEvent: true,
           existingEvent: toExisting(sameUrlAndDate[0]),
@@ -281,6 +314,7 @@ export async function findDuplicate(
       const unambiguousUndated = !haveDate && sameUrl.length === 1;
       return {
         isDuplicate: true,
+        stagesSkipped,
         matchType: unambiguousUndated ? "exact_url" : "series_url",
         identifiesSameEvent: unambiguousUndated,
         existingEvent: toExisting(sameUrl[0]),
@@ -291,7 +325,7 @@ export async function findDuplicate(
   // No startDate → no place/name matching is meaningful. Stages 2-4
   // all need a date window.
   if (!haveDate || minDate === null || maxDate === null) {
-    return { isDuplicate: false };
+    return { isDuplicate: false, stagesSkipped };
   }
   // Re-bound as non-null for stages 2-4. `haveDate` is a plain boolean, so
   // TypeScript cannot narrow minDate/maxDate through it on its own.
@@ -300,6 +334,17 @@ export async function findDuplicate(
 
   // ── Stages 2a + 2b: place + date ─────────────────────────────────
   const hasPlaceSignal = !!input.venueName || !!(input.venueCity && input.venueState);
+
+  // OPE-477 — record inertness from the INPUTS, not from inside the block.
+  // `hasPlaceSignal` can skip the whole of stage 2, so a push placed inside it
+  // never runs in exactly the case this ticket is about: no venue name, no
+  // city. (First attempt did that and the specimen test caught it.)
+  if (!input.venueCity || !input.venueState) {
+    stagesSkipped.push("city_state_date:no-city-state");
+  }
+  // `venue_date` is inert when there was nothing to resolve FROM. When there
+  // was, the resolution result decides — recorded just after the attempt.
+  if (!input.venueName) stagesSkipped.push("venue_date:venue-unresolved");
 
   if (hasPlaceSignal) {
     // 2a — try to resolve venueId server-side. Both "linked" and
@@ -315,6 +360,8 @@ export async function findDuplicate(
         venueState: input.venueState ?? null,
       });
       if (linked.venueId) resolvedVenueId = linked.venueId;
+      // Attempted and came back empty — the stage cannot run.
+      if (!resolvedVenueId) stagesSkipped.push("venue_date:venue-unresolved");
     }
 
     if (resolvedVenueId) {
@@ -341,6 +388,7 @@ export async function findDuplicate(
       if (venueMatch.length > 0) {
         return {
           isDuplicate: true,
+          stagesSkipped,
           matchType: "venue_date",
           identifiesSameEvent: true,
           existingEvent: toExisting(venueMatch[0]),
@@ -380,6 +428,7 @@ export async function findDuplicate(
       if (cityStateMatch.length > 0) {
         return {
           isDuplicate: true,
+          stagesSkipped,
           matchType: "city_state_date",
           identifiesSameEvent: true,
           existingEvent: toExisting(cityStateMatch[0]),
@@ -416,6 +465,7 @@ export async function findDuplicate(
       if (sim > nameThreshold) {
         return {
           isDuplicate: true,
+          stagesSkipped,
           matchType: "similar_name_date",
           identifiesSameEvent: true,
           similarity: sim,
@@ -425,7 +475,51 @@ export async function findDuplicate(
     }
   }
 
-  return { isDuplicate: false };
+  // ── Stage 4 (OPE-477): name containment, ONLY when both venue stages were blind ──
+  //
+  // The gate is the design, not a detail. Measured against the live corpus, this
+  // signal applied broadly would add ~136 candidate pairs on top of the 223 the
+  // venue stage already catches — enough to make `force_create: true` routine,
+  // which is OPE-454's failure mode. Restricted to candidates whose venue
+  // stages could not evaluate it touches 6 pairs corpus-wide.
+  //
+  // So a candidate that HAD a venue never reaches here, and matching for the
+  // 42% of email submissions that resolve one is completely unchanged.
+  const venueStagesWereBlind =
+    stagesSkipped.includes("venue_date:venue-unresolved") &&
+    stagesSkipped.includes("city_state_date:no-city-state");
+
+  if (input.name && venueStagesWereBlind) {
+    const normalizedName = normalizeName(input.name);
+    const candidates = await db
+      .select(eventColumns)
+      .from(events)
+      .where(
+        and(
+          gte(events.startDate, windowStart),
+          lte(events.startDate, windowEnd),
+          notAMergeTombstone()
+        )
+      )
+      .orderBy(...bestMatchFirst);
+
+    for (const ev of candidates) {
+      if (!ev.name) continue;
+      const match = nameContainmentMatch(normalizedName, normalizeName(ev.name));
+      if (match) {
+        return {
+          isDuplicate: true,
+          stagesSkipped,
+          matchType: "name_containment_date",
+          identifiesSameEvent: true,
+          existingEvent: toExisting(ev),
+          sharedTokens: match.sharedDistinctive,
+        };
+      }
+    }
+  }
+
+  return { isDuplicate: false, stagesSkipped };
 }
 
 function toExisting(row: {
