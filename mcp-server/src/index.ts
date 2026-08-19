@@ -630,6 +630,13 @@ async function handleLegacyMcpRequest(request: Request, env: Env): Promise<Respo
       registerCreateClaimInviteTool(server, db, auth, env);
       registerClaimReviewTools(server, db, auth);
       registerResolveHeldPhotosTool(server, db, auth, env);
+      // OPE-469 — MUST be registered here as well as in the OAuth path above.
+      // This file has TWO registration lists: the McpAgent class (OAuth) and
+      // this legacy stateless handler for `mmatf_` Bearer tokens. Registering
+      // in one deploys green and leaves the tool invisible on the other — which
+      // is what happened on the first ship, and the `mmatf_` path is exactly the
+      // one an agent uses for direct curl when the tool registry is frozen.
+      registerReplayInboundAttachmentTool(server, db, auth, env);
       registerAnalyticsTools(server, auth, env);
       registerBlogTools(server, db, auth, env);
       registerContentLinksTools(server, db, auth, env);
