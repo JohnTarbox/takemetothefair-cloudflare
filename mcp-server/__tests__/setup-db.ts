@@ -950,6 +950,16 @@ const SCHEMA_SQL = `
   );
 
   -- OPE-433 scope 4 — provenance for venues + event_days (drizzle/0208).
+  -- OPE-471 — series slug history (drizzle/0209).
+  CREATE TABLE series_slug_history (
+    id TEXT PRIMARY KEY,
+    series_id TEXT NOT NULL,
+    old_slug TEXT NOT NULL,
+    new_slug TEXT NOT NULL,
+    changed_at INTEGER NOT NULL,
+    changed_by TEXT
+  );
+
   CREATE TABLE entity_data_citations (
     id TEXT PRIMARY KEY,
     entity_type TEXT NOT NULL,

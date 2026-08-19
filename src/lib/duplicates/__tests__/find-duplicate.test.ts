@@ -46,6 +46,11 @@ describe("findDuplicate — stage 1 exact_url", () => {
       select: vi.fn(() => ({
         from: vi.fn(() => ({
           where: vi.fn(() => ({
+            // OPE-432 added .orderBy() between .where() and .limit() so a
+            // window holding several candidates returns a deterministic one.
+            orderBy: vi.fn(() => ({
+              limit: vi.fn(() => Promise.resolve([exact])),
+            })),
             limit: vi.fn(() => Promise.resolve([exact])),
           })),
         })),
@@ -72,6 +77,11 @@ describe("findDuplicate — stage 1 exact_url", () => {
       select: vi.fn(() => ({
         from: vi.fn(() => ({
           where: vi.fn(() => ({
+            // OPE-432 added .orderBy() between .where() and .limit() so a
+            // window holding several candidates returns a deterministic one.
+            orderBy: vi.fn(() => ({
+              limit: vi.fn(() => Promise.resolve([])),
+            })),
             limit: vi.fn(() => Promise.resolve([])),
           })),
         })),

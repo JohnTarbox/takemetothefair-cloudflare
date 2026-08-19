@@ -243,7 +243,16 @@ Source of truth: `src/lib/duplicates/find-duplicate.ts`. The 4-stage matcher use
 
 `normalizeName()` lives in `src/lib/duplicates/normalize-name.ts` and strips leading ordinals (`38th `, `Annual `), trailing year (` 2026`), and punctuation.
 
-**Two existing MCP tools — `suggest_event` (vendor.ts:772-788) and `update_event` (admin.ts:861-911) — still use a different overlap-based dedup**. Rewiring them through `findDuplicate` is deferred per #285's commit message — they surface `warnings.possible_duplicates` rather than blocking, so the behavior change needs its own audit.
+**Both MCP tools now delegate to this same matcher** (corrected 2026-08-18 — the previous note here said they used a separate overlap-based dedup, which has been untrue since the K2 rewire). `suggest_event` (`vendor.ts`) and `update_event` (`admin.ts`) both call `checkDuplicateViaMainApp` → `/api/suggest-event/check-duplicate` → `findDuplicate`. There is exactly ONE dedup implementation, so a fix here reaches the app and MCP surfaces together.
+
+What still differs between them is what they DO with a hit, not how they find it:
+
+- `suggest_event` **blocks** (`force_create: true` overrides).
+- `update_event` is **warning-only** — it surfaces `warnings.possible_duplicates` and never blocks; `acknowledge_possible_duplicates` suppresses the warning.
+
+⚠️ A stale "these are separate implementations" note is exactly what produces a fix wired into one of two parallel paths. If you change `findDuplicate`, you have changed both tools — verify against both rather than assuming one is untouched.
+
+**Tombstones are excluded (OPE-432).** Every stage filters `merged_into IS NULL` and orders APPROVED-first, because `merge_events` leaves the losing row in place as a redirect. Returning one as a duplicate hands the submitter a URL that 301s away — reproduced live when `suggest_event` refused a legitimate 2028 edition against a `…-merged-4acbfcb3` row. Note the exclusion keys on `merged_into`, **not** on `status='REJECTED'`: a plain rejected row stays matchable on purpose, or previously-rejected spam becomes re-creatable (OPE-278).
 
 ### Merge — `merge_events` MCP tool + `mergeEvents()` core
 

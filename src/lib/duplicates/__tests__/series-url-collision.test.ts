@@ -39,7 +39,10 @@ const SCHEMA_SQL = `
     id TEXT PRIMARY KEY, slug TEXT, name TEXT,
     start_date INTEGER, end_date INTEGER,
     status TEXT, source_url TEXT, venue_id TEXT,
-    series_id TEXT, rolled_from_event_id TEXT
+    series_id TEXT, rolled_from_event_id TEXT,
+    -- OPE-432: findDuplicate now excludes merge tombstones, so the column
+    -- the predicate reads has to exist here or every query 500s.
+    merged_into TEXT
   );
   CREATE TABLE venues (
     id TEXT PRIMARY KEY, name TEXT, city TEXT, state TEXT

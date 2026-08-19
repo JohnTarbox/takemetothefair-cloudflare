@@ -11,9 +11,25 @@ import {
 
 // Fixture builder — only override what a test cares about.
 let seq = 0;
+/**
+ * Default the NAME from the slug rather than a constant.
+ *
+ * OPE-473 added a (normalized name, venue) grouping key alongside the stem
+ * key. A fixture that gives every event the literal name "Event" at the same
+ * venue therefore fuses corpora that in production have distinct names — which
+ * is a property of the fixture, not of the grouper. Deriving the name from the
+ * slug keeps each synthetic event as distinguishable as a real one, so a test
+ * that means to exercise stem grouping still does.
+ */
+const nameFromSlug = (slug: string) =>
+  slug
+    .split("-")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+
 const mk = (over: Partial<GroupableEvent> = {}): GroupableEvent => ({
   id: over.id ?? `e${seq++}`,
-  name: over.name ?? "Event",
+  name: over.name ?? nameFromSlug(over.slug ?? "event"),
   slug: over.slug ?? "event",
   venueId: over.venueId !== undefined ? over.venueId : "v1",
   startDate: over.startDate !== undefined ? over.startDate : new Date(Date.UTC(2026, 0, 1)),
@@ -200,10 +216,13 @@ describe("groupEvents — defaults member selection", () => {
 });
 
 describe("findVendorNameCollisions — slug-drift among vendor groups", () => {
-  it("flags two vendor groups whose names normalize identically but landed apart", () => {
-    // "Newport Boat Show" (clean) vs "Annual Newport Boat Show 2026":
-    // different stems → two groups, but normalizeName collapses both to
-    // "newport boat show". Both vendor-bearing → flag for human review.
+  it("no longer needs flagging when the name key already united them (OPE-473)", () => {
+    // "Newport Boat Show" (clean) vs "Annual Newport Boat Show 2026": different
+    // stems, but normalizeName collapses both to "newport boat show" and they
+    // share a venue. This used to split into two groups and raise a review flag
+    // — the reviewer's job being to merge them by hand. The second grouping key
+    // now does it up front, which is the whole point of OPE-473: the flag
+    // existed because the grouper missed these.
     const groups = groupEvents([
       mk({ id: "a", name: "Newport Boat Show", slug: "newport-boat-show", vendorLinkCount: 5 }),
       mk({
@@ -211,13 +230,139 @@ describe("findVendorNameCollisions — slug-drift among vendor groups", () => {
         name: "Annual Newport Boat Show",
         slug: "annual-newport-boat-show-2026",
         vendorLinkCount: 3,
+        startDate: jan(2027),
       }),
     ]);
-    expect(groups).toHaveLength(2); // confirm they did split
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0].members.map((m) => m.id).sort()).toEqual(["a", "b"]);
+    // The clean un-suffixed slug wins, per the spec.
+    expect(groups[0].canonicalSlug).toBe("newport-boat-show");
+    // Vendor-bearing and multi-occurrence — still the roster-fuse risk class,
+    // so it still asks for confirmation. Uniting them does not skip that.
+    expect(groups[0].needsManualConfirm).toBe(true);
+    expect(findVendorNameCollisions(groups)).toEqual([]);
+  });
+
+  it("still flags a name collision the venue key cannot resolve — DIFFERENT venue rows", () => {
+    // The flag keeps its job for the case OPE-473 deliberately does not touch:
+    // one physical place recorded as two venue rows (the Winthrop shape). The
+    // name key requires a matching venue_id, so these stay apart — correctly,
+    // because merging them is a venue decision, not a series one.
+    const groups = groupEvents([
+      mk({
+        id: "a",
+        name: "Newport Boat Show",
+        slug: "newport-boat-show",
+        venueId: "v1",
+        vendorLinkCount: 5,
+      }),
+      mk({
+        id: "b",
+        name: "Annual Newport Boat Show",
+        slug: "annual-newport-boat-show-2026",
+        venueId: "v2",
+        vendorLinkCount: 3,
+      }),
+    ]);
+
+    expect(groups).toHaveLength(2);
     const flags = findVendorNameCollisions(groups);
     expect(flags).toHaveLength(1);
     expect(flags[0].normalizedName).toBe("newport boat show");
     expect(flags[0].groupSlugs).toEqual(["annual-newport-boat-show", "newport-boat-show"]);
+  });
+
+  it("reunites the Farmington shape — the specimen this ticket was filed on", () => {
+    // Two parents, one edition each, because the hand-created 2027 row carries
+    // a state infix: strip the year from `farmington-fair-me-2027` and the stem
+    // is `farmington-fair-me`, which is not `farmington-fair`. No user or
+    // crawler could traverse from the 2026 edition to the 2027 one.
+    //
+    // Nothing about the SLUGS changes here — only which series they hang off.
+    const groups = groupEvents([
+      mk({
+        id: "f2026",
+        name: "Farmington Fair",
+        slug: "farmington-fair",
+        venueId: "v-farmington",
+        startDate: jan(2026),
+      }),
+      mk({
+        id: "f2027",
+        name: "Farmington Fair 2027",
+        slug: "farmington-fair-me-2027",
+        venueId: "v-farmington",
+        startDate: jan(2027),
+      }),
+    ]);
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0].members.map((m) => m.id)).toEqual(["f2026", "f2027"]);
+    expect(groups[0].canonicalSlug).toBe("farmington-fair"); // the clean twin wins
+    expect(groups[0].isMultiOccurrence).toBe(true);
+    // Different years, so this is a series — not a same-year duplicate.
+    expect(groups[0].sameYearConflict).toBe(false);
+  });
+
+  it("groups all FOUR Martha's Vineyard editions — OPE-480's specimen", () => {
+    // Filed as its own ticket after OPE-432 closed: four editions of one fair
+    // carrying TWO series_ids and TWO NULLs, each with a different slug
+    // convention. Every one of those conventions is represented below.
+    //
+    // The stem key alone reaches none of them — `martha-s-vineyard-fair`,
+    // `marthas-vineyard-fair-ma`, and `marthas-vineyard-fair` are three
+    // distinct stems. The name key collapses all four, because normalizeName
+    // strips the trailing year and the apostrophe: every one becomes
+    // "marthas vineyard fair", at one shared venue.
+    const groups = groupEvents([
+      mk({
+        id: "mv2026",
+        name: "Martha's Vineyard Fair 2026",
+        slug: "martha-s-vineyard-fair-2026",
+        venueId: "v-mv",
+        startDate: jan(2026),
+      }),
+      mk({
+        id: "mv2027",
+        name: "Martha's Vineyard Fair 2027",
+        slug: "marthas-vineyard-fair-ma-2027",
+        venueId: "v-mv",
+        startDate: jan(2027),
+      }),
+      mk({
+        id: "mv2028",
+        name: "Martha's Vineyard Fair 2028",
+        slug: "marthas-vineyard-fair-2028",
+        venueId: "v-mv",
+        startDate: jan(2028),
+      }),
+      mk({
+        id: "mv2029",
+        name: "Martha's Vineyard Fair 2029",
+        slug: "marthas-vineyard-fair-2029",
+        venueId: "v-mv",
+        startDate: jan(2029),
+      }),
+    ]);
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0].members.map((m) => m.id)).toEqual(["mv2026", "mv2027", "mv2028", "mv2029"]);
+    // The clean un-suffixed slug wins, per the EH3 spec.
+    expect(groups[0].canonicalSlug).toBe("martha-s-vineyard-fair");
+    // Four distinct years — a series, not four same-year duplicates.
+    expect(groups[0].sameYearConflict).toBe(false);
+  });
+
+  it("does not fuse same-named events that have NO venue", () => {
+    // The name key requires a non-null venue. Two events called "Craft Fair"
+    // with no venue are not evidence of anything, and fusing them would be the
+    // over-grouping the original locked decision was guarding against.
+    const groups = groupEvents([
+      mk({ id: "a", name: "Craft Fair", slug: "craft-fair-spring-2026", venueId: null }),
+      mk({ id: "b", name: "Craft Fair", slug: "craft-fair-autumn-2026", venueId: null }),
+    ]);
+    expect(groups).toHaveLength(2);
   });
 
   it("does not flag a name collision when neither group carries vendors", () => {

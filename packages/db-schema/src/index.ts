@@ -1298,6 +1298,40 @@ export const performerSlugHistory = sqliteTable(
   })
 );
 
+/**
+ * OPE-471 — slug history for `event_series` (drizzle/0209).
+ *
+ * The one entity of seven that could not 301 on rename. It stayed theoretical
+ * until something needed to retire a series slug — the duplicate-parent
+ * consolidation needs ~115 — and these are not cold URLs:
+ * `/events/the-big-e-eastern-states-exposition-ma` holds 19 clicks and 2,434
+ * impressions at position 5.1, while its clean twin is unknown to Google.
+ * Retiring the duplicate without a 301 would destroy the only ranking asset
+ * several fairs have.
+ *
+ * Mirrors {@link eventSlugHistory}, `new_slug` included: the middleware walks
+ * chains, so a slug that moves twice needs every hop, not just its origin.
+ */
+export const seriesSlugHistory = sqliteTable(
+  "series_slug_history",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    seriesId: text("series_id")
+      .notNull()
+      .references(() => eventSeries.id, { onDelete: "cascade" }),
+    oldSlug: text("old_slug").$type<Slug>().notNull(),
+    newSlug: text("new_slug").$type<Slug>().notNull(),
+    changedAt: integer("changed_at", { mode: "timestamp" }).notNull(),
+    changedBy: text("changed_by"),
+  },
+  (t) => [
+    index("idx_series_slug_history_old_slug").on(t.oldSlug),
+    index("idx_series_slug_history_series_id").on(t.seriesId),
+  ]
+);
+
 // Venue slug history — mirrors eventSlugHistory for /venues/[slug].
 // drizzle/0109 (E remainder, Dev backlog 2026-06-05). Populated by
 // merge_venue so the merged-away slug 301-redirects to the keeper via
@@ -2352,6 +2386,13 @@ export const gscMilestoneEmails = sqliteTable(
     // Google's cited impact date — nullable because not every milestone
     // email includes one explicitly.
     reachedDate: text("reached_date"),
+    /**
+     * OPE-456 — `anchored` | `unanchored` | NULL(unknown, pre-dates the column).
+     * Which sentence the date came from. An unanchored parse on a forwarded
+     * email is the forward header's date, not Google's; the correction path
+     * lets an anchored value supersede a weaker one but never the reverse.
+     */
+    reachedDateSource: text("reached_date_source"),
     emailDate: text("email_date").notNull(),
     siteUrl: text("site_url").notNull().default("https://meetmeatthefair.com/"),
     source: text("source").notNull().default("google_search_console_email"),

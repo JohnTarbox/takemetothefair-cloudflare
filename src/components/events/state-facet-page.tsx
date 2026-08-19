@@ -20,7 +20,12 @@ import { ItemListSchema } from "@/components/seo/ItemListSchema";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { truncateAtBoundary } from "@/lib/seo/truncate-meta";
 import { STATES, STATE_BY_SLUG } from "@/lib/states";
-import { countFacetEvents, getFacetEvents } from "@/lib/events/facet-query";
+import {
+  countFacetEvents,
+  countFacetForIndexing,
+  getFacetEvents,
+  getFacetSeasonality,
+} from "@/lib/events/facet-query";
 import {
   resolveFacet,
   isFacetIndexable,
@@ -104,6 +109,38 @@ const KIND_ICON: Record<FacetKind, typeof CalendarDays> = {
  * builder. The alternative, caching a count across the two, would buy one
  * cheap COUNT and add a way for the robots tag to disagree with the listing.
  */
+const SEASON_MONTHS = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+];
+
+/**
+ * OPE-470 — render a month set as a season.
+ *
+ * Contiguous months read as a range ("May–August"); a split season reads as a
+ * list ("June, September and October"), because a fair town with a summer run
+ * and a leaf-peeping weekend genuinely has two seasons and collapsing them to
+ * "June–October" would state something false about September.
+ */
+export function formatSeason(months: number[]): string {
+  if (months.length === 0) return "";
+  const names = months.map((m) => SEASON_MONTHS[m - 1]).filter(Boolean);
+  if (names.length === 1) return names[0];
+  const contiguous = months.every((m, i) => i === 0 || m === months[i - 1] + 1);
+  if (contiguous) return `${names[0]}–${names[names.length - 1]}`;
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
 export async function getFacetMetadata(stateSlug: string, facetSlug: string): Promise<Metadata> {
   const state = lookupState(stateSlug);
   const now = new Date();
@@ -114,8 +151,19 @@ export async function getFacetMetadata(stateSlug: string, facetSlug: string): Pr
   }
 
   const db = getCloudflareDb();
+  // OPE-470 — indexability asks a DIFFERENT question from the listing.
+  //
+  // `countFacetForIndexing` uses a rolling ±12-month window for region and type
+  // facets ("does this place host fairs?") and the forward window for month and
+  // weekend ("how much is left in this window?"). The listing below still shows
+  // upcoming events either way.
+  //
+  // Before this, a summer region measured in mid-August looked thin: the
+  // Berkshires read 5 forward against 12 in calendar 2026 and went noindex at
+  // the exact moment its season peaks.
   const total = await countFacetEvents(db, state.code, stateSlug, facet, now);
-  const indexable = isFacetIndexable(facet, total);
+  const depth = await countFacetForIndexing(db, state.code, stateSlug, facet, now);
+  const indexable = isFacetIndexable(facet, depth);
 
   const title = `${headline(facet, state.name)} | Meet Me at the Fair`;
   const description = metaDescription(facet, state.name, total);
@@ -179,6 +227,13 @@ export async function StateFacetPage({ stateSlug, facetSlug, searchParams }: Sta
     PAGE_SIZE
   );
   const totalPages = Math.ceil(total / PAGE_SIZE);
+
+  // OPE-470 — only when there is nothing forward to show. A populated page pays
+  // nothing for this.
+  const seasonality =
+    eventsList.length === 0
+      ? await getFacetSeasonality(db, state.code, stateSlug, facet, now)
+      : null;
   const heading = headline(facet, state.name);
   const Icon = KIND_ICON[facet.kind];
 
@@ -258,11 +313,29 @@ export async function StateFacetPage({ stateSlug, facetSlug, searchParams }: Sta
         /* An empty facet is a normal state, not an error — a March page in
            August simply has nothing published yet. Say so plainly and send the
            reader somewhere useful rather than showing a bare "no results". */
-        <div className="rounded-lg border border-border bg-muted/40 py-12 text-center">
+        <div className="rounded-lg border border-border bg-muted/40 py-12 px-6 text-center">
           <Icon className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
           <p className="text-lg text-muted-foreground">
-            Nothing listed for {facet.label} in {state.name} yet.
+            Nothing listed for {facet.label} in {state.name} right now.
           </p>
+          {/* OPE-470 scope 3 — the seasonal content contract.
+              Relaxing the depth gate without this ships blank directories: an
+              indexable Berkshires page in January listing zero events is worse
+              than a noindexed one. When the place demonstrably hosts fairs, say
+              so and say when, drawn from the SAME rolling window the
+              indexability decision used — so the page cannot claim a season the
+              gate did not count. */}
+          {seasonality && seasonality.total > 0 && (
+            <p className="mt-2 text-muted-foreground">
+              {facet.label} hosts{" "}
+              <strong>
+                {seasonality.total} {seasonality.total === 1 ? "event" : "events"}
+              </strong>{" "}
+              a year
+              {seasonality.months.length > 0 && <>, typically {formatSeason(seasonality.months)}</>}
+              . Next season&rsquo;s dates are usually published a few months ahead.
+            </p>
+          )}
           <p className="mt-2 text-muted-foreground">
             Organisers publish dates throughout the year — or{" "}
             <Link href={`/events/${stateSlug}`} className="text-royal hover:text-navy font-medium">

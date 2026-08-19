@@ -9,3 +9,23 @@
   Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://challenges.cloudflare.com https://www.googletagmanager.com https://www.google-analytics.com https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https://challenges.cloudflare.com https://www.google-analytics.com https://region1.google-analytics.com https://www.google.com https://cloudflareinsights.com; frame-src https://challenges.cloudflare.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
   Link: <https://challenges.cloudflare.com>; rel=preconnect
   Link: <https://www.googletagmanager.com>; rel=preconnect
+
+# OPE-476 — restore `immutable` for build output.
+#
+# Workers Static Assets applies `public, max-age=0, must-revalidate` to every
+# asset by default, and that default was reaching all 389 files under
+# /_next/static/ — asking the browser to re-check every chunk, stylesheet and
+# font on every navigation. Fonts block text render, so it sat on LCP.
+#
+# Safe for this prefix and ONLY this prefix: every filename under it is
+# content-hashed (chunks/css/media carry a content hash; _buildManifest.js and
+# _ssgManifest.js sit under a per-build ID directory), so a URL here can never
+# come to mean something different. Nothing else in the app is content-
+# addressed — a long cache on HTML or /_next/image would be a real bug.
+#
+# Do NOT add a Cache-Control to the /* block above. Cloudflare joins duplicate
+# headers from multiple matching rules with a comma, so `/*` setting one would
+# produce `max-age=0, must-revalidate, public, max-age=31536000, immutable`
+# rather than an override. Guarded by scripts/check-static-asset-cache.ts.
+/_next/static/*
+  Cache-Control: public, max-age=31536000, immutable

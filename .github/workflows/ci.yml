@@ -119,6 +119,12 @@ jobs:
       - name: Check event JSON-LD required fields (A10 — guards K46 'Missing field location')
         run: npx tsx scripts/check-event-jsonld-fields.ts
 
+      - name: Check /_next/static keeps its immutable cache header (OPE-476)
+        run: npx tsx scripts/check-static-asset-cache.ts
+
+      - name: Check MCP tools are registered on BOTH transports (OPE-469)
+        run: npx tsx scripts/check-mcp-tools-both-paths.ts
+
   e2e:
     name: E2E Tests
     runs-on: ubuntu-latest

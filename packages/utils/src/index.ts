@@ -471,3 +471,9 @@ export * from "./support-obligation";
 // carry none and where the fabricated-fact defects actually cluster. Pure: it
 // builds and filters citation rows; each codebase owns its own insert.
 export * from "./entity-citation";
+
+// OPE-294 — is an image ours or hotlinked from somebody else's CDN? Pure
+// classification only: it never rewrites or re-hosts, because re-hosting may be
+// MORE restricted than hotlinking and that read is John's.
+export * from "./image-host";
+export * from "./gsc-milestones";

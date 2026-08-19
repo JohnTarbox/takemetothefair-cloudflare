@@ -108,7 +108,7 @@ export async function readKpiValues(
   ]);
 
   const [siteCtr, conversionRate, brandShare, sitemapQuality, timeToIndex] = await Promise.all([
-    readSiteCtr(env, fmt(stableStartDate), fmt(stableEndDate), gscMaxDate),
+    readSiteCtr(db, fmt(stableStartDate), fmt(stableEndDate), gscMaxDate),
     readConversionRate(
       db,
       env,
@@ -132,24 +132,77 @@ export async function readKpiValues(
   };
 }
 
+/**
+ * OPE-266 — site CTR, read from the UNFILTERED daily totals.
+ *
+ * This used to call `getSiteSearchQueries(env, { rowLimit: 500, … })` and divide
+ * `totals.clicks / totals.impressions`. That is a **query-dimensioned** request,
+ * and its `totals` cover only the rows returned — the top 500 queries — not the
+ * site. GSC also withholds anonymized (rare/personal) queries from any
+ * dimensioned response entirely, so the subset is not a sample of the whole, it
+ * is the whole minus an unmeasurable slice.
+ *
+ * The consequence was not theoretical. `site_ctr` sat RED for nine days at
+ * 1.71% against a ≥2.0% target, and OPE-266 was auto-filed to go work the
+ * recommendations queue. Measured afterwards against `gsc_daily_totals` — the
+ * unfiltered series we already ingest — over the KPI's own 7-day stable window:
+ *
+ *     7d ending 2026-07-10 (first red)   2.39%
+ *     7d ending 2026-07-19 (at filing)   2.36%
+ *     7d ending 2026-08-13               2.47%
+ *
+ * Site CTR was never below target. The KPI was measuring a truncated subset and
+ * reporting it as the site, which sent a dev day at content that was fine — the
+ * exact "not-summable" class OPE-364's brief warns about, live in a KPI.
+ *
+ * `gsc_daily_totals` is the right source: same GSC origin, already ingested
+ * daily, no row limit, no dimension. It is also cheaper — a D1 read instead of
+ * an external API call.
+ */
 async function readSiteCtr(
-  env: ScEnv,
+  db: Db,
   startDate: string,
   endDate: string,
   gscMaxDate: string | null
 ): Promise<KpiValueResult> {
   try {
-    const res = await getSiteSearchQueries(env, {
-      rowLimit: 500,
-      dateRange: { startDate, endDate },
-    });
-    const ctr = res.totals.impressions > 0 ? res.totals.clicks / res.totals.impressions : 0;
+    const [row] = await db
+      .select({
+        clicks: sql<number>`COALESCE(SUM(${schema.gscDailyTotals.clicks}), 0)`,
+        impressions: sql<number>`COALESCE(SUM(${schema.gscDailyTotals.impressions}), 0)`,
+        days: sql<number>`COUNT(*)`,
+      })
+      .from(schema.gscDailyTotals)
+      .where(
+        and(gte(schema.gscDailyTotals.date, startDate), lt(schema.gscDailyTotals.date, endDate))
+      );
+
+    const clicks = Number(row?.clicks ?? 0);
+    const impressions = Number(row?.impressions ?? 0);
+
+    // No rows for the window means the ingest has not run, NOT a CTR of zero.
+    // Returning 0 here would classify as RED — inventing a crisis out of a
+    // missing feed, which is the failure this whole ticket is about.
+    if (!row || Number(row.days ?? 0) === 0 || impressions === 0) {
+      return {
+        value: null,
+        dataAgeSeconds: ageSecondsFromIsoDate(gscMaxDate),
+        meta: {
+          reason: "no gsc_daily_totals rows in window",
+          window: { startDate, endDate },
+          gscMaxDate,
+        },
+      };
+    }
+
     return {
-      value: ctr,
+      value: clicks / impressions,
       dataAgeSeconds: ageSecondsFromIsoDate(gscMaxDate),
       meta: {
-        clicks: res.totals.clicks,
-        impressions: res.totals.impressions,
+        clicks,
+        impressions,
+        days: Number(row.days),
+        source: "gsc_daily_totals (unfiltered)",
         window: { startDate, endDate },
         gscMaxDate,
       },

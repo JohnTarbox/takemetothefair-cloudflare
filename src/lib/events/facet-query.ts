@@ -9,7 +9,7 @@
  * nobody notices for months. Sharing `facetConditions` makes the two agree by
  * construction rather than by discipline (`feedback_classifier_window_must_match_display`).
  */
-import { and, count, eq, isNotNull, inArray, sql } from "drizzle-orm";
+import { and, count, eq, gte, isNotNull, inArray, lt, sql } from "drizzle-orm";
 import { events, venues, promoters, eventVendors, vendors } from "@/lib/db/schema";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { upcomingEndPredicate } from "@/lib/event-dates";
@@ -24,6 +24,7 @@ import {
   facetUrl,
   FACET_STATES,
   type ResolvedFacet,
+  facetDepthBasis,
 } from "@/lib/events/facets";
 import { STATE_BY_SLUG } from "@/lib/states";
 import type { getCloudflareDb } from "@/lib/cloudflare";
@@ -48,6 +49,134 @@ function baseConditions(stateCode: string, now: Date) {
     isNotNull(events.startDate),
     upcomingEndPredicate(now),
   ];
+}
+
+/**
+ * OPE-470 — the ROLLING window used for the indexability depth check.
+ *
+ * Both bounds, deliberately. `start_date >= now - 12 months` on its own counts
+ * forward to infinity and is not a window at all — that exact one-sided error
+ * was made and caught on OPE-426, and it would quietly re-introduce the
+ * "measured from today" bias this ticket exists to remove, just pointing the
+ * other way.
+ *
+ * ±12 months is a full seasonal cycle in each direction: every edition of an
+ * annual fair is inside it regardless of the month you ask, which is precisely
+ * the property that stops a summer region blinking out of the index in August.
+ */
+const ROLLING_MONTHS = 12;
+
+export function rollingDepthWindow(now: Date): { start: Date; end: Date } {
+  const start = new Date(now);
+  start.setUTCMonth(start.getUTCMonth() - ROLLING_MONTHS);
+  const end = new Date(now);
+  end.setUTCMonth(end.getUTCMonth() + ROLLING_MONTHS);
+  return { start, end };
+}
+
+/**
+ * Count a facet's DEPTH — how much this place or category hosts across a full
+ * year — as opposed to how much is left in the forward window.
+ *
+ * Used only for the indexability decision on `rolling12` facets. The listing
+ * itself still shows upcoming events: those are two different questions and
+ * conflating them is the bug. They are kept in one file, one facet-condition
+ * builder, so the pair cannot drift on WHICH events they consider — only on
+ * WHEN, which is the intended difference.
+ */
+export async function countFacetDepth(
+  db: FacetDb,
+  stateCode: string,
+  stateSlug: string,
+  facet: ResolvedFacet,
+  now: Date
+): Promise<number> {
+  const { start, end } = rollingDepthWindow(now);
+  const rows = await db
+    .select({ n: sql<number>`count(*)` })
+    .from(events)
+    .leftJoin(venues, eq(events.venueId, venues.id))
+    .where(
+      and(
+        isPublicEventStatus(),
+        eq(events.stateCode, stateCode),
+        isNotNull(events.startDate),
+        gte(events.startDate, start),
+        lt(events.startDate, end),
+        ...facetConditions(stateSlug, facet, now)
+      )
+    );
+  return Number(rows[0]?.n ?? 0);
+}
+
+/**
+ * The count the indexability decision should use for this facet.
+ *
+ * One entry point so a caller cannot pick the wrong basis by accident — the
+ * page and the sitemap must agree, or Google is asked for two contradictory
+ * things about the same URL.
+ */
+export async function countFacetForIndexing(
+  db: FacetDb,
+  stateCode: string,
+  stateSlug: string,
+  facet: ResolvedFacet,
+  now: Date
+): Promise<number> {
+  return facetDepthBasis(facet.kind) === "rolling12"
+    ? countFacetDepth(db, stateCode, stateSlug, facet, now)
+    : countFacetEvents(db, stateCode, stateSlug, facet, now);
+}
+
+/**
+ * OPE-470 scope 3 — what a facet looks like across a whole year.
+ *
+ * Relaxing the depth gate alone SHIPS BLANK DIRECTORIES: an indexable
+ * `/massachusetts/berkshires` in January listing zero events is worse than a
+ * noindexed one. Half the year, the fix without this makes things worse.
+ *
+ * So a page whose forward window is empty still has something true to say —
+ * how many fairs the place hosts in a year and when its season runs — drawn
+ * from the same rolling window the indexability decision used, so the page
+ * cannot claim a season the gate did not count.
+ */
+export async function getFacetSeasonality(
+  db: FacetDb,
+  stateCode: string,
+  stateSlug: string,
+  facet: ResolvedFacet,
+  now: Date
+): Promise<{ total: number; months: number[] }> {
+  const { start, end } = rollingDepthWindow(now);
+  const rows = await db
+    .select({
+      month: sql<string>`strftime('%m', ${events.startDate}, 'unixepoch')`,
+      n: sql<number>`count(*)`,
+    })
+    .from(events)
+    .leftJoin(venues, eq(events.venueId, venues.id))
+    .where(
+      and(
+        isPublicEventStatus(),
+        eq(events.stateCode, stateCode),
+        isNotNull(events.startDate),
+        gte(events.startDate, start),
+        lt(events.startDate, end),
+        ...facetConditions(stateSlug, facet, now)
+      )
+    )
+    .groupBy(sql`strftime('%m', ${events.startDate}, 'unixepoch')`);
+
+  const total = rows.reduce((a, r) => a + Number(r.n ?? 0), 0);
+  // Months carrying at least a fifth of the year's events — enough to describe
+  // a season without listing every month a single fair happened to fall in.
+  const threshold = Math.max(1, total * 0.15);
+  const months = rows
+    .filter((r) => Number(r.n ?? 0) >= threshold)
+    .map((r) => Number(r.month))
+    .filter((m) => Number.isFinite(m) && m >= 1 && m <= 12)
+    .sort((a, b) => a - b);
+  return { total, months };
 }
 
 /**
@@ -201,7 +330,11 @@ export async function indexableFacetUrls(
   for (let i = 0; i < jobs.length; i += CHUNK) {
     const chunk = jobs.slice(i, i + CHUNK);
     const counts = await Promise.all(
-      chunk.map((j) => countFacetEvents(db, j.stateCode, j.stateSlug, j.facet, now))
+      // OPE-470 — the same basis the page uses. If the sitemap counted forward
+      // while the page counted rolling, the sitemap would submit URLs the page
+      // marks noindex, which is the "Submitted URL marked noindex" report
+      // nobody checks.
+      chunk.map((j) => countFacetForIndexing(db, j.stateCode, j.stateSlug, j.facet, now))
     );
     chunk.forEach((j, k) => {
       if (isFacetIndexable(j.facet, counts[k])) {

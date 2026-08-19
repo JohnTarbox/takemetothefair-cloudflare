@@ -13,6 +13,8 @@ const SCHEMA_SQL = `
     window_days INTEGER NOT NULL DEFAULT 28,
     threshold INTEGER NOT NULL,
     reached_date TEXT,
+    -- OPE-456 (drizzle/0210) — how reached_date was obtained.
+    reached_date_source TEXT,
     email_date TEXT NOT NULL,
     site_url TEXT NOT NULL DEFAULT 'https://meetmeatthefair.com/',
     source TEXT NOT NULL DEFAULT 'google_search_console_email',
@@ -87,5 +89,65 @@ describe("ingestGscMilestone (OPE-108)", () => {
       .prepare("SELECT threshold FROM gsc_milestone_emails ORDER BY threshold")
       .all() as Array<{ threshold: number }>;
     expect(rows.map((r) => r.threshold)).toEqual([1200, 1500, 3000]);
+  });
+});
+
+/**
+ * OPE-456 — a later, better-sourced call must be able to correct a row.
+ *
+ * The old contract was "first write wins, forever": correct information supplied
+ * afterwards came back as `inserted: false` and was discarded, which made every
+ * ingest bug unfixable through the tool that caused it. The repair path was
+ * direct DB access — which is how row 18 actually got corrected.
+ */
+describe("OPE-456 — correction, in one direction only", () => {
+  const base = (over: Record<string, unknown> = {}) => ({
+    metric: "clicks",
+    windowDays: 28,
+    threshold: 12000,
+    reachedDate: "2026-08-17",
+    reachedDateSource: "unanchored" as const,
+    emailDate: "2026-08-17",
+    ...over,
+  });
+
+  it("an anchored parse supersedes an unanchored one, and says so", async () => {
+    const first = await ingestGscMilestone(db, base() as never);
+    expect(first.inserted).toBe(true);
+
+    const second = await ingestGscMilestone(
+      db,
+      base({ reachedDate: "2026-08-15", reachedDateSource: "anchored" }) as never
+    );
+    expect(second.inserted).toBe(false);
+    expect(second.corrected).toBe(true);
+    expect(second.row.reachedDate).toBe("2026-08-15");
+    expect(second.row.reachedDateSource).toBe("anchored");
+    expect(second.outcome).toMatch(/corrected/i);
+  });
+
+  it("an unanchored parse NEVER supersedes an anchored one", async () => {
+    // The reverse direction is what makes this safe. Without it, a re-forward
+    // would overwrite Google's date with the date of the re-forward — the same
+    // defect, arriving later.
+    await ingestGscMilestone(
+      db,
+      base({ reachedDate: "2026-08-15", reachedDateSource: "anchored" }) as never
+    );
+    const again = await ingestGscMilestone(db, base() as never);
+
+    expect(again.corrected).toBe(false);
+    expect(again.row.reachedDate).toBe("2026-08-15");
+    expect(again.outcome).toMatch(/anchored/i);
+  });
+
+  it("an anchored parse fills a row whose provenance is unknown (pre-column rows)", async () => {
+    await ingestGscMilestone(db, base({ reachedDateSource: null }) as never);
+    const fixed = await ingestGscMilestone(
+      db,
+      base({ reachedDate: "2026-08-15", reachedDateSource: "anchored" }) as never
+    );
+    expect(fixed.corrected).toBe(true);
+    expect(fixed.row.reachedDate).toBe("2026-08-15");
   });
 });

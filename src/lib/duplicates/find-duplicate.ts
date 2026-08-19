@@ -76,11 +76,12 @@
  * behavior change that needs its own audit + PR.
  */
 
-import { and, eq, gte, lte, sql } from "drizzle-orm";
+import { and, asc, eq, gte, isNull, lte, sql } from "drizzle-orm";
 import type { Database } from "@/lib/db";
 import { events, venues } from "@/lib/db/schema";
 import { autoLinkVenue } from "@/lib/venue-matching";
 import { normalizeName } from "@/lib/duplicates/normalize-name";
+import { nameContainmentMatch } from "@/lib/duplicates/name-containment";
 
 export interface FindDuplicateInput {
   /** Original-source URL of the candidate. Exact-match shortcut. */
@@ -105,7 +106,10 @@ export type MatchType =
   | "series_url"
   | "venue_date"
   | "city_state_date"
-  | "similar_name_date";
+  | "similar_name_date"
+  // OPE-477 — the venue-less fallback. Only reachable when BOTH venue stages
+  // were inert, so it never widens matching for a candidate that had a venue.
+  | "name_containment_date";
 
 /**
  * OPE-454 — the match types that identify the SAME EVENT, and so should
@@ -119,6 +123,24 @@ export function identifiesSameEvent(matchType: MatchType): boolean {
   return matchType !== "series_url";
 }
 
+/**
+ * OPE-477 — which stages could not evaluate for this candidate.
+ *
+ * The defect this names: a stage with a missing input returned nothing, and
+ * "nothing" was indistinguishable from "checked and cleared". A caller that
+ * blocks on `isDuplicate` alone cannot tell whether dedup ran on four stages or
+ * on one. Now it can.
+ *
+ * Reported on BOTH result shapes deliberately — a hit on a weak stage while the
+ * strong ones were blind is still worth knowing about.
+ */
+export type SkippedStage =
+  | "exact_url:no-source-url"
+  | "venue_date:venue-unresolved"
+  | "city_state_date:no-city-state"
+  | "similar_name_date:no-name"
+  | "all:no-date";
+
 export interface ExistingEvent {
   id: string;
   slug: string;
@@ -129,9 +151,10 @@ export interface ExistingEvent {
 }
 
 export type FindDuplicateResult =
-  | { isDuplicate: false }
+  | { isDuplicate: false; stagesSkipped: SkippedStage[] }
   | {
       isDuplicate: true;
+      stagesSkipped: SkippedStage[];
       matchType: MatchType;
       similarity?: number; // only on similar_name_date
       /**
@@ -142,7 +165,70 @@ export type FindDuplicateResult =
        */
       identifiesSameEvent: boolean;
       existingEvent: ExistingEvent;
+      /** OPE-477 — set on `name_containment_date`: the tokens that matched. */
+      sharedTokens?: string[];
     };
+
+/**
+ * OPE-432 — a merge tombstone is not a duplicate candidate.
+ *
+ * `merge_events` does not delete the losing row. It renames the slug to
+ * `<orig>-merged-<id8>`, writes `event_slug_history`, sets `status='REJECTED'`
+ * and `merged_into=<keeper>`, and leaves the row as an audit tombstone whose
+ * only remaining job is to 301 to the keeper. It is a redirect, not an event.
+ *
+ * Returning one as a duplicate hands the submitter a URL that redirects away
+ * from the row they were just told they duplicated. Reproduced live while
+ * entering the missing 2028 Martha's Vineyard edition: `suggest_event` refused
+ * it against a row whose slug was already
+ * `marthas-vineyard-agricultural-fair-2026-merged-4acbfcb3`, and an operator
+ * had to pass `force_create: true` to enter a legitimate event.
+ *
+ * Measured in prod 2026-08-18: 48 tombstones, 46 carrying a `source_url`
+ * across 44 distinct URLs, 23 of them future-dated — i.e. inside the ±7d
+ * window stages 2–4 match on.
+ *
+ * ── Why this keys on `merged_into` and NOT on `status='REJECTED'` ──
+ *
+ * The ticket asked for both. Excluding every REJECTED row would be a worse
+ * defect than the one being fixed: OPE-278 exists to stop attendee-list and
+ * list-broker spam from being classified `new_event` and creating events, and
+ * the rows an operator rejects are exactly what that produces. Blind dedup to
+ * them and previously-rejected spam becomes re-creatable on every resubmission,
+ * with nothing left to match against.
+ *
+ * A REJECTED-but-not-merged row is also still a real record of a real
+ * submission — unlike a tombstone, which by construction describes an event
+ * that lives at a different id. So it stays matchable, and the thing that was
+ * actually wrong about it (telling a submitter their event is "already in our
+ * directory" when it was rejected) is fixed where the message is written; the
+ * result already carries `status` for exactly that purpose.
+ *
+ * A status predicate here would also trip the OPE-437 guard in
+ * `dedup-sees-nonpublic-events.test.ts`, which asserts this file applies no
+ * status filter so dedup can keep seeing PENDING rows. That guard is right,
+ * and `merged_into` is orthogonal to it.
+ */
+const notAMergeTombstone = () => isNull(events.mergedInto);
+
+/**
+ * OPE-432 — a deterministic winner when a window holds several live events.
+ *
+ * Every stage below is `limit(1)` over a set that routinely has more than one
+ * row, and none of them ordered it, so which event a submitter was told they
+ * duplicated depended on SQLite's scan order. That is the same defect class
+ * OPE-454 fixed in stage 1 ("returned an ARBITRARY row"), still present in
+ * stages 2–4. Prod holds 98 (venue, ±7d) windows containing more than one
+ * candidate row, 49 of them future-dated.
+ *
+ * APPROVED first — a published event is the one a submitter can actually go
+ * and look at, and the one whose URL is worth returning. `id` breaks the
+ * remaining tie so repeated calls agree with each other.
+ */
+const bestMatchFirst = [
+  sql`CASE WHEN ${events.status} = 'APPROVED' THEN 0 ELSE 1 END`,
+  asc(events.id),
+];
 
 /**
  * Run the 4-stage dedup match against the supplied candidate. Returns
@@ -166,6 +252,13 @@ export async function findDuplicate(
   const minDate = haveDate ? new Date(eventDate.getTime() - dateRangeMs) : null;
   const maxDate = haveDate ? new Date(eventDate.getTime() + dateRangeMs) : null;
 
+  // OPE-477 — every stage that could not evaluate, so "no match" is
+  // distinguishable from "never checked".
+  const stagesSkipped: SkippedStage[] = [];
+  if (!input.sourceUrl) stagesSkipped.push("exact_url:no-source-url");
+  if (!input.name) stagesSkipped.push("similar_name_date:no-name");
+  if (!haveDate) stagesSkipped.push("all:no-date");
+
   const eventColumns = {
     id: events.id,
     slug: events.slug,
@@ -186,13 +279,16 @@ export async function findDuplicate(
           and(
             eq(events.sourceUrl, input.sourceUrl),
             gte(events.startDate, minDate!),
-            lte(events.startDate, maxDate!)
+            lte(events.startDate, maxDate!),
+            notAMergeTombstone()
           )
         )
+        .orderBy(...bestMatchFirst)
         .limit(1);
       if (sameUrlAndDate.length > 0) {
         return {
           isDuplicate: true,
+          stagesSkipped,
           matchType: "exact_url",
           identifiesSameEvent: true,
           existingEvent: toExisting(sameUrlAndDate[0]),
@@ -206,7 +302,8 @@ export async function findDuplicate(
     const sameUrl = await db
       .select(eventColumns)
       .from(events)
-      .where(eq(events.sourceUrl, input.sourceUrl))
+      .where(and(eq(events.sourceUrl, input.sourceUrl), notAMergeTombstone()))
+      .orderBy(...bestMatchFirst)
       .limit(2);
 
     if (sameUrl.length > 0) {
@@ -217,6 +314,7 @@ export async function findDuplicate(
       const unambiguousUndated = !haveDate && sameUrl.length === 1;
       return {
         isDuplicate: true,
+        stagesSkipped,
         matchType: unambiguousUndated ? "exact_url" : "series_url",
         identifiesSameEvent: unambiguousUndated,
         existingEvent: toExisting(sameUrl[0]),
@@ -227,7 +325,7 @@ export async function findDuplicate(
   // No startDate → no place/name matching is meaningful. Stages 2-4
   // all need a date window.
   if (!haveDate || minDate === null || maxDate === null) {
-    return { isDuplicate: false };
+    return { isDuplicate: false, stagesSkipped };
   }
   // Re-bound as non-null for stages 2-4. `haveDate` is a plain boolean, so
   // TypeScript cannot narrow minDate/maxDate through it on its own.
@@ -236,6 +334,17 @@ export async function findDuplicate(
 
   // ── Stages 2a + 2b: place + date ─────────────────────────────────
   const hasPlaceSignal = !!input.venueName || !!(input.venueCity && input.venueState);
+
+  // OPE-477 — record inertness from the INPUTS, not from inside the block.
+  // `hasPlaceSignal` can skip the whole of stage 2, so a push placed inside it
+  // never runs in exactly the case this ticket is about: no venue name, no
+  // city. (First attempt did that and the specimen test caught it.)
+  if (!input.venueCity || !input.venueState) {
+    stagesSkipped.push("city_state_date:no-city-state");
+  }
+  // `venue_date` is inert when there was nothing to resolve FROM. When there
+  // was, the resolution result decides — recorded just after the attempt.
+  if (!input.venueName) stagesSkipped.push("venue_date:venue-unresolved");
 
   if (hasPlaceSignal) {
     // 2a — try to resolve venueId server-side. Both "linked" and
@@ -251,6 +360,8 @@ export async function findDuplicate(
         venueState: input.venueState ?? null,
       });
       if (linked.venueId) resolvedVenueId = linked.venueId;
+      // Attempted and came back empty — the stage cannot run.
+      if (!resolvedVenueId) stagesSkipped.push("venue_date:venue-unresolved");
     }
 
     if (resolvedVenueId) {
@@ -268,13 +379,16 @@ export async function findDuplicate(
           and(
             eq(events.venueId, resolvedVenueId),
             gte(events.startDate, windowStart),
-            lte(events.startDate, windowEnd)
+            lte(events.startDate, windowEnd),
+            notAMergeTombstone()
           )
         )
+        .orderBy(...bestMatchFirst)
         .limit(1);
       if (venueMatch.length > 0) {
         return {
           isDuplicate: true,
+          stagesSkipped,
           matchType: "venue_date",
           identifiesSameEvent: true,
           existingEvent: toExisting(venueMatch[0]),
@@ -305,13 +419,16 @@ export async function findDuplicate(
             sql`LOWER(${venues.city}) = LOWER(${normalizedCity})`,
             eq(venues.state, normalizedState),
             gte(events.startDate, windowStart),
-            lte(events.startDate, windowEnd)
+            lte(events.startDate, windowEnd),
+            notAMergeTombstone()
           )
         )
+        .orderBy(...bestMatchFirst)
         .limit(1);
       if (cityStateMatch.length > 0) {
         return {
           isDuplicate: true,
+          stagesSkipped,
           matchType: "city_state_date",
           identifiesSameEvent: true,
           existingEvent: toExisting(cityStateMatch[0]),
@@ -333,7 +450,14 @@ export async function findDuplicate(
         sourceUrl: events.sourceUrl,
       })
       .from(events)
-      .where(and(gte(events.startDate, windowStart), lte(events.startDate, windowEnd)));
+      .where(
+        and(
+          gte(events.startDate, windowStart),
+          lte(events.startDate, windowEnd),
+          notAMergeTombstone()
+        )
+      )
+      .orderBy(...bestMatchFirst);
     for (const ev of similarEvents) {
       if (!ev.name) continue;
       const existingNormalized = normalizeName(ev.name);
@@ -341,6 +465,7 @@ export async function findDuplicate(
       if (sim > nameThreshold) {
         return {
           isDuplicate: true,
+          stagesSkipped,
           matchType: "similar_name_date",
           identifiesSameEvent: true,
           similarity: sim,
@@ -350,7 +475,51 @@ export async function findDuplicate(
     }
   }
 
-  return { isDuplicate: false };
+  // ── Stage 4 (OPE-477): name containment, ONLY when both venue stages were blind ──
+  //
+  // The gate is the design, not a detail. Measured against the live corpus, this
+  // signal applied broadly would add ~136 candidate pairs on top of the 223 the
+  // venue stage already catches — enough to make `force_create: true` routine,
+  // which is OPE-454's failure mode. Restricted to candidates whose venue
+  // stages could not evaluate it touches 6 pairs corpus-wide.
+  //
+  // So a candidate that HAD a venue never reaches here, and matching for the
+  // 42% of email submissions that resolve one is completely unchanged.
+  const venueStagesWereBlind =
+    stagesSkipped.includes("venue_date:venue-unresolved") &&
+    stagesSkipped.includes("city_state_date:no-city-state");
+
+  if (input.name && venueStagesWereBlind) {
+    const normalizedName = normalizeName(input.name);
+    const candidates = await db
+      .select(eventColumns)
+      .from(events)
+      .where(
+        and(
+          gte(events.startDate, windowStart),
+          lte(events.startDate, windowEnd),
+          notAMergeTombstone()
+        )
+      )
+      .orderBy(...bestMatchFirst);
+
+    for (const ev of candidates) {
+      if (!ev.name) continue;
+      const match = nameContainmentMatch(normalizedName, normalizeName(ev.name));
+      if (match) {
+        return {
+          isDuplicate: true,
+          stagesSkipped,
+          matchType: "name_containment_date",
+          identifiesSameEvent: true,
+          existingEvent: toExisting(ev),
+          sharedTokens: match.sharedDistinctive,
+        };
+      }
+    }
+  }
+
+  return { isDuplicate: false, stagesSkipped };
 }
 
 function toExisting(row: {
