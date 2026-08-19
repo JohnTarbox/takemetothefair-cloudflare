@@ -305,6 +305,55 @@ describe("findVendorNameCollisions — slug-drift among vendor groups", () => {
     expect(groups[0].sameYearConflict).toBe(false);
   });
 
+  it("groups all FOUR Martha's Vineyard editions — OPE-480's specimen", () => {
+    // Filed as its own ticket after OPE-432 closed: four editions of one fair
+    // carrying TWO series_ids and TWO NULLs, each with a different slug
+    // convention. Every one of those conventions is represented below.
+    //
+    // The stem key alone reaches none of them — `martha-s-vineyard-fair`,
+    // `marthas-vineyard-fair-ma`, and `marthas-vineyard-fair` are three
+    // distinct stems. The name key collapses all four, because normalizeName
+    // strips the trailing year and the apostrophe: every one becomes
+    // "marthas vineyard fair", at one shared venue.
+    const groups = groupEvents([
+      mk({
+        id: "mv2026",
+        name: "Martha's Vineyard Fair 2026",
+        slug: "martha-s-vineyard-fair-2026",
+        venueId: "v-mv",
+        startDate: jan(2026),
+      }),
+      mk({
+        id: "mv2027",
+        name: "Martha's Vineyard Fair 2027",
+        slug: "marthas-vineyard-fair-ma-2027",
+        venueId: "v-mv",
+        startDate: jan(2027),
+      }),
+      mk({
+        id: "mv2028",
+        name: "Martha's Vineyard Fair 2028",
+        slug: "marthas-vineyard-fair-2028",
+        venueId: "v-mv",
+        startDate: jan(2028),
+      }),
+      mk({
+        id: "mv2029",
+        name: "Martha's Vineyard Fair 2029",
+        slug: "marthas-vineyard-fair-2029",
+        venueId: "v-mv",
+        startDate: jan(2029),
+      }),
+    ]);
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0].members.map((m) => m.id)).toEqual(["mv2026", "mv2027", "mv2028", "mv2029"]);
+    // The clean un-suffixed slug wins, per the EH3 spec.
+    expect(groups[0].canonicalSlug).toBe("martha-s-vineyard-fair");
+    // Four distinct years — a series, not four same-year duplicates.
+    expect(groups[0].sameYearConflict).toBe(false);
+  });
+
   it("does not fuse same-named events that have NO venue", () => {
     // The name key requires a non-null venue. Two events called "Craft Fair"
     // with no venue are not evidence of anything, and fusing them would be the
