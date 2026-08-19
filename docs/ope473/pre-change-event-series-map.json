@@ -1,0 +1,2306 @@
+[
+{
+"event_id": "9e576dd1-5838-48f6-aa63-baf6e02f058a",
+"original_series_id": "01626099cb789b78a4f60966b323a558",
+"event_slug": "nh-beer-trail-festival",
+"status": "APPROVED",
+"event_name": "NH Beer Trail Festival",
+"venue_id": "76d2d423-b949-4000-ac94-4921ddc7605d",
+"source_name": "nhbrewers.org"
+},
+{
+"event_id": "0256183d-50c8-4638-9b7b-3dcac3a1f7a3",
+"original_series_id": "01b93381f7a6137323eca8ae5456beef",
+"event_slug": "hopkinton-state-fair",
+"status": "APPROVED",
+"event_name": "Hopkinton State Fair",
+"venue_id": "e07be75f-32d3-4d2b-b5c4-e387446cb539",
+"source_name": "vtnhfairs.org-nh"
+},
+{
+"event_id": "3487e5fd-c0fa-4a08-ac28-672b1325b30f",
+"original_series_id": "025eef0dacd9af1fc35285f95535bbdd",
+"event_slug": "harwinton-fair-2026-1",
+"status": "REJECTED",
+"event_name": "Harwinton Fair 2026",
+"venue_id": "a4dd6358-299e-4b84-97ef-121a31827cbd",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "599d84e7-5cc3-4707-afea-a463bcc6aa80",
+"original_series_id": "038cb92e69cdcf59d60103727db9e118",
+"event_slug": "cannon-grange-agricultural-fair-2026",
+"status": "APPROVED",
+"event_name": "Cannon Grange Agricultural Fair 2026",
+"venue_id": "ac63ab5c-fdec-4783-a28b-b34bb3e5a825",
+"source_name": "cannongrange.org"
+},
+{
+"event_id": "dfa7f853-4905-4eaa-a5d2-e5a2bec72ad0",
+"original_series_id": "03b85e3199bf054a7093fe34b6a40cf4",
+"event_slug": "fairfield-county-4-h-fair-2026",
+"status": "APPROVED",
+"event_name": "Fairfield County 4-H Fair 2026",
+"venue_id": "6ded6605-af0c-4f0a-bd80-081ac4205675",
+"source_name": "uconn.edu"
+},
+{
+"event_id": "aa25c142a5920383bae9ba5e98f69b4e",
+"original_series_id": "0414532686dfa5d632f82b7edcb36fb1",
+"event_slug": "lebanon-country-fair-ct-2027",
+"status": "TENTATIVE",
+"event_name": "Lebanon Country Fair 2027",
+"venue_id": "5fd1506b-b043-4853-9b0f-a070765ea53e",
+"source_name": "lebanoncountryfair.org"
+},
+{
+"event_id": "a77cd216349dd4bf71003722498209fe",
+"original_series_id": "07bfdd9693e1ab7ebaedbf89e2314ca6",
+"event_slug": "the-bradford-fair-2026-merged-a77cd216",
+"status": "REJECTED",
+"event_name": "The Bradford Fair 2026",
+"venue_id": "9a462978-4004-432a-be4d-8f894382f1ee",
+"source_name": "web-research"
+},
+{
+"event_id": "afecfe6c-cf62-47fd-a070-e3fe0a03bebb",
+"original_series_id": "07bfdd9693e1ab7ebaedbf89e2314ca6",
+"event_slug": "the-bradford-fair",
+"status": "APPROVED",
+"event_name": "The Bradford Fair",
+"venue_id": "9a462978-4004-432a-be4d-8f894382f1ee",
+"source_name": "vtnhfairs.org-vt"
+},
+{
+"event_id": "a51be74a8ed66d5a3a858339de2d7837",
+"original_series_id": "07c41100e6a8abd57581f39797648c77",
+"event_slug": "union-fair-me-2027",
+"status": "TENTATIVE",
+"event_name": "Union Fair 2027",
+"venue_id": "6fe8fa99-ec7f-449a-95d1-6bcf1d5d1460",
+"source_name": "mainefairs.net"
+},
+{
+"event_id": "a32a1e20-9f59-4053-be22-e0f6fd221d4b",
+"original_series_id": "0b20066461b5601355f5ce0f9c34fc66",
+"event_slug": "new-england-spring-craft-festival-2026",
+"status": "APPROVED",
+"event_name": "New England Spring Craft Festival 2026",
+"venue_id": "511eb2a2-6907-4a54-8e69-6039b7f080aa",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "5eeec83a-9a10-4189-91b7-616377108d2d",
+"original_series_id": "0b8048765583e218fd9ac2a6cd8a32de",
+"event_slug": "sandwich-fair-2026",
+"status": "APPROVED",
+"event_name": "Sandwich Fair 2026",
+"venue_id": "3c9f583f-f508-4510-9f17-20449cd6ae9d",
+"source_name": "vtnhfairs.org-nh"
+},
+{
+"event_id": "1c6bfc308a0abc53f64a670c8f55b516",
+"original_series_id": "0bad4430a8ff531ab2e428fc809a3059",
+"event_slug": "granby-grange-agricultural-fair-ct-2027",
+"status": "TENTATIVE",
+"event_name": "Granby Grange Agricultural Fair 2027",
+"venue_id": "443e0a72-f3f7-4e02-bd6d-04af639fde69",
+"source_name": "granbygrange.org"
+},
+{
+"event_id": "42cb72ebec3827f1d82b4130d2adaee0",
+"original_series_id": "0cab3951436ca8c5e129190660c55f12",
+"event_slug": "marthas-vineyard-fair-ma-2027",
+"status": "TENTATIVE",
+"event_name": "Martha's Vineyard Fair 2027",
+"venue_id": "5e6f81ed-83e2-455a-b2e0-f70e074af257",
+"source_name": "mafa.org"
+},
+{
+"event_id": "bc51d235-03a5-4338-a98d-36cb33124089",
+"original_series_id": "0f05df2a93936f2652dd3c67d359eb90",
+"event_slug": "middlesex-and-new-haven-county-4-h-fair-2026",
+"status": "APPROVED",
+"event_name": "Middlesex & New Haven County 4-H Fair 2026",
+"venue_id": "facef4de-ade4-4201-8a55-8b7f3378a647",
+"source_name": "4-hfair.org"
+},
+{
+"event_id": "9c5ed5f737ce315066f8a45c6bb08e77",
+"original_series_id": "1012830c3a5c4f9262f15fcd6870a646",
+"event_slug": "greenfield-hill-grange-fair-ct-2027",
+"status": "TENTATIVE",
+"event_name": "Greenfield Hill Grange Fair 2027",
+"venue_id": "d90c8438-f600-42ff-b2fa-641392e7f2ba",
+"source_name": "ctagfairs.org"
+},
+{
+"event_id": "181dee88e9b48336cd69ff3fb9758074",
+"original_series_id": "1056f0f43ab724fd25bf161b7e43ec19",
+"event_slug": "caledonia-county-fair-vt-2027",
+"status": "TENTATIVE",
+"event_name": "Caledonia County Fair 2027",
+"venue_id": "4a57f38a-f59a-4ce9-8aee-75fda7af3fd3",
+"source_name": null
+},
+{
+"event_id": "4323edce-460f-4df9-812f-0636d28469e5",
+"original_series_id": "11002ce1fa1794f7b1f8c806bf42cd2b",
+"event_slug": "brooklyn-fair-2026",
+"status": "APPROVED",
+"event_name": "Brooklyn Fair 2026",
+"venue_id": "c505fb46-91ad-4bce-ac6c-ffed271c8792",
+"source_name": "brooklynfair.org"
+},
+{
+"event_id": "2049a02a-3a13-4249-9d74-1b94521efbea",
+"original_series_id": "126592b8b426523570bf6f9ced049da1",
+"event_slug": "monmouth-fair",
+"status": "APPROVED",
+"event_name": "Monmouth Fair",
+"venue_id": "77cbcbbe-dcc8-4e78-8fb8-1fe612e08791",
+"source_name": "mainefairs.net"
+},
+{
+"event_id": "6f1f6772-89fa-4b2d-ab88-7b34f3643936",
+"original_series_id": "1288ca0508d85e14ae1829f06467cb03",
+"event_slug": "hopkinton-state-fair-2026-1",
+"status": "REJECTED",
+"event_name": "Hopkinton State Fair 2026",
+"venue_id": "e07be75f-32d3-4d2b-b5c4-e387446cb539",
+"source_name": "organizer-website"
+},
+{
+"event_id": "e3efbf2781d5ef8368a45d03c2391649",
+"original_series_id": "129b8bd2b3c8640602ab245cc46a7bbc",
+"event_slug": "eastern-rhode-island-4-h-country-fair-2026",
+"status": "APPROVED",
+"event_name": "Eastern Rhode Island 4-H Country Fair 2026",
+"venue_id": "840221b4-01c7-48fe-883a-a213510ee4e9",
+"source_name": "uri.edu"
+},
+{
+"event_id": "5896d31a-6cc7-4a37-8f8e-301f597e9deb",
+"original_series_id": "1836964c647494a6d936ef5df8d8340f",
+"event_slug": "cheshire-grange-community-fair-2026",
+"status": "APPROVED",
+"event_name": "Cheshire Grange Community Fair 2026",
+"venue_id": "01146c69-0e09-4b9e-bb37-aeed9be384a5",
+"source_name": "Connecticut State Grange \u2014 Cheshire Grange No. 23 event listing"
+},
+{
+"event_id": "31dc5bf60801ba05aeb650d9bbe88277",
+"original_series_id": "18f64dbef52798007b6fd5117c292e4b",
+"event_slug": "brooklyn-fair-ct-2027",
+"status": "TENTATIVE",
+"event_name": "Brooklyn Fair 2027",
+"venue_id": "c505fb46-91ad-4bce-ac6c-ffed271c8792",
+"source_name": "brooklynfair.org"
+},
+{
+"event_id": "ab6ea0545b2d9eb02e10d6ad2bac339a",
+"original_series_id": "1963891d9c59cafe8d633970c751bffc",
+"event_slug": "piscataquis-valley-fair-me-2027",
+"status": "TENTATIVE",
+"event_name": "Piscataquis Valley Fair 2027",
+"venue_id": "9f46dd13-bb0f-4aff-9b9b-99b7010c4113",
+"source_name": "mainefairs.net"
+},
+{
+"event_id": "c105688a-4da8-491f-87e2-7f6594d655da",
+"original_series_id": "1cedbbd70f9d8e73c088e903ea0aa8df",
+"event_slug": "maine-lobster-festival-2026-1",
+"status": "REJECTED",
+"event_name": "Maine Lobster Festival 2026",
+"venue_id": "f82d2e96-4b8e-4c31-8bf5-310d93aebd8c",
+"source_name": "mainemade.com"
+},
+{
+"event_id": "1a672adc-35dc-4ff9-84c8-1663a8b24352",
+"original_series_id": "1d46da0a35afa8fe842f87a5c8dd5aa8",
+"event_slug": "stratham-4-h-summerfest-2026-1",
+"status": "REJECTED",
+"event_name": "Stratham 4-H Summerfest 2026",
+"venue_id": "98edc9e5-7630-4ecd-a9ff-134b9adc1e62",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "033df9456e161ae8dd5ceb6953bb312e",
+"original_series_id": "1d65f7910ce3ed52d337e6772fbb2196",
+"event_slug": "middlesex-county-4-h-fair-ma-2027",
+"status": "TENTATIVE",
+"event_name": "Middlesex County 4-H Fair 2027",
+"venue_id": "c4badc86-6302-4bb5-99a9-1ffb5ec0e2ca",
+"source_name": "mafa.org"
+},
+{
+"event_id": "9b3847b50b0ec4ca1f261c3ab65802e8",
+"original_series_id": "1e3d6ef232932859bcc71e7365ef843e",
+"event_slug": "franklin-county-fair-ma-2027",
+"status": "TENTATIVE",
+"event_name": "Franklin County Fair 2027",
+"venue_id": "b6e02c8c-887d-4dda-ad80-cc72f98eb843",
+"source_name": "mafa.org"
+},
+{
+"event_id": "cebc8891-d1e0-4d1b-98eb-b8010008125f",
+"original_series_id": "1e6df13050de751b83ceb71852a47a20",
+"event_slug": "kennebunkport-christmas-prelude-2026-1",
+"status": "REJECTED",
+"event_name": "Kennebunkport Christmas Prelude 2026",
+"venue_id": "28f31649-182c-4420-9bb1-15ef6455fc1f",
+"source_name": "christmasprelude.com"
+},
+{
+"event_id": "9bd0e3b92de34e1ece922d16d9a3efb0",
+"original_series_id": "1fe2b5e86d0ff6d04ff2b8a8a7111f71",
+"event_slug": "cheshire-fair-nh-2027",
+"status": "TENTATIVE",
+"event_name": "Cheshire Fair 2027",
+"venue_id": "07bfc689-a3e4-48e1-b3eb-8e75dd92b3de",
+"source_name": "web-research"
+},
+{
+"event_id": "7ba0be54869afe82457ea6a2e63df515",
+"original_series_id": "223eee2d76ee68d3035d24481ecfecd0",
+"event_slug": "chester-fair-ct-2027",
+"status": "TENTATIVE",
+"event_name": "Chester Fair 2027",
+"venue_id": "80c08919-e72b-406b-aa0a-67467a46559b",
+"source_name": "chesterfair.org"
+},
+{
+"event_id": "6053837f686a4db793e11a76b52a9465",
+"original_series_id": "22df4bb9b404484e6d347a7ad9ee729c",
+"event_slug": "bethlehem-fair-ct-2027",
+"status": "TENTATIVE",
+"event_name": "Bethlehem Fair 2027",
+"venue_id": "da048e8f-7ecd-4ecd-b97c-1c7caff6cbb9",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "9a73397b260f6dfc8f261b1a9942eaf8",
+"original_series_id": "24299e2341c18e66066321225344f6ac",
+"event_slug": "south-middleboro-grange-fair-2026",
+"status": "APPROVED",
+"event_name": "South Middleboro Grange Fair 2026",
+"venue_id": "81a68350-221d-4dc3-acf1-82504b9c25c4",
+"source_name": "Massachusetts State Grange \u2014 South Middleboro Grange #337 chapter page"
+},
+{
+"event_id": "68151442-2165-44a4-a880-4711a7ff2803",
+"original_series_id": "243ea7066b62d402fedfe35e56bd0244",
+"event_slug": "fryeburg-fair-2026",
+"status": "APPROVED",
+"event_name": "Fryeburg Fair 2026",
+"venue_id": "ebfb3a6d-f738-4c5a-9d6e-36c57da58dd9",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "810ad4e5a507788e2f46374979939003",
+"original_series_id": "2531ed40852bcb2f92c17ba700428abe",
+"event_slug": "lamoille-county-field-days-vt-2027",
+"status": "TENTATIVE",
+"event_name": "Lamoille County Field Days 2027",
+"venue_id": "05e09830-5210-451e-9739-59777a4ae06b",
+"source_name": "web-research"
+},
+{
+"event_id": "3d70876cdbe4a1678458950b6841b784",
+"original_series_id": "253d36b26c27d790780a7f4f136409e6",
+"event_slug": "heath-fair-ma-2027",
+"status": "TENTATIVE",
+"event_name": "Heath Fair 2027",
+"venue_id": "ab5a010e-4dd2-4d24-89ac-3a0140989a9e",
+"source_name": "mafa.org"
+},
+{
+"event_id": "f8d67c5c-9ba8-4f5c-9a92-eb69eb5b8ee4",
+"original_series_id": "25cc704b827385c65b2cfaebd5eef25f",
+"event_slug": "wallingford-grange-fair-2026",
+"status": "APPROVED",
+"event_name": "Wallingford Grange Fair 2026",
+"venue_id": "66647b76-d31b-45bc-abc2-45de944c13cd",
+"source_name": "wallingfordgrange.org"
+},
+{
+"event_id": "81a0c5ad-e913-42ae-a3c5-d9be1d2338cb",
+"original_series_id": "26f6384e66d15bd4cf58c79ff57ef1e9",
+"event_slug": "northern-maine-fair",
+"status": "APPROVED",
+"event_name": "Northern Maine Fair",
+"venue_id": "516b7cc3-24e9-47b3-8dea-325e73580647",
+"source_name": "mainefairs.net"
+},
+{
+"event_id": "071f18fcf8b474d47f6946c18ac3014a",
+"original_series_id": "27b742d20e79de29f0afe7d922aebd9e",
+"event_slug": "orange-country-fair-ct-2027",
+"status": "TENTATIVE",
+"event_name": "Orange Country Fair 2027",
+"venue_id": "8eedbc38-8461-470a-b9c1-3cb9c9880c07",
+"source_name": "orangectfair.com"
+},
+{
+"event_id": "c518c4a9fc32656925652d3eb65dd4ab",
+"original_series_id": "27c9f7f0e35d40159c526a5f8769a990",
+"event_slug": "harwinton-fair-ct-2027",
+"status": "TENTATIVE",
+"event_name": "Harwinton Fair 2027",
+"venue_id": "a4dd6358-299e-4b84-97ef-121a31827cbd",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "b3bf26b47d4a42184f49aef2716212f5",
+"original_series_id": "2bbe80163f82631b8f70cebdaaf78291",
+"event_slug": "cornish-fair-2026-merged-b3bf26b4",
+"status": "REJECTED",
+"event_name": "Cornish Fair 2026",
+"venue_id": "7432f0ef-136b-4b9e-b858-d79ce4bf647d",
+"source_name": "web-research"
+},
+{
+"event_id": "ca788819-27b5-455f-807d-523f4c65c9f9",
+"original_series_id": "2bbe80163f82631b8f70cebdaaf78291",
+"event_slug": "cornish-fair",
+"status": "APPROVED",
+"event_name": "Cornish Fair",
+"venue_id": "7432f0ef-136b-4b9e-b858-d79ce4bf647d",
+"source_name": "vtnhfairs.org-nh"
+},
+{
+"event_id": "acced9c9-c827-4540-94e6-786ad3fef234",
+"original_series_id": "2d7fc2da6d353aa30770210d93c37ed4",
+"event_slug": "houlton-fair",
+"status": "APPROVED",
+"event_name": "Houlton Fair",
+"venue_id": "f55063c5-28a9-4eb2-8ffd-f0d505b39ae9",
+"source_name": "mainefairs.net"
+},
+{
+"event_id": "7d4395b0-70e3-4648-a5c4-19ca11b9bdde",
+"original_series_id": "2e77f77e42a8cae43450e4e91d969f88",
+"event_slug": "stowe-foliage-arts-festival-2026",
+"status": "APPROVED",
+"event_name": "Stowe Foliage Arts Festival 2026",
+"venue_id": "90228d1c-82ef-4cdc-b029-c80f5ec53b87",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "d8a34e1e1c1b729ccf6536937f4c0090",
+"original_series_id": "30674abedf291331acd4f2e248b2111a",
+"event_slug": "riverton-fair-ct-2027",
+"status": "TENTATIVE",
+"event_name": "Riverton Fair 2027",
+"venue_id": "c48b8198-e297-43d2-9193-3ae58b872689",
+"source_name": "rivertonfair.org"
+},
+{
+"event_id": "fe072289-d0f2-45ed-898c-b16e808dc349",
+"original_series_id": "31a1bf0c30777c49b0ec9e1a2e657152",
+"event_slug": "newport-international-boat-show-2026-1",
+"status": "REJECTED",
+"event_name": "Newport International Boat Show 2026",
+"venue_id": "ae5adce9-c9ae-42de-bf4b-9f7eee8099f6",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "f0965c46-80fa-4308-b3a6-5f43e485280c",
+"original_series_id": "32b85206f8ec8208227e7d41de45e85a",
+"event_slug": "hillstown-grange-agricultural-fair-2026",
+"status": "APPROVED",
+"event_name": "Hillstown Grange Agricultural Fair 2026",
+"venue_id": "5964c9f0-ae4b-4b1c-9b72-afb3d49d8974",
+"source_name": "hillstowngrange.org"
+},
+{
+"event_id": "abf21492-e615-402a-b47d-606914c1aa33",
+"original_series_id": "331bbbd42e1c2ba7681a380fc294a74e",
+"event_slug": "blue-hill-fair",
+"status": "APPROVED",
+"event_name": "Blue Hill Fair",
+"venue_id": "f01b3310-02f2-472f-a660-7c7c0df5971e",
+"source_name": "mainefairs.net"
+},
+{
+"event_id": "632b22a5-9025-47b1-8794-dca85df41e86",
+"original_series_id": "3355088ccda7bbbc1212868dd0e2a454",
+"event_slug": "ossipee-valley-fair",
+"status": "APPROVED",
+"event_name": "Ossipee Valley Fair",
+"venue_id": "cea42870-617c-40cf-b412-429b956020b4",
+"source_name": "mainefairs.net"
+},
+{
+"event_id": "cef2d5bae54d43ceefeea81797dc4a95",
+"original_series_id": "35a42070fab59eccd893e36a54fd56b9",
+"event_slug": "cumberland-county-fair-me-2027",
+"status": "TENTATIVE",
+"event_name": "Cumberland County Fair 2027",
+"venue_id": "0566b799-809a-4f06-bbe1-a95931475917",
+"source_name": "mainefairs.net"
+},
+{
+"event_id": "ae7f85c2-e663-4844-bd5d-b22eaea59b99",
+"original_series_id": "36af985c2fff9a1d4beed9fb05a9a3cc",
+"event_slug": "ekonk-community-grange-fair-2026",
+"status": "APPROVED",
+"event_name": "Ekonk Community Grange Fair 2026",
+"venue_id": "43202a7e-1e06-4e53-a0a3-8d3f077b76b0",
+"source_name": "Ekonk Community Grange No. 89"
+},
+{
+"event_id": "a3d641823e56fbf023317b500ce6bab9",
+"original_series_id": "36ed64b322fecfa8b107af4142c30e54",
+"event_slug": "topsham-fair-me-2027",
+"status": "TENTATIVE",
+"event_name": "Topsham Fair 2027",
+"venue_id": "728ef175-d8e4-462c-8ede-e4c124e1a419",
+"source_name": "mainefairs.net"
+},
+{
+"event_id": "7739f9c5-49ce-4456-a9e6-4e7bd2efbe41",
+"original_series_id": "3702906f1b115f955a6e62a28a504df9",
+"event_slug": "waterford-world-s-fair",
+"status": "REJECTED",
+"event_name": "Waterford World's Fair",
+"venue_id": "32012b4b-7ddf-4ecf-92df-62b09d804a95",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "a98681e5-66e4-4c7b-ba73-a8749b291dce",
+"original_series_id": "371a0c16c22c15d78e547e55f116bce8",
+"event_slug": "vacationland-rv-and-camping-show-2026",
+"status": "APPROVED",
+"event_name": "Vacationland RV & Camping Show 2026",
+"venue_id": "34a9360c-481e-4292-a7de-60edc7a460cc",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "df758144-547b-40af-8fd1-c2bae544788d",
+"original_series_id": "37d36258e7f6b929e89ac344d62a5a50",
+"event_slug": "acton-fair-2026",
+"status": "APPROVED",
+"event_name": "Acton Fair 2026",
+"venue_id": "008ce5e3-e68e-42b7-8657-4b4d48f35e00",
+"source_name": "mainefairs.net"
+},
+{
+"event_id": "ddad153d-6748-46a7-b13f-c313d75d406d",
+"original_series_id": "39d42804941d0de000bcf1b4faf7b1f1",
+"event_slug": "strawbery-banke-candlelight-stroll-2026-1",
+"status": "REJECTED",
+"event_name": "Strawbery Banke Candlelight Stroll 2026",
+"venue_id": "b289b092-cbe7-44f6-beb5-e90206f1e901",
+"source_name": "strawberybanke.org"
+},
+{
+"event_id": "ef0414b7-2af6-465c-9495-6d56fec38156",
+"original_series_id": "3a374125cc08f1ba471e0dd8714b5964",
+"event_slug": "winslow-vfw-crafts-fair-2026-duplicate",
+"status": "REJECTED",
+"event_name": "Winslow VFW Crafts Fair 2026",
+"venue_id": "a772df65-7862-41a5-8913-be8bdbae3411",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "3ec87099-d379-4d98-a8d1-b9c7b4bbd545",
+"original_series_id": "3a5f53cd9bc9f38702e4348b4c670ff9",
+"event_slug": "topsham-fair",
+"status": "APPROVED",
+"event_name": "Topsham Fair",
+"venue_id": "728ef175-d8e4-462c-8ede-e4c124e1a419",
+"source_name": "mainefairs.net"
+},
+{
+"event_id": "197719f08b5043e7848b8e81bce2e67b",
+"original_series_id": "3a60b9bb1811be41367a4aecc440413d",
+"event_slug": "ekonk-community-grange-fair-ct-2027",
+"status": "TENTATIVE",
+"event_name": "Ekonk Community Grange Fair 2027",
+"venue_id": "43202a7e-1e06-4e53-a0a3-8d3f077b76b0",
+"source_name": "ekonkgrange.org"
+},
+{
+"event_id": "ac56e36d-b35d-4fde-8d59-a275c75cc72c",
+"original_series_id": "3ab574c018bb957fbf6ee67fb816dde2",
+"event_slug": "skowhegan-state-fair",
+"status": "APPROVED",
+"event_name": "Skowhegan State Fair",
+"venue_id": "2516f056-2b87-4138-99cd-f1d6c423025e",
+"source_name": "mainefairs.net"
+},
+{
+"event_id": "2f2d1f07380537d1d11872c01e2065ef",
+"original_series_id": "3b5adf3bb5e7de01a236cee939bcc639",
+"event_slug": "portland-agricultural-fair-ct-2027",
+"status": "TENTATIVE",
+"event_name": "Portland Agricultural Fair 2027",
+"venue_id": "7b7833a5-87c6-4419-a2ba-3c1a1612bf68",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "1ac9ebaf-d963-4101-903e-e7ff70e899d5",
+"original_series_id": "3c2fe9c656395d787d6be0b9b718ac12",
+"event_slug": "three-county-fair-2026",
+"status": "APPROVED",
+"event_name": "Three County Fair 2026",
+"venue_id": "694e40aa-dccf-4611-97e2-c433cb8ad7a9",
+"source_name": "mafa.org"
+},
+{
+"event_id": "862bc8c97795cae915d9e97f586f2f11",
+"original_series_id": "3c32aaffaba632b2d2269cb343194a2c",
+"event_slug": "norfield-grange-agricultural-fair-and-market-ct-2027",
+"status": "TENTATIVE",
+"event_name": "Norfield Grange Agricultural Fair & Market 2027",
+"venue_id": "7eb339d0-a53d-4280-a559-a22434c52274",
+"source_name": "norfieldgrange.com"
+},
+{
+"event_id": "8f1e99ab-cf9d-4d9f-9de3-c6ab411ca146",
+"original_series_id": "3e40bb0c54e9b216e826aee1dea00232",
+"event_slug": "four-town-fair-2026",
+"status": "APPROVED",
+"event_name": "Four Town Fair 2026",
+"venue_id": "719d923e-f8f9-4860-90c1-4f113348445e",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "70f657bc-de02-449e-b108-cace87324c7d",
+"original_series_id": "3ff6bb6d6507b2c64166629850fbabdb",
+"event_slug": "greenfield-hill-grange-fair-2026",
+"status": "APPROVED",
+"event_name": "Greenfield Hill Grange Fair 2026",
+"venue_id": "d90c8438-f600-42ff-b2fa-641392e7f2ba",
+"source_name": "Connecticut State Grange \u2014 Greenfield Hill Grange No. 133 news column"
+},
+{
+"event_id": "b919e5950ff1cc63c7f9f9432bb535fe",
+"original_series_id": "410eec793b6603142fdf1fededb33818",
+"event_slug": "windham-county-4-h-fair-ct-2027",
+"status": "TENTATIVE",
+"event_name": "Windham County 4-H Fair 2027",
+"venue_id": "c505fb46-91ad-4bce-ac6c-ffed271c8792",
+"source_name": "uconn.edu"
+},
+{
+"event_id": "8b198688fa7e0331a54206b904fb6ab7",
+"original_series_id": "41de7600ba960f38b036414ae1306f88",
+"event_slug": "middlefield-fair-ma-2027",
+"status": "TENTATIVE",
+"event_name": "Middlefield Fair 2027",
+"venue_id": "15fd0ef7-8b09-473f-b951-f2d2307e1c0f",
+"source_name": "mafa.org"
+},
+{
+"event_id": "3900948cdebade99fd0f195aa5fe0e82",
+"original_series_id": "4242efb52495ed9cbc8c5a7fc5c86589",
+"event_slug": "williamsburg-grange-fair-2026",
+"status": "APPROVED",
+"event_name": "Williamsburg Grange Fair 2026",
+"venue_id": "bc73000b-2e1b-48ab-9f6b-18265e3b3338",
+"source_name": "massgrange.org"
+},
+{
+"event_id": "a57e7ba26a2c6ecfc517db5d8c0cd025",
+"original_series_id": "42ab4c98862f6359a7d059677658e9ec",
+"event_slug": "hebron-harvest-fair-ct-2027",
+"status": "TENTATIVE",
+"event_name": "Hebron Harvest Fair 2027",
+"venue_id": "4177eec5-c4a4-4da2-944f-6b41ac5da3c9",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "c2791593-2677-494c-b5b1-a68ead2f134c",
+"original_series_id": "443dde2e2ad7ad035defb66f124ab3f5",
+"event_slug": "norfield-grange-agricultural-fair-and-market-2026",
+"status": "APPROVED",
+"event_name": "Norfield Grange Agricultural Fair & Market 2026",
+"venue_id": "7eb339d0-a53d-4280-a559-a22434c52274",
+"source_name": "norfieldgrange.com"
+},
+{
+"event_id": "614b82e2-2cef-4f49-81c1-03d4574410cd",
+"original_series_id": "448c596cbf0792679a624f312a31b8fb",
+"event_slug": "north-haven-fair-2026",
+"status": "APPROVED",
+"event_name": "North Haven Fair 2026",
+"venue_id": "f405a003-8455-41c8-9ba7-c05c9c4c8dc3",
+"source_name": "northhaven-fair.com"
+},
+{
+"event_id": "2a3f9245-d587-426e-9dbb-b61600b94b66",
+"original_series_id": "44c19548d9484c93ee8d73ef416d1531",
+"event_slug": "stowe-foliage-arts-festival-2026-1",
+"status": "REJECTED",
+"event_name": "Stowe Foliage Arts Festival 2026",
+"venue_id": "90228d1c-82ef-4cdc-b029-c80f5ec53b87",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "6ba4afedbeed09855a74560141ea8a70",
+"original_series_id": "455682fe940854bf89a8026267a6520d",
+"event_slug": "sandwich-fair-nh-2027",
+"status": "TENTATIVE",
+"event_name": "Sandwich Fair 2027",
+"venue_id": "3c9f583f-f508-4510-9f17-20449cd6ae9d",
+"source_name": "vtnhfairs.org-nh"
+},
+{
+"event_id": "55f452f0-fcb8-4c74-a42b-db19c6c3ce80",
+"original_series_id": "45850373c4a19d0006f12aae7947b03c",
+"event_slug": "chester-fair-2026",
+"status": "APPROVED",
+"event_name": "Chester Fair 2026 \u2014 Aug 28\u201330 in Chester, CT",
+"venue_id": "80c08919-e72b-406b-aa0a-67467a46559b",
+"source_name": "chesterfair.org"
+},
+{
+"event_id": "c9bae2dc-dca1-4339-9490-c490de30cd1c",
+"original_series_id": "46081af7cbc8470debd16e1500ed023e",
+"event_slug": "deerfield-fair-2026",
+"status": "APPROVED",
+"event_name": "Deerfield Fair 2026",
+"venue_id": "62d96072-4cbb-4f5d-8f91-cc362321da14",
+"source_name": "vtnhfairs.org-nh"
+},
+{
+"event_id": "1b56f81c-cb8a-4b89-b62c-4225a6b3c306",
+"original_series_id": "48217d021a8248b27d2ac0504c0eab26",
+"event_slug": "pittston-fair",
+"status": "APPROVED",
+"event_name": "Pittston Fair",
+"venue_id": "7e1bbb55-40ee-4098-8252-adf443305237",
+"source_name": "mainefairs.net"
+},
+{
+"event_id": "cbfef526-a925-4dfe-a63b-db3097a72189",
+"original_series_id": "4858917212a6e406ed0ef4f7fa88463b",
+"event_slug": "north-stonington-agricultural-fair-2026",
+"status": "APPROVED",
+"event_name": "North Stonington Agricultural Fair 2026",
+"venue_id": "effc7b66-343f-4927-9b12-af37f56a384a",
+"source_name": "northstoningtonfair.org"
+},
+{
+"event_id": "a60b634990c66d846efcbf1827900e1a",
+"original_series_id": "488905ebb8e4946d49e95aeef4e3b748",
+"event_slug": "vermont-state-fair-vt-2027",
+"status": "TENTATIVE",
+"event_name": "Vermont State Fair 2027",
+"venue_id": "5900e30d-856c-4d49-bfc2-8bde3f13eb03",
+"source_name": "fairsandfestivals.net"
+},
+{
+"event_id": "dc59d6cd-11b3-42d7-9cac-93224368eb2e",
+"original_series_id": "49c80381e9026300259a1d2e0324b2b7",
+"event_slug": "westport-fair-2026",
+"status": "APPROVED",
+"event_name": "Westport Fair 2026",
+"venue_id": "eb832007-6a89-45ca-b0e7-ee4207142ca7",
+"source_name": "mafa.org"
+},
+{
+"event_id": "3ced53d7-4ec3-4042-8b90-a2615f37a581",
+"original_series_id": "4a5ff8968e0b28bbffc867bd77d4bbd6",
+"event_slug": "wapping-fair-2026",
+"status": "APPROVED",
+"event_name": "Wapping Fair 2026",
+"venue_id": "ffeed964-f45e-49e9-a3e0-4df58e2995b6",
+"source_name": "wappingfair.org"
+},
+{
+"event_id": "753fd0a4-9cd6-4381-8a60-7d2efe805ee9",
+"original_series_id": "4d75b93e70337463a0dcb868d2402e4a",
+"event_slug": "new-london-county-4-h-expo-and-fair-2026",
+"status": "APPROVED",
+"event_name": "New London County 4-H Expo & Fair 2026",
+"venue_id": "effc7b66-343f-4927-9b12-af37f56a384a",
+"source_name": "uconn.edu"
+},
+{
+"event_id": "86b04c13-9865-4edd-b341-636082637430",
+"original_series_id": "4dcd1a9c0e561954baa34a11ef03c207",
+"event_slug": "litchfield-county-4-h-fair-2026",
+"status": "APPROVED",
+"event_name": "Litchfield County 4-H Fair 2026",
+"venue_id": "05dbed64-3fd4-4f73-b0c1-01de9ff8b15c",
+"source_name": "uconn.edu"
+},
+{
+"event_id": "0196de10-d48b-4579-9dd3-c609bd3f1420",
+"original_series_id": "4dd4b649d7714b0755c6edc043b2c819",
+"event_slug": "maine-lobster-festival-2026",
+"status": "APPROVED",
+"event_name": "Maine Lobster Festival 2026",
+"venue_id": "f82d2e96-4b8e-4c31-8bf5-310d93aebd8c",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "648adc1d-223a-4067-b032-7d9e08f42176",
+"original_series_id": "4e69472a3aa09e013d1ca8a47561160d",
+"event_slug": "hillsborough-county-agricultural-fair",
+"status": "APPROVED",
+"event_name": "Hillsborough County Agricultural Fair",
+"venue_id": "2add6e80-2ff0-47f6-aea4-0e2f67d93d32",
+"source_name": "vtnhfairs.org-nh"
+},
+{
+"event_id": "76585d315e0e1a8e672391d26b9b4105",
+"original_series_id": "4e69472a3aa09e013d1ca8a47561160d",
+"event_slug": "hillsborough-county-agricultural-fair-2026-merged-76585d31",
+"status": "REJECTED",
+"event_name": "Hillsborough County Agricultural Fair 2026",
+"venue_id": "2add6e80-2ff0-47f6-aea4-0e2f67d93d32",
+"source_name": "web-research"
+},
+{
+"event_id": "cafdfa87-18fd-4940-bbdf-06dd6289c7d8",
+"original_series_id": "528ccc4016e9bfb794aee4ca470878ab",
+"event_slug": "vacationland-rv-camping-show",
+"status": "REJECTED",
+"event_name": "Vacationland RV & Camping Show",
+"venue_id": "34a9360c-481e-4292-a7de-60edc7a460cc",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "cb63b3f84bd36c0d85223a2d275ba037",
+"original_series_id": "53e7b7670eee75638944c5f25f4cb31e",
+"event_slug": "cheshire-fair-2026-merged-cb63b3f8",
+"status": "REJECTED",
+"event_name": "Cheshire Fair 2026",
+"venue_id": "07bfc689-a3e4-48e1-b3eb-8e75dd92b3de",
+"source_name": "web-research"
+},
+{
+"event_id": "ea06640a-55b5-48f4-b899-b4c85f77489f",
+"original_series_id": "53e7b7670eee75638944c5f25f4cb31e",
+"event_slug": "cheshire-fair",
+"status": "APPROVED",
+"event_name": "Cheshire Fair",
+"venue_id": "07bfc689-a3e4-48e1-b3eb-8e75dd92b3de",
+"source_name": "vtnhfairs.org-nh"
+},
+{
+"event_id": "cf5b6896-af47-447f-b3ab-dd1c209e17e6",
+"original_series_id": "53ffc00c2d4f1dd1d7b7002fd1ba3cb7",
+"event_slug": "hebron-harvest-fair-2026",
+"status": "APPROVED",
+"event_name": "Hebron Harvest Fair 2026",
+"venue_id": "4177eec5-c4a4-4da2-944f-6b41ac5da3c9",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "7c48ee54d91d2390235da0d0ded3b61a",
+"original_series_id": "5425a872f07e88d3fb4afc9baff14540",
+"event_slug": "common-ground-country-fair-me-2027",
+"status": "TENTATIVE",
+"event_name": "Common Ground Country Fair 2027",
+"venue_id": "d237455e-d210-4690-b429-5bc46690b6e3",
+"source_name": "mainemade.com"
+},
+{
+"event_id": "b85f6894-240c-4bab-b34a-2f9897d44ebd",
+"original_series_id": "5513a3ff31b945aaa32919c967c2b0c7",
+"event_slug": "boston-pride-for-the-people-2026-1",
+"status": "REJECTED",
+"event_name": "Boston Pride for the People 2026",
+"venue_id": "eb989086-cb77-484f-9f3f-f1824c7fe3b9",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "10f88895-7808-44e4-9c15-6e6686551185",
+"original_series_id": "56e4e5cc1b9b51a35fd229e4c125f753",
+"event_slug": "simsbury-grange-agricultural-fair-2026",
+"status": "APPROVED",
+"event_name": "Simsbury Grange Agricultural Fair 2026",
+"venue_id": "3cad691e-a1cb-4751-b35f-8bb7ab1cd627",
+"source_name": "simsburygrange.org"
+},
+{
+"event_id": "3dc1e726-1eba-46c6-85d9-4f9466466ec1",
+"original_series_id": "59aa279f5abc866ec867c495222174a8",
+"event_slug": "stratham-4-h-summerfest",
+"status": "APPROVED",
+"event_name": "Stratham 4-H Summerfest",
+"venue_id": "98edc9e5-7630-4ecd-a9ff-134b9adc1e62",
+"source_name": "vtnhfairs.org-nh"
+},
+{
+"event_id": "8125eb54f002c44864f068e89ac2ed1e",
+"original_series_id": "5c52688f5ea03738e8ee919b91820ef2",
+"event_slug": "topsfield-fair-ma-2027",
+"status": "TENTATIVE",
+"event_name": "Topsfield Fair 2027",
+"venue_id": "237d5bea-e0cd-47eb-937f-4a71a588cec1",
+"source_name": "mafa.org"
+},
+{
+"event_id": "24288119-f6fc-4167-be69-725b7340ff9a",
+"original_series_id": "5c99191a18da0d4554c23806c1af02e9",
+"event_slug": "litchfield-fair",
+"status": "APPROVED",
+"event_name": "Litchfield Fair",
+"venue_id": "a24a9e3a-d69b-49ea-bfbc-3e668a22a094",
+"source_name": "mainefairs.net"
+},
+{
+"event_id": "d62043c9d6bd949070be13b0dc2e69ed",
+"original_series_id": "5d3a6c8d9b7759526d8161fcce876550",
+"event_slug": "riverton-grange-fair-ct-2027",
+"status": "TENTATIVE",
+"event_name": "Riverton Grange Fair 2027",
+"venue_id": "78aee4a6-c6a9-437b-b2cc-2e6d9c4c9b71",
+"source_name": "ctagfairs.org"
+},
+{
+"event_id": "62567474-bcc5-4d3f-86f0-0694a13fad00",
+"original_series_id": "5d8301f6940addc91676ed361ac7174d",
+"event_slug": "hampshire-county-4-h-fair-2026",
+"status": "APPROVED",
+"event_name": "Hampshire County 4-H Fair 2026",
+"venue_id": "7270a91c-9722-42ae-a351-53c5549739b9",
+"source_name": "mafa.org"
+},
+{
+"event_id": "98b69712-32dd-4717-a519-50731526c7b0",
+"original_series_id": "5daa79bc3c162209f4347799a8e04a12",
+"event_slug": "strawbery-banke-candlelight-stroll-2026",
+"status": "APPROVED",
+"event_name": "Strawbery Banke Candlelight Stroll 2026",
+"venue_id": "b289b092-cbe7-44f6-beb5-e90206f1e901",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "357dcb3c-0110-463c-99f5-1341f76536fd",
+"original_series_id": "5e1fa577ba34be70b95ce6b8d98bf30d",
+"event_slug": "boston-marathon-2026-1",
+"status": "APPROVED",
+"event_name": "Boston Marathon 2026",
+"venue_id": "b4c30111-7fd9-45e4-ac70-8db8e9350906",
+"source_name": "boston-athletic-association"
+},
+{
+"event_id": "86b621f1-542e-4d50-9022-ec44577a7864",
+"original_series_id": "6022f0ccabf13267f4c54aa9f46a601b",
+"event_slug": "kennebunkport-christmas-prelude-2026",
+"status": "APPROVED",
+"event_name": "Kennebunkport Christmas Prelude 2026",
+"venue_id": "28f31649-182c-4420-9bb1-15ef6455fc1f",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "c95c0bef6e91f28d2af95823198c5d06",
+"original_series_id": "6148ecc93c24b740582541b2dc374a32",
+"event_slug": "four-town-fair-ct-2027",
+"status": "TENTATIVE",
+"event_name": "Four Town Fair 2027",
+"venue_id": "719d923e-f8f9-4860-90c1-4f113348445e",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "2e5b9f7891bf0514df05402c45e3de4e",
+"original_series_id": "61f76eebed254987d310e9242b84d08a",
+"event_slug": "northern-maine-fair-me-2027",
+"status": "TENTATIVE",
+"event_name": "Northern Maine Fair 2027",
+"venue_id": "516b7cc3-24e9-47b3-8dea-325e73580647",
+"source_name": "mainefairs.net"
+},
+{
+"event_id": "d889f4f9-f012-4530-ad34-ad7d3d193183",
+"original_series_id": "62689df5ed20e08c32c31116d058bd23",
+"event_slug": "winslow-vfw-crafts-fair-2026",
+"status": "APPROVED",
+"event_name": "Winslow VFW Crafts Fair 2026",
+"venue_id": "a772df65-7862-41a5-8913-be8bdbae3411",
+"source_name": null
+},
+{
+"event_id": "a5548962-4bb2-431c-a54d-6bd1894d176a",
+"original_series_id": "63a9efa8f0d3e7008177ae8c6e7d773e",
+"event_slug": "middlefield-fair-2026",
+"status": "APPROVED",
+"event_name": "Middlefield Fair 2026",
+"venue_id": "15fd0ef7-8b09-473f-b951-f2d2307e1c0f",
+"source_name": "mafa.org"
+},
+{
+"event_id": "43b19cff-776a-462c-ba71-0b918acc650e",
+"original_series_id": "63bb2870468898067fe05c393115d8b5",
+"event_slug": "franklin-county-fair-2026",
+"status": "APPROVED",
+"event_name": "Franklin County Fair 2026",
+"venue_id": "b6e02c8c-887d-4dda-ad80-cc72f98eb843",
+"source_name": "mafa.org"
+},
+{
+"event_id": "45cb5ae21114a0c833b4c0a8723c19b2",
+"original_series_id": "65625fd29eeb898cbff6be39aa704d9d",
+"event_slug": "east-middleboro-4-h-fair-ma-2027",
+"status": "TENTATIVE",
+"event_name": "East Middleboro 4-H Fair 2027",
+"venue_id": "2ec5a4d7-76cd-4cf2-adcf-678b4246580a",
+"source_name": "em4h.org"
+},
+{
+"event_id": "c2d39452-9caa-4316-a221-020fdbfb0851",
+"original_series_id": "6767ad7696b9dde258677cb50954f724",
+"event_slug": "bethlehem-fair-2026",
+"status": "APPROVED",
+"event_name": "Bethlehem Fair 2026",
+"venue_id": "da048e8f-7ecd-4ecd-b97c-1c7caff6cbb9",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "ce615cc7c72bb0b70faa35861ff5e4c7",
+"original_series_id": "6a662fd9bd54a836302c1fb4c4707545",
+"event_slug": "litchfield-fair-me-2027",
+"status": "TENTATIVE",
+"event_name": "Litchfield Fair 2027",
+"venue_id": "a24a9e3a-d69b-49ea-bfbc-3e668a22a094",
+"source_name": "mainefairs.net"
+},
+{
+"event_id": "d529a5479eda315027f3ff84010e6d28",
+"original_series_id": "6d5f1391e0b77d398829740158f889db",
+"event_slug": "houlton-fair-me-2027",
+"status": "TENTATIVE",
+"event_name": "Houlton Fair 2027",
+"venue_id": "f55063c5-28a9-4eb2-8ffd-f0d505b39ae9",
+"source_name": "mainefairs.net"
+},
+{
+"event_id": "c2eec38e-2f17-4784-93e3-a8767d15d4d1",
+"original_series_id": "6ea8406f2e21efd840c2c4819f3049a4",
+"event_slug": "tolland-county-4-h-fair-2026",
+"status": "APPROVED",
+"event_name": "Tolland County 4-H Fair 2026",
+"venue_id": "5e1484aa-7069-4d5e-80e9-30a2c22b1946",
+"source_name": "uconn.edu"
+},
+{
+"event_id": "3632d720-5db2-44b8-b3eb-d279be49e379",
+"original_series_id": "6f92708fb093db50ec2dc45f975d5049",
+"event_slug": "winchester-grange-fair-2026",
+"status": "APPROVED",
+"event_name": "Winchester Grange Fair 2026",
+"venue_id": "eae1f1d4-b5c3-409c-8aff-a6a016ca07bd",
+"source_name": "Winchester Grange No. 74"
+},
+{
+"event_id": "ce52e387-8aa5-4221-92d3-10a49c483eeb",
+"original_series_id": "6f944e8df45280d46d8a78af05292b32",
+"event_slug": "martha-s-vineyard-fair-2026",
+"status": "APPROVED",
+"event_name": "Martha's Vineyard Fair 2026",
+"venue_id": "5e6f81ed-83e2-455a-b2e0-f70e074af257",
+"source_name": "mafa.org"
+},
+{
+"event_id": "be77e416-4ff4-4262-a36b-b2c089739a2e",
+"original_series_id": "7008b8d2b33a79b82194863f4781ff39",
+"event_slug": "springfield-fair",
+"status": "APPROVED",
+"event_name": "Springfield Fair",
+"venue_id": "f9ee5e90-a4c2-459f-a968-c4a91ed179e9",
+"source_name": "mainefairs.net"
+},
+{
+"event_id": "a0ef89139e1d63fbcd45440a5c68ae15",
+"original_series_id": "71c11ffecee3a2e80629dfa8f287d70d",
+"event_slug": "middlesex-and-new-haven-county-4-h-fair-ct-2027",
+"status": "TENTATIVE",
+"event_name": "Middlesex & New Haven County 4-H Fair 2027",
+"venue_id": "facef4de-ade4-4201-8a55-8b7f3378a647",
+"source_name": "4-hfair.org"
+},
+{
+"event_id": "7cfee544-dd33-4499-94e7-d222ffca0f42",
+"original_series_id": "72a845a103fa8a9e1f8b869072afcdfb",
+"event_slug": "vermont-state-fair",
+"status": "APPROVED",
+"event_name": "Vermont State Fair",
+"venue_id": "5900e30d-856c-4d49-bfc2-8bde3f13eb03",
+"source_name": "vermontstatefair.org"
+},
+{
+"event_id": "a2a0eb2b-91c5-4bcb-8985-62595ce544ad",
+"original_series_id": "72a845a103fa8a9e1f8b869072afcdfb",
+"event_slug": "vermont-state-fair-2026-merged-a2a0eb2b",
+"status": "REJECTED",
+"event_name": "Vermont State Fair 2026",
+"venue_id": "5900e30d-856c-4d49-bfc2-8bde3f13eb03",
+"source_name": "fairsandfestivals.net"
+},
+{
+"event_id": "5bc2b755-4f0b-492a-bc70-e42a0fb44955",
+"original_series_id": "7324ad384dc0f36add7f0c84abbc8e08",
+"event_slug": "spencer-fair-2026",
+"status": "APPROVED",
+"event_name": "Spencer Fair 2026",
+"venue_id": "d9d9f33c-2019-41ab-b0b6-da9586d2414a",
+"source_name": "mafa.org"
+},
+{
+"event_id": "519e2e652551efa26affdfdc0a606888",
+"original_series_id": "753fcbac1a58a78663148fb31f0d45b3",
+"event_slug": "belknap-county-4-h-fair-2026-merged-519e2e65",
+"status": "REJECTED",
+"event_name": "Belknap County 4-H Fair 2026",
+"venue_id": "9788649e-8d22-4e36-b9ec-e650745e1089",
+"source_name": "web-research"
+},
+{
+"event_id": "f86aa63a-dba7-4849-a637-5a31c9afea79",
+"original_series_id": "753fcbac1a58a78663148fb31f0d45b3",
+"event_slug": "belknap-county-4-h-fair",
+"status": "APPROVED",
+"event_name": "Belknap County 4-H Fair",
+"venue_id": "9788649e-8d22-4e36-b9ec-e650745e1089",
+"source_name": "vtnhfairs.org-nh"
+},
+{
+"event_id": "80758140dd672e71312290f9afb2af71",
+"original_series_id": "762a10bdb75e76ae7e0cdefe2638a2cd",
+"event_slug": "three-county-fair-ma-2027",
+"status": "TENTATIVE",
+"event_name": "Three County Fair 2027",
+"venue_id": "694e40aa-dccf-4611-97e2-c433cb8ad7a9",
+"source_name": "mafa.org"
+},
+{
+"event_id": "0fcdb870c7609c4da088e0fbd274b1d4",
+"original_series_id": "767b697fca5500c112b7f174a6e8572a",
+"event_slug": "south-middleboro-grange-fair-ma-2027",
+"status": "TENTATIVE",
+"event_name": "South Middleboro Grange Fair 2027",
+"venue_id": "81a68350-221d-4dc3-acf1-82504b9c25c4",
+"source_name": "massgrange.org"
+},
+{
+"event_id": "feb71ed3-a361-4c1c-b3e7-4f7a81fb4d34",
+"original_series_id": "7713e29607135784722081b7b70418e4",
+"event_slug": "cumberland-county-fair",
+"status": "APPROVED",
+"event_name": "Cumberland County Fair",
+"venue_id": "0566b799-809a-4f06-bbe1-a95931475917",
+"source_name": "mainefairs.net"
+},
+{
+"event_id": "30e6943d-e86c-4442-a03a-b170c35eac49",
+"original_series_id": "7799db2adffef2000bc09ccdd31b4c23",
+"event_slug": "shelburne-grange-fair-2026",
+"status": "APPROVED",
+"event_name": "Shelburne Grange Fair 2026",
+"venue_id": "bf1faf22-b003-47d7-a726-c1d846de30ed",
+"source_name": "mafa.org"
+},
+{
+"event_id": "5022102c04bdf15e450a4dddc14f7cde",
+"original_series_id": "7868069ca4febfe1fff5006f30c56589",
+"event_slug": "wapping-fair-ct-2027",
+"status": "TENTATIVE",
+"event_name": "Wapping Fair 2027",
+"venue_id": "ffeed964-f45e-49e9-a3e0-4df58e2995b6",
+"source_name": "wappingfair.org"
+},
+{
+"event_id": "237d3ff75fe2878ffd8a714f8c08c874",
+"original_series_id": "79eed850b79e458c0a1fe93f8f12fe49",
+"event_slug": "tolland-county-4-h-fair-ct-2027",
+"status": "TENTATIVE",
+"event_name": "Tolland County 4-H Fair 2027",
+"venue_id": "5e1484aa-7069-4d5e-80e9-30a2c22b1946",
+"source_name": "uconn.edu"
+},
+{
+"event_id": "e8b7fedb844d8f22355c1988c98f06ae",
+"original_series_id": "7a8ce9c5c6d0ba58f51c117002f118f1",
+"event_slug": "bangor-state-fair-me-2027",
+"status": "TENTATIVE",
+"event_name": "Bangor State Fair 2027",
+"venue_id": "cc853a76-91e8-4c1b-b2cd-42c90c8bf36f",
+"source_name": "mainefairs.net"
+},
+{
+"event_id": "44bf188f896301c73b735f722672b344",
+"original_series_id": "7cb7c4d9af7740da709a6656c685f1cb",
+"event_slug": "springfield-fair-me-2027",
+"status": "TENTATIVE",
+"event_name": "Springfield Fair 2027",
+"venue_id": "f9ee5e90-a4c2-459f-a968-c4a91ed179e9",
+"source_name": "mainefairs.net"
+},
+{
+"event_id": "6830fbd3-2c6f-4016-ad39-ab130a647a22",
+"original_series_id": "7df6849b47e421aed36995d828a8c4d7",
+"event_slug": "nh-bacon-beer-festival-2026",
+"status": "REJECTED",
+"event_name": "NH Bacon & Beer Festival 2026",
+"venue_id": "e879c6ac-a6a1-4e0d-a587-5732b9861929",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "0393e9ab21ee82cc182ffc6848d8cc72",
+"original_series_id": "801f880b6540f805cd04a11f3bf05127",
+"event_slug": "monmouth-fair-me-2027",
+"status": "TENTATIVE",
+"event_name": "Monmouth Fair 2027",
+"venue_id": "77cbcbbe-dcc8-4e78-8fb8-1fe612e08791",
+"source_name": "mainefairs.net"
+},
+{
+"event_id": "22f3c001a1301dcec88ae34b67d4c044",
+"original_series_id": "80835d37cb1efd004def3bd4a213aef4",
+"event_slug": "franklin-county-field-days-vt-2027",
+"status": "TENTATIVE",
+"event_name": "Franklin County Field Days 2027",
+"venue_id": "74e6eadb-2f2a-4948-920e-6a9dfc1e95c1",
+"source_name": "vtnhfairs.org-vt"
+},
+{
+"event_id": "5e4e86d6-9106-4456-8516-744947e8a577",
+"original_series_id": "80997c9b34a9eb521e35c41e0e75070e",
+"event_slug": "bass-park-after-dark-2",
+"status": "REJECTED",
+"event_name": "Bass Park After Dark",
+"venue_id": "43975d8d-0950-4c63-bf60-9bbb266f1c9c",
+"source_name": "mainemade.com"
+},
+{
+"event_id": "48f4f3391913e1dbd96919b1ccf1226c",
+"original_series_id": "81411be1f31b56c6b607e99cd99eff9a",
+"event_slug": "new-london-county-4-h-expo-and-fair-ct-2027",
+"status": "TENTATIVE",
+"event_name": "New London County 4-H Expo & Fair 2027",
+"venue_id": "effc7b66-343f-4927-9b12-af37f56a384a",
+"source_name": "uconn.edu"
+},
+{
+"event_id": "84bf4641-f44a-4f75-a09f-67992c83e849",
+"original_series_id": "851e8d9f424fab266653831279ec092b",
+"event_slug": "union-fair",
+"status": "APPROVED",
+"event_name": "Union Fair",
+"venue_id": "6fe8fa99-ec7f-449a-95d1-6bcf1d5d1460",
+"source_name": "Union Fair Society"
+},
+{
+"event_id": "2fb0be72-bd58-47ef-b34b-d35e14cc14f4",
+"original_series_id": "8b72903ff619c59f56ca9177815b328a",
+"event_slug": "newport-international-boat-show-2025",
+"status": "APPROVED",
+"event_name": "Newport International Boat Show 2025",
+"venue_id": "ae5adce9-c9ae-42de-bf4b-9f7eee8099f6",
+"source_name": "informa-d365-events"
+},
+{
+"event_id": "38bc758e-a000-4e26-ba5a-42f46f8cdcea",
+"original_series_id": "8b72903ff619c59f56ca9177815b328a",
+"event_slug": "newport-international-boat-show-2026",
+"status": "APPROVED",
+"event_name": "Newport International Boat Show 2026",
+"venue_id": "ae5adce9-c9ae-42de-bf4b-9f7eee8099f6",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "8eac571d-d0b8-4615-b896-bff489df3148",
+"original_series_id": "8bfc80fdda3a3c16d4b961261a87b963",
+"event_slug": "goshen-fair-2026",
+"status": "APPROVED",
+"event_name": "Goshen Fair 2026",
+"venue_id": "05dbed64-3fd4-4f73-b0c1-01de9ff8b15c",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "6a7691e2-28af-4d67-97cb-2ccf16e729b2",
+"original_series_id": "8c4264878e89a6a0a80b5b0fb7733724",
+"event_slug": "terryville-lions-country-fair-2026",
+"status": "APPROVED",
+"event_name": "Terryville Lions Country Fair 2026",
+"venue_id": "b176fa09-4112-43c9-b80d-971d2226f445",
+"source_name": "terryvillefair.org"
+},
+{
+"event_id": "c5f94848-19c7-42fc-b134-fb5ceb8b3c65",
+"original_series_id": "907f7fc7de8a2f37a231373d52beb871",
+"event_slug": "bangor-state-fair",
+"status": "APPROVED",
+"event_name": "Bangor State Fair",
+"venue_id": "cc853a76-91e8-4c1b-b2cd-42c90c8bf36f",
+"source_name": "bangorstatefair.com"
+},
+{
+"event_id": "eb3c5e32-2737-4303-98cb-68cc1e4a88b8",
+"original_series_id": "909f3c90b75f430ae381d6c5b1ec52ba",
+"event_slug": "durham-fair-2026",
+"status": "APPROVED",
+"event_name": "Durham Fair 2026",
+"venue_id": "facef4de-ade4-4201-8a55-8b7f3378a647",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "cbf9772c3b653c62e6d32c5124ade2dd",
+"original_series_id": "914e271a27a6d295b0162f6dadd45229",
+"event_slug": "hillsborough-county-agricultural-fair-nh-2027",
+"status": "TENTATIVE",
+"event_name": "Hillsborough County Agricultural Fair 2027",
+"venue_id": "2add6e80-2ff0-47f6-aea4-0e2f67d93d32",
+"source_name": "web-research"
+},
+{
+"event_id": "b0657071-95aa-4a2a-97a8-f3155e80a190",
+"original_series_id": "91606a7bf3818e6b32c5117bb1548a40",
+"event_slug": "waterford-worlds-fair",
+"status": "APPROVED",
+"event_name": "Waterford World's Fair",
+"venue_id": "32012b4b-7ddf-4ecf-92df-62b09d804a95",
+"source_name": "official_website"
+},
+{
+"event_id": "750a154131ecdf069262909dc4207303",
+"original_series_id": "91bbfeab895d180fd4af6a6bf09c889d",
+"event_slug": "ware-grange-fair-ma-2027",
+"status": "TENTATIVE",
+"event_name": "Ware Grange Fair 2027",
+"venue_id": "7ed77c36-cd01-4ebe-ae05-704ca41985b8",
+"source_name": "waregrange.org"
+},
+{
+"event_id": "72e7492c84f077e7e332d907aa4e2d34",
+"original_series_id": "929490d119bcccc60f54e25fe11463b1",
+"event_slug": "lancaster-fair-nh-2027",
+"status": "TENTATIVE",
+"event_name": "Lancaster Fair 2027",
+"venue_id": "da8e9e6b-e079-426d-86b7-1ca43862185d",
+"source_name": "web-research"
+},
+{
+"event_id": "0c87810e-775c-44b3-813e-ac657490b2c5",
+"original_series_id": "92c001fc0ef8d1e3c3d6f5c27f828972",
+"event_slug": "bonny-eagle-craft-fair-2026-merged-0c87810e",
+"status": "REJECTED",
+"event_name": "Bonny Eagle Craft Fair 2026",
+"venue_id": "e5b0de8b-c1d7-4cd8-8939-35ee6b945daa",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "92365ca7-11cd-4133-ac63-3190269587e8",
+"original_series_id": "92c001fc0ef8d1e3c3d6f5c27f828972",
+"event_slug": "bonny-eagle-craft-fair",
+"status": "APPROVED",
+"event_name": "Bonny Eagle Craft Fair",
+"venue_id": "e5b0de8b-c1d7-4cd8-8939-35ee6b945daa",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "7389ea936ee1bb1676507c4ff44b7932",
+"original_series_id": "92f0e7305735c4231626ec02477da11e",
+"event_slug": "pittston-fair-me-2027",
+"status": "TENTATIVE",
+"event_name": "Pittston Fair 2027",
+"venue_id": "7e1bbb55-40ee-4098-8252-adf443305237",
+"source_name": "mainefairs.net"
+},
+{
+"event_id": "7e8feb50-888f-41ba-a2ef-a37dbb18d9c6",
+"original_series_id": "93e29dfb4358f2f0691b05e1bc2fffa1",
+"event_slug": "bonny-eagle-craft-fair-2026-1",
+"status": "REJECTED",
+"event_name": "Bonny Eagle Craft Fair 2026",
+"venue_id": "e5b0de8b-c1d7-4cd8-8939-35ee6b945daa",
+"source_name": "aggregator-listing"
+},
+{
+"event_id": "77f71b0616a45dbe1fde59db86108e05",
+"original_series_id": "93e85e10df16d9df17a6c73ba824b4c7",
+"event_slug": "harmony-free-fair-me-2027",
+"status": "TENTATIVE",
+"event_name": "Harmony Free Fair 2027",
+"venue_id": "6efc76db-fb57-4ad0-b95c-85edce972b2f",
+"source_name": "mainefairs.net"
+},
+{
+"event_id": "cab05618-613d-4233-9555-89a319974539",
+"original_series_id": "93fe8f5ae4028f242a7ef186496c755c",
+"event_slug": "bridgewater-country-fair-2026",
+"status": "APPROVED",
+"event_name": "Bridgewater Country Fair 2026",
+"venue_id": "0efa772c-56f9-4a45-a133-b15f2b908cad",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "95adb3131c561edbea9c07b1818b2565",
+"original_series_id": "9420418a6aab0ed061d4249c95d8790e",
+"event_slug": "new-portland-lions-fair-me-2027",
+"status": "TENTATIVE",
+"event_name": "New Portland Lions Fair 2027",
+"venue_id": "b178ee97-ca3b-4fac-a3ca-0fccfe23571e",
+"source_name": "mainefairs.net"
+},
+{
+"event_id": "667253c6187153a56b3ebfc6ddb1719d",
+"original_series_id": "958c0893ddc2b9b4d13dec0513673009",
+"event_slug": "williamsburg-grange-fair-ma-2027",
+"status": "TENTATIVE",
+"event_name": "Williamsburg Grange Fair 2027",
+"venue_id": "bc73000b-2e1b-48ab-9f6b-18265e3b3338",
+"source_name": "massgrange.org"
+},
+{
+"event_id": "bc06d9ea-715d-4bd7-bf60-995f575b95eb",
+"original_series_id": "96473a60a106fdc7886ae7b35fd32061",
+"event_slug": "kennebunkport-christmas-prelude-2026-2",
+"status": "REJECTED",
+"event_name": "Kennebunkport Christmas Prelude 2026",
+"venue_id": "28f31649-182c-4420-9bb1-15ef6455fc1f",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "2cba81d9f4fb02120696417c248b0def",
+"original_series_id": "96fe87a5a8fc2bf40949a723979b83c5",
+"event_slug": "fryeburg-fair-me-2027",
+"status": "TENTATIVE",
+"event_name": "Fryeburg Fair 2027",
+"venue_id": "ebfb3a6d-f738-4c5a-9d6e-36c57da58dd9",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "327b49ec-da47-4257-b3fd-9f141b41cb9b",
+"original_series_id": "977fa5461097021fb047defb75dbb1aa",
+"event_slug": "hardwick-fair",
+"status": "APPROVED",
+"event_name": "Hardwick Fair",
+"venue_id": "e87405a3-a50d-4ad4-bada-c0bf0a26cd22",
+"source_name": "hardwickfair.com"
+},
+{
+"event_id": "b26e1219-d103-4e69-a69a-541e10dc7d09",
+"original_series_id": "98e1ec0e976c2408c2d9c0e987d8542d",
+"event_slug": "franklin-county-field-days",
+"status": "CANCELLED",
+"event_name": "Franklin County Field Days",
+"venue_id": "74e6eadb-2f2a-4948-920e-6a9dfc1e95c1",
+"source_name": "franklincountyfielddays.org"
+},
+{
+"event_id": "81bbb52d-3555-4547-9e1f-f358c930d19d",
+"original_series_id": "997032d004b48e7b060e597d1084a1d1",
+"event_slug": "common-ground-country-fair-2026",
+"status": "APPROVED",
+"event_name": "Common Ground Country Fair 2026",
+"venue_id": "d237455e-d210-4690-b429-5bc46690b6e3",
+"source_name": "mainemade.com"
+},
+{
+"event_id": "eb651a82fbe379e7029c18861466c980",
+"original_series_id": "9984351dcdfb8781d4cd204e845f9e00",
+"event_slug": "east-middleboro-4-h-fair-2026",
+"status": "APPROVED",
+"event_name": "East Middleboro 4-H Fair 2026",
+"venue_id": "2ec5a4d7-76cd-4cf2-adcf-678b4246580a",
+"source_name": "em4h.org"
+},
+{
+"event_id": "fe7c68b9-2bac-43e3-8a3b-a46e0e2e938b",
+"original_series_id": "9a96a81f0019112ce22b5beb4744ef79",
+"event_slug": "springfield-fair-1",
+"status": "REJECTED",
+"event_name": "Springfield Fair",
+"venue_id": "f9ee5e90-a4c2-459f-a968-c4a91ed179e9",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "b5b4fbc1991564704ff90ac208ad6b69",
+"original_series_id": "9ca28f9288517fc3098362598886a25f",
+"event_slug": "litchfield-county-4-h-fair-ct-2027",
+"status": "TENTATIVE",
+"event_name": "Litchfield County 4-H Fair 2027",
+"venue_id": "05dbed64-3fd4-4f73-b0c1-01de9ff8b15c",
+"source_name": "uconn.edu"
+},
+{
+"event_id": "086cc7fb-9b6b-467e-8ef5-d3254944410d",
+"original_series_id": "9ece9bda5aad7e9bf70921e932ae70e5",
+"event_slug": "piscataquis-valley-fair",
+"status": "APPROVED",
+"event_name": "Piscataquis Valley Fair",
+"venue_id": "9f46dd13-bb0f-4aff-9b9b-99b7010c4113",
+"source_name": "mainefairs.net"
+},
+{
+"event_id": "c1bf23ad6d812bd8142b5c1b587f965f",
+"original_series_id": "9ef86a09aa6a4f20bdf22a012a03eea9",
+"event_slug": "sheffield-fair-ma-2027",
+"status": "TENTATIVE",
+"event_name": "Sheffield Fair 2027",
+"venue_id": "1075d65a-1c9c-4b4b-9ae4-51ecad5c9ae2",
+"source_name": "sheffieldfair.com"
+},
+{
+"event_id": "e87c0d3d-c8ac-42ee-8385-d40c5dd9fb0e",
+"original_series_id": "a0c2d9f8dc68077f3b784fd1e510dd2a",
+"event_slug": "windham-county-4-h-fair-2026",
+"status": "APPROVED",
+"event_name": "Windham County 4-H Fair 2026",
+"venue_id": "c505fb46-91ad-4bce-ac6c-ffed271c8792",
+"source_name": "4-h.extension.uconn.edu"
+},
+{
+"event_id": "ecc0a2ad3e6571e1e7d6444248f6d98e",
+"original_series_id": "a0d803886c76862da49dc69a155981e1",
+"event_slug": "ossipee-valley-fair-me-2027",
+"status": "TENTATIVE",
+"event_name": "Ossipee Valley Fair 2027",
+"venue_id": "cea42870-617c-40cf-b412-429b956020b4",
+"source_name": "mainefairs.net"
+},
+{
+"event_id": "221fdadc3de115d83c4f97c912e19cb0",
+"original_series_id": "a10569663e9b035e26596ac0f40313c0",
+"event_slug": "hartford-county-4-h-fair-ct-2027",
+"status": "TENTATIVE",
+"event_name": "Hartford County 4-H Fair 2027",
+"venue_id": "719d923e-f8f9-4860-90c1-4f113348445e",
+"source_name": "hartfordcounty4hfair.org"
+},
+{
+"event_id": "3f366cca-b223-45a8-97c6-0821e2d2860d",
+"original_series_id": "a14a898821aa88423b60bfd7602e005e",
+"event_slug": "bass-park-after-dark",
+"status": "APPROVED",
+"event_name": "Bass Park After Dark",
+"venue_id": "43975d8d-0950-4c63-bf60-9bbb266f1c9c",
+"source_name": "mainemade.com"
+},
+{
+"event_id": "55e130f628a98ff96ae377b6a64e93a2",
+"original_series_id": "a16ed3a9494c05d7565d8c4846197800",
+"event_slug": "north-stonington-agricultural-fair-ct-2027",
+"status": "TENTATIVE",
+"event_name": "North Stonington Agricultural Fair 2027",
+"venue_id": "effc7b66-343f-4927-9b12-af37f56a384a",
+"source_name": "northstoningtonfair.org"
+},
+{
+"event_id": "e6d25c73e5ced569c135cdc9a10ed2fb",
+"original_series_id": "a1b609cce82379262e0b8c853c7f442e",
+"event_slug": "farmington-fair-me-2027",
+"status": "TENTATIVE",
+"event_name": "Farmington Fair 2027",
+"venue_id": "33897ff7-57a2-42a2-8f03-93bec0e66cdf",
+"source_name": "mainefairs.net"
+},
+{
+"event_id": "2668fc2e80b88126fde1603b59966771",
+"original_series_id": "a2869f013fee5f4dd2a88258adeae152",
+"event_slug": "cannon-grange-agricultural-fair-ct-2027",
+"status": "TENTATIVE",
+"event_name": "Cannon Grange Agricultural Fair 2027",
+"venue_id": "ac63ab5c-fdec-4783-a28b-b34bb3e5a825",
+"source_name": "cannongrange.org"
+},
+{
+"event_id": "110eaa4c09b81082643f0556dd34c80a",
+"original_series_id": "a3dd595d79ec2ec831758a4a11f9421e",
+"event_slug": "acton-fair-me-2027",
+"status": "TENTATIVE",
+"event_name": "Acton Fair 2027",
+"venue_id": "008ce5e3-e68e-42b7-8657-4b4d48f35e00",
+"source_name": "mainefairs.net"
+},
+{
+"event_id": "e2a214e2b1c41814db821eff8f34257c",
+"original_series_id": "a6a3e63846ac0b0e8b7dada1cc0921c8",
+"event_slug": "the-bradford-fair-vt-2027",
+"status": "TENTATIVE",
+"event_name": "The Bradford Fair 2027",
+"venue_id": "9a462978-4004-432a-be4d-8f894382f1ee",
+"source_name": "web-research"
+},
+{
+"event_id": "050408cb-a166-41d4-bcd2-85a28d7580d8",
+"original_series_id": "a872eddddde371a0efdfa828fc8ec9a0",
+"event_slug": "granite-state-fair",
+"status": "APPROVED",
+"event_name": "Granite State Fair",
+"venue_id": "c865c2d7-5b3a-4c03-81ca-a78666df9e7e",
+"source_name": "vtnhfairs.org-nh"
+},
+{
+"event_id": "e84a15e20f379101652e2a53a881fe6c",
+"original_series_id": "a872eddddde371a0efdfa828fc8ec9a0",
+"event_slug": "granite-state-fair-2026",
+"status": "APPROVED",
+"event_name": "Granite State Fair 2026",
+"venue_id": "c865c2d7-5b3a-4c03-81ca-a78666df9e7e",
+"source_name": "web-research"
+},
+{
+"event_id": "4ac5623c-6fb9-4433-ba38-cc60501224ab",
+"original_series_id": "a94c048ca5b747117ac561944079dcbd",
+"event_slug": "middlesex-county-4-h-fair-2026",
+"status": "APPROVED",
+"event_name": "Middlesex County 4-H Fair 2026",
+"venue_id": "c4badc86-6302-4bb5-99a9-1ffb5ec0e2ca",
+"source_name": "mafa.org"
+},
+{
+"event_id": "043c6c6b837d7bb8a65844267a0c5fe7",
+"original_series_id": "a98585d729bec8203b6bc7cc58f0004e",
+"event_slug": "fairfield-county-4-h-fair-ct-2027",
+"status": "TENTATIVE",
+"event_name": "Fairfield County 4-H Fair 2027",
+"venue_id": "6ded6605-af0c-4f0a-bd80-081ac4205675",
+"source_name": "uconn.edu"
+},
+{
+"event_id": "ba7d12a9-0808-4b02-8641-6f7dd38305a5",
+"original_series_id": "a9f6681269c4fb4c0a15141c4dc69d58",
+"event_slug": "orange-country-fair-2026",
+"status": "APPROVED",
+"event_name": "Orange Country Fair 2026",
+"venue_id": "8eedbc38-8461-470a-b9c1-3cb9c9880c07",
+"source_name": "orangectfair.com"
+},
+{
+"event_id": "05da9dbda7ef7d2fd3e5d0c7f8aec377",
+"original_series_id": "aad8cdf29e0b0ee07db1d25a0fc44c97",
+"event_slug": "belknap-county-4-h-fair-nh-2027",
+"status": "TENTATIVE",
+"event_name": "Belknap County 4-H Fair 2027",
+"venue_id": "9788649e-8d22-4e36-b9ec-e650745e1089",
+"source_name": "web-research"
+},
+{
+"event_id": "185d5bc7-2d5e-42f7-80fc-e8142ca8feb5",
+"original_series_id": "ab3bc8f394cba66e7223826bb3c8afe7",
+"event_slug": "se-connecticut-home-and-garden-show-2027",
+"status": "APPROVED",
+"event_name": "SE Connecticut Home & Garden Show 2027",
+"venue_id": "511eb2a2-6907-4a54-8e69-6039b7f080aa",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "fef6956b882f98e8bebf9a1833843400",
+"original_series_id": "abb8abbb1e0d484592fa560be5fd8768",
+"event_slug": "blue-hill-fair-me-2027",
+"status": "TENTATIVE",
+"event_name": "Blue Hill Fair 2027",
+"venue_id": "f01b3310-02f2-472f-a660-7c7c0df5971e",
+"source_name": "mainefairs.net"
+},
+{
+"event_id": "8215c22d-294b-411b-81c0-031cce446374",
+"original_series_id": "adf5b006a16d1fcfa646715bc55f11df",
+"event_slug": "harwinton-fair-2026",
+"status": "APPROVED",
+"event_name": "Harwinton Fair 2026",
+"venue_id": "a4dd6358-299e-4b84-97ef-121a31827cbd",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "cc07534b8d746a6e76956ac6de2dccd0",
+"original_series_id": "aebb7650fe159cba62690abe21b974e7",
+"event_slug": "durham-fair-ct-2027",
+"status": "TENTATIVE",
+"event_name": "Durham Fair 2027",
+"venue_id": "facef4de-ade4-4201-8a55-8b7f3378a647",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "d94887de257cbead95d30b37524b645c",
+"original_series_id": "afbeaa0ff70624a1ff0bfc2e0a128423",
+"event_slug": "hardwick-fair-ma-2027",
+"status": "TENTATIVE",
+"event_name": "Hardwick Fair 2027",
+"venue_id": "e87405a3-a50d-4ad4-bada-c0bf0a26cd22",
+"source_name": "mafa.org"
+},
+{
+"event_id": "0a8c1c41060da947e70dd47809d82073",
+"original_series_id": "affcd5dd8fb28d0ee4dddd4c361bcafe",
+"event_slug": "clinton-lions-fair-me-2027",
+"status": "TENTATIVE",
+"event_name": "Clinton Lions Fair 2027",
+"venue_id": "e6132657-b067-4aa2-a5eb-73b228a02b1a",
+"source_name": "mainefairs.net"
+},
+{
+"event_id": "23eac12f-8217-4714-83b4-8714c3e674bb",
+"original_series_id": "b0d0bc43d1b373941a3c31897e63afc5",
+"event_slug": "riverton-fair-2026",
+"status": "APPROVED",
+"event_name": "Riverton Fair 2026",
+"venue_id": "c48b8198-e297-43d2-9193-3ae58b872689",
+"source_name": "rivertonfair.org"
+},
+{
+"event_id": "24e6b6abe4cd9abf50bf92b3a28f7464",
+"original_series_id": "b28722805ced69611e88ce9d85584257",
+"event_slug": "simsbury-grange-agricultural-fair-ct-2027",
+"status": "TENTATIVE",
+"event_name": "Simsbury Grange Agricultural Fair 2027",
+"venue_id": "3cad691e-a1cb-4751-b35f-8bb7ab1cd627",
+"source_name": "simsburygrange.org"
+},
+{
+"event_id": "b5dd2f01b0f4ce7e8a56daf9e179e386",
+"original_series_id": "b757dfd9b46386e1dd5cca3b39d3464e",
+"event_slug": "blandford-fair-ma-2027",
+"status": "TENTATIVE",
+"event_name": "Blandford Fair 2027",
+"venue_id": "f403253b-961a-46bc-8233-b28c71558436",
+"source_name": "mafa.org"
+},
+{
+"event_id": "efba83647ac428aaae1bb89c4fc4a399",
+"original_series_id": "b82637d63ee7bf8108045312c8ed3daf",
+"event_slug": "deerfield-fair-nh-2027",
+"status": "TENTATIVE",
+"event_name": "Deerfield Fair 2027",
+"venue_id": "62d96072-4cbb-4f5d-8f91-cc362321da14",
+"source_name": "vtnhfairs.org-nh"
+},
+{
+"event_id": "a7d7178f42c152df89baccab80d7be75",
+"original_series_id": "b98e0062c373bef5d3252047d6cfd6b4",
+"event_slug": "goshen-fair-ct-2027",
+"status": "TENTATIVE",
+"event_name": "Goshen Fair 2027",
+"venue_id": "05dbed64-3fd4-4f73-b0c1-01de9ff8b15c",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "0b60aad7d4a9483f6bac16f381bc6991",
+"original_series_id": "baf19ee95aaf4b34d6f5a1f74140fbf0",
+"event_slug": "southern-rhode-island-4-h-fair-2026",
+"status": "APPROVED",
+"event_name": "Southern Rhode Island 4-H Fair 2026",
+"venue_id": "069d9aeb-c046-425f-a0aa-b5ea6b36cd47",
+"source_name": "southernrifair.wixsite.com"
+},
+{
+"event_id": "3b398452e0b805408a4ebea6a3d020b0",
+"original_series_id": "bc19939eecc92fad9b73d7d2a6103f52",
+"event_slug": "orleans-county-fair-2026-merged-3b398452",
+"status": "REJECTED",
+"event_name": "Orleans County Fair 2026",
+"venue_id": "977dcbe2-b47f-4163-afc0-aaa8f8c2a385",
+"source_name": "web-research"
+},
+{
+"event_id": "b15294b8-9dad-4290-b38e-a596c49b13f6",
+"original_series_id": "bc19939eecc92fad9b73d7d2a6103f52",
+"event_slug": "orleans-county-fair",
+"status": "APPROVED",
+"event_name": "Orleans County Fair",
+"venue_id": "977dcbe2-b47f-4163-afc0-aaa8f8c2a385",
+"source_name": "vtnhfairs.org-vt"
+},
+{
+"event_id": "716e5e5cff50c765131c6e8eaadca7f0",
+"original_series_id": "bc37a5e35f5050e5d0b59b68ab5befb3",
+"event_slug": "hillstown-grange-agricultural-fair-ct-2027",
+"status": "TENTATIVE",
+"event_name": "Hillstown Grange Agricultural Fair 2027",
+"venue_id": "5964c9f0-ae4b-4b1c-9b72-afb3d49d8974",
+"source_name": "hillstowngrange.org"
+},
+{
+"event_id": "18b2f92d971a3e1eb770a53e46b2dfeb",
+"original_series_id": "c0273013c161f196efec35767a5c7f8f",
+"event_slug": "hampden-county-4-h-fair-ma-2027",
+"status": "TENTATIVE",
+"event_name": "Hampden County 4-H Fair 2027",
+"venue_id": "56e66e39-90ce-49c3-afc3-467019b5a4d9",
+"source_name": "mafa.org"
+},
+{
+"event_id": "d4cc6a33-f6c0-43a1-b563-ca92873fded0",
+"original_series_id": "c60ac5d09c7dce952bab75dbf411e515",
+"event_slug": "hampden-county-4-h-fair-2026",
+"status": "APPROVED",
+"event_name": "Hampden County 4-H Fair 2026",
+"venue_id": "56e66e39-90ce-49c3-afc3-467019b5a4d9",
+"source_name": "easternstatesexposition.com"
+},
+{
+"event_id": "09883d5f2e8a660526b87a2a0873d209",
+"original_series_id": "c713ac9f3cabc86de356c55cc90a23e9",
+"event_slug": "worcester-county-4-h-fair-2026",
+"status": "APPROVED",
+"event_name": "Worcester County 4-H Fair 2026",
+"venue_id": "d9d9f33c-2019-41ab-b0b6-da9586d2414a",
+"source_name": "umass.edu/mass4h"
+},
+{
+"event_id": "1786485804e2dc7339b3b0a226baba76",
+"original_series_id": "c739efd91c668c5d4bea5754abecc90e",
+"event_slug": "spencer-fair-ma-2027",
+"status": "TENTATIVE",
+"event_name": "Spencer Fair 2027",
+"venue_id": "d9d9f33c-2019-41ab-b0b6-da9586d2414a",
+"source_name": "mafa.org"
+},
+{
+"event_id": "6b49605c-1d8d-4210-b73b-2ced698862a7",
+"original_series_id": "c7b3d2f83c77522092add5a5b95595db",
+"event_slug": "granby-grange-agricultural-fair-2026",
+"status": "APPROVED",
+"event_name": "Granby Grange Agricultural Fair 2026",
+"venue_id": "443e0a72-f3f7-4e02-bd6d-04af639fde69",
+"source_name": "granbygrange.org"
+},
+{
+"event_id": "fdfd1320-5fa1-4f57-b3ea-4050772ee09b",
+"original_series_id": "c81c894598c303aabb1e1cf467e5fc8d",
+"event_slug": "nh-bacon-and-beer-festival-2026",
+"status": "APPROVED",
+"event_name": "NH Bacon & Beer Festival 2026",
+"venue_id": "e879c6ac-a6a1-4e0d-a587-5732b9861929",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "32248b124b58ce4c02ee30b63d804c25",
+"original_series_id": "c8311b177c9024051c158006c8d9cc4b",
+"event_slug": "eastern-rhode-island-4-h-country-fair-ri-2027",
+"status": "TENTATIVE",
+"event_name": "Eastern Rhode Island 4-H Country Fair 2027",
+"venue_id": "840221b4-01c7-48fe-883a-a213510ee4e9",
+"source_name": "uri.edu"
+},
+{
+"event_id": "22f1d8de8205cc8e66c0a0ff2872c0dc",
+"original_series_id": "c8651155768046a35bf9398f9f8a4e5f",
+"event_slug": "waterford-worlds-fair-me-2027",
+"status": "TENTATIVE",
+"event_name": "Waterford World's Fair 2027",
+"venue_id": "32012b4b-7ddf-4ecf-92df-62b09d804a95",
+"source_name": "mainefairs.net"
+},
+{
+"event_id": "592925b4e4feb6a96fa14553df6e59cd",
+"original_series_id": "cc085284a4b30855520b41dd24ca1aa4",
+"event_slug": "dartmouth-grange-fair-ma-2027",
+"status": "TENTATIVE",
+"event_name": "Dartmouth Grange Fair 2027",
+"venue_id": "bc824813-1523-40ae-9ea8-cf8957794363",
+"source_name": "dartmouthgrange.org"
+},
+{
+"event_id": "7640012d3cdc4b4d41dfea8aba03c709",
+"original_series_id": "cc192b86c528a15ac2411c393268bacd",
+"event_slug": "cheshire-grange-community-fair-ct-2027",
+"status": "TENTATIVE",
+"event_name": "Cheshire Grange Community Fair 2027",
+"venue_id": "01146c69-0e09-4b9e-bb37-aeed9be384a5",
+"source_name": "cheshiregrange.org"
+},
+{
+"event_id": "457b8761-2217-420c-8b14-969f55569956",
+"original_series_id": "cc6639ee45dd16c14070d3ce5eb00b20",
+"event_slug": "lancaster-fair",
+"status": "APPROVED",
+"event_name": "Lancaster Fair",
+"venue_id": "da8e9e6b-e079-426d-86b7-1ca43862185d",
+"source_name": "vtnhfairs.org-nh"
+},
+{
+"event_id": "994d78d29ca06c7529a7f209dd0c98d4",
+"original_series_id": "cc6639ee45dd16c14070d3ce5eb00b20",
+"event_slug": "lancaster-fair-2026-merged-994d78d2",
+"status": "REJECTED",
+"event_name": "Lancaster Fair 2026",
+"venue_id": "da8e9e6b-e079-426d-86b7-1ca43862185d",
+"source_name": "web-research"
+},
+{
+"event_id": "5f0c4bfe-acbc-4539-a394-0d8621557e9d",
+"original_series_id": "cd92890da96ab27cd268aec8ff3720a4",
+"event_slug": "blandford-fair-2026",
+"status": "APPROVED",
+"event_name": "Blandford Fair 2026",
+"venue_id": "f403253b-961a-46bc-8233-b28c71558436",
+"source_name": "mafa.org"
+},
+{
+"event_id": "27304763-156a-4e1c-a401-ce194635e63c",
+"original_series_id": "ce54ac458b4e1b57cc67b4bbfc1a80d1",
+"event_slug": "north-haverhill-fair",
+"status": "APPROVED",
+"event_name": "North Haverhill Fair",
+"venue_id": "ebfa8afd-90fb-4e0f-83fe-e5521303e976",
+"source_name": "nohaverhillfair.com"
+},
+{
+"event_id": "bd2c70bb31ff5b3da172adfb92d5f239",
+"original_series_id": "ce54ac458b4e1b57cc67b4bbfc1a80d1",
+"event_slug": "north-haverhill-fair-2026-merged-bd2c70bb",
+"status": "REJECTED",
+"event_name": "North Haverhill Fair 2026",
+"venue_id": "ebfa8afd-90fb-4e0f-83fe-e5521303e976",
+"source_name": "web-research"
+},
+{
+"event_id": "c761b7f7299d8d157806ca8e69ce5fae",
+"original_series_id": "d28d6b30c6bb45e2a7bca2057994d389",
+"event_slug": "terryville-lions-country-fair-ct-2027",
+"status": "TENTATIVE",
+"event_name": "Terryville Lions Country Fair 2027",
+"venue_id": "b176fa09-4112-43c9-b80d-971d2226f445",
+"source_name": "terryvillefair.org"
+},
+{
+"event_id": "451e08a3-91cd-43f7-b52e-6dc116aaa416",
+"original_series_id": "d31724a58a3db5f7497fd4d57109d123",
+"event_slug": "farmington-fair",
+"status": "APPROVED",
+"event_name": "Farmington Fair",
+"venue_id": "33897ff7-57a2-42a2-8f03-93bec0e66cdf",
+"source_name": "mainefairs.net"
+},
+{
+"event_id": "09c57962-c3c5-4d47-b919-b7a56fa1e6cb",
+"original_series_id": "d51d01b951320430da4841b90d53f822",
+"event_slug": "lamoille-county-field-days",
+"status": "APPROVED",
+"event_name": "Lamoille County Field Days",
+"venue_id": "05e09830-5210-451e-9739-59777a4ae06b",
+"source_name": "vtnhfairs.org-vt"
+},
+{
+"event_id": "81866eb19f834c827202522741b52da0",
+"original_series_id": "d51d01b951320430da4841b90d53f822",
+"event_slug": "lamoille-county-field-days-2026-merged-81866eb1",
+"status": "REJECTED",
+"event_name": "Lamoille County Field Days 2026",
+"venue_id": "05e09830-5210-451e-9739-59777a4ae06b",
+"source_name": "web-research"
+},
+{
+"event_id": "531c945f92ca476c0602a5aca587b992",
+"original_series_id": "d5829812489c4bee03c8563b98cb4ff3",
+"event_slug": "dartmouth-grange-fair-2026",
+"status": "APPROVED",
+"event_name": "Dartmouth Grange Fair 2026",
+"venue_id": "bc824813-1523-40ae-9ea8-cf8957794363",
+"source_name": "dartmouthgrange.org"
+},
+{
+"event_id": "be5ac84288229a61e329ecfe52edb329",
+"original_series_id": "d73d28b1fd2bbc40b948cb9cead469ba",
+"event_slug": "north-haven-fair-ct-2027",
+"status": "TENTATIVE",
+"event_name": "North Haven Fair 2027",
+"venue_id": "f405a003-8455-41c8-9ba7-c05c9c4c8dc3",
+"source_name": "northhaven-fair.com"
+},
+{
+"event_id": "4534cc5601b60b5f525fbe0803f6e28c",
+"original_series_id": "d7aa68ab5cc0c487b0ddcc3eec707d8e",
+"event_slug": "hamburg-fair-ct-2027",
+"status": "TENTATIVE",
+"event_name": "Hamburg Fair 2027",
+"venue_id": "875276f8-b025-41e7-842e-783b79870497",
+"source_name": "hamburgfair.org"
+},
+{
+"event_id": "bf545ad6d17c9f23e64f4f8e355217e1",
+"original_series_id": "d82ccf55cd8b47944e8f761481c06e70",
+"event_slug": "sheffield-fair-2026",
+"status": "APPROVED",
+"event_name": "Sheffield Fair 2026",
+"venue_id": "1075d65a-1c9c-4b4b-9ae4-51ecad5c9ae2",
+"source_name": "sheffieldfair.com"
+},
+{
+"event_id": "8b3463b8-78f5-463f-aed8-5cae68d34d91",
+"original_series_id": "d886398ea8d8639cc47b25e46ce9647a",
+"event_slug": "heath-fair-2026",
+"status": "APPROVED",
+"event_name": "Heath Fair 2026",
+"venue_id": "ab5a010e-4dd2-4d24-89ac-3a0140989a9e",
+"source_name": "heathfair.org"
+},
+{
+"event_id": "7b35431474102e17ad52c78873a5b869",
+"original_series_id": "d9a38f6df14fcba95bdc0845baecf1ec",
+"event_slug": "southern-rhode-island-4-h-fair-ri-2027",
+"status": "TENTATIVE",
+"event_name": "Southern Rhode Island 4-H Fair 2027",
+"venue_id": "069d9aeb-c046-425f-a0aa-b5ea6b36cd47",
+"source_name": "southernrifair.wixsite.com"
+},
+{
+"event_id": "2dcb0223-fd4b-4101-89f5-f6b8debf9af2",
+"original_series_id": "dbc464da3e165396c8b42919b2c44509",
+"event_slug": "hartford-county-4-h-fair-2026",
+"status": "APPROVED",
+"event_name": "Hartford County 4-H Fair 2026",
+"venue_id": "719d923e-f8f9-4860-90c1-4f113348445e",
+"source_name": "hartfordcounty4hfair.org"
+},
+{
+"event_id": "807d27e6abadba03d0793eb8c279f7db",
+"original_series_id": "dce8a6516699e256015cc93dd7b2eebd",
+"event_slug": "shelburne-grange-fair-ma-2027",
+"status": "TENTATIVE",
+"event_name": "Shelburne Grange Fair 2027",
+"venue_id": "bf1faf22-b003-47d7-a726-c1d846de30ed",
+"source_name": "mafa.org"
+},
+{
+"event_id": "eac75e70f39d52956c03c81f3e099dd6",
+"original_series_id": "dd06d5d69df68fe1d8134ff22ebb657f",
+"event_slug": "north-haverhill-fair-nh-2027",
+"status": "TENTATIVE",
+"event_name": "North Haverhill Fair 2027",
+"venue_id": "ebfa8afd-90fb-4e0f-83fe-e5521303e976",
+"source_name": "web-research"
+},
+{
+"event_id": "a033e7282eb42b34e790f2367131f22c",
+"original_series_id": "de3b59d5bfaa573cb14c0cc7d1577b6b",
+"event_slug": "westport-fair-ma-2027",
+"status": "TENTATIVE",
+"event_name": "Westport Fair 2027",
+"venue_id": "eb832007-6a89-45ca-b0e7-ee4207142ca7",
+"source_name": "mafa.org"
+},
+{
+"event_id": "0f99447a0449b7751df6037f2e2b3c1d",
+"original_series_id": "e03a12324409a1bdd4b303ce3c1af31b",
+"event_slug": "windsor-fair-me-2027",
+"status": "TENTATIVE",
+"event_name": "Windsor Fair 2027",
+"venue_id": "270f15d8-9567-4ad2-8a45-3ac3552f9dcd",
+"source_name": "mainefairs.net"
+},
+{
+"event_id": "adaf6b3eb9b71742eb6d00d58a524731",
+"original_series_id": "e08e158c63ccf341165d44385648832f",
+"event_slug": "orleans-county-fair-vt-2027",
+"status": "TENTATIVE",
+"event_name": "Orleans County Fair 2027",
+"venue_id": "977dcbe2-b47f-4163-afc0-aaa8f8c2a385",
+"source_name": "web-research"
+},
+{
+"event_id": "84176587cadfabcbde442e91e83be228",
+"original_series_id": "e2fd5c4002b3584be506f7569506bd91",
+"event_slug": "ware-grange-fair-2026",
+"status": "APPROVED",
+"event_name": "Ware Grange Fair 2026",
+"venue_id": "7ed77c36-cd01-4ebe-ae05-704ca41985b8",
+"source_name": "waregrange.org"
+},
+{
+"event_id": "1f712621-9dbf-4128-af21-6e36d0f665c1",
+"original_series_id": "e318c00656d84d7a35e80cd79bbd4ec9",
+"event_slug": "riverton-grange-fair-2026",
+"status": "APPROVED",
+"event_name": "Riverton Grange Fair 2026",
+"venue_id": "78aee4a6-c6a9-437b-b2cc-2e6d9c4c9b71",
+"source_name": "ctagfairs.org"
+},
+{
+"event_id": "d0bf2870-1c05-4888-9656-4301e6ca432b",
+"original_series_id": "e399f6da32aea4365ed264356ba5fc40",
+"event_slug": "littleville-fair-2026",
+"status": "APPROVED",
+"event_name": "Littleville Fair 2026",
+"venue_id": "bdcd8a89-1249-438e-9d0a-b45635b8b147",
+"source_name": "Littleville Fair"
+},
+{
+"event_id": "6ab8c9e5-bf6a-43c7-9b2f-b02818e7b504",
+"original_series_id": "e4f7f5f5590a40a43e125f2f42d1f384",
+"event_slug": "se-connecticut-home-garden-show-2026",
+"status": "APPROVED",
+"event_name": "SE Connecticut Home & Garden Show 2026",
+"venue_id": "511eb2a2-6907-4a54-8e69-6039b7f080aa",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "af5db204b19a3cf6a041acbd40b5366f",
+"original_series_id": "e5ba669bbaffacc1135940dfa8f6ed5f",
+"event_slug": "skowhegan-state-fair-me-2027",
+"status": "TENTATIVE",
+"event_name": "Skowhegan State Fair 2027",
+"venue_id": "2516f056-2b87-4138-99cd-f1d6c423025e",
+"source_name": "mainefairs.net"
+},
+{
+"event_id": "f6aa0d1b77f77661f4c00ad164bcb478",
+"original_series_id": "e5fcfc6fc5201c1ebd55b6c8a552e813",
+"event_slug": "littleville-fair-ma-2027",
+"status": "TENTATIVE",
+"event_name": "Littleville Fair 2027",
+"venue_id": "bdcd8a89-1249-438e-9d0a-b45635b8b147",
+"source_name": "mafa.org"
+},
+{
+"event_id": "0a205b46-69bf-4e51-b2f2-da4b477f23ec",
+"original_series_id": "e6354018fdd1be48a6d200dc6650f129",
+"event_slug": "nh-beer-trail-festival-1",
+"status": "REJECTED",
+"event_name": "NH Beer Trail Festival",
+"venue_id": "76d2d423-b949-4000-ac94-4921ddc7605d",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "e32cc0e4-8f78-45e7-b9a0-cdc65b78e338",
+"original_series_id": "e709bc82e2d2a3d9b78e08bf38e880e9",
+"event_slug": "hamburg-fair-2026",
+"status": "APPROVED",
+"event_name": "Hamburg Fair 2026",
+"venue_id": "875276f8-b025-41e7-842e-783b79870497",
+"source_name": "hamburgfair.org"
+},
+{
+"event_id": "3695ea8e-4b6d-4c21-b91a-8f020a2d0f60",
+"original_series_id": "e70f4c779b8be4c6ba0ebae0da23cb72",
+"event_slug": "lebanon-country-fair-2026",
+"status": "APPROVED",
+"event_name": "Lebanon Country Fair 2026",
+"venue_id": "5fd1506b-b043-4853-9b0f-a070765ea53e",
+"source_name": "lebanoncountryfair.org"
+},
+{
+"event_id": "18fcc2c0e868e6f1c115c7f6cad182fe",
+"original_series_id": "e737df999e76fc5960fa434574700662",
+"event_slug": "granite-state-fair-nh-2027",
+"status": "TENTATIVE",
+"event_name": "Granite State Fair 2027",
+"venue_id": "c865c2d7-5b3a-4c03-81ca-a78666df9e7e",
+"source_name": "web-research"
+},
+{
+"event_id": "4a11e783-f0e5-4031-a5ef-a3ca73788288",
+"original_series_id": "e74553c1ed45f20567a889b5ee42f024",
+"event_slug": "vermont-sheep-and-wool-festival-2026-merged-4a11e783",
+"status": "REJECTED",
+"event_name": "Vermont Sheep & Wool Festival 2026",
+"venue_id": "7b9e51c8-749c-4d3d-aca2-533606506ab4",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "9a8daa28-16c6-4007-b65d-81c56807c388",
+"original_series_id": "e74553c1ed45f20567a889b5ee42f024",
+"event_slug": "vermont-sheep-wool-festival-2026",
+"status": "APPROVED",
+"event_name": "Vermont Sheep & Wool Festival 2026",
+"venue_id": "7b9e51c8-749c-4d3d-aca2-533606506ab4",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "5b0cf8cdd3f4967e63e816935c1af291",
+"original_series_id": "e8132d9112244bf4db1f5f093314ea15",
+"event_slug": "cornish-fair-nh-2027",
+"status": "TENTATIVE",
+"event_name": "Cornish Fair 2027",
+"venue_id": "7432f0ef-136b-4b9e-b858-d79ce4bf647d",
+"source_name": "web-research"
+},
+{
+"event_id": "6af44b8597dba7648fd2cb2880ad9c80",
+"original_series_id": "e841fec2a1a039e3c9f66ddccd061492",
+"event_slug": "oxford-fair-me-2027",
+"status": "TENTATIVE",
+"event_name": "Oxford Fair 2027",
+"venue_id": "fbddcc92-9ddc-417a-9b49-b516911df82d",
+"source_name": "mainefairs.net"
+},
+{
+"event_id": "88268b53df266e1118dd85c689d8f1f1",
+"original_series_id": "e963dadddcfd0687a1f2cd6728abd62f",
+"event_slug": "hampshire-county-4-h-fair-ma-2027",
+"status": "TENTATIVE",
+"event_name": "Hampshire County 4-H Fair 2027",
+"venue_id": "7270a91c-9722-42ae-a351-53c5549739b9",
+"source_name": "mafa.org"
+},
+{
+"event_id": "dbe4e0f8-1ab8-4480-be29-f94a36aa1bca",
+"original_series_id": "ebcc278902a226a1c900fe1878d5a849",
+"event_slug": "topsfield-fair-2026",
+"status": "APPROVED",
+"event_name": "Topsfield Fair 2026",
+"venue_id": "237d5bea-e0cd-47eb-937f-4a71a588cec1",
+"source_name": "mafa.org"
+},
+{
+"event_id": "5593dbee-58ce-4e06-9631-062f10f88ace",
+"original_series_id": "ed8cf092ff1ab935ca9e267a4392ec32",
+"event_slug": "oxford-fair",
+"status": "APPROVED",
+"event_name": "Oxford Fair",
+"venue_id": "fbddcc92-9ddc-417a-9b49-b516911df82d",
+"source_name": "mainefairs.net"
+},
+{
+"event_id": "b680bdc664fc4201b81a830c2f4420bb",
+"original_series_id": "f380ee2e9e90163078dda13bbd9442c1",
+"event_slug": "winchester-grange-fair-ct-2027",
+"status": "TENTATIVE",
+"event_name": "Winchester Grange Fair 2027",
+"venue_id": "eae1f1d4-b5c3-409c-8aff-a6a016ca07bd",
+"source_name": "winchestergrange.org"
+},
+{
+"event_id": "5bec16b5-99ce-4e42-b96c-47c1de8c4b68",
+"original_series_id": "f3cd04e1cabba18cc8c158fef6e33994",
+"event_slug": "caledonia-county-fair-2025-merged-5bec16b5",
+"status": "REJECTED",
+"event_name": "Caledonia County Fair 2025",
+"venue_id": "4a57f38a-f59a-4ce9-8aee-75fda7af3fd3",
+"source_name": "vtnhfairs.org-vt"
+},
+{
+"event_id": "d702a8e8-a1ee-40cb-8bb1-7f79923fcc46",
+"original_series_id": "f3cd04e1cabba18cc8c158fef6e33994",
+"event_slug": "caledonia-county-fair-2026",
+"status": "APPROVED",
+"event_name": "Caledonia County Fair 2026",
+"venue_id": "4a57f38a-f59a-4ce9-8aee-75fda7af3fd3",
+"source_name": "vtnhfairs.org-vt"
+},
+{
+"event_id": "f6433404b809784067d84f0ca787aeed",
+"original_series_id": "f49e04a8c962551e58f0851478ab4e79",
+"event_slug": "bridgewater-country-fair-ct-2027",
+"status": "TENTATIVE",
+"event_name": "Bridgewater Country Fair 2027",
+"venue_id": "0efa772c-56f9-4a45-a133-b15f2b908cad",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "cf4c78a5-6748-4421-86dc-2afb137f4b4c",
+"original_series_id": "f4a2ed9a9944eceda8b3006d54963e91",
+"event_slug": "kennebunkport-christmas-prelude-2026-3",
+"status": "REJECTED",
+"event_name": "Kennebunkport Christmas Prelude 2026",
+"venue_id": "28f31649-182c-4420-9bb1-15ef6455fc1f",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "4eee27df-c612-4818-af68-d25329df249a",
+"original_series_id": "f64a10d16b334a3dbd23c19bb12fb934",
+"event_slug": "boston-marathon-2026",
+"status": "TENTATIVE",
+"event_name": "Boston Marathon 2026",
+"venue_id": "b4c30111-7fd9-45e4-ac70-8db8e9350906",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "da7b9e37-a669-4ab0-8809-ade9f911b44d",
+"original_series_id": "f6971aab3823a050c43f634adc5c94f1",
+"event_slug": "harmony-free-fair",
+"status": "APPROVED",
+"event_name": "Harmony Free Fair",
+"venue_id": "6efc76db-fb57-4ad0-b95c-85edce972b2f",
+"source_name": "mainefairs.net"
+},
+{
+"event_id": "8f4323d5-213f-4ebf-8a42-71a81fa3cf98",
+"original_series_id": "f6e8882acefa5611d023224f3404d0cf",
+"event_slug": "new-portland-lions-fair",
+"status": "APPROVED",
+"event_name": "New Portland Lions Fair",
+"venue_id": "b178ee97-ca3b-4fac-a3ca-0fccfe23571e",
+"source_name": "mainefairs.net"
+},
+{
+"event_id": "789678c2e4c3c21a8bebf084a4bbeb3e",
+"original_series_id": "f85d8a11b543656edb166346326a3cd3",
+"event_slug": "worcester-county-4-h-fair-ma-2027",
+"status": "TENTATIVE",
+"event_name": "Worcester County 4-H Fair 2027",
+"venue_id": "d9d9f33c-2019-41ab-b0b6-da9586d2414a",
+"source_name": "umass.edu"
+},
+{
+"event_id": "e2a6457d-251e-423a-acad-12d18e3fce07",
+"original_series_id": "f87eba0b03983276d685547e1db61089",
+"event_slug": "boston-pride-for-the-people-2026",
+"status": "APPROVED",
+"event_name": "Boston Pride for the People 2026",
+"venue_id": "eb989086-cb77-484f-9f3f-f1824c7fe3b9",
+"source_name": "boston-pride-for-the-people"
+},
+{
+"event_id": "6eaf975c-259b-4859-8866-28711ab71fdc",
+"original_series_id": "f8db144143ecc8ec06c8ba98a6457945",
+"event_slug": "clinton-lions-fair",
+"status": "APPROVED",
+"event_name": "Clinton Lions Fair",
+"venue_id": "e6132657-b067-4aa2-a5eb-73b228a02b1a",
+"source_name": "mainefairs.net"
+},
+{
+"event_id": "e0f073c4-1729-4160-b577-6abf4a1aa89b",
+"original_series_id": "f8f3248e44791c08c9afea3ff5ff3e6e",
+"event_slug": "bass-park-after-dark-1",
+"status": "REJECTED",
+"event_name": "Bass Park After Dark",
+"venue_id": "43975d8d-0950-4c63-bf60-9bbb266f1c9c",
+"source_name": "mainemade.com"
+},
+{
+"event_id": "7c6ade85-3a90-45bd-80e8-797acf47719f",
+"original_series_id": "f93a2e7f9fff5d6e70376d65792ba624",
+"event_slug": "vermont-sheep-wool-festival-2026-2",
+"status": "REJECTED",
+"event_name": "Vermont Sheep & Wool Festival 2026",
+"venue_id": "7b9e51c8-749c-4d3d-aca2-533606506ab4",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "b743ad5f-65fb-4156-8e89-29efb9fe8143",
+"original_series_id": "f9b972690071010ab2d516744cfd7b56",
+"event_slug": "new-england-spring-craft-festival-2026-1",
+"status": "REJECTED",
+"event_name": "New England Spring Craft Festival 2026",
+"venue_id": "511eb2a2-6907-4a54-8e69-6039b7f080aa",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "feaa5c50-90fe-4199-8f3e-b42670ea7b77",
+"original_series_id": "faeeaf0bb8206767ac67c1ad55ced94a",
+"event_slug": "portland-agricultural-fair-2026",
+"status": "APPROVED",
+"event_name": "Portland Agricultural Fair 2026",
+"venue_id": "7b7833a5-87c6-4419-a2ba-3c1a1612bf68",
+"source_name": "vendor-submission"
+},
+{
+"event_id": "691dd8f51d5661ac1df2cbcb8222b0c3",
+"original_series_id": "fcb6c3d1d6d167972501833ba6389a03",
+"event_slug": "stratham-4-h-summerfest-nh-2027",
+"status": "TENTATIVE",
+"event_name": "Stratham 4-H Summerfest 2027",
+"venue_id": "98edc9e5-7630-4ecd-a9ff-134b9adc1e62",
+"source_name": "vtnhfairs.org-nh"
+},
+{
+"event_id": "9605356ffbec38ab3057f41d06208661",
+"original_series_id": "fd696cb236471cee47167a2e3d3181b4",
+"event_slug": "wallingford-grange-fair-ct-2027",
+"status": "TENTATIVE",
+"event_name": "Wallingford Grange Fair 2027",
+"venue_id": "66647b76-d31b-45bc-abc2-45de944c13cd",
+"source_name": "wallingfordgrange.org"
+},
+{
+"event_id": "9fd3e6a4-1fcc-4df7-b4ba-a847befbbfd8",
+"original_series_id": "ffc462dd43c15fb788a7ef01aa12e4d9",
+"event_slug": "windsor-fair",
+"status": "APPROVED",
+"event_name": "Windsor Fair",
+"venue_id": "270f15d8-9567-4ad2-8a45-3ac3552f9dcd",
+"source_name": "mainefairs.net"
+}
+]
