@@ -7,6 +7,7 @@ import { eq, desc, and, ne } from "drizzle-orm";
 import { createSlug, unsafeSlug } from "@/lib/utils";
 import { venueUpdateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
+import { recordMutation } from "@/lib/audit/record-mutation";
 import { findVenueByGooglePlaceId } from "@/lib/queries";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 import { venueSyndicationStatements } from "@/lib/syndication/outbox";
@@ -49,7 +50,7 @@ export const GET = withAuth<{ id: string }>({ role: "ADMIN" }, async ({ request,
 
 export const PATCH = withAuth<{ id: string }>(
   { role: "ADMIN" },
-  async ({ request, db, params }) => {
+  async ({ request, db, params, session }) => {
     const { id } = params;
 
     // Validate request body
@@ -185,6 +186,20 @@ export const PATCH = withAuth<{ id: string }>(
       ] as const;
       await db.batch(venueBatch as unknown as Parameters<typeof db.batch>[0]);
 
+      // OPE-433 scope 5 — a real before/after, because `currentVenue` was
+      // already read above for the slug check. This is the edit path most
+      // likely to produce the OPE-421 shape (a venue name overwritten with an
+      // event name), and until now it left no trace of who did it.
+      await recordMutation(db, {
+        entityType: "venue",
+        entityId: id,
+        verb: "update",
+        actor: session.user.id,
+        before: currentVenue as unknown as Record<string, unknown>,
+        after: updateData as unknown as Record<string, unknown>,
+        note: "admin venue edit",
+      });
+
       // SYN1 — trigger the dispatcher only when a mirrored field changed (the
       // venue fan-out also bumped its events' versions in the batch above).
       if (venueSyndicationStmts.length > 0) {
@@ -249,10 +264,19 @@ export const PATCH = withAuth<{ id: string }>(
 
 export const DELETE = withAuth<{ id: string }>(
   { role: "ADMIN" },
-  async ({ request, db, params }) => {
+  async ({ request, db, params, session }) => {
     const { id } = params;
 
     try {
+      // OPE-433 scope 5 — record BEFORE the row is gone; afterwards there is
+      // nothing left to describe.
+      await recordMutation(db, {
+        entityType: "venue",
+        entityId: id,
+        verb: "delete",
+        actor: session.user.id,
+        note: "admin venue delete",
+      });
       await db.delete(venues).where(eq(venues.id, id));
       return NextResponse.json({ success: true });
     } catch (error) {

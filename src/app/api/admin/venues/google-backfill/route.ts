@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/api/with-auth";
+import { recordMutation } from "@/lib/audit/record-mutation";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { venues } from "@/lib/db/schema";
 import { eq, isNull, inArray, and } from "drizzle-orm";
@@ -8,7 +9,7 @@ import { lookupPlace } from "@/lib/google-maps";
 import { logError } from "@/lib/logger";
 import { createSlug } from "@/lib/utils";
 
-export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
+export const POST = withAuth({ role: "ADMIN" }, async ({ request, db, session }) => {
   const env = getCloudflareEnv();
   const apiKey = env.GOOGLE_MAPS_API_KEY;
 
@@ -96,6 +97,19 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
           }
         }
         await db.update(venues).set(updates).where(eq(venues.id, venue.id));
+        // OPE-433 scope 5 — this sweep can overwrite `name` and `imageUrl` from
+        // Google, which is exactly the OPE-421 shape (a venue's name replaced
+        // by something else). An unattributed rename of a published venue is
+        // the single hardest edit to reconstruct after the fact.
+        await recordMutation(db, {
+          entityType: "venue",
+          entityId: venue.id,
+          verb: "update",
+          actor: session.user.id,
+          before: { name: venue.name, imageUrl: venue.imageUrl },
+          after: updates,
+          note: "google places backfill sweep",
+        });
         success++;
       } else if (result === null) {
         skipped++;

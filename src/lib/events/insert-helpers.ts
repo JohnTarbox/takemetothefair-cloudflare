@@ -13,6 +13,7 @@ import type { DrizzleD1Database } from "drizzle-orm/d1";
 import { and, eq, gt, lt, or } from "drizzle-orm";
 import * as schema from "@/lib/db/schema";
 import { eventDays, events, entityDataCitations } from "@/lib/db/schema";
+import { recordMutation } from "@/lib/audit/record-mutation";
 import {
   buildEntityCitations,
   toCitationFields,
@@ -52,18 +53,31 @@ export async function insertEventDaysBatched(
   eventId: string,
   days: EventDayInput[] | null | undefined,
   /**
-   * OPE-433 scope 4 — where these hours came from, when the caller knows.
+   * OPE-433 scope 5 — WHO is creating these days.
    *
-   * `event_days` is the table with no provenance at all, and it is where BOTH
-   * logged fabricated-fact instances live: MDI's invented 10-5/10-4/10-3 hours
-   * against a published flat 9-4, and OPE-411's 09:00–18:00 rows. A day row
-   * that cannot say where its hours came from is indistinguishable from one
-   * somebody made up, which is why they were made up for months without anyone
-   * being able to tell.
+   * Optional, and the audit is skipped when absent. Deliberate: an anonymous
+   * audit row records that something happened and still cannot say what, which
+   * is the specimen's failure with extra steps. Callers that know their
+   * identity should pass it; the guard in
+   * `scripts/check-venue-day-writes-audited.ts` makes the omission visible.
+   */
+  actor?: string,
+  /**
+   * OPE-433 scope 4 — WHERE these hours came from, when the caller knows.
+   *
+   * `event_days` is where BOTH logged fabricated-fact instances live: MDI's
+   * invented 10-5/10-4/10-3 hours against a published flat 9-4, and OPE-411's
+   * 09:00–18:00 rows. A day row that cannot say where its hours came from is
+   * indistinguishable from one somebody made up, which is why they were made
+   * up for months without anyone being able to tell.
    *
    * Optional on purpose. A caller with no real source passes nothing and
    * records nothing — absence is the honest value, and inventing a source to
    * satisfy a required argument would be the very failure this closes.
+   *
+   * `actor` and `source` are separate questions and are kept separate: an
+   * admin typing hours by hand HAS an actor and no source; an importer has
+   * both; a migration has a source and no person.
    */
   source?: {
     sourceUrl: string;
@@ -88,6 +102,23 @@ export async function insertEventDaysBatched(
     await db.insert(eventDays).values(rows.slice(i, i + EVENT_DAYS_BATCH_SIZE));
   }
 
+  // OPE-433 scope 5 — WHO. One row per day rather than one for the batch: the
+  // question asked later is "where did THIS day's hours come from", and a
+  // batch-level entry cannot answer it.
+  if (actor) {
+    for (const r of rows) {
+      await recordMutation(db, {
+        entityType: "event_day",
+        entityId: r.id,
+        verb: "create",
+        actor,
+        after: { date: r.date, openTime: r.openTime, closeTime: r.closeTime },
+        note: `event ${eventId}`,
+      });
+    }
+  }
+
+  // OPE-433 scope 4 — WHERE FROM.
   if (!source?.sourceUrl) return;
   // Best-effort, and chunked to the same D1 parameter ceiling as the rows
   // themselves. Provenance must never be able to fail an insert that already

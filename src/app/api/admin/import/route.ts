@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/api/with-auth";
+import { recordMutation } from "@/lib/audit/record-mutation";
 import { events, venues, promoters, eventDays } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import type { ScrapedEvent, ScrapedVenue } from "@/lib/scrapers/types";
@@ -97,6 +98,18 @@ async function findOrCreateVenue(
   }
 
   const newVenueId = crypto.randomUUID();
+  // OPE-433 scope 5 — name the importer. The ticket's specimen listed "the
+  // mafa.org importer running with sync_enabled=1" as one of three
+  // indistinguishable candidates for an unattributed production write; an
+  // importer that says which importer it is removes it from that list.
+  await recordMutation(db, {
+    entityType: "venue",
+    entityId: newVenueId,
+    verb: "create",
+    actor: "admin-import",
+    after: { name: decodedName, city: scrapedVenue.city, state: scrapedVenue.state },
+    note: "scraper import venue create",
+  });
   await db.insert(venues).values({
     id: newVenueId,
     name: decodedName,
@@ -577,6 +590,19 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
           const CHUNK = 11;
           for (let i = 0; i < dayRows.length; i += CHUNK) {
             await db.insert(eventDays).values(dayRows.slice(i, i + CHUNK));
+          }
+          // OPE-433 scope 5 — importer-created day rows. These are the ones
+          // most likely to carry hours nobody published, so which importer
+          // wrote them is the first question anyone asks.
+          for (const r of dayRows) {
+            await recordMutation(db, {
+              entityType: "event_day",
+              entityId: r.id,
+              verb: "create",
+              actor: "admin-import",
+              after: { date: r.date, openTime: r.openTime, closeTime: r.closeTime },
+              note: `scraper import on event ${newEventId}`,
+            });
           }
         }
 

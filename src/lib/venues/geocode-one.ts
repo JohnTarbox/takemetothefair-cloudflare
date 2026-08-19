@@ -30,6 +30,7 @@
 import { and, eq, ne } from "drizzle-orm";
 import { venues, adminActions, entityDataCitations } from "@/lib/db/schema";
 import { buildEntityCitations, toCitationFields } from "@takemetothefair/utils";
+import { recordMutation } from "@/lib/audit/record-mutation";
 import { geocodeAddressDetailed, lookupPlace } from "@/lib/google-maps";
 import {
   preflight,
@@ -146,6 +147,25 @@ export async function geocodeVenueRow(
     if (!v.zip && pin.zip) updates.zip = pin.zip;
     if (!v.address?.trim() && pin.address) updates.address = pin.address;
     await db.update(venues).set(updates).where(eq(venues.id, v.id));
+
+    // OPE-433 scope 5 — THE specimen. Venue 5e6f81ed was mutated in production
+    // at 04:00:20Z on 2026-08-17 (city normalised, address filled, lat/long
+    // set) and an agent, this sweep, and the mafa.org importer were
+    // indistinguishable from the evidence. This is the row that would have
+    // answered it.
+    //
+    // Scope 4's citation beside it says WHERE the values came from; this says
+    // WHO wrote them. Both were missing, and only together do they make the
+    // write reconstructable.
+    await recordMutation(db, {
+      entityType: "venue",
+      entityId: v.id,
+      verb: "update",
+      actor: "venues_geocode",
+      before: { latitude: v.latitude, longitude: v.longitude, zip: v.zip, address: v.address },
+      after: updates,
+      note: `geocode:${outcome.status}`,
+    });
 
     // OPE-433 scope 4 — attribute what Google told us.
     //

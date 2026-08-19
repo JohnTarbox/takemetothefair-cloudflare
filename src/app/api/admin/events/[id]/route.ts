@@ -20,6 +20,7 @@ import { PUBLIC_EVENT_STATUSES } from "@/lib/constants";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 import { eventJoinProjection } from "@/lib/db/event-join-projection";
 import { recomputeEventCompleteness } from "@/lib/completeness";
+import { recordMutation } from "@/lib/audit/record-mutation";
 import { parseTimestamp } from "@/lib/datetime";
 import { normalizeEventDate } from "@/lib/event-dates";
 import { notifyApprovalIfNeeded } from "@/lib/approval-notification";
@@ -469,6 +470,26 @@ export const PATCH = withAuth<{ id: string }>(
           );
         }
         throw err;
+      }
+
+      // OPE-433 scope 5 — the admin day-editor replaces the whole set
+      // (DELETE-all then re-INSERT), so an edit here is indistinguishable in
+      // the row data from a fabrication. Both logged fabricated-fact instances
+      // live in `event_days`; this is the surface a human uses to change them.
+      //
+      // Recorded after the batch commits, so the log never claims a change the
+      // transaction rolled back.
+      if (data.eventDays !== undefined) {
+        for (const r of eventDayRows) {
+          await recordMutation(db, {
+            entityType: "event_day",
+            entityId: r.id,
+            verb: "create",
+            actor: session.user.id,
+            after: { date: r.date, openTime: r.openTime, closeTime: r.closeTime },
+            note: `admin day-set replace on event ${id}`,
+          });
+        }
       }
 
       // SYN1 — trigger the dispatcher only when an outbox row was actually

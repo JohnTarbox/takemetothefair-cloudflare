@@ -4,6 +4,7 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { geocodeNewVenue } from "@/lib/venues/geocode-one";
 import { venues } from "@/lib/db/schema";
+import { recordMutation } from "@/lib/audit/record-mutation";
 import { eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { createSlug } from "@/lib/utils";
@@ -128,6 +129,19 @@ export async function POST(request: Request) {
       accessibility: body.accessibility ?? null,
       parking: body.parking ?? null,
       status: "ACTIVE",
+    });
+
+    // OPE-433 scope 5 — the non-admin creation path. A promoter or vendor
+    // creating a venue is the most common way a row with a wrong name or an
+    // empty address enters the catalog (OPE-421), so who did it matters at
+    // least as much here as on the admin route.
+    await recordMutation(db, {
+      entityType: "venue",
+      entityId: venueId,
+      verb: "create",
+      actor: session.user.id,
+      after: { name: body.name, address: body.address, city: body.city, state: body.state },
+      note: `venue create via ${session.user.role}`,
     });
 
     // OPE-408 — geocode at creation. The public venue-create path had no

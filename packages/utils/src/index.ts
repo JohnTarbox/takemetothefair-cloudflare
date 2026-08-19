@@ -472,6 +472,11 @@ export * from "./support-obligation";
 // builds and filters citation rows; each codebase owns its own insert.
 export * from "./entity-citation";
 
+// OPE-433 scope 5 — venue and event_day writes must be answerable. Pure: it
+// builds the audit payload and decides whether one is worth writing; each
+// codebase owns its own insert into admin_actions.
+export * from "./mutation-audit";
+
 // OPE-294 — is an image ours or hotlinked from somebody else's CDN? Pure
 // classification only: it never rewrites or re-hosts, because re-hosting may be
 // MORE restricted than hotlinking and that read is John's.

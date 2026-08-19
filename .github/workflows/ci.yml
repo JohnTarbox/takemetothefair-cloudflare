@@ -113,6 +113,9 @@ jobs:
       - name: Check events inserts state their confidence (OPE-433)
         run: npx tsx scripts/check-events-insert-confidence.ts
 
+      - name: Check venue/event_day writes are auditable (OPE-433 scope 5)
+        run: npx tsx scripts/check-venue-day-writes-audited.ts
+
       - name: Check Turnstile render params (OPE-250 — size enum + sitekey)
         run: npx tsx scripts/check-turnstile-params.ts
 

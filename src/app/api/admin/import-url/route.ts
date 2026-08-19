@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/api/with-auth";
+import { recordMutation } from "@/lib/audit/record-mutation";
 import { events, venues, promoters, eventSchemaOrg } from "@/lib/db/schema";
 import { attachEventToSeries } from "@/lib/series/resolve-or-create-series";
 import { parseJsonLd } from "@/lib/schema-org";
@@ -96,6 +97,17 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
       }
 
       const newVenueId = crypto.randomUUID();
+      // OPE-433 scope 5 — see the sibling note in /api/admin/import. Naming the
+      // importer is what removes it from the specimen's list of
+      // indistinguishable suspects.
+      await recordMutation(db, {
+        entityType: "venue",
+        entityId: newVenueId,
+        verb: "create",
+        actor: "admin-import-url",
+        after: { name: venueOption.name, address: venueOption.address },
+        note: "url import venue create",
+      });
       await db.insert(venues).values({
         id: newVenueId,
         name: venueOption.name,
