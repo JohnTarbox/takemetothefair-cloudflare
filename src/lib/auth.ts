@@ -4,6 +4,7 @@ import type { Session, User, NextAuthConfig } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import Google from "next-auth/providers/google";
 import Facebook from "next-auth/providers/facebook";
+import { isPlaceholderEmail, PLACEHOLDER_REFUSAL } from "@/lib/auth/placeholder-account";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { getCloudflareDb } from "./cloudflare";
 import * as schema from "./db/schema";
@@ -164,6 +165,16 @@ function createAuthConfig(): NextAuthConfig {
           return null;
         }
 
+        // OPE-293 — an ingestion placeholder never logs in. Redundant today
+        // (0 of 6,824 hold a password_hash, so the `!user.passwordHash` check
+        // below already refuses them) and deliberately kept anyway: the
+        // password-reset path is what would mint that hash, and a guard that
+        // only works while a second guard holds is not a guard.
+        if (isPlaceholderEmail(credentials.email as string)) {
+          console.warn(`[auth] credentials refused — ${PLACEHOLDER_REFUSAL}`);
+          return null;
+        }
+
         const db = getCloudflareDb();
 
         try {
@@ -262,6 +273,18 @@ function createAuthConfig(): NextAuthConfig {
             user.role = dbUser.role as UserRole;
           }
           return true;
+        }
+
+        // OPE-293 — refuse BEFORE the email-match lookup below.
+        //
+        // That lookup links a provider account to any existing user that has no
+        // `passwordHash`, and placeholders have none by definition — so they are
+        // exactly the rows it would bind to. Refusing here also covers the
+        // create branch, so a provider attesting a `pending+…` address cannot
+        // mint a fresh account on it either.
+        if (isPlaceholderEmail(profile.email)) {
+          console.warn(`[auth] OAuth refused — ${PLACEHOLDER_REFUSAL}`);
+          return "/login?error=AccessDenied";
         }
 
         // Check if a user with this email already exists

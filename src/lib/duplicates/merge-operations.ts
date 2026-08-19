@@ -11,6 +11,7 @@ import {
   eventDataCitations,
   eventSlugHistory,
   eventSeries,
+  seriesSlugHistory,
   contentLinks,
   adminActions,
 } from "@/lib/db/schema";
@@ -873,7 +874,7 @@ async function mergeEvents(
   // of two merged events should describe the series is a judgement, and
   // guessing it silently is how a venue ends up published as the organizer.
   const seriesToRepoint = await db
-    .select({ id: eventSeries.id })
+    .select({ id: eventSeries.id, canonicalSlug: eventSeries.canonicalSlug })
     .from(eventSeries)
     .where(eq(eventSeries.canonicalSlug, originalDupSlug));
 
@@ -921,6 +922,27 @@ async function mergeEvents(
         .set({ canonicalSlug: unsafeSlug(keeper.slug), updatedAt: new Date() })
         .where(eq(eventSeries.id, row.id))
     ),
+    // OPE-471 — record the retired series slug so it 301s instead of 404ing.
+    //
+    // The repoint above (added by OPE-423) renames a LIVE, INDEXED hub. Until
+    // `series_slug_history` existed there was nowhere to record that, so the
+    // old URL simply stopped resolving — and these are the URLs carrying the
+    // ranking: `/events/the-big-e-eastern-states-exposition-ma` holds 19 clicks
+    // and 2,434 impressions at position 5.1.
+    //
+    // In the same batch as the rename, so a crawler can never observe the new
+    // slug without the redirect for the old one existing.
+    ...seriesToRepoint
+      .filter((row) => row.canonicalSlug && row.canonicalSlug !== keeper.slug)
+      .map((row) =>
+        db.insert(seriesSlugHistory).values({
+          seriesId: row.id,
+          oldSlug: row.canonicalSlug,
+          newSlug: unsafeSlug(keeper.slug),
+          changedAt: new Date(),
+          changedBy: actorUserId,
+        })
+      ),
     // Step 5: admin_actions audit row.
     db.insert(adminActions).values({
       action: "event.merge",

@@ -215,7 +215,11 @@ export async function findEventBySubjectName(
  *  Photos in one email are from one outing, so the first fix represents the
  *  batch. Returns {} when the bucket is missing, refs are absent, or nothing
  *  parses — every one of which must hold rather than throw. */
-async function readExif(env: HandlerEnv, refs: AttachmentRef[]): Promise<ExifData> {
+/**
+ * OPE-469 — exported so a replay can run the identical EXIF read the live
+ * handler runs, rather than a lookalike that could drift from it.
+ */
+export async function readExif(env: HandlerEnv, refs: AttachmentRef[]): Promise<ExifData> {
   const bucket = env.VENDOR_ASSETS;
   if (!bucket) return {};
   for (const ref of imageRefs(refs)) {

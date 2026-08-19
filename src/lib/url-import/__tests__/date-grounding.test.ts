@@ -142,10 +142,24 @@ describe("wired into extractMultipleEvents", () => {
       ]),
     });
     const { events } = await extractMultipleEvents(ai, MV_PAGE, md);
-    expect(events).toHaveLength(1);
-    expect(events[0].startDate).toBeNull();
-    expect(events[0].endDate).toBeNull(); // end rides with start
-    expect(events[0].name).toContain("Martha's Vineyard");
+
+    // The grounding rule this test was written for still holds: the invented
+    // 2024 range is gone, and no event on this page carries it.
+    expect(events.map((e) => e.startDate)).not.toContain("2024-08-15");
+    expect(events.every((e) => e.name?.includes("Martha's Vineyard"))).toBe(true);
+
+    // The count changed with OPE-432's repair pass, and the change is the
+    // point rather than a side effect. Grounding leaves the candidate with no
+    // date at all; the page publishes four editions, so all four are restored
+    // from the source table instead of one dateless row being written.
+    expect(events).toHaveLength(5);
+    expect(events.some((e) => e.startDate === null)).toBe(true);
+    expect(events.map((e) => e.startDate).filter(Boolean)).toEqual([
+      "2026-08-13",
+      "2027-08-12",
+      "2028-08-10",
+      "2029-08-09",
+    ]);
   });
 
   it("keeps a date the page really prints", async () => {
@@ -159,8 +173,22 @@ describe("wired into extractMultipleEvents", () => {
       ]),
     });
     const { events } = await extractMultipleEvents(ai, MV_PAGE, md);
-    expect(events[0].startDate).toBe("2028-08-10");
-    expect(events[0].endDate).toBe("2028-08-13");
+
+    // Grounding keeps the model's 2028 dates — that is what this test is for.
+    // It is no longer events[0] because OPE-432 restores the three editions
+    // the model omitted and orders the result by date, so assert on the row
+    // rather than on its position.
+    const y2028 = events.find((e) => e.startDate === "2028-08-10");
+    expect(y2028).toBeDefined();
+    expect(y2028!.endDate).toBe("2028-08-13");
+
+    // …and the omitted editions come back rather than being silently lost.
+    expect(events.map((e) => e.startDate)).toEqual([
+      "2026-08-13",
+      "2027-08-12",
+      "2028-08-10",
+      "2029-08-09",
+    ]);
   });
 
   it("keeps every edition of the multi-year table", async () => {
@@ -181,5 +209,65 @@ describe("wired into extractMultipleEvents", () => {
       "2028-08-10",
       "2029-08-09",
     ]);
+  });
+});
+
+/**
+ * OPE-479 — the hours block must reach the extraction OUTPUT, not just parse.
+ *
+ * A parser nobody calls is the recurring defect in this repo (OPE-456 shipped
+ * one; OPE-189 and OPE-405 were both silent no-ops). So this asserts the wiring
+ * end-to-end through `extractMultipleEvents`, against the real page text.
+ */
+describe("OPE-479 — published hours reach the extracted candidates", () => {
+  const md = {} as import("../types").PageMetadata;
+  const mkAi = (resp: unknown) => ({ run: async () => resp }) as never;
+
+  const PAGE_WITH_HOURS = `
+    Fair Dates for 2026-2029
+    Thursday, August 13th to Sunday, August 16th, 2026
+
+    Fair Hours
+    Thursday, Friday and Saturday: 10 AM to 11 PM
+    Barn closes at 9 PM
+    Sunday: 10 AM to 6 PM
+    Carnival Opens at 11 AM each day of the Fair
+  `;
+
+  it("attaches per-day gate hours to the candidate", async () => {
+    const ai = mkAi({
+      response: JSON.stringify([
+        { name: "Martha's Vineyard Agricultural Fair 2026", startDate: "2026-08-13" },
+      ]),
+    });
+    const { events } = await extractMultipleEvents(ai, PAGE_WITH_HOURS, md);
+
+    const withHours = events.find((e) => (e.dayHours?.length ?? 0) > 0);
+    expect(withHours).toBeDefined();
+
+    const byDay = new Map(withHours!.dayHours!.map((d) => [d.weekday, d]));
+    expect(byDay.get(4)).toMatchObject({ openTime: "10:00", closeTime: "23:00" }); // Thu
+    expect(byDay.get(0)).toMatchObject({ openTime: "10:00", closeTime: "18:00" }); // Sun
+  });
+
+  it("does not let a building time become the fair's closing time", async () => {
+    // The whole point. "Barn closes at 9 PM" sits between the Thu-Sat line and
+    // the Sunday line; a naive parse would close the fair two hours early.
+    const ai = mkAi({
+      response: JSON.stringify([{ name: "MV Fair 2026", startDate: "2026-08-13" }]),
+    });
+    const { events } = await extractMultipleEvents(ai, PAGE_WITH_HOURS, md);
+    const hours = events.find((e) => (e.dayHours?.length ?? 0) > 0)!.dayHours!;
+
+    expect(hours.every((d) => d.closeTime !== "21:00")).toBe(true);
+    expect(hours.find((d) => d.weekday === 4)!.notes.join(" ")).toContain("Barn closes at 9 PM");
+  });
+
+  it("leaves dayHours absent when the page publishes none", async () => {
+    const ai = mkAi({
+      response: JSON.stringify([{ name: "Some Fair 2026", startDate: "2026-08-13" }]),
+    });
+    const { events } = await extractMultipleEvents(ai, "August 13 to 16, 2026. Come see us!", md);
+    expect(events.every((e) => !e.dayHours || e.dayHours.length === 0)).toBe(true);
   });
 });

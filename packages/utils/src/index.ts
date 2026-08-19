@@ -476,3 +476,9 @@ export * from "./entity-citation";
 // builds the audit payload and decides whether one is worth writing; each
 // codebase owns its own insert into admin_actions.
 export * from "./mutation-audit";
+
+// OPE-294 — is an image ours or hotlinked from somebody else's CDN? Pure
+// classification only: it never rewrites or re-hosts, because re-hosting may be
+// MORE restricted than hotlinking and that read is John's.
+export * from "./image-host";
+export * from "./gsc-milestones";

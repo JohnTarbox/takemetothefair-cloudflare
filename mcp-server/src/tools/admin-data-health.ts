@@ -26,7 +26,10 @@ import {
   events,
   eventSeries,
   inboundEmails,
+  gscDailyTotals,
+  gscMilestoneEmails,
 } from "../schema.js";
+import { deriveCrossings, auditStoredDates } from "@takemetothefair/utils";
 import { jsonContent } from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
@@ -198,6 +201,54 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
         .innerJoin(events, eq(events.slug, eventSeries.canonicalSlug))
         .where(sql`${events.mergedInto} IS NOT NULL`);
 
+      // ── OPE-467: claimed vs stored vs skipped, per lane ──────────────
+      //
+      // This defect ran for three months and was found by hand-diffing
+      // `attachment_count` against `attachment_refs`. The acceptance criterion
+      // is that nobody has to do that again.
+      //
+      // Reported per `to_address` because the lane split is what made the
+      // original report legible — though note the diagnosis it suggested was
+      // wrong: there is ONE capture path, called before intent routing, so a
+      // lane difference is a difference in what people SEND, not in code.
+      //
+      // `unaccounted` is the only number here that is a fault. A skip is a
+      // policy decision now that it is recorded; a part that is neither stored
+      // nor explained is a part that went missing.
+      const attachmentCapture = await db
+        .select({
+          lane: inboundEmails.toAddress,
+          emails: sql<number>`count(*)`,
+          claimed: sql<number>`coalesce(sum(${inboundEmails.attachmentCount}), 0)`,
+          stored: sql<number>`coalesce(sum((length(coalesce(${inboundEmails.attachmentRefs}, '')) - length(replace(coalesce(${inboundEmails.attachmentRefs}, ''), '"key"', ''))) / 5), 0)`,
+          skipped: sql<number>`coalesce(sum((length(coalesce(${inboundEmails.attachmentSkips}, '')) - length(replace(coalesce(${inboundEmails.attachmentSkips}, ''), '"reason"', ''))) / 8), 0)`,
+        })
+        .from(inboundEmails)
+        .where(sql`${inboundEmails.attachmentCount} > 0`)
+        .groupBy(inboundEmails.toAddress);
+
+      // ── OPE-294: hotlinked images, so the trend is answerable ────────
+      //
+      // The acceptance asks that `health.hotlinked` "trends down and stays
+      // down". It has been trending UP: venue hotlinks 172 → 173 and event
+      // hotlinks 28 → 51 between the ticket being filed (2026-07-28) and
+      // 2026-08-18, the newest arriving that same day. Nothing reported that,
+      // which is why it took a re-measurement by hand to notice.
+      //
+      // Counted here rather than judged: this reports the population, it does
+      // not act on it. Whether the existing rows are re-hosted, attributed, or
+      // dropped is John's licensing decision, and re-hosting may be MORE
+      // restricted than hotlinking.
+      const hotlinkedImages = await db
+        .select({
+          venues_google_places: sql<number>`(SELECT count(*) FROM venues WHERE image_url LIKE '%googleusercontent.com%')`,
+          venues_third_party: sql<number>`(SELECT count(*) FROM venues WHERE image_url IS NOT NULL AND image_url <> '' AND image_url NOT LIKE 'https://cdn.meetmeatthefair.com%' AND image_url NOT LIKE '/%')`,
+          venues_owned: sql<number>`(SELECT count(*) FROM venues WHERE image_url LIKE 'https://cdn.meetmeatthefair.com%' OR image_url LIKE '/%')`,
+          events_third_party: sql<number>`(SELECT count(*) FROM events WHERE image_url IS NOT NULL AND image_url <> '' AND image_url NOT LIKE 'https://cdn.meetmeatthefair.com%' AND image_url NOT LIKE '/%')`,
+          events_owned: sql<number>`(SELECT count(*) FROM events WHERE image_url LIKE 'https://cdn.meetmeatthefair.com%' OR image_url LIKE '/%')`,
+        })
+        .from(sql`(SELECT 1)`);
+
       // OPE-452 — an email that ARRIVED with content and landed with none.
       //
       // The reported specimen turned out to be captured fine (2,318 chars), but
@@ -263,6 +314,45 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
         promoter_reply_response_rate: "Awaiting Phase 2 promoter-reply data",
       };
 
+      // ── OPE-456 invariant: a stored milestone date we cannot derive ─────
+      //
+      // The 12,000-click milestone was stored as 2026-08-17 — the date John
+      // FORWARDED the mail — when Google's own body said Aug 15. The auto-ingest
+      // (OPE-311) stamps `email_date: new Date()` at processing time, and
+      // `reached_date` absorbed it. It was corrected by hand after deriving the
+      // real crossing from our own `gsc_daily_totals`.
+      //
+      // OPE-456 shipped that derivation as a tested pure function and **nothing
+      // called it**. So the arithmetic that catches this class existed while the
+      // class stayed uncaught — which is the OPE-246 defect shape, in a ticket
+      // about a silently-wrong date. This is its caller.
+      //
+      // `differs` is the fault. `underivable` is not: our daily totals only go
+      // back so far, and a threshold crossed before the series starts genuinely
+      // cannot be derived — reporting that as a violation would train the
+      // reader to ignore the check.
+      const milestoneRows = await db
+        .select({
+          threshold: gscMilestoneEmails.threshold,
+          reachedDate: gscMilestoneEmails.reachedDate,
+        })
+        .from(gscMilestoneEmails)
+        .where(eq(gscMilestoneEmails.metric, "clicks"));
+
+      const dailyRows = await db
+        .select({ date: gscDailyTotals.date, clicks: gscDailyTotals.clicks })
+        .from(gscDailyTotals);
+
+      const milestoneAudit = auditStoredDates(
+        milestoneRows.map((r) => ({ threshold: r.threshold, reachedDate: r.reachedDate })),
+        deriveCrossings(
+          dailyRows.map((d) => ({ date: d.date, clicks: d.clicks })),
+          milestoneRows.map((r) => r.threshold),
+          28
+        )
+      );
+      const milestoneDrift = milestoneAudit.filter((a) => a.verdict === "differs");
+
       return {
         content: [
           jsonContent({
@@ -286,6 +376,21 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
               violation_count: Number(tombstoneViolationCount?.count ?? 0),
               violations: tombstoneViolations,
             },
+            // OPE-467 — claimed vs stored vs skipped per lane. `unaccounted`
+            // is the fault number; a recorded skip is a policy decision.
+            //
+            // ⚠️ Rows received before 2026-07-03 will always show unaccounted:
+            // `captureAttachments` did not exist until commit 9de7b361
+            // (OPE-68), so those attachments were never filtered — there was
+            // nothing to filter them. Not backfillable; the raw MIME is gone.
+            attachment_capture: attachmentCapture.map((r) => ({
+              ...r,
+              unaccounted: Number(r.claimed) - Number(r.stored) - Number(r.skipped),
+            })),
+            // OPE-294 — the hotlink population, so "trends down" is checkable
+            // rather than asserted. `venues_google_places` is the subset with a
+            // licensing question attached.
+            hotlinked_images: hotlinkedImages[0] ?? null,
             // OPE-423 invariant 2 — see the comment at the query.
             series_canonical_invariant: {
               rule: "event_series.canonical_slug must not name an event with merged_into set",
@@ -305,6 +410,16 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
                 subject: r.subject,
                 raw_size: r.rawSize,
               })),
+            },
+            // OPE-456 — stored milestone dates checked against our OWN daily
+            // totals. `drift` is the fault; `underivable` counts are reported
+            // separately so a short history never reads as a defect.
+            gsc_milestone_date_drift: {
+              rule: "gsc_milestone_emails.reached_date must match the derived 28-day crossing from gsc_daily_totals",
+              violation_count: milestoneDrift.length,
+              violations: milestoneDrift,
+              underivable_count: milestoneAudit.filter((a) => a.verdict === "underivable").length,
+              audited: milestoneAudit.length,
             },
             snapshot_trend: trend,
           }),

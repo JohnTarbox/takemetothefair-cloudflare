@@ -32,6 +32,28 @@ export interface ExtractedEventData {
   endTime: string | null; // "HH:MM" 24-hour, wall-clock at venue (see header)
   hoursVaryByDay: boolean; // AI detected varying hours
   hoursNotes: string | null; // Free text (e.g., "Fri 5-9pm, Sat-Sun 10am-6pm")
+  /**
+   * OPE-479 — per-day hours lifted from a published "Fair Hours" block.
+   *
+   * Deliberately NOT auto-written to `event_days`. `create_event_day` takes no
+   * citation parameter (the `event_days have no provenance` half of OPE-433),
+   * and hours are the field this project has already been burned on — the MDI
+   * incident stored an invented descending pattern against a published flat
+   * 9-4. Writing them at volume with no recorded source would make that worse,
+   * so these surface as reviewable extraction output until OPE-433 lands the
+   * provenance columns.
+   *
+   * `openTime`/`closeTime` are the GATE hours. Building- and attraction-level
+   * times (Hall / Barn / Fiber Tent / carnival) are in `notes` and never in the
+   * times, because "Barn closes at 9 PM" is not the fair closing at 9 PM.
+   */
+  dayHours?: Array<{
+    /** 0 = Sunday … 6 = Saturday. */
+    weekday: number;
+    openTime: string | null;
+    closeTime: string | null;
+    notes: string[];
+  }> | null;
   specificDates: string[] | null; // ["YYYY-MM-DD", ...] for non-contiguous dates
   venueName: string | null;
   venueAddress: string | null;
