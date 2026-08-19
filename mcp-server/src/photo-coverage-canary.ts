@@ -18,6 +18,7 @@
  * stale and the silence escalates through the OPE-75 digest.
  */
 import type { Env } from "./index.js";
+import { withMainAppSlot, isWorkerOom } from "./main-app-gate.js";
 import { logError } from "./logger.js";
 
 export async function runScheduledPhotoCoverageScan(env: Env): Promise<void> {
@@ -33,17 +34,29 @@ export async function runScheduledPhotoCoverageScan(env: Env): Promise<void> {
   };
 
   try {
-    const response = env.MAIN_APP
-      ? await env.MAIN_APP.fetch(new Request(url, init))
-      : await fetch(url, init);
+    // OPE-489 — same main-app slot gate as runMainAppSweep. This canary is a
+    // sibling in the daily Promise.all, so without the gate it contributed to
+    // (and died from) the shared-isolate OOM alongside the other sweeps.
+    const response = await withMainAppSlot(() =>
+      env.MAIN_APP ? env.MAIN_APP.fetch(new Request(url, init)) : fetch(url, init)
+    );
     if (!response.ok) {
       const body = (await response.text()).slice(0, 300);
+      // OPE-489 §4 — name an isolate OOM kill distinctly from a transient 5xx.
+      const oom = isWorkerOom(body);
       await logError(env.DB, {
         source: SOURCE,
-        message: "photo-coverage scan returned non-2xx",
+        message: oom
+          ? "photo-coverage scan killed by Worker memory limit"
+          : "photo-coverage scan returned non-2xx",
         statusCode: response.status,
         sessionId,
-        context: { url, status: response.status, bodyExcerpt: body },
+        context: {
+          url,
+          status: response.status,
+          bodyExcerpt: body,
+          cause: oom ? "worker-oom" : "non-2xx",
+        },
       });
       return;
     }

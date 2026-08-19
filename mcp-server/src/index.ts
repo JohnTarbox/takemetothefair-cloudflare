@@ -2,6 +2,7 @@ import OAuthProvider from "@cloudflare/workers-oauth-provider";
 import { McpAgent } from "agents/mcp";
 import { getCurrentAgent } from "agents";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { withMainAppSlot, isWorkerOom } from "./main-app-gate.js";
 import { LoginHandler } from "./oauth/login-handler.js";
 import {
   decideSendRouting,
@@ -698,19 +699,36 @@ async function runMainAppSweep(
     // OPE-258 — shared caller: prefers the service binding, falls back to
     // public fetch on a binding blip (the previous inline ternary had no
     // fallback), and stamps the entrypoint so a future 401 names itself.
-    const response = await mainAppFetch(env, path, "scheduled", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      ...(body ? { body: JSON.stringify(body) } : {}),
-    });
+    //
+    // OPE-489 — held behind the main-app slot gate. The daily batch fans ~12 of
+    // these out of a single Promise.all; run together they shared one main-app
+    // isolate's 128 MB and killed it, which is why four unrelated sweeps failed
+    // at the identical second with "Worker exceeded memory limit."
+    const response = await withMainAppSlot(() =>
+      mainAppFetch(env, path, "scheduled", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      })
+    );
     if (!response.ok) {
       const text = (await response.text()).slice(0, 300);
+      // OPE-489 §4 — an isolate OOM kill and a transient blip used to log
+      // identically, which is why this read as flakiness for two weeks. Name it.
+      const oom = isWorkerOom(text);
       await logError(env.DB, {
         source: `mcp:schedule:${label.replace(/\s+/g, "-")}`,
-        message: `cron task '${label}' returned non-2xx`,
+        message: oom
+          ? `cron task '${label}' killed by Worker memory limit`
+          : `cron task '${label}' returned non-2xx`,
         statusCode: response.status,
         sessionId,
-        context: { path, status: response.status, bodyExcerpt: text },
+        context: {
+          path,
+          status: response.status,
+          bodyExcerpt: text,
+          cause: oom ? "worker-oom" : "non-2xx",
+        },
       });
       return;
     }
@@ -1711,6 +1729,13 @@ export default {
           { missing_only: true }
         )
       );
+      // OPE-489 — this `return` was MISSING. Every other cron branch has one;
+      // without it, 08:30 ran the venue geocode and then FELL THROUGH into the
+      // default daily batch, so the entire ~20-task daily fan-out executed a
+      // SECOND time every day. That is why error_logs carries two identical
+      // failure bursts per day, 06:01 and 08:31 — and it defeated this branch's
+      // own stated intent ("after the 08:00 sweep so the two do not contend").
+      return;
     }
 
     if (controller.cron === "0 7 * * *") {
