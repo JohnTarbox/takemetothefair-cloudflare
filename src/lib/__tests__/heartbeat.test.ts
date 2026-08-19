@@ -104,8 +104,37 @@ describe("OPE-309 assurance probes", () => {
     expect(names).toContain("recommendation-scan");
   });
 
-  it("does NOT probe the fault emitter — absence of faults is not a dead feed", () => {
-    expect(names.some((n) => n.includes("fault"))).toBe(false);
+  it("probes the fault emitter's RUN, and never the fault LEDGER", () => {
+    // The original form of this test asserted no probe name contained "fault" at
+    // all. The PRINCIPLE it protects is sound and unchanged: `fault_signatures`
+    // is EVENT-driven, so its `last_seen` stays flat during genuinely quiet
+    // traffic and a freshness SLA on it rebuilds the false-STALE pattern OPE-295
+    // removed. Absence of faults is not a dead feed.
+    //
+    // OPE-488 sharpened the assertion to the principle rather than to the
+    // substring. The emitter writes one `mcp:fault-signatures-emit` row per RUN,
+    // hourly, WHETHER OR NOT it finds anything — that signal is schedule-driven,
+    // so absence there genuinely is evidence, and it is exactly what this file's
+    // own rule says is probeable. Probe the run, never the yield.
+    //
+    // Worth the sharpening: on 2026-08-19 the ledger had not moved in ~50h and
+    // two tickets were filed asserting the emitter had died. It was running every
+    // hour on schedule; the ledger was quiet because ChunkLoadError is on the
+    // curated NOISE_DENYLIST by design.
+    //
+    // Pinned to an exact list, not a "some" check, so any FUTURE fault-named
+    // probe — in particular one on the ledger — still fails here and has to
+    // argue its case.
+    expect(names.filter((n) => n.includes("fault"))).toEqual(["fault-emitter-run"]);
+  });
+
+  it("sizes the fault-emitter probe for an HOURLY cadence, not a daily one", () => {
+    const probe = HEARTBEAT_PROBES.find((p) => p.name === "fault-emitter-run")!;
+    // Hourly cron: a window of a few hours tolerates a couple of missed fires
+    // while still catching a genuinely dead emitter the same day. The 48h daily
+    // sizing below would hide a full day of silence on an hourly feed.
+    expect(probe.expectedWindowHours).toBeGreaterThanOrEqual(3);
+    expect(probe.expectedWindowHours).toBeLessThanOrEqual(12);
   });
 
   it("gives the daily feeds room for exactly one missed run", () => {
