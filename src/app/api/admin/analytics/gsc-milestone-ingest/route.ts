@@ -92,7 +92,7 @@ export async function POST(request: Request) {
 
   try {
     const db = getCloudflareDb();
-    const { inserted, row } = await ingestGscMilestone(db, milestone, { note });
+    const { inserted, corrected, outcome, row } = await ingestGscMilestone(db, milestone, { note });
     return NextResponse.json({
       success: true,
       inserted,
@@ -102,6 +102,11 @@ export async function POST(request: Request) {
         window_days: row.windowDays,
         threshold: row.threshold,
         reached_date: row.reachedDate,
+        // OPE-456 — say WHICH happened. `inserted: false` alone told a caller
+        // supplying a better date nothing about whether it was used.
+        corrected,
+        outcome,
+        reached_date_source: row.reachedDateSource,
         email_date: row.emailDate,
       },
       note: inserted

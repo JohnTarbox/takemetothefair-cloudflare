@@ -43,6 +43,9 @@ describe("parseGscMilestoneEmail (OPE-108)", () => {
       windowDays: 28,
       threshold: 3000,
       reachedDate: "2026-07-04",
+      // OPE-456 — the date sits on the line AFTER the "reached" sentence, which
+      // the forward-looking scan still anchors to. Google's own format.
+      reachedDateSource: "anchored",
       emailDate: "2026-07-06",
     });
   });
@@ -90,5 +93,53 @@ describe("parseGscMilestoneEmail (OPE-108)", () => {
         emailDate: c.email,
       });
     }
+  });
+});
+
+/**
+ * OPE-456 — the forwarded-email shape that stored row 18 two days late.
+ *
+ * The ticket supposed the ingest "falls back to email_date". It does not, and
+ * never did. `extractDate` returns the FIRST date anywhere in the text, and on
+ * a forward that is the forward header's own Date:, not Google's claim. Same
+ * wrong value, different mechanism — and the difference is what the fix hangs
+ * on, so it is pinned here.
+ */
+describe("OPE-456 — a forwarded milestone must not take the forward date", () => {
+  const FORWARDED = [
+    "---------- Forwarded message ---------",
+    "From: Google Search Console <sc-noreply@google.com>",
+    "Date: Mon, Aug 17, 2026 at 6:03 AM",
+    "Subject: Congrats on reaching 12K clicks in 28 days!",
+    "To: John Tarbox <jtarboxme@gmail.com>",
+    "",
+    "On Aug 15, 2026 your site reached 12K clicks from Google Search in the past 28 days",
+    "https://meetmeatthefair.com/",
+  ].join("\n");
+
+  it("anchors to Google's sentence, not the forward header", () => {
+    const row = parseGscMilestoneEmail({
+      subject: "Fwd: Congrats on reaching 12K clicks in 28 days!",
+      body: FORWARDED,
+      emailDate: "2026-08-17T13:43:00Z",
+    });
+    expect(row).not.toBeNull();
+    // The exact defect: this was stored as 2026-08-17.
+    expect(row!.reachedDate).toBe("2026-08-15");
+    expect(row!.reachedDateSource).toBe("anchored");
+    expect(row!.emailDate).toBe("2026-08-17");
+  });
+
+  it("reports `unanchored` when no reach sentence carries a date", () => {
+    // Then the value is the first date in the blob, which on a forward is the
+    // forward date — so it is reported as weak and the correction path lets a
+    // later anchored parse replace it.
+    const row = parseGscMilestoneEmail({
+      subject: "Congrats on reaching 5K clicks in 28 days!",
+      body: "Date: Mon, Aug 17, 2026 at 6:03 AM\n\nSee your report.",
+      emailDate: "2026-08-17T13:43:00Z",
+    });
+    expect(row!.reachedDate).toBe("2026-08-17");
+    expect(row!.reachedDateSource).toBe("unanchored");
   });
 });
