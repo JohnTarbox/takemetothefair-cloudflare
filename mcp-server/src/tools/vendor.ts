@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { eq, and, or, sql } from "drizzle-orm";
 import { vendors, events, eventVendors, promoters, venues } from "../schema.js";
+import { recordMutation } from "../audit/record-mutation.js";
 import {
   parseJsonArray,
   formatDateRange,
@@ -899,6 +900,19 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
           // so the operator can later edit a proper name without losing
           // the address text the AI extracted.
           const newAddress = _coerced.wasCoerced && _coerced.address ? _coerced.address : "";
+          // OPE-433 scope 5 — `suggest_event` creating a venue is the highest-
+          // volume unattended venue-creation path there is, and it is where the
+          // OPE-421 shape originates: a venue row whose `name` is really an
+          // event name or a street address. DQ2 coerces what it can; the audit
+          // records who to ask about the rest.
+          await recordMutation(db, {
+            entityType: "venue",
+            entityId: newVenueId,
+            verb: "create",
+            actor: auth.userId ?? "mcp:suggest_event",
+            after: { name: effectiveVenueName, address: newAddress, city: params.venue_city },
+            note: "venue auto-created by suggest_event",
+          });
           await db.insert(venues).values({
             id: newVenueId,
             name: effectiveVenueName,
