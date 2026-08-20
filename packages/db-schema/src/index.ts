@@ -3116,6 +3116,59 @@ export const standingFailureState = sqliteTable("standing_failure_state", {
  * (resolved_at IS NULL) and "how long has this been red" without re-deriving
  * anything.
  */
+/**
+ * OPE-501 — per-step evidence for one Workflow run.
+ *
+ * `workflow_instance_id` was surfaced on the admin record and carried in every
+ * trace, and NOTHING accepted it. It identified nothing an agent could open.
+ *
+ * The Workflows binding is reachable from the MCP Worker, but
+ * `WorkflowInstance.status()` returns only `{ status, error?, output? }` — the
+ * INSTANCE's state, never its steps. Per-step history lives in the Cloudflare
+ * dashboard/REST API, behind credentials the Worker does not carry. So the only
+ * way to answer "did `ocr-attachments` actually fire?" from an agent is to write
+ * it down as it happens.
+ *
+ * The cost of not having it, 2026-08-20: reviewing `c00f0865`, the question was
+ * whether the OCR step ran and produced nothing, or never ran at all — an
+ * OCR-quality defect versus a routing defect, with different fixes. The
+ * available evidence (no attachment citations, no venue, no hero) supports both
+ * equally, so the finding had to be filed "not established".
+ *
+ * ⚠️ NOT backfillable. Runs before this ships stay opaque.
+ */
+export const workflowRunSteps = sqliteTable(
+  "workflow_run_steps",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    /** The Workflow instance id — the identifier that was previously dead. */
+    instanceId: text("instance_id").notNull(),
+    /** e.g. "inbound-email". */
+    workflowName: text("workflow_name").notNull(),
+    /** Resolves a run back to the email that caused it (OPE-501 item 3). */
+    inboundEmailId: text("inbound_email_id"),
+    stepName: text("step_name").notNull(),
+    /**
+     * `ok` | `failed` | `skipped`.
+     *
+     * `skipped` is the load-bearing one and the reason this is not just error
+     * logging: a step that never ran is indistinguishable from a step that ran
+     * and found nothing, unless the skip is recorded as deliberately as the run.
+     */
+    status: text("status", { enum: ["ok", "failed", "skipped"] }).notNull(),
+    /** Why it was skipped, or what it produced. JSON. */
+    detail: text("detail"),
+    durationMs: integer("duration_ms"),
+    recordedAt: integer("recorded_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    index("idx_workflow_run_steps_instance").on(t.instanceId),
+    index("idx_workflow_run_steps_email").on(t.inboundEmailId),
+  ]
+);
+
 export const staleRedSignals = sqliteTable("stale_red_signals", {
   /** The StaleRed refKey, e.g. "queue-freeze:promoter_enrichment". */
   refKey: text("ref_key").primaryKey(),

@@ -1207,6 +1207,18 @@ const SCHEMA_SQL = `
     created_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL
   );
+
+  CREATE TABLE workflow_run_steps (
+    id TEXT PRIMARY KEY,
+    instance_id TEXT NOT NULL,
+    workflow_name TEXT NOT NULL,
+    inbound_email_id TEXT,
+    step_name TEXT NOT NULL,
+    status TEXT NOT NULL,
+    detail TEXT,
+    duration_ms INTEGER,
+    recorded_at INTEGER NOT NULL
+  );
   CREATE INDEX idx_claim_tokens_entity ON claim_tokens (entity_type, entity_id);
   CREATE INDEX idx_claim_tokens_expires ON claim_tokens (expires_at);
 `;

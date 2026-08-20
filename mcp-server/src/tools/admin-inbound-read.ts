@@ -21,8 +21,8 @@
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { and, desc, eq, gte, lte, like } from "drizzle-orm";
-import { emailSendLedger, events, inboundEmails } from "../schema.js";
+import { and, desc, eq, gte, lte, like, sql } from "drizzle-orm";
+import { emailSendLedger, events, inboundEmails, workflowRunSteps } from "../schema.js";
 import { jsonContent } from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
@@ -45,7 +45,12 @@ interface OcrRecord {
   markdown: string | null;
 }
 
-export function registerInboundReadTools(server: McpServer, db: Db, auth: AuthContext) {
+export function registerInboundReadTools(
+  server: McpServer,
+  db: Db,
+  auth: AuthContext,
+  env?: { INBOUND_EMAIL?: { get(id: string): Promise<{ status(): Promise<unknown> }> } }
+) {
   if (auth.role !== "ADMIN") return;
 
   // --- get_inbound_email ---------------------------------------------------
@@ -290,6 +295,117 @@ export function registerInboundReadTools(server: McpServer, db: Db, auth: AuthCo
                 ? { body_text: r.bodyText, body_html: r.bodyHtml }
                 : {}),
             })),
+          }),
+        ],
+      };
+    }
+  );
+
+  // --- get_workflow_instance (OPE-501) -------------------------------------
+  server.tool(
+    "get_workflow_instance",
+    "Open a Workflow run by its workflow_instance_id (or by inbound_email_id) — the identifier that was previously surfaced everywhere and accepted by nothing. Returns the live instance status from the Workflows binding PLUS the per-step record: which steps ran, which were SKIPPED and why, and the source list the pipeline fanned out over. Use this to tell 'the step ran and produced nothing' apart from 'the step never ran' — different defects with different fixes. Read-only. Admin only.",
+    {
+      workflow_instance_id: z.string().optional(),
+      inbound_email_id: z
+        .string()
+        .optional()
+        .describe("Resolve the run from the email that caused it."),
+    },
+    async (params) => {
+      let instanceId = params.workflow_instance_id ?? null;
+      let emailId = params.inbound_email_id ?? null;
+
+      if (!instanceId && !emailId) {
+        return {
+          content: [jsonContent({ error: "workflow_instance_id_or_inbound_email_id_required" })],
+          isError: true,
+        };
+      }
+
+      // Resolve either direction (item 3).
+      if (!instanceId && emailId) {
+        const [row] = await db
+          .select({ wf: inboundEmails.workflowInstanceId })
+          .from(inboundEmails)
+          .where(eq(inboundEmails.id, emailId))
+          .limit(1);
+        instanceId = row?.wf ?? null;
+        if (!instanceId) {
+          return {
+            content: [
+              jsonContent({
+                error: "no_workflow_instance_for_email",
+                inbound_email_id: emailId,
+                detail:
+                  "The email row carries no workflow_instance_id — it may predate the workflow, or never have been routed.",
+              }),
+            ],
+            isError: true,
+          };
+        }
+      }
+
+      const steps = await db
+        .select()
+        .from(workflowRunSteps)
+        .where(eq(workflowRunSteps.instanceId, instanceId as string))
+        .orderBy(workflowRunSteps.recordedAt);
+
+      if (!emailId) emailId = steps[0]?.inboundEmailId ?? null;
+
+      // Live instance state from the binding. This is INSTANCE-level only —
+      // Cloudflare's WorkflowInstance.status() returns { status, error?, output? }
+      // and never per-step history, which is exactly why the steps above are
+      // persisted rather than read back.
+      let liveStatus: unknown = null;
+      let liveStatusError: string | null = null;
+      if (env?.INBOUND_EMAIL) {
+        try {
+          const inst = await env.INBOUND_EMAIL.get(instanceId as string);
+          liveStatus = await inst.status();
+        } catch (err) {
+          liveStatusError = err instanceof Error ? err.message : String(err);
+        }
+      } else {
+        liveStatusError = "INBOUND_EMAIL binding not available in this context";
+      }
+
+      const resulting = emailId
+        ? await db
+            .select({ id: events.id, name: events.name, slug: events.slug, status: events.status })
+            .from(events)
+            .where(
+              eq(
+                events.id,
+                sql`(SELECT resulting_event_id FROM inbound_emails WHERE id = ${emailId})`
+              )
+            )
+            .limit(1)
+        : [];
+
+      return {
+        content: [
+          jsonContent({
+            workflow_instance_id: instanceId,
+            inbound_email_id: emailId,
+            live_status: liveStatus,
+            live_status_error: liveStatusError,
+            live_status_note:
+              "Instance-level only. Cloudflare's WorkflowInstance.status() returns { status, error?, output? } and carries no per-step history; `steps` below is the persisted record.",
+            step_count: steps.length,
+            steps: steps.map((s2) => ({
+              step: s2.stepName,
+              status: s2.status,
+              detail: s2.detail ? safeJson<unknown>(s2.detail, s2.detail) : null,
+              duration_ms: s2.durationMs,
+              recorded_at: s2.recordedAt?.toISOString() ?? null,
+            })),
+            steps_note:
+              steps.length === 0
+                ? "No step records. Runs before OPE-501 shipped are opaque — this is not backfillable."
+                : undefined,
+            resulting_event: resulting[0] ?? null,
           }),
         ],
       };

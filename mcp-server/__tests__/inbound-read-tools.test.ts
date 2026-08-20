@@ -40,10 +40,15 @@ describe("inbound read tools (OPE-499)", () => {
     tools = c.tools;
   });
 
-  it("registers all three read tools and no writers", () => {
+  it("registers only READ tools — no writer may join this registrar", () => {
+    // Pinned as an exact list on purpose: this registrar is the inbound lane's
+    // read surface, and the property worth guarding is that adding a WRITER here
+    // fails the build rather than quietly shipping a mutation behind a name that
+    // reads like a query. OPE-501 added get_workflow_instance, also read-only.
     expect([...tools.keys()].sort()).toEqual([
       "get_inbound_email",
       "get_sent_emails",
+      "get_workflow_instance",
       "list_inbound_emails",
     ]);
   });
