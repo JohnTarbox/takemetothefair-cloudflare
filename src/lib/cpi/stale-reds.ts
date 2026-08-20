@@ -20,6 +20,14 @@ export interface StaleRed {
   href: string;
   firstDetectedAt: string;
   hoursInRed: number;
+  /**
+   * OPE-308 — this red belongs in the digest BODY but must not, on its own,
+   * trigger a send. Set only by `selectStaleFaultReds`: a render-fault refKey
+   * is `route#message` where the message is the browser's own error text, so
+   * its identity changes when the error text changes. Membership therefore
+   * churns without anything on our side moving. See `staleRedFingerprint`.
+   */
+  volatileSignature?: boolean;
 }
 
 /**
@@ -115,6 +123,8 @@ export function selectStaleFaultReds(
         refKey: row.signature,
         // Deep-link to the OPE-83 tile anchor on the analytics overview.
         href: "/admin/analytics#render-fault-health",
+        // Excluded from the push fingerprint — see the field's doc comment.
+        volatileSignature: true,
         firstDetectedAt: new Date(row.firstSeen).toISOString(),
         hoursInRed,
       });
@@ -156,9 +166,15 @@ export function formatStaleRedDigest(
   const intro =
     `${n} action-queue signal${n === 1 ? " has" : "s have"} been red past the escalation ` +
     `threshold (P0 > ${STALE_THRESHOLD_HOURS.P0}h, P1 > ${STALE_THRESHOLD_HOURS.P1}h).`;
+  // OPE-308 — this used to say "daily … keeps nagging", which stopped being
+  // true once the scan moved to pushing on change. Describe what actually
+  // happens, so an operator can read the arrival of this mail as a signal in
+  // itself rather than as background noise.
   const outro =
-    "This is the daily CPI stale-red digest. It re-lists whatever is currently " +
-    "stale-red and keeps nagging until each signal is fixed.";
+    "You are getting this because the set of stale-red signals CHANGED. A signal " +
+    "that is simply still red does not re-send — Monday's inventory covers whatever " +
+    "is still standing. Render faults are listed here but do not trigger a send on " +
+    "their own, because their signatures rotate.";
 
   const textLines = reds.map(
     (r) =>
@@ -192,9 +208,25 @@ export function formatStaleRedDigest(
  * clock always advances), which reintroduces the daily mail through the back
  * door while looking like change detection. Sorting means the digest's own
  * ordering cannot fake a change either.
+ *
+ * ...and `volatileSignature` reds are excluded, because the first cut of this
+ * still mailed near-daily. Measured 2026-08-20 over the send ledger: the digest
+ * count oscillated 11/12/13/14 day to day while the eight non-fault reds had
+ * not moved since 08-16. Every swing was render-fault signatures rotating —
+ * their refKey embeds the browser's error text, so a reworded message is a new
+ * member. Eight standing problems were invisible behind that churn.
+ *
+ * They stay in the digest body (`formatStaleRedDigest` gets the full set); they
+ * just no longer decide WHEN it is sent. The cost is accepted deliberately: a
+ * brand-new client-side error waits for the Monday inventory rather than
+ * paging same-day. That was the explicit ruling on OPE-308 — a JS error on
+ * /login is not the same class of news as a frozen queue.
  */
-export function staleRedFingerprint(reds: Pick<StaleRed, "refKey">[]): string {
+export function staleRedFingerprint(
+  reds: Pick<StaleRed, "refKey" | "volatileSignature">[]
+): string {
   return reds
+    .filter((r) => !r.volatileSignature)
     .map((r) => r.refKey)
     .sort()
     .join("|");
