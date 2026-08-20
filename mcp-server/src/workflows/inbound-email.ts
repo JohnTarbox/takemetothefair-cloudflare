@@ -119,6 +119,7 @@ import { detectRosterEntries, type RosterEntry } from "../email-handlers/roster-
 import { isShareRedirectHost, resolveShareRedirect } from "../email-handlers/share-redirect.js";
 import { toMarkdownWithRetry } from "../email-handlers/ocr-retry.js";
 import { detectRosterTells, hasRosterSuspicion } from "../email-handlers/roster-tells.js";
+import { detectForwardedMachineNotification } from "../email-handlers/forwarded-machine-notification.js";
 import { recordWorkflowStep } from "../workflow-run-log.js";
 import { buildReply } from "../email-reply-builder.js";
 import { issueToken } from "../feedback-tokens.js";
@@ -704,6 +705,11 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
                 messageId: inboundEmails.messageId,
                 // OPE-453 — needed by the reply-kind invariant guard below.
                 parsedUrl: inboundEmails.parsedUrl,
+                // OPE-456 — needed by the forwarded-machine-notification guard.
+                // The FULL body, not bodyTextExcerpt: the forwarded `From:`
+                // header often sits past the 500-char preview, so the excerpt
+                // would silently never match (the same trap OPE-459 hit).
+                bodyText: inboundEmails.bodyText,
               })
               .from(inboundEmails)
               .where(eq(inboundEmails.id, messageRowId))
@@ -848,6 +854,36 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             // Downgrade, don't drop: `unfetchable-url` is true whenever a URL is
             // on the row, so the sender still gets an accurate reply rather than
             // silence. Sending nothing would trade a wrong answer for no answer.
+            // OPE-456 scope 1b — never auto-answer a machine-generated
+            // notification that arrived inside a forward.
+            //
+            // `isNonActionableSender` runs at the door on the ENVELOPE sender.
+            // A human forwarding a robot's mail defeats it: the envelope is the
+            // human. That is how Google Search Console was told it forgot to
+            // include a link to its event.
+            //
+            // Checked HERE, at the same last-moment position as the invariant
+            // below, because the message must still be PROCESSED — this
+            // specimen's milestone ingested correctly, and dropping it at the
+            // door would trade a wrong reply for a lost signal. Only the reply
+            // is suppressed. The original sender is a no-reply robot and the
+            // forwarder already knows what they sent, so silence is right.
+            const machineFwd = detectForwardedMachineNotification(rows[0].bodyText);
+            if (machineFwd.isMachine) {
+              await logError(this.env.DB, {
+                level: "info",
+                source: SOURCE,
+                message: `suppressed auto-reply: forwarded machine notification from ${machineFwd.originalSender}`,
+                sessionId,
+                context: {
+                  messageRowId,
+                  replyKind,
+                  originalSender: machineFwd.originalSender,
+                },
+              });
+              return;
+            }
+
             if (violatesNoUrlInvariant(replyKind, rows[0].parsedUrl)) {
               await logError(this.env.DB, {
                 level: "error",
