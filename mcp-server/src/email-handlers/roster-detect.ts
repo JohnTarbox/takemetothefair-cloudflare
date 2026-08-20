@@ -38,10 +38,86 @@ function cleanName(raw: string): string {
   return s;
 }
 
+/**
+ * OPE-405 rework — generic form-field labels, which are NOT exhibitors.
+ *
+ * A blank vendor APPLICATION form OCRs into exactly the shape a roster has: a
+ * roster-keyword heading followed by a bulleted list. The list is the fields
+ * you are asked to fill in. Prod `4c536723` staged "Name", "Phone Number",
+ * "Mailing Address", "Email Address", "Business Name" as its exhibitor roster.
+ */
+const FORM_FIELD_LABELS = new Set([
+  "name",
+  "full name",
+  "first name",
+  "last name",
+  "business name",
+  "company name",
+  "contact name",
+  "phone",
+  "phone number",
+  "telephone",
+  "cell",
+  "email",
+  "e-mail",
+  "email address",
+  "address",
+  "mailing address",
+  "street address",
+  "city",
+  "state",
+  "zip",
+  "zip code",
+  "website",
+  "signature",
+  "date",
+  "amount",
+  "fee",
+  "total",
+  "product description",
+  "description",
+  "type of work",
+  "booth size",
+  "notes",
+]);
+
 function isPlausibleName(s: string): boolean {
   if (s.length === 0 || s.length > MAX_NAME_LEN) return false;
   if (s.split(/\s+/).length > MAX_NAME_WORDS) return false; // reject prose
   if (!/[A-Za-z0-9]/.test(s)) return false; // must carry a letter/number
+
+  // ── OPE-405 rework — precision gate ──────────────────────────────────────
+  //
+  // Measured in prod 2026-08-20: roster detection had fired THREE times and
+  // produced **zero real exhibitor names**. Every staged roster was junk, and
+  // each one set `flagged_for_review=1`, sending an operator to look at
+  // nothing. That is worse than the silent no-op it was filed as, because it
+  // looks like coverage.
+  //
+  //   34b06089  "Peripheral Rows:", "Top-right:** Stalls 21, 22, 35, 36, and
+  //             31.", "Miscellaneous:"  ← a vision model DESCRIBING a booth map
+  //   4c536723  "Name", "Phone Number", "Email Address", "Business Name"
+  //             ← a blank application FORM
+  //   ac46add3  "Artisan Stalls:"
+  //
+  // The common cause: OCR of an image is a *description*, not a transcription.
+  // It renders structure as `**Label:** value` bullets under a heading, and
+  // `artisans?` in ROSTER_KEYWORD matches "Artisan Stalls:", so the heading
+  // gate passes. Nothing downstream asked whether the bullets were names.
+
+  // A heading or a field label, never an exhibitor: "Peripheral Rows:".
+  if (s.endsWith(":")) return false;
+
+  // Residual markdown emphasis means this line was `**Label:** value` — a
+  // described structure, not a name. cleanName only strips the ENDS.
+  if (s.includes("**")) return false;
+
+  if (FORM_FIELD_LABELS.has(s.toLowerCase())) return false;
+
+  // A sentence, not a name: "Stalls 32, 33, and 34." Gated on word count so a
+  // legitimate "Smith & Sons Inc." (4 words) still passes.
+  if (s.endsWith(".") && s.split(/\s+/).length > 4) return false;
+
   return true;
 }
 
@@ -172,21 +248,46 @@ export function detectRosterNames(body: string | null | undefined): string[] {
       if (hasHeading) {
         const names: string[] = [];
         const seen = new Set<string>();
+        // Counted BEFORE dedup, and it is not the same number as `names.length`.
+        // See the gate below for why the difference matters.
+        let plausibleCount = 0;
         for (let k = i; k < j && names.length < MAX_ROSTER; k++) {
           const m = lines[k].match(BULLET);
           if (!m) continue;
           const name = cleanName(m[1]);
           if (!isPlausibleName(name)) continue;
+          plausibleCount++;
           const key = name.toLowerCase();
           if (seen.has(key)) continue;
           seen.add(key);
           names.push(name);
         }
-        // The MIN_ROSTER gate is on the RUN length (already checked) — that's the
-        // "this is a list under a vendor heading" signal. Return the unique
-        // plausible names it yielded (dedup/prose-filtering may drop it below
-        // MIN_ROSTER; that's fine, the run already qualified it).
-        if (names.length > 0) return names;
+        // OPE-405 rework — the MIN_ROSTER gate now applies to the SURVIVORS,
+        // not just the raw run.
+        //
+        // This deliberately reverses an earlier decision. Gating on run length
+        // alone was defensible while the filter only removed duplicates and
+        // obvious prose: the run itself was the "list under a vendor heading"
+        // signal. It stopped being defensible once the precision gate began
+        // rejecting headings and form-field labels, because a run of four
+        // structural bullets with a single name-shaped token among them would
+        // stage a one-entry "roster" — and every staged roster sets
+        // `flagged_for_review=1`, so the cost lands on an operator.
+        //
+        // The count that matters is PLAUSIBLE entries, not surviving unique
+        // ones, because the two drops mean opposite things:
+        //
+        //   rejected as implausible  → evidence this is NOT a roster (a
+        //                              heading, a form-field label, prose)
+        //   dropped as a duplicate   → still evidence it IS one; the run held
+        //                              three roster-shaped items, two of which
+        //                              named the same vendor
+        //
+        // Gating on `names.length` would have killed a legitimate three-item
+        // list containing one case-duplicate — which is exactly what the
+        // existing "dedupes case-insensitively" test covers, and why that test
+        // is load-bearing rather than incidental.
+        if (plausibleCount >= MIN_ROSTER) return names;
       }
     }
     i = j;

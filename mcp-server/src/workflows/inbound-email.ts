@@ -118,6 +118,7 @@ import { computeFillEmptyProposals } from "../email-handlers/enrich-proposal.js"
 import { detectRosterEntries, type RosterEntry } from "../email-handlers/roster-detect.js";
 import { isShareRedirectHost, resolveShareRedirect } from "../email-handlers/share-redirect.js";
 import { toMarkdownWithRetry } from "../email-handlers/ocr-retry.js";
+import { detectRosterTells, hasRosterSuspicion } from "../email-handlers/roster-tells.js";
 import { recordWorkflowStep } from "../workflow-run-log.js";
 import { buildReply } from "../email-reply-builder.js";
 import { issueToken } from "../feedback-tokens.js";
@@ -1275,7 +1276,33 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             },
           });
 
-          if (!found) return;
+          // OPE-405 item 2 — no roster captured, but did the PROSE say there
+          // was one? `34b06089` was scored `new_event` @0.90 carrying three
+          // tells at once and nothing recorded that they fired, so the miss was
+          // invisible. Flag + log rather than reroute: this makes the gap
+          // countable, which is the precondition for changing routing.
+          if (!found) {
+            const tells = detectRosterTells(subject, row?.bodyText ?? "", rowSnapshot.fromAddress);
+            if (hasRosterSuspicion(tells)) {
+              await logError(db, {
+                level: "warn",
+                source: "mcp:workflow:roster-capture",
+                message: `roster SUSPECTED but none captured: ${tells.matched.join(", ")}`,
+                context: {
+                  messageRowId,
+                  tells: tells.matched,
+                  addressCount: tells.addressCount,
+                  attachmentCount: rowSnapshot.attachmentCount,
+                  ocrSources: attachmentSources.length,
+                },
+              });
+              await db
+                .update(inboundEmails)
+                .set({ flaggedForReview: 1 })
+                .where(eq(inboundEmails.id, messageRowId));
+            }
+            return;
+          }
 
           await db.insert(adminActions).values({
             action: "roster.detected",
