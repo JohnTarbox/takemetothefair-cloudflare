@@ -10,6 +10,7 @@
  * un-auditable, so the tool warns (soft, mirroring PARTIAL-without-offset).
  */
 import { describe, it, expect, beforeEach } from "vitest";
+import { eq } from "drizzle-orm";
 import { CapturingMcpServer, createTestDb, type TestDb } from "./setup-db.js";
 import { registerAdminTools } from "../src/tools/admin.js";
 import { registerVendorRosterTools } from "../src/tools/admin-vendor-roster.js";
@@ -282,5 +283,80 @@ describe("set_vendor_roster_status — provenance warning (OPE-264)", () => {
       source_url: "https://example.com/exhibitors",
     });
     expect(out.warnings.some((w) => w.includes("cannot be audited"))).toBe(false);
+  });
+});
+
+/**
+ * OPE-498 — NEEDS_RENDERED_FETCH must be a DIFFERENT bucket from PARTIAL.
+ *
+ * All five PARTIAL rows had vendor_roster_offset == vendor_count: the offset was
+ * never a stopping point, it was the whole payload a server-side fetch receives.
+ * Because a PARTIAL with a source_url and an offset is the cheapest-looking item
+ * in the drain, every pass reached for them, re-fetched the identical first page,
+ * and wrote the same offset back.
+ */
+describe("NEEDS_RENDERED_FETCH is not PARTIAL (OPE-498)", () => {
+  async function callJson(name: string, args: Record<string, unknown>) {
+    const r = (await server.invoke(name, args)) as { content: Array<{ text: string }> };
+    return JSON.parse(r.content[0].text) as Record<string, unknown>;
+  }
+
+  beforeEach(() => {
+    db.insert(events)
+      .values({
+        id: "ev-rendered",
+        name: "Guilford Craft Expo 2026",
+        slug: unsafeSlug("guilford-craft-expo-2026"),
+        promoterId: "p1",
+        status: "APPROVED",
+        startDate: new Date("2026-07-01T00:00:00Z"),
+        endDate: new Date("2026-07-02T00:00:00Z"),
+        vendorRosterStatus: "NEEDS_RENDERED_FETCH",
+        vendorRosterOffset: 25,
+        vendorRosterSourceUrl: "https://www.artrider.com/guilford-craft-expo-2026",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as never)
+      .run();
+  });
+
+  it("does NOT come back from a PARTIAL filter — the drain stops seeing it as resumable work", async () => {
+    const out = await callJson("list_all_events", { vendor_roster_status: ["PARTIAL"] });
+    const ids = (out.events as Array<{ id: string }>).map((e) => e.id);
+    expect(ids).not.toContain("ev-rendered");
+  });
+
+  it("is selectable in its own right, so the capability gap stays countable", async () => {
+    const out = await callJson("list_all_events", {
+      vendor_roster_status: ["NEEDS_RENDERED_FETCH"],
+    });
+    const ids = (out.events as Array<{ id: string }>).map((e) => e.id);
+    expect(ids).toContain("ev-rendered");
+  });
+
+  it("the setter accepts it and warns when the verdict has no source_url", async () => {
+    // The verdict is about a SPECIFIC url — "this page does not serve its
+    // roster" — so without the url it cannot be re-checked when a rendering
+    // fetcher exists.
+    const out = await callJson("set_vendor_roster_status", {
+      event_id: "ev-rendered",
+      status: "NEEDS_RENDERED_FETCH",
+    });
+    expect(JSON.stringify(out)).toMatch(/cannot be audited or re-verified/i);
+  });
+
+  it("preserves the offset when the status is set — it is the only record of where the run reached", async () => {
+    await callJson("set_vendor_roster_status", {
+      event_id: "ev-rendered",
+      status: "NEEDS_RENDERED_FETCH",
+      source_url: "https://www.artrider.com/guilford-craft-expo-2026",
+    });
+    const [row] = db
+      .select({ offset: events.vendorRosterOffset, status: events.vendorRosterStatus })
+      .from(events)
+      .where(eq(events.id, "ev-rendered"))
+      .all();
+    expect(row.status).toBe("NEEDS_RENDERED_FETCH");
+    expect(row.offset).toBe(25);
   });
 });

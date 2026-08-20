@@ -294,6 +294,22 @@ export const VENDOR_ROSTER_STATUS_VALUES = [
   "HAS_ROSTER",
   "NO_PUBLIC_LIST",
   "PARTIAL",
+  // OPE-498 — "a public list exists, but not in the served HTML."
+  //
+  // Distinct from PARTIAL, which means "a run stopped and can resume at
+  // vendor_roster_offset", and distinct from NO_PUBLIC_LIST, which means the
+  // roster is not published at all. Measured 2026-08-20: ALL FIVE PARTIAL rows
+  // had vendor_roster_offset == vendor_count, because the offset was not a
+  // stopping point — it was the entire payload a server-side fetch receives.
+  // Guilford proves it: the Artrider page serves exactly 25 artists in its HTML
+  // while its own copy says the show has 175.
+  //
+  // The distinction is load-bearing because a PARTIAL with a source_url and an
+  // offset is the CHEAPEST-LOOKING item in the drain — no search needed, just
+  // resume — so every pass reached for these five, re-fetched the identical
+  // first page, and wrote the same offset back. A rail that cannot express
+  // "unreachable by this method" mis-sells a capability gap as queue work.
+  "NEEDS_RENDERED_FETCH",
 ] as const;
 export type VendorRosterStatus = (typeof VENDOR_ROSTER_STATUS_VALUES)[number];
 

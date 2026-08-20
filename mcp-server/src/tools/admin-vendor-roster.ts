@@ -17,6 +17,12 @@ import type { AuthContext } from "../auth.js";
  *   NO_PUBLIC_LIST — researched dead-end (the sticky state that stops the
  *                    Sisyphean re-research and makes the system converge)
  *   PARTIAL        — incomplete; pass `offset` so the next run resumes there
+ *   NEEDS_RENDERED_FETCH — OPE-498: a PUBLIC roster that is not in the served
+ *                    HTML (client-rendered gallery, SPA, interactive floorplan).
+ *                    Not NO_PUBLIC_LIST (the list exists) and not PARTIAL
+ *                    (there is nothing to resume — the "offset" was the whole
+ *                    payload). Keeps the drain from re-fetching the same first
+ *                    page forever.
  *   NEEDS_RESEARCH — manual re-enqueue (rarely needed; normally the sweep sets it)
  *
  * Read the current state via get_event_details (`vendorRoster` block).
@@ -29,7 +35,10 @@ export function registerVendorRosterTools(server: McpServer, db: Db, auth: AuthC
     [
       "Record the vendor-roster research state for an event (OPE-13 rails).",
       "Pass either event_id or event_slug (event_id wins). `status` is one of",
-      "NEEDS_RESEARCH | HAS_ROSTER | NO_PUBLIC_LIST | PARTIAL. For a terminal",
+      "NEEDS_RESEARCH | HAS_ROSTER | NO_PUBLIC_LIST | PARTIAL |",
+      "NEEDS_RENDERED_FETCH (public roster not present in the served HTML —",
+      "use this rather than PARTIAL when the fetched page IS the whole payload).",
+      "For a terminal",
       "status (everything except NEEDS_RESEARCH) vendor_roster_checked_at is",
       "stamped now. Pass source_url for the exhibitor page used, and offset",
       "(resume point) when status=PARTIAL. Writes an admin_actions audit row.",
@@ -40,7 +49,7 @@ export function registerVendorRosterTools(server: McpServer, db: Db, auth: AuthC
       event_slug: z.string().min(1).optional().describe("Event slug."),
       status: z
         .enum(VENDOR_ROSTER_STATUS_VALUES)
-        .describe("NEEDS_RESEARCH | HAS_ROSTER | NO_PUBLIC_LIST | PARTIAL"),
+        .describe("NEEDS_RESEARCH | HAS_ROSTER | NO_PUBLIC_LIST | PARTIAL | NEEDS_RENDERED_FETCH"),
       source_url: z
         .string()
         .url()
@@ -71,8 +80,13 @@ export function registerVendorRosterTools(server: McpServer, db: Db, auth: AuthC
       // never re-verify where a HAS_ROSTER/NO_PUBLIC_LIST verdict came from. Warn
       // (don't block: a roster may legitimately come from a non-URL source such
       // as an attachment), mirroring the PARTIAL-without-offset soft check above.
+      // OPE-498 — NEEDS_RENDERED_FETCH joins the list: it is a verdict about a
+      // SPECIFIC url ("this page does not serve its roster"), so without the url
+      // the verdict cannot be re-checked when a rendering fetcher exists.
       if (
-        (params.status === "HAS_ROSTER" || params.status === "NO_PUBLIC_LIST") &&
+        (params.status === "HAS_ROSTER" ||
+          params.status === "NO_PUBLIC_LIST" ||
+          params.status === "NEEDS_RENDERED_FETCH") &&
         !params.source_url
       ) {
         warnings.push(
@@ -103,16 +117,34 @@ export function registerVendorRosterTools(server: McpServer, db: Db, auth: AuthC
       // when provided and cleared on NEEDS_RESEARCH re-enqueue (a fresh attempt).
       const now = new Date();
       const isTerminal = params.status !== "NEEDS_RESEARCH";
-      await db
-        .update(events)
-        .set({
-          vendorRosterStatus: params.status,
-          vendorRosterCheckedAt: isTerminal ? now : null,
-          vendorRosterSourceUrl: isTerminal ? (params.source_url ?? null) : null,
-          vendorRosterOffset: params.status === "PARTIAL" ? (params.offset ?? null) : null,
-          updatedAt: now,
-        })
-        .where(eq(events.id, event.id));
+
+      // OPE-498 — the offset means different things per status, so it is
+      // cleared, set, or LEFT ALONE rather than uniformly overwritten.
+      //
+      //  PARTIAL              — a resume point. Set from params (unchanged).
+      //  NEEDS_RENDERED_FETCH — NOT a resume point: it records how much a
+      //                         server-side fetch could see, and offset ==
+      //                         vendor_count is the *evidence* the page is
+      //                         client-rendered. Clearing it would destroy the
+      //                         only proof of the diagnosis, so the stored value
+      //                         is preserved when none is supplied.
+      //  everything else      — no resume point applies; cleared as before.
+      const setValues: Record<string, unknown> = {
+        vendorRosterStatus: params.status,
+        vendorRosterCheckedAt: isTerminal ? now : null,
+        vendorRosterSourceUrl: isTerminal ? (params.source_url ?? null) : null,
+        updatedAt: now,
+      };
+      if (params.status === "PARTIAL") {
+        setValues.vendorRosterOffset = params.offset ?? null;
+      } else if (params.status === "NEEDS_RENDERED_FETCH") {
+        // Only overwrite when the caller actually supplied one.
+        if (params.offset !== undefined) setValues.vendorRosterOffset = params.offset;
+      } else {
+        setValues.vendorRosterOffset = null;
+      }
+
+      await db.update(events).set(setValues).where(eq(events.id, event.id));
 
       await db.insert(adminActions).values({
         action: "event.vendor_roster_status",

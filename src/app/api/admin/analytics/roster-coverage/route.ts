@@ -52,12 +52,21 @@ export async function GET(request: NextRequest) {
     const needsResearch = byStatus("NEEDS_RESEARCH");
     const noPublicList = byStatus("NO_PUBLIC_LIST");
     const partial = byStatus("PARTIAL");
+    // OPE-498 — a public roster we cannot reach with a server-side fetch.
+    const needsRenderedFetch = byStatus("NEEDS_RENDERED_FETCH");
     const unevaluated = byStatus(null); // not yet swept
-    const total = hasRoster + needsResearch + noPublicList + partial + unevaluated;
+    const total =
+      hasRoster + needsResearch + noPublicList + partial + needsRenderedFetch + unevaluated;
 
-    // researchable = total minus the un-backfillable tail (NO_PUBLIC_LIST):
-    // events that genuinely COULD carry a roster.
-    const researchable = total - noPublicList;
+    // researchable = total minus the tails we cannot backfill with the fetch we
+    // have. NO_PUBLIC_LIST has no list at all; NEEDS_RENDERED_FETCH has one we
+    // cannot see without a rendering fetcher.
+    //
+    // ⚠️ The two are NOT the same tail and must not be merged: NO_PUBLIC_LIST is
+    // permanent, NEEDS_RENDERED_FETCH becomes researchable the day a rendered
+    // fetch exists. Collapsing them would hide the size of that opportunity —
+    // Guilford alone is 150 uncaptured makers on a 175-exhibitor show.
+    const researchable = total - noPublicList - needsRenderedFetch;
 
     // Global queue counts (all events, not just producer-class) — the actual
     // worklist the analyst sweep drains + the un-backfillable tail.
@@ -67,7 +76,12 @@ export async function GET(request: NextRequest) {
       .where(
         and(
           isNull(events.mergedInto),
-          inArray(events.vendorRosterStatus, ["NEEDS_RESEARCH", "NO_PUBLIC_LIST", "PARTIAL"])
+          inArray(events.vendorRosterStatus, [
+            "NEEDS_RESEARCH",
+            "NO_PUBLIC_LIST",
+            "PARTIAL",
+            "NEEDS_RENDERED_FETCH",
+          ])
         )
       )
       .groupBy(events.vendorRosterStatus);
@@ -117,8 +131,12 @@ export async function GET(request: NextRequest) {
       },
       queue: {
         needsResearchTotal: queueOf("NEEDS_RESEARCH"),
+        // OPE-498 — `partialTotal` now means what it says: rows a run can
+        // actually resume. Before this it reported 5 rows that were as complete
+        // as a server-side fetch could make them.
         partialTotal: queueOf("PARTIAL"),
         noPublicListTotal: queueOf("NO_PUBLIC_LIST"),
+        needsRenderedFetchTotal: queueOf("NEEDS_RENDERED_FETCH"),
       },
       linksAddedTrend,
     });

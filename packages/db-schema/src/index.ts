@@ -643,7 +643,11 @@ export const events = sqliteTable(
     // exactly where it left off (e.g. the Foxboro 174-roster finished over two
     // passes).
     vendorRosterStatus: text("vendor_roster_status", {
-      enum: ["NEEDS_RESEARCH", "HAS_ROSTER", "NO_PUBLIC_LIST", "PARTIAL"],
+      // OPE-498 — NEEDS_RENDERED_FETCH: a public roster exists but is not in the
+      // served HTML (client-rendered gallery, SPA, interactive floorplan). NOT
+      // NO_PUBLIC_LIST (the list IS public) and NOT PARTIAL (there is nothing to
+      // resume — the offset was the whole payload).
+      enum: ["NEEDS_RESEARCH", "HAS_ROSTER", "NO_PUBLIC_LIST", "PARTIAL", "NEEDS_RENDERED_FETCH"],
     }),
     vendorRosterCheckedAt: integer("vendor_roster_checked_at", { mode: "timestamp" }),
     vendorRosterSourceUrl: text("vendor_roster_source_url"),
