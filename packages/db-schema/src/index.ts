@@ -251,6 +251,19 @@ export const promoters = sqliteTable("promoters", {
   }),
   // JSON snapshot of which target fields are filled: {hero,logo,description,socials,contact}.
   enrichmentCoverage: text("enrichment_coverage"),
+  /**
+   * When a render last WROTE a field to this row. NOT "when did we last look".
+   *
+   * OPE-496 — these two columns are one word apart and mean different things,
+   * and the drain lane keyed its recency filter on this one. It is NULL for 91%
+   * of promoters (including 51 of 56 ENRICHED) precisely because most renders
+   * find nothing to write, so the filter excluded almost nothing and the same
+   * top-25 were re-rendered daily — ~2 promoters/day of real progress against a
+   * 485-deep queue, with every call still returning success.
+   *
+   * A recency filter wants `enrichmentAttemptedAt` below. Use
+   * `list_promoter_enrichment_queue`, which keys on the right one.
+   */
   lastEnrichedAt: integer("last_enriched_at", { mode: "timestamp" }),
   // Why a NEEDS_ENRICHMENT promoter can't be drained; set alongside BLOCKED.
   enrichmentBlockedReason: text("enrichment_blocked_reason", {
@@ -258,6 +271,14 @@ export const promoters = sqliteTable("promoters", {
   }),
   // OPE-36 (drizzle/0141) — last time the pre-extraction job tried this promoter
   // (success OR fail). The nightly selector prefers never-attempted, then stale.
+  /**
+   * When a render last LOOKED at this row, whether or not it wrote anything.
+   *
+   * This is the column a recency / "don't re-research yet" filter wants — it is
+   * populated 485/485 across the NEEDS_ENRICHMENT queue and 28/28 for BLOCKED.
+   * See the OPE-496 note on `lastEnrichedAt` for what happens when the two are
+   * confused.
+   */
   enrichmentAttemptedAt: integer("enrichment_attempted_at", { mode: "timestamp" }),
   // OPE-63 (drizzle/0144, 2026-07-02) — promoter claim state, parity with the
   // vendors.claimed/claimedAt/claimedBy trio (see vendors table). `claimed` =
@@ -786,6 +807,14 @@ export const vendors = sqliteTable("vendors", {
   // a cached 0-100 value; recomputed via computeVendorCompleteness on every
   // insert/update and gates inclusion in /sitemap.xml at >= 40.
   enrichmentSource: text("enrichment_source"),
+  /**
+   * When a render last LOOKED at this row, whether or not it wrote anything.
+   *
+   * This is the column a recency / "don't re-research yet" filter wants — it is
+   * populated 485/485 across the NEEDS_ENRICHMENT queue and 28/28 for BLOCKED.
+   * See the OPE-496 note on `lastEnrichedAt` for what happens when the two are
+   * confused.
+   */
   enrichmentAttemptedAt: integer("enrichment_attempted_at", { mode: "timestamp" }),
   domainHijacked: integer("domain_hijacked", { mode: "boolean" }).notNull().default(false),
   completenessScore: integer("completeness_score").notNull().default(0),
@@ -1176,6 +1205,14 @@ export const performers = sqliteTable("performers", {
   enhancedProfileExpiresAt: integer("enhanced_profile_expires_at", { mode: "timestamp" }),
   // Enrichment + quality tracking — mirrors vendors §10.2.
   enrichmentSource: text("enrichment_source"),
+  /**
+   * When a render last LOOKED at this row, whether or not it wrote anything.
+   *
+   * This is the column a recency / "don't re-research yet" filter wants — it is
+   * populated 485/485 across the NEEDS_ENRICHMENT queue and 28/28 for BLOCKED.
+   * See the OPE-496 note on `lastEnrichedAt` for what happens when the two are
+   * confused.
+   */
   enrichmentAttemptedAt: integer("enrichment_attempted_at", { mode: "timestamp" }),
   domainHijacked: integer("domain_hijacked", { mode: "boolean" }).notNull().default(false),
   completenessScore: integer("completeness_score").notNull().default(0),
@@ -1185,6 +1222,19 @@ export const performers = sqliteTable("performers", {
     enum: ["NEEDS_ENRICHMENT", "IN_PROGRESS", "ENRICHED", "NO_SOURCE", "BLOCKED"],
   }),
   enrichmentCoverage: text("enrichment_coverage"), // JSON {image,description,socials,contact}
+  /**
+   * When a render last WROTE a field to this row. NOT "when did we last look".
+   *
+   * OPE-496 — these two columns are one word apart and mean different things,
+   * and the drain lane keyed its recency filter on this one. It is NULL for 91%
+   * of promoters (including 51 of 56 ENRICHED) precisely because most renders
+   * find nothing to write, so the filter excluded almost nothing and the same
+   * top-25 were re-rendered daily — ~2 promoters/day of real progress against a
+   * 485-deep queue, with every call still returning success.
+   *
+   * A recency filter wants `enrichmentAttemptedAt` below. Use
+   * `list_promoter_enrichment_queue`, which keys on the right one.
+   */
   lastEnrichedAt: integer("last_enriched_at", { mode: "timestamp" }),
   enrichmentBlockedReason: text("enrichment_blocked_reason", {
     enum: ["js_gated", "host_gated", "parked", "hijacked", "no_image", "stale", "rate_limited"],
