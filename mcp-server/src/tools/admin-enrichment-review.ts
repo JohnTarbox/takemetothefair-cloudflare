@@ -32,6 +32,7 @@ import {
   triggerIndexNow,
 } from "../helpers.js";
 import {
+  decodeUrlAndEntities,
   isMalformedEmail,
   isPlaceholderPhone,
   isPlatformPlaceholderHandle,
@@ -285,6 +286,14 @@ export function registerEnrichmentReviewTools(
               reason: "malformed_email",
               value: c.proposedValue,
             });
+            continue;
+          }
+          // OPE-504 — entity-obfuscated addresses that were VALIDATED decoded
+          // and then STORED raw. The address itself is good; only the encoding
+          // is wrong, so repair rather than reject.
+          const decoded = decodeUrlAndEntities(c.proposedValue).trim();
+          if (decoded !== c.proposedValue && !isMalformedEmail(decoded)) {
+            rewritten.push({ id: c.id, before: c.proposedValue, after: decoded });
           }
           continue;
         }
@@ -382,7 +391,7 @@ export function registerEnrichmentReviewTools(
             truncated: pending.length >= limit,
             would_reject: rejected.length,
             would_flag_placeholder_phone: flagged.length,
-            would_strip_social_links: rewritten.length,
+            would_rewrite_value: rewritten.length,
             reject_reasons: byReason,
             samples: {
               rejected: rejected.slice(0, 15),
