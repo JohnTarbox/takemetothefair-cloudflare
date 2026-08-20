@@ -56,6 +56,27 @@ describe("email format validation (OPE-504)", () => {
   });
 });
 
+describe("emails are decoded at STORAGE, not only at validation (OPE-504)", () => {
+  it("stores the decoded address from an entity-obfuscated mailto", async () => {
+    const { extractVendorContact } = await import("../src/enrichment/extract.js");
+    const html =
+      '<a href="mailto:c&#111;&#110;&#116;&#97;ct&#64;caleflakecampground.com">Email us</a>';
+    const out = extractVendorContact(html, "https://caleflakecampground.com/");
+    expect(out.email?.value).toBe("contact@caleflakecampground.com");
+  });
+
+  it("stores the decoded address from entity-obfuscated JSON-LD", async () => {
+    const { extractVendorContact } = await import("../src/enrichment/extract.js");
+    const html = `<script type="application/ld+json">${JSON.stringify({
+      "@type": "LocalBusiness",
+      name: "Calef Lake",
+      email: "c&#111;&#110;&#116;&#97;ct&#64;caleflakecampground.com",
+    })}</script>`;
+    const out = extractVendorContact(html, "https://caleflakecampground.com/");
+    expect(out.email?.value).toBe("contact@caleflakecampground.com");
+  });
+});
+
 describe("dummy-phone patterns (OPE-504)", () => {
   it("rejects (800) 800-0000 — prod candidate 7055, staged clean at 0.90", () => {
     expect(isPlaceholderPhone("(800) 800-0000")).toBe(true);
@@ -237,7 +258,7 @@ describe("revalidate_enrichment_candidates (OPE-504)", () => {
       }),
     });
     const res = await call({ dry_run: false });
-    expect(res.would_strip_social_links).toBe(1);
+    expect(res.would_rewrite_value).toBe(1);
     const after = db
       .select({ v: vendorEnrichmentCandidates.proposedValue })
       .from(vendorEnrichmentCandidates)
@@ -260,6 +281,24 @@ describe("revalidate_enrichment_candidates (OPE-504)", () => {
     const res = await call({ dry_run: false });
     expect(res.reject_reasons.all_social_links_platform_placeholder).toBe(1);
     expect(decisionOf(id)).toBe("rejected");
+  });
+
+  it("REPAIRS an entity-obfuscated email rather than rejecting it — 8 prod rows", async () => {
+    // `c&#111;&#110;tact&#64;caleflakecampground.com` validated fine (the
+    // guards decode internally) and was then stored as the raw entity soup at
+    // confidence 0.8 with no flags. The address is good; the encoding is not.
+    const encoded = "c&#111;&#110;&#116;&#97;ct&#64;caleflakecampground.com";
+    const id = seed({ proposedValue: encoded });
+    const res = await call({ dry_run: false });
+    expect(res.would_rewrite_value).toBe(1);
+    expect(res.would_reject).toBe(0);
+    const after = db
+      .select({ v: vendorEnrichmentCandidates.proposedValue })
+      .from(vendorEnrichmentCandidates)
+      .where(eq(vendorEnrichmentCandidates.id, id))
+      .get()?.v;
+    expect(after).toBe("contact@caleflakecampground.com");
+    expect(decisionOf(id)).toBe("pending");
   });
 
   it("never touches an already-reviewed row", async () => {

@@ -119,7 +119,7 @@ const GENERIC_MAILBOX_LOCALPARTS = new Set([
 /** Decode `%XX` URL-encoding AND numeric/hex HTML entities, then basic named
  *  entities — the layers that made cited tel values dirty
  *  (`%20(603)…`, `&#x2B;1(207)…`). */
-function decodeUrlAndEntities(s: string): string {
+export function decodeUrlAndEntities(s: string): string {
   let out = s;
   if (out.includes("%")) {
     try {
@@ -528,8 +528,19 @@ export function extractVendorContact(html: string, sourceUrl: string): VendorExt
     const tel = normalizePhone(telRaw); // OPE-249 #1
     if (tel && !out.phone) out.phone = { value: tel, method: "jsonld", confidence: 0.9 };
 
+    // OPE-504 — decode BEFORE storing, not only before validating. The
+    // validators call decodeUrlAndEntities internally, so an entity-obfuscated
+    // address (`c&#111;&#110;tact&#64;example.com`, a common anti-scraper
+    // trick) passed every check and was then stored as the raw entity soup.
+    // Eight such rows were pending in prod at confidence 0.8 with no flags —
+    // auto-merge-eligible, and they would have written entity text onto a live
+    // vendor page. Validation and storage must see the same string.
     const emailRaw =
-      typeof node.email === "string" ? node.email.replace(/^mailto:/i, "").trim() : "";
+      typeof node.email === "string"
+        ? decodeUrlAndEntities(node.email)
+            .replace(/^mailto:/i, "")
+            .trim()
+        : "";
     // OPE-249 #4 — never stage placeholder/site-builder residue as a contact.
     if (emailRaw && !out.email && !isPlaceholderEmail(emailRaw) && !isMalformedEmail(emailRaw))
       out.email = { value: emailRaw, method: "jsonld", confidence: 0.9 };
@@ -573,7 +584,10 @@ export function extractVendorContact(html: string, sourceUrl: string): VendorExt
   if (!out.email) {
     const mailto = html.match(/href=["']mailto:([^"'?]+)/i);
     if (mailto) {
-      const email = decodeBasicEntities(mailto[1]).trim();
+      // OPE-504 — was decodeBasicEntities, which only handles a fixed NAMED
+      // list; the prod rows were numeric (`&#111;`). This is the path that
+      // produced them.
+      const email = decodeUrlAndEntities(mailto[1]).trim();
       if (email && !isPlaceholderEmail(email) && !isMalformedEmail(email))
         // OPE-249 #4
         out.email = { value: email, method: "mailto", confidence: 0.8 };
@@ -603,8 +617,9 @@ export function extractVendorContact(html: string, sourceUrl: string): VendorExt
       // affinity (matches the site, or a generic mailbox) it's likely a
       // personal address at a third domain (`kkeating@granitemediagroup.com`).
       // Keep it but drop confidence below the clean bar so it stages flagged.
-      const affinity = emailHasDomainAffinity(m[0], sourceUrl);
-      out.email = { value: m[0], method: "regex", confidence: affinity ? 0.5 : 0.2 };
+      const decoded = decodeUrlAndEntities(m[0]).trim(); // OPE-504 — see above
+      const affinity = emailHasDomainAffinity(decoded, sourceUrl);
+      out.email = { value: decoded, method: "regex", confidence: affinity ? 0.5 : 0.2 };
     }
   }
   if (!out.phone) {
