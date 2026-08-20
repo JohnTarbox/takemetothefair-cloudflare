@@ -438,9 +438,16 @@ export default async function HomePage() {
             {weekEvents.length > 0 && (
               <div>
                 <div className="mb-3 flex items-end justify-between">
-                  <div className="text-xs font-bold uppercase tracking-[0.16em] text-terracotta-fg">
+                  {/* An h2, not a div: the stub cards below carry h3s, so a
+                      non-heading label here left the homepage skipping h1 → h3
+                      with no h2 in between. Same classes, so the rendering is
+                      byte-identical — this is a semantics fix, not a design
+                      change. Caught by scripts/verify-production.ts, which
+                      could not report it while the workflow ran with
+                      continue-on-error. */}
+                  <h2 className="text-xs font-bold uppercase tracking-[0.16em] text-terracotta-fg">
                     Happening this week
-                  </div>
+                  </h2>
                   <Link
                     href="/events?when=week"
                     className="flex items-center whitespace-nowrap text-sm font-semibold text-secondary hover:text-terracotta"
