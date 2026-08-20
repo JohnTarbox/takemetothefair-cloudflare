@@ -179,3 +179,32 @@ describe("series grouping key", () => {
     expect(seriesNameKey("Fryeburg Fair")).not.toBe(seriesNameKey("Cheshire Fair"));
   });
 });
+
+/**
+ * The invariant's anchor. This constant is the difference between reporting
+ * "0 defects" and reporting "146 defects" for the same healthy system — the
+ * 146 being events created BEFORE the write-path fix existed.
+ */
+describe("SERIES_WRITE_PATH_SHIPPED_AT", () => {
+  it("is the PR #931 deploy instant, in seconds", async () => {
+    const src = await import("node:fs").then((fs) =>
+      fs.readFileSync(new URL("../src/tools/admin-data-health.ts", import.meta.url), "utf8")
+    );
+    const m = src.match(/const SERIES_WRITE_PATH_SHIPPED_AT = (\d+);/);
+    expect(m).not.toBeNull();
+    const v = Number(m![1]);
+
+    // Seconds, not milliseconds. A ms value here sits in the year 58,600,
+    // matches no rows, and reports a clean zero that reads as success.
+    expect(v).toBe(Math.floor(Date.parse("2026-08-19T14:00:00Z") / 1000));
+    expect(String(v)).toHaveLength(10);
+  });
+
+  it("is anchored before the first post-fix event and after the fix landed", () => {
+    const v = Math.floor(Date.parse("2026-08-19T14:00:00Z") / 1000);
+    // First event created after the deploy, from prod: 2026-08-19 18:02:39Z.
+    expect(v).toBeLessThan(Math.floor(Date.parse("2026-08-19T18:02:39Z") / 1000));
+    // PR #931's AGENT DONE was posted 2026-08-19T14:09Z.
+    expect(v).toBeLessThanOrEqual(Math.floor(Date.parse("2026-08-19T14:09:53Z") / 1000));
+  });
+});
