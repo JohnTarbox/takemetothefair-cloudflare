@@ -19,11 +19,12 @@ export const dynamic = "force-dynamic";
  * `@/lib/vendors/self-reported-events`.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { and, desc, eq, like, or } from "drizzle-orm";
+import { and, desc, eq, or } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { requireVerifiedSession } from "@/lib/api-auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { adminActions, events, vendors, venues } from "@/lib/db/schema";
+import { containsCI } from "@/lib/db/contains-ci";
 import {
   listSelfReportedEvents,
   setSelfReportedEvents,
@@ -65,7 +66,13 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ selected, results: [] });
     }
 
-    const term = `%${q.replace(/[%_]/g, "")}%`;
+    // OPE-366 — instr(), not LIKE. This built a LIKE PATTERN from the user's
+    // query with NO length cap at all, and D1 caps a pattern at 50 characters:
+    // 280 logged `LIKE or GLOB pattern too complex` failures, the most of any
+    // source. See src/lib/db/contains-ci.ts. Stripping `%`/`_` is also no
+    // longer needed — they are literal to instr — so a business with `%` in
+    // its name is now findable rather than silently mangled.
+    const term = q;
     const results = await db
       .select({
         id: events.id,
@@ -81,7 +88,10 @@ export async function GET(request: NextRequest) {
       // something we haven't published, and it keeps rejected/duplicate
       // tombstones out of the picker.
       .where(
-        and(eq(events.status, "APPROVED"), or(like(events.name, term), like(venues.city, term)))
+        and(
+          eq(events.status, "APPROVED"),
+          or(containsCI(events.name, term), containsCI(venues.city, term))
+        )
       )
       // Past events are the POINT here — most attestations are historical —
       // so no date floor; newest first is the useful ordering.

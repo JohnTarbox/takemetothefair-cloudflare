@@ -14,10 +14,10 @@ import {
   type SQL,
   type AnyColumn,
 } from "drizzle-orm";
+import { containsCI } from "@/lib/db/contains-ci";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { withErrorHandler } from "@/lib/api-handler";
 import { searchHelpArticles } from "@/lib/help-articles";
-import { sanitizeLikeInput } from "@/lib/utils";
 import { expandEventSearchQuery } from "@/lib/search/query-expansion";
 import { levenshteinSimilarity } from "@takemetothefair/utils";
 import { logError } from "@/lib/logger";
@@ -27,11 +27,22 @@ import {
   type GroupableVendor,
 } from "@/lib/vendor-listing-grouping";
 
-// SEARCH1 (2026-06-09) — Cap query length at 100 chars. SQLite's LIKE-pattern
-// complexity counter (limit ~50k) trips on long unanchored `%…%` patterns
-// scanned against large text columns; before this cap, every keystroke past
-// ~45 chars 500'd the whole route. The cap is enforced server-side and
-// mirrored client-side as `maxLength` (defense in depth).
+// SEARCH1 (2026-06-09) — cap query length at 100 chars, kept as a plain sanity
+// bound on user input.
+//
+// ⚠️ OPE-366 correction: this comment used to read "SQLite's LIKE-pattern
+// complexity counter (limit ~50k)", and 100 was chosen against that number.
+// **D1's cap is 50 CHARACTERS, not 50,000** — measured on prod for OPE-404,
+// where 50 passes and 52 throws. So the cap was set to twice what D1 allowed
+// and the route kept throwing `LIKE or GLOB pattern too complex` (13 logged
+// failures, most recently 2026-08-17, taking the venues section down for real
+// users). The neighbouring SEARCH1 note blaming the size of the searched
+// COLUMN is also wrong: the column is irrelevant, the PATTERN is what is
+// measured.
+//
+// The matching now uses instr() (see src/lib/db/contains-ci.ts), which has no
+// pattern-length limit, so this cap no longer guards against anything — it is
+// retained only to bound input. Do not re-derive a LIKE cap from it.
 const MAX_QUERY_LENGTH = 100;
 
 const EMPTY_RESPONSE = { events: [], venues: [], vendors: [], blogPosts: [], help: [] };
@@ -52,7 +63,6 @@ export const GET = withErrorHandler(async (request: Request) => {
   // Escape LIKE metacharacters (`%`, `_`) before wrapping the user's input.
   // Without this, a query like `100%_off` was interpreted as wildcards
   // rather than literal text.
-  const searchTerm = `%${sanitizeLikeInput(q)}%`;
 
   // OPE-281 — expand the query into structured match intent for the EVENTS
   // section: event-type synonyms (fair⇄market⇄festival⇄show), category mapping
@@ -71,20 +81,24 @@ export const GET = withErrorHandler(async (request: Request) => {
     gte(events.endDate, nowDate),
     and(isNull(events.endDate), gte(events.startDate, nowDate))
   );
-  const like = (col: AnyColumn, term: string) =>
-    sql`LOWER(${col}) LIKE ${"%" + sanitizeLikeInput(term) + "%"}`;
+  // OPE-366 — instr(), not LIKE. D1 caps a LIKE PATTERN at 50 characters and
+  // this route built one from the user's query, so any search past ~48 chars
+  // threw SQLITE_ERROR. See src/lib/db/contains-ci.ts. No escaping needed —
+  // `%` and `_` are literal to instr, which also fixes `100%_off` searching
+  // for the literal text rather than acting as wildcards.
+  const contains = (col: AnyColumn, term: string) => containsCI(col, term);
   const nameGroupClauses = expanded.nameTermGroups
-    .map((group) => or(...group.map((alt) => like(events.name, alt))))
+    .map((group) => or(...group.map((alt) => contains(events.name, alt))))
     .filter((c): c is SQL => c !== undefined);
   const nameMatch = nameGroupClauses.length > 0 ? and(...nameGroupClauses) : undefined;
   const categoryMatch =
     expanded.categoryNames.length > 0
-      ? or(...expanded.categoryNames.map((c) => like(events.categories, c.toLowerCase())))
+      ? or(...expanded.categoryNames.map((c) => contains(events.categories, c.toLowerCase())))
       : undefined;
   const eventTextPredicate: SQL =
     nameMatch && categoryMatch
       ? (or(nameMatch, categoryMatch) as SQL)
-      : (nameMatch ?? categoryMatch ?? sql`LOWER(${events.name}) LIKE LOWER(${searchTerm})`);
+      : (nameMatch ?? categoryMatch ?? containsCI(events.name, q));
   const eventsWhere = and(
     isPublicEventStatus(),
     notEnded,
@@ -123,10 +137,7 @@ export const GET = withErrorHandler(async (request: Request) => {
       })
       .from(venues)
       .where(
-        and(
-          eq(venues.status, "ACTIVE"),
-          sql`(LOWER(${venues.name}) LIKE LOWER(${searchTerm}) OR LOWER(${venues.city}) LIKE LOWER(${searchTerm}))`
-        )
+        and(eq(venues.status, "ACTIVE"), or(containsCI(venues.name, q), containsCI(venues.city, q)))
       )
       .orderBy(venues.name)
       .limit(5),
@@ -153,7 +164,10 @@ export const GET = withErrorHandler(async (request: Request) => {
       })
       .from(vendors)
       .where(
-        sql`LOWER(${vendors.businessName}) LIKE LOWER(${searchTerm}) OR LOWER(COALESCE(${vendors.displayName}, '')) LIKE LOWER(${searchTerm})`
+        or(
+          containsCI(vendors.businessName, q),
+          containsCI(sql`COALESCE(${vendors.displayName}, '')`, q)
+        )
       )
       .orderBy(vendors.businessName)
       .limit(15),
@@ -174,7 +188,7 @@ export const GET = withErrorHandler(async (request: Request) => {
       .where(
         and(
           eq(blogPosts.status, "PUBLISHED"),
-          sql`(LOWER(${blogPosts.title}) LIKE LOWER(${searchTerm}) OR LOWER(COALESCE(${blogPosts.excerpt}, '')) LIKE LOWER(${searchTerm}))`
+          or(containsCI(blogPosts.title, q), containsCI(sql`COALESCE(${blogPosts.excerpt}, '')`, q))
         )
       )
       .orderBy(desc(blogPosts.publishDate))
