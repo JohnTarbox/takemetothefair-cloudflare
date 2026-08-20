@@ -118,6 +118,7 @@ import { computeFillEmptyProposals } from "../email-handlers/enrich-proposal.js"
 import { detectRosterEntries, type RosterEntry } from "../email-handlers/roster-detect.js";
 import { isShareRedirectHost, resolveShareRedirect } from "../email-handlers/share-redirect.js";
 import { toMarkdownWithRetry } from "../email-handlers/ocr-retry.js";
+import { recordWorkflowStep } from "../workflow-run-log.js";
 import { buildReply } from "../email-reply-builder.js";
 import { issueToken } from "../feedback-tokens.js";
 import { issueCorrectionToken } from "../correction-tokens.js";
@@ -563,7 +564,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     } else {
       try {
         if (intent === "submit" || intent === "new_event") {
-          result = await this.runSubmitPipeline(step, messageRowId);
+          result = await this.runSubmitPipeline(step, messageRowId, sessionId);
         } else {
           result = await step.do(
             "dispatch",
@@ -1049,7 +1050,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
    */
   private async runSubmitPipeline(
     step: WorkflowStep,
-    messageRowId: string
+    messageRowId: string,
+    instanceId: string
   ): Promise<HandlerResult> {
     const rowSnapshot = await step.do(
       "submit/load-row",
@@ -1162,6 +1164,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     let attachmentSources: SubmitSource[] = [];
     if (rowSnapshot.attachmentCount > 0 && rowSnapshot.attachmentRefs) {
       const refsJson = rowSnapshot.attachmentRefs;
+      const ocrStartedAt = Date.now();
       attachmentSources = await step.do(
         "ocr-attachments",
         // OPE-189 — the old 60s step timeout EQUALLED the AI binding's own 60s
@@ -1173,6 +1176,38 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         { retries: { limit: 1, delay: "10 seconds", backoff: "constant" }, timeout: "200 seconds" },
         () => this.ocrAttachments(refsJson, messageRowId)
       );
+      // OPE-501 — the step that could not be answered for. "Ran and produced
+      // nothing" and "never ran" are different defects with different fixes, and
+      // the output row cannot tell them apart.
+      await recordWorkflowStep(getDb(this.env.DB), {
+        instanceId,
+        workflowName: "inbound-email",
+        inboundEmailId: messageRowId,
+        stepName: "ocr-attachments",
+        status: "ok",
+        detail: {
+          attachments_claimed: rowSnapshot.attachmentCount,
+          sources_produced: attachmentSources.length,
+        },
+        durationMs: Date.now() - ocrStartedAt,
+      });
+    } else {
+      // The other half of the same question, and the reason this table exists:
+      // a SKIP recorded as deliberately as a run.
+      await recordWorkflowStep(getDb(this.env.DB), {
+        instanceId,
+        workflowName: "inbound-email",
+        inboundEmailId: messageRowId,
+        stepName: "ocr-attachments",
+        status: "skipped",
+        detail: {
+          reason:
+            rowSnapshot.attachmentCount === 0
+              ? "no attachments on the email"
+              : "attachment_count > 0 but attachment_refs is empty — nothing was stored at receive time (see OPE-467)",
+          attachments_claimed: rowSnapshot.attachmentCount,
+        },
+      });
     }
 
     // ───── OPE-176 roster capture, now attachment-aware (OPE-405) ──────────
@@ -1295,7 +1330,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         true, // hasAttachments — attachments were present + OCR'd
         overflowed,
         bodyTextRaw,
-        messageRowId
+        messageRowId,
+        instanceId
       );
     }
 
@@ -1313,7 +1349,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         rowSnapshot.attachmentCount > 0,
         overflowed,
         bodyTextRaw,
-        messageRowId
+        messageRowId,
+        instanceId
       );
     }
 
@@ -2481,8 +2518,36 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     // Passed to each URL source's submitExtract so the AI's two-section
     // prompt can prefer body dates over the linked page's (analyst D1).
     emailBody: string,
-    messageRowId: string
+    messageRowId: string,
+    instanceId: string
   ): Promise<HandlerResult> {
+    // OPE-501 item 2 — the source list, recorded BEFORE the fan-out.
+    //
+    // `reply_kind='ok-multi'` with one resulting event is a normal output of
+    // this method. Whether that reflects correct dedup or the over-collapse of
+    // OPE-459 defect 3 depends entirely on what the source list held — which
+    // nothing returned, because it only ever existed in memory. Writing it down
+    // is what makes "N sources in, M events out" attributable afterwards.
+    await recordWorkflowStep(getDb(this.env.DB), {
+      instanceId,
+      workflowName: "inbound-email",
+      inboundEmailId: messageRowId,
+      stepName: "multi-source-fanout",
+      status: "ok",
+      detail: {
+        source_count: sources.length,
+        overflowed,
+        sources: sources.map((src) => ({
+          kind: src.kind,
+          // Identifier per kind: the url for a url source, the filename for an
+          // attachment, "body" for prose. Enough to line a source up against the
+          // citations the run produced.
+          ref: src.kind === "url" ? src.url : src.kind === "attachment" ? src.name : "body",
+          text_chars: "text" in src && typeof src.text === "string" ? src.text.length : null,
+        })),
+      },
+    });
+
     interface SourceCandidate {
       // Single-event-shaped (events = [event]); url carries provenance
       // ("" for body-sourced events → submitEvent omits sourceUrl).

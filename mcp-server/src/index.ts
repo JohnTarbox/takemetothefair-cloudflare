@@ -331,7 +331,7 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
         // UR1 C5 (2026-06-04) — problem-report triage tools.
         registerAdminProblemReportTools(this.server, db);
         // OPE-499 — inbound-correspondence read surface (input side of a submission).
-        registerInboundReadTools(this.server, db, auth);
+        registerInboundReadTools(this.server, db, auth, this.env);
         // OPE-500 — read an event at ANY status (the public reader is APPROVED-only).
         registerAdminEventReadTools(this.server, db, auth);
         // OPE-414 — market-player register (competitors, aggregators, and the
@@ -623,7 +623,7 @@ async function handleLegacyMcpRequest(request: Request, env: Env): Promise<Respo
     if (auth.role === "ADMIN") {
       registerAdminTools(server, db, auth, env);
       registerAdminProblemReportTools(server, db);
-      registerInboundReadTools(server, db, auth);
+      registerInboundReadTools(server, db, auth, env);
       registerAdminEventReadTools(server, db, auth);
       registerMergeEntitiesTools(server, db, auth);
       registerMergeVendorTool(server, db, auth);
