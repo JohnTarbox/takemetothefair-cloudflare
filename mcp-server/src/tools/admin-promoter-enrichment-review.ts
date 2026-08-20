@@ -24,7 +24,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { and, desc, eq, gte, sql } from "drizzle-orm";
 import { computePromoterEnrichment, isPlaceholderDescription } from "@takemetothefair/constants";
-import { adminActions, promoterEnrichmentCandidates, promoters } from "../schema.js";
+import { adminActions, events, promoterEnrichmentCandidates, promoters } from "../schema.js";
 import { jsonContent, logEnrichment, publicUrlFor, triggerIndexNow } from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
@@ -71,6 +71,114 @@ export function registerPromoterEnrichmentReviewTools(
   env?: Env
 ) {
   if (auth.role !== "ADMIN") return;
+
+  // --- list_promoter_enrichment_queue -------------------------------------
+  //
+  // OPE-496. The drain lane was hand-rolling this selection in SQL and keying
+  // its recency filter on `promoters.last_enriched_at`, which is 91% NULL — so
+  // the filter excluded almost nothing and the same top-25 were re-rendered
+  // every day, ~2 promoters/day of real progress against a 485-deep queue.
+  //
+  // `last_enriched_at` is not broken. It is stamped ONLY when a render actually
+  // wrote a field, which is a deliberate and useful distinction from its sibling
+  // `enrichment_attempted_at` ("we looked, and may have found nothing"). The
+  // recency filter wants the SECOND one, and this queue's rows carry it 485/485.
+  //
+  // Exposed as a tool rather than left as a query for each caller to write,
+  // because the two columns are one word apart and picking the wrong one fails
+  // silently — every call still returns success, and only the throughput tells
+  // you. The nightly cron selector (enrichment/promoter-select.ts) already keys
+  // on the right column; this gives the interactive lane the same guarantee.
+  server.tool(
+    "list_promoter_enrichment_queue",
+    "Select the next batch of promoters to research for enrichment — the ENTITY queue (promoters.enrichment_status), not the staged-candidate queue. Filters to promoters with a website that still need enrichment and have not been ATTEMPTED within `stale_after_days`, newest-neglected first, ordered by upcoming approved-event count so the highest-traffic promoters are researched first. Use this instead of hand-writing the selection: the recency filter keys on enrichment_attempted_at ('when did we last look'), NOT last_enriched_at ('when did we last write a field'), and the latter is NULL for most of the queue. Read-only. Admin only.",
+    {
+      stale_after_days: z
+        .number()
+        .int()
+        .min(1)
+        .max(365)
+        .optional()
+        .default(30)
+        .describe(
+          "Skip promoters attempted within this many days. Default 30, matching the nightly cron selector."
+        ),
+      limit: z.number().int().min(1).max(100).optional().default(25),
+    },
+    async (params) => {
+      const staleDays = params.stale_after_days ?? 30;
+      const limit = params.limit ?? 25;
+      const cutoff = Math.floor(Date.now() / 1000) - staleDays * 86_400;
+
+      const upcoming = sql<number>`(
+        SELECT COUNT(*) FROM ${events}
+         WHERE ${events.promoterId} = ${promoters.id}
+           AND ${events.status} = 'APPROVED'
+           AND ${events.endDate} >= unixepoch()
+      )`;
+
+      const rows = await db
+        .select({
+          id: promoters.id,
+          companyName: promoters.companyName,
+          slug: promoters.slug,
+          website: promoters.website,
+          enrichmentStatus: promoters.enrichmentStatus,
+          enrichmentAttemptedAt: promoters.enrichmentAttemptedAt,
+          lastEnrichedAt: promoters.lastEnrichedAt,
+          upcomingEvents: upcoming,
+        })
+        .from(promoters)
+        .where(
+          sql`${promoters.website} IS NOT NULL AND TRIM(${promoters.website}) <> ''
+            AND (
+              ${promoters.enrichmentStatus} IS NULL
+              OR ${promoters.enrichmentStatus} = 'NEEDS_ENRICHMENT'
+            )
+            AND (
+              ${promoters.enrichmentAttemptedAt} IS NULL
+              OR ${promoters.enrichmentAttemptedAt} < ${cutoff}
+            )`
+        )
+        // Never-attempted first (they carry the least information), then the
+        // longest-neglected, then by traffic value.
+        .orderBy(
+          sql`${promoters.enrichmentAttemptedAt} IS NULL DESC`,
+          sql`${promoters.enrichmentAttemptedAt} ASC`,
+          desc(upcoming)
+        )
+        .limit(limit);
+
+      const [{ total } = { total: 0 }] = await db
+        .select({ total: sql<number>`COUNT(*)` })
+        .from(promoters)
+        .where(eq(promoters.enrichmentStatus, "NEEDS_ENRICHMENT"));
+
+      return {
+        content: [
+          jsonContent({
+            stale_after_days: staleDays,
+            queue_depth: total,
+            returned: rows.length,
+            // Named so a caller cannot mistake which column drove the filter.
+            filtered_on: "enrichment_attempted_at",
+            promoters: rows.map((r) => ({
+              promoter_id: r.id,
+              company_name: r.companyName,
+              slug: r.slug,
+              website: r.website,
+              enrichment_status: r.enrichmentStatus,
+              last_attempted_at: r.enrichmentAttemptedAt
+                ? new Date(r.enrichmentAttemptedAt).toISOString()
+                : null,
+              last_enriched_at: r.lastEnrichedAt ? new Date(r.lastEnrichedAt).toISOString() : null,
+              upcoming_approved_events: Number(r.upcomingEvents ?? 0),
+            })),
+          }),
+        ],
+      };
+    }
+  );
 
   // --- list_promoter_enrichment_candidates --------------------------------
   server.tool(
