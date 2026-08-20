@@ -119,6 +119,21 @@ export const venues = sqliteTable(
      *  Prefer this over the free-text `city` for any grouping, coverage
      *  denominator or region facet. */
     locationId: text("location_id"),
+    /**
+     * HOW `locationId` was resolved (OPE-425 review finding 2).
+     *
+     * The first backfill matched on name only, so "unmatched" conflated two
+     * very different things: a venue whose `city` is genuinely junk (a real
+     * OPE-421 defect), and a venue whose city string simply did not match (a
+     * limitation of the join wearing a defect's clothes). The live specimen was
+     * `MA | Cape Cod` — offered as proof the report worked, while carrying
+     * coordinates that land squarely in Barnstable County.
+     *
+     * `exact` | `alias` | `coordinates` | NULL (unmatched). With this recorded,
+     * "unmatched" means we have NEITHER a usable name NOR a usable point, which
+     * is the thing actually worth a human's attention.
+     */
+    locationMatchedBy: text("location_matched_by"),
     latitude: real("latitude"),
     longitude: real("longitude"),
     capacity: integer("capacity"),
@@ -3636,10 +3651,44 @@ export const locations = sqliteTable(
     id: text("id").primaryKey(),
     state: text("state").notNull(),
     county: text("county"),
+    /** The full Census COUNTIES string when a place spans more than one, so a
+     *  scalar `county` never quietly implies a place sits in exactly one. */
+    countyNote: text("county_note"),
+    /**
+     * Which county geography this row's `county` came from (OPE-425 review
+     * finding 1). County boundaries are NOT immutable: the Bureau replaced
+     * Connecticut's eight legacy counties with NINE PLANNING REGIONS as
+     * county-equivalents, approved 2022 and implemented 2024. Mixing the two
+     * inside one state is the same failure the `populationYear` column exists
+     * to prevent, so the vintage travels with the value.
+     *
+     * Also carries the reason when assignment was refused, e.g.
+     * `unassigned-ct-planning-region-vintage-gap` — the only published
+     * place-to-county file is the 2020 vintage, which assigns CT places to the
+     * LEGACY counties, so CT's CDPs are left unassigned rather than mixed.
+     */
+    countyVintage: text("county_vintage"),
     name: text("name").notNull(),
     type: text("type", {
       enum: ["city", "town", "plantation", "unorganized_territory", "village_cdp"],
     }).notNull(),
+    /**
+     * Whether this row may be summed into a population denominator
+     * (OPE-425 review finding 3).
+     *
+     * 0 for `village_cdp`. A CDP's population is a SUBSET of its parent
+     * municipality's, so any `SUM(population)` across all rows double-counts
+     * and every coverage-vs-universe ratio is inflated by 791 non-municipal
+     * rows. Per-capita grading is this table's first named application, so
+     * getting the denominator wrong would corrupt the headline number.
+     *
+     * A column rather than a `type NOT IN (...)` convention in each query,
+     * because the convention has to be remembered by every future caller and
+     * the column does not.
+     */
+    isDenominatorEligible: integer("is_denominator_eligible", { mode: "boolean" })
+      .notNull()
+      .default(true),
     /** Set for villages/CDPs belonging to a municipality. NULL from the seed —
      *  Census carries no CDP→MCD containment, and a guessed parent is exactly
      *  the plausible-but-unsourced value this project keeps getting bitten by. */

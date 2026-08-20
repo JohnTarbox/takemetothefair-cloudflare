@@ -37,6 +37,7 @@ const SCHEMA_SQL = `
     zip TEXT NOT NULL DEFAULT '',
     -- OPE-425 — resolved canonical municipality (drizzle/0207).
     location_id TEXT,
+    location_matched_by TEXT,
     latitude REAL,
     longitude REAL,
     capacity INTEGER,
