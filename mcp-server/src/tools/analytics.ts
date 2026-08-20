@@ -1304,7 +1304,10 @@ export function registerAnalyticsTools(server: McpServer, auth: AuthContext, env
     [
       "Vendor-roster coverage metric (OPE-13). For PAST producer-class events:",
       "share with a roster (coveragePct), the NEEDS_RESEARCH queue size, the",
-      "NO_PUBLIC_LIST un-backfillable tail, PARTIAL count, and an 8-week",
+      "NO_PUBLIC_LIST un-backfillable tail, PARTIAL count (rows a run can",
+      "genuinely RESUME), the OPE-498 NEEDS_RENDERED_FETCH count (a public",
+      "roster that is not in the served HTML — reachable only with a rendering",
+      "fetcher we do not have), and an 8-week",
       "links-added trend. Use this to see how the vendor-roster backfill system",
       "is converging over time. Read-only, admin only.",
     ].join(" "),
