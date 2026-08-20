@@ -100,6 +100,12 @@ export interface EnrichmentResult {
   candidates: ProposedCandidate[];
   /** Vendor-level conflicts (also merged into every candidate's flags). */
   vendorFlags: CandidateFlag[];
+  /**
+   * OPE-504 — candidates dropped because they proposed the value already
+   * stored. Surfaced rather than silently discarded: a suppression nobody can
+   * count is indistinguishable from an extractor that stopped working.
+   */
+  suppressedNoOps: number;
   /** Set → dispatcher flips domain_hijacked and writes no field candidates. */
   domainProblem: DomainProblem | null;
 }
