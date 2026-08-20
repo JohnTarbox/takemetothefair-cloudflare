@@ -1621,8 +1621,25 @@ function GscMilestoneChartCard({ points }: { points: GscMilestonePoint[] }) {
       <CardHeader>
         <CardTitle>Search clicks milestones</CardTitle>
         <p className="text-xs text-muted-foreground mt-0.5">
-          Milestones from Google Search Console emails · 28-day click window · log scale · from May
-          2026
+          28-day click window · log scale · from May 2026
+        </p>
+        {/* OPE-456 — the two sources answer different questions and must not be
+            conflated. Google skipped several badges outright (it jumped
+            1.5K → 3K), so a badge-only chart under-reports growth; relabelling
+            our derivations as badges would invent awards Google never made. */}
+        <p className="text-xs text-muted-foreground mt-1 flex items-center gap-3">
+          <span className="inline-flex items-center gap-1.5">
+            <svg width="10" height="10" aria-hidden="true">
+              <circle cx="5" cy="5" r="4" className="fill-blue-600" />
+            </svg>
+            Badge awarded by Google
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <svg width="10" height="10" aria-hidden="true">
+              <circle cx="5" cy="5" r="3" className="fill-white stroke-blue-600" strokeWidth={2} />
+            </svg>
+            Crossing derived from our own daily totals
+          </span>
         </p>
       </CardHeader>
       <CardContent>
@@ -1693,7 +1710,7 @@ function MilestoneChart({ points }: { points: GscMilestonePoint[] }) {
   const coords = points.map((p, i) => {
     const x = padLeft + i * stepX;
     const y = yFor(p.threshold);
-    return { x, y, threshold: p.threshold, emailDate: p.emailDate };
+    return { x, y, threshold: p.threshold, emailDate: p.emailDate, derived: p.derived };
   });
 
   const linePath = coords.map((c, i) => `${i === 0 ? "M" : "L"} ${c.x} ${c.y}`).join(" ");
@@ -1727,8 +1744,17 @@ function MilestoneChart({ points }: { points: GscMilestonePoint[] }) {
       <path d={linePath} className="stroke-blue-600 fill-none" strokeWidth={2} />
       {coords.map((c, i) => (
         <g key={`${c.emailDate}-${i}`}>
-          {/* dot */}
-          <circle cx={c.x} cy={c.y} r={4} className="fill-blue-600" />
+          {/* dot — OPE-456: a HOLLOW dot is a crossing we derived from our own
+              daily totals; a solid dot is a badge Google actually awarded.
+              Shape rather than colour so the distinction survives a greyscale
+              print and does not depend on the legend being read. */}
+          <circle
+            cx={c.x}
+            cy={c.y}
+            r={4}
+            className={c.derived ? "fill-white stroke-blue-600" : "fill-blue-600"}
+            strokeWidth={c.derived ? 2 : 0}
+          />
           {/* value label above the dot */}
           <text
             x={c.x}
@@ -2917,6 +2943,12 @@ async function loadGscMilestones(): Promise<GscMilestonePoint[]> {
       threshold: gscMilestoneEmails.threshold,
       emailDate: gscMilestoneEmails.emailDate,
       reachedDate: gscMilestoneEmails.reachedDate,
+      // OPE-456 — ruling option 3: plot BOTH Google's awarded badges and our
+      // own derived threshold crossings, distinguished so neither pretends to
+      // be the other. Google skipped several badges outright (row 13's note:
+      // it jumped 1.5K → 3K), so a badge-only chart under-reports growth while
+      // a chart that relabels derivations as badges would invent awards.
+      source: gscMilestoneEmails.source,
     })
     .from(gscMilestoneEmails)
     .where(
@@ -2934,13 +2966,20 @@ async function loadGscMilestones(): Promise<GscMilestonePoint[]> {
     threshold: r.threshold,
     emailDate: r.emailDate,
     reachedDate: r.reachedDate,
+    derived: r.source === DERIVED_MILESTONE_SOURCE,
   }));
 }
+
+/** OPE-456 — `source` value for a crossing computed from `gsc_daily_totals`
+ *  rather than awarded by Google. Matches drizzle/0222. */
+const DERIVED_MILESTONE_SOURCE = "derived_from_gsc_daily_totals";
 
 interface GscMilestonePoint {
   threshold: number;
   emailDate: string;
   reachedDate: string | null;
+  /** True when we computed this crossing ourselves; false = Google badge. */
+  derived: boolean;
 }
 
 async function GoogleTab() {
