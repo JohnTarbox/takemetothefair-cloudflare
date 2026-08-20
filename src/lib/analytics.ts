@@ -3,6 +3,8 @@
  * Safe to call anywhere — no-ops if gtag isn't loaded.
  */
 
+import { ALL_FUNNEL_STEP_NAMES } from "@/lib/analytics/funnel-steps";
+
 declare global {
   interface Window {
     gtag?: (...args: [string, string, Record<string, unknown>?]) => void;
@@ -483,7 +485,27 @@ export function trackVendorClaim(
     vendor_id: vendorId,
     claim_method: claimMethod,
   });
-  sendBeacon(name, "conversion", { vendorSlug, vendorId, claimMethod });
+  // OPE-364 rework — beacon a declared FUNNEL STEP under the `funnel` category.
+  //
+  // `claim_started` and `claim_submitted` are listed in FUNNEL_STEPS.claim, and
+  // the read path selects on `event_category = 'funnel'`. This beaconed them as
+  // `conversion`, so the two deepest steps of the claim funnel could never
+  // appear in the claim funnel — it would have read
+  // `claim_view → claim_form_interacted → 0 → 0` and looked like total
+  // drop-off while the rows sat in the table under another category.
+  //
+  // Latent rather than observed: prod holds zero rows for either name under ANY
+  // category, so nobody has clicked a claim button since the instrument
+  // shipped. It would have manifested on the first real claim, as a metric that
+  // is WRONG rather than missing — which is worse, and is precisely the failure
+  // the `suggest_event_submit` discovery on this same ticket was praised for
+  // catching. It was caught there and missed here.
+  //
+  // Derived from the registry rather than hard-coded, so a step added to
+  // FUNNEL_STEPS later cannot silently keep the wrong category. `claim_approved`
+  // is not a funnel step and correctly stays `conversion`.
+  const category = ALL_FUNNEL_STEP_NAMES.includes(name) ? "funnel" : "conversion";
+  sendBeacon(name, category, { vendorSlug, vendorId, claimMethod });
 }
 
 // ── ENG1.6 (Dev-Email-2026-06-10 §B, 2026-06-10) — browse CTR ──

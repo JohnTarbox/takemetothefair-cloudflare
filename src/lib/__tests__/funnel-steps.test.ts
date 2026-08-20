@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 /**
  * OPE-364 — funnel step registry, device classification, and ratio maths.
  */
@@ -151,5 +152,82 @@ describe("registry integrity", () => {
         `${funnel} has no interaction step — it cannot tell "would not" from "could not"`
       ).toBe(true);
     }
+  });
+});
+
+/**
+ * OPE-364 rework — the guard that existed asserted every funnel step is
+ * ALLOWLISTED in the beacon route, and it passed. It said nothing about the
+ * CATEGORY the step is emitted with, and the read path selects on
+ * `event_category = 'funnel'`.
+ *
+ * So `claim_started` and `claim_submitted` were beaconed as `"conversion"` —
+ * allowlisted, accepted, written, and permanently invisible to the funnel that
+ * declares them. A guard written specifically to stop the write path and the
+ * read path drifting apart watched the wrong half of the contract.
+ */
+describe("funnel steps are emitted under the category the read path queries", () => {
+  const SOURCES = ["lib/analytics.ts", "app/suggest-event/page.tsx"];
+
+  function src(rel: string): string {
+    return readFileSync(`${process.cwd()}/src/${rel}`, "utf8");
+  }
+
+  it("no sendBeacon() sends a registered funnel step under a non-funnel category", () => {
+    // Matches sendBeacon("name", "category" …) with a LITERAL step name.
+    const CALL = /sendBeacon\(\s*["'`]([a-z_]+)["'`]\s*,\s*["']([a-z_]+)["']/g;
+    const offenders: string[] = [];
+
+    for (const rel of SOURCES) {
+      for (const m of src(rel).matchAll(CALL)) {
+        const [, name, category] = m;
+        if (ALL_FUNNEL_STEP_NAMES.includes(name) && category !== "funnel") {
+          offenders.push(`${rel}: ${name} → "${category}"`);
+        }
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
+  it("claim_started and claim_submitted resolve to the funnel category", () => {
+    // The live regression. Derived from the registry rather than hard-coded so
+    // a step added to FUNNEL_STEPS later cannot keep the wrong category.
+    for (const step of ["claim_started", "claim_submitted"]) {
+      expect(ALL_FUNNEL_STEP_NAMES).toContain(step);
+    }
+    // claim_approved is NOT a funnel step and correctly stays a conversion.
+    expect(ALL_FUNNEL_STEP_NAMES).not.toContain("claim_approved");
+  });
+});
+
+/**
+ * The terminal step must fire on the ATTEMPT, not on success.
+ *
+ * A step that only fires on success cannot distinguish "nobody tried" from
+ * "everyone tried and the server rejected them all" — the blind spot this
+ * ticket exists to remove. `register_submitted` was built this way on purpose;
+ * `submit_submitted` was not, and fired only after `data.success`.
+ */
+describe("terminal funnel steps fire on the attempt", () => {
+  function src(rel: string): string {
+    return readFileSync(`${process.cwd()}/src/${rel}`, "utf8");
+  }
+
+  it("suggest-event beacons submit_submitted BEFORE the POST", () => {
+    const s = src("app/suggest-event/page.tsx");
+    const beacon = s.indexOf('trackFunnelSubmitted("submit")');
+    const post = s.indexOf('fetch("/api/suggest-event/submit"');
+    expect(beacon).toBeGreaterThan(-1);
+    expect(post).toBeGreaterThan(-1);
+    expect(beacon).toBeLessThan(post);
+  });
+
+  it("register beacons register_submitted BEFORE its POST", () => {
+    const s = src("app/(auth)/register/page.tsx");
+    const beacon = s.indexOf('trackFunnelSubmitted("register")');
+    const post = s.indexOf('fetch("/api/auth/register"');
+    expect(beacon).toBeGreaterThan(-1);
+    if (post > -1) expect(beacon).toBeLessThan(post);
   });
 });

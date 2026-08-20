@@ -477,6 +477,22 @@ export default function SuggestEventPage() {
     setError("");
     setStep("submitting");
 
+    // OPE-364 rework — funnel step 3, emitted on the user's ATTEMPT, before the
+    // POST and before any server-side validation, rate limit or Turnstile gate.
+    //
+    // It previously fired only after `data.success`, so every failure path
+    // returned before it. That made the submit funnel unable to distinguish
+    // "nobody tried to submit" from "everyone tried and the server rejected
+    // them all" — the exact blind spot this ticket exists to remove, and the
+    // opposite of what `register_submitted` was deliberately built to do (see
+    // the note at register/page.tsx). Same ticket, two funnels, one of them
+    // carrying the defect the other was designed to avoid.
+    //
+    // It also made the step unprovable without creating a real production
+    // event: the only way to emit it was to succeed. On the attempt, a
+    // deliberately-invalid submission demonstrates the step and writes nothing.
+    trackFunnelSubmitted("submit");
+
     try {
       const res = await fetch("/api/suggest-event/submit", {
         method: "POST",
@@ -524,11 +540,6 @@ export default function SuggestEventPage() {
       trackFormSubmit("suggest_event_public", {
         event_name: extractedData.name || undefined,
       });
-      // OPE-364 — the submit funnel's terminal step, beaconed to D1.
-      // `trackFormSubmit` above only beacons the newsletter/vendor_claim
-      // audiences (suggest is GA4-only), so without this the funnel's last step
-      // would read zero in D1 forever while GA4 showed submissions.
-      trackFunnelSubmitted("submit");
     } catch {
       setError("Failed to submit event. Please try again.");
       resetTurnstile();
