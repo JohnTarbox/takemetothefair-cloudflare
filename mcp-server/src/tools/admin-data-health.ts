@@ -33,6 +33,7 @@ import { deriveCrossings, auditStoredDates } from "@takemetothefair/utils";
 import { jsonContent } from "../helpers.js";
 import { loadLocationsUniverse } from "../locations-universe.js";
 import type { Db } from "../db.js";
+import { findSlugCollisionPairs } from "../slug-collision-invariant.js";
 import type { AuthContext } from "../auth.js";
 
 const TWENTY_EIGHT_DAYS_SECS = 28 * 24 * 60 * 60;
@@ -201,6 +202,10 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
         .from(eventSeries)
         .innerJoin(events, eq(events.slug, eventSeries.canonicalSlug))
         .where(sql`${events.mergedInto} IS NOT NULL`);
+
+      // OPE-278 item 3 — live `-N` slug pairs; see slug-collision-invariant.ts
+      // for why this is narrow (42 suffixed events in prod, 2 real defects).
+      const slugCollisions = await findSlugCollisionPairs(db);
 
       // ── OPE-467: claimed vs stored vs skipped, per lane ──────────────
       //
@@ -473,6 +478,15 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
             // rather than asserted. `venues_google_places` is the subset with a
             // licensing question attached.
             hotlinked_images: hotlinkedImages[0] ?? null,
+            // OPE-278 item 3 — live `-N` slug pairs, the receipt dedup
+            // leaves when it loses. Narrow by design: both rows live AND
+            // start dates within 7 days, because 42 events carry a numeric
+            // suffix and nearly all were already rejected by hand. See the
+            // comment at the query for why the date guard is load-bearing.
+            slug_collision_live_pairs: {
+              rule: "no two LIVE events may differ only by a numeric slug suffix within 7 days of each other",
+              ...slugCollisions,
+            },
             // OPE-423 invariant 2 — see the comment at the query.
             series_canonical_invariant: {
               rule: "event_series.canonical_slug must not name an event with merged_into set",
