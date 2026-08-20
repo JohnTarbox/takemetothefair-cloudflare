@@ -57,6 +57,7 @@
 import { useEffect } from "react";
 import { AlertTriangle } from "lucide-react";
 import { reportClientError } from "@/lib/report-client-error";
+import { recoverFromStaleChunkInBrowser } from "@/lib/stale-chunk-recovery";
 
 export default function GlobalError({
   error,
@@ -85,6 +86,11 @@ export default function GlobalError({
       errorType: "react-global-error",
       digest: error.digest,
     });
+    // OPE-485 — the stale-chunk recovery's highest-value hook. All 60 of the
+    // ChunkLoadErrors in the 14-day sample arrived as `react-global-error`,
+    // i.e. through THIS boundary: a failed lazy chunk takes down the route
+    // render, not just a promise. One reload, sentinel-guarded.
+    recoverFromStaleChunkInBrowser({ message: error.message, stack: error.stack });
   }, [error]);
 
   return (

@@ -6,6 +6,7 @@ import { useSession } from "next-auth/react";
 import { AlertTriangle, Home, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { reportClientError } from "@/lib/report-client-error";
+import { recoverFromStaleChunkInBrowser } from "@/lib/stale-chunk-recovery";
 
 export default function Error({
   error,
@@ -41,6 +42,9 @@ export default function Error({
       errorType: "react-error-boundary",
       digest: error.digest,
     });
+    // OPE-485 — same recovery as the root boundary; a chunk failure under a
+    // nested boundary is the identical stale-build cause.
+    recoverFromStaleChunkInBrowser({ message: error.message, stack: error.stack });
   }, [error]);
 
   return (
