@@ -38,6 +38,21 @@ import type { AuthContext } from "../auth.js";
 
 const TWENTY_EIGHT_DAYS_SECS = 28 * 24 * 60 * 60;
 
+/**
+ * Epoch SECONDS at which the OPE-472 series write-path fix (PR #931) deployed:
+ * 2026-08-19T14:00:00Z.
+ *
+ * A fixed constant, not a rolling window. The question it answers — "has the
+ * writer parented every event it should since it started running" — has a
+ * fixed start, and a rolling window would quietly forgive a regression as soon
+ * as it aged out.
+ *
+ * SECONDS because D1 stores these columns as seconds; a millisecond value here
+ * is far in the future, matches nothing, and reports a clean zero that reads
+ * exactly like success.
+ */
+const SERIES_WRITE_PATH_SHIPPED_AT = 1787148000;
+
 export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthContext) {
   if (auth.role !== "ADMIN") return;
 
@@ -277,6 +292,24 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
           // evidence of a dead writer — that inference is what went wrong — so
           // report the thing that actually moves when the writer runs.
           assigned_since_jul: sql<number>`(SELECT count(*) FROM events WHERE series_id IS NOT NULL AND created_at >= unixepoch('2026-07-01'))`,
+          // ⚠️ THE number to read. Everything above is anchored at 2026-07-01,
+          // which predates the write-path fix by seven weeks, so those counts
+          // are dominated by the PRE-FIX backlog and cannot go to zero no
+          // matter how well the writer behaves: `orphan_since_jul_with_venue`
+          // reads 146, and all 146 were created before the fix existed. That
+          // backlog is OPE-473's gated backfill, not a live defect.
+          //
+          // Anchoring on the deploy instant separates "did the fix work" from
+          // "is the backlog cleared". Verified in prod 2026-08-20:
+          //   orphan_after_fix_with_venue = 0   ← the writer is correct
+          //   orphan_after_fix_no_venue   = 2   ← skipped by design, drains
+          //                                        via the late attach
+          //
+          // Shipping this without the anchor would have handed the next
+          // reviewer a 146 to misread — which is precisely the mistake that
+          // failed this ticket's first review, reproduced one level up.
+          orphan_after_fix_with_venue: sql<number>`(SELECT count(*) FROM events WHERE series_id IS NULL AND venue_id IS NOT NULL AND created_at >= ${SERIES_WRITE_PATH_SHIPPED_AT})`,
+          orphan_after_fix_no_venue: sql<number>`(SELECT count(*) FROM events WHERE series_id IS NULL AND venue_id IS NULL AND created_at >= ${SERIES_WRITE_PATH_SHIPPED_AT})`,
           series_created_last_7d: sql<number>`(SELECT count(*) FROM event_series WHERE created_at >= unixepoch('now','-7 days'))`,
           duplicate_parents: sql<number>`(SELECT count(*) FROM (SELECT lower(trim(name)) AS n, venue_id FROM event_series WHERE venue_id IS NOT NULL GROUP BY n, venue_id HAVING count(*) > 1))`,
           single_event_series: sql<number>`(SELECT count(*) FROM (SELECT s.id FROM event_series s JOIN events e ON e.series_id = s.id GROUP BY s.id HAVING count(e.id) = 1))`,
