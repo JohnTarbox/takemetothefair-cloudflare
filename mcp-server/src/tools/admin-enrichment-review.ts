@@ -22,7 +22,7 @@
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { and, desc, eq, gte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { adminActions, vendorEnrichmentCandidates, vendors } from "../schema.js";
 import {
   jsonContent,
@@ -31,7 +31,22 @@ import {
   recomputeVendorCompleteness,
   triggerIndexNow,
 } from "../helpers.js";
+import {
+  isMalformedEmail,
+  isPlaceholderPhone,
+  isPlatformPlaceholderHandle,
+} from "../enrichment/extract.js";
 import type { Db } from "../db.js";
+
+/** Flags is a JSON array column; a malformed value must not abort the pass. */
+function parseFlags(raw: string): string[] {
+  try {
+    const v = JSON.parse(raw);
+    return Array.isArray(v) ? (v as string[]) : [];
+  } catch {
+    return [];
+  }
+}
 import type { AuthContext } from "../auth.js";
 
 interface Env {
@@ -194,6 +209,189 @@ export function registerEnrichmentReviewTools(
               job_run_id: r.jobRunId,
               created_at: r.createdAt instanceof Date ? r.createdAt.toISOString() : r.createdAt,
             })),
+          }),
+        ],
+      };
+    }
+  );
+
+  // --- revalidate_enrichment_candidates (OPE-504) --------------------------
+  //
+  // The gate fix only helps NEW inflow. 3,578 rows were already pending when it
+  // shipped, and the backlog is precisely the part OPE-374's auto-merge rule
+  // would act on. This re-runs the new guards over the existing queue.
+  //
+  // Follows docs/bulk-mutation-discipline.md:
+  //   single-writer     — one tool invocation, cursor-batched, no fan-out
+  //   idempotent        — only touches decision='pending'; a second run is a no-op
+  //   read-back-verified— returns per-reason counts; re-run must report 0 changes
+  //   rollback-planned  — every row it rejects is stamped reviewed_by =
+  //                       'ope504-revalidate', so the reverse is one UPDATE:
+  //                       SET decision='pending', reviewed_by=NULL, reviewed_at=NULL
+  //                       WHERE reviewed_by='ope504-revalidate'
+  //
+  // dry_run defaults TRUE. Writing to the backlog is a bulk prod mutation and
+  // wants a human's nod, so the default has to be the safe one.
+  server.tool(
+    "revalidate_enrichment_candidates",
+    "OPE-504 backlog pass: re-run the value-FORMAT guards over already-pending vendor-enrichment candidates. Rejects malformed/placeholder emails and no-op proposals (proposed == current), adds the placeholder_phone flag to dummy numbers, and strips website-platform placeholder handles (facebook.com/wix) from social_links payloads. dry_run defaults TRUE — returns the counts it WOULD change without writing. Idempotent; rejections are stamped reviewed_by='ope504-revalidate' for one-statement rollback. Admin only.",
+    {
+      dry_run: z
+        .boolean()
+        .default(true)
+        .describe("Default true. When true, computes and reports but writes nothing."),
+      limit: z
+        .number()
+        .int()
+        .positive()
+        .max(5000)
+        .default(5000)
+        .describe("Max pending rows to examine this pass (default 5000)."),
+    },
+    async (params) => {
+      // `.default()` does not fire on every caller path in this codebase, so
+      // read defensively rather than trusting the schema.
+      const dryRun = params.dry_run !== false;
+      const limit = params.limit ?? 5000;
+
+      const pending = await db
+        .select()
+        .from(vendorEnrichmentCandidates)
+        .where(eq(vendorEnrichmentCandidates.decision, "pending"))
+        .orderBy(vendorEnrichmentCandidates.id)
+        .limit(limit);
+
+      const rejected: Array<{ id: number; field: string; reason: string; value: string }> = [];
+      const flagged: Array<{ id: number; value: string }> = [];
+      const rewritten: Array<{ id: number; before: string; after: string }> = [];
+
+      for (const c of pending) {
+        // no-op: proposes exactly what is already stored
+        if (c.currentValue !== null && c.proposedValue === c.currentValue) {
+          rejected.push({
+            id: c.id,
+            field: c.proposedField,
+            reason: "no_op_proposal",
+            value: c.proposedValue,
+          });
+          continue;
+        }
+
+        if (c.proposedField === "contact_email") {
+          if (isMalformedEmail(c.proposedValue)) {
+            rejected.push({
+              id: c.id,
+              field: c.proposedField,
+              reason: "malformed_email",
+              value: c.proposedValue,
+            });
+          }
+          continue;
+        }
+
+        if (c.proposedField === "contact_phone") {
+          const flags = parseFlags(c.flags);
+          if (isPlaceholderPhone(c.proposedValue) && !flags.includes("placeholder_phone")) {
+            flagged.push({ id: c.id, value: c.proposedValue });
+          }
+          continue;
+        }
+
+        if (c.proposedField === "social_links") {
+          let parsed: Record<string, string>;
+          try {
+            parsed = JSON.parse(c.proposedValue) as Record<string, string>;
+          } catch {
+            continue; // not our business to repair unparseable payloads
+          }
+          const kept: Record<string, string> = {};
+          for (const [platform, url] of Object.entries(parsed)) {
+            if (!isPlatformPlaceholderHandle(url)) kept[platform] = url;
+          }
+          if (Object.keys(kept).length === Object.keys(parsed).length) continue; // nothing to do
+          if (Object.keys(kept).length === 0) {
+            rejected.push({
+              id: c.id,
+              field: c.proposedField,
+              reason: "all_social_links_platform_placeholder",
+              value: c.proposedValue,
+            });
+          } else {
+            rewritten.push({ id: c.id, before: c.proposedValue, after: JSON.stringify(kept) });
+          }
+        }
+      }
+
+      if (!dryRun) {
+        const now = new Date();
+        // Chunked: D1 caps bound parameters at 100 per statement.
+        for (let i = 0; i < rejected.length; i += 50) {
+          const ids = rejected.slice(i, i + 50).map((r) => r.id);
+          await db
+            .update(vendorEnrichmentCandidates)
+            .set({ decision: "rejected", reviewedAt: now, reviewedBy: "ope504-revalidate" })
+            .where(
+              and(
+                inArray(vendorEnrichmentCandidates.id, ids),
+                eq(vendorEnrichmentCandidates.decision, "pending")
+              )
+            );
+        }
+        // Flags and rewrites are per-row (each writes a distinct value).
+        for (const f of flagged) {
+          const [row] = await db
+            .select({ flags: vendorEnrichmentCandidates.flags })
+            .from(vendorEnrichmentCandidates)
+            .where(eq(vendorEnrichmentCandidates.id, f.id))
+            .limit(1);
+          const next = [...new Set([...parseFlags(row?.flags ?? "[]"), "placeholder_phone"])];
+          await db
+            .update(vendorEnrichmentCandidates)
+            .set({ flags: JSON.stringify(next) })
+            .where(
+              and(
+                eq(vendorEnrichmentCandidates.id, f.id),
+                eq(vendorEnrichmentCandidates.decision, "pending")
+              )
+            );
+        }
+        for (const r of rewritten) {
+          await db
+            .update(vendorEnrichmentCandidates)
+            .set({ proposedValue: r.after })
+            .where(
+              and(
+                eq(vendorEnrichmentCandidates.id, r.id),
+                eq(vendorEnrichmentCandidates.decision, "pending")
+              )
+            );
+        }
+      }
+
+      const byReason: Record<string, number> = {};
+      for (const r of rejected) byReason[r.reason] = (byReason[r.reason] ?? 0) + 1;
+
+      return {
+        content: [
+          jsonContent({
+            ok: true,
+            dry_run: dryRun,
+            pending_examined: pending.length,
+            // True when the examined set hit the cap — otherwise a partial pass
+            // reads as "the whole backlog is clean".
+            truncated: pending.length >= limit,
+            would_reject: rejected.length,
+            would_flag_placeholder_phone: flagged.length,
+            would_strip_social_links: rewritten.length,
+            reject_reasons: byReason,
+            samples: {
+              rejected: rejected.slice(0, 15),
+              flagged: flagged.slice(0, 15),
+              rewritten: rewritten.slice(0, 10),
+            },
+            rollback: dryRun
+              ? null
+              : "UPDATE vendor_enrichment_candidates SET decision='pending', reviewed_by=NULL, reviewed_at=NULL WHERE reviewed_by='ope504-revalidate'",
           }),
         ],
       };

@@ -16,7 +16,7 @@ import { sanitizeScrapedDescription } from "@takemetothefair/utils";
 // `isPlaceholderEmail` (line ~124) which is NOT the same rule as extract.ts's
 // version of that name; two divergent implementations behind one identifier is
 // a trap, and adding a third copy for phones would deepen it.
-import { isPlaceholderPhone } from "./extract.js";
+import { isMalformedEmail, isPlaceholderPhone, isPlatformPlaceholderHandle } from "./extract.js";
 import type {
   CandidateFlag,
   DomainProblem,
@@ -305,7 +305,7 @@ export function buildEnrichmentResult(
     }
   }
   if (domainProblem) {
-    return { candidates: [], vendorFlags: [], domainProblem };
+    return { candidates: [], vendorFlags: [], domainProblem, suppressedNoOps: 0 };
   }
 
   // --- Closed business (vendor-level flag) ---
@@ -317,6 +317,7 @@ export function buildEnrichmentResult(
   if (nonBusiness) vendorFlags.push("non_business_website");
 
   const candidates: ProposedCandidate[] = [];
+  let suppressedNoOps = 0;
   const push = (
     field: EnrichField,
     proposedValue: string,
@@ -325,6 +326,16 @@ export function buildEnrichmentResult(
     confidence: number,
     flags: CandidateFlag[] = []
   ) => {
+    // OPE-504 — never stage a candidate that proposes the value already
+    // stored. All 14 `non_business_website` rows in one prod sample were
+    // exactly this: `proposed_value` identical to `current_value`, occupying a
+    // human review slot in a queue with zero outflow while proposing nothing.
+    // The flag itself survives on `vendorFlags` (and is now written to the
+    // enrichment log on the live path too), so nothing is lost by dropping it.
+    if (currentValue !== null && proposedValue === currentValue) {
+      suppressedNoOps++;
+      return;
+    }
     candidates.push({ field, proposedValue, currentValue, method, confidence, flags });
   };
 
@@ -335,7 +346,7 @@ export function buildEnrichmentResult(
     push("website", vendor.website ?? opts.sourceUrl, vendor.website, "regex", 0, [
       "non_business_website",
     ]);
-    return { candidates, vendorFlags, domainProblem: null };
+    return { candidates, vendorFlags, domainProblem: null, suppressedNoOps };
   }
 
   // --- contact_phone (fill-empty-only) ---
@@ -358,7 +369,11 @@ export function buildEnrichmentResult(
 
   // --- contact_email (fill-empty-only + junk drop + cross-domain flag) ---
   if (ex.email && isEmpty(vendor.contactEmail)) {
-    if (!isPlaceholderEmail(ex.email.value)) {
+    // OPE-504 — malformed is dropped, same as placeholder. `email_domain_mismatch`
+    // was doing the job of format validation and fails exactly when the bad
+    // value sits on the vendor's OWN domain (prod 7149,
+    // `bill.@thirstyrobotbrewing.com`, staged clean at 0.90 with no flags).
+    if (!isPlaceholderEmail(ex.email.value) && !isMalformedEmail(ex.email.value)) {
       // I3: flag (don't drop) an email whose domain is unrelated to the
       // vendor's own website — it may be the real contact or a scraped third
       // party (a webmaster's address, a directory's relay). A human decides.
@@ -377,7 +392,22 @@ export function buildEnrichmentResult(
     // before staging so we never store a campaign-tagged link.
     const cleanedSocial: Record<string, string> = {};
     for (const [platform, url] of Object.entries(ex.social.value)) {
+      // OPE-504 — drop the WEBSITE PLATFORM's own accounts, scraped off a
+      // template footer (facebook.com/wix, instagram.com/squarespace). Applied
+      // per LINK, not per row: several prod vendors mixed one placeholder in
+      // with genuine handles, so rejecting the whole payload would throw away
+      // real data.
+      if (isPlatformPlaceholderHandle(url)) continue;
       cleanedSocial[platform] = stripTrackingParams(url);
+    }
+    // Every link was platform residue — there is no candidate here.
+    if (Object.keys(cleanedSocial).length === 0) {
+      return {
+        candidates,
+        vendorFlags: [...new Set(vendorFlags)],
+        domainProblem: null,
+        suppressedNoOps,
+      };
     }
     const flags: CandidateFlag[] = [];
     for (const url of Object.values(cleanedSocial)) {
@@ -450,5 +480,5 @@ export function buildEnrichmentResult(
     c.flags = [...new Set([...c.flags, ...vendorWide])];
   }
 
-  return { candidates, vendorFlags: dedupedVendorFlags, domainProblem: null };
+  return { candidates, vendorFlags: dedupedVendorFlags, domainProblem: null, suppressedNoOps };
 }

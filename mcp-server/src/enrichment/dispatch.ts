@@ -207,7 +207,7 @@ export async function processEnrichmentJob(
       fieldsChanged,
       notes: `dry-run: ${result.candidates.length} candidate(s) staged${
         result.vendorFlags.length ? `; flags=${result.vendorFlags.join(",")}` : ""
-      }`,
+      }${result.suppressedNoOps ? `; no-ops suppressed=${result.suppressedNoOps}` : ""}`,
     });
     return {
       vendorId: msg.vendorId,
@@ -227,7 +227,13 @@ export async function processEnrichmentJob(
     source: "browser_enrich",
     status: applied.length > 0 ? "success" : "skipped",
     fieldsChanged: applied,
-    notes: `auto-merge: applied ${applied.length} field(s)`,
+    // OPE-504 — vendorFlags used to be recorded ONLY on the dry-run path, so
+    // on the live path `non_business_website` and friends existed nowhere
+    // durable. That mattered the moment no-op candidates were suppressed:
+    // the redundant `website` candidate row was the flag's only trace here.
+    notes: `auto-merge: applied ${applied.length} field(s)${
+      result.vendorFlags.length ? `; flags=${result.vendorFlags.join(",")}` : ""
+    }${result.suppressedNoOps ? `; no-ops suppressed=${result.suppressedNoOps}` : ""}`,
   });
   if (applied.length > 0) {
     await recomputeVendorCompleteness(db, msg.vendorId);

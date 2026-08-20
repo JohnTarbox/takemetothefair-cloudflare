@@ -39,8 +39,44 @@ const SOCIAL_JUNK_PATH = /\/(sharer|share|intent|plugins|dialog|tr\b|embed)/i;
 
 /** OPE-249 #4 — placeholder / site-builder-residue email domains + local-parts
  *  that must never stage as a real contact. */
+/**
+ * OPE-504 — file extensions that turn up as the final label when a scraper
+ * matches an image or asset filename with an `@` in it (retina `@2x`/`@3x`
+ * assets are the common source). Never a real mail domain.
+ */
+const ASSET_EXTENSION_TLDS = new Set([
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "svg",
+  "webp",
+  "avif",
+  "ico",
+  "bmp",
+  "tiff",
+  "pdf",
+  "css",
+  "js",
+  "json",
+  "xml",
+  "zip",
+  "mp4",
+  "webm",
+  "woff",
+  "woff2",
+]);
+
 const PLACEHOLDER_EMAIL_DOMAINS = new Set([
   "godaddy.com",
+  // OPE-504 — Wix's default pre-publish domain. Prod candidate 7780 proposed
+  // `info@mysite.com` and was caught only by email_domain_mismatch, i.e. by
+  // accident; on a vendor whose site really was mysite.com it would pass.
+  "mysite.com",
+  "mydomain.com",
+  "yoursite.com",
+  "yourdomain.com",
+  "domain.com",
   "wix.com",
   "wixpress.com",
   "squarespace.com",
@@ -174,9 +210,126 @@ export function isPlaceholderPhone(canonical: string): boolean {
   // 234-5678 IS well-formed and DOES reach here, so this check earns its place.
   if (isSequentialRun(subscriber)) return true;
 
+  // OPE-504 — `(800) 800-0000` (prod candidate 7055) reached here CLEAN at
+  // confidence 0.90. The repeated-digit test above runs on the whole 7-digit
+  // subscriber, so an all-zero LINE number behind a different exchange slips
+  // past it. Two narrow tells, both stronger than they look:
+  //
+  //   * an all-zero line number (`xxx-xxx-0000`)
+  //   * the exchange repeating the area code (`800-800-xxxx`)
+  //
+  // Real switchboards on `-0000` do exist, so this will occasionally be wrong.
+  // That is the right trade here: `placeholder_phone` FLAGS for review rather
+  // than dropping (OPE-376's deliberate choice), so a false positive costs one
+  // human glance, while a false negative writes a fake number onto a live
+  // vendor page.
+  if (/^0+$/.test(line)) return true;
+  if (npa === nxx) return true;
+
   return false;
 }
 
+/**
+ * OPE-504 — true when a social URL points at the WEBSITE PLATFORM's own
+ * account rather than the vendor's.
+ *
+ * These come off template footers: a Wix site ships with links to Wix's own
+ * Facebook/Twitter/Instagram, and the scraper cannot tell them from the
+ * vendor's. Six vendors in one 200-row prod sample carried them, several
+ * mixing one placeholder in with genuine handles — so this is applied
+ * PER LINK, never per row.
+ *
+ * Matches the final path segment WHOLE. Substring matching would kill
+ * `facebook.com/wixomfarmersmarket`, which is a real Michigan market.
+ */
+const PLATFORM_PLACEHOLDER_HANDLES = new Set([
+  "wix",
+  "wixcom",
+  "squarespace",
+  "shopify",
+  "godaddy",
+  "weebly",
+  "wordpress",
+  "wordpressdotcom",
+  "webflow",
+  "bigcommerce",
+  "duda",
+  "jimdo",
+  "yourbusiness",
+  "yourpage",
+  "username",
+]);
+
+export function isPlatformPlaceholderHandle(url: string): boolean {
+  let path: string;
+  try {
+    path = new URL(url).pathname;
+  } catch {
+    return false;
+  }
+  const segments = path.split("/").filter(Boolean);
+  if (segments.length === 0) return false;
+  // `youtube.com/user/Wix` and `youtube.com/c/Wix` put the handle last; so does
+  // the plain `facebook.com/wix`. Taking the last segment covers both.
+  const handle = segments[segments.length - 1].toLowerCase().replace(/[^a-z0-9]/g, "");
+  return PLATFORM_PLACEHOLDER_HANDLES.has(handle);
+}
+
+/**
+ * OPE-504 — true when this string is not a plausible email address at all.
+ *
+ * The gate had no format validation. `email_domain_mismatch` was standing in
+ * for it, which fails in exactly the case that matters: a malformed value on
+ * the vendor's OWN domain. Verified in prod — candidate 7149 proposed
+ * `bill.@thirstyrobotbrewing.com` at confidence 0.90 with no flags at all,
+ * which is inside the auto-merge predicate.
+ *
+ * Deliberately NOT a full RFC 5322 implementation. RFC 5322 permits quoted
+ * local-parts containing almost anything, so a faithful validator would accept
+ * `"bill."@example.com` and defeat the point. This is the pragmatic shape
+ * every mail provider actually accepts, which is the right test for "did the
+ * scraper pick up a real address".
+ */
+export function isMalformedEmail(email: string): boolean {
+  const e = decodeUrlAndEntities(email).trim();
+  if (!e || /\s/.test(e)) return true;
+
+  const at = e.indexOf("@");
+  // Exactly one @ — `two@at@example.com` is not an address.
+  if (at < 1 || at !== e.lastIndexOf("@")) return true;
+
+  const local = e.slice(0, at);
+  const domain = e.slice(at + 1).toLowerCase();
+
+  // Local-part: no leading/trailing dot, no doubled dot.
+  if (local.startsWith(".") || local.endsWith(".") || local.includes("..")) return true;
+  if (!/^[A-Za-z0-9!#$%&'*+/=?^_`{|}~.-]+$/.test(local)) return true;
+
+  // Domain: dot-separated labels, each alphanumeric with interior hyphens,
+  // and a final alphabetic TLD of at least two characters.
+  const labels = domain.split(".");
+  if (labels.length < 2) return true;
+  for (const label of labels) {
+    if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(label)) return true;
+  }
+  const tld = labels[labels.length - 1];
+  if (!/^[a-z]{2,}$/.test(tld)) return true;
+
+  // `US_Web_AllBrands_Logos_Desktop@3x.png` (prod candidate 7399) is a
+  // STRUCTURALLY valid domain — `3x` is a legal label and `png` is alphabetic.
+  // The only thing wrong with it is that nobody's mail server lives at a
+  // filename, so the rejection has to be a real asset-extension check rather
+  // than a cleverer shape rule. Found by the test failing on the first cut.
+  if (ASSET_EXTENSION_TLDS.has(tld)) return true;
+
+  return false;
+}
+
+/**
+ * NOTE: applied at all three extraction sites alongside `isMalformedEmail`, so
+ * the vendor, performer AND promoter lanes are covered — `safety-rules.ts`
+ * gates only vendors, and it carries its own DIFFERENT function of this name.
+ */
 /** OPE-249 #4 — true when this address is site-builder/placeholder residue. */
 export function isPlaceholderEmail(email: string): boolean {
   const e = decodeUrlAndEntities(email).toLowerCase().trim();
@@ -378,7 +531,7 @@ export function extractVendorContact(html: string, sourceUrl: string): VendorExt
     const emailRaw =
       typeof node.email === "string" ? node.email.replace(/^mailto:/i, "").trim() : "";
     // OPE-249 #4 — never stage placeholder/site-builder residue as a contact.
-    if (emailRaw && !out.email && !isPlaceholderEmail(emailRaw))
+    if (emailRaw && !out.email && !isPlaceholderEmail(emailRaw) && !isMalformedEmail(emailRaw))
       out.email = { value: emailRaw, method: "jsonld", confidence: 0.9 };
 
     const addr = node.address;
@@ -421,7 +574,7 @@ export function extractVendorContact(html: string, sourceUrl: string): VendorExt
     const mailto = html.match(/href=["']mailto:([^"'?]+)/i);
     if (mailto) {
       const email = decodeBasicEntities(mailto[1]).trim();
-      if (email && !isPlaceholderEmail(email))
+      if (email && !isPlaceholderEmail(email) && !isMalformedEmail(email))
         // OPE-249 #4
         out.email = { value: email, method: "mailto", confidence: 0.8 };
     }
@@ -445,7 +598,7 @@ export function extractVendorContact(html: string, sourceUrl: string): VendorExt
   out.bodyText = text.slice(0, 20000);
   if (!out.email) {
     const m = text.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/);
-    if (m && !isPlaceholderEmail(m[0])) {
+    if (m && !isPlaceholderEmail(m[0]) && !isMalformedEmail(m[0])) {
       // OPE-249 #5 — a regex email is the weakest signal; without domain
       // affinity (matches the site, or a generic mailbox) it's likely a
       // personal address at a third domain (`kkeating@granitemediagroup.com`).
