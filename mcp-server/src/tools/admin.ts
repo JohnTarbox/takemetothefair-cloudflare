@@ -69,6 +69,7 @@ import {
   PUBLIC_ACCESS,
   computePromoterEnrichment,
 } from "@takemetothefair/constants";
+import { attachEventToSeries } from "@takemetothefair/event-series";
 import { dollarsToCents } from "../helpers.js";
 import { recordMutation } from "../audit/record-mutation.js";
 import { notifyApprovalIfNeeded } from "../approval-notification.js";
@@ -1415,6 +1416,49 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           await db.update(events).set(updates).where(eq(events.id, event.id));
         }
         await recomputeEventCompleteness(db, event.id);
+
+        // OPE-472 rework — LATE series attach, when a venue arrives after the
+        // event was created.
+        //
+        // The write-path fix parents an event at creation, but it keys on
+        // `normalized(name) + venue_id` and therefore skips an event with no
+        // venue. Measured in prod 2026-08-20: of the 6 events created since the
+        // write-path fix deployed, the 4 with a venue were all parented and the
+        // 2 without were not. Those two were unparented *by design* — and, until
+        // now, permanently, because the only moment parentage was attempted had
+        // already passed. Venue-less events are the normal output of a thin
+        // extraction, so that was a draining pool with no drain.
+        //
+        // This is the moment the missing input arrives. `attachEventToSeries`
+        // guards on `series_id IS NULL`, so it can only fill a hole, never
+        // re-parent an event that already belongs somewhere.
+        //
+        // Best-effort and non-fatal: parentage is an enhancement, the edit is
+        // the operator's actual request.
+        const gainedVenue =
+          updates.venueId !== undefined &&
+          updates.venueId !== null &&
+          !event.venueId &&
+          !event.seriesId;
+        if (gainedVenue) {
+          try {
+            const attached = await attachEventToSeries(db, event.id, {
+              name: (updates.name as string) ?? event.name,
+              venueId: updates.venueId as string,
+              promoterId: event.promoterId ?? null,
+            });
+            if (attached.outcome === "skipped") {
+              // Surfaced, not swallowed: a silent skip here is exactly what
+              // made the original fix look dead from the outside.
+              console.warn(
+                `[series] late attach skipped for ${event.id}: ${attached.reason ?? "unknown"}`
+              );
+            }
+          } catch (err) {
+            console.error("[series] late attach threw", err);
+          }
+        }
+
         await logEnrichment(db, {
           targetType: "event",
           targetId: event.id,

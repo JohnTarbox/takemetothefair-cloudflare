@@ -93,7 +93,8 @@
     "tailwind-merge": "^3.4.0",
     "tldts": "^7.4.6",
     "web-vitals": "^5.2.0",
-    "zod": "^4.3.6"
+    "zod": "^4.3.6",
+    "@takemetothefair/event-series": "*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241230.0",

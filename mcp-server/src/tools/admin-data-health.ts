@@ -247,6 +247,32 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
         .select({
           orphan_live_events: sql<number>`(SELECT count(*) FROM events WHERE series_id IS NULL AND status IN ('APPROVED','TENTATIVE') AND merged_into IS NULL)`,
           orphan_events_since_jul: sql<number>`(SELECT count(*) FROM events WHERE series_id IS NULL AND created_at >= unixepoch('2026-07-01'))`,
+          // OPE-472 rework — split the orphan count by CAUSE.
+          //
+          // The single total above cost a false REVIEW FAIL on 2026-08-20: the
+          // number kept climbing (170 → 172), which was read as "the write path
+          // never resumed". Measured directly, the write path was working —
+          // of 6 events created after it deployed, the 4 with a venue were all
+          // parented. The 2 that were not had `venue_id IS NULL`, which the
+          // resolver skips deliberately, because keying on name alone would put
+          // every "Holiday Craft Fair" in New England under one parent.
+          //
+          // So the two halves have to be counted apart or the invariant cannot
+          // express its own success:
+          //   *_with_venue — a real defect. Should be 0. Non-zero means the
+          //                  write path genuinely is not firing.
+          //   *_no_venue   — blocked upstream on venue resolution, not a
+          //                  parentage bug. Drains via the late attach in
+          //                  update_event as venues get assigned.
+          orphan_since_jul_with_venue: sql<number>`(SELECT count(*) FROM events WHERE series_id IS NULL AND venue_id IS NOT NULL AND created_at >= unixepoch('2026-07-01'))`,
+          orphan_since_jul_no_venue: sql<number>`(SELECT count(*) FROM events WHERE series_id IS NULL AND venue_id IS NULL AND created_at >= unixepoch('2026-07-01'))`,
+          orphan_live_with_venue: sql<number>`(SELECT count(*) FROM events WHERE series_id IS NULL AND venue_id IS NOT NULL AND status IN ('APPROVED','TENTATIVE') AND merged_into IS NULL)`,
+          orphan_live_no_venue: sql<number>`(SELECT count(*) FROM events WHERE series_id IS NULL AND venue_id IS NULL AND status IN ('APPROVED','TENTATIVE') AND merged_into IS NULL)`,
+          // Liveness, stated positively. A non-decreasing orphan total is NOT
+          // evidence of a dead writer — that inference is what went wrong — so
+          // report the thing that actually moves when the writer runs.
+          assigned_since_jul: sql<number>`(SELECT count(*) FROM events WHERE series_id IS NOT NULL AND created_at >= unixepoch('2026-07-01'))`,
+          series_created_last_7d: sql<number>`(SELECT count(*) FROM event_series WHERE created_at >= unixepoch('now','-7 days'))`,
           duplicate_parents: sql<number>`(SELECT count(*) FROM (SELECT lower(trim(name)) AS n, venue_id FROM event_series WHERE venue_id IS NOT NULL GROUP BY n, venue_id HAVING count(*) > 1))`,
           single_event_series: sql<number>`(SELECT count(*) FROM (SELECT s.id FROM event_series s JOIN events e ON e.series_id = s.id GROUP BY s.id HAVING count(e.id) = 1))`,
           newest_series_created: sql<string>`(SELECT max(date(created_at, 'unixepoch')) FROM event_series)`,
@@ -431,10 +457,17 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
               ...r,
               unaccounted: Number(r.claimed) - Number(r.stored) - Number(r.skipped),
             })),
-            // OPE-472 — series parentage. `orphan_events_since_jul` is the
-            // one that says whether the write-path fix is actually holding:
-            // it should stop growing the day it ships, while the live-orphan
-            // backlog is a separate (backfill) question.
+            // OPE-472 — series parentage.
+            //
+            // Read `orphan_since_jul_with_venue` (should be 0) for "is the
+            // write path holding", NOT the undifferentiated
+            // `orphan_events_since_jul`, which legitimately climbs whenever a
+            // venue-less event is created and is therefore useless as a
+            // health signal on its own. `series_created_last_7d` and
+            // `assigned_since_jul` are the positive liveness numbers; a
+            // frozen `series_created_last_7d` is the real "writer is dead"
+            // tell. The live-orphan backlog remains a separate (backfill)
+            // question owned by OPE-473.
             series_invariants: seriesInvariants ?? null,
             // OPE-294 — the hotlink population, so "trends down" is checkable
             // rather than asserted. `venues_google_places` is the subset with a

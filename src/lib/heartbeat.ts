@@ -28,6 +28,7 @@ import {
   siteHealthRefreshState,
   agentHeartbeats,
   errorLogs,
+  eventSeries,
   inboundEmails,
   imageCoverageState,
   newsletterIssues,
@@ -398,6 +399,29 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
   // every hour on schedule, and the ledger was quiet because ChunkLoadError is on
   // the curated NOISE_DENYLIST by design. This probe answers "did it run?"
   // definitively, so that question never again has to be inferred from the ledger.
+  {
+    // OPE-472 rework. The defect this probe exists for is not a crash — it is
+    // SILENCE. `event_series` was backfilled once and went inert for seven
+    // weeks while every new event was born unparented, and nothing said so;
+    // the newest-series date sat frozen at 2026-06-30 and no one was looking.
+    //
+    // Evidence is a series row being CREATED, not an orphan count falling.
+    // The orphan total legitimately climbs whenever a venue-less event arrives
+    // (the resolver skips those by design), so it cannot distinguish "working"
+    // from "dead" — reading it that way is what produced a REVIEW FAIL against
+    // a live fix on 2026-08-20.
+    //
+    // 336h (14d) because series creation is demand-driven: a parent is minted
+    // only for the FIRST edition of a fair at a venue, and a quiet fortnight of
+    // familiar events is normal. Prod rate at ship time was ~4 series/day, so
+    // 14d of true silence is a real signal rather than a slow week.
+    name: "series-write-path",
+    ownerOpe: "OPE-472",
+    label: "Series parent minted at event write time",
+    priority: "P1",
+    expectedWindowHours: 336,
+    lastEvidenceAt: (db) => maxTs(db, eventSeries, eventSeries.createdAt),
+  },
   {
     name: "fault-emitter-run",
     ownerOpe: "OPE-488",
