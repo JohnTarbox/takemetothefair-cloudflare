@@ -383,7 +383,35 @@ export async function resolvePhotoEvent(
   readExifFn: () => Promise<ExifData>,
   subject: string | null = null
 ): Promise<{ resolution: Resolution; exif: ExifData }> {
-  const overrideEvent = await findOverrideEvent(db, overrideSlugs);
+  // OPE-404 item 2 — a LOOKUP failure must hold the photo, never kill the email.
+  //
+  // The LIKE-pattern defect (fixed in PR #863) did not merely fail to match: it
+  // threw, the throw became `caughtError` in the workflow, and the row landed on
+  // `status='failed'` with no recovery path. `401adb3c` ("Belgrade Lakes") is
+  // still sitting there — the cause was fixed on 2026-08-16 and the row has not
+  // moved since 08-10, because nothing replays a failed photo.
+  //
+  // The specific bug is gone. This is the class guard: an identification
+  // question that cannot be answered has a correct answer already — HOLD and
+  // ask — and reaching it must not depend on every future lookup being
+  // exception-free. Holding costs a reply; throwing costs the photo.
+  //
+  // Deliberately narrow: only the two identification lookups are wrapped. The
+  // EXIF read below is already hold-on-failure by contract, and wrapping the
+  // whole function would swallow genuine infrastructure errors that SHOULD
+  // surface (a missing DB binding is not a photo we can hold).
+  const identify = async <T>(what: string, fn: () => Promise<T>): Promise<T | null> => {
+    try {
+      return await fn();
+    } catch (err) {
+      // Loud, not silent: a fail-soft reason nobody reads is how the original
+      // matcher went unnoticed for months.
+      console.error(`[photo-intake] ${what} lookup failed; holding photo`, err);
+      return null;
+    }
+  };
+
+  const overrideEvent = await identify("override-slug", () => findOverrideEvent(db, overrideSlugs));
   if (overrideEvent) {
     return {
       resolution: resolveOccurrence({ overrideEvent, venues: [], events: [] }),
@@ -394,7 +422,7 @@ export async function resolvePhotoEvent(
   // OPE-254 — the fair NAMED in the subject (in prose, not as a bare slug)
   // still beats EXIF/no-GPS-hold: John naming the fair is the documented
   // override, and a subject that spells out the fair name IS naming it.
-  const namedEvent = await findEventBySubjectName(db, subject);
+  const namedEvent = await identify("subject-name", () => findEventBySubjectName(db, subject));
   if (namedEvent) {
     return {
       resolution: resolveOccurrence({ overrideEvent: namedEvent, venues: [], events: [] }),

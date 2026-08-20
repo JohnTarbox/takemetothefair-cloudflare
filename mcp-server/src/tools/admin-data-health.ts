@@ -218,6 +218,40 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
         .innerJoin(events, eq(events.slug, eventSeries.canonicalSlug))
         .where(sql`${events.mergedInto} IS NOT NULL`);
 
+      // ── OPE-404 — an inbound email stuck on `failed` has no owner ────
+      //
+      // The LIKE-pattern defect that killed `401adb3c` ("Belgrade Lakes",
+      // photo_intake) was FIXED on 2026-08-16 by PR #863. The row was still
+      // `status='failed'`, `resulting_event_id` NULL, photo never delivered,
+      // when this was written on 2026-08-20 — ten days after arrival and four
+      // days after the cause stopped existing.
+      //
+      // That gap is the real defect. Fixing the cause does not move rows that
+      // already failed, and nothing counts them, so a dead submission waits for
+      // somebody to go looking. `failed` is terminal in the workflow — there is
+      // no retry that reaches it.
+      //
+      // Counted with an AGE, not just a total: a row that failed ten minutes
+      // ago may still be mid-retry, and a count alone cannot tell that from one
+      // abandoned for a fortnight. `oldest_failed_days` is the number that says
+      // somebody has to act.
+      //
+      // Reports, does not replay: replaying a photo email writes to a public
+      // gallery, and which event a photo belongs to is often exactly the
+      // question that failed. Belgrade Lakes is genuinely ambiguous — two
+      // approved events share the name.
+      const [stuckInbound] = await db
+        .select({
+          failed_total: sql<number>`(SELECT count(*) FROM inbound_emails WHERE status = 'failed')`,
+          failed_photo_intake: sql<number>`(SELECT count(*) FROM inbound_emails WHERE status = 'failed' AND intent = 'photo_intake')`,
+          failed_unresolved: sql<number>`(SELECT count(*) FROM inbound_emails WHERE status = 'failed' AND resulting_event_id IS NULL)`,
+          // unixepoch() and received_at are both SECONDS — 86400, not 86400000.
+          oldest_failed_days: sql<
+            number | null
+          >`(SELECT CAST((unixepoch() - MIN(received_at)) / 86400 AS INTEGER) FROM inbound_emails WHERE status = 'failed')`,
+        })
+        .from(sql`(SELECT 1)`);
+
       // OPE-278 item 3 — live `-N` slug pairs; see slug-collision-invariant.ts
       // for why this is narrow (42 suffixed events in prod, 2 real defects).
       const slugCollisions = await findSlugCollisionPairs(db);
@@ -511,6 +545,10 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
             // rather than asserted. `venues_google_places` is the subset with a
             // licensing question attached.
             hotlinked_images: hotlinkedImages[0] ?? null,
+            // OPE-404 — inbound emails terminally stuck on `status='failed'`.
+            // `oldest_failed_days` is the actionable one: fixing a cause does
+            // not move rows that already failed, and nothing else counts them.
+            stuck_inbound_emails: stuckInbound ?? null,
             // OPE-278 item 3 — live `-N` slug pairs, the receipt dedup
             // leaves when it loses. Narrow by design: both rows live AND
             // start dates within 7 days, because 42 events carry a numeric
