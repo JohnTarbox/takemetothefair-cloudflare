@@ -1643,6 +1643,12 @@ export const eventDataCitations = sqliteTable(
     index("idx_citations_event_field").on(table.eventId, table.fieldName),
     index("idx_citations_event_state").on(table.eventId, table.state),
     index("idx_citations_state").on(table.state),
+    // OPE-502 (drizzle/0220) — source-first reads. Every index above leads
+    // with event_id, which answers "this event's provenance" and nothing
+    // about "what else did this URL produce". Needed once OPE-433 makes a
+    // blast-radius lookup a pre-write check rather than an audit query.
+    index("idx_citations_source_url").on(table.sourceUrl),
+    index("idx_citations_created_at").on(table.createdAt, table.id),
   ]
 );
 
