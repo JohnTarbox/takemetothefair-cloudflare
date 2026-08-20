@@ -917,7 +917,12 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         {
           param: "application_deadline",
           column: "applicationDeadline",
-          transform: (v: string) => new Date(v),
+          // OPE-505 — was a bare `new Date(v)`, the same midnight-UTC anchor
+          // bug this ticket found in the citation tool. A deadline of
+          // "2026-09-12" stored at 00:00:00Z reads as Sept 11 to every US
+          // visitor, which for a deadline is the difference between open and
+          // closed. Found while fixing the citation path; same class, one line.
+          transform: (v: string) => normalizeEventDate(v) ?? undefined,
         },
         {
           param: "application_url",

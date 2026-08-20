@@ -3,6 +3,7 @@ import { z } from "zod";
 import { and, desc, eq, gt, gte, inArray, isNull, lt, sql } from "drizzle-orm";
 import { adminActions, events, eventDataCitations } from "../schema.js";
 import { decodeHtmlEntities, dollarsToCents, jsonContent } from "../helpers.js";
+import { normalizeEventDate } from "@takemetothefair/utils";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 
@@ -78,8 +79,13 @@ const DENORM_FIELD_MAP: Record<string, DenormSpec> = {
   application_deadline: {
     column: "applicationDeadline",
     parse: (raw) => {
-      const d = new Date(raw);
-      return isNaN(d.getTime()) ? undefined : d;
+      // OPE-505 — MUST go through normalizeEventDate. A bare `YYYY-MM-DD`
+      // through `new Date()` lands at 00:00:00Z, which renders as the
+      // PREVIOUS calendar day everywhere in the US. Citing a date is the
+      // last step of verifying it, so the raw parser preferentially
+      // corrupted events an operator had just gone to the trouble of
+      // getting right. An explicit time is preserved verbatim.
+      return normalizeEventDate(raw) ?? undefined;
     },
   },
   // OPE-198 — the rest of the vendor-application family, so a field populated
@@ -128,15 +134,25 @@ const DENORM_FIELD_MAP: Record<string, DenormSpec> = {
   start_date: {
     column: "startDate",
     parse: (raw) => {
-      const d = new Date(raw);
-      return isNaN(d.getTime()) ? undefined : d;
+      // OPE-505 — MUST go through normalizeEventDate. A bare `YYYY-MM-DD`
+      // through `new Date()` lands at 00:00:00Z, which renders as the
+      // PREVIOUS calendar day everywhere in the US. Citing a date is the
+      // last step of verifying it, so the raw parser preferentially
+      // corrupted events an operator had just gone to the trouble of
+      // getting right. An explicit time is preserved verbatim.
+      return normalizeEventDate(raw) ?? undefined;
     },
   },
   end_date: {
     column: "endDate",
     parse: (raw) => {
-      const d = new Date(raw);
-      return isNaN(d.getTime()) ? undefined : d;
+      // OPE-505 — MUST go through normalizeEventDate. A bare `YYYY-MM-DD`
+      // through `new Date()` lands at 00:00:00Z, which renders as the
+      // PREVIOUS calendar day everywhere in the US. Citing a date is the
+      // last step of verifying it, so the raw parser preferentially
+      // corrupted events an operator had just gone to the trouble of
+      // getting right. An explicit time is preserved verbatim.
+      return normalizeEventDate(raw) ?? undefined;
     },
   },
   venue_id: {
@@ -166,6 +182,75 @@ const DENORM_FIELD_MAP: Record<string, DenormSpec> = {
     },
   },
 };
+
+/**
+ * OPE-505 — the ONE place a citation is allowed to touch an events column.
+ *
+ * Both `create_event_citation` and `bulk_create_event_citations` had their own
+ * copy of this write. They drifted in what they reported (the bulk path did not
+ * even surface a skip reason), and a fix applied to one would have silently
+ * missed the other. There is now a single writer.
+ *
+ * Reports before/after rather than a bare column name. The reported incident
+ * was a date being moved twelve hours by a call whose response said only
+ * `event_column_updated: "startDate"` — technically a disclosure, but nothing
+ * an operator could read as "I changed your value".
+ */
+export type DenormApplyResult = {
+  column: string | null;
+  previousValue: string | number | null;
+  newValue: string | number | null;
+  skipReason: string | null;
+};
+
+/** Render a column value for the tool response: Dates as ISO, else as-is. */
+function serializeColumnValue(v: unknown): string | number | null {
+  if (v == null) return null;
+  if (v instanceof Date) return v.toISOString();
+  if (typeof v === "number" || typeof v === "string") return v;
+  return String(v);
+}
+
+export async function applyDenormColumn(
+  db: Db,
+  eventId: string,
+  fieldName: string,
+  rawValue: string
+): Promise<DenormApplyResult> {
+  const none: DenormApplyResult = {
+    column: null,
+    previousValue: null,
+    newValue: null,
+    skipReason: null,
+  };
+
+  const denorm = DENORM_FIELD_MAP[fieldName];
+  if (!denorm) return { ...none, skipReason: "unknown_field_name" };
+
+  const parsed = denorm.parse(rawValue);
+  if (parsed === undefined) return { ...none, skipReason: "parse_failed" };
+
+  const col = events[denorm.column as keyof typeof events] as never;
+  const before = await db.select({ v: col }).from(events).where(eq(events.id, eventId)).limit(1);
+  if (before.length === 0) return { ...none, skipReason: "event_not_found" };
+
+  const previousValue = serializeColumnValue(before[0].v);
+  const newValue = serializeColumnValue(parsed);
+
+  // Don't write when nothing changes. `events.updated_at` is a real change
+  // signal (OPE-308/332 use it for conditional GET and sitemap lastmod), so a
+  // no-op citation must not bump it and invalidate caches for nothing.
+  if (previousValue === newValue) {
+    return { column: String(denorm.column), previousValue, newValue, skipReason: "unchanged" };
+  }
+
+  await db
+    .update(events)
+    .set({ [denorm.column]: parsed, updatedAt: new Date() })
+    .where(eq(events.id, eventId));
+
+  return { column: String(denorm.column), previousValue, newValue, skipReason: null };
+}
 
 function parseDollarsToCents(raw: string): number | undefined {
   // Strips "$", commas, whitespace. Rejects ranges ("$50-$75") and free text.
@@ -332,26 +417,13 @@ export function registerCitationTools(server: McpServer, db: Db, auth: AuthConte
 
       // Sync denormalized events column when the field is known and the
       // value parses. parseDollarsToCents rejects ranges like "$50-$75" so
-      // those won't accidentally clobber the column.
-      let eventColumnUpdated: string | null = null;
-      let columnSkipReason: string | null = null;
-      if (updateColumn) {
-        const denorm = DENORM_FIELD_MAP[params.field_name];
-        if (!denorm) {
-          columnSkipReason = "unknown_field_name";
-        } else {
-          const parsed = denorm.parse(params.value);
-          if (parsed === undefined) {
-            columnSkipReason = "parse_failed";
-          } else {
-            await db
-              .update(events)
-              .set({ [denorm.column]: parsed, updatedAt: new Date() })
-              .where(eq(events.id, params.event_id));
-            eventColumnUpdated = String(denorm.column);
-          }
-        }
-      }
+      // those won't accidentally clobber the column. OPE-505: one shared
+      // writer, and it reports what it changed.
+      const applied = updateColumn
+        ? await applyDenormColumn(db, params.event_id, params.field_name, params.value)
+        : { column: null, previousValue: null, newValue: null, skipReason: null };
+      const eventColumnUpdated = applied.skipReason === null ? applied.column : null;
+      const columnSkipReason = applied.skipReason;
 
       return {
         content: [
@@ -363,6 +435,12 @@ export function registerCitationTools(server: McpServer, db: Db, auth: AuthConte
             superseded_count: supersededCount,
             event_column_updated: eventColumnUpdated,
             column_skip_reason: columnSkipReason,
+            // OPE-505 — before/after for anything this call touched, matching
+            // update_event's shape. `column_previous_value` is populated even
+            // when the write was skipped as `unchanged`, so a caller can tell
+            // "already correct" apart from "not attempted".
+            column_previous_value: applied.previousValue,
+            column_new_value: applied.newValue,
           }),
         ],
       };
@@ -857,6 +935,9 @@ export function registerCitationTools(server: McpServer, db: Db, auth: AuthConte
         citation_id: string;
         superseded_count: number;
         event_column_updated: string | null;
+        column_skip_reason: string | null;
+        column_previous_value: string | number | null;
+        column_new_value: string | number | null;
       }> = [];
       const errors: Array<{ index: number; message: string }> = [];
 
@@ -918,26 +999,20 @@ export function registerCitationTools(server: McpServer, db: Db, auth: AuthConte
             updatedAt: new Date(),
           });
 
-          let eventColumnUpdated: string | null = null;
-          if (updateColumn) {
-            const denorm = DENORM_FIELD_MAP[c.field_name];
-            if (denorm) {
-              const parsed = denorm.parse(c.value);
-              if (parsed !== undefined) {
-                await db
-                  .update(events)
-                  .set({ [denorm.column]: parsed, updatedAt: new Date() })
-                  .where(eq(events.id, c.event_id));
-                eventColumnUpdated = String(denorm.column);
-              }
-            }
-          }
+          // OPE-505 — same writer as the single-citation path, so the noon
+          // anchor and the before/after reporting cannot drift between them.
+          const applied = updateColumn
+            ? await applyDenormColumn(db, c.event_id, c.field_name, c.value)
+            : { column: null, previousValue: null, newValue: null, skipReason: null };
 
           created.push({
             index: i,
             citation_id: citationId,
             superseded_count: supersededCount,
-            event_column_updated: eventColumnUpdated,
+            event_column_updated: applied.skipReason === null ? applied.column : null,
+            column_skip_reason: applied.skipReason,
+            column_previous_value: applied.previousValue,
+            column_new_value: applied.newValue,
           });
         } catch (err) {
           errors.push({
