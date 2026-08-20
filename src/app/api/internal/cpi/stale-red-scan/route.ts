@@ -279,9 +279,15 @@ export const POST = withInternalKey({ source: "cpi:stale-red-scan" }, async ({ d
     //
     // A NEW red, or one clearing, is news and still pushes immediately. A red
     // that is simply still red is inventory, and belongs in the Monday summary.
-    // The fingerprint is the sorted refKey set: it changes when the membership
-    // changes and not when hoursInRed ticks up, which is exactly the
-    // distinction between news and steady state.
+    // The fingerprint is the sorted refKey set of the NON-VOLATILE reds: it
+    // changes when the membership changes and not when hoursInRed ticks up,
+    // which is exactly the distinction between news and steady state.
+    //
+    // Render-fault reds are deliberately not part of it (OPE-308 follow-up) —
+    // they rotate on their own and were re-triggering this mail near-daily on
+    // their own. They are still in `allReds`, so they still appear in the
+    // digest body and still count toward the subject line; they just do not
+    // decide when it is sent. See `staleRedFingerprint`.
     const fingerprint = staleRedFingerprint(allReds);
     const kv = getCloudflareRateLimitKv();
     const lastFingerprint = kv ? await kv.get(STALE_RED_FINGERPRINT_KEY) : null;
