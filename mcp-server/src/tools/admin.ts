@@ -115,6 +115,7 @@ import { registerDataHealthTool } from "./admin-data-health.js";
 import { registerGa4LivenessTool } from "./admin-ga4-liveness.js";
 import { registerLogVendorOutreachTool } from "./admin-log-vendor-outreach.js";
 import { registerClaimCorroborateTool } from "./admin-claim-corroborate.js";
+import { registerPhotoProposalTools } from "./admin-photo-proposals.js";
 import type { MainAppEnv as MainAppEnvForCorroborate } from "../main-app-fetch.js";
 import {
   registerCitationTools,
@@ -298,6 +299,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   // OPE-237 — the declared-website corroboration pass. The classifier shipped
   // with PR #791 and had no caller; this is its trigger.
   registerClaimCorroborateTool(server, auth, env as unknown as MainAppEnvForCorroborate);
+
+  // OPE-240 — read the staged booth-photo proposals. The PHOTO_AUTOWRITE_ENABLED
+  // gate is meant to be judged on these, and they were unreadable outside /admin.
+  registerPhotoProposalTools(server, db, auth);
 
   // ── list_all_events ────────────────────────────────────────────
   // Whitelist of event fields that can be filtered for NULL values
