@@ -29,6 +29,8 @@ import {
   decideDiscoveryRouting,
   isUnusableEventName,
   isPlaceholderUrl,
+  UNLABELED_SOURCE,
+  assertIngestionMethod,
 } from "@takemetothefair/utils";
 import { EVENT_CATEGORIES, PRIMARY_AUDIENCE, PUBLIC_ACCESS } from "@takemetothefair/constants";
 import { logError } from "../logger.js";
@@ -1086,10 +1088,25 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
       // — imported from @takemetothefair/utils so MCP + main app share one
       // source of truth. Vendor submissions default to TENTATIVE; a gate
       // failure downgrades them to PENDING with the trace in gate_flags.
+      // OPE-491 — resolve provenance ONCE, before the gates, so the gate
+      // evaluator and the stored row cannot disagree about what this row is.
+      //
+      // The default is `UNLABELED_SOURCE`, not "vendor-submission". The old
+      // default was itself a key in METHOD_BY_NAME, so it matched on the
+      // classifier's first branch and made the domain inference below it
+      // unreachable: every caller that omitted `source_label` was stamped a
+      // vendor submission regardless of where the data actually came from.
+      //
+      // Tier behaviour is unchanged. `evaluateGates` resolves credibility from
+      // `sourceUrl || sourceName`, and neither the old string nor the new one is
+      // a hostname, so both fall through to the same default tier.
+      const sourceLabel = params.source_label?.trim() || UNLABELED_SOURCE;
+      const sourceClassification = classifySource(sourceLabel, params.source_url);
+
       const gateResult = evaluateGates({
         name: params.name,
         sourceUrl: params.source_url ?? null,
-        sourceName: "vendor-submission",
+        sourceName: sourceLabel,
         startDate,
         endDate,
         applicationDeadline: null,
@@ -1132,11 +1149,6 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
         });
       }
 
-      // K26: resolve provenance once. Default preserves pre-K26 behavior
-      // ("vendor-submission" → ingestion_method 'vendor_submission').
-      const sourceLabel = params.source_label?.trim() || "vendor-submission";
-      const sourceClassification = classifySource(sourceLabel, params.source_url);
-
       const eventId = crypto.randomUUID();
       await db.insert(events).values({
         id: eventId,
@@ -1178,7 +1190,13 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
         // harvest events are no longer mis-bucketed as vendor submissions.
         sourceName: sourceLabel,
         sourceDomain: sourceClassification.sourceDomain,
-        ingestionMethod: sourceClassification.ingestionMethod,
+        // OPE-491 — the column is plain TEXT with no CHECK and no Drizzle enum,
+        // so this assertion is the only thing standing between a typo and a
+        // permanent new category in a field the admin UI groups by.
+        ingestionMethod: assertIngestionMethod(
+          sourceClassification.ingestionMethod,
+          "suggest_event"
+        ),
         sourceUrl: params.source_url || null,
         sourceId: params.source_url
           ? params.source_url

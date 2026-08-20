@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { classifySource } from "../source-classification";
+import {
+  INGESTION_METHODS,
+  UNLABELED_SOURCE,
+  assertIngestionMethod,
+  classifySource,
+} from "../source-classification";
 
 describe("classifySource — analyst backlog Item 1 (2026-05-26)", () => {
   // ---- domain extraction ----
@@ -109,5 +114,78 @@ describe("classifySource — analyst backlog Item 1 (2026-05-26)", () => {
     expect(r.sourceDomain).toBe("capecodchamber.org");
     // Method falls through to aggregator_import via the domain (capecod is tier-3)
     expect(r.ingestionMethod).toBe("aggregator_import");
+  });
+});
+
+/**
+ * OPE-491 — the default label was itself a classifier key.
+ *
+ * `suggest_event` defaulted `source_label` to `"vendor-submission"`, which is a
+ * key in METHOD_BY_NAME, so it matched on the first branch and made the domain
+ * inference below it unreachable. 670 rows (~36% of all events) were stamped
+ * `vendor_submission` regardless of where they actually came from.
+ */
+describe("UNLABELED_SOURCE — the fall-through default (OPE-491)", () => {
+  it("is NOT a classifier key, so an aggregator domain classifies as aggregator_import", () => {
+    // The headline acceptance case. 34 mainemade.com rows in prod are stamped
+    // vendor_submission today; mainemade.com is in AGGREGATOR_HOSTS and would
+    // have classified correctly had the default not pre-empted the check.
+    const r = classifySource(UNLABELED_SOURCE, "https://mainemade.com/events/pottery-tour");
+    expect(r.ingestionMethod).toBe("aggregator_import");
+    expect(r.sourceDomain).toBe("mainemade.com");
+  });
+
+  it("classifies a non-aggregator domain as direct_scrape", () => {
+    const r = classifySource(UNLABELED_SOURCE, "https://jenksproductions.com/shows/x");
+    expect(r.ingestionMethod).toBe("direct_scrape");
+  });
+
+  it("falls back to admin_manual when there is no domain signal at all", () => {
+    const r = classifySource(UNLABELED_SOURCE, null);
+    expect(r.ingestionMethod).toBe("admin_manual");
+    // And it is never mistaken for a hostname — no dot.
+    expect(r.sourceDomain).toBe(null);
+  });
+
+  it("demonstrates the OLD default's defect, so the regression is legible", () => {
+    // Same URL, same everything — only the label differs. This is the entire bug.
+    const withOldDefault = classifySource("vendor-submission", "https://mainemade.com/x");
+    const withNewDefault = classifySource(UNLABELED_SOURCE, "https://mainemade.com/x");
+    expect(withOldDefault.ingestionMethod).toBe("vendor_submission"); // wrong
+    expect(withNewDefault.ingestionMethod).toBe("aggregator_import"); // right
+  });
+
+  it("an EXPLICIT vendor-submission label still classifies as one", () => {
+    // The public vendor form passes this explicitly, so genuine submissions are
+    // unaffected by the default change.
+    expect(classifySource("vendor-submission", null).ingestionMethod).toBe("vendor_submission");
+  });
+});
+
+describe("assertIngestionMethod — the allowlist that never existed (OPE-491)", () => {
+  it("accepts every declared method", () => {
+    for (const m of INGESTION_METHODS) {
+      expect(assertIngestionMethod(m, "test")).toBe(m);
+    }
+  });
+
+  it.each([
+    ["vendor submission"],
+    ["VENDOR_SUBMISSION"],
+    ["discovery "],
+    [""],
+    [null],
+    [undefined],
+    [7],
+  ])("refuses %p", (bad) => {
+    // ingestion_method is plain TEXT with no CHECK and no Drizzle enum, and 13
+    // distinct values were live in prod — so nothing else stops a typo
+    // becoming a permanent new category.
+    expect(() => assertIngestionMethod(bad, "test")).toThrow(/unknown ingestion_method/);
+  });
+
+  it("names the allowed set in the error, so the fix is obvious from the log", () => {
+    expect(() => assertIngestionMethod("nope", "suggest_event")).toThrow(/suggest_event/);
+    expect(() => assertIngestionMethod("nope", "suggest_event")).toThrow(/aggregator_import/);
   });
 });
