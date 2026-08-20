@@ -3027,6 +3027,41 @@ export const standingFailureState = sqliteTable("standing_failure_state", {
 //
 // last_sent_date doubles as the once-per-Monday guard — date-keyed rather than
 // elapsed-days so a missed week doesn't permanently shift the cadence.
+/**
+ * OPE-497 — WHICH signals are stale-red right now, not just how many.
+ *
+ * The OPE-75 scan already computes a full set of REDs and mails them as a
+ * digest. What it did NOT do is leave a queryable trace: the only persisted
+ * datum was `weekly_inventory_state.stale_red_current`, a COUNT. So "is the
+ * promoter enrichment queue red?" was unanswerable from D1, and on 2026-08-19 an
+ * analyst with full database access concluded — reasonably, and wrongly — that
+ * the frozen-queue alert had never fired in 15 days. It had been firing daily
+ * into an email.
+ *
+ * An alert that reaches a human but leaves no record is not auditable, and the
+ * cheapest way to find out whether a detector works should not be "ask the
+ * person who receives the mail".
+ *
+ * One row per signal, upserted every scan. `resolvedAt` is stamped when a scan
+ * no longer sees the signal, so the table answers both "red now"
+ * (resolved_at IS NULL) and "how long has this been red" without re-deriving
+ * anything.
+ */
+export const staleRedSignals = sqliteTable("stale_red_signals", {
+  /** The StaleRed refKey, e.g. "queue-freeze:promoter_enrichment". */
+  refKey: text("ref_key").primaryKey(),
+  priority: text("priority").notNull(),
+  title: text("title").notNull(),
+  href: text("href"),
+  /** When the signal first went red, as the detector reported it. */
+  firstDetectedAt: integer("first_detected_at", { mode: "timestamp" }),
+  hoursInRed: real("hours_in_red"),
+  /** The most recent scan that still saw this signal red. */
+  lastSeenAt: integer("last_seen_at", { mode: "timestamp" }).notNull(),
+  /** Set by the first scan that no longer sees it. NULL = currently red. */
+  resolvedAt: integer("resolved_at", { mode: "timestamp" }),
+});
+
 export const weeklyInventoryState = sqliteTable("weekly_inventory_state", {
   id: text("id").primaryKey(),
   /** YYYY-MM-DD of the last Monday a summary went out. */

@@ -26,6 +26,20 @@ export const FROZEN_ZERO_OUTFLOW_DAYS = 7;
 /** Trailing-14d outflow÷inflow below which SLOW-DRAIN fires. */
 export const SLOW_DRAIN_RATIO_THRESHOLD = 0.5;
 
+/**
+ * OPE-497 scope 5 — the gates, overridable from `tunable_thresholds`.
+ *
+ * These governed a live alert while existing only as constants in this file, so
+ * an operator inspecting the database could not see what the alert was even
+ * checking. The caller loads them from D1 and passes them in; the defaults here
+ * remain the source of truth when a row is absent, so a missing threshold row
+ * degrades to today's behaviour rather than to no alerting.
+ */
+export interface QueueFreezeThresholds {
+  frozenZeroOutflowDays?: number;
+  slowDrainRatio?: number;
+}
+
 const MS_PER_HOUR = 3_600_000;
 
 export interface QueueFlow {
@@ -68,7 +82,13 @@ function toRed(priority: "P0" | "P1", title: string, flow: QueueFlow, now: Date)
  * throws. P1 (a backlog to fix, not a 3am page) — the digest re-lists it every
  * day it persists, which is the whole point vs the silent six-week freeze.
  */
-export function assessQueueFreeze(flow: QueueFlow, now: Date): StaleRed | null {
+export function assessQueueFreeze(
+  flow: QueueFlow,
+  now: Date,
+  thresholds: QueueFreezeThresholds = {}
+): StaleRed | null {
+  const frozenDays = thresholds.frozenZeroOutflowDays ?? FROZEN_ZERO_OUTFLOW_DAYS;
+  const slowRatio = thresholds.slowDrainRatio ?? SLOW_DRAIN_RATIO_THRESHOLD;
   if (flow.depth <= 0) return null; // an empty queue can't be frozen
   if (flow.outflow7d === null) return null; // outflow not yet computable → don't cry wolf
 
@@ -76,7 +96,7 @@ export function assessQueueFreeze(flow: QueueFlow, now: Date): StaleRed | null {
   if (flow.outflow7d === 0) {
     return toRed(
       "P1",
-      `${flow.label}: ${flow.depth} open, 0 closed in ${FROZEN_ZERO_OUTFLOW_DAYS}d (frozen)`,
+      `${flow.label}: ${flow.depth} open, 0 closed in ${frozenDays}d (frozen)`,
       flow,
       now
     );
@@ -85,11 +105,11 @@ export function assessQueueFreeze(flow: QueueFlow, now: Date): StaleRed | null {
   // SLOW DRAIN — over 14d, closing less than half of what's arriving.
   if (flow.outflow14d !== null && flow.inflow14d > 0) {
     const ratio = flow.outflow14d / flow.inflow14d;
-    if (ratio < SLOW_DRAIN_RATIO_THRESHOLD) {
+    if (ratio < slowRatio) {
       return toRed(
         "P1",
         `${flow.label}: drain ratio ${ratio.toFixed(2)} over 14d ` +
-          `(< ${SLOW_DRAIN_RATIO_THRESHOLD}); ${flow.depth} open, ${flow.inflow14d} in / ${flow.outflow14d} out`,
+          `(< ${slowRatio}); ${flow.depth} open, ${flow.inflow14d} in / ${flow.outflow14d} out`,
         flow,
         now
       );
@@ -100,10 +120,14 @@ export function assessQueueFreeze(flow: QueueFlow, now: Date): StaleRed | null {
 }
 
 /** Assess every queue; returns the drain REDs (healthy ones drop out). */
-export function assessAllQueueFreeze(flows: QueueFlow[], now: Date): StaleRed[] {
+export function assessAllQueueFreeze(
+  flows: QueueFlow[],
+  now: Date,
+  thresholds: QueueFreezeThresholds = {}
+): StaleRed[] {
   const out: StaleRed[] = [];
   for (const f of flows) {
-    const red = assessQueueFreeze(f, now);
+    const red = assessQueueFreeze(f, now, thresholds);
     if (red) out.push(red);
   }
   return out;
