@@ -387,7 +387,29 @@ export async function createOrLinkVendor(
 
     const placeholderEmail = `pending+${finalSlug}@meetmeatthefair.com`;
     const userId = crypto.randomUUID();
-    await db.insert(users).values({ id: userId, email: placeholderEmail, role: "VENDOR" });
+    await db.insert(users).values({
+      id: userId,
+      email: placeholderEmail,
+      // OPE-292 — a placeholder OWNER row, not a registration.
+      //
+      // ⚠️ This is the writer the original fix MISSED. `create_vendor` and
+      // `create_promoter` in mcp-server were both stamped in PR #900; this one
+      // lives in a shared package and was not, so it kept defaulting to
+      // `registration`. Between 2026-08-18 22:09 and 2026-08-20 00:20 it minted
+      // **389** mislabelled rows — enough that `origin='registration'` read 64%
+      // placeholder, making the column wrong in the exact way it was added to
+      // prevent.
+      //
+      // The audit that accompanied #900 enumerated `from(users)` sites across
+      // `src/` and `mcp-server/src/` and did not reach `packages/`. A fix wired
+      // into one of two parallel paths is this repo's most repeated defect;
+      // when stamping a field on creation, grep the WORKSPACE, not the app.
+      //
+      // The health-report invariant added alongside this makes a recurrence
+      // visible instead of silent.
+      origin: "ingestion",
+      role: "VENDOR",
+    });
 
     const loc = input.location ? parseLocation(input.location) : { city: null, state: null };
 
