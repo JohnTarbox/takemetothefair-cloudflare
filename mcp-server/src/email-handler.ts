@@ -391,6 +391,56 @@ export async function handleInboundEmail(
           sessionId,
           context: { from: fromAddr, subject },
         });
+
+        // OPE-456 scope 1a — a successfully-ingested milestone is TERMINAL.
+        //
+        // This block already ran and then fell through to the classifier and
+        // the submission workflow. One email, two consumers, one of them wrong:
+        // the 12K milestone ingested correctly AND the submission lane answered
+        // Google Search Console that it forgot to include a link to its event.
+        //
+        // Terminating here rather than adding a `gsc_milestone` intent to the
+        // classifier taxonomy. The taxonomy has many consumers and widening it
+        // is a change with reach; this email has no remaining work once the
+        // milestone is stored, which is exactly the shape `subscribe@` already
+        // uses two blocks below ("handled entirely here... nothing for the
+        // classifier or the workflow to do").
+        //
+        // Gated on `res.ok`, and that is load-bearing: the endpoint returns
+        // **400 not_a_milestone** when the subject matches neither shape, so an
+        // ordinary sc-noreply email still routes normally. Terminating on the
+        // pre-filter alone would swallow real mail.
+        if (res.ok) {
+          try {
+            await insertAuditNoopRow(getDb(env.DB), {
+              fromAddr,
+              toAddr,
+              subject,
+              bodyTextExcerpt,
+              attachmentCount,
+              rawSize: message.rawSize,
+              messageId: (parsed.messageId || "").trim() || null,
+              reason: "gsc-milestone-ingested",
+            });
+          } catch (err) {
+            await logError(env.DB, {
+              source: "email-handler:ope-311-gsc-milestone",
+              message: "failed to record terminal row for ingested GSC milestone",
+              error: err,
+              sessionId,
+              context: { from: fromAddr, subject },
+            }).catch(() => {});
+          }
+          await logError(env.DB, {
+            level: "info",
+            source: "email-handler:ope-311-gsc-milestone",
+            message:
+              "GSC milestone ingested; skipped classifier + submission workflow (OPE-456 scope 1a)",
+            sessionId,
+            context: { from: fromAddr, subject },
+          }).catch(() => {});
+          return;
+        }
       } catch (e) {
         await logError(env.DB, {
           level: "warn",
