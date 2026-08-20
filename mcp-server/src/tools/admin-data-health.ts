@@ -31,6 +31,7 @@ import {
 } from "../schema.js";
 import { deriveCrossings, auditStoredDates } from "@takemetothefair/utils";
 import { jsonContent } from "../helpers.js";
+import { loadLocationsUniverse } from "../locations-universe.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 
@@ -378,10 +379,28 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
       );
       const milestoneDrift = milestoneAudit.filter((a) => a.verdict === "differs");
 
+      // OPE-425 review finding 7 — the locations table shipped with zero oracle
+      // coverage, so every claim about the project's newest table was a local
+      // measurement with no read path. This is also finding 6's answer: the
+      // rows-in/rows-stored assertion runs HERE, continuously, against real
+      // rows — stronger than the one-off local check that caught the original
+      // 423-row silent loss. Fail-soft: a health report that cannot render
+      // because one block threw is worse than a block that says it failed.
+      let locationsUniverse: unknown;
+      try {
+        locationsUniverse = await loadLocationsUniverse(db);
+      } catch (err) {
+        locationsUniverse = {
+          error: "locations_universe_failed",
+          detail: err instanceof Error ? err.message : String(err),
+        };
+      }
+
       return {
         content: [
           jsonContent({
             generated_at: new Date().toISOString(),
+            locations_universe: locationsUniverse,
             today_snapshot: today ?? null,
             outreach_queue_top: queue.map((q) => ({
               ...q,
