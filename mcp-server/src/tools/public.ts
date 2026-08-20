@@ -418,6 +418,30 @@ export function registerPublicTools(server: McpServer, db: Db) {
       }
 
       if (resolved.length === 0) {
+        // OPE-500 — "not found" was doing two jobs. This tool filters to
+        // publicly-visible rows, so a PENDING event — the exact population a
+        // reviewer is asked to judge — reported as nonexistent while
+        // list_all_events returned it by the same slug. Say which it is.
+        const [anyStatus] = await db
+          .select({ status: events.status, lifecycleStatus: events.lifecycleStatus })
+          .from(events)
+          .where(eq(events.slug, unsafeSlug(slug)))
+          .limit(1);
+        if (anyStatus) {
+          return {
+            content: [
+              jsonContent({
+                error: "event_exists_but_not_publicly_visible",
+                slug,
+                status: anyStatus.status,
+                lifecycle_status: anyStatus.lifecycleStatus,
+                detail:
+                  "This tool returns publicly-visible events only. Use get_event_details_admin to read it.",
+              }),
+            ],
+            isError: true,
+          };
+        }
         return { content: [{ type: "text", text: "Event not found." }], isError: true };
       }
 
@@ -465,6 +489,13 @@ export function registerPublicTools(server: McpServer, db: Db) {
             ...(resolvedVia ? { requested_slug: slug, resolved_via_slug_history: true } : {}),
             description: event.description,
             dates: formatDateRange(event.startDate, event.endDate),
+            // OPE-500 / OPE-482 — the formatted string goes through the SAME
+            // renderer the site uses, so reading it back is not an independent
+            // check of the stored column. The raw ISO values are, and they ride
+            // alongside so a caller verifying a date has something to verify
+            // against.
+            start_date: event.startDate ? new Date(event.startDate).toISOString() : null,
+            end_date: event.endDate ? new Date(event.endDate).toISOString() : null,
             datesConfirmed: event.datesConfirmed,
             venue: event.venueName
               ? {
