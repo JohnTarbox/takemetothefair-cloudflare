@@ -11,6 +11,8 @@ import {
   eventDays,
   vendorSlugHistory,
   eventSlugHistory,
+  promoterSlugHistory,
+  venueSlugHistory,
   adminActions,
   eventDataCitations,
 } from "../schema.js";
@@ -28,6 +30,7 @@ import {
   coerceVenueNameAtIngest,
   VALID_TRANSITIONS,
 } from "../helpers.js";
+import { recordSlugRename } from "../slug-history.js";
 import { checkDuplicateViaMainApp } from "../duplicates/check-duplicate.js";
 import {
   EVENT_STATUS_ENUM,
@@ -1654,6 +1657,24 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
 
         venueUpdates.updatedAt = new Date();
         await db.update(venues).set(venueUpdates).where(eq(venues.id, venue.id));
+        // OPE-495 — the venue can be renamed as a SIDE EFFECT of update_event,
+        // which the comment below already calls the least expected way a
+        // published venue changes. It owes a redirect exactly like a direct
+        // update_venue does, and is the easiest of the three to forget.
+        await recordSlugRename({
+          label: "update_event:venue",
+          entityId: venue.id,
+          previousSlug: venue.slug,
+          nextSlug: venueUpdates.slug as string | undefined,
+          write: (oldSlug, newSlug) =>
+            db.insert(venueSlugHistory).values({
+              venueId: venue.id,
+              oldSlug,
+              newSlug,
+              changedAt: new Date(),
+              changedBy: auth.userId,
+            }),
+        });
         // OPE-433 scope 5 — a venue edited as a SIDE EFFECT of an event update.
         // This is the least expected way a published venue changes, so it is
         // the one most worth naming.
@@ -2884,6 +2905,23 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       } else {
         await db.update(venues).set(updates).where(eq(venues.id, venue.id));
       }
+
+      // OPE-495 — same defect as update_promoter, same fix. venue_slug_history
+      // also held zero MCP-written rows before this.
+      await recordSlugRename({
+        label: "update_venue",
+        entityId: venue.id,
+        previousSlug: venue.slug,
+        nextSlug: updates.slug as string | undefined,
+        write: (oldSlug, newSlug) =>
+          db.insert(venueSlugHistory).values({
+            venueId: venue.id,
+            oldSlug,
+            newSlug,
+            changedAt: new Date(),
+            changedBy: auth.userId,
+          }),
+      });
 
       // OPE-433 scope 5 — `update_venue` over MCP. An agent holding the admin
       // token can change a published venue, and before this there was nothing
@@ -4239,6 +4277,26 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       updates.enrichmentCoverage = enrichment.coverageJson;
 
       await db.update(promoters).set(updates).where(eq(promoters.id, promoter.id));
+
+      // OPE-495 — record the rename so /promoters/<old-slug> keeps 301-ing.
+      // `update_promoter` regenerates the slug from `name` through the same
+      // collision loop update_event uses, but never wrote the history row, so
+      // every MCP rename silently orphaned a live URL. Verified in prod: all 10
+      // promoter_slug_history rows were admin-UI writes; not one came from MCP.
+      await recordSlugRename({
+        label: "update_promoter",
+        entityId: promoter.id,
+        previousSlug: promoter.slug,
+        nextSlug: updates.slug as string | undefined,
+        write: (oldSlug, newSlug) =>
+          db.insert(promoterSlugHistory).values({
+            promoterId: promoter.id,
+            oldSlug,
+            newSlug,
+            changedAt: new Date(),
+            changedBy: auth.userId,
+          }),
+      });
 
       const newValues: Record<string, unknown> = {};
       for (const field of requestedFields) {
