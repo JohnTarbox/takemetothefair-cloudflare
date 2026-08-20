@@ -252,6 +252,29 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
         })
         .from(sql`(SELECT 1)`);
 
+      // ── OPE-292 — a placeholder must never sit in the registration partition ──
+      //
+      // `users.origin` exists so a real-user count does not have to match an
+      // email string. That only works while every creation path stamps it, and
+      // one did not: `createOrLinkVendor` in packages/vendor-linking minted
+      // **389** placeholder rows as `registration` between 2026-08-18 and
+      // 2026-08-20, taking that partition to 64% noise.
+      //
+      // The writer is fixed and the rows relabelled (drizzle/0223), but a
+      // column whose correctness depends on every future writer remembering is
+      // a column that will be wrong again. This is the check that says so.
+      //
+      // Target is 0. Non-zero means a creation path is not stamping origin —
+      // grep the WORKSPACE for `insert(users)`, not just the app: that is
+      // precisely how the first fix reached three of four writers.
+      const [placeholderOrigin] = await db
+        .select({
+          misfiled_placeholders: sql<number>`(SELECT count(*) FROM users WHERE origin = 'registration' AND email LIKE 'pending+%')`,
+          registration_total: sql<number>`(SELECT count(*) FROM users WHERE origin = 'registration')`,
+          ingestion_total: sql<number>`(SELECT count(*) FROM users WHERE origin = 'ingestion')`,
+        })
+        .from(sql`(SELECT 1)`);
+
       // OPE-278 item 3 — live `-N` slug pairs; see slug-collision-invariant.ts
       // for why this is narrow (42 suffixed events in prod, 2 real defects).
       const slugCollisions = await findSlugCollisionPairs(db);
@@ -549,6 +572,13 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
             // `oldest_failed_days` is the actionable one: fixing a cause does
             // not move rows that already failed, and nothing else counts them.
             stuck_inbound_emails: stuckInbound ?? null,
+            // OPE-292 — placeholder accounts must not pollute the
+            // registration partition. `misfiled_placeholders` should be 0;
+            // non-zero means some creation path stopped stamping `origin`.
+            placeholder_origin: {
+              rule: "no users row may be origin='registration' with a pending+ placeholder email",
+              ...placeholderOrigin,
+            },
             // OPE-278 item 3 — live `-N` slug pairs, the receipt dedup
             // leaves when it loses. Narrow by design: both rows live AND
             // start dates within 7 days, because 42 events carry a numeric
