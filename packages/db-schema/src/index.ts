@@ -4168,6 +4168,22 @@ export const inboundEmails = sqliteTable(
      *  NULL when no event is involved (no-url, extract-failed, etc.). */
     resultingEventId: text("resulting_event_id"),
     /**
+     * OPE-499 — the OCR markdown the workflow already produces, PERSISTED.
+     *
+     * `ocrAttachments` runs `env.AI.toMarkdown` over every stored attachment and
+     * feeds the text straight into extraction, then discards it. So the single
+     * most valuable input-side fact about a poster submission — what the flyer
+     * actually says — existed for the duration of one workflow step and was never
+     * recoverable afterwards. Every review of an attachment-bearing submission had
+     * to infer the flyer's contents from the row it produced.
+     *
+     * JSON array: `[{ key, name, chars, outcome, markdown }]`, one entry per
+     * attachment, including the ones that produced nothing — `outcome` carries
+     * `object-not-found` / `under-threshold:Nchars` / `ok:Nchars` so a
+     * contributed-nothing attachment is distinguishable from an unread one.
+     */
+    attachmentOcr: text("attachment_ocr"),
+    /**
      * OPE-403 — how many of this email's photos actually reached `event_photos`.
      *
      * `resulting_event_id` answers "which fair did we decide these are from",
