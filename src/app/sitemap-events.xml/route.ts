@@ -26,6 +26,32 @@ const EVENTS_PER_PAGE = 30;
 
 async function buildEventUrls(): Promise<SitemapUrl[]> {
   const db = getCloudflareDb();
+
+  // OPE-333 follow-up — the listing pages' lastmod, and why it is NOT `new Date()`.
+  //
+  // The pagination entries used the render time, which made 84 of the 3,120
+  // `<lastmod>` values change on EVERY request. Two consequences, and the
+  // second is the expensive one:
+  //
+  //   1. The response body differed between identical requests, so the ETag
+  //      differed too — `If-None-Match` could never match, and the ETag half
+  //      of the conditional-GET work was dead on arrival for the whole file.
+  //      (Verified against prod: four consecutive HEADs returned four ETags
+  //      and one stable Last-Modified.)
+  //   2. Every crawl was told those 84 listing pages had changed seconds ago.
+  //      A lastmod that always says "now" carries no information, and Google
+  //      discounts a lastmod it finds unreliable — so the cost is not just a
+  //      wasted download, it is teaching the crawler to distrust the signal
+  //      on the pages where it IS accurate.
+  //
+  // The listing pages change when their contents change, so the honest value
+  // is the same MAX(updated_at) the index publishes for this type. Stable
+  // across requests, and true.
+  const listingLastMod = (await getSitemapTypeLastMod("events")) ?? new Date();
+
+  // `now` is for TIME-OF-QUERY decisions only — is this event upcoming, is it
+  // past. It must never become a `lastModified`; that conflation is the bug
+  // above. Keeping the two named separately makes the next edit obvious.
   const now = new Date();
 
   const [eventRows, futureCountRow, allCountRow] = await Promise.all([
@@ -87,7 +113,7 @@ async function buildEventUrls(): Promise<SitemapUrl[]> {
   for (let page = 2; page <= futureTotalPages; page++) {
     paginationPages.push({
       url: `${SITEMAP_BASE_URL}/events?page=${page}`,
-      lastModified: now,
+      lastModified: listingLastMod,
       changeFrequency: "daily",
       priority: 0.6,
     });
@@ -97,7 +123,7 @@ async function buildEventUrls(): Promise<SitemapUrl[]> {
   for (let page = 2; page <= allTotalPages; page++) {
     paginationPages.push({
       url: `${SITEMAP_BASE_URL}/events/all?page=${page}`,
-      lastModified: now,
+      lastModified: listingLastMod,
       changeFrequency: "weekly",
       priority: 0.5,
     });
