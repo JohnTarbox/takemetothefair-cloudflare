@@ -1,0 +1,298 @@
+/**
+ * OPE-499 — an agent read surface for the inbound-correspondence lane.
+ *
+ * `inbound_correspondence` is a named fault source, and every fault ever found
+ * in it was found by a human opening /admin and reading. Four viewers shipped
+ * (OPE-152, 155, 156, 187) and none had an MCP equivalent, so an agent asked to
+ * review a submission could not read the submission — every finding was an
+ * inference from the row the pipeline produced.
+ *
+ * The 2026-08-20 specimen is the case in point: a review of `c00f0865…` found a
+ * fabricated 2026-09-01 → 09-30 span and six citations stamped to sources that
+ * cannot support them, and had input-side facts only because John pasted the
+ * admin record into chat by hand.
+ *
+ * All read-only, all admin-gated. No writers — these add no queue inflow, which
+ * is why they are not Phase-0 gated.
+ *
+ * PII: submitter addresses are outside-contributor data. These tools are
+ * admin-only, the same gate /admin sits behind, so they return what the admin
+ * viewer returns and deliberately do NOT invent a looser policy.
+ */
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
+import { and, desc, eq, gte, lte, like } from "drizzle-orm";
+import { emailSendLedger, events, inboundEmails } from "../schema.js";
+import { jsonContent } from "../helpers.js";
+import type { Db } from "../db.js";
+import type { AuthContext } from "../auth.js";
+
+/** Parse a JSON column without letting one malformed row kill the read. */
+function safeJson<T>(raw: string | null | undefined, fallback: T): T {
+  if (!raw) return fallback;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+interface OcrRecord {
+  key: string;
+  name: string;
+  chars: number;
+  outcome: string;
+  markdown: string | null;
+}
+
+export function registerInboundReadTools(server: McpServer, db: Db, auth: AuthContext) {
+  if (auth.role !== "ADMIN") return;
+
+  // --- get_inbound_email ---------------------------------------------------
+  server.tool(
+    "get_inbound_email",
+    "Read one inbound email in full — the INPUT side of a submission. Returns sender, subject, the complete body (not the 500-char excerpt), the parsed URL, classifier intent, workflow instance id, reply kind, resulting event, attachment refs/skips, and an OCR summary per attachment. Use this before writing any finding about a submission, so the finding cites what arrived rather than inferring it from the row that came out. Read-only. Admin only.",
+    {
+      inbound_email_id: z.string().describe("inbound_emails.id"),
+      include_body_html: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe(
+          "Include the raw HTML body as well as the text body. Off by default — it is large and rarely what you want."
+        ),
+      include_ocr_text: z
+        .boolean()
+        .optional()
+        .default(true)
+        .describe("Include each attachment's full OCR markdown. Off makes the response a summary."),
+    },
+    async (params) => {
+      const [row] = await db
+        .select()
+        .from(inboundEmails)
+        .where(eq(inboundEmails.id, params.inbound_email_id))
+        .limit(1);
+
+      if (!row) {
+        return {
+          content: [
+            jsonContent({
+              error: "inbound_email_not_found",
+              inbound_email_id: params.inbound_email_id,
+            }),
+          ],
+        };
+      }
+
+      const ocr = safeJson<OcrRecord[]>(row.attachmentOcr, []);
+      const refs = safeJson<unknown[]>(row.attachmentRefs, []);
+      const skips = safeJson<unknown[]>(row.attachmentSkips, []);
+
+      // The events this email produced. `resulting_event_id` is singular — an
+      // email that created six events records one — so this reports the column
+      // AND says so, rather than implying it is the whole answer. The
+      // one-to-many link table is OPE-464's scope.
+      const resulting = row.resultingEventId
+        ? await db
+            .select({ id: events.id, name: events.name, slug: events.slug, status: events.status })
+            .from(events)
+            .where(eq(events.id, row.resultingEventId))
+            .limit(1)
+        : [];
+
+      return {
+        content: [
+          jsonContent({
+            id: row.id,
+            received_at: row.receivedAt?.toISOString() ?? null,
+            from_address: row.fromAddress,
+            to_address: row.toAddress,
+            subject: row.subject,
+            intent: row.intent,
+            status: row.status,
+            reply_kind: row.replyKind,
+            workflow_instance_id: row.workflowInstanceId,
+            message_id: row.messageId,
+            parsed_url: row.parsedUrl,
+            // Stated explicitly because it is a live trap: the column is
+            // SINGULAR. An email whose body carried four links records one.
+            parsed_url_note:
+              "inbound_emails.parsed_url stores ONE url. If the body carried several, the others are not on this row — check event_data_citations for the event this produced.",
+            body_text: row.bodyText ?? row.bodyTextExcerpt ?? null,
+            body_text_is_excerpt_only: !row.bodyText && !!row.bodyTextExcerpt,
+            ...(params.include_body_html ? { body_html: row.bodyHtml } : {}),
+            raw_size: row.rawSize,
+            error: row.error,
+            resulting_event_id: row.resultingEventId,
+            resulting_event: resulting[0] ?? null,
+            resulting_event_note:
+              "Singular by schema — an email that created several events records only one here (OPE-464).",
+            attachment_count: row.attachmentCount,
+            attachment_refs: refs,
+            attachment_skips: skips,
+            attachment_ocr: ocr.map((o) => ({
+              key: o.key,
+              name: o.name,
+              chars: o.chars,
+              outcome: o.outcome,
+              ...(params.include_ocr_text !== false ? { markdown: o.markdown } : {}),
+            })),
+            attachment_ocr_note:
+              ocr.length === 0 && row.attachmentCount > 0
+                ? "No OCR stored. Emails processed before OPE-499 discarded it after extraction — it is not recoverable for this row."
+                : undefined,
+          }),
+        ],
+      };
+    }
+  );
+
+  // --- list_inbound_emails -------------------------------------------------
+  server.tool(
+    "list_inbound_emails",
+    "List inbound emails with filters — the measurement surface the 2026-08-18 pass had to do by hand. Filter by intent, status, reply_kind, sender, and a received-at window. Returns a summary row each (no bodies); use get_inbound_email for one in full. Read-only. Admin only.",
+    {
+      intent: z.string().optional().describe("e.g. 'submit', 'photo_intake'"),
+      status: z.string().optional().describe("e.g. 'received', 'replied', 'failed'"),
+      reply_kind: z
+        .string()
+        .optional()
+        .describe("e.g. 'ok-multi', 'no-url', 'no-url-prose-failed'"),
+      from_address: z.string().optional().describe("Exact or partial sender address."),
+      received_after: z.string().optional().describe("ISO date/datetime, inclusive."),
+      received_before: z.string().optional().describe("ISO date/datetime, inclusive."),
+      has_attachments: z
+        .boolean()
+        .optional()
+        .describe("Only emails that arrived with attachments."),
+      limit: z.number().int().min(1).max(200).optional().default(50),
+    },
+    async (params) => {
+      const conds = [];
+      if (params.intent) conds.push(eq(inboundEmails.intent, params.intent));
+      if (params.status) conds.push(eq(inboundEmails.status, params.status));
+      if (params.reply_kind) conds.push(eq(inboundEmails.replyKind, params.reply_kind));
+      if (params.from_address)
+        conds.push(like(inboundEmails.fromAddress, `%${params.from_address}%`));
+      if (params.received_after) {
+        const d = new Date(params.received_after);
+        if (!Number.isNaN(d.getTime())) conds.push(gte(inboundEmails.receivedAt, d));
+      }
+      if (params.received_before) {
+        const d = new Date(params.received_before);
+        if (!Number.isNaN(d.getTime())) conds.push(lte(inboundEmails.receivedAt, d));
+      }
+
+      const rows = await db
+        .select({
+          id: inboundEmails.id,
+          receivedAt: inboundEmails.receivedAt,
+          fromAddress: inboundEmails.fromAddress,
+          toAddress: inboundEmails.toAddress,
+          subject: inboundEmails.subject,
+          intent: inboundEmails.intent,
+          status: inboundEmails.status,
+          replyKind: inboundEmails.replyKind,
+          attachmentCount: inboundEmails.attachmentCount,
+          attachmentOcr: inboundEmails.attachmentOcr,
+          resultingEventId: inboundEmails.resultingEventId,
+          error: inboundEmails.error,
+        })
+        .from(inboundEmails)
+        .where(conds.length > 0 ? and(...conds) : undefined)
+        .orderBy(desc(inboundEmails.receivedAt))
+        .limit(params.limit ?? 50);
+
+      const filtered = params.has_attachments ? rows.filter((r) => r.attachmentCount > 0) : rows;
+
+      return {
+        content: [
+          jsonContent({
+            count: filtered.length,
+            emails: filtered.map((r) => ({
+              inbound_email_id: r.id,
+              received_at: r.receivedAt?.toISOString() ?? null,
+              from_address: r.fromAddress,
+              to_address: r.toAddress,
+              subject: r.subject,
+              intent: r.intent,
+              status: r.status,
+              reply_kind: r.replyKind,
+              attachment_count: r.attachmentCount,
+              has_stored_ocr: !!r.attachmentOcr,
+              resulting_event_id: r.resultingEventId,
+              error: r.error,
+            })),
+          }),
+        ],
+      };
+    }
+  );
+
+  // --- get_sent_emails -----------------------------------------------------
+  server.tool(
+    "get_sent_emails",
+    "Read what we actually TOLD a submitter — the ledgered outbound side, including the rendered body. Filter by inbound_email_id, message_id, or recipient. Note this is different from list_pending_replies, which only shows replies the EMAIL_REPLY_ENABLED gate REFUSED to send; this shows what went out. Read-only. Admin only.",
+    {
+      inbound_email_id: z
+        .string()
+        .optional()
+        .describe("Replies sent in response to this inbound email."),
+      message_id: z.string().optional().describe("A specific ledger row."),
+      recipient: z.string().optional().describe("Exact or partial recipient address."),
+      include_body: z.boolean().optional().default(true),
+      limit: z.number().int().min(1).max(100).optional().default(20),
+    },
+    async (params) => {
+      const conds = [];
+      if (params.inbound_email_id)
+        conds.push(eq(emailSendLedger.inboundEmailId, params.inbound_email_id));
+      if (params.message_id) conds.push(eq(emailSendLedger.messageId, params.message_id));
+      if (params.recipient) conds.push(like(emailSendLedger.recipient, `%${params.recipient}%`));
+
+      if (conds.length === 0) {
+        return {
+          content: [
+            jsonContent({
+              error: "filter_required",
+              detail:
+                "Pass inbound_email_id, message_id or recipient. An unfiltered dump of outbound mail is not a useful read and is a lot of contributor PII.",
+            }),
+          ],
+        };
+      }
+
+      const rows = await db
+        .select()
+        .from(emailSendLedger)
+        .where(and(...conds))
+        .orderBy(desc(emailSendLedger.sentAt))
+        .limit(params.limit ?? 20);
+
+      return {
+        content: [
+          jsonContent({
+            count: rows.length,
+            sent: rows.map((r) => ({
+              message_id: r.messageId,
+              sent_at: r.sentAt?.toISOString() ?? null,
+              recipient: r.recipient,
+              subject: r.subject,
+              source: r.source,
+              provider: r.provider,
+              status: r.status,
+              delivery_status: r.deliveryStatus,
+              delivery_detail: r.deliveryDetail,
+              error: r.error,
+              inbound_email_id: r.inboundEmailId,
+              ...(params.include_body !== false
+                ? { body_text: r.bodyText, body_html: r.bodyHtml }
+                : {}),
+            })),
+          }),
+        ],
+      };
+    }
+  );
+}

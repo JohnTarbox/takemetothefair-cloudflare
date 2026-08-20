@@ -19,6 +19,7 @@ import { registerVendorTools } from "./tools/vendor.js";
 import { registerPromoterTools } from "./tools/promoter.js";
 import { registerAdminTools } from "./tools/admin.js";
 import { registerMarketPlayerTools } from "./tools/admin-market-players.js";
+import { registerInboundReadTools } from "./tools/admin-inbound-read.js";
 import { registerAdminProblemReportTools } from "./tools/admin-problem-reports.js";
 import { correlateProblemReportCore } from "./problem-reports/correlate.js";
 import { registerMergeEntitiesTools } from "./tools/admin-merge-entities.js";
@@ -328,6 +329,8 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
         registerAdminTools(this.server, db, auth, this.env);
         // UR1 C5 (2026-06-04) — problem-report triage tools.
         registerAdminProblemReportTools(this.server, db);
+        // OPE-499 — inbound-correspondence read surface (input side of a submission).
+        registerInboundReadTools(this.server, db, auth);
         // OPE-414 — market-player register (competitors, aggregators, and the
         // civic citation sources that are deliberately NOT competitors).
         registerMarketPlayerTools(this.server, db, auth);
@@ -617,6 +620,7 @@ async function handleLegacyMcpRequest(request: Request, env: Env): Promise<Respo
     if (auth.role === "ADMIN") {
       registerAdminTools(server, db, auth, env);
       registerAdminProblemReportTools(server, db);
+      registerInboundReadTools(server, db, auth);
       registerMergeEntitiesTools(server, db, auth);
       registerMergeVendorTool(server, db, auth);
       registerVendorHierarchyTools(server, db, auth);

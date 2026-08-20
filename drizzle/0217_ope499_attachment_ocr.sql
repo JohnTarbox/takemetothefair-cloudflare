@@ -1,0 +1,15 @@
+-- OPE-499 — persist the attachment OCR the inbound workflow already computes.
+--
+-- `ocrAttachments` runs env.AI.toMarkdown over every stored attachment, feeds
+-- the markdown into extraction, and drops it. The text existed for one workflow
+-- step and was unrecoverable after — so a review of an attachment-bearing
+-- submission could never read the flyer, only guess at it from the row that came
+-- out. On the 2026-08-20 specimen (`c00f0865…`) the poster almost certainly
+-- carries the real date and venue, and the fabricated 2026-09-01 → 09-30 span
+-- was filed without anyone being able to look.
+--
+-- Additive and nullable: nothing reads it until the OPE-499 tools ship, and rows
+-- processed before this migration simply carry NULL (their OCR is genuinely
+-- gone — this cannot be backfilled, and pretending otherwise would be worse
+-- than the gap).
+ALTER TABLE inbound_emails ADD COLUMN attachment_ocr TEXT;

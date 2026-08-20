@@ -1171,7 +1171,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         // budget must cover several ~60s attempts; step-level retry stays as an
         // outer backstop.
         { retries: { limit: 1, delay: "10 seconds", backoff: "constant" }, timeout: "200 seconds" },
-        () => this.ocrAttachments(refsJson)
+        () => this.ocrAttachments(refsJson, messageRowId)
       );
     }
 
@@ -2183,7 +2183,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
    * refs blob, a missing object, or a per-attachment toMarkdown error each
    * skip that attachment (or all) and contribute no source. Worst case: [].
    */
-  private async ocrAttachments(refsJson: string): Promise<SubmitSource[]> {
+  private async ocrAttachments(refsJson: string, emailId: string): Promise<SubmitSource[]> {
     const bucket = this.env.VENDOR_ASSETS;
     const ai = this.env.AI;
     if (!bucket || !ai) {
@@ -2205,6 +2205,16 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       return [];
     }
     const sources: SubmitSource[] = [];
+    // OPE-499 — keep what we read, not just what we used. One entry per
+    // attachment INCLUDING the ones that yielded nothing, so "the flyer said
+    // nothing useful" is distinguishable from "we never read the flyer".
+    const ocrRecords: Array<{
+      key: string;
+      name: string;
+      chars: number;
+      outcome: string;
+      markdown: string | null;
+    }> = [];
     for (const ref of refs) {
       if (!ref || typeof ref.key !== "string") continue;
       // OPE-189 — record a concrete per-attachment outcome for EVERY path so a
@@ -2212,6 +2222,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       // toMarkdown `format:"error"` variant and the under-threshold drop both fell
       // through to [] with no trace).
       let outcome = "unknown";
+      let markdownForRecord: string | null = null;
       try {
         const obj = await bucket.get(ref.key);
         if (!obj) {
@@ -2234,6 +2245,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
               }).catch(() => {});
             }
           );
+          markdownForRecord = result.text;
           if (result.text !== null) {
             const len = result.text.trim().length;
             if (len >= MIN_OCR_CHARS) {
@@ -2267,6 +2279,32 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         source: "mcp:workflow:ocr-attachments",
         message: `attachment "${ref.name || ref.key}" (${ref.mimeType || "?"}, ${ref.size ?? "?"}B): ${outcome}`,
       }).catch(() => {});
+      ocrRecords.push({
+        key: ref.key,
+        name: ref.name || "attachment",
+        chars: markdownForRecord ? markdownForRecord.trim().length : 0,
+        outcome,
+        markdown: markdownForRecord,
+      });
+    }
+
+    // OPE-499 — persist what we read. Best-effort by the same contract as the
+    // rest of this method: a failure here must never cost us the extraction that
+    // already succeeded, so it logs and moves on rather than throwing.
+    if (ocrRecords.length > 0) {
+      try {
+        await getDb(this.env.DB)
+          .update(inboundEmails)
+          .set({ attachmentOcr: JSON.stringify(ocrRecords) })
+          .where(eq(inboundEmails.id, emailId));
+      } catch (err) {
+        await logError(getDb(this.env.DB), {
+          level: "warn",
+          source: "mcp:workflow:ocr-attachments",
+          message: "failed to persist attachment OCR; extraction unaffected",
+          error: err,
+        }).catch(() => {});
+      }
     }
     return sources;
   }
