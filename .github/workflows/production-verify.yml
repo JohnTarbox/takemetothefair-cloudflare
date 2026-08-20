@@ -25,9 +25,21 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
+      # OPE-363 — this step ran with `continue-on-error: true`, so the
+      # workflow could never go red and nobody read the report. It had been
+      # reporting 5 failures every Monday: three false alarms from a
+      # `networkidle` wait that never settles on this site, one assertion that
+      # had been stale since the 2026-06-07 design-system token migration, and
+      # ONE REAL DEFECT (state-page pagination). All four false/stale cases are
+      # fixed in this change, so a red run now means something.
+      #
+      # ⚠️ The first scheduled run WILL be red, on the real one — clicking the
+      # next-page control on /events/[state] does not navigate. That is the
+      # check working, not the check being noisy; suppressing a true alarm in
+      # code is worse than a red badge. See the OPE-363 thread for the
+      # diagnosis.
       - name: Run production verification
         run: npx tsx scripts/verify-production.ts
-        continue-on-error: true
 
       - name: Upload screenshots and results
         uses: actions/upload-artifact@v6

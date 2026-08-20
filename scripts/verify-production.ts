@@ -58,12 +58,21 @@ async function main() {
       fail("Canonical URL (homepage)", "Missing canonical link tag");
     }
 
-    // bg-cream on html
+    // Theme class on <html>.
+    //
+    // This asserted `bg-cream` until 2026-08-20 and had been failing ever
+    // since the 2026-06-07 design-system token migration removed that class.
+    // A permanently-failing assertion is not a check, it is noise that trains
+    // everyone to ignore the report — and this workflow ran with
+    // `continue-on-error: true`, so nobody saw it fail for two months.
+    //
+    // What actually matters now is that a theme is resolved at all, because an
+    // unthemed <html> is the visible symptom of the token system not loading.
     const htmlClass = await homepage.locator("html").getAttribute("class");
-    if (htmlClass?.includes("bg-cream")) {
-      pass("bg-cream on <html>", `class="${htmlClass}"`);
+    if (htmlClass && /\b(light|dark)\b/.test(htmlClass)) {
+      pass("Theme class on <html>", `class="${htmlClass}"`);
     } else {
-      fail("bg-cream on <html>", `class="${htmlClass}"`);
+      fail("Theme class on <html>", `no light/dark class: "${htmlClass}"`);
     }
 
     // Heading hierarchy
@@ -366,8 +375,21 @@ async function main() {
 
     // Click next and verify page 2 loads with events
     if (mainNextHref) {
+      // ⚠️ waitForURL, NOT waitForLoadState("networkidle").
+      //
+      // This asserted on `page.url()` after `networkidle`, and reported three
+      // pagination FAILures for months. Pagination was never broken: verified
+      // 2026-08-20 that `/events?page=2` returns 200, serves different HTML from
+      // page 1, keeps its query string in the browser, and renders different
+      // events. `networkidle` simply never settles on this site — Turnstile and
+      // analytics keep connections open — so the URL was read before the
+      // navigation it was waiting for had committed.
+      //
+      // A canary that cries wolf gets muted, and this one was: the workflow ran
+      // with `continue-on-error: true`, so three false alarms every Monday cost
+      // nothing and told nobody anything.
       await paginationPage.locator('a:has-text("»")').first().click();
-      await paginationPage.waitForLoadState("networkidle");
+      await paginationPage.waitForURL(/[?&]page=2/, { timeout: 15000 }).catch(() => {});
       const page2Url = paginationPage.url();
       const page2HasEvents = await paginationPage.evaluate(() => {
         return document.querySelectorAll(".aspect-video").length > 0;
@@ -405,7 +427,8 @@ async function main() {
     // Click next and verify we stay on state page with events
     if (stateNextHref) {
       await statePagPage.locator('a:has-text("»")').first().click();
-      await statePagPage.waitForLoadState("networkidle");
+      // See the waitForURL note on the events pagination check above.
+      await statePagPage.waitForURL(/[?&]page=2/, { timeout: 15000 }).catch(() => {});
       const statePage2Url = statePagPage.url();
       const statePage2H1 = await statePagPage
         .locator("h1")
@@ -540,7 +563,8 @@ async function main() {
       .catch(() => null);
     if (mobileNextHref) {
       await mobileEvents.locator('a:has-text("»")').first().click();
-      await mobileEvents.waitForLoadState("networkidle");
+      // See the waitForURL note on the events pagination check above.
+      await mobileEvents.waitForURL(/[?&]page=2/, { timeout: 15000 }).catch(() => {});
       const mobilePage2Url = mobileEvents.url();
       const mobilePage2HasEvents = await mobileEvents.evaluate(() => {
         return document.querySelectorAll(".aspect-video").length > 0;
