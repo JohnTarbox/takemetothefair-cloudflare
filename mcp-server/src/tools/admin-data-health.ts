@@ -279,6 +279,39 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
       // for why this is narrow (42 suffixed events in prod, 2 real defects).
       const slugCollisions = await findSlugCollisionPairs(db);
 
+      // ── OPE-505: split date anchors ───────────────────────────────────
+      //
+      // `create_event_citation` parsed a bare `YYYY-MM-DD` with `new Date()`,
+      // landing it at 00:00:00Z instead of the canonical noon anchor, and wrote
+      // it straight into the events column. On a row whose end_date was already
+      // correct that leaves start at midnight and end at noon — a shape nothing
+      // else produces, which is why it works as a signature.
+      //
+      // Midnight UTC renders as the PREVIOUS calendar day everywhere in the US,
+      // so each of these is a fair advertised a day early. Five rows in prod at
+      // the time of the fix, every one of them carrying exactly one start_date
+      // citation. Counted here so the number cannot climb again unnoticed.
+      //
+      // Raw SQL: D1 date columns are SECONDS. A `% 86400` gives seconds into
+      // the UTC day — 0 is midnight, 43200 is noon.
+      const splitAnchorRows = await db.all<{
+        slug: string;
+        status: string;
+        start_date: number;
+        end_date: number;
+      }>(sql`
+        SELECT slug, status, start_date, end_date
+        FROM events
+        WHERE merged_into IS NULL
+          AND start_date IS NOT NULL AND end_date IS NOT NULL
+          AND (
+            (start_date % 86400 = 0     AND end_date % 86400 = 43200)
+            OR (start_date % 86400 = 43200 AND end_date % 86400 = 0)
+          )
+        ORDER BY start_date
+        LIMIT 50
+      `);
+
       // ── OPE-467: claimed vs stored vs skipped, per lane ──────────────
       //
       // This defect ran for three months and was found by hand-diffing
@@ -587,6 +620,19 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
             slug_collision_live_pairs: {
               rule: "no two LIVE events may differ only by a numeric slug suffix within 7 days of each other",
               ...slugCollisions,
+            },
+            // OPE-505 — the citation tool's midnight-anchor signature. Should
+            // stay at whatever John rules on for the existing rows and never
+            // grow; growth means a date writer bypassed normalizeEventDate again.
+            split_date_anchor: {
+              rule: "no event may have one date at midnight UTC and the other at noon UTC",
+              violation_count: splitAnchorRows.length,
+              violations: splitAnchorRows.map((r) => ({
+                slug: r.slug,
+                status: r.status,
+                start_date: new Date(r.start_date * 1000).toISOString(),
+                end_date: new Date(r.end_date * 1000).toISOString(),
+              })),
             },
             // OPE-423 invariant 2 — see the comment at the query.
             series_canonical_invariant: {
