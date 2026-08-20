@@ -32,6 +32,9 @@ const registerSchema = z.object({
   role: z.enum(["USER", "PROMOTER", "VENDOR"]).optional().default("USER"),
   companyName: z.string().optional(),
   businessName: z.string().optional(),
+  // OPE-237 — the vendor's self-declared website. Optional; see the register
+  // form for why it is never required.
+  website: z.string().trim().url().optional(),
   // Set when the signup originates from a public "Claim this listing" CTA
   // (/vendors/[slug] or /promoters/[slug]). The slug of the entity being
   // claimed. `claimSlug` is the canonical field; `claimVendorSlug` is kept as
@@ -71,6 +74,7 @@ export async function POST(request: NextRequest) {
       role,
       companyName,
       businessName,
+      website,
       claimSlug: claimSlugField,
       claimVendorSlug,
       turnstileToken,
@@ -193,7 +197,11 @@ export async function POST(request: NextRequest) {
             // Always false here — verification lands minutes-to-hours later and
             // re-scores. The signup-time score is deliberately pessimistic.
             emailVerified: false,
-            website: null,
+            // OPE-237 — was hard-coded `null`, which is why the corroboration
+            // dimension read UNAVAILABLE on all 35 rows accumulated since
+            // 2026-07-28. Adding the form field alone would have changed
+            // nothing: this line discarded it before the screen ever saw it.
+            website: website ?? null,
             description: null,
           });
         } catch (evidenceErr) {
