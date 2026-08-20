@@ -38,10 +38,35 @@
  *
  * ## One predicate, deliberately
  *
- * Every guard reads this function so OPE-292 can retarget it — from the email
- * pattern to an explicit provenance column — by editing one body rather than
- * hunting call sites. That column does not exist yet (verified against prod
- * `pragma_table_info`), so the pattern is the interim, as the ticket allows.
+ * Every guard reads this function, so the rule can be retargeted by editing one
+ * body rather than hunting call sites.
+ *
+ * ── Why it keys on the email shape and not `users.origin` ────────────────
+ *
+ * ⚠️ Correcting this file's own previous comment, which claimed the column did
+ * not exist. It does, and did — OPE-292 added it in PR #900. The claim was
+ * wrong when written.
+ *
+ * The column is still not what this guard keys on, and the reason is better
+ * than the one it replaced. OPE-292 shipped `users.origin` and stamped three of
+ * its four writers; the fourth, in `packages/vendor-linking`, kept defaulting
+ * to `registration` and minted 389 mislabelled placeholders in under two days.
+ * At the point this guard was written, retargeting it at that column would have
+ * silently disarmed it for **64% of the population it exists to cover**.
+ *
+ * That writer is now wired and the rows relabelled (2026-08-20), so the column
+ * currently reads clean — 0 misfiled of 219 registrations. But the email shape
+ * remains the better primary predicate, because it is INTRINSIC to how the
+ * address is minted, whereas the column is a stamp that a future writer can
+ * forget. It already was forgotten once, and nothing about that is unlikely to
+ * recur; `placeholder_origin` in the health report is what watches for it.
+ *
+ * The two predicates fail in opposite directions, which is why the column is
+ * worth adding as a SECOND check wherever a resolved row is in hand: the shape
+ * cannot catch an ingestion path that mints a differently-formed address, and
+ * the column cannot catch a writer that forgot to stamp. Neither is sufficient
+ * alone. Not done here — this ticket's guards deliberately run BEFORE the user
+ * lookup, and a check that needs the row cannot sit there.
  */
 
 /**
