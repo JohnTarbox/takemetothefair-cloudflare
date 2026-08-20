@@ -48,7 +48,7 @@ import { isAuthorized } from "@/lib/api-auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { vendorClaimEvidence } from "@/lib/db/schema";
 import { classifyDeclaredPresence, reassessClaimEvidence } from "@/lib/claims/claim-evidence";
-import { fetchStandard } from "@takemetothefair/site-fetch";
+import { fetchHtmlWithSsrfGuard } from "@takemetothefair/site-fetch";
 import { logError } from "@/lib/logger";
 
 /** Per-site budget. A vendor's slow server must not stall the whole pass. */
@@ -123,11 +123,24 @@ export async function POST(request: Request) {
       const verdict = await classifyDeclaredPresence(
         row.declaredWebsite,
         row.businessName,
+        // SSRF-guarded, and that is not optional here: this URL comes from an
+        // UNVERIFIED PUBLIC REGISTRANT, not from an operator. A stored
+        // `http://169.254.169.254/…` would otherwise be fetched by our Worker
+        // the moment an admin ran the pass — stored SSRF with a human trigger.
+        //
+        // The guard re-checks the host on every redirect hop, because a public
+        // host can 3xx into an internal one and a single up-front check misses
+        // it. Same pattern as /api/admin/upload-image-from-url.
+        //
+        // ⚠️ DNS rebinding remains a documented residual (the Workers runtime
+        // exposes no resolved IP), accepted on the same grounds as the sibling
+        // routes: Workers have no metadata service or internal HTTP network to
+        // pivot into.
         async (url: string) => {
           const controller = new AbortController();
           const t = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
           try {
-            const out = await fetchStandard(url, controller.signal);
+            const out = await fetchHtmlWithSsrfGuard(url, controller.signal);
             return out.ok
               ? { ok: true, html: out.html }
               : { ok: false, html: null, failReason: out.error };

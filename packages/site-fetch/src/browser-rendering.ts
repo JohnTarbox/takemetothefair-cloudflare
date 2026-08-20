@@ -15,6 +15,8 @@
 
 /** 15s for the standard fetch path. */
 export const FETCH_TIMEOUT = 15000;
+import { isBlockedSsrfHost } from "./ssrf-guard";
+
 /** 25s for Browser Rendering — managed Chrome is slower. */
 export const BROWSER_RENDERING_TIMEOUT = 25000;
 
@@ -240,4 +242,119 @@ export async function fetchWithEscalation(
     return { html: escalated.html, fetchMethod: "browser-rendering", standard, escalated };
   }
   return { html: null, fetchMethod: "failed", standard, escalated };
+}
+
+/**
+ * SSRF-guarded HTML fetch for a URL supplied by an UNTRUSTED party.
+ *
+ * `fetchStandard` deliberately does not guard: its callers pass URLs an
+ * operator typed or that came from our own data. When the URL originates from
+ * a public, unverified user — a vendor's self-declared website at registration
+ * (OPE-237) — a single up-front host check is not enough either, because a
+ * public host can 3xx-redirect to an internal address.
+ *
+ * So redirects are followed MANUALLY and the check re-runs on every hop, which
+ * is the pattern `/api/admin/upload-image-from-url` and
+ * `/api/admin/import-url/fetch` already established here.
+ *
+ * ⚠️ Documented residual, same as those two: **DNS rebinding is not covered.**
+ * `isBlockedSsrfHost` is a string check, and the Workers runtime exposes no
+ * resolved IP to validate against, so a public hostname whose A-record points
+ * at a private address still resolves. Accepted for the same reason: Workers
+ * have no metadata service and no internal HTTP network to pivot into. Do not
+ * read this helper as making an arbitrary URL safe to fetch in a runtime that
+ * DOES have those.
+ */
+export async function fetchHtmlWithSsrfGuard(
+  rawUrl: string,
+  signal: AbortSignal,
+  maxRedirects = 3
+): Promise<FetchOutcome> {
+  let current: URL;
+  try {
+    current = new URL(rawUrl);
+  } catch {
+    return { ok: false, status: null, error: "invalid_url", userMessage: "Not a valid URL." };
+  }
+
+  for (let hop = 0; hop <= maxRedirects; hop++) {
+    if (current.protocol !== "http:" && current.protocol !== "https:") {
+      return {
+        ok: false,
+        status: null,
+        error: "blocked_protocol",
+        userMessage: "Only http(s) URLs are supported.",
+      };
+    }
+    if (isBlockedSsrfHost(current.hostname)) {
+      return {
+        ok: false,
+        status: null,
+        error: "blocked_host",
+        userMessage: "Internal URLs are not allowed.",
+      };
+    }
+
+    let resp: Response;
+    try {
+      resp = await fetch(current.href, {
+        signal,
+        redirect: "manual",
+        headers: {
+          "User-Agent": FETCH_UA,
+          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        },
+      });
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") {
+        return { ok: false, status: null, error: "timeout", userMessage: "Page took too long." };
+      }
+      return {
+        ok: false,
+        status: null,
+        error: `network: ${err instanceof Error ? err.message : String(err)}`,
+        userMessage: "Could not fetch page.",
+      };
+    }
+
+    if (resp.status >= 300 && resp.status < 400) {
+      const loc = resp.headers.get("location");
+      if (!loc) {
+        return {
+          ok: false,
+          status: resp.status,
+          error: "redirect_without_location",
+          userMessage: "Could not fetch page.",
+        };
+      }
+      try {
+        current = new URL(loc, current);
+      } catch {
+        return {
+          ok: false,
+          status: resp.status,
+          error: "invalid_redirect",
+          userMessage: "Could not fetch page.",
+        };
+      }
+      continue; // re-check the new hop at the top of the loop
+    }
+
+    if (!resp.ok) {
+      return {
+        ok: false,
+        status: resp.status,
+        error: `http_${resp.status}`,
+        userMessage: `Page returned ${resp.status}.`,
+      };
+    }
+    return { ok: true, html: await resp.text(), finalUrl: current.href };
+  }
+
+  return {
+    ok: false,
+    status: null,
+    error: "too_many_redirects",
+    userMessage: "Too many redirects.",
+  };
 }
