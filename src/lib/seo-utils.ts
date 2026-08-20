@@ -344,15 +344,47 @@ export function roundDownToTen(n: number): number {
   return Math.floor(n / 10) * 10;
 }
 
+/**
+ * The state page `<title>` — the single highest-value string on the page.
+ *
+ * ── OPE-394: why the tail is short ───────────────────────────────────────
+ *
+ * This shipped as `… — Find Craft Fairs, Home Shows, Festivals · MMATF`, which
+ * runs to 90 characters on Massachusetts. Google renders roughly 60 characters
+ * / ~600px, so the SERP showed about
+ *
+ *     Massachusetts Fairs & Festivals 2026 — Find Craft Fairs, Ho…
+ *
+ * — half the tag invisible, and the invisible half carrying the brand. The head
+ * term survived only because it was placed first, which is what kept this from
+ * being a regression rather than a missed opportunity.
+ *
+ * `— Full Calendar` is the form John approved on 2026-08-16. The dropped copy
+ * is not worthless, it was in the wrong element: "find craft fairs, home shows,
+ * festivals" belongs in the meta description and the on-page intro, where
+ * nothing truncates it. Do not smuggle it back into the tag.
+ *
+ * ── The year rolls, and that is tested ──────────────────────────────────
+ *
+ * `year` defaults to the CURRENT year, so January needs no deploy. That is the
+ * one condition attached to the original approval, and it is not provable by
+ * reading the template — OPE-197 existed solely to evergreen ~1,146 series
+ * names that carried a hardcoded trailing year, and reintroducing that class on
+ * the six highest-value pages on the site is exactly what the condition guards
+ * against. `seo-utils.test.ts` renders this at a simulated 2027 and 2030.
+ *
+ * ⚠️ Known behaviour in late December, stated rather than silently accepted:
+ * the title says the CURRENT year until 23:59 on 31 December, so for the last
+ * few weeks of the year it advertises a calendar that is nearly spent. Rolling
+ * early would invert the problem — the page would promise 2027 while listing
+ * 2026 events. Left as-is deliberately; a Q4 flip is a content decision with
+ * SERP consequences, not a code tweak, and it needs John.
+ */
 export function buildStateTitle(
   stateName: string,
   year: number = new Date().getFullYear()
 ): string {
-  // Per analyst's 2026-05-16 SEO recommendation: lead with state + intent
-  // categories, end with brand. Drives ranking on "fairs in {state} {year}"
-  // queries that ranked page-2 with the prior title (e.g. "fairs in
-  // massachusetts 2026" at position 15.4 in GSC).
-  return `${stateName} Fairs & Festivals ${year} — Find Craft Fairs, Home Shows, Festivals · MMATF`;
+  return `${stateName} Fairs & Festivals ${year} — Full Calendar`;
 }
 
 export function buildStateMetaDescription(
