@@ -1,7 +1,8 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   buildEventMetaDescription,
   buildEventTitle,
+  buildStateTitle,
   buildVendorMetaDescription,
   buildVenueMetaDescription,
   isCleanDbDescription,
@@ -643,5 +644,165 @@ describe("buildEventMetaDescription — null/missing dates and venues", () => {
     });
     expect(out).toContain("Mystery Pop-Up");
     expect(out.length).toBeLessThanOrEqual(160);
+  });
+});
+
+/**
+ * OPE-394 — the state page `<title>`.
+ *
+ * Two things are pinned here, and neither is provable by reading the template:
+ * the exact approved copy, and that the year actually rolls.
+ */
+describe("buildStateTitle — OPE-394", () => {
+  /**
+   * Approximate rendered width in CSS pixels at Google's desktop SERP title
+   * size (Arial ~20px). Character COUNT is a proxy for the real limit, which is
+   * pixel width — the review asked for width, not a count, because
+   * `Massachusetts` and `New Hampshire` are wide strings at the same length as
+   * a narrow one.
+   *
+   * Advance widths are Arial's, in units per 1000em, for the character classes
+   * these titles actually use. This is an estimate, not a browser render: it is
+   * good to a few percent, which is enough to tell 500px from 700px and not
+   * enough to adjudicate a title sitting exactly on the boundary.
+   */
+  function approxPixelWidth(text: string, fontPx = 20): number {
+    const W: Record<string, number> = {
+      " ": 278,
+      "&": 667,
+      "—": 1000,
+      "·": 333,
+      i: 222,
+      j: 222,
+      l: 222,
+      f: 278,
+      t: 278,
+      r: 333,
+      I: 278,
+      J: 500,
+      "1": 556,
+    };
+    let units = 0;
+    for (const ch of text) {
+      if (W[ch] !== undefined) units += W[ch];
+      else if (ch >= "A" && ch <= "Z")
+        units += 700; // caps average
+      else if (ch >= "0" && ch <= "9") units += 556;
+      else units += 528; // lowercase average
+    }
+    return (units / 1000) * fontPx;
+  }
+
+  /** Google truncates desktop titles around 600px. */
+  const SERP_WIDTH_PX = 600;
+
+  const APPROVED: Record<string, string> = {
+    Massachusetts: "Massachusetts Fairs & Festivals 2026 — Full Calendar",
+    "New Hampshire": "New Hampshire Fairs & Festivals 2026 — Full Calendar",
+    Connecticut: "Connecticut Fairs & Festivals 2026 — Full Calendar",
+    "Rhode Island": "Rhode Island Fairs & Festivals 2026 — Full Calendar",
+    Vermont: "Vermont Fairs & Festivals 2026 — Full Calendar",
+    Maine: "Maine Fairs & Festivals 2026 — Full Calendar",
+  };
+
+  for (const [state, expected] of Object.entries(APPROVED)) {
+    it(`${state} renders the approved copy exactly`, () => {
+      expect(buildStateTitle(state, 2026)).toBe(expected);
+    });
+  }
+
+  it("never carries the 90-char tail that shipped", () => {
+    // The specific deviation this ticket was sent back for.
+    for (const state of Object.keys(APPROVED)) {
+      const t = buildStateTitle(state, 2026);
+      expect(t).not.toContain("Find Craft Fairs");
+      expect(t).not.toContain("MMATF");
+    }
+  });
+
+  it("fits SERP width on the two widest states, head term and year intact", () => {
+    // Massachusetts and New Hampshire are the long cases at 52 characters.
+    for (const state of ["Massachusetts", "New Hampshire"]) {
+      const t = buildStateTitle(state, 2026);
+      const px = approxPixelWidth(t);
+      expect(px, `${state} at ${Math.round(px)}px`).toBeLessThan(SERP_WIDTH_PX);
+      // The two things that must survive truncation even if the tail does not.
+      expect(approxPixelWidth(`${state} Fairs & Festivals 2026`)).toBeLessThan(SERP_WIDTH_PX);
+    }
+  });
+
+  it("the old 90-char title did NOT fit — the regression this reverses", () => {
+    // Guards the test itself: if approxPixelWidth were broken and returned
+    // something tiny, every assertion above would pass vacuously.
+    const old =
+      "Massachusetts Fairs & Festivals 2026 — Find Craft Fairs, Home Shows, Festivals · MMATF";
+    expect(approxPixelWidth(old)).toBeGreaterThan(SERP_WIDTH_PX);
+  });
+
+  describe("the year rolls — the sole condition on the approval", () => {
+    it("renders next year's title at a simulated 2027", () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date("2027-03-14T12:00:00Z"));
+        // No `year` argument — this is the production call shape.
+        expect(buildStateTitle("Massachusetts")).toBe(
+          "Massachusetts Fairs & Festivals 2027 — Full Calendar"
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("still rolls years later, so it is not a two-value special case", () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date("2030-07-01T12:00:00Z"));
+        expect(buildStateTitle("Maine")).toContain("2030");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("flips at the turn of the year, and flips on LOCAL time", () => {
+      // Two things stated here rather than left implied.
+      //
+      // 1. Late December: the title advertises the CURRENT year right up to
+      //    the turn, so for the last weeks it points at a nearly-spent
+      //    calendar. Rolling early would invert the problem — promising 2027
+      //    while the page lists 2026 events — so this is deliberate.
+      //
+      // 2. ⚠️ `getFullYear()` reads LOCAL time, and production Workers run
+      //    UTC. So the live flip happens at UTC midnight, which is 7pm Eastern
+      //    on 31 December: for ~5 hours the six state pages will say 2027
+      //    while it is still 2026 in New England. Small, but real, and the
+      //    same UTC-vs-local class as OPE-482. Recorded rather than fixed —
+      //    pinning the title to an explicit zone is a content decision.
+      //
+      // Dates below are chosen to be unambiguous in ANY test-runner timezone;
+      // an assertion written as `2027-01-01T00:01:00Z` passes in UTC and fails
+      // in Eastern, which is how this behaviour surfaced.
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date("2026-12-20T12:00:00Z"));
+        expect(buildStateTitle("Vermont")).toContain("2026");
+        vi.setSystemTime(new Date("2027-01-02T12:00:00Z"));
+        expect(buildStateTitle("Vermont")).toContain("2027");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("uses local-time year — documents the UTC/local seam", () => {
+      // Pins the behaviour so a future change to an explicit timezone is a
+      // deliberate edit against a failing test, not a silent shift.
+      vi.useFakeTimers();
+      try {
+        const instant = new Date("2027-01-01T02:00:00Z");
+        vi.setSystemTime(instant);
+        expect(buildStateTitle("Maine")).toContain(String(instant.getFullYear()));
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 });
