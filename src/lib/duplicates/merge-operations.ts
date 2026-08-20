@@ -1,4 +1,5 @@
 import { eq, and, inArray, sql, or, isNull } from "drizzle-orm";
+import { differentEditionYears } from "@/lib/series/merge-year-guard";
 import type { Database } from "@/lib/db";
 import {
   venues,
@@ -50,6 +51,20 @@ export async function getMergePreview(
 }
 
 /**
+ * OPE-481 — deliberate overrides for a merge. Absent by default, so the safe
+ * behaviour is what you get by not thinking about it.
+ */
+export interface MergeOptions {
+  /**
+   * Permit merging two events whose start years differ. Off by default: such a
+   * pair is normally two EDITIONS of a series, and merging them destroys a real
+   * future event. Set only when a human has confirmed the two rows really are
+   * one edition double-entered.
+   */
+  allowCrossYearMerge?: boolean;
+}
+
+/**
  * Execute merge operation.
  *
  * `actorUserId` (K3, 2026-05-31) — recorded in the admin_actions row that
@@ -61,13 +76,14 @@ export async function executeMerge(
   type: DuplicateEntityType,
   primaryId: string,
   duplicateId: string,
-  actorUserId?: string | null
+  actorUserId?: string | null,
+  options?: MergeOptions
 ): Promise<MergeResponse> {
   switch (type) {
     case "venues":
       return mergeVenues(db, primaryId, duplicateId);
     case "events":
-      return mergeEvents(db, primaryId, duplicateId, actorUserId ?? null);
+      return mergeEvents(db, primaryId, duplicateId, actorUserId ?? null, options);
     case "vendors":
       return mergeVendors(db, primaryId, duplicateId);
     case "promoters":
@@ -626,7 +642,8 @@ async function mergeEvents(
   db: Database,
   primaryId: string,
   duplicateId: string,
-  actorUserId: string | null = null
+  actorUserId: string | null = null,
+  options?: MergeOptions
 ): Promise<MergeResponse> {
   const transferred: RelationshipCounts = { eventVendors: 0, favorites: 0 };
 
@@ -652,6 +669,8 @@ async function mergeEvents(
         sourceDomain: events.sourceDomain,
         sourceId: events.sourceId,
         sourceName: events.sourceName,
+        // OPE-481 — needed by the cross-year guard below.
+        startDate: events.startDate,
       })
       .from(events)
       .where(eq(events.id, primaryId)),
@@ -664,6 +683,8 @@ async function mergeEvents(
         sourceDomain: events.sourceDomain,
         sourceId: events.sourceId,
         sourceName: events.sourceName,
+        // OPE-481 — needed by the cross-year guard below.
+        startDate: events.startDate,
       })
       .from(events)
       .where(eq(events.id, duplicateId)),
@@ -681,6 +702,34 @@ async function mergeEvents(
   }
   if (duplicate.mergedInto) {
     throw new Error(`mergeEvents: duplicate ${duplicateId} is already merged`);
+  }
+  // OPE-481 — cross-year merges are refused HERE, in the core, not only at the
+  // route.
+  //
+  // Two events whose start years differ are different EDITIONS of a series, and
+  // merging them tombstones a real future event — the OPE-432 / OPE-473
+  // failure class, and the original 548-link cross-year roster fusion.
+  //
+  // The check already existed in `/api/admin/duplicates/merge`, which is
+  // currently the only caller, so nothing bypassed it in practice. But a guard
+  // that lives at one entry point protects the ENTRY POINT, not the operation:
+  // a future internal job, migration or script calling executeMerge directly
+  // would have skipped it silently, and the cost of that mistake is an
+  // unrecoverable destroyed edition. The route keeps its own copy for a
+  // friendlier API error; this one is the authoritative gate.
+  //
+  // `allowCrossYearMerge` exists so a deliberate cross-year merge is still
+  // possible, but only by saying so explicitly — the force_create shape used in
+  // intake. Never default it to true.
+  if (
+    !options?.allowCrossYearMerge &&
+    differentEditionYears(keeper.startDate, duplicate.startDate)
+  ) {
+    throw new Error(
+      `mergeEvents: refusing cross-year merge — keeper ${primaryId} and duplicate ${duplicateId} ` +
+        `start in different years. These are different editions of a series; link them as ` +
+        `occurrences instead. Pass allowCrossYearMerge to override deliberately.`
+    );
   }
 
   // K3 Step 1: rename the duplicate's slug to free the URL. Suffix is

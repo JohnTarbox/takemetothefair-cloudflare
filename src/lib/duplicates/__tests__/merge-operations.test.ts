@@ -948,3 +948,100 @@ describe("transferFavorites (D1-safe favorites merge)", () => {
     expect(n).toBe(0);
   });
 });
+
+/**
+ * OPE-481 — the cross-year guard must live in the CORE, not only at the route.
+ *
+ * The check already existed in `/api/admin/duplicates/merge`, which is currently
+ * the only caller — so nothing bypassed it in practice. But a guard at one entry
+ * point protects the entry point, not the operation: a future internal job,
+ * migration or script calling `executeMerge` directly would have skipped it
+ * silently, and the cost is an unrecoverably destroyed future edition.
+ *
+ * These tests call `executeMerge` DIRECTLY. The route is not involved at all,
+ * which is exactly the bypass the ticket is about.
+ */
+describe("executeMerge — cross-year guard in the core (OPE-481)", () => {
+  /** Mock db whose batch() returns [vendors, [keeper], [duplicate]]. */
+  function dbWithStarts(keeperStart: Date | null, dupStart: Date | null) {
+    const snap = (id: string, startDate: Date | null, extra: Record<string, unknown> = {}) => ({
+      slug: `${id}-slug`,
+      viewCount: 0,
+      sourceUrl: null,
+      sourceDomain: null,
+      sourceId: null,
+      sourceName: null,
+      startDate,
+      ...extra,
+    });
+    return {
+      batch: vi.fn().mockResolvedValue([
+        [], // primaryVendors
+        [snap("keeper", keeperStart)],
+        [snap("dup", dupStart, { mergedInto: null })],
+      ]),
+      select: vi.fn().mockReturnThis(),
+      from: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnValue([]),
+      update: vi.fn().mockReturnThis(),
+      set: vi.fn().mockReturnThis(),
+      insert: vi.fn().mockReturnThis(),
+      values: vi.fn().mockReturnThis(),
+      delete: vi.fn().mockReturnThis(),
+    };
+  }
+
+  it("REFUSES a cross-year merge when called directly, with no route in the picture", async () => {
+    const db = dbWithStarts(new Date("2026-08-15T00:00:00Z"), new Date("2027-08-14T00:00:00Z"));
+    await expect(executeMerge(db as never, "events", "keeper-id", "dup-id")).rejects.toThrow(
+      /refusing cross-year merge/
+    );
+    // And it refuses BEFORE any destructive write.
+    expect(db.update).not.toHaveBeenCalled();
+    expect(db.insert).not.toHaveBeenCalled();
+  });
+
+  it("names both ids and the remedy, so the operator is not left guessing", async () => {
+    const db = dbWithStarts(new Date("2026-08-15T00:00:00Z"), new Date("2027-08-14T00:00:00Z"));
+    await expect(executeMerge(db as never, "events", "keeper-id", "dup-id")).rejects.toThrow(
+      /keeper-id/
+    );
+    await expect(executeMerge(db as never, "events", "keeper-id", "dup-id")).rejects.toThrow(
+      /occurrences instead/
+    );
+  });
+
+  it("allows the merge past the guard when allowCrossYearMerge is passed explicitly", async () => {
+    // The deliberate-override case. It must not still throw the GUARD error —
+    // whatever happens afterwards in this mock is beside the point.
+    const db = dbWithStarts(new Date("2026-08-15T00:00:00Z"), new Date("2027-08-14T00:00:00Z"));
+    const err = await executeMerge(db as never, "events", "keeper-id", "dup-id", null, {
+      allowCrossYearMerge: true,
+    }).catch((e: Error) => e);
+    expect(String(err)).not.toMatch(/refusing cross-year merge/);
+  });
+
+  it("does not fire for a SAME-year pair", async () => {
+    const db = dbWithStarts(new Date("2026-08-15T00:00:00Z"), new Date("2026-09-01T00:00:00Z"));
+    const err = await executeMerge(db as never, "events", "keeper-id", "dup-id").catch(
+      (e: Error) => e
+    );
+    expect(String(err)).not.toMatch(/refusing cross-year merge/);
+  });
+
+  it("does not fire when either start date is unknown", async () => {
+    // A missing date is not evidence of a different edition; refusing there
+    // would block legitimate merges of undated duplicates.
+    for (const [a, b] of [
+      [null, new Date("2027-01-01T00:00:00Z")],
+      [new Date("2026-01-01T00:00:00Z"), null],
+      [null, null],
+    ] as [Date | null, Date | null][]) {
+      const db = dbWithStarts(a, b);
+      const err = await executeMerge(db as never, "events", "keeper-id", "dup-id").catch(
+        (e: Error) => e
+      );
+      expect(String(err)).not.toMatch(/refusing cross-year merge/);
+    }
+  });
+});
