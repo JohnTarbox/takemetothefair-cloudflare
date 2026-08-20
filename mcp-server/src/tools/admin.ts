@@ -55,6 +55,8 @@ import {
   eventApprovalBlockReason,
   mergedTombstoneBlockReason,
   normalizeEventDate,
+  classifySource,
+  assertIngestionMethod,
 } from "@takemetothefair/utils";
 import {
   eventOutboxStatements,
@@ -1320,6 +1322,26 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           .select({ count: sql<number>`COUNT(*)` })
           .from(eventDays)
           .where(eq(eventDays.eventId, event.id));
+
+        // OPE-491 §3 — RECLASSIFY on write, not only on insert.
+        //
+        // `source_domain` and `ingestion_method` are derived columns computed
+        // once at insert and never refreshed, so editing `source_url` or
+        // `source_name` left them describing the OLD source. Verified in prod:
+        // at least 4 rows carry a `source_domain` that is not the host of their
+        // own `source_url` (`Artisan's Alliance` → domain
+        // ctcraftfairconnection.com, url ctcraftshows.com).
+        //
+        // Reuses the merged values the gate block already computed, so the
+        // classification and the gate verdict always describe the same source.
+        if (params.source_url !== undefined || params.source_name !== undefined) {
+          const reclassified = classifySource(mergedSourceName, mergedSourceUrl);
+          updates.sourceDomain = reclassified.sourceDomain;
+          updates.ingestionMethod = assertIngestionMethod(
+            reclassified.ingestionMethod,
+            "update_event"
+          );
+        }
 
         const gateResult = evaluateGates({
           name: params.name ?? (evRow.name as string | null | undefined) ?? null,

@@ -22,7 +22,7 @@ import { auth } from "@/lib/auth";
 import { inferCategoriesFromName } from "@/lib/url-import/infer-categories";
 import { loadClassifications, gateUrlForField } from "@/lib/url-classification";
 import { PUBLIC_EVENT_STATUSES } from "@/lib/constants";
-import { classifySource } from "@/lib/source-classification";
+import { classifySource, assertIngestionMethod } from "@/lib/source-classification";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 import { autoLinkVenue, deriveStateFromText } from "@/lib/venue-matching";
 import { normalizeEventDate } from "@/lib/event-dates";
@@ -573,8 +573,15 @@ export async function POST(request: NextRequest) {
       // three distinct ingestion methods via the classifier's label table.
       // sourceDomain comes from data.sourceUrl when the submitter included one.
       sourceDomain: classifySource(sourceName, data.sourceUrl).sourceDomain,
-      ingestionMethod:
-        classifySource(sourceName, data.sourceUrl).ingestionMethod ?? "community_suggestion",
+      // OPE-491 — assert the derived method before it reaches the INSERT. The
+      // column is plain TEXT with no CHECK and no Drizzle enum, so this is the
+      // only enforcement point. (The `?? "community_suggestion"` fallback that
+      // used to sit here was unreachable: classifySource never returns
+      // null/undefined — it defaults to admin_manual by contract.)
+      ingestionMethod: assertIngestionMethod(
+        classifySource(sourceName, data.sourceUrl).ingestionMethod,
+        "suggest-event/submit"
+      ),
       sourceUrl: data.sourceUrl || null,
       sourceId: data.sourceUrl ? createSlug(data.sourceUrl) : newEventId,
       syncEnabled: false,

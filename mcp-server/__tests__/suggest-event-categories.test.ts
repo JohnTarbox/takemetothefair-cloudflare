@@ -130,17 +130,67 @@ describe("suggest_event categories (K21)", () => {
 describe("suggest_event source_label (K26)", () => {
   async function storedProvenance(eventId: string) {
     const rows = await db
-      .select({ sourceName: events.sourceName, ingestionMethod: events.ingestionMethod })
+      .select({
+        sourceName: events.sourceName,
+        ingestionMethod: events.ingestionMethod,
+        sourceDomain: events.sourceDomain,
+      })
       .from(events)
       .where(eq(events.id, eventId))
       .limit(1);
     return rows[0];
   }
 
-  it("defaults to vendor-submission provenance when source_label is omitted", async () => {
+  // OPE-491 — this test previously asserted the DEFECT: that an omitted
+  // source_label defaults to "vendor-submission". That default is itself a key
+  // in METHOD_BY_NAME, so it matched the classifier's first branch and made the
+  // domain inference below it unreachable — 670 rows (~36% of all events) were
+  // stamped vendor submissions regardless of where they came from. The
+  // expectation is inverted deliberately, not relaxed.
+  it("falls THROUGH to domain inference when source_label is omitted", async () => {
     const { payload } = await suggest({
       name: "Default Provenance Fair",
       start_date: "2026-09-15",
+    });
+    const p = await storedProvenance(payload!.event.id);
+    expect(p.sourceName).toBe("unlabeled");
+    // No source_url and no domain signal → the honest answer is admin_manual,
+    // NOT a claim that a vendor submitted it.
+    expect(p.ingestionMethod).toBe("admin_manual");
+  });
+
+  it("an unlabeled call on an AGGREGATOR domain classifies as aggregator_import", async () => {
+    // The ticket's headline acceptance case. mainemade.com is in
+    // AGGREGATOR_HOSTS and has 34 rows in prod stamped vendor_submission today;
+    // every one would have classified correctly had the default not pre-empted
+    // the domain check.
+    const { payload } = await suggest({
+      name: "Aggregator Sourced Fair",
+      start_date: "2026-09-16",
+      source_url: "https://mainemade.com/events/pottery-tour",
+    });
+    const p = await storedProvenance(payload!.event.id);
+    expect(p.ingestionMethod).toBe("aggregator_import");
+    expect(p.sourceDomain).toBe("mainemade.com");
+  });
+
+  it("an unlabeled call on an ordinary domain classifies as direct_scrape", async () => {
+    const { payload } = await suggest({
+      name: "Promoter Site Fair",
+      start_date: "2026-09-17",
+      source_url: "https://jenksproductions.com/shows/spring",
+    });
+    const p = await storedProvenance(payload!.event.id);
+    expect(p.ingestionMethod).toBe("direct_scrape");
+  });
+
+  it("an EXPLICIT vendor-submission label still records a vendor submission", async () => {
+    // The public vendor form passes this explicitly, so genuine submissions are
+    // unaffected by the default change. This is the guard against over-fixing.
+    const { payload } = await suggest({
+      name: "Real Vendor Submitted Fair",
+      start_date: "2026-09-18",
+      source_label: "vendor-submission",
     });
     const p = await storedProvenance(payload!.event.id);
     expect(p.sourceName).toBe("vendor-submission");

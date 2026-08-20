@@ -41,6 +41,50 @@ export const INGESTION_METHODS: readonly IngestionMethod[] = [
   "discovery",
 ] as const;
 
+/**
+ * OPE-491 — the label `suggest_event` records when the caller passed none.
+ *
+ * Deliberately NOT a key in `METHOD_BY_NAME`, and deliberately not null:
+ *
+ *  - not a map key, so `inferIngestionMethod` falls THROUGH to the domain
+ *    chain and yields the honest `aggregator_import` / `direct_scrape` /
+ *    `admin_manual`. The previous default was `"vendor-submission"`, which IS
+ *    a key — so it matched on the first branch and the domain inference below
+ *    it was unreachable for every unlabeled caller. 670 rows (~36% of all
+ *    events) were stamped `vendor_submission` that way, including 34 from
+ *    `mainemade.com`, an AGGREGATOR_HOSTS member that would have classified
+ *    correctly had the default not pre-empted the check.
+ *  - contains no dot, so `normalizeHostname` returns null and it can never be
+ *    mistaken for a domain.
+ *  - not null, so `source_name` keeps a greppable marker that distinguishes
+ *    "no label was passed" from the legacy NULLs.
+ */
+export const UNLABELED_SOURCE = "unlabeled";
+
+/** Type guard for values arriving from outside the type system (D1 reads,
+ *  JSON bodies, tool params). */
+export function isIngestionMethod(value: unknown): value is IngestionMethod {
+  return typeof value === "string" && (INGESTION_METHODS as readonly string[]).includes(value);
+}
+
+/**
+ * Assert an ingestion_method before it reaches an INSERT/UPDATE.
+ *
+ * The column is plain TEXT with no CHECK constraint and no Drizzle enum, and 13
+ * distinct values were live in prod when OPE-491 was filed — so nothing at the
+ * database layer stops a typo becoming a permanent new category. This is the
+ * only enforcement point there is.
+ */
+export function assertIngestionMethod(value: unknown, context: string): IngestionMethod {
+  if (!isIngestionMethod(value)) {
+    throw new Error(
+      `${context}: refusing to write unknown ingestion_method ${JSON.stringify(value)}. ` +
+        `Allowed: ${INGESTION_METHODS.join(", ")}`
+    );
+  }
+  return value;
+}
+
 export interface SourceClassification {
   sourceDomain: string | null;
   /** Always set — classifier defaults to admin_manual when no other signal
