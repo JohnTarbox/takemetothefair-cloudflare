@@ -12,11 +12,13 @@ import {
   indexnowSubmissions,
   pendingSearchPings,
   weeklyInventoryState,
+  staleRedSignals,
 } from "@/lib/db/schema";
-import { count, desc, eq, isNull } from "drizzle-orm";
+import { and, count, desc, eq, isNull, notInArray } from "drizzle-orm";
 import { getIndexNowQuota, type BingEnv } from "@/lib/bing-webmaster";
 import { assessAllIntegrationSilence, type IntegrationActivity } from "@/lib/integration-silence";
 import { assessAllQueueFreeze } from "@/lib/queue-freeze";
+import { loadQueueFreezeThresholds } from "@/lib/queue-freeze-thresholds";
 import { gatherQueueFlows, persistQueueSnapshots } from "@/lib/analytics-overview/queue-drain";
 import { assessAllHeartbeat } from "@/lib/heartbeat";
 import { assessPhotoEffectiveness } from "@/lib/photo-effectiveness/load";
@@ -186,7 +188,11 @@ export const POST = withInternalKey({ source: "cpi:stale-red-scan" }, async ({ d
     let queueReds: StaleRed[] = [];
     try {
       const flows = await gatherQueueFlows(db, now);
-      queueReds = assessAllQueueFreeze(flows, now);
+      // OPE-497 scope 5 — the frozen/slow-drain gates were code constants, so an
+      // operator inspecting the database could not see what the alert checked.
+      // Absent rows fall back to the same constants, so a missing threshold
+      // degrades to today's behaviour rather than to silence.
+      queueReds = assessAllQueueFreeze(flows, now, await loadQueueFreezeThresholds(db));
       // Persist AFTER assessing so the inbound queue's outflow delta reads the
       // prior day's row, not today's.
       await persistQueueSnapshots(db, flows, now);
@@ -312,6 +318,67 @@ export const POST = withInternalKey({ source: "cpi:stale-red-scan" }, async ({ d
         level: "warn",
         source: "cpi:stale-red-scan",
         message: "steady-state write failed; digest unaffected",
+        error: err,
+      });
+    }
+
+    // OPE-497 — persist WHICH signals are red, not only how many.
+    //
+    // The count above (`staleRedCurrent`) was the only trace this scan left, so
+    // "is the promoter enrichment queue red?" could not be answered from the
+    // database at all. On 2026-08-19 an analyst with full D1 access checked
+    // `health_issues` and `tunable_thresholds`, found nothing, and concluded the
+    // frozen-queue alert had never been built — while it had been firing daily
+    // into an email for two weeks. The detector was fine; it was unauditable.
+    //
+    // Upsert the current set, then resolve everything the scan no longer sees,
+    // so `resolved_at IS NULL` is the answer to "what is red right now".
+    // Best-effort, like the count write: the scan's job is the digest.
+    try {
+      const seenAt = new Date();
+      for (const red of allReds) {
+        await db
+          .insert(staleRedSignals)
+          .values({
+            refKey: red.refKey,
+            priority: red.priority,
+            title: red.title,
+            href: red.href ?? null,
+            firstDetectedAt: red.firstDetectedAt ? new Date(red.firstDetectedAt) : null,
+            hoursInRed: red.hoursInRed ?? null,
+            lastSeenAt: seenAt,
+            resolvedAt: null,
+          })
+          .onConflictDoUpdate({
+            target: staleRedSignals.refKey,
+            set: {
+              priority: red.priority,
+              title: red.title,
+              href: red.href ?? null,
+              hoursInRed: red.hoursInRed ?? null,
+              lastSeenAt: seenAt,
+              // A signal that went green and came back is red again. Clearing
+              // this is what makes recurrence visible rather than looking like
+              // one continuous outage.
+              resolvedAt: null,
+            },
+          });
+      }
+      // Anything still open but not seen this run has recovered.
+      const openKeys = allReds.map((r) => r.refKey);
+      await db
+        .update(staleRedSignals)
+        .set({ resolvedAt: seenAt })
+        .where(
+          openKeys.length > 0
+            ? and(isNull(staleRedSignals.resolvedAt), notInArray(staleRedSignals.refKey, openKeys))
+            : isNull(staleRedSignals.resolvedAt)
+        );
+    } catch (err) {
+      await logError(db, {
+        level: "warn",
+        source: "cpi:stale-red-scan",
+        message: "stale-red signal persistence failed; digest unaffected",
         error: err,
       });
     }

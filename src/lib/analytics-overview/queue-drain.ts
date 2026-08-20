@@ -27,6 +27,7 @@ import {
   inboundEmails,
   venues,
   queueDrainSnapshots,
+  promoters,
 } from "@/lib/db/schema";
 import { getCurrentIssues } from "@/lib/site-health";
 import { SITE_URL } from "@takemetothefair/constants";
@@ -578,6 +579,50 @@ async function venuesMissingCoordsFlow(db: Db, now: Date): Promise<QueueDrainRow
 
 /** Compute live flow for all seven queues. Never throws per-queue — a failure in
  *  one returns a depth-0 placeholder so the others still render/alert. */
+/**
+ * OPE-497 scope 3 — the ENTITY-level promoter enrichment queue.
+ *
+ * `promoter_enrichment` (already monitored) counts rows in
+ * `promoter_enrichment_candidates` — the REVIEW queue, depth ~848. The queue the
+ * drain task actually selects from is
+ * `promoters.enrichment_status = 'NEEDS_ENRICHMENT'` — depth 485 — and it was
+ * absent from `queue_drain_snapshots` entirely. Two different queues, one of
+ * them invisible, with names close enough that the dashboard read as covering
+ * both.
+ *
+ * Flows are reported NULL, deliberately. Becoming NEEDS_ENRICHMENT is a status
+ * transition, not a row creation, and the column that would date the exit —
+ * `promoters.last_enriched_at` — is 91% NULL including 51 of the 56 ENRICHED
+ * rows (OPE-496). So outflow genuinely is not computable here yet.
+ *
+ * `assessQueueFreeze` returns null for a null outflow, so this row publishes
+ * DEPTH without ever raising a RED it cannot justify. When OPE-496 makes
+ * `last_enriched_at` reliable, wiring the flows in is a small follow-up and the
+ * alerting starts working on its own. Silence beats a false alarm; an invisible
+ * 485-deep queue beats neither.
+ */
+export async function promoterNeedsEnrichmentFlow(db: Db): Promise<QueueDrainRow> {
+  const [row] = await db
+    .select({ n: count() })
+    .from(promoters)
+    .where(eq(promoters.enrichmentStatus, "NEEDS_ENRICHMENT"));
+
+  return {
+    queueName: "promoter_needs_enrichment",
+    label: "Promoters awaiting enrichment (entity queue)",
+    href: QUEUE_DRAIN_HREF,
+    depth: row?.n ?? 0,
+    inflow7d: 0,
+    outflow7d: null,
+    inflow14d: 0,
+    outflow14d: null,
+    oldestOpenAgeHours: null,
+    inflow1d: 0,
+    outflow1d: null,
+    drainRatio7d: null,
+  };
+}
+
 export async function gatherQueueFlows(db: Db, now: Date): Promise<QueueDrainRow[]> {
   const enrichment = (
     queueName: string,
@@ -613,6 +658,7 @@ export async function gatherQueueFlows(db: Db, now: Date): Promise<QueueDrainRow
       vendorEnrichmentCandidates.reviewedAt,
       vendorEnrichmentCandidates.decision
     ),
+    promoterNeedsEnrichmentFlow(db),
     enrichment(
       "promoter_enrichment",
       "Promoter enrichment review",

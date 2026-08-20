@@ -89,3 +89,54 @@ describe("assessAllQueueFreeze", () => {
     expect(reds.map((r) => r.refKey)).toEqual(["queue-freeze:event_discrepancies"]);
   });
 });
+
+/**
+ * OPE-497 — the gates are now overridable from `tunable_thresholds`.
+ *
+ * They governed a live alert while existing only as code constants, so nobody
+ * inspecting the database could see what the alert tested. That opacity is part
+ * of why OPE-497 was filed against a detector that was, in fact, working.
+ */
+describe("queue-freeze thresholds are overridable (OPE-497)", () => {
+  const base = {
+    queueName: "promoter_enrichment",
+    label: "Promoter enrichment review",
+    href: "/admin/analytics#queue-drain",
+    depth: 848,
+    inflow7d: 80,
+    inflow14d: 496,
+    oldestOpenAgeHours: null,
+  };
+
+  it("uses the code defaults when no override is supplied", () => {
+    // The real prod numbers on 2026-08-19: 6 closed against 496 arrived over
+    // 14d = 0.012, far under the 0.5 gate. This is the RED the ticket believed
+    // had never fired.
+    const red = assessQueueFreeze({ ...base, outflow7d: 6, outflow14d: 6 }, new Date());
+    expect(red).not.toBeNull();
+    expect(red!.title).toMatch(/drain ratio 0\.01 over 14d/);
+    expect(red!.refKey).toBe("queue-freeze:promoter_enrichment");
+  });
+
+  it("a LOWER ratio override can quiet a lane that legitimately batches reviews", () => {
+    const flow = { ...base, outflow7d: 6, outflow14d: 6 };
+    expect(assessQueueFreeze(flow, new Date(), { slowDrainRatio: 0.001 })).toBeNull();
+  });
+
+  it("a LONGER frozen window can quiet a lane that drains weekly", () => {
+    const frozen = { ...base, outflow7d: 0, outflow14d: 0 };
+    // Default: 7 days of zero outflow is RED.
+    expect(assessQueueFreeze(frozen, new Date())).not.toBeNull();
+    // The override changes the WORDING as well as the gate, so the digest never
+    // quotes a threshold that is not the one in force.
+    const red = assessQueueFreeze(frozen, new Date(), { frozenZeroOutflowDays: 30 });
+    expect(red!.title).toMatch(/0 closed in 30d \(frozen\)/);
+  });
+
+  it("still refuses to fire on a null outflow, whatever the thresholds say", () => {
+    // The entity-level promoter queue is exactly this shape: 485 deep, and no
+    // computable outflow until OPE-496 makes last_enriched_at reliable.
+    const unknown = { ...base, depth: 485, outflow7d: null, outflow14d: null };
+    expect(assessQueueFreeze(unknown, new Date(), { slowDrainRatio: 0.99 })).toBeNull();
+  });
+});
