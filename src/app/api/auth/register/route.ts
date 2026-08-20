@@ -4,6 +4,7 @@ import { z } from "zod";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { users, userRoles, promoters, vendors, verificationTokens } from "@/lib/db/schema";
 import { hashPassword } from "@/lib/auth";
+import { isBlockedSsrfHost } from "@takemetothefair/site-fetch";
 import { createSlug } from "@/lib/utils";
 import { eq } from "drizzle-orm";
 import {
@@ -32,6 +33,33 @@ const registerSchema = z.object({
   role: z.enum(["USER", "PROMOTER", "VENDOR"]).optional().default("USER"),
   companyName: z.string().optional(),
   businessName: z.string().optional(),
+  // OPE-237 — the vendor's self-declared website. Optional; see the register
+  // form for why it is never required.
+  //
+  // Rejected at the BOUNDARY if it points at an internal host. The
+  // corroboration pass fetches this URL later, so accepting
+  // `http://169.254.169.254/…` here would store a stored-SSRF payload that an
+  // admin action detonates. Defence in depth — the pass guards every redirect
+  // hop too — but not storing a hostile URL at all is strictly better than
+  // refusing to fetch it afterwards.
+  website: z
+    .string()
+    .trim()
+    .url()
+    .refine(
+      (v) => {
+        try {
+          const u = new URL(v);
+          return (
+            (u.protocol === "http:" || u.protocol === "https:") && !isBlockedSsrfHost(u.hostname)
+          );
+        } catch {
+          return false;
+        }
+      },
+      { message: "Enter a public website address" }
+    )
+    .optional(),
   // Set when the signup originates from a public "Claim this listing" CTA
   // (/vendors/[slug] or /promoters/[slug]). The slug of the entity being
   // claimed. `claimSlug` is the canonical field; `claimVendorSlug` is kept as
@@ -71,6 +99,7 @@ export async function POST(request: NextRequest) {
       role,
       companyName,
       businessName,
+      website,
       claimSlug: claimSlugField,
       claimVendorSlug,
       turnstileToken,
@@ -193,7 +222,11 @@ export async function POST(request: NextRequest) {
             // Always false here — verification lands minutes-to-hours later and
             // re-scores. The signup-time score is deliberately pessimistic.
             emailVerified: false,
-            website: null,
+            // OPE-237 — was hard-coded `null`, which is why the corroboration
+            // dimension read UNAVAILABLE on all 35 rows accumulated since
+            // 2026-07-28. Adding the form field alone would have changed
+            // nothing: this line discarded it before the screen ever saw it.
+            website: website ?? null,
             description: null,
           });
         } catch (evidenceErr) {

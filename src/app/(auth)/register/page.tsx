@@ -31,6 +31,24 @@ const registerClientSchema = z
     role: z.enum(["USER", "PROMOTER", "VENDOR"]),
     companyName: z.string().optional(),
     businessName: z.string().optional(),
+    // OPE-237 — the declared website. Optional by design: a real maker on
+    // Gmail with no site is the MODAL legitimate vendor here, and requiring a
+    // URL would turn "has no website" into a signup blocker rather than a
+    // neutral fact.
+    //
+    // Why it exists at all: the realness screen's `corroboration` dimension
+    // can only check a site the vendor DECLARES, and the form collected none.
+    // Measured 2026-08-20 — all 35 rows accumulated since 2026-07-28 read
+    // `corroboration: UNAVAILABLE` with an empty `declared_website`. One third
+    // of the score has been inert for 24 days, and this one field is what
+    // switches it on.
+    website: z
+      .string()
+      .trim()
+      .optional()
+      .refine((v) => !v || /^https?:\/\/.+\..+/.test(v), {
+        message: "Enter a full URL, e.g. https://example.com",
+      }),
   })
   .refine((data) => data.password === data.confirmPassword, {
     message: "Passwords do not match",
@@ -52,6 +70,7 @@ const FIELD_LABELS: Record<string, string> = {
   confirmPassword: "Confirm password",
   companyName: "Company name",
   businessName: "Business name",
+  website: "Website",
 };
 
 // Turnstile widget types
@@ -97,6 +116,7 @@ function RegisterForm() {
     role: defaultRole.toUpperCase(),
     companyName: prefilledCompanyName,
     businessName: prefilledBusinessName,
+    website: "",
   });
   const [error, setError] = useState("");
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
@@ -290,6 +310,7 @@ function RegisterForm() {
           role: formData.role,
           companyName: formData.companyName,
           businessName: formData.businessName,
+          website: formData.website?.trim() || undefined,
           claimSlug: claimSlug || undefined,
           turnstileToken: turnstileToken || undefined,
         }),
@@ -506,6 +527,29 @@ function RegisterForm() {
                 placeholder="Your business name"
                 required
               />
+            )}
+
+            {/* OPE-237 — optional on purpose. A maker with no website is the
+                modal legitimate vendor here; this asks, it never gates. The
+                helper text says why we want it, because a bare URL box on a
+                signup form reads as data collection for its own sake. */}
+            {formData.role === "VENDOR" && (
+              <div>
+                <Input
+                  label="Website or social profile (optional)"
+                  name="website"
+                  type="url"
+                  value={formData.website}
+                  onChange={handleChange}
+                  onBlur={handleBlur}
+                  error={fieldErrors.website}
+                  placeholder="https://example.com or your Instagram/Etsy link"
+                  aria-describedby="website-help"
+                />
+                <p id="website-help" className="mt-1 text-xs text-muted-foreground">
+                  Helps us confirm your listing is yours — speeds up review.
+                </p>
+              </div>
             )}
 
             <label className="flex items-start gap-2 text-sm text-muted-foreground">

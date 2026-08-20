@@ -114,6 +114,8 @@ import { registerDataHealthTool } from "./admin-data-health.js";
 // OPE-386 — read-only reader for ga4_liveness_log (OPE-381 had no MCP surface).
 import { registerGa4LivenessTool } from "./admin-ga4-liveness.js";
 import { registerLogVendorOutreachTool } from "./admin-log-vendor-outreach.js";
+import { registerClaimCorroborateTool } from "./admin-claim-corroborate.js";
+import type { MainAppEnv as MainAppEnvForCorroborate } from "../main-app-fetch.js";
 import {
   registerCitationTools,
   DENORM_FIELD_MAP as CITATION_DENORM_FIELD_MAP,
@@ -292,6 +294,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   // /admin/vendor-claim-leaderboard. MCP-exposed so Cowork can log
   // attempts without going through the browser UI.
   registerLogVendorOutreachTool(server, db, auth);
+
+  // OPE-237 — the declared-website corroboration pass. The classifier shipped
+  // with PR #791 and had no caller; this is its trigger.
+  registerClaimCorroborateTool(server, auth, env as unknown as MainAppEnvForCorroborate);
 
   // ── list_all_events ────────────────────────────────────────────
   // Whitelist of event fields that can be filtered for NULL values
