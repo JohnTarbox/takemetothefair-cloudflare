@@ -73,6 +73,18 @@ SUBMISSION_ACK_ENABLED = "false"
 # silently reverted it to "false", and the 07-23 approve click hit "sending is
 # turned off". This file is the only durable home for the flag. (Secrets survive a
 # deploy; vars do not.)
+#
+# OPE-509 (2026-08-20) — mechanism decision, recorded here deliberately.
+# KEPT as a committed plaintext var. REJECTED: making it a Cloudflare Secret.
+# A secret would survive a deploy and so make a dashboard/CLI flip a real kill
+# switch — but it also removes the value from `grep`, and "nobody can tell what
+# this gate is set to" is the exact problem this ticket was filed to end. The
+# flag is not the safety mechanism anyway: a broadcast additionally requires
+# John's per-issue approve click (OPE-231) or an explicit MCP
+# require_human_confirmation:'GO'. So the committed file stays the one source of
+# truth, and the correct way to change this gate is to edit THIS LINE and deploy
+# — not to touch the dashboard, where any edit is reverted by the next deploy.
+# Read the resolved runtime value at GET /api/admin/capability-flags.
 NEWSLETTER_SEND_ENABLED = "true"
 
 # OPE-232 — CAN-SPAM physical postal address rendered in the newsletter footer.

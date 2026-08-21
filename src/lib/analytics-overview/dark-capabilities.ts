@@ -55,6 +55,20 @@ export const CAPABILITY_FLAGS: CapabilityFlag[] = [
     offIsDeliberate: false,
   },
   {
+    // OPE-509 — missing from this inventory until the 2026-08-20 gate audit,
+    // despite being exactly the shape this file exists for: a capability that
+    // withholds something from a real person. Its absence is the same blindness
+    // the header warns about, one level up — the inventory itself needs
+    // auditing, not just the flags in it.
+    name: "SUBMISSION_ACK_ENABLED",
+    worker: "main-app",
+    darkMeans:
+      "Someone who submits an event at /suggest-event gets no acknowledgment. The page " +
+      "promises a reply in 24-48h and nothing sends (OPE-412).",
+    // Deliberate: the ack copy has not been approved for send yet.
+    offIsDeliberate: true,
+  },
+  {
     name: "VENDOR_DIGEST_SEND_ENABLED",
     worker: "main-app",
     darkMeans: "The Monday vendor digest composes but does not reach vendors.",
