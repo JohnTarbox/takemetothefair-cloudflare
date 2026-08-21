@@ -113,6 +113,29 @@ async function planEventVendorTransfer(db: Db, keeperId: string, duplicateId: st
   return { transferable, colliding, dupLinkCount: dupLinks.length };
 }
 
+/**
+ * OPE-451 — warn when the keeper choice is backwards for SEO.
+ *
+ * Found live: Little Cat Metals was filed as keeper `123f2fd1` (slug
+ * `little-cat-metals-1`) while the DUPLICATE held the clean `little-cat-metals`.
+ * Every transfer count was zero-risk and the preview was completely silent, so
+ * the merge would have redirected the good URL onto the suffixed one —
+ * permanently, with nothing in the output to suggest anything was wrong.
+ *
+ * Same lesson as the OPE-473 series consolidation: the canonical slug decides
+ * the keeper; "which row is older" and "which has more links" do not.
+ * Returns null when the direction is fine.
+ */
+export function slugDirectionWarning(keeperSlug: string, dupSlug: string): string | null {
+  const suffixed = /-\d+$/;
+  if (!suffixed.test(keeperSlug) || suffixed.test(dupSlug)) return null;
+  return (
+    `SLUG DIRECTION: the keeper's slug is '${keeperSlug}' (numeric suffix) while the duplicate ` +
+    `holds the cleaner '${dupSlug}'. Merging this way redirects the better URL onto the worse ` +
+    `one, permanently. Consider swapping keeper and duplicate, or renaming the keeper's slug first.`
+  );
+}
+
 export function registerMergeVendorTool(server: McpServer, db: Db, auth: AuthContext) {
   server.tool(
     "merge_vendor",
@@ -262,6 +285,8 @@ export function registerMergeVendorTool(server: McpServer, db: Db, auth: AuthCon
           `${childRefs.length} other vendor row(s) point at the duplicate via brand/operator/alias/redirect and will be repointed at the keeper.`
         );
       }
+      const slugWarning = slugDirectionWarning(keeper.slug, dup.slug);
+      if (slugWarning) warnings.push(slugWarning);
 
       const summary = {
         keeper: { id: keeper.id, name: keeper.businessName, slug: keeper.slug },

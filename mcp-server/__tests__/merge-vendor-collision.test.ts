@@ -9,10 +9,14 @@
  *
  *     UPDATE event_vendors SET vendor_id = keeper WHERE vendor_id = duplicate
  *
- * throws the moment both vendors are linked to the same event — and that is the
- * COMMON case, not the rare one: a duplicate vendor is typically created while
- * linking the very event its keeper is already on. The reported pair behaves
- * exactly that way (`dc755ad9` was linked to `defe4089` alongside its keeper).
+ * throws the moment both vendors are linked to the same event.
+ *
+ * CORRECTION (2026-08-20, from actually running the merge): this file used to
+ * say the reported pair "behaves exactly that way". It does not. `dc755ad9` was
+ * on the AUTUMN show and its keeper `4e1032cb` on the SPRING one, so the live
+ * merge transferred 1 link and dropped 0. The collision case is real and worth
+ * planning for — the unique indexes below prove it — but it was not what the
+ * reported pair did, and the claim should not have been stated as observed.
  *
  * `merge_venue` never had to think about this, because `events.venue_id` has no
  * such constraint — which is precisely why copying that tool wholesale would
@@ -71,7 +75,7 @@ beforeEach(() => {
   db = drizzle(raw, { schema });
 });
 
-describe("the reported shape — both vendors on the same event", () => {
+describe("the collision shape — both vendors on the same event", () => {
   beforeEach(() => {
     link("keep-link", "defe4089", "4e1032cb");
     link("dup-link", "defe4089", "dc755ad9");
@@ -174,5 +178,42 @@ describe("degenerate inputs", () => {
     const plan = await planEventVendorTransfer(db, "keeper", "dup");
     expect(plan.transferable.sort()).toEqual(["d1", "d2"]);
     expect(() => applyPlan(plan, "keeper")).not.toThrow();
+  });
+});
+
+/**
+ * OPE-451 — keeper-direction warning.
+ *
+ * The five pre-existing pairs on the ticket all previewed with zero risk
+ * (1 link, 0 dropped, 0 warnings). One of them, Little Cat Metals, was still
+ * wrong: the keeper held `little-cat-metals-1` and the duplicate held the clean
+ * `little-cat-metals`. Nothing in the output said so.
+ */
+describe("slugDirectionWarning (OPE-451)", () => {
+  it("warns when the keeper carries the numeric suffix and the duplicate does not", async () => {
+    const { slugDirectionWarning } = await import("../src/tools/admin-merge-vendor.js");
+    const w = slugDirectionWarning("little-cat-metals-1", "little-cat-metals");
+    expect(w).toContain("SLUG DIRECTION");
+    expect(w).toContain("little-cat-metals-1");
+  });
+
+  it("is silent for the normal direction — keeper clean, duplicate suffixed", async () => {
+    const { slugDirectionWarning } = await import("../src/tools/admin-merge-vendor.js");
+    // The two merges actually executed on 2026-08-20 were both this shape.
+    expect(slugDirectionWarning("salvage-sistas", "salvage-sistas-1")).toBeNull();
+    expect(
+      slugDirectionWarning("time-to-be-candle-company", "time-to-be-candle-company-1")
+    ).toBeNull();
+  });
+
+  it("is silent when BOTH are suffixed — nothing to prefer between them", async () => {
+    const { slugDirectionWarning } = await import("../src/tools/admin-merge-vendor.js");
+    expect(slugDirectionWarning("acme-2", "acme-3")).toBeNull();
+  });
+
+  it("does not fire on a slug that merely ends in a year", async () => {
+    const { slugDirectionWarning } = await import("../src/tools/admin-merge-vendor.js");
+    // A vendor slug ending in digits without a hyphen is not a dedup suffix.
+    expect(slugDirectionWarning("studio1999", "studio")).toBeNull();
   });
 });
