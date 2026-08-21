@@ -248,6 +248,13 @@ export function registerEnrichmentReviewTools(
         .max(5000)
         .default(5000)
         .describe("Max pending rows to examine this pass (default 5000)."),
+      candidate_ids: z
+        .array(z.number().int().positive())
+        .max(90)
+        .optional()
+        .describe(
+          "OPE-249 — restrict the pass to these candidate ids. Lets a single known-dirty row be repaired without running over the whole backlog. Capped at 90 (D1 binds 100 parameters per statement)."
+        ),
     },
     async (params) => {
       // `.default()` does not fire on every caller path in this codebase, so
@@ -255,10 +262,17 @@ export function registerEnrichmentReviewTools(
       const dryRun = params.dry_run !== false;
       const limit = params.limit ?? 5000;
 
+      const scope = params.candidate_ids?.length
+        ? and(
+            eq(vendorEnrichmentCandidates.decision, "pending"),
+            inArray(vendorEnrichmentCandidates.id, params.candidate_ids)
+          )
+        : eq(vendorEnrichmentCandidates.decision, "pending");
+
       const pending = await db
         .select()
         .from(vendorEnrichmentCandidates)
-        .where(eq(vendorEnrichmentCandidates.decision, "pending"))
+        .where(scope)
         .orderBy(vendorEnrichmentCandidates.id)
         .limit(limit);
 
@@ -386,6 +400,7 @@ export function registerEnrichmentReviewTools(
             ok: true,
             dry_run: dryRun,
             pending_examined: pending.length,
+            scoped_to_ids: params.candidate_ids ?? null,
             // True when the examined set hit the cap — otherwise a partial pass
             // reads as "the whole backlog is clean".
             truncated: pending.length >= limit,

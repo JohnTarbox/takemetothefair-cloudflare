@@ -119,6 +119,58 @@ const GENERIC_MAILBOX_LOCALPARTS = new Set([
 /** Decode `%XX` URL-encoding AND numeric/hex HTML entities, then basic named
  *  entities — the layers that made cited tel values dirty
  *  (`%20(603)…`, `&#x2B;1(207)…`). */
+/**
+ * OPE-249 — invisible characters that a copy-paste or a CMS drops into an
+ * otherwise perfectly good address. Prod specimen: candidate 7530 (Moat
+ * Mountain Brewing) proposed a U+200B-prefixed `hello@moatmountain.com`.
+ *
+ * These must be STRIPPED, not treated as malformed. `String.prototype.trim`
+ * does not remove them — U+200B is not ECMAScript WhiteSpace — so before this
+ * the format validator rejected a recoverable address outright.
+ */
+function stripInvisible(s: string): string {
+  // zero-width space/non-joiner/joiner, word joiner, BOM, soft hyphen.
+  return s.replace(/[\u200B-\u200D\u2060\uFEFF\u00AD]/g, "");
+}
+
+/**
+ * OPE-249 — Cloudflare's email-obfuscation scheme.
+ *
+ * Cloudflare rewrites `mailto:` addresses to
+ * `/cdn-cgi/l/email-protection#<hex>` and decodes them client-side in JS. A
+ * server-side scraper sees only the hex, so the address is lost — which is
+ * doubly bad here, because turning that protection on is a signal the business
+ * cares about the address being harvested badly.
+ *
+ * The encoding is trivial: the first byte is an XOR key, every following byte
+ * is the plaintext XOR that key. Returns null when the input is not this shape,
+ * so callers can fall through to the ordinary decoders.
+ */
+export function decodeCfEmailProtection(raw: string): string | null {
+  const m = raw.match(/email-protection#?([0-9a-fA-F]{4,})/);
+  const hex = m?.[1] ?? (/^[0-9a-fA-F]{6,}$/.test(raw.trim()) ? null : null);
+  if (!hex || hex.length % 2 !== 0) return null;
+  const key = parseInt(hex.slice(0, 2), 16);
+  let out = "";
+  for (let i = 2; i < hex.length; i += 2) {
+    out += String.fromCharCode(parseInt(hex.slice(i, i + 2), 16) ^ key);
+  }
+  // Only claim success if it actually looks like an address.
+  return out.includes("@") ? out : null;
+}
+
+/**
+ * OPE-249 / OPE-504 — the ONE normalizer for a scraped email.
+ *
+ * Cloudflare-decode, then entity/percent-decode, then strip invisibles, then
+ * trim. Used by BOTH the validators and the extraction sites that store the
+ * value, so "validated decoded, stored raw" cannot come back.
+ */
+export function normalizeExtractedEmail(raw: string): string {
+  const cf = decodeCfEmailProtection(raw);
+  return stripInvisible(decodeUrlAndEntities(cf ?? raw)).trim();
+}
+
 export function decodeUrlAndEntities(s: string): string {
   let out = s;
   if (out.includes("%")) {
@@ -291,7 +343,9 @@ export function isPlatformPlaceholderHandle(url: string): boolean {
  * scraper pick up a real address".
  */
 export function isMalformedEmail(email: string): boolean {
-  const e = decodeUrlAndEntities(email).trim();
+  // OPE-249 — normalizeExtractedEmail, not decodeUrlAndEntities: a U+200B prefix
+  // is not whitespace to `trim`, so the old form rejected a recoverable address.
+  const e = normalizeExtractedEmail(email);
   if (!e || /\s/.test(e)) return true;
 
   const at = e.indexOf("@");
@@ -332,7 +386,7 @@ export function isMalformedEmail(email: string): boolean {
  */
 /** OPE-249 #4 — true when this address is site-builder/placeholder residue. */
 export function isPlaceholderEmail(email: string): boolean {
-  const e = decodeUrlAndEntities(email).toLowerCase().trim();
+  const e = normalizeExtractedEmail(email).toLowerCase();
   const at = e.lastIndexOf("@");
   if (at < 1 || at === e.length - 1) return true; // malformed → never stage clean
   const local = e.slice(0, at);
@@ -537,7 +591,7 @@ export function extractVendorContact(html: string, sourceUrl: string): VendorExt
     // vendor page. Validation and storage must see the same string.
     const emailRaw =
       typeof node.email === "string"
-        ? decodeUrlAndEntities(node.email)
+        ? normalizeExtractedEmail(node.email)
             .replace(/^mailto:/i, "")
             .trim()
         : "";
@@ -582,12 +636,27 @@ export function extractVendorContact(html: string, sourceUrl: string): VendorExt
 
   // --- 2. mailto: / tel: anchors ---
   if (!out.email) {
+    // OPE-249 — a Cloudflare-protected address is NOT a mailto link: the href
+    // is `/cdn-cgi/l/email-protection#<hex>` and the real address only appears
+    // after client-side JS runs. A server-side scraper therefore saw nothing at
+    // all here, which is the worst outcome on exactly the sites that turned the
+    // protection on. Tried before the mailto branch because when both are
+    // present the protected one is the real address and the mailto is a decoy.
+    const cfProtected = html.match(/email-protection#?([0-9a-fA-F]{4,})/);
+    if (cfProtected) {
+      const decoded = normalizeExtractedEmail(cfProtected[0]);
+      if (decoded && !isPlaceholderEmail(decoded) && !isMalformedEmail(decoded)) {
+        out.email = { value: decoded, method: "mailto", confidence: 0.8 };
+      }
+    }
+  }
+  if (!out.email) {
     const mailto = html.match(/href=["']mailto:([^"'?]+)/i);
     if (mailto) {
       // OPE-504 — was decodeBasicEntities, which only handles a fixed NAMED
       // list; the prod rows were numeric (`&#111;`). This is the path that
       // produced them.
-      const email = decodeUrlAndEntities(mailto[1]).trim();
+      const email = normalizeExtractedEmail(mailto[1]);
       if (email && !isPlaceholderEmail(email) && !isMalformedEmail(email))
         // OPE-249 #4
         out.email = { value: email, method: "mailto", confidence: 0.8 };
@@ -617,7 +686,7 @@ export function extractVendorContact(html: string, sourceUrl: string): VendorExt
       // affinity (matches the site, or a generic mailbox) it's likely a
       // personal address at a third domain (`kkeating@granitemediagroup.com`).
       // Keep it but drop confidence below the clean bar so it stages flagged.
-      const decoded = decodeUrlAndEntities(m[0]).trim(); // OPE-504 — see above
+      const decoded = normalizeExtractedEmail(m[0]); // OPE-504/OPE-249 — see above
       const affinity = emailHasDomainAffinity(decoded, sourceUrl);
       out.email = { value: decoded, method: "regex", confidence: affinity ? 0.5 : 0.2 };
     }
