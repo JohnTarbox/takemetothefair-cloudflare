@@ -32,8 +32,8 @@ import {
   triggerIndexNow,
 } from "../helpers.js";
 import {
-  decodeUrlAndEntities,
   isMalformedEmail,
+  normalizeExtractedEmail,
   isPlaceholderPhone,
   isPlatformPlaceholderHandle,
 } from "../enrichment/extract.js";
@@ -305,7 +305,12 @@ export function registerEnrichmentReviewTools(
           // OPE-504 — entity-obfuscated addresses that were VALIDATED decoded
           // and then STORED raw. The address itself is good; only the encoding
           // is wrong, so repair rather than reject.
-          const decoded = decodeUrlAndEntities(c.proposedValue).trim();
+          // OPE-249 — normalizeExtractedEmail, NOT decodeUrlAndEntities. The
+          // extractor was moved onto the normalizer and this repair path was
+          // not, so a zero-width-prefixed row (cand 7530) came back "nothing to
+          // do" while the extractor would now fix it. Caught by reading the
+          // dry-run output instead of assuming it matched.
+          const decoded = normalizeExtractedEmail(c.proposedValue);
           if (decoded !== c.proposedValue && !isMalformedEmail(decoded)) {
             rewritten.push({ id: c.id, before: c.proposedValue, after: decoded });
           }

@@ -301,6 +301,21 @@ describe("revalidate_enrichment_candidates (OPE-504)", () => {
     expect(decisionOf(id)).toBe("pending");
   });
 
+  it("repairs a ZERO-WIDTH-prefixed email — the repair path must use the same normalizer", async () => {
+    // OPE-249: the extractor moved onto normalizeExtractedEmail and this repair
+    // path did not, so cand 7530 came back "nothing to do" while a fresh
+    // extraction would have fixed it. Same fix, two paths, one of them missed.
+    const id = seed({ proposedValue: "\u200Bhello@moatmountain.com" });
+    const res = await call({ dry_run: false });
+    expect(res.would_rewrite_value).toBe(1);
+    const after = db
+      .select({ v: vendorEnrichmentCandidates.proposedValue })
+      .from(vendorEnrichmentCandidates)
+      .where(eq(vendorEnrichmentCandidates.id, id))
+      .get()?.v;
+    expect(after).toBe("hello@moatmountain.com");
+  });
+
   it("never touches an already-reviewed row", async () => {
     const id = seed({ proposedValue: "bill.@bad.com", decision: "approved" });
     const res = await call({ dry_run: false });
