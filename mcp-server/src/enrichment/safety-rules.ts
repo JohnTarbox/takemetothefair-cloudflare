@@ -271,11 +271,110 @@ function anyMarker(haystack: string, markers: string[]): boolean {
   return markers.some((m) => h.includes(m));
 }
 
+/**
+ * OPE-511 — does this source page's domain belong to THIS vendor?
+ *
+ * The enrichment gate's approved auto-merge rule is `confidence >= 0.90 AND
+ * flags = 0 AND prior = NULL`, and the clearest wrong class it lets through is
+ * cross-vendor attribution. The specimen: `Third Shift Fabrication` was
+ * proposed `(603) 899-2465` — scraped from `udderlygutters.com`, which is
+ * Udderly Gutters' site — at confidence 0.90 with zero flags.
+ *
+ * ⚠️ The obvious guard does not work, and it is worth stating why.
+ *
+ * "Reject when `source_url`'s domain differs from the vendor's own website
+ * domain" passes this specimen unchanged: `Third Shift Fabrication`'s STORED
+ * `website` IS `https://udderlygutters.com`. Two vendor rows carry the same
+ * URL, and the enricher fetched exactly what it was told to. `vendor.website`
+ * is the contaminated field, so it cannot also be the authority. Measured on
+ * prod 2026-08-23: 564 vendors (22% of the 2,589 with a site) sit on 180 shared
+ * domains, so this is not a one-off.
+ *
+ * What is left is the vendor's NAME, which no scraper wrote.
+ *
+ * ── Token affinity, and why the bar is deliberately low ──────────────────
+ *
+ * A domain "relates" when the registrable label contains any meaningful token
+ * of the business name, or vice versa. Generously, because the false direction
+ * is expensive: measured across the 120 currently-eligible candidates, a strict
+ * reading would have held a bookseller at `rarebookstore.net`, `Premier` at
+ * `pontoons.com`, and `East Coast Yacht Sales` at its own acronym `ecys.com`.
+ * Real domains often say what a business DOES rather than what it is called.
+ *
+ * That is also why the flag is a HOLD and not a discard. It blocks auto-merge
+ * and asks for a human; it does not claim the value is wrong.
+ */
+
+/**
+ * Site-builder hosts where the SUBDOMAIN carries the business identity.
+ *
+ * `laikenmaehandmade.squarespace.com` is Laiken Mae's site; taking the
+ * registrable label would read "squarespace" and hold a perfectly good
+ * candidate. Caught by running this check over the live pending set before
+ * shipping it — two of its twelve holds were this, and were mine, not the
+ * data's.
+ */
+const PLATFORM_HOSTS = [
+  "squarespace.com",
+  "wixsite.com",
+  "myshopify.com",
+  "weebly.com",
+  "godaddysites.com",
+  "square.site",
+  "wordpress.com",
+  "blogspot.com",
+  "netlify.app",
+  "webflow.io",
+];
+
+/** The identifying label: `www.foo-bar.co.uk/x` → `foobar`, and
+ *  `laikenmae.squarespace.com` → `laikenmae`. */
+export function domainLabel(url: string): string | null {
+  const host = hostOf(url);
+  if (!host) return null;
+  const parts = host.split(".").filter(Boolean);
+  if (parts.length === 0) return null;
+
+  // On a site-builder host the business is the leftmost label, not the platform.
+  const platform = PLATFORM_HOSTS.find((p) => host === p || host.endsWith(`.${p}`));
+  if (platform && host !== platform) {
+    const sub = host.slice(0, host.length - platform.length - 1).split(".")[0];
+    if (sub) return sub.replace(/[^a-z0-9]/g, "");
+  }
+
+  // Second-level label, skipping a leading `www`. For `a.co.uk` the label is
+  // still the third-from-last, which is close enough for a containment test.
+  const idx =
+    parts.length >= 3 && parts[parts.length - 2].length <= 3 ? parts.length - 3 : parts.length - 2;
+  const label = parts[Math.max(0, idx)] ?? parts[0];
+  return label.replace(/[^a-z0-9]/g, "");
+}
+
+/**
+ * True when the source domain plausibly belongs to this vendor.
+ *
+ * Containment both ways: `puhallastudios.com` contains "puhalla" (Lynne
+ * Puhalla), and `Fidium` is contained by `fidiumfiber`. Both are real rows.
+ */
+export function sourceDomainRelatesToVendor(businessName: string, sourceUrl: string): boolean {
+  const label = domainLabel(sourceUrl);
+  if (!label) return true; // Unparseable: not evidence of anything.
+  const tokens = nameTokens(businessName);
+  if (tokens.length === 0) return true; // No name to compare — do not accuse.
+  return tokens.some((t) => label.includes(t) || t.includes(label));
+}
+
 export interface BuildOptions {
   /** Post-redirect URL from the standard fetch path, if known. */
   finalUrl?: string;
   /** The URL we fetched (vendor.website). */
   sourceUrl: string;
+  /**
+   * OPE-511 — the name of a DIFFERENT vendor that also lists this website and
+   * whose name matches its domain, if any. Supplied by the caller because it
+   * needs a DB lookup; absent means "not checked", never "checked and clean".
+   */
+  domainClaimedByVendor?: string | null;
 }
 
 /**
@@ -315,6 +414,17 @@ export function buildEnrichmentResult(
   const srcHost = hostOf(opts.sourceUrl);
   const nonBusiness = srcHost != null && NON_BUSINESS_HOSTS.includes(srcHost);
   if (nonBusiness) vendorFlags.push("non_business_website");
+
+  // --- OPE-511: source-domain affinity (vendor-level) ---
+  //
+  // Ordered after the non-business check and before staging, so the flag lands
+  // on every candidate this page produces rather than on whichever field
+  // happens to be examined first.
+  if (opts.domainClaimedByVendor) {
+    vendorFlags.push("source_domain_other_vendor");
+  } else if (!sourceDomainRelatesToVendor(vendor.businessName, opts.sourceUrl)) {
+    vendorFlags.push("source_domain_unrelated");
+  }
 
   const candidates: ProposedCandidate[] = [];
   let suppressedNoOps = 0;
@@ -474,7 +584,14 @@ export function buildEnrichmentResult(
   // its OWN candidate so it doesn't needlessly quarantine an unrelated clean
   // fill (e.g. a valid phone number on a page whose city disagrees with us).
   const dedupedVendorFlags = [...new Set(vendorFlags)];
-  const VENDOR_WIDE: CandidateFlag[] = ["business_closed", "non_business_website"];
+  // OPE-511 — both source-domain flags are VENDOR-WIDE: if the page belongs to
+  // someone else, every value on it is suspect, not just one field.
+  const VENDOR_WIDE: CandidateFlag[] = [
+    "business_closed",
+    "non_business_website",
+    "source_domain_unrelated",
+    "source_domain_other_vendor",
+  ];
   const vendorWide = dedupedVendorFlags.filter((f) => VENDOR_WIDE.includes(f));
   for (const c of candidates) {
     c.flags = [...new Set([...c.flags, ...vendorWide])];
