@@ -54,9 +54,21 @@ export async function GET(request: NextRequest) {
     const partial = byStatus("PARTIAL");
     // OPE-498 — a public roster we cannot reach with a server-side fetch.
     const needsRenderedFetch = byStatus("NEEDS_RENDERED_FETCH");
+    // OPE-527 — links we hold but nobody researched or attributed. Counted
+    // SEPARATELY from hasRoster on purpose: folding them in makes coveragePct
+    // read as "we have this many verified rosters" when part of it is "we have
+    // this many piles of links". Coverage is a claim about knowledge, and this
+    // bucket is precisely the rows where we do not have it.
+    const hasLinksUnverified = byStatus("HAS_LINKS_UNVERIFIED");
     const unevaluated = byStatus(null); // not yet swept
     const total =
-      hasRoster + needsResearch + noPublicList + partial + needsRenderedFetch + unevaluated;
+      hasRoster +
+      needsResearch +
+      noPublicList +
+      partial +
+      needsRenderedFetch +
+      hasLinksUnverified +
+      unevaluated;
 
     // researchable = total minus the tails we cannot backfill with the fetch we
     // have. NO_PUBLIC_LIST has no list at all; NEEDS_RENDERED_FETCH has one we
@@ -122,12 +134,20 @@ export async function GET(request: NextRequest) {
         needsResearch,
         noPublicList,
         partial,
+        // OPE-527 — see the comment at the computation. Reported alongside
+        // hasRoster rather than inside it.
+        hasLinksUnverified,
         unevaluated,
         // Primary metric (playbook §7): share of past producer-class events
         // with a roster. coverageOfResearchablePct excludes the NO_PUBLIC_LIST
         // tail for the "of those that could have one" view.
+        // OPE-527 — coveragePct counts VERIFIED rosters only. The second
+        // figure adds the unverified pile, so the gap between the two is
+        // readable at a glance: it is the amount of "coverage" that is really
+        // just links nobody checked.
         coveragePct: pct(hasRoster, total),
         coverageOfResearchablePct: pct(hasRoster, researchable),
+        coverageInclUnverifiedPct: pct(hasRoster + hasLinksUnverified, total),
       },
       queue: {
         needsResearchTotal: queueOf("NEEDS_RESEARCH"),
@@ -137,6 +157,9 @@ export async function GET(request: NextRequest) {
         partialTotal: queueOf("PARTIAL"),
         noPublicListTotal: queueOf("NO_PUBLIC_LIST"),
         needsRenderedFetchTotal: queueOf("NEEDS_RENDERED_FETCH"),
+        // OPE-527 — not re-enqueued by the sweep (we already hold the links),
+        // but targetable by a drain that wants to attribute them.
+        hasLinksUnverifiedTotal: queueOf("HAS_LINKS_UNVERIFIED"),
       },
       linksAddedTrend,
     });

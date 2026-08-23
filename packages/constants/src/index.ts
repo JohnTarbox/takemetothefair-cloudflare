@@ -310,6 +310,23 @@ export const VENDOR_ROSTER_STATUS_VALUES = [
   // first page, and wrote the same offset back. A rail that cannot express
   // "unreachable by this method" mis-sells a capability gap as queue work.
   "NEEDS_RENDERED_FETCH",
+  // OPE-527 — "this event holds roster-grade vendor links, but nobody
+  // researched them and nothing records where they came from."
+  //
+  // The distinction HAS_ROSTER cannot make. HAS_ROSTER is TERMINAL: the drain
+  // never re-selects it. So writing it for a row we merely COUNTED converts a
+  // visible gap (a populated row still reading NEEDS_RESEARCH, which is safe
+  // and self-correcting the moment anyone looks) into an invisible one (a
+  // permanent claim that a roster was researched, with no record of the
+  // source). OPE-525's sweep guard did exactly that to 14 rows before this
+  // value existed.
+  //
+  // Deliberately does NOT stamp vendor_roster_checked_at: no check occurred,
+  // and a timestamp would be a second unattributed claim. Like HAS_ROSTER it
+  // is not re-enqueued by the occurred sweep — the point is to stop burning
+  // passes on rosters we already hold — but unlike HAS_ROSTER it is honest
+  // about never having been verified, and a drain can target it deliberately.
+  "HAS_LINKS_UNVERIFIED",
 ] as const;
 export type VendorRosterStatus = (typeof VENDOR_ROSTER_STATUS_VALUES)[number];
 

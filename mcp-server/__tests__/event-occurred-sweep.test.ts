@@ -292,20 +292,26 @@ describe("runOccurredTransitionSweep — Pass 3 already-held rosters (OPE-525)",
 
     const res = await runOccurredTransitionSweep(db, { now: NOW });
 
-    expect(rosterStatusOf("rostered")).toBe("HAS_ROSTER");
+    // OPE-527 — HAS_LINKS_UNVERIFIED, not HAS_ROSTER: this sweep counts links,
+    // it does not research a roster, and HAS_ROSTER is a terminal claim that
+    // someone did.
+    expect(rosterStatusOf("rostered")).toBe("HAS_LINKS_UNVERIFIED");
     expect(res.rosterAlreadyHeld).toBe(1);
     expect(res.rosterEnqueued).toBe(0);
   });
 
-  it("stamps checked_at, so the determination does not read as unchecked", async () => {
+  it("does NOT stamp checked_at — nothing was checked (OPE-527)", async () => {
+    // The OPE-525 cut stamped checked_at here, reasoning the sweep had made a
+    // determination from evidence already in the database. It had not: it
+    // counted rows. A timestamp would be a second claim nobody made, on a row
+    // whose whole point is that nobody looked.
     seed({ id: "rostered2", slug: "rostered2-2026" });
     seedVendors("rostered2", 12);
 
     await runOccurredTransitionSweep(db, { now: NOW });
 
     const row = db.select().from(events).where(eq(events.id, "rostered2")).all()[0];
-    expect(row.vendorRosterCheckedAt).not.toBeNull();
-    // We assert "links exist", not "this page is where they came from".
+    expect(row.vendorRosterCheckedAt ?? null).toBeNull();
     expect(row.vendorRosterSourceUrl ?? null).toBeNull();
   });
 
@@ -380,7 +386,7 @@ describe("runOccurredTransitionSweep — Pass 3 already-held rosters (OPE-525)",
     await runOccurredTransitionSweep(db, { now: NOW });
     const second = await runOccurredTransitionSweep(db, { now: NOW });
 
-    expect(rosterStatusOf("twice")).toBe("HAS_ROSTER");
+    expect(rosterStatusOf("twice")).toBe("HAS_LINKS_UNVERIFIED");
     expect(second.rosterAlreadyHeld).toBe(0); // already terminal, not re-selected
   });
 });
