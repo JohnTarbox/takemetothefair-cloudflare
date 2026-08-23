@@ -16,6 +16,7 @@
 import { and, eq } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import { newsletterSubscribers } from "@/lib/db/schema";
+import { addToList, listForSource } from "./newsletter-list-membership";
 
 const TOKEN_BYTE_LENGTH = 32;
 /** OPE-168 — days a newsletter confirmation link stays valid. Widened from 1
@@ -88,7 +89,10 @@ export async function consumeNewsletterConfirmationToken(
 
   const [row] = await db
     .select({
+      id: newsletterSubscribers.id,
       email: newsletterSubscribers.email,
+      // OPE-510 — the signup surface decides which audience list this is.
+      source: newsletterSubscribers.source,
       expires: newsletterSubscribers.confirmationExpires,
       confirmed: newsletterSubscribers.confirmed,
     })
@@ -102,6 +106,14 @@ export async function consumeNewsletterConfirmationToken(
   // successful confirm. Treat as benign — the subscription is in the
   // desired state. UX returns a friendly "already confirmed" page.
   if (row.confirmed) {
+    // OPE-510 — self-healing, and worth the extra write.
+    //
+    // Every subscriber confirmed between 2026-08-10 and this fix is
+    // `confirmed=1` with NO list row, so the broadcast skips them silently. A
+    // stale link re-clicked is the one moment we hear from such a person, and
+    // upserting here puts them back on the list at no cost — `addToList` is
+    // idempotent, so for an already-listed subscriber this is a no-op.
+    await addToList(db, row.id, listForSource(row.source));
     return { ok: false, reason: "already_confirmed" };
   }
 
@@ -142,6 +154,23 @@ export async function consumeNewsletterConfirmationToken(
         eq(newsletterSubscribers.confirmationTokenHash, tokenHash)
       )
     );
+
+  // OPE-510 — put them on the audience list.
+  //
+  // `newsletter_list_subscriptions` shipped with OPE-191 and the signup wiring
+  // was deferred, while the SAME increment switched the weekend broadcast to
+  // read that table. So a deferral scoped to the vendor list became a silent
+  // delivery hole on the public one: eight people double-opted-in and received
+  // nothing, and three more were stranded in the two days after the backfill.
+  //
+  // AFTER the confirm write, not before: if the confirm update fails we have
+  // not put an unconfirmed address on a mailing list. And deliberately NOT
+  // inside the same statement — a list write that throws must not roll back a
+  // consent record the subscriber already earned. The canary in
+  // `newsletter-list-membership.ts` is what catches the residual case where
+  // this line fails while the confirm succeeds; before this ticket there was
+  // nothing comparing the two counts at all, which is why it hid for 11 days.
+  await addToList(db, row.id, listForSource(row.source));
 
   return { ok: true, email: row.email };
 }

@@ -78,6 +78,25 @@ export const handle: HandlerFn = async (env, _ctx, row): Promise<HandlerResult> 
     // OPE-466 — and this one records the phrase it acted on.
     .set({ unsubscribed: true, unsubscribedAt: new Date(), unsubscribeEvidence: evidence })
     .where(sql`LOWER(${newsletterSubscribers.email}) = LOWER(${row.fromAddress})`);
+
+  // OPE-510 scope 2 — the LIST rows, tombstoned in the same breath.
+  //
+  // This handler and the API route are the two unsubscribe writers, and the
+  // docblock above already records why they must agree. The audience list is a
+  // third piece of the same state: the weekend broadcast reads
+  // `newsletter_list_subscriptions`, so leaving a live row here means someone
+  // who asked to stop keeps receiving mail. Matched case-insensitively for the
+  // same reason the update above is.
+  await db.run(sql`
+    UPDATE newsletter_list_subscriptions
+       SET unsubscribed_at = unixepoch()
+     WHERE unsubscribed_at IS NULL
+       AND subscriber_id IN (
+         SELECT id FROM newsletter_subscribers
+          WHERE LOWER(email) = LOWER(${row.fromAddress})
+       )
+  `);
+
   return {
     replyKind: "unsubscribe-ack",
     replyParams: { subject: row.subject ?? "" },

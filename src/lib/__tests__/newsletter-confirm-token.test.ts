@@ -34,6 +34,21 @@ const SCHEMA_SQL = `
     confirmation_token_hash TEXT,
     confirmation_expires INTEGER
   );
+
+  -- OPE-510 (drizzle/0193 via OPE-191). Confirming now also puts the
+  -- subscriber on an audience list, because the weekend broadcast reads THIS
+  -- table and the signup path never wrote to it: eight people double-opted-in
+  -- and got nothing. These tests exercise the confirm path, so the table has to
+  -- exist here or they fail on the write rather than on the behaviour.
+  CREATE TABLE newsletter_list_subscriptions (
+    id TEXT PRIMARY KEY,
+    subscriber_id TEXT NOT NULL,
+    list TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    unsubscribed_at INTEGER
+  );
+  CREATE UNIQUE INDEX idx_newsletter_list_subs_unique
+    ON newsletter_list_subscriptions (subscriber_id, list);
 `;
 
 const sqlite = new Database(":memory:");
@@ -49,6 +64,7 @@ const db = drizzle(sqlite) as unknown as Parameters<typeof issueNewsletterConfir
 
 beforeEach(() => {
   sqlite["exec"]("DELETE FROM newsletter_subscribers");
+  sqlite["exec"]("DELETE FROM newsletter_list_subscriptions");
 });
 
 afterAll(() => {
@@ -307,5 +323,72 @@ describe("OPE-389 — confirm stamps the time, not just the flag", () => {
       .get("returning@example.com") as { unsubscribed: number; unsubscribed_at: number | null };
     expect(row.unsubscribed).toBe(0);
     expect(row.unsubscribed_at).toBeNull();
+  });
+});
+
+/**
+ * OPE-510 acceptance — "a fresh end-to-end public signup + confirm produces
+ * exactly one active `weekend` row, verified by READING THE TABLE BACK, not by
+ * trusting the endpoint's response."
+ *
+ * That wording is the lesson from the defect: the confirm endpoint returned
+ * success for eleven days while writing nothing to the list, so the response
+ * was never the thing to check.
+ */
+describe("OPE-510 — confirming puts the subscriber on an audience list", () => {
+  function listRows(email: string) {
+    return sqlite
+      .prepare(
+        `SELECT l.list, l.unsubscribed_at FROM newsletter_list_subscriptions l
+           JOIN newsletter_subscribers s ON s.id = l.subscriber_id
+          WHERE s.email = ?`
+      )
+      .all(email) as Array<{ list: string; unsubscribed_at: number | null }>;
+  }
+
+  it("writes exactly one active weekend row for a footer signup", async () => {
+    await seedRow("a@example.com");
+    sqlite
+      .prepare("UPDATE newsletter_subscribers SET source='footer' WHERE email='a@example.com'")
+      .run();
+
+    const { rawToken } = await issueNewsletterConfirmationToken(db, "a@example.com");
+    const result = await consumeNewsletterConfirmationToken(db, rawToken);
+    expect(result.ok).toBe(true);
+
+    const rows = listRows("a@example.com");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].list).toBe("weekend");
+    expect(rows[0].unsubscribed_at).toBeNull();
+  });
+
+  it("is idempotent — confirming twice leaves one row, not two", async () => {
+    await seedRow("b@example.com");
+    const { rawToken } = await issueNewsletterConfirmationToken(db, "b@example.com");
+    await consumeNewsletterConfirmationToken(db, rawToken);
+    // A second issue+consume cycle, as a re-opt-in would do.
+    const second = await issueNewsletterConfirmationToken(db, "b@example.com");
+    await consumeNewsletterConfirmationToken(db, second.rawToken);
+
+    expect(listRows("b@example.com")).toHaveLength(1);
+  });
+
+  it("heals an already-confirmed subscriber who has no list row", async () => {
+    // Everyone confirmed between 2026-08-10 and this fix is exactly this shape:
+    // a confirmed row with no list membership. A stale link re-clicked is the
+    // one moment we hear from them, and it now puts them back on the list.
+    await seedRow("c@example.com");
+    const { rawToken } = await issueNewsletterConfirmationToken(db, "c@example.com");
+    // Confirm out-of-band, so consuming the still-valid token hits the
+    // already_confirmed arm rather than the success arm.
+    sqlite
+      .prepare("UPDATE newsletter_subscribers SET confirmed=1 WHERE email='c@example.com'")
+      .run();
+
+    const result = await consumeNewsletterConfirmationToken(db, rawToken);
+    expect(result.ok).toBe(false);
+    expect((result as { reason: string }).reason).toBe("already_confirmed");
+
+    expect(listRows("c@example.com").filter((r) => r.unsubscribed_at === null)).toHaveLength(1);
   });
 });
