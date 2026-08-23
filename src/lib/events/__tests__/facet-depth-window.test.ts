@@ -80,21 +80,119 @@ describe("the Berkshires, at the moment it was noindexed", () => {
   });
 });
 
+/**
+ * OPE-470 scope 4 — hysteresis, decided by measurement rather than argument.
+ *
+ * The previous version of this block looped twelve times over
+ * `isFacetIndexable(region, 12)` with a CONSTANT depth. The loop could not fail:
+ * nothing moved between iterations, so it asserted the same expression twelve
+ * times and proved nothing about a season boundary. That is precisely the
+ * "scored as an argument" the 08-20 review objected to.
+ *
+ * These slide a real clock over real event dates through the real
+ * `rollingDepthWindow`, so a one-sided or too-narrow window makes them fail.
+ */
+function depthAt(dates: readonly Date[], now: Date): number {
+  const { start, end } = rollingDepthWindow(now);
+  return dates.filter((d) => d >= start && d < end).length;
+}
+
+/** `n` events every summer, for each listed year — a seasonal market. */
+function seasonalMarket(years: readonly number[], perYear: number): Date[] {
+  const out: Date[] = [];
+  for (const y of years) {
+    for (let i = 0; i < perYear; i++) {
+      // Spread May–August, the shape the Berkshires actually has.
+      const month = 5 + (i % 4);
+      out.push(new Date(Date.UTC(y, month - 1, 10 + (i % 15), 12)));
+    }
+  }
+  return out;
+}
+
+/** Every month-start from `from` through `to`, inclusive. */
+function monthlyClock(from: string, to: string): Date[] {
+  const out: Date[] = [];
+  const end = new Date(to);
+  for (const d = new Date(from); d <= end; d.setUTCMonth(d.getUTCMonth() + 1)) {
+    out.push(new Date(d));
+  }
+  return out;
+}
+
 describe("a rolling window does not flap across a season boundary", () => {
   const region = { kind: "region" as const, minEvents: FACET_MIN_EVENTS };
+  const clock = monthlyClock("2026-01-01T12:00:00Z", "2027-12-01T12:00:00Z");
 
-  it("an annual market stays indexable in every month of the year", () => {
-    // A page noindexed August→spring and indexable only May→July can spend its
-    // whole eligible window waiting for re-inclusion — worse than either steady
-    // state, and with IndexNow latched (OPE-447) re-inclusion runs on organic
-    // crawl alone. 12 annual events sit inside a ±12-month window whatever
-    // month is asked, so the verdict cannot blink.
-    const annualDepth = 12;
-    for (let m = 0; m < 12; m++) {
-      expect(isFacetIndexable(region as never, annualDepth)).toBe(true);
-    }
+  it("a summer-only market stays indexable in EVERY month, with the clock moving", () => {
+    // The reported defect: a page noindexed August→spring and indexable only
+    // May–July can spend its whole eligible window waiting for re-inclusion —
+    // worse than either steady state, and with IndexNow latched (OPE-447)
+    // re-inclusion runs on organic crawl alone.
+    const dates = seasonalMarket([2025, 2026, 2027, 2028], 12);
+    const verdicts = clock.map((now) => isFacetIndexable(region as never, depthAt(dates, now)));
+
+    expect(verdicts).toHaveLength(24);
+    expect(verdicts.every((v) => v === true)).toBe(true);
+  });
+
+  it("the FORWARD count it replaced DOES flap on the real Berkshires shape", () => {
+    // The control, and getting it right is the whole finding.
+    //
+    // A market whose next season is already published does NOT expose the bug —
+    // a forward window still contains a full season. The Berkshires' actual
+    // shape is that next season is NOT published yet: measured in prod
+    // 2026-08-23, 9 of its 10 in-window events are TRAILING and exactly 1 is
+    // forward. Organisers publish in spring, so for most of the year the
+    // catalogue holds the season that just happened.
+    //
+    // So the control models that: editions exist through the current year only.
+    const dates = seasonalMarket([2025, 2026], 12);
+    const thisYear = monthlyClock("2026-01-01T12:00:00Z", "2026-12-01T12:00:00Z");
+
+    const forward = thisYear.map((now) =>
+      isFacetIndexable(region as never, countForward(dates, now))
+    );
+    const rolling = thisYear.map((now) => isFacetIndexable(region as never, depthAt(dates, now)));
+
+    // The old basis blinks as the season drains away…
+    expect(new Set(forward).size).toBeGreaterThan(1);
+    expect(forward.some((v) => v === false)).toBe(true);
+    // …while the rolling window holds it steady. Same data, same clock.
+    expect(new Set(rolling).size).toBe(1);
+    expect(rolling[0]).toBe(true);
+  });
+
+  it("a genuinely thin market stays noindex all year — the gate still says no", () => {
+    // A rolling window must not simply make everything indexable. `south-coast`
+    // is the live proof (5 upcoming, noindex, while the Berkshires' 5 upcoming
+    // is indexable); this is the same property under test.
+    const dates = seasonalMarket([2025, 2026, 2027, 2028], 3);
+    const verdicts = clock.map((now) => isFacetIndexable(region as never, depthAt(dates, now)));
+    expect(verdicts.every((v) => v === false)).toBe(true);
+  });
+
+  it("a market sitting EXACTLY on the floor does not blink month to month", () => {
+    // The residual scope-4 asked about: seasonal flapping is removed by the
+    // window's construction, but a market hovering at the floor could in
+    // principle still oscillate as editions age out. Measured rather than
+    // argued — and if this ever fails, that is the evidence that hysteresis
+    // (persisted prior state) is genuinely needed rather than merely requested.
+    const dates = seasonalMarket([2025, 2026, 2027, 2028], FACET_MIN_EVENTS);
+    const verdicts = clock.map((now) => isFacetIndexable(region as never, depthAt(dates, now)));
+
+    expect(new Set(verdicts).size).toBe(1);
+    expect(verdicts[0]).toBe(true);
   });
 });
+
+/** Forward-only depth — the basis this ticket replaced, kept solely so the
+ *  control test above can show it flapping. */
+function countForward(dates: readonly Date[], now: Date): number {
+  const end = new Date(now);
+  end.setUTCMonth(end.getUTCMonth() + 12);
+  return dates.filter((d) => d >= now && d < end).length;
+}
 
 describe("formatSeason", () => {
   it("reads a contiguous run as a range", () => {
@@ -111,5 +209,47 @@ describe("formatSeason", () => {
   it("handles a single month and an empty set", () => {
     expect(formatSeason([7])).toBe("July");
     expect(formatSeason([])).toBe("");
+  });
+});
+
+/**
+ * OPE-470 scope 3 — the empty-window content contract.
+ *
+ * The 08-20 review asked to "confirm `getFacetSeasonality` reads the same
+ * rolling window the gate counted." It must: a page that says "hosts 12 events
+ * a year" while the gate indexed it on a different count is a page making a
+ * claim nothing verified.
+ *
+ * Asserted against the source because the function needs a D1 handle. Anchored
+ * on the CALL syntax, not the bare symbol — a bare-symbol search matches the
+ * import line and the assertion goes vacuously green.
+ */
+describe("the seasonality copy is drawn from the gate's own window", () => {
+  it("getFacetSeasonality calls rollingDepthWindow, like countFacetDepth does", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const source: string = readFileSync(resolve(__dirname, "..", "facet-query.ts"), "utf8");
+
+    const fn = source.slice(source.indexOf("export async function getFacetSeasonality"));
+    const body = fn.slice(0, fn.indexOf("\nexport "));
+
+    expect(body).toContain("rollingDepthWindow(now)");
+    // It must not quietly compute its own bounds.
+    expect(body).not.toMatch(/setUTCMonth/);
+  });
+
+  it("renders only when the forward list is empty, so a populated page pays nothing", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const page: string = readFileSync(
+      resolve(__dirname, "..", "..", "..", "components", "events", "state-facet-page.tsx"),
+      "utf8"
+    );
+
+    // The gate on the query…
+    expect(page).toMatch(/eventsList\.length === 0\s*\?\s*await getFacetSeasonality/);
+    // …and on the render. `total > 0` is what stops a genuinely empty facet
+    // (a month with no events at all) from claiming a season it does not have.
+    expect(page).toMatch(/seasonality && seasonality\.total > 0/);
   });
 });
