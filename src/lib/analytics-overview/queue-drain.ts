@@ -28,6 +28,7 @@ import {
   venues,
   queueDrainSnapshots,
   promoters,
+  users,
 } from "@/lib/db/schema";
 import { getCurrentIssues } from "@/lib/site-health";
 import { SITE_URL } from "@takemetothefair/constants";
@@ -501,6 +502,141 @@ export async function undeliveredAuthEmailFlow(db: Db, now: Date): Promise<Queue
 }
 
 /**
+ * OPE-177 — verification mail that DID arrive and was never acted on.
+ *
+ * This queue exists because the delivery-event feed falsified the premise that
+ * created the ticket. OPE-177 was filed as a deliverability problem: a vendor
+ * registered, asked for the confirmation email three times, got none. The first
+ * week of real events says that is the rare case, not the common one —
+ * `auth.register` measured 14 delivered against 1 bounced, and four of the five
+ * most recent unverified registrations had their mail confirmed delivered.
+ *
+ * So `undelivered_auth_email` above, which counts only mail that provably did
+ * not arrive, reads 1 while roughly nineteen people are stuck. It is correct and
+ * it is not the number anyone should be managing to. Scope 3 of the ticket asked
+ * for a signal on verification mail going "unconfirmed at an elevated rate", and
+ * this is that half. It was unbuildable before the subscription existed: without
+ * delivery events there is no way to separate "never arrived" from "arrived and
+ * was ignored", and a single combined count of unverified users conflates a
+ * deliverability incident with ordinary human drop-off.
+ *
+ * ── Definitions, because the three windows deliberately differ ──────────────
+ * depth    — unverified registrations whose auth mail was DELIVERED more than
+ *            `GRACE_H` ago. The grace matters: someone who signed up nine
+ *            minutes ago has not failed to confirm, and without it every fresh
+ *            signup would flag and the operator would learn to ignore the tile.
+ * inflow   — distinct registrations that received delivered auth mail in the
+ *            window. No grace: this is arrivals into the population, not stuck.
+ * outflow  — distinct registrations that VERIFIED in the window and had
+ *            delivered auth mail. That makes `drainRatio7d` the confirmation
+ *            rate of delivered verification mail, which is the actual quantity
+ *            scope 3 named.
+ *
+ * The window is self-gating in the same way as the queue above — it starts at
+ * the first delivery event we ever received, so before the subscription fired
+ * this reports an honest zero rather than indicting every historical NULL.
+ *
+ * Recipient matching is case-insensitive: `users.email` preserves the casing a
+ * person typed (`Leavienessa@gmail.com` is a live row) while the ledger records
+ * what was passed to the mailer. An exact-equality join would silently
+ * undercount, and a signal that quietly reads low is worse than no signal.
+ */
+export async function unconfirmedAuthEmailFlow(db: Db, now: Date): Promise<QueueDrainRow> {
+  /** Hours a delivered verification email is given before it counts as stuck. */
+  const GRACE_H = 24;
+  const d = (days: number) => new Date(now.getTime() - days * DAY_MS);
+  const graceCutoff = new Date(now.getTime() - GRACE_H * 60 * 60 * 1000);
+
+  const empty = (): QueueDrainRow => ({
+    queueName: "unconfirmed_auth_email",
+    label: "Auth email delivered but never confirmed",
+    href: QUEUE_DRAIN_HREF,
+    depth: 0,
+    inflow7d: 0,
+    outflow7d: null,
+    inflow14d: 0,
+    outflow14d: null,
+    oldestOpenAgeHours: null,
+    inflow1d: 0,
+    outflow1d: null,
+    drainRatio7d: null,
+  });
+
+  const [firstEvent] = await db
+    .select({ t: sql<number | null>`min(${emailDeliveryEvents.receivedAt})` })
+    .from(emailDeliveryEvents);
+  if (firstEvent?.t == null) return empty();
+  const since = new Date(Number(firstEvent.t) * 1000);
+
+  const sameRecipient = sql`lower(${emailSendLedger.recipient}) = lower(${users.email})`;
+  const deliveredAuthSend = and(
+    like(emailSendLedger.source, "auth.%"),
+    eq(emailSendLedger.deliveryStatus, "delivered"),
+    gte(emailSendLedger.sentAt, since)
+  );
+  // Placeholder OWNER accounts (OPE-292) are not registrations and never verify.
+  const realRegistration = eq(users.origin, "registration");
+
+  const distinctUsers = async (where: SQL | undefined): Promise<number> => {
+    const [r] = await db
+      .select({ n: sql<number>`count(distinct ${users.id})` })
+      .from(users)
+      .innerJoin(emailSendLedger, sameRecipient)
+      .where(where);
+    return Number(r?.n ?? 0);
+  };
+
+  const stuck = and(
+    realRegistration,
+    isNull(users.emailVerified),
+    deliveredAuthSend,
+    lt(emailSendLedger.sentAt, graceCutoff)
+  );
+  const arrived = (from: Date) =>
+    and(realRegistration, deliveredAuthSend, gte(emailSendLedger.sentAt, from));
+  const confirmed = (from: Date) =>
+    and(
+      realRegistration,
+      deliveredAuthSend,
+      isNotNull(users.emailVerified),
+      gte(users.emailVerified, from)
+    );
+
+  const [depth, inflow1d, inflow7d, inflow14d, outflow1d, outflow7d, outflow14d, oldest] =
+    await Promise.all([
+      distinctUsers(stuck),
+      distinctUsers(arrived(d(1))),
+      distinctUsers(arrived(d(7))),
+      distinctUsers(arrived(d(14))),
+      distinctUsers(confirmed(d(1))),
+      distinctUsers(confirmed(d(7))),
+      distinctUsers(confirmed(d(14))),
+      db
+        .select({ oldest: sql<number | null>`min(${emailSendLedger.sentAt})` })
+        .from(users)
+        .innerJoin(emailSendLedger, sameRecipient)
+        .where(stuck),
+    ]);
+
+  const oldestSec = oldest[0]?.oldest ?? null;
+  return {
+    queueName: "unconfirmed_auth_email",
+    label: "Auth email delivered but never confirmed",
+    href: QUEUE_DRAIN_HREF,
+    depth,
+    inflow7d,
+    outflow7d,
+    inflow14d,
+    outflow14d,
+    oldestOpenAgeHours:
+      oldestSec != null ? (now.getTime() / 1000 - Number(oldestSec)) / 3600 : null,
+    inflow1d,
+    outflow1d,
+    drainRatio7d: ratio(outflow7d, inflow7d),
+  };
+}
+
+/**
  * OPE-408 — venues with no coordinates.
  *
  * `venues_geocode` shipped (OPE-207) "for batch backfill AND every future new
@@ -705,6 +841,12 @@ export async function gatherQueueFlows(db: Db, now: Date): Promise<QueueDrainRow
     // the CF Email Sending subscription publishes its first event (the window
     // starts there), so it cannot cry wolf on historical NULLs.
     undeliveredAuthEmailFlow(db, now),
+    // OPE-177 — the other half, and the bigger one. Once delivery events made
+    // "did not arrive" measurable, the first week's data said it is NOT the
+    // dominant cause of a stuck signup: 14 delivered vs 1 bounced on
+    // auth.register. Counting only undelivered mail would have reported 1 while
+    // ~19 people sat unverified.
+    unconfirmedAuthEmailFlow(db, now),
     // OPE-365 (R1) — people owed a human response. Distinct from
     // inbound_exceptions, which counts classifier UNCERTAINTY: that queue has
     // held depth 33 with outflow_1d=0 while a real customer's blocker passed
