@@ -261,16 +261,52 @@ function parseDollarsToCents(raw: string): number | undefined {
   return dollarsToCents(parseFloat(cleaned)) ?? undefined;
 }
 
-// Citations are scoped by (event_id, field_name, year). `year IS NULL` is its
-// own bucket (evergreen citations like founding year) — we match NULL to NULL
-// explicitly because SQL `=` treats them as unequal.
-function sameKeyFilter(eventId: string, fieldName: string, year: number | null | undefined) {
+/**
+ * OPE-516 — which prior citations a new one retires.
+ *
+ * The bug was not an unexamined `WHERE year = ?`. `sameKeyFilter` handles NULL
+ * deliberately and says why. The defect is semantic: `year` was doing two jobs
+ * at once — "which EDITION does this fact describe" and, accidentally, "which
+ * supersede bucket does this row live in" — and the second job breaks the first.
+ *
+ * Every citation the inbound pipeline writes carries `year: null`. Every
+ * citation a human writes carries a real year. Under one shared key the two
+ * groups can never retire each other, so a correction lands beside the machine's
+ * error instead of replacing it. A live event carried two `active` name
+ * citations with different values, and the tool reported `superseded_count: 0`
+ * — indistinguishable from "first citation for this field".
+ *
+ * It fails in the CORRECTING direction only, which is the worst possible bias:
+ * the unattended writer is fine, and the rare deliberate fix is the one that
+ * does not take.
+ *
+ * ── The rule, and why it is asymmetric ──────────────────────────────────
+ *
+ * A YEAR-STAMPED citation supersedes the same year AND year-null. A year-null
+ * row is an unscoped claim about the field; a scoped one refines it, so
+ * retiring it is right.
+ *
+ * A YEAR-NULL citation supersedes year-null only.
+ *
+ * The ticket asked for "and vice versa". I have not done that, and the reason
+ * is the asymmetry in who writes what: the pipeline writes year-null at scale,
+ * unattended. If a null citation retired every stamped row for its field, one
+ * re-ingest would wipe out every per-edition citation a human had recorded —
+ * strictly worse than the bug being fixed, and in the same direction (machine
+ * beats human).
+ *
+ * The conflicting stamped rows are REPORTED instead, via `conflicts_remaining`.
+ * That is what closes the acceptance's real concern — no conflict is left
+ * silent — without handing the unattended writer a destructive default.
+ */
+function supersedeScopeFilter(eventId: string, fieldName: string, year: number | null | undefined) {
+  const hasYear = year !== null && year !== undefined;
   return and(
     eq(eventDataCitations.eventId, eventId),
     eq(eventDataCitations.fieldName, fieldName),
-    year === null || year === undefined
-      ? sql`${eventDataCitations.year} IS NULL`
-      : eq(eventDataCitations.year, year)
+    hasYear
+      ? sql`(${eventDataCitations.year} IS NULL OR ${eventDataCitations.year} = ${year})`
+      : sql`${eventDataCitations.year} IS NULL`
   );
 }
 
@@ -375,13 +411,24 @@ export function registerCitationTools(server: McpServer, db: Db, auth: AuthConte
       let supersededCount = 0;
       let supersededId: string | null = null;
 
+      // OPE-516 — active citations left behind. `superseded_count: 0` is a
+      // legitimate value (first citation for a field), so it is
+      // indistinguishable from success unless the caller already knows to look.
+      // A caller cannot check for a conflict it is not told about.
+      let conflictsRemaining: Array<{
+        id: string;
+        year: number | null;
+        value: string;
+        source_name: string | null;
+      }> = [];
+
       if (autoSupersede) {
         const priorActive = await db
           .select({ id: eventDataCitations.id })
           .from(eventDataCitations)
           .where(
             and(
-              sameKeyFilter(params.event_id, params.field_name, params.year),
+              supersedeScopeFilter(params.event_id, params.field_name, params.year),
               eq(eventDataCitations.state, "active")
             )
           );
@@ -394,6 +441,31 @@ export function registerCitationTools(server: McpServer, db: Db, auth: AuthConte
             .where(inArray(eventDataCitations.id, ids));
           supersededCount = ids.length;
         }
+
+        // Anything still active for this (event, field) that the scope above
+        // deliberately did not touch — a different edition's citation, or the
+        // year-stamped rows a year-null write must not destroy.
+        const stillActive = await db
+          .select({
+            id: eventDataCitations.id,
+            year: eventDataCitations.year,
+            value: eventDataCitations.value,
+            sourceName: eventDataCitations.sourceName,
+          })
+          .from(eventDataCitations)
+          .where(
+            and(
+              eq(eventDataCitations.eventId, params.event_id),
+              eq(eventDataCitations.fieldName, params.field_name),
+              eq(eventDataCitations.state, "active")
+            )
+          );
+        conflictsRemaining = stillActive.map((r) => ({
+          id: r.id,
+          year: r.year ?? null,
+          value: r.value,
+          source_name: r.sourceName ?? null,
+        }));
       }
 
       const citationId = crypto.randomUUID();
@@ -433,6 +505,14 @@ export function registerCitationTools(server: McpServer, db: Db, auth: AuthConte
             event_id: params.event_id,
             field_name: params.field_name,
             superseded_count: supersededCount,
+            // OPE-516 — other active citations for this (event, field) that
+            // SURVIVE this write. Excludes the row just written, which would
+            // otherwise make every call report a conflict with itself.
+            //
+            // Deliberate when it is a different edition; a genuine CONFLICT
+            // when it is not — and either way the caller now sees it instead of
+            // reading a bare `superseded_count: 0` as success.
+            conflicts_remaining: conflictsRemaining,
             event_column_updated: eventColumnUpdated,
             column_skip_reason: columnSkipReason,
             // OPE-505 — before/after for anything this call touched, matching
@@ -806,7 +886,10 @@ export function registerCitationTools(server: McpServer, db: Db, auth: AuthConte
           .from(eventDataCitations)
           .where(
             and(
-              sameKeyFilter(prior.eventId, prior.fieldName, prior.year),
+              // OPE-516 — re-activating a citation asks the same question as
+              // creating one: what does this row retire? Same rule, so a
+              // revived year-stamped citation also demotes the year-null one.
+              supersedeScopeFilter(prior.eventId, prior.fieldName, prior.year),
               eq(eventDataCitations.state, "active")
             )
           );
@@ -965,7 +1048,10 @@ export function registerCitationTools(server: McpServer, db: Db, auth: AuthConte
               .from(eventDataCitations)
               .where(
                 and(
-                  sameKeyFilter(c.event_id, c.field_name, c.year),
+                  // OPE-516 — the bulk path must retire exactly what the
+                  // single path retires. Two supersede rules for one concept is
+                  // how a fix ends up wired into one of two parallel paths.
+                  supersedeScopeFilter(c.event_id, c.field_name, c.year),
                   eq(eventDataCitations.state, "active")
                 )
               );
