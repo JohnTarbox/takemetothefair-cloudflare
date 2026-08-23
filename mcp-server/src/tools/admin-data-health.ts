@@ -18,7 +18,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { desc, eq, gte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, isNull, sql } from "drizzle-orm";
 import {
   eventDiscrepancies,
   goodwillHealthSnapshots,
@@ -38,6 +38,10 @@ import { findSlugCollisionPairs } from "../slug-collision-invariant.js";
 import type { AuthContext } from "../auth.js";
 
 const TWENTY_EIGHT_DAYS_SECS = 28 * 24 * 60 * 60;
+/** OPE-526 — window for the vendor-application capture probe. 90d is wide
+ *  enough that a low-volume lane still shows a meaningful denominator; a 28d
+ *  window put `direct_scrape` in single digits, where 0/3 says nothing. */
+const VENDOR_CAPTURE_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
 
 /**
  * Epoch SECONDS at which the OPE-472 series write-path fix (PR #931) deployed:
@@ -562,10 +566,55 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
         };
       }
 
+      // OPE-526 — vendor-application capture, by intake lane.
+      //
+      // Exists because "shipped" and "working" were the same claim for five
+      // weeks: OPE-198 wired the vendor-application family on three paths and
+      // was reported as covering every intake path. Nothing measured it, so
+      // the two paths it missed stayed at a hard zero and only surfaced when
+      // someone ran the query by hand.
+      //
+      // Reported as a per-method breakdown rather than one percentage: a
+      // single blended number would have stayed comfortable while an entire
+      // lane wrote nothing. A lane at 0/n with n non-trivial is the signal.
+      let vendorFieldCapture: unknown;
+      try {
+        vendorFieldCapture = await db
+          .select({
+            ingestion_method: events.ingestionMethod,
+            events: sql<number>`COUNT(*)`,
+            with_any_field: sql<number>`SUM(CASE WHEN ${events.applicationUrl} IS NOT NULL
+              OR ${events.vendorFeeMinCents} IS NOT NULL
+              OR ${events.applicationDeadline} IS NOT NULL
+              OR ${events.applicationInstructions} IS NOT NULL THEN 1 ELSE 0 END)`,
+            with_apply_url: sql<number>`SUM(CASE WHEN ${events.applicationUrl} IS NOT NULL THEN 1 ELSE 0 END)`,
+            with_fee: sql<number>`SUM(CASE WHEN ${events.vendorFeeMinCents} IS NOT NULL THEN 1 ELSE 0 END)`,
+            with_deadline: sql<number>`SUM(CASE WHEN ${events.applicationDeadline} IS NOT NULL THEN 1 ELSE 0 END)`,
+          })
+          .from(events)
+          .where(
+            and(
+              isNull(events.mergedInto),
+              gte(events.createdAt, new Date(Date.now() - VENDOR_CAPTURE_WINDOW_MS))
+            )
+          )
+          .groupBy(events.ingestionMethod);
+      } catch (err) {
+        vendorFieldCapture = {
+          error: "vendor_field_capture_failed",
+          detail: err instanceof Error ? err.message : String(err),
+        };
+      }
+
       return {
         content: [
           jsonContent({
             generated_at: new Date().toISOString(),
+            // OPE-526 — see the comment above the query. `ingestion_method` is
+            // itself an imperfect instrument (OPE-486/OPE-491: it conflates
+            // three questions and ~40% is a defaulted label), so read a lane at
+            // zero as "go look at the code for that lane", not as a verdict.
+            vendor_field_capture_90d: vendorFieldCapture,
             locations_universe: locationsUniverse,
             today_snapshot: today ?? null,
             outreach_queue_top: queue.map((q) => ({

@@ -31,7 +31,9 @@ import {
   isPlaceholderUrl,
   UNLABELED_SOURCE,
   assertIngestionMethod,
+  dollarsToCents,
 } from "@takemetothefair/utils";
+import { parseDateOnly } from "@takemetothefair/datetime";
 import { EVENT_CATEGORIES, PRIMARY_AUDIENCE, PUBLIC_ACCESS } from "@takemetothefair/constants";
 import { logError } from "../logger.js";
 
@@ -675,6 +677,54 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
         .describe(
           "True when advance registration is required to attend. Separate axis from audience/access."
         ),
+      // OPE-526 — the vendor-application family. OPE-198 extended the AI
+      // extractor's PROMPT for these, which covers the paths where a model
+      // reads prose. This tool is a structured API: there is no prompt to
+      // extend, and it had no parameters for them, so an agent that read a
+      // booth fee off an organizer's page had no way to send it. That is why
+      // `vendor_submission` and `direct_scrape` are hard zeros in prod.
+      //
+      // Fees are DOLLARS on the wire (matching the extractor's contract) and
+      // stored as cents. Every field is optional and nothing is inferred:
+      // omitted stays NULL rather than guessed.
+      vendor_fee_min: z
+        .number()
+        .nonnegative()
+        .optional()
+        .describe("Minimum booth/vendor fee in DOLLARS (stored as cents). Omit if not stated."),
+      vendor_fee_max: z
+        .number()
+        .nonnegative()
+        .optional()
+        .describe("Maximum booth/vendor fee in DOLLARS (stored as cents). Omit if not stated."),
+      vendor_fee_notes: z
+        .string()
+        .max(500)
+        .transform(sanitizeProse)
+        .optional()
+        .describe("Fee detail the min/max can't hold (e.g. '$50 for 10x10, $75 for 10x20')."),
+      application_url: z.string().url().optional().describe("URL where vendors apply for a booth."),
+      application_deadline: z
+        .string()
+        .regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD")
+        .optional()
+        .describe(
+          "Deadline for VENDORS to apply (YYYY-MM-DD). NOT the event's own date — leave unset unless the source states an application/registration deadline. Feeds the start_equals_deadline gate."
+        ),
+      application_instructions: z
+        .string()
+        .max(500)
+        .transform(sanitizeProse)
+        .optional()
+        .describe(
+          "How to apply when there is NO application URL (e.g. 'email organizer@example.com with product photos')."
+        ),
+      estimated_attendance: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe("Estimated attendance, when the source states it."),
       promoter_id: z
         .string()
         .optional()
@@ -1109,7 +1159,13 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
         sourceName: sourceLabel,
         startDate,
         endDate,
-        applicationDeadline: null,
+        // OPE-526 — was hardcoded `null`, which silently disabled the
+        // start_equals_deadline gate on this path: the gate cannot fire on a
+        // value the caller was never able to supply. Wiring the parameter
+        // turns that gate on here for the first time.
+        applicationDeadline: params.application_deadline
+          ? parseDateOnly(params.application_deadline)
+          : null,
         description,
       });
       const eventStatus = gateResult.route === "PENDING_REVIEW" ? "PENDING" : "TENTATIVE";
@@ -1181,6 +1237,24 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
         publicAccess: params.public_access,
         accessNotes: params.access_notes,
         registrationRequired: params.registration_required,
+        // OPE-526 — vendor-application family. dollarsToCents per the money
+        // convention; `?? null` (not `|| null`) so a legitimate 0 fee — a free
+        // booth, which organizers do advertise — is stored rather than erased.
+        vendorFeeMinCents:
+          params.vendor_fee_min !== undefined
+            ? (dollarsToCents(params.vendor_fee_min) ?? null)
+            : null,
+        vendorFeeMaxCents:
+          params.vendor_fee_max !== undefined
+            ? (dollarsToCents(params.vendor_fee_max) ?? null)
+            : null,
+        vendorFeeNotes: params.vendor_fee_notes ?? null,
+        applicationUrl: params.application_url ?? null,
+        applicationDeadline: params.application_deadline
+          ? parseDateOnly(params.application_deadline)
+          : null,
+        applicationInstructions: params.application_instructions ?? null,
+        estimatedAttendance: params.estimated_attendance ?? null,
         // Mirror the main-app suggest-event behavior: vendor submissions are
         // TENTATIVE-lifecycle (dates unconfirmed at submission time).
         lifecycleStatus: "TENTATIVE",
