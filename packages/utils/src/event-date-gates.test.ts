@@ -186,3 +186,66 @@ describe("evaluateGates — timezone anchoring (OPE-307)", () => {
     expect(result.reasons).toContain("start_date_timezone_confused");
   });
 });
+
+describe("sameDay compares calendar days, not a millisecond delta (OPE-526)", () => {
+  /**
+   * The regression this pins.
+   *
+   * `sameDay` used `Math.abs(a - b) < 12h`. The codebase's two date-only
+   * parsers sit EXACTLY 12h apart — normalizeEventDate anchors at 12:00Z,
+   * parseDateOnly at 00:00Z — and `12h < 12h` is false. So any gate comparing
+   * a noon-anchored date against a midnight-anchored one returned false for
+   * EVERY date, not just timezone edge cases.
+   *
+   * Live consequence: start_equals_deadline was wired on the URL-import path
+   * by OPE-198, but import-url builds startDate with normalizeEventDate when
+   * the extractor produced no event-days (route.ts:162) — so on that branch
+   * the gate could never fire, while reading as shipped.
+   */
+  const NOON = new Date("2026-09-15T12:00:00.000Z"); // normalizeEventDate
+  const MIDNIGHT = new Date("2026-09-15T00:00:00.000Z"); // parseDateOnly
+
+  it("the two parsers really are exactly 12h apart — the premise of this test", () => {
+    expect(NOON.getTime() - MIDNIGHT.getTime()).toBe(12 * 60 * 60 * 1000);
+  });
+
+  it("fires start_equals_deadline across the noon/midnight boundary", () => {
+    const result = evaluateGates({
+      name: "Deadline Equals Start Fair",
+      sourceUrl: "https://example.org/fair",
+      sourceName: "url-import",
+      startDate: NOON,
+      endDate: NOON,
+      applicationDeadline: MIDNIGHT,
+      description: null,
+    });
+    expect(result.reasons).toContain("start_equals_deadline");
+  });
+
+  it("still does not fire on genuinely different days (control)", () => {
+    const result = evaluateGates({
+      name: "Normal Fair",
+      sourceUrl: "https://example.org/fair",
+      sourceName: "url-import",
+      startDate: NOON,
+      endDate: NOON,
+      applicationDeadline: new Date("2026-08-01T00:00:00.000Z"),
+      description: null,
+    });
+    expect(result.reasons).not.toContain("start_equals_deadline");
+  });
+
+  it("does not fire across an adjacent-day boundary 1ms apart", () => {
+    // The old 12h window would have called these the same day. They are not.
+    const result = evaluateGates({
+      name: "Adjacent Fair",
+      sourceUrl: "https://example.org/fair",
+      sourceName: "url-import",
+      startDate: new Date("2026-09-15T23:59:59.999Z"),
+      endDate: new Date("2026-09-15T23:59:59.999Z"),
+      applicationDeadline: new Date("2026-09-16T00:00:00.000Z"),
+      description: null,
+    });
+    expect(result.reasons).not.toContain("start_equals_deadline");
+  });
+});

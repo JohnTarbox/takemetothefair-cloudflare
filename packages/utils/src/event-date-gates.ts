@@ -264,7 +264,6 @@ export interface DateGateInput {
 
 export type DateGateResult = { ok: true } | { ok: false; reasons: string[] };
 
-const SAME_DAY_TOLERANCE_MS = 12 * 60 * 60 * 1000; // 12h — covers TZ jitter
 const MAX_FUTURE_MS = 18 * 30 * 86400 * 1000; // ~18 months
 // Duration plausibility: events lasting more than this without a MAJOR
 // scale tag are almost certainly a recurring-series row (e.g., a farmers
@@ -283,7 +282,24 @@ const MULTI_DAY_PATTERNS = [
 ];
 
 function sameDay(a: Date, b: Date): boolean {
-  return Math.abs(a.getTime() - b.getTime()) < SAME_DAY_TOLERANCE_MS;
+  // OPE-526 — compare CALENDAR DAYS in UTC, not a millisecond delta.
+  //
+  // The delta form was `< 12h`, and the codebase's two date-only parsers sit
+  // EXACTLY 12h apart: normalizeEventDate anchors at 12:00Z (deliberately, to
+  // survive timezone shifts) and parseDateOnly at 00:00Z. `12h < 12h` is
+  // false, so any caller mixing the two got a permanent silent `false` — not a
+  // timezone edge case, but every date, always. That is how
+  // start_equals_deadline came to be wired on import-url by OPE-198 yet unable
+  // to fire whenever the extractor produced no event-days (route.ts:162 takes
+  // the noon-anchored branch while the deadline stays midnight-anchored).
+  //
+  // Comparing calendar days is what every caller actually meant, and it is
+  // immune to which parser produced either side.
+  return (
+    a.getUTCFullYear() === b.getUTCFullYear() &&
+    a.getUTCMonth() === b.getUTCMonth() &&
+    a.getUTCDate() === b.getUTCDate()
+  );
 }
 
 /** Pattern that catches mentions of a specific time-of-day in a description.
