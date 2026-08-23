@@ -139,6 +139,23 @@ export async function countFacetForIndexing(
  * how many fairs the place hosts in a year and when its season runs — drawn
  * from the same rolling window the indexability decision used, so the page
  * cannot claim a season the gate did not count.
+ *
+ * ── Inert for month and weekend facets, by construction (OPE-470, 2026-08-23)
+ *
+ * `facetConditions` restricts a month facet to that month, and this query
+ * applies it too. So the same restriction that emptied the forward list also
+ * drives this count to zero, the caller's `total > 0` render gate fails, and no
+ * sentence appears. That is correct — "January hosts 0 events a year, typically
+ * —" says nothing — but it means an empty month page is NOT evidence the
+ * contract is broken. Verified live: `/events/connecticut/april` renders no
+ * events and no seasonality line, and both are right.
+ *
+ * The contract exists for REGION and TYPE facets, where the year genuinely has
+ * events the forward window does not. As of 2026-08-23 no live region has an
+ * empty forward window (the thinnest, `massachusetts/south-coast` and
+ * `massachusetts/berkshires`, each show 5), so this cannot currently be
+ * demonstrated on a served region page — only its window and render gate can be
+ * pinned, which the tests do.
  */
 export async function getFacetSeasonality(
   db: FacetDb,
