@@ -3,6 +3,7 @@ import { z } from "zod";
 import { eq, and, or, gte, lte, like, inArray, isNull, sql, desc } from "drizzle-orm";
 import {
   events,
+  eventNameVariants,
   venues,
   vendors,
   eventVendors,
@@ -91,6 +92,28 @@ async function resolveSlugHistory(
 }
 
 export function registerPublicTools(server: McpServer, db: Db) {
+  /**
+   * OPE-517 — match a pattern against the event's name OR any of its recorded
+   * name variants.
+   *
+   * Scope item 3 of the ticket, and it calls itself the criterion that matters:
+   * "if search doesn't hit a variant as readily as the canonical name, the whole
+   * feature is decorative." A variant nobody can search for is a row in a table.
+   *
+   * EXISTS rather than a JOIN, deliberately: an event with three variants must
+   * return once, not three times, and a JOIN would need a DISTINCT that fights
+   * the fuzzy scorer's ordering.
+   */
+  function nameOrVariantLike(pattern: string) {
+    return or(
+      like(events.name, pattern),
+      sql`EXISTS (
+      SELECT 1 FROM event_name_variants v
+       WHERE v.event_id = ${events.id} AND v.variant LIKE ${pattern}
+    )`
+    );
+  }
+
   // ── search_events ──────────────────────────────────────────────
   server.tool(
     "search_events",
@@ -149,7 +172,9 @@ export function registerPublicTools(server: McpServer, db: Db) {
       const conditions = [publicEventWhere()];
 
       if (params.query && !params.fuzzy) {
-        conditions.push(like(events.name, `%${escapeLike(params.query)}%`));
+        // OPE-517 — the organizer's name for a fair must find the same page.
+        const p = nameOrVariantLike(`%${escapeLike(params.query)}%`);
+        if (p) conditions.push(p);
       } else if (params.query && params.fuzzy) {
         // Fuzzy mode: pre-filter the SQL candidate set to rows whose name
         // contains AT LEAST ONE non-stopword query token. Without this gate,
@@ -168,7 +193,9 @@ export function registerPublicTools(server: McpServer, db: Db) {
         // doesn't hurt.
         const tokens = tokenize(params.query);
         if (tokens.length > 0) {
-          const tokenLikes = tokens.map((t) => like(events.name, `%${escapeLike(t)}%`));
+          // OPE-517 — variants join the candidate gate too, or a variant-only
+          // match is filtered out before the scorer ever sees it.
+          const tokenLikes = tokens.map((t) => nameOrVariantLike(`%${escapeLike(t)}%`));
           // OPE-434 superset invariant: enabling fuzzy must never DROP a row
           // that exact matching would have returned. The token ORs alone don't
           // guarantee that — the candidate set is capped at `sqlLimit` with no
@@ -176,7 +203,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
           // the whole-query LIKE (the exact-mode predicate) in keeps it in the
           // candidate set, and it scores 1.0 because every query token is
           // present in the name by construction.
-          tokenLikes.push(like(events.name, `%${escapeLike(params.query)}%`));
+          tokenLikes.push(nameOrVariantLike(`%${escapeLike(params.query)}%`));
           // OR — match any token. The JS scorer then ranks by weighted fraction
           // of tokens that match.
           const fuzzyOr = tokenLikes.length === 1 ? tokenLikes[0] : or(...tokenLikes);
@@ -302,13 +329,40 @@ export function registerPublicTools(server: McpServer, db: Db) {
         );
       }
 
+      // OPE-517 — variants for the candidate rows, fetched once. Only needed
+      // for fuzzy scoring; exact mode already matched in SQL.
+      const variantsByEvent = new Map<string, string[]>();
+      if (params.fuzzy && params.query && results.length > 0) {
+        const ids = results.map((r) => r.id);
+        const vrows = await db
+          .select({ eventId: eventNameVariants.eventId, variant: eventNameVariants.variant })
+          .from(eventNameVariants)
+          .where(inArray(eventNameVariants.eventId, ids));
+        for (const v of vrows) {
+          const list = variantsByEvent.get(v.eventId);
+          if (list) list.push(v.variant);
+          else variantsByEvent.set(v.eventId, [v.variant]);
+        }
+      }
+
       // Fuzzy scoring: score, filter by threshold, sort by score, then paginate
       type Row = (typeof results)[number];
       type ScoredRow = Row & { matchScore?: number };
       let scored: ScoredRow[];
       if (params.fuzzy && params.query) {
         scored = results
-          .map((r) => ({ ...r, matchScore: fuzzyTokenScore(params.query!, r.name) }))
+          // OPE-517 — score against the BEST of the canonical name and any
+          // variant. Scoring the name alone would let a row through the SQL
+          // candidate gate on a variant match and then drop it at the
+          // threshold, which is the "decorative feature" failure the ticket
+          // names — visible in the candidate set, invisible in the results.
+          .map((r) => ({
+            ...r,
+            matchScore: Math.max(
+              fuzzyTokenScore(params.query!, r.name),
+              ...(variantsByEvent.get(r.id) ?? []).map((v) => fuzzyTokenScore(params.query!, v))
+            ),
+          }))
           .filter((r) => r.matchScore! >= 0.2)
           .sort((a, b) => b.matchScore! - a.matchScore!)
           .slice(offset, offset + limit);

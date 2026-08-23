@@ -122,6 +122,7 @@ import {
   DENORM_FIELD_MAP as CITATION_DENORM_FIELD_MAP,
   SOURCE_TYPE_VALUES as CITATION_SOURCE_TYPE_VALUES,
 } from "./admin-citations.js";
+import { registerEventNameVariantTools } from "./admin-event-name-variants.js";
 
 const PUBLIC_EVENT_SET = new Set<string>(PUBLIC_EVENT_STATUSES);
 const PUBLIC_VENDOR_SET = new Set<string>(PUBLIC_VENDOR_STATUSES);
@@ -223,6 +224,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   // create_event_citation, list_event_citations, update_event_citation,
   // delete_event_citation, bulk_create_event_citations.
   registerCitationTools(server, db, auth, env);
+  // OPE-517 — name variants. Registered beside citations because a variant with
+  // a source_url is the companion to a `name` citation from the same source.
+  registerEventNameVariantTools(server, db, auth);
 
   // Event lifecycle transitions (drizzle/0067). Adds update_event_lifecycle
   // with transition validation, date-swap for RESCHEDULED/POSTPONED,

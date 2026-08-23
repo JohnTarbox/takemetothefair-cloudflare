@@ -5262,6 +5262,60 @@ export const gscMonthlyOracle = sqliteTable("gsc_monthly_oracle", {
  * can resurrect someone. `unsubscribedAt` here is the narrower "leave this
  * list only".
  */
+/**
+ * OPE-517 — the other names an event is known by.
+ *
+ * An event row has one `name`. When the organizer, an aggregator and we each
+ * call a fair something different, only one of those strings can exist, and the
+ * rest become unsearchable. Measured on the Island Arts Association's twelve
+ * fairs: dates, venues and hours matched our rows exactly, and all twelve names
+ * differed.
+ *
+ * ⚠️ NOT a dedup table. `vendors.aliasOf` and `merge_events` mean "this row IS
+ * that row". This means "this row has another name" — one surviving event, no
+ * second row involved. Do not add `alias` to any name here; the word invites
+ * exactly the wrong implementation.
+ *
+ * Each variant carries its own `sourceUrl`, which is why this is a table and
+ * not a JSON column: "where did this name come from" has to be answerable per
+ * entry, and that is the companion to the `name` citation in
+ * `event_data_citations`.
+ */
+export const eventNameVariants = sqliteTable(
+  "event_name_variants",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    eventId: text("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    /** The other name, verbatim as the source writes it. */
+    variant: text("variant").notNull(),
+    /** Who calls it this — provenance, not precedence. */
+    variantType: text("variant_type", {
+      enum: ["organizer_official", "aggregator", "historical", "common_usage"],
+    })
+      .notNull()
+      .default("common_usage"),
+    sourceUrl: text("source_url"),
+    createdBy: text("created_by"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    uniqueIndex("idx_event_name_variants_unique").on(t.eventId, t.variant),
+    index("idx_event_name_variants_variant").on(t.variant),
+  ]
+);
+
+export const EVENT_NAME_VARIANT_TYPES = [
+  "organizer_official",
+  "aggregator",
+  "historical",
+  "common_usage",
+] as const;
+export type EventNameVariantType = (typeof EVENT_NAME_VARIANT_TYPES)[number];
+
 export const newsletterListSubscriptions = sqliteTable(
   "newsletter_list_subscriptions",
   {
