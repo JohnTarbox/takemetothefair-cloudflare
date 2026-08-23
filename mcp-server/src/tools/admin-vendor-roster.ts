@@ -118,6 +118,36 @@ export function registerVendorRosterTools(server: McpServer, db: Db, auth: AuthC
       const now = new Date();
       const isTerminal = params.status !== "NEEDS_RESEARCH";
 
+      // OPE-527 — a status that ASSERTS a roster was found must say where.
+      //
+      // HAS_ROSTER is terminal: the drain never re-selects it, so it is the
+      // only thing standing between "someone found and verified this roster"
+      // and "nobody knows". Measured 2026-08-23: 31 of 66 HAS_ROSTER rows (47%)
+      // carried no source_url at all, and the share was growing.
+      //
+      // Rejected rather than warned. The pre-OPE-527 code warned and wrote
+      // anyway, which is how 47% accumulated — a warning nothing reads is not a
+      // gate (the fail-soft-reason-with-no-reader shape from OPE-403).
+      //
+      // HAS_LINKS_UNVERIFIED is the honest destination when there is no source:
+      // it records the links without claiming anyone researched them.
+      if (params.status === "HAS_ROSTER" && !params.source_url) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text:
+                "HAS_ROSTER requires source_url — it is a terminal claim that a roster was found, " +
+                "and without the source nothing records where. If you are recording that the event " +
+                "simply HOLDS vendor links that nobody researched, use status 'HAS_LINKS_UNVERIFIED'. " +
+                "Do not pass the organizer homepage or the event's own source_url as a stand-in: a " +
+                "wrong provenance is worse than an absent one.",
+            },
+          ],
+          isError: true,
+        };
+      }
+
       // OPE-498 — the offset means different things per status, so it is
       // cleared, set, or LEFT ALONE rather than uniformly overwritten.
       //
@@ -131,7 +161,10 @@ export function registerVendorRosterTools(server: McpServer, db: Db, auth: AuthC
       //  everything else      — no resume point applies; cleared as before.
       const setValues: Record<string, unknown> = {
         vendorRosterStatus: params.status,
-        vendorRosterCheckedAt: isTerminal ? now : null,
+        // OPE-527 — HAS_LINKS_UNVERIFIED is terminal for enqueue purposes but
+        // records no check, so it must not stamp checked_at. A timestamp there
+        // would be a second claim nobody made.
+        vendorRosterCheckedAt: isTerminal && params.status !== "HAS_LINKS_UNVERIFIED" ? now : null,
         vendorRosterSourceUrl: isTerminal ? (params.source_url ?? null) : null,
         updatedAt: now,
       };

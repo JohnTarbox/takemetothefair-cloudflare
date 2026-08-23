@@ -253,12 +253,25 @@ describe("list_all_events — vendor_roster_status filter (OPE-264)", () => {
   });
 });
 
-describe("set_vendor_roster_status — provenance warning (OPE-264)", () => {
-  async function setStatus(args: Record<string, unknown>) {
-    const r = (await server.invoke("set_vendor_roster_status", args)) as {
+describe("set_vendor_roster_status — provenance (OPE-264 warning → OPE-527 gate)", () => {
+  /**
+   * OPE-264 made a source_url-less terminal verdict WARN. OPE-527 makes
+   * HAS_ROSTER specifically REJECT, because the warning did not work: by
+   * 2026-08-23, 31 of 66 HAS_ROSTER rows (47%) carried no source_url and the
+   * share was growing. A warning nothing reads is not a gate.
+   *
+   * NO_PUBLIC_LIST keeps the warning rather than becoming a gate — it asserts
+   * an ABSENCE, and what URL proves an absence is a genuine open question the
+   * ticket flagged rather than settled. Raised on the ticket, not decided here.
+   */
+  async function raw(args: Record<string, unknown>) {
+    return (await server.invoke("set_vendor_roster_status", args)) as {
       content: Array<{ text: string }>;
       isError?: boolean;
     };
+  }
+  async function setStatus(args: Record<string, unknown>) {
+    const r = await raw(args);
     return JSON.parse(r.content[0].text) as { warnings: string[] };
   }
 
@@ -266,23 +279,40 @@ describe("set_vendor_roster_status — provenance warning (OPE-264)", () => {
     seedEvent({ id: "e-x", name: "X Fair", slug: "x-fair", endDate: new Date("2026-08-01") });
   });
 
-  it("warns when HAS_ROSTER is set without a source_url", async () => {
-    const out = await setStatus({ event_id: "e-x", status: "HAS_ROSTER" });
-    expect(out.warnings.some((w) => w.includes("cannot be audited"))).toBe(true);
+  it("REJECTS HAS_ROSTER without a source_url", async () => {
+    const r = await raw({ event_id: "e-x", status: "HAS_ROSTER" });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain("HAS_LINKS_UNVERIFIED");
   });
 
-  it("warns when NO_PUBLIC_LIST is set without a source_url", async () => {
+  it("leaves the row untouched when it rejects", async () => {
+    // A rejection that still wrote would be worse than the warning it replaced.
+    await raw({ event_id: "e-x", status: "HAS_ROSTER" });
+    const row = db.select().from(events).where(eq(events.id, "e-x")).all()[0];
+    expect(row.vendorRosterStatus ?? null).toBeNull();
+  });
+
+  it("still warns (does not reject) for NO_PUBLIC_LIST without a source_url", async () => {
     const out = await setStatus({ event_id: "e-x", status: "NO_PUBLIC_LIST" });
     expect(out.warnings.some((w) => w.includes("cannot be audited"))).toBe(true);
   });
 
-  it("does not warn when a terminal status includes a source_url", async () => {
+  it("accepts HAS_ROSTER with a source_url, and does not warn", async () => {
     const out = await setStatus({
       event_id: "e-x",
       status: "HAS_ROSTER",
       source_url: "https://example.com/exhibitors",
     });
     expect(out.warnings.some((w) => w.includes("cannot be audited"))).toBe(false);
+  });
+
+  it("accepts HAS_LINKS_UNVERIFIED without a source_url — that is its purpose", async () => {
+    const r = await raw({ event_id: "e-x", status: "HAS_LINKS_UNVERIFIED" });
+    expect(r.isError).toBeFalsy();
+    const row = db.select().from(events).where(eq(events.id, "e-x")).all()[0];
+    expect(row.vendorRosterStatus).toBe("HAS_LINKS_UNVERIFIED");
+    // and records no check, because none happened
+    expect(row.vendorRosterCheckedAt ?? null).toBeNull();
   });
 });
 

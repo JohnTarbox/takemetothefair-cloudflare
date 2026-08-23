@@ -58,7 +58,7 @@ export interface OccurredSweepResult {
   rolledFromBackfill: number;
   /** OPE-13 — events seeded into the vendor-roster NEEDS_RESEARCH queue. */
   rosterEnqueued: number;
-  /** OPE-525 — events stamped HAS_ROSTER because they already held >=ROSTER_EVIDENCE_MIN non-sponsor links. */
+  /** OPE-525/527 — events stamped HAS_LINKS_UNVERIFIED because they already held >=ROSTER_EVIDENCE_MIN non-sponsor links. */
   rosterAlreadyHeld: number;
   /** OPE-31 — events seeded straight to NO_PUBLIC_LIST because their producer is
    *  flagged vendor_roster_publishes_lists = false (never publishes a roster). */
@@ -337,15 +337,23 @@ export async function runOccurredTransitionSweep(
     }
     result.rosterEnqueued = needsResearchIds.length;
 
-    // Stamp checked_at as well: this IS a determination about the roster, made
-    // from evidence already in the database, so it should not read as unchecked.
-    // source_url stays null - we are asserting "links exist", not "this page is
-    // where they came from", and set_vendor_roster_status already warns about a
-    // null source_url rather than pretending one.
+    // OPE-527 — writes HAS_LINKS_UNVERIFIED, not HAS_ROSTER.
+    //
+    // The first cut of this guard (OPE-525) wrote HAS_ROSTER and stamped
+    // checked_at, reasoning that "links exist" is a determination made from
+    // evidence already in the database. That reasoning was wrong in a way worth
+    // recording: HAS_ROSTER is TERMINAL, so it is never revisited, and this
+    // sweep has no idea where those links came from. It turned a visible gap
+    // (a populated row reading NEEDS_RESEARCH — safe, self-correcting, costs a
+    // wasted pass) into an invisible one (a permanent unattributed claim that
+    // someone researched this roster). 14 prod rows got that treatment.
+    //
+    // checked_at is deliberately NOT stamped: no check occurred, and a
+    // timestamp would be a second claim nobody made.
     for (const batch of chunkIds(alreadyRosteredIds)) {
       await db
         .update(events)
-        .set({ vendorRosterStatus: "HAS_ROSTER", vendorRosterCheckedAt: now, updatedAt: now })
+        .set({ vendorRosterStatus: "HAS_LINKS_UNVERIFIED", updatedAt: now })
         .where(inArray(events.id, batch));
     }
     result.rosterAlreadyHeld = alreadyRosteredIds.length;

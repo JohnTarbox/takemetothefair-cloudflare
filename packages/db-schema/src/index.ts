@@ -663,7 +663,18 @@ export const events = sqliteTable(
       // served HTML (client-rendered gallery, SPA, interactive floorplan). NOT
       // NO_PUBLIC_LIST (the list IS public) and NOT PARTIAL (there is nothing to
       // resume — the offset was the whole payload).
-      enum: ["NEEDS_RESEARCH", "HAS_ROSTER", "NO_PUBLIC_LIST", "PARTIAL", "NEEDS_RENDERED_FETCH"],
+      // OPE-527 — HAS_LINKS_UNVERIFIED: the row holds roster-grade vendor
+      // links that nobody researched and nothing attributed. Distinct from
+      // HAS_ROSTER, which asserts a roster was found AND (post-OPE-527)
+      // carries the source_url proving where.
+      enum: [
+        "NEEDS_RESEARCH",
+        "HAS_ROSTER",
+        "NO_PUBLIC_LIST",
+        "PARTIAL",
+        "NEEDS_RENDERED_FETCH",
+        "HAS_LINKS_UNVERIFIED",
+      ],
     }),
     vendorRosterCheckedAt: integer("vendor_roster_checked_at", { mode: "timestamp" }),
     vendorRosterSourceUrl: text("vendor_roster_source_url"),
