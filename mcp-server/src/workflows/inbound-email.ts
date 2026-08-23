@@ -620,8 +620,13 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     // (classifier-introduced) joins correction + press in this set
     // because it also benefits from admin tailoring (decisionToReplyKind
     // collapses it onto correction's decision shape).
+    // OPE-254 — a handler may decline the pause. The correction handler does
+    // when the reply named a fair and its held photos are already attached:
+    // there is no judgement left to make, and the block below would overwrite
+    // the handler's replyKind and resultingEventId with a generic ack.
     const needsAdminDecision =
-      intent === "correction" || intent === "press" || intent === "claim_request";
+      (intent === "correction" || intent === "press" || intent === "claim_request") &&
+      !result.skipAdminDecision;
     if (!caughtError && needsAdminDecision) {
       await step.do(
         "mark-waiting",
