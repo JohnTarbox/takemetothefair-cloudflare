@@ -134,6 +134,22 @@ export const venues = sqliteTable(
      * is the thing actually worth a human's attention.
      */
     locationMatchedBy: text("location_matched_by"),
+    /**
+     * OPE-425 review finding 9 — how far the `coordinates` match reached, in km.
+     *
+     * Set only when `locationMatchedBy = 'coordinates'`. The centroid match is
+     * bounded at ~25 km and is deliberately labelled an approximation, but
+     * without the distance a 200 m match and a 22 km guess are the same row: an
+     * identical positive `coordinates` result with nothing to separate them.
+     *
+     * Captured at WRITE time because that is the only moment it is known — it is
+     * the loader's ORDER BY key. Re-deriving it afterwards would measure against
+     * whatever `locations` holds then, which answers a different question.
+     *
+     * NULL for exact/alias matches: they have no distance, and a 0 would read as
+     * "perfect" rather than "not applicable".
+     */
+    locationMatchKm: real("location_match_km"),
     latitude: real("latitude"),
     longitude: real("longitude"),
     capacity: integer("capacity"),
