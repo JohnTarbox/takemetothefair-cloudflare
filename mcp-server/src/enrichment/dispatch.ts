@@ -8,7 +8,7 @@
 // Resilience: per-message try/ack/retry like the SYN1 dispatcher. A fetch miss
 // is NOT a failure — a dead site is itself a signal; we stamp the attempt and
 // ack. Only an unexpected DB error retries → DLQ after max_retries.
-import { and, eq, inArray, ne } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, ne } from "drizzle-orm";
 import { vendors, vendorEnrichmentCandidates } from "../schema.js";
 import { getDb, type Db } from "../db.js";
 import { logError } from "../logger.js";
@@ -20,7 +20,7 @@ import {
 } from "../helpers.js";
 import { fetchVendorSite } from "./fetch-site.js";
 import { extractVendorContact } from "./extract.js";
-import { buildEnrichmentResult } from "./safety-rules.js";
+import { buildEnrichmentResult, domainLabel, sourceDomainRelatesToVendor } from "./safety-rules.js";
 import type { VendorRowForEnrichment } from "./types.js";
 
 /**
@@ -124,6 +124,44 @@ async function flagDuplicateContactValues(
   } catch {
     // See the docblock: fail open, do not sink the enrichment run.
   }
+}
+
+/**
+ * OPE-511 — another vendor on this same website whose NAME matches its domain.
+ *
+ * Deliberately narrow. Sharing a domain is not by itself evidence of anything
+ * (franchises, listing sites, a parent company), so the match also has to point
+ * at the other vendor: `udderlygutters.com` matches "Udderly Gutters" and not
+ * "Third Shift Fabrication", which is what makes the page theirs rather than
+ * merely shared.
+ *
+ * Returns the other vendor's name for the log, or null. A null means "no such
+ * vendor found", never "checked and clean" — the affinity flag covers the rest.
+ */
+async function findVendorClaimingDomain(
+  db: ReturnType<typeof getDb>,
+  vendorId: string,
+  sourceUrl: string
+): Promise<string | null> {
+  const label = domainLabel(sourceUrl);
+  if (!label) return null;
+  try {
+    const others = await db
+      .select({ id: vendors.id, businessName: vendors.businessName, website: vendors.website })
+      .from(vendors)
+      .where(and(ne(vendors.id, vendorId), isNotNull(vendors.website)))
+      .limit(5000);
+    for (const o of others) {
+      if (!o.website) continue;
+      if (domainLabel(o.website) !== label) continue;
+      if (sourceDomainRelatesToVendor(o.businessName, sourceUrl)) return o.businessName;
+    }
+  } catch {
+    // A lookup failure must not sink the enrichment run; the affinity flag
+    // still applies and the candidate still stages.
+    return null;
+  }
+  return null;
 }
 
 /** One enrichment job. */
@@ -242,9 +280,20 @@ export async function processEnrichmentJob(
     state: row.state,
     description: row.description,
   };
+  // OPE-511 — is this website actually somebody ELSE's?
+  //
+  // 564 vendors (22% of those with a site) share 180 domains, so "the vendor's
+  // own website" is not a reliable authority — it is the field that gets
+  // contaminated. When another vendor lists the same site AND the domain
+  // matches THEIR name rather than ours, the page is theirs and everything on
+  // it is suspect. That is the `Third Shift Fabrication` / `Udderly Gutters`
+  // specimen exactly.
+  const domainClaimedByVendor = await findVendorClaimingDomain(db, row.id, sourceUrl);
+
   const result = buildEnrichmentResult(vendorRow, extraction, {
     sourceUrl,
     finalUrl: fetched.finalUrl,
+    domainClaimedByVendor,
   });
 
   // --- Domain problem: flag the vendor, stage nothing ---

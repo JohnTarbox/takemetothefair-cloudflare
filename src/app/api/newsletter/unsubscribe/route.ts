@@ -13,6 +13,7 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { newsletterSubscribers } from "@/lib/db/schema";
+import { removeFromAllLists } from "@/lib/email/newsletter-list-membership";
 import {
   verifyUnsubscribeToken,
   resolveUnsubscribeSecret,
@@ -69,6 +70,22 @@ async function performUnsubscribe(token: string): Promise<string> {
         unsubscribeEvidence: "signed-unsubscribe-link",
       })
       .where(eq(newsletterSubscribers.email, email));
+
+    // OPE-510 scope 2 — unsubscribing must reach the LIST table too.
+    //
+    // The weekend broadcast selects from `newsletter_list_subscriptions`, so
+    // without this the two tables disagree about who is subscribed. The sharp
+    // edge is the resubscribe: a returning subscriber reads `unsubscribed=0`,
+    // the canary counts them as balanced, and the broadcast still skips them
+    // because their list row stays tombstoned. `addToList` clears the stamp on
+    // re-confirm, and this is its counterpart.
+    const [sub] = await db
+      .select({ id: newsletterSubscribers.id })
+      .from(newsletterSubscribers)
+      .where(eq(newsletterSubscribers.email, email))
+      .limit(1);
+    if (sub) await removeFromAllLists(db, sub.id);
+
     return "ok";
   } catch (e) {
     await logError(db, {

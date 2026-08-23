@@ -32,6 +32,7 @@ import {
 import { deriveCrossings, auditStoredDates } from "@takemetothefair/utils";
 import { jsonContent } from "../helpers.js";
 import { loadLocationsUniverse } from "../locations-universe.js";
+import { listBalance } from "../newsletter-list-balance.js";
 import type { Db } from "../db.js";
 import { findSlugCollisionPairs } from "../slug-collision-invariant.js";
 import type { AuthContext } from "../auth.js";
@@ -540,6 +541,17 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
       // rows — stronger than the one-off local check that caught the original
       // 423-row silent loss. Fail-soft: a health report that cannot render
       // because one block threw is worse than a block that says it failed.
+      // OPE-510 — cheap enough to run unconditionally; three COUNTs.
+      let newsletterListBalance: unknown;
+      try {
+        newsletterListBalance = await listBalance(db);
+      } catch (err) {
+        newsletterListBalance = {
+          error: "newsletter_list_balance_failed",
+          detail: err instanceof Error ? err.message : String(err),
+        };
+      }
+
       let locationsUniverse: unknown;
       try {
         locationsUniverse = await loadLocationsUniverse(db);
@@ -605,6 +617,25 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
             // `oldest_failed_days` is the actionable one: fixing a cause does
             // not move rows that already failed, and nothing else counts them.
             stuck_inbound_emails: stuckInbound ?? null,
+            // OPE-510 — the two subscriber counts that must agree.
+            //
+            // `newsletter_list_subscriptions` shipped with no writer on the
+            // signup path while the weekend broadcast switched to reading it,
+            // so confirmed subscribers accumulated with no list row and got no
+            // mail. It hid for ELEVEN DAYS because nothing compared the two
+            // sides: the list had 17 members the morning of its backfill and
+            // still had 17 a week later, and a number that never moves looks
+            // exactly like a number nothing writes to.
+            //
+            // `orphaned` is the actionable figure and it counts PEOPLE, each of
+            // whom completed double opt-in and is receiving nothing. It read 6
+            // before the 08-21 backfill, 0 after, and 3 again two days later —
+            // which is the whole argument for watching it continuously rather
+            // than auditing it twice.
+            newsletter_list_balance: {
+              rule: "every confirmed, non-unsubscribed subscriber is on at least one active list",
+              result: newsletterListBalance,
+            },
             // OPE-292 — placeholder accounts must not pollute the
             // registration partition. `misfiled_placeholders` should be 0;
             // non-zero means some creation path stopped stamping `origin`.

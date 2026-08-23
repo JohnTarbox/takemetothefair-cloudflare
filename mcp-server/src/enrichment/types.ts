@@ -69,6 +69,20 @@ export type CandidateFlag =
   // or a scraped third-party address; a human decides). Distinct from
   // placeholder_email, which is dropped outright.
   | "email_domain_mismatch"
+  // OPE-511 — the SOURCE PAGE's registrable domain bears no relation to this
+  // vendor's name. Blocks auto-merge and routes to a human; it does NOT assert
+  // the value is wrong. Measured against the live pending set, roughly half the
+  // candidates this catches are legitimate (a bookseller at `rarebookstore.net`,
+  // an acronym domain like `ecys.com`), so treating it as a discard would throw
+  // away real data. Treating it as "needs eyes" is the correct strength.
+  | "source_domain_unrelated"
+  // OPE-511 — stronger, and the one that caught the headline specimen: ANOTHER
+  // vendor is on this same website, and the domain matches THEIR name rather
+  // than ours. `Third Shift Fabrication` carried `udderlygutters.com`, which is
+  // also `Udderly Gutters`' site, and was proposed their phone at confidence
+  // 0.90 with zero flags — fully eligible under the approved auto-merge rule,
+  // and wrong. Distinct from the flag above so triage can see which is which.
+  | "source_domain_other_vendor"
   // OPE-512 — this exact contact value is already proposed for a DIFFERENT
   // vendor. Auto-merging writes one phone or email onto several live vendor
   // rows and destroys the cheapest duplicate-vendor signal we have: measured on
