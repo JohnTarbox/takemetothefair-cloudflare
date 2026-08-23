@@ -7,7 +7,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createTestDb, mockIndexNowFetch, type TestDb } from "./setup-db.js";
 import { runOccurredTransitionSweep } from "../src/event-occurred-sweep.js";
 import * as logger from "../src/logger.js";
-import { events, adminActions, promoters } from "../src/schema.js";
+import { events, adminActions, promoters, eventVendors, vendors, users } from "../src/schema.js";
 import { and, eq } from "drizzle-orm";
 import { unsafeSlug } from "@takemetothefair/utils";
 
@@ -251,5 +251,136 @@ describe("runOccurredTransitionSweep — cross-run idempotency", () => {
     expect(
       db.select().from(events).where(eq(events.rolledFromEventId, "recurring")).all()
     ).toHaveLength(1);
+  });
+});
+
+describe("runOccurredTransitionSweep — Pass 3 already-held rosters (OPE-525)", () => {
+  // Prod shape this fixes: 34 OCCURRED events carrying 1,440 CONFIRMED/APPROVED
+  // vendor links had ALL been stamped NEEDS_RESEARCH by this sweep, because it
+  // selected on `vendor_roster_status IS NULL` and trusted a downstream worker
+  // (in another repo) to skip populated events. The worker did not, so the
+  // weekly drain re-surfaced them indefinitely.
+  function seedVendors(eventId: string, n: number, participation = "EXHIBITOR") {
+    for (let i = 0; i < n; i++) {
+      const vid = `ven-${eventId}-${i}`;
+      db.insert(users)
+        .values({ id: `u-${vid}`, email: `${vid}@test`, role: "VENDOR" })
+        .run();
+      db.insert(vendors)
+        .values({
+          id: vid,
+          userId: `u-${vid}`,
+          businessName: `Vendor ${i}`,
+          slug: unsafeSlug(`vendor-${eventId}-${i}`),
+        })
+        .run();
+      db.insert(eventVendors)
+        .values({
+          id: `ev-${vid}`,
+          eventId,
+          vendorId: vid,
+          status: "CONFIRMED",
+          participationType: participation,
+        })
+        .run();
+    }
+  }
+
+  it("stamps HAS_ROSTER instead of queueing research when the roster is already held", async () => {
+    seed({ id: "rostered", slug: "rostered-2026" });
+    seedVendors("rostered", 12); // >= ROSTER_EVIDENCE_MIN
+
+    const res = await runOccurredTransitionSweep(db, { now: NOW });
+
+    expect(rosterStatusOf("rostered")).toBe("HAS_ROSTER");
+    expect(res.rosterAlreadyHeld).toBe(1);
+    expect(res.rosterEnqueued).toBe(0);
+  });
+
+  it("stamps checked_at, so the determination does not read as unchecked", async () => {
+    seed({ id: "rostered2", slug: "rostered2-2026" });
+    seedVendors("rostered2", 12);
+
+    await runOccurredTransitionSweep(db, { now: NOW });
+
+    const row = db.select().from(events).where(eq(events.id, "rostered2")).all()[0];
+    expect(row.vendorRosterCheckedAt).not.toBeNull();
+    // We assert "links exist", not "this page is where they came from".
+    expect(row.vendorRosterSourceUrl ?? null).toBeNull();
+  });
+
+  it("a thin set of links is still NEEDS_RESEARCH — two vendors is not a roster", async () => {
+    // 13 of the 34 prod rows had <=3 links. Re-surfacing those is CORRECT; the
+    // guard must not swallow them just to drive the audit query to zero.
+    seed({ id: "thin", slug: "thin-2026" });
+    seedVendors("thin", 2);
+
+    const res = await runOccurredTransitionSweep(db, { now: NOW });
+
+    expect(rosterStatusOf("thin")).toBe("NEEDS_RESEARCH");
+    expect(res.rosterAlreadyHeld).toBe(0);
+    expect(res.rosterEnqueued).toBe(1);
+  });
+
+  it("SPONSOR_ONLY links never count as a roster, however many there are", async () => {
+    // Three prod events had sponsors as their ONLY links. Counting them would
+    // stamp HAS_ROSTER on an event we have genuinely never rostered — removing
+    // it from research on false evidence, which is worse than the original bug.
+    seed({ id: "sponsors", slug: "sponsors-2026" });
+    seedVendors("sponsors", 15, "SPONSOR_ONLY");
+
+    const res = await runOccurredTransitionSweep(db, { now: NOW });
+
+    expect(rosterStatusOf("sponsors")).toBe("NEEDS_RESEARCH");
+    expect(res.rosterAlreadyHeld).toBe(0);
+  });
+
+  it("only CONFIRMED/APPROVED links count — pending applications are not a roster", async () => {
+    seed({ id: "applied", slug: "applied-2026" });
+    for (let i = 0; i < 15; i++) {
+      const vid = `ven-applied-${i}`;
+      db.insert(users)
+        .values({ id: `u-${vid}`, email: `${vid}@test`, role: "VENDOR" })
+        .run();
+      db.insert(vendors)
+        .values({
+          id: vid,
+          userId: `u-${vid}`,
+          businessName: `V${i}`,
+          slug: unsafeSlug(`v-applied-${i}`),
+        })
+        .run();
+      db.insert(eventVendors)
+        .values({ id: `ev-${vid}`, eventId: "applied", vendorId: vid, status: "APPLIED" })
+        .run();
+    }
+
+    const res = await runOccurredTransitionSweep(db, { now: NOW });
+
+    expect(rosterStatusOf("applied")).toBe("NEEDS_RESEARCH");
+    expect(res.rosterAlreadyHeld).toBe(0);
+  });
+
+  it("does not clobber an existing terminal status", async () => {
+    // The IS NULL guard predates this change; pin it, because the new branch
+    // writes HAS_ROSTER and must not become a way to overwrite NO_PUBLIC_LIST.
+    seed({ id: "settled", slug: "settled-2026", vendorRosterStatus: "NO_PUBLIC_LIST" });
+    seedVendors("settled", 20);
+
+    const res = await runOccurredTransitionSweep(db, { now: NOW });
+
+    expect(rosterStatusOf("settled")).toBe("NO_PUBLIC_LIST");
+    expect(res.rosterAlreadyHeld).toBe(0);
+  });
+
+  it("is idempotent across runs", async () => {
+    seed({ id: "twice", slug: "twice-2026" });
+    seedVendors("twice", 12);
+
+    await runOccurredTransitionSweep(db, { now: NOW });
+    const second = await runOccurredTransitionSweep(db, { now: NOW });
+
+    expect(rosterStatusOf("twice")).toBe("HAS_ROSTER");
+    expect(second.rosterAlreadyHeld).toBe(0); // already terminal, not re-selected
   });
 });
