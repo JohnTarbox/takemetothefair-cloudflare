@@ -23,8 +23,8 @@
  *     so Pass-1 rows are owned solely by Pass 1. rolloverEventIfRecurring is
  *     idempotent, so this is safe even if the exclusion misses.
  */
-import { eq, and, or, inArray, lt, isNull, isNotNull } from "drizzle-orm";
-import { events, adminActions, promoters } from "./schema.js";
+import { eq, and, or, inArray, lt, isNull, isNotNull, ne, sql } from "drizzle-orm";
+import { events, adminActions, promoters, eventVendors } from "./schema.js";
 import { rolloverEventIfRecurring } from "./event-rollover.js";
 import { logError } from "./logger.js";
 import { chunkIds } from "@takemetothefair/utils";
@@ -36,6 +36,20 @@ const BACKFILL_LIMIT = 200;
 /** OPE-13 — per-run cap on the vendor-roster NEEDS_RESEARCH enqueue (Pass 3). */
 const ROSTER_ENQUEUE_LIMIT = 200;
 
+/**
+ * OPE-525 — how many non-sponsor vendor links count as "we already hold this
+ * roster", so the sweep stamps HAS_ROSTER instead of queueing research.
+ *
+ * 10 is drawn from the prod distribution of the rows this fixed, not picked for
+ * roundness. Of the 34 already-linked events the sweep had stamped
+ * NEEDS_RESEARCH, 15 carried >=10 non-sponsor links and held 1,396 of the 1,440
+ * links between them (97%); the remaining 19 held 44 links, thirteen of them
+ * three or fewer. So the threshold separates "an ingested exhibitor list" from
+ * "a couple of vendors we happen to know about", and the latter genuinely does
+ * still need research - re-surfacing those is correct, not a bug.
+ */
+const ROSTER_EVIDENCE_MIN = 10;
+
 const SOURCE = "mcp/event-occurred-sweep";
 
 export interface OccurredSweepResult {
@@ -44,6 +58,8 @@ export interface OccurredSweepResult {
   rolledFromBackfill: number;
   /** OPE-13 — events seeded into the vendor-roster NEEDS_RESEARCH queue. */
   rosterEnqueued: number;
+  /** OPE-525 — events stamped HAS_ROSTER because they already held >=ROSTER_EVIDENCE_MIN non-sponsor links. */
+  rosterAlreadyHeld: number;
   /** OPE-31 — events seeded straight to NO_PUBLIC_LIST because their producer is
    *  flagged vendor_roster_publishes_lists = false (never publishes a roster). */
   rosterNoPublicList: number;
@@ -65,6 +81,7 @@ export async function runOccurredTransitionSweep(
     rolledFromTransition: 0,
     rolledFromBackfill: 0,
     rosterEnqueued: 0,
+    rosterAlreadyHeld: 0,
     rosterNoPublicList: 0,
     errors: 0,
     transitionLimitHit: false,
@@ -221,9 +238,17 @@ export async function runOccurredTransitionSweep(
   // (HAS_ROSTER / NO_PUBLIC_LIST / PARTIAL set by the research worker) is NEVER
   // clobbered — the dead-end stays sticky and the system converges. Capped per
   // run like the other passes; the remainder seeds over subsequent daily runs.
-  // Soft-deleted/merged tombstones (merged_into) are excluded. The worker's own
-  // pre-check (skip if list_event_vendors already populated) dedups events that
-  // happen to already carry links, so enqueuing on NULL is safe.
+  // Soft-deleted/merged tombstones (merged_into) are excluded.
+  //
+  // OPE-525 — this used to read "the worker's own pre-check (skip if
+  // list_event_vendors already populated) dedups events that happen to already
+  // carry links, so enqueuing on NULL is safe." Prod falsified it: 34 OCCURRED
+  // events carrying 1,440 CONFIRMED/APPROVED links had all been stamped
+  // NEEDS_RESEARCH here, and the weekly drain re-surfaced them indefinitely.
+  //
+  // The assumption was not wrong so much as unenforceable: the "worker" is a
+  // skill in another repo on another machine, so this sweep could never hold it
+  // to that contract. The dedup now happens HERE, where it can be tested.
   try {
     const toEnqueue = await db
       .select({
@@ -256,8 +281,41 @@ export async function runOccurredTransitionSweep(
     // queue: their events go straight to NO_PUBLIC_LIST so passes don't re-grind
     // the same producer-wide dead-end. Only an explicit `false` diverts; NULL
     // (unknown) and `true` keep today's NEEDS_RESEARCH behavior.
-    const noPublicListIds = toEnqueue.filter((e) => e.publishesLists === false).map((e) => e.id);
-    const needsResearchIds = toEnqueue.filter((e) => e.publishesLists !== false).map((e) => e.id);
+    // OPE-525 — count roster-grade links the event ALREADY holds, so a show whose
+    // exhibitor list was ingested months ago is not queued as unresearched.
+    //
+    // SPONSOR_ONLY is excluded deliberately: a sponsor is not a vendor roster.
+    // Three of the affected prod events had sponsors as their ONLY links, and
+    // counting those would have stamped HAS_ROSTER on an event we genuinely
+    // have never rostered - removing it from research on false evidence, which
+    // is worse than the bug being fixed.
+    const linkCounts = new Map<string, number>();
+    for (const batch of chunkIds(toEnqueue.map((e) => e.id))) {
+      const rows = await db
+        .select({ eventId: eventVendors.eventId, n: sql<number>`COUNT(*)` })
+        .from(eventVendors)
+        .where(
+          and(
+            inArray(eventVendors.eventId, batch),
+            inArray(eventVendors.status, ["CONFIRMED", "APPROVED"]),
+            or(
+              isNull(eventVendors.participationType),
+              ne(eventVendors.participationType, "SPONSOR_ONLY")
+            )
+          )
+        )
+        .groupBy(eventVendors.eventId);
+      for (const r of rows) linkCounts.set(r.eventId, Number(r.n));
+    }
+
+    const alreadyRosteredIds = toEnqueue
+      .filter((e) => (linkCounts.get(e.id) ?? 0) >= ROSTER_EVIDENCE_MIN)
+      .map((e) => e.id);
+    const rosteredSet = new Set(alreadyRosteredIds);
+    const remaining = toEnqueue.filter((e) => !rosteredSet.has(e.id));
+
+    const noPublicListIds = remaining.filter((e) => e.publishesLists === false).map((e) => e.id);
+    const needsResearchIds = remaining.filter((e) => e.publishesLists !== false).map((e) => e.id);
 
     // OPE-241 — chunked writes: ROSTER_ENQUEUE_LIMIT is 200, i.e. ABOVE D1's
     // 100-bound-param cap, so a full pass already throws "too many SQL
@@ -278,6 +336,19 @@ export async function runOccurredTransitionSweep(
         .where(inArray(events.id, batch));
     }
     result.rosterEnqueued = needsResearchIds.length;
+
+    // Stamp checked_at as well: this IS a determination about the roster, made
+    // from evidence already in the database, so it should not read as unchecked.
+    // source_url stays null - we are asserting "links exist", not "this page is
+    // where they came from", and set_vendor_roster_status already warns about a
+    // null source_url rather than pretending one.
+    for (const batch of chunkIds(alreadyRosteredIds)) {
+      await db
+        .update(events)
+        .set({ vendorRosterStatus: "HAS_ROSTER", vendorRosterCheckedAt: now, updatedAt: now })
+        .where(inArray(events.id, batch));
+    }
+    result.rosterAlreadyHeld = alreadyRosteredIds.length;
   } catch (error) {
     result.errors++;
     await logError(db, {
@@ -293,7 +364,7 @@ export async function runOccurredTransitionSweep(
   console.log(
     `[occurred-sweep] transitioned=${result.transitioned} ` +
       `rolledFromTransition=${result.rolledFromTransition} ` +
-      `rolledFromBackfill=${result.rolledFromBackfill} rosterEnqueued=${result.rosterEnqueued} ` +
+      `rolledFromBackfill=${result.rolledFromBackfill} rosterEnqueued=${result.rosterEnqueued} rosterAlreadyHeld=${result.rosterAlreadyHeld} ` +
       `errors=${result.errors} ` +
       `transitionLimitHit=${result.transitionLimitHit} backfillLimitHit=${result.backfillLimitHit} ` +
       `rosterEnqueueLimitHit=${result.rosterEnqueueLimitHit}`
