@@ -24,8 +24,14 @@ import { z } from "zod";
 import { and, desc, eq, gte, lte, like, sql } from "drizzle-orm";
 import { emailSendLedger, events, inboundEmails, workflowRunSteps } from "../schema.js";
 import { jsonContent } from "../helpers.js";
+import { mainAppFetch, type MainAppEnv } from "../main-app-fetch.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
+
+/** MCP tool envelope around `jsonContent`, which returns a content ITEM. */
+function contentOf(payload: unknown) {
+  return { content: [jsonContent(payload)] };
+}
 
 /** Parse a JSON column without letting one malformed row kill the read. */
 function safeJson<T>(raw: string | null | undefined, fallback: T): T {
@@ -49,7 +55,9 @@ export function registerInboundReadTools(
   server: McpServer,
   db: Db,
   auth: AuthContext,
-  env?: { INBOUND_EMAIL?: { get(id: string): Promise<{ status(): Promise<unknown> }> } }
+  env?: MainAppEnv & {
+    INBOUND_EMAIL?: { get(id: string): Promise<{ status(): Promise<unknown> }> };
+  }
 ) {
   if (auth.role !== "ADMIN") return;
 
@@ -143,13 +151,128 @@ export function registerInboundReadTools(
               outcome: o.outcome,
               ...(params.include_ocr_text !== false ? { markdown: o.markdown } : {}),
             })),
+            // OPE-409 — the previous wording read "it is not recoverable",
+            // where "it" scans as THE ATTACHMENT. On 2026-08-21 an agent read it
+            // that way, concluded a fair's official poster was unreachable, and
+            // told John so — while the file sat in `attachment_refs` on this
+            // same response. What is unrecoverable is the OCR TEXT.
             attachment_ocr_note:
               ocr.length === 0 && row.attachmentCount > 0
-                ? "No OCR stored. Emails processed before OPE-499 discarded it after extraction — it is not recoverable for this row."
+                ? "No OCR TEXT stored — discarded after extraction before OPE-499, and not regenerable. The ATTACHMENT ITSELF is retained: see attachment_refs[].key, and call fetch_inbound_attachment to read its bytes."
                 : undefined,
           }),
         ],
       };
+    }
+  );
+
+  // --- fetch_inbound_attachment --------------------------------------------
+  //
+  // OPE-409 step 2. The bytes of an inbound attachment have always been
+  // reachable — anonymously, from the public CDN — and that is the exposure this
+  // ticket exists to close. The moment it closes, the ONLY route is the
+  // admin-gated `/api/admin/inbound-emails/[id]/attachments/[index]`, which
+  // takes a browser session or the `X-Internal-Key` that only our own Workers
+  // hold. Neither is callable by an agent holding an MCP token.
+  //
+  // So the lockdown cannot ship without this tool: closing the public path first
+  // would trade a low-severity exposure for a real operational loss, namely the
+  // ability to rescue photos the pipeline drops.
+  //
+  // Discoverability is part of the requirement, not a nicety. On 2026-08-21 an
+  // agent working a live repair concluded a fair's official poster was
+  // unrecoverable and told John so — the reasoning was "no MCP tool returns the
+  // bytes", which was TRUE, and the conclusion was false, because the CDN was
+  // serving it. A recovery path that only exists in a ticket gets rediscovered
+  // the hard way. Hence this tool, and hence the `attachment_ocr_note` above
+  // pointing straight at it.
+  server.tool(
+    "fetch_inbound_attachment",
+    "Read the BYTES of one inbound-email attachment (poster, flyer, PDF) — base64, with its name and mime type. This is the authenticated recovery path: use it when an attachment's content matters and no OCR text was stored, and after the public inbound-attachments/ CDN prefix is closed. Get the index from get_inbound_email's attachment_refs. Read-only. Admin only.",
+    {
+      inbound_email_id: z.string().describe("inbound_emails.id"),
+      index: z
+        .number()
+        .int()
+        .min(0)
+        .default(0)
+        .describe("Position in attachment_refs, from get_inbound_email."),
+    },
+    async (params: { inbound_email_id: string; index: number }) => {
+      if (!env?.INTERNAL_API_KEY && !env?.MAIN_APP) {
+        return contentOf({
+          ok: false,
+          error: "unconfigured",
+          detail:
+            "Neither MAIN_APP binding nor INTERNAL_API_KEY is set on this Worker, so the authenticated attachment route cannot be reached.",
+        });
+      }
+
+      let res: Response;
+      try {
+        res = await mainAppFetch(
+          env,
+          `/api/admin/inbound-emails/${encodeURIComponent(params.inbound_email_id)}/attachments/${params.index}`,
+          "fetch"
+        );
+      } catch (err) {
+        return contentOf({
+          ok: false,
+          error: "fetch-failed",
+          detail: err instanceof Error ? err.message : String(err),
+        });
+      }
+
+      if (!res.ok) {
+        // Surface the real status. A 401 here means the internal key is wrong,
+        // which is a deployment fault and must not read as "no such attachment".
+        return contentOf({
+          ok: false,
+          error: `http-${res.status}`,
+          detail:
+            res.status === 401
+              ? "The route rejected our internal key — a Worker configuration fault, not a missing attachment."
+              : res.status === 404
+                ? "No attachment at that index for that email."
+                : await res.text().catch(() => ""),
+        });
+      }
+
+      const buf = await res.arrayBuffer();
+      const bytes = new Uint8Array(buf);
+      const contentType = res.headers.get("content-type") ?? "application/octet-stream";
+      const disposition = res.headers.get("content-disposition") ?? "";
+      const nameMatch = disposition.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i);
+
+      // Base64 inflates by ~4/3, and a tool response has to survive being read
+      // by a model. Above the cap, return the metadata and say plainly that the
+      // bytes were withheld — a truncated base64 blob is worse than none,
+      // because it decodes to a corrupt file that looks like a real answer.
+      const MAX_INLINE_BYTES = 1_500_000;
+      if (bytes.byteLength > MAX_INLINE_BYTES) {
+        return contentOf({
+          ok: true,
+          inlined: false,
+          reason: "too-large",
+          size: bytes.byteLength,
+          max_inline_bytes: MAX_INLINE_BYTES,
+          content_type: contentType,
+          filename: nameMatch?.[1] ?? null,
+          note: "Bytes withheld, not truncated. For an image this size, replay_inbound_attachment (OCR/vision) is the cheaper read; a human can download it from /admin/inbound-emails.",
+        });
+      }
+
+      let binary = "";
+      for (const b of bytes) binary += String.fromCharCode(b);
+
+      return contentOf({
+        ok: true,
+        inlined: true,
+        size: bytes.byteLength,
+        content_type: contentType,
+        filename: nameMatch?.[1] ?? null,
+        base64: btoa(binary),
+      });
     }
   );
 

@@ -44,8 +44,11 @@ describe("inbound read tools (OPE-499)", () => {
     // Pinned as an exact list on purpose: this registrar is the inbound lane's
     // read surface, and the property worth guarding is that adding a WRITER here
     // fails the build rather than quietly shipping a mutation behind a name that
-    // reads like a query. OPE-501 added get_workflow_instance, also read-only.
+    // reads like a query. OPE-501 added get_workflow_instance, also read-only;
+    // OPE-409 added fetch_inbound_attachment, which streams bytes out and
+    // mutates nothing.
     expect([...tools.keys()].sort()).toEqual([
+      "fetch_inbound_attachment",
       "get_inbound_email",
       "get_sent_emails",
       "get_workflow_instance",
@@ -140,7 +143,20 @@ describe("inbound read tools (OPE-499)", () => {
     } as never);
     const out = await callJson(tools, "get_inbound_email", { inbound_email_id: "e4" });
     expect(out.attachment_ocr).toEqual([]);
-    expect(out.attachment_ocr_note).toMatch(/not recoverable/i);
+    // OPE-409 — the assertion changed because the SENTENCE was the defect.
+    // The old copy said "it is not recoverable", where "it" scans as the
+    // ATTACHMENT; on 2026-08-21 an agent read it that way, declared a fair's
+    // poster unreachable and told John so, while the file sat in
+    // `attachment_refs` on the same response. So the property now pinned is not
+    // "says unrecoverable" but the two that actually matter:
+    const note = out.attachment_ocr_note as string;
+    // 1. it is explicit that only the TEXT is gone…
+    expect(note).toMatch(/no ocr text stored/i);
+    // 2. …and it points at the attachment that is still there.
+    expect(note).toMatch(/attachment_refs/);
+    expect(note).toMatch(/fetch_inbound_attachment/);
+    // The old wording must not creep back: no bare "it is not recoverable".
+    expect(note).not.toMatch(/\bit is not recoverable\b/i);
   });
 
   it("warns that parsed_url is singular — the trap that made a 4-URL email look like 1", async () => {
