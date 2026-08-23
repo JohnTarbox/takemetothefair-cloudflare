@@ -68,7 +68,16 @@ export type CandidateFlag =
   // website domain — stage it but flag for review (it may be the real contact,
   // or a scraped third-party address; a human decides). Distinct from
   // placeholder_email, which is dropped outright.
-  | "email_domain_mismatch";
+  | "email_domain_mismatch"
+  // OPE-512 — this exact contact value is already proposed for a DIFFERENT
+  // vendor. Auto-merging writes one phone or email onto several live vendor
+  // rows and destroys the cheapest duplicate-vendor signal we have: measured on
+  // prod 2026-08-23, 37 clusters covering 77 vendors, and most of them are
+  // near-duplicate NAMES — "Gryffon Ridge" vs "Gryphon Ridge Spice Merchants",
+  // "Hamlin's Marina" vs "Hamlin's Marine", "The Kona Brand" vs "Kona Brand".
+  // Those are dedup LEADS. Merging them silently is how a duplicate pair
+  // becomes two equally-plausible rows nobody can tell apart afterwards.
+  | "duplicate_value_across_vendors";
 
 export interface ProposedCandidate {
   field: EnrichField;
