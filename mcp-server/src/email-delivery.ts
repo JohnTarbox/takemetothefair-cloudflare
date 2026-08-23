@@ -113,6 +113,12 @@ export function deliveryStatusOf(ev: EmailSendingEvent): string | null {
  * brackets, `<abc@meetmeatthefair.com>`. The documented event payload shows a
  * bare id. Rather than guess, match on both spellings with exact equality.
  *
+ * SETTLED IN PRODUCTION 2026-08-23: live events carry the *angle-bracket* form,
+ * so the documentation is wrong and the stored spelling is the one that matches.
+ * 91/91 events resolved to a ledger row with zero unmatched warns. Keep the
+ * both-spellings tolerance anyway — it costs one array entry, it is the only
+ * reason this worked on day one, and the docs remain free to become true later.
+ *
  * Exact equality (via IN) and never LIKE: D1 caps a LIKE pattern at 50
  * characters and a Message-ID can exceed that. That cap is invisible locally —
  * better-sqlite3 allows 50000 — and has already broken one matcher in this

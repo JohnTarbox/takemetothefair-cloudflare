@@ -214,9 +214,19 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     // unless something watches for the silence.
     //
     // 72h window: at ~15 sends/day every day produces delivered events, so three
-    // silent days is a fault, not a quiet weekend. Dormant (enabled_at NULL in
-    // drizzle/0193) until the subscription exists — a probe enabled ahead of its
-    // producer just teaches the operator to ignore reds.
+    // silent days is a fault, not a quiet weekend. Seeded dormant (enabled_at
+    // NULL in drizzle/0193) because a probe enabled ahead of its producer just
+    // teaches the operator to ignore reds.
+    //
+    // ENABLED 2026-08-23, once the producer was proven rather than assumed. The
+    // subscription was created 08-17 00:57:28Z and the first event did not
+    // arrive until 06:01:37Z — a ~5h gap on Cloudflare's side that read exactly
+    // like a dead subscription while it lasted, and briefly got recorded as one.
+    // Do not treat a few silent hours after creating a subscription as evidence
+    // of anything.
+    //
+    // The window is now measured, not estimated: 91 events over the first seven
+    // days, 6-32 per day, with no zero days. 72h holds.
     name: "email-delivery-events",
     ownerOpe: "OPE-177",
     label: "Email delivery events (CF subscription)",
