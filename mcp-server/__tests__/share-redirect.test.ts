@@ -52,9 +52,13 @@ describe("resolveShareRedirect (OPE-193)", () => {
     expect(lastRequestedUrl).toBe("https://share.google/abcd");
   });
 
-  it("resolves a relative Location, which stays on the share host → loop guard → null", async () => {
+  it("resolves a relative Location, which stays on the share host → cycle guard → null", async () => {
     // A relative Location resolves against the share URL, so it can only land
-    // back on the same share host (fb.me) — the loop guard then returns null.
+    // back on the same share host (fb.me). Since OPE-277 that is a WAYPOINT
+    // rather than an immediate null — the resolver follows it, the stub answers
+    // with the same Location, and the cycle guard stops it. Same outcome, and
+    // the distinction matters: a share host that redirects onward to a real
+    // page now resolves instead of being dropped.
     stubRedirect({ status: 301, location: "/landing/123" });
     expect(await resolveShareRedirect("https://fb.me/e/xyz")).toBeNull();
   });
