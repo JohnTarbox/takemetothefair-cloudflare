@@ -38,6 +38,8 @@ const SCHEMA_SQL = `
     -- OPE-425 — resolved canonical municipality (drizzle/0207).
     location_id TEXT,
     location_matched_by TEXT,
+    -- OPE-425 finding 9 (drizzle/0224) — how far a coordinates match reached.
+    location_match_km REAL,
     latitude REAL,
     longitude REAL,
     capacity INTEGER,

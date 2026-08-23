@@ -250,6 +250,17 @@ WHERE location_id IS NULL
 // boundary file we can join in SQLite, and a centroid within ~25 km is an
 // honest approximation PROVIDED it is labelled as one — which is what
 // `location_matched_by = 'coordinates'` is for.
+//
+// OPE-425 review finding 9 — the distance is written WITH the match.
+//
+// Without it every pass-2 row reads as an identical positive `coordinates`
+// match, and a 200 m hit is indistinguishable from a 22 km guess forever after.
+// The distance is only knowable here: it is this statement's ORDER BY key.
+// Deriving it later would measure against whatever `locations` holds then.
+//
+// 111.32 km per degree of latitude; the same cos²(43°) longitude scaling as the
+// ranking term, so the stored km matches the metric that chose the row rather
+// than a second, subtly different one.
 out.push("");
 out.push("-- Pass 2 — coordinate fallback for venues pass 1 could not name-match.");
 out.push(`UPDATE venues SET
@@ -262,7 +273,20 @@ out.push(`UPDATE venues SET
             + ((l.longitude - venues.longitude) * (l.longitude - venues.longitude) * 0.535)
      LIMIT 1
   ),
-  location_matched_by = 'coordinates'
+  location_matched_by = 'coordinates',
+  location_match_km = (
+    SELECT 111.32 * SQRT(
+             ((l.latitude - venues.latitude) * (l.latitude - venues.latitude))
+           + ((l.longitude - venues.longitude) * (l.longitude - venues.longitude) * 0.535)
+           )
+      FROM locations l
+     WHERE l.state = venues.state
+       AND l.is_denominator_eligible = 1
+       AND l.latitude IS NOT NULL AND l.longitude IS NOT NULL
+     ORDER BY ((l.latitude - venues.latitude) * (l.latitude - venues.latitude))
+            + ((l.longitude - venues.longitude) * (l.longitude - venues.longitude) * 0.535)
+     LIMIT 1
+  )
 WHERE location_id IS NULL
   AND latitude IS NOT NULL AND longitude IS NOT NULL
   AND (

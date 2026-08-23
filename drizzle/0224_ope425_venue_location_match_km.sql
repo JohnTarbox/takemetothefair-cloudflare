@@ -1,0 +1,18 @@
+-- OPE-425 finding 9 — record HOW FAR the coordinate match reached, as it is made.
+--
+-- Pass 2 of the loader resolves a venue we cannot name-match to the nearest
+-- denominator-eligible municipality centroid within ~25 km. That is an honest
+-- approximation, and `location_matched_by = 'coordinates'` says so. What it does
+-- not say is whether a given row was 200 m out or 22 km out — and once the run
+-- is over, both read as an identical positive `coordinates` match with no way to
+-- tell them apart.
+--
+-- The distance is known only at write time (it is the ORDER BY key), so it has
+-- to be captured then. Reconstructing it later means re-deriving a match against
+-- a `locations` table that may since have changed, which answers a different
+-- question.
+--
+-- Nullable and only set for `location_matched_by = 'coordinates'`: an exact or
+-- alias match has no distance, and a zero would read as "perfect", which is the
+-- opposite of true.
+ALTER TABLE venues ADD COLUMN location_match_km REAL;

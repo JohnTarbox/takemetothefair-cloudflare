@@ -49,14 +49,33 @@ export const EXPECTED_COUNTY_UNASSIGNED = 185;
 
 export interface LocationsUniverse {
   loaded: boolean;
+  /**
+   * OPE-425 finding 8 — the verdict, and it must be able to say "no".
+   *
+   * `true` loaded and clean · `false` loaded with problems · `null` NOT LOADED.
+   *
+   * Null rather than true on an empty table is the whole point. Every assertion
+   * below was written as `!loaded || <check>`, so a table with zero rows
+   * reported `rows_match: true`, every state `ok: true` and `problems: []` — a
+   * green light on nothing at all. That is worse than no check, because the
+   * table this guards is the one whose known failure is a SILENT partial write
+   * (2,390 in, 1,967 stored, no error), and an oracle that has never returned
+   * a failure on any input is not evidence of anything.
+   */
+  ok: boolean | null;
+  /** `not-loaded` · `ok` · `problems`. The word form of `ok`, so a null cannot
+   *  be skim-read as a pass. */
+  status: "not-loaded" | "ok" | "problems";
   rows_stored: number;
   rows_expected: number;
-  rows_match: boolean;
+  /** null when not loaded — unknown, not "matches". */
+  rows_match: boolean | null;
   by_state: Array<{
     state: string;
     municipal_stored: number;
     municipal_expected: number;
-    ok: boolean;
+    /** null when not loaded — see the note on `ok`. */
+    ok: boolean | null;
   }>;
   by_type: Record<string, number>;
   county_unassigned: number;
@@ -65,6 +84,24 @@ export interface LocationsUniverse {
   venues_total: number;
   venues_resolved: number;
   venues_by_matched_by: Record<string, number>;
+  /**
+   * OPE-425 finding 9 — the shape of the coordinate matches, not just their count.
+   *
+   * `venues_by_matched_by.coordinates` says how many rows the centroid fallback
+   * resolved. It cannot say whether they were good. A run that resolves 40 rows
+   * at a median 22 km has assigned towns almost at random and reads identically
+   * to one that resolved 40 at 200 m. `p50_km`/`max_km` is what separates them,
+   * and `over_10km` is the number worth acting on.
+   *
+   * null before the loader has run, or on rows written before this column
+   * existed — deliberately not 0, which would claim perfect matches.
+   */
+  coordinate_match_km: {
+    n: number;
+    p50_km: number | null;
+    max_km: number | null;
+    over_10km: number;
+  } | null;
   /** Venues with neither a usable name nor a usable point — the OPE-421 list. */
   venues_unresolved: Array<{ state: string; city: string; has_coordinates: boolean }>;
   problems: string[];
@@ -100,8 +137,8 @@ export async function loadLocationsUniverse(db: Db): Promise<LocationsUniverse> 
 
   const byState = Object.entries(EXPECTED_MUNICIPALITIES).map(([state, expected]) => {
     const stored = municipalByState.get(state) ?? 0;
-    const ok = !loaded || stored === expected;
-    if (loaded && !ok) {
+    const ok = loaded ? stored === expected : null;
+    if (ok === false) {
       problems.push(`${state}: ${stored} municipalities stored, ${expected} expected`);
     }
     return { state, municipal_stored: stored, municipal_expected: expected, ok };
@@ -136,6 +173,24 @@ export async function loadLocationsUniverse(db: Db): Promise<LocationsUniverse> 
   const byMatchedBy: Record<string, number> = {};
   for (const r of matchRows) byMatchedBy[r.m] = Number(r.n);
 
+  // OPE-425 finding 9 — read the distances back. Ordered so p50 is a real
+  // median rather than an average, which a few far matches would drag.
+  const coordDistances = await db
+    .select({ km: sql<number>`location_match_km` })
+    .from(sql`venues`)
+    .where(sql`location_matched_by = 'coordinates' AND location_match_km IS NOT NULL`)
+    .orderBy(sql`location_match_km`);
+  const kms = coordDistances.map((r) => Number(r.km)).filter((n) => Number.isFinite(n));
+  const coordinateMatchKm =
+    kms.length === 0
+      ? null
+      : {
+          n: kms.length,
+          p50_km: Math.round(kms[Math.floor((kms.length - 1) / 2)] * 100) / 100,
+          max_km: Math.round(kms[kms.length - 1] * 100) / 100,
+          over_10km: kms.filter((k) => k > 10).length,
+        };
+
   // The OPE-421 report, narrowed to what it was always meant to be: rows we can
   // resolve by NEITHER name NOR point.
   const unresolved = await db
@@ -160,11 +215,19 @@ export async function loadLocationsUniverse(db: Db): Promise<LocationsUniverse> 
     );
   }
 
+  const status: LocationsUniverse["status"] = !loaded
+    ? "not-loaded"
+    : problems.length > 0
+      ? "problems"
+      : "ok";
+
   return {
     loaded,
+    ok: !loaded ? null : problems.length === 0,
+    status,
     rows_stored: Number(rowsStored),
     rows_expected: EXPECTED_TOTAL_ROWS,
-    rows_match: !loaded || Number(rowsStored) === EXPECTED_TOTAL_ROWS,
+    rows_match: loaded ? Number(rowsStored) === EXPECTED_TOTAL_ROWS : null,
     by_state: byState,
     by_type: byType,
     county_unassigned: Number(countyUnassigned),
@@ -173,6 +236,7 @@ export async function loadLocationsUniverse(db: Db): Promise<LocationsUniverse> 
     venues_total: Number(venuesTotal),
     venues_resolved: Number(venuesResolved),
     venues_by_matched_by: byMatchedBy,
+    coordinate_match_km: coordinateMatchKm,
     venues_unresolved: unresolved.map((r) => ({
       state: r.state,
       city: r.city,
