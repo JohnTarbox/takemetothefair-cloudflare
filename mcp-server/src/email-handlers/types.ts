@@ -201,6 +201,23 @@ export interface HandlerResult {
    *  inbound_emails.resulting_event_id at mark-done. */
   resultingEventId?: string | null;
   /**
+   * OPE-254 — the handler already did the thing; do not park this for a human.
+   *
+   * `correction` normally hibernates on a 7-day `waitForEvent` admin decision
+   * before it replies, because most corrections want a human's wording. A reply
+   * naming the fair on a held-photo notification is not that: the photos are
+   * already attached by the time the handler returns, and the outcome to report
+   * is a fact, not a judgement.
+   *
+   * Without this flag the workflow overwrites the handler's result wholesale
+   * after the gate — losing `replyKind: 'photo-intake-resolved'` and
+   * `resultingEventId` — and the person who did exactly what we asked waits up
+   * to a week for an acknowledgement of work that finished in seconds. That is
+   * the same "we told the user to do X, they did X, nothing happened" shape this
+   * ticket exists to close.
+   */
+  skipAdminDecision?: boolean;
+  /**
    * OPE-366 — where this email's work actually LANDED, when that destination
    * is not an event.
    *

@@ -87,6 +87,10 @@ export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> =
       },
       resultingEventId: photo.event.id,
       status: "replied",
+      // The photos are attached already. Parking this behind the correction
+      // lane's admin-decision pause would discard this result and make the
+      // sender wait up to 7 days to hear that it worked.
+      skipAdminDecision: true,
     };
   }
 
