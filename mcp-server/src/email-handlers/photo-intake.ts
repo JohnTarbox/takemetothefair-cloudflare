@@ -135,6 +135,29 @@ export function eventSlugsFromSubjectUrl(subject: string | null): string[] {
  *  multi-word slug (has a hyphen) of at least this length. */
 const MIN_NAME_SLUG_LEN = 8;
 
+/** Trailing edition year on a stored slug: `phillips-old-home-days-2026`. */
+const SLUG_YEAR_SUFFIX = /-(?:19|20)\d{2}$/;
+
+/**
+ * OPE-254 — the stored slug minus its edition year.
+ *
+ * 930 of our 1,463 approved events (64%) carry a `-YYYY` suffix, and nobody
+ * replying "this photo is from Phillips Old Home Days" types the year. Matching
+ * on the base is what makes a human's own words reach the row.
+ *
+ * Safe because the base is a PREFIX of the full slug: anything the full-slug
+ * test would have matched, the base test matches too, so this only ever widens.
+ */
+export function slugWithoutYear(slug: string): string {
+  return slug.replace(SLUG_YEAR_SUFFIX, "");
+}
+
+/** The year a subject explicitly names, if it names one. */
+export function explicitYearIn(subjectSlug: string): string | null {
+  const m = subjectSlug.match(/(?:^|-)((?:19|20)\d{2})(?:-|$)/);
+  return m ? m[1] : null;
+}
+
 /**
  * OPE-254 — resolve the fair when its NAME (not a bare slug token) appears in
  * the subject, e.g. "Photos from the Waterford World's Fair" → the event whose
@@ -183,6 +206,12 @@ export async function findEventBySubjectName(
   // createSlug of a subject with no slug-able characters is empty.
   if (subjectSlug.length < MIN_NAME_SLUG_LEN) return null;
 
+  // The stored slug minus any `-YYYY` edition suffix. Computed in SQL so the
+  // comparison stays a single indexed-ish scan rather than pulling 1,463 rows.
+  const baseSlug = sql`CASE WHEN ${events.slug} GLOB '*-[12][0-9][0-9][0-9]'
+      THEN substr(${events.slug}, 1, length(${events.slug}) - 5)
+      ELSE ${events.slug} END`;
+
   const rows = await db
     .select({ id: events.id, name: events.name, slug: events.slug })
     .from(events)
@@ -190,25 +219,65 @@ export async function findEventBySubjectName(
       and(
         eq(events.status, "APPROVED"),
         isNull(events.mergedInto),
-        sql`length(${events.slug}) >= ${MIN_NAME_SLUG_LEN}`,
-        sql`${events.slug} LIKE '%-%'`,
-        // Event's own slug must appear intact inside the slugified subject.
+        // Guards apply to the BASE, which is what we actually match on — a slug
+        // that only clears the bar because of its year suffix has not really
+        // cleared it.
+        sql`length(${baseSlug}) >= ${MIN_NAME_SLUG_LEN}`,
+        sql`${baseSlug} LIKE '%-%'`,
+        // The event's name (year suffix stripped) must appear intact inside the
+        // slugified subject.
+        //
         // instr(), not LIKE — see the OPE-404 note in this function's docblock.
         // The LIKE form built its PATTERN from this column and blew D1's 50-char
         // pattern limit on the 114 approved events with slugs over 48 chars.
-        sql`instr(${subjectSlug}, ${events.slug}) > 0`
+        //
+        // Matching the base rather than the full slug is OPE-254: 64% of
+        // approved events carry `-YYYY`, and a person naming the fair in a reply
+        // does not type it. The base is a prefix of the full slug, so this can
+        // only ever widen what matched before, never narrow it.
+        sql`instr(${subjectSlug}, ${baseSlug}) > 0`
       )
     );
 
   if (rows.length === 0) return null;
-  // Keep only maximal matches: drop any slug that is a substring of another
-  // matched slug (the shorter, redundant spelling of the same name).
-  const maximal = rows.filter(
-    (r) => !rows.some((o) => o.slug !== r.slug && o.slug.includes(r.slug))
+
+  // If the subject names a year, it must be the edition's year. Without this,
+  // "Phillips Old Home Days 2025" would resolve onto the 2026 row purely because
+  // the base matched — attaching a photo to the wrong edition, which for a photo
+  // is a wrong answer rather than a near miss. A subject with no year stays
+  // eligible for every edition and is disambiguated below.
+  const wantedYear = explicitYearIn(subjectSlug);
+  const yearOk = wantedYear
+    ? rows.filter((r) => {
+        const m = r.slug.match(SLUG_YEAR_SUFFIX);
+        return !m || m[0].slice(1) === wantedYear;
+      })
+    : rows;
+  if (yearOk.length === 0) return null;
+
+  // Keep only maximal matches: drop any name that is a substring of another
+  // matched name (the shorter, redundant spelling of the same fair).
+  //
+  // Compared on the year-stripped base, deliberately. `fryeburg-fair-2026` is
+  // NOT a substring of `fryeburg-fair-antique-show-2026` — the year sits in the
+  // middle — so comparing raw slugs would call a plain containment ambiguous and
+  // hold on a subject we can read perfectly well.
+  const withBase = yearOk.map((r) => ({ ...r, base: slugWithoutYear(r.slug) }));
+  const maximal = withBase.filter(
+    (r) => !withBase.some((o) => o.base !== r.base && o.base.includes(r.base))
   );
-  // Exactly one independent fair name in the subject → resolve. Two or more →
-  // genuinely ambiguous, hold and ask.
-  return maximal.length === 1 ? maximal[0] : null;
+
+  // Exactly one independent fair name in the subject → resolve.
+  //
+  // Two or more → hold and ask. That covers both genuine ambiguity ("Fryeburg
+  // Fair and Skowhegan Fair") and the same fair's multiple editions, which after
+  // year-stripping share a base and cannot be told apart from the name alone.
+  // Measured on prod: only 19 of 1,443 base names (1.3%) have more than one
+  // edition, so holding there costs little and guessing an edition would put a
+  // photo on the wrong year's page.
+  if (maximal.length !== 1) return null;
+  const { base: _base, ...winner } = maximal[0];
+  return winner;
 }
 
 /** Read EXIF from the first image attachment that yields usable data.
