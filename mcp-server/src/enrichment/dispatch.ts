@@ -24,6 +24,109 @@ import { buildEnrichmentResult, domainLabel, sourceDomainRelatesToVendor } from 
 import type { VendorRowForEnrichment } from "./types.js";
 
 /**
+ * The auto-merge DECISION, separated from the write.
+ *
+ * Extracted for OPE-512 so the rule every gate guard depends on — "a flagged
+ * candidate never auto-merges" — is testable without a database. That rule is
+ * load-bearing far beyond this ticket: OPE-511's source-domain flags, the
+ * city/state/area-code mismatches and the closed-business flag all block
+ * merging through this single line, so if it ever stopped honouring flags,
+ * several guards would silently stop guarding at once.
+ */
+export function decideFills(
+  candidates: {
+    field: string;
+    proposedValue: string;
+    currentValue: string | null;
+    flags: string[];
+  }[],
+  fieldToColumn: Record<string, string>
+): { update: Record<string, string>; applied: string[] } {
+  const update: Record<string, string> = {};
+  const applied: string[] = [];
+  for (const c of candidates) {
+    if (c.flags.length > 0) continue; // flagged → manual review only
+    if (c.currentValue != null) continue; // not a true fill
+    const col = fieldToColumn[c.field];
+    if (!col) continue;
+    update[col] = c.proposedValue;
+    applied.push(c.field);
+  }
+  return { update, applied };
+}
+
+/** The column map the live path uses, exported so a test cannot drift from it.
+ *  `description` is absent on purpose — it is never auto-published (§5). */
+export const AUTO_MERGE_COLUMNS: Record<string, string> = {
+  contact_phone: "contactPhone",
+  contact_email: "contactEmail",
+  social_links: "socialLinks",
+  address: "address",
+  city: "city",
+  state: "state",
+};
+
+/** Test seam: the decision only, with the real column map. */
+export function applyFillsForTest(
+  candidates: {
+    field: string;
+    proposedValue: string;
+    currentValue: string | null;
+    flags: string[];
+  }[]
+): string[] {
+  return decideFills(candidates, AUTO_MERGE_COLUMNS).applied;
+}
+
+/** Contact fields where one shared value across vendors is a duplicate signal.
+ *  Address/city/state are deliberately excluded — two real vendors at one
+ *  fairground or in one town share those legitimately and constantly. */
+const SHARED_VALUE_FIELDS = new Set(["contact_phone", "contact_email"]);
+
+/**
+ * OPE-512 — mark any contact candidate whose value is already proposed for a
+ * different vendor.
+ *
+ * Mutates `candidates` in place so the flag reaches BOTH the staged row and the
+ * in-memory list `applyFills` reads; returning a copy would leave the live path
+ * merging a value the queue shows as flagged.
+ *
+ * Best-effort: a lookup failure leaves the candidates unflagged and staged
+ * rather than sinking the run — the same posture as the rest of this file. It
+ * fails OPEN on purpose, because auto-merge is off and every candidate is
+ * reviewed by a human today; when auto-merge is turned on under OPE-374 this
+ * assumption is worth revisiting.
+ */
+async function flagDuplicateContactValues(
+  db: Db,
+  vendorId: string,
+  candidates: { field: string; proposedValue: string; flags: string[] }[]
+): Promise<void> {
+  const contact = candidates.filter((c) => SHARED_VALUE_FIELDS.has(c.field));
+  if (contact.length === 0) return;
+  try {
+    for (const c of contact) {
+      const [hit] = await db
+        .select({ otherVendorId: vendorEnrichmentCandidates.vendorId })
+        .from(vendorEnrichmentCandidates)
+        .where(
+          and(
+            eq(vendorEnrichmentCandidates.proposedField, c.field),
+            eq(vendorEnrichmentCandidates.proposedValue, c.proposedValue),
+            ne(vendorEnrichmentCandidates.vendorId, vendorId)
+          )
+        )
+        .limit(1);
+      if (hit && !c.flags.includes("duplicate_value_across_vendors")) {
+        c.flags.push("duplicate_value_across_vendors");
+      }
+    }
+  } catch {
+    // See the docblock: fail open, do not sink the enrichment run.
+  }
+}
+
+/**
  * OPE-511 — another vendor on this same website whose NAME matches its domain.
  *
  * Deliberately narrow. Sharing a domain is not by itself evidence of anything
@@ -214,6 +317,25 @@ export async function processEnrichmentJob(
     };
   }
 
+  // OPE-512 — a contact value already proposed for ANOTHER vendor.
+  //
+  // Auto-merging these writes one phone or email onto several live vendor rows.
+  // Three of the four clusters OPE-374 sampled are benign — one business with
+  // several listings — and that is exactly why they must not merge: the shared
+  // value is the cheapest duplicate-vendor signal we have, and merging it
+  // silently turns a dedup lead into two rows nobody can distinguish later.
+  //
+  // Measured on prod 2026-08-23: 37 clusters over 77 vendors, and the names say
+  // it plainly — "Gryffon Ridge" / "Gryphon Ridge Spice Merchants", "Hamlin's
+  // Marina" / "Hamlin's Marine", "603 Perfect Blend LLC" / "603 Perfect Blend".
+  //
+  // Flagged at STAGING rather than at the merge step, deliberately: a flag on
+  // the candidate row means the existing "no flagged candidate auto-merges"
+  // rule in applyFills does the blocking, the dry-run and live paths agree by
+  // construction, and a human draining the queue can SEE why it is there. A
+  // check bolted onto the merge step alone would be invisible in the queue.
+  await flagDuplicateContactValues(db, msg.vendorId, result.candidates);
+
   // Always refresh the staged proposals for this vendor (idempotent re-run).
   await db
     .delete(vendorEnrichmentCandidates)
@@ -315,25 +437,9 @@ async function applyFills(
     flags: string[];
   }[]
 ): Promise<string[]> {
-  const FIELD_TO_COLUMN: Record<string, keyof typeof vendors.$inferInsert> = {
-    contact_phone: "contactPhone",
-    contact_email: "contactEmail",
-    social_links: "socialLinks",
-    address: "address",
-    city: "city",
-    state: "state",
-    // description is intentionally EXCLUDED — never auto-published (§5).
-  };
-  const update: Record<string, string> = {};
-  const applied: string[] = [];
-  for (const c of candidates) {
-    if (c.flags.length > 0) continue; // flagged → manual review only
-    if (c.currentValue != null) continue; // not a true fill
-    const col = FIELD_TO_COLUMN[c.field];
-    if (!col) continue;
-    update[col] = c.proposedValue;
-    applied.push(c.field);
-  }
+  // ONE map, shared with `applyFillsForTest`. A second copy here is exactly how
+  // a test starts asserting against a column set production no longer uses.
+  const { update, applied } = decideFills(candidates, AUTO_MERGE_COLUMNS);
   if (applied.length === 0) return [];
   await db.update(vendors).set(update).where(eq(vendors.id, vendorId));
   // Mark ONLY the fields we actually applied as auto_merged. Flagged/conflict

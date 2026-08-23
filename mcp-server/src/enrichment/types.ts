@@ -82,7 +82,16 @@ export type CandidateFlag =
   // also `Udderly Gutters`' site, and was proposed their phone at confidence
   // 0.90 with zero flags — fully eligible under the approved auto-merge rule,
   // and wrong. Distinct from the flag above so triage can see which is which.
-  | "source_domain_other_vendor";
+  | "source_domain_other_vendor"
+  // OPE-512 — this exact contact value is already proposed for a DIFFERENT
+  // vendor. Auto-merging writes one phone or email onto several live vendor
+  // rows and destroys the cheapest duplicate-vendor signal we have: measured on
+  // prod 2026-08-23, 37 clusters covering 77 vendors, and most of them are
+  // near-duplicate NAMES — "Gryffon Ridge" vs "Gryphon Ridge Spice Merchants",
+  // "Hamlin's Marina" vs "Hamlin's Marine", "The Kona Brand" vs "Kona Brand".
+  // Those are dedup LEADS. Merging them silently is how a duplicate pair
+  // becomes two equally-plausible rows nobody can tell apart afterwards.
+  | "duplicate_value_across_vendors";
 
 export interface ProposedCandidate {
   field: EnrichField;
