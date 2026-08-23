@@ -48,6 +48,32 @@ const descriptionSchema = z
   .transform(sanitizeProse)
   .optional()
   .nullable();
+/**
+ * OPE-524 — a display name is a NAME, not a locator.
+ *
+ * `vendors.display_name` is resolved as the vendor's surface name on the detail
+ * page, search results, the sitemap, facet queries and every event listing
+ * (COALESCE(display_name, business_name)). Before this guard it was validated
+ * only for length and prose-sanitised, so a URL passed: a live vendor page
+ * carried a Shopify image URL as both its <title> and its <h1> for ten days
+ * while sitting in sitemap-vendors.xml.
+ *
+ * Deliberately NOT rejected: a single dotted token with no scheme, no `www.`
+ * and no path ("Bath.com"). That is a plausible real brand, rejecting it would
+ * leave such a vendor no workaround, and it is not the shape that caused the
+ * incident. The line is drawn at strings that are unambiguously locators.
+ */
+export function looksLikeUrlOrEmail(value: string): boolean {
+  const v = value.trim();
+  if (!v) return false;
+  if (v.includes("://")) return true; // any scheme
+  if (v.startsWith("//")) return true; // scheme-relative
+  if (/^www\./i.test(v)) return true;
+  if (/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(v)) return true; // email
+  if (/^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}\//i.test(v)) return true; // domain + path
+  return false;
+}
+
 const urlSchema = z
   .string()
   .url()
@@ -612,6 +638,11 @@ export const vendorProfileUpdateSchema = z.object({
     .min(VALIDATION.NAME_MIN_LENGTH)
     .max(VALIDATION.NAME_MAX_LENGTH)
     .transform(sanitizeProse)
+    // Refine AFTER the transform: the post-sanitise value is what reaches the
+    // column and the page, so that is the string that must not be a locator.
+    .refine((v) => !looksLikeUrlOrEmail(v), {
+      message: "Display name looks like a URL or email address; enter a name instead",
+    })
     .nullable()
     .optional(),
 });

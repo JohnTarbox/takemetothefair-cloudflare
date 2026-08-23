@@ -1032,3 +1032,69 @@ describe("vendorProfileUpdateSchema — EH1 self-edit perimeter", () => {
     );
   });
 });
+
+describe("vendorProfileUpdateSchema — OPE-524 displayName is a name, not a URL", () => {
+  // The prod specimen. vendors.ksw-luxury-knits had display_name byte-identical
+  // to logo_url, which rendered as the <title> AND <h1> of a live, sitemap-listed
+  // page for ten days. Length + sanitizeProse passed it: a URL is a valid-length
+  // string. This exact value is the red-first case.
+  const PROD_SPECIMEN =
+    "https://cdn.shopify.com/s/files/1/0703/9710/0141/files/Updated_Hangtag_Front.jpg?v=1786546389";
+
+  it("rejects the exact prod specimen that reached a live page title", () => {
+    expect(vendorProfileUpdateSchema.safeParse({ displayName: PROD_SPECIMEN }).success).toBe(false);
+  });
+
+  it.each([
+    ["https scheme", "https://example.com"],
+    ["http scheme", "http://example.com"],
+    ["scheme-relative", "//example.com/logo.png"],
+    ["any scheme", "ftp://files.example.com/x"],
+    ["www prefix", "www.example.com"],
+    ["WWW prefix, uppercase", "WWW.EXAMPLE.COM"],
+    ["bare domain with a path", "example.com/shop"],
+    ["email address", "vendor@example.com"],
+  ])("rejects a displayName that is %s", (_label, value) => {
+    expect(vendorProfileUpdateSchema.safeParse({ displayName: value }).success).toBe(false);
+  });
+
+  // Positive controls. These are the SIX real aliases live in prod alongside the
+  // bad one; the guard exists to catch the seventh, not to break the feature.
+  it.each([
+    "South Branch Lake Gallery",
+    "The Christina Gallery",
+    "Reading the World",
+    "Anchored Homestead",
+    "MFE SelfDefense",
+    "Blossoms and Bones",
+  ])("still accepts the real prod alias %s", (value) => {
+    const r = vendorProfileUpdateSchema.safeParse({ displayName: value });
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data.displayName).toBe(value);
+  });
+
+  it("still accepts a brand that is itself a bare dotted token", () => {
+    // Deliberate line: a single dotted token with no scheme, no www and no path
+    // is a plausible real brand ("Bath.com"), and rejecting it would leave that
+    // vendor no workaround. It is also not the shape that caused the incident.
+    const r = vendorProfileUpdateSchema.safeParse({ displayName: "Bath.com" });
+    expect(r.success).toBe(true);
+  });
+
+  it("still accepts names containing punctuation that is not URL-shaped", () => {
+    for (const ok of ["Ben & Jerry's", "Smith, Jones + Co.", "J.P. Morgan", "Rte. 1 Antiques"]) {
+      expect(vendorProfileUpdateSchema.safeParse({ displayName: ok }).success).toBe(true);
+    }
+  });
+
+  it("rejects a URL even when padded with whitespace", () => {
+    expect(
+      vendorProfileUpdateSchema.safeParse({ displayName: `  ${PROD_SPECIMEN}  ` }).success
+    ).toBe(false);
+  });
+
+  it("leaves null and absent untouched", () => {
+    expect(vendorProfileUpdateSchema.safeParse({ displayName: null }).success).toBe(true);
+    expect(vendorProfileUpdateSchema.safeParse({}).success).toBe(true);
+  });
+});
