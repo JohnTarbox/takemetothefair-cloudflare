@@ -27,6 +27,7 @@ import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 import { autoLinkVenue, deriveStateFromText } from "@/lib/venue-matching";
 import { normalizeEventDate } from "@/lib/event-dates";
 import { groundNameInSources } from "@/lib/url-import/name-grounding";
+import { qualifyNameWithHost } from "@/lib/url-import/host-qualified-name";
 import {
   areDatesContiguous,
   isUnusableEventName,
@@ -153,11 +154,31 @@ export async function POST(request: NextRequest) {
 
     // Held internal submissions get a placeholder that reads as unfinished to
     // anyone who sees it, rather than a confident wrong name.
-    const effectiveName = nameIsUnusable
+    const baseName = nameIsUnusable
       ? `Untitled submission${data.venueCity ? ` — ${data.venueCity}` : ""}${
           data.startDate ? ` (${data.startDate})` : ""
         }`
       : data.name;
+
+    // OPE-378 defect 4 — the organizer never reached the name.
+    //
+    // The Waterville specimen produced "28th Annual Craft Fair": true, and
+    // useless. It names no fair in particular, collides with every other craft
+    // fair in the state, and the source said who ran it in its first clause.
+    //
+    // Applied to MACHINE submissions only. On the internal path a name is
+    // something an extractor assembled and this is a naming convention; on the
+    // public form it is what a person typed, and silently rewriting that is a
+    // different act with a different failure mode. `qualifyNameWithHost` is a
+    // deterministic rule, not a model call — deliberately, since name synthesis
+    // is exactly what produced the invented "Holiday" in defect 2 of this same
+    // ticket. It only ever PREPENDS a host drawn from the submission, so the
+    // grounding gate below still passes by construction.
+    const hostQualified =
+      isInternal && !nameIsUnusable
+        ? qualifyNameWithHost(baseName, data.venueName)
+        : { name: baseName, applied: false as const };
+    const effectiveName = hostQualified.name;
 
     // Generate event slug. WS2a — shared prefix-range resolver (was a
     // per-candidate while-loop; now `base-2` first on collision, not `base-1`).
@@ -453,6 +474,13 @@ export async function POST(request: NextRequest) {
       gateReasons.push("ungrounded_name");
       gateRoute = "PENDING_REVIEW";
     }
+
+    // OPE-378 — record that the convention fired, WITHOUT touching gateRoute.
+    // A qualified name is more correct than the one we were given, so routing it
+    // to review would punish the fix. The flag exists so the rewrite is
+    // queryable: if the convention ever starts firing on names it should not,
+    // `gate_flags LIKE '%host_qualified_name%'` is how anyone would find out.
+    if (hostQualified.applied) gateReasons.push("host_qualified_name");
 
     const eventStatus = gateRoute === "PENDING_REVIEW" ? "PENDING" : baseEventStatus;
     const gateFlagsJson = gateReasons.length > 0 ? JSON.stringify(gateReasons) : null;
