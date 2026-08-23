@@ -979,6 +979,19 @@ const SCHEMA_SQL = `
     created_at INTEGER NOT NULL
   );
 
+  -- OPE-517 (drizzle/0225) — other names an event is known by. NOT dedup.
+  CREATE TABLE event_name_variants (
+    id TEXT PRIMARY KEY,
+    event_id TEXT NOT NULL,
+    variant TEXT NOT NULL,
+    variant_type TEXT NOT NULL DEFAULT 'common_usage',
+    source_url TEXT,
+    created_by TEXT,
+    created_at INTEGER NOT NULL
+  );
+  CREATE UNIQUE INDEX idx_event_name_variants_unique
+    ON event_name_variants (event_id, variant);
+
   CREATE TABLE event_data_citations (
     id TEXT PRIMARY KEY,
     event_id TEXT NOT NULL,
