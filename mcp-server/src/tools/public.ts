@@ -30,6 +30,7 @@ import {
 } from "../helpers.js";
 import {
   displayVendorName,
+  chunkIds,
   type ParentDisplayInput,
   type VendorDisplayInput,
 } from "@takemetothefair/utils";
@@ -333,15 +334,26 @@ export function registerPublicTools(server: McpServer, db: Db) {
       // for fuzzy scoring; exact mode already matched in SQL.
       const variantsByEvent = new Map<string, string[]>();
       if (params.fuzzy && params.query && results.length > 0) {
-        const ids = results.map((r) => r.id);
-        const vrows = await db
-          .select({ eventId: eventNameVariants.eventId, variant: eventNameVariants.variant })
-          .from(eventNameVariants)
-          .where(inArray(eventNameVariants.eventId, ids));
-        for (const v of vrows) {
-          const list = variantsByEvent.get(v.eventId);
-          if (list) list.push(v.variant);
-          else variantsByEvent.set(v.eventId, [v.variant]);
+        // OPE-517 followup — MUST be chunked. `results` here is the fuzzy
+        // OVER-FETCH, sized `Math.max(limit * 10, 200)`, so a one-shot
+        // inArray() binds 200+ parameters against D1's 100-param ceiling and
+        // throws "too many SQL variables". It fires on exactly the queries
+        // fuzzy exists to serve: a common token ("festival", "fair") matches
+        // hundreds of rows through the OR pre-filter, so the over-fetch fills.
+        //
+        // Shipped unchunked in the original OPE-517 change and broke the fuzzy
+        // path in prod the same day. chunkIds is the OPE-241 remedy and its
+        // docblock example is this exact query shape.
+        for (const batch of chunkIds(results.map((r) => r.id))) {
+          const vrows = await db
+            .select({ eventId: eventNameVariants.eventId, variant: eventNameVariants.variant })
+            .from(eventNameVariants)
+            .where(inArray(eventNameVariants.eventId, batch));
+          for (const v of vrows) {
+            const list = variantsByEvent.get(v.eventId);
+            if (list) list.push(v.variant);
+            else variantsByEvent.set(v.eventId, [v.variant]);
+          }
         }
       }
 
