@@ -12,7 +12,21 @@ import { logError } from "@/lib/logger";
 
 const extractRequestSchema = z.object({
   content: z.string().min(1, "Content is required"),
-  url: z.string().url().optional(),
+  // OPE-297 rework — accept "" as ABSENT.
+  //
+  // `.optional()` admits `undefined`, not `""`, so a caller that always sends
+  // its url field (the wizard did) gets a 400 with the message "Invalid URL"
+  // the moment that field is empty. On the image/paste lane it always is. The
+  // wizard now omits it, but this endpoint is the shared entry point for every
+  // extract path, and an empty string plainly MEANS absent here — refusing it
+  // buys nothing and costs a dead lane. Mirrors the `.or(z.literal(""))`
+  // convention already used by urlSchema in @takemetothefair/validation.
+  url: z
+    .string()
+    .url()
+    .optional()
+    .or(z.literal(""))
+    .transform((v) => (v ? v : undefined)),
   metadata: z
     .object({
       title: z.string().nullable().optional(),
