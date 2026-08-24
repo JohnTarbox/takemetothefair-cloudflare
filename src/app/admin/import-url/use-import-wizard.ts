@@ -6,7 +6,7 @@ import type {
   EventConfidence,
   VenueOption,
 } from "@/lib/url-import/types";
-import { isValidUrl } from "./utils";
+import { isValidUrl, buildExtractPayload } from "./utils";
 import { levenshteinSimilarity } from "@/lib/duplicates/similarity";
 import { extractTextFromHtml, extractMetadata } from "@/lib/url-import/html-parser";
 
@@ -702,11 +702,13 @@ export function useImportWizard() {
       const res = await fetch("/api/admin/import-url/extract", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          content,
-          url: state.url,
-          metadata: metadata || {},
-        }),
+        // OPE-297 rework — an absent URL must be OMITTED, not sent as "".
+        // On the image/paste lane state.url is still its initial "", and the
+        // endpoint's z.string().url().optional() rejects "" (optional admits
+        // undefined, not empty string) with the message "Invalid URL". That
+        // 400 was BOTH defects John hit: the banner, and the empty Review form
+        // — because extraction never ran, so the OCR text was never read.
+        body: JSON.stringify(buildExtractPayload(content, state.url, metadata)),
         signal,
       });
       const data = (await res.json()) as ExtractResponse;
