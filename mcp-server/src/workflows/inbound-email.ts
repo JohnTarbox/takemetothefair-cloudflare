@@ -1377,6 +1377,11 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       }
     );
 
+    // OPE-537 — the attachment branch below returns, so it never reaches the
+    // decline record. Captured here so that record cannot misreport a run
+    // that DID fan out as a skip.
+    const hasAttachmentSources = attachmentSources.length > 0;
+
     if (attachmentSources.length > 0) {
       const sources: SubmitSource[] = [];
       // Body-linked URLs first (URL-first ordering — richer provenance wins the
@@ -1401,6 +1406,39 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         messageRowId,
         instanceId
       );
+    }
+
+    // OPE-537 — record the DECLINE, the way ocr-attachments does.
+    //
+    // This branch has three conditions and used to record nothing when it
+    // declined, so from the outside "no fanout because the body carried no
+    // prose" and "fanout ran and crashed" were the same observation: an
+    // absent step row. `recordWorkflowStep({stepName:"multi-source-fanout"})`
+    // lives INSIDE runMultiSourcePipeline, so the record exists if and only
+    // if the method is called — the skip had nowhere to be written.
+    //
+    // That is why the Vermont Crafters Expo failure took a ticket to
+    // diagnose rather than a glance: the one artifact that would have named
+    // the cause was structurally incapable of existing.
+    if (!(!isFreeTextIntent && bodyHasSubstance && bodyUrls.length >= 1) && !hasAttachmentSources) {
+      await recordWorkflowStep(getDb(this.env.DB), {
+        instanceId,
+        workflowName: "inbound-email",
+        inboundEmailId: messageRowId,
+        stepName: "multi-source-fanout",
+        status: "skipped",
+        detail: {
+          // Each condition reported separately: the caller needs to know WHICH
+          // one declined, not merely that one did.
+          free_text_intent: isFreeTextIntent,
+          body_has_prose_substance: bodyHasSubstance,
+          body_url_count: bodyUrls.length,
+          body_chars: bodyTextRaw.length,
+        },
+      }).catch(() => {
+        // Cosmetic-failsoft, like every other observability write in this
+        // workflow: losing the record must not cost the submission.
+      });
     }
 
     if (!isFreeTextIntent && bodyHasSubstance && bodyUrls.length >= 1) {
@@ -1456,7 +1494,21 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     // URL-fetch path and reply with the "couldn't extract from the page
     // you linked" template even though the user pasted full details.
     const isFreeText = rowSnapshot.classifiedSubIntent === "free_text";
-    const hasBodyText = (rowSnapshot.bodyTextExcerpt ?? "").trim().length > 20;
+    // OPE-537 — the THIRD raw-length prose bar, found by the test written for
+    // the other two. `> 20` characters is cleared by any bare URL, and this
+    // flag gates `submitFreeTextExtract` on the B2 free-text branch — so a
+    // URL-only body classified `free_text` would be handed to the extractor as
+    // prose exactly as the Vermont Crafters Expo body was on the fetch-failure
+    // branch. Same defect, one branch over; fixed here rather than left for a
+    // fourth ticket to find.
+    //
+    // Note this reads `bodyTextExcerpt` (a 500-char preview) while the
+    // extraction below deliberately uses the full `bodyText` (OPE-174 #2). The
+    // gate stays on the excerpt: it only decides whether prose EXISTS, and the
+    // first 500 characters answer that.
+    const hasBodyText = bodyHasProseSubstance(
+      stripSignature(stripForwardedPreamble(rowSnapshot.bodyTextExcerpt ?? ""))
+    );
     const noUrlOrFreeText = !rowSnapshot.parsedUrl || isFreeText;
     if (noUrlOrFreeText) {
       // Track whether we actually attempted prose extraction so the
@@ -1590,8 +1642,34 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         // of bouncing. Falls through to the original bounce when there's no usable
         // prose. Failsoft: any hiccup in the fallback re-throws the original error.
         const rawBody = rowSnapshot.bodyText ?? rowSnapshot.bodyTextExcerpt ?? "";
-        const proseLen = stripSignature(stripForwardedPreamble(rawBody)).trim().length;
-        if (proseLen > 40) {
+        // OPE-537 — measure PROSE, not raw characters.
+        //
+        // This was `stripSignature(stripForwardedPreamble(rawBody)).trim().length > 40`,
+        // and that is the exact bar OPE-457 already removed one gate over. Its
+        // comment at the `bodyHasSubstance` definition says so in as many
+        // words: "measure PROSE, not raw length. `https://vineyardartisans.com/`
+        // is 29 chars and used to clear this bar, so a body that was nothing
+        // but a URL was handed to the LLM as an independent prose source. It
+        // invented three festivals with 2024 dates."
+        //
+        // OPE-457 converted the definition at :1193 and left this call site on
+        // raw length, so the two gates disagreed about the same string:
+        //
+        //     body = "https://…/vermont-crafters-expo/2026-11-07/\n\n"  (76 chars)
+        //     bodyHasProseSubstance -> false   (blocks multi-source-fanout)
+        //     raw length 74 > 40    -> true    (admits THIS path)
+        //
+        // So a bare-URL email whose fetch 403'd fell through to here, the URL
+        // was handed to the extractor as prose, and it produced an event
+        // invented entirely from the URL string — name from the slug, date
+        // from the path segment, and a fluent description that stated the
+        // OPPOSITE of what the page said. Stored PENDING, replied to as a
+        // success, no citations, no source_url.
+        //
+        // Sharing one definition is the fix. A body with no prose now bounces
+        // as a fetch failure, which is recoverable; a fabricated description
+        // that survives a human skim at approval is not.
+        if (bodyHasProseSubstance(stripSignature(stripForwardedPreamble(rawBody)))) {
           try {
             const extracted = await step.do(
               "submit/fetch-fail-body-extract",

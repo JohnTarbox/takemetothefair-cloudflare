@@ -25,9 +25,36 @@ export const BROWSER_RENDERING_TIMEOUT = 25000;
  * many hosting-provider WAFs; standardizing on a Chrome fingerprint keeps the
  * standard path closer to Browser Rendering's real Chrome and avoids
  * unnecessary escalations.
+ *
+ * ⚠️ THE VERSION NUMBER IS LOAD-BEARING AND IT ROTS. Keep it current.
+ *
+ * OPE-537: this said `Chrome/120.0.0.0`, set 2026-06-12 (`e502627d`). Chrome
+ * 120 shipped in December 2023 — it was ~18 months stale the day it was
+ * committed and ~2.7 years stale when it was found. WAF fake-browser
+ * heuristics treat a UA claiming a Chrome version no real Chrome has run for
+ * years as forged, and refuse it. Measured against
+ * vermontartscouncil.org, three trials each:
+ *
+ *     Chrome/120  403 403 403      Chrome/131  403 403 403
+ *     Chrome/124  403 403 403      Chrome/141  200 200 200
+ *
+ * It is not bot-vs-browser and it is not the platform token — Mac/120 is also
+ * 403 and Windows/141 is also 200. It is the version, and the effect is not
+ * one site: bumping it took ctcraftfairconnection.com (13 events) and
+ * castleberryfairs.com (10 events) from 403 to 200 as well.
+ *
+ * The cost of it being stale is worse than a failed fetch, which is why this
+ * comment is long. A 403 here does not surface as an error: the inbound
+ * workflow falls through to OPE-185's body-prose fallback, and for a
+ * URL-only email that means an event FABRICATED from the URL string, stored
+ * with a confident wrong description and logged as a success.
+ *
+ * ── Last verified against a live WAF: 2026-08-24 (Chrome/147 → HTTP 200 on
+ *    vermontartscouncil.org, ctcraftfairconnection.com, castleberryfairs.com).
+ *    Re-verify if fetches start returning 403 for no other reason. ──
  */
 export const FETCH_UA =
-  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36";
 
 export type FetchOutcome =
   // `finalUrl` is the post-redirect response URL on the standard path (used by
