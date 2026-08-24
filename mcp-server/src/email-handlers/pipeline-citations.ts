@@ -186,6 +186,30 @@ export function contradictedDateFields(
 }
 
 /**
+ * Outcome of one citation write.
+ *
+ * ── Why this is not just a number ────────────────────────────────────────
+ * OPE-540: every email-submitted event created on 2026-08-24 had zero
+ * citations, and the investigation could not distinguish "this function was
+ * never called" from "it was called and returned 0" from prod data — the
+ * caller records nothing on success, and a bare `0` carries no reason. Five
+ * separate causes all produced the identical observable.
+ *
+ * `reason` is null on success and otherwise names which branch returned zero.
+ */
+export interface CitationWriteResult {
+  /** Rows actually inserted. */
+  inserted: number;
+  /** Why zero rows were written; null when `inserted > 0`. */
+  reason:
+    | "no-source-url"
+    | "no-citeable-fields"
+    | "all-fields-already-cited"
+    | "all-fields-contradicted"
+    | null;
+}
+
+/**
  * Record one `event_data_citations` row per tracked, non-empty field on
  * `extracted.event`, attributed to `source`. Returns the number of rows
  * inserted (0 when nothing was citeable or every row was already present).
@@ -204,12 +228,12 @@ export async function recordSourceCitations(
      *  by the contradiction guard. Omitted → guard is inert. */
     supportingText?: string;
   }
-): Promise<number> {
+): Promise<CitationWriteResult> {
   const { eventId, extracted, source, fromAddress } = args;
   const { sourceUrl, sourceName } = sourceIdentity(source, fromAddress, extracted);
   // A url-source with no URL has no provenance to attach — bail rather than
   // insert a NOT-NULL-violating empty source_url.
-  if (!sourceUrl) return 0;
+  if (!sourceUrl) return { inserted: 0, reason: "no-source-url" };
 
   // Idempotency guard: which fields already have an active citation from THIS
   // exact source? Skip those so retries / redelivery don't duplicate. Scoped
@@ -248,7 +272,15 @@ export async function recordSourceCitations(
     });
   }
 
-  if (rows.length === 0) return 0;
+  if (rows.length === 0) {
+    // Distinguishes "the extractor gave us nothing citeable" from "we already
+    // had these" — the two are indistinguishable in a bare `0`, and that
+    // ambiguity is what made OPE-540 undiagnosable from prod data.
+    return {
+      inserted: 0,
+      reason: alreadyCited.size > 0 ? "all-fields-already-cited" : "no-citeable-fields",
+    };
+  }
 
   // OPE-457 scope 5 — drop date citations the supporting text cannot support.
   // Dropped rather than thrown: the event already exists and the NAME citation
@@ -266,7 +298,7 @@ export async function recordSourceCitations(
         `attributed to a ${source.kind} source whose text contains no year (${contradicted.join(", ")})`
     );
   }
-  if (keep.length === 0) return 0;
+  if (keep.length === 0) return { inserted: 0, reason: "all-fields-contradicted" };
   await db.insert(eventDataCitations).values(keep);
-  return keep.length;
+  return { inserted: keep.length, reason: null };
 }

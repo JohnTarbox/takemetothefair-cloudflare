@@ -21,6 +21,7 @@ import { eq, isNotNull, sql } from "drizzle-orm";
 import {
   adminActions,
   bingLivenessLog,
+  eventDataCitations,
   eventDiscrepancies,
   emailSendLedger,
   emailDeliveryEvents,
@@ -89,6 +90,31 @@ async function maxTs(
  * DORMANT via a null `enabled_at` — it can't false-fire until John flips the flag.
  */
 export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
+  {
+    // OPE-540 — proof that inbound submissions are still producing PROVENANCE.
+    //
+    // Every email-submitted event created on 2026-08-24 had zero citations,
+    // and nobody noticed until an unrelated acceptance criterion happened to
+    // check. Nothing watches this table: the pipeline reports success, the
+    // event exists and looks complete, and the provenance row simply is not
+    // written. A silent writer, which is the exact class OPE-246 exists for.
+    //
+    // Evidence is the newest citation row of ANY kind. Deliberately not
+    // scoped to a source_type or an ingestion path: several writers feed this
+    // table (the inbound pipeline, `update_event`'s citation arg, goodwill
+    // flips), and a probe narrow enough to name one of them would go red on a
+    // quiet week rather than on a broken writer.
+    //
+    // 72h, not 48: citation volume follows submission volume, which is bursty
+    // — the 30-day history has legitimate 3-day gaps with no submissions at
+    // all. A window that fires on ordinary quiet is a window that gets muted.
+    name: "event-data-citations-writer",
+    ownerOpe: "OPE-540",
+    label: "Event provenance citations (inbound pipeline)",
+    priority: "P1",
+    expectedWindowHours: 72,
+    lastEvidenceAt: (db) => maxTs(db, eventDataCitations, eventDataCitations.createdAt),
+  },
   {
     // OPE-348 — proof the agent-silence watchdog is ITSELF executing.
     //
