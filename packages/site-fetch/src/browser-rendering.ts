@@ -218,6 +218,40 @@ export async function fetchViaBrowserRendering(
  * errors sometimes recover when proxied through CF's edge. 404s, non-HTML
  * content-types, and PDFs are NOT escalated (no point — BR can't recover them).
  */
+/**
+ * OPE-537 — a 200 that carries no extractable text is a FAILED fetch.
+ *
+ * `shouldEscalate` above judges the HTTP status and nothing else, so a page
+ * that answers 200 with a body we cannot read from — a JS-only shell, a WAF
+ * interstitial, a datacenter-IP variant — was treated as a success and its
+ * empty string handed downstream.
+ *
+ * That is exactly what happened after the UA fix landed: the Vermont Crafters
+ * Expo URL stopped 403ing, `/api/admin/import-url/fetch` returned
+ * `success: true`, and `inbound_emails` recorded
+ *
+ *     content_length_chars    0
+ *     content_sha256_first16  e3b0c44298fc1c14     <- sha256 of ""
+ *
+ * `/api/admin/import-url/extract` then rejected it with a 400 ("Content is
+ * required"), several services away from the thing that was actually wrong.
+ * Browser Rendering — which exists precisely for a page whose text is not in
+ * the served HTML — was never tried, because the status was 200.
+ *
+ * The threshold is deliberately near-zero rather than a prose-quality bar.
+ * "This page has essentially no text" is a different and much safer judgement
+ * than "this page has too little text to be worth extracting": a real event
+ * page can legitimately be terse, and escalating those to Browser Rendering
+ * would cost latency and quota for no gain. 32 characters is below any real
+ * page and above the whitespace-and-nav residue an empty shell leaves.
+ */
+export const MIN_EXTRACTABLE_TEXT_CHARS = 32;
+
+/** True when extracted page text is too empty to have come from a real page. */
+export function isEmptyExtraction(text: string | null | undefined): boolean {
+  return (text ?? "").trim().length < MIN_EXTRACTABLE_TEXT_CHARS;
+}
+
 export function shouldEscalate(outcome: FetchOutcome): boolean {
   if (outcome.ok) return false;
   if (outcome.error === "timeout") return true;

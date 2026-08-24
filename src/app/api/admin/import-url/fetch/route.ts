@@ -8,6 +8,7 @@ import {
   shouldEscalate,
   isBlockedSsrfHost,
   FETCH_TIMEOUT,
+  isEmptyExtraction,
 } from "@takemetothefair/site-fetch";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { logError } from "@/lib/logger";
@@ -117,8 +118,68 @@ export const GET = withAuthorized({ allowReadonlyBearer: false }, async ({ reque
 
     // Extract metadata and text content (reused from html-parser.ts —
     // works identically on HTML from either fetch path).
-    const metadata = extractMetadata(html);
-    const content = extractTextFromHtml(html);
+    let metadata = extractMetadata(html);
+    let content = extractTextFromHtml(html);
+
+    // OPE-537 — a 200 carrying no extractable text is a FAILED fetch.
+    //
+    // `shouldEscalate` judges the HTTP status alone, so a page answering 200
+    // with an unreadable body (JS-only shell, WAF interstitial, datacenter-IP
+    // variant) reached here, got extracted to "", and was returned as
+    // `success: true`. Downstream, `/api/admin/import-url/extract` rejected
+    // the empty string with a 400 — several services away from the actual
+    // problem, and with the real reason discarded in between.
+    //
+    // Measured on the 2026-08-24 re-submit of the Vermont Crafters Expo URL,
+    // AFTER the UA fix removed the 403: `content_length_chars = 0`,
+    // `content_sha256_first16 = e3b0c44298fc1c14` (sha256 of ""). Browser
+    // Rendering — which exists for exactly this page shape — was never tried,
+    // because the status was 200.
+    //
+    // So emptiness now escalates the same way a 403 does, and if the rendered
+    // path is also empty we say so plainly instead of passing "" off as a
+    // fetched page. Only attempted once: if we already came from Browser
+    // Rendering there is nothing further to escalate to.
+    if (isEmptyExtraction(content)) {
+      const alreadyRendered = fetchMethod === "browser-rendering";
+      const rendered = alreadyRendered
+        ? null
+        : await fetchViaBrowserRendering(parsedUrl.href, cfEnv);
+      if (rendered?.ok && !isEmptyExtraction(extractTextFromHtml(rendered.html))) {
+        html = rendered.html;
+        metadata = extractMetadata(html);
+        content = extractTextFromHtml(html);
+        fetchMethod = "browser-rendering";
+      } else {
+        await logError(db, {
+          level: "warn",
+          message:
+            `Fetch returned 200 with no extractable text: ${fetchMethod}` +
+            (alreadyRendered
+              ? " (already rendered)"
+              : ` br=${rendered?.ok ? "empty" : rendered?.error}`),
+          source: "api/admin/import-url/fetch",
+          context: {
+            url: parsedUrl.href,
+            htmlBytes: html.length,
+            extractedChars: content.trim().length,
+            firstFetchMethod: fetchMethod,
+            brError: rendered?.ok ? "rendered-but-empty" : (rendered?.error ?? "not-attempted"),
+          },
+        });
+        // Reported as a failure, with a message that names THIS cause rather
+        // than letting a downstream validator invent a different one.
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              "Fetched the page but found no readable text on it. It may require JavaScript or be blocking automated access. Try pasting the content manually.",
+            fetchMethod: "failed",
+          },
+          { status: 200 }
+        );
+      }
+    }
 
     return NextResponse.json({
       success: true,
