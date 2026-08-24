@@ -1420,7 +1420,27 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     // That is why the Vermont Crafters Expo failure took a ticket to
     // diagnose rather than a glance: the one artifact that would have named
     // the cause was structurally incapable of existing.
-    if (!(!isFreeTextIntent && bodyHasSubstance && bodyUrls.length >= 1) && !hasAttachmentSources) {
+    // OPE-537 fix 2 — a URL is a source ON ITS OWN.
+    //
+    // The gate below used to read `!isFreeTextIntent && bodyHasSubstance &&
+    // bodyUrls.length >= 1`, which made body prose a precondition for fanning
+    // out over URLS. An email whose entire body is one bare URL therefore
+    // declined the fanout and fell through to the single-URL submit path —
+    // the Vermont Crafters Expo failure. The prose requirement belongs to the
+    // body PSEUDO-SOURCE, not to the decision to fan out at all.
+    //
+    // The attachment branch above (`attachmentSources.length > 0`) already had
+    // this shape: it pushes URL sources on `!isFreeTextIntent`, and pushes the
+    // body source only `if (bodyHasSubstance)`. The two branches disagreed;
+    // this makes the no-attachment branch match the one that was right.
+    //
+    // ⚠️ Kept as ONE const deliberately. The decline record and the execution
+    // branch must be exact complements — computed separately they can drift,
+    // and the failure mode of drift is a run that records a skip, or a skip
+    // that records nothing, which is the class of bug this whole ticket is.
+    const shouldFanOut = !isFreeTextIntent && bodyUrls.length >= 1;
+
+    if (!shouldFanOut && !hasAttachmentSources) {
       await recordWorkflowStep(getDb(this.env.DB), {
         instanceId,
         workflowName: "inbound-email",
@@ -1441,11 +1461,16 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       });
     }
 
-    if (!isFreeTextIntent && bodyHasSubstance && bodyUrls.length >= 1) {
+    if (shouldFanOut) {
       const sources: SubmitSource[] = [
         ...bodyUrls.map((url): SubmitSource => ({ kind: "url", url })),
-        { kind: "body", text: bodyTextRaw },
       ];
+      // The body pseudo-source joins only when it actually carries prose.
+      // A bare-URL body contributes nothing but the URL already in `sources`;
+      // adding it as a "body" source would hand the extractor a copy of the
+      // URL string as if it were page content — which is how the fabricated
+      // description got written in the first place.
+      if (bodyHasSubstance) sources.push({ kind: "body", text: bodyTextRaw });
       const overflowed = bodyUrls.length >= 10;
       return await this.runMultiSourcePipeline(
         step,

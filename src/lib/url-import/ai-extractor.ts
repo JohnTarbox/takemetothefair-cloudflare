@@ -11,6 +11,7 @@ import { groundDateInSource } from "./date-grounding";
 import { WORKERS_AI_MODEL } from "@takemetothefair/constants";
 import { repairFlattenedEditions } from "./deterministic/repair-editions";
 import { parseHoursBlock } from "./deterministic/hours-block";
+import { isTruncatedExcerpt } from "./truncated-excerpt";
 
 // Logging: diagnostic output here uses console.warn so it surfaces in
 // `wrangler tail` for an admin running an import while still satisfying the
@@ -304,7 +305,14 @@ export async function extractEventData(
 
   // Include meta description (often contains dates/times)
   if (metadata.description) {
-    contextInfo += `Page description: ${metadata.description}\n`;
+    // A CMS excerpt is still WORTH sending — this page's carried the event
+    // dates ("On November 7th & 8th") that appear nowhere in structured data.
+    // What it must not do is arrive labelled like an authoritative summary,
+    // which is how a sentence severed mid-clause got copied into the stored
+    // description verbatim. Label it, and say what to do with it.
+    contextInfo += isTruncatedExcerpt(metadata.description)
+      ? `Page description (TRUNCATED EXCERPT — use for facts such as dates, but do NOT copy as the description; write from the page text below): ${metadata.description}\n`
+      : `Page description: ${metadata.description}\n`;
   }
 
   // If we have JSON-LD structured data, include it for better extraction
@@ -382,7 +390,14 @@ export async function extractMultipleEvents(
 
   // Include meta description (often contains dates/times)
   if (metadata.description) {
-    contextInfo += `Page description: ${metadata.description}\n`;
+    // A CMS excerpt is still WORTH sending — this page's carried the event
+    // dates ("On November 7th & 8th") that appear nowhere in structured data.
+    // What it must not do is arrive labelled like an authoritative summary,
+    // which is how a sentence severed mid-clause got copied into the stored
+    // description verbatim. Label it, and say what to do with it.
+    contextInfo += isTruncatedExcerpt(metadata.description)
+      ? `Page description (TRUNCATED EXCERPT — use for facts such as dates, but do NOT copy as the description; write from the page text below): ${metadata.description}\n`
+      : `Page description: ${metadata.description}\n`;
   }
 
   // If we have JSON-LD structured data, include it for better extraction
@@ -607,7 +622,7 @@ function sanitizeEventData(
     _extractId: `event-${index}-${Date.now()}`,
     _selected: true, // Default to selected
     name: sanitizeString(item.name || item.title),
-    description: sanitizeString(item.description, 2000),
+    description: sanitizeDescription(item.description, 2000),
     startDate: groundedStart,
     endDate: groundedEnd,
     startTime,
@@ -847,7 +862,7 @@ function parseAiResponse(
     // Validate and sanitize each field
     const extracted: ExtractedEventData = {
       name: sanitizeString(parsed.name),
-      description: sanitizeString(parsed.description, 2000),
+      description: sanitizeDescription(parsed.description, 2000),
       startDate: sanitizeDate(parsed.startDate),
       endDate: sanitizeDate(parsed.endDate),
       startTime,
@@ -1038,6 +1053,22 @@ function calculateConfidence(data: ExtractedEventData, metadata: PageMetadata): 
 /**
  * Sanitize helpers
  */
+/**
+ * `sanitizeString` for the description field, with one extra rule: a value
+ * that looks like a CMS excerpt is dropped rather than stored.
+ *
+ * Called on the raw model output, so it also catches the case that motivated
+ * it — the model copying a truncated `Page description:` out of the prompt
+ * verbatim instead of writing from the body prose it was also given.
+ * See ./truncated-excerpt.ts for why a dropped field beats a severed one.
+ */
+function sanitizeDescription(value: unknown, maxLength: number): string | null {
+  // BEFORE sanitizeString — it appends its own "..." at maxLength, which
+  // this would then read as a truncation marker on every long description.
+  if (isTruncatedExcerpt(value)) return null;
+  return sanitizeString(value, maxLength);
+}
+
 function sanitizeString(value: unknown, maxLength?: number): string | null {
   if (value === null || value === undefined) return null;
   let str = String(value).trim();
