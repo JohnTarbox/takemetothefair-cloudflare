@@ -47,6 +47,27 @@ const SYSTEM_PROMPT = `You are an expert at extracting event information from we
 
 const MULTI_EVENT_SYSTEM_PROMPT = `You are an expert at extracting multiple event listings from webpage text. You find ALL events mentioned and return them as a JSON array. You always respond with valid JSON only, no explanations.`;
 
+/**
+ * OPE-531 — tell the model what day it is.
+ *
+ * The prompts ask for `"startDate": "YYYY-MM-DD"` and, until now, never said
+ * what "now" was. Sources routinely print a bare "September 12th" and leave
+ * the year to context the model does not have, so it had to either invent an
+ * unanchored year or emit a yearless string that `sanitizeDate` then dropped.
+ * Either way the VCS Makers Market submission stored `start_date NULL` from a
+ * body that states its date three times.
+ *
+ * The parser-side fix (`resolveYearlessDate`) makes the yearless string
+ * survive; this makes the model's own inference correct rather than arbitrary.
+ * They are belt and braces on purpose — we cannot observe which branch a given
+ * extraction takes (OPE-501), so both roads had to be paved.
+ */
+function buildDateContext(nowMs: number = Date.now()): string {
+  const today = new Date(nowMs).toISOString().slice(0, 10);
+  return `TODAY'S DATE: ${today}
+If a date appears with no year (e.g. "September 12", "Labor Day weekend"), resolve it to the NEXT occurrence on or after today's date and emit the full YYYY-MM-DD. Never emit a date in the past. If the source states no date at all, use null — do NOT guess one.`;
+}
+
 const buildMultiEventPrompt = (
   content: string,
   contextInfo: string
@@ -94,6 +115,8 @@ Return a JSON array where each event has these fields (use null for fields not f
     "walkInsAllowed": true/false/null - whether walk-in vendors are accepted
   }
 ]
+
+${buildDateContext()}
 
 IMPORTANT RULES:
 1. Find ALL events on the page - there may be 1, 5, 10, or more events
@@ -181,6 +204,8 @@ Return a JSON array where each event has these fields (use null for fields not f
   }
 ]
 
+${buildDateContext()}
+
 IMPORTANT RULES:
 1. Find ALL events mentioned in the body AND the linked page - there may be 1, 5, 10, or more.
 2. Each event listing is a separate object in the array.
@@ -235,6 +260,8 @@ Find and extract these fields. Use null for any field not found:
   "applicationInstructions": "how to apply when NO application URL is given (e.g. 'email organizer@example.com with product photos') - max 500 chars, or null",
   "walkInsAllowed": true/false/null - whether walk-in vendors are accepted
 }
+
+${buildDateContext()}
 
 IMPORTANT PARSING RULES:
 1. Page titles often contain: "Event Name | Date Range | Venue" - parse these parts separately
@@ -1021,7 +1048,128 @@ function sanitizeString(value: unknown, maxLength?: number): string | null {
   return str;
 }
 
-function sanitizeDate(value: unknown): string | null {
+const MONTH_NAMES: Record<string, string> = {
+  january: "01",
+  jan: "01",
+  february: "02",
+  feb: "02",
+  march: "03",
+  mar: "03",
+  april: "04",
+  apr: "04",
+  may: "05",
+  june: "06",
+  jun: "06",
+  july: "07",
+  jul: "07",
+  august: "08",
+  aug: "08",
+  september: "09",
+  sep: "09",
+  sept: "09",
+  october: "10",
+  oct: "10",
+  november: "11",
+  nov: "11",
+  december: "12",
+  dec: "12",
+};
+
+/**
+ * OPE-531 — resolve a month-day date that carries no year.
+ *
+ * The VCS Makers Market submission (inbound `a0e400a9`) says "Saturday,
+ * September 12th, 10 AM-3 PM" and prints no year anywhere in the body. It
+ * landed with `start_date NULL`, because every branch of `sanitizeDate` above
+ * this one requires an explicit 4-digit year, and the native-`Date` fallback
+ * does not rescue it either: `new Date("September 12th")` is Invalid Date, and
+ * `new Date("September 12")` yields **2001**-09-12, which the `year >= 2020`
+ * guard then rejects. So a yearless date did not merely fail to parse — it
+ * failed silently, and the row was acked to the submitter as a clean success.
+ *
+ * Yearless dates are not an edge case in this corpus. Posters, Facebook event
+ * bodies and "SAVE THE DATE" notices routinely print "September 12" and leave
+ * the year to context, which is precisely the case `date-grounding.ts` already
+ * anticipates: it grades an absent-but-future year as `inferred` and KEEPS it.
+ * That verdict was unreachable from here, because nothing upstream ever
+ * produced a date for it to judge.
+ *
+ * ── Why the NEXT occurrence, not the current year ─────────────────────────
+ *
+ * Resolving "January 10" to the current year on 2026-12-20 produces a date
+ * three hundred days in the past. `groundDateInSource` would then grade it
+ * `fabricated` (absent AND past) and drop it — the same NULL we started with,
+ * reached by a longer road. Worse, if it survived it would be the failure mode
+ * that module calls the worst of the three: a past date is filtered out of
+ * every forward-looking view, so nobody ever sees it to correct it.
+ *
+ * Next-occurrence keeps the result in the future, where grounding's `inferred`
+ * verdict applies and where a wrong guess is visible on the listing for an
+ * operator to fix. That asymmetry is deliberate and is the same one
+ * `date-grounding.ts` documents.
+ *
+ * `nowMs` is injected rather than read from the clock so the behaviour is
+ * testable and so a run near a year boundary is reproducible — the same
+ * convention `groundDateInSource` uses for `nowYear`.
+ */
+export function resolveYearlessDate(value: string, nowMs: number = Date.now()): string | null {
+  const str = value.trim();
+
+  // An optional leading weekday ("Saturday," / "Sat") is common in prose and
+  // carries no information we need — the calendar decides the weekday.
+  // Full names are listed FIRST: JS alternation is ordered, so a leading
+  // `tue` would otherwise win against "Tuesday" and strand "sday" in the
+  // string, which then matches nothing.
+  const withoutWeekday = str.replace(
+    /^(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tues|tue|weds|wed|thurs|thur|thu|fri|sat|sun)\.?\s*,?\s*/i,
+    ""
+  );
+
+  // "September 12" / "September 12th" / "Sept 12"
+  let monthKey: string | undefined;
+  let dayStr: string | undefined;
+  const monthDay = withoutWeekday.match(/^([a-z]+)\s+(\d{1,2})(?:st|nd|rd|th)?$/i);
+  if (monthDay) {
+    monthKey = monthDay[1].toLowerCase();
+    dayStr = monthDay[2];
+  } else {
+    // "12 September" / "12th September"
+    const dayMonth = withoutWeekday.match(/^(\d{1,2})(?:st|nd|rd|th)?\s+([a-z]+)$/i);
+    if (dayMonth) {
+      monthKey = dayMonth[2].toLowerCase();
+      dayStr = dayMonth[1];
+    }
+  }
+  if (monthKey === undefined || dayStr === undefined) return null;
+
+  const month = MONTH_NAMES[monthKey];
+  if (!month) return null;
+  const day = parseInt(dayStr, 10);
+  if (day < 1 || day > 31) return null;
+
+  const now = new Date(nowMs);
+  const nowYear = now.getUTCFullYear();
+  const monthNum = parseInt(month, 10);
+
+  // Try this year, then the next two. The extra years are not padding: they
+  // cover 29 February, which exists only in a leap year, so "February 29"
+  // submitted in 2026 resolves to 2028 rather than being silently dropped.
+  for (let i = 0; i < 4; i++) {
+    const year = nowYear + i;
+    // Round-trip through UTC to reject a day the month does not have —
+    // `Date.UTC(2026, 1, 30)` rolls forward into March rather than failing.
+    const candidate = new Date(Date.UTC(year, monthNum - 1, day));
+    if (candidate.getUTCMonth() !== monthNum - 1 || candidate.getUTCDate() !== day) continue;
+    // Compare against today's calendar date, not the instant: an event
+    // happening later TODAY must resolve to today, not to next year.
+    const todayUtc = Date.UTC(nowYear, now.getUTCMonth(), now.getUTCDate());
+    if (candidate.getTime() < todayUtc) continue;
+    return `${year}-${month}-${String(day).padStart(2, "0")}`;
+  }
+  return null;
+}
+
+export function sanitizeDate(value: unknown, nowMs: number = Date.now()): string | null {
   if (value === null || value === undefined) return null;
   const str = String(value).trim();
   if (str === "" || str.toLowerCase() === "null" || str.toLowerCase() === "tbd") return null;
@@ -1053,36 +1201,10 @@ function sanitizeDate(value: unknown): string | null {
     }
 
     // Handle "Month Day, Year" format (e.g., "January 15, 2025")
-    const monthNames: Record<string, string> = {
-      january: "01",
-      jan: "01",
-      february: "02",
-      feb: "02",
-      march: "03",
-      mar: "03",
-      april: "04",
-      apr: "04",
-      may: "05",
-      june: "06",
-      jun: "06",
-      july: "07",
-      jul: "07",
-      august: "08",
-      aug: "08",
-      september: "09",
-      sep: "09",
-      sept: "09",
-      october: "10",
-      oct: "10",
-      november: "11",
-      nov: "11",
-      december: "12",
-      dec: "12",
-    };
 
     const monthDayYear = str.match(/^([a-z]+)\s+(\d{1,2})(?:st|nd|rd|th)?,?\s*(\d{4})$/i);
     if (monthDayYear) {
-      const monthNum = monthNames[monthDayYear[1].toLowerCase()];
+      const monthNum = MONTH_NAMES[monthDayYear[1].toLowerCase()];
       if (monthNum) {
         const day = monthDayYear[2].padStart(2, "0");
         return `${monthDayYear[3]}-${monthNum}-${day}`;
@@ -1092,12 +1214,21 @@ function sanitizeDate(value: unknown): string | null {
     // Handle "Day Month Year" format (e.g., "15 January 2025")
     const dayMonthYear = str.match(/^(\d{1,2})(?:st|nd|rd|th)?\s+([a-z]+),?\s*(\d{4})$/i);
     if (dayMonthYear) {
-      const monthNum = monthNames[dayMonthYear[2].toLowerCase()];
+      const monthNum = MONTH_NAMES[dayMonthYear[2].toLowerCase()];
       if (monthNum) {
         const day = dayMonthYear[1].padStart(2, "0");
         return `${dayMonthYear[3]}-${monthNum}-${day}`;
       }
     }
+
+    // OPE-531 — a month-day with no year, resolved to its next occurrence.
+    //
+    // Must sit BEFORE the native-Date fallback below, which does not merely
+    // fail on these: `new Date("September 12")` returns 2001-09-12, and the
+    // `year >= 2020` guard then discards it. The result was a silent null on
+    // input a human reads without hesitation.
+    const yearless = resolveYearlessDate(str, nowMs);
+    if (yearless) return yearless;
 
     // Try native Date parsing as fallback
     const date = new Date(str);
