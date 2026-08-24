@@ -357,7 +357,22 @@ export async function submitExtract(
     );
   }
   if (!res.ok) {
-    throw new NonRetryableError(`extract-${res.status}`);
+    // OPE-537 — carry the endpoint's own message, do not discard it.
+    //
+    // This threw `extract-400` and dropped the body. The endpoint had said
+    // "Content is required", which names the failing field exactly — and
+    // losing it turned a one-line diagnosis into three D1 queries against
+    // telemetry columns. `submitFetch` above already captures upstream error
+    // text this way; these two call sites did not, in the same file.
+    //
+    // Read defensively: a non-JSON body must not turn a 400 into a network
+    // error, so the status stays the leading token either way.
+    const upstream = await res
+      .clone()
+      .json()
+      .then((b) => (b && typeof b === "object" && "error" in b ? String(b.error) : null))
+      .catch(() => null);
+    throw new NonRetryableError(`extract-${res.status}${upstream ? `: ${upstream}` : ""}`);
   }
   const body = (await res.json().catch(() => null)) as
     | {
@@ -446,7 +461,22 @@ export async function submitFreeTextExtract(
     );
   }
   if (!res.ok) {
-    throw new NonRetryableError(`extract-${res.status}`);
+    // OPE-537 — carry the endpoint's own message, do not discard it.
+    //
+    // This threw `extract-400` and dropped the body. The endpoint had said
+    // "Content is required", which names the failing field exactly — and
+    // losing it turned a one-line diagnosis into three D1 queries against
+    // telemetry columns. `submitFetch` above already captures upstream error
+    // text this way; these two call sites did not, in the same file.
+    //
+    // Read defensively: a non-JSON body must not turn a 400 into a network
+    // error, so the status stays the leading token either way.
+    const upstream = await res
+      .clone()
+      .json()
+      .then((b) => (b && typeof b === "object" && "error" in b ? String(b.error) : null))
+      .catch(() => null);
+    throw new NonRetryableError(`extract-${res.status}${upstream ? `: ${upstream}` : ""}`);
   }
   const body = (await res.json().catch(() => null)) as
     | {

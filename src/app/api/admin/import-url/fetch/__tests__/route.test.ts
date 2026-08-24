@@ -33,7 +33,21 @@ vi.mock("@/lib/url-import/html-parser", () => ({
     ogImage: null,
     jsonLd: null,
   })),
-  extractTextFromHtml: vi.fn(() => "extracted content"),
+  // OPE-537 — the stub's LENGTH is now load-bearing.
+  //
+  // This returned "extracted content" (17 chars). The route now treats a 200
+  // whose extracted text is essentially empty as a FAILED fetch, because
+  // returning `success: true` with an empty string is what handed /extract an
+  // empty payload and got a 400 back several services later. A 17-character
+  // stub sits below that bar and made three routing tests fail for a reason
+  // that had nothing to do with routing.
+  //
+  // Long enough to represent a real page, which is what the stub always meant.
+  extractTextFromHtml: vi.fn(
+    () =>
+      "Kingfield Craft Fair — Saturday October 4, 2026, 9am to 4pm at the " +
+      "Kingfield Elementary School gym. Over 40 local makers, free admission."
+  ),
 }));
 
 import { GET } from "../route";
@@ -130,6 +144,61 @@ describe("GET /api/admin/import-url/fetch — Browser Rendering escalation", () 
 
     expect(body.success).toBe(true);
     expect(body.fetchMethod).toBe("browser-rendering");
+  });
+
+  it("OPE-537: a 200 with no readable text escalates to Browser Rendering", async () => {
+    // The case that got past everything: the status was fine, so shouldEscalate
+    // said no, and an empty string was returned as `success: true`.
+    const { extractTextFromHtml } = await import("@/lib/url-import/html-parser");
+    vi.mocked(extractTextFromHtml)
+      .mockReturnValueOnce("") // standard fetch — unreadable page
+      .mockReturnValue(
+        "Vermont Crafters Expo — November 7 and 8, 2026 at the Champlain Valley Expo."
+      );
+
+    let callCount = 0;
+    global.fetch = vi.fn(async () => {
+      callCount += 1;
+      if (callCount === 1) {
+        return new Response("<html><body><div id=app></div></body></html>", {
+          status: 200,
+          headers: { "content-type": "text/html" },
+        });
+      }
+      return new Response(
+        JSON.stringify({ success: true, result: "<html><body>rendered</body></html>" }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    });
+
+    const res = await GET(makeRequest("https://example.com/js-only"), noParams);
+    const body = (await res.json()) as { success: boolean; fetchMethod?: string };
+
+    expect(body.success).toBe(true);
+    expect(body.fetchMethod).toBe("browser-rendering");
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("OPE-537: fails with a NAMED reason when the rendered page is also empty", async () => {
+    // The honest-bounce case. It must not return `success: true` with "" and
+    // let a downstream validator invent a different explanation.
+    const { extractTextFromHtml } = await import("@/lib/url-import/html-parser");
+    vi.mocked(extractTextFromHtml).mockReturnValue("");
+
+    global.fetch = vi.fn(
+      async () =>
+        new Response("<html><body></body></html>", {
+          status: 200,
+          headers: { "content-type": "text/html" },
+        })
+    );
+
+    const res = await GET(makeRequest("https://example.com/empty"), noParams);
+    const body = (await res.json()) as { success: boolean; error?: string; fetchMethod?: string };
+
+    expect(body.success).toBe(false);
+    expect(body.fetchMethod).toBe("failed");
+    expect(body.error).toMatch(/no readable text/i);
   });
 
   it("does NOT escalate on 404 — surfaces fetchMethod='failed'", async () => {
