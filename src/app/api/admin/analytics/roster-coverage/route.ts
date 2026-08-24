@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { and, eq, gte, inArray, isNull, like, or, sql } from "drizzle-orm";
 import { isAuthorized } from "@/lib/api-auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
+import { rosterResearchTargetWhere, isNonResearchCategory } from "@takemetothefair/db-schema";
 import { events, eventVendors } from "@/lib/db/schema";
 import { PRODUCER_CLASS_CATEGORIES } from "@takemetothefair/constants";
 
@@ -82,21 +83,44 @@ export async function GET(request: NextRequest) {
 
     // Global queue counts (all events, not just producer-class) — the actual
     // worklist the analyst sweep drains + the un-backfillable tail.
+    // OPE-528 — the queue now counts only rows a drain could actually close.
+    //
+    // It previously counted every row in a queue status, including 8 REJECTED
+    // events (a decision already taken) and 128 weekly farmers-market
+    // occurrences (which do not publish exhibitor rosters, so they can never
+    // reach a terminal status and the recurrence mints more every week).
+    // Because the drain sorts `end_date_desc`, those were also the rows at the
+    // TOP of the worklist.
+    //
+    // `rosterResearchTargetWhere` is shared with the MCP `list_all_events`
+    // filter so the two surfaces cannot drift — they differed by exactly 3
+    // (merge tombstones) with no stated rule until this was one definition.
+    const queueStatuses = [
+      "NEEDS_RESEARCH",
+      "NO_PUBLIC_LIST",
+      "PARTIAL",
+      "NEEDS_RENDERED_FETCH",
+    ] as const;
     const queueRows = await db
       .select({ status: events.vendorRosterStatus, n: sql<number>`count(*)` })
       .from(events)
       .where(
-        and(
-          isNull(events.mergedInto),
-          inArray(events.vendorRosterStatus, [
-            "NEEDS_RESEARCH",
-            "NO_PUBLIC_LIST",
-            "PARTIAL",
-            "NEEDS_RENDERED_FETCH",
-          ])
-        )
+        and(rosterResearchTargetWhere(), inArray(events.vendorRosterStatus, [...queueStatuses]))
       )
       .groupBy(events.vendorRosterStatus);
+
+    // EXCLUDED, NOT DISCARDED. Reported as their own totals so the queue
+    // shrinking is legible as a definition change rather than as a drain that
+    // happened overnight. A number that silently drops is indistinguishable
+    // from a queue that emptied — the failure this rail keeps hitting.
+    const [excludedRows] = await db
+      .select({
+        nonApproved: sql<number>`sum(case when ${events.status} <> 'APPROVED' and ${events.mergedInto} is null then 1 else 0 end)`,
+        tombstoned: sql<number>`sum(case when ${events.mergedInto} is not null then 1 else 0 end)`,
+        recurringMarket: sql<number>`sum(case when ${events.mergedInto} is null and ${events.status} = 'APPROVED' and ${isNonResearchCategory()} then 1 else 0 end)`,
+      })
+      .from(events)
+      .where(inArray(events.vendorRosterStatus, [...queueStatuses]));
     const queueOf = (s: string): number => queueRows.find((r) => r.status === s)?.n ?? 0;
 
     // 8-week links-added trend. Bucket in JS (Drizzle returns Date objects, so
@@ -160,6 +184,13 @@ export async function GET(request: NextRequest) {
         // OPE-527 — not re-enqueued by the sweep (we already hold the links),
         // but targetable by a drain that wants to attribute them.
         hasLinksUnverifiedTotal: queueOf("HAS_LINKS_UNVERIFIED"),
+        // OPE-528 — what the totals above deliberately leave out. Present so
+        // the exclusion is auditable from the same response that applies it.
+        excluded: {
+          nonApproved: excludedRows?.nonApproved ?? 0,
+          tombstoned: excludedRows?.tombstoned ?? 0,
+          recurringMarket: excludedRows?.recurringMarket ?? 0,
+        },
       },
       linksAddedTrend,
     });
