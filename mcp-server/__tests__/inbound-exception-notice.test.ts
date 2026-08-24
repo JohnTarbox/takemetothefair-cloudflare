@@ -47,7 +47,12 @@ describe("decideInboundExceptionNotice", () => {
 
 describe("intent constants (queue + disposition scope)", () => {
   it("salvage queue is scoped to real event-submission intents", () => {
-    expect([...SALVAGE_INTENTS]).toEqual(["new_event", "submit"]);
+    // OPE-532 added `photo_intake`. Someone emailing a photo of a fair is
+    // making a real submission attempt, and prod held a `status='failed'`
+    // photo intake (2026-08-10) that no count has ever included, because the
+    // intent allow-list excluded it. Deliberate change; this pin caught it,
+    // which is exactly what it is for.
+    expect([...SALVAGE_INTENTS]).toEqual(["new_event", "submit", "photo_intake"]);
   });
   it("auto-disposition is limited to unambiguous non-event intents (not 'unclear')", () => {
     expect([...NON_EVENT_INTENTS]).toEqual(["spam", "unsubscribe"]);
@@ -62,5 +67,43 @@ describe("helpers", () => {
   });
   it("escapeHtml escapes subject/address special chars", () => {
     expect(escapeHtml('Fair & "Expo" <b>')).toBe("Fair &amp; &quot;Expo&quot; &lt;b&gt;");
+  });
+});
+
+describe("OPE-532 — a flat queue that is ageing still speaks", () => {
+  const { ageBucket } = __test;
+
+  it("stays silent on an unchanged count that has not aged into a new bucket", () => {
+    // The original rule, unchanged: same size, same bucket, nothing new to say.
+    expect(decideInboundExceptionNotice(9, YESTERDAY, 9, TODAY, ageBucket(4), 3)).toBe(false);
+  });
+
+  it("speaks when the oldest item crosses a threshold, though the count is identical", () => {
+    // The hole this closes. A backlog frozen at 9 for a month was, to the old
+    // gate, indistinguishable from one nobody needed to hear about.
+    expect(decideInboundExceptionNotice(9, YESTERDAY, 9, TODAY, ageBucket(8), 3)).toBe(true);
+  });
+
+  it("does not speak twice for the same bucket", () => {
+    expect(decideInboundExceptionNotice(9, YESTERDAY, 9, TODAY, ageBucket(20), 14)).toBe(false);
+  });
+
+  it("treats a null stored bucket as 'never escalated' rather than zero", () => {
+    // Rows predating drizzle/0227. Reading null as 0 would make the first
+    // ageing queue after deploy fire on a bucket it had already lived through.
+    expect(decideInboundExceptionNotice(9, YESTERDAY, 9, TODAY, ageBucket(40), null)).toBe(false);
+  });
+
+  it("never sends twice in one day, whatever the escalation", () => {
+    // The once-a-day rule outranks escalation.
+    expect(decideInboundExceptionNotice(9, TODAY, 9, TODAY, ageBucket(90), 3)).toBe(false);
+  });
+
+  it("still refuses to speak about an empty queue however old it was", () => {
+    expect(decideInboundExceptionNotice(0, YESTERDAY, 9, TODAY, ageBucket(90), 3)).toBe(false);
+  });
+
+  it("keeps the count-change path working regardless of age", () => {
+    expect(decideInboundExceptionNotice(11, YESTERDAY, 9, TODAY, ageBucket(0), null)).toBe(true);
   });
 });

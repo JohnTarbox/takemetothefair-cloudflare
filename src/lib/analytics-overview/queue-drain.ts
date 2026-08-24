@@ -12,7 +12,7 @@
  * is recovered as a day-over-day depth delta from the persisted snapshots — and
  * stays `null` (→ no RED, tile shows "pending history") until a prior row exists.
  */
-import { and, count, eq, gte, inArray, isNotNull, isNull, like, lt, sql } from "drizzle-orm";
+import { and, count, eq, gte, inArray, isNotNull, isNull, like, lt, not, sql } from "drizzle-orm";
 import {
   emailSendLedger,
   emailDeliveryEvents,
@@ -31,7 +31,11 @@ import {
   users,
 } from "@/lib/db/schema";
 import { getCurrentIssues } from "@/lib/site-health";
-import { SITE_URL } from "@takemetothefair/constants";
+import {
+  SITE_URL,
+  TERMINAL_UNHANDLED_REPLY_KINDS,
+  DISPOSED_INBOUND_STATUSES,
+} from "@takemetothefair/constants";
 import type { AnyColumn, SQL } from "drizzle-orm";
 import type { SQLiteTable } from "drizzle-orm/sqlite-core";
 import { assessQueueFreeze, type QueueFlow } from "@/lib/queue-freeze";
@@ -265,6 +269,95 @@ async function inboundExceptionFlow(db: Db, now: Date): Promise<QueueDrainRow> {
     inflow1d,
     outflow1d,
     drainRatio7d: ratio(outflow7d, inflow7d),
+  };
+}
+
+/**
+ * OPE-532 — inbound submissions that ended in an acknowledgement rather than
+ * an action.
+ *
+ * When the photo lane cannot resolve a fair it sends the "which fair?" reply
+ * and writes `status='replied'` — the same status a fully successful
+ * submission gets. So the row records its own failure as a success, and every
+ * counter downstream reads it as handled.
+ *
+ * It was invisible to all three of its neighbours, which is why ten losses
+ * inside eighteen minutes on 2026-08-23 produced no alert of any kind:
+ *
+ *   inbound_exceptions        counts `flagged_for_review=1`. All 9 live held
+ *                             rows are `flagged_for_review=0` — verified in
+ *                             prod, not assumed.
+ *   inbound_awaiting_decision counts `status='waiting'`. These say 'replied'.
+ *   OPE-17's triage notice     required `status='failed'` AND a submission
+ *                             intent. A held photo fails BOTH.
+ *
+ * `oldestOpenAgeHours` is reported, like its OPE-387 sibling and for the same
+ * reason: depth alone cannot show that the oldest of these has been sitting
+ * since 2026-07-17. Nothing here times out on its own, so age is the only
+ * signal that the queue has stopped moving.
+ */
+async function inboundHeldSubmissionFlow(db: Db, now: Date): Promise<QueueDrainRow> {
+  const d = (days: number) => new Date(now.getTime() - days * DAY_MS);
+  // Same three clauses as the MCP Worker's `salvageCandidateWhere` branch (B),
+  // over the SAME shared constants, so the operator email and this tile cannot
+  // disagree about what is held.
+  const held = and(
+    isNull(inboundEmails.resultingEventId),
+    inArray(inboundEmails.replyKind, [...TERMINAL_UNHANDLED_REPLY_KINDS]),
+    not(inArray(inboundEmails.status, [...DISPOSED_INBOUND_STATUSES]))
+  );
+  const [depth, inflow1d, inflow7d, inflow14d, oldest] = await Promise.all([
+    cnt(db, inboundEmails, held),
+    cnt(db, inboundEmails, and(held, gte(inboundEmails.receivedAt, d(1)))),
+    cnt(db, inboundEmails, and(held, gte(inboundEmails.receivedAt, d(7)))),
+    cnt(db, inboundEmails, and(held, gte(inboundEmails.receivedAt, d(14)))),
+    db
+      .select({ oldest: sql<number | null>`min(${inboundEmails.receivedAt})` })
+      .from(inboundEmails)
+      .where(held),
+  ]);
+
+  const oldestSec = oldest[0]?.oldest ?? null;
+  const oldestOpenAgeHours =
+    oldestSec != null ? (now.getTime() / 1000 - Number(oldestSec)) / 3600 : null;
+
+  const prior = await db
+    .select({
+      depth: queueDrainSnapshots.depth,
+      outflow1d: queueDrainSnapshots.outflow1d,
+      snapshotDate: queueDrainSnapshots.snapshotDate,
+    })
+    .from(queueDrainSnapshots)
+    .where(
+      and(
+        eq(queueDrainSnapshots.queueName, "inbound_held_submissions"),
+        lt(queueDrainSnapshots.snapshotDate, utcDate(now))
+      )
+    )
+    .orderBy(sql`${queueDrainSnapshots.snapshotDate} desc`)
+    .limit(14);
+
+  const outflow1d = prior.length > 0 ? Math.max(0, prior[0].depth + inflow1d - depth) : null;
+  const sumStored = (n: number): number | null => {
+    const rows = prior.slice(0, n).filter((r) => r.outflow1d != null);
+    if (rows.length === 0) return null;
+    const stored = rows.reduce((s, r) => s + (r.outflow1d as number), 0);
+    return stored + (outflow1d ?? 0);
+  };
+
+  return {
+    queueName: "inbound_held_submissions",
+    label: "Inbound submissions held (acked, never actioned)",
+    href: QUEUE_DRAIN_HREF,
+    depth,
+    inflow7d,
+    outflow7d: sumStored(6),
+    inflow14d,
+    outflow14d: sumStored(13),
+    oldestOpenAgeHours,
+    inflow1d,
+    outflow1d,
+    drainRatio7d: ratio(sumStored(6), inflow7d),
   };
 }
 
@@ -794,6 +887,7 @@ export async function gatherQueueFlows(db: Db, now: Date): Promise<QueueDrainRow
       vendorEnrichmentCandidates.reviewedAt,
       vendorEnrichmentCandidates.decision
     ),
+    inboundHeldSubmissionFlow(db, now),
     promoterNeedsEnrichmentFlow(db),
     enrichment(
       "promoter_enrichment",

@@ -1,0 +1,15 @@
+-- OPE-532 — a held photo-intake email is `status='replied'`, so every counter
+-- reads it as handled.
+--
+-- The inbound-exception notice debounces on COUNT alone: `lastQueueCount ===
+-- count` suppresses the notice. So a queue that stops draining goes silent
+-- precisely when it has become a problem. This column stores the age bucket of
+-- the oldest candidate at the last notice, so a flat-but-ageing queue can
+-- speak again when its oldest item crosses a threshold.
+--
+-- Nullable and with no backfill on purpose:
+--   * ADD COLUMN with no default is a pure schema change, so this applies
+--     cleanly to the empty database CI builds from migrations.
+--   * NULL reads as "never escalated", which is the correct starting state for
+--     the single pre-existing row rather than a fabricated 0.
+ALTER TABLE inbound_exception_notice_state ADD COLUMN last_oldest_age_bucket INTEGER;
