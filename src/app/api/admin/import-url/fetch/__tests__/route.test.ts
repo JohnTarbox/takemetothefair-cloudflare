@@ -201,6 +201,53 @@ describe("GET /api/admin/import-url/fetch — Browser Rendering escalation", () 
     expect(body.error).toMatch(/no readable text/i);
   });
 
+  it("OPE-537: logs a SAMPLE of the body, not just its length", async () => {
+    // The Vermont Crafters Expo re-submit (`f2b62b40`, 2026-08-24) logged
+    // `htmlBytes: 219` — a 200 carrying 219 bytes, while the same URL served
+    // 86,036 bytes to a request from outside Cloudflare with byte-identical
+    // headers. A WAF stub, a meta-refresh, a JS challenge and an empty CMS
+    // shell are all plausible at that size and indistinguishable by length,
+    // so the diagnosis stalled on a number.
+    const { extractTextFromHtml } = await import("@/lib/url-import/html-parser");
+    vi.mocked(extractTextFromHtml).mockReturnValue("");
+    const { logError } = await import("@/lib/logger");
+
+    const stub = '<html><head><meta http-equiv="refresh" content="0;url=/blocked"></head></html>';
+    global.fetch = vi.fn(
+      async () => new Response(stub, { status: 200, headers: { "content-type": "text/html" } })
+    );
+
+    await GET(makeRequest("https://example.com/stub"), noParams);
+
+    expect(logError).toHaveBeenCalled();
+    const ctx = vi.mocked(logError).mock.calls.at(-1)?.[1]?.context as Record<string, unknown>;
+    expect(ctx.htmlBytes).toBe(stub.length);
+    // The actual bytes — the part that identifies WHICH kind of stub it is.
+    expect(String(ctx.htmlPrefix)).toContain("http-equiv");
+    expect(String(ctx.htmlPrefix)).toContain("/blocked");
+  });
+
+  it("OPE-537: caps and single-lines the logged sample", async () => {
+    const { extractTextFromHtml } = await import("@/lib/url-import/html-parser");
+    vi.mocked(extractTextFromHtml).mockReturnValue("");
+
+    const { logError } = await import("@/lib/logger");
+    // Pretty-printed markup: without whitespace collapsing, indentation alone
+    // would push the informative part of the page past the cap.
+    const huge = "<html>\n" + "        <div>padding</div>\n".repeat(400) + "</html>";
+    global.fetch = vi.fn(
+      async () => new Response(huge, { status: 200, headers: { "content-type": "text/html" } })
+    );
+
+    await GET(makeRequest("https://example.com/huge"), noParams);
+
+    const ctx = vi.mocked(logError).mock.calls.at(-1)?.[1]?.context as Record<string, unknown>;
+    const prefix = String(ctx.htmlPrefix);
+    expect(prefix.length).toBeLessThanOrEqual(220);
+    expect(prefix).not.toContain("\n");
+    expect(prefix).not.toContain("        ");
+  });
+
   it("does NOT escalate on 404 — surfaces fetchMethod='failed'", async () => {
     global.fetch = vi.fn(async () => new Response("not found", { status: 404 }));
 

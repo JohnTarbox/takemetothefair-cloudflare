@@ -25,6 +25,18 @@ import { logError } from "@/lib/logger";
 // real side effect (it triggers an outbound fetch + Browser Rendering), so the
 // read-only Claude token must NOT authorize it — only an admin session or the
 // internal key. Replaces the prior inline timing-unsafe `===` key check.
+/**
+ * A short, single-line, size-capped sample of a response body for the error log.
+ *
+ * Whitespace is collapsed because minified and pretty-printed markup differ by
+ * hundreds of leading spaces, which would push the informative part of a stub
+ * page past the cap. The cap keeps a full HTML error page out of a D1 column.
+ */
+const HTML_LOG_PREFIX_CHARS = 220;
+function htmlLogPrefix(html: string): string {
+  return html.replace(/\s+/g, " ").trim().slice(0, HTML_LOG_PREFIX_CHARS);
+}
+
 export const GET = withAuthorized({ allowReadonlyBearer: false }, async ({ request, db }) => {
   // Browser-Rendering credentials for the escalation path below.
   const cfEnv = getCloudflareEnv() as unknown as {
@@ -165,6 +177,16 @@ export const GET = withAuthorized({ allowReadonlyBearer: false }, async ({ reque
             extractedChars: content.trim().length,
             firstFetchMethod: fetchMethod,
             brError: rendered?.ok ? "rendered-but-empty" : (rendered?.error ?? "not-attempted"),
+            // What the body ACTUALLY was. We logged htmlBytes and threw the
+            // bytes away, so "200 with 219 bytes" was as far as any diagnosis
+            // could get — a WAF stub, a meta-refresh, a JS challenge and an
+            // empty CMS shell are indistinguishable by length. A prefix
+            // separates them on the first occurrence instead of the second.
+            htmlPrefix: htmlLogPrefix(html),
+            // Present only when Browser Rendering DID return a page that we
+            // then failed to extract text from — that is a different bug from
+            // the origin refusing us, and it needs its own sample.
+            ...(rendered?.ok ? { renderedPrefix: htmlLogPrefix(rendered.html) } : {}),
           },
         });
         // Reported as a failure, with a message that names THIS cause rather

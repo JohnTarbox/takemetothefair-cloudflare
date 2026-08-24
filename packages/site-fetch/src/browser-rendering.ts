@@ -21,6 +21,36 @@ import { isBlockedSsrfHost } from "./ssrf-guard";
 export const BROWSER_RENDERING_TIMEOUT = 25000;
 
 /**
+ * Page-load options for the Browser Rendering `/content` call.
+ *
+ * We passed NOTHING here until 2026-08-24, taking whatever the API defaulted
+ * to. Cloudflare's FAQ on `422 Unprocessable Entity` says it "usually means
+ * Browser Run was not able to complete an action because of an issue with the
+ * site… Most often, this error is caused by a timeout", and every worked
+ * example in their docs passes explicit `gotoOptions`. Ours 422'd on every
+ * attempt from 2026-07-19 onward while the request body had not changed since
+ * PR #478 — i.e. the regression was on their side, and the documented remedy
+ * is to stop relying on the default.
+ *
+ * ⚠️ `timeout` MUST stay below BROWSER_RENDERING_TIMEOUT (our own abort). If
+ * ours fires first we kill the request before the API can tell us why it
+ * failed, which is the exact blindness this change exists to remove. 20s
+ * leaves 5s of headroom for the API to answer.
+ *
+ * `networkidle2` (≤2 in-flight connections for 500ms) rather than
+ * `domcontentloaded`: the pages that reach this path are the ones that render
+ * their content with JavaScript, so returning at DOMContentLoaded would hand
+ * back the same empty shell the standard fetch already got.
+ */
+/** Cap on captured upstream error text — it lands in a D1 log column. */
+export const API_ERROR_DETAIL_CAP = 300;
+
+export const BROWSER_RENDERING_GOTO = {
+  waitUntil: "networkidle2",
+  timeout: 20000,
+} as const;
+
+/**
  * Real-browser UA. A self-identifying bot UA ("MeetMeAtTheFair/1.0") tripped
  * many hosting-provider WAFs; standardizing on a Chrome fingerprint keeps the
  * standard path closer to Browser Rendering's real Chrome and avoids
@@ -141,6 +171,34 @@ export async function fetchStandard(url: string, signal: AbortSignal): Promise<F
  * Calls the REST `/content` endpoint (not the Workers Puppeteer binding) —
  * minimum billable browser time, no held-open sessions.
  */
+/**
+ * Best-effort extraction of a human-readable reason from a failed Cloudflare
+ * API response. Never throws and never rejects: this runs on a path that is
+ * ALREADY failing, so a parse problem here must not replace a real upstream
+ * error with a parse error.
+ *
+ * Cloudflare returns `{ success, errors: [{ code, message }] }`; some edge
+ * failures return plain text or HTML instead, so the raw body is the fallback.
+ * Capped because it lands in a D1 log column, and an HTML error page is large.
+ */
+async function readApiErrorDetail(response: Response): Promise<string> {
+  const raw = await response.text().catch(() => "");
+  if (!raw) return "";
+  try {
+    const parsed = JSON.parse(raw) as {
+      errors?: Array<{ code?: number; message?: string }>;
+    };
+    const named = parsed.errors
+      ?.map((e) => (e.code ? `${e.code} ${e.message ?? ""}`.trim() : (e.message ?? "")))
+      .filter(Boolean)
+      .join("; ");
+    if (named) return named.slice(0, API_ERROR_DETAIL_CAP);
+  } catch {
+    // Not JSON — fall through to the raw body.
+  }
+  return raw.replace(/\s+/g, " ").trim().slice(0, API_ERROR_DETAIL_CAP);
+}
+
 export async function fetchViaBrowserRendering(
   url: string,
   env: BrowserRenderingEnv
@@ -165,7 +223,7 @@ export async function fetchViaBrowserRendering(
         Authorization: `Bearer ${env.CLOUDFLARE_BROWSER_RENDERING_TOKEN}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ url }),
+      body: JSON.stringify({ url, gotoOptions: BROWSER_RENDERING_GOTO }),
     });
   } catch (err) {
     clearTimeout(timeoutId);
@@ -186,10 +244,18 @@ export async function fetchViaBrowserRendering(
   }
   clearTimeout(timeoutId);
   if (!response.ok) {
+    // Read the body before discarding the response. This block used to throw
+    // it away and keep only the status, which is why "browser-rendering-http-422"
+    // was every 422 we had on record for five weeks: the status says an action
+    // failed, the body says which one and why. Same lesson as the discarded
+    // `extract-` upstream error (PR #1017) — a status code is not a diagnosis.
+    const detail = await readApiErrorDetail(response);
     return {
       ok: false,
       status: response.status,
-      error: `browser-rendering-http-${response.status}`,
+      // Prefix preserved so existing log greps and dashboards keep matching;
+      // the detail is appended, not substituted.
+      error: `browser-rendering-http-${response.status}${detail ? `: ${detail}` : ""}`,
       userMessage: "Could not fetch page. Try pasting the content manually.",
     };
   }
