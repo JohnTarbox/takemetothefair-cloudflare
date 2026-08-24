@@ -26,6 +26,7 @@ import { classifySource, assertIngestionMethod } from "@/lib/source-classificati
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 import { autoLinkVenue, deriveStateFromText } from "@/lib/venue-matching";
 import { normalizeEventDate } from "@/lib/event-dates";
+import { singleDayWithHours } from "@/lib/single-day-hours";
 import { groundNameInSources } from "@/lib/url-import/name-grounding";
 import { qualifyNameWithHost } from "@/lib/url-import/host-qualified-name";
 import {
@@ -374,6 +375,18 @@ export async function POST(request: NextRequest) {
       closed?: boolean;
       vendorOnly?: boolean;
     }
+    // OPE-531 — a one-day event's hours, which previously had nowhere to go.
+    const singleDayHoursDate = singleDayWithHours({
+      startDate,
+      endDate,
+      hasExplicitDays: Boolean(
+        (data.eventDays && data.eventDays.length > 0) ||
+        (data.specificDates && data.specificDates.length > 0)
+      ),
+      startTime: data.startTime,
+      endTime: data.endTime,
+    });
+
     const effectiveEventDays: NormalizedDay[] | null =
       data.eventDays && data.eventDays.length > 0
         ? data.eventDays.map((d) => ({
@@ -398,7 +411,33 @@ export async function POST(request: NextRequest) {
               openTime: data.startTime || null,
               closeTime: data.endTime || null,
             }))
-          : null;
+          : // OPE-531 — a single-day event's hours had nowhere to go.
+            //
+            // `data.startTime` / `data.endTime` were read ONLY inside the
+            // `specificDates` branch above, and `events` has no time columns:
+            // hours live exclusively in `event_days`. So a one-day submission
+            // carrying "10 AM-3 PM" — the overwhelmingly common shape for a
+            // craft fair or makers market — had its hours silently discarded
+            // at this line, after being extracted correctly.
+            //
+            // Live specimen: the VCS Makers Market body states "10 AM-3 PM"
+            // twice; the stored event has no `event_days` row at all.
+            //
+            // Only fires when there is genuinely nothing else: no explicit
+            // eventDays, no specificDates, a real start date, at least one
+            // known time, and a single calendar day. Multi-day events are
+            // left alone — spreading one time range across a range of dates
+            // would assert per-day hours nobody stated, which is the OPE-465
+            // fabrication direction.
+            singleDayHoursDate
+            ? [
+                {
+                  date: singleDayHoursDate,
+                  openTime: data.startTime || null,
+                  closeTime: data.endTime || null,
+                },
+              ]
+            : null;
 
     // OPE-47 (2026-07): derive the discontinuous flag from ACTUAL date
     // contiguity, not a bare day count. Previously any event with ≥2
