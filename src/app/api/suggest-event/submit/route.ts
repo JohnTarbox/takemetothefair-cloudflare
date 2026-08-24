@@ -14,6 +14,7 @@ import {
 import { resolveUniqueEventSlug, insertEventDaysBatched } from "@/lib/events/insert-helpers";
 import { attachEventToSeries } from "@/lib/series/resolve-or-create-series";
 import { logError } from "@/lib/logger";
+import { mintVenueFromIngest } from "@/lib/venue-minting";
 import { recomputeEventCompleteness } from "@/lib/completeness";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { evaluateGates } from "@/lib/event-date-gates";
@@ -356,6 +357,36 @@ export async function POST(request: NextRequest) {
       resolvedStateCode = result.stateCode ?? resolvedStateCode;
     } else if (resolvedVenueId) {
       venueDecision = "pre-resolved";
+    }
+
+    // OPE-541 / OPE-531 — mint a venue from ingest prose when nothing matched.
+    //
+    // Authorized by John, 2026-08-24: "yes, ingest should mint venues from
+    // email prose." That ruling was the blocker; the guards are in
+    // `venue-minting.ts` and the reasoning for each is documented there.
+    //
+    // Scoped to `source === "email"` because that is exactly what was
+    // authorized. The public /suggest-event form picks a venue explicitly and
+    // the admin importers already create venues on operator action, so
+    // neither needs this and widening it would be my decision, not his.
+    let venueMintReason: string | null = null;
+    if (!resolvedVenueId && data.source === "email") {
+      const mint = await mintVenueFromIngest(db, {
+        decision: venueDecision,
+        venueName: data.venueName,
+        venueAddress: data.venueAddress ?? null,
+        venueCity: data.venueCity ?? null,
+        venueState: data.venueState ?? null,
+      });
+      venueMintReason = mint.reason ?? "minted";
+      if (mint.venueId) {
+        // Covers BOTH outcomes that yield an id: a fresh mint, and the
+        // pre-insert re-check finding a row the matcher missed. The second is
+        // a successful link, not a refusal, so it must not be dropped.
+        resolvedVenueId = mint.venueId;
+        resolvedStateCode = resolvedStateCode ?? (data.venueState?.trim().toUpperCase() || null);
+        venueDecision = mint.minted ? "minted-from-prose" : "matched-on-recheck";
+      }
     }
     // OPE-411 — append the `Location:` block ONLY when the venue did not
     // resolve.
@@ -723,6 +754,11 @@ export async function POST(request: NextRequest) {
         venue_address_supplied: Boolean(data.venueAddress),
         venue_city_supplied: Boolean(data.venueCity),
         venue_state_supplied: Boolean(data.venueState),
+        // OPE-541 — null when minting was not attempted; otherwise "minted"
+        // or the refusal reason. Distinguishes "we could have and chose not
+        // to" from "we tried and the guards refused", which is the pair the
+        // minting rate has to be read against.
+        mint_reason: venueMintReason,
         source: data.source ?? null,
       },
     }).catch(() => {

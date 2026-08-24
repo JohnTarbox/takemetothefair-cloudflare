@@ -489,6 +489,41 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     lastEvidenceAt: (db) => maxTs(db, eventSeries, eventSeries.createdAt),
   },
   {
+    // OPE-541 — proof the venue-decision path (and with it, minting) still runs.
+    //
+    // This ships a NEW WRITER: ingest now creates venue rows from email prose
+    // when `autoLinkVenue` returns `no-match`. The OPE-246 rule wants a probe
+    // for it, and the obvious one is wrong.
+    //
+    // Watching "newest venue minted by ingest" would be a YIELD, not a run.
+    // Minting fires only when a submission carries an unknown venue AND a city
+    // AND a state; a quiet week, or a week in which every venue happened to
+    // match, produces zero minted rows with nothing broken at all. That probe
+    // REDs on ordinary weather, gets muted, and then reads as coverage while
+    // covering nothing.
+    //
+    // The RUN is the decision record. `venue-resolution` is emitted once per
+    // submission for EVERY outcome — matched, ambiguous, no-match, minted,
+    // refused — so its absence means the venue path itself stopped executing,
+    // which is the only thing a probe here can honestly assert.
+    //
+    // 72h for the same reason the OPE-540 citation probe uses it: this tracks
+    // submission volume, which is bursty enough to contain legitimate
+    // multi-day gaps.
+    name: "venue-decision-writer",
+    ownerOpe: "OPE-541",
+    label: "Venue resolution decisions (submit pipeline)",
+    priority: "P1",
+    expectedWindowHours: 72,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        errorLogs,
+        errorLogs.timestamp,
+        eq(errorLogs.source, "api/suggest-event/submit:venue-resolution")
+      ),
+  },
+  {
     name: "fault-emitter-run",
     ownerOpe: "OPE-488",
     label: "Render-fault emitter run (hourly cron)",
