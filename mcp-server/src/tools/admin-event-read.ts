@@ -20,7 +20,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { and, eq, isNull, inArray } from "drizzle-orm";
-import { unsafeSlug } from "@takemetothefair/utils";
+import { unsafeSlug, centsToDollars } from "@takemetothefair/utils";
 import { events, eventDays, eventVendors, promoters, vendors, venues } from "../schema.js";
 import { jsonContent } from "../helpers.js";
 import type { Db } from "../db.js";
@@ -79,6 +79,47 @@ export function registerAdminEventReadTools(server: McpServer, db: Db, auth: Aut
           venueName: venues.name,
           venueCity: venues.city,
           venueState: venues.state,
+          venueAddress: venues.address,
+          venueZip: venues.zip,
+          // OPE-534 — everything below here is writable by `update_event` and
+          // was NOT readable through this tool. An agent that sets a field it
+          // has never seen destroys whatever was there, silently: no error, no
+          // warning, and per OPE-505 no audit trail either.
+          //
+          // The live loss (2026-08-24, KCCV Holiday Craft Fair) replaced a real
+          // Zeffy application form with a marketing landing page, and a
+          // vendor_fee_notes value carrying the only record of the prior
+          // Google-Form route. The reader returned no key for either — not
+          // null, ABSENT — so nothing in the response even hinted they existed.
+          //
+          // The gap measured 27 fields, not the 11 the ticket had observed.
+          ticketPriceMinCents: events.ticketPriceMinCents,
+          ticketPriceMaxCents: events.ticketPriceMaxCents,
+          vendorFeeMinCents: events.vendorFeeMinCents,
+          vendorFeeMaxCents: events.vendorFeeMaxCents,
+          vendorFeeNotes: events.vendorFeeNotes,
+          applicationUrl: events.applicationUrl,
+          applicationInstructions: events.applicationInstructions,
+          applicationDeadline: events.applicationDeadline,
+          walkInsAllowed: events.walkInsAllowed,
+          commercialVendorsAllowed: events.commercialVendorsAllowed,
+          estimatedAttendance: events.estimatedAttendance,
+          eventScale: events.eventScale,
+          indoorOutdoor: events.indoorOutdoor,
+          imageUrl: events.imageUrl,
+          imageFocalX: events.imageFocalX,
+          imageFocalY: events.imageFocalY,
+          featured: events.featured,
+          isStatewide: events.isStatewide,
+          stateCode: events.stateCode,
+          primaryAudience: events.primaryAudience,
+          publicAccess: events.publicAccess,
+          accessNotes: events.accessNotes,
+          registrationRequired: events.registrationRequired,
+          recurrenceRule: events.recurrenceRule,
+          discontinuousDates: events.discontinuousDates,
+          sourceId: events.sourceId,
+          syncEnabled: events.syncEnabled,
           promoterId: events.promoterId,
           promoterName: promoters.companyName,
           promoterSlug: promoters.slug,
@@ -164,14 +205,64 @@ export function registerAdminEventReadTools(server: McpServer, db: Db, auth: Aut
             view_count: event.viewCount,
             created_at: event.createdAt ? new Date(event.createdAt).toISOString() : null,
             updated_at: event.updatedAt ? new Date(event.updatedAt).toISOString() : null,
+            // OPE-534 — flat and ALWAYS present, alongside the nested blocks.
+            // The nested `venue`/`promoter` objects are null when unset, so
+            // their `id` key disappears entirely with them — the same
+            // absent-key trap, on the two FKs update_event can write.
+            venue_id: event.venueId,
+            promoter_id: event.promoterId,
             venue: event.venueId
               ? {
                   id: event.venueId,
                   name: event.venueName,
                   city: event.venueCity,
                   state: event.venueState,
+                  address: event.venueAddress,
+                  zip: event.venueZip,
                 }
               : null,
+            // OPE-534 — the writable field set, in full. Flat and always
+            // present (null when unset) rather than nested or omitted: an
+            // ABSENT key is what made the 2026-08-24 loss invisible, because a
+            // caller cannot tell "no value" from "this tool does not report
+            // it", and only one of those is safe to overwrite.
+            ticket_price_min: centsToDollars(event.ticketPriceMinCents),
+            ticket_price_max: centsToDollars(event.ticketPriceMaxCents),
+            vendor_fee_min: centsToDollars(event.vendorFeeMinCents),
+            vendor_fee_max: centsToDollars(event.vendorFeeMaxCents),
+            vendor_fee_notes: event.vendorFeeNotes,
+            application_url: event.applicationUrl,
+            application_instructions: event.applicationInstructions,
+            application_deadline: event.applicationDeadline
+              ? new Date(event.applicationDeadline).toISOString()
+              : null,
+            walk_ins_allowed: event.walkInsAllowed,
+            commercial_vendors_allowed: event.commercialVendorsAllowed,
+            estimated_attendance: event.estimatedAttendance,
+            event_scale: event.eventScale,
+            indoor_outdoor: event.indoorOutdoor,
+            image_url: event.imageUrl,
+            image_focal_x: event.imageFocalX,
+            image_focal_y: event.imageFocalY,
+            featured: event.featured,
+            is_statewide: event.isStatewide,
+            state_code: event.stateCode,
+            primary_audience: event.primaryAudience,
+            public_access: event.publicAccess,
+            access_notes: event.accessNotes,
+            registration_required: event.registrationRequired,
+            recurrence_rule: event.recurrenceRule,
+            discontinuous_dates: event.discontinuousDates,
+            source_id: event.sourceId,
+            sync_enabled: event.syncEnabled,
+            // Venue-creation helpers `update_event` accepts. Surfaced flat too
+            // so the reader/writer enumeration test has something to match, and
+            // so a caller sees the same shape it can send back.
+            venue_name: event.venueName,
+            venue_address: event.venueAddress,
+            venue_city: event.venueCity,
+            venue_state: event.venueState,
+            venue_zip: event.venueZip,
             promoter: event.promoterId
               ? { id: event.promoterId, name: event.promoterName, slug: event.promoterSlug }
               : null,

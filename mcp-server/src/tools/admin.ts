@@ -1438,6 +1438,31 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         }
       }
 
+      // OPE-534 — name the fields this call is about to OVERWRITE.
+      //
+      // `previousValues` already carried the evidence, and it is what caught
+      // the 2026-08-24 loss — but only because one agent happened to read the
+      // echo. A value buried in a response nobody inspects is not a signal, and
+      // per OPE-505 field-level writes leave no audit trail at all, so this
+      // echo is the ONLY record that a real value was replaced.
+      //
+      // So the destructive subset is lifted into `warnings`, where the caller
+      // already looks (gate_flags, possible_duplicates). Only non-null →
+      // different-value counts: filling a blank is not an overwrite, and
+      // warning on a no-op rewrite would train the reader to ignore it.
+      const overwroteNonNull = Object.entries(previousValues)
+        .filter(([field, prior]) => {
+          if (prior === null || prior === undefined || prior === "") return false;
+          const mapping = fieldMap.find((f) => f.param === field);
+          if (!mapping) return false;
+          // Compare against the value actually being written, so re-sending an
+          // identical value is silent.
+          const next = updates[mapping.column];
+          return next !== undefined && next !== prior;
+        })
+        .map(([field]) => field)
+        .sort();
+
       // Execute event update (skip if only venue fields provided)
       if (requestedFields.length > 0) {
         // SYN1 — outbox row + version bump in the SAME batch as the UPDATE so a
@@ -1836,6 +1861,13 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       if (possibleDuplicatesWarning && possibleDuplicatesWarning.length > 0) {
         warnings.possible_duplicates = possibleDuplicatesWarning;
         warnings.message = `Found ${possibleDuplicatesWarning.length} existing event(s) at the same venue with overlapping dates. Review and re-call with acknowledge_possible_duplicates=true if these are distinct events.`;
+      }
+      if (overwroteNonNull.length > 0) {
+        warnings.overwrote_nonnull = overwroteNonNull;
+        warnings.overwrote_nonnull_message =
+          `Replaced a non-null value on: ${overwroteNonNull.join(", ")}. ` +
+          `Prior values are in previousValues — check them before moving on. ` +
+          `Field-level edits leave no audit trail (OPE-505), so this response is the only record.`;
       }
       if (gateFlagsWarning) {
         warnings.gate_flags = gateFlagsWarning;

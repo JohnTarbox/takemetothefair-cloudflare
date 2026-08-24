@@ -246,6 +246,23 @@ export function dollarsToCents(dollars: unknown): number | null {
 }
 
 /**
+ * The inverse of `dollarsToCents` — integer cents back to a dollar number.
+ *
+ * Added for OPE-534, where `get_event_details_admin` began returning the
+ * price/fee columns it had been omitting. It lives here rather than at the
+ * call site so the round trip is defined in ONE place: a reader that divided
+ * by 100 locally while the writer multiplied here is how a money convention
+ * quietly develops two halves that disagree.
+ *
+ * Null in, null out — a missing fee is not zero, and rendering it as 0 would
+ * assert "free" about a row nobody has priced.
+ */
+export function centsToDollars(cents: number | null | undefined): number | null {
+  if (cents == null || !Number.isFinite(cents)) return null;
+  return cents / 100;
+}
+
+/**
  * Format a price range stored as integer cents. Drops trailing `.00` for
  * whole-dollar amounts (e.g. "$25" not "$25.00"); renders cents when
  * present ("$10.50").
