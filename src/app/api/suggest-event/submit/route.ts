@@ -325,6 +325,23 @@ export async function POST(request: NextRequest) {
     let resolvedStateCode: string | null = data.venueState
       ? data.venueState.trim().toUpperCase()
       : null;
+    // OPE-541 — the venue outcome is RECORDED, not just used.
+    //
+    // `venue_id IS NULL` has two completely different causes and the fix for
+    // each is in a different subsystem:
+    //
+    //   (a) the extractor produced no venueName, so the branch below never
+    //       runs and autoLinkVenue is never called
+    //   (b) a venueName was supplied and autoLinkVenue returned `no-match` /
+    //       `ambiguous` — it matches only and NEVER creates, so a venue we
+    //       have never seen cannot resolve by construction
+    //
+    // Both leave an identical row: venue_id NULL. `result.decision` is the
+    // one value that separates them and it was computed and thrown away, so
+    // event `25c9c493` ("Doody's Totoket Inn", 465 Foxon Rd, North Branford
+    // CT — nowhere in our venues table) could not be classified from prod at
+    // all. Same defect as OPE-540, one subsystem over.
+    let venueDecision: string = "not-attempted-no-venue-name";
     if (!resolvedVenueId && data.venueName) {
       const result = await autoLinkVenue(db, {
         venueName: data.venueName,
@@ -333,9 +350,12 @@ export async function POST(request: NextRequest) {
         venueState: data.venueState ?? null,
       });
       resolvedVenueId = result.venueId;
+      venueDecision = result.decision;
       // Inherit state from matched venue when present; fall through to
       // any state we already had (extracted/AI) when no venue matched.
       resolvedStateCode = result.stateCode ?? resolvedStateCode;
+    } else if (resolvedVenueId) {
+      venueDecision = "pre-resolved";
     }
     // OPE-411 — append the `Location:` block ONLY when the venue did not
     // resolve.
@@ -681,6 +701,32 @@ export async function POST(request: NextRequest) {
         gateReasons.includes("ungrounded_name")
           ? 1
           : 0,
+    });
+
+    // OPE-541 — one row per submission saying how the venue resolved.
+    // Deliberately logged for EVERY outcome, matches included: a record that
+    // exists only on failure cannot measure a rate, and the open question on
+    // OPE-531 (should ingest mint venues from prose?) is a question about a
+    // rate. Fail-soft — losing the record must not cost the submission.
+    await logError(db, {
+      level: "info",
+      source: "api/suggest-event/submit:venue-resolution",
+      message: `venue resolution: ${venueDecision}`,
+      context: {
+        eventId: newEventId,
+        decision: venueDecision,
+        resolved: resolvedVenueId !== null,
+        // Which inputs the extractor actually supplied. This is the half that
+        // distinguishes cause (a) from cause (b); without it a `no-match`
+        // and a never-attempted look the same from the outside.
+        venue_name_supplied: Boolean(data.venueName),
+        venue_address_supplied: Boolean(data.venueAddress),
+        venue_city_supplied: Boolean(data.venueCity),
+        venue_state_supplied: Boolean(data.venueState),
+        source: data.source ?? null,
+      },
+    }).catch(() => {
+      // Observability only.
     });
 
     await recomputeEventCompleteness(db, newEventId);
