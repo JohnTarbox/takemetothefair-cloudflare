@@ -136,14 +136,32 @@ describe("fetch_inbound_attachment", () => {
     expect(out.detail).toMatch(/no attachment at that index/i);
   });
 
-  it("withholds oversized bytes rather than truncating them", async () => {
+  it("withholds oversized bytes and hands back a download URL instead", async () => {
+    // OPE-409 — over the cap used to be a dead end: `{ok:true, inlined:false}`
+    // and nothing else. That branch fires for 52 of 88 stored attachments
+    // (59%), including all five of the reference-case photos at 3.67-5.49 MB,
+    // so the recovery path declined the majority of what it exists to recover.
     const big = new Uint8Array(1_500_001);
-    impl = async () => ({
-      ok: true,
-      status: 200,
-      headers: new Headers({ "content-type": "image/jpeg" }),
-      arrayBuffer: async () => big.buffer,
-    });
+    impl = async (_env: unknown, path: string) => {
+      if (typeof path === "string" && path.includes("attachment-download-slot")) {
+        return {
+          ok: true,
+          status: 200,
+          headers: new Headers(),
+          json: async () => ({
+            success: true,
+            download_url: "https://meetmeatthefair.com/api/admin/inbound-attachment/tok123",
+            expires_at: "2026-08-24T04:00:00.000Z",
+          }),
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "image/jpeg" }),
+        arrayBuffer: async () => big.buffer,
+      };
+    };
 
     const out = await call(collect(ENV), { inbound_email_id: "e1", index: 0 });
     expect(out.ok).toBe(true);
@@ -152,7 +170,39 @@ describe("fetch_inbound_attachment", () => {
     expect(out.size).toBe(1_500_001);
     // A partial blob would decode to a corrupt file that looks like an answer.
     expect(out.base64).toBeUndefined();
-    expect(out.note).toMatch(/withheld, not truncated/i);
+    expect(out.download_url).toBe(
+      "https://meetmeatthefair.com/api/admin/inbound-attachment/tok123"
+    );
+    expect(out.expires_at).toBe("2026-08-24T04:00:00.000Z");
+    // Not the CDN: the URL has to survive the inbound-attachments lockdown.
+    expect(out.download_url).not.toMatch(/cdn\.meetmeatthefair\.com/);
+  });
+
+  it("says plainly when the slot could not be minted, instead of implying a size limit", async () => {
+    // The two outcomes demand different responses — "too big to inline, here is
+    // the URL" versus "this attachment is currently unreachable by any agent" —
+    // and rendering them identically is the failure mode this whole ticket is
+    // about. A refusal that reports success is what left 59% of the archive
+    // looking recoverable.
+    const big = new Uint8Array(2_000_000);
+    impl = async (_env: unknown, path: string) => {
+      if (typeof path === "string" && path.includes("attachment-download-slot")) {
+        return { ok: false, status: 503, headers: new Headers(), text: async () => "" };
+      }
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "image/jpeg" }),
+        arrayBuffer: async () => big.buffer,
+      };
+    };
+
+    const out = await call(collect(ENV), { inbound_email_id: "e1", index: 0 });
+    expect(out.ok).toBe(true);
+    expect(out.inlined).toBe(false);
+    expect(out.download_url).toBeNull();
+    expect(out.note).toMatch(/unreachable programmatically/i);
+    expect(out.note).toMatch(/fault worth reporting/i);
   });
 
   it("says so when the Worker has no route to the main app", async () => {

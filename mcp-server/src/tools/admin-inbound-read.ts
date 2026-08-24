@@ -250,6 +250,24 @@ export function registerInboundReadTools(
       // because it decodes to a corrupt file that looks like a real answer.
       const MAX_INLINE_BYTES = 1_500_000;
       if (bytes.byteLength > MAX_INLINE_BYTES) {
+        // OPE-409 — over the cap is no longer a dead end.
+        //
+        // This branch used to return `{ok: true, inlined: false}` and stop: a
+        // refusal that reports success. Measured across the archive it fired
+        // for 52 of 88 attachments (59%), including all five of OPE-409's
+        // reference-case photos at 3.67-5.49 MB — so the recovery path
+        // declined the majority of what it exists to recover, and the 08-23
+        // live proof passed only because it happened to use a 160 KB object.
+        //
+        // The cap itself stays. It is not arbitrary: base64 inflates 4/3 and
+        // this result is read into a model's context, so a 7 MB object is a
+        // ~9.3 MB string that no context holds. Raising it would move the
+        // failure, not remove it. Instead the bytes leave the MCP channel
+        // entirely, behind a 10-minute single-attachment slot — the same move
+        // K17 made for uploads, pointed the other way.
+        const slot = env
+          ? await issueDownloadSlot(env, params.inbound_email_id, params.index)
+          : null;
         return contentOf({
           ok: true,
           inlined: false,
@@ -258,7 +276,16 @@ export function registerInboundReadTools(
           max_inline_bytes: MAX_INLINE_BYTES,
           content_type: contentType,
           filename: nameMatch?.[1] ?? null,
-          note: "Bytes withheld, not truncated. For an image this size, replay_inbound_attachment (OCR/vision) is the cheaper read; a human can download it from /admin/inbound-emails.",
+          ...(slot
+            ? {
+                download_url: slot.download_url,
+                expires_at: slot.expires_at,
+                note: "Bytes withheld from this result (base64 of this size will not fit a model context). Fetch download_url directly — it needs no credential, serves the full object, and expires. It is on meetmeatthefair.com, not the CDN, so it also survives the inbound-attachments lockdown; upload_event_image can be handed this URL.",
+              }
+            : {
+                download_url: null,
+                note: "Bytes withheld, and minting a download slot FAILED — so this attachment is currently unreachable programmatically. That is a fault worth reporting, not a size limitation. A human can still download it from /admin/inbound-emails.",
+              }),
         });
       }
 
@@ -275,6 +302,41 @@ export function registerInboundReadTools(
       });
     }
   );
+
+  // OPE-409 — mint a short-lived download slot for one attachment.
+  //
+  // Returns null rather than throwing: a slot failure must not turn a
+  // successful metadata read into an error, but it also must not be silent —
+  // the caller reports it explicitly above, because "unreachable" and "too
+  // large" demand different responses and had been rendering identically.
+  async function issueDownloadSlot(
+    e: NonNullable<typeof env>,
+    inboundEmailId: string,
+    index: number
+  ): Promise<{ download_url: string; expires_at: string } | null> {
+    try {
+      const r = await mainAppFetch(
+        e,
+        "/api/admin/inbound-emails/attachment-download-slot",
+        "fetch",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ inbound_email_id: inboundEmailId, index }),
+        }
+      );
+      if (!r.ok) return null;
+      const j = (await r.json()) as {
+        success?: boolean;
+        download_url?: string;
+        expires_at?: string;
+      };
+      if (!j?.success || !j.download_url || !j.expires_at) return null;
+      return { download_url: j.download_url, expires_at: j.expires_at };
+    } catch {
+      return null;
+    }
+  }
 
   // --- list_inbound_emails -------------------------------------------------
   server.tool(

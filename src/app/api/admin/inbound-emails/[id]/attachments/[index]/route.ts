@@ -19,15 +19,10 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
-import { inboundEmails } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { resolveAttachmentRef, streamAttachment } from "@/lib/inbound-attachment-stream";
 
-interface AttachmentRef {
-  key: string;
-  name: string;
-  mimeType: string;
-  size: number;
-}
+// The AttachmentRef shape now lives with the shared reader in
+// src/lib/inbound-attachment-stream.ts — one definition, two routes.
 
 export async function GET(
   request: NextRequest,
@@ -63,74 +58,18 @@ export async function GET(
 
   const { id, index } = await params;
   const idx = Number.parseInt(index, 10);
-  if (!Number.isInteger(idx) || idx < 0) {
-    return NextResponse.json({ error: "bad_index" }, { status: 400 });
-  }
 
+  // OPE-409 — lookup + streaming now live in one shared module, because a
+  // second (token-gated) entry point was added and the two must not drift.
+  // See src/lib/inbound-attachment-stream.ts.
   const db = getCloudflareDb();
-  const [row] = await db
-    .select({ attachmentRefs: inboundEmails.attachmentRefs })
-    .from(inboundEmails)
-    .where(eq(inboundEmails.id, id))
-    .limit(1);
-  if (!row || !row.attachmentRefs) {
-    return NextResponse.json({ error: "not_found" }, { status: 404 });
-  }
-
-  let refs: AttachmentRef[];
-  try {
-    refs = JSON.parse(row.attachmentRefs) as AttachmentRef[];
-  } catch {
-    return NextResponse.json({ error: "bad_refs" }, { status: 500 });
-  }
-  const ref = Array.isArray(refs) ? refs[idx] : undefined;
-  if (!ref || typeof ref.key !== "string") {
-    return NextResponse.json({ error: "not_found" }, { status: 404 });
-  }
-  // Only ever serve keys under the inbound-attachments prefix.
-  if (!ref.key.startsWith("inbound-attachments/")) {
-    return NextResponse.json({ error: "forbidden_key" }, { status: 403 });
+  const resolved = await resolveAttachmentRef(db, id, idx);
+  if (!resolved.ok) {
+    return NextResponse.json({ error: resolved.err.error }, { status: resolved.err.status });
   }
 
   const env = getCloudflareEnv() as unknown as { VENDOR_ASSETS?: R2Bucket };
-  const bucket = env.VENDOR_ASSETS;
-  if (!bucket) {
-    return NextResponse.json({ error: "storage_unavailable" }, { status: 503 });
-  }
-  const obj = await bucket.get(ref.key);
-  if (!obj) {
-    return NextResponse.json({ error: "object_missing" }, { status: 404 });
-  }
-
-  const download = request.nextUrl.searchParams.get("dl") === "1";
-  const mime = ref.mimeType || obj.httpMetadata?.contentType || "application/octet-stream";
-  // Strip characters that could break the Content-Disposition header.
-  const safeName = (ref.name || `attachment-${idx}`).replace(/[\r\n"\\]/g, "_");
-
-  // XSS defense: mimeType is attacker-influenced (it comes off the inbound email).
-  // Only render KNOWN-SAFE raster/pdf types inline — crucially NOT image/svg+xml
-  // (an image/* type that executes script) or text/html. Everything else is forced
-  // to a download. CSP sandbox + CORP are belt-and-suspenders so anything that does
-  // render can't touch the admin origin.
-  const SAFE_INLINE = new Set([
-    "image/png",
-    "image/jpeg",
-    "image/jpg",
-    "image/gif",
-    "image/webp",
-    "application/pdf",
-  ]);
-  const inline = !download && SAFE_INLINE.has(mime.toLowerCase());
-
-  return new NextResponse(obj.body, {
-    headers: {
-      "Content-Type": mime,
-      "Content-Disposition": `${inline ? "inline" : "attachment"}; filename="${safeName}"`,
-      // Private admin content — never cache in shared/edge caches.
-      "Cache-Control": "private, no-store",
-      "X-Content-Type-Options": "nosniff",
-      "Content-Security-Policy": "sandbox; default-src 'none'",
-      "Cross-Origin-Resource-Policy": "same-origin",
-    },
+  return streamAttachment(env.VENDOR_ASSETS, resolved.ref, idx, {
+    download: request.nextUrl.searchParams.get("dl") === "1",
   });
 }
