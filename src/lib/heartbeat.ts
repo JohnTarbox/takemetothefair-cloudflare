@@ -507,14 +507,31 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     // refused — so its absence means the venue path itself stopped executing,
     // which is the only thing a probe here can honestly assert.
     //
-    // 72h for the same reason the OPE-540 citation probe uses it: this tracks
-    // submission volume, which is bursty enough to contain legitimate
-    // multi-day gaps.
+    // 336h, and the 72h this shipped with was WRONG — measured, not guessed.
+    //
+    // This path has no cron: it executes only when somebody submits, so the
+    // probe's floor is however long the submission queue can legitimately go
+    // quiet. Over the last 90 days there are 313 gaps between consecutive
+    // submit-route events; SEVEN exceed 72h and the largest is 241.5h. Three
+    // of those are from the last month alone (126.7h ending 08-17, 115.4h
+    // ending 08-03, 94.7h ending 08-11).
+    //
+    // A 72h window would therefore have RED'd about once a fortnight on
+    // nothing but a quiet week — which is the failure this probe's own note
+    // warns about: it gets muted, and a muted probe is worse than no probe
+    // because it reads as coverage. 336h clears the observed maximum with
+    // headroom and matches the window `event-series-write-path` already uses
+    // for the same reason.
+    //
+    // The cost is honest: a dead venue-decision writer now takes up to 14 days
+    // to surface. That is weak, and it is the most this path can support
+    // without crying wolf — the alternative is not a faster probe, it is a
+    // muted one.
     name: "venue-decision-writer",
     ownerOpe: "OPE-541",
     label: "Venue resolution decisions (submit pipeline)",
     priority: "P1",
-    expectedWindowHours: 72,
+    expectedWindowHours: 336,
     lastEvidenceAt: (db) =>
       maxTs(
         db,
