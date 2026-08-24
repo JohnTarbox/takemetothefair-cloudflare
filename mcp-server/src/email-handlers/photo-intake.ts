@@ -87,6 +87,34 @@ export function imageRefs(refs: AttachmentRef[]): AttachmentRef[] {
   );
 }
 
+/**
+ * OPE-325 — the multipart body for `/api/admin/import-url/extract-image`.
+ *
+ * Extracted so the content type is testable. It was the whole defect: the call
+ * used `new Blob([bytes])`, whose `type` is `""`, so the part went out as
+ * `application/octet-stream` and the route rejected it at `route.ts:55`
+ * (`f.type.startsWith("image/")`) with a 400 reading
+ * `'image.png' is application/octet-stream — images only.`
+ *
+ * The type was never lost AT REST. Three independent routes to the same object
+ * all report `image/png` — the stored `attachment_refs[].mimeType`,
+ * `fetch_inbound_attachment` reading the R2 object, and `upload_event_image`
+ * fetching it off the CDN. It was lost only in this hand-off, and the correct
+ * value was in the ref the whole time.
+ *
+ * `imageRefs()` has already filtered these to `image/*`, so this can never set
+ * a type the route would refuse.
+ *
+ * Format-independent, which was the falsifiable half of the diagnosis: the held
+ * set is 7 PNG screenshots and 6 JPEG Facebook-CDN files, and every one of them
+ * failed identically.
+ */
+export function buildExtractImageForm(bytes: ArrayBuffer, ref: AttachmentRef): FormData {
+  const form = new FormData();
+  form.append("images", new Blob([bytes], { type: ref.mimeType }), ref.name || "poster.png");
+  return form;
+}
+
 /** Count image attachments, falling back to the raw attachment_count when refs
  *  are absent/unparseable (capture is best-effort — see email-handler.ts). */
 function countPhotos(attachmentRefs: string | null, attachmentCount: number): number {
@@ -588,8 +616,7 @@ async function classifyAsPoster(
     if (!obj) return giveUp("R2 object missing", { key: images[0].key });
     const bytes = await obj.arrayBuffer();
 
-    const form = new FormData();
-    form.append("images", new Blob([bytes]), images[0].name || "poster.jpg");
+    const form = buildExtractImageForm(bytes, images[0]);
     const res = await mainAppFetch(
       env as unknown as MainAppEnv,
       "/api/admin/import-url/extract-image",
