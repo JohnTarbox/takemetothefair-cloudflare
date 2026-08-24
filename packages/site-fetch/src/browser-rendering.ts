@@ -16,6 +16,7 @@
 /** 15s for the standard fetch path. */
 export const FETCH_TIMEOUT = 15000;
 import { isBlockedSsrfHost } from "./ssrf-guard";
+import { detectChallengePage, CHALLENGE_USER_MESSAGE } from "./challenge-page";
 
 /** 25s for Browser Rendering — managed Chrome is slower. */
 export const BROWSER_RENDERING_TIMEOUT = 25000;
@@ -161,7 +162,20 @@ export async function fetchStandard(url: string, signal: AbortSignal): Promise<F
       userMessage: "URL does not point to an HTML page",
     };
   }
-  return { ok: true, html: await response.text(), finalUrl: response.url || url };
+  const html = await response.text();
+  // A 200 is not proof we got the page we asked for. Some origins answer a
+  // bot check with 200 + interstitial rather than 403, and everything
+  // downstream would then extract an event from the challenge page.
+  const challenge = detectChallengePage(html, response.headers);
+  if (challenge.isChallenge) {
+    return {
+      ok: false,
+      status: response.status,
+      error: `challenge-page:${challenge.vendor}`,
+      userMessage: CHALLENGE_USER_MESSAGE,
+    };
+  }
+  return { ok: true, html, finalUrl: response.url || url };
 }
 
 /**
@@ -275,6 +289,19 @@ export async function fetchViaBrowserRendering(
       userMessage: "Could not fetch page. Try pasting the content manually.",
     };
   }
+  // BR renders whatever the origin served, including an interstitial, and
+  // reports it as a successful render. This is the call site that produced
+  // an event named "Just a moment..." — no origin headers are available
+  // here, so the body markers are the only signal.
+  const brChallenge = detectChallengePage(body.result);
+  if (brChallenge.isChallenge) {
+    return {
+      ok: false,
+      status: response.status,
+      error: `browser-rendering-challenge-page:${brChallenge.vendor}`,
+      userMessage: CHALLENGE_USER_MESSAGE,
+    };
+  }
   return { ok: true, html: body.result };
 }
 
@@ -323,6 +350,12 @@ export function shouldEscalate(outcome: FetchOutcome): boolean {
   if (outcome.error === "timeout") return true;
   if (outcome.error === "content-type") return false;
   if (outcome.error === "pdf-unsupported") return false;
+  // A challenge is exactly what Browser Rendering exists for — a real browser
+  // with a real TLS fingerprint. It does not always pass (10times.com served
+  // the interstitial to BR too), but it is the one remaining option, and not
+  // trying would leave escalation unattempted on the case it was built for.
+  // `challenge-page:*` carries a vendor suffix, hence startsWith.
+  if (outcome.error.startsWith("challenge-page:")) return true;
   if (outcome.status === null) return true; // network error
   return outcome.status === 401 || outcome.status === 403 || outcome.status === 429;
 }

@@ -4,4 +4,5 @@
  * (network fetch); keep pure helpers in @takemetothefair/utils instead.
  */
 export * from "./browser-rendering";
+export * from "./challenge-page";
 export * from "./ssrf-guard";
