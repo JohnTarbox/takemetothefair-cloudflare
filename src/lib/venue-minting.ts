@@ -6,8 +6,8 @@
  * prose." That answers OPE-531's open question and unblocks OPE-541.
  *
  * ── What this is fixing ──────────────────────────────────────────────────
- * `autoLinkVenue` matches only — `venue-matching.ts` contains no
- * `insert(venues)`. So a venue we have never seen cannot resolve, and event
+ * `autoLinkVenue` matches only — `venue-matching.ts` never inserts into the
+ * venues table at all. So a venue we have never seen cannot resolve, and event
  * `25c9c493` was stored with `venue_id = NULL` while its own description read
  * "Doody's Totoket Inn Restaurant … 465 Foxon Rd, North Branford, CT 06471".
  * 51 events currently carry a null venue with a description; 16 of those
