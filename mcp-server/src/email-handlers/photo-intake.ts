@@ -547,11 +547,45 @@ async function classifyAsPoster(
 ): Promise<{ classification: PosterClassification; text: string } | null> {
   const bucket = env.VENDOR_ASSETS;
   const images = imageRefs(refs);
-  if (!bucket || images.length === 0) return null;
+
+  // OPE-325 rework — every give-up path SAYS SO.
+  //
+  // This function shipped 2026-08-04 with five ways to return null and logging
+  // on only one of them. Prod, 20 days later: `error_logs` holds ZERO rows from
+  // `mcp:photo-intake:poster-classify` — not one verdict, not one failure —
+  // while at least 13 posters were held, ten of them in eighteen minutes on
+  // 08-23. Info-level logging works fine (531 rows in the same week, including
+  // `email-handler:ope-315-photo-only` at the exact second the last poster
+  // arrived), so the silence is this function returning early, unlogged.
+  //
+  // Four candidates were ruled out from source and prod data: VENDOR_ASSETS IS
+  // bound in the MCP worker, the extract-image route DOES accept the internal
+  // key, the stored refs DO carry `mimeType: image/png`, and the R2 keys are
+  // present. The two that remain — a missing R2 object, and a non-OK response —
+  // are indistinguishable from outside precisely BECAUSE they return null in
+  // silence. That is the defect: not that the classifier fails, but that it
+  // cannot be observed failing. The next held poster now names its own branch.
+  const giveUp = async (reason: string, context: Record<string, unknown> = {}) => {
+    await logError(env.DB, {
+      level: "warn",
+      source: "mcp:photo-intake:poster-classify",
+      message: `poster classification skipped: ${reason}`,
+      context: { messageRowId, reason, ...context },
+    });
+    return null;
+  };
+
+  if (!bucket) return giveUp("no VENDOR_ASSETS binding");
+  if (images.length === 0) {
+    return giveUp("no image attachments after mimeType filter", {
+      refCount: refs.length,
+      mimeTypes: refs.map((r) => r?.mimeType ?? null).slice(0, 5),
+    });
+  }
 
   try {
     const obj = await bucket.get(images[0].key);
-    if (!obj) return null;
+    if (!obj) return giveUp("R2 object missing", { key: images[0].key });
     const bytes = await obj.arrayBuffer();
 
     const form = new FormData();
@@ -562,9 +596,15 @@ async function classifyAsPoster(
       "workflow",
       { method: "POST", body: form }
     );
-    if (!res.ok) return null;
+    if (!res.ok) {
+      return giveUp("extract-image returned non-OK", {
+        status: res.status,
+        body: (await res.text().catch(() => "")).slice(0, 200),
+      });
+    }
     const data = (await res.json().catch(() => ({}))) as { content?: string };
     const text = data.content ?? "";
+    if (!text.trim()) return giveUp("extract-image returned empty content");
 
     const classification = classifyPosterText(text);
     await logError(env.DB, {
@@ -625,10 +665,24 @@ async function stagePosterAsPendingEvent(
   detail?: string;
 }> {
   try {
-    // No source URL — a poster has no page. submitExtract tolerates this; the
-    // submit schema only validates sourceUrl when present.
-    // Empty url + the free-text-shaped fetch result: this is the same shape
-    // the B2 pasted-prose path uses, where there is no page to have fetched.
+    // A poster has no page, so there is no source URL.
+    //
+    // ⚠️ OPE-325 rework — the comment that used to sit here said "submitExtract
+    // tolerates this; the submit schema only validates sourceUrl when present."
+    // That was WRONG, and it was wrong in a way that killed this path silently.
+    // It conflated two schemas: the SUBMIT schema (which does only validate
+    // `sourceUrl` when present) and the EXTRACT ENDPOINT's schema, which the
+    // poster hits first. submitExtract POSTs to /api/admin/import-url/extract
+    // (submit.ts:337) passing this `url` straight through, and that endpoint
+    // declared `url: z.string().url().optional()` — and `.optional()` admits
+    // `undefined`, NOT `""`. So every poster died on a 400 reading exactly
+    // "Invalid URL", before the submit schema was ever consulted.
+    //
+    // Same root cause as the OPE-297 image-lane failure John hit on 08-23: one
+    // empty string, two dead features. Fixed in #1007 by having that endpoint
+    // treat "" as absent — which is why this now works without a change here.
+    // Left as "" deliberately rather than switched to undefined: the endpoint
+    // is the right place for the tolerance, and a test now pins it.
     const extracted = await submitExtract(
       env,
       {
