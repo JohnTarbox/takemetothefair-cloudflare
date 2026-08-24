@@ -30,6 +30,7 @@ import {
   coerceVenueNameAtIngest,
   VALID_TRANSITIONS,
 } from "../helpers.js";
+import { rosterResearchTargetWhere } from "@takemetothefair/db-schema";
 import { recordSlugRename } from "../slug-history.js";
 import { checkDuplicateViaMainApp } from "../duplicates/check-duplicate.js";
 import {
@@ -372,6 +373,12 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .describe(
           "OPE-13 rails: filter by vendor-roster research state (multi-valued OR). E.g. ['NEEDS_RESEARCH'] lists the un-researched drain queue; ['PARTIAL'] locates a crashed run's resume point. Each row returns vendor_roster_status / _checked_at / _source_url / _offset + vendor_count so the roster drain can select targets in ONE call instead of pre-checking events one at a time."
         ),
+      include_non_research_targets: z
+        .boolean()
+        .optional()
+        .describe(
+          "OPE-528: by default a vendor_roster_status filter returns only rows a drain could close — APPROVED, not a merge tombstone, and not a recurring farmers market (they publish no exhibitor roster and the recurrence re-mints one row per week). Set true to see the excluded rows; they are excluded from the worklist, not hidden."
+        ),
       sort: z
         .enum(["end_date_desc", "end_date_asc", "start_date_desc", "start_date_asc"])
         .optional()
@@ -414,6 +421,21 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       if (params.vendor_roster_status && params.vendor_roster_status.length > 0) {
         // Index-backed by idx_events_vendor_roster_status (partial, IS NOT NULL).
         conditions.push(inArray(events.vendorRosterStatus, params.vendor_roster_status));
+        // OPE-528 — restrict to rows a drain could actually close.
+        //
+        // The drain calls this with sort:'end_date_desc', so the un-closeable
+        // rows were not merely inflating a total — they were the FIRST thing
+        // the pass read. Roughly half of the 40 most-recently-ended were
+        // single-week farmers-market occurrences, which do not publish
+        // exhibitor rosters and which the recurrence re-mints every week.
+        //
+        // Shares ONE definition with the main app's get_roster_coverage
+        // totals, which is the point: the two counts differed by exactly 3
+        // (merge tombstones, dropped by coverage and not here) with no rule
+        // stated anywhere.
+        if (!params.include_non_research_targets) {
+          conditions.push(rosterResearchTargetWhere());
+        }
       }
 
       // Default is insertion order (unchanged behaviour); an explicit sort lets the

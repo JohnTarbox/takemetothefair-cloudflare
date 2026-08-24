@@ -5540,3 +5540,6 @@ export const tunableThresholds = sqliteTable("tunable_thresholds", {
 });
 
 export type TunableThreshold = typeof tunableThresholds.$inferSelect;
+
+// OPE-528 — the shared "is this a roster-research target" predicate.
+export * from "./roster-research-queue";
