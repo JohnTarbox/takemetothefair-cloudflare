@@ -649,3 +649,28 @@ export function searchPingRetentionDays(env: { SEARCH_PING_RETENTION_DAYS?: stri
   const raw = Number(env.SEARCH_PING_RETENTION_DAYS);
   return Number.isFinite(raw) && raw > 0 ? raw : SEARCH_PING_RETENTION_DAYS;
 }
+
+/**
+ * OPE-532 — inbound reply kinds that TERMINATE the pipeline without producing
+ * an event and without leaving anyone owing a reply. The submission is lost.
+ *
+ * Shared rather than local because two packages need the same answer: the MCP
+ * Worker's `inbound-exception-notice` (which counts them for the operator
+ * email) and the main app's `queue_drain_snapshots` (which gives OPE-247's
+ * frozen-queue alerting something to watch). Two copies of this list is how a
+ * fix ends up wired into one of two parallel paths.
+ *
+ * Deliberately excludes `no-url`: there the sender was asked for a URL and has
+ * not answered, so the ball is in their court. That is a different queue.
+ */
+export const TERMINAL_UNHANDLED_REPLY_KINDS = [
+  "photo-intake-unresolved",
+  "no-url-prose-failed",
+] as const;
+
+/**
+ * Inbound statuses meaning a human or a rail has already disposed of the row.
+ * `reply_kind` is never rewritten on disposal, so without this an operator
+ * rejecting a held photo would leave it counted for ever.
+ */
+export const DISPOSED_INBOUND_STATUSES = ["rejected", "audit-noop", "salvaged"] as const;

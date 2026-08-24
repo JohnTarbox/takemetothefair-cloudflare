@@ -3291,6 +3291,13 @@ export const inboundExceptionNoticeState = sqliteTable("inbound_exception_notice
   lastNoticeDate: text("last_notice_date").notNull(),
   lastQueueCount: integer("last_queue_count").notNull(),
   lastNotifiedAt: integer("last_notified_at", { mode: "timestamp" }).notNull(),
+  // OPE-532 (drizzle/0227) — the age-escalation bucket at the last notice.
+  // The debounce suppresses a notice whose COUNT is unchanged, which means a
+  // queue that stops draining goes quiet exactly when it most needs saying.
+  // Storing the bucket lets a flat-but-ageing queue speak again when its
+  // oldest item crosses a threshold. Nullable: rows predating 0227 have no
+  // bucket, and a null is read as "never escalated" rather than as zero.
+  lastOldestAgeBucket: integer("last_oldest_age_bucket"),
 });
 
 // OPE-37 (drizzle/0142, 2026-07-01) — debounce state for the promoter-enrichment
@@ -3997,7 +4004,8 @@ export const queueDrainSnapshots = sqliteTable(
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
     /** Stable queue key: event_discrepancies | vendor_enrichment |
-     *  promoter_enrichment | performer_enrichment | site_health | inbound_exceptions. */
+     *  promoter_enrichment | performer_enrichment | site_health | inbound_exceptions |
+     *  inbound_awaiting_decision | inbound_held_submissions (OPE-532). */
     queueName: text("queue_name").notNull(),
     snapshotDate: text("snapshot_date").notNull(), // YYYY-MM-DD (UTC)
     /** Current open/pending backlog. */

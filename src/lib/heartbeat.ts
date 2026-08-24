@@ -42,6 +42,7 @@ import {
   recommendationScanState,
   vendorClaimEvidence,
   vendorEnrichmentCandidates,
+  queueDrainSnapshots,
 } from "@/lib/db/schema";
 import { SITE_URL } from "@takemetothefair/constants";
 import type { StaleRed } from "@/lib/cpi/stale-reds";
@@ -105,6 +106,35 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     expectedWindowHours: 48,
     lastEvidenceAt: (db) =>
       maxTs(db, agentHeartbeats, agentHeartbeats.lastSeenAt, eq(agentHeartbeats.kind, "watchdog")),
+  },
+  {
+    // OPE-532 — proof the held-submission queue is still being MEASURED.
+    //
+    // This probe exists because of what this ticket found: three separate
+    // detectors watched ten submissions be lost on 2026-08-23 and none of them
+    // said anything, each for its own reason. Adding a fourth counter without
+    // asking "and what tells us THIS one stopped?" would repeat the mistake at
+    // one level up.
+    //
+    // Evidence is a snapshot ROW for this queue name — the measurement running
+    // — deliberately NOT the depth. Depth going to zero is the good outcome
+    // (the queue drained); depth staying flat is what the queue's own
+    // freeze-alert is for. Only the presence of the row distinguishes "nothing
+    // is held" from "nobody is looking".
+    //
+    // 48h against a daily snapshot: one missed run is a blip, two is a pattern.
+    name: "inbound-held-submissions-snapshot",
+    ownerOpe: "OPE-532",
+    label: "Held-submission queue snapshot",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        queueDrainSnapshots,
+        queueDrainSnapshots.createdAt,
+        eq(queueDrainSnapshots.queueName, "inbound_held_submissions")
+      ),
   },
   {
     // OPE-345 (A6 freshness) — the summable GSC feed. A gap here means the
