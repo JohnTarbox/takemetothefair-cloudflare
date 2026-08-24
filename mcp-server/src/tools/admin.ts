@@ -68,6 +68,7 @@ import {
   PRIMARY_AUDIENCE,
   PUBLIC_ACCESS,
   computePromoterEnrichment,
+  VENDOR_ROSTER_STATUS_VALUES,
 } from "@takemetothefair/constants";
 import { attachEventToSeries } from "@takemetothefair/event-series";
 import { dollarsToCents } from "../helpers.js";
@@ -359,7 +360,14 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           "Filter for events where these fields are NULL/missing. E.g. ['venue_id','image_url'] returns events with no venue AND no image."
         ),
       vendor_roster_status: z
-        .array(z.enum(["NEEDS_RESEARCH", "HAS_ROSTER", "NO_PUBLIC_LIST", "PARTIAL"]))
+        // OPE-530 — was a hardcoded copy of four values, and it had gone stale.
+        // `set_vendor_roster_status` writes from VENDOR_ROSTER_STATUS_VALUES,
+        // so rows can hold NEEDS_RENDERED_FETCH (OPE-498) and
+        // HAS_LINKS_UNVERIFIED (OPE-527) — but this filter could not select
+        // either. 5 live NEEDS_RENDERED_FETCH rows were unreachable, which is
+        // exactly the "capability gap stays countable" acceptance OPE-498 was
+        // filed for. Reading the canonical list means it cannot drift again.
+        .array(z.enum(VENDOR_ROSTER_STATUS_VALUES))
         .optional()
         .describe(
           "OPE-13 rails: filter by vendor-roster research state (multi-valued OR). E.g. ['NEEDS_RESEARCH'] lists the un-researched drain queue; ['PARTIAL'] locates a crashed run's resume point. Each row returns vendor_roster_status / _checked_at / _source_url / _offset + vendor_count so the roster drain can select targets in ONE call instead of pre-checking events one at a time."

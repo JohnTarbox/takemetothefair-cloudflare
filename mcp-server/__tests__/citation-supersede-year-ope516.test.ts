@@ -70,7 +70,11 @@ async function cite(over: Record<string, unknown>) {
       field_name: "name",
       value: "Revolutionary Fair",
       source_url: "https://example.com/poster.jpg",
-      source_type: "organizer_site",
+      // OPE-530: was "organizer_site", which is NOT in SOURCE_TYPE_VALUES.
+      // These seven tests were exercising supersede logic with a source_type
+      // the real MCP boundary rejects outright — the harness never ran the
+      // enum. Fixture corrected; the schema is right as it stands.
+      source_type: "official_website",
       update_event_column: false,
       ...over,
     })
