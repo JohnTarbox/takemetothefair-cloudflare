@@ -224,8 +224,12 @@ describe("alias + merge (OPE-113)", () => {
   });
 
   it("merge_performer moves appearances, drops clashes, tombstones the duplicate", async () => {
-    const keeper = (await call("create_performer", { name: "Keeper Act", website: "" }))
-      .performer as { id: string };
+    // OPE-530: was `website: ""`, which fails `z.string().url()`. The real MCP
+    // boundary refuses an empty string — an absent optional field is omitted,
+    // not sent blank — so this fixture was input the tool could never receive.
+    const keeper = (await call("create_performer", { name: "Keeper Act" })).performer as {
+      id: string;
+    };
     const dup = (
       await call("create_performer", { name: "Dup Act", website: "https://dup.example" })
     ).performer as { id: string; slug: string };

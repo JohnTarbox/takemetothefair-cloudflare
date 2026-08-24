@@ -5,6 +5,7 @@
  * actually read or write. New columns added to the production schema do NOT
  * need to be reflected here unless a tool under test starts using them.
  */
+import { z } from "zod";
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import * as schema from "../src/schema.js";
@@ -1267,23 +1268,80 @@ export function createTestDb(): { db: TestDb; raw: Database.Database } {
  * Captures (toolName, handler) pairs from any code that calls
  * `server.tool(name, desc, schema, handler)`. Lets tests invoke a tool's
  * handler directly without spinning up the real MCP transport.
+ *
+ * OPE-532/OPE-530 — the schema used to be accepted and thrown away.
+ *
+ * `tool()` took `_schema: unknown` and dropped it, and `invoke()` passed raw
+ * params straight to the handler. So no test in this suite could exercise a
+ * parameter constraint: every `.url()`, `.regex()`, `.min()`, `.max()`,
+ * `.enum()` and `.transform()` across the ~200 live tools was unpinned.
+ *
+ * That is silent in the direction that matters. Deleting a constraint produced
+ * no failure anywhere — the suite stayed green while the boundary eroded. It
+ * also meant handlers were being tested against input the real MCP boundary
+ * would have refused, so a passing test did not imply a reachable code path.
+ *
+ * Now the shape is retained and `invoke()` runs it, passing the PARSED value
+ * on. Passing the parsed value is half the point: `.transform(decodeHtmlEntities)`
+ * and `.transform(sanitizeProse)` are applied at the schema layer by house
+ * convention, so a handler that received raw params was never seeing what
+ * production hands it.
+ *
+ * `handlers` keeps its original type — tests call `.has()` and `.size` on it —
+ * and the shapes live in a parallel map.
  */
 export class CapturingMcpServer {
   handlers = new Map<string, (params: Record<string, unknown>) => Promise<unknown>>();
+  /** Raw zod shapes, by tool name. `server.tool()` takes a shape object
+   *  (`Record<string, ZodTypeAny>`), not a ZodObject, so it is wrapped at
+   *  validation time rather than stored pre-wrapped. */
+  schemas = new Map<string, Record<string, z.ZodTypeAny>>();
+
+  private readonly validate: boolean;
+
+  /**
+   * `validate` defaults to TRUE. An opt-in default would have left the harness
+   * silently permissive, which is the state this class is being fixed out of.
+   * Pass `{ validate: false }` only to characterise pre-existing behaviour, and
+   * say why at the call site.
+   */
+  constructor(opts: { validate?: boolean } = {}) {
+    this.validate = opts.validate ?? true;
+  }
 
   tool(
     name: string,
     _description: string,
-    _schema: unknown,
+    schema: unknown,
     handler: (params: Record<string, unknown>) => Promise<unknown>
   ) {
     this.handlers.set(name, handler);
+    if (schema && typeof schema === "object") {
+      this.schemas.set(name, schema as Record<string, z.ZodTypeAny>);
+    }
   }
 
   invoke(name: string, params: Record<string, unknown> = {}) {
     const handler = this.handlers.get(name);
     if (!handler) throw new Error(`Tool not registered: ${name}`);
-    return handler(params);
+    const shape = this.schemas.get(name);
+    if (!this.validate || !shape) return handler(params);
+
+    const parsed = z.object(shape).safeParse(params);
+    if (!parsed.success) {
+      // Returned, not thrown — the real MCP surface answers a bad argument with
+      // an error RESULT, and a test asserting rejection should be able to read
+      // the message rather than wrap everything in expect().rejects.
+      const detail = parsed.error.issues
+        .map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`)
+        .join("; ");
+      return Promise.resolve({
+        content: [{ type: "text", text: `Invalid arguments for ${name}: ${detail}` }],
+        isError: true,
+      });
+    }
+    // Parsed, not raw: transforms are part of the contract.
+    return handler(parsed.data as Record<string, unknown>);
   }
 }
 
