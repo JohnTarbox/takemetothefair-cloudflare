@@ -2610,6 +2610,11 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
   private async recordCitationsBestEffort(
     step: WorkflowStep,
     label: string,
+    // OPE-540 — needed to write the step record. Passed explicitly rather
+    // than held as instance state: this class handles one run, but a field
+    // that is only *usually* right is how observability starts lying.
+    instanceId: string,
+    messageRowId: string,
     eventId: string,
     extracted: import("../email-handlers/submit.js").SubmitExtractResult,
     source: SubmitSource,
@@ -2623,14 +2628,49 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         label,
         { retries: { limit: 2, delay: "5 seconds", backoff: "constant" }, timeout: "10 seconds" },
         async () => {
-          const inserted = await recordSourceCitations(getDb(this.env.DB), {
+          const result = await recordSourceCitations(getDb(this.env.DB), {
             eventId,
             extracted,
             source,
             fromAddress,
             supportingText,
           });
-          return { inserted };
+          // OPE-540 — record the OUTCOME, not just the throw.
+          //
+          // Until now this step wrote to `workflow_run_steps` only when it
+          // FAILED. So a run that wrote no citations and a run where this
+          // method was never reached left byte-identical evidence: nothing.
+          // Every email-submitted event on 2026-08-24 had zero citations and
+          // the cause could not be determined from prod at all — five
+          // candidate branches, one observable.
+          //
+          // `multi-source-fanout` got this right (OPE-537) and it is why that
+          // one was diagnosable in a glance. Same treatment here.
+          await recordWorkflowStep(getDb(this.env.DB), {
+            instanceId,
+            workflowName: "inbound-email",
+            inboundEmailId: messageRowId,
+            stepName: "citations",
+            status: result.inserted > 0 ? "ok" : "skipped",
+            detail: {
+              label,
+              event_id: eventId,
+              inserted: result.inserted,
+              // Null on success; otherwise names WHICH zero-branch fired.
+              reason: result.reason,
+              source_kind: source.kind,
+              source_ref:
+                source.kind === "url"
+                  ? source.url
+                  : source.kind === "attachment"
+                    ? source.name
+                    : "body",
+            },
+          }).catch(() => {
+            // Cosmetic-failsoft, like every other observability write here:
+            // losing the record must not cost the citations we just wrote.
+          });
+          return { inserted: result.inserted, reason: result.reason };
         }
       );
     } catch (err) {
@@ -2658,6 +2698,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
   private async recordMergedSiblingCitations(
     step: WorkflowStep,
     labelPrefix: string,
+    instanceId: string,
+    messageRowId: string,
     eventId: string,
     siblings: ReadonlyArray<{
       source: SubmitSource;
@@ -2670,6 +2712,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       await this.recordCitationsBestEffort(
         step,
         `${labelPrefix}/cite-merged[${i}]`,
+        instanceId,
+        messageRowId,
         eventId,
         siblings[i].extracted,
         siblings[i].source,
@@ -3073,6 +3117,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         await this.recordMergedSiblingCitations(
           step,
           "submit/single",
+          instanceId,
+          messageRowId,
           res.resultingEventId,
           only.mergedSiblings,
           fromAddress,
@@ -3155,6 +3201,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             await this.recordCitationsBestEffort(
               step,
               `${labelPrefix}/cite-keeper`,
+              instanceId,
+              messageRowId,
               dedup.existingEventId,
               extracted,
               cand.source,
@@ -3165,6 +3213,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
               await this.recordMergedSiblingCitations(
                 step,
                 `${labelPrefix}/keeper`,
+                instanceId,
+                messageRowId,
                 dedup.existingEventId,
                 cand.mergedSiblings,
                 fromAddress,
@@ -3194,6 +3244,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         await this.recordCitationsBestEffort(
           step,
           `${labelPrefix}/cite`,
+          instanceId,
+          messageRowId,
           submitted.id,
           extracted,
           cand.source,
@@ -3204,6 +3256,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           await this.recordMergedSiblingCitations(
             step,
             labelPrefix,
+            instanceId,
+            messageRowId,
             submitted.id,
             cand.mergedSiblings,
             fromAddress,

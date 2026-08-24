@@ -64,7 +64,7 @@ describe("recordSourceCitations", () => {
       source: { kind: "url", url: "https://fryeburgfair.org/schedule" },
       fromAddress: "sender@example.com",
     });
-    expect(n).toBe(3); // name, start_date, end_date
+    expect(n).toEqual({ inserted: 3, reason: null }); // name, start_date, end_date
     const rows = readCitations(eventId);
     const byField = new Map(rows.map((r) => [r.fieldName, r]));
     expect(byField.get("name")?.sourceUrl).toBe("https://fryeburgfair.org/schedule");
@@ -96,7 +96,7 @@ describe("recordSourceCitations", () => {
       source: { kind: "body" },
       fromAddress: "promoter@fair.org",
     });
-    expect(n).toBe(3);
+    expect(n).toEqual({ inserted: 3, reason: null });
     const rows = readCitations(eventId);
     for (const r of rows) {
       expect(r.sourceUrl).toBe("email://promoter@fair.org");
@@ -112,7 +112,7 @@ describe("recordSourceCitations", () => {
       source: { kind: "attachment", name: "fair poster.pdf" },
       fromAddress: "promoter@fair.org",
     });
-    expect(n).toBe(3);
+    expect(n).toEqual({ inserted: 3, reason: null });
     const rows = readCitations(eventId);
     for (const r of rows) {
       expect(r.sourceUrl).toBe(
@@ -133,7 +133,7 @@ describe("recordSourceCitations", () => {
       source: { kind: "url", url: "https://second-source.example/event" },
       fromAddress: "sender@example.com",
     });
-    expect(n).toBe(3);
+    expect(n).toEqual({ inserted: 3, reason: null });
     const rows = readCitations(keeperId);
     expect(rows).toHaveLength(3);
     expect(rows.every((r) => r.eventId === keeperId)).toBe(true);
@@ -150,8 +150,11 @@ describe("recordSourceCitations", () => {
     };
     const first = await recordSourceCitations(db, args);
     const second = await recordSourceCitations(db, args);
-    expect(first).toBe(3);
-    expect(second).toBe(0); // dedupe guard skips all three
+    expect(first).toEqual({ inserted: 3, reason: null });
+    // OPE-540 — the second call still writes nothing, but now SAYS SO. A bare
+    // 0 here was indistinguishable from "never called", which is precisely
+    // why the 2026-08-24 zero-citation run could not be diagnosed from prod.
+    expect(second).toEqual({ inserted: 0, reason: "all-fields-already-cited" });
     expect(readCitations(eventId)).toHaveLength(3);
   });
 
@@ -199,7 +202,7 @@ describe("recordSourceCitations", () => {
       source: { kind: "body" },
       fromAddress: "sender@example.com",
     });
-    expect(n).toBe(1); // only `name`
+    expect(n).toEqual({ inserted: 1, reason: null }); // only `name`
     const rows = readCitations(eventId);
     expect(rows.map((r) => r.fieldName)).toEqual(["name"]);
   });
