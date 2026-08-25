@@ -1,3 +1,9 @@
+// OPE-482 — fixtures use Date.UTC(..., 12) rather than the LOCAL-time
+// `new Date(y, m, d)` constructor. These four assertions passed on a developer
+// machine in America/New_York and failed on CI's UTC runner: local-midnight is
+// 04:00Z in EDT and 00:00Z in UTC, and date-only rendering is now Eastern, so
+// the UTC runner's value resolved to the previous day. The tests were always
+// host-dependent; switching the render zone is what made it observable.
 import { describe, it, expect } from "vitest";
 import {
   createSlug,
@@ -39,7 +45,7 @@ describe("createSlug", () => {
 
 describe("formatDate", () => {
   it("formats Date object correctly", () => {
-    const date = new Date(2024, 5, 15); // June 15, 2024
+    const date = new Date(Date.UTC(2024, 5, 15, 12)); // June 15, 2024
     const result = formatDate(date);
     expect(result).toContain("Jun");
     expect(result).toContain("15");
@@ -47,20 +53,23 @@ describe("formatDate", () => {
   });
 
   it("formats date string correctly", () => {
-    const result = formatDate("2024-12-25T12:00:00");
+    // Explicit Z: without it this is parsed as LOCAL time, so the assertion
+    // depended on the host zone (it fails in Asia/Tokyo). Same class as the
+    // Date.UTC fixtures above.
+    const result = formatDate("2024-12-25T12:00:00Z");
     expect(result).toContain("Dec");
     expect(result).toContain("25");
     expect(result).toContain("2024");
   });
 
   it("includes weekday in output", () => {
-    const date = new Date(2024, 5, 15); // June 15, 2024 is a Saturday
+    const date = new Date(Date.UTC(2024, 5, 15, 12)); // June 15, 2024 is a Saturday
     const result = formatDate(date);
     expect(result).toContain("Sat");
   });
 
   it("returns formatted string with expected parts", () => {
-    const date = new Date(2024, 0, 1);
+    const date = new Date(Date.UTC(2024, 0, 1, 12));
     const result = formatDate(date);
     expect(result).toMatch(/\w+,\s+\w+\s+\d+,\s+\d{4}/);
   });
@@ -68,15 +77,15 @@ describe("formatDate", () => {
 
 describe("formatDateRange", () => {
   it("returns single date format when start equals end", () => {
-    const start = new Date(2024, 5, 15);
-    const end = new Date(2024, 5, 15);
+    const start = new Date(Date.UTC(2024, 5, 15, 12));
+    const end = new Date(Date.UTC(2024, 5, 15, 12));
     const result = formatDateRange(start, end);
     expect(result).not.toContain(" - ");
   });
 
   it("returns range format when dates differ", () => {
-    const start = new Date(2024, 5, 15);
-    const end = new Date(2024, 5, 17);
+    const start = new Date(Date.UTC(2024, 5, 15, 12));
+    const end = new Date(Date.UTC(2024, 5, 17, 12));
     const result = formatDateRange(start, end);
     expect(result).toContain(" - ");
     expect(result).toContain("15");
@@ -89,7 +98,7 @@ describe("formatDateRange", () => {
   });
 
   it("returns TBD when start is null", () => {
-    const result = formatDateRange(null, new Date(2024, 5, 15));
+    const result = formatDateRange(null, new Date(Date.UTC(2024, 5, 15, 12)));
     expect(result).toBe("TBD");
   });
 
@@ -97,7 +106,7 @@ describe("formatDateRange", () => {
     // Asymmetric with the start-is-null case: knowing the start is more
     // useful UX than rendering "TBD". formatDateRange falls through to
     // formatDate(startDate) when end is missing. See src/lib/utils.ts:97-99.
-    const result = formatDateRange(new Date(2024, 5, 15), null);
+    const result = formatDateRange(new Date(Date.UTC(2024, 5, 15, 12)), null);
     expect(result).toBe("Sat, Jun 15, 2024");
   });
 
