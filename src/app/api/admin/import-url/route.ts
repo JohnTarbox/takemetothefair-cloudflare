@@ -14,7 +14,6 @@ import { inferCategoriesFromName } from "@/lib/url-import/infer-categories";
 import { logError } from "@/lib/logger";
 import { recomputeEventCompleteness } from "@/lib/completeness";
 import { logEnrichment } from "@/lib/enrichment-log";
-import { parseDateOnly } from "@/lib/datetime";
 import { normalizeEventDate } from "@/lib/event-dates";
 import { areDatesContiguous } from "@takemetothefair/utils";
 import { getCloudflareEnv } from "@/lib/cloudflare";
@@ -153,8 +152,12 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
     if (hasSpecificDates) {
       // Auto-compute from specificDates
       const sorted = [...event.specificDates!].sort();
-      startDate = parseDateOnly(sorted[0]);
-      endDate = parseDateOnly(sorted[sorted.length - 1]);
+      // OPE-482: normalizeEventDate (noon UTC), NOT parseDateOnly (midnight
+      // UTC). Midnight-UTC is 8pm Eastern the previous day, so those rows
+      // render one day early. Same fix the PUT handler's discontinuous branch
+      // already carries — this create path was the one it missed.
+      startDate = normalizeEventDate(sorted[0]);
+      endDate = normalizeEventDate(sorted[sorted.length - 1]);
     } else {
       // A3 (Dev backlog 2026-06-05): route through normalizeEventDate so
       // a bare YYYY-MM-DD lands at noon UTC (canonical anchor), matching
@@ -205,7 +208,10 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
       // start_equals_deadline gate (the "vendor deadline mistaken for the event
       // date" failure) can finally run on the URL-import path too.
       applicationDeadline: event.applicationDeadline
-        ? parseDateOnly(event.applicationDeadline)
+        ? // OPE-482: noon anchor — the deadline is rendered by the same
+          // Eastern formatters, and a midnight-UTC deadline reads a day EARLY,
+          // i.e. tells a vendor they missed a deadline they had not.
+          normalizeEventDate(event.applicationDeadline)
         : null,
       description: event.description,
     });
@@ -262,7 +268,10 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
       estimatedAttendance: event.estimatedAttendance ?? null,
       applicationUrl: gatedApplicationUrl,
       applicationDeadline: event.applicationDeadline
-        ? parseDateOnly(event.applicationDeadline)
+        ? // OPE-482: noon anchor — the deadline is rendered by the same
+          // Eastern formatters, and a midnight-UTC deadline reads a day EARLY,
+          // i.e. tells a vendor they missed a deadline they had not.
+          normalizeEventDate(event.applicationDeadline)
         : null,
       applicationInstructions: event.applicationInstructions || null,
       walkInsAllowed: event.walkInsAllowed ?? null,

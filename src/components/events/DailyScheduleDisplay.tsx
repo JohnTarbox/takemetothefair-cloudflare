@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Clock, ChevronDown, ChevronRight } from "lucide-react";
 import type { EventDay } from "@/types";
-import { formatDateOnly, parseDateOnly } from "@/lib/datetime";
+import { formatDateOnly } from "@/lib/datetime";
 import { cadenceLabel, findNextUpcoming, inferCadence } from "@/lib/recurring-display";
 import { areDatesContiguous } from "@takemetothefair/utils";
 
@@ -51,9 +51,11 @@ function formatRange(open: string | null | undefined, close: string | null | und
 }
 
 function formatDateShort(dateStr: string): string {
-  // parseDateOnly anchors to midnight UTC; formatDateOnly renders in UTC, so
-  // the displayed date matches the input regardless of viewer timezone.
-  return formatDateOnly(parseDateOnly(dateStr));
+  // OPE-482: hand the "YYYY-MM-DD" string to the formatter directly. It
+  // anchors bare calendar dates at NOON UTC, so the displayed date matches the
+  // input in any zone. The previous `parseDateOnly` round-trip anchored at
+  // midnight UTC, which is 8pm Eastern the previous day.
+  return formatDateOnly(dateStr);
 }
 
 function allSameHours(days: EventDay[]): boolean {

@@ -8,15 +8,50 @@
  *     `drizzle/0045_fix_timestamp_columns_back_to_seconds.sql` for the
  *     corrective migration that established this invariant.
  *     (`mode: "timestamp_ms"` would store ms-epoch — the project does not use it.)
- *   - Calendar dates (event start/end) are stored as midnight UTC.
+ *   - Calendar dates (event start/end) are stored anchored at NOON UTC — the
+ *     `normalizeEventDate` convention (OPE-307). This line used to read
+ *     "midnight UTC"; that was already false when written and is what the
+ *     OPE-482 note below is about. Legacy midnight-UTC rows were re-anchored by
+ *     drizzle/0232.
  *   - Instants (createdAt, lastCrawledAt, etc.) are stored as the actual moment.
  *
- * Render policy:
+ * Render policy (OPE-482, 2026-08-25 — this changed; read the note below):
  *   - Time-bearing fields render in the venue's local zone (`VENUE_TZ`) with
  *     the TZ abbreviation appended (e.g. "5:00 PM EDT").
- *   - Date-only fields render in UTC (the storage zone) WITHOUT a TZ label.
+ *   - Date-only fields render in `VENUE_TZ` WITHOUT a TZ label.
  *   - Audit instants render in the viewer's local zone on the client and in
  *     UTC on the server (use `formatTimestamp` vs `formatTimestampForServer`).
+ *
+ * Why date-only rendering moved from UTC to Eastern (OPE-482):
+ *   The old policy rendered date-only fields in UTC and justified it with the
+ *   storage invariant above — "calendar dates are stored as midnight UTC". That
+ *   invariant was never true of the whole corpus. Measured 2026-08-25 across
+ *   1,469 APPROVED events, `end_date` carried at least four conventions:
+ *
+ *     12:00:00Z   987 rows   the canonical anchor (`normalizeEventDate`)
+ *     03:59:59Z    15 rows   23:59:59 Eastern — end of the last day
+ *     00:00:00Z    20 rows   midnight UTC, i.e. "this calendar date" literally
+ *     00:15–03:00Z  6 rows   real Eastern closing times (8:15pm–11pm)
+ *     04:00:00Z     2 rows   midnight Eastern (mismatches in the EST half)
+ *
+ *   43 of those rows rendered an end date ONE DAY LATE under a UTC render,
+ *   including 12 fairs that had not happened yet. Rendering in Eastern is
+ *   correct for every convention EXCEPT the literal midnight-UTC one, so
+ *   drizzle/0232 re-anchored those 20 rows to 12:00Z first and the writers that
+ *   produced them were fixed in the same PR. Noon UTC is deliberately the
+ *   anchor: 12:00Z is 07:00/08:00 ET, so the Eastern calendar date and the UTC
+ *   calendar date agree, which is what makes the anchor timezone-safe in both
+ *   directions.
+ *
+ *   `get_data_health_report`'s `midnightUtcDateAnchors` invariant watches for
+ *   the midnight-UTC convention returning — if it does, those rows render a day
+ *   EARLY, which is the failure mode this policy trades for the old one.
+ *
+ * Bare "YYYY-MM-DD" strings (e.g. `event_days.date`) are calendar dates, not
+ * instants. Every formatter anchors them at NOON UTC before rendering, so they
+ * display as the same calendar day in any zone. Pass such a string directly —
+ * do NOT route it through `parseDateOnly` first, which anchors at midnight UTC
+ * and therefore renders one day early in Eastern.
  *
  * All parsers return `null` on bad input; all formatters return `""` on bad
  * input. Nothing in this module ever throws on a `Date` value — that was the
@@ -263,10 +298,47 @@ function cachedFmt(
 // defaults reproduce the pre-P3a Eastern-US render byte-for-byte.
 const DEFAULT_LOCALE = "en-US";
 
+/** Bare calendar date with no time component — `event_days.date`, form inputs,
+ *  the `"YYYY-MM-DD"` shape every extractor emits. */
+const BARE_CALENDAR_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Coerce a formatter input to a `Date`.
+ *
+ * A bare "YYYY-MM-DD" string is a CALENDAR DATE, not an instant, so it is
+ * anchored at NOON UTC rather than the midnight UTC `new Date(s)` would give.
+ * Noon is the zone-safe anchor (12:00Z = 07:00/08:00 ET), so the string renders
+ * as the same calendar day whether the formatter is pointed at UTC or Eastern.
+ * Anchoring at midnight instead is precisely the OPE-482 defect one level down:
+ * midnight UTC is 8pm Eastern the PREVIOUS day.
+ *
+ * This mirrors `normalizeEventDate` in @takemetothefair/utils, which applies the
+ * same noon anchor on the write side. Read and write now agree by construction.
+ */
 function coerce(d: Date | string | number | null | undefined): Date | null {
   if (d == null) return null;
   if (d instanceof Date) return isNaN(d.getTime()) ? null : d;
+  if (typeof d === "string" && BARE_CALENDAR_DATE.test(d)) {
+    const anchored = parseDateOnly(d);
+    if (!anchored) return null; // calendar-invalid, e.g. "2026-02-30"
+    return new Date(anchored.getTime() + 12 * 60 * 60 * 1000);
+  }
   return parseDateLoose(d);
+}
+
+/**
+ * The calendar y/m/d a `Date` falls on in `tz`. Used wherever two dates must be
+ * compared as calendar days rather than as instants — the UTC components are
+ * the wrong answer once rendering is Eastern.
+ */
+function calendarPartsIn(d: Date, tz: string): { y: number; m: number; day: number } {
+  const parts = cachedFmt("calendarParts", tz, "en-CA", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(d);
+  const get = (t: string) => parseInt(parts.find((p) => p.type === t)?.value ?? "0", 10);
+  return { y: get("year"), m: get("month"), day: get("day") };
 }
 
 // ── Formatters ─────────────────────────────────────────────────────
@@ -283,11 +355,12 @@ function coerce(d: Date | string | number | null | undefined): Date | null {
  */
 export function formatDateOnly(
   d: Date | string | number | null | undefined,
-  locale: string = DEFAULT_LOCALE
+  locale: string = DEFAULT_LOCALE,
+  tz: string = VENUE_TZ
 ): string {
   const date = coerce(d);
   if (!date) return "";
-  return cachedFmt("dateOnly", "UTC", locale, {
+  return cachedFmt("dateOnly", tz, locale, {
     weekday: "short",
     year: "numeric",
     month: "short",
@@ -308,12 +381,14 @@ export function formatDateRange(
   if (!startDate || startDate.getTime() === 0) return "TBD";
   const endDate = coerce(end);
   if (!endDate || endDate.getTime() === 0) return formatDateOnly(startDate);
-  // Compare calendar days in UTC (where the dates are conceptually anchored)
-  if (
-    startDate.getUTCFullYear() === endDate.getUTCFullYear() &&
-    startDate.getUTCMonth() === endDate.getUTCMonth() &&
-    startDate.getUTCDate() === endDate.getUTCDate()
-  ) {
+  // Compare calendar days in the zone we RENDER in (OPE-482). Comparing UTC
+  // components while rendering Eastern is how you get "Sep 26, 2026 - Sep 26,
+  // 2026": a same-Eastern-day pair (12:00Z start, 03:59:59Z-next-day end) reads
+  // as two different UTC days, so the range branch fires and prints the same
+  // formatted date twice.
+  const s = calendarPartsIn(startDate, VENUE_TZ);
+  const e = calendarPartsIn(endDate, VENUE_TZ);
+  if (s.y === e.y && s.m === e.m && s.day === e.day) {
     return formatDateOnly(startDate);
   }
   return `${formatDateOnly(startDate)} - ${formatDateOnly(endDate)}`;
@@ -332,11 +407,12 @@ export function formatDateRange(
  */
 export function formatDateMedium(
   d: Date | string | number | null | undefined,
-  locale: string = DEFAULT_LOCALE
+  locale: string = DEFAULT_LOCALE,
+  tz: string = VENUE_TZ
 ): string {
   const date = coerce(d);
   if (!date) return "";
-  return cachedFmt("dateMedium", "UTC", locale, {
+  return cachedFmt("dateMedium", tz, locale, {
     year: "numeric",
     month: "short",
     day: "numeric",
@@ -353,11 +429,12 @@ export function formatDateMedium(
  */
 export function formatDateLong(
   d: Date | string | number | null | undefined,
-  locale: string = DEFAULT_LOCALE
+  locale: string = DEFAULT_LOCALE,
+  tz: string = VENUE_TZ
 ): string {
   const date = coerce(d);
   if (!date) return "";
-  return cachedFmt("dateLong", "UTC", locale, {
+  return cachedFmt("dateLong", tz, locale, {
     year: "numeric",
     month: "long",
     day: "numeric",
@@ -375,11 +452,12 @@ export function formatDateLong(
  */
 export function formatDateShort(
   d: Date | string | number | null | undefined,
-  locale: string = DEFAULT_LOCALE
+  locale: string = DEFAULT_LOCALE,
+  tz: string = VENUE_TZ
 ): string {
   const date = coerce(d);
   if (!date) return "";
-  return cachedFmt("dateShort", "UTC", locale, {
+  return cachedFmt("dateShort", tz, locale, {
     month: "short",
     day: "numeric",
   }).format(date);
@@ -397,11 +475,12 @@ export function formatDateShort(
  */
 export function formatMonthShort(
   d: Date | string | number | null | undefined,
-  locale: string = DEFAULT_LOCALE
+  locale: string = DEFAULT_LOCALE,
+  tz: string = VENUE_TZ
 ): string {
   const date = coerce(d);
   if (!date) return "";
-  return cachedFmt("monthShort", "UTC", locale, {
+  return cachedFmt("monthShort", tz, locale, {
     month: "short",
   }).format(date);
 }
@@ -517,11 +596,53 @@ export function formatTimestampForServer(d: Date | string | number | null | unde
 
 /**
  * Convert a Date to "YYYY-MM-DD" using its UTC components.
+ *
+ * ⚠️ This is the STORAGE-side helper: it reports the UTC calendar date, which
+ * is what round-trips through `parseDateOnly` / `normalizeEventDate`. It is the
+ * wrong helper for anything a human or a calendar client will read — a row
+ * stored at `2026-09-27T03:59:59Z` (23:59:59 Eastern on Sep 26) reports
+ * "2026-09-27" here. For display, ICS export, and any surface that must agree
+ * with the rendered page, use `toIsoDateOnlyInVenueZone` (OPE-482).
  */
 export function toIsoDateOnly(d: Date | string | number | null | undefined): string {
   const date = coerce(d);
   if (!date) return "";
   return date.toISOString().slice(0, 10);
+}
+
+/**
+ * "YYYY-MM-DD" of an instant as it falls in the venue's zone — the display
+ * twin of `toIsoDateOnly`, and the one that agrees with what the page renders.
+ *
+ * Use for ICS/calendar export, `<input type="date">` values on admin forms, and
+ * anywhere a date string is derived from a stored instant for a human to read.
+ *
+ * Returns `""` on null / Invalid Date.
+ */
+export function toIsoDateOnlyInVenueZone(
+  d: Date | string | number | null | undefined,
+  tz: string = VENUE_TZ
+): string {
+  const date = coerce(d);
+  if (!date) return "";
+  const { y, m, day } = calendarPartsIn(date, tz);
+  return `${String(y).padStart(4, "0")}-${String(m).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+/**
+ * The calendar YEAR an instant falls in, in the venue's zone.
+ *
+ * `getUTCFullYear()` is wrong for the occurrence-year routes and canonical URLs:
+ * a New Year's Eve event ending `2026-12-31 23:59:59` Eastern is stored at
+ * `2027-01-01T04:59:59Z`, whose UTC year is 2027. Returns `null` on bad input.
+ */
+export function getVenueZoneYear(
+  d: Date | string | number | null | undefined,
+  tz: string = VENUE_TZ
+): number | null {
+  const date = coerce(d);
+  if (!date) return null;
+  return calendarPartsIn(date, tz).y;
 }
 
 /**

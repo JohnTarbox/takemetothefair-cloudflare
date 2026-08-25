@@ -13,6 +13,7 @@ import {
 import { eventLifecycleUpdateSchema, validateRequestBody } from "@/lib/validations";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 import { logError } from "@/lib/logger";
+import { normalizeEventDate } from "@/lib/event-dates";
 
 interface Params {
   params: Promise<{ id: string }>;
@@ -95,8 +96,10 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       const swap = swapDatesForLifecycle(
         { startDate: current.startDate ?? null, endDate: current.endDate ?? null },
         {
-          startDate: new_start_date ? new Date(new_start_date) : null,
-          endDate: new_end_date ? new Date(new_end_date) : null,
+          // OPE-482: a rescheduled date arrives as a bare YYYY-MM-DD; raw
+          // `new Date()` anchors it at midnight UTC, which renders a day early.
+          startDate: normalizeEventDate(new_start_date),
+          endDate: normalizeEventDate(new_end_date),
         }
       );
       dateUpdate = {

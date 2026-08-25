@@ -1,3 +1,8 @@
+// OPE-482 — event-date fixtures are anchored at NOON UTC (12:00Z), the
+// convention `normalizeEventDate` writes and 987 of 1,469 APPROVED rows hold.
+// They were midnight UTC, which under the Eastern date rendering this ticket
+// introduced resolves to the PREVIOUS calendar day. The fixtures moved, not the
+// expectations: every assertion below still names the day the event happens on.
 import { describe, it, expect } from "vitest";
 import { buildPresence } from "@jonnyboats/calendar-core";
 import { validateConfig } from "@jonnyboats/calendar-contract";
@@ -15,7 +20,7 @@ function row(partial: Partial<CalendarEventInput>): CalendarEventInput {
     slug: "test-fair",
     categories: '["Festival"]',
     discontinuousDates: false,
-    startDate: new Date(Date.UTC(2026, 6, 10)), // 2026-07-10
+    startDate: new Date(Date.UTC(2026, 6, 10, 12)), // 2026-07-10
     endDate: null,
     venue: null,
     ...partial,
@@ -52,8 +57,8 @@ describe("Year presence — adapter → buildPresence", () => {
     const events = toCalendarEvents(
       [
         row({
-          startDate: new Date(Date.UTC(2026, 6, 10)),
-          endDate: new Date(Date.UTC(2026, 6, 12)),
+          startDate: new Date(Date.UTC(2026, 6, 10, 12)),
+          endDate: new Date(Date.UTC(2026, 6, 12, 12)),
         }),
       ],
       { includePast: true }
@@ -90,8 +95,8 @@ describe("Year presence — adapter → buildPresence", () => {
     const events = toCalendarEvents(
       [
         row({
-          startDate: new Date(Date.UTC(2025, 11, 30)),
-          endDate: new Date(Date.UTC(2025, 11, 31)),
+          startDate: new Date(Date.UTC(2025, 11, 30, 12)),
+          endDate: new Date(Date.UTC(2025, 11, 31, 12)),
         }),
       ],
       { includePast: true }

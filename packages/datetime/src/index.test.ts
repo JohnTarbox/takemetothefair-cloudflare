@@ -206,13 +206,25 @@ describe("parseWallClockInVenueZone", () => {
 });
 
 describe("formatDateOnly", () => {
-  it("formats a date in UTC without a TZ label", () => {
-    const out = formatDateOnly(new Date("2026-04-30T00:00:00Z"));
+  // OPE-482: these fixtures moved from 00:00:00Z to the 12:00:00Z anchor. That is
+  // not test-fitting — midnight UTC is 8pm Eastern the PREVIOUS day, and the
+  // formatters now render Eastern. The noon anchor is what the corpus actually
+  // stores (987 of 1,469 APPROVED end dates) and what `normalizeEventDate`
+  // writes. The day-early behaviour of 00:00:00Z is asserted deliberately below.
+  it("formats a date in the venue zone without a TZ label", () => {
+    const out = formatDateOnly(new Date("2026-04-30T12:00:00Z"));
     expect(out).toContain("Apr");
     expect(out).toContain("30");
     expect(out).toContain("2026");
-    expect(out).toMatch(/^Thu/); // April 30, 2026 is a Thursday in UTC
+    expect(out).toMatch(/^Thu/); // April 30, 2026 is a Thursday
     expect(out).not.toMatch(/EDT|EST|UTC|GMT/); // no TZ label on date-only
+  });
+
+  it("a midnight-UTC instant renders the PREVIOUS Eastern day — by design", () => {
+    // The trade OPE-482 made explicitly. Rendering Eastern fixes 43 rows that
+    // showed a day late and breaks the midnight-UTC convention, so drizzle/0232
+    // re-anchored those rows and the writers that produced them were fixed.
+    expect(formatDateOnly(new Date("2026-04-30T00:00:00Z"))).toBe("Wed, Apr 29, 2026");
   });
 
   it("returns empty string for null/undefined", () => {
@@ -226,24 +238,32 @@ describe("formatDateOnly", () => {
   });
 
   it("accepts a string and parses defensively", () => {
-    expect(formatDateOnly("2026-04-30T00:00:00Z")).toContain("Apr 30");
+    expect(formatDateOnly("2026-04-30T12:00:00Z")).toContain("Apr 30");
+  });
+
+  it("a bare YYYY-MM-DD string renders as itself, in any season", () => {
+    // OPE-482: bare calendar dates are anchored at noon before rendering, so
+    // `event_days.date` and form values display the day they name.
+    expect(formatDateOnly("2026-04-30")).toContain("Apr 30");
+    expect(formatDateOnly("2026-01-15")).toContain("Jan 15");
   });
 
   it("renders the same date regardless of host time zone (DST edge)", () => {
-    // Mid-DST date — in EDT this is May 1 21:00 the prior day, but UTC-anchored.
-    const utcMay1 = new Date("2026-05-01T00:00:00Z");
-    expect(formatDateOnly(utcMay1)).toContain("May 1");
+    // Noon anchor: 12:00Z is 08:00 EDT, so the Eastern and UTC calendar days
+    // agree and the render is host-zone independent in both directions.
+    const may1 = new Date("2026-05-01T12:00:00Z");
+    expect(formatDateOnly(may1)).toContain("May 1");
   });
 });
 
 describe("formatDateMedium", () => {
   it("renders without weekday: 'Apr 30, 2026'", () => {
-    const out = formatDateMedium(new Date("2026-04-30T00:00:00Z"));
+    const out = formatDateMedium(new Date("2026-04-30T12:00:00Z"));
     expect(out).toBe("Apr 30, 2026");
   });
 
   it("uses short month name (not long)", () => {
-    expect(formatDateMedium(new Date("2026-01-15T00:00:00Z"))).toBe("Jan 15, 2026");
+    expect(formatDateMedium(new Date("2026-01-15T12:00:00Z"))).toBe("Jan 15, 2026");
   });
 
   it("returns '' on null / Invalid Date / garbage", () => {
@@ -256,7 +276,7 @@ describe("formatDateMedium", () => {
 
 describe("formatDateLong", () => {
   it("renders with long month name: 'April 30, 2026'", () => {
-    const out = formatDateLong(new Date("2026-04-30T00:00:00Z"));
+    const out = formatDateLong(new Date("2026-04-30T12:00:00Z"));
     expect(out).toBe("April 30, 2026");
   });
 
@@ -268,7 +288,7 @@ describe("formatDateLong", () => {
 
 describe("formatDateShort", () => {
   it("renders without year: 'Apr 30'", () => {
-    const out = formatDateShort(new Date("2026-04-30T00:00:00Z"));
+    const out = formatDateShort(new Date("2026-04-30T12:00:00Z"));
     expect(out).toBe("Apr 30");
   });
 
@@ -309,19 +329,19 @@ describe("formatDateRange", () => {
   });
 
   it("returns single date when end is missing", () => {
-    const out = formatDateRange("2026-04-30T00:00:00Z", null);
+    const out = formatDateRange("2026-04-30T12:00:00Z", null);
     expect(out).toContain("Apr 30, 2026");
     expect(out).not.toContain(" - ");
   });
 
   it("returns single date when start and end are the same calendar day", () => {
-    const start = "2026-04-30T00:00:00Z";
-    const end = "2026-04-30T00:00:00Z";
+    const start = "2026-04-30T12:00:00Z";
+    const end = "2026-04-30T12:00:00Z";
     expect(formatDateRange(start, end)).not.toContain(" - ");
   });
 
   it("returns a range when start and end are different calendar days", () => {
-    const out = formatDateRange("2026-04-30T00:00:00Z", "2026-05-02T00:00:00Z");
+    const out = formatDateRange("2026-04-30T12:00:00Z", "2026-05-02T12:00:00Z");
     expect(out).toContain("Apr 30");
     expect(out).toContain("May 2");
     expect(out).toContain(" - ");
@@ -577,7 +597,7 @@ describe("cross-zone helpers (P3a)", () => {
 
   it("formatDateMedium accepts a locale param (fr-CA produces French month abbr)", () => {
     // April in French Canadian abbreviated form is "avr.".
-    const out = formatDateMedium(new Date("2026-04-30T00:00:00Z"), "fr-CA");
+    const out = formatDateMedium(new Date("2026-04-30T12:00:00Z"), "fr-CA");
     expect(out).toContain("avr");
     expect(out).toContain("2026");
     expect(out).toContain("30");

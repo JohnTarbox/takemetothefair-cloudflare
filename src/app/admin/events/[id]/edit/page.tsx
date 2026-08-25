@@ -14,7 +14,8 @@ import { SchemaOrgPanel } from "@/components/admin/SchemaOrgPanel";
 import { RescrapePanel } from "@/components/admin/RescrapePanel";
 import { FocalPointPicker } from "@/components/admin/FocalPointPicker";
 import { STATES, STATE_CODES, type StateCode } from "@/lib/states";
-import { parseDateOnly, toIsoDateOnly } from "@/lib/datetime";
+import { toIsoDateOnlyInVenueZone } from "@/lib/datetime";
+import { normalizeEventDate } from "@/lib/event-dates";
 
 interface Venue {
   id: string;
@@ -208,12 +209,13 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
 
     if (discontinuousDates && eventDays.length > 0) {
       const sorted = eventDays.map((d) => d.date).sort();
-      startDateISO = parseDateOnly(sorted[0])?.toISOString() ?? null;
-      endDateISO = parseDateOnly(sorted[sorted.length - 1])?.toISOString() ?? null;
+      startDateISO = normalizeEventDate(sorted[0])?.toISOString() ?? null;
+      endDateISO = normalizeEventDate(sorted[sorted.length - 1])?.toISOString() ?? null;
     } else {
       startDateISO =
-        datesTBD || !startDate ? null : (parseDateOnly(startDate)?.toISOString() ?? null);
-      endDateISO = datesTBD || !endDate ? null : (parseDateOnly(endDate)?.toISOString() ?? null);
+        datesTBD || !startDate ? null : (normalizeEventDate(startDate)?.toISOString() ?? null);
+      endDateISO =
+        datesTBD || !endDate ? null : (normalizeEventDate(endDate)?.toISOString() ?? null);
     }
 
     const data = {
@@ -253,7 +255,10 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
         : null,
       eventScale: formData.get("eventScale") || null,
       applicationDeadline: formData.get("applicationDeadline")
-        ? (parseDateOnly(formData.get("applicationDeadline") as string)?.toISOString() ?? null)
+        ? // OPE-482: noon-UTC anchor. A midnight-UTC deadline renders a day EARLY
+          // under Eastern formatting — it tells a vendor they missed a deadline
+          // they had not.
+          (normalizeEventDate(formData.get("applicationDeadline") as string)?.toISOString() ?? null)
         : null,
       applicationUrl: formData.get("applicationUrl") || null,
       applicationInstructions: formData.get("applicationInstructions") || null,
@@ -283,7 +288,12 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
 
   const formatDateForInput = (dateStr: string) => {
     if (!dateStr) return "";
-    return toIsoDateOnly(dateStr);
+    // OPE-482: show the EASTERN calendar date, so the form agrees with the public
+    // page. `toIsoDateOnly` reports UTC components — a row stored at
+    // 2026-09-27T03:59:59Z (Sep 26 23:59:59 ET) prefilled "2026-09-27" here while
+    // the page said Sep 26. The round trip is safe because the API runs
+    // normalizeEventDate on save, landing the value on the 12:00Z anchor.
+    return toIsoDateOnlyInVenueZone(dateStr);
   };
 
   if (loading) {

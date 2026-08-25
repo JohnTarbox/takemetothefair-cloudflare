@@ -8,8 +8,11 @@
 //
 // Load-bearing rules (from the contract docs):
 //   - All-day occurrences are FLOATING: date-only `start`, no `timezone`, so they
-//     never shift day under a different `displayTimeZone`. MMATF stores dates as
-//     midnight-UTC anchors, so `toIsoDateOnly` is exact.
+//     never shift day under a different `displayTimeZone`. OPE-482: derive that
+//     date in the VENUE zone. The old note claimed "MMATF stores dates as
+//     midnight-UTC anchors, so `toIsoDateOnly` is exact" — measured 2026-08-25,
+//     the corpus holds at least four storage conventions, and a row at
+//     2026-09-27T03:59:59Z (Sep 26 23:59:59 ET) exported as Sep 27.
 //   - All-day `end` is EXCLUSIVE (DTEND): a Fri–Sun event has `end = Mon`. We add
 //     one day to the inclusive `endDate`. (Property-tested for the off-by-one.)
 //   - `occurrences[]` MUST be sorted ascending by start (validateWindow enforces).
@@ -18,7 +21,7 @@
 
 import type { CalendarEvent, Occurrence } from "@jonnyboats/calendar-contract";
 import {
-  toIsoDateOnly,
+  toIsoDateOnlyInVenueZone,
   addDaysIso,
   parseWallClockInVenueZone,
   VENUE_TZ,
@@ -72,12 +75,12 @@ function venueBits(input: CalendarEventInput): Pick<Occurrence, "location" | "ma
 
 /** Continuous event → ONE all-day occurrence spanning start … (end + 1 day, exclusive). */
 function continuousOccurrence(input: CalendarEventInput): Occurrence {
-  const start = toIsoDateOnly(input.startDate);
+  const start = toIsoDateOnlyInVenueZone(input.startDate);
   const bits = venueBits(input);
   // DTEND-exclusive: only emit `end` when the event actually spans >1 day.
   let end: string | undefined;
   if (input.endDate) {
-    const endDateOnly = toIsoDateOnly(input.endDate);
+    const endDateOnly = toIsoDateOnlyInVenueZone(input.endDate);
     if (endDateOnly > start) end = addDaysIso(endDateOnly, 1);
   }
   return {

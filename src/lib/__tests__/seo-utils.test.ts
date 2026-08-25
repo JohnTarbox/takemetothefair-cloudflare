@@ -1,3 +1,8 @@
+// OPE-482 — event-date fixtures are anchored at NOON UTC (12:00Z), the
+// convention `normalizeEventDate` writes and 987 of 1,469 APPROVED rows hold.
+// They were midnight UTC, which under the Eastern date rendering this ticket
+// introduced resolves to the PREVIOUS calendar day. The fixtures moved, not the
+// expectations: every assertion below still names the day the event happens on.
 import { describe, it, expect, vi } from "vitest";
 import {
   buildEventMetaDescription,
@@ -294,7 +299,7 @@ describe("buildEventTitle", () => {
   it("injects the startDate year into the title (Marshfield Fair 2026)", () => {
     const out = buildEventTitle({
       name: "Marshfield Fair",
-      startDate: new Date("2026-08-21T00:00:00Z"),
+      startDate: new Date("2026-08-21T12:00:00Z"),
       venue: { city: "Marshfield", state: "MA" },
     });
     // City + "ma" both appear in the name → existing logic suppresses the
@@ -305,7 +310,7 @@ describe("buildEventTitle", () => {
   it("injects the year AND keeps the location suffix (Barnstable County Fair 2026)", () => {
     const out = buildEventTitle({
       name: "Barnstable County Fair",
-      startDate: new Date("2026-07-18T00:00:00Z"),
+      startDate: new Date("2026-07-18T12:00:00Z"),
       venue: { city: "Falmouth", state: "MA" },
     });
     expect(out).toBe("Barnstable County Fair 2026 · Falmouth, MA");
@@ -314,7 +319,7 @@ describe("buildEventTitle", () => {
   it("does not double the year when the name already carries it", () => {
     const out = buildEventTitle({
       name: "Vermont Maple Open House Weekend 2027",
-      startDate: new Date("2027-03-01T00:00:00Z"),
+      startDate: new Date("2027-03-01T12:00:00Z"),
     });
     expect(out).toBe("Vermont Maple Open House Weekend 2027");
     expect(out).not.toContain("2027 2027");
@@ -325,7 +330,7 @@ describe("buildEventTitle", () => {
       name: "207 Beer Week",
       isStatewide: true,
       stateCode: "ME",
-      startDate: new Date("2026-05-04T00:00:00Z"),
+      startDate: new Date("2026-05-04T12:00:00Z"),
     });
     expect(out).toBe("207 Beer Week 2026 · Statewide Maine");
   });
@@ -349,8 +354,8 @@ describe("buildEventMetaDescription — clean DB description leads (no suffix, r
         "Brattleboro Area Indoor Farmers Market will be held on March 7th, 2026. This market will feature locally grown produce, handmade crafts, prepared food, live entertainment, and more. Hours: 10am-2pm",
       categories: '["Farmers Market"]',
       venue: { name: "Winston Prouty Center", city: "Brattleboro", state: "VT" },
-      startDate: new Date("2026-03-07T00:00:00Z"),
-      endDate: new Date("2026-03-07T00:00:00Z"),
+      startDate: new Date("2026-03-07T12:00:00Z"),
+      endDate: new Date("2026-03-07T12:00:00Z"),
     });
     expect(out).not.toContain("will be held on March 7th");
     expect(out).toContain("locally grown produce");
@@ -368,8 +373,8 @@ describe("buildEventMetaDescription — clean DB description leads (no suffix, r
         "Free statewide weekend event hosted by the Vermont Maple Sugar Makers' Association. Over 80 sugarhouses across Vermont open their doors for tours, tastings, live music, and maple treats during peak sugaring season.",
       categories: '["Festival","Community Event"]',
       venue: null,
-      startDate: new Date("2027-03-26T00:00:00Z"),
-      endDate: new Date("2027-03-27T00:00:00Z"),
+      startDate: new Date("2027-03-26T12:00:00Z"),
+      endDate: new Date("2027-03-27T12:00:00Z"),
     });
     // Cut at clause boundary — second sentence is too long to include and the
     // first ends cleanly at "Association.". Pin the exact output to guard
@@ -394,8 +399,8 @@ describe("buildEventMetaDescription — clean DB description leads (no suffix, r
       description: desc,
       categories: '["Fair"]',
       venue: { name: "Fryeburg Fairgrounds", city: "Fryeburg", state: "ME" },
-      startDate: new Date("2026-10-04T00:00:00Z"),
-      endDate: new Date("2026-10-11T00:00:00Z"),
+      startDate: new Date("2026-10-04T12:00:00Z"),
+      endDate: new Date("2026-10-11T12:00:00Z"),
     });
     expect(out).toBe(
       "Maine's Blue Ribbon Classic Agricultural Fair since 1851 — the state's largest agricultural fair, drawing approximately 260,000 attendees annually…"
@@ -414,8 +419,8 @@ describe("buildEventMetaDescription — clean DB description leads (no suffix, r
         city: "Kennebunkport",
         state: "ME",
       },
-      startDate: new Date("2026-12-04T00:00:00Z"),
-      endDate: new Date("2026-12-13T00:00:00Z"),
+      startDate: new Date("2026-12-04T12:00:00Z"),
+      endDate: new Date("2026-12-13T12:00:00Z"),
     });
     expect(out).toContain("Kennebunkport Christmas Prelude");
     // No date suffix.
@@ -436,8 +441,8 @@ describe("buildEventMetaDescription — clean DB description leads (no suffix, r
         "Maine's Blue Ribbon Classic Agricultural Fair since 1851 — the state's largest agricultural fair, drawing 260,000 attendees annually.",
       categories: '["Fair"]',
       venue: { name: "Fryeburg Fairgrounds", city: "Fryeburg", state: "ME" },
-      startDate: new Date("2026-10-04T00:00:00Z"),
-      endDate: new Date("2026-10-11T00:00:00Z"),
+      startDate: new Date("2026-10-04T12:00:00Z"),
+      endDate: new Date("2026-10-11T12:00:00Z"),
     });
     expect(out).toContain("260,000 attendees annually");
     expect(out).not.toContain("Oct 4-11");
@@ -490,8 +495,8 @@ describe("buildEventMetaDescription — fallback when DB description fails gate 
       description: "",
       categories: '["Fair"]',
       venue: { name: "Franklin County Fairgrounds", city: "Greenfield", state: "MA" },
-      startDate: new Date("2026-09-09T00:00:00Z"),
-      endDate: new Date("2026-09-12T00:00:00Z"),
+      startDate: new Date("2026-09-09T12:00:00Z"),
+      endDate: new Date("2026-09-12T12:00:00Z"),
     });
     // OPE-42 composed form keys off city/state (not the venue name).
     expect(out).toContain("Greenfield, MA");
@@ -506,8 +511,8 @@ describe("buildEventMetaDescription — fallback when DB description fails gate 
       description: "Contact: Jane Doe at jane@example.com for application details and pricing.",
       categories: '["Festival"]',
       venue: { name: "Test Venue", city: "Boston", state: "MA" },
-      startDate: new Date("2026-06-15T00:00:00Z"),
-      endDate: new Date("2026-06-15T00:00:00Z"),
+      startDate: new Date("2026-06-15T12:00:00Z"),
+      endDate: new Date("2026-06-15T12:00:00Z"),
     });
     expect(out).not.toContain("Contact: Jane");
     expect(out).toContain("Festival");
@@ -534,8 +539,8 @@ describe("buildEventMetaDescription — fallback when DB description fails gate 
       description: null,
       categories: '["Festival"]',
       venue: null,
-      startDate: new Date("2026-06-15T00:00:00Z"),
-      endDate: new Date("2026-06-15T00:00:00Z"),
+      startDate: new Date("2026-06-15T12:00:00Z"),
+      endDate: new Date("2026-06-15T12:00:00Z"),
     });
     expect(out).toBe(
       "Test Event is a Festival on Jun 15, 2026. Find hours, tickets, vendor applications, and directions on Meet Me at the Fair."

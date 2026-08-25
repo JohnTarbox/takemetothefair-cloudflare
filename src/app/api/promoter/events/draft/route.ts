@@ -9,7 +9,7 @@ import { resolveUniqueEventSlug, insertEventDaysBatched } from "@/lib/events/ins
 import { recordMutation } from "@/lib/audit/record-mutation";
 import { validateRequestBody, promoterEventCreateSchema } from "@/lib/validations";
 import { logError } from "@/lib/logger";
-import { parseDateOnly } from "@/lib/datetime";
+import { normalizeEventDate } from "@/lib/event-dates";
 import { recomputeEventCompleteness } from "@/lib/completeness";
 
 interface EventDayInput {
@@ -80,8 +80,12 @@ export async function POST(request: NextRequest) {
     let endDate = data.endDate ?? null;
     if (isDiscontinuous && eventDaysInput.length > 0) {
       const sorted = eventDaysInput.map((d) => d.date).sort();
-      startDate = parseDateOnly(sorted[0])?.toISOString() ?? null;
-      endDate = parseDateOnly(sorted[sorted.length - 1])?.toISOString() ?? null;
+      // OPE-482: normalizeEventDate (noon UTC), NOT parseDateOnly (midnight
+      // UTC). Midnight-UTC is 8pm Eastern the previous day, so those rows
+      // render one day early. Same fix the PUT handler's discontinuous branch
+      // already carries — this create path was the one it missed.
+      startDate = normalizeEventDate(sorted[0])?.toISOString() ?? null;
+      endDate = normalizeEventDate(sorted[sorted.length - 1])?.toISOString() ?? null;
     }
 
     // Public date range (excludes vendor-only days)
@@ -89,7 +93,10 @@ export async function POST(request: NextRequest) {
       eventDaysInput.length > 0
         ? computePublicDates(eventDaysInput)
         : {
-            publicStartDate: startDate ? new Date(startDate) : null,
+            // OPE-482: noon-UTC anchor. public_start_date IS the date the event
+            // card renders (`event.publicStartDate ?? event.startDate`), so a
+            // midnight-UTC write here shows a day early on every card.
+            publicStartDate: normalizeEventDate(startDate),
             publicEndDate: endDate ? new Date(endDate) : null,
           };
 
@@ -120,8 +127,10 @@ export async function POST(request: NextRequest) {
           venueId: data.venueId || null,
           stateCode: data.stateCode || null,
           isStatewide: data.isStatewide ?? false,
-          startDate: startDate ? new Date(startDate) : null,
-          endDate: endDate ? new Date(endDate) : null,
+          // OPE-482: `new Date("YYYY-MM-DD")` is midnight UTC = 8pm Eastern the
+          // previous day. normalizeEventDate anchors at noon UTC.
+          startDate: normalizeEventDate(startDate),
+          endDate: normalizeEventDate(endDate),
           publicStartDate,
           publicEndDate,
           discontinuousDates: isDiscontinuous,
@@ -203,8 +212,9 @@ export async function POST(request: NextRequest) {
       stateCode: data.stateCode || null,
       isStatewide: data.isStatewide ?? false,
       promoterId: promoter.id,
-      startDate: startDate ? new Date(startDate) : null,
-      endDate: endDate ? new Date(endDate) : null,
+      // OPE-482: see above — noon-UTC anchor, not midnight.
+      startDate: normalizeEventDate(startDate),
+      endDate: normalizeEventDate(endDate),
       publicStartDate,
       publicEndDate,
       discontinuousDates: isDiscontinuous,

@@ -19,6 +19,7 @@ import { internalKeyMatches } from "@/lib/api-auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { createOccurrenceForSeries } from "@/lib/series/create-occurrence";
 import { logError } from "@/lib/logger";
+import { normalizeEventDate } from "@/lib/event-dates";
 
 async function authorize(request: NextRequest): Promise<boolean> {
   if (await internalKeyMatches(request)) return true;
@@ -26,10 +27,17 @@ async function authorize(request: NextRequest): Promise<boolean> {
   return session?.user?.role === "ADMIN";
 }
 
+/**
+ * OPE-482 — was a hand-rolled `new Date(s)`, which anchors a bare "YYYY-MM-DD"
+ * at midnight UTC (= 8pm Eastern the previous day). This route is a confirmed
+ * live producer of those rows: `paradise-city-arts-festival-spring-2027` and two
+ * siblings were created 2026-08-13/17 storing 00:00:00Z on both date columns,
+ * which falsified drizzle/0199's "zero rows created since 2026-07-01" claim.
+ * Route through the canonical normalizer like every other write path.
+ */
 function parseDate(s: unknown): Date | null {
   if (typeof s !== "string" || !s) return null;
-  const d = new Date(s);
-  return Number.isNaN(d.getTime()) ? null : d;
+  return normalizeEventDate(s);
 }
 
 export async function POST(request: NextRequest) {

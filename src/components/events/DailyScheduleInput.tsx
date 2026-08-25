@@ -32,9 +32,9 @@ interface DailyScheduleInputProps {
 }
 
 function formatDateDisplay(dateStr: string): string {
-  // parseDateOnly anchors to midnight UTC; formatDateOnly renders in UTC, so
-  // the displayed date matches the input regardless of host timezone.
-  return formatDateOnly(parseDateOnly(dateStr));
+  // OPE-482: see DailyScheduleDisplay — the formatter anchors bare calendar
+  // dates at noon UTC, so no parseDateOnly round-trip (midnight UTC) here.
+  return formatDateOnly(dateStr);
 }
 
 function getDatesInRange(start: string, end: string): { dates: string[]; truncated: boolean } {

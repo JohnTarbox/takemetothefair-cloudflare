@@ -8,7 +8,7 @@
 // share the array returned by `buildEventFaqItems` so the two surfaces
 // can never diverge.
 
-import { formatDateOnly, formatDateRange, parseDateOnly } from "@/lib/datetime";
+import { formatDateOnly, formatDateRange } from "@/lib/datetime";
 import { formatPrice } from "@/lib/utils";
 
 export type FaqItem = { question: string; answer: string };
@@ -146,7 +146,10 @@ export function buildEventFaqItems(input: EventFaqInput): FaqItem[] {
   const vendorOnlyDays = eventDays.filter((d) => d.vendorOnly === true);
   if (vendorOnlyDays.length > 0) {
     const dates = vendorOnlyDays
-      .map((d) => formatDateOnly(parseDateOnly(d.date)))
+      // OPE-482: pass the calendar-date string straight through. The old
+      // `parseDateOnly` round-trip anchored at midnight UTC, which renders as
+      // the PREVIOUS day now that formatters are Eastern.
+      .map((d) => formatDateOnly(d.date))
       .filter((s) => s.length > 0)
       .join(", ");
     if (dates) {

@@ -1,4 +1,5 @@
 import { decodeHtmlEntities, formatDateRange } from "@/lib/utils";
+import { getVenueZoneYear } from "@/lib/datetime";
 import { parseJsonArray } from "@/types";
 import { displayVenueName } from "@/lib/venue-display";
 import { truncateAtBoundary, trimTrailingFunctionWord } from "@/lib/seo/truncate-meta";
@@ -149,7 +150,10 @@ export function buildEventTitle(event: {
   // name already carries the year (e.g. "…Weekend 2027").
   const rawName = decodeHtmlEntities(event.name);
   const nameLower = rawName.toLowerCase();
-  const year = event.startDate ? new Date(event.startDate).getUTCFullYear() : null;
+  // OPE-482: the EASTERN calendar year. `getUTCFullYear()` puts a New Year's Eve
+  // event ending 2026-12-31 23:59:59 ET (stored 2027-01-01T04:59:59Z) in 2027,
+  // which would append the wrong year to the SEO title.
+  const year = event.startDate ? getVenueZoneYear(event.startDate) : null;
   const name =
     year && Number.isFinite(year) && !nameLower.includes(String(year))
       ? `${rawName} ${year}`

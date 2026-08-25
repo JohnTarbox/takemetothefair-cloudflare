@@ -1,3 +1,8 @@
+// OPE-482 — event-date fixtures are anchored at NOON UTC (12:00Z), the
+// convention `normalizeEventDate` writes and 987 of 1,469 APPROVED rows hold.
+// They were midnight UTC, which under the Eastern date rendering this ticket
+// introduced resolves to the PREVIOUS calendar day. The fixtures moved, not the
+// expectations: every assertion below still names the day the event happens on.
 import { describe, it, expect } from "vitest";
 import { toCalendarEvent, toCalendarEvents, type CalendarEventInput } from "../to-calendar-event";
 import { validateWindow, validateConfig } from "@jonnyboats/calendar-contract";
@@ -14,7 +19,7 @@ function row(partial: Partial<CalendarEventInput>): CalendarEventInput {
     slug: "test-fair",
     categories: "[]",
     discontinuousDates: false,
-    startDate: new Date(Date.UTC(2026, 6, 10)), // 2026-07-10
+    startDate: new Date(Date.UTC(2026, 6, 10, 12)), // 2026-07-10
     endDate: null,
     venue: null,
     ...partial,
@@ -24,7 +29,10 @@ function row(partial: Partial<CalendarEventInput>): CalendarEventInput {
 describe("toCalendarEvent — continuous events", () => {
   it("single-day event emits one occurrence with no end (DTEND omitted)", () => {
     const e = toCalendarEvent(
-      row({ startDate: new Date(Date.UTC(2026, 6, 10)), endDate: new Date(Date.UTC(2026, 6, 10)) })
+      row({
+        startDate: new Date(Date.UTC(2026, 6, 10, 12)),
+        endDate: new Date(Date.UTC(2026, 6, 10, 12)),
+      })
     );
     expect(e).not.toBeNull();
     expect(e!.occurrences).toHaveLength(1);
@@ -36,7 +44,10 @@ describe("toCalendarEvent — continuous events", () => {
   it("3-day Fri–Sun event has EXCLUSIVE end = Mon (the off-by-one)", () => {
     // Fri 2026-07-10 … Sun 2026-07-12 inclusive ⇒ end (exclusive) = Mon 2026-07-13.
     const e = toCalendarEvent(
-      row({ startDate: new Date(Date.UTC(2026, 6, 10)), endDate: new Date(Date.UTC(2026, 6, 12)) })
+      row({
+        startDate: new Date(Date.UTC(2026, 6, 10, 12)),
+        endDate: new Date(Date.UTC(2026, 6, 12, 12)),
+      })
     );
     expect(e!.occurrences[0]!.start).toBe("2026-07-10");
     expect(e!.occurrences[0]!.end).toBe("2026-07-13"); // NOT 2026-07-12, NOT 2026-07-14
@@ -53,16 +64,16 @@ describe("toCalendarEvent — ongoing (>14d) derivation by the engine", () => {
     const twenty = toCalendarEvent(
       row({
         id: "long",
-        startDate: new Date(Date.UTC(2026, 6, 1)),
-        endDate: new Date(Date.UTC(2026, 6, 21)),
+        startDate: new Date(Date.UTC(2026, 6, 1, 12)),
+        endDate: new Date(Date.UTC(2026, 6, 21, 12)),
       })
     )!;
     // exactly 14 days inclusive: 07-01 … 07-14 ⇒ span end-exclusive 07-15, length 14d.
     const fourteen = toCalendarEvent(
       row({
         id: "two-wk",
-        startDate: new Date(Date.UTC(2026, 6, 1)),
-        endDate: new Date(Date.UTC(2026, 6, 14)),
+        startDate: new Date(Date.UTC(2026, 6, 1, 12)),
+        endDate: new Date(Date.UTC(2026, 6, 14, 12)),
       })
     )!;
     expect(isEventOngoing(twenty, CFG)).toBe(true);
@@ -144,8 +155,8 @@ describe("past-events rule (Step 5) — toCalendarEvents filtering", () => {
   it("drops an event whose every occurrence is past", () => {
     const r = row({
       id: "gone",
-      startDate: new Date(Date.UTC(2026, 6, 1)),
-      endDate: new Date(Date.UTC(2026, 6, 3)),
+      startDate: new Date(Date.UTC(2026, 6, 1, 12)),
+      endDate: new Date(Date.UTC(2026, 6, 3, 12)),
     });
     expect(toCalendarEvents([r], { todayIso: TODAY })).toHaveLength(0);
     expect(toCalendarEvents([r], { includePast: true, todayIso: TODAY })).toHaveLength(1);
@@ -155,8 +166,8 @@ describe("past-events rule (Step 5) — toCalendarEvents filtering", () => {
     // 11-day event 07-05…07-15, today 07-10 → ribbon starts today; past days empty.
     const r = row({
       id: "multiday",
-      startDate: new Date(Date.UTC(2026, 6, 5)),
-      endDate: new Date(Date.UTC(2026, 6, 15)),
+      startDate: new Date(Date.UTC(2026, 6, 5, 12)),
+      endDate: new Date(Date.UTC(2026, 6, 15, 12)),
     });
     const out = toCalendarEvents([r], { todayIso: TODAY });
     expect(out).toHaveLength(1);
@@ -168,8 +179,8 @@ describe("past-events rule (Step 5) — toCalendarEvents filtering", () => {
     // 26-day span 06-25…07-20 → ongoing band; must keep original start.
     const r = row({
       id: "band",
-      startDate: new Date(Date.UTC(2026, 5, 25)),
-      endDate: new Date(Date.UTC(2026, 6, 20)),
+      startDate: new Date(Date.UTC(2026, 5, 25, 12)),
+      endDate: new Date(Date.UTC(2026, 6, 20, 12)),
     });
     const out = toCalendarEvents([r], { todayIso: TODAY });
     expect(out).toHaveLength(1);
@@ -191,8 +202,8 @@ describe("adapter output passes the contract's validateWindow", () => {
     const out = toCalendarEvents([
       row({
         id: "a",
-        startDate: new Date(Date.UTC(2026, 6, 10)),
-        endDate: new Date(Date.UTC(2026, 6, 12)),
+        startDate: new Date(Date.UTC(2026, 6, 10, 12)),
+        endDate: new Date(Date.UTC(2026, 6, 12, 12)),
       }),
       row({ id: "b", discontinuousDates: true, eventDayDates: ["2026-07-20", "2026-07-05"] }),
       row({ id: "c", categories: JSON.stringify(["Craft Fair"]) }),
