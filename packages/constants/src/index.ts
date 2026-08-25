@@ -109,11 +109,20 @@ export const PUBLIC_LIFECYCLE_STATUSES = [
  * ── Why this lives in constants (OPE-487, 2026-08-25) ────────────────────
  *
  * It used to exist TWICE — `src/lib/event-lifecycle.ts` for the API route and
- * `mcp-server/src/lifecycle.ts` for the MCP tool and the OCCURRED sweep — kept
- * in sync BY HAND, with the mcp copy's own header admitting "CI doesn't catch
+ * `mcp-server/src/lifecycle.ts` for the `update_event_lifecycle` tool — kept in
+ * sync BY HAND, with the mcp copy's own header admitting "CI doesn't catch
  * drift". That is a poor arrangement for an ordinary lookup table and a bad one
  * for a SAFETY GUARD: the failure mode is one copy widened and the other not,
  * which reads as "the rule is enforced" from whichever side you happen to test.
+ *
+ * ⚠️ A THIRD writer does not consult this table at all: the K27 OCCURRED sweep
+ * (`mcp-server/src/event-occurred-sweep.ts`) sets `lifecycle_status = 'OCCURRED'`
+ * with a direct UPDATE. The mcp copy's header claimed the sweep shared it; it
+ * never imported it. That is tolerable today — the sweep only makes
+ * SCHEDULED/RESCHEDULED/MOVED_ONLINE → OCCURRED, all legal here, and it does
+ * stamp `lifecycle_status_changed_at` and a reason — but it is an unguarded
+ * write path, and worth knowing before anyone assumes this table is the only
+ * way the column changes.
  *
  * The earlier objection to moving it here was that doing so "would pull in the
  * Drizzle-dependent publicEventWhere()". That is true of the whole module and

@@ -3,8 +3,13 @@
  *
  * OPE-487 (2026-08-25): the transition map and its validator are no longer
  * duplicated here. They live in @takemetothefair/constants and are re-exported
- * below, so this worker, the main-app route and the OCCURRED sweep all enforce
- * ONE definition.
+ * below, so this worker and the main-app route enforce ONE definition.
+ *
+ * ⚠️ The previous header said the OCCURRED sweep shared this copy. It does not —
+ * `event-occurred-sweep.ts` never imported this module and writes the column
+ * with a direct UPDATE. It stamps `lifecycle_status_changed_at` and a reason, and
+ * only makes transitions this table permits, so nothing is broken; but it is an
+ * unguarded path and the old claim was simply untrue.
  *
  * The previous header admitted the arrangement's flaw outright — "Kept in sync
  * with the main-app definition BY HAND … CI doesn't catch drift" — and the
