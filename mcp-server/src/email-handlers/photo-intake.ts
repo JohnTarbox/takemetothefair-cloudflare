@@ -939,6 +939,62 @@ export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> =
     exif = {};
   }
 
+  // OPE-544 — the fair's own name, read off the image, is an identifier.
+  //
+  // John emailed the Hillsborough County Agricultural Fair LOGO. It says
+  // "THE HILLSBOROUGH COUNTY AGRICULTURAL FAIR · NEW BOSTON, NH" in plain
+  // lettering, OCR read 1584 characters of it, and we replied "which fair?" —
+  // while `648adc1d` (APPROVED, New Boston NH) sat in the table. Resolution
+  // keyed on EXIF GPS, which a logo (or any image an email client stripped)
+  // will never have, so it gave up before anything looked at the text.
+  //
+  // That is OPE-541's shape one lane over: the identifying value was extracted
+  // and then discarded.
+  //
+  // Reuses `findEventBySubjectName` UNCHANGED rather than adding a second
+  // matcher. It is already generic over its input — it slugifies whatever
+  // string it is handed — and its guards are what make this safe on 1.5 KB of
+  // OCR prose rather than a short subject line: an event's own base slug must
+  // appear INTACT, must be multi-word, must clear MIN_NAME_SLUG_LEN, must be
+  // APPROVED and non-tombstone, and two independent fair names still HOLD.
+  // A second matcher would be the "fix wired into one of two parallel paths"
+  // failure this codebase keeps hitting.
+  //
+  // `instr()`, not LIKE — see OPE-404's note on that function. It is the reason
+  // handing it a long string is safe at all: LIKE would have built a pattern
+  // from the slug column and blown D1's 50-char cap.
+  //
+  // Cost is unchanged for the normal case: this whole block runs ONLY on the
+  // hold path, and the OCR result is threaded to the poster branch below rather
+  // than classified twice.
+  let poster: Awaited<ReturnType<typeof classifyAsPoster>> = null;
+  if (resolution.status !== "resolved") {
+    poster = await classifyAsPoster(env, refs, row.id);
+    if (poster && poster.classification.verdict !== "POSTER") {
+      const namedInImage = await findEventBySubjectName(db, poster.text).catch(() => null);
+      if (namedInImage) {
+        await logError(env.DB, {
+          level: "info",
+          source: "mcp:photo-intake:ocr-name-resolve",
+          message: `fair resolved from image text: ${namedInImage.name}`,
+          context: {
+            messageRowId: row.id,
+            eventId: namedInImage.id,
+            eventSlug: namedInImage.slug,
+            heldReason: resolution.reason,
+            ocrChars: poster.classification.chars,
+          },
+        });
+        resolution = resolveOccurrence({
+          overrideEvent: namedInImage,
+          overrideMethod: "ocr-name",
+          venues: [],
+          events: [],
+        });
+      }
+    }
+  }
+
   if (resolution.status === "resolved") {
     // OPE-204 Milestone A — identify the booths and STAGE them for review.
     // No vendor/event/hero writes here; gated OFF by default and fail-soft, so
@@ -1070,7 +1126,7 @@ export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> =
   // PENDING is the whole point: OPE-204's "no public writes from an unmeasured
   // classifier" holds, because PENDING is not public. Nothing this classifier
   // decides reaches a visitor without a human approving it.
-  const poster = await classifyAsPoster(env, refs, row.id);
+  // Already classified above on the hold path — do not OCR the image twice.
   if (poster && poster.classification.verdict === "POSTER") {
     const staged = await stagePosterAsPendingEvent(env, poster.text, row);
     return {

@@ -58,8 +58,15 @@ export type Resolution =
       eventId: string;
       eventName: string;
       eventSlug: string;
-      /** How we got there — surfaced in the reply so John can sanity-check. */
-      method: "override" | "exif";
+      /** How we got there — surfaced in the reply so John can sanity-check.
+       *
+       *  `ocr-name` (OPE-544) is deliberately its own value rather than folded
+       *  into `override`. An override is a human naming the fair; an OCR-name
+       *  match is us reading the fair's name off the image. They deserve
+       *  different trust in a reply and different rows in a precision audit,
+       *  and collapsing them would make the new path unmeasurable — the same
+       *  mistake OPE-541 was about one lane over. */
+      method: "override" | "exif" | "ocr-name";
       /** Miles from the photo to the matched venue. Absent for overrides. */
       distanceMiles?: number;
       venueName?: string;
@@ -122,6 +129,14 @@ export function venuesWithinRadius(
 export interface ResolveInput {
   /** Explicit override: the event named by `photos+<slug>@` or the subject. */
   overrideEvent?: { id: string; name: string; slug: string } | null;
+  /**
+   * What to record as `method` when `overrideEvent` resolves (OPE-544).
+   *
+   * Defaults to `override`, which is every pre-existing caller. The photo lane
+   * passes `ocr-name` when the event was identified by matching the OCR text of
+   * the image itself, so the two never blur together in the reply or the log.
+   */
+  overrideMethod?: "override" | "ocr-name";
   gps?: { latitude: number; longitude: number };
   /** Local "YYYY-MM-DD" from EXIF DateTimeOriginal. */
   takenOnLocalDate?: string;
@@ -150,7 +165,7 @@ export function resolveOccurrence(input: ResolveInput): Resolution {
       eventId: input.overrideEvent.id,
       eventName: input.overrideEvent.name,
       eventSlug: input.overrideEvent.slug,
-      method: "override",
+      method: input.overrideMethod ?? "override",
     };
   }
 
