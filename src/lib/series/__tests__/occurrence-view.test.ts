@@ -18,8 +18,18 @@ const occ = (over: Partial<OccurrenceRow> & { id: string }): OccurrenceRow => ({
 });
 
 // Helper to build a dated occurrence (single-day).
+//
+// OPE-482 — anchored at NOON UTC, the convention `normalizeEventDate` writes and
+// the corpus holds. It was `Date.UTC(y, m, d)` — midnight UTC — which is the one
+// convention drizzle/0232 removed from production precisely because it renders as
+// the previous day in Eastern. The expectations below are unchanged; the fixture
+// now matches what the database actually stores.
 const dated = (id: string, y: number, m = 8, d = 1): OccurrenceRow =>
-  occ({ id, startDate: new Date(Date.UTC(y, m, d)), endDate: new Date(Date.UTC(y, m, d + 2)) });
+  occ({
+    id,
+    startDate: new Date(Date.UTC(y, m, d, 12)),
+    endDate: new Date(Date.UTC(y, m, d + 2, 12)),
+  });
 
 describe("partitionOccurrences", () => {
   it("splits into current (asc) and past (desc by start)", () => {

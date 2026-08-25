@@ -20,6 +20,7 @@ import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import type { SeriesLanding, LandingOccurrence } from "@/lib/series/get-series-landing";
 import { formatDateRange } from "@/lib/utils";
 import { cdnImage } from "@/lib/cdn-image";
+import { toIsoDateOnlyInVenueZone } from "@/lib/datetime";
 
 const HERO_WIDTHS = [400, 800, 1200, 1600];
 
@@ -46,8 +47,15 @@ export function SeriesLandingPage({ landing, now }: { landing: SeriesLanding; no
       description: series.description,
       imageUrl: series.imageUrl,
       venue: hero?.venue ?? null,
-      startDateIso: hero?.startDate ? hero.startDate.toISOString().slice(0, 10) : null,
-      endDateIso: hero?.endDate ? hero.endDate.toISOString().slice(0, 10) : null,
+      // OPE-482 follow-up — the EASTERN calendar date, not the UTC one.
+      // `toISOString().slice(0,10)` on `2026-09-27T03:59:59Z` (Sep 26 23:59:59 ET)
+      // yields "2026-09-27", and this value goes straight into the series
+      // JSON-LD's `endDate`. Live before this fix: /events/farmington-fair
+      // emitted `"endDate":"2026-09-27"` for a fair that ends Sep 26, while the
+      // /2026 occurrence page next to it emitted the correct Sep 19 span for
+      // Oxford. Two Google-visible schemas, one wrong.
+      startDateIso: hero?.startDate ? toIsoDateOnlyInVenueZone(hero.startDate) : null,
+      endDateIso: hero?.endDate ? toIsoDateOnlyInVenueZone(hero.endDate) : null,
       // OPE-18 — series-level WARNING-set sources: eventStatus from the hero
       // occurrence's lifecycle; organizer (+ logo fallback for subEvent images)
       // from the series promoter. The builder already emitted these when given
