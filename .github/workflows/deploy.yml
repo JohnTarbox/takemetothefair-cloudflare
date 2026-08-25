@@ -103,12 +103,103 @@ jobs:
           # inlines blank — same broken state, so also guarded client-side).
           NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${{ secrets.NEXT_PUBLIC_TURNSTILE_SITE_KEY }}
 
+      # ── OPE-494 — keep the PREVIOUS build's chunks servable after a deploy ──
+      #
+      # The Workers Assets manifest is replaced wholesale on every deploy, so the
+      # moment a new version goes live the old build's `_next/static/chunks/*`
+      # stop being served and any tab still holding the old manifest throws
+      # ChunkLoadError on its next client-side navigation. 60 occurrences across
+      # 49 routes in 14 days, and this repo deploys several times a day.
+      #
+      # The ticket proposed moving _next/static to R2 and pointing Next at it with
+      # `assetPrefix`. This does the same job by merging the previous build's tree
+      # into the new one before upload, which is strictly safer: `assetPrefix` is
+      # baked in at BUILD time, so a wrong value breaks every page's JS at once,
+      # and it needs a new bucket, a CDN route and a lifecycle rule. This needs
+      # none of those, and its failure mode is today's behaviour.
+      #
+      # Safe to merge because the filenames are content-addressed — chunks are
+      # `<id>-<contenthash>.js` and the manifests live under a per-build ID
+      # directory (`_next/static/<buildId>/`). Two builds cannot collide on a name
+      # unless the file is byte-identical.
+      #
+      # The merge copies PREVIOUS first and CURRENT second, so on any collision
+      # the current build wins by copy order. Deliberately not `cp -n`: GNU
+      # coreutils warns that `-n` is "non-portable and may change in future", and
+      # a silent flip in that behaviour would mean the OLD build overwriting the
+      # new one — a far worse failure than the one being fixed, and an invisible
+      # one. Copy order cannot change meaning.
+      #
+      # Bounded at two generations by construction: the cache is re-saved from a
+      # snapshot taken BEFORE the merge, so it always holds exactly one build, not
+      # an ever-growing union. Measured 2026-08-25 — one build is 389 files /
+      # 5.7 MB, so two is ~780 against the 20,000-file Workers Assets limit. The
+      # guard below fails the deploy long before that stops being true.
+      - name: Snapshot this build's static tree (pre-merge)
+        run: |
+          set -eu
+          rm -rf /tmp/next-static-current
+          mkdir -p /tmp/next-static-current
+          cp -R .open-next/assets/_next/static/. /tmp/next-static-current/
+          echo "this build: $(find /tmp/next-static-current -type f | wc -l) files"
+
+      - name: Restore previous build's static tree
+        uses: actions/cache/restore@v4
+        with:
+          path: /tmp/next-static-previous
+          # Unique per commit so the save below is never a no-op on an existing
+          # key; the prefix restore-key is what actually finds the last build.
+          key: next-static-${{ github.sha }}
+          restore-keys: |
+            next-static-
+
+      - name: Merge previous build's chunks into this deploy
+        run: |
+          set -eu
+          rm -rf /tmp/next-static-merged
+          mkdir -p /tmp/next-static-merged
+          if [ -d /tmp/next-static-previous ]; then
+            cp -R /tmp/next-static-previous/. /tmp/next-static-merged/
+            echo "merged previous build's static tree"
+          else
+            echo "no previous static tree cached (first run after this change) — deploying this build only"
+          fi
+          # Current build copied SECOND, so it wins any collision.
+          cp -R .open-next/assets/_next/static/. /tmp/next-static-merged/
+          rm -rf .open-next/assets/_next/static
+          mv /tmp/next-static-merged .open-next/assets/_next/static
+          count=$(find .open-next/assets -type f | wc -l)
+          echo "asset files after merge: ${count} (Workers Assets limit: 20000)"
+          if [ "${count}" -gt 15000 ]; then
+            echo "::error::asset count ${count} is approaching the 20000 Workers Assets limit — reduce retained generations"
+            exit 1
+          fi
+
       - name: Deploy Worker
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: deploy
+
+      # Advance the generation only after a successful deploy: if the deploy
+      # failed, the build now live is still the one already cached, so leaving the
+      # old entry in place is correct. Saved from the PRE-MERGE snapshot, which is
+      # what bounds retention at two builds.
+      - name: Stage this build's static tree for the next deploy
+        if: success()
+        run: |
+          set -eu
+          rm -rf /tmp/next-static-previous
+          mkdir -p /tmp/next-static-previous
+          cp -R /tmp/next-static-current/. /tmp/next-static-previous/
+
+      - name: Save this build's static tree
+        if: success()
+        uses: actions/cache/save@v4
+        with:
+          path: /tmp/next-static-previous
+          key: next-static-${{ github.sha }}
 
       # Post-deploy prod smoke — the OpenNext Worker now serves the apex route
       # (cutover 2026-06-10). Hardcoded URLs only, no user input into the shell.
