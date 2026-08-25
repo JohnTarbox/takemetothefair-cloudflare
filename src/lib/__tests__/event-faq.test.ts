@@ -1,3 +1,8 @@
+// OPE-482 — event-date fixtures are anchored at NOON UTC (12:00Z), the
+// convention `normalizeEventDate` writes and 987 of 1,469 APPROVED rows hold.
+// They were midnight UTC, which under the Eastern date rendering this ticket
+// introduced resolves to the PREVIOUS calendar day. The fixtures moved, not the
+// expectations: every assertion below still names the day the event happens on.
 import { describe, it, expect } from "vitest";
 import {
   buildEventFaqItems,
@@ -52,7 +57,7 @@ describe("buildEventFaqItems — suppression rules", () => {
   it("suppresses application deadline when in the past", () => {
     const items = call({
       event: emptyEvent({
-        applicationDeadline: new Date("2026-04-01T00:00:00Z"),
+        applicationDeadline: new Date("2026-04-01T12:00:00Z"),
       }),
     });
     expect(items.find((i) => i.question.includes("application deadline"))).toBeUndefined();
@@ -61,7 +66,7 @@ describe("buildEventFaqItems — suppression rules", () => {
   it("renders application deadline when in the future", () => {
     const items = call({
       event: emptyEvent({
-        applicationDeadline: new Date("2026-06-01T00:00:00Z"),
+        applicationDeadline: new Date("2026-06-01T12:00:00Z"),
       }),
     });
     const q = items.find((i) => i.question.includes("application deadline"));
@@ -157,8 +162,8 @@ describe("buildEventFaqItems — suppression rules", () => {
     const items = call({
       event: emptyEvent({
         name: "Acton Fair",
-        startDate: new Date("2026-08-14T00:00:00Z"),
-        endDate: new Date("2026-08-16T00:00:00Z"),
+        startDate: new Date("2026-08-14T12:00:00Z"),
+        endDate: new Date("2026-08-16T12:00:00Z"),
       }),
     });
     const q = items.find((i) => i.question.includes("When is Acton Fair"));
@@ -301,9 +306,9 @@ describe("buildEventFaqItems — caps and ordering", () => {
     const items = call({
       event: emptyEvent({
         name: "Fully Populated Fair",
-        startDate: new Date("2026-08-14T00:00:00Z"),
-        endDate: new Date("2026-08-16T00:00:00Z"),
-        applicationDeadline: new Date("2026-07-01T00:00:00Z"),
+        startDate: new Date("2026-08-14T12:00:00Z"),
+        endDate: new Date("2026-08-16T12:00:00Z"),
+        applicationDeadline: new Date("2026-07-01T12:00:00Z"),
         applicationUrl: "https://example.com/apply",
         applicationInstructions: "Submit photos of your work.",
         vendorFeeMinCents: 15000,
@@ -352,9 +357,9 @@ describe("buildEventFaqItems — caps and ordering", () => {
     const items = call({
       event: emptyEvent({
         name: "Mixed Fair",
-        startDate: new Date("2026-08-14T00:00:00Z"),
-        endDate: new Date("2026-08-16T00:00:00Z"),
-        applicationDeadline: new Date("2026-07-01T00:00:00Z"),
+        startDate: new Date("2026-08-14T12:00:00Z"),
+        endDate: new Date("2026-08-16T12:00:00Z"),
+        applicationDeadline: new Date("2026-07-01T12:00:00Z"),
         vendorFeeMinCents: 15000,
         vendorFeeMaxCents: null,
       }),

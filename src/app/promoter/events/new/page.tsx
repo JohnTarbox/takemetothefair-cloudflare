@@ -22,7 +22,8 @@ import { DailyScheduleInput, type EventDayInput } from "@/components/events/Dail
 import { VenueComboSearch } from "@/components/venue-combo-search";
 import { WelcomeBanner } from "@/components/onboarding/welcome-banner";
 import { STATES, STATE_CODES, type StateCode } from "@/lib/states";
-import { parseDateOnly, parseWallClockInVenueZone } from "@/lib/datetime";
+import { parseWallClockInVenueZone } from "@/lib/datetime";
+import { normalizeEventDate } from "@/lib/event-dates";
 
 interface Venue {
   id: string;
@@ -110,8 +111,8 @@ function buildRequestBody(
   let endDateISO: string | null = null;
   if (discontinuousDates && eventDays.length > 0) {
     const sorted = eventDays.map((d) => d.date).sort();
-    startDateISO = parseDateOnly(sorted[0])?.toISOString() ?? null;
-    endDateISO = parseDateOnly(sorted[sorted.length - 1])?.toISOString() ?? null;
+    startDateISO = normalizeEventDate(sorted[0])?.toISOString() ?? null;
+    endDateISO = normalizeEventDate(sorted[sorted.length - 1])?.toISOString() ?? null;
   } else if (form.startDate && form.endDate) {
     // Promoter-entered times are wall-clock in the venue's zone (per the
     // datetime architecture decision), not browser-local. P3b threads
@@ -161,7 +162,10 @@ function buildRequestBody(
     estimatedAttendance: form.estimatedAttendance ? parseInt(form.estimatedAttendance, 10) : null,
     eventScale: form.eventScale || null,
     applicationDeadline: form.applicationDeadline
-      ? (parseDateOnly(form.applicationDeadline)?.toISOString() ?? null)
+      ? // OPE-482: noon-UTC anchor. A midnight-UTC deadline renders a day EARLY
+        // under Eastern formatting — it tells a vendor they missed a deadline
+        // they had not.
+        (normalizeEventDate(form.applicationDeadline)?.toISOString() ?? null)
       : null,
     applicationUrl: form.applicationUrl || null,
     applicationInstructions: form.applicationInstructions || null,

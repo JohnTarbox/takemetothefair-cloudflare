@@ -1,6 +1,6 @@
 import type { EventDay } from "@/types";
 import { cdnImage, focalPointGravity } from "@/lib/cdn-image";
-import { formatDateOnly, parseDateOnly } from "@/lib/datetime";
+import { formatDateOnly } from "@/lib/datetime";
 
 interface EventDayImageStripProps {
   days: EventDay[];
@@ -70,11 +70,11 @@ export function EventDayImageStrip({ days, className }: EventDayImageStripProps)
             )
             .join(", ");
 
-          // Caption: short date + optional notes. parseDateOnly handles
-          // the "YYYY-MM-DD" → Date conversion the rest of the codebase
-          // standardized on (P3 / 2026-06-01 dateutil cleanup).
-          const parsedDate = parseDateOnly(day.date);
-          const dateLabel = parsedDate ? formatDateOnly(parsedDate) : day.date;
+          // Caption: short date + optional notes. OPE-482 — the formatter takes
+          // the "YYYY-MM-DD" string directly and anchors it at noon UTC; the
+          // old parseDateOnly round-trip anchored at midnight UTC and renders a
+          // day early under Eastern.
+          const dateLabel = formatDateOnly(day.date) || day.date;
 
           return (
             <figure

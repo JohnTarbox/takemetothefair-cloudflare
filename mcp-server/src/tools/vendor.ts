@@ -33,7 +33,6 @@ import {
   assertIngestionMethod,
   dollarsToCents,
 } from "@takemetothefair/utils";
-import { parseDateOnly } from "@takemetothefair/datetime";
 import { EVENT_CATEGORIES, PRIMARY_AUDIENCE, PUBLIC_ACCESS } from "@takemetothefair/constants";
 import { logError } from "../logger.js";
 
@@ -1164,7 +1163,9 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
         // value the caller was never able to supply. Wiring the parameter
         // turns that gate on here for the first time.
         applicationDeadline: params.application_deadline
-          ? parseDateOnly(params.application_deadline)
+          ? // OPE-482: noon-UTC anchor — a midnight-UTC deadline renders a day
+            // early under Eastern formatting.
+            normalizeEventDate(params.application_deadline)
           : null,
         description,
       });
@@ -1251,7 +1252,9 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
         vendorFeeNotes: params.vendor_fee_notes ?? null,
         applicationUrl: params.application_url ?? null,
         applicationDeadline: params.application_deadline
-          ? parseDateOnly(params.application_deadline)
+          ? // OPE-482: noon-UTC anchor — a midnight-UTC deadline renders a day
+            // early under Eastern formatting.
+            normalizeEventDate(params.application_deadline)
           : null,
         applicationInstructions: params.application_instructions ?? null,
         estimatedAttendance: params.estimated_attendance ?? null,

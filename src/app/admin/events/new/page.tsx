@@ -12,6 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { DailyScheduleInput, type EventDayInput } from "@/components/events/DailyScheduleInput";
 import { STATES, STATE_CODES, type StateCode } from "@/lib/states";
 import { parseDateOnly } from "@/lib/datetime";
+import { normalizeEventDate } from "@/lib/event-dates";
 
 interface Venue {
   id: string;
@@ -106,12 +107,13 @@ export default function NewEventPage() {
 
     if (discontinuousDates && eventDays.length > 0) {
       const sorted = eventDays.map((d) => d.date).sort();
-      startDateISO = parseDateOnly(sorted[0])?.toISOString() ?? null;
-      endDateISO = parseDateOnly(sorted[sorted.length - 1])?.toISOString() ?? null;
+      startDateISO = normalizeEventDate(sorted[0])?.toISOString() ?? null;
+      endDateISO = normalizeEventDate(sorted[sorted.length - 1])?.toISOString() ?? null;
     } else {
       startDateISO =
-        datesTBD || !startDate ? null : (parseDateOnly(startDate)?.toISOString() ?? null);
-      endDateISO = datesTBD || !endDate ? null : (parseDateOnly(endDate)?.toISOString() ?? null);
+        datesTBD || !startDate ? null : (normalizeEventDate(startDate)?.toISOString() ?? null);
+      endDateISO =
+        datesTBD || !endDate ? null : (normalizeEventDate(endDate)?.toISOString() ?? null);
     }
 
     const promoterId = formData.get("promoterId") as string;
@@ -157,7 +159,10 @@ export default function NewEventPage() {
         : null,
       eventScale: formData.get("eventScale") || null,
       applicationDeadline: formData.get("applicationDeadline")
-        ? (parseDateOnly(formData.get("applicationDeadline") as string)?.toISOString() ?? null)
+        ? // OPE-482: noon-UTC anchor. A midnight-UTC deadline renders a day EARLY
+          // under Eastern formatting — it tells a vendor they missed a deadline
+          // they had not.
+          (normalizeEventDate(formData.get("applicationDeadline") as string)?.toISOString() ?? null)
         : null,
       applicationUrl: formData.get("applicationUrl") || null,
       applicationInstructions: formData.get("applicationInstructions") || null,

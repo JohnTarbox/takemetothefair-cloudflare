@@ -10,6 +10,7 @@ import { and, eq } from "drizzle-orm";
 import type { Database } from "@/lib/db";
 import { events, eventSeries, eventDays, adminActions } from "@/lib/db/schema";
 import { createSlug, appendSlugSegment, unsafeSlug } from "@takemetothefair/utils";
+import { getVenueZoneYear } from "@/lib/datetime";
 import {
   inheritSeriesDefaults,
   type SeriesRow,
@@ -49,7 +50,10 @@ export type CreateOccurrenceResult =
 
 /** Year of an existing series sibling — from its start date, else a -YYYY slug suffix. */
 function siblingYear(startDate: Date | null, slug: string): number | null {
-  if (startDate) return new Date(startDate).getUTCFullYear();
+  // OPE-482: Eastern calendar year — a late-December occurrence stored at an
+  // end-of-day Eastern anchor has a UTC year one ahead, which would make the
+  // sibling-clash check compare against the wrong year.
+  if (startDate) return getVenueZoneYear(startDate);
   const m = slug.match(/-(\d{4})$/);
   return m ? Number.parseInt(m[1], 10) : null;
 }

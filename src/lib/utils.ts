@@ -3,7 +3,6 @@ import { twMerge } from "tailwind-merge";
 import {
   formatDateOnly,
   formatDateRange as datetimeFormatDateRange,
-  parseDateOnly,
   parseWallClockInVenueZone,
   formatIcsUtc,
   formatIcsVenueZone,
@@ -19,6 +18,7 @@ import {
   decodeHtmlEntities,
   unsafeSlug,
   appendSlugSegment,
+  normalizeEventDate,
   type Slug,
 } from "@takemetothefair/utils";
 export { createSlug, decodeHtmlEntities, unsafeSlug, appendSlugSegment };
@@ -63,8 +63,9 @@ export function findUniqueSlug(baseSlug: Slug, existingSlugs: (string | null)[])
 }
 
 /**
- * Display a date in UTC without a TZ label (date-only field convention).
- * Delegates to the canonical formatter in `src/lib/datetime.ts`.
+ * Display a date in the venue zone without a TZ label (date-only convention).
+ * Delegates to the canonical formatter in `src/lib/datetime.ts`. Said "in UTC"
+ * until OPE-482 moved date-only rendering to America/New_York.
  */
 export function formatDate(date: Date | string): string {
   return formatDateOnly(date);
@@ -84,11 +85,14 @@ export function formatDateRange(
 export function formatDiscontinuousDates(days: { date: string }[]): string {
   if (!days?.length) return "TBD";
   const sorted = [...days].sort((a, b) => a.date.localeCompare(b.date));
-  if (sorted.length === 1) return formatDate(parseDateOnly(sorted[0].date) ?? new Date(NaN));
-  const first = parseDateOnly(sorted[0].date);
-  const last = parseDateOnly(sorted[sorted.length - 1].date);
+  // OPE-482: hand the "YYYY-MM-DD" strings to the formatter directly. It anchors
+  // bare calendar dates at noon UTC; the old `parseDateOnly` round-trip anchored
+  // at midnight UTC, which renders a day early now that formatters are Eastern.
+  if (sorted.length === 1) return formatDate(sorted[0].date);
+  const first = formatDate(sorted[0].date);
+  const last = formatDate(sorted[sorted.length - 1].date);
   if (!first || !last) return "TBD";
-  return `${formatDate(first)} — ${formatDate(last)} (${sorted.length} dates)`;
+  return `${first} — ${last} (${sorted.length} dates)`;
 }
 
 export function computePublicDates(eventDays: { date: string; vendorOnly?: boolean | null }[]): {
@@ -104,9 +108,13 @@ export function computePublicDates(eventDays: { date: string; vendorOnly?: boole
     return { publicStartDate: null, publicEndDate: null };
   }
 
+  // OPE-482: noon-UTC anchor, not `parseDateOnly`'s midnight UTC. These two
+  // columns feed the SERVED date band (they shadow start_date/end_date on the
+  // public page), so a midnight-UTC write here renders one day early in Eastern
+  // — the same defect as the events.start_date writers fixed in this PR.
   return {
-    publicStartDate: parseDateOnly(publicDays[0]),
-    publicEndDate: parseDateOnly(publicDays[publicDays.length - 1]),
+    publicStartDate: normalizeEventDate(publicDays[0]),
+    publicEndDate: normalizeEventDate(publicDays[publicDays.length - 1]),
   };
 }
 

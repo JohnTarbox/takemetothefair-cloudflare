@@ -317,6 +317,55 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
         LIMIT 50
       `);
 
+      // ── OPE-482: midnight-UTC date anchors ────────────────────────────
+      //
+      // The generalization of `split_date_anchor` above. That one catches a
+      // narrow signature (one column at midnight, its sibling at noon); this
+      // one catches the convention itself, on every date column that reaches a
+      // rendered surface.
+      //
+      // Load-bearing since 2026-08-25: date-only formatters now render in
+      // America/New_York, not UTC. Under UTC a midnight-UTC value displayed the
+      // intended day and the defect was invisible; under Eastern it displays the
+      // PREVIOUS day. So this count is no longer a tidiness metric — every row
+      // it returns is a wrong date on a live page.
+      //
+      // `public_start_date` is here because it is what the event card actually
+      // renders (`event.publicStartDate ?? event.startDate`), and it was the
+      // largest population by two orders of magnitude when this shipped: 695
+      // rows, against 30 on `start_date`. `application_deadline` is here because
+      // a day-early deadline tells a vendor they missed a window they had not.
+      //
+      // Expected 0 after drizzle/0232. Non-zero means a write path bypassed
+      // normalizeEventDate again — which is exactly how this recurred: OPE-307
+      // fixed ingest, drizzle/0199 backfilled start_date, and three rows still
+      // arrived on 2026-08-13/17 through `create_occurrence`'s own hand-rolled
+      // `new Date(s)`.
+      //
+      // Raw SQL: D1 date columns are SECONDS, so `% 86400 = 0` is midnight UTC.
+      const [midnightAnchors] = await db.all<{
+        start_date: number;
+        end_date: number;
+        public_start_date: number;
+        public_end_date: number;
+        application_deadline: number;
+      }>(sql`
+        SELECT
+          COALESCE(SUM(start_date % 86400 = 0), 0)           AS start_date,
+          COALESCE(SUM(end_date % 86400 = 0), 0)             AS end_date,
+          COALESCE(SUM(public_start_date % 86400 = 0), 0)    AS public_start_date,
+          COALESCE(SUM(public_end_date % 86400 = 0), 0)      AS public_end_date,
+          COALESCE(SUM(application_deadline % 86400 = 0), 0) AS application_deadline
+        FROM events
+        WHERE merged_into IS NULL
+      `);
+      const midnightAnchorTotal =
+        Number(midnightAnchors?.start_date ?? 0) +
+        Number(midnightAnchors?.end_date ?? 0) +
+        Number(midnightAnchors?.public_start_date ?? 0) +
+        Number(midnightAnchors?.public_end_date ?? 0) +
+        Number(midnightAnchors?.application_deadline ?? 0);
+
       // ── OPE-467: claimed vs stored vs skipped, per lane ──────────────
       //
       // This defect ran for three months and was found by hand-diffing
@@ -713,6 +762,20 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
                 start_date: new Date(r.start_date * 1000).toISOString(),
                 end_date: new Date(r.end_date * 1000).toISOString(),
               })),
+            },
+            // OPE-482 — see the comment at the query. Any non-zero column here
+            // is a date rendering one day EARLY on a live page, because
+            // date-only formatting is Eastern as of 2026-08-25.
+            midnight_utc_date_anchors: {
+              rule: "no live event may store a date at exactly 00:00:00Z — the noon anchor (normalizeEventDate) is the convention",
+              violation_count: midnightAnchorTotal,
+              by_column: {
+                start_date: Number(midnightAnchors?.start_date ?? 0),
+                end_date: Number(midnightAnchors?.end_date ?? 0),
+                public_start_date: Number(midnightAnchors?.public_start_date ?? 0),
+                public_end_date: Number(midnightAnchors?.public_end_date ?? 0),
+                application_deadline: Number(midnightAnchors?.application_deadline ?? 0),
+              },
             },
             // OPE-423 invariant 2 — see the comment at the query.
             series_canonical_invariant: {

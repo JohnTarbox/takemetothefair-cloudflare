@@ -12,7 +12,6 @@ import { eventCreateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 import { PUBLIC_EVENT_STATUSES } from "@/lib/constants";
 import { classifySource } from "@/lib/source-classification";
-import { parseDateOnly } from "@/lib/datetime";
 import { normalizeEventDate } from "@/lib/event-dates";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 import { recomputeEventCompleteness } from "@/lib/completeness";
@@ -147,8 +146,12 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
     let endDate = normalizeEventDate(data.endDate);
     if (data.discontinuousDates && data.eventDays && data.eventDays.length > 0) {
       const sorted = data.eventDays.map((d) => d.date).sort();
-      startDate = parseDateOnly(sorted[0]);
-      endDate = parseDateOnly(sorted[sorted.length - 1]);
+      // OPE-482: normalizeEventDate (noon UTC), NOT parseDateOnly (midnight
+      // UTC). Midnight-UTC is 8pm Eastern the previous day, so those rows
+      // render one day early. Same fix the PUT handler's discontinuous branch
+      // already carries — this create path was the one it missed.
+      startDate = normalizeEventDate(sorted[0]);
+      endDate = normalizeEventDate(sorted[sorted.length - 1]);
     }
 
     // Auto-compute public date range (excluding vendor-only days)

@@ -241,11 +241,18 @@ export function EventSchema({
   // event_days — the 11 genuinely-dateless TENTATIVE events), SUPPRESS the whole
   // Event node instead of emitting a dateless one that GSC flags "Missing field
   // startDate". The human-readable page is unaffected — this is JSON-LD only.
+  // OPE-482 — emit the venue-zone ISO ("2026-09-26T23:59:59-04:00") rather than
+  // the UTC Z form ("2026-09-27T03:59:59.000Z"). Same instant either way, so no
+  // semantic change for a consumer that parses offsets; but the Z form invites
+  // any reader that truncates to the date to publish Sep 27 for a fair that ends
+  // Sep 26. This also makes the top-level dates consistent with the subEvents,
+  // which have emitted venue-zone offsets since P3b.
+  const venueTzForJsonLd = venue?.timezone ?? undefined;
   const resolvedStartDate =
-    (startDate ? (parseDateLoose(startDate)?.toISOString() ?? undefined) : undefined) ??
+    (startDate ? formatIsoInVenueZone(startDate, venueTzForJsonLd) || undefined : undefined) ??
     dayDerivedDates?.start;
   const resolvedEndDate =
-    (endDate ? (parseDateLoose(endDate)?.toISOString() ?? undefined) : undefined) ??
+    (endDate ? formatIsoInVenueZone(endDate, venueTzForJsonLd) || undefined : undefined) ??
     dayDerivedDates?.end;
   if (!resolvedStartDate) return null;
 
