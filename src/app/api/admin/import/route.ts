@@ -6,7 +6,12 @@ import { events, venues, promoters, eventDays } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import type { ScrapedEvent, ScrapedVenue } from "@/lib/scrapers/types";
 import { decodeHtmlEntities, sanitizeScrapedDescription } from "@/lib/scrapers/utils";
-import { getScraper, parseSourceOptions, getDetailsScraper } from "@/lib/scrapers/registry";
+import {
+  getScraper,
+  parseSourceOptions,
+  getDetailsScraper,
+  getScraperRetirement,
+} from "@/lib/scrapers/registry";
 import { createSlug, appendSlugSegment, unsafeSlug } from "@/lib/utils";
 import { normalizeEventDate } from "@/lib/event-dates";
 import { logError } from "@/lib/logger";
@@ -676,6 +681,13 @@ export const PATCH = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
     const results = {
       synced: 0,
       unchanged: 0,
+      // OPE-483 — "we chose not to try" is not the same outcome as "we tried and
+      // nothing changed", and folding both into `unchanged` is how a whole source
+      // going dead reads as a clean run. mainefairs.net sat at
+      // last_synced_at == created_at for seven months across 20 events, and no
+      // counter here would have shown it.
+      skippedUnknownSource: 0,
+      skippedRetiredSource: [] as string[],
       errors: [] as string[],
     };
 
@@ -683,11 +695,19 @@ export const PATCH = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
       try {
         if (!event.sourceUrl) continue;
 
-        // Use the appropriate scraper based on source
+        // A source we retired reports itself; an unrecognised one is counted
+        // separately from a real no-change. See `results` above.
+        const retired = getScraperRetirement(event.sourceName);
+        if (retired) {
+          const note = `${event.sourceName}: retired ${retired.since} — ${retired.reason}`;
+          if (!results.skippedRetiredSource.includes(note)) {
+            results.skippedRetiredSource.push(note);
+          }
+          continue;
+        }
         const detailsScraper = getDetailsScraper(event.sourceName);
         if (!detailsScraper) {
-          // Unknown source, skip
-          results.unchanged++;
+          results.skippedUnknownSource++;
           continue;
         }
         const details = await detailsScraper(event.sourceUrl);

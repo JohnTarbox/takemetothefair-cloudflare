@@ -58,4 +58,18 @@ export interface ScrapeResult {
 export interface ScraperEntry {
   scrape: (options?: { stateCode?: string; customUrl?: string }) => Promise<ScrapeResult>;
   scrapeDetails: (url: string) => Promise<Partial<ScrapedEvent>>;
+  /**
+   * OPE-483 — set when the upstream site has changed shape enough that this
+   * scraper can no longer work, with the date it was verified dead.
+   *
+   * A retired entry stays in the registry on purpose: removing it would make
+   * `getScraper()` return undefined, which the importer treats as "unknown
+   * source, skip" and counts as `unchanged` — indistinguishable from a
+   * successful no-op run. Keeping the entry and marking it lets the caller say
+   * WHY nothing happened.
+   *
+   * Retiring is a claim about the live site. State what was checked and when,
+   * so the next reader can re-check it rather than trust it.
+   */
+  retired?: { since: string; reason: string };
 }
