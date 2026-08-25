@@ -207,16 +207,42 @@ async function loadOverall(): Promise<{
   };
 }
 
-const METHOD_OPTIONS: Array<{ value: string | null; label: string }> = [
-  { value: null, label: "All methods" },
-  { value: "direct_scrape", label: "direct_scrape" },
-  { value: "aggregator_import", label: "aggregator_import" },
-  { value: "vendor_submission", label: "vendor_submission" },
-  { value: "email_submission", label: "email_submission" },
-  { value: "community_suggestion", label: "community_suggestion" },
-  { value: "admin_manual", label: "admin_manual" },
-  { value: "web_research", label: "web_research" },
-];
+/**
+ * OPE-486 — the filter chips are DERIVED from the methods actually present, not
+ * from a hardcoded list.
+ *
+ * The hardcoded version held 7 values. Production holds 13, so six of them —
+ * covering 171 live events — had no chip and were unreachable through this page:
+ *
+ *   annual_rollover 121 · discovery 37 · manual_winter 6 · manual_rollover 3
+ *   manual_series_add 2 · NULL 2      (measured 2026-08-25, merged_into IS NULL)
+ *
+ * `discovery` is the pointed one: `suggest_event` has classified to it since K26
+ * and this page could never show those rows. A hand-maintained mirror of an open
+ * column drifts the moment anything writes a new value, and the drift is silent
+ * — the page renders fine, it just cannot reach part of its own dataset.
+ *
+ * Deriving is also the only option that survives the vocabulary decision this
+ * ticket is parked on: whichever way `discovery`/`web_research` is settled, the
+ * filter shows what exists.
+ *
+ * NOT sourced from `INGESTION_METHODS` (the OPE-491 allowlist) for the same
+ * reason: that is the set of values we intend to write, and it excludes all four
+ * `annual_rollover`/`manual_*` legacy values that are in the table today. The
+ * filter's job is to reach the data, not to assert what the data should be.
+ */
+async function loadMethodOptions(): Promise<Array<{ value: string | null; label: string }>> {
+  const db = getCloudflareDb();
+  const rows = await db
+    .selectDistinct({ method: events.ingestionMethod })
+    .from(events)
+    .where(isNotNull(events.ingestionMethod));
+  const methods = rows
+    .map((r) => r.method)
+    .filter((m): m is string => typeof m === "string" && m.length > 0)
+    .sort();
+  return [{ value: null, label: "All methods" }, ...methods.map((m) => ({ value: m, label: m }))];
+}
 
 export const dynamic = "force-dynamic";
 
@@ -228,7 +254,11 @@ export default async function SourceQualityPage({
   const params = await searchParams;
   const filterMethod = params.method && params.method !== "all" ? params.method : null;
 
-  const [rows, overall] = await Promise.all([loadSourceQuality(filterMethod), loadOverall()]);
+  const [rows, overall, methodOptions] = await Promise.all([
+    loadSourceQuality(filterMethod),
+    loadOverall(),
+    loadMethodOptions(),
+  ]);
 
   return (
     <div className="max-w-7xl space-y-6">
@@ -257,7 +287,7 @@ export default async function SourceQualityPage({
           <div className="flex items-center justify-between gap-4">
             <h2 className="font-semibold text-foreground">Filter</h2>
             <nav className="flex flex-wrap gap-1 text-xs">
-              {METHOD_OPTIONS.map((opt) => {
+              {methodOptions.map((opt) => {
                 const active = (opt.value ?? "all") === (filterMethod ?? "all");
                 const href = opt.value
                   ? `/admin/source-quality?method=${opt.value}`
