@@ -10,6 +10,7 @@
  */
 import type { OccurrenceForSchema } from "./series-schema-org";
 import type { PlaceVenue } from "@/lib/seo/place-jsonld";
+import { toIsoDateOnlyInVenueZone } from "@/lib/datetime";
 
 /** Minimal occurrence shape — a public, non-tombstone event under the series. */
 export interface OccurrenceRow {
@@ -138,8 +139,11 @@ export function toSchemaOccurrences(occurrences: OccurrenceRow[]): OccurrenceFor
     slug: o.slug,
     year: occYear(o),
     name: o.name,
-    startDateIso: o.startDate ? o.startDate.toISOString().slice(0, 10) : null,
-    endDateIso: o.endDate ? o.endDate.toISOString().slice(0, 10) : null,
+    // OPE-482 follow-up — Eastern calendar date. These feed the subEvent
+    // `startDate`/`endDate` in the series JSON-LD; the UTC slice put an
+    // end-of-day-Eastern occurrence on the following day.
+    startDateIso: o.startDate ? toIsoDateOnlyInVenueZone(o.startDate) : null,
+    endDateIso: o.endDate ? toIsoDateOnlyInVenueZone(o.endDate) : null,
     venue: o.venue ?? null,
     // OPE-18 — pass the WARNING-set sources through to the builder (emit-when-known).
     imageUrl: o.imageUrl ?? null,
