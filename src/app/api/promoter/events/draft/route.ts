@@ -93,11 +93,10 @@ export async function POST(request: NextRequest) {
       eventDaysInput.length > 0
         ? computePublicDates(eventDaysInput)
         : {
-            // OPE-482: noon-UTC anchor. public_start_date IS the date the event
-            // card renders (`event.publicStartDate ?? event.startDate`), so a
-            // midnight-UTC write here shows a day early on every card.
-            publicStartDate: normalizeEventDate(startDate),
-            publicEndDate: endDate ? new Date(endDate) : null,
+            // OPE-543 — NULL, not a copy of start/end. Nothing invalidates such a
+            // copy on a later date edit, and every reader falls back to start/end.
+            publicStartDate: null,
+            publicEndDate: null,
           };
 
     const finalStatus = submit ? "PENDING" : "DRAFT";

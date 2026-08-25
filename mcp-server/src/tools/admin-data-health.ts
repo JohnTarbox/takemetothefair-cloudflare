@@ -366,6 +366,51 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
         Number(midnightAnchors?.public_end_date ?? 0) +
         Number(midnightAnchors?.application_deadline ?? 0);
 
+      // ── OPE-543: public_* must be DERIVED, never a copy ───────────────
+      //
+      // `public_start_date`/`public_end_date` are what the site serves to
+      // everyone who is not an admin or a vendor. They mean "the first and last
+      // day the public can attend" — the event_days span minus vendor_only setup
+      // days — so they legitimately differ from start_date ONLY when such days
+      // exist.
+      //
+      // Two violations, deliberately counted apart because they have different
+      // causes and different fixes:
+      //
+      //   orphaned_copies  public_* set on a row with NO event_days. There is
+      //                    nothing to derive it from, so it is a copy of
+      //                    start/end that no write path invalidates. 326 rows on
+      //                    2026-08-25; only 37 had gone stale, the rest were the
+      //                    same defect awaiting their first date edit.
+      //   stale_derivation public_* disagrees with the days it should come from.
+      //
+      // This one is worth more than the usual invariant because the defect is
+      // invisible from the inside: admins and vendors are served `start_date`
+      // (events/[slug]/page.tsx:1156-1167), so the people who could notice see
+      // the correct date and only the public sees the wrong one. It also escapes
+      // the daily sweep, which filters and orders on `start_date` — the detector
+      // and the defect were keyed to different columns.
+      //
+      // Expected 0/0 after drizzle/0234.
+      const [publicDateDerivation] = await db.all<{
+        orphaned_copies: number;
+        stale_derivation: number;
+      }>(sql`
+        SELECT
+          (SELECT COUNT(*) FROM events e
+             WHERE e.merged_into IS NULL
+               AND e.public_start_date IS NOT NULL
+               AND NOT EXISTS (SELECT 1 FROM event_days d WHERE d.event_id = e.id)
+          ) AS orphaned_copies,
+          (SELECT COUNT(*) FROM events e
+             WHERE e.merged_into IS NULL
+               AND EXISTS (SELECT 1 FROM event_days d WHERE d.event_id = e.id)
+               AND IFNULL(date(e.public_start_date,'unixepoch'),'~') <>
+                   IFNULL((SELECT MIN(d.date) FROM event_days d
+                             WHERE d.event_id = e.id AND d.vendor_only = 0),'~')
+          ) AS stale_derivation
+      `);
+
       // ── OPE-467: claimed vs stored vs skipped, per lane ──────────────
       //
       // This defect ran for three months and was found by hand-diffing
@@ -776,6 +821,17 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
                 public_end_date: Number(midnightAnchors?.public_end_date ?? 0),
                 application_deadline: Number(midnightAnchors?.application_deadline ?? 0),
               },
+            },
+            // OPE-543 — see the comment at the query. Non-zero means the
+            // public date band can disagree with the event's own dates, on a
+            // surface no admin or vendor is served.
+            public_date_derivation: {
+              rule: "public_start_date/public_end_date are derived from event_days (minus vendor_only) — NULL when there are no days, never a copy of start_date",
+              violation_count:
+                Number(publicDateDerivation?.orphaned_copies ?? 0) +
+                Number(publicDateDerivation?.stale_derivation ?? 0),
+              orphaned_copies: Number(publicDateDerivation?.orphaned_copies ?? 0),
+              stale_derivation: Number(publicDateDerivation?.stale_derivation ?? 0),
             },
             // OPE-423 invariant 2 — see the comment at the query.
             series_canonical_invariant: {
