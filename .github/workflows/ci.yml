@@ -156,12 +156,51 @@ jobs:
       - name: Seed database
         run: npx tsx scripts/seed.ts
 
+      # OPE-484 — key the browser cache on the RESOLVED Playwright version, read
+      # from node_modules after `npm ci`. package.json pins `^1.40.0`, which
+      # resolves to 1.58.0 today and will drift on its own; keying on the range
+      # would serve a stale browser build after a minor bump, and keying on the
+      # lockfile hash would needlessly miss on every unrelated dependency change.
+      - name: Resolve Playwright version
+        id: playwright-version
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      # The cache key names the BROWSER SET, not just the version. E2E needs
+      # chromium+webkit and Smoke needs chromium only; if they shared a key, a
+      # Smoke-populated entry would register as a hit for E2E and webkit would
+      # simply be absent — a missing-browser failure at test time rather than an
+      # honest cache miss. Two entries, no cross-contamination.
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ steps.playwright-version.outputs.version }}-chromium-webkit
+
       # OPE-361 — webkit as well as chromium. The /register mobile-layout bug was
       # reported on an iPhone and desktop-width Chromium testing could not see
       # it; the mobile-safari project (iPhone 13 profile) is what covers that
       # class now, and a project CI never runs is not coverage.
+      #
+      # OPE-484 — the download is the step that intermittently sat for 20-30
+      # minutes (once 80, while a sibling PR's identical job finished in 3m35s).
+      # `timeout-minutes` is the half of this fix that matters most: a hang now
+      # FAILS instead of showing "pending", which a reviewer cannot distinguish
+      # from a queue. That ambiguity is what pressured merges onto incomplete
+      # gates.
       - name: Install Playwright browsers
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        timeout-minutes: 10
         run: npx playwright install --with-deps chromium webkit
+
+      # On a cache hit the BINARIES are restored but the apt system libraries are
+      # not — those live in the runner image, not in ~/.cache/ms-playwright, and
+      # webkit in particular needs several that ubuntu-latest does not preinstall.
+      # So a hit still runs deps-only, which is the cheap half of `--with-deps`.
+      - name: Install Playwright system dependencies (cache hit)
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        timeout-minutes: 5
+        run: npx playwright install-deps chromium webkit
 
       # mobile-safari is testMatch-scoped to *-mobile-*.spec.ts, so this adds
       # ~8 tests rather than a fourth full pass of the suite.
@@ -203,8 +242,34 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm ci
 
+      # OPE-484 — same treatment as the E2E job. Smoke needs chromium only, so it
+      # carries its own cache key; see the note there for why the browser set is
+      # part of the key rather than shared.
+      #
+      # The two jobs cannot literally share one install — they are separate jobs
+      # on separate runners. What they were actually competing for was the
+      # upstream CDN, which is why they hung simultaneously; a warm cache removes
+      # both from that path entirely, which is the shareable part.
+      - name: Resolve Playwright version
+        id: playwright-version
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ steps.playwright-version.outputs.version }}-chromium
+
       - name: Install Playwright browsers
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        timeout-minutes: 10
         run: npx playwright install --with-deps chromium
+
+      - name: Install Playwright system dependencies (cache hit)
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        timeout-minutes: 5
+        run: npx playwright install-deps chromium
 
       - name: Run smoke tests
         run: npm run test:smoke
