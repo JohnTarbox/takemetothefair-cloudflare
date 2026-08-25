@@ -202,10 +202,31 @@ export async function rolloverEventIfRecurring(
     commercialVendorsAllowed: source.commercialVendorsAllowed,
     status: "TENTATIVE",
     // Provenance: this edition was machine-generated, not externally sourced.
-    sourceName: source.sourceName,
-    sourceDomain: source.sourceDomain,
+    //
+    // OPE-483 — the three lines under this comment used to contradict it, copying
+    // the SOURCE edition's `source_name` / `source_domain` / `source_url` onto a
+    // row no external source has ever published. Only `ingestion_method` and
+    // `source_id` honoured it.
+    //
+    // The cost is not cosmetic. 20 live `*-me-2027` pages carry
+    // `https://mainefairs.net/event/<slug>/` inherited from their 2026 edition;
+    // that URL pattern 404s (all 21 in the DB re-checked 2026-08-25), and those
+    // rows were minted FIVE MONTHS after it died. A provenance pointer that
+    // cannot be followed is worse than none: it makes the claim unfalsifiable
+    // while looking sourced. (Those particular rows came from an offline
+    // `annual_rollover` script, not this function — this is the same defect in
+    // the path that will actually run next.)
+    //
+    // A rolled edition's honest provenance is "we predicted it from last year's".
+    // `rolledFromEventId` below carries the lineage; the external fields stay
+    // null until something re-resolves them. Note `sourceName` must not be a
+    // hostname-like string either — `classifySource` falls back to reading it AS
+    // the domain, so leaving "mainefairs.net" here would reinstate
+    // `source_domain` by inference even with the URL nulled.
+    sourceName: "auto-rollover",
+    sourceDomain: null,
     ingestionMethod: "auto_rollover",
-    sourceUrl: source.sourceUrl,
+    sourceUrl: null,
     sourceId: newEventId,
     syncEnabled: false,
     vendorFeeMinCents: source.vendorFeeMinCents,
