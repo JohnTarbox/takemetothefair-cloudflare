@@ -5,7 +5,7 @@ import { events, adminActions, eventSlugHistory } from "../schema.js";
 import { EVENT_LIFECYCLE_VALUES, type EventLifecycle } from "@takemetothefair/constants";
 import { decodeHtmlEntities } from "@takemetothefair/utils";
 import { jsonContent, publicUrlFor, triggerIndexNow } from "../helpers.js";
-import { LIFECYCLE_TRANSITIONS, isPublicLifecycle } from "../lifecycle.js";
+import { validateLifecycleTransition, isPublicLifecycle } from "../lifecycle.js";
 import { rolloverEventIfRecurring } from "../event-rollover.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
@@ -76,6 +76,8 @@ export function registerEventLifecycleTools(
           id: events.id,
           slug: events.slug,
           lifecycleStatus: events.lifecycleStatus,
+          // OPE-487 — feeds the terminal-correction check below.
+          lifecycleStatusChangedAt: events.lifecycleStatusChangedAt,
           startDate: events.startDate,
           endDate: events.endDate,
           // OPE-450 — the keeper this row was rejected AGAINST, when a human
@@ -113,16 +115,29 @@ export function registerEventLifecycleTools(
         };
       }
 
-      const allowed = LIFECYCLE_TRANSITIONS[from] ?? [];
-      if (!allowed.includes(to)) {
+      // OPE-487 — go through the SHARED validator rather than reading the table
+      // inline. This tool previously did its own `LIFECYCLE_TRANSITIONS[from]`
+      // lookup, which meant the app route and this tool each implemented the
+      // rule separately even while importing the same map — so a change to the
+      // rule (as opposed to the data) landed in one and not the other.
+      //
+      // The context argument enables the terminal-correction escape: a terminal
+      // value that was never transitioned (NULL changed_at) on an event that has
+      // not happened yet (future start_date) may be corrected to a non-terminal
+      // state. Both conditions required.
+      const check = validateLifecycleTransition(from, to, {
+        lifecycleStatusChangedAt: current.lifecycleStatusChangedAt ?? null,
+        startDate: current.startDate ?? null,
+      });
+      if (!check.ok) {
         return {
           content: [
             jsonContent({
               error: "invalid_transition",
-              message: `transition ${from} → ${to} is not permitted`,
+              message: check.reason,
               from,
               to,
-              allowed_targets: allowed,
+              allowed_targets: check.allowed,
             }),
           ],
           isError: true,

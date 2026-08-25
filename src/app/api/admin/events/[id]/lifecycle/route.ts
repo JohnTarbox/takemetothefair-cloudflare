@@ -57,6 +57,8 @@ export async function PATCH(request: NextRequest, { params }: Params) {
         id: events.id,
         slug: events.slug,
         lifecycleStatus: events.lifecycleStatus,
+        // OPE-487 — needed for the terminal-correction check below.
+        lifecycleStatusChangedAt: events.lifecycleStatusChangedAt,
         startDate: events.startDate,
         endDate: events.endDate,
       })
@@ -70,7 +72,16 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     const from = current.lifecycleStatus as EventLifecycle;
     const to = new_lifecycle as EventLifecycle;
 
-    const check = validateLifecycleTransition(from, to);
+    // OPE-487 — passing the row's own facts enables the terminal-correction
+    // escape: a terminal value that was NEVER transitioned (NULL changed_at) on
+    // an event that has not happened yet (future start_date) can be corrected to
+    // a non-terminal state. Both conditions are required; see the constants
+    // definition for why the NULL check alone would open 191 legitimately-past
+    // rows to resurrection.
+    const check = validateLifecycleTransition(from, to, {
+      lifecycleStatusChangedAt: current.lifecycleStatusChangedAt ?? null,
+      startDate: current.startDate ?? null,
+    });
     if (!check.ok) {
       return NextResponse.json(
         {

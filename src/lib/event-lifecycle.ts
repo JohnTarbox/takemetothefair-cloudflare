@@ -107,73 +107,23 @@ export function publicEventWhere() {
 // Transition validation
 // ---------------------------------------------------------------------------
 //
-// State-machine transitions for lifecycle. Mirrors VALID_TRANSITIONS in
-// vendor-status.ts. Used by the lifecycle API route + MCP tool to reject
-// nonsensical transitions server-side.
+// State-machine transitions for lifecycle.
 //
-// Notes:
-//  - SCHEDULED can transition to anything (it's the catch-all starting state).
-//  - CANCELLED → SCHEDULED is allowed (uncancellation). Rare but real.
-//  - OCCURRED ↔ NO_SHOW only — both are terminal for the event itself, but
-//    admins can correct between them if reality didn't match the backfill.
-//  - There is no transition INTO OCCURRED or NO_SHOW from a future-state
-//    lifecycle except via RESCHEDULED (a rescheduled event can occur or
-//    no-show on its new dates) and SCHEDULED → OCCURRED/NO_SHOW (admin
-//    marking outcome of an event that just ran).
+// OPE-487 (2026-08-25): the table and its validator MOVED to
+// @takemetothefair/constants and are re-exported here, so the app route, the
+// MCP tool and the OCCURRED sweep all read one definition. They were previously
+// two hand-synced copies — see the note on the constants definition for why
+// that was a bad arrangement for a safety guard specifically.
+//
+// `publicEventWhere()` below stays here: it is Drizzle-dependent, which is what
+// kept the whole module out of constants in the first place.
 
-export const LIFECYCLE_TRANSITIONS: Record<EventLifecycle, EventLifecycle[]> = {
-  SCHEDULED: [
-    EVENT_LIFECYCLE.TENTATIVE,
-    EVENT_LIFECYCLE.POSTPONED,
-    EVENT_LIFECYCLE.RESCHEDULED,
-    EVENT_LIFECYCLE.CANCELLED,
-    EVENT_LIFECYCLE.MOVED_ONLINE,
-    EVENT_LIFECYCLE.OCCURRED,
-    EVENT_LIFECYCLE.NO_SHOW,
-  ],
-  TENTATIVE: [
-    EVENT_LIFECYCLE.SCHEDULED,
-    EVENT_LIFECYCLE.POSTPONED,
-    EVENT_LIFECYCLE.CANCELLED,
-    EVENT_LIFECYCLE.MOVED_ONLINE,
-  ],
-  POSTPONED: [EVENT_LIFECYCLE.SCHEDULED, EVENT_LIFECYCLE.RESCHEDULED, EVENT_LIFECYCLE.CANCELLED],
-  RESCHEDULED: [
-    EVENT_LIFECYCLE.SCHEDULED,
-    EVENT_LIFECYCLE.POSTPONED,
-    EVENT_LIFECYCLE.CANCELLED,
-    EVENT_LIFECYCLE.OCCURRED,
-    EVENT_LIFECYCLE.NO_SHOW,
-  ],
-  CANCELLED: [EVENT_LIFECYCLE.SCHEDULED, EVENT_LIFECYCLE.RESCHEDULED],
-  MOVED_ONLINE: [EVENT_LIFECYCLE.CANCELLED, EVENT_LIFECYCLE.OCCURRED, EVENT_LIFECYCLE.NO_SHOW],
-  OCCURRED: [EVENT_LIFECYCLE.NO_SHOW],
-  NO_SHOW: [EVENT_LIFECYCLE.OCCURRED],
-};
-
-export type TransitionResult =
-  | { ok: true }
-  | { ok: false; reason: string; allowed: readonly EventLifecycle[] };
-
-/** Validates that a lifecycle transition is permitted. Use server-side in
- *  every write surface (API route + MCP tool) before persisting the change. */
-export function validateLifecycleTransition(
-  from: EventLifecycle,
-  to: EventLifecycle
-): TransitionResult {
-  if (from === to) {
-    return { ok: false, reason: "no-op transition", allowed: LIFECYCLE_TRANSITIONS[from] };
-  }
-  const allowed = LIFECYCLE_TRANSITIONS[from] ?? [];
-  if (!allowed.includes(to)) {
-    return {
-      ok: false,
-      reason: `transition ${from} → ${to} is not permitted`,
-      allowed,
-    };
-  }
-  return { ok: true };
-}
+export {
+  LIFECYCLE_TRANSITIONS,
+  TERMINAL_LIFECYCLE_STATUSES,
+  validateLifecycleTransition,
+} from "@takemetothefair/constants";
+export type { TransitionResult, LifecycleTransitionContext } from "@takemetothefair/constants";
 
 // ---------------------------------------------------------------------------
 // Date-swap helper for RESCHEDULED / POSTPONED
