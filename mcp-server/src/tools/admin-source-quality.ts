@@ -83,7 +83,7 @@ export function registerSourceQualityTool(server: McpServer, db: Db, auth: AuthC
         .string()
         .optional()
         .describe(
-          "Filter to a single ingestion method (e.g. 'direct_scrape', 'aggregator_import', 'email_submission', 'vendor_submission', 'community_suggestion', 'admin_manual', 'web_research'). Omit to return all methods."
+          "Filter to a single ingestion method. OPE-486 — this list is the set actually present in D1 as of 2026-08-25, not the declared vocabulary: 'vendor_submission', 'direct_scrape', 'aggregator_import', 'annual_rollover', 'web_research', 'admin_manual', 'email_submission', 'discovery', 'community_suggestion', 'manual_winter', 'manual_rollover', 'manual_series_add'. It previously named seven and omitted 'discovery' — which suggest_event has classified to since K26 — so a caller reading this description could not discover a filter value that matched 37 live rows. Note 'discovery' and 'web_research' are the same lane under two names; which one survives is an open decision on OPE-486, so filter on both when you mean the research lane. Omit to return all methods."
         ),
       sort: z
         .enum(SORT_VALUES)
