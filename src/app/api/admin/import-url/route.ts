@@ -234,8 +234,10 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
       isStatewide: event.isStatewide === true,
       startDate,
       endDate,
-      publicStartDate: startDate,
-      publicEndDate: endDate,
+      // OPE-543 — see admin/events/route.ts: a copy of start/end here is never
+      // invalidated by a later date edit. NULL, and the reader falls back.
+      publicStartDate: null,
+      publicEndDate: null,
       // OPE-433 — presence of a parsed date is not confirmation of it. This
       // read `startDate !== null`, so any URL import that managed to parse a
       // date claimed the date was confirmed. See the sibling note in

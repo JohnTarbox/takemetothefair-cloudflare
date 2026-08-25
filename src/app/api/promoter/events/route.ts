@@ -128,16 +128,13 @@ export async function POST(request: NextRequest) {
     }
 
     // Auto-compute public date range (excluding vendor-only days).
-    // A3 (Dev backlog 2026-06-05): route through normalizeEventDate so a
-    // bare YYYY-MM-DD lands at noon UTC (canonical anchor) rather than
-    // the midnight-UTC default that renders as previous-day-EDT.
+    // OPE-543 — with no event_days there is no public span to derive, so NULL
+    // rather than a copy of start/end that nothing later invalidates. Readers are
+    // all `publicStartDate ?? startDate`.
     const { publicStartDate, publicEndDate } =
       eventDaysInput && eventDaysInput.length > 0
         ? computePublicDates(eventDaysInput)
-        : {
-            publicStartDate: normalizeEventDate(startDate),
-            publicEndDate: normalizeEventDate(endDate),
-          };
+        : { publicStartDate: null, publicEndDate: null };
 
     const baseSlug = createSlug(name);
 

@@ -1463,6 +1463,36 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .map(([field]) => field)
         .sort();
 
+      // OPE-543 — keep the PUBLIC date band in step with the dates being written.
+      //
+      // `public_start_date` / `public_end_date` are what the site serves to
+      // everyone who is not an admin or a vendor (events/[slug]/page.tsx:1156-1167,
+      // event-card.tsx:111). They are DERIVED — the first and last day the public
+      // can attend, i.e. the event_days span minus vendor-only setup days — and
+      // until now they were recomputed ONLY by the event_day tools. So
+      // `update_event` moving start_date left them pointing at the old range and
+      // the public page kept serving it.
+      //
+      // That is exactly how this was found: a date correction applied through
+      // this tool left `great-feast-of-the-holy-ghost-of-new-england-2026`
+      // rendering "Thu, Aug 27" in its band while the same page's schedule list
+      // and og:description said Aug 26. The reporter could only see it because
+      // they checked the page as an anonymous visitor — an admin viewing it is
+      // served `start_date` and sees no problem at all.
+      //
+      // Derive from the days ALREADY stored so an event with vendor-only days
+      // keeps its real public span; with no days there is nothing to derive and
+      // the answer is NULL, which every reader resolves via `?? startDate`.
+      if (updates.startDate !== undefined || updates.endDate !== undefined) {
+        const storedDays = await db
+          .select({ date: eventDays.date, vendorOnly: eventDays.vendorOnly })
+          .from(eventDays)
+          .where(eq(eventDays.eventId, event.id));
+        const { publicStartDate, publicEndDate } = computePublicDates(storedDays);
+        updates.publicStartDate = publicStartDate;
+        updates.publicEndDate = publicEndDate;
+      }
+
       // Execute event update (skip if only venue fields provided)
       if (requestedFields.length > 0) {
         // SYN1 — outbox row + version bump in the SAME batch as the UPDATE so a

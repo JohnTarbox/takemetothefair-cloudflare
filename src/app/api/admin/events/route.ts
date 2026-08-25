@@ -155,10 +155,21 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
     }
 
     // Auto-compute public date range (excluding vendor-only days)
+    // OPE-543 — when there are no event_days there is nothing to derive a PUBLIC
+    // span from, so leave these NULL. They used to be set to a COPY of
+    // start/end, and nothing ever invalidated that copy: `public_*` is only
+    // recomputed by the event_days write paths, so any later edit to
+    // start_date/end_date left the copy behind and the public page kept
+    // rendering the old dates. 37 live rows were in that state on 2026-08-25.
+    //
+    // NULL is not a loss of information — every reader is
+    // `publicStartDate ?? startDate` (event-card.tsx:111, events/[slug]/page.tsx:1163,
+    // events-view.tsx:1303, StubEventCard.tsx:53) and no query orders or filters
+    // on the column. It is what the correctly-rendering rows already look like.
     const { publicStartDate, publicEndDate } =
       data.eventDays && data.eventDays.length > 0
         ? computePublicDates(data.eventDays)
-        : { publicStartDate: startDate, publicEndDate: endDate };
+        : { publicStartDate: null, publicEndDate: null };
 
     // Derive stateCode from the attached venue when not explicitly provided,
     // so state filters stay in sync without callers having to pass both.

@@ -200,15 +200,46 @@ export const PATCH = withAuth<{ id: string }>(
         updateData.endDate = normalizeEventDate(sorted[sorted.length - 1]);
       }
 
-      // Auto-compute public date range (excluding vendor-only days)
-      if (data.eventDays !== undefined) {
+      // Auto-compute public date range (excluding vendor-only days).
+      //
+      // OPE-543 — this used to be gated on `data.eventDays !== undefined` ALONE,
+      // which is the whole defect: `public_*` was recomputed only by event_day
+      // writes, so an edit that changed just `start_date` left it stale and the
+      // public page kept serving the OLD range. That is how
+      // `great-feast-of-the-holy-ghost-of-new-england-2026` came to render
+      // "Thu, Aug 27" in its date band while its own schedule list, its "Next:"
+      // line and its og:description all said Aug 26, in the same fetch.
+      //
+      // Worse, the divergence is invisible to the person who can fix it: the
+      // renderer serves `start_date` to admins and vendors and `public_*` to
+      // everyone else (events/[slug]/page.tsx:1156-1167), so an admin checking
+      // the page sees the correct date and only the public sees the wrong one.
+      //
+      // So recompute whenever EITHER input moves. With no event_days there is no
+      // public span to derive and the answer is NULL, not a copy of start/end —
+      // every reader is `publicStartDate ?? startDate`.
+      const eventDatesChanged =
+        updateData.startDate !== undefined || updateData.endDate !== undefined;
+      if (data.eventDays !== undefined || eventDatesChanged) {
         if (data.eventDays && data.eventDays.length > 0) {
           const { publicStartDate, publicEndDate } = computePublicDates(data.eventDays);
           updateData.publicStartDate = publicStartDate;
           updateData.publicEndDate = publicEndDate;
-        } else {
+        } else if (data.eventDays !== undefined) {
+          // Days explicitly cleared.
           updateData.publicStartDate = null;
           updateData.publicEndDate = null;
+        } else {
+          // Dates moved but the payload carries no days. Re-derive from the days
+          // ALREADY stored, so an event with vendor-only setup days keeps its
+          // real public span instead of being flattened to the raw start/end.
+          const storedDays = await db
+            .select({ date: eventDays.date, vendorOnly: eventDays.vendorOnly })
+            .from(eventDays)
+            .where(eq(eventDays.eventId, id));
+          const { publicStartDate, publicEndDate } = computePublicDates(storedDays);
+          updateData.publicStartDate = publicStartDate;
+          updateData.publicEndDate = publicEndDate;
         }
       }
 
