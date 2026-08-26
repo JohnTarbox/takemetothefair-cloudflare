@@ -27,7 +27,6 @@ import {
   count,
   inArray,
   sql,
-  like,
   notLike,
   isNull,
   isNotNull,
@@ -41,7 +40,8 @@ import { attachEventDayDates } from "@/lib/event-days-attach";
 import { eventJoinProjection } from "@/lib/db/event-join-projection";
 import { auth } from "@/lib/auth";
 import { logError } from "@/lib/logger";
-import { sanitizeLikeInput } from "@/lib/utils";
+import { containsCI } from "@/lib/db/contains-ci";
+import { searchTrigrams, trigramMinMatches } from "@/lib/events/search-trigrams";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
 import { ItemListTracker } from "@/components/analytics/ItemListTracker";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
@@ -179,6 +179,12 @@ async function getEvents(
 
   const db = getCloudflareDb();
 
+  // OPE-548 — diagnostic holders, populated inside the try so the catch can
+  // describe the query that failed. Declared out here only because `query` and
+  // `conditions` are block-scoped to the try; nothing is computed eagerly.
+  let builtQuery: { toSQL: () => { sql: string; params: unknown[] } } | undefined;
+  let conditionCount = 0;
+
   try {
     // Build conditions
     const conditions = [isPublicEventStatus()];
@@ -211,47 +217,60 @@ async function getEvents(
     }
 
     if (searchParams.query) {
-      // Strip LIKE wildcards (`%`, `_`) before constructing the pattern so a
-      // user query of "%" doesn't degenerate to "match every row." Drizzle
-      // parameterizes the value, so this is wildcard hygiene, not SQL escape.
-      const query = sanitizeLikeInput(searchParams.query.toLowerCase().trim());
-      const searchTerm = `%${query}%`;
+      // OPE-548 — `instr()` via containsCI, not LIKE. Two reasons, and the
+      // second is the one that bit:
+      //
+      //  1. A LIKE pattern has a complexity ceiling in D1 and `instr()` has
+      //     none, so no user input can make this throw
+      //     `LIKE or GLOB pattern too complex` however long or wildcard-dense
+      //     it is. That error has now hit five call sites in 27 days.
+      //  2. `sanitizeLikeInput` did not do what its comment claimed. It
+      //     REPLACED `%` with `\\%` — an escape that only works with an
+      //     `ESCAPE` clause, which Drizzle's `like()` cannot emit. So the
+      //     wildcard survived into the pattern AND the pattern got longer.
+      //     `instr()` needs no escaping at all: `%` and `_` are literal to it,
+      //     so a search for "100% off" now finds the text "100% off" instead
+      //     of behaving as two wildcards.
+      const query = searchParams.query.toLowerCase().trim();
 
-      // Build search conditions
       const searchConditions = [
         // Exact substring match (case-insensitive)
-        sql`LOWER(${events.name}) LIKE ${searchTerm}`,
-        sql`LOWER(${events.description}) LIKE ${searchTerm}`,
+        containsCI(events.name, query),
+        containsCI(events.description, query),
       ];
 
       // Add fuzzy matching using trigrams for typo tolerance
       // For words > 4 chars, generate overlapping 3-char patterns
-      // "Choclate" -> %cho%, %hoc%, %ocl%, %cla%, %lat%, %ate%
+      // "Choclate" -> cho, hoc, ocl, cla, lat, ate
       // This will match "Chocolate" which contains most of these
-      if (query.length >= 4) {
-        const trigrams: string[] = [];
-        for (let i = 0; i <= query.length - 3; i++) {
-          trigrams.push(query.substring(i, i + 3));
-        }
-
+      //
+      // OPE-548 — bounded by TRIGRAM_MAX_QUERY_LEN. Every trigram is one bound
+      // parameter, and D1 caps a statement at 100 of them, so an unbounded
+      // fan-out is the SECOND D1 limit this block could trip: a 200-character
+      // query generated 198 conditions. Past ~32 characters a query is a phrase
+      // rather than a word, the exact substring match above is already the
+      // signal, and typo tolerance over that many trigrams matches noise — so
+      // skipping fuzzy matching there costs nothing real.
+      const trigrams = searchTrigrams(query);
+      if (trigrams.length > 0) {
         // Require at least 60% of trigrams to match (allows for typos)
-        const minMatches = Math.max(2, Math.floor(trigrams.length * 0.6));
+        const minMatches = trigramMinMatches(trigrams.length);
 
         // Build a condition that counts matching trigrams
         const trigramConditions = trigrams.map(
-          (t) => sql`(CASE WHEN LOWER(${events.name}) LIKE ${"%" + t + "%"} THEN 1 ELSE 0 END)`
+          (t) => sql`(CASE WHEN ${containsCI(events.name, t)} THEN 1 ELSE 0 END)`
         );
 
-        if (trigramConditions.length > 0) {
-          searchConditions.push(sql`(${sql.join(trigramConditions, sql` + `)}) >= ${minMatches}`);
-        }
+        searchConditions.push(sql`(${sql.join(trigramConditions, sql` + `)}) >= ${minMatches}`);
       }
 
       conditions.push(or(...searchConditions)!);
     }
 
     if (searchParams.category) {
-      conditions.push(like(events.categories, `%${searchParams.category}%`));
+      // OPE-548 — same treatment: this was `like(categories, '%' + category + '%')`
+      // straight from the query string, with no length cap at all.
+      conditions.push(containsCI(events.categories, searchParams.category));
     }
 
     if (searchParams.featured === "true") {
@@ -349,6 +368,11 @@ async function getEvents(
         .limit(limit)
         .offset(offset);
     }
+
+    // OPE-548 — hand the catch a handle on the finished builder. `toSQL()` is
+    // only ever called on the failure path, so this costs a reference.
+    builtQuery = query;
+    conditionCount = conditions.length;
 
     const results = await query;
 
@@ -535,11 +559,69 @@ async function getEvents(
       limit,
     };
   } catch (e) {
+    // OPE-548 — log what BUILT the query, not just how it was paginated.
+    //
+    // All 38 logged occurrences of the D1 pattern-complexity error carried a
+    // byte-identical context — `{isCalendarView:false, page:1, limit:30}` —
+    // because the filter inputs that construct the predicates were never
+    // recorded. `url` and `user_agent` were NULL too. The result was an error
+    // firing every few minutes for two days that no one could attribute to a
+    // request shape: I probed production with pattern lengths to 202, 120
+    // literal `%`, dense `_`, and a 200-char category and reproduced none of
+    // them, while organic traffic kept failing throughout.
+    //
+    // So this logs the inputs AND the generated SQL. `toSQL()` is what makes
+    // the next occurrence self-diagnosing rather than another identical row:
+    // it names the exact predicate and the parameter that broke it. Guarded in
+    // its own try — a diagnostic must never replace the error it describes.
+    let generatedSql: string | undefined;
+    let paramShapes: string | undefined;
+    try {
+      const compiled = builtQuery?.toSQL();
+      if (compiled) {
+        generatedSql = String(compiled.sql).slice(0, 1500);
+        paramShapes = JSON.stringify(
+          (compiled.params ?? []).map((p: unknown) =>
+            typeof p === "string" ? { len: p.length, head: p.slice(0, 40) } : typeof p
+          )
+        ).slice(0, 1500);
+      }
+    } catch {
+      generatedSql = "<toSQL() unavailable>";
+    }
     await logError(db, {
       message: "Error fetching events",
       error: e,
       source: "app/events/page.tsx:getEvents",
-      context: { isCalendarView, page, limit },
+      context: {
+        isCalendarView,
+        page,
+        limit,
+        sort,
+        // The predicate-building inputs. Truncated because they are arbitrary
+        // user input and this row is written on every failure.
+        filters: {
+          query: searchParams.query?.slice(0, 120) ?? null,
+          queryLen: searchParams.query?.length ?? 0,
+          category: searchParams.category?.slice(0, 120) ?? null,
+          categoryLen: searchParams.category?.length ?? 0,
+          state: searchParams.state ?? null,
+          when: searchParams.when ?? null,
+          view: searchParams.view ?? null,
+          includePast: searchParams.includePast ?? null,
+          includeTBD: searchParams.includeTBD ?? null,
+          featured: searchParams.featured ?? null,
+          commercialVendors: searchParams.commercialVendors ?? null,
+          excludeFarmersMarkets: searchParams.excludeFarmersMarkets ?? null,
+          indoorOutdoor: searchParams.indoorOutdoor ?? null,
+          scale: searchParams.scale ?? null,
+          myEvents: searchParams.myEvents ?? null,
+          favorites: searchParams.favorites ?? null,
+        },
+        conditionCount,
+        generatedSql,
+        paramShapes,
+      },
     });
     // REL1' §1 (2026-06-04): throw FetchError instead of returning empty.
     // Lets Next.js's error.tsx render a "service temporarily unavailable"
