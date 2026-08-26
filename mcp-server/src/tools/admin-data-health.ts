@@ -250,10 +250,29 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
           failed_total: sql<number>`(SELECT count(*) FROM inbound_emails WHERE status = 'failed')`,
           failed_photo_intake: sql<number>`(SELECT count(*) FROM inbound_emails WHERE status = 'failed' AND intent = 'photo_intake')`,
           failed_unresolved: sql<number>`(SELECT count(*) FROM inbound_emails WHERE status = 'failed' AND resulting_event_id IS NULL)`,
+          // OPE-551 — EXCLUDED, NOT DISCARDED. Rows that failed and were later
+          // resolved. Should normally be 0; a non-zero value means a recovery
+          // path attached a photo without clearing the status and the daily
+          // exception rail has not caught up yet. Reported so that gap is
+          // visible in the same response that now excludes it, rather than
+          // being silently absorbed into an age nobody can explain.
+          failed_but_resolved: sql<number>`(SELECT count(*) FROM inbound_emails WHERE status = 'failed' AND resulting_event_id IS NOT NULL)`,
+          // OPE-551 — the age must key on UNRESOLVED rows, like the count above.
+          //
+          // This counted every `status='failed'` row, so a resolved email whose
+          // photo had just been delivered still set the age. That is the number
+          // PR #966 described as "the number that says somebody has to act",
+          // and it was saying it about work already done.
+          //
+          // Fixing the writer (`resolveHeldPhotoEmail` now clears the status)
+          // closes today's instance. This is the durable half: a health metric
+          // must not depend on every future writer remembering to tidy up, nor
+          // on a daily reconcile having run since the last recovery.
+          //
           // unixepoch() and received_at are both SECONDS — 86400, not 86400000.
           oldest_failed_days: sql<
             number | null
-          >`(SELECT CAST((unixepoch() - MIN(received_at)) / 86400 AS INTEGER) FROM inbound_emails WHERE status = 'failed')`,
+          >`(SELECT CAST((unixepoch() - MIN(received_at)) / 86400 AS INTEGER) FROM inbound_emails WHERE status = 'failed' AND resulting_event_id IS NULL)`,
         })
         .from(sql`(SELECT 1)`);
 

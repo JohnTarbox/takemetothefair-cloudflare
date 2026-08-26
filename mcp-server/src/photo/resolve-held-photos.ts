@@ -29,7 +29,7 @@
  * sent two) finds no unresolved parents and no-ops.
  */
 
-import { and, desc, eq, inArray, isNull, isNotNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, isNotNull, sql } from "drizzle-orm";
 import { recordCrossing, ref } from "../inbound/crossing-ledger.js";
 import type { InboundEmail } from "@takemetothefair/db-schema";
 import { inboundEmails } from "../schema.js";
@@ -210,6 +210,24 @@ export async function resolveHeldPhotoEmail(
         // OPE-403 — record the COUNT, not just the decision. This is what makes
         // a later run's skip decision a fact rather than an inference.
         photosStored: res.attached,
+        // OPE-551 — leave the row's STATE honest, not just its data.
+        //
+        // This wrote resulting_event_id and photos_stored and left
+        // `status='failed'` in place, so an email whose photo had just been
+        // delivered still counted as stuck. The daily exception rail
+        // (`reconcileInboundExceptions`, "already-handled: failed but has a
+        // resulting event → salvaged") does eventually correct it — so the
+        // report of a PERMANENT wrong number was not right — but "eventually"
+        // is up to 24 hours, and for that whole window the purpose-built
+        // recovery tool leaves the ledger contradicting itself.
+        //
+        // Guarded by a CASE rather than set unconditionally: this function also
+        // runs on rows that never failed (a photo held only because the event
+        // was ambiguous), and stamping `salvaged` over `processed` or `replied`
+        // would be a different lie in the other direction. SQLite evaluates all
+        // SET expressions against the pre-update row, so this reads the old
+        // status correctly.
+        status: sql`CASE WHEN ${inboundEmails.status} = 'failed' THEN 'salvaged' ELSE ${inboundEmails.status} END`,
       })
       .where(eq(inboundEmails.id, row.id));
     return { attached: res.attached, failed: res.failed, skipped: false };
