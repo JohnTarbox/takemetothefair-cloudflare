@@ -282,3 +282,90 @@ describe("resolveHeldPhotosFromReply (OPE-254)", () => {
     ).toBeNull();
   });
 });
+
+/**
+ * OPE-551 — resolving a held photo must leave the row's STATE honest, not just
+ * its data.
+ *
+ * `resolveHeldPhotoEmail` wrote `resulting_event_id` and `photos_stored` and
+ * left `status='failed'` in place, so an email whose photo had just been
+ * delivered still counted as stuck. `oldest_failed_days` — described on its own
+ * PR as "the number that says somebody has to act" — reported it as 16 days
+ * overdue.
+ *
+ * The daily exception rail does eventually reconcile this (`failed` + a
+ * resulting event → `salvaged`), so the reported PERMANENT wrong number was not
+ * right. But "eventually" is up to 24 hours, and for that window the
+ * purpose-built recovery tool leaves the ledger contradicting itself.
+ *
+ * The second test is the one that matters more: the flip must NOT fire on rows
+ * that never failed.
+ */
+describe("resolveHeldPhotoEmail — status reconciliation (OPE-551)", () => {
+  const REFS = imageRefsJson(["k1"]);
+  const row = (id: string) => ({ id, attachmentRefs: REFS, resultingEventId: null });
+  const statusOf = async (d: Db, id: string) =>
+    (await d.select().from(inboundEmails).where(eq(inboundEmails.id, id)))[0];
+
+  it("clears a FAILED status when the photo actually attaches", async () => {
+    const { db } = createTestDb();
+    const d = db as unknown as Db;
+    const id = await seedHeldParent(d, { status: "failed", error: "D1_ERROR: boom" });
+    const { env } = mockAttachEnv();
+
+    const res = await resolveHeldPhotoEmail(env, d, row(id), "evt-waterford");
+    expect(res.attached).toBe(1);
+
+    const after = await statusOf(d, id);
+    expect(after.status).toBe("salvaged");
+    expect(after.resultingEventId).toBe("evt-waterford");
+  });
+
+  it("does NOT overwrite a status that was never 'failed'", async () => {
+    // The guard that keeps this from being a different lie. A photo held only
+    // because the event was ambiguous sits at 'replied', and stamping
+    // 'salvaged' over it would misreport a row that never failed.
+    const { db } = createTestDb();
+    const d = db as unknown as Db;
+    const id = await seedHeldParent(d, { status: "replied" });
+    const { env } = mockAttachEnv();
+
+    await resolveHeldPhotoEmail(env, d, row(id), "evt-waterford");
+
+    expect((await statusOf(d, id)).status).toBe("replied");
+  });
+
+  it("leaves a FAILED row alone when nothing attaches", async () => {
+    // A total attach failure must stay visible for retry — clearing the status
+    // here would hide a row that genuinely still needs work.
+    const { db } = createTestDb();
+    const d = db as unknown as Db;
+    const id = await seedHeldParent(d, { status: "failed" });
+    const { env } = mockAttachEnv({ missingObject: true });
+
+    const res = await resolveHeldPhotoEmail(env, d, row(id), "evt-waterford");
+    expect(res.attached).toBe(0);
+
+    const after = await statusOf(d, id);
+    expect(after.status).toBe("failed");
+    expect(after.resultingEventId).toBeNull();
+  });
+
+  it("preserves `error` — the record of WHY it failed is not noise", async () => {
+    // Deliberately not cleared, against the ticket's scope-3 suggestion. The
+    // row genuinely did fail and was then salvaged: `status` is the state field
+    // and is now correct, while `error` is the only surviving diagnostic of the
+    // cause. OPE-404's investigation depended on exactly this text.
+    const { db } = createTestDb();
+    const d = db as unknown as Db;
+    const id = await seedHeldParent(d, {
+      status: "failed",
+      error: "D1_ERROR: pattern too complex",
+    });
+    const { env } = mockAttachEnv();
+
+    await resolveHeldPhotoEmail(env, d, row(id), "evt-waterford");
+
+    expect((await statusOf(d, id)).error).toContain("pattern too complex");
+  });
+});
