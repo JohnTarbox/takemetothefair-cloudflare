@@ -14,7 +14,20 @@
  * as Bing-sourced issues.
  */
 
-import { eq, and, gte, lt, asc, desc, isNull, or, like, sql, inArray } from "drizzle-orm";
+import {
+  eq,
+  and,
+  gte,
+  lt,
+  asc,
+  desc,
+  isNull,
+  isNotNull,
+  or,
+  like,
+  sql,
+  inArray,
+} from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import {
   events,
@@ -489,14 +502,23 @@ async function recordHealthIssue(
   }
 }
 
-/** Build the prioritized list of URLs to inspect this sweep. */
+/**
+ * Build the prioritized list of URLs to inspect this sweep.
+ *
+ * ⚠️ NOT read-only despite the name: Tier 0 stamps `last_reverified_at` on the
+ * rows it selects, because a rotation cursor that nothing advances is not a
+ * rotation. The only production caller is `runSweep`.
+ */
 export async function pickUrls(
   db: Db,
   batchSize: number,
   /** OPE-372 — the canonical allow-list. Optional so existing callers and tests
    *  keep working; runSweep passes the set it already computed rather than
    *  paying for the same query twice. */
-  precomputedCanonicalEventUrls?: Set<string>
+  precomputedCanonicalEventUrls?: Set<string>,
+  /** Injected so the Tier 0 cursor stamp is deterministic under test; runSweep
+   *  passes the same `now` it uses everywhere else in the pass. */
+  now: Date = new Date()
 ): Promise<string[]> {
   const oneDayAgo = new Date(Date.now() - 86400 * 1000);
   const sixHoursAgo = new Date(Date.now() - 6 * 3600 * 1000);
@@ -626,6 +648,81 @@ export async function pickUrls(
     if (!guaranteed.has(url)) filler.add(url);
     return filler.size >= fillerBudget;
   };
+
+  // Tier 0 (OPE-567 follow-up): URLs carrying an OPEN ERROR health issue.
+  //
+  // Tier 1 below re-inspects a non-OK *index* verdict — but `lastVerdict` only
+  // stores the index half. A page that is indexed perfectly well and has BROKEN
+  // STRUCTURED DATA is PASS there, so nothing ever prioritised it for a
+  // re-check, and it fell into the general rotation.
+  //
+  // That is why the four GSC_RICH_RESULT_FAIL rows OPE-567 fixed had sat open
+  // since June: all four are `PASS` / "Submitted and indexed", each with ~1,300
+  // URLs ahead of it in the least-recently-inspected queue — roughly five months
+  // at the default batch size. The staleness rule alone would have corrected
+  // them no sooner than January.
+  //
+  // An open ERROR is by definition the most actionable row on the dashboard, so
+  // it is the first thing worth spending an inspection on. This also makes the
+  // rail self-healing: a row that is fixed or stale gets re-checked promptly and
+  // downgrades itself, rather than waiting for a rotation to come around.
+  // ⚠️ CAPPED AT HALF THE FILLER BUDGET, on purpose. Uncapped, this tier owns
+  // the whole sweep the moment something systemic raises a pile of ERROR rows,
+  // and the tiers below it (new URLs, never-inspected pages) would never run
+  // again. Priority, not monopoly.
+  //
+  // Scoped to GSC_RICH_RESULT_FAIL because that is the type with no other rail.
+  // The OPE-382 re-verify pass above filters `issueType = GSC_INSPECTION_NON_OK`
+  // and so has never once looked at a rich-result row — a second, independent
+  // reason the four rows OPE-567 fixed sat open since June. Keeping the two
+  // types disjoint also means the cursor write below cannot perturb re-verify's
+  // ordering.
+  const openErrorBudget = Math.ceil(fillerBudget / 2);
+  if (openErrorBudget > 0) {
+    const openErrors = await db
+      .select({ id: healthIssues.id, url: healthIssues.url })
+      .from(healthIssues)
+      .where(
+        and(
+          isNull(healthIssues.resolvedAt),
+          eq(healthIssues.severity, "ERROR"),
+          eq(healthIssues.issueType, "GSC_RICH_RESULT_FAIL"),
+          isNotNull(healthIssues.url)
+        )
+      )
+      // Reuses OPE-382's cursor, for OPE-382's reason. Ordering by when the row
+      // was DETECTED would re-pick the same oldest rows every night and starve
+      // the rest — the exact head-of-line block that left two 5xx rows unfetched
+      // at ranks 80 and 107. NULL sorts first in SQLite ASC, so never-attempted
+      // rows lead, which is every one of them on this tier's first run.
+      .orderBy(asc(healthIssues.lastReverifiedAt), asc(healthIssues.firstDetectedAt))
+      .limit(openErrorBudget);
+
+    const attempted: string[] = [];
+    for (const r of openErrors) {
+      if (!r.url) continue;
+      if (filler.size >= openErrorBudget) break;
+      attempted.push(r.id);
+      if (addFiller(r.url)) break;
+    }
+
+    // Stamp EVERY row we selected, whatever the inspection later concludes — an
+    // attempt must advance the cursor or the rotation above is decorative. A row
+    // dropped by the canonical filter at the end of this function advances too;
+    // it simply waits one rotation, which is self-correcting and far cheaper
+    // than a row that can never be reached.
+    // Chunked at 50, matching reverifyOpenIssues above. The list is bounded by
+    // ceil(batchSize / 2), which reaches D1's 100-bound-parameter cap at
+    // batchSize=200 — a value this file's own tests already pass. Local SQLite
+    // allows 32,766 binds, so an unchunked version would stay green here and
+    // fail only in production.
+    for (let i = 0; i < attempted.length; i += 50) {
+      await db
+        .update(healthIssues)
+        .set({ lastReverifiedAt: now })
+        .where(inArray(healthIssues.id, attempted.slice(i, i + 50)));
+    }
+  }
 
   // Tier 1: URLs with non-OK last verdict
   if (fillerBudget > 0) {
@@ -826,9 +923,11 @@ export async function runSweep(
   // withdraw the health issues the old non-canonical URLs manufactured.
   const canonicalEventUrls = await getCanonicalEventUrlSet(db, HOST);
 
-  const urls = await pickUrls(db, batchSize, canonicalEventUrls);
-
+  // Declared before the pick: Tier 0 stamps its cursor with this same instant,
+  // so every write in the pass shares one timestamp.
   const now = new Date();
+
+  const urls = await pickUrls(db, batchSize, canonicalEventUrls, now);
 
   // All three maintenance passes run BEFORE the early return: they must happen
   // even on a sweep that inspects nothing (quota exhausted, empty pick). Tying

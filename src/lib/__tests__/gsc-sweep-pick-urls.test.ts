@@ -105,6 +105,25 @@ const SCHEMA_SQL = `
     lag_seconds INTEGER,
     computed_at INTEGER NOT NULL
   );
+  -- OPE-567 follow-up: Tier 0 re-inspects URLs carrying an open ERROR row.
+  -- The harness builds its schema from inline CREATE TABLE rather than from
+  -- migrations, so a new table pickUrls reads must be added here too or every
+  -- test in the file dies on "no such table" (reference_d1_and_migration_gotchas).
+  CREATE TABLE health_issues (
+    id TEXT PRIMARY KEY,
+    fingerprint TEXT,
+    source TEXT NOT NULL,
+    issue_type TEXT NOT NULL,
+    severity TEXT NOT NULL,
+    url TEXT,
+    message TEXT,
+    first_detected_at INTEGER NOT NULL,
+    last_detected_at INTEGER NOT NULL,
+    resolved_at INTEGER,
+    resolution_reason TEXT,
+    last_reverified_at INTEGER,
+    snoozed_until INTEGER
+  );
 `;
 
 let raw: Database.Database;
@@ -271,5 +290,123 @@ describe("A10/A11 — per-page-type guaranteed coverage", () => {
     expect(urls).toContain(`${HOST}/blog/guaranteed-post-b`);
     // And a Tier-1 stale event still made it into the filler budget.
     expect(urls.some((u) => u.startsWith(`${HOST}/events/stale-`))).toBe(true);
+  });
+});
+
+/**
+ * OPE-567 follow-up — Tier 0: a URL with an OPEN ERROR health issue is
+ * re-inspected first.
+ *
+ * Tier 1 re-inspects a non-OK *index* verdict, but `last_verdict` only stores
+ * the index half. A page that is indexed perfectly and has BROKEN STRUCTURED
+ * DATA reads `PASS` there, so nothing prioritised it and it fell into the
+ * general rotation.
+ *
+ * Measured on prod 2026-08-26: the four open GSC_RICH_RESULT_FAIL rows were all
+ * `PASS` / "Submitted and indexed", each with ~1,300 URLs ahead of it in the
+ * least-recently-inspected queue — about five months at the default batch size.
+ * The OPE-567 staleness rule alone would not have corrected them until January.
+ */
+function seedOpenIssue(
+  url: string,
+  severity: string,
+  opts: {
+    resolved?: boolean;
+    source?: string;
+    issueType?: string;
+    firstDetectedAt?: number;
+    lastReverifiedAt?: number | null;
+  } = {}
+) {
+  raw
+    .prepare(
+      `INSERT INTO health_issues
+       (id, fingerprint, source, issue_type, severity, url, message,
+        first_detected_at, last_detected_at, resolved_at, last_reverified_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'FAIL: Missing field "location"', ?, ?, ?, ?)`
+    )
+    .run(
+      `hi-${url}-${severity}`,
+      `fp-${url}`,
+      opts.source ?? "GSC_URL_INSPECTION",
+      opts.issueType ?? "GSC_RICH_RESULT_FAIL",
+      severity,
+      url,
+      opts.firstDetectedAt ?? 1,
+      opts.firstDetectedAt ?? 1,
+      opts.resolved ? 2 : null,
+      opts.lastReverifiedAt ?? null
+    );
+}
+
+describe("OPE-567 follow-up — Tier 0 re-inspects URLs with an open ERROR", () => {
+  // ⚠️ ISOLATION NOTE, learned the hard way on this very test.
+  //
+  // The first version of this used a seeded `/events/<slug>` URL — the exact
+  // prod shape — and passed with Tier 0 DELETED. A canonical event is picked by
+  // the guaranteed per-type slice regardless, so the test proved nothing. It is
+  // the same trap the REL5 block above already documents.
+  //
+  // These use a `/venues/<slug>` URL with NO venue row: the guaranteed slice
+  // cannot pick it (no entity), and the OPE-372 canonical filter only rejects
+  // `/events/` URLs, so Tier 0 is the ONLY thing that can put it in the result.
+  // Deleting Tier 0 now reddens the positive case, which is what makes the three
+  // negatives below mean anything.
+  it("picks a URL that ONLY an open ERROR row can justify", async () => {
+    const url = `${HOST}/venues/ghost-with-open-error`;
+    seedOpenIssue(url, "ERROR");
+    expect(await pickUrls(db as never, 200)).toContain(url);
+  });
+
+  it("does NOT pick a RESOLVED error row", async () => {
+    const url = `${HOST}/venues/already-fixed-venue`;
+    seedOpenIssue(url, "ERROR", { resolved: true });
+    expect(await pickUrls(db as never, 200)).not.toContain(url);
+  });
+
+  it("does NOT pick an open INFO row — only ERROR earns a re-inspection", async () => {
+    // A downgraded STALE VERDICT row is INFO. It must not consume the tier it
+    // was just removed from, or the fix would re-prioritise its own output.
+    const url = `${HOST}/venues/downgraded-stale-venue`;
+    seedOpenIssue(url, "INFO");
+    expect(await pickUrls(db as never, 200)).not.toContain(url);
+  });
+
+  it("does NOT pick a GSC_INSPECTION_NON_OK row — that type has its own pass", async () => {
+    // Scope matters both ways. `reverifyOpenIssues` already round-robins the
+    // NON_OK rows against our own origin; pulling them in here would spend a
+    // GSC inspection re-learning what a cheap local fetch already settles, and
+    // would move a cursor that pass depends on.
+    const url = `${HOST}/venues/non-ok-venue`;
+    seedOpenIssue(url, "ERROR", { issueType: "GSC_INSPECTION_NON_OK" });
+    expect(await pickUrls(db as never, 200)).not.toContain(url);
+  });
+
+  it("caps itself at half the filler budget, so it cannot own the sweep", async () => {
+    // The systemic case: many open errors at once. Without the cap this tier
+    // takes every slot and the discovery tiers below never run again.
+    for (let i = 0; i < 40; i++) seedOpenIssue(`${HOST}/venues/err-${i}`, "ERROR");
+    const picked = await pickUrls(db as never, 8);
+    const fromTier0 = picked.filter((u) => u.includes("/venues/err-"));
+    expect(fromTier0.length).toBeLessThanOrEqual(4); // ceil(8/2) at most
+    expect(fromTier0.length).toBeGreaterThan(0); // ...but it does get a share
+  });
+
+  it("rotates: a second run picks rows the first run did not", async () => {
+    // The stamp is what makes the cap safe. Without advancing the cursor, the
+    // same oldest N rows are re-picked every night and the rest starve — the
+    // OPE-382 head-of-line bug, rebuilt on a new tier.
+    for (let i = 0; i < 40; i++) seedOpenIssue(`${HOST}/venues/rot-${i}`, "ERROR");
+    const t0 = new Date(1_000_000);
+    const first = (await pickUrls(db as never, 8, undefined, t0)).filter((u) =>
+      u.includes("/venues/rot-")
+    );
+    const second = (await pickUrls(db as never, 8, undefined, t0)).filter((u) =>
+      u.includes("/venues/rot-")
+    );
+    expect(first.length).toBeGreaterThan(0);
+    expect(second.length).toBeGreaterThan(0);
+    // No overlap: every row the first run touched was stamped and sorts last.
+    expect(second.filter((u) => first.includes(u))).toEqual([]);
   });
 });
