@@ -734,10 +734,20 @@ export function registerPublicTools(server: McpServer, db: Db) {
   // ── search_vendors ─────────────────────────────────────────────
   server.tool(
     "search_vendors",
-    "Search vendors by name or type.",
+    [
+      "Search vendors by name or type.",
+      "Soft-deleted vendors — which is what `merge_vendor` leaves behind — are",
+      "EXCLUDED by default; pass include_deleted to see them.",
+    ].join(" "),
     {
       query: z.string().optional().describe("Search by business name (partial match)"),
       type: z.string().optional().describe("Filter by vendor type"),
+      include_deleted: z
+        .boolean()
+        .optional()
+        .describe(
+          "Include soft-deleted vendors (merge tombstones). Default false. Only for auditing a merge — a tombstone's slug 301s to its keeper, so never link one."
+        ),
       limit: z.number().min(1).max(50).optional().describe("Max results (default 20)"),
       offset: z
         .number()
@@ -747,6 +757,27 @@ export function registerPublicTools(server: McpServer, db: Db) {
     },
     async (params) => {
       const conditions = [];
+
+      // OPE-566 — exclude merge tombstones.
+      //
+      // `merge_vendor` soft-deletes the loser and renames its slug to
+      // `<orig>-merged-<id8>`, exactly as `merge_events` does. This search had
+      // NO base filter, so all 116 soft-deleted rows were returned as if live:
+      // `search_vendors("Sea Bags")` returned the keeper AND
+      // `sea-bags-llc-merged-b653a2cc`, whose page is a 301.
+      //
+      // That is OPE-432's finding one entity type over — "returning a tombstone
+      // hands the caller a URL that redirects away" — and here it is worse than
+      // a bad link: an agent using this tool to pick a vendor to attach to an
+      // event can attach the tombstone, re-splitting a merge somebody did on
+      // purpose.
+      //
+      // Mirrors `search_performers`, which already does exactly this
+      // (admin-performers.ts: `if (!params.include_deleted) conds.push(...)`).
+      // The escape hatch is kept for the same reason it exists there: auditing
+      // a merge is a real need, and a silent exclusion with no way to look is
+      // how the next investigation gets stuck.
+      if (!params.include_deleted) conditions.push(isNull(vendors.deletedAt));
 
       if (params.query) {
         // EH2.1 — match on either business_name OR display_name so a query
