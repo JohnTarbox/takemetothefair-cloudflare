@@ -103,6 +103,172 @@ export const PUBLIC_LIFECYCLE_STATUSES = [
   EVENT_LIFECYCLE.MOVED_ONLINE,
 ] as const;
 
+/**
+ * State-machine transitions for `events.lifecycle_status`.
+ *
+ * ── Why this lives in constants (OPE-487, 2026-08-25) ────────────────────
+ *
+ * It used to exist TWICE — `src/lib/event-lifecycle.ts` for the API route and
+ * `mcp-server/src/lifecycle.ts` for the `update_event_lifecycle` tool — kept in
+ * sync BY HAND, with the mcp copy's own header admitting "CI doesn't catch
+ * drift". That is a poor arrangement for an ordinary lookup table and a bad one
+ * for a SAFETY GUARD: the failure mode is one copy widened and the other not,
+ * which reads as "the rule is enforced" from whichever side you happen to test.
+ *
+ * ⚠️ A THIRD writer does not consult this table at all: the K27 OCCURRED sweep
+ * (`mcp-server/src/event-occurred-sweep.ts`) sets `lifecycle_status = 'OCCURRED'`
+ * with a direct UPDATE. The mcp copy's header claimed the sweep shared it; it
+ * never imported it. That is tolerable today — the sweep only makes
+ * SCHEDULED/RESCHEDULED/MOVED_ONLINE → OCCURRED, all legal here, and it does
+ * stamp `lifecycle_status_changed_at` and a reason — but it is an unguarded
+ * write path, and worth knowing before anyone assumes this table is the only
+ * way the column changes.
+ *
+ * The earlier objection to moving it here was that doing so "would pull in the
+ * Drizzle-dependent publicEventWhere()". That is true of the whole module and
+ * false of this map: the transitions and their validator are pure. This package
+ * has no dependencies, and `mcp-server/src/lifecycle.ts` already imported
+ * `EventLifecycle` from it. `publicEventWhere()` stays in the app.
+ *
+ * ── The rules ────────────────────────────────────────────────────────────
+ *
+ *  - SCHEDULED can transition to anything (the catch-all starting state).
+ *  - CANCELLED → SCHEDULED is allowed (uncancellation). Rare but real.
+ *  - OCCURRED ↔ NO_SHOW only — both are terminal for the event itself, but
+ *    admins can correct between them if reality didn't match the backfill.
+ *  - There is no transition INTO OCCURRED or NO_SHOW from a future-state
+ *    lifecycle except via RESCHEDULED, and SCHEDULED → OCCURRED/NO_SHOW.
+ */
+export const LIFECYCLE_TRANSITIONS: Record<EventLifecycle, EventLifecycle[]> = {
+  SCHEDULED: [
+    EVENT_LIFECYCLE.TENTATIVE,
+    EVENT_LIFECYCLE.POSTPONED,
+    EVENT_LIFECYCLE.RESCHEDULED,
+    EVENT_LIFECYCLE.CANCELLED,
+    EVENT_LIFECYCLE.MOVED_ONLINE,
+    EVENT_LIFECYCLE.OCCURRED,
+    EVENT_LIFECYCLE.NO_SHOW,
+  ],
+  TENTATIVE: [
+    EVENT_LIFECYCLE.SCHEDULED,
+    EVENT_LIFECYCLE.POSTPONED,
+    EVENT_LIFECYCLE.CANCELLED,
+    EVENT_LIFECYCLE.MOVED_ONLINE,
+  ],
+  POSTPONED: [EVENT_LIFECYCLE.SCHEDULED, EVENT_LIFECYCLE.RESCHEDULED, EVENT_LIFECYCLE.CANCELLED],
+  RESCHEDULED: [
+    EVENT_LIFECYCLE.SCHEDULED,
+    EVENT_LIFECYCLE.POSTPONED,
+    EVENT_LIFECYCLE.CANCELLED,
+    EVENT_LIFECYCLE.OCCURRED,
+    EVENT_LIFECYCLE.NO_SHOW,
+  ],
+  CANCELLED: [EVENT_LIFECYCLE.SCHEDULED, EVENT_LIFECYCLE.RESCHEDULED],
+  MOVED_ONLINE: [EVENT_LIFECYCLE.CANCELLED, EVENT_LIFECYCLE.OCCURRED, EVENT_LIFECYCLE.NO_SHOW],
+  OCCURRED: [EVENT_LIFECYCLE.NO_SHOW],
+  NO_SHOW: [EVENT_LIFECYCLE.OCCURRED],
+};
+
+/** The two states the table treats as terminal for the event itself. */
+export const TERMINAL_LIFECYCLE_STATUSES = [
+  EVENT_LIFECYCLE.OCCURRED,
+  EVENT_LIFECYCLE.NO_SHOW,
+] as const;
+
+/**
+ * Row facts needed to judge whether a terminal value is a RECORD of something
+ * that happened, or a value that merely arrived on the row. Optional at every
+ * call site: omit it and the strict table applies, which is the safe default
+ * for a caller that has not thought about this.
+ */
+export interface LifecycleTransitionContext {
+  /** `events.lifecycle_status_changed_at`. NULL ⇒ never explicitly transitioned. */
+  lifecycleStatusChangedAt?: Date | null;
+  /** `events.start_date`. */
+  startDate?: Date | null;
+  /** Injectable clock, for tests. */
+  now?: Date;
+}
+
+export type TransitionResult =
+  | { ok: true; terminalCorrection?: boolean }
+  | { ok: false; reason: string; allowed: readonly EventLifecycle[] };
+
+/**
+ * OPE-487 — is this terminal value provably spurious rather than merely
+ * unrecorded?
+ *
+ * BOTH conditions are required, and the conjunction is the whole design:
+ *
+ *   1. `lifecycle_status_changed_at IS NULL` — nothing ever transitioned the
+ *      row, so the value arrived with an import rather than recording an event.
+ *   2. `start_date` is in the FUTURE — the terminal value cannot be true.
+ *
+ * Condition 1 alone is nowhere near sufficient, and the production numbers say
+ * so plainly. Measured 2026-08-25 across live rows in a terminal state:
+ *
+ *     641  terminal rows
+ *     194  with a NULL changed_at
+ *     191  of those are PAST events — correctly backfilled OCCURRED
+ *       3  are future-dated — the actual defect
+ *
+ * So a NULL-only rule would make 194 rows correctable to reach 3, and 191 of
+ * the ones it opened are genuinely-occurred fairs. Resurrecting a past event is
+ * the exact failure this lane has already caused once (a tombstone brought back
+ * on 2026-08-17), and the terminal states exist to prevent it. The date check is
+ * what separates "we have no record of the transition" from "the transition
+ * cannot have happened".
+ */
+function isSpuriousTerminalValue(
+  from: EventLifecycle,
+  context: LifecycleTransitionContext | undefined
+): boolean {
+  if (!context) return false;
+  if (!(TERMINAL_LIFECYCLE_STATUSES as readonly string[]).includes(from)) return false;
+  // An explicit transition timestamp means a human or a sweep decided this.
+  if (context.lifecycleStatusChangedAt != null) return false;
+  const start = context.startDate;
+  if (!start || Number.isNaN(start.getTime())) return false;
+  const now = context.now ?? new Date();
+  return start.getTime() > now.getTime();
+}
+
+/**
+ * Validates that a lifecycle transition is permitted. Use server-side in EVERY
+ * write surface before persisting.
+ *
+ * Pass `context` to enable the OPE-487 terminal-correction escape; without it
+ * the strict table applies unchanged, so every existing caller keeps its
+ * current behaviour until it opts in.
+ */
+export function validateLifecycleTransition(
+  from: EventLifecycle,
+  to: EventLifecycle,
+  context?: LifecycleTransitionContext
+): TransitionResult {
+  if (from === to) {
+    return { ok: false, reason: "no-op transition", allowed: LIFECYCLE_TRANSITIONS[from] };
+  }
+  const allowed = LIFECYCLE_TRANSITIONS[from] ?? [];
+  if (allowed.includes(to)) return { ok: true };
+
+  // The escape is deliberately one-directional: it lets a spurious terminal
+  // value be corrected to a NON-terminal one. It never creates a new terminal
+  // value, so it cannot be used to mark something occurred.
+  if (
+    isSpuriousTerminalValue(from, context) &&
+    !(TERMINAL_LIFECYCLE_STATUSES as readonly string[]).includes(to)
+  ) {
+    return { ok: true, terminalCorrection: true };
+  }
+
+  return {
+    ok: false,
+    reason: `transition ${from} → ${to} is not permitted`,
+    allowed,
+  };
+}
+
 // ── Venue statuses ────────────────────────────────────────────────
 
 export const VENUE_STATUS = {
