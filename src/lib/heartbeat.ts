@@ -116,6 +116,36 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     lastEvidenceAt: (db) => maxTs(db, eventDataCitations, eventDataCitations.createdAt),
   },
   {
+    // OPE-547 — proof the daily OCCURRED sweep is executing.
+    //
+    // This cron had no probe, and that is precisely how its defect survived:
+    // Pass 3 keyed on `lifecycle_status = 'OCCURRED'`, so 123 past TENTATIVE
+    // events were never evaluated, and nothing anywhere said so. The sweep
+    // reported success every night while a whole population went unseen.
+    //
+    // Watching the RUN, not the yield. The yield is not probeable: Pass 1
+    // transitions nothing on a day when no event ends, and Pass 3's enqueue
+    // count correctly falls to zero once the backlog drains — so a probe on
+    // either would go red on a quiet week rather than on a dead cron, the
+    // false-fire OPE-541 had to be corrected for. The sweep therefore stamps
+    // agent_heartbeats on EVERY run and this watches the stamp.
+    //
+    // 48h: the sweep is daily, so one missed run is within tolerance and two
+    // consecutive misses are not.
+    name: "occurred-transition-sweep",
+    ownerOpe: "OPE-547",
+    label: "Daily OCCURRED transition + roster sweep (MCP cron)",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        agentHeartbeats,
+        agentHeartbeats.lastSeenAt,
+        eq(agentHeartbeats.agentCode, "watchdog:occurred-sweep")
+      ),
+  },
+  {
     // OPE-348 — proof the agent-silence watchdog is ITSELF executing.
     //
     // The watchdog's normal output is silence, so "no alert" is indistinguishable

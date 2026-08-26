@@ -7,7 +7,15 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createTestDb, mockIndexNowFetch, type TestDb } from "./setup-db.js";
 import { runOccurredTransitionSweep } from "../src/event-occurred-sweep.js";
 import * as logger from "../src/logger.js";
-import { events, adminActions, promoters, eventVendors, vendors, users } from "../src/schema.js";
+import {
+  events,
+  adminActions,
+  promoters,
+  eventVendors,
+  vendors,
+  users,
+  agentHeartbeats,
+} from "../src/schema.js";
 import { and, eq } from "drizzle-orm";
 import { unsafeSlug } from "@takemetothefair/utils";
 
@@ -388,5 +396,228 @@ describe("runOccurredTransitionSweep — Pass 3 already-held rosters (OPE-525)",
 
     expect(rosterStatusOf("twice")).toBe("HAS_LINKS_UNVERIFIED");
     expect(second.rosterAlreadyHeld).toBe(0); // already terminal, not re-selected
+  });
+});
+
+/**
+ * OPE-547 — Pass 3 used to key on `lifecycle_status = 'OCCURRED'`, which left
+ * two populations permanently unevaluated. Measured in prod 2026-08-26, among
+ * APPROVED non-tombstoned non-farmers-market events:
+ *
+ *     past + OCCURRED ..... 499 rows,   0 with a NULL vendor_roster_status
+ *     past + TENTATIVE .... 126 rows, 123 with a NULL vendor_roster_status
+ *
+ * The sweep was working perfectly on everything it could see. It could not see
+ * a past TENTATIVE event, because Pass 1 only transitions SCHEDULED /
+ * RESCHEDULED / MOVED_ONLINE, and TENTATIVE→OCCURRED is not a legal lifecycle
+ * transition regardless — a tentative event is one we never confirmed happened.
+ * So the fix widens Pass 3, not Pass 1, and the first test below is the one
+ * that would have caught the original defect.
+ */
+describe("Pass 3 — OPE-547: the event being OVER is what matters, not its label", () => {
+  function seedVendorLinks(eventId: string, n: number) {
+    for (let i = 0; i < n; i++) {
+      const vid = `${eventId}-v547-${i}`;
+      db.insert(users)
+        .values({ id: `u-${vid}`, email: `${vid}@example.com`, role: "VENDOR" })
+        .run();
+      db.insert(vendors)
+        .values({
+          id: vid,
+          userId: `u-${vid}`,
+          businessName: `Vendor ${vid}`,
+          slug: unsafeSlug(`vendor-${vid}`),
+        })
+        .run();
+      db.insert(eventVendors)
+        .values({ id: `ev-${vid}`, eventId, vendorId: vid, status: "CONFIRMED" })
+        .run();
+    }
+  }
+
+  it("enqueues a PAST TENTATIVE event — the 123-row population Pass 1 can never reach", async () => {
+    // Pass 1 will not touch this row (TENTATIVE is not in its transition list),
+    // so before this fix it stayed NULL forever while looking, to every metric,
+    // like an event nobody needed to research.
+    seed({
+      id: "past-tentative",
+      slug: "past-tentative-2026",
+      lifecycleStatus: "TENTATIVE",
+      endDate: new Date(Date.UTC(2026, 6, 1, 12, 0, 0)), // before NOW
+    });
+
+    await runOccurredTransitionSweep(db, { now: NOW });
+
+    expect(lifecycleOf("past-tentative")).toBe("TENTATIVE"); // lifecycle untouched
+    expect(rosterStatusOf("past-tentative")).toBe("NEEDS_RESEARCH");
+  });
+
+  it("stamps an UPCOMING event that already holds a roster — Hartford's shape", async () => {
+    // The 37-vendor Hartford CT Fall Home Show, three months out with no roster
+    // status. Holding the links is a fact about now; it does not wait for the
+    // event to happen.
+    seed({
+      id: "upcoming-rostered",
+      slug: "upcoming-rostered-2027",
+      lifecycleStatus: "TENTATIVE",
+      startDate: new Date(Date.UTC(2027, 1, 1, 12, 0, 0)),
+      endDate: new Date(Date.UTC(2027, 1, 2, 12, 0, 0)), // after NOW
+    });
+    seedVendorLinks("upcoming-rostered", 12);
+
+    const res = await runOccurredTransitionSweep(db, { now: NOW });
+
+    expect(rosterStatusOf("upcoming-rostered")).toBe("HAS_LINKS_UNVERIFIED");
+    expect(res.rosterAlreadyHeld).toBe(1);
+  });
+
+  it("does NOT enqueue an upcoming event for research — nothing to research yet", async () => {
+    // The half that keeps this from being a queue-inflation change. An upcoming
+    // event with no links stays NULL: "not yet due" and "researched, found
+    // nothing" are different states and only one of them is true.
+    seed({
+      id: "upcoming-bare",
+      slug: "upcoming-bare-2027",
+      lifecycleStatus: "SCHEDULED",
+      startDate: new Date(Date.UTC(2027, 1, 1, 12, 0, 0)),
+      endDate: new Date(Date.UTC(2027, 1, 2, 12, 0, 0)),
+    });
+
+    const res = await runOccurredTransitionSweep(db, { now: NOW });
+
+    expect(rosterStatusOf("upcoming-bare")).toBeNull();
+    expect(res.rosterEnqueued).toBe(0);
+  });
+
+  it("an upcoming event with a THIN set of links is left NULL, not stamped", async () => {
+    // Selected by neither arm: not over, and below ROSTER_EVIDENCE_MIN. It must
+    // fall through untouched rather than being stamped on weak evidence.
+    seed({
+      id: "upcoming-thin",
+      slug: "upcoming-thin-2027",
+      lifecycleStatus: "SCHEDULED",
+      startDate: new Date(Date.UTC(2027, 1, 1, 12, 0, 0)),
+      endDate: new Date(Date.UTC(2027, 1, 2, 12, 0, 0)),
+    });
+    seedVendorLinks("upcoming-thin", 3);
+
+    await runOccurredTransitionSweep(db, { now: NOW });
+
+    expect(rosterStatusOf("upcoming-thin")).toBeNull();
+  });
+});
+
+/**
+ * OPE-547 — the writer now applies the same target definition the metric does.
+ * OPE-528 added `rosterResearchTargetWhere()` to get_roster_coverage but not to
+ * this pass, so the sweep kept minting rows the reader then had to exclude:
+ * 128 weekly farmers-market occurrences and 8 REJECTED events were in the
+ * queue, and because the drain sorts end_date_desc they sat at the TOP of it.
+ */
+describe("Pass 3 — OPE-547: the writer honours the same exclusions as the reader", () => {
+  it("does not enqueue a weekly farmers market", async () => {
+    seed({
+      id: "fm",
+      slug: "rutland-farmers-market-2026-07-04",
+      categories: JSON.stringify(["Farmers Market"]),
+      lifecycleStatus: "OCCURRED",
+      endDate: new Date(Date.UTC(2026, 6, 4, 12, 0, 0)),
+    });
+
+    await runOccurredTransitionSweep(db, { now: NOW });
+
+    expect(rosterStatusOf("fm")).toBeNull();
+  });
+
+  it("does not enqueue a REJECTED event — the decision is already taken", async () => {
+    seed({
+      id: "rejected",
+      slug: "rejected-2026",
+      status: "REJECTED",
+      lifecycleStatus: "OCCURRED",
+      endDate: new Date(Date.UTC(2026, 6, 4, 12, 0, 0)),
+    });
+
+    await runOccurredTransitionSweep(db, { now: NOW });
+
+    expect(rosterStatusOf("rejected")).toBeNull();
+  });
+
+  it("still enqueues an event with NO categories at all", async () => {
+    // The COALESCE trap `isNonResearchCategory` documents: in SQL
+    // `lower(NULL) LIKE '%x%'` is NULL, so `NOT (...)` is NULL and the row
+    // fails the filter. Without the COALESCE every unclassified event would
+    // silently vanish from the queue — a worse bug than the one being fixed.
+    seed({
+      id: "uncategorised",
+      slug: "uncategorised-2026",
+      categories: null,
+      lifecycleStatus: "OCCURRED",
+      endDate: new Date(Date.UTC(2026, 6, 4, 12, 0, 0)),
+    });
+
+    await runOccurredTransitionSweep(db, { now: NOW });
+
+    expect(rosterStatusOf("uncategorised")).toBe("NEEDS_RESEARCH");
+  });
+});
+
+/**
+ * OPE-547 / OPE-246 — the sweep must leave proof it RAN.
+ *
+ * It had no probe for its whole life, which is how a pass that silently skipped
+ * 123 rows went unnoticed. Its yield cannot serve as the signal: Pass 1
+ * transitions nothing on a day when no event ends, and Pass 3's enqueue count
+ * correctly reaches zero once the backlog drains. So the stamp must be written
+ * on EVERY run — including, and especially, a run that did nothing.
+ */
+describe("Pass 4 — OPE-547: per-run heartbeat stamp", () => {
+  it("stamps agent_heartbeats even when the sweep does no work at all", async () => {
+    // No events seeded. This is the case that matters: a quiet run and a dead
+    // cron produce identical yields, and only the stamp tells them apart.
+    const res = await runOccurredTransitionSweep(db, { now: NOW });
+    expect(res.transitioned).toBe(0);
+    expect(res.rosterEnqueued).toBe(0);
+
+    const row = db
+      .select()
+      .from(agentHeartbeats)
+      .where(eq(agentHeartbeats.agentCode, "watchdog:occurred-sweep"))
+      .all()[0];
+    expect(row).toBeDefined();
+    expect(row.lastSeenAt.getTime()).toBe(NOW.getTime());
+    expect(row.kind).toBe("watchdog");
+  });
+
+  it("updates the existing stamp rather than accumulating a row per run", async () => {
+    const LATER = new Date(NOW.getTime() + 24 * 60 * 60 * 1000);
+    await runOccurredTransitionSweep(db, { now: NOW });
+    await runOccurredTransitionSweep(db, { now: LATER });
+
+    const rows = db
+      .select()
+      .from(agentHeartbeats)
+      .where(eq(agentHeartbeats.agentCode, "watchdog:occurred-sweep"))
+      .all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].lastSeenAt.getTime()).toBe(LATER.getTime());
+  });
+
+  it("records what the run did, so a stamp is auditable and not just a pulse", async () => {
+    seed({
+      id: "stamped",
+      slug: "stamped-2026",
+      endDate: new Date(Date.UTC(2026, 6, 4, 12, 0, 0)),
+    });
+
+    await runOccurredTransitionSweep(db, { now: NOW });
+
+    const row = db
+      .select()
+      .from(agentHeartbeats)
+      .where(eq(agentHeartbeats.agentCode, "watchdog:occurred-sweep"))
+      .all()[0];
+    expect(row.note).toContain("transitioned=1");
+    expect(row.note).toContain("errors=0");
   });
 });

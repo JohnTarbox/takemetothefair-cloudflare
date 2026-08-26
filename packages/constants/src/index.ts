@@ -533,6 +533,29 @@ export const PRODUCER_CLASS_CATEGORIES = [
 ] as const satisfies readonly EventCategory[];
 export type ProducerClassCategory = (typeof PRODUCER_CLASS_CATEGORIES)[number];
 
+/**
+ * OPE-525/527 — how many non-sponsor vendor links count as "we already hold
+ * this roster", so the occurred-sweep stamps HAS_LINKS_UNVERIFIED instead of
+ * queueing the event for research it does not need.
+ *
+ * 10 is drawn from the prod distribution of the rows this fixed, not picked for
+ * roundness. Of the 34 already-linked events the sweep had stamped
+ * NEEDS_RESEARCH, 15 carried >=10 non-sponsor links and held 1,396 of the 1,440
+ * links between them (97%); the remaining 19 held 44 links, thirteen of them
+ * three or fewer. So the threshold separates "an ingested exhibitor list" from
+ * "a couple of vendors we happen to know about", and the latter genuinely does
+ * still need research — re-surfacing those is correct, not a bug.
+ *
+ * Corroborated independently 2026-08-26 (OPE-547): across all 66 rows a human
+ * researcher has ever stamped HAS_ROSTER, the MINIMUM link count is 8 and every
+ * one of them holds 5+. Nobody has ever called a 1–4 link event a roster.
+ *
+ * OPE-547 moved this out of `mcp-server/src/event-occurred-sweep.ts` so the
+ * writer that applies it and the metric that reports against it share one
+ * number. They were about to be two.
+ */
+export const ROSTER_EVIDENCE_MIN = 10;
+
 // ── TAX1 Phase 1 — audience / access enums ────────────────────────
 //
 // Orthogonal to EVENT_CATEGORIES (what an event IS) and to vendor-
