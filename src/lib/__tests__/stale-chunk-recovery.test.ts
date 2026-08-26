@@ -6,6 +6,8 @@ import {
   isStaleChunkError,
   recoverFromStaleChunk,
   type SentinelStorage,
+  MAX_RELOAD_ATTEMPTS,
+  WEBPACK_CHUNK_LOAD_TIMEOUT_MS,
 } from "@/lib/stale-chunk-recovery";
 
 /** In-memory sessionStorage stand-in. */
@@ -70,7 +72,9 @@ describe("claimReloadAttempt — the loop guard", () => {
   it("allows the first attempt and records it", () => {
     const s = memStorage();
     expect(claimReloadAttempt(s, 1_000_000)).toBe(true);
-    expect(s.data[CHUNK_RELOAD_SENTINEL]).toBe("1000000");
+    // OPE-550 — the sentinel now carries an attempt COUNT as well as the time.
+    // The cooldown bounds the rate; only the count bounds the total.
+    expect(s.data[CHUNK_RELOAD_SENTINEL]).toBe("1:1000000");
   });
 
   it("REFUSES a second attempt inside the cooldown — this is the anti-loop property", () => {
@@ -137,5 +141,97 @@ describe("recoverFromStaleChunk", () => {
     // Not consuming the sentinel matters: an ordinary bug must not disarm the
     // recovery for a real stale-chunk error moments later.
     expect(s.data[CHUNK_RELOAD_SENTINEL]).toBeUndefined();
+  });
+});
+
+/**
+ * OPE-550 — the 4h21m reload loop.
+ *
+ * One iPhone reloaded `/blog/gun-shows-in-maine-2026-…` 40 times over 4h21m.
+ * Measured gaps between consecutive `error_logs` rows: 121, 121, 121, 122 …
+ * seconds — webpack's 120s `chunkLoadTimeout` plus a reload round-trip.
+ *
+ * The sentinel was working perfectly. At a 60s cooldown it simply could not
+ * block a loop whose iterations are 121s apart: the cooldown was half the
+ * timeout, so every iteration was outside the window by construction. The
+ * reported hypothesis — that `sessionStorage` was failing open on iOS Safari —
+ * is falsified by that same regularity: a sentinel that never persisted would
+ * loop at reload speed, one or two seconds, not a metronomic 121.
+ *
+ * These lock the two properties that actually bound it.
+ */
+describe("OPE-550 — a timeout-driven loop cannot outrun the cooldown", () => {
+  it("REFUSES the reload 121 seconds later — the exact observed cadence", () => {
+    // The regression test in one assertion. Under the old 60s cooldown this
+    // returned true, forty times over four hours.
+    const s = memStorage();
+    const t0 = 1_000_000;
+    expect(claimReloadAttempt(s, t0)).toBe(true);
+    expect(claimReloadAttempt(s, t0 + 121_000)).toBe(false);
+  });
+
+  it("keeps the cooldown safely above webpack's chunk timeout", () => {
+    // The derivation, asserted rather than left in prose: if Next's default
+    // ever rises past the cooldown, the loop comes straight back.
+    expect(RELOAD_COOLDOWN_MS).toBeGreaterThan(WEBPACK_CHUNK_LOAD_TIMEOUT_MS);
+    expect(RELOAD_COOLDOWN_MS).toBeGreaterThanOrEqual(WEBPACK_CHUNK_LOAD_TIMEOUT_MS * 4);
+  });
+
+  it("stops entirely after MAX_RELOAD_ATTEMPTS, however long the user waits", () => {
+    // The cooldown bounds the RATE; at one per 10 minutes a stalled connection
+    // still yields 24 reloads in four hours. Only the ceiling bounds the total.
+    const s = memStorage();
+    let t = 1_000_000;
+    for (let i = 0; i < MAX_RELOAD_ATTEMPTS; i++) {
+      expect(claimReloadAttempt(s, t)).toBe(true);
+      t += RELOAD_COOLDOWN_MS;
+    }
+    expect(claimReloadAttempt(s, t)).toBe(false);
+    expect(claimReloadAttempt(s, t + RELOAD_COOLDOWN_MS * 100)).toBe(false);
+  });
+
+  it("the ceiling holds even if the clock jumps backwards", () => {
+    // Checked before the cooldown on purpose: a bogus timestamp must not buy
+    // an unbounded budget.
+    const s = memStorage();
+    let t = 1_000_000;
+    for (let i = 0; i < MAX_RELOAD_ATTEMPTS; i++) {
+      claimReloadAttempt(s, t);
+      t += RELOAD_COOLDOWN_MS;
+    }
+    expect(claimReloadAttempt(s, 0)).toBe(false);
+    expect(claimReloadAttempt(s, -1_000_000)).toBe(false);
+  });
+});
+
+describe("OPE-550 — unreadable sentinel states resolve toward FEWER reloads", () => {
+  it("treats the legacy bare-timestamp format as one attempt already spent", () => {
+    // A tab open across the deploy must not be handed a fresh budget.
+    const s = memStorage();
+    s.data[CHUNK_RELOAD_SENTINEL] = "1000000";
+    expect(claimReloadAttempt(s, 1_000_000 + RELOAD_COOLDOWN_MS)).toBe(true);
+    // ...and that counted, so only MAX-2 remain after this one.
+    expect(s.data[CHUNK_RELOAD_SENTINEL]).toBe(`2:${1_000_000 + RELOAD_COOLDOWN_MS}`);
+  });
+
+  it("treats a corrupt count as exhausted rather than as zero", () => {
+    const s = memStorage();
+    s.data[CHUNK_RELOAD_SENTINEL] = "banana:1000000";
+    expect(claimReloadAttempt(s, 9_000_000)).toBe(false);
+  });
+
+  it("still refuses everything when storage throws", () => {
+    // Unchanged by OPE-550, and re-asserted because the ticket's acceptance
+    // criterion names it: no sentinel must mean no reload, not free reloads.
+    const throwing = {
+      getItem() {
+        throw new Error("SecurityError");
+      },
+      setItem() {
+        throw new Error("SecurityError");
+      },
+    };
+    expect(claimReloadAttempt(throwing, 1)).toBe(false);
+    expect(claimReloadAttempt(null, 1)).toBe(false);
   });
 });
