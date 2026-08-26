@@ -36,6 +36,7 @@ import { SITE_URL } from "@takemetothefair/constants";
 import { inspectUrl, ScApiError, ScConfigError, type ScEnv } from "@/lib/search-console";
 import { fingerprintFor } from "@/lib/site-health";
 import { summarizeRichResults } from "@/lib/gsc-rich-results";
+import { buildPageLastChangedMap } from "@/lib/gsc-page-last-changed";
 import { reverifyHealthIssue, LOCALLY_DECIDABLE_SQL_PROBES } from "@/lib/site-health-reverify";
 import { HEALTH_RESOLUTION_REASON } from "@takemetothefair/db-schema";
 import { getIndexableVendorRows } from "@/lib/sitemap/indexable-vendors";
@@ -856,6 +857,23 @@ export async function runSweep(
 
   if (urls.length === 0) return result;
 
+  // OPE-567 — one batched read of every inspected page's `updated_at`, before
+  // the loop. A GSC verdict describes the last CRAWL; without this the sweep
+  // cannot tell a live failure from one about a version of the page that
+  // stopped existing two months ago. Failsoft: if the lookup throws, the map is
+  // empty, every verdict is treated as current, and the sweep behaves exactly
+  // as it did before this ticket.
+  let pageLastChanged = new Map<string, Date>();
+  try {
+    pageLastChanged = await buildPageLastChangedMap(db, urls);
+  } catch (error) {
+    result.errors.push(
+      `page-last-changed lookup failed (verdicts treated as current): ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  }
+
   for (const url of urls) {
     const path = pathFromUrl(url);
     try {
@@ -971,7 +989,12 @@ export async function runSweep(
       // two months because the sweep persisted only coverageState. A FAIL/ERROR
       // rich result becomes its own GSC_RICH_RESULT_FAIL health row (distinct
       // fingerprint from the coverage row, so the two open/resolve independently).
-      const rr = summarizeRichResults(inspection.richResults);
+      const rr = summarizeRichResults(inspection.richResults, {
+        lastCrawlTime: inspection.index.lastCrawlTime
+          ? new Date(inspection.index.lastCrawlTime)
+          : null,
+        pageLastChangedAt: pageLastChanged.get(url) ?? null,
+      });
       await recordHealthIssue(
         db,
         {

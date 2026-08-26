@@ -1016,7 +1016,19 @@ export function registerAnalyticsTools(server: McpServer, auth: AuthContext, env
 
   server.tool(
     "get_site_health_issues",
-    "Unified Bing + GSC site health issues with snooze state. Filter by source (BING_SCAN | BING_SITEMAP | GSC_SITEMAP | GSC_URL_INSPECTION), severity (ERROR | WARNING | NOTICE), or hideSnoozed. Admin only.",
+    [
+      "Unified Bing + GSC site health issues with snooze state. Filter by source",
+      "(BING_SCAN | BING_SITEMAP | GSC_SITEMAP | GSC_URL_INSPECTION), severity, or hideSnoozed.",
+      "Severities actually present are ERROR | WARNING | INFO — NOT 'NOTICE', which this",
+      "description claimed for months and which has never existed in the table.",
+      "",
+      "OPE-567 — a GSC_RICH_RESULT_FAIL row at INFO whose message begins STALE VERDICT is a",
+      "verdict about a version of the page that no longer exists: Google last crawled before",
+      "the row was updated. It is reported, not suppressed, so you can see that Google still",
+      "thinks the page is broken and has not looked since. Do not action it; it clears on the",
+      "next crawl. Measured 2026-08-26, 52 of 52 rows in that class were false positives.",
+      "Admin only.",
+    ].join(" "),
     {
       source: z.enum(["BING_SCAN", "BING_SITEMAP", "GSC_SITEMAP", "GSC_URL_INSPECTION"]).optional(),
       severity: z.enum(["ERROR", "WARNING", "NOTICE"]).optional(),
