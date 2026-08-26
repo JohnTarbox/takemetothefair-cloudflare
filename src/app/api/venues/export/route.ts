@@ -2,10 +2,10 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { venues } from "@/lib/db/schema";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, or, sql } from "drizzle-orm";
 import { parseJsonArray } from "@/types";
 import { auth } from "@/lib/auth";
-import { sanitizeLikeInput } from "@/lib/utils";
+import { containsCI } from "@/lib/db/contains-ci";
 import { logError } from "@/lib/logger";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
@@ -35,9 +35,8 @@ export async function GET(request: Request) {
     }
 
     if (query) {
-      conditions.push(
-        sql`(${venues.name} LIKE ${"%" + sanitizeLikeInput(query) + "%"} OR ${venues.city} LIKE ${"%" + sanitizeLikeInput(query) + "%"})`
-      );
+      // OPE-565 — instr() via containsCI; no LIKE pattern built from input.
+      conditions.push(or(containsCI(venues.name, query), containsCI(venues.city, query))!);
     }
 
     // Fetch all venues with event counts

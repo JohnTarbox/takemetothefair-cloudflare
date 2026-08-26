@@ -128,6 +128,9 @@ jobs:
       - name: Check MCP tools are registered on BOTH transports (OPE-469)
         run: npx tsx scripts/check-mcp-tools-both-paths.ts
 
+      - name: Guard against LIKE patterns built from user input (OPE-565)
+        run: npx tsx scripts/check-d1-like-user-input.ts
+
   e2e:
     name: E2E Tests
     runs-on: ubuntu-latest

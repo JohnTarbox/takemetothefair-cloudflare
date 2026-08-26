@@ -17,10 +17,11 @@ export const dynamic = "force-dynamic";
  * from/subject so the thread is legible. Admin-gated (PII: recipients + subjects).
  */
 import { NextRequest, NextResponse } from "next/server";
+import { containsCI } from "@/lib/db/contains-ci";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { emailSendLedger, inboundEmails } from "@/lib/db/schema";
-import { and, desc, eq, gte, inArray, like, type SQL } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, type SQL } from "drizzle-orm";
 
 const ALLOWED_STATUSES = ["sent", "failed", "stubbed"] as const;
 
@@ -41,7 +42,8 @@ export async function GET(request: NextRequest) {
   const conditions: SQL[] = [
     gte(emailSendLedger.sentAt, new Date(Date.now() - sinceHours * 3600_000)),
   ];
-  if (q) conditions.push(like(emailSendLedger.recipient, `%${q}%`));
+  // OPE-565 — instr() via containsCI; no LIKE pattern built from input.
+  if (q) conditions.push(containsCI(emailSendLedger.recipient, q));
   if (source) conditions.push(eq(emailSendLedger.source, source));
   if (inboundEmailId) conditions.push(eq(emailSendLedger.inboundEmailId, inboundEmailId));
   if (statusParam) {

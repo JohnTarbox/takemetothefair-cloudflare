@@ -1,8 +1,9 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
+import { containsCI } from "@/lib/db/contains-ci";
 import { withAuth } from "@/lib/api/with-auth";
 import { errorLogs } from "@/lib/db/schema";
-import { desc, eq, like, and, sql, lt } from "drizzle-orm";
+import { desc, eq, and, sql, lt } from "drizzle-orm";
 
 export const GET = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
   const searchParams = request.nextUrl.searchParams;
@@ -13,8 +14,12 @@ export const GET = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
 
   const conditions = [];
   if (level) conditions.push(eq(errorLogs.level, level));
-  if (source) conditions.push(like(errorLogs.source, `%${source}%`));
-  if (q) conditions.push(like(errorLogs.message, `%${q}%`));
+  // OPE-565 — instr() via containsCI. Admin-only, but `q` searches
+  // `error_logs.message`, and an operator pasting a whole stack trace in to
+  // find its siblings is the most natural possible use of this box — and
+  // exactly the shape that builds an enormous LIKE pattern.
+  if (source) conditions.push(containsCI(errorLogs.source, source));
+  if (q) conditions.push(containsCI(errorLogs.message, q));
 
   const logs = await db
     .select({
