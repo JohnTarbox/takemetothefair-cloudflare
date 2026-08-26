@@ -5,7 +5,7 @@ import { isAuthorized } from "@/lib/api-auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { rosterResearchTargetWhere, isNonResearchCategory } from "@takemetothefair/db-schema";
 import { events, eventVendors } from "@/lib/db/schema";
-import { PRODUCER_CLASS_CATEGORIES } from "@takemetothefair/constants";
+import { PRODUCER_CLASS_CATEGORIES, ROSTER_EVIDENCE_MIN } from "@takemetothefair/constants";
 
 /**
  * GET /api/admin/analytics/roster-coverage
@@ -123,6 +123,53 @@ export async function GET(request: NextRequest) {
       .where(inArray(events.vendorRosterStatus, [...queueStatuses]));
     const queueOf = (s: string): number => queueRows.find((r) => r.status === s)?.n ?? 0;
 
+    // OPE-547 — the NULL population, reported as a first-class total.
+    //
+    // Until now a NULL vendor_roster_status was counted by NOTHING. The
+    // `producerClass` block below computes `unevaluated` from byStatus(null),
+    // but its denominator is PAST + producer-class + OCCURRED, so it read 0
+    // while 651 research targets carried no status at all. The `queue` block
+    // uses inArray over the four queue statuses, and NULL is never in an
+    // inArray — so it could not see them either.
+    //
+    // The effect was a dashboard on which `unevaluated: 0` sat next to a
+    // 37-vendor home show with no roster status, and a drain could set three
+    // terminal verdicts and move `needsResearchTotal` by zero. Measured
+    // 2026-08-26, among APPROVED non-tombstoned non-farmers-market events:
+    //
+    //     past + OCCURRED ..... 499 rows,   0 NULL   <- the sweep works
+    //     past + TENTATIVE .... 126 rows, 123 NULL   <- Pass 3 never saw them
+    //     upcoming ............ 483 rows, 483 NULL   <- legitimately not yet due
+    //
+    // Past and upcoming are split because they mean opposite things. A past
+    // NULL row is a gap: the event is over and nothing was ever decided. An
+    // upcoming NULL row is correct: there is nothing to research yet. Folding
+    // them into one number would make the honest 483 hide the 123 that matter,
+    // which is the same mistake this field exists to undo.
+    const rosterGradeLinks = sql<number>`(
+      SELECT COUNT(*) FROM ${eventVendors}
+      WHERE ${eventVendors.eventId} = ${events.id}
+        AND ${eventVendors.status} IN ('CONFIRMED', 'APPROVED')
+        AND (${eventVendors.participationType} IS NULL
+             OR ${eventVendors.participationType} <> 'SPONSOR_ONLY')
+    )`;
+    const nowSecs = Math.floor(now.getTime() / 1000);
+    const isOver = sql`${events.endDate} IS NOT NULL AND ${events.endDate} < ${nowSecs}`;
+    const [unevalRow] = await db
+      .select({
+        total: sql<number>`count(*)`,
+        past: sql<number>`sum(case when ${isOver} then 1 else 0 end)`,
+        upcoming: sql<number>`sum(case when ${events.endDate} is not null and not (${isOver}) then 1 else 0 end)`,
+        undated: sql<number>`sum(case when ${events.endDate} is null then 1 else 0 end)`,
+        // The "finished work with no receipt" bucket — rows already holding
+        // roster-grade links that no status records. These are what a drain
+        // would otherwise research from scratch.
+        withRosterGradeLinks: sql<number>`sum(case when ${rosterGradeLinks} >= ${ROSTER_EVIDENCE_MIN} then 1 else 0 end)`,
+        withSomeLinks: sql<number>`sum(case when ${rosterGradeLinks} > 0 then 1 else 0 end)`,
+      })
+      .from(events)
+      .where(and(rosterResearchTargetWhere(), isNull(events.vendorRosterStatus)));
+
     // 8-week links-added trend. Bucket in JS (Drizzle returns Date objects, so
     // we sidestep any epoch-unit ambiguity in the stored integer timestamps).
     const WEEKS = 8;
@@ -172,6 +219,18 @@ export async function GET(request: NextRequest) {
         coveragePct: pct(hasRoster, total),
         coverageOfResearchablePct: pct(hasRoster, researchable),
         coverageInclUnverifiedPct: pct(hasRoster + hasLinksUnverified, total),
+      },
+      // OPE-547 — see the computation above. Deliberately a SIBLING of `queue`
+      // rather than a field inside it: these rows are not in the queue, and
+      // nesting them there would imply a drain could close them today.
+      unevaluated: {
+        total: unevalRow?.total ?? 0,
+        past: unevalRow?.past ?? 0,
+        upcoming: unevalRow?.upcoming ?? 0,
+        undated: unevalRow?.undated ?? 0,
+        withRosterGradeLinks: unevalRow?.withRosterGradeLinks ?? 0,
+        withSomeLinks: unevalRow?.withSomeLinks ?? 0,
+        rosterGradeLinkThreshold: ROSTER_EVIDENCE_MIN,
       },
       queue: {
         needsResearchTotal: queueOf("NEEDS_RESEARCH"),
