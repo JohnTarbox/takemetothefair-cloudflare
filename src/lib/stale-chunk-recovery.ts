@@ -35,17 +35,75 @@
  * rather than asserted in a comment.
  */
 
-/** sessionStorage key holding the epoch-ms of the last recovery attempt. */
+/** sessionStorage key holding `"<attempts>:<lastEpochMs>"` for this tab. */
 export const CHUNK_RELOAD_SENTINEL = "mmatf:stale-chunk-reload-at";
+
+/**
+ * webpack's `output.chunkLoadTimeout`, in ms. Not configured in
+ * `next.config.mjs`, so this is the bundled default, read from source:
+ * `node_modules/next/dist/compiled/webpack/bundle5.js` → `D(v,"chunkLoadTimeout",12e4)`.
+ *
+ * Recorded as a named constant because the cooldown below is DERIVED from it.
+ * If Next ever changes the default, the derivation is what must be re-checked,
+ * and a bare 60_000 gave nobody anything to re-check.
+ */
+export const WEBPACK_CHUNK_LOAD_TIMEOUT_MS = 120_000;
 
 /**
  * Minimum gap between two recovery attempts in one tab.
  *
- * 60s is far longer than a reload round-trip (so a loop is blocked on its second
- * iteration) and far shorter than the gap between two deploys (so a genuinely
- * new incident still gets its one attempt).
+ * ## OPE-550 — why this is 10 minutes and was 60 seconds
+ *
+ * At 60s this sentinel could not stop a loop, and did not: one iPhone spent
+ * **4h21m** reloading `/blog/gun-shows-in-maine-2026-…` 40 times. Measured gaps
+ * between consecutive errors, from `error_logs`:
+ *
+ *     22:18:26 → 22:20:27 → 22:22:28 → 22:24:29 → 22:26:31
+ *        121s       121s       121s       122s
+ *
+ * That is `WEBPACK_CHUNK_LOAD_TIMEOUT_MS` plus a reload round-trip, and it is
+ * the whole mechanism: the chunk request STALLS rather than failing, webpack
+ * gives up after 120s, and by then the 60s cooldown has long since expired —
+ * so the next reload is permitted, and restarts the same doomed download.
+ *
+ * The cooldown was structurally incapable of blocking a timeout-driven loop,
+ * because it was exactly half the timeout. The original comment reasoned that
+ * "60s is far longer than a reload round-trip, so a loop is blocked on its
+ * second iteration" — true for a `missing:` chunk, which fails in milliseconds,
+ * and false for a `timeout:` chunk, which cannot fail in under 120s by
+ * definition.
+ *
+ * ⚠️ The 121s regularity also FALSIFIES the reported hypothesis that the
+ * sentinel was failing open on iOS Safari. A sentinel that never persisted
+ * would loop at reload speed — one to two seconds. Metronomic 121s gaps are
+ * proof the sentinel was being written and read correctly on every iteration.
+ * It worked perfectly and permitted the loop anyway.
+ *
+ * 10 minutes is 5× the timeout, so no stalled-chunk cycle can outrun it, while
+ * still being far shorter than the gap between two deploys.
  */
-export const RELOAD_COOLDOWN_MS = 60_000;
+export const RELOAD_COOLDOWN_MS = 10 * 60_000;
+
+/**
+ * Absolute per-tab ceiling on recovery reloads, regardless of the cooldown.
+ *
+ * The cooldown alone bounds the RATE, not the TOTAL: at one reload per 10
+ * minutes a persistently stalled connection still produces 24 in four hours.
+ * A user is not helped by a 25th attempt, and each one costs them their scroll
+ * position and any unsubmitted form state.
+ *
+ * Three, because a tab here can legitimately outlive several deploys (this
+ * repo ships multiple times a day) and each deploy is one genuine incident —
+ * but a tab that has already failed to recover three times is not going to.
+ * After that the user keeps the error, which is the honest outcome and the one
+ * they can act on.
+ *
+ * ⚠️ Deliberately NOT an in-memory counter, which the ticket suggested. A
+ * reload destroys in-memory state, so an in-memory counter is always 0 on the
+ * iteration that matters and bounds nothing. The bound has to live in storage
+ * precisely because the thing being bounded is a reload.
+ */
+export const MAX_RELOAD_ATTEMPTS = 3;
 
 /**
  * Messages that mean "the chunk this build asked for is not there".
@@ -100,16 +158,43 @@ export interface SentinelStorage {
 export function claimReloadAttempt(storage: SentinelStorage | null, nowMs: number): boolean {
   if (!storage) return false;
   try {
-    const previous = storage.getItem(CHUNK_RELOAD_SENTINEL);
-    if (previous !== null) {
-      const last = Number.parseInt(previous, 10);
-      if (Number.isFinite(last) && nowMs - last < RELOAD_COOLDOWN_MS) return false;
-    }
-    storage.setItem(CHUNK_RELOAD_SENTINEL, String(nowMs));
+    const { attempts, lastMs } = readSentinel(storage);
+    // OPE-550 — the absolute ceiling is checked FIRST, so it holds even if the
+    // clock jumps, the stored timestamp is garbage, or a future edit loosens
+    // the cooldown.
+    if (attempts >= MAX_RELOAD_ATTEMPTS) return false;
+    if (lastMs !== null && nowMs - lastMs < RELOAD_COOLDOWN_MS) return false;
+    storage.setItem(CHUNK_RELOAD_SENTINEL, `${attempts + 1}:${nowMs}`);
     return true;
   } catch {
     return false;
   }
+}
+
+/**
+ * Parse the sentinel into an attempt count and the last attempt time.
+ *
+ * Tolerates the pre-OPE-550 format (a bare epoch-ms with no count) so a tab
+ * open across the deploy is not handed a fresh budget: an unparseable or
+ * legacy value counts as one attempt already spent, which errs toward fewer
+ * reloads. Every unreadable state resolves in the safe direction.
+ */
+function readSentinel(storage: SentinelStorage): { attempts: number; lastMs: number | null } {
+  const raw = storage.getItem(CHUNK_RELOAD_SENTINEL);
+  if (raw === null) return { attempts: 0, lastMs: null };
+
+  const [countPart, timePart] = raw.split(":");
+  if (timePart === undefined) {
+    // Legacy: a bare timestamp.
+    const legacy = Number.parseInt(countPart, 10);
+    return { attempts: 1, lastMs: Number.isFinite(legacy) ? legacy : null };
+  }
+  const attempts = Number.parseInt(countPart, 10);
+  const lastMs = Number.parseInt(timePart, 10);
+  return {
+    attempts: Number.isFinite(attempts) && attempts >= 0 ? attempts : MAX_RELOAD_ATTEMPTS,
+    lastMs: Number.isFinite(lastMs) ? lastMs : null,
+  };
 }
 
 /**
