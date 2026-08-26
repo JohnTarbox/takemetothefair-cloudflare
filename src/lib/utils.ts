@@ -30,9 +30,21 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-export function sanitizeLikeInput(input: string): string {
-  return input.replace(/[%_]/g, "\\$&");
-}
+/**
+ * REMOVED 2026-08-26 (OPE-565). Use `containsCI` from `@/lib/db/contains-ci`.
+ *
+ * `sanitizeLikeInput` returned `input.replace(/[%_]/g, "\\$&")` — a backslash
+ * escape that SQLite honours only alongside an `ESCAPE` clause, which Drizzle's
+ * `like()` cannot emit. So at every one of its nine call sites the wildcard
+ * survived into the pattern AND the pattern got two characters longer per
+ * metacharacter: it made both problems it was named for slightly worse, while
+ * reading as a guard.
+ *
+ * `containsCI` compiles to `instr(lower(col), ?) > 0`. There is nothing to
+ * escape — `%` and `_` are literal to instr() — and no pattern-complexity
+ * ceiling to cross. `scripts/check-d1-like-user-input.ts` fails the build if
+ * this name comes back.
+ */
 
 /**
  * Generate bounds for prefix-based slug queries using string comparison.

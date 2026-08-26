@@ -1,8 +1,8 @@
-import { and, eq, isNotNull, like, notLike, or, isNull, lte, count, sql } from "drizzle-orm";
+import { and, eq, isNotNull, notLike, or, isNull, lte, count } from "drizzle-orm";
 import { events } from "@/lib/db/schema";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { upcomingEndPredicate, whenWindowEnd } from "@/lib/event-dates";
-import { sanitizeLikeInput } from "@/lib/utils";
+import { containsCI } from "@/lib/db/contains-ci";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 
 // Public filters that show up in /events?... URLs and could legitimately
@@ -74,18 +74,19 @@ export async function countPublicFilteredEvents(
   }
 
   if (searchParams.query) {
-    const query = sanitizeLikeInput(searchParams.query.toLowerCase().trim());
-    const searchTerm = `%${query}%`;
-    conditions.push(
-      or(
-        sql`LOWER(${events.name}) LIKE ${searchTerm}`,
-        sql`LOWER(${events.description}) LIKE ${searchTerm}`
-      )!
-    );
+    // OPE-565 — `instr()` via containsCI, matching the listing query in
+    // `app/events/(listing)/page.tsx`. These two run on the SAME request from
+    // the SAME user input, and OPE-548 converted only the listing half: the
+    // count query kept building a LIKE pattern from the search box, so the
+    // page could still throw on an input the listing now survives. Fixing one
+    // of two parallel paths is this codebase's most-repeated shape and this is
+    // an instance of it one hour old.
+    const query = searchParams.query.toLowerCase().trim();
+    conditions.push(or(containsCI(events.name, query), containsCI(events.description, query))!);
   }
 
   if (searchParams.category) {
-    conditions.push(like(events.categories, `%${searchParams.category}%`));
+    conditions.push(containsCI(events.categories, searchParams.category));
   }
 
   if (searchParams.featured === "true") {

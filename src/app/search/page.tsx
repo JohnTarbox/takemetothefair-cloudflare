@@ -4,7 +4,7 @@ import Image from "next/image";
 import { Calendar, MapPin, Store, FileText, HelpCircle, Search } from "lucide-react";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, vendors, blogPosts, users } from "@/lib/db/schema";
-import { and, eq, sql, desc, inArray, isNull } from "drizzle-orm";
+import { and, eq, or, sql, desc, inArray, isNull } from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
 import {
   collectBrandParentIdsToLoad,
@@ -12,7 +12,8 @@ import {
   type GroupableVendor,
 } from "@/lib/vendor-listing-grouping";
 import { upcomingEndPredicate } from "@/lib/event-dates";
-import { formatDateRange, sanitizeLikeInput } from "@/lib/utils";
+import { formatDateRange } from "@/lib/utils";
+import { containsCI } from "@/lib/db/contains-ci";
 import { formatDateMedium } from "@/lib/datetime";
 import { Card } from "@/components/ui/card";
 import { extractFirstImage } from "@/lib/markdown-utils";
@@ -52,12 +53,24 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
   }
 
   const db = getCloudflareDb();
-  // SEARCH1-class hardening (mirror of /api/search, 2026-06-13): cap the query
-  // length and escape LIKE metacharacters before building the pattern. An
-  // unanchored `%…%` over very long input trips SQLite's pattern-complexity
-  // limit — especially against large text columns — and 500s the whole page.
+  // OPE-565 — `instr()` via containsCI, not a LIKE pattern.
+  //
+  // The comment this replaces described hardening that did not hold. Two
+  // reasons, and both were invisible from the call site:
+  //
+  //  1. `sanitizeLikeInput` REPLACES `%` with `\%` — an escape that only works
+  //     alongside an `ESCAPE` clause, which nothing here emits. So the wildcard
+  //     survived into the pattern AND the pattern got longer.
+  //  2. Capping at 100 characters was calibrated against a limit nobody has
+  //     pinned down: the /events probes for OPE-548 passed a 202-character
+  //     pattern. A cap on the wrong axis is not a guard.
+  //
+  // `instr()` has no pattern-complexity ceiling at all, and `%`/`_` are literal
+  // to it — so searching for "100% off" now finds the text "100% off" instead
+  // of behaving as two wildcards. The length cap stays only to bound how much
+  // work a single request can ask for; it is no longer load-bearing.
   const MAX_QUERY_LENGTH = 100;
-  const searchTerm = `%${sanitizeLikeInput(q.slice(0, MAX_QUERY_LENGTH))}%`;
+  const term = q.slice(0, MAX_QUERY_LENGTH);
 
   // Promise.allSettled (not Promise.all) so one failing section degrades to
   // empty for that section instead of 500-ing the entire page.
@@ -77,7 +90,7 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
           isPublicEventStatus(),
           // A2 (Dev backlog 2026-06-05): 24h end-of-day grace per upcomingEndPredicate.
           upcomingEndPredicate(new Date()),
-          sql`(LOWER(${events.name}) LIKE LOWER(${searchTerm}) OR LOWER(${events.description}) LIKE LOWER(${searchTerm}))`,
+          or(containsCI(events.name, term), containsCI(events.description, term))!,
           // OPE-172 — honor the homepage region selector (undefined = all NE).
           stateFilter
         )
@@ -97,7 +110,7 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
       .where(
         and(
           eq(venues.status, "ACTIVE"),
-          sql`(LOWER(${venues.name}) LIKE LOWER(${searchTerm}) OR LOWER(${venues.city}) LIKE LOWER(${searchTerm}))`
+          or(containsCI(venues.name, term), containsCI(venues.city, term))!
         )
       )
       .orderBy(venues.name)
@@ -129,7 +142,11 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
         // Match against either business_name OR display_name OR description
         // so brand-name searches surface a row even when only the override
         // matches.
-        sql`(LOWER(${vendors.businessName}) LIKE LOWER(${searchTerm}) OR LOWER(COALESCE(${vendors.displayName}, '')) LIKE LOWER(${searchTerm}) OR LOWER(${vendors.description}) LIKE LOWER(${searchTerm}))`
+        or(
+          containsCI(vendors.businessName, term),
+          containsCI(sql`COALESCE(${vendors.displayName}, '')`, term),
+          containsCI(sql`COALESCE(${vendors.description}, '')`, term)
+        )!
       )
       .orderBy(vendors.businessName)
       .limit(15),
@@ -153,7 +170,10 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
           // body LIKE was the pattern-complexity trigger. body is still
           // SELECTed above for the card thumbnail (extractFirstImage), just
           // no longer matched against. COALESCE because some posts have NULL excerpt.
-          sql`(LOWER(${blogPosts.title}) LIKE LOWER(${searchTerm}) OR LOWER(COALESCE(${blogPosts.excerpt}, '')) LIKE LOWER(${searchTerm}))`
+          or(
+            containsCI(blogPosts.title, term),
+            containsCI(sql`COALESCE(${blogPosts.excerpt}, '')`, term)
+          )!
         )
       )
       .orderBy(desc(blogPosts.publishDate))

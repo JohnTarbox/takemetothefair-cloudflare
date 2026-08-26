@@ -3,11 +3,11 @@ import Link from "next/link";
 import { Search, X, Heart, Calendar, Filter } from "lucide-react";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { venues, userFavorites } from "@/lib/db/schema";
-import { eq, and, sql, isNotNull, isNull } from "drizzle-orm";
+import { eq, and, or, sql, isNotNull, isNull } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { VenuesView } from "@/components/venues/venues-view";
 import { logError } from "@/lib/logger";
-import { sanitizeLikeInput } from "@/lib/utils";
+import { containsCI } from "@/lib/db/contains-ci";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
 import { ItemListTracker } from "@/components/analytics/ItemListTracker";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
@@ -79,13 +79,14 @@ async function getVenues(searchParams: SearchParams, favoriteUserId?: string) {
     }
 
     if (searchParams.q) {
-      // Strip LIKE wildcards from user input so a query of "%" doesn't
-      // match every venue. Drizzle parameterizes the value, so this is
-      // wildcard hygiene rather than SQL escape.
-      const q = sanitizeLikeInput(searchParams.q);
-      conditions.push(
-        sql`(${venues.name} LIKE ${"%" + q + "%"} OR ${venues.city} LIKE ${"%" + q + "%"})`
-      );
+      // OPE-565 — `instr()` via containsCI. The comment here used to say the
+      // strip was "wildcard hygiene rather than SQL escape", which was the
+      // right intent and the wrong implementation: `sanitizeLikeInput` escapes
+      // rather than strips, so `%` survived into the pattern as a wildcard.
+      // instr() makes it literal, so a search for "%" now finds venues whose
+      // name contains "%" — i.e. none — instead of matching every venue.
+      const q = searchParams.q;
+      conditions.push(or(containsCI(venues.name, q), containsCI(venues.city, q))!);
     }
 
     // Use subquery for favorites filter (avoids D1 bind parameter limit)

@@ -1,0 +1,19 @@
+# LIKE/GLOB sites the guard flags as user-derived but that are safe.
+#
+# Format matches check-d1-inarray-params.allowlist: one `repo-relative/path.ts`
+# per line, optionally `:<line>` to pin a single site. `#` starts a comment.
+#
+# EMPTY ON PURPOSE, 2026-08-26. Every site the guard found was a real defect
+# and every one was fixed rather than allowlisted. Keep it that way if you can:
+# an entry here accepts a latent 500, and this family has already produced
+# 315 production errors across five call sites in 27 days.
+#
+# Before adding an entry, try the fix — it is usually one line:
+#   like(col, `%${x}%`)  →  containsCI(col, x)     from @/lib/db/contains-ci
+#
+# `containsCI` compiles to instr(lower(col), ?) > 0. It has no pattern-
+# complexity ceiling, and `%`/`_` become literal, which is what a person
+# typing them into a search box meant anyway.
+#
+# Add NEW entries only with an explicit reason (and an issue link if it is a
+# deferred fix rather than a genuine exception).

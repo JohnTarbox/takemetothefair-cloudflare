@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
+import { containsCI } from "@/lib/db/contains-ci";
 import Link from "next/link";
 import { EventsView } from "@/components/events/events-view";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, promoters, eventVendors, vendors } from "@/lib/db/schema";
-import { eq, and, lt, count, inArray, desc, sql } from "drizzle-orm";
+import { eq, and, lt, count, inArray, desc } from "drizzle-orm";
 import { isPubliclyVisibleVendorLink } from "@/lib/vendor-status";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { attachEventDayDates } from "@/lib/event-days-attach";
@@ -47,8 +48,10 @@ async function getPastEvents(searchParams: SearchParams) {
   }
 
   if (searchParams.category) {
-    const categoryPattern = `%${searchParams.category}%`;
-    conditions.push(sql`${events.categories} LIKE ${categoryPattern}` as ReturnType<typeof eq>);
+    // OPE-565 — instr() via containsCI. Found by the new CI guard, not by the
+    // manual sweep or the ticket: /events/past takes the same `?category=`
+    // query string as the main listing and had the same unguarded pattern.
+    conditions.push(containsCI(events.categories, searchParams.category) as ReturnType<typeof eq>);
   }
 
   // Narrow projection — D1's 100-col result-row cap; see

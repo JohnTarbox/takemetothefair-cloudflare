@@ -3,11 +3,11 @@ import { NextResponse } from "next/server";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues } from "@/lib/db/schema";
 import { eventVenueJoinProjection } from "@/lib/db/event-join-projection";
-import { eq, and, like, or } from "drizzle-orm";
+import { eq, and, or } from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { upcomingEndPredicate } from "@/lib/event-dates";
 import { auth } from "@/lib/auth";
-import { sanitizeLikeInput } from "@/lib/utils";
+import { containsCI } from "@/lib/db/contains-ci";
 import { logError } from "@/lib/logger";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
@@ -42,14 +42,12 @@ export async function GET(request: Request) {
     }
 
     if (query) {
-      const safeQuery = sanitizeLikeInput(query);
-      conditions.push(
-        or(like(events.name, `%${safeQuery}%`), like(events.description, `%${safeQuery}%`))!
-      );
+      // OPE-565 — instr() via containsCI; no LIKE pattern built from input.
+      conditions.push(or(containsCI(events.name, query), containsCI(events.description, query))!);
     }
 
     if (category) {
-      conditions.push(like(events.categories, `%${sanitizeLikeInput(category)}%`));
+      conditions.push(containsCI(events.categories, category));
     }
 
     if (featured === "true") {
