@@ -48,3 +48,37 @@ describe("SearchResultsTracker (OPE-248)", () => {
     expect(trackSearchResults).toHaveBeenLastCalledWith("craft", 0);
   });
 });
+
+/**
+ * OPE-549 item 4 — an incomplete search must not report a count.
+ *
+ * This component exists (OPE-248) so a zero is trustworthy: "zero-result
+ * queries are the ones telling us what inventory or aliasing we're missing."
+ * A section that THREW produces a zero meaning the opposite — the search never
+ * happened. Emitting it poisons the one metric this component was built to
+ * provide, and it does so silently, in the direction that manufactures fake
+ * demand signal.
+ */
+describe("SearchResultsTracker — incomplete searches (OPE-549)", () => {
+  beforeEach(() => {
+    trackSearchResults.mockClear();
+    cleanup();
+  });
+
+  it("emits nothing when a section failed, even with a zero count", () => {
+    render(<SearchResultsTracker query="fryeburg" resultsCount={0} incomplete />);
+    expect(trackSearchResults).not.toHaveBeenCalled();
+  });
+
+  it("emits nothing when a section failed even though OTHER sections returned results", () => {
+    // A partial count is not a smaller truth — it is a different number that
+    // reads as the real one.
+    render(<SearchResultsTracker query="fryeburg" resultsCount={5} incomplete />);
+    expect(trackSearchResults).not.toHaveBeenCalled();
+  });
+
+  it("still emits a genuine zero — the case the tracker exists for", () => {
+    render(<SearchResultsTracker query="fryeburg" resultsCount={0} />);
+    expect(trackSearchResults).toHaveBeenCalledWith("fryeburg", 0);
+  });
+});
