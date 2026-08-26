@@ -8,6 +8,18 @@ interface SearchResultsTrackerProps {
   query: string;
   /** Number of results this page rendered — 0 is the important case. */
   resultsCount: number;
+  /**
+   * OPE-549 — true when at least one search section FAILED rather than
+   * returning nothing. Suppresses the event entirely.
+   *
+   * Not a smaller count, and not a flag on the event: a count from an
+   * incomplete search is not a count. This tracker exists (OPE-248) precisely
+   * so a zero is trustworthy — "zero-result queries are the ones telling us
+   * what inventory or aliasing we're missing" — and a section that threw
+   * produces a zero that means the opposite. Emitting it would poison the one
+   * metric this component was built to provide.
+   */
+  incomplete?: boolean;
 }
 
 /**
@@ -30,18 +42,24 @@ interface SearchResultsTrackerProps {
  * Mirrors DetailPageTracker: a null-rendering client component dropped into a
  * Server Component page.
  */
-export function SearchResultsTracker({ query, resultsCount }: SearchResultsTrackerProps) {
+export function SearchResultsTracker({
+  query,
+  resultsCount,
+  incomplete = false,
+}: SearchResultsTrackerProps) {
   // Guard against React Strict Mode's double-invoke in dev and against a
   // re-render re-emitting for the same query. Keyed by query+count so a NEW
   // search on the same mounted page still emits.
   const lastSent = useRef<string | null>(null);
 
   useEffect(() => {
+    // OPE-549 — an incomplete search reports nothing at all.
+    if (incomplete) return;
     const key = `${query}::${resultsCount}`;
     if (lastSent.current === key) return;
     lastSent.current = key;
     trackSearchResults(query, resultsCount);
-  }, [query, resultsCount]);
+  }, [query, resultsCount, incomplete]);
 
   return null;
 }

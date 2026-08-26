@@ -14,6 +14,7 @@ import {
 import { upcomingEndPredicate } from "@/lib/event-dates";
 import { formatDateRange } from "@/lib/utils";
 import { containsCI } from "@/lib/db/contains-ci";
+import { formatSectionList } from "@/lib/search/section-failures";
 import { formatDateMedium } from "@/lib/datetime";
 import { Card } from "@/components/ui/card";
 import { extractFirstImage } from "@/lib/markdown-utils";
@@ -208,6 +209,34 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
   const vendorMatches = vendorsSettled.status === "fulfilled" ? vendorsSettled.value : [];
   const blogResults = blogSettled.status === "fulfilled" ? blogSettled.value : [];
 
+  // OPE-549 item 4 — a failed section must SAY so.
+  //
+  // The rejection has always been logged (above), but the page rendered the
+  // failure and a genuine zero identically: HTTP 200, "No results found". So a
+  // visitor whose query broke the events query was told, in as many words, that
+  // no events matched — and `view_search_results` reported resultsCount 0 as a
+  // real zero, feeding a metric that says demand does not exist.
+  //
+  // That silence is why the LIKE-pattern family ran for a month before anyone
+  // looked: nobody complains about a search that politely finds nothing.
+  // `[[feedback_silent_discard_reads_as_outage]]` — but the inverse, and worse,
+  // because the discard is invisible to the person it happened to.
+  //
+  // Note this deliberately does NOT throw. Unlike `/events` (REL1' §1), search
+  // is four independent sections, and failing the page because the blog index
+  // hiccuped would throw away three good result sets. Per-section honesty is
+  // the right granularity here; a whole-page error is not.
+  const failedSections = (
+    [
+      [eventsSettled, "events"],
+      [venuesSettled, "venues"],
+      [vendorsSettled, "vendors"],
+      [blogSettled, "blog posts"],
+    ] as const
+  )
+    .filter(([settled]) => settled.status === "rejected")
+    .map(([, label]) => label);
+
   // EH2-A6 (2026-06-13) — dedup the vendor results by brand-parent group, the
   // same way /api/search and the /vendors listing do, so `/search?q=leaf`
   // returns ONE LeafFilter card (the brand hub) instead of the hub plus each
@@ -320,17 +349,39 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
           Enhanced Measurement site-search auto-event, which carries
           search_term but never results_count — so zero-result queries were
           undetectable. This is a Server Component, hence the client child. */}
-      <SearchResultsTracker query={q} resultsCount={totalResults} />
+      <SearchResultsTracker
+        query={q}
+        resultsCount={totalResults}
+        incomplete={failedSections.length > 0}
+      />
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-navy">Search Results</h1>
         <p className="mt-2 text-muted-foreground">
-          {totalResults === 0
-            ? `No results found for "${q}"`
-            : `Found ${totalResults} result${totalResults !== 1 ? "s" : ""} for "${q}"`}
+          {totalResults === 0 && failedSections.length > 0
+            ? `We could not finish searching for "${q}"`
+            : totalResults === 0
+              ? `No results found for "${q}"`
+              : `Found ${totalResults} result${totalResults !== 1 ? "s" : ""} for "${q}"`}
         </p>
       </div>
 
-      {totalResults === 0 && (
+      {/* OPE-549 item 4 — the section-failure notice. Rendered whether or not
+          other sections returned results: a partial result set that looks
+          complete is the same lie as an empty one, just harder to notice. */}
+      {failedSections.length > 0 && (
+        <div
+          role="status"
+          className="mb-8 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100"
+        >
+          <p className="font-medium">Some results are missing</p>
+          <p className="mt-1">
+            We could not search {formatSectionList(failedSections)} just now, so anything matching
+            there is not shown. Please try again in a moment.
+          </p>
+        </div>
+      )}
+
+      {totalResults === 0 && failedSections.length === 0 && (
         <div className="text-center py-12">
           <Search className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
           <p className="text-muted-foreground">
