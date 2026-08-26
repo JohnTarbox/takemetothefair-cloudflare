@@ -170,6 +170,14 @@ export async function GET(request: NextRequest) {
       .from(events)
       .where(and(rosterResearchTargetWhere(), isNull(events.vendorRosterStatus)));
 
+    // OPE-547 follow-up — see the note at `hasLinksUnverifiedTotal`.
+    const [hasLinksUnverifiedRow] = await db
+      .select({ n: sql<number>`count(*)` })
+      .from(events)
+      .where(
+        and(rosterResearchTargetWhere(), eq(events.vendorRosterStatus, "HAS_LINKS_UNVERIFIED"))
+      );
+
     // 8-week links-added trend. Bucket in JS (Drizzle returns Date objects, so
     // we sidestep any epoch-unit ambiguity in the stored integer timestamps).
     const WEEKS = 8;
@@ -242,7 +250,24 @@ export async function GET(request: NextRequest) {
         needsRenderedFetchTotal: queueOf("NEEDS_RENDERED_FETCH"),
         // OPE-527 — not re-enqueued by the sweep (we already hold the links),
         // but targetable by a drain that wants to attribute them.
-        hasLinksUnverifiedTotal: queueOf("HAS_LINKS_UNVERIFIED"),
+        //
+        // OPE-547 follow-up — this read `queueOf("HAS_LINKS_UNVERIFIED")`, and
+        // `queueOf` looks in `queueRows`, which is filtered by
+        // `inArray(vendorRosterStatus, queueStatuses)` — an array that does NOT
+        // contain HAS_LINKS_UNVERIFIED. So it was structurally incapable of
+        // returning anything but 0.
+        //
+        // It went unnoticed because prod held ZERO rows in that status from the
+        // day OPE-527 created it until drizzle/0236 stamped 8 this afternoon —
+        // so 0 was accidentally the right answer for as long as anyone looked.
+        // The field's own comment calls these rows "targetable by a drain",
+        // which is precisely the claim a permanent 0 makes false.
+        //
+        // Counted directly against the same research-target definition the rest
+        // of this block uses, rather than by widening `queueStatuses`: that
+        // array defines what the QUEUE is, `excluded` is computed from it too,
+        // and this status is deliberately not in the queue.
+        hasLinksUnverifiedTotal: hasLinksUnverifiedRow?.n ?? 0,
         // OPE-528 — what the totals above deliberately leave out. Present so
         // the exclusion is auditable from the same response that applies it.
         excluded: {
