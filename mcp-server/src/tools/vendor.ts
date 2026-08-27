@@ -982,6 +982,23 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
 
       // ── Duplicate detection (K2 rewire, 2026-06-04) ──────────────
       // Was: inline venue+date-overlap query at the same venueId only.
+      // OPE-581 — provenance derived BEFORE the duplicate check, because the
+      // series-occurrence branch below writes a row too and used to send none
+      // of this. It was computed further down, after that branch had already
+      // returned, so the two write paths could not agree by construction.
+      // Hoisted rather than duplicated: one derivation, both paths.
+      const sourceLabel = params.source_label?.trim() || UNLABELED_SOURCE;
+      const sourceClassification = classifySource(sourceLabel, params.source_url);
+
+      // Same reason: the plain path filters categories against EVENT_CATEGORIES
+      // with an ["Event"] fallback, and the series branch needs the identical
+      // set or the two paths disagree on the same payload.
+      const validCategorySet = new Set<string>(EVENT_CATEGORIES);
+      const providedCategories = params.categories ?? [];
+      const filteredCategories = providedCategories.filter((c) => validCategorySet.has(c));
+      const droppedCategories = providedCategories.filter((c) => !validCategorySet.has(c));
+      const categoriesToStore = filteredCategories.length > 0 ? filteredCategories : ["Event"];
+
       // Now: delegates to /api/suggest-event/check-duplicate which runs
       // the shared `findDuplicate` 4-stage match (exact_url > venue_date
       // > city_state_date > similar_name_date, ±7d window). Catches the
@@ -1048,6 +1065,22 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
                 start_date: params.start_date,
                 end_date: params.end_date,
                 description: params.description,
+                // OPE-581 — everything below here used to be dropped. The
+                // occurrence landed with a NULL source_url, `series-occurrence`
+                // /`admin_manual` provenance and empty taxonomy, which made a
+                // discovery-created event look hand-entered and manufactured the
+                // exact empty-categories condition the admin uncategorized queue
+                // exists to catch.
+                source_url: params.source_url ?? null,
+                source_name: sourceLabel,
+                ingestion_method: sourceClassification.ingestionMethod,
+                categories: categoriesToStore,
+                // No `tags` — `suggest_event` has no tags parameter. The plain
+                // path stamps a fixed ["community-suggestion","vendor-submission"]
+                // pair, which would be a false claim on a discovery-created
+                // occurrence, so this route keeps inheriting the series tags.
+                // Deviation from the acceptance's "match the plain path", stated
+                // on the ticket rather than silently resolved either way.
               }),
             });
             const occ = (await occRes.json().catch(() => null)) as Record<string, unknown> | null;
@@ -1149,9 +1182,6 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
       // Tier behaviour is unchanged. `evaluateGates` resolves credibility from
       // `sourceUrl || sourceName`, and neither the old string nor the new one is
       // a hostname, so both fall through to the same default tier.
-      const sourceLabel = params.source_label?.trim() || UNLABELED_SOURCE;
-      const sourceClassification = classifySource(sourceLabel, params.source_url);
-
       const gateResult = evaluateGates({
         name: params.name,
         sourceUrl: params.source_url ?? null,
@@ -1188,11 +1218,6 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
       // dropped values and echo them back in `warnings.dropped_categories`
       // so the caller (and the operator reading the reply) can see the
       // coercion happened. Storage behavior is unchanged.
-      const validCategorySet = new Set<string>(EVENT_CATEGORIES);
-      const providedCategories = params.categories ?? [];
-      const filteredCategories = providedCategories.filter((c) => validCategorySet.has(c));
-      const droppedCategories = providedCategories.filter((c) => !validCategorySet.has(c));
-      const categoriesToStore = filteredCategories.length > 0 ? filteredCategories : ["Event"];
       if (categoriesToStore[0] === "Event") {
         await logError(db, {
           source: "mcp:suggest_event:uncategorized",

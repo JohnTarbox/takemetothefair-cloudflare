@@ -29,6 +29,13 @@ export interface CreateOccurrenceInput {
   /** Provenance on the inserted row. Defaults mirror the admin route. */
   sourceName?: string;
   ingestionMethod?: string;
+  /**
+   * OPE-581 — the URL the occurrence was discovered from. Without it a
+   * discovery-created event is indistinguishable from a hand-entered one, which
+   * is the provenance corruption OPE-491 fixed on the plain write path; this
+   * route was never covered by that fix.
+   */
+  sourceUrl?: string | null;
 }
 
 export type CreateOccurrenceResult =
@@ -193,7 +200,14 @@ export async function createOccurrenceForSeries(
   if (!values.promoterId) return { created: false, reason: "promoter_required", year };
 
   // Year-suffixed slug, uniqueness-resolved (mirrors suggest_event).
-  const baseSlug = createSlug(`${values.name} ${year}`);
+  //
+  // OPE-581 — do not stamp a year the name already ends with. Discovery names
+  // its finds "<Event> 2027", so the unconditional suffix produced
+  // `provincetown-portuguese-festival-2027-2027`. Matched on the exact year
+  // being appended rather than any trailing 4 digits, so an event legitimately
+  // named for a different number keeps its suffix.
+  const nameEndsWithYear = new RegExp(`(^|[^0-9])${year}$`).test(values.name.trim());
+  const baseSlug = createSlug(nameEndsWithYear ? values.name : `${values.name} ${year}`);
   let finalSlug = baseSlug;
   let suffix = 0;
   for (;;) {
@@ -236,6 +250,7 @@ export async function createOccurrenceForSeries(
     rolledFromEventId: values.rolledFromEventId,
     sourceName: input.sourceName ?? "series-occurrence",
     ingestionMethod: input.ingestionMethod ?? "admin_manual",
+    sourceUrl: input.sourceUrl ?? null,
     syncEnabled: false,
     createdAt: now,
     updatedAt: now,

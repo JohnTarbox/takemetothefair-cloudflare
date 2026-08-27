@@ -35,6 +35,22 @@ async function authorize(request: NextRequest): Promise<boolean> {
  * which falsified drizzle/0199's "zero rows created since 2026-07-01" claim.
  * Route through the canonical normalizer like every other write path.
  */
+/**
+ * OPE-581 — accept either a JSON string or an array for the taxonomy columns,
+ * which are stored as JSON-string arrays.
+ *
+ * Returns `undefined` (not null) when the caller said nothing, so
+ * `inheritSeriesDefaults` still inherits the series value. Returning null here
+ * would turn "caller did not mention categories" into "caller wants none" and
+ * blank the taxonomy on every rollover.
+ */
+function toJsonArrayColumn(v: string[] | string | null | undefined): string | null | undefined {
+  if (v === undefined) return undefined;
+  if (v === null) return null;
+  if (Array.isArray(v)) return JSON.stringify(v);
+  return v;
+}
+
 function parseDate(s: unknown): Date | null {
   if (typeof s !== "string" || !s) return null;
   return normalizeEventDate(s);
@@ -57,6 +73,16 @@ export async function POST(request: NextRequest) {
       description?: string | null;
       image_url?: string | null;
       rolled_from_event_id?: string | null;
+      // OPE-581 — the payload the series route used to drop. `suggest_event`
+      // routes here when it matches an existing series, and everything not
+      // listed on this type was silently discarded: a discovery-created event
+      // landed with a NULL source_url, `admin_manual` provenance and empty
+      // taxonomy, indistinguishable from a hand-entered row.
+      source_url?: string | null;
+      source_name?: string | null;
+      ingestion_method?: string | null;
+      categories?: string[] | string | null;
+      tags?: string[] | string | null;
     };
 
     if (!body.series_id || !Number.isInteger(body.year)) {
@@ -80,9 +106,15 @@ export async function POST(request: NextRequest) {
         endDate: parseDate(body.end_date),
         description: body.description,
         imageUrl: body.image_url,
+        // Undefined still inherits the series values; only an explicit list wins.
+        categories: toJsonArrayColumn(body.categories),
+        tags: toJsonArrayColumn(body.tags),
       },
       rolledFromEventId: body.rolled_from_event_id ?? null,
       actorUserId: session?.user?.id ?? null,
+      sourceUrl: body.source_url ?? null,
+      ...(body.source_name ? { sourceName: body.source_name } : {}),
+      ...(body.ingestion_method ? { ingestionMethod: body.ingestion_method } : {}),
     });
 
     if (!result.created) {

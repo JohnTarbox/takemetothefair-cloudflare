@@ -34,6 +34,19 @@ export interface OccurrenceOverrides {
   endDate?: Date | null;
   description?: string | null;
   imageUrl?: string | null;
+  /**
+   * OPE-581 — caller-supplied taxonomy. Absent (undefined) still inherits the
+   * series values, which is the right default for a rollover; present wins,
+   * because a discovery run that classified the event knows more about THIS
+   * edition than the series row does.
+   *
+   * Inheriting unconditionally is what made the series route manufacture the
+   * exact condition the admin uncategorized queue exists to catch: a series
+   * with empty `categories` stamped `[]` onto every occurrence under it, while
+   * the caller's four categories were dropped on the floor.
+   */
+  categories?: string | null;
+  tags?: string | null;
 }
 
 export interface OccurrenceInsertValues {
@@ -78,8 +91,8 @@ export function inheritSeriesDefaults(
     recurrenceRule: series.recurrenceRule,
     description: pick(overrides.description, series.description),
     imageUrl: pick(overrides.imageUrl, series.imageUrl),
-    categories: series.categories,
-    tags: series.tags,
+    categories: pick(overrides.categories, series.categories),
+    tags: pick(overrides.tags, series.tags),
     primaryAudience: series.primaryAudience,
     publicAccess: series.publicAccess,
     status: "TENTATIVE",
