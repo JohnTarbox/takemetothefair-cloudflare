@@ -86,6 +86,7 @@ const emptyResult = () => ({
   newIssues: 0,
   resolvedIssues: 0,
   skipped: 0,
+  deadlineSkipped: 0,
   errors: [],
   resolvedByReason: {},
 });

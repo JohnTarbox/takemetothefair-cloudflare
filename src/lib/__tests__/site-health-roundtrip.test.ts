@@ -48,6 +48,7 @@ const newResult = () => ({
   newIssues: 0,
   resolvedIssues: 0,
   skipped: 0,
+  deadlineSkipped: 0,
   errors: [] as string[],
   resolvedByReason: {} as Record<string, number>,
 });

@@ -146,6 +146,38 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       ),
   },
   {
+    // OPE-588 — proof the GSC sweep's FILLER tiers still select work.
+    //
+    // Tiers 1, 2, 2c and REL5 were unreachable for two months and nothing said
+    // so: `fillerBudget = max(0, batchSize - guaranteed.size)` with a 50-URL
+    // guaranteed set and a cron that passes batchSize=8 is zero, always. A tier
+    // that selects nothing is indistinguishable from a tier with nothing to
+    // select, which is exactly the OPE-246 class.
+    //
+    // ⚠️ This watches a YIELD, which OPE-547 warns against — a yield probe goes
+    // red on a quiet week rather than on a dead path. It is the right shape
+    // HERE because zero filler is never a quiet week: `fillerBudget` is derived
+    // from constants, so zero means the arithmetic regressed, and tier 2c
+    // (never-inspected URLs) cannot run dry while ~2,200 sitemap URLs rotate a
+    // few per type per night. If it ever does fire on a genuinely empty filler,
+    // that means the corpus is fully inspected — which has never been true and
+    // would itself be worth knowing.
+    //
+    // 48h: the sweep is daily, so one missed run is tolerable and two are not.
+    name: "gsc-sweep-filler-tiers",
+    ownerOpe: "OPE-588",
+    label: "GSC sweep filler tiers (Tier 1/2/2c/REL5) selecting work",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        agentHeartbeats,
+        agentHeartbeats.lastSeenAt,
+        eq(agentHeartbeats.agentCode, "watchdog:gsc-sweep-filler")
+      ),
+  },
+  {
     // OPE-348 — proof the agent-silence watchdog is ITSELF executing.
     //
     // The watchdog's normal output is silence, so "no alert" is indistinguishable

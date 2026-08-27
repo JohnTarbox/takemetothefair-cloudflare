@@ -476,3 +476,48 @@ describe("OPE-567 follow-up — Tier 0 re-inspects URLs with an open ERROR", () 
     expect(second.filter((u) => first.includes(u))).toEqual([]);
   });
 });
+
+describe("OPE-588 — the filler budget is no longer structurally zero", () => {
+  // ⚠️ These use a URL that ONLY Tier 1 can produce: a gsc_inspection_state row
+  // with a non-OK verdict whose slug has NO venue row behind it. The guaranteed
+  // per-type sample selects FROM the venues table, so it can never reach this
+  // URL, and the OPE-372 canonical filter only rejects `/events/` paths.
+  //
+  // The first version asserted `picked.length > 0` after seeding 12 venues.
+  // That passed with the structurally-zero budget restored, because `guaranteed`
+  // alone made the array non-empty — it measured the union again, which is the
+  // same mistake this file's REL5 note already warns about.
+  const TIER1_ONLY = `${HOST}/venues/tier1-only-no-venue-row`;
+
+  function seedTier1Only() {
+    raw
+      .prepare(
+        `INSERT INTO gsc_inspection_state (url, last_inspected_at, last_verdict) VALUES (?, 1, 'FAIL')`
+      )
+      .run(TIER1_ONLY);
+  }
+
+  it("selects filler even when `guaranteed` is larger than batchSize", async () => {
+    // ⚠️ The condition to reproduce is `guaranteed.size >= batchSize`, NOT "lots
+    // of rows". PER_TYPE caps the venue sample at 4 however many venues exist,
+    // so an earlier version that seeded 12 and called pickUrls(db, 8) left
+    // guaranteed=4 < 8 — the old arithmetic still yielded 4 and the mutant
+    // survived. Six venues (sample -> 4) against batchSize 3 puts guaranteed
+    // above the batch, which is the prod shape: 50 guaranteed vs a cron
+    // passing 8.
+    for (let i = 0; i < 6; i++) {
+      raw
+        .prepare(`INSERT INTO venues (id, slug, status) VALUES (?, ?, 'ACTIVE')`)
+        .run(`v-fb-${i}`, `filler-budget-venue-${i}`);
+    }
+    seedTier1Only();
+    expect(await pickUrls(db as never, 3)).toContain(TIER1_ONLY);
+  });
+
+  it("still honours a caller asking for a tiny run — batchSize is a ceiling", async () => {
+    // The MCP tool documents batch_size:0 as maintenance-only, no quota spend.
+    // An unconditional FILLER_BUDGET would spend it anyway.
+    seedTier1Only();
+    expect(await pickUrls(db as never, 0)).not.toContain(TIER1_ONLY);
+  });
+});
