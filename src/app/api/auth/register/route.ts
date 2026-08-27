@@ -14,6 +14,12 @@ import {
   type ResolveClaimAtSignupResult,
 } from "@/lib/claims/resolve-claim-at-signup";
 import { recordClaimEvidence } from "@/lib/claims/claim-evidence";
+import {
+  findNameCollision,
+  nameCollisionMessage,
+  isUniqueConstraintError,
+  type NameCollision,
+} from "@/lib/claims/signup-name-collision";
 import { parseGaClientId } from "@/lib/ga4-measurement-protocol";
 import {
   trackClaimAccountCreatedServer,
@@ -72,6 +78,50 @@ const registerSchema = z.object({
   turnstileToken: z.string().optional(), // Turnstile verification token
 });
 
+/**
+ * 409 for a signup that collided with an existing listing.
+ *
+ * `claimAvailable` is what the register form needs to offer the claim link.
+ * Kept structured rather than baked into the message string so the client can
+ * render a real link instead of parsing prose.
+ */
+/**
+ * Undo the half-made account.
+ *
+ * The pre-flight above catches every collision we have actually observed. This
+ * covers the narrow race where two signups with the same business name pass it
+ * together — one wins the UNIQUE index, the other must not be left owning an
+ * account it was told had failed to be created. D1 gives us no transaction
+ * across these statements, so the compensating delete IS the rollback.
+ *
+ * Fail-soft: if the cleanup itself fails we still return the 409. A stranded
+ * row is bad; a stranded row plus a 500 is worse, and the caller has already
+ * been told the name is the problem.
+ */
+async function rollbackHalfCreatedAccount(db: ReturnType<typeof getCloudflareDb>, userId: string) {
+  try {
+    await db.delete(userRoles).where(eq(userRoles.userId, userId));
+    await db.delete(users).where(eq(users.id, userId));
+  } catch {
+    // Swallowed on purpose — see above.
+  }
+}
+
+function nameCollisionResponse(collision: NameCollision) {
+  return NextResponse.json(
+    {
+      error: nameCollisionMessage(collision),
+      claimAvailable: {
+        entityType: collision.entityType,
+        slug: collision.slug,
+        name: collision.name,
+        claimUrl: collision.claimUrl,
+      },
+    },
+    { status: 409 }
+  );
+}
+
 export async function POST(request: NextRequest) {
   // Rate limiting check
   const rateLimitResult = await checkRateLimit(request, "auth-register");
@@ -126,6 +176,32 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // OPE-573 — resolve a business-name collision BEFORE creating anything.
+    //
+    // Ordering is the whole fix. `users` + `user_roles` are inserted below,
+    // then the vendor/promoter row; there is no transaction spanning them, so
+    // a UNIQUE failure on the entity slug used to leave a REAL account behind
+    // with no listing. The person saw "An error occurred during registration"
+    // and their retry hit "An account with this email already exists" — locked
+    // out of a signup that had half-succeeded. Three accounts are in that state
+    // on prod; see @/lib/claims/signup-name-collision.
+    //
+    // Checked only for the create-a-new-listing shape. A claim-funnel signup
+    // (claimSlug present) is ALREADY heading at an existing listing and must
+    // not be blocked for colliding with the very row it means to claim.
+    if (!claimSlug) {
+      const collisionName =
+        role === "VENDOR" ? businessName : role === "PROMOTER" ? companyName : undefined;
+      if (collisionName) {
+        const collision = await findNameCollision(
+          db,
+          role === "VENDOR" ? "VENDOR" : "PROMOTER",
+          collisionName
+        );
+        if (collision) return nameCollisionResponse(collision);
+      }
+    }
+
     const passwordHash = await hashPassword(password);
     const userId = crypto.randomUUID();
 
@@ -171,15 +247,35 @@ export async function POST(request: NextRequest) {
         claim = { outcome: res.outcome, entityType: res.entityType };
         claimResult = res;
       } else if (companyName) {
-        await db.insert(promoters).values({
-          id: crypto.randomUUID(),
-          userId,
-          companyName,
-          slug: createSlug(companyName),
-          claimed: true,
-          claimedAt: new Date(),
-          claimedBy: userId,
-        });
+        try {
+          await db.insert(promoters).values({
+            id: crypto.randomUUID(),
+            userId,
+            companyName,
+            slug: createSlug(companyName),
+            claimed: true,
+            claimedAt: new Date(),
+            claimedBy: userId,
+          });
+        } catch (slugErr) {
+          // Same shape as the vendor branch — promoters.slug carries the same
+          // notNull().unique() and had the same unhandled collision.
+          if (!isUniqueConstraintError(slugErr)) throw slugErr;
+          await rollbackHalfCreatedAccount(db, userId);
+          const collision = await findNameCollision(db, "PROMOTER", companyName);
+          await logError(db, {
+            level: "warn",
+            message: "OPE-573 promoter slug collision resolved at insert (pre-flight raced)",
+            source: "api/auth/register:slug-collision",
+            context: { companyName, slug: collision?.slug ?? null },
+          });
+          return collision
+            ? nameCollisionResponse(collision)
+            : NextResponse.json(
+                { error: "That organization name is already in use. Please try again." },
+                { status: 409 }
+              );
+        }
       }
     }
 
@@ -195,15 +291,36 @@ export async function POST(request: NextRequest) {
         claimResult = res;
       } else if (businessName) {
         const vendorId = crypto.randomUUID();
-        await db.insert(vendors).values({
-          id: vendorId,
-          userId,
-          businessName,
-          slug: createSlug(businessName),
-          claimed: true,
-          claimedAt: new Date(),
-          claimedBy: userId,
-        });
+        try {
+          await db.insert(vendors).values({
+            id: vendorId,
+            userId,
+            businessName,
+            slug: createSlug(businessName),
+            claimed: true,
+            claimedAt: new Date(),
+            claimedBy: userId,
+          });
+        } catch (slugErr) {
+          // OPE-573 backstop — the pre-flight lost a race. Undo the account and
+          // answer with the same 409 the pre-flight would have sent, rather than
+          // letting this reach the outer catch as a 500 with a raw driver string.
+          if (!isUniqueConstraintError(slugErr)) throw slugErr;
+          await rollbackHalfCreatedAccount(db, userId);
+          const collision = await findNameCollision(db, "VENDOR", businessName);
+          await logError(db, {
+            level: "warn",
+            message: "OPE-573 vendor slug collision resolved at insert (pre-flight raced)",
+            source: "api/auth/register:slug-collision",
+            context: { businessName, slug: collision?.slug ?? null },
+          });
+          return collision
+            ? nameCollisionResponse(collision)
+            : NextResponse.json(
+                { error: "That business name is already in use. Please try again." },
+                { status: 409 }
+              );
+        }
 
         // OPE-237 — realness screen. THIS is the live claim path: verified
         // against prod 2026-07-27, the dedicated claim endpoints have logged

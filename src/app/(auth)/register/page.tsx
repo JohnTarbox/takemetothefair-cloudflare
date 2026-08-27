@@ -119,6 +119,12 @@ function RegisterForm() {
     website: "",
   });
   const [error, setError] = useState("");
+  const [claimAvailable, setClaimAvailable] = useState<{
+    entityType: "VENDOR" | "PROMOTER";
+    slug: string;
+    name: string;
+    claimUrl: string;
+  } | null>(null);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [isLoading, setIsLoading] = useState(false);
   const [termsAccepted, setTermsAccepted] = useState(false);
@@ -319,6 +325,15 @@ function RegisterForm() {
       const data = (await response.json()) as {
         error?: string;
         retryAfter?: number;
+        // OPE-573 — the business name matched a listing already in the
+        // directory. The server sends the listing so we can offer the claim
+        // flow instead of just refusing the name.
+        claimAvailable?: {
+          entityType: "VENDOR" | "PROMOTER";
+          slug: string;
+          name: string;
+          claimUrl: string;
+        };
         claim?: {
           outcome:
             | "approved"
@@ -338,6 +353,9 @@ function RegisterForm() {
           );
         } else {
           setError(data.error || "Registration failed");
+          // A name collision is the one failure with somewhere better to go
+          // than "try again": the listing exists, so offer to claim it.
+          setClaimAvailable(data.claimAvailable ?? null);
         }
         resetTurnstile();
         return;
@@ -438,6 +456,20 @@ function RegisterForm() {
             {error && (
               <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-600 text-sm">
                 {error}
+                {/* OPE-573 — a name collision means the listing already exists.
+                    Give the person the way forward rather than a dead end; the
+                    alternative they reach for otherwise is a slightly different
+                    name, which is how the directory grows duplicates. */}
+                {claimAvailable && (
+                  <div className="mt-2">
+                    <Link
+                      href={claimAvailable.claimUrl}
+                      className="font-medium underline underline-offset-2"
+                    >
+                      Claim “{claimAvailable.name}”
+                    </Link>
+                  </div>
+                )}
               </div>
             )}
             <FormErrorSummary errors={fieldErrors} fieldLabels={FIELD_LABELS} />

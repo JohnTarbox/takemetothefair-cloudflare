@@ -117,6 +117,116 @@ describe("POST /api/auth/register", () => {
     expect(data.error).toContain("already exists");
   });
 
+  // ── OPE-573 — business-name collision ──────────────────────────────────────
+  //
+  // The defect was not the error message. `users` + `user_roles` are inserted
+  // BEFORE the vendor row and nothing spans them in a transaction, so a UNIQUE
+  // failure on `vendors.slug` left a REAL account with no listing: the person
+  // saw "an error occurred", and their retry hit "email already exists". Three
+  // accounts are in that state on prod.
+  //
+  // So the load-bearing assertion in these tests is NOT the 409 — it is that
+  // `db.insert` is never reached.
+
+  const collidingVendorBody = {
+    email: "newvendor@example.com",
+    password: "password123",
+    name: "New Vendor",
+    role: "VENDOR",
+    businessName: "21 Street Beads",
+  };
+
+  it("does not create an account when the business name collides", async () => {
+    mockDb.limit
+      .mockResolvedValueOnce([]) // no existing user with this email
+      .mockResolvedValueOnce([{ slug: "21-street-beads", name: "21 Street Beads", claimed: 0 }]);
+
+    const response = await POST(
+      new NextRequest("http://localhost:3000/api/auth/register", {
+        method: "POST",
+        body: JSON.stringify(collidingVendorBody),
+      })
+    );
+
+    expect(response.status).toBe(409);
+    // ⚠️ This is the regression guard. A 409 that still wrote the user row
+    // would leave the person locked out exactly as before.
+    expect(mockDb.insert).not.toHaveBeenCalled();
+  });
+
+  it("hands back the existing listing so the form can offer the claim flow", async () => {
+    mockDb.limit
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ slug: "21-street-beads", name: "21 Street Beads", claimed: 0 }]);
+
+    const response = await POST(
+      new NextRequest("http://localhost:3000/api/auth/register", {
+        method: "POST",
+        body: JSON.stringify(collidingVendorBody),
+      })
+    );
+    const data = (await response.json()) as any;
+
+    expect(data.claimAvailable).toEqual({
+      entityType: "VENDOR",
+      slug: "21-street-beads",
+      name: "21 Street Beads",
+      claimUrl: "/claim/vendor/21-street-beads",
+    });
+    // Names the listing rather than saying "name taken" — the latter invites
+    // "21 Street Beads LLC", which is the duplicate we are avoiding.
+    expect(data.error).toContain("21 Street Beads");
+    expect(data.error).not.toMatch(/UNIQUE|SQLITE|D1_ERROR/);
+  });
+
+  it("does NOT block a claim-funnel signup against the listing it means to claim", async () => {
+    // claimSlug present = the user is claiming an EXISTING listing. Running the
+    // collision check here would reject them for colliding with their own target.
+    //
+    // ⚠️ The collision row MUST be present for this test to mean anything. An
+    // earlier version stubbed `limit` to always return [], so no collision
+    // existed at all and the test passed whether or not the `!claimSlug` guard
+    // ran — the mutant survived. Seed the collision, then assert it is ignored.
+    mockDb.limit
+      .mockResolvedValueOnce([]) // email is free
+      .mockResolvedValueOnce([{ slug: "21-street-beads", name: "21 Street Beads", claimed: 0 }]);
+    mockDb.values.mockResolvedValue(undefined);
+
+    const response = await POST(
+      new NextRequest("http://localhost:3000/api/auth/register", {
+        method: "POST",
+        body: JSON.stringify({ ...collidingVendorBody, claimSlug: "21-street-beads" }),
+      })
+    );
+
+    expect(response.status).not.toBe(409);
+  });
+
+  it("applies the same check to promoters", async () => {
+    // promoters.slug carries the same notNull().unique() and had the same gap.
+    mockDb.limit
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ slug: "acme-events", name: "Acme Events", claimed: 1 }]);
+
+    const response = await POST(
+      new NextRequest("http://localhost:3000/api/auth/register", {
+        method: "POST",
+        body: JSON.stringify({
+          email: "promoter@example.com",
+          password: "password123",
+          name: "Promoter Person",
+          role: "PROMOTER",
+          companyName: "Acme Events",
+        }),
+      })
+    );
+    const data = (await response.json()) as any;
+
+    expect(response.status).toBe(409);
+    expect(mockDb.insert).not.toHaveBeenCalled();
+    expect(data.claimAvailable.claimUrl).toBe("/claim/promoter/acme-events");
+  });
+
   it("successfully registers a new user", async () => {
     mockDb.limit.mockResolvedValue([]);
     mockDb.values.mockResolvedValue(undefined);
