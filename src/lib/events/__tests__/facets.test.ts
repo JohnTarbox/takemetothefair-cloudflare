@@ -61,11 +61,30 @@ describe("facet slug registry", () => {
   });
 
   it("gives states without a region map no region facets, not an error", () => {
-    expect(resolveFacet("maine", "berkshires", NOW)).toBeNull();
-    expect(facetSlugsByKind("maine").region).toEqual([]);
+    // OPE-586 moved Maine INTO the mesh, so this now uses a state that is still
+    // deliberately out of it. NH/VT/RI are Phase 2, gated on the 2026-09-17
+    // MA/CT KPI read.
+    expect(resolveFacet("new-hampshire", "berkshires", NOW)).toBeNull();
+    expect(facetSlugsByKind("new-hampshire").region).toEqual([]);
     // Months and types are still defined for every state — which is exactly why
     // the nav has to be gated on stateHasFacets rather than on this list.
-    expect(facetSlugsByKind("maine").month).toHaveLength(12);
+    expect(facetSlugsByKind("new-hampshire").month).toHaveLength(12);
+  });
+
+  it("keeps NH/VT/RI out of the mesh — the Phase-2 gate, asserted", () => {
+    // ⚠️ Shipping a region map for these before the KPI read would quietly
+    // expand the experiment past the cohort it is being measured on, and the
+    // read would then be uninterpretable. Failing here is the point.
+    for (const state of ["new-hampshire", "vermont", "rhode-island"]) {
+      expect(facetSlugsByKind(state).region, `${state} must stay Phase 2`).toEqual([]);
+    }
+  });
+
+  it("Maine is in the mesh with regions that match its inventory", () => {
+    const regions = facetSlugsByKind("maine").region;
+    expect(regions).toContain("bangor-penobscot"); // 36 upcoming — the OPE-415 gap
+    expect(regions).toContain("kennebec-valley"); // augusta 15
+    expect(regions.length).toBeGreaterThanOrEqual(8);
   });
 });
 
@@ -87,7 +106,11 @@ describe("FACET_STATES matches the routes on disk", () => {
   it("stateHasFacets agrees with the list", () => {
     expect(stateHasFacets("massachusetts")).toBe(true);
     expect(stateHasFacets("connecticut")).toBe(true);
-    expect(stateHasFacets("maine")).toBe(false);
+    expect(stateHasFacets("maine")).toBe(true); // OPE-586 Phase 1
+    // Phase 2 — must stay false until the 2026-09-17 KPI read.
+    expect(stateHasFacets("new-hampshire")).toBe(false);
+    expect(stateHasFacets("vermont")).toBe(false);
+    expect(stateHasFacets("rhode-island")).toBe(false);
   });
 });
 
