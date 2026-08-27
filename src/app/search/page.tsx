@@ -196,7 +196,12 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
         await logError(db, {
           message: `Search page section "${section}" failed`,
           error: settled.reason,
-          source: "app/search/page",
+          // OPE-574 — must match the page-error canary's SOURCE_PATTERN
+          // ("app/%page.tsx:%"). Without the `.tsx:<fn>` suffix this row is
+          // written and then never counted: 4 such rows sat in error_logs
+          // invisible to the canary. The convention is load-bearing, not
+          // cosmetic — see scripts/check-page-error-source.ts.
+          source: "app/search/page.tsx:searchSections",
           context: { section, q },
           level: "warn",
         });
