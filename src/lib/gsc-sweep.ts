@@ -880,7 +880,26 @@ export async function pickUrls(
   // self-terminating: the exemption only ever covers rows that already exist,
   // and each one disappears from it the moment the row resolves.
   const isExempt = (u: string) => openErrorUrls.has(u);
-  return [...guaranteed, ...filler].filter((u) => isExempt(u) || !isNonCanonicalEventUrl(u));
+
+  // ⚠️ TIER 0 GOES FIRST IN THE RETURNED ARRAY, and the order is load-bearing.
+  //
+  // The inspection loop in `runSweep` has NO time budget — it walks every URL
+  // this returns at a ~3-5s GSC call each. `guaranteed` alone is 50 URLs, so a
+  // run is 150-250s and is killed by the platform long before it finishes
+  // (OPE-382 already measured the sweep over its limit). Whatever sits at the
+  // FRONT is therefore what actually gets inspected.
+  //
+  // Tier 0 adds into `guaranteed`, which is insertion-ordered, so its URLs
+  // landed LAST — behind all 50 rotation samples. Combined with the cursor
+  // stamp in the tier itself, that reproduces the precise bug this stack has
+  // been fixing: rows marked attempted, never actually looked at. Every night.
+  const ordered = [...openErrorUrls, ...guaranteed, ...filler];
+  const seen = new Set<string>();
+  return ordered.filter((u) => {
+    if (seen.has(u)) return false; // openErrorUrls are also in `guaranteed`
+    seen.add(u);
+    return isExempt(u) || !isNonCanonicalEventUrl(u);
+  });
 }
 
 /**
