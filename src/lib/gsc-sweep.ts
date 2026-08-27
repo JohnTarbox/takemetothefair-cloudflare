@@ -666,6 +666,9 @@ export async function pickUrls(
   // it is the first thing worth spending an inspection on. This also makes the
   // rail self-healing: a row that is fixed or stale gets re-checked promptly and
   // downgrades itself, rather than waiting for a rotation to come around.
+  /** Tier 0 picks, exempt from the canonical filter below — see the note there. */
+  const openErrorUrls = new Set<string>();
+
   // ⚠️ CAPPED AT HALF THE FILLER BUDGET, on purpose. Uncapped, this tier owns
   // the whole sweep the moment something systemic raises a pile of ERROR rows,
   // and the tiers below it (new URLs, never-inspected pages) would never run
@@ -703,6 +706,7 @@ export async function pickUrls(
       if (!r.url) continue;
       if (filler.size >= openErrorBudget) break;
       attempted.push(r.id);
+      openErrorUrls.add(r.url);
       if (addFiller(r.url)) break;
     }
 
@@ -848,7 +852,27 @@ export async function pickUrls(
   const isNonCanonicalEventUrl = (u: string) =>
     u.startsWith(`${HOST}/events/`) && !canonicalEventUrls.has(u);
 
-  return [...guaranteed, ...filler].filter((u) => !isNonCanonicalEventUrl(u));
+  // Tier 0's picks bypass the canonical filter, and ONLY Tier 0's.
+  //
+  // OPE-372 drops non-canonical `/events/` URLs so the discovery tiers cannot
+  // keep feeding legacy flat URLs back in and refilling the queue. That reason
+  // does not apply to a URL we are holding an OPEN ERROR against: we already
+  // raised the row, so refusing to inspect it makes it unclosable. Measured
+  // 2026-08-26 — all four open ERRORs are rich-result FAILs on flat
+  // `/events/<slug>` URLs whose canonical form is `/events/<slug>/<year>`, so
+  // without this exemption Tier 0 would pick them, stamp them, and then discard
+  // them every single night.
+  //
+  // Deliberately NOT solved by widening `resolveNonCanonicalEventIssues` to
+  // withdraw them: OPE-372 excluded rich-result rows from that pass on purpose
+  // ("a rich-result failure is a different question and is not ours to close"),
+  // and it is right — those pages serve 200 and self-canonicalise, so Google
+  // indexes them and their structured data genuinely matters. Closing the row
+  // would discard real signal; inspecting it cannot. Bounded and
+  // self-terminating: the exemption only ever covers rows that already exist,
+  // and each one disappears from it the moment the row resolves.
+  const isExempt = (u: string) => openErrorUrls.has(u);
+  return [...guaranteed, ...filler].filter((u) => isExempt(u) || !isNonCanonicalEventUrl(u));
 }
 
 /**

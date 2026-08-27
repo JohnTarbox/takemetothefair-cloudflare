@@ -392,6 +392,27 @@ describe("OPE-567 follow-up — Tier 0 re-inspects URLs with an open ERROR", () 
     expect(fromTier0.length).toBeGreaterThan(0); // ...but it does get a share
   });
 
+  it("reaches a NON-CANONICAL flat event URL — the exact prod shape", async () => {
+    // All four open ERRORs measured 2026-08-26 are rich-result FAILs on flat
+    // `/events/<slug>` URLs whose canonical form is `/events/<slug>/<year>`.
+    // Without the Tier 0 exemption, OPE-372's filter discards them AFTER the
+    // stamp, so the sweep would pick them, mark them attempted, and inspect
+    // nothing — every night, forever.
+    const url = `${HOST}/events/pizza-pilsners-festival`;
+    seedOpenIssue(url, "ERROR");
+    expect(await pickUrls(db as never, 200)).toContain(url);
+  });
+
+  it("the exemption is Tier 0's ALONE — a plain non-canonical URL is still dropped", async () => {
+    // The guard on the exemption above. OPE-372's filter must keep working for
+    // every URL that is not being held open by an ERROR row, or this reopens
+    // the queue-refill bug it was written to close.
+    const url = `${HOST}/events/some-legacy-flat-url`;
+    // Made eligible via the REL5 tier — the very path OPE-372's filter blocks.
+    seedSubmission(url, "2026-06-01T00:00:00Z", null);
+    expect(await pickUrls(db as never, 200)).not.toContain(url);
+  });
+
   it("rotates: a second run picks rows the first run did not", async () => {
     // The stamp is what makes the cap safe. Without advancing the cursor, the
     // same oldest N rows are re-picked every night and the rest starve — the
