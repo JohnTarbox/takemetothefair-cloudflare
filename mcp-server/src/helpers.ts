@@ -199,6 +199,35 @@ export function publicEventWhere() {
   return and(inArrayMcp(events.status, [...PE]), inArrayMcp(events.lifecycleStatus, [...PL]));
 }
 
+/**
+ * OPE-582 — the visibility gate for `search_events`, which alone among the
+ * public readers may be asked to see the un-approved queue.
+ *
+ * The daily discovery task parks its own output as PENDING, and all three of
+ * its dedup passes run on `search_events`. Gated to APPROVED/TENTATIVE, every
+ * pass is blind to the exact queue the task fills, so it re-discovers events it
+ * created itself — confirmed twice (2026-08-22, 2026-08-26), each time caught
+ * only by `suggest_event`'s `exact_url` guard, which does nothing once the same
+ * event turns up under a different URL.
+ *
+ * ⚠️ Deliberately NOT a change to `publicEventWhere()`. That helper guards
+ * eight other read sites (get_event_details, the slug reads, get_vendor_events,
+ * venue listings…), where returning a PENDING row would leak an unapproved
+ * event to a public caller. The blindness is correct everywhere except here.
+ *
+ * An empty/absent list reproduces `publicEventWhere()` exactly, so existing
+ * callers are untouched. An explicit list swaps ONLY the editorial half — the
+ * lifecycle filter still applies, because a CANCELLED event is not a dedup
+ * target.
+ */
+export function searchEventStatusWhere(includeStatuses?: readonly string[]) {
+  if (!includeStatuses || includeStatuses.length === 0) return publicEventWhere();
+  return and(
+    inArrayMcp(events.status, [...includeStatuses] as (typeof PE)[number][]),
+    inArrayMcp(events.lifecycleStatus, [...PL])
+  );
+}
+
 /** Build a concise text content response for MCP */
 export function jsonContent(data: unknown): { type: "text"; text: string } {
   return { type: "text", text: JSON.stringify(data, null, 2) };

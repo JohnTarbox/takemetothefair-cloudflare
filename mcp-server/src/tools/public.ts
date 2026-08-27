@@ -15,7 +15,7 @@ import {
   venueSlugHistory,
   promoterSlugHistory,
 } from "../schema.js";
-import { PRIMARY_AUDIENCE, PUBLIC_ACCESS } from "@takemetothefair/constants";
+import { PRIMARY_AUDIENCE, PUBLIC_ACCESS, EVENT_STATUS_VALUES } from "@takemetothefair/constants";
 import {
   parseJsonArray,
   formatDateRange,
@@ -25,6 +25,7 @@ import {
   tokenize,
   PUBLIC_VENDOR_STATUSES,
   publicEventWhere,
+  searchEventStatusWhere,
   jsonContent,
   unsafeSlug,
 } from "../helpers.js";
@@ -162,6 +163,26 @@ export function registerPublicTools(server: McpServer, db: Db) {
         .describe(
           "Filter by public-access policy. OPEN = anyone can attend (may still require ticket); CLOSED = restricted."
         ),
+      // OPE-582 — opt into non-public statuses, for dedup callers only.
+      //
+      // The daily discovery task parks its own output as PENDING under the
+      // `needs-enrichment` gate, and all three of its dedup passes run on this
+      // tool. Filtered to APPROVED/TENTATIVE, every pass is blind to the exact
+      // queue the task fills, so it re-discovers events it created itself —
+      // twice confirmed (2026-08-22, 2026-08-26), each time caught only by
+      // `suggest_event`'s `exact_url` guard, which does nothing when the same
+      // event is found from a different URL.
+      //
+      // Opt-in rather than a change to `publicEventWhere()`: that helper also
+      // guards get_event_details, get_vendor_events and the slug reads, where
+      // returning a PENDING row would leak an unapproved event to a public
+      // caller. The blindness is correct there and wrong only here.
+      include_statuses: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "Editorial statuses to include. Omit for the public default (APPROVED + TENTATIVE). Pass e.g. ['APPROVED','TENTATIVE','PENDING'] for dedup checks that must see the un-approved queue. Does NOT relax the lifecycle filter."
+        ),
       limit: z.number().min(1).max(50).optional().describe("Max results (default 20)"),
       offset: z
         .number()
@@ -170,7 +191,30 @@ export function registerPublicTools(server: McpServer, db: Db) {
         .describe("Number of results to skip for pagination (default 0)"),
     },
     async (params) => {
-      const conditions = [publicEventWhere()];
+      // Default is byte-for-byte the old predicate, so every existing caller is
+      // unaffected. An explicit list swaps ONLY the editorial-status half and
+      // keeps the lifecycle filter — a CANCELLED event is not a dedup target.
+      // Validated against the canonical constant rather than a duplicated zod
+      // enum, so adding a status in one place cannot leave this behind. An
+      // unrecognised value is an ERROR, not a silent drop — quietly ignoring it
+      // would hand the caller a confident "no duplicates found" answer computed
+      // over the wrong set, which is the exact failure this ticket is about.
+      const requested = params.include_statuses ?? [];
+      const validStatuses = EVENT_STATUS_VALUES as readonly string[];
+      const unknownStatuses = requested.filter((v) => !validStatuses.includes(v));
+      if (unknownStatuses.length > 0) {
+        return {
+          content: [
+            jsonContent({
+              error: "invalid_status",
+              message: `Unknown status value(s): ${unknownStatuses.join(", ")}. Valid: ${validStatuses.join(", ")}`,
+            }),
+          ],
+          isError: true,
+        };
+      }
+
+      const conditions = [searchEventStatusWhere(requested)];
 
       if (params.query && !params.fuzzy) {
         // OPE-517 — the organizer's name for a fair must find the same page.
