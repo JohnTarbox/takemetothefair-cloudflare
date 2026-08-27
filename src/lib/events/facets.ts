@@ -60,7 +60,11 @@ export type FacetKind = "month" | "region" | "type" | "weekend";
  * feature could ship. Adding a state means adding its route file AND this entry,
  * and `facet-registry.test.ts` fails if the two disagree.
  */
-export const FACET_STATES = ["massachusetts", "connecticut"] as const;
+// OPE-586 — Maine added on John's decision. NH/VT/RI are Phase 2, gated on the
+// 2026-09-17 MA/CT outcome-KPI read; `facets.test.ts` asserts they stay out, so
+// adding one early fails a test rather than quietly widening the experiment
+// past the cohort it is being measured on.
+export const FACET_STATES = ["massachusetts", "connecticut", "maine"] as const;
 
 /** True when `/events/{stateSlug}/{facet}` routes exist for this state. */
 export function stateHasFacets(stateSlug: string): boolean {
