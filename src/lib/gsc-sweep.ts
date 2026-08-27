@@ -669,18 +669,32 @@ export async function pickUrls(
   /** Tier 0 picks, exempt from the canonical filter below — see the note there. */
   const openErrorUrls = new Set<string>();
 
-  // ⚠️ CAPPED AT HALF THE FILLER BUDGET, on purpose. Uncapped, this tier owns
-  // the whole sweep the moment something systemic raises a pile of ERROR rows,
-  // and the tiers below it (new URLs, never-inspected pages) would never run
-  // again. Priority, not monopoly.
+  // ⚠️ BUDGETED INDEPENDENTLY OF `fillerBudget`, because that budget is
+  // structurally ZERO in production and this tier would never run.
   //
-  // Scoped to GSC_RICH_RESULT_FAIL because that is the type with no other rail.
-  // The OPE-382 re-verify pass above filters `issueType = GSC_INSPECTION_NON_OK`
-  // and so has never once looked at a rich-result row — a second, independent
-  // reason the four rows OPE-567 fixed sat open since June. Keeping the two
-  // types disjoint also means the cursor write below cannot perturb re-verify's
-  // ordering.
-  const openErrorBudget = Math.ceil(fillerBudget / 2);
+  //   fillerBudget = max(0, batchSize - guaranteed.size)
+  //
+  // `guaranteed` is five per-type samples of PER_TYPE=10. Measured 2026-08-26,
+  // every type has far more than 10 rows (986 venues / 719 promoters / 116
+  // posts / 1,468 events), so guaranteed.size is 50 on every run — and
+  // `batch_size` is capped at 50 by the MCP tool. The subtraction is therefore
+  // always <= 0, and Tiers 1, 2, 2c and REL5 have been unreachable since OPE-91
+  // moved per-type coverage into its own never-truncated set. The design note
+  // above still says this function yields "~50-60 URLs/run", which is only true
+  // if filler ships on top; it has not.
+  //
+  // That is a much larger defect than OPE-567 and is filed separately rather
+  // than fixed by side effect here. What this tier needs is only that its own
+  // handful of slots not come from a budget that is always zero.
+  //
+  // Added to `guaranteed`, not `filler`: that set is never truncated, and an
+  // open ERROR has a better claim to a guaranteed slot than a rotation sample.
+  // Placed AFTER fillerBudget is computed so it cannot shrink filler further if
+  // the budget above is ever repaired.
+  const OPEN_ERROR_MAX_PER_RUN = 5;
+  // Honours the tool's documented `batch_size: 0` contract — maintenance passes
+  // only, no GSC quota spend at all.
+  const openErrorBudget = batchSize === 0 ? 0 : Math.min(OPEN_ERROR_MAX_PER_RUN, batchSize);
   if (openErrorBudget > 0) {
     const openErrors = await db
       .select({ id: healthIssues.id, url: healthIssues.url })
@@ -693,33 +707,27 @@ export async function pickUrls(
           isNotNull(healthIssues.url)
         )
       )
-      // Reuses OPE-382's cursor, for OPE-382's reason. Ordering by when the row
-      // was DETECTED would re-pick the same oldest rows every night and starve
-      // the rest — the exact head-of-line block that left two 5xx rows unfetched
-      // at ranks 80 and 107. NULL sorts first in SQLite ASC, so never-attempted
-      // rows lead, which is every one of them on this tier's first run.
+      // Reuses OPE-382's cursor, for OPE-382's reason. Ordering by detection
+      // time re-picks the same oldest rows every run and starves the rest — the
+      // head-of-line block that left two 5xx rows unfetched at ranks 80 and 107.
+      // NULL sorts first in SQLite ASC, so never-attempted rows lead.
       .orderBy(asc(healthIssues.lastReverifiedAt), asc(healthIssues.firstDetectedAt))
       .limit(openErrorBudget);
 
     const attempted: string[] = [];
     for (const r of openErrors) {
       if (!r.url) continue;
-      if (filler.size >= openErrorBudget) break;
       attempted.push(r.id);
       openErrorUrls.add(r.url);
-      if (addFiller(r.url)) break;
+      guaranteed.add(r.url);
     }
 
-    // Stamp EVERY row we selected, whatever the inspection later concludes — an
-    // attempt must advance the cursor or the rotation above is decorative. A row
-    // dropped by the canonical filter at the end of this function advances too;
-    // it simply waits one rotation, which is self-correcting and far cheaper
-    // than a row that can never be reached.
-    // Chunked at 50, matching reverifyOpenIssues above. The list is bounded by
-    // ceil(batchSize / 2), which reaches D1's 100-bound-parameter cap at
-    // batchSize=200 — a value this file's own tests already pass. Local SQLite
-    // allows 32,766 binds, so an unchunked version would stay green here and
-    // fail only in production.
+    // Stamp EVERY row we selected, whatever the inspection concludes — an
+    // attempt must advance the cursor or the rotation above is decorative.
+    // Chunked at 50, matching reverifyOpenIssues; the list is bounded by
+    // OPEN_ERROR_MAX_PER_RUN today, and the chunk keeps it safe if that grows
+    // past D1's 100-bound-parameter cap. Local SQLite allows 32,766 binds, so
+    // an unchunked version would stay green in tests and fail only in prod.
     for (let i = 0; i < attempted.length; i += 50) {
       await db
         .update(healthIssues)

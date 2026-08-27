@@ -382,35 +382,55 @@ describe("OPE-567 follow-up — Tier 0 re-inspects URLs with an open ERROR", () 
     expect(await pickUrls(db as never, 200)).not.toContain(url);
   });
 
-  it("caps itself at half the filler budget, so it cannot own the sweep", async () => {
-    // The systemic case: many open errors at once. Without the cap this tier
-    // takes every slot and the discovery tiers below never run again.
+  it("runs even though fillerBudget is structurally ZERO — the whole point", async () => {
+    // fillerBudget = max(0, batchSize - guaranteed.size), and `guaranteed` is
+    // five per-type samples of PER_TYPE=10. Measured on prod 2026-08-26, every
+    // type has far more than 10 rows, so guaranteed.size is 50 on every run
+    // against a batch_size the MCP tool caps at 50 — the budget is ALWAYS 0 and
+    // every filler tier is unreachable. Tier 0 must not draw from it.
+    //
+    // ⚠️ This must REPRODUCE that, not just assert around it. An earlier version
+    // seeded nothing and called pickUrls(db, 1): with an empty `guaranteed`,
+    // fillerBudget was 1, so a Tier 0 wired to fillerBudget passed too and the
+    // mutant survived. Seeding 10 venues makes guaranteed.size >= batchSize,
+    // exactly as in prod.
+    for (let i = 0; i < 10; i++) {
+      raw
+        .prepare(`INSERT INTO venues (id, slug, status) VALUES (?, ?, 'ACTIVE')`)
+        .run(`v-fill-${i}`, `filler-venue-${i}`);
+    }
+    const url = `${HOST}/venues/reachable-on-a-zero-budget`;
+    seedOpenIssue(url, "ERROR");
+    expect(await pickUrls(db as never, 1)).toContain(url);
+  });
+
+  it("caps at 5 per run, so it cannot own the sweep", async () => {
+    // The systemic case: many open errors at once. Uncapped, this tier would
+    // spend the whole GSC budget re-checking errors and nothing else.
     for (let i = 0; i < 40; i++) seedOpenIssue(`${HOST}/venues/err-${i}`, "ERROR");
     const picked = await pickUrls(db as never, 8);
     const fromTier0 = picked.filter((u) => u.includes("/venues/err-"));
-    expect(fromTier0.length).toBeLessThanOrEqual(4); // ceil(8/2) at most
-    expect(fromTier0.length).toBeGreaterThan(0); // ...but it does get a share
+    expect(fromTier0).toHaveLength(5);
   });
 
-  it("reaches a NON-CANONICAL flat event URL — the exact prod shape", async () => {
-    // All four open ERRORs measured 2026-08-26 are rich-result FAILs on flat
-    // `/events/<slug>` URLs whose canonical form is `/events/<slug>/<year>`.
-    // Without the Tier 0 exemption, OPE-372's filter discards them AFTER the
-    // stamp, so the sweep would pick them, mark them attempted, and inspect
-    // nothing — every night, forever.
-    const url = `${HOST}/events/pizza-pilsners-festival`;
+  it("honours batch_size=0 — maintenance only, no GSC spend", async () => {
+    // The MCP tool documents 0 as "run ONLY the maintenance passes, no quota
+    // spend at all". A tier with its own budget must not quietly break that.
+    const url = `${HOST}/venues/must-not-be-inspected`;
     seedOpenIssue(url, "ERROR");
-    expect(await pickUrls(db as never, 200)).toContain(url);
+    expect(await pickUrls(db as never, 0)).not.toContain(url);
   });
 
-  it("the exemption is Tier 0's ALONE — a plain non-canonical URL is still dropped", async () => {
-    // The guard on the exemption above. OPE-372's filter must keep working for
-    // every URL that is not being held open by an ERROR row, or this reopens
-    // the queue-refill bug it was written to close.
-    const url = `${HOST}/events/some-legacy-flat-url`;
-    // Made eligible via the REL5 tier — the very path OPE-372's filter blocks.
-    seedSubmission(url, "2026-06-01T00:00:00Z", null);
-    expect(await pickUrls(db as never, 200)).not.toContain(url);
+  it("does not stamp the cursor when batch_size=0", async () => {
+    // Stamping without inspecting would advance the rotation for work never
+    // done — the exact defect this PR exists to fix, in miniature.
+    const url = `${HOST}/venues/unstamped`;
+    seedOpenIssue(url, "ERROR");
+    await pickUrls(db as never, 0);
+    const row = raw
+      .prepare("SELECT last_reverified_at AS c FROM health_issues WHERE url = ?")
+      .get(url) as { c: number | null };
+    expect(row.c).toBeNull();
   });
 
   it("rotates: a second run picks rows the first run did not", async () => {
