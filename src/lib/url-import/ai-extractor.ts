@@ -1200,6 +1200,40 @@ export function resolveYearlessDate(value: string, nowMs: number = Date.now()): 
   return null;
 }
 
+/**
+ * OPE-587 — does this string state a DAY, or only a month/season/year?
+ *
+ * The native-`Date` fallback below does not fail on an underspecified date; it
+ * invents one. `new Date("Fall 2026")` is 1 January, `new Date("March 2026")`
+ * is 1 March, `new Date("2026")` is 1 January. That fabricated day then lands
+ * on a live `start_date` and flows into the date gates and the sitemap — a
+ * concrete claim nobody made, which is the OPE-465 fabrication direction in
+ * miniature.
+ *
+ * ## Why a rule rather than a list of bad strings
+ *
+ * The obvious fix is to match "Fall 2026", "March 2026", "2026" and abstain.
+ * That is a denylist, and the next unlisted shape ("Spring '27", "2026-06",
+ * "late summer 2026") fabricates again in exactly the same way — silently,
+ * because fabrication produces a valid-looking date rather than an error.
+ *
+ * So the invariant is inverted: the fallback may only accept input that states
+ * a day. Strip the 4-digit year, and if no 1-2 digit number survives, no day
+ * was given. "Thu, Sep 25, 2026" keeps its 25 and parses; "March 2026" is left
+ * with "March" and abstains.
+ *
+ * Every fully-specified format is matched by an earlier branch, so this guards
+ * only the fallback — it cannot reject a date the function already understood.
+ */
+export function statesNoDayOfMonth(str: string): boolean {
+  // `YYYY-MM` is the one shape that survives the year-strip with a number that
+  // is NOT a day: "2026-06" -> "-06". Handled explicitly, because `new Date`
+  // reads it as the 1st and it is a realistic thing for an extractor to emit.
+  if (/^\d{4}-\d{1,2}$/.test(str.trim())) return true;
+  const withoutYear = str.replace(/\b\d{4}\b/g, " ");
+  return !/\d{1,2}/.test(withoutYear);
+}
+
 export function sanitizeDate(value: unknown, nowMs: number = Date.now()): string | null {
   if (value === null || value === undefined) return null;
   const str = String(value).trim();
@@ -1260,6 +1294,13 @@ export function sanitizeDate(value: unknown, nowMs: number = Date.now()): string
     // input a human reads without hesitation.
     const yearless = resolveYearlessDate(str, nowMs);
     if (yearless) return yearless;
+
+    // OPE-587 — abstain rather than fabricate a day nobody stated.
+    //
+    // Placed immediately before the fallback and nowhere else: every branch
+    // above has already matched a fully-specified date, so this can only ever
+    // reject input the fallback would have guessed at.
+    if (statesNoDayOfMonth(str)) return null;
 
     // Try native Date parsing as fallback
     const date = new Date(str);
