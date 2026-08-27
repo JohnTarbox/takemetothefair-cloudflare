@@ -29,6 +29,8 @@ import {
   inArray,
 } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
+import { logError } from "@/lib/logger";
+import { agentHeartbeats } from "@/lib/db/schema";
 import {
   events,
   eventSeries,
@@ -63,6 +65,53 @@ import {
 type Db = DrizzleD1Database<typeof schema>;
 
 const DEFAULT_BATCH_SIZE = 200;
+
+/**
+ * OPE-588 — the per-run inspection budget, made explicit.
+ *
+ * ## What was wrong
+ *
+ * `fillerBudget = max(0, batchSize - guaranteed.size)`, with `guaranteed` being
+ * five per-type samples of PER_TYPE. Once the site passed 10 rows per type that
+ * set pinned at 50, and the nightly cron calls the sweep route with no
+ * `batchSize` — the route defaults to **8**. So the subtraction has been
+ * `max(0, 8 - 50) = 0` every night since OPE-91, and Tiers 1, 2, 2c and REL5
+ * have never run in production. A tier that selects nothing looks exactly like
+ * a tier with nothing to select, which is why nothing reported it.
+ *
+ * ## Why a bigger budget alone would not have fixed it
+ *
+ * The run cannot finish 50 URLs. At ~6s per GSC call (48 URLs took >300s on
+ * 2026-08-27) a run that survives two minutes manages roughly twenty, and the
+ * platform kills it wherever it happens to be — OPE-382 measured the same
+ * thing. `guaranteed` has been sized for a run that does not exist, so filler
+ * was starved by truncation as much as by arithmetic.
+ *
+ * Putting filler ahead of `guaranteed` would starve the per-type rotation
+ * instead, which is precisely the OPE-91 bug (blog/vendor/venue/promoter went
+ * uninspected for weeks). The honest fix is to make the whole list fit:
+ * fewer guaranteed slots per run, a real filler allowance, and a deadline that
+ * stops cleanly instead of being killed.
+ *
+ * PER_TYPE 10 -> 4 costs rotation speed and buys correctness: every type is
+ * still sampled every night, and a week still covers 28 per type.
+ */
+const PER_TYPE = 4;
+/** Independent of `guaranteed` — this is the whole point of OPE-588. */
+const FILLER_BUDGET = 6;
+/**
+ * Wall-clock ceiling for the inspection loop.
+ *
+ * Deliberately below the observed kill points (OPE-382: over both the 60s MCP
+ * and 180s edge budgets; 2026-08-27: >300s for 48 URLs). Stopping ourselves at
+ * a known line degrades predictably and REPORTS what it skipped; being killed
+ * truncates silently wherever the axe falls, which reads identical to a run
+ * with nothing to do.
+ */
+const SWEEP_TIME_BUDGET_MS = 120_000;
+
+/** OPE-588 — heartbeat code proving the filler tiers still select work. */
+export const FILLER_HEARTBEAT_CODE = "watchdog:gsc-sweep-filler";
 const HOST = SITE_URL;
 
 function pathFromUrl(url: string): string {
@@ -126,6 +175,18 @@ interface SweepResult {
   newIssues: number;
   resolvedIssues: number;
   skipped: number;
+  /**
+   * OPE-588 — URLs the run never reached because it hit SWEEP_TIME_BUDGET_MS.
+   * Distinct from `skipped`, which counts per-URL decisions inside the loop:
+   * one means "we looked and moved on", the other means "we never looked".
+   * Collapsing them would hide exactly the truncation this field exists for.
+   *
+   * Optional because it is an OUTPUT of `runSweep`: the sub-passes that take a
+   * `SweepResult` (re-verify, expire, withdraw) neither read nor set it, and
+   * making it required forced every one of their test helpers to declare a
+   * field it has nothing to say about. Same reasoning as `resolvedByReason`.
+   */
+  deadlineSkipped?: number;
   errors: string[];
   /** OPE-373 — closures broken out by reason. A single total cannot tell
    *  "we proved it fixed" from "we stopped looking", and those are the two
@@ -509,7 +570,7 @@ async function recordHealthIssue(
  * rows it selects, because a rotation cursor that nothing advances is not a
  * rotation. The only production caller is `runSweep`.
  */
-export async function pickUrls(
+export async function pickUrlsDetailed(
   db: Db,
   batchSize: number,
   /** OPE-372 — the canonical allow-list. Optional so existing callers and tests
@@ -519,7 +580,7 @@ export async function pickUrls(
   /** Injected so the Tier 0 cursor stamp is deterministic under test; runSweep
    *  passes the same `now` it uses everywhere else in the pass. */
   now: Date = new Date()
-): Promise<string[]> {
+): Promise<{ urls: string[]; fillerSelected: number; guaranteedSelected: number }> {
   const oneDayAgo = new Date(Date.now() - 86400 * 1000);
   const sixHoursAgo = new Date(Date.now() - 6 * 3600 * 1000);
 
@@ -545,7 +606,6 @@ export async function pickUrls(
   // budget. The returned length may exceed batchSize by design (guaranteed
   // coverage + filler); GSC's ~2000/day quota comfortably covers the ~50-60
   // URLs/run this produces.
-  const PER_TYPE = 10;
   const guaranteed = new Set<string>();
   const addByPrefix = (prefix: string, rows: Array<{ slug: string }>) => {
     for (const r of rows) guaranteed.add(`${HOST}${prefix}${r.slug}`);
@@ -641,7 +701,9 @@ export async function pickUrls(
   // default 8) this budget can be 0 — that's fine, the guaranteed set still
   // ships in full.
   const filler = new Set<string>();
-  const fillerBudget = Math.max(0, batchSize - guaranteed.size);
+  // OPE-588 — independent of `guaranteed`. Bounded by batchSize so a caller
+  // asking for a tiny run still gets a tiny run.
+  const fillerBudget = Math.max(0, Math.min(FILLER_BUDGET, batchSize));
   /** Add to filler if there's budget and it isn't already guaranteed; returns true once filler is full. */
   const addFiller = (url: string): boolean => {
     if (filler.size >= fillerBudget) return true;
@@ -895,11 +957,30 @@ export async function pickUrls(
   // been fixing: rows marked attempted, never actually looked at. Every night.
   const ordered = [...openErrorUrls, ...guaranteed, ...filler];
   const seen = new Set<string>();
-  return ordered.filter((u) => {
+  const urls = ordered.filter((u) => {
     if (seen.has(u)) return false; // openErrorUrls are also in `guaranteed`
     seen.add(u);
     return isExempt(u) || !isNonCanonicalEventUrl(u);
   });
+  return { urls, fillerSelected: filler.size, guaranteedSelected: guaranteed.size };
+}
+
+/**
+ * The URL list alone.
+ *
+ * `runSweep` uses `pickUrlsDetailed` because OPE-588's heartbeat needs to know
+ * whether the filler tiers selected anything — a count that is invisible once
+ * the tiers are flattened into one array. Kept as a separate wrapper so the
+ * existing callers and tests, which only ever want the list, are unchanged.
+ */
+export async function pickUrls(
+  db: Db,
+  batchSize: number,
+  precomputedCanonicalEventUrls?: Set<string>,
+  now: Date = new Date()
+): Promise<string[]> {
+  const { urls } = await pickUrlsDetailed(db, batchSize, precomputedCanonicalEventUrls, now);
+  return urls;
 }
 
 /**
@@ -966,6 +1047,7 @@ export async function runSweep(
     newIssues: 0,
     resolvedIssues: 0,
     skipped: 0,
+    deadlineSkipped: 0,
     errors: [],
     resolvedByReason: {},
   };
@@ -978,7 +1060,12 @@ export async function runSweep(
   // so every write in the pass shares one timestamp.
   const now = new Date();
 
-  const urls = await pickUrls(db, batchSize, canonicalEventUrls, now);
+  const { urls, fillerSelected, guaranteedSelected } = await pickUrlsDetailed(
+    db,
+    batchSize,
+    canonicalEventUrls,
+    now
+  );
 
   // All three maintenance passes run BEFORE the early return: they must happen
   // even on a sweep that inspects nothing (quota exhausted, empty pick). Tying
@@ -1024,7 +1111,58 @@ export async function runSweep(
     );
   }
 
-  for (const url of urls) {
+  // OPE-588 — evidence that the filler tiers are still reachable.
+  //
+  // ⚠️ Stamped only when filler selected something, which is a YIELD probe and
+  // normally the wrong shape (OPE-547's note: a yield probe goes red on a quiet
+  // week rather than on a dead cron). It is right HERE because a zero filler is
+  // not a quiet week — `fillerBudget` is computed from constants, so zero means
+  // the arithmetic broke again, and tier 2c (never-inspected URLs) cannot run
+  // dry while ~2,200 sitemap URLs rotate 4-per-type a night.
+  //
+  // If this ever does go red on a legitimately-empty filler, that is worth
+  // knowing too: it would mean the corpus is fully inspected, which has never
+  // been true.
+  if (fillerSelected > 0) {
+    await db
+      .insert(agentHeartbeats)
+      .values({
+        id: crypto.randomUUID(),
+        agentCode: FILLER_HEARTBEAT_CODE,
+        kind: "watchdog",
+        lastSeenAt: now,
+        note: `filler=${fillerSelected} guaranteed=${guaranteedSelected}`,
+      })
+      .onConflictDoUpdate({
+        target: agentHeartbeats.agentCode,
+        set: {
+          lastSeenAt: now,
+          note: `filler=${fillerSelected} guaranteed=${guaranteedSelected}`,
+        },
+      });
+  }
+
+  // OPE-588 — stop at a line we chose rather than one the platform chooses.
+  const deadline = now.getTime() + SWEEP_TIME_BUDGET_MS;
+  for (const [i, url] of urls.entries()) {
+    if (Date.now() >= deadline) {
+      // Everything from here on was never attempted. Recorded and logged so a
+      // truncated run is legible; a silent stop reads exactly like a run with
+      // nothing to do, which is how the dead filler tiers went unnoticed.
+      result.deadlineSkipped = urls.length - i;
+      await logError(db, {
+        level: "warn",
+        message: "OPE-588 sweep hit its time budget",
+        source: "lib/gsc-sweep.ts:runSweep",
+        context: {
+          inspected: result.inspected,
+          notReached: result.deadlineSkipped,
+          budgetMs: SWEEP_TIME_BUDGET_MS,
+          firstUnreached: url,
+        },
+      });
+      break;
+    }
     const path = pathFromUrl(url);
     try {
       const inspection = await inspectUrl(env, path);
