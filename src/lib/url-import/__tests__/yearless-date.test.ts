@@ -92,23 +92,42 @@ describe("sanitizeDate — yearless input reaches a real date", () => {
     expect(sanitizeDate("details will be sent out later this year", AUG_24_2026)).toBeNull();
   });
 
-  it("PINS A KNOWN GAP: an underspecified date still fabricates a day-of-month", () => {
-    // NOT endorsed behaviour — pinned so that fixing it is a deliberate act
-    // with a failing test, rather than a silent change.
+  it("OPE-587: an underspecified date ABSTAINS instead of fabricating a day", () => {
+    // Was PINNED here as a known gap by OPE-531 — the pin asserted the bad
+    // behaviour (`"Fall 2026"` -> `2026-01-01`) so that fixing it would be a
+    // deliberate act with a failing test rather than a silent change. This is
+    // that act; the pin is now an assertion of the intended behaviour.
     //
-    // Found by this file, pre-existing, and NOT introduced by the yearless
-    // branch (which requires a 1-2 digit day, so it never sees these). The
-    // culprit is the native-`Date` fallback below it: `new Date("Fall 2026")`
-    // is 1 January and `new Date("March 2026")` is 1 March. A season and a
-    // bare month are not days, and inventing the 1st is the OPE-465
-    // fabrication direction — the same class as the Martha's Vineyard 2024
-    // row that OPE-432 was filed for.
-    //
-    // Left alone deliberately: narrowing the native fallback reaches every
-    // extraction path, which is wider than OPE-531's scope. Reported on the
-    // ticket for its own change.
-    expect(sanitizeDate("Fall 2026", AUG_24_2026)).toBe("2026-01-01");
-    expect(sanitizeDate("March 2026", AUG_24_2026)).toBe("2026-03-01");
+    // The culprit was the native-`Date` fallback: `new Date("Fall 2026")` is
+    // 1 January, `new Date("March 2026")` is 1 March. A season and a bare month
+    // are not days, and inventing the 1st is the OPE-465 fabrication direction.
+    expect(sanitizeDate("Fall 2026", AUG_24_2026)).toBeNull();
+    expect(sanitizeDate("March 2026", AUG_24_2026)).toBeNull();
+    expect(sanitizeDate("2026", AUG_24_2026)).toBeNull();
+  });
+
+  it("abstains on shapes a denylist would have missed", () => {
+    // ⚠️ The reason the fix is a rule ("no day stated") rather than a list of
+    // three bad strings. Each of these fabricates in exactly the same way and
+    // none is named in the ticket — a denylist would have shipped looking
+    // complete while these kept inventing dates.
+    for (const input of [
+      "2026-06", // new Date -> 2026-06-01
+      "late summer 2026",
+      "Spring 2027",
+      "Winter 2026",
+      "early March 2026",
+    ]) {
+      expect(sanitizeDate(input, AUG_24_2026), input).toBeNull();
+    }
+  });
+
+  it("does NOT abstain on odd-but-dated formats the fallback exists for", () => {
+    // The guard's blast radius. The fallback's legitimate job is formats no
+    // earlier branch matches but which DO state a day; rejecting those would
+    // trade fabrication for silent data loss, which is not an improvement.
+    expect(sanitizeDate("Thu, Sep 25, 2026", AUG_24_2026)).toBe("2026-09-25");
+    expect(sanitizeDate("Sept 25 2026", AUG_24_2026)).toBe("2026-09-25");
   });
 
   it("leaves an explicit year exactly as it was — these are the controls", () => {
