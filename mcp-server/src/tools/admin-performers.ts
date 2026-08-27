@@ -22,7 +22,14 @@ import {
   adminActions,
   events,
 } from "../schema.js";
-import { appendSlugSegment, createSlug, escapeLike, jsonContent, unsafeSlug } from "../helpers.js";
+import {
+  appendSlugSegment,
+  createSlug,
+  decodeHtmlEntities,
+  escapeLike,
+  jsonContent,
+  unsafeSlug,
+} from "../helpers.js";
 import { combinedSimilarity } from "@takemetothefair/utils";
 import { PERFORMER_ROSTER_STATUS_VALUES } from "@takemetothefair/constants";
 import type { Db } from "../db.js";
@@ -62,7 +69,29 @@ const toDate = (sec: number | null | undefined): Date | null =>
 const toSec = (d: Date | null | undefined): number | null =>
   d == null ? null : Math.floor(d.getTime() / 1000);
 
-/** Slug for a new performer name, made unique against existing performers. */
+/**
+ * Slug for a new performer name, made unique against existing performers.
+ *
+ * ⚠️ OPE-584 — `name` MUST already be HTML-decoded when it gets here.
+ *
+ * `createSlug` is correct and always was: it maps a literal `&` to "and"
+ * (`"Kevin Niles & Company"` → `kevin-niles-and-company`). What it cannot do is
+ * recognise an entity that was never decoded — `"Kevin Niles &amp; Company"`
+ * slugifies to `kevin-niles-andamp-company`, which is exactly what 13 live
+ * performer URLs carried.
+ *
+ * The tool schemas above now `.transform(decodeHtmlEntities)` on every
+ * free-text field, per the convention in CLAUDE.md that this file was the only
+ * tool file not following — it contained zero uses of the helper while
+ * events/venues/vendors applied it, which is precisely why those tables were
+ * 100% clean across 251 ampersand names and this one was 13-for-29 wrong.
+ *
+ * Note what makes the damage permanent rather than self-healing:
+ * `update_performer` deliberately leaves the slug unchanged, so a later name
+ * correction fixes the display name and strands the URL. Nine of the thirteen
+ * rows are in exactly that state — clean name, broken slug — which is why the
+ * two symptoms look like separate defects and are not.
+ */
 export async function ensureUniquePerformerSlug(db: Db, name: string): Promise<string> {
   const base = createSlug(name);
   const existing = await db
@@ -155,13 +184,13 @@ const performerFields = {
     .enum(ACT_CATEGORY)
     .optional()
     .describe("Act category — drives display + schema.org @type."),
-  description: z.string().optional().describe("Bio."),
+  description: z.string().transform(decodeHtmlEntities).optional().describe("Bio."),
   website: z.string().url().optional().describe("Official site."),
   social_links: z.string().optional().describe("JSON of FB/IG/YouTube links."),
   image_url: z.string().url().optional().describe("Hero image URL (CDN host)."),
-  home_base_city: z.string().optional(),
+  home_base_city: z.string().transform(decodeHtmlEntities).optional(),
   home_base_state: z.string().optional(),
-  contact_name: z.string().optional(),
+  contact_name: z.string().transform(decodeHtmlEntities).optional(),
   contact_email: z.string().optional(),
   contact_phone: z.string().optional(),
 };
@@ -191,7 +220,9 @@ export function registerPerformerTools(server: McpServer, db: Db, auth: AuthCont
     "create_performer",
     "Create a performer (act that appears at events, e.g. 'Mr. Drew and His Animals Too'). Generates a unique slug from the name. Does NOT dedup — use create_or_link_performer when adding an act to an event so fuzzy-dup detection runs. Admin only.",
     {
-      name: z.string().min(1).describe("Act/stage name."),
+      // OPE-584 — decode BEFORE this value reaches the column or the slugifier.
+      // See the note on ensureUniquePerformerSlug.
+      name: z.string().min(1).transform(decodeHtmlEntities).describe("Act/stage name."),
       ...performerFields,
     },
     async (params) => {
@@ -222,7 +253,12 @@ export function registerPerformerTools(server: McpServer, db: Db, auth: AuthCont
     "Update a performer's fields (not its slug — slug changes go through merge/alias). Only provided fields change. Admin only.",
     {
       performer_id: z.string().min(1),
-      name: z.string().min(1).optional().describe("New display name (slug is left unchanged)."),
+      name: z
+        .string()
+        .min(1)
+        .transform(decodeHtmlEntities)
+        .optional()
+        .describe("New display name (slug is left unchanged)."),
       ...performerFields,
     },
     async (params) => {
@@ -327,7 +363,11 @@ export function registerPerformerTools(server: McpServer, db: Db, auth: AuthCont
     "Add an act to an event: fuzzy-dedup against existing performers by name, then create the appearance (event_performers row). If a likely duplicate is found (>=0.92 combined similarity) it is NOT auto-linked — the matches are returned for manual confirm (dash/abbrev variants like 'Mr Drew' vs 'Mr. Drew and His Animals Too' slip fuzzy matching; use set_performer_alias for those). Pass performer_id to skip dedup and link a known act. One call = one appearance/set. Admin only.",
     {
       event_id: z.string().min(1),
-      name: z.string().min(1).describe("Act name (used for fuzzy-dedup + create)."),
+      name: z
+        .string()
+        .min(1)
+        .transform(decodeHtmlEntities)
+        .describe("Act name (used for fuzzy-dedup + create)."),
       performer_id: z
         .string()
         .optional()
