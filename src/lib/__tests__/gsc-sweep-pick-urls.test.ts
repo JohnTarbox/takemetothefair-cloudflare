@@ -413,6 +413,31 @@ describe("OPE-567 follow-up — Tier 0 re-inspects URLs with an open ERROR", () 
     expect(fromTier0).toHaveLength(5);
   });
 
+  it("puts its URLs FIRST — the run is killed before it finishes", async () => {
+    // runSweep's inspection loop has no time budget and `guaranteed` alone is
+    // 50 URLs at ~3-5s each, so the platform kills the run partway. Position in
+    // this array decides what is actually inspected. Tier 0 adding into an
+    // insertion-ordered Set put it behind all 50 rotation samples, while still
+    // stamping its cursor — attempted, never looked at.
+    for (let i = 0; i < 10; i++) {
+      raw
+        .prepare(`INSERT INTO venues (id, slug, status) VALUES (?, ?, 'ACTIVE')`)
+        .run(`v-ord-${i}`, `ordering-venue-${i}`);
+    }
+    const url = `${HOST}/venues/must-be-inspected-first`;
+    seedOpenIssue(url, "ERROR");
+    const picked = await pickUrls(db as never, 8);
+    expect(picked[0]).toBe(url);
+  });
+
+  it("returns no duplicates — Tier 0 URLs are in `guaranteed` too", async () => {
+    const url = `${HOST}/venues/dupe-check`;
+    seedOpenIssue(url, "ERROR");
+    const picked = await pickUrls(db as never, 8);
+    expect(picked.filter((u) => u === url)).toHaveLength(1);
+    expect(new Set(picked).size).toBe(picked.length);
+  });
+
   it("honours batch_size=0 — maintenance only, no GSC spend", async () => {
     // The MCP tool documents 0 as "run ONLY the maintenance passes, no quota
     // spend at all". A tier with its own budget must not quietly break that.
