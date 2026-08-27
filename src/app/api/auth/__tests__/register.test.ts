@@ -27,6 +27,7 @@ vi.mock("@/lib/cloudflare", () => ({
 vi.mock("@/lib/logger", () => ({
   logError: vi.fn(),
 }));
+import { logError } from "@/lib/logger";
 
 // Import after mocks are set up
 import { POST } from "../register/route";
@@ -177,6 +178,29 @@ describe("POST /api/auth/register", () => {
     // "21 Street Beads LLC", which is the duplicate we are avoiding.
     expect(data.error).toContain("21 Street Beads");
     expect(data.error).not.toMatch(/UNIQUE|SQLITE|D1_ERROR/);
+  });
+
+  it("records the collision as a HANDLED event, not an error", async () => {
+    // Acceptance: `error_logs` must show this as handled, not level='error'
+    // with a raw driver string. Without a log at all the fix would be
+    // invisible — a recurring collision would look like it had stopped.
+    mockDb.limit
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ slug: "21-street-beads", name: "21 Street Beads", claimed: 0 }]);
+
+    await POST(
+      new NextRequest("http://localhost:3000/api/auth/register", {
+        method: "POST",
+        body: JSON.stringify(collidingVendorBody),
+      })
+    );
+
+    const call = vi.mocked(logError).mock.calls.at(-1)?.[1] as any;
+    expect(call.level).toBe("warn");
+    expect(call.source).toBe("api/auth/register:name-collision");
+    expect(call.context.slug).toBe("21-street-beads");
+    // No driver string, and no `error` object carrying one.
+    expect(JSON.stringify(call)).not.toMatch(/UNIQUE|SQLITE|D1_ERROR/);
   });
 
   it("does NOT block a claim-funnel signup against the listing it means to claim", async () => {

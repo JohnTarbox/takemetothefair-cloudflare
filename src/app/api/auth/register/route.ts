@@ -198,7 +198,29 @@ export async function POST(request: NextRequest) {
           role === "VENDOR" ? "VENDOR" : "PROMOTER",
           collisionName
         );
-        if (collision) return nameCollisionResponse(collision);
+        if (collision) {
+          // Record it as a HANDLED event, per the ticket's acceptance. Two
+          // reasons this is not just noise:
+          //  1. Without it the fix is invisible. The old failure at least left
+          //     an `error` row; a clean 409 that logged nothing would make a
+          //     recurring collision look like it had stopped happening.
+          //  2. It is a demand signal. Every one of these is a vendor already
+          //     in the directory trying to sign up — the claim funnel OPE-59
+          //     measured at ~0 conversion. Knowing how often this fires, and
+          //     whether a claim follows, is the only way to tell whether the
+          //     claim link works.
+          await logError(db, {
+            level: "warn",
+            message: "OPE-573 signup name collision — routed to claim flow",
+            source: "api/auth/register:name-collision",
+            context: {
+              entityType: collision.entityType,
+              slug: collision.slug,
+              claimed: collision.claimed,
+            },
+          });
+          return nameCollisionResponse(collision);
+        }
       }
     }
 
