@@ -22,8 +22,14 @@
  * counts entries since the last fire whose `source` matches
  * `app/%page.tsx:%`, and dispatches Slack + email alerts on:
  *
- *   - RED   — ≥ 50 errors in 10 min  (≈ 5/min sustained, outage territory)
- *   - YELLOW — ≥ 10 errors in 10 min (≈ 1/min sustained, degradation)
+ *   - RED    — >= RED_THRESHOLD errors in 10 min, PER SOURCE
+ *   - YELLOW — >= YELLOW_THRESHOLD errors in 10 min, PER SOURCE
+ *
+ * ⚠️ The live values are the constants below (RED 10 / YELLOW 3), not the
+ * 50/10 this block claimed until 2026-08-27. The numbers were changed when the
+ * canary moved to per-source counting and the prose was not — which matters,
+ * because OPE-574 reasoned from the stale figures to conclude this canary had
+ * missed a fault it had in fact caught. Read the constants, not this comment.
  *
  * Debounced via `page_error_canary_state` (one row per tier) so a single
  * sustained outage doesn't fire the same tier every cron tick:

@@ -61,6 +61,27 @@ export default function Error({
           JSX because client error boundaries can't export metadata — React 19 /
           Next 15 hoist <meta> to <head> on both server and client render. */}
       <meta name="robots" content="noindex" />
+      {/* OPE-574 — the machine-detectable signal, restored.
+
+          The status line is NOT available to us here and cannot be made so on
+          this route. `/events`, `/venues` and `/vendors` each keep a
+          `loading.tsx` inside their `(listing)` route group (OPE-420), which
+          opens a Suspense boundary and streams: the 200 is flushed before the
+          page body runs, so a throw afterwards renders this boundary into an
+          already-committed response. That is a deliberate trade — the dynamic
+          `[slug]` routes were moved OUT of those groups precisely so they could
+          still send a real 404. See docs/mig4-soft-404-opennext-isr.md.
+
+          An apex Worker used to rewrite 200 -> 500 by reading a hidden marker
+          here; the OpenNext cutover retired that Worker and the marker went
+          with it, leaving body-shape as the only external tell — and the only
+          stable one was an H1 string that a copy edit would silently break.
+
+          So: an explicit, greppable contract for uptime checks and the OPE-84
+          runbook, whose step 3.2 (`curl -sI`, note the status) cleared a live
+          fault as healthy. `content` distinguishes a failed data fetch from a
+          render crash, because they need different responses. */}
+      <meta name="x-render-fault" content={isFetchError ? "fetch-error" : "render-error"} />
       <div className="text-center max-w-md">
         <div className="mb-6 flex justify-center">
           <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center">
