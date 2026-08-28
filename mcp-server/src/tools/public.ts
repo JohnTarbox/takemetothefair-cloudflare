@@ -107,6 +107,15 @@ export function registerPublicTools(server: McpServer, db: Db) {
    * return once, not three times, and a JOIN would need a DISTINCT that fights
    * the fuzzy scorer's ordering.
    */
+  /**
+   * OPE-593 — most query tokens that may reach the SQL candidate gate.
+   *
+   * See `docs/d1-statement-limits.md`. D1 caps expression tree depth at 100 and
+   * each token costs ~2 levels, so this is a depth budget, not a relevance
+   * choice. Raising it without re-reading that file risks the fifth cap.
+   */
+  const MAX_FUZZY_TOKENS = 24;
+
   function nameOrVariantLike(pattern: string) {
     return or(
       like(events.name, pattern),
@@ -243,7 +252,30 @@ export function registerPublicTools(server: McpServer, db: Db) {
         // stop word / year / ordinal, no SQL filter is applied — the JS
         // scorer would return 0 matches anyway, so the over-fetch slice
         // doesn't hurt.
-        const tokens = tokenize(params.query);
+        // OPE-593 — cap the tokens that reach SQL.
+        //
+        // FAM-D1-PARAMCAP, fifth door. D1 caps expression tree depth at 100
+        // (SQLite's own default is 1000; measured by bracketing against prod —
+        // 99 OR terms pass, ~120 throw "Expression tree is too large").
+        //
+        // This path built one predicate per query token and OR'd them, and
+        // `tokenize()` has no ceiling while `params.query` is free text. Worse,
+        // `nameOrVariantLike` is itself `or(like, EXISTS)`, so each token costs
+        // about TWO levels of depth. Roughly 50 tokens — an ordinary pasted
+        // event blurb — would have thrown. It had not fired only because
+        // callers happened to send short queries, which is a fact about today's
+        // traffic and not a guard.
+        //
+        // 24 leaves a wide margin: ~2 levels per token is ~48, plus the
+        // whole-query term and the surrounding `and()` conditions, against 100.
+        // It also costs nothing real — `tokenize()` has already dropped stop
+        // words, years and ordinals, and no event name has 24 significant
+        // tokens. The JS scorer still sees the FULL token list, so ranking is
+        // unchanged; only the SQL candidate gate is capped.
+        //
+        // The OPE-434 superset invariant still holds: the whole-query LIKE is
+        // pushed in below regardless, so an exact match cannot be gated out.
+        const tokens = tokenize(params.query).slice(0, MAX_FUZZY_TOKENS);
         if (tokens.length > 0) {
           // OPE-517 — variants join the candidate gate too, or a variant-only
           // match is filtered out before the scorer ever sees it.
