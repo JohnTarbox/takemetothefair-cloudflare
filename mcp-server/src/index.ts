@@ -51,6 +51,7 @@ import {
 import { runScheduledDedupSweepCanary } from "./dedup-sweep-canary.js";
 import { runScheduledCpiStaleRedCanary } from "./cpi-stale-red-canary.js";
 import { runScheduledNewsletterListBalanceCanary } from "./newsletter-list-balance-canary.js";
+import { runScheduledOperatorQueueNotice } from "./operator-queue-notice.js";
 import { runAgentSilenceWatchdog } from "./agent-silence-watchdog.js";
 import { runScheduledCpiScanWatchdog } from "./cpi-scan-watchdog.js";
 import {
@@ -1881,6 +1882,17 @@ export default {
         // is an invariant violation, not a backlog, and a steady count of 4 is
         // four people still receiving nothing. Failsoft; never throws.
         runScheduledNewsletterListBalanceCanary(env),
+        // OPE-599 (2026-08-28) — operator work queues with something waiting.
+        //
+        // A vendor's claim on his own listing sat PENDING for 36 DAYS in a
+        // table that held two rows in its entire history, and was found only
+        // because an unrelated sweep happened to read it. `list_claims` works
+        // fine; it is passive, and an admin has to think to call it.
+        //
+        // Silent when both queues are clear — an alert that fires daily
+        // regardless becomes wallpaper, which is how the sibling canaries on
+        // this rail stay useful.
+        runScheduledOperatorQueueNotice(env),
         // OPE-225 (2026-07-20) — photo-coverage rails. Refreshes
         // image_coverage_state for every live entity (coverage by demand tier,
         // image_set_at first-observation, hotlink health) so the OPE-226
