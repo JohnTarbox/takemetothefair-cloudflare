@@ -1,6 +1,6 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
-import { and, desc, eq, gte, inArray } from "drizzle-orm";
+import { and, desc, eq, gte, notInArray } from "drizzle-orm";
 import { withInternalKey } from "@/lib/api/with-auth";
 import { errorLogs, faultSignatures } from "@/lib/db/schema";
 import { logError } from "@/lib/logger";
@@ -35,6 +35,9 @@ import { classifyFault } from "@/lib/faults/family-registry";
  * result rather than an outage.
  */
 
+/** OPE-93 heartbeat source name, hoisted so the never-ingest list can name it. */
+const EMIT_HEARTBEAT_SOURCE_NAME = "mcp:fault-signatures-emit";
+
 /** Scan window: occurrences newer than this are considered. */
 const WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 /** Hard cap on rows scanned per run (newest first) — bounds the query. */
@@ -48,9 +51,26 @@ const MAX_ROWS = 5000;
  * backend errors — and re-ingested its own heartbeat. Scope it to render sources.
  */
 const RENDER_FAULT_SOURCES = ["server-render", "client"];
+
+/**
+ * OPE-615 — sources that must NEVER be ingested, now that the scan is no longer
+ * limited to the render lane.
+ *
+ * OPE-93's warning is the reason this list exists and not a reason to stay
+ * narrow: without a filter the emitter grouped EVERY `error_logs` row including
+ * its own heartbeat, and re-ingested itself. The answer is to exclude the
+ * self-referential sources by name, not to exclude the whole server side.
+ */
+const NEVER_INGEST_SOURCES = [
+  // The emitter's own "I ran" stamp (OPE-93).
+  EMIT_HEARTBEAT_SOURCE_NAME,
+  // This route's own failures — ingesting them would make a broken emitter
+  // file OPEs about itself, forever.
+  "faults:candidates",
+];
 /** Heartbeat source — the operator's "when did the emitter last run" signal
  *  (OPE-93). Excluded from RENDER_FAULT_SOURCES so it's never re-ingested. */
-const EMIT_HEARTBEAT_SOURCE = "mcp:fault-signatures-emit";
+const EMIT_HEARTBEAT_SOURCE = EMIT_HEARTBEAT_SOURCE_NAME;
 
 const toMs = (d: Date | null): number | null => (d ? d.getTime() : null);
 
@@ -101,22 +121,60 @@ interface Accum {
   sessions: Set<string>;
 }
 
-export const POST = withInternalKey({ source: "faults:candidates" }, async ({ db }) => {
+export const POST = withInternalKey({ source: "faults:candidates" }, async ({ db, request }) => {
   try {
     const now = new Date();
-    const since = new Date(now.getTime() - WINDOW_MS);
+    // OPE-615 scope 3 — the backfill is THIS emitter run over a longer window,
+    // not a hand-inserted set of rows. The ticket says "do not hand-insert",
+    // and it is right: a backfill written by hand proves nothing about whether
+    // the emitter would have produced those rows itself.
+    //
+    // Capped at 30 days, which is also D1's Time Travel horizon — beyond it
+    // there is nothing to reconcile against anyway.
+    let windowMs = WINDOW_MS;
+    try {
+      const body = (await request.clone().json()) as { window_days?: number } | null;
+      const d = Number(body?.window_days);
+      if (Number.isFinite(d) && d > 0) windowMs = Math.min(d, 30) * 24 * 60 * 60 * 1000;
+    } catch {
+      // No body, or not JSON — the default 7-day window is the normal case.
+    }
+    const since = new Date(now.getTime() - windowMs);
 
+    // OPE-615 — the emitter is no longer limited to the render lane.
+    //
+    // It scanned `source IN ('server-render','client')`. Everything else —
+    // route handlers, scheduled jobs, workflows, queue consumers — could recur
+    // for weeks and never mint a signature. Measured over 7 days on prod:
+    // 209 rows in scope against 134 rows across 16 EXCLUDED sources, and the
+    // two largest excluded ones were the two live defects
+    // (`app/events/page.tsx:getEvents` 88, `api/admin/import-url/extract` 26).
+    //
+    // The consequence is self-certifying: four consecutive OPE-84 runs found
+    // every fileable fault in the out-of-ledger sweep and none in the ledger,
+    // and a clean ledger reads to a human as a clean production.
+    //
+    // Now an exclusion list rather than an allow-list, so a NEW source is
+    // watched by default. That is the direction that fails safe — the old shape
+    // silently ignored every source nobody remembered to add.
     const rows = await db
       .select({
         message: errorLogs.message,
         route: errorLogs.route,
+        source: errorLogs.source,
         digest: errorLogs.digest,
         url: errorLogs.url,
         context: errorLogs.context,
         timestamp: errorLogs.timestamp,
       })
       .from(errorLogs)
-      .where(and(gte(errorLogs.timestamp, since), inArray(errorLogs.source, RENDER_FAULT_SOURCES)))
+      .where(
+        and(
+          gte(errorLogs.timestamp, since),
+          eq(errorLogs.level, "error"),
+          notInArray(errorLogs.source, NEVER_INGEST_SOURCES)
+        )
+      )
       .orderBy(desc(errorLogs.timestamp))
       .limit(MAX_ROWS);
 
@@ -141,17 +199,40 @@ export const POST = withInternalKey({ source: "faults:candidates" }, async ({ db
         suppressedTotal += 1;
         continue;
       }
+      // OPE-615 — server rows key on `source`, not on `route`.
+      //
+      // `computeSignature` falls back to the literal "unknown" when route is
+      // null, and route IS null on every server row — so widening the scan
+      // without this would collapse every backend fault in the system into one
+      // signature per error class. `source` is a stable, high-quality grouping
+      // key and is strictly better than the route key the render lane uses.
+      const isRenderLane = RENDER_FAULT_SOURCES.includes(r.source ?? "");
+      const groupKey = isRenderLane ? r.route : (r.source ?? r.route);
       const signature = computeSignature({
-        route: r.route,
+        route: groupKey,
         message: r.message,
         digest: r.digest,
       });
       const tsMs = r.timestamp ? r.timestamp.getTime() : now.getTime();
-      const sessionKey = sessionKeyFor(r.context, r.url);
+      // OPE-615 scope 2 — for a server fault, a distinct DAY is the analogue of
+      // a distinct session.
+      //
+      // The `minSessions` gate was tuned against burst-prone browser noise, and
+      // on server rows there is no session key at all, so `distinctSessions`
+      // degrades to the raw count — which ranks a 3-second loop-burst ABOVE a
+      // cron that fails once a day. That is backwards: the burst is one event,
+      // the cron is a standing fault.
+      //
+      // Keying the session dimension on the UTC day inverts it with no new
+      // threshold: five errors inside one burst count as ONE, and three days of
+      // a failing cron count as THREE.
+      const sessionKey = isRenderLane
+        ? sessionKeyFor(r.context, r.url)
+        : new Date(tsMs).toISOString().slice(0, 10);
       const acc = groups.get(signature);
       if (!acc) {
         groups.set(signature, {
-          route: r.route ?? null,
+          route: groupKey ?? null,
           errorClass: normalizeErrorClass(r.message),
           count: 1,
           firstSeen: tsMs,
