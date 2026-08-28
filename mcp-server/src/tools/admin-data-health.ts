@@ -33,6 +33,7 @@ import { deriveCrossings, auditStoredDates } from "@takemetothefair/utils";
 import { jsonContent } from "../helpers.js";
 import { loadLocationsUniverse } from "../locations-universe.js";
 import { listBalance } from "../newsletter-list-balance.js";
+import { readOperatorQueues } from "../operator-queue-notice.js";
 import type { Db } from "../db.js";
 import { findSlugCollisionPairs } from "../slug-collision-invariant.js";
 import type { AuthContext } from "../auth.js";
@@ -660,8 +661,23 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
       // because one block threw is worse than a block that says it failed.
       // OPE-510 — cheap enough to run unconditionally; three COUNTs.
       let newsletterListBalance: unknown;
+      let operatorQueues: {
+        pending_claims: number;
+        pending_reply_drafts: number;
+        oldest_waiting_days: number;
+      } | null = null;
       try {
         newsletterListBalance = await listBalance(db);
+        // OPE-599 — same read the daily notice uses, so the report and the
+        // alert can never disagree about what is waiting.
+        operatorQueues = await (async () => {
+          const q = await readOperatorQueues(db, new Date());
+          return {
+            pending_claims: q.agedClaims,
+            pending_reply_drafts: q.agedReplies,
+            oldest_waiting_days: q.oldestDays,
+          };
+        })();
       } catch (err) {
         newsletterListBalance = {
           error: "newsletter_list_balance_failed",
@@ -797,6 +813,16 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
             newsletter_list_balance: {
               rule: "every confirmed, non-unsubscribed subscriber is on at least one active list",
               result: newsletterListBalance,
+            },
+            // OPE-599 — operator work queues with something waiting.
+            //
+            // In the cheapest oracle we have, not only in a daily email. A
+            // vendor's claim on his own listing sat PENDING for 36 days in a
+            // two-row table because nothing ever put the number in front of
+            // anyone — and this report is the thing an operator actually reads.
+            operator_queues: {
+              rule: "no entity claim or written reply draft should wait more than 48h undecided",
+              result: operatorQueues,
             },
             // OPE-292 — placeholder accounts must not pollute the
             // registration partition. `misfiled_placeholders` should be 0;

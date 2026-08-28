@@ -1223,6 +1223,25 @@ const SCHEMA_SQL = `
     decided_by TEXT
   );
   CREATE INDEX idx_entity_claims_entity ON entity_claims (entity_type, entity_id);
+
+  -- OPE-599 — the operator-queue notice reads this alongside entity_claims.
+  -- Four written-but-undelivered drafts sat here for the same reason a claim
+  -- sat 36 days: nothing notified. Without the table the read throws and any
+  -- test of the notice passes by testing nothing.
+  CREATE TABLE pending_email_replies (
+    id TEXT PRIMARY KEY,
+    inbound_email_id TEXT NOT NULL,
+    to_address TEXT NOT NULL,
+    subject TEXT,
+    body_text TEXT NOT NULL,
+    requested_by TEXT,
+    requested_at INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    reviewed_by TEXT,
+    reviewed_at INTEGER,
+    review_note TEXT,
+    sent_message_id TEXT
+  );
   CREATE INDEX idx_entity_claims_user ON entity_claims (user_id);
   CREATE INDEX idx_entity_claims_status ON entity_claims (status);
 
