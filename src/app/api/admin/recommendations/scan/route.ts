@@ -42,8 +42,14 @@ export const POST = withAuthorized(async ({ request, db }) => {
   const slice = ALL_RULES.slice(cursor, cursor + chunk);
   const result = await scanAll(db, slice);
 
-  const nextCursor = cursor + slice.length;
+  // OPE-575 — advance by what the scan actually CONSUMED, not by the slice
+  // length. `scanAll` stops at a wall-clock budget, so a chunk containing two
+  // fetch-heavy rules now returns early instead of running past the workflow's
+  // 300s step timeout and taking the whole invocation down. Advancing by
+  // slice.length here would skip the rules it never reached.
+  const nextCursor = cursor + result.rulesConsumed;
   const more = nextCursor < ALL_RULES.length;
+  const truncated = result.rulesConsumed < slice.length;
 
   // REL3 (2026-06-08) — flat `{ruleKey: ms}` map, easier to consume
   // for the workflow's slow-rule WARN logging than digging through
@@ -63,6 +69,10 @@ export const POST = withAuthorized(async ({ request, db }) => {
       more,
       totalRules: ALL_RULES.length,
       ruleTimings,
+      // OPE-575 — lets the caller tell "this chunk finished" from "this chunk
+      // ran out of time", which is otherwise invisible: both return more:true.
+      truncated,
+      rulesConsumed: result.rulesConsumed,
     },
   });
 });

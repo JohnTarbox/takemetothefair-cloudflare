@@ -143,7 +143,13 @@ export class RecommendationsScanWorkflow extends WorkflowEntrypoint<
             timeout: "5 minutes",
           },
           async (): Promise<ChunkResponse> => {
-            const url = `${this.env.MAIN_APP_URL}/api/admin/recommendations/scan?cursor=${cursorForLog}&chunk=4`;
+            // OPE-575 — the endpoint bounds a chunk by WALL CLOCK now, not by count, so
+            // this asks for a generous slice and lets the server stop where the
+            // budget runs out. `chunk=4` used to override the endpoint's own
+            // deliberate default of 3 ("almost guarantees at most one fetch-heavy
+            // rule per chunk") and two slow rules in one chunk is exactly what blew
+            // the 300s step timeout 14 times.
+            const url = `${this.env.MAIN_APP_URL}/api/admin/recommendations/scan?cursor=${cursorForLog}&chunk=8`;
             const init: RequestInit = {
               method: "POST",
               headers: {
