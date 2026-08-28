@@ -24,7 +24,7 @@ import { recordMutation } from "@/lib/audit/record-mutation";
 import { parseTimestamp } from "@/lib/datetime";
 import { normalizeEventDate } from "@/lib/event-dates";
 import { notifyApprovalIfNeeded } from "@/lib/approval-notification";
-import { evaluateGates, mirroredFieldsChanged } from "@takemetothefair/utils";
+import { evaluateGates, mirroredFieldsChanged, nextGateFlags } from "@takemetothefair/utils";
 import { eventSyndicationStatements } from "@/lib/syndication/outbox";
 import { enqueueSyndicationChange } from "@/lib/queues/producers";
 import { repairBlogLinksForSlugChange } from "@/lib/content-links-sync";
@@ -123,6 +123,11 @@ export const PATCH = withAuth<{ id: string }>(
           applicationDeadline: events.applicationDeadline,
           eventScale: events.eventScale,
           discontinuousDates: events.discontinuousDates,
+          // OPE-435 — needed to decide whether a CLEAN gate verdict should
+          // clear a stale flag. Without reading the current value there is no
+          // way to tell "was never flagged" from "was flagged and is now
+          // repaired", and only the second one needs a write.
+          gateFlags: events.gateFlags,
         })
         .from(events)
         .where(eq(events.id, id))
@@ -315,8 +320,24 @@ export const PATCH = withAuth<{ id: string }>(
         data.discontinuousDates !== undefined ||
         data.eventDays !== undefined;
 
+      // OPE-435 — a row that ALREADY carries flags is re-evaluated on every
+      // edit, whatever the payload touches.
+      //
+      // The payload gate above is right for RAISING a flag: a cosmetic edit
+      // should not pay for a gate evaluation. It is wrong for CLEARING one,
+      // because the repair frequently arrives through a field the gate does
+      // not list. Reproduced live: three consecutive writes fixed an event's
+      // schedule through `event_days` and passed no date field, so the gate
+      // never re-ran and `end_date_in_past` survived on an event ending in
+      // November 2026 — through two updates AND an approve.
+      //
+      // `evaluateGates` is pure JS with no I/O, so re-running it for an
+      // already-flagged row costs nothing worth gating on.
+      const alreadyFlagged =
+        typeof currentEvent.gateFlags === "string" && currentEvent.gateFlags.length > 0;
+
       let gateFlagsWarning: string[] | null = null;
-      if (gateRelevantChanging) {
+      if (gateRelevantChanging || alreadyFlagged) {
         const mergedStartDate =
           updateData.startDate !== undefined
             ? (updateData.startDate as Date | null)
@@ -368,9 +389,19 @@ export const PATCH = withAuth<{ id: string }>(
           eventDaysCount: mergedEventDaysCount,
         });
 
+        // OPE-435 — one shared decision, so this path and the MCP tool cannot
+        // drift. See `nextGateFlags` for why a clean verdict clears wholesale.
+        const flagDecision = nextGateFlags({
+          currentFlags: currentEvent.gateFlags,
+          route: gateResult.route,
+          reasons: gateResult.reasons,
+        });
+        if (flagDecision.write) {
+          updateData.gateFlags = flagDecision.value;
+        }
+        gateFlagsWarning = flagDecision.warning;
+
         if (gateResult.route === "PENDING_REVIEW") {
-          gateFlagsWarning = gateResult.reasons;
-          updateData.gateFlags = JSON.stringify(gateResult.reasons);
           // If the PATCH tried to land the event in APPROVED, downgrade to
           // PENDING. The existing "clear gate_flags when status != PENDING"
           // branch above ran BEFORE this block, so the new gate_flags assigned
@@ -380,8 +411,6 @@ export const PATCH = withAuth<{ id: string }>(
             updateData.status = "PENDING";
           }
         }
-        // If route === "APPROVED", leave gate_flags alone. The existing
-        // status-transition clear above is the right behavior in that case.
       }
 
       // Atomic save: bundle the events UPDATE, the optional slug-history INSERT,

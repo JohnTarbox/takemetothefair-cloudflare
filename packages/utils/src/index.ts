@@ -499,3 +499,10 @@ export * from "./mutation-audit";
 // MORE restricted than hotlinking and that read is John's.
 export * from "./image-host";
 export * from "./gsc-milestones";
+
+/**
+ * OPE-435 — the single decision for what `events.gate_flags` becomes after a
+ * re-evaluation, shared by the main-app PATCH and the MCP `update_event` tool
+ * so the two write paths cannot drift.
+ */
+export * from "./next-gate-flags";

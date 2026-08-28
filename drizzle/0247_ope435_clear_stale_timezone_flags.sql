@@ -1,0 +1,52 @@
+-- OPE-435 — clear `start_date_timezone_confused` where the gate PROVABLY
+-- cannot fire.
+--
+-- ── Scope, and why it is this narrow ──────────────────────────────────────
+-- Of the 30 rows carrying this flag, exactly 13 sit at `start_date` =
+-- 12:00:00 UTC. `dateLooksTimezoneConfused` (packages/utils/src/
+-- event-date-gates.ts:346) opens with:
+--
+--     if (h === 12 && m === 0 && s === 0) return false;
+--
+-- so for those rows the evaluator returns clean before consulting anything
+-- else. Their stored flag is a value the gate cannot produce today. Removing
+-- it is a CORRECTION, not a suppression, and that distinction is the whole
+-- reason this migration is scoped the way it is: the previous OPE-435
+-- migration was sent back for clearing flag strings on rows whose condition it
+-- had not fixed, which made "still flagged → 0" true and misleading at once.
+--
+-- ── What this deliberately does NOT touch ─────────────────────────────────
+-- The 17 rows genuinely OFF the anchor (04:00Z, 09:00Z, 13:00Z, 21:00Z) keep
+-- their flag. The gate is telling the truth about them, and erasing a true
+-- flag is exactly the defect above. Normalizing their `start_date` to the noon
+-- anchor is the ticket's other option and remains available — it is a bulk
+-- mutation of production event dates, and after the previous review it is a
+-- data decision to take deliberately rather than as a side effect of a
+-- correctness fix. Every one of them preserves its Eastern calendar date
+-- today, so nothing is rendering wrong while they wait.
+--
+-- Also skipped: 3 anchored rows whose `gate_flags` carries SIBLING reasons
+-- alongside this one. Removing one element from a JSON array in SQL is exactly
+-- the kind of surgery that drops a neighbouring reason by accident; the code
+-- fix shipped with this migration re-derives the whole set from
+-- `evaluateGates` on their next edit, which is both safer and more complete.
+-- The `NOT LIKE '%","%'` test below is what excludes them: a multi-reason
+-- array always contains the `","` separator.
+--
+-- ── Properties ────────────────────────────────────────────────────────────
+-- IDEMPOTENT: self-limiting. A re-run matches nothing, because the WHERE
+-- clause requires the flag it removes.
+-- NO-OP ON AN EMPTY DB: a bare UPDATE over zero rows, no FK dependency — CI
+-- applies every migration to a fresh D1 and this one matches nothing there.
+-- ROLLBACK: the flag is derived state. `evaluateGates` reproduces it from the
+-- row's own fields on the next write, so there is nothing to restore.
+--
+-- `updated_at` is deliberately NOT bumped. Since OPE-308 it is a real change
+-- signal driving sitemap `lastmod` and the conditional-GET validator; these
+-- rows have no user-visible change, and bumping them would tell search engines
+-- pages changed and bust their 304s for a correction nobody can see.
+UPDATE events
+   SET gate_flags = NULL
+ WHERE gate_flags = '["start_date_timezone_confused"]'
+   AND start_date IS NOT NULL
+   AND (start_date % 86400) = 43200;

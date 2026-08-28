@@ -60,6 +60,7 @@ import {
   normalizeEventDate,
   classifySource,
   assertIngestionMethod,
+  nextGateFlags,
 } from "@takemetothefair/utils";
 import {
   eventOutboxStatements,
@@ -1338,8 +1339,23 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         params.source_name !== undefined ||
         params.discontinuous_dates !== undefined;
 
+      // OPE-435 — an already-flagged row re-evaluates on EVERY edit.
+      //
+      // The payload gate above is right for raising a flag and wrong for
+      // clearing one: repairs routinely arrive through a field the gate does
+      // not list. Reproduced live — three writes fixed a schedule through
+      // `event_days`, passed no date field, and `end_date_in_past` survived on
+      // an event ending November 2026 across two updates and an approve.
+      //
+      // The same rule is in the main app's PATCH handler
+      // (`src/app/api/admin/events/[id]/route.ts`). Both paths write this
+      // column and both had the defect; fixing one would have left the other
+      // producing exactly the stale flags this ticket is about.
+      const evRowFlags = (event as Record<string, unknown>).gateFlags;
+      const alreadyFlagged = typeof evRowFlags === "string" && evRowFlags.length > 0;
+
       let gateFlagsWarning: string[] | null = null;
-      if (gateRelevantChanging) {
+      if (gateRelevantChanging || alreadyFlagged) {
         const evRow = event as Record<string, unknown>;
         const mergedStartDate =
           updates.startDate !== undefined
@@ -1414,13 +1430,22 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           eventDaysCount: eventDaysCount ?? 0,
         });
 
-        if (gateResult.route === "PENDING_REVIEW") {
-          gateFlagsWarning = gateResult.reasons;
-          updates.gateFlags = JSON.stringify(gateResult.reasons);
+        // OPE-435 — one shared decision with the main app's PATCH handler, so
+        // the two write paths cannot drift. See `nextGateFlags`.
+        const flagDecision = nextGateFlags({
+          currentFlags: typeof evRowFlags === "string" ? evRowFlags : null,
+          route: gateResult.route,
+          reasons: gateResult.reasons,
+        });
+        gateFlagsWarning = flagDecision.warning;
+        if (flagDecision.write) {
+          updates.gateFlags = flagDecision.value;
           // Make sure the gate-flags column write actually happens even if
           // no other field is in `requestedFields` — the existing write
           // block only fires when requestedFields.length > 0. Add a synthetic
-          // marker so the gate-only path still writes.
+          // marker so the gate-only path still writes. This now matters for
+          // CLEARING too: a repair that touches nothing else must still be
+          // able to erase a stale flag.
           if (!requestedFields.includes("gate_flags")) {
             requestedFields.push("gate_flags");
           }
