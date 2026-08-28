@@ -34,6 +34,7 @@ import { jsonContent } from "../helpers.js";
 import { loadLocationsUniverse } from "../locations-universe.js";
 import { listBalance } from "../newsletter-list-balance.js";
 import { readOperatorQueues } from "../operator-queue-notice.js";
+import { readDayCoverage } from "../events/day-coverage.js";
 import type { Db } from "../db.js";
 import { findSlugCollisionPairs } from "../slug-collision-invariant.js";
 import type { AuthContext } from "../auth.js";
@@ -431,6 +432,47 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
           ) AS stale_derivation
       `);
 
+      // ── OPE-617: "has hours" was a PRESENCE test ─────────────────────
+      //
+      // The daily sweep's `no_hours` gap asked only
+      // `COUNT(event_days) = 0` — whether ANY schedule row exists. It did not
+      // ask whether the rows are open to the public, or whether they fall
+      // inside the event's own span.
+      //
+      // Windsor Fair — Maine's second-largest agricultural fair, a 10-day run —
+      // scored "has hours" on 2026-08-28, the day before it opened, on ONE row
+      // dated 2026-08-27 with `vendor_only = 1` and the note "vendor setup and
+      // appreciation event, not open to general public". Hopkinton State Fair
+      // scored the same on a single row dated 2025.
+      //
+      // And the public consequence is worse than "a thin schedule", because
+      // `events/[slug]/page.tsx:1158` filters `!d.vendorOnly` out of the
+      // schedule block: the page rendered NO SCHEDULE AT ALL while the metric
+      // reported the event had hours. A metric that is confidently wrong in the
+      // direction of "nothing to do here" is worse than a missing one.
+      //
+      // Two signals, counted apart because they are different faults:
+      //
+      //   no_public_days   the event HAS day rows but none is both public and
+      //                    in-span — the schedule block renders empty. This is
+      //                    the corrected `no_hours`.
+      //   out_of_span_days a row dated outside [start_date, end_date]. Distinct
+      //                    from the above: the data is PRESENT AND WRONG rather
+      //                    than absent, and it survives even on events whose
+      //                    other rows are fine.
+      //
+      // NOT counted: `day_rows < span_days`. That framing is 20/23 false on live
+      // data — winter farmers' markets (span 148–176 days, 20–26 weekly rows),
+      // the Connecticut Renaissance Faire, King Richard's Faire and Strawbery
+      // Banke are all legitimately intermittent. A weekends-only run is SUPPOSED
+      // to have fewer day rows than calendar days. The analyst caught that by
+      // reading the 23 matches instead of trusting the count, and the ticket
+      // asks explicitly that it not be built.
+      //
+      // Scoped to upcoming APPROVED events: a past fair's schedule cannot be
+      // acted on, and this is a worklist rather than an audit.
+      const dayCoverage = await readDayCoverage(db);
+
       // ── OPE-467: claimed vs stored vs skipped, per lane ──────────────
       //
       // This defect ran for three months and was found by hand-diffing
@@ -823,6 +865,17 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
             operator_queues: {
               rule: "no entity claim or written reply draft should wait more than 48h undecided",
               result: operatorQueues,
+            },
+            // OPE-617 — "has hours" must mean hours the public can attend.
+            //
+            // `no_public_days` is the corrected `no_hours`: the event has
+            // schedule rows, but none is both public and inside its own span, so
+            // the page renders an empty schedule while a presence test reports
+            // it covered. `out_of_span_days` is the separate fault where the
+            // data is present and wrong.
+            event_day_coverage: {
+              rule: "an upcoming APPROVED event with day rows must have at least one public row inside its own span, and no row outside it",
+              ...dayCoverage,
             },
             // OPE-292 — placeholder accounts must not pollute the
             // registration partition. `misfiled_placeholders` should be 0;
