@@ -208,6 +208,15 @@ export type ActiveItem = {
 
 export type ScanResult = {
   scannedRules: number;
+  /**
+   * OPE-575 — how many of `defs` this call advanced past, INCLUDING rules
+   * skipped as disabled. The caller's cursor indexes the full rule list, so it
+   * must advance by what was consumed, not by what actually executed —
+   * otherwise a disabled rule is re-offered forever.
+   *
+   * Less than `defs.length` only when the time budget stopped the loop early.
+   */
+  rulesConsumed: number;
   inserted: number;
   refreshed: number;
   resolved: number;
@@ -300,7 +309,43 @@ async function ensureRulesRegistered(db: Db, defs: RuleDefinition[]): Promise<Ma
   return byKey;
 }
 
-export async function scanAll(db: Db, defs: RuleDefinition[]): Promise<ScanResult> {
+/**
+ * OPE-575 — wall-clock budget for one scan call.
+ *
+ * The recommendations-scan workflow wraps each chunk in a `step.do` with
+ * `timeout: "5 minutes"`, and 14 invocations died on exactly that: the logged
+ * "Execution timed out after 300000ms" is 300s = that step timeout, not the
+ * Workers execution ceiling.
+ *
+ * The cause is rule drift, and the instrument already named it. Measured from
+ * `error_logs` source `…:slow-rule`:
+ *
+ *   stubs_ready_for_enrichment      212,024 ms
+ *   vendors_no_description          148,640 ms
+ *   events_legacy_gate_candidates  ~211,000 ms
+ *
+ * Any two of those in one chunk exceeds 300s and takes the rest of the chunk
+ * down with them. This route's own header records the same failure being
+ * patched in May by lowering the default chunk 8 -> 3, on the reasoning that
+ * "chunk=3 almost guarantees at most one fetch-heavy rule per chunk". Almost.
+ * A count-based bound has to be re-tuned every time a rule gets slower, and
+ * nothing notices until the step dies again.
+ *
+ * So bound by TIME instead: stop adding rules once the budget is spent and
+ * tell the caller how far it got. Chunk size then adapts to whatever the rules
+ * currently cost.
+ *
+ * 120s leaves better than 2x headroom under the 300s step timeout for the one
+ * rule that may overrun it — the budget is checked BETWEEN rules, so the
+ * overshoot is bounded by the slowest single rule, not by the budget.
+ */
+export const SCAN_TIME_BUDGET_MS = 120_000;
+
+export async function scanAll(
+  db: Db,
+  defs: RuleDefinition[],
+  opts: { deadlineMs?: number } = {}
+): Promise<ScanResult> {
   const ruleIds = await ensureRulesRegistered(db, defs);
   const enabled = await db
     .select()
@@ -319,7 +364,17 @@ export async function scanAll(db: Db, defs: RuleDefinition[]): Promise<ScanResul
   let failedRules = 0;
   const perRule: ScanResult["perRule"] = [];
 
+  const budgetMs = opts.deadlineMs ?? SCAN_TIME_BUDGET_MS;
+  const startedAt = Date.now();
+  let rulesConsumed = 0;
+
   for (const def of defs) {
+    // OPE-575 — checked BEFORE the rule, and never before the first one:
+    // a single rule slower than the whole budget must still make progress,
+    // or the cursor sticks and that rule is never scanned again. It then gets
+    // a chunk to itself next call, which is the right shape for it.
+    if (rulesConsumed > 0 && Date.now() - startedAt >= budgetMs) break;
+    rulesConsumed++;
     if (!enabledKeys.has(def.ruleKey)) continue;
     const ruleId = ruleIds.get(def.ruleKey);
     if (!ruleId) continue;
@@ -530,6 +585,7 @@ export async function scanAll(db: Db, defs: RuleDefinition[]): Promise<ScanResul
 
   return {
     scannedRules: perRule.length,
+    rulesConsumed,
     inserted: totalInserted,
     refreshed: totalRefreshed,
     resolved: totalResolved,
