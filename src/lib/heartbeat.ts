@@ -44,6 +44,7 @@ import {
   vendorClaimEvidence,
   vendorEnrichmentCandidates,
   queueDrainSnapshots,
+  workflowRunSteps,
 } from "@/lib/db/schema";
 import { SITE_URL } from "@takemetothefair/constants";
 import type { StaleRed } from "@/lib/cpi/stale-reds";
@@ -630,6 +631,37 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
         adminActions,
         adminActions.createdAt,
         eq(adminActions.action, "venue.geocode.sweep")
+      ),
+  },
+  {
+    // OPE-540 — the inbound pipeline's citation writer RAN.
+    //
+    // This is the probe whose absence made the defect undiagnosable. The writer
+    // stopped producing rows and nothing said so; it surfaced only because an
+    // unrelated acceptance test happened to check citation counts, six weeks in.
+    //
+    // Watches the STEP RECORD, not the citation rows. A citation-row probe is a
+    // yield probe, and this yield legitimately reaches zero: the writer only
+    // fires when an email submission creates or dedups an event, and inbound is
+    // roughly four new-event emails a week. The step row is written on every
+    // attempt whatever the outcome — including `skipped` WITH the reason — so
+    // its absence means the path stopped executing.
+    //
+    // 336h for the same reason `venue-decision-writer` uses it: at this volume
+    // a quiet fortnight is ordinary and anything shorter cries wolf. The cost is
+    // honest — a dead writer takes up to 14 days to surface — and it is the most
+    // this traffic level supports without the probe being muted.
+    name: "inbound-citation-writer",
+    ownerOpe: "OPE-540",
+    label: "Inbound pipeline citation writer (per-source provenance)",
+    priority: "P1",
+    expectedWindowHours: 336,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        workflowRunSteps,
+        workflowRunSteps.recordedAt,
+        eq(workflowRunSteps.stepName, "citations")
       ),
   },
   {
