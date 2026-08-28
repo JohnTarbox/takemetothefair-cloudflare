@@ -41,6 +41,16 @@ import {
 import type { Env } from "./index.js";
 import { getDb, type Db } from "./db.js";
 import { logError } from "./logger.js";
+// OPE-611 — the third queue. This file's own docblock predicted it ("a third
+// is a few lines"); the alternative was a bespoke notifier, which is how the
+// fourth silent queue gets missed.
+import {
+  readTentativePromotionQueue,
+  selectImminentTentative,
+  formatTentativeLine,
+  IMMINENT_DAYS,
+  IMMINENT_SECONDS,
+} from "./events/tentative-queue.js";
 
 const SOURCE = "mcp:schedule:operator-queue-notice";
 
@@ -63,6 +73,13 @@ export interface OperatorQueueCounts {
   agedClaims: number;
   /** pending_email_replies drafts still awaiting review past the SLA. */
   agedReplies: number;
+  /**
+   * OPE-611 — upcoming APPROVED+TENTATIVE events within IMMINENT_DAYS of
+   * opening that already carry organizer-grade provenance. Unlike the two
+   * above this is NOT an age measure: these rows became urgent by the calendar
+   * moving toward them, not by sitting still.
+   */
+  imminentTentative: number;
   /** Oldest waiting row in either queue, in days. */
   oldestDays: number;
   /** Human-readable lines for the alert body. */
@@ -76,11 +93,36 @@ export interface OperatorQueueCounts {
  * the ticket calls out and the one that keeps this from becoming wallpaper.
  */
 export function decideOperatorQueueNotice(
-  counts: Pick<OperatorQueueCounts, "agedClaims" | "agedReplies">,
+  counts: Pick<OperatorQueueCounts, "agedClaims" | "agedReplies" | "imminentTentative">,
   alreadySentToday: boolean
 ): boolean {
-  if (counts.agedClaims + counts.agedReplies <= 0) return false;
+  if (totalWaiting(counts) <= 0) return false;
   return !alreadySentToday;
+}
+
+/**
+ * One definition of "is there anything to say", used by the decision, the
+ * early return and the subject line.
+ *
+ * It is a named function rather than three inline sums because OPE-611 added
+ * the third term: two of the three call sites were updated by hand when the
+ * second queue landed, and a queue missing from the early-return sum is silent
+ * in exactly the way this whole file exists to prevent.
+ */
+export function totalWaiting(
+  counts: Pick<OperatorQueueCounts, "agedClaims" | "agedReplies" | "imminentTentative">
+): number {
+  // `?? 0` per term is not defensive clutter — it is load-bearing, and adding
+  // OPE-611's field proved it. A missing term makes the sum NaN, `NaN <= 0` is
+  // FALSE, and the notice therefore fires on a COMPLETELY EMPTY queue: the
+  // exact wallpaper failure this file is built to avoid, reached by trying to
+  // add a queue to it. The existing OPE-599 zero-state test caught it.
+  //
+  // TypeScript does not cover this: `mcp-server/tsconfig.json` includes only
+  // `src/**/*.ts`, so no test file is typechecked and a call site there can
+  // omit a field silently. The guard is in the direction that matters — a
+  // dropped queue under-counts and stays quiet, rather than alerting always.
+  return (counts.agedClaims ?? 0) + (counts.agedReplies ?? 0) + (counts.imminentTentative ?? 0);
 }
 
 /** Start of the current UTC day — the debounce window boundary. */
@@ -150,9 +192,19 @@ export async function readOperatorQueues(db: Db, now: Date): Promise<OperatorQue
     );
   }
 
+  // OPE-611 — imminent unpromoted events. Read within the imminence window
+  // rather than pulling the whole 164-row upcoming cohort and filtering in JS:
+  // the alert only ever needs the near end, and the reader is also called
+  // unbounded by the MCP tool for the deliberate-drain view.
+  const tentative = selectImminentTentative(
+    await readTentativePromotionQueue(db, now, { withinSeconds: IMMINENT_SECONDS })
+  );
+  for (const t of tentative) lines.push(formatTentativeLine(t));
+
   return {
     agedClaims: claims.length,
     agedReplies: replies.length,
+    imminentTentative: tentative.length,
     oldestDays: Math.floor(oldestMs / 86400_000),
     lines,
   };
@@ -174,7 +226,7 @@ export async function checkOperatorQueues(db: Db, env: Env, now: Date = new Date
     return;
   }
 
-  if (counts.agedClaims + counts.agedReplies <= 0) {
+  if (totalWaiting(counts) <= 0) {
     console.log("[cron] operator-queue-notice — queues clear, staying quiet");
     return;
   }
@@ -207,17 +259,26 @@ export async function checkOperatorQueues(db: Db, env: Env, now: Date = new Date
     return;
   }
 
-  const total = counts.agedClaims + counts.agedReplies;
+  const total = totalWaiting(counts);
   const subject = `[MMATF] ${total} operator queue item${total === 1 ? "" : "s"} waiting (oldest ${counts.oldestDays}d)`;
+  // The tentative clause is omitted entirely when that queue is empty, so the
+  // two original queues read exactly as they did before OPE-611.
+  const tentativeClause =
+    counts.imminentTentative > 0
+      ? ` ${counts.imminentTentative} event(s) open within ${IMMINENT_DAYS} days but are still ` +
+        `TENTATIVE despite organizer-grade sources, so the digest and every ` +
+        `SCHEDULED-filtered feed drop them.`
+      : "";
   const textBody =
     `${counts.agedClaims} entity claim(s) and ${counts.agedReplies} written reply draft(s) ` +
-    `have been waiting more than ${QUEUE_SLA_HOURS}h.\n\n` +
+    `have been waiting more than ${QUEUE_SLA_HOURS}h.${tentativeClause}\n\n` +
     counts.lines.map((l) => `  - ${l}`).join("\n") +
     `\n\nA claim is a real person asking to own their listing; a reply draft is an ` +
     `answer already written to a real person and not yet sent.\n`;
   const htmlBody =
     `<p><strong>${counts.agedClaims}</strong> entity claim(s) and <strong>${counts.agedReplies}</strong> ` +
-    `written reply draft(s) have been waiting more than ${QUEUE_SLA_HOURS}h.</p>` +
+    `written reply draft(s) have been waiting more than ${QUEUE_SLA_HOURS}h.` +
+    `${esc(tentativeClause)}</p>` +
     `<ul>${counts.lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>`;
 
   const alertEmail = env.ALERT_EMAIL_TECHNICAL;

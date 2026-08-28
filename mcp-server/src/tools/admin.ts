@@ -115,6 +115,7 @@ import { registerSourceQualityTool } from "./admin-source-quality.js";
 import { registerSourceReliabilityTool } from "./admin-source-reliability.js";
 import { registerDiscrepancyTools } from "./admin-discrepancies.js";
 import { registerDataHealthTool } from "./admin-data-health.js";
+import { registerTentativeQueueTool } from "./admin-tentative-queue.js";
 // OPE-386 — read-only reader for ga4_liveness_log (OPE-381 had no MCP surface).
 import { registerGa4LivenessTool } from "./admin-ga4-liveness.js";
 import { registerLogVendorOutreachTool } from "./admin-log-vendor-outreach.js";
@@ -297,6 +298,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   // reliability matrix + 28-day resolution metrics + 14-day snapshot
   // trend. Phase-2-only metrics stub as 'Awaiting Phase 2' per B8.
   registerDataHealthTool(server, db, auth);
+  // OPE-611 — registered here rather than in index.ts because `registerAdminTools`
+  // is the single funnel both registration paths go through (index.ts:332 OAuth,
+  // index.ts:626 legacy `mmatf_`); adding it here cannot land in only one.
+  registerTentativeQueueTool(server, db, auth);
   registerGa4LivenessTool(server, db, auth);
 
   // Analyst J1 (2026-05-29 PM): outreach-attempt logging substrate for
