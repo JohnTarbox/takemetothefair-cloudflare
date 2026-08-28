@@ -185,7 +185,8 @@ export {
   PUBLIC_LIFECYCLE_STATUSES,
 } from "@takemetothefair/constants";
 
-import { and, inArray as inArrayMcp } from "drizzle-orm";
+import { and, inArray as inArrayMcp, sql } from "drizzle-orm";
+import { venues } from "./schema.js";
 import {
   PUBLIC_EVENT_STATUSES as PE,
   PUBLIC_LIFECYCLE_STATUSES as PL,
@@ -226,6 +227,46 @@ export function searchEventStatusWhere(includeStatuses?: readonly string[]) {
     inArrayMcp(events.status, [...includeStatuses] as (typeof PE)[number][]),
     inArrayMcp(events.lifecycleStatus, [...PL])
   );
+}
+
+/**
+ * OPE-607 — the `state` predicate for `search_events`.
+ *
+ * Extracted from the tool so it can be run against a real database, exactly as
+ * OPE-582 did for `searchEventStatusWhere`. Asserting that the tool ACCEPTS a
+ * `state` parameter would not catch the case that matters — a predicate that
+ * takes the argument and then quietly keeps excluding venue-less rows.
+ *
+ * `search_events` LEFT-joins `venues`, so a venue-less event IS in the corpus.
+ * But `venues.state` is NULL for it, and `upper(NULL) = 'ME'` evaluates to NULL
+ * rather than false, so the row failed every state-filtered query while
+ * returning normally with `state` omitted. The tool reported "no match" against
+ * a corpus with a hole in it.
+ *
+ * `events.state_code` is the schema's own answer for this case — "denormalized
+ * from venue.state; required when venueId is null".
+ *
+ * The fallback is scoped to `venue_id IS NULL` rather than written as
+ * `COALESCE(venues.state, events.state_code)`. Those two are equivalent on
+ * every row where the venue resolves — including when venue and `state_code`
+ * DISAGREE, since COALESCE takes the venue's value first. They differ in
+ * exactly one case: an event whose `venue_id` IS set but whose venue row has a
+ * NULL `state`. COALESCE would quietly answer that from `state_code`; this form
+ * does not.
+ *
+ * Not matching is the right answer there. A venue with no state is a data gap,
+ * and papering over it with the event's denormalized copy hides a broken venue
+ * row behind a search result that looks fine — while `state_code` is only
+ * guaranteed populated for the venue-less case in the first place. This form
+ * therefore only ADDS rows that currently match nothing, and changes no
+ * existing match.
+ *
+ * NOTE the caller must still LEFT-join `venues` for this to mean anything; an
+ * inner join would drop the rows before the predicate is reached.
+ */
+export function searchEventStateWhere(state: string) {
+  return sql`(upper(${venues.state}) = upper(${state})
+              OR (${events.venueId} IS NULL AND upper(${events.stateCode}) = upper(${state})))`;
 }
 
 /** Build a concise text content response for MCP */
