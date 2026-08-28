@@ -36,6 +36,7 @@ import {
   entityClaims,
   pendingEmailReplies,
   emailSendLedger,
+  operatorOutboundDrafts,
   users,
 } from "@takemetothefair/db-schema";
 import type { Env } from "./index.js";
@@ -74,6 +75,11 @@ export interface OperatorQueueCounts {
   /** pending_email_replies drafts still awaiting review past the SLA. */
   agedReplies: number;
   /**
+   * OPE-596 — operator-initiated drafts awaiting a human decision. Each is a
+   * message somebody intends to send to a real person and nobody has ruled on.
+   */
+  pendingOperatorDrafts: number;
+  /**
    * OPE-626 — customer-facing `reply:*` emails delivered in the last 24h on a
    * path the `EMAIL_REPLY_ENABLED` gate cannot reach. Zero when the flag is
    * on, because then the sends are intended rather than a bypass.
@@ -101,7 +107,7 @@ export interface OperatorQueueCounts {
 export function decideOperatorQueueNotice(
   counts: Pick<
     OperatorQueueCounts,
-    "agedClaims" | "agedReplies" | "imminentTentative" | "ungatedReplies"
+    "agedClaims" | "agedReplies" | "imminentTentative" | "ungatedReplies" | "pendingOperatorDrafts"
   >,
   alreadySentToday: boolean
 ): boolean {
@@ -121,7 +127,7 @@ export function decideOperatorQueueNotice(
 export function totalWaiting(
   counts: Pick<
     OperatorQueueCounts,
-    "agedClaims" | "agedReplies" | "imminentTentative" | "ungatedReplies"
+    "agedClaims" | "agedReplies" | "imminentTentative" | "ungatedReplies" | "pendingOperatorDrafts"
   >
 ): number {
   // `?? 0` per term is not defensive clutter — it is load-bearing, and adding
@@ -138,7 +144,8 @@ export function totalWaiting(
     (counts.agedClaims ?? 0) +
     (counts.agedReplies ?? 0) +
     (counts.imminentTentative ?? 0) +
-    (counts.ungatedReplies ?? 0)
+    (counts.ungatedReplies ?? 0) +
+    (counts.pendingOperatorDrafts ?? 0)
   );
 }
 
@@ -285,11 +292,35 @@ export async function readOperatorQueues(
     // Observability must not take the notice down with it.
   }
 
+  // OPE-596 — operator-initiated drafts waiting on a human decision.
+  //
+  // John's item 5: this rides the notice rather than becoming a twelfth
+  // bespoke canary. Unlike the ungated-reply line above, this IS a work queue
+  // — a steady count means "seen, not yet decided" — so it inherits the
+  // once-a-day debounce and does not re-nag.
+  let pendingOperatorDrafts = 0;
+  try {
+    const [row] = await db
+      .select({ n: sql<number>`count(*)` })
+      .from(operatorOutboundDrafts)
+      .where(eq(operatorOutboundDrafts.status, "pending"));
+    pendingOperatorDrafts = Number(row?.n ?? 0);
+    if (pendingOperatorDrafts > 0) {
+      lines.push(
+        `${pendingOperatorDrafts} operator-initiated email draft(s) awaiting approval — ` +
+          `each is a message somebody intends to send to a real person.`
+      );
+    }
+  } catch {
+    // The table may not exist on an older deploy; never take the notice down.
+  }
+
   return {
     agedClaims: claims.length,
     agedReplies: replies.length,
     imminentTentative: tentative.length,
     ungatedReplies,
+    pendingOperatorDrafts,
     oldestDays: Math.floor(oldestMs / 86400_000),
     lines,
   };
@@ -348,6 +379,13 @@ export async function checkOperatorQueues(db: Db, env: Env, now: Date = new Date
   const subject = `[MMATF] ${total} operator queue item${total === 1 ? "" : "s"} waiting (oldest ${counts.oldestDays}d)`;
   // The tentative clause is omitted entirely when that queue is empty, so the
   // two original queues read exactly as they did before OPE-611.
+  // OPE-596 — omitted entirely when the queue is empty, so the notice reads
+  // exactly as it did before this queue existed.
+  const draftsClause =
+    counts.pendingOperatorDrafts > 0
+      ? ` ${counts.pendingOperatorDrafts} operator-initiated draft(s) are waiting on your approval; ` +
+        `nothing is sent until you rule, and delivery additionally needs OPERATOR_OUTBOUND_ENABLED.`
+      : "";
   const tentativeClause =
     counts.imminentTentative > 0
       ? ` ${counts.imminentTentative} event(s) open within ${IMMINENT_DAYS} days but are still ` +
@@ -356,14 +394,14 @@ export async function checkOperatorQueues(db: Db, env: Env, now: Date = new Date
       : "";
   const textBody =
     `${counts.agedClaims} entity claim(s) and ${counts.agedReplies} written reply draft(s) ` +
-    `have been waiting more than ${QUEUE_SLA_HOURS}h.${tentativeClause}\n\n` +
+    `have been waiting more than ${QUEUE_SLA_HOURS}h.${tentativeClause}${draftsClause}\n\n` +
     counts.lines.map((l) => `  - ${l}`).join("\n") +
     `\n\nA claim is a real person asking to own their listing; a reply draft is an ` +
     `answer already written to a real person and not yet sent.\n`;
   const htmlBody =
     `<p><strong>${counts.agedClaims}</strong> entity claim(s) and <strong>${counts.agedReplies}</strong> ` +
     `written reply draft(s) have been waiting more than ${QUEUE_SLA_HOURS}h.` +
-    `${esc(tentativeClause)}</p>` +
+    `${esc(tentativeClause)}${esc(draftsClause)}</p>` +
     `<ul>${counts.lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>`;
 
   const alertEmail = env.ALERT_EMAIL_TECHNICAL;

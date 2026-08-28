@@ -117,6 +117,7 @@ import { registerSourceReliabilityTool } from "./admin-source-reliability.js";
 import { registerDiscrepancyTools } from "./admin-discrepancies.js";
 import { registerDataHealthTool } from "./admin-data-health.js";
 import { registerTentativeQueueTool } from "./admin-tentative-queue.js";
+import { registerOperatorOutboundTools } from "./admin-operator-outbound.js";
 // OPE-386 — read-only reader for ga4_liveness_log (OPE-381 had no MCP surface).
 import { registerGa4LivenessTool } from "./admin-ga4-liveness.js";
 import { registerLogVendorOutreachTool } from "./admin-log-vendor-outreach.js";
@@ -303,6 +304,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   // is the single funnel both registration paths go through (index.ts:332 OAuth,
   // index.ts:626 legacy `mmatf_`); adding it here cannot land in only one.
   registerTentativeQueueTool(server, db, auth);
+  // OPE-596 — operator-initiated outbound. Registered through the same funnel
+  // so it reaches BOTH registration paths (index.ts:332 OAuth, :626 legacy).
+  registerOperatorOutboundTools(server, db, auth, env as never);
   registerGa4LivenessTool(server, db, auth);
 
   // Analyst J1 (2026-05-29 PM): outreach-attempt logging substrate for

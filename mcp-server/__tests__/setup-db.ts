@@ -1242,6 +1242,29 @@ const SCHEMA_SQL = `
     review_note TEXT,
     sent_message_id TEXT
   );
+  -- OPE-596 — operator-INITIATED outbound drafts. A sibling of the table
+  -- above, deliberately separate: pending_email_replies.inbound_email_id is
+  -- NOT NULL and that coupling is load-bearing, while operator-initiated mail
+  -- has no inbound to point at.
+  -- (No backticks in this file: the whole schema is one template literal, and
+  --  a backtick in a comment closes it. The failure reads as "Tests no tests".)
+  CREATE TABLE operator_outbound_drafts (
+    id TEXT PRIMARY KEY,
+    to_address TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    body_text TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    related_entity_type TEXT,
+    related_entity_id TEXT,
+    composed_by TEXT,
+    composed_at INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    reviewed_by TEXT,
+    reviewed_at INTEGER,
+    review_note TEXT,
+    sent_at INTEGER,
+    sent_message_id TEXT
+  );
   CREATE INDEX idx_entity_claims_user ON entity_claims (user_id);
   CREATE INDEX idx_entity_claims_status ON entity_claims (status);
 
