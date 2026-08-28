@@ -38,6 +38,13 @@ export const NOISE_DENYLIST: readonly string[] = [
   // Client-side React hydration mismatches — a separate class of work, not a
   // server render fault; excluded from this rail.
   "hydration",
+  // OPE-577 — a SPEC-LEVEL NOTICE, not an error. The ResizeObserver spec
+  // requires the browser to fire this when a resize handler dirties layout and
+  // the loop has to run again; every major framework trips it and no user ever
+  // sees anything. 14 occurrences in 30 days, never actionable. Safe as
+  // always-noise (not third-party) because it is un-actionable on EVERY route,
+  // including auth ones — there is no version of it that blocks a signup.
+  "resizeobserver loop",
   // Bots hitting malformed / percent-mangled URLs — decode throws we can't fix.
   "malformed uri",
   "uri malformed",
@@ -119,6 +126,74 @@ export const NOISE_EXEMPT_ROUTE_PREFIXES: readonly string[] = [
   "/checkout",
 ];
 
+/**
+ * OPE-577 — an extension-injected fault, detected by STACK SHAPE.
+ *
+ * ⚠️ This is deliberately NARROWER than the rule OPE-577 proposed, and the
+ * ticket's own version would have suppressed our own render path.
+ *
+ * The ticket asked to denylist "`global code@<page-url>:1:N` with a
+ * `window.<vendor>` property". Measured against 30 days of live `error_logs`,
+ * `global code@` appears on 90 rows — and roughly 60 of them are the
+ * `b.parentNode` family whose FIRST frame is
+ * `$RS@https://meetmeatthefair.com/events/...:23:306805`. That is our own
+ * bundle: `$RS` is React's streaming-resume frame, and the streaming payload
+ * executes at page global scope, so `global code@` shows up as its SECOND
+ * frame. Keying on the substring would suppress our own streaming render path —
+ * exactly the over-suppression the ticket's own notes warn against.
+ *
+ * So both conditions are required, and both come from the six real extension
+ * rows in that window (`_G`, `__firefox__`):
+ *
+ *   1. the FIRST stack frame is `global code@<url>:1:<col>` — line 1, i.e. a
+ *      script executing at page top level rather than inside a module. Our
+ *      bundles report line 23.
+ *   2. the message is `ReferenceError: Can't find variable: <ident>` — an
+ *      extension probing for its own global that a content-script race removed.
+ *
+ * A page of ours that genuinely threw a ReferenceError from an inline line-1
+ * script would match, which is why this stays on the THIRD-PARTY list and keeps
+ * the auth-route carve-out rather than going to the always list.
+ */
+export function isExtensionInjectionStack(
+  message: string | null | undefined,
+  stackTrace: string | null | undefined
+): boolean {
+  if (!message || !stackTrace) return false;
+  if (!/can't find variable:/i.test(message)) return false;
+  const firstFrame = stackTrace.split("\n")[0]?.trim() ?? "";
+  return /^global code@\S+:1:\d+$/.test(firstFrame);
+}
+
+/**
+ * OPE-577 — did the INGEST already say this came from a third party?
+ *
+ * `context.thirdParty` is written at report time by the client reporter, which
+ * knows the script origin the browser attributed the fault to. That is
+ * PROVENANCE rather than message text, so it is the most reliable signal
+ * available and cannot be defeated by a string change.
+ *
+ * ⚠️ Impact is smaller than the ticket estimates. It calls this "a one-line
+ * win" suppressing "the whole embed family"; measured over 30 days the flag is
+ * present and true on **10 of 2,982** rows. Worth consulting — it is free and
+ * exactly right when set — but it does not by itself quiet the queue.
+ *
+ * Parse failures are NOT third-party: a malformed context must never suppress.
+ */
+export function contextSaysThirdParty(context: string | null | undefined): boolean {
+  if (!context) return false;
+  try {
+    const parsed: unknown = JSON.parse(context);
+    return (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      (parsed as { thirdParty?: unknown }).thirdParty === true
+    );
+  } catch {
+    return false;
+  }
+}
+
 /** True when `route` is conversion/auth-critical and must never be auto-suppressed. */
 export function isNoiseExemptRoute(route: string | null | undefined): boolean {
   if (!route) return false; // unknown route → not exempt (see classifyNoise)
@@ -148,8 +223,12 @@ export interface NoiseVerdict {
 export function classifyNoise(input: {
   message: string | null | undefined;
   route?: string | null;
+  /** OPE-577 — the ingest's own `context` JSON, for the `thirdParty` flag. */
+  context?: string | null;
+  /** OPE-577 — for extension-injection stack-shape detection. */
+  stackTrace?: string | null;
 }): NoiseVerdict {
-  const { message, route } = input;
+  const { message, route, context, stackTrace } = input;
   if (!message) return { noise: false, reason: null, matched: null };
   const raw = message.toLowerCase();
   const normalized = normalizeErrorClass(message);
@@ -157,6 +236,24 @@ export function classifyNoise(input: {
 
   const always = NOISE_DENYLIST.find(hits);
   if (always) return { noise: true, reason: "always", matched: always };
+
+  // OPE-577 — PROVENANCE-based suppression, checked before the text denylist
+  // because it is the stronger signal: it says where the code came from rather
+  // than what it happened to say.
+  //
+  // Both still honour the OPE-173 auth carve-out. That is not caution for its
+  // own sake — `/register#script error.` WAS the registration-blocking
+  // Turnstile throw, and a third-party-looking shape on an auth route is
+  // exactly the case where being wrong is most expensive.
+  const provenance = contextSaysThirdParty(context)
+    ? "context.thirdParty"
+    : isExtensionInjectionStack(message, stackTrace)
+      ? "extension-injection-stack"
+      : null;
+  if (provenance) {
+    if (isNoiseExemptRoute(route)) return { noise: false, reason: null, matched: provenance };
+    return { noise: true, reason: "third-party", matched: provenance };
+  }
 
   const thirdParty = THIRD_PARTY_NOISE_DENYLIST.find(hits);
   if (thirdParty) {
@@ -206,9 +303,30 @@ export function normalizeErrorClass(message: string | null | undefined): string 
       //
       // A longer object name is a real identifier and is kept, because
       // `myWidget.id` and `cart.id` are genuinely different faults.
+      // OPE-577 — the same idea, widened to the EXPRESSION forms OPE-613 missed.
+      //
+      // OPE-613's pattern required the dotted pair to be the ENTIRE quoted
+      // payload, so it handled `evaluating 'b.parentNode'` and nothing else.
+      // Safari also emits whole expressions, and the live specimen that filed
+      // OPE-577 is one:
+      //
+      //   evaluating 'window.ethereum.selectedAddress = undefined'
+      //
+      // That fell through to the quote-strip below and reached a human as
+      // `typeerror: undefined is not an object (evaluating )` — which reads
+      // exactly like a genuine empty-collection fault in our own render path.
+      // The ticket is explicit that classifying off that key would have filed a
+      // phantom bug.
+      //
+      // So: take the LEADING dotted identifier path out of the payload and drop
+      // the rest of the expression (the ` = undefined` tail is the volatile
+      // half). The minified-object rule is unchanged from OPE-613.
       .replace(
-        /evaluating (['"`])([a-z_$][\w$]*)\.([\w$]+)\1/g,
-        (_m, _q, obj: string, prop: string) => `evaluating ${obj.length <= 2 ? "*" : obj}.${prop}`
+        /evaluating (['"`])([a-z_$][\w$]*(?:\.[\w$]+)+)[^'"`]*\1/g,
+        (_m, _q, path: string) => {
+          const [head, ...rest] = path.split(".");
+          return `evaluating ${head.length <= 2 ? "*" : head}.${rest.join(".")}`;
+        }
       )
       // Quoted string literals ('...', "...", `...`) — the quoted payload is
       // almost always a volatile value (a slug, a url, an id).
