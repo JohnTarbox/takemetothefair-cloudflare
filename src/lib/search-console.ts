@@ -879,6 +879,63 @@ export type QueryPagesResult = {
  * with per-page impressions/clicks/position. Useful for cannibalization
  * detection (multiple pages competing for the same query).
  */
+/**
+ * OPE-592 — collapse GSC page rows that share a PATH.
+ *
+ * The request asks for `dimensions: ["page"]`, so GSC returns one row per page
+ * — but its key is a full URL, and `pathFromGscPageKey` returns `u.pathname`,
+ * dropping host, query string and fragment. Distinct GSC keys (apex vs www,
+ * `?utm_source=…`, a `#fragment`) therefore collapse to the same displayed path
+ * while keeping SEPARATE metric rows.
+ *
+ * Observed: `get_query_pages("vermont county fairs 2026")` returned five rows
+ * for three paths, the VT blog guide appearing three times (13 + 11 + 11
+ * impressions), with `totals.pages: 5`.
+ *
+ * The damage is not cosmetic, and it runs one way. The tool's stated purpose is
+ * cannibalization detection — "multiple pages competing for the same query" —
+ * so a caller counting competing pages read 5 where the truth is 3, and any
+ * single row understated that page's impressions. BOTH errors push toward "more
+ * cannibalization than there is", the direction that ships an unnecessary
+ * canonicalization or content intervention.
+ *
+ * It also made two oracles disagree by 2.7x: `get_search_queries` reported 13
+ * impressions for the VT guide where this tool summed to 35.
+ *
+ * Extracted so the aggregation can be tested without standing up a GSC fetch,
+ * a KV binding and an OAuth token — the arithmetic is the part that was wrong.
+ */
+export function collapseQueryPageRows(siteUrl: string, rows: GscApiRow[]): QueryPageRow[] {
+  const byPath = new Map<string, { clicks: number; impressions: number; posWeighted: number }>();
+  for (const r of rows) {
+    const path = pathFromGscPageKey(siteUrl, r.keys?.[0] ?? "");
+    const clicks = r.clicks ?? 0;
+    const impressions = r.impressions ?? 0;
+    const acc = byPath.get(path) ?? { clicks: 0, impressions: 0, posWeighted: 0 };
+    acc.clicks += clicks;
+    acc.impressions += impressions;
+    // Position must be IMPRESSION-WEIGHTED, not a naive mean of the sub-rows:
+    // averaging pos 1.0 (3 impressions) with pos 6.8 (63) reports ~3.9 for a
+    // page that is really ranking ~6.5 for almost everyone who saw it.
+    acc.posWeighted += (r.position ?? 0) * impressions;
+    byPath.set(path, acc);
+  }
+
+  const out: QueryPageRow[] = [...byPath.entries()].map(([path, a]) => ({
+    path,
+    clicks: a.clicks,
+    impressions: a.impressions,
+    // Recomputed from the summed totals rather than averaged — averaging ratios
+    // weights a 3-impression row equally with a 63-impression one.
+    ctr: a.impressions > 0 ? a.clicks / a.impressions : 0,
+    position: a.impressions > 0 ? a.posWeighted / a.impressions : 0,
+  }));
+  // Preserve the ordering intent (most impressions first) now that the original
+  // row order no longer maps 1:1 onto the output.
+  out.sort((x, y) => y.impressions - x.impressions);
+  return out;
+}
+
 export async function getQueryPages(
   env: ScEnv,
   query: string,
@@ -945,13 +1002,8 @@ export async function getQueryPages(
   }
 
   const data = (await res.json()) as { rows?: GscApiRow[] };
-  const pages: QueryPageRow[] = (data.rows ?? []).map((r) => ({
-    path: pathFromGscPageKey(siteUrl, r.keys?.[0] ?? ""),
-    clicks: r.clicks ?? 0,
-    impressions: r.impressions ?? 0,
-    ctr: r.ctr ?? 0,
-    position: r.position ?? 0,
-  }));
+
+  const pages = collapseQueryPageRows(siteUrl, data.rows ?? []);
 
   const result: QueryPagesResult = {
     query,
