@@ -3113,6 +3113,42 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       // OPE-378 / OPE-458 — this lone candidate may BE a cluster: if Phase A.9
       // folded siblings into it, their provenance still belongs on the event
       // (whether it was created here or matched an existing row).
+      // OPE-540 — cite the lone candidate's OWN source.
+      //
+      // THE defect. This N=1 collapse branch delegates to
+      // `submitExtractedEvent`, which creates events and writes no citation at
+      // all, and the only citation call here was the one below — which fires
+      // exclusively for siblings Phase A.9 FOLDED IN. So the candidate's own
+      // source, the one that actually produced the event, was never recorded.
+      //
+      // It reads as a rare edge case and is the opposite: `source_count` is 1
+      // on every fanout run in `workflow_run_steps`, so the N=1 collapse is the
+      // ordinary shape and the per-source loop below it is the exception. That
+      // is why `event_data_citations` holds 108 pipeline rows in four months
+      // against 1,140 written by hand, and why the pipeline's last write was
+      // 2026-08-23 01:47:31 — the last time two sources survived to the loop.
+      //
+      // The consequence is not cosmetic. OPE-537 named "zero citations + null
+      // source_url" as the signature for finding fabricated rows; while the
+      // most common path emits no citations, that signature matches almost
+      // every honest event too and identifies nothing.
+      //
+      // Best-effort and idempotent per (event, field, source_url), so a retry
+      // or a redelivery cannot duplicate, and citing a DEDUPED event is
+      // deliberate — "another source also asserted this field" is the signal.
+      if (res.resultingEventId) {
+        await this.recordCitationsBestEffort(
+          step,
+          "submit/single/cite",
+          instanceId,
+          messageRowId,
+          res.resultingEventId,
+          only.extracted,
+          only.source,
+          fromAddress,
+          emailBody
+        );
+      }
       if (only.mergedSiblings?.length && res.resultingEventId) {
         await this.recordMergedSiblingCitations(
           step,
