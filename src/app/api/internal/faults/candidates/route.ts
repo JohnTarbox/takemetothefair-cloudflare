@@ -165,6 +165,8 @@ export const POST = withInternalKey({ source: "faults:candidates" }, async ({ db
         digest: errorLogs.digest,
         url: errorLogs.url,
         context: errorLogs.context,
+        // OPE-577 — needed for extension-injection stack-shape detection.
+        stackTrace: errorLogs.stackTrace,
         timestamp: errorLogs.timestamp,
       })
       .from(errorLogs)
@@ -192,7 +194,16 @@ export const POST = withInternalKey({ source: "faults:candidates" }, async ({ db
     const suppressed: Record<string, number> = {};
     let suppressedTotal = 0;
     for (const r of rows) {
-      const verdict = classifyNoise({ message: r.message, route: r.route });
+      // OPE-577 — classify on PROVENANCE (where the code came from) as well as
+      // message text. `context.thirdParty` is set by the client reporter and
+      // the stack shape identifies extension injection; neither can be defeated
+      // by a third party changing its wording.
+      const verdict = classifyNoise({
+        message: r.message,
+        route: r.route,
+        context: r.context,
+        stackTrace: r.stackTrace,
+      });
       if (verdict.noise) {
         const key = `${verdict.reason}:${verdict.matched}`;
         suppressed[key] = (suppressed[key] ?? 0) + 1;
