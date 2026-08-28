@@ -134,12 +134,17 @@ export function busiestMonth(countsByMonth: number[]): string | null {
  * data cannot support them, so a thin state gets a shorter paragraph instead of
  * a vaguer one.
  */
-export function buildStateIntro(stateName: string, inv: StateInventory, year: number): string {
+// OPE-598 — `year` is a LABEL derived from the events the page lists
+// ("2026", "2026–2027"), not the clock. The blank branch below is defensive
+// only: `formatYearSpanLabel` falls back to the current year, so the live path
+// never passes "". It is kept so a future caller that genuinely has no year
+// degrades to shorter copy rather than to the string "undefined".
+export function buildStateIntro(stateName: string, inv: StateInventory, year: string): string {
   const parts: string[] = [];
 
   parts.push(
     inv.upcomingCount > 0
-      ? `Meet Me at the Fair tracks ${inv.upcomingCount} upcoming ${stateName} fairs, festivals, craft shows and markets for ${year}.`
+      ? `Meet Me at the Fair tracks ${inv.upcomingCount} upcoming ${stateName} fairs, festivals, craft shows and markets${year ? ` for ${year}` : ""}.`
       : `Meet Me at the Fair tracks ${stateName} fairs, festivals, craft shows and markets year-round.`
   );
 
@@ -169,14 +174,16 @@ export function buildStateIntro(stateName: string, inv: StateInventory, year: nu
  * Each entry is emitted ONLY when the underlying data supports it. Callers must
  * treat fewer than STATE_FAQ_MIN_ITEMS as "emit no FAQ and no JSON-LD".
  */
-export function buildStateFaq(stateName: string, inv: StateInventory, year: number): FaqItem[] {
+// OPE-598 — see buildStateIntro, including why the blank branch is defensive
+// rather than a live path.
+export function buildStateFaq(stateName: string, inv: StateInventory, year: string): FaqItem[] {
   const items: FaqItem[] = [];
 
   if (inv.upcomingCount > 0) {
     items.push({
-      question: `How many fairs and festivals are there in ${stateName} in ${year}?`,
+      question: `How many fairs and festivals are there in ${stateName}${year ? ` in ${year}` : ""}?`,
       answer:
-        `We currently list ${inv.upcomingCount} upcoming ${stateName} fairs, festivals, craft shows and markets for ${year}` +
+        `We currently list ${inv.upcomingCount} upcoming ${stateName} fairs, festivals, craft shows and markets${year ? ` for ${year}` : ""}` +
         (inv.townCount > 1 ? `, spread across ${inv.townCount} towns and cities.` : `.`) +
         ` The calendar is updated daily as organisers publish their dates.`,
     });

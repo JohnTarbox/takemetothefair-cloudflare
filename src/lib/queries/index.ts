@@ -2,7 +2,7 @@
  * Reusable query helpers to eliminate N+1 queries and reduce code duplication
  */
 
-import { eq, count, and, ne, isNotNull, inArray } from "drizzle-orm";
+import { eq, count, and, ne, isNotNull, inArray, sql } from "drizzle-orm";
 import type { Database } from "@/lib/db";
 import {
   venues,
@@ -418,6 +418,86 @@ export async function findVenueByGooglePlaceId(
  * so the SEO meta count matches what the page lists. Used by `generateMetadata`
  * on the six state index pages.
  */
+/**
+ * OPE-598 — the year span of the events a state page actually lists.
+ *
+ * The state pages rendered a year token derived from `new Date().getFullYear()`
+ * in six places (title, og:title, meta description, H1, intro, FAQ Q+A) while
+ * the list itself is not year-scoped at all — it renders "upcoming" events by
+ * date ascending. On 2026-08-27 the Rhode Island page therefore read "Fairs &
+ * Festivals 2026" and "48 upcoming … for 2026" over a list containing 2027
+ * events; Massachusetts rendered 13 events of which EIGHT were 2027.
+ *
+ * The copy and the query disagreed, and the copy is the SERP snippet — so
+ * somebody searching "rhode island fairs 2027" saw a 2026 headline on a page
+ * that did have 2027 events. That is the exact query OPE-583 says we are losing.
+ *
+ * This returns the span of what is rendered, so the label can be TRUE rather
+ * than merely current. It also fixes the December case the `buildStateTitle`
+ * docblock already flagged — a page whose remaining events are all next year
+ * stops advertising a spent calendar.
+ *
+ * Mirrors `countUpcomingEventsByState`'s predicate exactly (same visibility
+ * gate, same 24h end-of-day grace); a span computed over a different set than
+ * the one displayed would be a new way to be wrong.
+ *
+ * Returns null when the state lists nothing — the caller then has no span to
+ * describe and should omit the year rather than invent one.
+ */
+export async function getUpcomingEventYearSpanByState(
+  db: Database,
+  stateCode: string
+): Promise<{ minYear: number; maxYear: number } | null> {
+  const now = new Date();
+  const [row] = await db
+    .select({
+      minStart: sql<number | null>`min(${events.startDate})`,
+      maxStart: sql<number | null>`max(${events.startDate})`,
+    })
+    .from(events)
+    .where(
+      and(
+        isPublicEventStatus(),
+        eq(events.stateCode, stateCode),
+        isNotNull(events.startDate),
+        upcomingEndPredicate(now)
+      )
+    );
+  if (row?.minStart == null || row?.maxStart == null) return null;
+  // Stored as unix seconds; the display convention is Eastern (see
+  // project_eastern_date_rendering), and a year boundary is the one place a
+  // UTC read can land an event in the wrong year.
+  const toYear = (secs: number) =>
+    Number(
+      new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", year: "numeric" }).format(
+        new Date(Number(secs) * 1000)
+      )
+    );
+  return { minYear: toYear(row.minStart), maxYear: toYear(row.maxStart) };
+}
+
+/**
+ * The year label for state-page copy: "2026", or "2026–2027" when the listed
+ * events span more than one year.
+ *
+ * ⚠️ A null span means the state lists NOTHING upcoming, and the fallback is
+ * the current year — NOT an empty label. This is load-bearing for OPE-394,
+ * whose approval carried exactly one condition: the year must never be frozen,
+ * so January never needs a deploy (the OPE-197 class of bug, which cost a whole
+ * ticket to evergreen ~1,146 hardcoded series names).
+ *
+ * Dropping the token on an empty state would have been a silent title change on
+ * six of the highest-value pages on the site — a content decision with SERP
+ * consequences, which the `buildStateTitle` docblock says belongs to John, not
+ * to a side effect of this ticket. So OPE-598 changes where a year comes from
+ * (the listed events, rather than the wall clock) and deliberately does NOT
+ * change whether one appears.
+ */
+export function formatYearSpanLabel(span: { minYear: number; maxYear: number } | null): string {
+  if (!span) return String(new Date().getFullYear());
+  return span.minYear === span.maxYear ? String(span.minYear) : `${span.minYear}–${span.maxYear}`;
+}
+
 export async function countUpcomingEventsByState(db: Database, stateCode: string): Promise<number> {
   const now = new Date();
   const [row] = await db
