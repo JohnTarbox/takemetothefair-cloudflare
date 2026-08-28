@@ -27,6 +27,9 @@ export function ErrorAnalyticsBridge() {
         stack,
         url: window.location.href,
         errorType: "window-error",
+        // OPE-614 scope 3 — the script that threw. Cross-origin scripts without
+        // CORS report "", and that absence is itself informative.
+        filename: event.filename || undefined,
       });
       recoverFromStaleChunkInBrowser({ message, stack });
     }
@@ -41,6 +44,17 @@ export function ErrorAnalyticsBridge() {
         stack,
         url: window.location.href,
         errorType: "unhandledrejection",
+        // OPE-614 — when the rejection value is NOT an Error there is no
+        // `.stack` to take, which is why all 34 rows of the `.id` family are
+        // stackless while 307 of 450 client rows overall carry one. Record what
+        // it actually was instead: our own code rejects with Errors, and
+        // injected scripts frequently reject with strings or plain objects, so
+        // the type is itself an origin signal.
+        reasonType: typeof reason,
+        reasonConstructor:
+          reason === null || reason === undefined
+            ? undefined
+            : (reason.constructor?.name ?? undefined),
       });
       // A lazy route chunk fails as a REJECTED import, so this handler — not
       // window.onerror — is the one that sees most of them.

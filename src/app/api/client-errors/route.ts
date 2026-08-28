@@ -21,6 +21,11 @@ type ClientErrorPayload = {
   stack?: unknown;
   url?: unknown;
   errorType?: unknown;
+  // OPE-614 — adjudication fields. See the context block below for why.
+  userAgent?: unknown;
+  reasonType?: unknown;
+  reasonConstructor?: unknown;
+  filename?: unknown;
   statusCode?: unknown;
   // OPE-25 — sent by the React error boundaries (optional).
   componentStack?: unknown;
@@ -150,6 +155,31 @@ export async function POST(request: Request) {
       // site defect. Nothing downstream is suppressed on it — whether the
       // fault-proposal rail should skip these is the operator's call.
       thirdParty: isThirdPartyInjectedError(stack) || undefined,
+      // OPE-614 — capture for ADJUDICATION, not new dedup dimensions.
+      //
+      // The standing triage precedent was that every client candidate resolves
+      // to third-party noise. The payload recorded nothing that could confirm
+      // or refute that: `thirdParty` was set on 10 of 450 rows, `stack_trace`
+      // was NULL on the whole family under investigation, and there was no
+      // `userAgent` field at all. So the precedent was UN-FALSIFIABLE, and it
+      // was steering live rulings — manufactured confidence, wrong in the
+      // false-healthy direction.
+      //
+      // `userAgent` is the cheapest discriminator: extension-injected faults
+      // concentrate in identifiable browser populations, ours spread across the
+      // whole user base — one query separates the hypotheses.
+      //
+      // ⚠️ Scope 4: NONE of these enter the signature key. `computeSignature`
+      // takes route + normalized message only, so dedup is unchanged and a
+      // UA-varying fault does not fragment into a row per browser.
+      //
+      // PII boundary, deliberate and narrow: userAgent only. No IP, no user id.
+      userAgent:
+        typeof payload.userAgent === "string" ? payload.userAgent.slice(0, 400) : undefined,
+      reasonType: typeof payload.reasonType === "string" ? payload.reasonType : undefined,
+      reasonConstructor:
+        typeof payload.reasonConstructor === "string" ? payload.reasonConstructor : undefined,
+      filename: typeof payload.filename === "string" ? payload.filename.slice(0, 500) : undefined,
     },
   });
 
