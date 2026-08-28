@@ -19,8 +19,14 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { desc, eq } from "drizzle-orm";
-import { vendors, vendorOutreachAttempts, adminActions, emailSuppressionList } from "../schema.js";
+import { and, desc, eq, or, sql } from "drizzle-orm";
+import {
+  vendors,
+  vendorOutreachAttempts,
+  adminActions,
+  emailSuppressionList,
+  users,
+} from "../schema.js";
 import { jsonContent } from "../helpers.js";
 import { buildUnsubscribeUrl } from "@takemetothefair/utils";
 import type { Db } from "../db.js";
@@ -198,7 +204,7 @@ export function registerSendVendorEmailTool(
 
   server.tool(
     "send_vendor_email",
-    "Compose + send a one-off email from a @meetmeatthefair.com address to a vendor (claim invites, outreach for missing data, replies). Either render a template ('claim_invite') OR send FREE-FORM by passing subject + body (+ optional html). Sends via the transactional email pipeline, auto-BCCs the operator, appends a CAN-SPAM footer (unsubscribe + mailing address), honors the suppression list (returns suppressed:true and sends nothing if the vendor unsubscribed), and logs to admin_actions + vendor_outreach_attempts. Requires the vendor to have a contact_email on file. Admin only.",
+    "Compose + send a one-off email from a @meetmeatthefair.com address to a vendor (claim invites, outreach for missing data, replies). Either render a template ('claim_invite') OR send FREE-FORM by passing subject + body (+ optional html). Sends via the transactional email pipeline, auto-BCCs the operator, appends a CAN-SPAM footer (unsubscribe + mailing address), honors the suppression list (returns suppressed:true and sends nothing if the vendor unsubscribed), and logs to admin_actions + vendor_outreach_attempts. Sends to the listing's contact_email by default; pass `email` to override (must belong to a user who owns or has claimed the vendor), which is how you reach a vendor whose contact_email is NULL without publishing their address. Admin only.",
     {
       vendor_id: z.string().min(1).describe("Vendor ID (UUID). Find via search_vendors."),
       template_id: z
@@ -230,6 +236,16 @@ export function registerSendVendorEmailTool(
         .describe(
           "Reserved for future templates that take fill-in variables. Unused by claim_invite."
         ),
+      // OPE-595 — same shape, wording and semantics as `create_claim_invite`'s
+      // `email`. A consistency change, not a new concept.
+      email: z
+        .string()
+        .email()
+        .optional()
+        .describe(
+          "Override recipient. Defaults to the listing's contact_email. Compared lowercased. " +
+            "Must belong to a user who OWNS or has CLAIMED this vendor — this is not a send-to-anyone tool."
+        ),
     },
     async (params) => {
       if (!env?.EMAIL_JOBS) {
@@ -251,6 +267,9 @@ export function registerSendVendorEmailTool(
           slug: vendors.slug,
           contactEmail: vendors.contactEmail,
           claimed: vendors.claimed,
+          // OPE-595 — needed by the override's ownership guard.
+          userId: vendors.userId,
+          claimedBy: vendors.claimedBy,
         })
         .from(vendors)
         .where(eq(vendors.id, params.vendor_id))
@@ -262,16 +281,72 @@ export function registerSendVendorEmailTool(
           isError: true,
         };
       }
-      if (!vendor.contactEmail) {
+      // OPE-595 — the recipient, and why an override exists at all.
+      //
+      // `contact_email` RENDERS PUBLICLY as a mailto link on /vendors/<slug>
+      // and a write to it triggers an IndexNow recrawl. It is NULL on ~90% of
+      // listings (664 of 6,561 populated). So before this, sending one recovery
+      // note to a real vendor meant first publishing their personal address to
+      // the open web — which is not a trade worth making for an internal send,
+      // and is why OPE-573's remediation stalled here.
+      const overrideEmail = params.email?.trim().toLowerCase();
+      const recipient = overrideEmail ?? vendor.contactEmail;
+
+      if (!recipient) {
         return {
           content: [
             {
               type: "text",
-              text: `Vendor ${vendor.businessName} has no contact_email on file — can't send.`,
+              text: `Vendor ${vendor.businessName} has no contact_email on file — pass \`email\` to send to the owner/claimant instead.`,
             },
           ],
           isError: true,
         };
+      }
+
+      // Guardrail: an override may only reach someone who already owns or has
+      // claimed THIS vendor. Without it the tool becomes send-to-anyone with a
+      // vendor id as a fig leaf. A broader audience is a different tool with a
+      // different gate — deliberately not this one.
+      if (overrideEmail) {
+        // A vendor with neither an owner nor a claimant has nobody an override
+        // could legitimately reach. Saying so beats a comparison against a
+        // sentinel that can never match — same refusal, but the reason is
+        // readable in the response.
+        const permitted = [vendor.userId, vendor.claimedBy].filter(
+          (id): id is string => typeof id === "string" && id.length > 0
+        );
+        const owner = permitted.length
+          ? (
+              await db
+                .select({ id: users.id })
+                .from(users)
+                .where(
+                  and(
+                    sql`lower(${users.email}) = ${overrideEmail}`,
+                    or(...permitted.map((id) => eq(users.id, id)))
+                  )
+                )
+                .limit(1)
+            )[0]
+          : undefined;
+        if (!owner) {
+          return {
+            content: [
+              jsonContent({
+                success: false,
+                error: "override_not_owner",
+                vendor_id: vendor.id,
+                note:
+                  permitted.length === 0
+                    ? `${vendor.businessName} has no owner and no claimant, so no override recipient can be authorised.`
+                    : `${overrideEmail} does not belong to a user who owns or has claimed ` +
+                      `${vendor.businessName}. Refusing — send_vendor_email is not a send-to-anyone tool.`,
+              }),
+            ],
+            isError: true,
+          };
+        }
       }
 
       // K41 — decide template vs free-form. subject+body wins; otherwise a
@@ -302,14 +377,14 @@ export function registerSendVendorEmailTool(
 
       // K36 — suppression gate. If the vendor unsubscribed, send NOTHING and
       // write no outreach/audit rows.
-      if (await isEmailSuppressed(db, vendor.contactEmail)) {
+      if (await isEmailSuppressed(db, recipient)) {
         return {
           content: [
             jsonContent({
               success: false,
               suppressed: true,
               vendor_id: vendor.id,
-              sent_to: vendor.contactEmail,
+              sent_to: recipient,
               note: "Recipient is on the suppression list (unsubscribed). Nothing was sent or logged.",
             }),
           ],
@@ -325,7 +400,7 @@ export function registerSendVendorEmailTool(
           html: params.html,
         }),
         {
-          recipientEmail: vendor.contactEmail,
+          recipientEmail: recipient,
           reasonLine: "your business is listed on Meet Me at the Fair.",
           env,
         }
@@ -335,7 +410,7 @@ export function registerSendVendorEmailTool(
 
       // Primary send to the vendor.
       const primary: EmailJobMessage = {
-        to: vendor.contactEmail,
+        to: recipient,
         subject: rendered.subject.slice(0, 200),
         text: rendered.text,
         html: rendered.html,
@@ -345,7 +420,7 @@ export function registerSendVendorEmailTool(
       await env.EMAIL_JOBS.send(primary);
 
       // BCC copy to the operator (CF Email send() has no bcc field — second msg).
-      const bccNote = `[BCC copy] The email below was sent to ${vendor.businessName} <${vendor.contactEmail}> via send_vendor_email (${mode}).\n\n----------\n\n`;
+      const bccNote = `[BCC copy] The email below was sent to ${vendor.businessName} <${recipient}>${overrideEmail ? " [recipient OVERRIDE]" : ""} via send_vendor_email (${mode}).\n\n----------\n\n`;
       const bcc: EmailJobMessage = {
         to: BCC_TO,
         subject: `[BCC] ${rendered.subject}`.slice(0, 200),
@@ -367,7 +442,11 @@ export function registerSendVendorEmailTool(
         channel: "email",
         outcome: "sent",
         outcomeAt: now,
-        notes: `send_vendor_email: ${mode}`.slice(0, 500),
+        notes:
+          `send_vendor_email: ${mode}${overrideEmail ? ` -> override ${overrideEmail}` : ""}`.slice(
+            0,
+            500
+          ),
         createdBy: auth.userId,
       });
 
@@ -380,7 +459,11 @@ export function registerSendVendorEmailTool(
         payloadJson: JSON.stringify({
           template_id: params.template_id ?? null,
           mode,
-          to: vendor.contactEmail,
+          to: recipient,
+          // OPE-595 item 4 — the ledger must show WHERE it went, not only which
+          // vendor it was about. An override that left no trace would make the
+          // audit row quietly wrong.
+          recipient_override: overrideEmail ?? null,
           bcc: BCC_TO,
           attemptId,
           via: "mcp",
@@ -396,7 +479,8 @@ export function registerSendVendorEmailTool(
             business_name: vendor.businessName,
             mode,
             template_id: params.template_id ?? null,
-            sent_to: vendor.contactEmail,
+            sent_to: recipient,
+            recipient_override: overrideEmail ?? null,
             bcc: BCC_TO,
             outreach_attempt_id: attemptId,
           }),
