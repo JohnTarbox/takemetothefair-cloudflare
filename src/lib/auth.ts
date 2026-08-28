@@ -5,6 +5,7 @@ import Credentials from "next-auth/providers/credentials";
 import Google from "next-auth/providers/google";
 import Facebook from "next-auth/providers/facebook";
 import { isPlaceholderEmail, PLACEHOLDER_REFUSAL } from "@/lib/auth/placeholder-account";
+import { normalizeEmail } from "@/lib/auth/normalize-email";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { getCloudflareDb } from "./cloudflare";
 import * as schema from "./db/schema";
@@ -178,8 +179,15 @@ function createAuthConfig(): NextAuthConfig {
         const db = getCloudflareDb();
 
         try {
+          // OPE-601 — the identity key is case-insensitive.
+          //
+          // This lookup was the worse half of that bug: it locks people out of
+          // accounts they already own. Jan Merrill reset her password
+          // successfully on 2026-08-07 (that route folds case), then could not
+          // sign in as `Admin@kewlkandylz.com`, and registered again 48 minutes
+          // later — which 500'd on her own vendor slug.
           const user = await db.query.users.findFirst({
-            where: eq(schema.users.email, credentials.email as string),
+            where: eq(schema.users.email, normalizeEmail(credentials.email as string)),
           });
 
           if (!user || !user.passwordHash) {
@@ -289,7 +297,7 @@ function createAuthConfig(): NextAuthConfig {
 
         // Check if a user with this email already exists
         const existingUser = await db.query.users.findFirst({
-          where: eq(schema.users.email, profile.email),
+          where: eq(schema.users.email, normalizeEmail(profile.email)),
         });
 
         if (existingUser && existingUser.passwordHash) {

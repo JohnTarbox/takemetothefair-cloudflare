@@ -1,5 +1,6 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
+import { normalizeEmail } from "@/lib/auth/normalize-email";
 import { z } from "zod";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { users, userRoles, promoters, vendors, verificationTokens } from "@/lib/db/schema";
@@ -143,7 +144,7 @@ export async function POST(request: NextRequest) {
     }
 
     const {
-      email,
+      email: rawEmail,
       password,
       name,
       role,
@@ -167,6 +168,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // OPE-601 — the identity key is case-insensitive, so the duplicate check
+    // and every subsequent use of the address run on the normalized form.
+    // Unnormalized, `Admin@x.com` sailed past this check while `admin@x.com`
+    // already existed, and the insert below then created the second account.
+    const email = normalizeEmail(rawEmail);
     const existingUser = await db.select().from(users).where(eq(users.email, email)).limit(1);
 
     if (existingUser.length > 0) {

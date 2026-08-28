@@ -2,6 +2,7 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
+import { normalizeEmail } from "@/lib/auth/normalize-email";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { users, passwordResetTokens } from "@/lib/db/schema";
 import { isPlaceholderEmail, PLACEHOLDER_REFUSAL } from "@/lib/auth/placeholder-account";
@@ -34,7 +35,10 @@ export async function POST(request: NextRequest) {
       return GENERIC_OK;
     }
 
-    const email = parsed.data.email.toLowerCase().trim();
+    // OPE-601 — via the shared normalizer. This route already folded case and
+    // login did not, which is the inconsistency that made the bug read as
+    // "reset works but sign-in doesn't" rather than as one defect.
+    const email = normalizeEmail(parsed.data.email);
     // OPE-293 — never mint a reset token for an ingestion placeholder.
     //
     // This is the path that would give a placeholder a credential: the token is
