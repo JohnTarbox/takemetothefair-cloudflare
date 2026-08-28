@@ -55,6 +55,7 @@ import {
   type SiteSearchQueriesResult,
   type SitemapStatus,
 } from "@/lib/search-console";
+import { computeMilestoneLayout, MILESTONE_CHART_DIMS } from "@/lib/charts/milestone-layout";
 import { formatDateOnly, formatTimestampForServer } from "@/lib/datetime";
 import {
   isWindowKey,
@@ -1665,7 +1666,17 @@ function GscMilestoneChartCard({ points }: { points: GscMilestonePoint[] }) {
           <div>
             <p className="text-xs text-muted-foreground">Milestones</p>
             <p className="text-2xl font-bold text-foreground tabular-nums">{fmt(sorted.length)}</p>
-            <p className="text-xs text-muted-foreground">Across span</p>
+            {/* OPE-602 defect 5 — the cards compute over the FULL series while
+                the chart plots from May 2026, so "Milestones 28" sat inches
+                above a plot of 25 dots and the two never reconciled. Saying so
+                where both are visible costs one line; making the reader work it
+                out from a subtitle several inches away is how an admin panel
+                stops being trusted. */}
+            <p className="text-xs text-muted-foreground">
+              {chartPoints.length === sorted.length
+                ? "Across span"
+                : `across span · ${fmt(chartPoints.length)} plotted`}
+            </p>
           </div>
           <div>
             <p className="text-xs text-muted-foreground">May ramp</p>
@@ -1682,61 +1693,63 @@ function GscMilestoneChartCard({ points }: { points: GscMilestonePoint[] }) {
 }
 
 function MilestoneChart({ points }: { points: GscMilestonePoint[] }) {
-  // Hand-rolled SVG (matches the existing Sparkline pattern). Wider viewBox
-  // than the sparkline because we draw value labels above each point.
-  const width = 800;
-  const height = 220;
-  const padTop = 28; // room for value labels above the highest point
-  const padBottom = 36; // room for date labels below the x-axis
-  const padLeft = 12;
-  const padRight = 12;
-  const stepX = points.length > 1 ? (width - padLeft - padRight) / (points.length - 1) : 0;
-  const plotHeight = height - padTop - padBottom;
-
-  // K12 (2026-06-16): log-linear y-axis. A linear axis crushes the early
-  // milestones — with a 1000-click max, the 20–40 starting points sit at
-  // <4% of the plot height, so the post-launch growth *shape* is unreadable.
-  // Map thresholds through a natural-log scale spanning the in-view
-  // [min, max], with a small low-end pad so the lowest point clears the
-  // baseline. Thresholds are floored at 1 to keep log() finite.
-  const logVals = points.map((p) => Math.log(Math.max(1, p.threshold)));
-  const logMax = Math.max(...logVals);
-  const logMinRaw = Math.min(...logVals);
-  const logSpan = logMax - logMinRaw || 1; // avoid /0 when every point is equal
-  const logMin = logMinRaw - logSpan * 0.08;
-  const yFor = (threshold: number) =>
-    padTop + plotHeight * (1 - (Math.log(Math.max(1, threshold)) - logMin) / (logMax - logMin));
-
-  const coords = points.map((p, i) => {
-    const x = padLeft + i * stepX;
-    const y = yFor(p.threshold);
-    return { x, y, threshold: p.threshold, emailDate: p.emailDate, derived: p.derived };
-  });
-
-  const linePath = coords.map((c, i) => `${i === 0 ? "M" : "L"} ${c.x} ${c.y}`).join(" ");
-  const areaPath = `${linePath} L ${coords[coords.length - 1].x} ${height - padBottom} L ${coords[0].x} ${height - padBottom} Z`;
-
-  // x-axis date labels: render at start, middle, and end so the chart
-  // stays readable even when point count grows beyond 8.
-  const dateLabelIndices =
-    coords.length <= 1 ? [0] : [0, Math.floor((coords.length - 1) / 2), coords.length - 1];
-  // De-dup so a 2-point series doesn't render the middle/end label twice.
-  const uniqueDateLabelIndices = Array.from(new Set(dateLabelIndices));
+  // OPE-602 — layout maths extracted to `@/lib/charts/milestone-layout` so the
+  // label-collision and edge-clipping rules are testable. They are arithmetic,
+  // and none of it could be tested while it lived inside this markup.
+  const d = MILESTONE_CHART_DIMS;
+  const layout = computeMilestoneLayout(points, fmt, d);
+  const { coords, ticks, linePath, areaPath, dateLabelIndices, labelStride } = layout;
+  if (coords.length === 0) return null;
+  const baselineY = d.height - d.padBottom;
 
   return (
     <svg
-      viewBox={`0 0 ${width} ${height}`}
-      preserveAspectRatio="none"
-      className="w-full h-56"
+      viewBox={`0 0 ${d.width} ${d.height}`}
+      // OPE-602 ROOT CAUSE. This was `preserveAspectRatio="none"` with a pinned
+      // `h-56`, which let the axes scale independently: every glyph and dot was
+      // stretched, and the amount CHANGED WITH THE WINDOW (1.41x too wide at
+      // 1151px, 0.41x at 380px). `r={4}` painted an 11.5 x 8.1px ellipse.
+      //
+      // `meet` alone would letterbox, so the box is given the viewBox's own
+      // aspect ratio and the SVG fills it exactly — undistorted at every width,
+      // with height scaling instead of glyphs.
+      preserveAspectRatio="xMidYMid meet"
+      style={{ aspectRatio: `${d.width} / ${d.height}` }}
+      className="w-full h-auto"
       aria-label="Search clicks milestone growth chart"
       role="img"
     >
+      {/* OPE-602 defect 4 — log-scale gridlines and ticks. The subtitle
+          promised "log scale" while the plot had a single baseline rule and no
+          ticks, so nothing let a reader take a value off the curve: the line
+          was decorative and the printed labels were the only data. */}
+      {ticks.map((t) => (
+        <g key={`tick-${t.value}`}>
+          <line
+            x1={d.padLeft}
+            y1={t.y}
+            x2={d.width - d.padRight}
+            y2={t.y}
+            className="stroke-gray-100"
+            strokeWidth={1}
+          />
+          <text
+            x={d.padLeft}
+            y={t.y - 2}
+            textAnchor="start"
+            className="fill-gray-400"
+            style={{ fontSize: "9px" }}
+          >
+            {fmt(t.value)}
+          </text>
+        </g>
+      ))}
       {/* baseline at the bottom of the plot area */}
       <line
-        x1={padLeft}
-        y1={height - padBottom}
-        x2={width - padRight}
-        y2={height - padBottom}
+        x1={d.padLeft}
+        y1={baselineY}
+        x2={d.width - d.padRight}
+        y2={baselineY}
         className="stroke-gray-200"
         strokeWidth={1}
       />
@@ -1755,19 +1768,30 @@ function MilestoneChart({ points }: { points: GscMilestonePoint[] }) {
             className={c.derived ? "fill-white stroke-blue-600" : "fill-blue-600"}
             strokeWidth={c.derived ? 2 : 0}
           />
-          {/* value label above the dot */}
-          <text
-            x={c.x}
-            y={c.y - 10}
-            textAnchor="middle"
-            className="fill-gray-900 text-xs font-semibold"
-            style={{ fontSize: "11px" }}
-          >
-            {fmt(c.threshold)}
-          </text>
+          {/* OPE-602 defect 6 — per-point detail. There were zero <title>
+              elements and one aria-label on the whole svg, so hovering a dot
+              gave nothing and a screen reader got "growth chart" and no data. */}
+          <title>
+            {`${fmt(c.threshold)} clicks — ${formatDateOnly(c.emailDate) || c.emailDate}${
+              c.derived ? " (derived from our own daily totals)" : ""
+            }`}
+          </title>
+          {/* value label — drawn every `labelStride` points (defect 1) and
+              anchored away from the edge (defect 2). */}
+          {c.showLabel && (
+            <text
+              x={c.x}
+              y={c.y - 10}
+              textAnchor={c.labelAnchor}
+              className="fill-gray-900 text-xs font-semibold"
+              style={{ fontSize: "11px" }}
+            >
+              {fmt(c.threshold)}
+            </text>
+          )}
         </g>
       ))}
-      {uniqueDateLabelIndices.map((idx) => {
+      {dateLabelIndices.map((idx) => {
         const c = coords[idx];
         const anchor: "start" | "middle" | "end" =
           idx === 0 ? "start" : idx === coords.length - 1 ? "end" : "middle";
@@ -1775,7 +1799,7 @@ function MilestoneChart({ points }: { points: GscMilestonePoint[] }) {
           <text
             key={`date-${idx}`}
             x={c.x}
-            y={height - padBottom + 16}
+            y={baselineY + 16}
             textAnchor={anchor}
             className="fill-gray-600"
             style={{ fontSize: "11px" }}
@@ -1784,6 +1808,25 @@ function MilestoneChart({ points }: { points: GscMilestonePoint[] }) {
           </text>
         );
       })}
+      {/* OPE-602 defect 3, stated rather than silently fixed: points are
+          INDEX-spaced, so the middle date label sits at the middle MILESTONE,
+          not the middle date, and the curve's right-hand flattening is partly
+          a spacing artifact. Date-spacing them honestly is blocked on OPE-456
+          — `reached_date` defaults to the forwarding email's date and
+          keep-earliest idempotency makes it uncorrectable — so a date-spaced
+          axis would be no more truthful than this one, only more convincing.
+          The caption below the chart now says so. */}
+      {labelStride > 1 && (
+        <text
+          x={d.width - d.padRight}
+          y={d.padTop - 16}
+          textAnchor="end"
+          className="fill-gray-400"
+          style={{ fontSize: "9px" }}
+        >
+          {`every ${labelStride}${labelStride === 2 ? "nd" : labelStride === 3 ? "rd" : "th"} milestone labelled`}
+        </text>
+      )}
     </svg>
   );
 }
