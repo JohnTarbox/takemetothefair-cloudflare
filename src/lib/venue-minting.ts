@@ -54,12 +54,14 @@
  *      identifiable and reversible later (the OPE-433 convention).
  */
 import { eq, and, sql } from "drizzle-orm";
-import type { SQLiteColumn } from "drizzle-orm/sqlite-core";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "@/lib/db/schema";
 import { venues } from "@/lib/db/schema";
 import { createSlug, appendSlugSegment } from "@/lib/utils";
 import { recordMutation } from "@/lib/audit/record-mutation";
+// OPE-600 — extracted to `@/lib/names/normalized-name` so the signup-collision
+// lookup reuses this exact pair rather than becoming a third implementation.
+import { normalizeName, normalizedNameSql } from "@/lib/names/normalized-name";
 import { geocodeNewVenue } from "@/lib/venues/geocode-one";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import type { Slug } from "@takemetothefair/utils";
@@ -119,49 +121,6 @@ export interface MintVenueInput {
   venueAddress?: string | null;
   venueCity?: string | null;
   venueState?: string | null;
-}
-
-/**
- * The two halves of the re-check's comparison. They MUST agree.
- *
- * The first version of this normalized only the input — `LOWER(TRIM(name))` on
- * the column against a quote-stripped string in JS — which meant the guard
- * could never match a name containing an apostrophe. That is the specimen's
- * own name ("Doody's Totoket Inn Restaurant"): the duplicate-suppressing
- * guard was inert for precisely the row the ticket is about, and silently, in
- * the direction that mints. Hence `normalization agrees on both sides` in the
- * tests — a table of inputs asserted equal through SQL and through JS.
- *
- * Curly quotes are folded too. Extractors take prose from web pages, where
- * U+2019 is what a typographic apostrophe actually is; treating it as a
- * different character from `'` would reopen the same hole one codepoint over.
- */
-const STRIPPED_QUOTES = ['"', "'", "`", "\u2019", "\u2018"];
-
-/** JS half. */
-function normalizeName(s: string): string {
-  let out = s.toLowerCase();
-  for (const q of STRIPPED_QUOTES) out = out.split(q).join("");
-  return out.replace(/\s+/g, " ").trim();
-}
-
-/**
- * SQL half — the same steps in the same order, over a column.
- *
- * Whitespace: SQLite has no regex, so runs are collapsed by three passes of
- * `REPLACE('  ', ' ')`, which flattens up to 8 consecutive spaces. Tabs and
- * newlines are mapped to spaces first. A name with more than 8 consecutive
- * spaces falls back to not matching — it mints a row instead of linking, which
- * is the same outcome as having no guard and never the wrong link.
- */
-function normalizedNameSql(col: SQLiteColumn) {
-  let expr = sql`LOWER(${col})`;
-  for (const q of STRIPPED_QUOTES) {
-    expr = sql`REPLACE(${expr}, ${q}, '')`;
-  }
-  expr = sql`REPLACE(REPLACE(${expr}, char(9), ' '), char(10), ' ')`;
-  for (let i = 0; i < 3; i++) expr = sql`REPLACE(${expr}, '  ', ' ')`;
-  return sql`TRIM(${expr})`;
 }
 
 /**

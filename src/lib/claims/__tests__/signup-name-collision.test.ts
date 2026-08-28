@@ -166,3 +166,86 @@ describe("isUniqueConstraintError — the backstop's trigger", () => {
     expect(isUniqueConstraintError(undefined)).toBe(false);
   });
 });
+
+/**
+ * OPE-600 — legacy-slug rows, the case slug-equality could not see.
+ *
+ * A stored slug is whatever the generator emitted the day the row was created,
+ * and `createSlug` has changed since. Verified against the LIVE generator, two
+ * classes diverge:
+ *
+ *   `&`          now becomes `-and-`   stored `golder-stone-garden`
+ *                                      current `golder-stone-and-garden`
+ *   apostrophe   now dropped           stored `ben-s-tackle-shack`
+ *                                      current `bens-tackle-shack`
+ *
+ * 67 and 58 vendor rows respectively on prod. For every one, the slug lookup
+ * found nothing, the insert hit the UNIQUE index anyway, and the person got the
+ * generic 500 with no claim link — the exact experience OPE-573 shipped this
+ * helper to remove.
+ *
+ * These seed REAL legacy rows and run the real statement. OPE-573's own retro
+ * found two decorative tests that asserted around the condition rather than
+ * reproducing it, so the fixtures here are stored slugs the current generator
+ * provably cannot produce: if the fallback is removed, the lookup misses and
+ * these fail.
+ */
+describe("OPE-600 — legacy slugs from an older generator still collide", () => {
+  it.each([
+    // [business name, slug stored by the OLD generator, class]
+    ["Golder Stone & Garden", "golder-stone-garden", "ampersand"],
+    ["J & B Marble", "j-b-marble", "ampersand"],
+    ["ABC Pool & Spa Center", "abc-pool-spa-center", "ampersand"],
+    ["Ben's Tackle Shack", "ben-s-tackle-shack", "apostrophe"],
+    ["Sportsmen's Connection", "sportsmen-s-connection", "apostrophe"],
+    ["Mayo's Hand Poured Baits", "mayo-s-hand-poured-baits", "apostrophe"],
+  ])("%s (stored %s, %s class) is found by name", async (name, legacySlug) => {
+    seedVendor(legacySlug, name);
+    const hit = await findNameCollision(db as never, "VENDOR", name);
+    expect(hit).not.toBeNull();
+    // The claim link must point at the row that actually EXISTS — i.e. the
+    // legacy slug — not at what the current generator would have produced.
+    // Sending someone to /claim/vendor/golder-stone-and-garden 404s.
+    expect(hit!.slug).toBe(legacySlug);
+    expect(hit!.claimUrl).toBe(`/claim/vendor/${legacySlug}`);
+  });
+
+  it("the trailing-space row from the ticket is matched too", () => {
+    // `kewl-kandylz`'s business_name is stored as "Kewl Kandylz " with a
+    // trailing space. Name equality that did not TRIM would miss it, and this
+    // is the listing the parent ticket's user actually owns.
+    seedVendor("kewl-kandylz-legacy", "Kewl Kandylz ");
+    return expect(findNameCollision(db as never, "VENDOR", "Kewl Kandylz")).resolves.toMatchObject({
+      slug: "kewl-kandylz-legacy",
+    });
+  });
+
+  it("matches a legacy PROMOTER slug as well as a vendor one", async () => {
+    // Both branches had the same defect; fixing only the vendor one is the
+    // "wired into one of two parallel paths" failure this codebase keeps
+    // hitting.
+    raw
+      .prepare(
+        `INSERT INTO promoters (id, user_id, company_name, slug, claimed) VALUES ('p1','u1',?,?,0)`
+      )
+      .run("Hearth & Home Wreaths", "hearth-home-wreaths");
+    const hit = await findNameCollision(db as never, "PROMOTER", "Hearth & Home Wreaths");
+    expect(hit).not.toBeNull();
+    expect(hit!.slug).toBe("hearth-home-wreaths");
+    expect(hit!.claimUrl).toBe("/claim/promoter/hearth-home-wreaths");
+  });
+
+  it("still returns null for a genuinely free name", async () => {
+    // The fallback widens the lookup, so the thing worth proving is that it did
+    // not widen it into matching everything. A false collision would block a
+    // legitimate signup behind a claim link for someone else's listing.
+    seedVendor("golder-stone-garden", "Golder Stone & Garden");
+    expect(await findNameCollision(db as never, "VENDOR", "Completely Different Co")).toBeNull();
+  });
+
+  it("does not match on a shared word", async () => {
+    seedVendor("golder-stone-garden", "Golder Stone & Garden");
+    expect(await findNameCollision(db as never, "VENDOR", "Stone")).toBeNull();
+    expect(await findNameCollision(db as never, "VENDOR", "Garden")).toBeNull();
+  });
+});

@@ -38,11 +38,12 @@
  * where two genuinely different fairs can share a name. It is the wrong tool
  * for an identity-bearing business listing.
  */
-import { eq } from "drizzle-orm";
+import { eq, or, sql } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import { vendors, promoters } from "@/lib/db/schema";
 import type * as schema from "@/lib/db/schema";
 import { createSlug } from "@/lib/utils";
+import { normalizeName, normalizedNameSql } from "@/lib/names/normalized-name";
 
 type Db = DrizzleD1Database<typeof schema>;
 
@@ -75,11 +76,34 @@ export async function findNameCollision(
   const slug = createSlug(rawName);
   if (!slug) return null;
 
+  // OPE-600 — slug equality is not sufficient, because a stored slug is
+  // whatever the generator emitted the day the row was created.
+  //
+  // `createSlug` has changed since. Two divergence classes are confirmed
+  // against the live generator: `&` now becomes `-and-` (stored
+  // `golder-stone-garden`, current `golder-stone-and-garden`) and an
+  // apostrophe is now dropped rather than hyphenated (stored
+  // `ben-s-tackle-shack`, current `bens-tackle-shack`). 67 + 58 vendor rows
+  // respectively, all predating the generator change.
+  //
+  // For every one of those, the slug lookup found nothing, the insert hit the
+  // UNIQUE index anyway, and the person got the generic 500 with no claim link
+  // — the exact experience OPE-573 shipped this helper to remove, silently and
+  // indistinguishably from the pre-fix bug.
+  //
+  // The name fallback sidesteps the whole question of WHICH generator wrote the
+  // row: it compares what the business is called, which does not change when
+  // the slugifier does. Third appearance of this family — it was root-caused on
+  // venues in PR #257 and the fallback was not generalised then.
+  const normalized = normalizeName(rawName);
+
   if (entityType === "VENDOR") {
     const [row] = await db
       .select({ slug: vendors.slug, name: vendors.businessName, claimed: vendors.claimed })
       .from(vendors)
-      .where(eq(vendors.slug, slug))
+      .where(
+        or(eq(vendors.slug, slug), sql`${normalizedNameSql(vendors.businessName)} = ${normalized}`)
+      )
       .limit(1);
     if (!row) return null;
     return {
@@ -94,7 +118,9 @@ export async function findNameCollision(
   const [row] = await db
     .select({ slug: promoters.slug, name: promoters.companyName, claimed: promoters.claimed })
     .from(promoters)
-    .where(eq(promoters.slug, slug))
+    .where(
+      or(eq(promoters.slug, slug), sql`${normalizedNameSql(promoters.companyName)} = ${normalized}`)
+    )
     .limit(1);
   if (!row) return null;
   return {
