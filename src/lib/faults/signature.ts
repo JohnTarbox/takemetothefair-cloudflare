@@ -71,11 +71,32 @@ export const THIRD_PARTY_NOISE_DENYLIST: readonly string[] = [
   // OUR bundle host; scripts served by third parties (challenges.cloudflare.com)
   // stay masked permanently, so this residue never goes to zero.
   "script error.",
-  // Minified third-party null-derefs. Anchored on the `evaluating '<expr>'`
-  // tail because the leading "TypeError: null is not an object" prefix also
-  // appears in genuine app errors.
-  "evaluating 'b.parentnode'",
-  "evaluating 'o.id'",
+  // Minified third-party null-deref. Anchored on the `evaluating <expr>` tail
+  // because the leading "TypeError: null is not an object" prefix also appears
+  // in genuine app errors.
+  //
+  // OPE-613 — keyed on the PROPERTY, not on the minified local. The entry used
+  // to read `evaluating 'b.parentnode'`; a bundler-assigned single letter is
+  // not a stable identifier of anything, so any rule keyed on one is defeated
+  // by the next rebuild — and after a rebuild reassigns that letter, the same
+  // rule can suppress a genuine fault instead. `normalizeErrorClass` now emits
+  // `evaluating *.parentnode`, which survives renaming.
+  //
+  // Evidence for this one specifically: minified third-party DOM code, a
+  // 3-second iPhone Safari loop-burst, 0 recurrence in 12 days. Ruled noise
+  // 2026-07-17 (Render-Fault-CPI-Retro-2026-07-17.md, post-retro approvals §3).
+  "evaluating *.parentnode",
+  // OPE-613 — `evaluating 'o.id'` REMOVED, deliberately.
+  //
+  // OPE-251 seeded it as a third-party shape by assertion, with no supporting
+  // evidence recorded, and it has never been adjudicated. It is also live: 34
+  // occurrences across 20 distinct pathnames (/events/*, /blog/*, /venues/*,
+  // /vendors/*, /for-vendors, /login), still firing on 2026-08-28.
+  //
+  // Suppressing it was already wrong; converting it to a build-stable
+  // `*.id` would have made it WORSE, by closing the gap that let `s.id` reach
+  // `proposed` and surface at all. So the family is now allowed to propose and
+  // be ruled on its own evidence — which is the whole point of this ticket.
 ];
 
 /**
@@ -164,6 +185,31 @@ export function normalizeErrorClass(message: string | null | undefined): string 
   return (
     message
       .toLowerCase()
+      // OPE-613 — keep the property being dereferenced, BEFORE the quote strip
+      // below removes it.
+      //
+      // `evaluating '<obj>.<prop>'` is the only token that identifies a client
+      // TypeError, and stripping it collapsed three unrelated faults into one
+      // class: `b.parentNode`, `o.id` and `s.id` all normalized to
+      // `typeerror: null is not an object (evaluating )`. Two rows sat at
+      // status='noise' under that class on a ruling made specifically about
+      // `b.parentNode` — so an `.id` fault landing on those routes deduped into
+      // a human's decision about a DIFFERENT fault and was never seen again.
+      // A human cannot rule correctly on a key that erased the evidence.
+      //
+      // The object half is dropped when it looks MINIFIED (1–2 chars), because
+      // it is a bundler-assigned local and rotates on every rebuild — observed
+      // directly: the same family ran as `o.id` (29 hits, 17 routes, to 08-19)
+      // and then as `s.id` (5 hits, 3 routes, from 08-28) across one deploy.
+      // Keying on it under-matches after a rebuild and, worse, can silently
+      // OVER-match a genuine fault that happens to minify to the same letter.
+      //
+      // A longer object name is a real identifier and is kept, because
+      // `myWidget.id` and `cart.id` are genuinely different faults.
+      .replace(
+        /evaluating (['"`])([a-z_$][\w$]*)\.([\w$]+)\1/g,
+        (_m, _q, obj: string, prop: string) => `evaluating ${obj.length <= 2 ? "*" : obj}.${prop}`
+      )
       // Quoted string literals ('...', "...", `...`) — the quoted payload is
       // almost always a volatile value (a slug, a url, an id).
       .replace(/(['"`]).*?\1/g, "")
