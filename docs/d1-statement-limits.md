@@ -99,3 +99,10 @@ happily in-process. This is documented from experience twice over:
 So guards for this family must assert a **structural** property that survives
 the engine difference — the shape of the statement, or the cap applied before
 it is built — never "it did not throw".
+
+## See also
+
+- `docs/d1-restore-procedure.md` — Time Travel's measured 30-day window, the
+  restore commands, and the drill that proved a restore actually reconciles.
+  Note in particular that Time Travel **overwrites in place** and cannot restore
+  into a new database.
