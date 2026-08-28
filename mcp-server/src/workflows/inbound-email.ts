@@ -437,6 +437,56 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       }
     );
 
+    // ───── OPE-330 (Demux D-4): ledger the route→lane crossing ─────
+    //
+    // `route_to_lane` was the one crossing type in the enum with NO WRITER.
+    // Live data on 2026-08-28: email_to_ticket 76, email_to_hold 18,
+    // review_to_rework 13, hold_to_resolve 0 (writer exists, never fired),
+    // route_to_lane 0 — because nothing recorded it.
+    //
+    // That is the FIRST hop of every inbound email, so "what happened to this
+    // email?" was missing its opening line: the ledger could say an email
+    // became a ticket, but not which lane decided so, and an email routed to
+    // the wrong project left no trace of the decision at all.
+    //
+    // A step of its own, deliberately: `recordCrossing` mints a fresh UUID per
+    // call and is not idempotent, and workflow steps memoize on success — so
+    // putting it inside the hold step below would re-write the row every time
+    // that step retried for an unrelated reason.
+    //
+    // UNROUTED is recorded too. It is a real routing outcome, and the case
+    // where knowing what we decided matters most.
+    await step.do(
+      "crossing/route-to-lane",
+      { retries: { limit: 2, delay: "5 seconds", backoff: "constant" }, timeout: "10 seconds" },
+      async () => {
+        const db = getDb(this.env.DB);
+        const [row] = await db
+          .select({
+            fromAddress: inboundEmails.fromAddress,
+            toAddress: inboundEmails.toAddress,
+            subject: inboundEmails.subject,
+          })
+          .from(inboundEmails)
+          .where(eq(inboundEmails.id, messageRowId))
+          .limit(1);
+        if (!row) return null;
+        const routed = routeToProject({
+          toAddress: row.toAddress ?? "",
+          fromAddress: row.fromAddress,
+          subject: row.subject ?? "",
+        });
+        await recordCrossing(db, {
+          sourceRef: ref.inboundEmail(messageRowId),
+          destinationRef: `lane:${routed.project}`,
+          crossingType: "route_to_lane",
+          actor: "system",
+          notes: routed.reason ?? null,
+        });
+        return null;
+      }
+    );
+
     // ───── OPE-357 (Demux D-1b): hold-and-ask on the UNROUTED path ─────
     //
     // OPE-327 shipped the DECISION (per-sender ceiling + 14-day expiry) and
