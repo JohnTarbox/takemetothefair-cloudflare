@@ -120,12 +120,51 @@ export const POST = withAuthorized(async ({ request, db }) => {
     // arg (analyst D1, 2026-05-29 PM); when non-empty the extractor
     // structures the prompt with two labeled sections — email body
     // marked PRIMARY for dates, fetched URL content secondary.
-    const { events, confidence } = await extractMultipleEvents(
-      ai,
-      content,
-      (metadata || {}) as PageMetadata,
-      emailBody
-    );
+    // OPE-576 — catch the AI failure HERE, not in the outer catch.
+    //
+    // The 20s ceiling in `extractMultipleEvents` throws, and that throw used
+    // to unwind straight past the deterministic salvage block below — which
+    // sits inside this same `try` and is gated on `events.length === 0`. So
+    // the one path the salvage was built for could never reach it: a page
+    // that timed out returned nothing, even when its OG title and a
+    // month-day-range heading were sitting right there at zero AI cost.
+    //
+    // Catching at the call site leaves `content`/`metadata`/`url` in scope
+    // (the outer catch cannot see them — they are declared inside the try)
+    // and lets the existing salvage run unmodified, because "AI produced no
+    // events" and "AI never answered" want exactly the same fallback.
+    let events: ExtractedEvent[] = [];
+    let confidence: Record<string, Record<string, "high" | "medium" | "low">> = {};
+    let aiFailure: string | null = null;
+    const aiStartedAt = Date.now();
+    try {
+      ({ events, confidence } = await extractMultipleEvents(
+        ai,
+        content,
+        (metadata || {}) as PageMetadata,
+        emailBody
+      ));
+    } catch (aiError) {
+      aiFailure = aiError instanceof Error ? aiError.message : String(aiError);
+      // OPE-576 §3 — instrument before tuning. The 24 prod rows carried
+      // `context: {}`, so nothing recorded how long the call ran or how much
+      // content it was given, and the ceiling could only have been tuned by
+      // guess. `warn`, not `error`: the salvage below may still rescue this,
+      // and a rescued page is not a failure.
+      await logError(db, {
+        level: "warn",
+        message: "AI extraction failed; attempting deterministic salvage",
+        error: aiError,
+        source: "api/admin/import-url/extract",
+        context: {
+          elapsedMs: Date.now() - aiStartedAt,
+          contentLength: content.length,
+          hasMetadataTitle: Boolean((metadata as PageMetadata | undefined)?.title),
+          url,
+        },
+        request,
+      });
+    }
 
     // Removed pre-2026-05-22 ticketUrl defaulting block. Defaulting the
     // ticket field to the source URL silently copied page URLs (and
@@ -198,8 +237,34 @@ export const POST = withAuthorized(async ({ request, db }) => {
           confidence: salvaged.confidence,
           count: salvaged.events.length,
           extractionMethod: "thin",
+          // OPE-576 — say WHY this is thin. A caller that compares extracted
+          // fields against stored ones (the GW1.3 holdout sampler) must be
+          // able to tell a deterministic guess from a real extraction; see
+          // the guard in holdout-sampling.ts.
+          ...(aiFailure ? { aiFailure } : {}),
         });
       }
+    }
+
+    // OPE-576 — the AI failed AND the salvage found nothing: fail CLOSED.
+    //
+    // This preserves the pre-existing contract exactly (`success:false`, no
+    // events, no prose, an operator-visible message). Worth stating plainly
+    // because the ticket's priority question was whether a timeout could
+    // fabricate: it never could. The endpoint returns no event record and no
+    // model-authored text on any failure path, before or after this change.
+    if (aiFailure) {
+      return NextResponse.json(
+        {
+          success: false,
+          events: [],
+          confidence: {},
+          error:
+            "Could not extract event data from this page — the extractor timed out and no " +
+            "usable title or date could be recovered. Retrying is unlikely to help; please add the event manually.",
+        },
+        { status: 200 }
+      );
     }
 
     return NextResponse.json({
