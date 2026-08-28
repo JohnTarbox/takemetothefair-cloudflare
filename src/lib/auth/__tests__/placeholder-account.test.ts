@@ -94,7 +94,11 @@ describe("every wired auth path consults the guard", () => {
     // link it exists to prevent.
     const signIn = authSource.slice(authSource.indexOf("async signIn("));
     const guardAt = guardCallIndex(signIn);
-    const lookupAt = signIn.indexOf("eq(schema.users.email, profile.email)");
+    // Anchored on the lookup's SHAPE, not on how `profile.email` is spelled
+    // inside it. OPE-601 wrapped that argument in `normalizeEmail(...)` — a
+    // change this assertion has no opinion about — and the exact-string form
+    // failed, which is a brittle test reporting a defect that does not exist.
+    const lookupAt = signIn.search(/eq\(schema\.users\.email,[^)]*profile\.email/);
     expect(guardAt).toBeGreaterThan(-1);
     expect(lookupAt).toBeGreaterThan(-1);
     expect(guardAt).toBeLessThan(lookupAt);

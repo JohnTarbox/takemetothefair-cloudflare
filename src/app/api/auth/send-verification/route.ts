@@ -2,6 +2,7 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
+import { normalizeEmail } from "@/lib/auth/normalize-email";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { users, verificationTokens } from "@/lib/db/schema";
 import { auth } from "@/lib/auth";
@@ -31,7 +32,7 @@ export async function POST(request: NextRequest) {
     // Prefer the authenticated session; fall back to a provided email for the
     // immediate-post-signup case where the session cookie hasn't fully synced.
     const session = await auth();
-    const targetEmail = (session?.user?.email ?? emailFromBody ?? "").toLowerCase().trim();
+    const targetEmail = normalizeEmail(session?.user?.email ?? emailFromBody);
 
     if (!targetEmail) {
       return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
