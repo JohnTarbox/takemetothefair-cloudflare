@@ -50,6 +50,7 @@ import {
 } from "./inbound-email-stale-sweep.js";
 import { runScheduledDedupSweepCanary } from "./dedup-sweep-canary.js";
 import { runScheduledCpiStaleRedCanary } from "./cpi-stale-red-canary.js";
+import { runScheduledNewsletterListBalanceCanary } from "./newsletter-list-balance-canary.js";
 import { runAgentSilenceWatchdog } from "./agent-silence-watchdog.js";
 import { runScheduledCpiScanWatchdog } from "./cpi-scan-watchdog.js";
 import {
@@ -1866,6 +1867,20 @@ export default {
         // signal can't sit silent for weeks (the IndexNow-dead-2-weeks case).
         // Failsoft by construction — logs + swallows, never throws.
         runScheduledCpiStaleRedCanary(env),
+        // OPE-510 §3 (2026-08-28) — newsletter list-balance canary.
+        //
+        // Compares confirmed-and-active subscribers against members of any
+        // active list; the gap IS the set of people who completed double
+        // opt-in and receive nothing. The query already existed but its only
+        // caller was the on-demand data-health report, so nothing ran it and
+        // nothing alerted: four real signups sat unmailed for five to seven
+        // days and were found by hand, chasing a preview_only recipient count.
+        //
+        // Nags once per DAY for as long as orphans exist — deliberately NOT
+        // the sibling notices' "quiet unless the count changed" debounce. This
+        // is an invariant violation, not a backlog, and a steady count of 4 is
+        // four people still receiving nothing. Failsoft; never throws.
+        runScheduledNewsletterListBalanceCanary(env),
         // OPE-225 (2026-07-20) — photo-coverage rails. Refreshes
         // image_coverage_state for every live entity (coverage by demand tier,
         // image_set_at first-observation, hotlink health) so the OPE-226

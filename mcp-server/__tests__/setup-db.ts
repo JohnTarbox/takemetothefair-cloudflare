@@ -310,6 +310,20 @@ const SCHEMA_SQL = `
     created_at INTEGER NOT NULL DEFAULT (unixepoch())
   );
 
+  -- OPE-510 — the other half of the list-balance invariant. The canary
+  -- compares confirmed-and-active subscribers here against members of any
+  -- active list below; without this table the balance query throws and any
+  -- test of it passes by testing nothing.
+  CREATE TABLE newsletter_subscribers (
+    id TEXT PRIMARY KEY,
+    email TEXT NOT NULL UNIQUE,
+    source TEXT,
+    confirmed INTEGER NOT NULL DEFAULT 0,
+    unsubscribed INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER,
+    confirmed_at INTEGER
+  );
+
   CREATE TABLE newsletter_list_subscriptions (
     id TEXT PRIMARY KEY,
     subscriber_id TEXT NOT NULL,

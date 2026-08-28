@@ -665,6 +665,34 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       ),
   },
   {
+    // OPE-510 §3 — the newsletter list-balance canary RAN.
+    //
+    // Watches the run stamp, not the alert. The alert is the yield and the
+    // yield is ZERO on every healthy day, so a yield probe here would be red
+    // whenever the system is working — the inversion that gets probes muted.
+    //
+    // This one is load-bearing rather than decorative. The canary's own query
+    // shipped weeks before anything called it, and the gap was invisible
+    // because a report field that nobody reads and a cron that never runs look
+    // identical from the database. Four confirmed subscribers went five to
+    // seven days receiving nothing while the check that would have caught them
+    // sat uninvoked.
+    //
+    // 48h on a daily cron: one missed fire is a blip, two is a fault.
+    name: "newsletter-list-balance-canary",
+    ownerOpe: "OPE-510",
+    label: "Newsletter list-balance canary (daily cron)",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        agentHeartbeats,
+        agentHeartbeats.lastSeenAt,
+        eq(agentHeartbeats.agentCode, "watchdog:newsletter-list-balance")
+      ),
+  },
+  {
     name: "fault-emitter-run",
     ownerOpe: "OPE-488",
     label: "Render-fault emitter run (hourly cron)",
