@@ -1698,6 +1698,18 @@ export const eventDays = sqliteTable("event_days", {
   openTime: text("open_time"), // "HH:MM" 24-hour format, or NULL
   closeTime: text("close_time"), // "HH:MM" 24-hour format, or NULL
   notes: text("notes"),
+  /**
+   * OPE-572 — operator/provenance notes for this day. NEVER rendered publicly.
+   *
+   * `notes` above is visitor-facing prose ("Opening day", "Veterans free with
+   * ID") and is printed verbatim in the Dates block. It was also the only
+   * writable text field on this row, so day-level provenance went there too and
+   * 44 rows leaked `Source: …` audit prose onto live pages.
+   *
+   * Anything that is about WHERE the hours came from belongs here. If you are
+   * writing "Source:", a URL, or a fetch date, it is this column.
+   */
+  internalNotes: text("internal_notes"),
   closed: integer("closed", { mode: "boolean" }).default(false),
   vendorOnly: integer("vendor_only", { mode: "boolean" }).default(false),
   // F2 (drizzle/0120, 2026-06-08) — per-occurrence image + focal-point.

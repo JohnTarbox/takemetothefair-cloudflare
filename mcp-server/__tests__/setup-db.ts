@@ -679,6 +679,7 @@ const SCHEMA_SQL = `
     open_time TEXT,
     close_time TEXT,
     notes TEXT,
+    internal_notes TEXT,
     closed INTEGER DEFAULT 0,
     vendor_only INTEGER DEFAULT 0,
     status TEXT,

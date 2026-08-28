@@ -27,6 +27,7 @@ import {
   type Slug,
   parseLocation,
   sanitizeProse,
+  decodeHtmlEntities,
   coerceVenueNameAtIngest,
   VALID_TRANSITIONS,
 } from "../helpers.js";
@@ -4578,7 +4579,23 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .regex(/^\d{2}:\d{2}$/)
         .optional()
         .describe("Closing time (HH:MM). Omit for 'hours not yet confirmed'."),
-      notes: z.string().optional().describe("Notes for this day"),
+      notes: z
+        .string()
+        .transform(decodeHtmlEntities)
+        .optional()
+        .describe(
+          "PUBLIC visitor-facing note, rendered verbatim on the event page (e.g. 'Opening day', 'Veterans free with ID'). Do NOT put provenance here — use internal_notes."
+        ),
+      // OPE-572 — the missing home for day-level provenance. 44 rows leaked
+      // `Source: …` audit prose onto live pages because `notes` was the only
+      // writable text field on the row.
+      internal_notes: z
+        .string()
+        .transform(decodeHtmlEntities)
+        .optional()
+        .describe(
+          "PRIVATE operator note — never rendered. Put hours provenance here: source URL, fetch date, 'SECONDARY SOURCE', confirmation details."
+        ),
       vendor_only: z
         .boolean()
         .optional()
@@ -4681,6 +4698,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           openTime,
           closeTime,
           notes: params.notes ?? null,
+          internalNotes: params.internal_notes ?? null,
           vendorOnly: params.vendor_only ?? false,
           // F2: per-day image; DB defaults take over when omitted.
           ...(params.image_url !== undefined && { imageUrl: params.image_url }),
@@ -4756,7 +4774,23 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .nullable()
         .optional()
         .describe("Closing time (HH:MM), or null to mark as 'hours not yet confirmed'."),
-      notes: z.string().optional().describe("Notes for this day"),
+      notes: z
+        .string()
+        .transform(decodeHtmlEntities)
+        .optional()
+        .describe(
+          "PUBLIC visitor-facing note, rendered verbatim on the event page (e.g. 'Opening day', 'Veterans free with ID'). Do NOT put provenance here — use internal_notes."
+        ),
+      // OPE-572 — the missing home for day-level provenance. 44 rows leaked
+      // `Source: …` audit prose onto live pages because `notes` was the only
+      // writable text field on the row.
+      internal_notes: z
+        .string()
+        .transform(decodeHtmlEntities)
+        .optional()
+        .describe(
+          "PRIVATE operator note — never rendered. Put hours provenance here: source URL, fetch date, 'SECONDARY SOURCE', confirmation details."
+        ),
       closed: z.boolean().optional().describe("Whether this day is cancelled/closed"),
       vendor_only: z
         .boolean()
@@ -4800,6 +4834,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       if (params.open_time !== undefined) updates.openTime = params.open_time;
       if (params.close_time !== undefined) updates.closeTime = params.close_time;
       if (params.notes !== undefined) updates.notes = params.notes;
+      if (params.internal_notes !== undefined) updates.internalNotes = params.internal_notes;
       if (params.closed !== undefined) updates.closed = params.closed;
       if (params.vendor_only !== undefined) updates.vendorOnly = params.vendor_only;
       // F2 — per-occurrence image. Same null-vs-undefined distinction

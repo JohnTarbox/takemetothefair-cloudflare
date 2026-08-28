@@ -35,7 +35,8 @@ const SCHEMA_SQL = `
     latitude REAL, longitude REAL
   );
   CREATE TABLE event_days (
-    id TEXT PRIMARY KEY, event_id TEXT, date INTEGER
+    id TEXT PRIMARY KEY, event_id TEXT, date INTEGER,
+    internal_notes TEXT
   );
   CREATE TABLE admin_actions (
     id TEXT PRIMARY KEY, action TEXT, actor_user_id TEXT,
