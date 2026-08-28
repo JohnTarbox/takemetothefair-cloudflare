@@ -725,6 +725,22 @@ describe("buildStateTitle — OPE-394", () => {
     }
   });
 
+  it("fits SERP width in the OPE-598 TWO-YEAR form, which is 5 chars longer", () => {
+    // The width case below pins the single-year form. OPE-598 introduced the
+    // span form ("2026\u20132027"), and ALL SIX live pages rendered it on the day
+    // it shipped \u2014 so the single-year assertion no longer covers what
+    // production actually serves. Measured worst case is Massachusetts at
+    // 442px against the 600px budget; this exists so a future copy change that
+    // eats the remaining headroom fails here rather than in a SERP.
+    for (const state of ["Massachusetts", "New Hampshire"]) {
+      const t = buildStateTitle(state, "2026\u20132027");
+      const px = approxPixelWidth(t);
+      expect(px, `${state} at ${Math.round(px)}px`).toBeLessThan(SERP_WIDTH_PX);
+      expect(t).toContain(`${state} Fairs & Festivals`);
+      expect(t).toContain("2026\u20132027");
+    }
+  });
+
   it("fits SERP width on the two widest states, head term and year intact", () => {
     // Massachusetts and New Hampshire are the long cases at 52 characters.
     for (const state of ["Massachusetts", "New Hampshire"]) {
