@@ -14,7 +14,11 @@ import { ItemListSchema } from "@/components/seo/ItemListSchema";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { getStateColors } from "@/lib/state-colors";
 import { STATES, STATE_BY_SLUG } from "@/lib/states";
-import { countUpcomingEventsByState } from "@/lib/queries";
+import {
+  countUpcomingEventsByState,
+  getUpcomingEventYearSpanByState,
+  formatYearSpanLabel,
+} from "@/lib/queries";
 import { buildStateTitle, buildStateMetaDescription } from "@/lib/seo-utils";
 import { FAQPageSchema } from "@/components/seo/FAQPageSchema";
 import { FacetNav } from "@/components/events/facet-nav";
@@ -173,8 +177,19 @@ export async function getStateMetadata(stateSlug: string): Promise<Metadata> {
   const { name, adjective } = STATES[code];
   const db = getCloudflareDb();
   const eventCount = await countUpcomingEventsByState(db, code);
-  const title = buildStateTitle(name);
-  const description = buildStateMetaDescription(name, eventCount, adjective);
+  // OPE-598 — the year comes from the events this page LISTS, not the clock.
+  //
+  // Both helpers defaulted to `new Date().getFullYear()` while the list itself
+  // is not year-scoped — it renders "upcoming" by date ascending. So on
+  // 2026-08-27 Rhode Island read "Fairs & Festivals 2026" over a list holding
+  // 2027 events, and Massachusetts rendered 13 of which EIGHT were 2027.
+  //
+  // This is the SERP snippet, so the cost is not tidiness: someone searching
+  // "rhode island fairs 2027" saw a 2026 headline on a page that did have 2027
+  // events — the exact query OPE-583 says we are losing.
+  const yearLabel = formatYearSpanLabel(await getUpcomingEventYearSpanByState(db, code));
+  const title = buildStateTitle(name, yearLabel);
+  const description = buildStateMetaDescription(name, eventCount, adjective, yearLabel);
   const canonical = `https://meetmeatthefair.com/events/${stateSlug}`;
   return {
     title,
@@ -285,8 +300,18 @@ export async function StateEventsPage({ stateSlug, searchParams }: StateEventsPa
   const colors = getStateColors(state.code);
 
   // OPE-394 — editorial + FAQ layer, derived from the WHOLE state's calendar.
-  const year = new Date().getFullYear();
-  const inventory = await getStateInventory(state.code);
+  // OPE-598 — same true label the metadata uses, threaded to the H1, the intro
+  // and the FAQ. One source for all six sites; a page that lists 2026 and 2027
+  // now says so instead of picking whichever year the server booted in.
+  //
+  // Issued together: the span query is new here, and awaiting it before the
+  // inventory would have added a serial D1 round-trip to a public page render
+  // for no ordering reason — the two are independent.
+  const [span, inventory] = await Promise.all([
+    getUpcomingEventYearSpanByState(getCloudflareDb(), state.code),
+    getStateInventory(state.code),
+  ]);
+  const year = formatYearSpanLabel(span);
   const intro = buildStateIntro(state.name, inventory, year);
   const faq = buildStateFaq(state.name, inventory, year);
   // Below the floor we emit NEITHER the block nor the JSON-LD. A thin FAQ is

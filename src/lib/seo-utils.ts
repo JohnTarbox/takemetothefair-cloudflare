@@ -370,25 +370,56 @@ export function roundDownToTen(n: number): number {
  *
  * ── The year rolls, and that is tested ──────────────────────────────────
  *
- * `year` defaults to the CURRENT year, so January needs no deploy. That is the
- * one condition attached to the original approval, and it is not provable by
- * reading the template — OPE-197 existed solely to evergreen ~1,146 series
- * names that carried a hardcoded trailing year, and reintroducing that class on
- * the six highest-value pages on the site is exactly what the condition guards
- * against. `seo-utils.test.ts` renders this at a simulated 2027 and 2030.
+ * The year must never freeze — January needs no deploy. That is the one
+ * condition attached to the original approval, and it is not provable by
+ * reading the template: OPE-197 existed solely to evergreen ~1,146 series names
+ * that carried a hardcoded trailing year, and reintroducing that class on the
+ * six highest-value pages on the site is exactly what the condition guards
+ * against. `seo-utils.test.ts` renders the no-argument shape at a simulated
+ * 2027 and 2030, and those tests still pass unchanged across OPE-598.
  *
- * ⚠️ Known behaviour in late December, stated rather than silently accepted:
- * the title says the CURRENT year until 23:59 on 31 December, so for the last
- * few weeks of the year it advertises a calendar that is nearly spent. Rolling
- * early would invert the problem — the page would promise 2027 while listing
- * 2026 events. Left as-is deliberately; a Q4 flip is a content decision with
- * SERP consequences, not a code tweak, and it needs John.
+ * ── OPE-598 changed the SOURCE of the year, not its presence ─────────────
+ *
+ * The label now comes from the events the page actually LISTS
+ * (`getUpcomingEventYearSpanByState` → `formatYearSpanLabel`), with the current
+ * year as the fallback when a state lists nothing. Callers that know their
+ * inventory pass a label; the default here covers the ones that don't, so no
+ * path can render a yearless title.
+ *
+ * That dissolves the late-December problem this note used to record as
+ * accepted. The old text read: the title says the CURRENT year until 23:59 on
+ * 31 December, so for the last few weeks it advertises a nearly-spent calendar
+ * — while rolling early on the clock would invert the problem, promising 2027
+ * to a page listing 2026 events. Deriving the label from the listing escapes
+ * both horns: the title cannot advertise a year the page does not list, because
+ * the label IS the listing. A page whose remaining inventory is all next year
+ * says next year; one still listing this year's events does not.
+ *
+ * ⚠️ What is still John's call, and was deliberately NOT taken here: whether a
+ * state with an EMPTY calendar should show a year at all. It shows the current
+ * one, exactly as before. Dropping the token would be a SERP-visible copy
+ * change on six pages arrived at as a side effect of a mechanical fix.
  */
 export function buildStateTitle(
   stateName: string,
-  year: number = new Date().getFullYear()
+  // OPE-598 — a LABEL, not a number: "2026", or "2026–2027" when the listed
+  // events span two years. It is derived from the events the page actually
+  // lists, which is why a page listing only 2027 events is no longer headed
+  // 2026, and why the late-December case the note above flags now resolves
+  // itself — once the remaining events are all next year, the label follows.
+  //
+  // ⚠️ The default stays the CURRENT YEAR, and that is deliberate. OPE-394's
+  // approval condition is that the year never freezes, not that it comes from
+  // the clock — OPE-598 changes the SOURCE of the year, never whether one is
+  // present. Defaulting to "" here would have quietly dropped the year from
+  // any state page with nothing upcoming: a SERP-visible copy change that the
+  // note above assigns to John, arrived at as a side effect. Callers that know
+  // their inventory pass a derived label; `formatYearSpanLabel` applies the
+  // same current-year fallback, so no path can render a yearless title.
+  yearLabel: string = String(new Date().getFullYear())
 ): string {
-  return `${stateName} Fairs & Festivals ${year} — Full Calendar`;
+  const suffix = yearLabel ? ` ${yearLabel}` : "";
+  return `${stateName} Fairs & Festivals${suffix} — Full Calendar`;
 }
 
 export function buildStateMetaDescription(
@@ -397,7 +428,9 @@ export function buildStateMetaDescription(
   // stateAdjective retained for callsite-compat; the new template uses
   // stateName directly. Will go away once all callers drop the arg.
   _stateAdjective: string,
-  year: number = new Date().getFullYear()
+  // OPE-598 — see buildStateTitle, including why this defaults to the clock
+  // rather than to "".
+  yearLabel: string = String(new Date().getFullYear())
 ): string {
   const rounded = roundDownToTen(eventCount);
   // When count is below 10, drop the "{N}+" prefix to avoid "0+ upcoming
@@ -405,8 +438,8 @@ export function buildStateMetaDescription(
   // meta shouldn't lie. Fall back to plain phrasing.
   const countPhrase =
     rounded > 0
-      ? `${rounded}+ upcoming ${stateName} fairs, festivals, craft shows, and home shows for ${year}`
-      : `Upcoming ${stateName} fairs, festivals, craft shows, and home shows for ${year}`;
+      ? `${rounded}+ upcoming ${stateName} fairs, festivals, craft shows, and home shows${yearLabel ? ` for ${yearLabel}` : ""}`
+      : `Upcoming ${stateName} fairs, festivals, craft shows, and home shows${yearLabel ? ` for ${yearLabel}` : ""}`;
   return `${countPhrase}. Browse events by month, category, or venue. Updated daily.`;
 }
 

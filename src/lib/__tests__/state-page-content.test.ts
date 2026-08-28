@@ -63,7 +63,7 @@ describe("busiestMonth", () => {
 
 describe("buildStateIntro", () => {
   it("states the count, the town spread and the season when all are known", () => {
-    const text = buildStateIntro("Massachusetts", inv(), 2026);
+    const text = buildStateIntro("Massachusetts", inv(), "2026");
     expect(text).toContain("120 upcoming Massachusetts fairs");
     expect(text).toContain("47 towns");
     expect(text).toContain("between June and September");
@@ -73,7 +73,7 @@ describe("buildStateIntro", () => {
     const text = buildStateIntro(
       "Vermont",
       inv({ upcomingCount: 3, countsByMonth: [0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0], townCount: 2 }),
-      2026
+      "2026"
     );
     expect(text).not.toContain("between");
     expect(text).not.toMatch(/season/i);
@@ -85,7 +85,7 @@ describe("buildStateIntro", () => {
     const text = buildStateIntro(
       "Rhode Island",
       inv({ upcomingCount: 0, countsByMonth: new Array(12).fill(0), townCount: 0 }),
-      2026
+      "2026"
     );
     expect(text).not.toContain("0 upcoming");
     expect(text).toContain("year-round");
@@ -94,14 +94,14 @@ describe("buildStateIntro", () => {
   it("never asserts hours, prices or admission", () => {
     // The grounding rule, as an assertion. These are the specifics that get
     // fabricated in generated SEO copy, and none of them are derivable here.
-    const text = buildStateIntro("Connecticut", inv(), 2026);
+    const text = buildStateIntro("Connecticut", inv(), "2026");
     expect(text).not.toMatch(/\b(am|pm|free admission|\$\d)/i);
   });
 });
 
 describe("buildStateFaq", () => {
   it("produces a full, grounded FAQ for a well-populated state", () => {
-    const faq = buildStateFaq("Massachusetts", inv(), 2026);
+    const faq = buildStateFaq("Massachusetts", inv(), "2026");
     expect(faq.length).toBeGreaterThanOrEqual(STATE_FAQ_MIN_ITEMS);
     expect(faq[0].question).toContain("Massachusetts");
     expect(faq[0].answer).toContain("120");
@@ -120,18 +120,18 @@ describe("buildStateFaq", () => {
         topCategories: [],
         townCount: 0,
       }),
-      2026
+      "2026"
     );
     expect(faq.length).toBeLessThan(STATE_FAQ_MIN_ITEMS);
   });
 
   it("omits the category question when there is only one category", () => {
-    const faq = buildStateFaq("Maine", inv({ topCategories: ["Agricultural Fair"] }), 2026);
+    const faq = buildStateFaq("Maine", inv({ topCategories: ["Agricultural Fair"] }), "2026");
     expect(faq.some((f) => /kinds of events/i.test(f.question))).toBe(false);
   });
 
   it("every answer is non-empty and mentions the state", () => {
-    const faq = buildStateFaq("Connecticut", inv(), 2026);
+    const faq = buildStateFaq("Connecticut", inv(), "2026");
     for (const item of faq) {
       expect(item.answer.trim().length).toBeGreaterThan(20);
       expect(item.question.trim().length).toBeGreaterThan(10);
@@ -140,8 +140,8 @@ describe("buildStateFaq", () => {
   });
 
   it("rolls the year rather than hard-coding it", () => {
-    const a = buildStateFaq("Maine", inv(), 2026)[0].answer;
-    const b = buildStateFaq("Maine", inv(), 2027)[0].answer;
+    const a = buildStateFaq("Maine", inv(), "2026")[0].answer;
+    const b = buildStateFaq("Maine", inv(), "2027")[0].answer;
     expect(a).toContain("2026");
     expect(b).toContain("2027");
   });

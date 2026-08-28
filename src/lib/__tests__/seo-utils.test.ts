@@ -712,14 +712,14 @@ describe("buildStateTitle — OPE-394", () => {
 
   for (const [state, expected] of Object.entries(APPROVED)) {
     it(`${state} renders the approved copy exactly`, () => {
-      expect(buildStateTitle(state, 2026)).toBe(expected);
+      expect(buildStateTitle(state, "2026")).toBe(expected);
     });
   }
 
   it("never carries the 90-char tail that shipped", () => {
     // The specific deviation this ticket was sent back for.
     for (const state of Object.keys(APPROVED)) {
-      const t = buildStateTitle(state, 2026);
+      const t = buildStateTitle(state, "2026");
       expect(t).not.toContain("Find Craft Fairs");
       expect(t).not.toContain("MMATF");
     }
@@ -728,7 +728,7 @@ describe("buildStateTitle — OPE-394", () => {
   it("fits SERP width on the two widest states, head term and year intact", () => {
     // Massachusetts and New Hampshire are the long cases at 52 characters.
     for (const state of ["Massachusetts", "New Hampshire"]) {
-      const t = buildStateTitle(state, 2026);
+      const t = buildStateTitle(state, "2026");
       const px = approxPixelWidth(t);
       expect(px, `${state} at ${Math.round(px)}px`).toBeLessThan(SERP_WIDTH_PX);
       // The two things that must survive truncation even if the tail does not.
