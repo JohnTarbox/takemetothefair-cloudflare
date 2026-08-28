@@ -24,7 +24,8 @@ const SCHEMA_SQL = `
     id TEXT PRIMARY KEY,
     event_id TEXT NOT NULL,
     date TEXT NOT NULL,
-    closed INTEGER DEFAULT 0
+    closed INTEGER DEFAULT 0,
+    internal_notes TEXT
   );
 `;
 

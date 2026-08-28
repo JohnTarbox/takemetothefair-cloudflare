@@ -20,7 +20,9 @@ const SCHEMA_SQL = `
     event_day_id TEXT, performance_start INTEGER, performance_end INTEGER, stage TEXT,
     billing TEXT, status TEXT NOT NULL DEFAULT 'PENDING'
   );
-  CREATE TABLE event_days ( id TEXT PRIMARY KEY, event_id TEXT NOT NULL, date TEXT NOT NULL );
+  CREATE TABLE event_days ( id TEXT PRIMARY KEY, event_id TEXT NOT NULL, date TEXT NOT NULL,
+    internal_notes TEXT
+  );
 `;
 
 let raw: InstanceType<typeof Database>;

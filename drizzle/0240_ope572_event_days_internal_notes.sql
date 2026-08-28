@@ -1,0 +1,27 @@
+-- OPE-572 — give a day's hours-provenance somewhere private to live.
+--
+-- `event_days.notes` renders VERBATIM to the public, inline in the Dates block
+-- (src/components/events/DailyScheduleDisplay.tsx:293,298 and
+-- EventDayImageStrip.tsx:107 — confirmed in the render code, not inferred).
+-- And `event_days` has no operator column: id, event_id, date, open_time,
+-- close_time, notes, closed, vendor_only, image_url, image_focal_x/y,
+-- created_at. That is the whole list.
+--
+-- So an analyst grounding a day's hours on an organizer page does the right
+-- thing — records provenance — into the only field that exists, and that field
+-- is public. 44 rows now carry `Source: …` prose on live event pages.
+--
+-- The fix is not a rule telling analysts to stop. That would trade an ugly page
+-- for unattributable hours, and hours are exactly the field organizers change
+-- without notice, so attribution matters more here than almost anywhere.
+--
+-- `event_citations` was the alternative. It keys on EVENT-level fields
+-- (start_date, ticket_price_min, venue_id …) and has no notion of a day, so
+-- using it would have meant inventing a day-grain field key and a join that
+-- nothing else needs. A column on the row the note is about is smaller and
+-- harder to misuse.
+--
+-- Pure ADD COLUMN, nullable, no default and no backfill here: clean no-op
+-- against the empty D1 that CI builds from migrations, and the 44 rows are
+-- split in 0241 so the schema exists before anything depends on it.
+ALTER TABLE event_days ADD COLUMN internal_notes TEXT;
