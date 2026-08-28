@@ -186,8 +186,20 @@ export default function RootLayout({
       */}
         {process.env.NEXT_PUBLIC_GA_ID && (
           <>
+            {/* OPE-578 — `crossOrigin` is what de-blinds this script's errors.
+                OPE-105 added it to our own bundles, but those are served
+                SAME-ORIGIN from /_next/static, where the browser already hands
+                `window.onerror` the real message and stack. The attribute is
+                belt-and-braces there and does nothing for `Script error.`.
+                These two third-party tags are the only CROSS-origin scripts on
+                the page, so they are the only ones that can produce it.
+                Verified 2026-08-28: this host answers
+                `access-control-allow-origin: https://meetmeatthefair.com`, so
+                an anonymous CORS load succeeds and the errors become
+                attributable. See the guard test for the precondition. */}
             <script
               async
+              crossOrigin="anonymous"
               src={`https://www.googletagmanager.com/gtag/js?id=${process.env.NEXT_PUBLIC_GA_ID}`}
             />
             <script
@@ -204,8 +216,11 @@ if (!window.__ga4Inited) {
           </>
         )}
         {process.env.NEXT_PUBLIC_CF_BEACON_TOKEN && (
+          // OPE-578 — see the note on the gtag tag above. Verified 2026-08-28:
+          // this host answers `access-control-allow-origin: *`.
           <script
             defer
+            crossOrigin="anonymous"
             src="https://static.cloudflareinsights.com/beacon.min.js"
             data-cf-beacon={`{"token": "${process.env.NEXT_PUBLIC_CF_BEACON_TOKEN}"}`}
           />
