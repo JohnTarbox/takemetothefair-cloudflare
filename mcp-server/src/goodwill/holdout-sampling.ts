@@ -62,6 +62,25 @@ import { submitFetch, submitExtract } from "../email-handlers/submit.js";
 import { NonRetryableError } from "cloudflare:workflows";
 
 const MAX_PER_RUN = 10;
+
+/**
+ * OPE-576 — is this extraction evidence of what the page SAYS?
+ *
+ * `thin` means the K7 deterministic composer produced it: a name lifted from
+ * an OG title or an <h1>, a date from a month-day-range regex. That is a
+ * best-effort reconstruction, not a reading, and comparing it against stored
+ * fields manufactures disagreements out of formatting — an OG title of
+ * "Ledyard Fair | Home" does not match the stored name, and the resulting
+ * discrepancy says something about the title tag rather than about the source.
+ *
+ * A named predicate rather than an inline `!== "thin"` because the reason is
+ * the part worth keeping: GATE-NOISE (2026-08-03) took this queue from 7,193
+ * to ~200 open, and a future author adding a fourth extraction method needs to
+ * decide deliberately which side of this line it falls on.
+ */
+export function isComparableExtraction(extractionMethod: string | undefined): boolean {
+  return extractionMethod !== "thin";
+}
 const HIGH_TRUST_SCORE_THRESHOLD = 0.8;
 
 export interface HoldoutSamplingResult {
@@ -71,6 +90,8 @@ export interface HoldoutSamplingResult {
   fetched: number;
   /** How many extracts succeeded (subset of fetched). */
   extracted: number;
+  /** OPE-576 — extracted, but THIN, so deliberately not compared. */
+  skippedThin: number;
   /** How many discrepancy rows were inserted (across all fields). */
   emitted: number;
   /** How many emit calls returned null due to the 24-hour idempotence
@@ -101,6 +122,7 @@ export async function runScheduledHoldoutSampling(
     sampled: 0,
     fetched: 0,
     extracted: 0,
+    skippedThin: 0,
     emitted: 0,
     skipped_dedup: 0,
     errors: 0,
@@ -210,6 +232,35 @@ export async function runScheduledHoldoutSampling(
         });
         continue;
       }
+      // OPE-576 — a THIN extraction is a deterministic guess, not a reading
+      // of the page, and it must never raise a discrepancy.
+      //
+      // `composeDeterministicExtract` lifts a name from the OG title or an
+      // <h1> and a date from a month-day-range regex. Comparing that against
+      // stored fields manufactures disagreements out of formatting: an OG
+      // title of "Ledyard Fair | Home" does not match the stored name, and
+      // the queue fills with differences that say nothing about the source.
+      //
+      // This guard is NOT only about the new timeout path. The zero-events
+      // salvage has returned `thin` here since K7 (2026-05-31) and this
+      // comparison has been unguarded that whole time — so the fix is
+      // pre-existing, and OPE-576 merely widens the path that reaches it.
+      //
+      // Counted separately rather than as an error: the fetch and extract
+      // both worked, and GATE-NOISE (2026-08-03) took the discrepancy queue
+      // from 7,193 to ~200 open. Re-inflating it with deterministic guesses
+      // would undo that quietly.
+      if (!isComparableExtraction(extracted.extractionMethod)) {
+        result.skippedThin += 1;
+        await logError(db, {
+          level: "warn",
+          source: SOURCE,
+          message: `skipping thin extraction for event=${row.eventId} — deterministic salvage is not evidence of drift`,
+          context: { sourceUrl: row.eventSourceUrl },
+        });
+        continue;
+      }
+
       result.extracted += 1;
 
       // Compare each tracked field. We emit one discrepancy per
@@ -286,7 +337,7 @@ export async function runScheduledHoldoutSampling(
 
     console.log(
       `[cron] holdout-sampling ok — sampled=${result.sampled} fetched=${result.fetched} ` +
-        `extracted=${result.extracted} emitted=${result.emitted} ` +
+        `extracted=${result.extracted} skippedThin=${result.skippedThin} emitted=${result.emitted} ` +
         `skipped_dedup=${result.skipped_dedup} errors=${result.errors}`
     );
     return result;

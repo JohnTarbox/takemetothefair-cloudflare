@@ -20,7 +20,11 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { eq } from "drizzle-orm";
 import { createTestDb, type TestDb } from "./setup-db.js";
-import { simpleNormalize, composeVenue } from "../src/goodwill/holdout-sampling.js";
+import {
+  simpleNormalize,
+  composeVenue,
+  isComparableExtraction,
+} from "../src/goodwill/holdout-sampling.js";
 import { captureHoldoutSampleDiscrepancy } from "../src/goodwill/capture.js";
 import { events, promoters, eventDiscrepancies, sourceReliability } from "../src/schema.js";
 
@@ -311,3 +315,24 @@ async function seedPromoter(database: TestDb, id: string): Promise<void> {
     slug: `promoter-${id}`,
   });
 }
+
+describe("isComparableExtraction — OPE-576", () => {
+  it("refuses to compare a THIN extraction", () => {
+    // `thin` is the K7 deterministic composer: a name off the OG title, a date
+    // off a regex. Comparing that to stored fields manufactures disagreements
+    // out of formatting rather than detecting drift at the source.
+    expect(isComparableExtraction("thin")).toBe(false);
+  });
+
+  it("compares real readings of the page", () => {
+    expect(isComparableExtraction("ai")).toBe(true);
+    expect(isComparableExtraction("json-ld")).toBe(true);
+  });
+
+  it("compares when the method is absent — an older deploy defaults to 'ai'", () => {
+    // `submitExtract` defaults a missing field to "ai", so undefined here means
+    // an ordinary extraction, not an unknown one. Failing closed on undefined
+    // would silently stop the sampler comparing anything at all.
+    expect(isComparableExtraction(undefined)).toBe(true);
+  });
+});
