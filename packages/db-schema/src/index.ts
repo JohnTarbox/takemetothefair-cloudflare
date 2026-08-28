@@ -2415,6 +2415,61 @@ export const PENDING_REPLY_STATUS = {
 export type PendingReplyStatus = (typeof PENDING_REPLY_STATUS)[keyof typeof PENDING_REPLY_STATUS];
 
 /**
+ * OPE-596 — operator-INITIATED outbound, in its own table.
+ *
+ * ── Why not reuse `pending_email_replies` ────────────────────────────────
+ * John's ruling, item 3, and the reason is in the column list above:
+ * `inbound_email_id` is `NOT NULL`. That coupling is load-bearing — every row
+ * in that table answers "which submission is this a reply to", and the review
+ * tools, the threading headers and the ledger join all lean on it.
+ *
+ * Operator-initiated mail has no inbound. Generalising the existing table would
+ * mean dropping that NOT NULL, which weakens a constraint that is currently
+ * doing real work, for the benefit of a row shape that shares only its status
+ * machine. A sibling table keeps both honest.
+ *
+ * ── Why a second flag ─────────────────────────────────────────────────────
+ * `EMAIL_REPLY_ENABLED` keeps meaning exactly what it means for the inbound
+ * queue. This queue is governed by `OPERATOR_OUTBOUND_ENABLED`, and John's
+ * guardrail is that it ships **OFF**: the build going in does not by itself put
+ * mail in front of anyone. The flip is his, made when he is ready.
+ */
+export const operatorOutboundDrafts = sqliteTable(
+  "operator_outbound_drafts",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    toAddress: text("to_address").notNull(),
+    subject: text("subject").notNull(),
+    bodyText: text("body_text").notNull(),
+    /**
+     * Why this is being sent, in the composer's own words. Not the body —
+     * a reviewer needs to know the PURPOSE before reading the prose, and a
+     * draft with no stated reason is one nobody can approve responsibly.
+     */
+    reason: text("reason").notNull(),
+    /** Optional subject of the mail: 'vendor' | 'promoter' | 'event' | … */
+    relatedEntityType: text("related_entity_type"),
+    relatedEntityId: text("related_entity_id"),
+    /** Agent code or admin user id — so "which lane composed this" is answerable. */
+    composedBy: text("composed_by"),
+    composedAt: integer("composed_at", { mode: "timestamp" }).notNull(),
+    /** pending | approved | discarded | sent. Shares PENDING_REPLY_STATUS. */
+    status: text("status").notNull().default("pending"),
+    reviewedBy: text("reviewed_by"),
+    reviewedAt: integer("reviewed_at", { mode: "timestamp" }),
+    reviewNote: text("review_note"),
+    sentAt: integer("sent_at", { mode: "timestamp" }),
+    sentMessageId: text("sent_message_id"),
+  },
+  (table) => [
+    index("idx_operator_outbound_status").on(table.status, table.composedAt),
+    index("idx_operator_outbound_entity").on(table.relatedEntityType, table.relatedEntityId),
+  ]
+);
+
+/**
  * OPE-373 — the closure reasons, ordered by strength of evidence.
  *
  * `no_longer_detected` is deliberately the weakest and is never to be read as
