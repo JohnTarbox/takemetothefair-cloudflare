@@ -28,6 +28,7 @@ import {
   searchEventStatusWhere,
   jsonContent,
   unsafeSlug,
+  searchEventStateWhere,
 } from "../helpers.js";
 import {
   displayVendorName,
@@ -132,7 +133,13 @@ export function registerPublicTools(server: McpServer, db: Db) {
           "Enable fuzzy name matching (default false). Returns results sorted by match_score."
         ),
       category: z.string().optional().describe("Filter by category"),
-      state: z.string().optional().describe("Filter by venue state (2-letter code)"),
+      state: z
+        .string()
+        .optional()
+        .describe(
+          "Filter by state (2-letter code). Matches the venue's state, or the event's own " +
+            "state_code when the event has no venue — so venue-less rows are not silently excluded."
+        ),
       venue_id: z
         .string()
         .optional()
@@ -264,15 +271,44 @@ export function registerPublicTools(server: McpServer, db: Db) {
         conditions.push(lte(events.startDate, new Date(params.start_before)));
       }
 
-      // Push state filter into SQL — venue is already joined
+      // OPE-607 — state matches the VENUE's state, or the event's own
+      // `state_code` when the event has no venue.
+      //
+      // The join is a LEFT join, so a venue-less event is present in the
+      // corpus — but `venues.state` is NULL for it, and `upper(NULL) = 'ME'`
+      // is NULL, not false. So the row silently failed every state-filtered
+      // query while returning fine with `state` omitted. That is the whole
+      // defect, and it is invisible from the caller's side: the tool reports
+      // "no match" against a corpus with a hole in it rather than erroring.
+      //
+      // Measured on prod 2026-08-28: 17 dedup-relevant rows (16 PENDING + 1
+      // TENTATIVE), 15 with a populated `state_code`. Zero APPROVED, so this
+      // is a dedup-integrity bug and not a public-listing one — but dedup is
+      // exactly what `search_events` is called for.
+      //
+      // `events.state_code` is documented in the schema as "denormalized from
+      // venue.state; required when venueId is null", so it is the column that
+      // exists for this case. Scoped to `venue_id IS NULL` deliberately: where
+      // a venue IS resolved its state is authoritative, and a COALESCE would
+      // quietly change which rows match when the two disagree. This branch can
+      // only ADD rows that currently match nothing.
       if (params.state) {
-        conditions.push(sql`upper(${venues.state}) = upper(${params.state})`);
+        conditions.push(searchEventStateWhere(params.state));
       }
 
       if (params.venue_id) {
         conditions.push(eq(events.venueId, params.venue_id));
       }
 
+      // OPE-607 scope 3 — `city` and `venue_name` stay venue-joined, and that
+      // is a decision, not an oversight.
+      //
+      // `venue_name` is a question ABOUT the venue, so a venue-less event
+      // genuinely has no answer. `city` has no `events`-level fallback to reach
+      // for — there is no `events.city` column, only `state_code` — so unlike
+      // `state` there is nothing to widen to. Both therefore exclude venue-less
+      // rows, and a caller doing dedup should filter on `state` (now fixed)
+      // rather than on `city`.
       if (params.venue_name && !params.venue_id) {
         conditions.push(like(venues.name, `%${escapeLike(params.venue_name)}%`));
       }
