@@ -23,6 +23,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { and, desc, eq, gte, lte, like, sql } from "drizzle-orm";
 import { emailSendLedger, events, inboundEmails, workflowRunSteps } from "../schema.js";
+import { buildVendorInquiryBriefing } from "../inbound/vendor-inquiry-briefing.js";
 import { jsonContent } from "../helpers.js";
 import { mainAppFetch, type MainAppEnv } from "../main-app-fetch.js";
 import type { Db } from "../db.js";
@@ -114,6 +115,32 @@ export function registerInboundReadTools(
             .limit(1)
         : [];
 
+      // OPE-604 — on a `vendor_inquiry`, assemble the answer's inputs.
+      //
+      // Attached to the READ rather than left to the operator because the six
+      // lookups are the same every time and three of them are invisible from
+      // /admin: whether the event's dates are supported by anything, whether
+      // the sender is already a vendor under a differently-spaced name, and
+      // what we already sent them.
+      //
+      // Fail-soft: a briefing that throws must not take the email read with
+      // it. The row is what the operator came for; the briefing is an aid.
+      let briefing: Awaited<ReturnType<typeof buildVendorInquiryBriefing>> | null = null;
+      let briefingError: string | null = null;
+      if (row.intent === "vendor_inquiry") {
+        try {
+          briefing = await buildVendorInquiryBriefing(db, {
+            id: row.id,
+            fromAddress: row.fromAddress,
+            subject: row.subject,
+            parsedUrl: row.parsedUrl,
+            bodyText: row.bodyText ?? row.bodyTextExcerpt ?? null,
+          });
+        } catch (err) {
+          briefingError = err instanceof Error ? err.message : String(err);
+        }
+      }
+
       return {
         content: [
           jsonContent({
@@ -124,6 +151,16 @@ export function registerInboundReadTools(
             subject: row.subject,
             intent: row.intent,
             status: row.status,
+            // OPE-604. Present only for `vendor_inquiry`; null elsewhere so a
+            // consumer can tell "not applicable" from "assembly failed".
+            vendor_inquiry_briefing: briefing,
+            ...(briefingError ? { vendor_inquiry_briefing_error: briefingError } : {}),
+            ...(row.intent === "vendor_inquiry"
+              ? {
+                  vendor_inquiry_briefing_note:
+                    "Assembled inputs only — NO reply prose is generated here, deliberately (OPE-604). Read `warnings` before quoting any date or figure to the sender: a `dates_confirmed=true with 0 active citations` row asserts dates nothing supports.",
+                }
+              : {}),
             reply_kind: row.replyKind,
             workflow_instance_id: row.workflowInstanceId,
             message_id: row.messageId,
