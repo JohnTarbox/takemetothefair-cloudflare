@@ -603,6 +603,36 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       ),
   },
   {
+    // OPE-408 — the nightly venue-geocode sweep RAN.
+    //
+    // Deliberately probes the RUN, not the yield. The obvious evidence — the
+    // `venue.update` row each successful geocode writes — is a YIELD, and a
+    // yield probe on this path cries wolf by construction: the sweep's job is
+    // to drain a finite backlog, so a night where every remaining venue is
+    // legitimately refused (low-confidence, non-point, duplicate-place) writes
+    // nothing and is indistinguishable from a dead cron. Two of the ten nights
+    // to 2026-08-28 wrote zero rows.
+    //
+    // `venue.geocode.sweep` is emitted once per `missing_only` call regardless
+    // of outcome, so its absence means the sweep itself stopped executing —
+    // which is the thing worth paging about, and which had NO D1 evidence at
+    // all before this PR (success went to `console.log`).
+    //
+    // 48h on a daily 08:30 cron: one missed fire is a blip, two is a fault.
+    name: "venue-geocode-sweep",
+    ownerOpe: "OPE-408",
+    label: "Venue geocode sweep (nightly 08:30 cron)",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        adminActions,
+        adminActions.createdAt,
+        eq(adminActions.action, "venue.geocode.sweep")
+      ),
+  },
+  {
     name: "fault-emitter-run",
     ownerOpe: "OPE-488",
     label: "Render-fault emitter run (hourly cron)",

@@ -45,7 +45,7 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { withInternalKey } from "@/lib/api/with-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
-import { venues } from "@/lib/db/schema";
+import { venues, adminActions } from "@/lib/db/schema";
 import { inArray, isNull, and, gt } from "drizzle-orm";
 import { logError } from "@/lib/logger";
 import { geocodeVenueRow } from "@/lib/venues/geocode-one";
@@ -197,6 +197,44 @@ export const POST = withInternalKey(
     // OPE-214 — only `missing_only` pages; an explicit id list is already the
     // caller's own cursor. Loop until this comes back null.
     const next_cursor = body.missing_only ? nextCursor(rows, limit) : null;
+
+    // OPE-408 — record that the SWEEP RAN, not just what it wrote.
+    //
+    // This is the observability half the original OPE-408 ship missed, and it
+    // is the OPE-246 "shipped but silently not executing" class exactly. Until
+    // now the only D1 trace of a nightly sweep was the `venue.update` row each
+    // SUCCESSFUL geocode leaves — a YIELD, not a run. On a night where every
+    // remaining venue is refused (low-confidence, non-point, duplicate-place),
+    // a healthy sweep and a dead cron are byte-for-byte identical in the
+    // database, and the only success signal is a `console.log` nobody can
+    // query. Two of the last ten nights wrote nothing; neither is
+    // distinguishable from an outage today.
+    //
+    // Only for `missing_only` — an explicit id list is somebody calling the
+    // tool by hand, which is not the cron and must not refresh its liveness.
+    if (body.missing_only) {
+      try {
+        await db.insert(adminActions).values({
+          action: "venue.geocode.sweep",
+          // `target_id` is NOT NULL and a sweep has no single target. The
+          // literal names the run rather than pointing at a row, and keeps the
+          // (target_type, target_id) index usable for "show me every sweep".
+          targetType: "venue",
+          targetId: "sweep",
+          createdAt: new Date(),
+          payloadJson: JSON.stringify({
+            attempted: results.length,
+            written: summary.ok ?? 0,
+            summary,
+            next_cursor,
+          }),
+        });
+      } catch {
+        // A liveness row must never fail the sweep it describes — same
+        // contract as `recordMutation`. A missed row reads as one late night,
+        // and the 48h probe window absorbs it.
+      }
+    }
 
     return NextResponse.json({ force, examined: results.length, summary, next_cursor, results });
   }

@@ -33,6 +33,7 @@ import {
 } from "../helpers.js";
 import { rosterResearchTargetWhere } from "@takemetothefair/db-schema";
 import { recordSlugRename } from "../slug-history.js";
+import { geocodeNewVenueViaMainApp } from "../venues/geocode-new.js";
 import { checkDuplicateViaMainApp } from "../duplicates/check-duplicate.js";
 import {
   EVENT_STATUS_ENUM,
@@ -3330,6 +3331,16 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           db,
           entity: { type: "venue", id: venueId, slug: finalSlug, action: "create" },
         });
+      }
+
+      // OPE-408 — geocode at creation.
+      //
+      // `create_venue` accepts latitude/longitude as OPTIONAL inputs and derives
+      // nothing, and every real caller (email submission, scrape, JSON-LD
+      // harvest) has a street address and no coordinates — so every venue born
+      // here started NULL. Skip the round-trip when the caller supplied a pin.
+      if (params.latitude == null || params.longitude == null) {
+        await geocodeNewVenueViaMainApp(env, venueId);
       }
 
       return {
