@@ -472,6 +472,42 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
       // Scoped to upcoming APPROVED events: a past fair's schedule cannot be
       // acted on, and this is a worklist rather than an audit.
       const dayCoverage = await readDayCoverage(db);
+      // ── OPE-615: does the fault ledger SEE what production is throwing? ──
+      //
+      // The emitter scanned only `source IN ('server-render','client')`, so
+      // every route handler, scheduled job, workflow and queue consumer could
+      // recur for weeks without minting a signature. Four consecutive OPE-84
+      // runs found every fileable fault in the out-of-ledger sweep and NONE in
+      // the ledger — while the ledger's own output those days was browser noise.
+      //
+      // The failure is self-certifying, which is why it needed a metric rather
+      // than a fix alone: the scan reports a clean ledger and a human
+      // reasonably reads that as a clean production.
+      //
+      // This compares the two populations directly. `sources_erroring` counts
+      // distinct `source` values throwing in the last 7d; `sources_in_ledger`
+      // counts distinct signature route-keys the ledger has ever held (server
+      // signatures are keyed on `source`, so the two are comparable). A large
+      // and persistent gap means the detector is pointed at a subset of
+      // production again.
+      //
+      // Not asserted to be zero: noise suppression and the propose threshold
+      // both legitimately keep sources out of the ledger, so this is a
+      // watch-the-trend number, not a pass/fail invariant.
+      const [faultLedgerYield] = await db.all<{
+        sources_erroring: number;
+        sources_in_ledger: number;
+      }>(sql`
+        SELECT
+          (SELECT COUNT(DISTINCT source) FROM error_logs
+             WHERE level = 'error'
+               AND source IS NOT NULL
+               AND timestamp >= strftime('%s','now') - 604800
+          ) AS sources_erroring,
+          (SELECT COUNT(DISTINCT route) FROM fault_signatures
+             WHERE route IS NOT NULL
+          ) AS sources_in_ledger
+      `);
 
       // ── OPE-467: claimed vs stored vs skipped, per lane ──────────────
       //
@@ -876,6 +912,15 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
             event_day_coverage: {
               rule: "an upcoming APPROVED event with day rows must have at least one public row inside its own span, and no row outside it",
               ...dayCoverage,
+            },
+            // OPE-615 — the fault ledger's coverage of what production throws.
+            //
+            // A detector pointed at a subset of production reports a clean
+            // ledger, and a clean ledger reads as a clean production. This is
+            // the number that would have caught that on 2026-08-17.
+            fault_ledger_yield: {
+              rule: "distinct error sources in the last 7d should be broadly represented among fault_signatures route keys",
+              ...faultLedgerYield,
             },
             // OPE-292 — placeholder accounts must not pollute the
             // registration partition. `misfiled_placeholders` should be 0;
