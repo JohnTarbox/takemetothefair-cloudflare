@@ -74,6 +74,12 @@ export interface OperatorQueueCounts {
   /** pending_email_replies drafts still awaiting review past the SLA. */
   agedReplies: number;
   /**
+   * OPE-626 — customer-facing `reply:*` emails delivered in the last 24h on a
+   * path the `EMAIL_REPLY_ENABLED` gate cannot reach. Zero when the flag is
+   * on, because then the sends are intended rather than a bypass.
+   */
+  ungatedReplies: number;
+  /**
    * OPE-611 — upcoming APPROVED+TENTATIVE events within IMMINENT_DAYS of
    * opening that already carry organizer-grade provenance. Unlike the two
    * above this is NOT an age measure: these rows became urgent by the calendar
@@ -93,7 +99,10 @@ export interface OperatorQueueCounts {
  * the ticket calls out and the one that keeps this from becoming wallpaper.
  */
 export function decideOperatorQueueNotice(
-  counts: Pick<OperatorQueueCounts, "agedClaims" | "agedReplies" | "imminentTentative">,
+  counts: Pick<
+    OperatorQueueCounts,
+    "agedClaims" | "agedReplies" | "imminentTentative" | "ungatedReplies"
+  >,
   alreadySentToday: boolean
 ): boolean {
   if (totalWaiting(counts) <= 0) return false;
@@ -110,7 +119,10 @@ export function decideOperatorQueueNotice(
  * in exactly the way this whole file exists to prevent.
  */
 export function totalWaiting(
-  counts: Pick<OperatorQueueCounts, "agedClaims" | "agedReplies" | "imminentTentative">
+  counts: Pick<
+    OperatorQueueCounts,
+    "agedClaims" | "agedReplies" | "imminentTentative" | "ungatedReplies"
+  >
 ): number {
   // `?? 0` per term is not defensive clutter — it is load-bearing, and adding
   // OPE-611's field proved it. A missing term makes the sum NaN, `NaN <= 0` is
@@ -122,7 +134,33 @@ export function totalWaiting(
   // `src/**/*.ts`, so no test file is typechecked and a call site there can
   // omit a field silently. The guard is in the direction that matters — a
   // dropped queue under-counts and stays quiet, rather than alerting always.
-  return (counts.agedClaims ?? 0) + (counts.agedReplies ?? 0) + (counts.imminentTentative ?? 0);
+  return (
+    (counts.agedClaims ?? 0) +
+    (counts.agedReplies ?? 0) +
+    (counts.imminentTentative ?? 0) +
+    (counts.ungatedReplies ?? 0)
+  );
+}
+
+/**
+ * OPE-626 — should the ungated-reply line appear at all?
+ *
+ * ⚠️ Unlike the other three, this is an INVARIANT, not a work queue — so it is
+ * allowed to repeat every day for as long as it holds. A steady count here
+ * does not mean "seen, not yet got to"; it means unreviewed mail is STILL
+ * reaching customers on a path the operator believes is switched off. That is
+ * the OPE-510 canary's shape, and the distinction is the one this file already
+ * draws for the other queues.
+ *
+ * Silent when the flag is ON: those sends are then intended, and reporting
+ * them as a bypass would be false.
+ */
+export function shouldReportUngatedReplies(
+  sentLast24h: number,
+  replyEnabled: string | undefined
+): boolean {
+  if (replyEnabled === "true") return false;
+  return sentLast24h > 0;
 }
 
 /** Start of the current UTC day — the debounce window boundary. */
@@ -138,7 +176,15 @@ function esc(s: string): string {
  * Read both queues. Exported so a test can seed real backdated rows and assert
  * the counts, rather than mocking a clock.
  */
-export async function readOperatorQueues(db: Db, now: Date): Promise<OperatorQueueCounts> {
+export async function readOperatorQueues(
+  db: Db,
+  now: Date,
+  // Structural, not `Pick<Env, …>`: the mcp-server `Env` interface does not
+  // declare EMAIL_REPLY_ENABLED at all — `queue-consumers.ts` reads it through
+  // its own local interface. Worth noting on OPE-626: the flag has no single
+  // typed home, which is part of why it has no single enforcement point.
+  env?: { EMAIL_REPLY_ENABLED?: string }
+): Promise<OperatorQueueCounts> {
   const cutoff = new Date(now.getTime() - QUEUE_SLA_HOURS * 3600_000);
   const lines: string[] = [];
   let oldestMs = 0;
@@ -201,10 +247,49 @@ export async function readOperatorQueues(db: Db, now: Date): Promise<OperatorQue
   );
   for (const t of tentative) lines.push(formatTentativeLine(t));
 
+  // OPE-626 — `reply:*` mail that reached a customer in the last 24h.
+  //
+  // `EMAIL_REPLY_ENABLED` is enforced in exactly ONE place
+  // (queue-consumers.ts:272) and only catches mail travelling through the
+  // EMAIL_JOBS queue. The two human-reviewable paths go through the queue and
+  // are gated; the highest-volume sender — the inbound workflow's auto-replies
+  // — calls `env.EMAIL.send` directly and never reaches it. Measured over 30
+  // days: 106 `reply:*` emails delivered across 19 distinct sources while the
+  // flag read false.
+  //
+  // Counted from the LEDGER rather than instrumented at the send site, so it
+  // stays true whatever the policy decision turns out to be — and so it also
+  // catches the second direct sender (`inbound-email-stale-sweep.ts`, source
+  // `reply:sweep-exceeded`) which the filing ticket did not name.
+  let ungatedReplies = 0;
+  try {
+    const [row] = await db
+      .select({ n: sql<number>`count(*)` })
+      .from(emailSendLedger)
+      .where(
+        and(
+          eq(emailSendLedger.status, "sent"),
+          sql`${emailSendLedger.source} LIKE 'reply:%'`,
+          gte(emailSendLedger.sentAt, new Date(now.getTime() - 24 * 3600_000))
+        )
+      );
+    const sent = Number(row?.n ?? 0);
+    if (shouldReportUngatedReplies(sent, env?.EMAIL_REPLY_ENABLED)) {
+      ungatedReplies = sent;
+      lines.push(
+        `⚠️ ${sent} customer reply email(s) sent in the last 24h while EMAIL_REPLY_ENABLED is not "true" — ` +
+          `the inbound workflow sends via env.EMAIL directly and never reaches the gate (OPE-626).`
+      );
+    }
+  } catch {
+    // Observability must not take the notice down with it.
+  }
+
   return {
     agedClaims: claims.length,
     agedReplies: replies.length,
     imminentTentative: tentative.length,
+    ungatedReplies,
     oldestDays: Math.floor(oldestMs / 86400_000),
     lines,
   };
@@ -220,7 +305,7 @@ export async function runScheduledOperatorQueueNotice(
 export async function checkOperatorQueues(db: Db, env: Env, now: Date = new Date()): Promise<void> {
   let counts: OperatorQueueCounts;
   try {
-    counts = await readOperatorQueues(db, now);
+    counts = await readOperatorQueues(db, now, env as { EMAIL_REPLY_ENABLED?: string });
   } catch (error) {
     await logError(db, { source: SOURCE, message: "[operator-queue] read failed", error });
     return;
