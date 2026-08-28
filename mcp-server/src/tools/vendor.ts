@@ -18,6 +18,7 @@ import {
   unsafeSlug,
   coerceVenueNameAtIngest,
 } from "../helpers.js";
+import { geocodeNewVenueViaMainApp } from "../venues/geocode-new.js";
 import { checkDuplicateViaMainApp } from "../duplicates/check-duplicate.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
@@ -977,6 +978,12 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
           });
           venueId = newVenueId;
           venueResult = { matched: false, venueId: newVenueId, name: effectiveVenueName };
+
+          // OPE-408 — geocode at creation. `suggest_event` is the highest-volume
+          // unattended venue-creation path there is, so an ungeocoded venue born
+          // here is the single biggest contributor to the missing-coords curve.
+          // Best-effort: never allowed to fail the submission.
+          await geocodeNewVenueViaMainApp(env, newVenueId);
         }
       }
 

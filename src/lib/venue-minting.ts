@@ -60,6 +60,8 @@ import * as schema from "@/lib/db/schema";
 import { venues } from "@/lib/db/schema";
 import { createSlug, appendSlugSegment } from "@/lib/utils";
 import { recordMutation } from "@/lib/audit/record-mutation";
+import { geocodeNewVenue } from "@/lib/venues/geocode-one";
+import { getCloudflareContext } from "@opennextjs/cloudflare";
 import type { Slug } from "@takemetothefair/utils";
 
 type Db = DrizzleD1Database<typeof schema>;
@@ -293,5 +295,35 @@ export async function mintVenueFromIngest(db: Db, input: MintVenueInput): Promis
     return { minted: false, venueId: null, slug: null, reason: "insert-failed" };
   }
 
+  // OPE-408 — geocode the venue we just minted.
+  //
+  // This call site is the reason the ticket reopened. OPE-408 wired the gate
+  // into the four main-app venue writers on 2026-08-16; OPE-541 added THIS
+  // writer on 2026-08-24 and, like OPE-207 before it, did not know the gate
+  // existed. `Hilton Garden Inn Auburn Riverwatch` (14 Great Falls Plaza,
+  // Auburn ME) was minted here on 08-25 and is still pinless three days later.
+  //
+  // Never fatal, and deliberately not awaited for its result: `geocodeNewVenue`
+  // swallows every fault and returns null, and the 08:30 nightly sweep is the
+  // retry. A venue that saved but failed to geocode is a far better outcome
+  // than a submission that 500s because Google was slow.
+  await geocodeNewVenue(db, venueId, readMapsApiKey());
+
   return { minted: true, venueId, slug, reason: null };
+}
+
+/**
+ * The Google key, or undefined off-Cloudflare.
+ *
+ * Same shape as `getCloudflareRateLimitKv`: this module has unit tests that run
+ * against better-sqlite3 with no Workers context, and `getCloudflareContext()`
+ * throws there. `geocodeNewVenue` already treats a missing key as "unconfigured
+ * — the sweep will catch up", so undefined is a supported input, not a failure.
+ */
+function readMapsApiKey(): string | undefined {
+  try {
+    return (getCloudflareContext().env as { GOOGLE_MAPS_API_KEY?: string }).GOOGLE_MAPS_API_KEY;
+  } catch {
+    return undefined;
+  }
 }
