@@ -2658,7 +2658,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   // ── update_vendor_status ───────────────────────────────────────
   server.tool(
     "update_vendor_status",
-    "Change a vendor's application status, payment status, or participation_type on an event. If no vendor-event link exists, creates one (upsert). Admin only.",
+    "Change a vendor's application status, payment status, participation_type, or PUBLIC VISIBILITY on an event. " +
+      "Set public_visible=false to keep a participation tracked internally but hidden from every public surface — the vendor still counts in the admin roster, coverage stats and analytics (OPE-316). " +
+      "If no vendor-event link exists, creates one (upsert). Admin only.",
     {
       event_id: z.string().describe("Event ID"),
       vendor_id: z.string().describe("Vendor ID"),
@@ -2670,6 +2672,18 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .describe(
           "New participation mode. EXHIBITOR / SPONSOR_ONLY / SPONSOR_AND_EXHIBITOR. Public event page splits the vendor list by this field."
         ),
+      // OPE-316 — the UPDATE path. `create_or_link_vendor` sets this at
+      // creation, but the case the ticket exists for is a vendor ALREADY
+      // linked who then asks to be hidden (the LeafFilter gemba), and there
+      // was no way to flip an existing row. Live: 0 of 6,598 links were
+      // hidden, so the capability had never been reachable for its own
+      // motivating case.
+      public_visible: z
+        .boolean()
+        .optional()
+        .describe(
+          "false = tracked but hidden from ALL public surfaces (event pages, rosters, JSON-LD). Still counted in admin views and coverage stats. Default true."
+        ),
       defer_search_ping: z
         .boolean()
         .optional()
@@ -2679,12 +2693,17 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         ),
     },
     async (params) => {
-      if (!params.status && !params.payment_status && !params.participation_type) {
+      if (
+        !params.status &&
+        !params.payment_status &&
+        !params.participation_type &&
+        params.public_visible === undefined
+      ) {
         return {
           content: [
             {
               type: "text",
-              text: "Provide at least one of status, payment_status, or participation_type to update.",
+              text: "Provide at least one of status, payment_status, participation_type, or public_visible to update.",
             },
           ],
           isError: true,
@@ -2828,6 +2847,13 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
 
       // Participation type — also no transition validation; admin sets freely
       // since this is a description of the relationship, not a workflow stage.
+      // OPE-316 — `!== undefined`, not truthiness: `false` is the whole point
+      // of this parameter, and a truthy test would silently ignore every
+      // request to HIDE a link while accepting every request to show one.
+      if (params.public_visible !== undefined) {
+        updates.publicVisible = params.public_visible;
+        result.newPublicVisible = params.public_visible;
+      }
       if (params.participation_type) {
         updates.participationType = params.participation_type;
         result.previousParticipationType = record.participationType;
