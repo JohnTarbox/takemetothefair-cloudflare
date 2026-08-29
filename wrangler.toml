@@ -58,7 +58,7 @@ EMAIL_REPLY_ENABLED = "false"
 # copy (OPE-6 gate on new customer-facing templates). While off, a submission
 # still succeeds and the skip is logged, so "we chose not to send" stays
 # distinguishable from "we tried and failed".
-SUBMISSION_ACK_ENABLED = "false"
+SUBMISSION_ACK_ENABLED = "true"
 # OPE-169 — newsletter BROADCAST gate. POST /api/admin/newsletter/send refuses a
 # real broadcast to the subscriber list unless this is "true" (a single-address
 # test_recipient send is always allowed).
