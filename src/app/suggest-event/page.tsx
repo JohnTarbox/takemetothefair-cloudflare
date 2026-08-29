@@ -741,7 +741,10 @@ export default function SuggestEventPage() {
               <p className="font-medium text-foreground">What happens next:</p>
               <p>1. We&apos;ll extract the event name, dates, location, and description</p>
               <p>2. You review and correct any details</p>
-              <p>3. Our team reviews your suggestion within 24–48 hours</p>
+              {/* OPE-412 — John, 2026-08-27: replace the 24–48h promise.
+                  It was met 0 of 6 times (fastest 19.0 days, average 33.6), and a
+                  printed deadline nothing keeps costs more than no deadline. */}
+              <p>3. Every suggestion is reviewed by a person before it&apos;s published</p>
             </div>
 
             {!manualPaste ? (
@@ -1381,7 +1384,7 @@ export default function SuggestEventPage() {
                 {suggesterEmail && " We'll notify you once it's approved."}
               </p>
               <p className="text-sm text-muted-foreground mb-6">
-                Our team typically reviews suggestions within 24–48 hours.
+                Every suggestion is reviewed by a person before it&apos;s published.
               </p>
 
               {createdEvent && (

@@ -88,7 +88,12 @@ describe("the copy", () => {
   it("says plainly that it is not published yet", () => {
     // The failure mode this prevents: a reader assuming "received" means "live",
     // then finding nothing on the site.
-    expect(buildSubmissionReceivedBody(input).text).toMatch(/not published yet/i);
+    //
+    // Widened from /not published yet/ when John's approved copy landed — it
+    // says "isn't published yet". The DECISION this test records is that the
+    // email states plainly it is not live; the contraction is phrasing. Still
+    // fails if the sentence is dropped, because "published yet" must survive.
+    expect(buildSubmissionReceivedBody(input).text).toMatch(/(isn't|is not|not) published yet/i);
   });
 });
 

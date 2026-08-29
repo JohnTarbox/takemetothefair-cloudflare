@@ -98,40 +98,63 @@ function escapeHtml(s: string): string {
 }
 
 /**
- * The copy. Kept as its own exported function so it can be reviewed and tested
- * without a queue, a DB, or a send.
+ * The copy — APPROVED BY JOHN on the issue, 2026-08-27, and reproduced verbatim.
  *
- * Reuses OPE-367's conclusions rather than re-litigating them: say what we did,
- * say what happens next, promise only what something keeps, and give a real way
- * to reach a person.
+ * His note: *"If the template's real merge-field names differ from the {{...}}
+ * placeholders above, map to the actual fields — the wording is what's
+ * approved, not the placeholder syntax."* So the mapping is:
+ *
+ *   {{event_name}}           -> input.eventName
+ *   {{submitted_dates}}      -> input.whenText   (omitted when unknown)
+ *   {{submitted_location}}   -> input.whereText  (omitted when unknown)
+ *   {{submission_ref}}       -> first 8 of input.eventId
+ *   {{first_name_or_there}}  -> "there", ALWAYS — see below
+ *
+ * ⚠️ There is no submitter name anywhere to map. `/suggest-event` captures an
+ * email address and nothing else; `events.suggester_email` has no `_name`
+ * sibling. So the greeting is always "Hi there," rather than sometimes
+ * personal — which is the honest reading of `first_name_or_there` given the
+ * data, not a shortcut. If a name field is ever captured, this is the one line
+ * to change.
+ *
+ * ⚠️ NO TIME WORDS, and that is load-bearing rather than stylistic. The form
+ * promised review "within 24–48 hours" and the queue met it **0 times out of
+ * 6** — fastest 19.0 days, average 33.6. Putting that promise in an email would
+ * take a line the reader might have skimmed on a page and deliver it to their
+ * inbox over our name: a stronger promise, made worse. A test asserts the body
+ * contains no time words; keep it that way.
+ *
+ * Kept as its own exported function so the copy can be reviewed and tested
+ * without a queue, a DB, or a send.
  */
 export function buildSubmissionReceivedBody(input: SubmissionAckInput): {
   subject: string;
   text: string;
 } {
-  const details = [
-    `What you sent us: ${input.eventName}`,
-    input.whenText ? `When: ${input.whenText}` : null,
-    input.whereText ? `Where: ${input.whereText}` : null,
-  ]
+  // Unknown fields are OMITTED rather than printed blank. A receipt with an
+  // empty line where the date should be reads as broken, and a receipt quoting
+  // a date we invented is worse than one that quotes none.
+  const details = [input.eventName, input.whenText || null, input.whereText || null]
     .filter(Boolean)
     .join("\n");
 
-  const text = `Thanks for suggesting an event to Meet Me at the Fair!
+  const text = `Hi there,
 
-We have it. Here is what came through:
+Thanks for submitting an event to Meet Me at the Fair. This note confirms we've got it — here's what came through:
 
 ${details}
 
-What happens next: a person reviews every suggestion before it goes on the site, so this is not published yet. When it is, you will get one more email with the link. If we cannot make sense of something, we will write and ask rather than guess.
+Your event isn't published yet — every submission is reviewed by a person before it goes live on the site. We'll take it from here.
 
-If you need to correct or add anything, just reply to this email — it reaches us, and quoting this message keeps it attached to your submission.
+If anything above looks wrong, or you'd like to add details (a website, times, vendor info, a photo), just reply to this email and it'll reach us.
 
-Reference: ${input.eventId.slice(0, 8)}
+Reference: ${input.eventId.slice(0, 8)} — please keep this on any reply so we can match it up.
 
-— Meet Me at the Fair`;
+Thanks for helping us keep Maine and New England's fairs and festivals listed.
 
-  return { subject: `We received your event suggestion: ${input.eventName}`, text };
+— The Meet Me at the Fair team`;
+
+  return { subject: `We received your event — ${input.eventName}`, text };
 }
 
 /**
