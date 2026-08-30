@@ -1,4 +1,5 @@
 import { parseDateLoose, parseWallClockInVenueZone, formatIsoInVenueZone } from "@/lib/datetime";
+import { buildEventSchemaImages } from "@/lib/event-photos";
 import { LIFECYCLE_TO_SCHEMA_ORG, type EventLifecycle } from "@/lib/event-lifecycle";
 import { buildPlaceJsonLd } from "@/lib/seo/place-jsonld";
 import { formatAudienceBadge, isClosedToPublic, hasNonDefaultAudience } from "@/lib/event-audience";
@@ -54,6 +55,15 @@ interface EventSchemaProps {
   startDate?: Date | null;
   endDate?: Date | null;
   imageUrl?: string | null;
+  /**
+   * OPE-212 §4 — extra gallery photos for the `image` array.
+   *
+   * OPTIONAL, and absent means "scalar image, exactly as before". Every
+   * existing caller keeps its current output byte-for-byte; only a caller that
+   * passes photos changes shape. Approved by John: "ImageObject array when >1
+   * photo exists (single-image events keep the current shape)."
+   */
+  galleryPhotos?: readonly { url: string; alt: string; caption?: string }[];
   url: string;
   venue?: {
     name: string;
@@ -132,6 +142,7 @@ function getEventType(categories?: string[]): string {
 
 export function EventSchema({
   name,
+  galleryPhotos,
   // `slug` kept in the prop type for caller compatibility but no longer
   // consumed inside the component (the dynamic /api/og?slug=… image URL
   // was retired 2026-06-04 in favour of the static og-default.png).
@@ -530,7 +541,7 @@ export function EventSchema({
     // suppressed above when it isn't) and the resolved end when known.
     startDate: resolvedStartDate,
     ...(resolvedEndDate ? { endDate: resolvedEndDate } : {}),
-    image: resolvedImage,
+    image: buildEventSchemaImages(resolvedImage, galleryPhotos ?? []),
     url,
     eventStatus,
     previousStartDate: previousStartIso,

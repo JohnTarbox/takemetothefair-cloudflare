@@ -1,4 +1,6 @@
 import { NewsletterSignupBlock } from "@/components/newsletter/newsletter-signup-block";
+import { getEventGallery } from "@/lib/event-photos";
+import { EventGallery } from "@/components/events/EventGallery";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
@@ -432,6 +434,11 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
   // flag, DEFAULT OFF (times show on-page but aren't fed to search engines until
   // an env flip — no code change needed).
   const eventPerformerRows = await loadEventPerformers(getCloudflareDb(), event.id);
+  // OPE-212 §3/§4 — the event's gallery photos. `event_photos` shipped in
+  // increment 1 (PR #741) and, like its vendor twin, had never been read by
+  // anything. Empty for ~all events today, so the block and the JSON-LD change
+  // are both no-ops until photos exist.
+  const eventGallery = await getEventGallery(getCloudflareDb(), event.id, event.name);
   let emitPerformerSubevents = false;
   try {
     emitPerformerSubevents =
@@ -521,6 +528,7 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
           startDate={event.startDate}
           endDate={event.endDate}
           imageUrl={event.imageUrl}
+          galleryPhotos={eventGallery}
           url={
             event.series && event.startDate
               ? `${SITE_URL}/events/${event.series.canonicalSlug}/${new Date(event.startDate).getUTCFullYear()}`
@@ -914,6 +922,13 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
                       {event.description || "No description available."}
                     </p>
                   </div>
+
+                  {/* OPE-212 §3 — public gallery. Greenlit by John 2026-07-15.
+                      Renders nothing when the event has no photos, so it costs
+                      nothing on the ~all events without one. The hero above
+                      keeps its fetchpriority: this block never renders the
+                      hero, so it cannot compete for LCP. */}
+                  <EventGallery images={eventGallery} eventName={event.name} />
 
                   {/* OPE-114 — "Who's Performing" (CONFIRMED acts only; renders
                       null when there are none, so zero weight for the ~all

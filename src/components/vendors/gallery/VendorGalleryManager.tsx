@@ -33,9 +33,31 @@ interface Props {
   photos: ManagedPhoto[];
   /** Called after a successful mutation so the parent can refresh. */
   onChanged?: () => void;
+  /**
+   * OPE-212 — which photo API to talk to.
+   *
+   * Events reuse this component rather than getting a second copy: the two
+   * galleries differ only in their route prefix and the name of the owning-id
+   * field. A forked component would be a second place for the "featured is
+   * exclusive" and "legacy rows are read-only" rules to drift.
+   *
+   * Defaults to the vendor surface so every existing caller is unchanged.
+   */
+  apiBase?: string;
+  /** Body key for the owning entity in the reorder call. */
+  ownerField?: string;
+  /** Omitted for events — there is no self-service upload path for them. */
+  uploadEnabled?: boolean;
 }
 
-export function VendorGalleryManager({ vendorId, photos: initial, onChanged }: Props) {
+export function VendorGalleryManager({
+  vendorId,
+  photos: initial,
+  onChanged,
+  apiBase = "/api/vendor-photos",
+  ownerField = "vendorId",
+  uploadEnabled = true,
+}: Props) {
   const [photos, setPhotos] = useState<ManagedPhoto[]>(initial);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -65,7 +87,7 @@ export function VendorGalleryManager({ vendorId, photos: initial, onChanged }: P
 
   async function remove(id: string) {
     if (!confirm("Delete this photo? This cannot be undone.")) return;
-    if (await send(`/api/vendor-photos/${id}`, { method: "DELETE" }, id)) {
+    if (await send(`${apiBase}/${id}`, { method: "DELETE" }, id)) {
       setPhotos((p) => p.filter((x) => x.id !== id));
     }
   }
@@ -73,7 +95,7 @@ export function VendorGalleryManager({ vendorId, photos: initial, onChanged }: P
   async function setFeatured(id: string) {
     if (
       await send(
-        `/api/vendor-photos/${id}`,
+        `${apiBase}/${id}`,
         {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
@@ -97,11 +119,11 @@ export function VendorGalleryManager({ vendorId, photos: initial, onChanged }: P
     const ids = next.map((p) => p.id).filter((id): id is string => id !== null);
     setPhotos(next);
     await send(
-      "/api/vendor-photos/reorder",
+      `${apiBase}/reorder`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ vendorId, photoIds: ids }),
+        body: JSON.stringify({ [ownerField]: vendorId, photoIds: ids }),
       },
       `reorder-${index}`
     );
@@ -109,7 +131,7 @@ export function VendorGalleryManager({ vendorId, photos: initial, onChanged }: P
 
   async function saveCaption(id: string, caption: string, altText: string) {
     await send(
-      `/api/vendor-photos/${id}`,
+      `${apiBase}/${id}`,
       {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -126,7 +148,7 @@ export function VendorGalleryManager({ vendorId, photos: initial, onChanged }: P
       const body = new FormData();
       body.set("vendorId", vendorId);
       body.set("file", file);
-      const res = await fetch("/api/vendor-photos/upload", { method: "POST", body });
+      const res = await fetch(`${apiBase}/upload`, { method: "POST", body });
       if (!res.ok) {
         // The server's message is written for the vendor ("Your gallery is
         // full (20 photos)", "That image is 8.2 MB"). Showing a generic
@@ -143,7 +165,7 @@ export function VendorGalleryManager({ vendorId, photos: initial, onChanged }: P
     }
   }
 
-  const uploader = (
+  const uploader = !uploadEnabled ? null : (
     <label className="mt-3 inline-flex cursor-pointer items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-foreground hover:bg-muted">
       {busy === "upload" ? (
         <Loader2 className="h-4 w-4 animate-spin" />
