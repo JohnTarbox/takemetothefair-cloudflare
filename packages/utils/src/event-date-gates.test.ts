@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { evaluateGates, nameMatchesAdminFlag, sourceCredibilityTier } from "./event-date-gates";
 
 describe("nameMatchesAdminFlag — analyst spec 2026-05-22", () => {
@@ -247,5 +247,79 @@ describe("sameDay compares calendar days, not a millisecond delta (OPE-526)", ()
       description: null,
     });
     expect(result.reasons).not.toContain("start_equals_deadline");
+  });
+});
+
+/**
+ * OPE-651 — `end_date_in_past` must not fire on the day of the event.
+ *
+ * The gate compared instants: `endDate.getTime() < now.getTime()`. Event dates
+ * are anchored at noon UTC, so it flipped to "past" at 12:00Z — 08:00 Eastern —
+ * on the event's OWN MORNING.
+ *
+ * The live case: a car show on 2026-08-30 running 10:00–15:00 EDT. An edit at
+ * 16:11Z raised `end_date_in_past` about two hours before the event opened, and
+ * the flag demoted the row out of the publication path for the whole day it was
+ * actually happening.
+ *
+ * These pin the boundary in the VENUE's zone, which is the only place the
+ * question means anything. Times are chosen to straddle Eastern midnight, not
+ * UTC midnight — the two are five hours apart and picking the wrong one is the
+ * defect.
+ */
+describe("end_date_in_past is a DAY comparison (OPE-651)", () => {
+  const TODAYS_EVENT = new Date("2026-08-30T12:00:00Z"); // noon-UTC anchor
+  const base = { name: "Car Show & Craft Fair", sourceName: "mainefairs.net" };
+
+  afterEach(() => vi.useRealTimers());
+  const at = (iso: string) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(iso));
+  };
+
+  it("does NOT flag an event happening TODAY — the reported incident", () => {
+    // 16:11Z = 12:11 EDT, the exact moment of the edit. The show ran 14:00–19:00Z.
+    at("2026-08-30T16:11:00Z");
+    const r = evaluateGates({ ...base, startDate: TODAYS_EVENT, endDate: TODAYS_EVENT });
+    expect(r.reasons).not.toContain("end_date_in_past");
+  });
+
+  it("does NOT flag it at 08:00 Eastern, the hour the old gate flipped", () => {
+    // 12:00Z exactly — where `endDate.getTime() < now.getTime()` first became true.
+    at("2026-08-30T12:00:01Z");
+    const r = evaluateGates({ ...base, startDate: TODAYS_EVENT, endDate: TODAYS_EVENT });
+    expect(r.reasons).not.toContain("end_date_in_past");
+  });
+
+  it("does NOT flag it at 23:00 Eastern — still the same day where the fair is", () => {
+    // 2026-08-31T03:00Z is already tomorrow in UTC, and still Aug 30 in Eastern.
+    // Comparing UTC days instead of venue days would wrongly flag here.
+    at("2026-08-31T03:00:00Z");
+    const r = evaluateGates({ ...base, startDate: TODAYS_EVENT, endDate: TODAYS_EVENT });
+    expect(r.reasons).not.toContain("end_date_in_past");
+  });
+
+  it("DOES flag it once Eastern midnight has passed", () => {
+    at("2026-08-31T04:30:00Z"); // 00:30 EDT on Aug 31
+    const r = evaluateGates({ ...base, startDate: TODAYS_EVENT, endDate: TODAYS_EVENT });
+    expect(r.reasons).toContain("end_date_in_past");
+  });
+
+  it("still catches the Cape Cod case this gate exists for", () => {
+    // Prior-year dates carried forward in an aggregator feed are months past,
+    // not hours — the correction must not weaken this.
+    at("2026-08-30T16:11:00Z");
+    const r = evaluateGates({
+      ...base,
+      startDate: new Date("2024-01-01T12:00:00Z"),
+      endDate: new Date("2024-01-01T12:00:00Z"),
+    });
+    expect(r.reasons).toContain("end_date_in_past");
+  });
+
+  it("applies the same correction to start_date_in_past (no end date)", () => {
+    at("2026-08-30T16:11:00Z");
+    const r = evaluateGates({ ...base, startDate: TODAYS_EVENT, endDate: null });
+    expect(r.reasons).not.toContain("start_date_in_past");
   });
 });

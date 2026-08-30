@@ -341,6 +341,31 @@ function calendarPartsIn(d: Date, tz: string): { y: number; m: number; day: numb
   return { y: get("year"), m: get("month"), day: get("day") };
 }
 
+/**
+ * Has `date`'s CALENDAR DAY already finished, as of `now`, in zone `tz`?
+ *
+ * OPE-651 — the date gates asked `endDate.getTime() < now.getTime()`, which is
+ * an instant comparison against a value that means a DAY. Event dates are
+ * anchored at noon UTC, so that predicate flipped to "past" at 12:00Z — 08:00
+ * Eastern — on the event's own morning.
+ *
+ * A car show running 10:00-15:00 EDT was therefore flagged `end_date_in_past`
+ * about two hours BEFORE it opened, and stayed flagged all day. For a directory
+ * whose entire value on the day of a fair is telling someone it is on today,
+ * that is the wrong hour to call it over.
+ *
+ * An event is not past until its end DATE has passed where the event happens,
+ * so this compares calendar days in `tz` and ignores time-of-day entirely.
+ * DST-safe: the zone conversion is done by `Intl`, not by arithmetic.
+ */
+export function hasCalendarDayPassed(date: Date, now: Date, tz: string = VENUE_TZ): boolean {
+  const d = calendarPartsIn(date, tz);
+  const n = calendarPartsIn(now, tz);
+  if (d.y !== n.y) return d.y < n.y;
+  if (d.m !== n.m) return d.m < n.m;
+  return d.day < n.day;
+}
+
 // ── Formatters ─────────────────────────────────────────────────────
 
 /**

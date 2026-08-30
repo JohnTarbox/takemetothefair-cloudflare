@@ -1366,20 +1366,47 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
         }
       }
 
+      // OPE-651 — report the status that was actually WRITTEN.
+      //
+      // This said `status: "TENTATIVE"`, hardcoded, while the row 12 lines up is
+      // inserted with `eventStatus` — which is "PENDING" whenever the gates
+      // route to review. So a gated create reported TENTATIVE and stored PENDING,
+      // and the caller had no way to know the row was off the publication path.
+      //
+      // That is what produced OPE-651's report: three events created 26 seconds
+      // apart all came back "TENTATIVE", and the one that acquired a gate flag
+      // read PENDING afterwards. It looked like a later `update_event` had
+      // silently demoted it — the demotion had in fact happened at CREATE, and
+      // only the report was wrong. (Neither `update_event` nor the main app's
+      // PATCH could have done it: MCP's gate block never assigns status, and the
+      // PATCH only downgrades a status that was being set to APPROVED.)
+      //
+      // `gate_flags` rides along for the same reason: a status the caller did not
+      // ask for needs to say why, or the next reader re-derives it from D1 as
+      // this ticket had to.
+      const suggestWarnings: Record<string, unknown> = {};
+      if (droppedCategories.length > 0) {
+        // K21 — only present when the caller passed categories that
+        // aren't on the canonical EVENT_CATEGORIES list. Lets the
+        // caller detect that those values were dropped (the event
+        // was still created with the valid subset, or ["Event"] if
+        // none survived) instead of the prior silent coercion.
+        suggestWarnings.dropped_categories = droppedCategories;
+      }
+      if (gateResult.reasons.length > 0) {
+        suggestWarnings.gate_flags = gateResult.reasons;
+      }
+      if (eventStatus !== "TENTATIVE") {
+        suggestWarnings.status_note = `Created as ${eventStatus}, not TENTATIVE, because the ingest gates routed it to review (${gateResult.reasons.join(", ") || "no reason recorded"}). A PENDING row is NOT on the publication path until an admin reviews it.`;
+      }
+
       return {
         content: [
           jsonContent({
             created: true,
-            event: { id: eventId, slug: finalSlug, name: params.name, status: "TENTATIVE" },
+            event: { id: eventId, slug: finalSlug, name: params.name, status: eventStatus },
             venue: venueResult,
-            // K21 — only present when the caller passed categories that
-            // aren't on the canonical EVENT_CATEGORIES list. Lets the
-            // caller detect that those values were dropped (the event
-            // was still created with the valid subset, or ["Event"] if
-            // none survived) instead of the prior silent coercion.
-            ...(droppedCategories.length > 0 && {
-              warnings: { dropped_categories: droppedCategories },
-            }),
+            ...(Object.keys(suggestWarnings).length > 0 && { warnings: suggestWarnings }),
           }),
         ],
       };
