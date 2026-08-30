@@ -24,7 +24,7 @@ export {
 export type { Slug } from "@takemetothefair/utils";
 
 import { eq } from "drizzle-orm";
-import { vendors, events, enrichmentLog } from "./schema.js";
+import { vendors, events, enrichmentLog, containsCI } from "./schema.js";
 import {
   computeVendorCompletenessScore as _scoreVendor,
   computeEventCompletenessScore as _scoreEvent,
@@ -185,7 +185,7 @@ export {
   PUBLIC_LIFECYCLE_STATUSES,
 } from "@takemetothefair/constants";
 
-import { and, inArray as inArrayMcp, sql } from "drizzle-orm";
+import { and, inArray as inArrayMcp, isNull as isNullMcp, or as orMcp, sql } from "drizzle-orm";
 import { venues } from "./schema.js";
 import {
   PUBLIC_EVENT_STATUSES as PE,
@@ -585,4 +585,61 @@ export function fuzzyTokenScore(query: string, target: string): number {
   }
   if (totalWeight === 0) return 0;
   return matchedWeight / totalWeight;
+}
+
+/**
+ * OPE-632/OPE-566 — the `search_vendors` WHERE clause, in one testable place.
+ *
+ * Two defects landed on this clause in four days, and neither was findable from
+ * outside the tool:
+ *
+ *   OPE-566  no base filter at all, so 121 soft-deleted merge tombstones
+ *            returned as live vendors.
+ *   OPE-632  `verified_only` did nothing. The ticket read it as a declared
+ *            filter dropped before the WHERE clause; in fact the parameter had
+ *            NEVER existed — `git log -S verified_only --all` returns no commit
+ *            — and an MCP tool silently ignores an argument it does not
+ *            declare, so a caller got all 6,567 rows back with no error.
+ *
+ * Both fail PERMISSIVELY, which is the dangerous direction. A filter returning
+ * nothing reads as "we have none of those" and gets investigated; one returning
+ * everything reads as "we have hundreds" and gets quoted. On 2026-08-30 the
+ * true count of `verified=1` was **6**.
+ *
+ * Extracted so the predicate can be run against a real SQLite database with a
+ * row that MUST be excluded — the shape `search-events-pending-ope582.test.ts`
+ * established. Asserting a parameter merely exists proves nothing here: a
+ * no-op filter passes every include-only assertion, which is exactly how this
+ * survived (OPE-530 describes the same gap for parameter validation generally).
+ */
+export function vendorSearchWhere(params: {
+  query?: string;
+  type?: string;
+  include_deleted?: boolean;
+  verified_only?: boolean;
+}) {
+  const conditions = [];
+
+  // OPE-566 — merge tombstones are soft-deleted and their slugs 301 away.
+  if (!params.include_deleted) conditions.push(isNullMcp(vendors.deletedAt));
+
+  if (params.query) {
+    // EH2.1 — business_name OR display_name, so a brand search finds the
+    // office row whose override stores that surface.
+    conditions.push(
+      orMcp(
+        containsCI(vendors.businessName, params.query),
+        sql`${vendors.displayName} IS NOT NULL AND ${containsCI(vendors.displayName, params.query)}`
+      )!
+    );
+  }
+  if (params.type) conditions.push(containsCI(vendors.vendorType, params.type));
+
+  // OPE-632 — `verified` is the PAID Enhanced Profile tier, NOT
+  // owner-confirmation or email verification. OPE-238 §2 documents the
+  // collision with `verifiedPro` and a proposed owner-confirmed state; do not
+  // redefine this to mean claimed.
+  if (params.verified_only) conditions.push(eq(vendors.verified, true));
+
+  return conditions.length > 0 ? and(...conditions) : undefined;
 }
