@@ -1,40 +1,17 @@
 /**
- * Case-insensitive substring match that cannot trip D1's LIKE-pattern cap.
+ * Re-export of the canonical `containsCI`, which now lives in
+ * `@takemetothefair/db-schema` so the MCP Worker can import it too.
  *
- * ── Why this exists ──────────────────────────────────────────────────────
+ * OPE-630: the implementation used to live HERE, inside the Next.js app. The
+ * MCP Worker is a separate deploy artifact that cannot import from `src/`, so
+ * the OPE-565 sweep fixed every app call site and left all ten MCP search
+ * sites on raw `LIKE` — `search_events`, the tool the discovery dedup passes
+ * call, still threw on any query over 48 characters. Moving the helper to the
+ * shared package is what makes "fix the family" reach both artifacts.
  *
- * `LOWER(col) LIKE '%needle%'` throws `D1_ERROR: LIKE or GLOB pattern too
- * complex: SQLITE_ERROR` once the PATTERN exceeds **50 characters**. Measured
- * on prod for OPE-404: 50 passes, 52 throws.
- *
- * That number is the whole problem, because local SQLite's cap is **50,000**.
- * Every test passes, and production fails on any search longer than ~48
- * characters. Two live endpoints carried the bug for weeks:
- *
- *   api/vendor/self-reported-events   280 errors  (no length cap at all)
- *   api/search  + app/search/page      13 errors  (cap set to 100)
- *
- * `/api/search` even documented the wrong limit at its cap —
- * *"SQLite's LIKE-pattern complexity counter (limit ~50k)"* — and set
- * `MAX_QUERY_LENGTH = 100` on that basis, i.e. twice what D1 actually allows.
- * The neighbouring SEARCH1 note blames the size of the searched COLUMN; the
- * column is irrelevant, it is the pattern that is measured.
- *
- * `instr(lower(col), lower(needle)) > 0` is exactly equivalent for a plain
- * substring test and has **no pattern-length limit**. It also needs no
- * metacharacter escaping — `%` and `_` are literal to `instr`, so a search for
- * `100%_off` matches the text `100%_off` instead of behaving as wildcards.
- *
- * Neither form can use an index for a leading-wildcard match, so this is not a
- * performance change.
- *
- * Do NOT "restore" the LIKE form, and do not fix a recurrence by lowering a
- * character cap — that trades a 500 for silently empty results on any query
- * a user would reasonably type.
+ * The full rationale (why `instr()` and not a character cap, and the measured
+ * 50-char D1 ceiling) is on the implementation in that package. This file
+ * stays so the ~15 existing `@/lib/db/contains-ci` imports keep working, and
+ * so the CI guard's suggested fix string remains true.
  */
-import { sql, type SQL } from "drizzle-orm";
-import type { AnyColumn } from "drizzle-orm";
-
-export function containsCI(col: AnyColumn | SQL, needle: string): SQL {
-  return sql`instr(lower(${col}), ${needle.toLowerCase()}) > 0`;
-}
+export { containsCI } from "@takemetothefair/db-schema";

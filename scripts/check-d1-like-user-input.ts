@@ -53,6 +53,30 @@
  *      `searchParams`, `params.get(...)`, `request.json()`, `formData.get(...)`,
  *      or an identifier assigned from one of those.
  *
+ * ...OR, inside `mcp-server/src`, the expression traces to an MCP tool
+ * ARGUMENT (`params.<field>`, or an identifier assigned from one).
+ *
+ * Why the second clause exists (OPE-630)
+ * --------------------------------------
+ * `mcp-server/src` has been in SCAN_DIRS since this guard shipped, and the
+ * guard still reported it clean while ten tainted sites sat in it. The rules
+ * above encode ONE arrival shape for user input — over HTTP, into a Next.js
+ * route handler. In the MCP Worker user input arrives as tool-call arguments:
+ *
+ *     server.tool("search_events", {...zod...}, async (params) => {
+ *       like(events.name, `%${escapeLike(params.query)}%`)   // ← user input
+ *     })
+ *
+ * There is no `searchParams` and no `request.json()`, so `taintedIdentifiers`
+ * returned an EMPTY SET for the whole file and every site read as a safe
+ * literal. On 2026-08-30 `search_events` — the tool the discovery dedup passes
+ * call — still threw `LIKE or GLOB pattern too complex` on any query over 48
+ * characters, six weeks and two "family fixes" later.
+ *
+ * The lesson is not "add a directory". The directory was already there. A
+ * guard that scans a file it cannot reason about is worse than one that skips
+ * it, because the scanned-file count reads as coverage.
+ *
  * Anything it cannot resolve is silent. This is a net for the known-bad shape,
  * not a proof of absence.
  *
@@ -78,6 +102,22 @@ const ALLOWLIST_PATH = join(ROOT, "scripts", "check-d1-like-user-input.allowlist
 /** Assignments that make an identifier user-controlled. */
 const REQUEST_SOURCE =
   /\b(searchParams|nextUrl\.searchParams|url\.searchParams)\b|\.get\(\s*["'][\w-]+["']\s*\)|await\s+(request|req)\.(json|formData|text)\(\)/;
+
+/**
+ * OPE-630 — an MCP tool argument. Only applied under `mcp-server/src`, where
+ * `async (params) => …` is the tool-handler signature and `params.<field>` is
+ * by construction the caller's zod-validated input.
+ *
+ * Scoped to that tree deliberately: `params` means something else in a Next.js
+ * route (`{ params }` route segments, already covered by `.get(...)`), and a
+ * repo-wide rule here would flag route-segment reads and get bulk-allowlisted.
+ */
+const MCP_PARAM_SOURCE = /\bparams\.[A-Za-z_$][\w$]*/;
+
+/** Is this file part of the MCP Worker, where tool args are the request? */
+function isMcpTree(rel: string): boolean {
+  return rel.startsWith("mcp-server/");
+}
 
 /** A LIKE/GLOB pattern site with something interpolated into the pattern. */
 const LIKE_SITE = /\b(?:not)?[Ll]ike\s*\(|\bLIKE\s|\bGLOB\s/;
@@ -125,12 +165,14 @@ function loadAllowlist(): Set<string> {
  * Deliberately file-local and syntactic. A value laundered through a helper in
  * another module is not traced — see the precision note in the header.
  */
-function taintedIdentifiers(lines: string[]): Set<string> {
+function taintedIdentifiers(lines: string[], mcp: boolean): Set<string> {
   const tainted = new Set<string>();
   for (const raw of lines) {
     const l = raw.trim();
     if (l.startsWith("//") || l.startsWith("*")) continue;
-    if (!REQUEST_SOURCE.test(l)) continue;
+    // In the MCP tree a value read off `params` is user input, exactly as a
+    // `searchParams.get()` read is in a route handler.
+    if (!REQUEST_SOURCE.test(l) && !(mcp && MCP_PARAM_SOURCE.test(l))) continue;
 
     // const q = searchParams.get("q")  /  const { query } = await req.json()
     const single = l.match(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=/);
@@ -155,6 +197,23 @@ function interpolations(line: string): string[] {
   // `"%" + q + "%"` concatenation form
   const concat = line.match(/["']%["']\s*\+\s*([A-Za-z_$][\w$.()]*)/g);
   if (concat) for (const c of concat) out.push(c.replace(/^["']%["']\s*\+\s*/, "").trim());
+
+  // OPE-630 — a pattern passed as a BARE IDENTIFIER: `like(col, q)`.
+  //
+  // Found by a test written for the MCP taint rule, and it is a hole in the
+  // original guard independent of that rule. Everything above only inspects
+  // `${...}` sites, so a pattern built on one line and used on the next was
+  // invisible — which is exactly how `search_vendors` spelled it:
+  //
+  //     const q = `%${escapeLike(params.query)}%`;   // built here
+  //     like(vendors.businessName, q)                // used here, unflagged
+  //
+  // The taint check still gates it, so a module-constant pattern
+  // (`like(t.slug, MERGED_PATTERN)`) stays quiet.
+  const bare = line.match(
+    /\b(?:not)?[Ll]ike\s*\(\s*[^,()]+(?:\([^()]*\))?[^,]*,\s*([A-Za-z_$][\w$]*)\s*\)/
+  );
+  if (bare) out.push(bare[1]);
   return out;
 }
 
@@ -166,7 +225,8 @@ function interpolations(line: string): string[] {
 export function checkFile(rel: string, src: string): Violation[] {
   const out: Violation[] = [];
   const lines = src.split("\n");
-  const tainted = taintedIdentifiers(lines);
+  const mcp = isMcpTree(rel);
+  const tainted = taintedIdentifiers(lines, mcp);
 
   lines.forEach((raw, i) => {
     const line = raw.trim();
@@ -186,10 +246,14 @@ export function checkFile(rel: string, src: string): Violation[] {
     } else if (LIKE_SITE.test(line)) {
       const hit = interpolations(line).find((expr) => {
         if (REQUEST_SOURCE.test(expr)) return true;
+        if (mcp && MCP_PARAM_SOURCE.test(expr)) return true;
         const ident = expr.match(/^([A-Za-z_$][\w$]*)/)?.[1];
         return !!ident && tainted.has(ident);
       });
-      if (hit) why = `LIKE pattern interpolates request-derived \`${hit}\``;
+      if (hit)
+        why = mcp
+          ? `LIKE pattern interpolates MCP tool argument \`${hit}\``
+          : `LIKE pattern interpolates request-derived \`${hit}\``;
     }
     if (!why) return;
     out.push({ file: rel, line: lineNo, text: line.slice(0, 130), why });

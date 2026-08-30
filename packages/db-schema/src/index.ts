@@ -5610,3 +5610,7 @@ export type TunableThreshold = typeof tunableThresholds.$inferSelect;
 
 // OPE-528 — the shared "is this a roster-research target" predicate.
 export * from "./roster-research-queue";
+
+// OPE-630 — the LIKE-cap-safe substring predicate, shared by the app AND the
+// MCP Worker. Two deploy artifacts, one implementation.
+export * from "./contains-ci";

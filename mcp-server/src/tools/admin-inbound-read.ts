@@ -21,8 +21,8 @@
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { and, desc, eq, gte, lte, like, sql } from "drizzle-orm";
-import { emailSendLedger, events, inboundEmails, workflowRunSteps } from "../schema.js";
+import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
+import { emailSendLedger, events, inboundEmails, workflowRunSteps, containsCI } from "../schema.js";
 import { buildVendorInquiryBriefing } from "../inbound/vendor-inquiry-briefing.js";
 import { jsonContent } from "../helpers.js";
 import { mainAppFetch, type MainAppEnv } from "../main-app-fetch.js";
@@ -401,7 +401,7 @@ export function registerInboundReadTools(
       if (params.status) conds.push(eq(inboundEmails.status, params.status));
       if (params.reply_kind) conds.push(eq(inboundEmails.replyKind, params.reply_kind));
       if (params.from_address)
-        conds.push(like(inboundEmails.fromAddress, `%${params.from_address}%`));
+        conds.push(containsCI(inboundEmails.fromAddress, params.from_address));
       if (params.received_after) {
         const d = new Date(params.received_after);
         if (!Number.isNaN(d.getTime())) conds.push(gte(inboundEmails.receivedAt, d));
@@ -476,7 +476,7 @@ export function registerInboundReadTools(
       if (params.inbound_email_id)
         conds.push(eq(emailSendLedger.inboundEmailId, params.inbound_email_id));
       if (params.message_id) conds.push(eq(emailSendLedger.messageId, params.message_id));
-      if (params.recipient) conds.push(like(emailSendLedger.recipient, `%${params.recipient}%`));
+      if (params.recipient) conds.push(containsCI(emailSendLedger.recipient, params.recipient));
 
       if (conds.length === 0) {
         return {
