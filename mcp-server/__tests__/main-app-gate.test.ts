@@ -2,6 +2,7 @@ import { describe, expect, it, beforeEach } from "vitest";
 import {
   MAX_CONCURRENT_MAIN_APP_CALLS,
   isWorkerOom,
+  classifyCronFailure,
   withMainAppSlot,
   __resetMainAppGate,
 } from "../src/main-app-gate.js";
@@ -80,5 +81,37 @@ describe("withMainAppSlot (OPE-489)", () => {
     expect(isWorkerOom("")).toBe(false);
     expect(isWorkerOom(null)).toBe(false);
     expect(isWorkerOom("Internal Server Error")).toBe(false);
+  });
+});
+
+/**
+ * OPE-641 — the third failure shape.
+ *
+ * OPE-489 separated an isolate OOM kill from an ordinary upstream error, and
+ * that instrumentation is the only reason the gsc-metrics-sync regression was
+ * diagnosable at all. It left one case ambiguous: a 5xx with no body, which
+ * matched neither branch and was filed as a plain `non-2xx`.
+ */
+describe("classifyCronFailure (OPE-641)", () => {
+  it("names an isolate OOM kill", () => {
+    expect(classifyCronFailure(500, "Worker exceeded memory limit.")).toBe("worker-oom");
+  });
+
+  it("names an empty-body 5xx instead of burying it in non-2xx", () => {
+    // The literal 2026-08-30 06:02:33 row: status 503, bodyExcerpt "".
+    expect(classifyCronFailure(503, "")).toBe("5xx-no-body");
+    expect(classifyCronFailure(500, "   ")).toBe("5xx-no-body");
+  });
+
+  it("leaves a real upstream error as non-2xx", () => {
+    expect(classifyCronFailure(500, "Internal Server Error")).toBe("non-2xx");
+    expect(classifyCronFailure(404, "")).toBe("non-2xx"); // empty, but not 5xx
+    expect(classifyCronFailure(429, "rate limited")).toBe("non-2xx");
+  });
+
+  it("prefers worker-oom when a 5xx DOES carry the memory body", () => {
+    // Ordering matters: the OOM body is non-empty, so the 5xx-no-body branch
+    // must not shadow it.
+    expect(classifyCronFailure(503, "Worker exceeded memory limit.")).toBe("worker-oom");
   });
 });

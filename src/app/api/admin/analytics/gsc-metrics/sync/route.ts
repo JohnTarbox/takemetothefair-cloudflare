@@ -40,6 +40,7 @@ import { getDailyTotals, getSearchMetricsByDateQueryPage, type ScEnv } from "@/l
 import { getDailySiteTotals, type Ga4Env } from "@/lib/ga4";
 import { getTrafficStats, type BingEnv } from "@/lib/bing-webmaster";
 import { logError } from "@/lib/logger";
+import { upsertInChunks } from "@/lib/db/upsert-in-chunks";
 
 function isoDaysAgo(days: number): string {
   const d = new Date();
@@ -47,18 +48,15 @@ function isoDaysAgo(days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-/** D1 batch in chunks — one batch over thousands of statements is unwise. */
-async function runBatched(
-  db: ReturnType<typeof getCloudflareDb>,
-  statements: unknown[],
-  chunkSize = 50
-) {
-  for (let i = 0; i < statements.length; i += chunkSize) {
-    const chunk = statements.slice(i, i + chunkSize);
-    if (chunk.length === 0) continue;
-    await db.batch(chunk as unknown as Parameters<typeof db.batch>[0]);
-  }
-}
+/**
+ * OPE-641 — `runBatched` was deleted, not adjusted.
+ *
+ * It chunked the EXECUTION of an array the caller had already built with
+ * `.map()`, so peak memory was spent before its first `batch()`. One ordinary
+ * daily run built 15,000–25,000 Drizzle statement objects at once and crossed
+ * the Worker's 128 MB isolate ceiling. `upsertInChunks` builds and executes one
+ * chunk at a time; see that file for the measurements.
+ */
 
 export async function POST(request: Request) {
   const fail = await requireAdminAuth(request);
@@ -98,7 +96,7 @@ export async function POST(request: Request) {
   let totalsError: string | null = null;
   try {
     const totals = await getDailyTotals(env, { startDate, endDate });
-    const stmts = totals.map((t) =>
+    totalsRows = await upsertInChunks(db, totals, (t) =>
       db
         .insert(gscDailyTotals)
         .values({
@@ -121,13 +119,6 @@ export async function POST(request: Request) {
           },
         })
     );
-    for (let i = 0; i < stmts.length; i += 50) {
-      const chunk = stmts.slice(i, i + 50);
-      if (chunk.length > 0) {
-        await db.batch(chunk as unknown as [(typeof chunk)[number], ...typeof chunk]);
-      }
-    }
-    totalsRows = totals.length;
   } catch (err) {
     // Isolated from the dimensioned sync below: one feed failing must not take
     // out the other, or a bad day loses both the totals AND the detail.
@@ -143,41 +134,40 @@ export async function POST(request: Request) {
   let gscError: string | null = null;
   if (!skipDetail)
     try {
-      const rows = await getSearchMetricsByDateQueryPage(env, { startDate, endDate });
-      const stmts = rows
-        .filter((r) => r.date && r.query && r.page)
-        .map((r) =>
-          db
-            .insert(gscSearchMetrics)
-            .values({
-              date: r.date,
-              query: r.query,
-              page: r.page,
+      const rows = (await getSearchMetricsByDateQueryPage(env, { startDate, endDate })).filter(
+        (r) => r.date && r.query && r.page
+      );
+      // The heavy one: 3,000-5,000 rows/day over a 5-day window.
+      gscRows = await upsertInChunks(db, rows, (r) =>
+        db
+          .insert(gscSearchMetrics)
+          .values({
+            date: r.date,
+            query: r.query,
+            page: r.page,
+            clicks: r.clicks,
+            impressions: r.impressions,
+            ctr: r.ctr,
+            position: r.position,
+            siteUrl,
+            updatedAt: now,
+          })
+          .onConflictDoUpdate({
+            target: [
+              gscSearchMetrics.siteUrl,
+              gscSearchMetrics.date,
+              gscSearchMetrics.query,
+              gscSearchMetrics.page,
+            ],
+            set: {
               clicks: r.clicks,
               impressions: r.impressions,
               ctr: r.ctr,
               position: r.position,
-              siteUrl,
               updatedAt: now,
-            })
-            .onConflictDoUpdate({
-              target: [
-                gscSearchMetrics.siteUrl,
-                gscSearchMetrics.date,
-                gscSearchMetrics.query,
-                gscSearchMetrics.page,
-              ],
-              set: {
-                clicks: r.clicks,
-                impressions: r.impressions,
-                ctr: r.ctr,
-                position: r.position,
-                updatedAt: now,
-              },
-            })
-        );
-      await runBatched(db, stmts);
-      gscRows = stmts.length;
+            },
+          })
+      );
     } catch (e) {
       gscError = e instanceof Error ? e.message : String(e);
       await logError(db, {
@@ -192,31 +182,27 @@ export async function POST(request: Request) {
   let ga4Error: string | null = null;
   if (!body.skip_ga4 && !skipDetail) {
     try {
-      const totals = await getDailySiteTotals(env, { startDate, endDate });
-      const stmts = totals
-        .filter((t) => t.date)
-        .map((t) =>
-          db
-            .insert(ga4DailyMetrics)
-            .values({
-              date: t.date,
+      const totals = (await getDailySiteTotals(env, { startDate, endDate })).filter((t) => t.date);
+      ga4Rows = await upsertInChunks(db, totals, (t) =>
+        db
+          .insert(ga4DailyMetrics)
+          .values({
+            date: t.date,
+            activeUsers: t.activeUsers,
+            sessions: t.sessions,
+            keyEvents: t.keyEvents,
+            updatedAt: now,
+          })
+          .onConflictDoUpdate({
+            target: ga4DailyMetrics.date,
+            set: {
               activeUsers: t.activeUsers,
               sessions: t.sessions,
               keyEvents: t.keyEvents,
               updatedAt: now,
-            })
-            .onConflictDoUpdate({
-              target: ga4DailyMetrics.date,
-              set: {
-                activeUsers: t.activeUsers,
-                sessions: t.sessions,
-                keyEvents: t.keyEvents,
-                updatedAt: now,
-              },
-            })
-        );
-      await runBatched(db, stmts);
-      ga4Rows = stmts.length;
+            },
+          })
+      );
     } catch (e) {
       ga4Error = e instanceof Error ? e.message : String(e);
       await logError(db, {
@@ -237,26 +223,22 @@ export async function POST(request: Request) {
   let bingError: string | null = null;
   if (!body.skip_bing && !skipDetail) {
     try {
-      const series = await getTrafficStats(env, { skipCache: true });
-      const stmts = series
-        .filter((r) => r.date)
-        .map((r) =>
-          db
-            .insert(bingDailyMetrics)
-            .values({
-              date: r.date,
-              impressions: r.impressions,
-              clicks: r.clicks,
-              siteUrl,
-              updatedAt: now,
-            })
-            .onConflictDoUpdate({
-              target: bingDailyMetrics.date,
-              set: { impressions: r.impressions, clicks: r.clicks, updatedAt: now },
-            })
-        );
-      await runBatched(db, stmts);
-      bingRows = stmts.length;
+      const series = (await getTrafficStats(env, { skipCache: true })).filter((r) => r.date);
+      bingRows = await upsertInChunks(db, series, (r) =>
+        db
+          .insert(bingDailyMetrics)
+          .values({
+            date: r.date,
+            impressions: r.impressions,
+            clicks: r.clicks,
+            siteUrl,
+            updatedAt: now,
+          })
+          .onConflictDoUpdate({
+            target: bingDailyMetrics.date,
+            set: { impressions: r.impressions, clicks: r.clicks, updatedAt: now },
+          })
+      );
     } catch (e) {
       bingError = e instanceof Error ? e.message : String(e);
       await logError(db, {
