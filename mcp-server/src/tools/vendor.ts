@@ -588,7 +588,10 @@ export function registerVendorTools(
 function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?: IndexNowEnv) {
   server.tool(
     "suggest_event",
-    "Suggest a new event to be added to the platform. The event will be created with TENTATIVE status. `start_date` is required so duplicate-detection (which keys on venue + date) can run — without a date the dedup guard silently skipped and we accrued duplicate rows like 'Winthrop Arts Festival 2026' alongside '38th Annual Winthrop Arts Festival' on the same date. If the date is genuinely unknown, hold the submission until it's confirmed rather than creating a dateless row.",
+    "Suggest a new event to be added to the platform. The event will be created with TENTATIVE status. " +
+      "`start_date` is required so duplicate-detection can run — without a date the dedup guard silently skipped and we accrued duplicate rows like 'Winthrop Arts Festival 2026' alongside '38th Annual Winthrop Arts Festival' on the same date. If the date is genuinely unknown, hold the submission until it's confirmed rather than creating a dateless row. " +
+      "Dedup runs FOUR keys in order, and the first hit wins: (1) `source_url` equality on the SAME CALENDAR DAY (`exact_url`, blocking) — same URL on a different day is `series_url` and does NOT block, so an organizer home page listing a whole season is fine; (2) venue + date within 7 days; (3) city/state + date within 7 days; (4) similar name + date. " +
+      "This description used to say dedup 'keys on venue + date', which was incomplete: the URL key runs FIRST, and when it was windowed at 7 days a weekly series had every event after the first refused against its sibling (OPE-650).",
     {
       name: z.string().transform(sanitizeProse).describe("Event name"),
       description: z.string().transform(sanitizeProse).optional().describe("Event description"),
