@@ -28,6 +28,7 @@ import { getCloudflareEnv } from "@/lib/cloudflare";
 import {
   CAPABILITY_FLAGS,
   resolveCapabilityFlags,
+  resolveSendGates,
 } from "@/lib/analytics-overview/dark-capabilities";
 
 function runtimeEnv(): Record<string, string | undefined> {
@@ -72,6 +73,11 @@ export const GET = withAuthorized(async () => {
     // The single question this endpoint exists to answer, hoisted so it can be
     // read without parsing the list.
     newsletter_send_enabled: env.NEWSLETTER_SEND_ENABLED ?? null,
+    // OPE-648 — every allowlisted SEND gate, resolved, so an agent can CHECK a
+    // gate before sending instead of learning its value from a refusal. Takes no
+    // key parameter: there is nothing to pass and therefore nothing to abuse.
+    // A gate this Worker does not enforce reports enabled:null, never false.
+    send_gates: resolveSendGates(env, "main-app"),
     worker: "meetmeatthefair-app",
     storage: "plaintext [vars] in wrangler.toml — the committed file is the source of truth",
     note:
