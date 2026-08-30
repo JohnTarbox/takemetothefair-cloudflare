@@ -541,3 +541,6 @@ export * from "./gsc-milestones";
  * so the two write paths cannot drift.
  */
 export * from "./next-gate-flags";
+
+// OPE-649 — shared with the MCP Worker; see the file header.
+export * from "./placeholder-account";
