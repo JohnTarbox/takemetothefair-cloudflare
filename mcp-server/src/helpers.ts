@@ -28,6 +28,7 @@ import { vendors, events, enrichmentLog, containsCI } from "./schema.js";
 import {
   computeVendorCompletenessScore as _scoreVendor,
   computeEventCompletenessScore as _scoreEvent,
+  searchSlugForm,
 } from "@takemetothefair/utils";
 import type { Db } from "./db.js";
 
@@ -625,10 +626,18 @@ export function vendorSearchWhere(params: {
   if (params.query) {
     // EH2.1 — business_name OR display_name, so a brand search finds the
     // office row whose override stores that surface.
+    //
+    // OPE-647 — plus the slug, which is the diacritic bridge. SQLite's LIKE and
+    // lower() are ASCII-only, so `search_vendors("aehko")` returned 0 while
+    // `search_vendors("aéhkō")` returned the row. `slug` already stores the
+    // transliterated form, so folding the query through the same slugifier
+    // matches both spellings with no schema change and no backfill.
+    const slugQuery = searchSlugForm(params.query);
     conditions.push(
       orMcp(
         containsCI(vendors.businessName, params.query),
-        sql`${vendors.displayName} IS NOT NULL AND ${containsCI(vendors.displayName, params.query)}`
+        sql`${vendors.displayName} IS NOT NULL AND ${containsCI(vendors.displayName, params.query)}`,
+        ...(slugQuery ? [containsCI(vendors.slug, slugQuery)] : [])
       )!
     );
   }
