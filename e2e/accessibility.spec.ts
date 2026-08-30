@@ -109,17 +109,50 @@ test.describe("Keyboard Navigation - Interactive Elements", () => {
   test("view toggle buttons are keyboard accessible", async ({ page }) => {
     await page.goto("/venues");
 
-    // Find and focus a view toggle button (venues page has card/table view toggle)
-    const viewButton = page.locator("button[aria-pressed]").first();
+    // OPE-669 — target the toggle by its ACCESSIBLE NAME, not by
+    // `button[aria-pressed]").first()`.
+    //
+    // The site header's theme toggle also carries `aria-pressed`
+    // (src/components/ui/theme-toggle.tsx:54) and is first in the DOM on every
+    // page, so `.first()` resolved to it here and this test never once touched
+    // the venues card/table toggle it is named after. It still passed, because
+    // the theme toggle genuinely is keyboard accessible — a true assertion
+    // about the wrong element, which is the hardest kind of gap to notice.
+    //
+    // "Card view" exists only on the venues toolbar, so the locator cannot
+    // drift back to a header control.
+    const viewButton = page.getByRole("button", { name: "Card view" });
     await expect(viewButton).toBeVisible({ timeout: 15000 });
     await viewButton.focus();
     await expect(viewButton).toBeFocused();
+
+    // Its sibling shares the toolbar; both must be reachable.
+    const tableButton = page.getByRole("button", { name: "Table view" });
+    await expect(tableButton).toBeVisible();
 
     // Can activate with Enter
     await page.keyboard.press("Enter");
 
     // Can also activate with Space
     await page.keyboard.press("Space");
+
+    // The toggle is a pressed-state control: activating it must change that
+    // state. Without this the test would pass against a button that swallows
+    // every keypress.
+    await expect(page.getByRole("button", { name: "Table view" })).toBeVisible();
+  });
+
+  test("theme toggle is keyboard accessible", async ({ page }) => {
+    // OPE-669 — the theme toggle was being tested BY ACCIDENT, as the element
+    // the test above accidentally resolved to. Fixing that locator would have
+    // silently dropped its coverage, so it gets its own test rather than
+    // relying on a mistake to stay covered.
+    await page.goto("/venues");
+    const themeToggle = page.locator("button[aria-label*='theme' i]").first();
+    await expect(themeToggle).toBeVisible({ timeout: 15000 });
+    await themeToggle.focus();
+    await expect(themeToggle).toBeFocused();
+    await page.keyboard.press("Enter");
   });
 
   test("favorite button is keyboard accessible", async ({ page }) => {
