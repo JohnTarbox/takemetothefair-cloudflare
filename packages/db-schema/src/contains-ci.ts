@@ -38,9 +38,58 @@
  * neither of them can miss. `src/lib/db/contains-ci.ts` re-exports it; do not
  * fork a second copy into either build.
  */
-import { sql, type SQL } from "drizzle-orm";
+import { or, sql, type SQL } from "drizzle-orm";
 import type { AnyColumn } from "drizzle-orm";
+import { searchSlugForm } from "@takemetothefair/utils";
 
 export function containsCI(col: AnyColumn | SQL, needle: string): SQL {
   return sql`instr(lower(${col}), ${needle.toLowerCase()}) > 0`;
+}
+
+/**
+ * Case-insensitive substring match against a display name OR its slug.
+ *
+ * ── The defect this closes (OPE-647, then OPE-653) ────────────────────────
+ *
+ * SQLite's `lower()` and `LIKE` are ASCII-only. A stored name containing a
+ * character a keyboard does not produce is therefore unfindable by the
+ * spelling a person actually types: `search_vendors("aehko")` returned 0 rows
+ * while `search_vendors("aéhkō")` returned the row — and the person searching
+ * has no way to know which spelling the database holds.
+ *
+ * The `slug` column is already the transliterated, punctuation-folded form of
+ * the name, written by `createSlug()` at insert time. Folding the QUERY through
+ * the same slugifier makes the two spellings meet in the middle. No schema
+ * change, no backfill, no normalization column.
+ *
+ * ── It is a PUNCTUATION fix far more than an accent fix ───────────────────
+ *
+ * Measured on prod 2026-08-30 for OPE-653 — of the 20 affected `venues` and
+ * `promoters` rows, **18 were em/en-dashes** ("Downtown Concord — Main
+ * Street", "Bates Mill Complex – 2 Oxford Street"), one a curly apostrophe
+ * ("Northboro Junior Woman’s Club"), and exactly ONE a real accent ("Wild Oats
+ * Bakery & Café"). A fix that folded only diacritics would have looked correct
+ * and missed 95% of the population. `createSlug` handles all of it, including
+ * expanding `&` to "and".
+ *
+ * ── Why the null guard is load-bearing ────────────────────────────────────
+ *
+ * A punctuation-only query ("—", "!!") slugifies to the empty string, and
+ * `instr(x, '')` returns 1 in SQLite — so an unguarded slug clause would be
+ * `1 > 0`, TRUE for every row, turning a nonsense query into "return the whole
+ * table". `searchSlugForm` returns null for that case and the clause is
+ * OMITTED rather than emitted-and-empty.
+ */
+export function nameOrSlugContains(
+  query: string,
+  nameCol: AnyColumn | SQL,
+  slugCol: AnyColumn | SQL
+): SQL {
+  const nameClause = containsCI(nameCol, query);
+  const slugQuery = searchSlugForm(query);
+  // Not `or(a, undefined)`: drizzle would keep the arity and emit an empty
+  // branch. Return the bare name clause so the SQL is identical to before the
+  // fix whenever slug-folding has nothing to add.
+  if (!slugQuery) return nameClause;
+  return or(nameClause, containsCI(slugCol, slugQuery))!;
 }

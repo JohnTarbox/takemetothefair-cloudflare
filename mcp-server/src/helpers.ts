@@ -24,11 +24,10 @@ export {
 export type { Slug } from "@takemetothefair/utils";
 
 import { eq } from "drizzle-orm";
-import { vendors, events, enrichmentLog, containsCI } from "./schema.js";
+import { vendors, events, enrichmentLog, containsCI, nameOrSlugContains } from "./schema.js";
 import {
   computeVendorCompletenessScore as _scoreVendor,
   computeEventCompletenessScore as _scoreEvent,
-  searchSlugForm,
 } from "@takemetothefair/utils";
 import type { Db } from "./db.js";
 
@@ -632,12 +631,18 @@ export function vendorSearchWhere(params: {
     // `search_vendors("aéhkō")` returned the row. `slug` already stores the
     // transliterated form, so folding the query through the same slugifier
     // matches both spellings with no schema change and no backfill.
-    const slugQuery = searchSlugForm(params.query);
+    //
+    // OPE-653 — the name-or-slug half now goes through the SHARED helper, which
+    // four sibling search sites also call. It was inlined here when OPE-647
+    // shipped this morning; leaving it inlined would have meant five copies of
+    // one idea, and this repo has already shipped that defect three times
+    // (containsCI reaching only the app, computePublicDates, the dedup note).
+    // The emitted SQL is unchanged — see the OPE-647 mutation tests, which
+    // pass untouched across this refactor.
     conditions.push(
       orMcp(
-        containsCI(vendors.businessName, params.query),
-        sql`${vendors.displayName} IS NOT NULL AND ${containsCI(vendors.displayName, params.query)}`,
-        ...(slugQuery ? [containsCI(vendors.slug, slugQuery)] : [])
+        nameOrSlugContains(params.query, vendors.businessName, vendors.slug),
+        sql`${vendors.displayName} IS NOT NULL AND ${containsCI(vendors.displayName, params.query)}`
       )!
     );
   }

@@ -16,6 +16,7 @@ import {
   promoterSlugHistory,
   // OPE-630 — LIKE-cap-safe substring predicate, shared with the Next.js app.
   containsCI,
+  nameOrSlugContains,
 } from "../schema.js";
 import { PRIMARY_AUDIENCE, PUBLIC_ACCESS, EVENT_STATUS_VALUES } from "@takemetothefair/constants";
 import {
@@ -422,7 +423,9 @@ export function registerPublicTools(server: McpServer, db: Db) {
       // rows, and a caller doing dedup should filter on `state` (now fixed)
       // rather than on `city`.
       if (params.venue_name && !params.venue_id) {
-        conditions.push(containsCI(venues.name, params.venue_name));
+        // OPE-653 — name OR slug, so "Downtown Concord - Main Street" (typed
+        // hyphen) finds the row stored with an em-dash.
+        conditions.push(nameOrSlugContains(params.venue_name, venues.name, venues.slug));
       }
 
       if (params.city) {
@@ -1037,7 +1040,9 @@ export function registerPublicTools(server: McpServer, db: Db) {
       const conditions = [eq(venues.status, "ACTIVE")];
 
       if (params.query) {
-        conditions.push(containsCI(venues.name, params.query));
+        // OPE-653 — 18 of 1,002 prod venue names hold a character a keyboard
+        // does not produce; all 18 are reachable through the slug.
+        conditions.push(nameOrSlugContains(params.query, venues.name, venues.slug));
       }
       if (params.city) {
         conditions.push(containsCI(venues.city, params.city));
@@ -1516,7 +1521,8 @@ export function registerPublicTools(server: McpServer, db: Db) {
       const conditions = [];
 
       if (params.query) {
-        conditions.push(containsCI(promoters.companyName, params.query));
+        // OPE-653 — 2 of 722 prod promoters: an em-dash and a curly apostrophe.
+        conditions.push(nameOrSlugContains(params.query, promoters.companyName, promoters.slug));
       }
 
       const rows = await db
