@@ -58,3 +58,51 @@ export function normalizeEventDate(input: string | Date | null | undefined): Dat
   const d = new Date(s);
   return isNaN(d.getTime()) ? null : d;
 }
+
+/**
+ * Public-facing start/end dates for an event, from its days.
+ *
+ * ## Why this lives here and not in either app (OPE-644)
+ *
+ * It existed TWICE — `src/lib/utils.ts` for the Next.js app and
+ * `mcp-server/src/helpers.ts` for the MCP Worker — and the two diverged.
+ * OPE-482 moved the app's copy to a noon-UTC anchor and left the Worker's on
+ * `new Date(day + "T00:00:00")`, so the Worker kept minting midnight-anchored
+ * rows for another five weeks.
+ *
+ * That is not cosmetic. These two columns SHADOW `start_date`/`end_date` on the
+ * public event page (`event.publicStartDate ?? event.startDate`), and date-only
+ * rendering is Eastern. Midnight UTC is 20:00 the PREVIOUS day in Eastern, so a
+ * midnight-anchored row renders the whole range one day early — while the
+ * `Dates:` list on the same page, which reads `event_days` directly, stays
+ * correct. The page contradicted itself.
+ *
+ * Measured on prod 2026-08-30: 39 of 668 events with public dates were
+ * midnight-anchored, 17 of them live and upcoming — including fairs opening
+ * five days later, telling visitors to arrive a day early and to skip the last
+ * day.
+ *
+ * One implementation, in the package both artifacts already depend on. Do not
+ * reintroduce a local copy in either.
+ */
+export function computePublicDates(days: { date: string; vendorOnly?: boolean | null }[]): {
+  publicStartDate: Date | null;
+  publicEndDate: Date | null;
+} {
+  const publicDays = days
+    .filter((d) => !d.vendorOnly)
+    .map((d) => d.date)
+    .sort();
+
+  if (publicDays.length === 0) {
+    return { publicStartDate: null, publicEndDate: null };
+  }
+
+  // `normalizeEventDate`, never a bare `new Date(day + "T00:00:00")` — that
+  // spelling is both midnight AND locale-dependent (no `Z`), so it is parsed in
+  // the runtime's local zone.
+  return {
+    publicStartDate: normalizeEventDate(publicDays[0]),
+    publicEndDate: normalizeEventDate(publicDays[publicDays.length - 1]),
+  };
+}

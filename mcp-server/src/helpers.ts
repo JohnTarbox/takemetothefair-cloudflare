@@ -436,25 +436,24 @@ export async function triggerIndexNow(
   }
 }
 
-/** Compute public start/end dates from event days, excluding vendor-only days */
-export function computePublicDates(days: { date: string; vendorOnly?: boolean | null }[]): {
-  publicStartDate: Date | null;
-  publicEndDate: Date | null;
-} {
-  const publicDays = days
-    .filter((d) => !d.vendorOnly)
-    .map((d) => d.date)
-    .sort();
-
-  if (publicDays.length === 0) {
-    return { publicStartDate: null, publicEndDate: null };
-  }
-
-  return {
-    publicStartDate: new Date(publicDays[0] + "T00:00:00"),
-    publicEndDate: new Date(publicDays[publicDays.length - 1] + "T00:00:00"),
-  };
-}
+/**
+ * OPE-644 — re-export of the shared implementation.
+ *
+ * This copy was the broken one. It read:
+ *
+ *     publicStartDate: new Date(publicDays[0] + "T00:00:00")
+ *
+ * which is midnight AND locale-dependent (no `Z`). OPE-482 fixed the app's copy
+ * to a noon-UTC anchor and never touched this one, so the Worker went on minting
+ * midnight-anchored `public_start_date` rows for five more weeks — and those
+ * columns SHADOW start/end on the public event page, where date-only rendering
+ * is Eastern. Midnight UTC is 20:00 the previous day in Eastern, so the served
+ * date band read one day early at both ends while the `Dates:` list on the same
+ * page stayed correct.
+ *
+ * 39 of 668 rows carried it; 17 were live and upcoming.
+ */
+export { computePublicDates } from "@takemetothefair/utils";
 
 // Status enums + transition state machine — sourced from the canonical
 // @takemetothefair/constants package. Aliases kept for backwards compat

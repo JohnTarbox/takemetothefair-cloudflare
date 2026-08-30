@@ -18,7 +18,6 @@ import {
   decodeHtmlEntities,
   unsafeSlug,
   appendSlugSegment,
-  normalizeEventDate,
   type Slug,
 } from "@takemetothefair/utils";
 export { createSlug, decodeHtmlEntities, unsafeSlug, appendSlugSegment };
@@ -107,28 +106,14 @@ export function formatDiscontinuousDates(days: { date: string }[]): string {
   return `${first} — ${last} (${sorted.length} dates)`;
 }
 
-export function computePublicDates(eventDays: { date: string; vendorOnly?: boolean | null }[]): {
-  publicStartDate: Date | null;
-  publicEndDate: Date | null;
-} {
-  const publicDays = eventDays
-    .filter((d) => !d.vendorOnly)
-    .map((d) => d.date)
-    .sort();
-
-  if (publicDays.length === 0) {
-    return { publicStartDate: null, publicEndDate: null };
-  }
-
-  // OPE-482: noon-UTC anchor, not `parseDateOnly`'s midnight UTC. These two
-  // columns feed the SERVED date band (they shadow start_date/end_date on the
-  // public page), so a midnight-UTC write here renders one day early in Eastern
-  // — the same defect as the events.start_date writers fixed in this PR.
-  return {
-    publicStartDate: normalizeEventDate(publicDays[0]),
-    publicEndDate: normalizeEventDate(publicDays[publicDays.length - 1]),
-  };
-}
+/**
+ * OPE-644 — re-export. The implementation moved to `@takemetothefair/utils`
+ * because it existed HERE and in `mcp-server/src/helpers.ts`, and the two
+ * diverged: OPE-482 fixed this copy to a noon-UTC anchor and left the Worker's
+ * on midnight, which kept minting rows that render a day early in Eastern.
+ * One implementation, in the package both artifacts already depend on.
+ */
+export { computePublicDates } from "@takemetothefair/utils";
 
 // dollarsToCents and formatPrice live in @takemetothefair/utils so the main
 // app and the MCP server use the same implementation. Re-exported here so
