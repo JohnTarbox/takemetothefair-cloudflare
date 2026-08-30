@@ -16,9 +16,14 @@ interface Props {
 }
 
 /**
- * Two-image gallery with a simple lightbox. Phase 1 keeps it minimal —
- * no carousels, no zoom. Click opens a fullscreen overlay; click anywhere
- * or press Escape to close.
+ * Gallery with a simple lightbox. No carousels, no zoom — click opens a
+ * fullscreen overlay; click anywhere or press Escape to close.
+ *
+ * OPE-211 increment 2 — the hard `slice(0, 2)` is gone. It was a Phase-1
+ * placeholder from when `gallery_images` was a two-element JSON column; with
+ * `vendor_photos` a vendor can have many, and silently dropping the third
+ * onward would make the upload UI look broken to the person who just used it.
+ * The grid grows to three columns above `sm` so more photos stay legible.
  */
 export function VendorGallery({ images, vendorName }: Props) {
   const [open, setOpen] = useState<number | null>(null);
@@ -27,8 +32,8 @@ export function VendorGallery({ images, vendorName }: Props) {
 
   return (
     <>
-      <div className="grid grid-cols-2 gap-3">
-        {images.slice(0, 2).map((img, i) => (
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        {images.map((img, i) => (
           <button
             key={img.url}
             type="button"
