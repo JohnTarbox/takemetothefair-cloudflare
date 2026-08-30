@@ -93,6 +93,23 @@ async function seedFirstEvent(receivedAt: Date) {
   });
 }
 
+/**
+ * OPE-637 — the grace is now a PARAMETER, supplied by the caller from
+ * `tunable_thresholds`, so these cases pass it explicitly.
+ *
+ * Every fixture and every assertion below is unchanged; only the input is now
+ * stated rather than assumed. They were written against the shipped
+ * `const GRACE_H = 24`, and reading 24 out of the default was what let them
+ * double as an accidental test of the constant — so when the default moved to
+ * the specified 48h seed, three cases testing case-insensitivity and drain
+ * ratio failed for reasons that had nothing to do with what they assert.
+ *
+ * A test should pin the property it names. These name recipient matching, the
+ * placeholder exclusion and the confirmation rate — none of which is a claim
+ * about how long the grace is.
+ */
+const FIXTURE_GRACE_H = 24;
+
 describe("unconfirmed_auth_email queue", () => {
   it("reads 0 when no delivery event has ever arrived", async () => {
     // Pre-subscription rows carry delivery_status NULL, which is "no signal".
@@ -100,7 +117,7 @@ describe("unconfirmed_auth_email queue", () => {
     await seedUser("u1", "a@example.com");
     await seedSend("m1", "a@example.com", hoursAgo(200), null);
 
-    const row = await unconfirmedAuthEmailFlow(db, NOW);
+    const row = await unconfirmedAuthEmailFlow(db, NOW, FIXTURE_GRACE_H);
     expect(row.depth).toBe(0);
     expect(row.inflow7d).toBe(0);
     expect(row.drainRatio7d).toBeNull();
@@ -111,7 +128,7 @@ describe("unconfirmed_auth_email queue", () => {
     await seedUser("u1", "a@example.com");
     await seedSend("m1", "a@example.com", hoursAgo(48), "delivered");
 
-    const row = await unconfirmedAuthEmailFlow(db, NOW);
+    const row = await unconfirmedAuthEmailFlow(db, NOW, FIXTURE_GRACE_H);
     expect(row.depth).toBe(1);
     expect(row.oldestOpenAgeHours).toBeCloseTo(48, 0);
   });
@@ -123,7 +140,7 @@ describe("unconfirmed_auth_email queue", () => {
     await seedUser("u1", "fresh@example.com");
     await seedSend("m1", "fresh@example.com", hoursAgo(0.15), "delivered");
 
-    const row = await unconfirmedAuthEmailFlow(db, NOW);
+    const row = await unconfirmedAuthEmailFlow(db, NOW, FIXTURE_GRACE_H);
     expect(row.depth).toBe(0);
     // Still an arrival, though — inflow has no grace.
     expect(row.inflow1d).toBe(1);
@@ -134,7 +151,7 @@ describe("unconfirmed_auth_email queue", () => {
     await seedUser("u1", "bounced@example.com");
     await seedSend("m1", "bounced@example.com", hoursAgo(48), "bounced");
 
-    expect((await unconfirmedAuthEmailFlow(db, NOW)).depth).toBe(0);
+    expect((await unconfirmedAuthEmailFlow(db, NOW, FIXTURE_GRACE_H)).depth).toBe(0);
   });
 
   it("does NOT count ingestion placeholder accounts", async () => {
@@ -145,7 +162,7 @@ describe("unconfirmed_auth_email queue", () => {
     await seedUser("u1", "pending+someshow@meetmeatthefair.com", { origin: "ingestion" });
     await seedSend("m1", "pending+someshow@meetmeatthefair.com", hoursAgo(48), "delivered");
 
-    expect((await unconfirmedAuthEmailFlow(db, NOW)).depth).toBe(0);
+    expect((await unconfirmedAuthEmailFlow(db, NOW, FIXTURE_GRACE_H)).depth).toBe(0);
   });
 
   it("matches the recipient case-insensitively", async () => {
@@ -155,7 +172,7 @@ describe("unconfirmed_auth_email queue", () => {
     await seedUser("u1", "Leavienessa@example.com");
     await seedSend("m1", "leavienessa@example.com", hoursAgo(48), "delivered");
 
-    expect((await unconfirmedAuthEmailFlow(db, NOW)).depth).toBe(1);
+    expect((await unconfirmedAuthEmailFlow(db, NOW, FIXTURE_GRACE_H)).depth).toBe(1);
   });
 
   it("reports the confirmation rate of delivered mail as drainRatio7d", async () => {
@@ -168,7 +185,7 @@ describe("unconfirmed_auth_email queue", () => {
       await seedSend(`m${n}`, `${n}@example.com`, hoursAgo(36), "delivered");
     }
 
-    const row = await unconfirmedAuthEmailFlow(db, NOW);
+    const row = await unconfirmedAuthEmailFlow(db, NOW, FIXTURE_GRACE_H);
     expect(row.inflow7d).toBe(4);
     expect(row.outflow7d).toBe(1);
     expect(row.depth).toBe(3);
@@ -182,6 +199,39 @@ describe("unconfirmed_auth_email queue", () => {
     await seedUser("u1", "old@example.com");
     await seedSend("m1", "old@example.com", hoursAgo(200), "delivered");
 
+    expect((await unconfirmedAuthEmailFlow(db, NOW, FIXTURE_GRACE_H)).depth).toBe(0);
+  });
+});
+
+/**
+ * OPE-637 — the acceptance criterion: changing the stored value must change
+ * queue membership with NO deploy.
+ *
+ * One fixture, three windows. This is the property that was impossible before:
+ * the grace lived in `const GRACE_H = 24`, so the only way to move the queue
+ * was to ship code.
+ */
+describe("the grace window drives membership (OPE-637)", () => {
+  it("moves the same signup in and out of the queue as the window changes", async () => {
+    await seedFirstEvent(hoursAgo(300));
+    await seedUser("u1", "waiting@example.com");
+    // Delivered 36h ago: stuck at a 24h window, not yet stuck at 48h.
+    await seedSend("m1", "waiting@example.com", hoursAgo(36), "delivered");
+
+    expect((await unconfirmedAuthEmailFlow(db, NOW, 24)).depth).toBe(1);
+    expect((await unconfirmedAuthEmailFlow(db, NOW, 48)).depth).toBe(0);
+    // ...and back again, so this is the window and not some ordering artefact.
+    expect((await unconfirmedAuthEmailFlow(db, NOW, 12)).depth).toBe(1);
+  });
+
+  it("defaults to the specified 48h seed, not the 24 that shipped", async () => {
+    // John's constraint 2. The shipped code used 24 — half the seed — and the
+    // window decides who appears in the queue, so the difference is not cosmetic.
+    await seedFirstEvent(hoursAgo(300));
+    await seedUser("u1", "borderline@example.com");
+    await seedSend("m1", "borderline@example.com", hoursAgo(36), "delivered");
+
+    // Called WITHOUT a grace argument — this is the fail-open default path.
     expect((await unconfirmedAuthEmailFlow(db, NOW)).depth).toBe(0);
   });
 });

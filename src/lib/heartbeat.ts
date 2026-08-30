@@ -265,6 +265,34 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       ),
   },
   {
+    // OPE-637 — proof the verification-threshold tuner is EXECUTING.
+    //
+    // Watches the info-level `error_logs` row the endpoint writes on EVERY run,
+    // not `tunable_thresholds.updated_at`. That distinction is the whole point:
+    // the tuner only WRITES when the tuned value actually moves, so a correctly-stable
+    // threshold and a dead cron produce byte-identical evidence in the config
+    // table. Probing the yield would go red on a healthy week and green on a
+    // job that stopped running — exactly backwards.
+    //
+    // This ticket exists because OPE-177 scope 3 shipped without three of its
+    // four constraints and nothing noticed for sixteen days, so a probe on the
+    // replacement is not optional.
+    //
+    // 48h for a daily cron: one missed run is a blip, two is a fault.
+    name: "verification-threshold-tuner",
+    ownerOpe: "OPE-637",
+    label: "Verification staleness threshold self-tune",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        errorLogs,
+        errorLogs.timestamp,
+        eq(errorLogs.source, "app/api/admin/thresholds/tune-verification")
+      ),
+  },
+  {
     name: "photo-intake",
     ownerOpe: "OPE-202",
     label: "Photo-intake lane",
