@@ -144,9 +144,19 @@ export function sanitizeProse(text: string): string {
 }
 
 /**
- * Branded slug type. A `Slug` is a `string` that has been through one of the
- * canonical slug generators (createSlug or createSlugFromName) — never a
- * raw user-supplied or hand-written string. The brand prevents accidental
+ * Branded slug type. A `Slug` is a `string` that has been through THE canonical
+ * slug generator, `createSlug` — never a raw user-supplied or hand-written
+ * string.
+ *
+ * OPE-659 — this comment used to read "one of the canonical slug generators
+ * (createSlug or createSlugFromName)", which blessed as canonical the very
+ * function whose output format produced the divergence the brand exists to
+ * prevent: `createSlugFromName("Dave's World")` is `dave-s-world`, and prod
+ * stores exactly that. Because it returned `Slug`, layers 1 and 2 of the #120
+ * defense (typed producers, typed storage) would have accepted its output into
+ * a slug column without complaint. It now returns a plain `string`, so they
+ * cannot. Nothing was exploiting the hole — both artifacts still type-check —
+ * but "unexploited" is not "closed". The brand prevents accidental
  * mixing of "string-shaped values that happen to look slug-like" with
  * "actual normalized slugs," which silently caused duplicate venue rows
  * in production (issue #120).
@@ -242,7 +252,32 @@ export function searchSlugForm(query: string): string | null {
   return slug.length > 0 ? (slug as string) : null;
 }
 
-export function createSlugFromName(name: string): Slug {
+/**
+ * NOT a slug generator, despite the name. Do NOT use this for a slug.
+ *
+ * OPE-659 — scope item 4 asked whether this should be deleted as an attractive
+ * nuisance. It must not be: four scrapers call it, and none of them for a slug.
+ * They call it for `events.source_id` —
+ *
+ *   src/lib/scrapers/mafa.ts:152
+ *   src/lib/scrapers/vtnhfairs.ts:215
+ *   src/lib/scrapers/joycescraftshows.ts:245
+ *   src/lib/scrapers/newenglandcraftfairs.ts:191
+ *
+ * — the STABLE EXTERNAL IDENTIFIER used to recognise an event we have already
+ * imported from that source. Its value is precisely that it never changes.
+ * "Improving" the algorithm would give every previously-imported event a new
+ * source_id, so the next scrape would match nothing and re-create the entire
+ * catalogue as duplicates. The sibling test calls it "legacy, scraper-stable"
+ * for that reason. Leave the algorithm alone, forever.
+ *
+ * What DID change (OPE-659): the return type, `Slug` -> `string`. It has no
+ * runtime effect and does not touch the algorithm; it stops the type system
+ * accepting this output into a slug column, which it previously did.
+ *
+ * For a slug, use `createSlug`.
+ */
+export function createSlugFromName(name: string): string {
   return (
     name
       .toLowerCase()
