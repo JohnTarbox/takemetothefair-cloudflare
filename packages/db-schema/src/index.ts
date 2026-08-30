@@ -2384,11 +2384,18 @@ export const pendingEmailReplies = sqliteTable(
     /** Agent code or admin user id — so "which lane keeps hitting this" is answerable. */
     requestedBy: text("requested_by"),
     requestedAt: integer("requested_at", { mode: "timestamp" }).notNull(),
-    /** pending | approved | discarded | sent. See PENDING_REPLY_STATUS. */
+    /** pending | approved | discarded | sent | superseded. See PENDING_REPLY_STATUS. */
     status: text("status").notNull().default("pending"),
     reviewedBy: text("reviewed_by"),
     reviewedAt: integer("reviewed_at", { mode: "timestamp" }),
     reviewNote: text("review_note"),
+    /**
+     * OPE-635 — the message that actually discharged this draft.
+     *
+     * The column existed from the start and NO path ever wrote it. It is the
+     * missing link between an approved draft and the delivery that settled it,
+     * and it is now required to reach `superseded`.
+     */
     sentMessageId: text("sent_message_id"),
   },
   (table) => [
@@ -2403,13 +2410,30 @@ export const pendingEmailReplies = sqliteTable(
  * An admin approving a draft records the human decision. Delivery still
  * respects EMAIL_REPLY_ENABLED: routing around an operator's stop-gate from
  * inside the very feature that gate exists to stop would encode exactly the
- * wrong lesson. Approved drafts go out when John flips the flag, not before.
+ * wrong lesson.
+ *
+ * OPE-635 — that reasoning is right and survives. What was wrong was the
+ * sentence that used to end this comment: *"Approved drafts go out when John
+ * flips the flag, not before."* **Nothing drains this queue.** A reply approved
+ * 2026-08-17 sat undelivered for 13 days; the flag was set true on 2026-08-30
+ * and nothing flushed, because there is no flusher. `approved` records a
+ * decision and delivery remains manual — which is a defensible design, but it
+ * was being described as the opposite, so a reviewer who approved a draft had
+ * every reason to believe the customer would receive it.
+ *
+ * `superseded` is the exit `approved` never had. A draft delivered by some
+ * other route (a hand-sent `reply_to_inbound_email`, say) had nowhere to go:
+ * settled drafts were not re-reviewable, so the row stayed `approved` forever
+ * as a duplicate-send hazard for whatever drain gets built later. Closing that
+ * out previously required a raw D1 UPDATE around the state machine.
  */
 export const PENDING_REPLY_STATUS = {
   PENDING: "pending",
   APPROVED: "approved",
   DISCARDED: "discarded",
   SENT: "sent",
+  /** Delivered by another path; carries the discharging `sent_message_id`. */
+  SUPERSEDED: "superseded",
 } as const;
 
 export type PendingReplyStatus = (typeof PENDING_REPLY_STATUS)[keyof typeof PENDING_REPLY_STATUS];
