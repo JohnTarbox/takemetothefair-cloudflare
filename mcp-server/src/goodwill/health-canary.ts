@@ -30,7 +30,12 @@
  */
 
 import { sql, eq, gte } from "drizzle-orm";
-import { eventDiscrepancies, sourceReliability, goodwillHealthSnapshots } from "../schema.js";
+import {
+  eventDiscrepancies,
+  sourceReliability,
+  goodwillHealthSnapshots,
+  summarizeResolutions,
+} from "../schema.js";
 import type { Db } from "../db.js";
 import { logError } from "../logger.js";
 
@@ -155,14 +160,19 @@ async function fetchResolutionCounts(
     .where(gte(eventDiscrepancies.resolvedAt, cutoff))
     .groupBy(eventDiscrepancies.resolutionStatus);
 
-  let resolved28d = 0;
-  let dismissed28d = 0;
-  for (const row of rows) {
-    const c = Number(row.count);
-    if (row.resolutionStatus === "dismissed") dismissed28d += c;
-    else if (row.resolutionStatus !== "open") resolved28d += c;
-  }
-  return { resolved28d, dismissed28d };
+  // OPE-391 — the bucketing rule now lives in @takemetothefair/db-schema,
+  // because it was written here AND in admin-data-health.ts AND was about to
+  // be written a third time in the app's Site Health tab. This one PERSISTS
+  // its answer, so a divergence would write a permanently wrong history.
+  //
+  // `resolvedLegacy` is byte-identical to the total this loop used to compute.
+  // The column has 87 days of history under that definition; redefining it
+  // would make new rows silently incomparable with old ones. The honest
+  // adjudicated/superseded split is additive and read by the UI, not stored.
+  const summary = summarizeResolutions(
+    rows.map((row) => ({ status: row.resolutionStatus, count: row.count }))
+  );
+  return { resolved28d: summary.resolvedLegacy, dismissed28d: summary.dismissed };
 }
 
 async function fetchReliabilityMedians(db: Db): Promise<{

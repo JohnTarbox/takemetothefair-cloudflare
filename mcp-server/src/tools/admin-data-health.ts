@@ -30,6 +30,7 @@ import {
   gscMilestoneEmails,
 } from "../schema.js";
 import { deriveCrossings, auditStoredDates } from "@takemetothefair/utils";
+import { summarizeResolutions } from "../schema.js";
 import { jsonContent } from "../helpers.js";
 import { loadLocationsUniverse } from "../locations-universe.js";
 import { listBalance } from "../newsletter-list-balance.js";
@@ -127,22 +128,14 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
         .where(gte(eventDiscrepancies.resolvedAt, new Date(since28dSecs * 1000)))
         .groupBy(eventDiscrepancies.resolutionStatus);
 
-      let resolved28d = 0;
-      let dismissed28d = 0;
-      let resolvedAuth28d = 0;
-      let resolvedDiv28d = 0;
-      for (const r of resolutionRows) {
-        const c = Number(r.count);
-        if (r.status === "dismissed") dismissed28d += c;
-        else if (r.status !== "open") {
-          resolved28d += c;
-          if (r.status === "resolved_authoritative") resolvedAuth28d += c;
-          if (r.status === "resolved_divergent") resolvedDiv28d += c;
-        }
-      }
-
-      const groundTruthCoverage =
-        resolved28d + dismissed28d === 0 ? null : resolved28d / (resolved28d + dismissed28d);
+      // OPE-391 — one bucketing rule, shared with health-canary.ts (which
+      // PERSISTS its answer) and with the app's Site Health tab.
+      const resolutions = summarizeResolutions(resolutionRows);
+      const resolved28d = resolutions.resolvedLegacy;
+      const dismissed28d = resolutions.dismissed;
+      const resolvedAuth28d = resolutions.resolvedAuthoritative;
+      const resolvedDiv28d = resolutions.resolvedDivergent;
+      const groundTruthCoverage = resolutions.legacyCoverage;
 
       // ── Snapshot trend ───────────────────────────────────────
       const trend = await db
@@ -681,6 +674,20 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
         dismissed_last_28d: dismissed28d,
         ground_truth_coverage:
           groundTruthCoverage === null ? null : Number(groundTruthCoverage.toFixed(3)),
+        // OPE-391 — the field above is dominated by bulk cleanups and reads
+        // ~0.999 while saying nothing about data quality: on 2026-08-30, 6,574
+        // of its 7,039 numerator was the 08-04 duplicate reclassification.
+        // These four are the honest split. Additive on purpose — the published
+        // field keeps its meaning, and the Site Health tab leads with these.
+        adjudicated_last_28d: resolutions.adjudicated,
+        superseded_last_28d: resolutions.superseded,
+        adjudicated_coverage:
+          resolutions.adjudicatedCoverage === null
+            ? null
+            : Number(resolutions.adjudicatedCoverage.toFixed(3)),
+        coverage_note:
+          "ground_truth_coverage counts superseded_* bookkeeping closures as resolved; " +
+          "adjudicated_coverage counts only rows an authority or operator actually judged.",
       };
 
       const phase2PendingMetrics = {
