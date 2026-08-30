@@ -6,6 +6,7 @@ import { recordMutation } from "@/lib/audit/record-mutation";
 import { events, venues, promoters, eventDays } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import type { ScrapedEvent, ScrapedVenue } from "@/lib/scrapers/types";
+import type { Slug } from "@takemetothefair/utils";
 import { decodeHtmlEntities, sanitizeScrapedDescription } from "@/lib/scrapers/utils";
 import {
   getScraper,
@@ -13,7 +14,7 @@ import {
   getDetailsScraper,
   getScraperRetirement,
 } from "@/lib/scrapers/registry";
-import { createSlug, appendSlugSegment, unsafeSlug } from "@/lib/utils";
+import { createSlug, appendSlugSegment, unsafeSlug, slugCandidates } from "@/lib/utils";
 import { normalizeEventDate } from "@/lib/event-dates";
 import { logError } from "@/lib/logger";
 import { recomputeEventCompleteness } from "@/lib/completeness";
@@ -81,26 +82,38 @@ async function findOrCreateVenue(
 
   // No existing venue found, or existing venue has different city - create new one
   // Generate unique slug if needed
-  let finalSlug = venueSlug;
-  if (existingVenues.length > 0) {
-    // Slug already exists - make it unique
-    if (venueCity) {
-      finalSlug = appendSlugSegment(venueSlug, createSlug(venueCity));
-    } else if (venueState) {
-      finalSlug = appendSlugSegment(venueSlug, venueState.toLowerCase());
-    } else {
-      finalSlug = appendSlugSegment(venueSlug, crypto.randomUUID().substring(0, 8));
-    }
-
-    // Check if this slug also exists, add random suffix if needed
-    const slugCheck = await db
-      .select()
+  // OPE-665 — one collision strategy across every venue-creating path: the
+  // numeric suffix from `venue-minting.ts`. This block previously appended the
+  // city, else the state, else 8 random hex characters — three shapes, chosen
+  // by which fields the scraper happened to supply.
+  //
+  // The random fallback was the real problem. It is not deterministic, so the
+  // same import retried produced a DIFFERENT public URL, and the slug it
+  // produced can never be read or guessed. It existed only because city and
+  // state can be absent; a numeric suffix always can be formed, so nothing
+  // needs to fall back to randomness.
+  //
+  // The old shape also checked its first candidate and then, on a clash,
+  // appended a uuid WITHOUT re-checking — so the value that reached the insert
+  // was the one nobody verified. Iterating the generator probes the candidate
+  // it is about to use, every time.
+  let finalSlug: Slug | null = null;
+  for (const candidate of slugCandidates(unsafeSlug(venueSlug))) {
+    const clash = await db
+      .select({ id: venues.id })
       .from(venues)
-      .where(eq(venues.slug, unsafeSlug(finalSlug)))
+      .where(eq(venues.slug, candidate))
       .limit(1);
-    if (slugCheck.length > 0) {
-      finalSlug = appendSlugSegment(finalSlug, crypto.randomUUID().substring(0, 8));
+    if (clash.length === 0) {
+      finalSlug = candidate;
+      break;
     }
+  }
+  if (!finalSlug) {
+    // Refuse rather than invent. The column is UNIQUE and NOT NULL, so an
+    // unverified slug here is a failed insert at best.
+    console.error(`[findOrCreateVenue] slug candidates exhausted for "${decodedName}"`);
+    return { id: defaultVenueId, newSlug: null };
   }
 
   const newVenueId = crypto.randomUUID();

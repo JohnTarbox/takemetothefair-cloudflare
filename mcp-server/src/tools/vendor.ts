@@ -33,6 +33,8 @@ import {
   UNLABELED_SOURCE,
   assertIngestionMethod,
   dollarsToCents,
+  slugCandidates,
+  type Slug,
 } from "@takemetothefair/utils";
 import { EVENT_CATEGORIES, PRIMARY_AUDIENCE, PUBLIC_ACCESS } from "@takemetothefair/constants";
 import { logError } from "../logger.js";
@@ -933,21 +935,35 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
           // match found by the OR clause above can have a different stored
           // slug (legacy generator), in which case `venueSlug` is still
           // free and the simple form is preferred.
-          let finalVenueSlug = venueSlug;
-          const slugCollides = existingVenues.some((v) => v.slug === unsafeSlug(venueSlug));
-          if (slugCollides) {
-            finalVenueSlug = venueCity
-              ? appendSlugSegment(venueSlug, createSlug(venueCity))
-              : appendSlugSegment(venueSlug, crypto.randomUUID().substring(0, 8));
+          // OPE-665 — the numeric suffix, matching venue-minting.ts and the
+          // admin import route. This previously appended the city, or 8 random
+          // hex characters when no city was known; a random slug is opaque and
+          // not deterministic, so the same suggestion retried produced a
+          // different public URL.
+          //
+          // The preceding comment's point still holds and is preserved by
+          // construction: the first candidate IS the plain slug, so a name-only
+          // match whose stored slug differs (legacy generator) still gets the
+          // simple form — the loop only advances on an ACTUAL clash.
+          let finalVenueSlug: Slug | null = null;
+          for (const candidate of slugCandidates(unsafeSlug(venueSlug))) {
+            const clash = await db
+              .select({ id: venues.id })
+              .from(venues)
+              .where(eq(venues.slug, candidate))
+              .limit(1);
+            if (clash.length === 0) {
+              finalVenueSlug = candidate;
+              break;
+            }
           }
-          // Ensure slug uniqueness
-          const slugCheck = await db
-            .select({ id: venues.id })
-            .from(venues)
-            .where(eq(venues.slug, unsafeSlug(finalVenueSlug)))
-            .limit(1);
-          if (slugCheck.length > 0) {
-            finalVenueSlug = appendSlugSegment(finalVenueSlug, crypto.randomUUID().substring(0, 8));
+          if (!finalVenueSlug) {
+            return {
+              content: [
+                jsonContent({ error: "venue_slug_exhausted", venue_name: effectiveVenueName }),
+              ],
+              isError: true,
+            };
           }
 
           const newVenueId = crypto.randomUUID();

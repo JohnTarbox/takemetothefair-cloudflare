@@ -189,6 +189,50 @@ export function appendSlugSegment(slug: Slug, segment: Slug | string | number): 
   return `${slug}-${segment}` as Slug;
 }
 
+/** How many candidates a slug-collision loop will try before giving up. */
+export const SLUG_CANDIDATE_ATTEMPTS = 50;
+
+/**
+ * The candidate slugs to try, in order, when `base` is already taken.
+ *
+ * OPE-665 — there were FOUR live collision strategies for the same entity:
+ *
+ *   numeric suffix   src/lib/venue-minting.ts:191      "-2", "-3", …
+ *   city suffix      src/app/api/admin/import/route.ts  "-rangeley"
+ *   state suffix     src/app/api/admin/import/route.ts  "-me"
+ *   random uuid8     both of the above, as a fallback   "-a3f9c210"
+ *
+ * so the URL a venue got depended on which code path happened to create it.
+ * The numeric suffix wins, for three reasons:
+ *
+ *   1. `slug-quality-drift` (src/lib/recommendations/rules/) already flags
+ *      city/state suffixes as drift — "bloats the URL without earning CTR".
+ *      One part of the codebase was flagging what another was minting.
+ *   2. City and state can be absent, which is exactly why both of those paths
+ *      needed a random-uuid fallback. A random slug is the worst outcome
+ *      available: permanently opaque, and NOT DETERMINISTIC — the same import
+ *      retried produces a different URL.
+ *   3. It is the strategy in `venue-minting.ts`, the newest of the three and
+ *      the only one with guards and tests (OPE-541).
+ *
+ * Deliberately a generator, not a "pick a suffix then check once" helper. The
+ * old shape checked its FIRST candidate, then appended a uuid if that clashed —
+ * so the value that actually reached the insert was the one nobody verified.
+ * A caller iterating this cannot make that mistake: it probes the candidate it
+ * is about to use, every time.
+ *
+ * Bounded on purpose. An unbounded loop against a UNIQUE column is a hang, and
+ * a caller that exhausts the sequence should refuse rather than invent a slug.
+ */
+export function* slugCandidates(
+  base: Slug,
+  maxAttempts: number = SLUG_CANDIDATE_ATTEMPTS
+): Generator<Slug> {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    yield attempt === 0 ? base : appendSlugSegment(base, attempt + 1);
+  }
+}
+
 /**
  * Canonical slug generator, backed by the `slugify` library. Use for new
  * slugs everywhere — venue, vendor, promoter, blog post slugs.
