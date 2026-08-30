@@ -1,5 +1,6 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
+import { detectPossibleDuplicate } from "@/lib/duplicates/venue-date-collision";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { events, promoters, eventSchemaOrg } from "@/lib/db/schema";
 import { parseJsonLd } from "@/lib/schema-org";
@@ -639,6 +640,24 @@ export async function POST(request: NextRequest) {
       // a correct, reviewable answer.
     }
 
+    // OPE-627 — the caller-supplied tag WINS.
+    //
+    // This route was the only writer of `possible_duplicate_of` in the codebase,
+    // and the inbound-email pipeline is its only caller that ever set it (on the
+    // MEDIUM-confidence branch). That upstream match is a richer judgement than a
+    // venue/day collision, so it is preserved; the detector only fills the gap
+    // when nothing upstream had an opinion — which is the case on every other
+    // intake path.
+    const possibleDuplicateOf =
+      data.possibleDuplicateOf ??
+      (await detectPossibleDuplicate(db, {
+        venueId: resolvedVenueId,
+        startDate: effectiveStartDate,
+        endDate: effectiveEndDate,
+        name: effectiveName,
+        promoterId: resolvedPromoterId,
+      }));
+
     // Create the event
     const newEventId = crypto.randomUUID();
     await db.insert(events).values({
@@ -719,7 +738,7 @@ export async function POST(request: NextRequest) {
       walkInsAllowed: data.walkInsAllowed ?? null,
       // Cohort 2 (2026-06-01) — populated when the inbound-email workflow
       // detected a MEDIUM-confidence dedup hit. NULL on every other path.
-      possibleDuplicateOf: data.possibleDuplicateOf ?? null,
+      possibleDuplicateOf,
       // DQ4: flag for review when any event_day row carries NULL hours.
       // OPE-201: also flag a past-dated auto-create — it's likely a real past
       // EDITION that needs web-confirmation → OCCURRED in the review/analyst

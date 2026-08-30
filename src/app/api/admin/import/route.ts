@@ -1,5 +1,6 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
+import { detectPossibleDuplicate } from "@/lib/duplicates/venue-date-collision";
 import { withAuth } from "@/lib/api/with-auth";
 import { recordMutation } from "@/lib/audit/record-mutation";
 import { events, venues, promoters, eventDays } from "@/lib/db/schema";
@@ -519,9 +520,21 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
         const gateFlagsJson =
           gateResult.reasons.length > 0 ? JSON.stringify(gateResult.reasons) : null;
 
+        // OPE-627 — report-only duplicate check. Writes the flag; merges nothing.
+        // This is the `aggregator_import` path, which the ticket's list of five
+        // intake paths did not name but which produced one side of the Logging
+        // Festival pair.
+        const possibleDuplicateOf = await detectPossibleDuplicate(db, {
+          venueId: eventVenueId,
+          startDate: normalizedStart,
+          endDate: normalizedEnd,
+          name: decodedNewEventName,
+          promoterId,
+        });
         const newEventId = crypto.randomUUID();
         await db.insert(events).values({
           id: newEventId,
+          possibleDuplicateOf,
           name: decodedNewEventName,
           slug,
           description: decodedNewDescription,

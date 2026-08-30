@@ -1,5 +1,6 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
+import { detectPossibleDuplicate } from "@/lib/duplicates/venue-date-collision";
 import { and, eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
@@ -190,7 +191,16 @@ export async function POST(request: NextRequest) {
     const slug = await resolveUniqueEventSlug(db, baseSlug);
 
     const newId = crypto.randomUUID();
+    // OPE-627 — report-only duplicate check. Writes the flag; merges nothing.
+    const possibleDuplicateOf = await detectPossibleDuplicate(db, {
+      venueId: data.venueId || null,
+      startDate: normalizeEventDate(startDate),
+      endDate: normalizeEventDate(endDate),
+      name: data.name,
+      promoterId: promoter.id,
+    });
     await db.insert(events).values({
+      possibleDuplicateOf,
       // OPE-433 — named explicitly rather than inherited from the DDL default.
       //
       // A promoter entering their OWN event is the strongest provenance we

@@ -1,5 +1,6 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
+import { detectPossibleDuplicate } from "@/lib/duplicates/venue-date-collision";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { promoters, events, venues } from "@/lib/db/schema";
@@ -162,7 +163,16 @@ export async function POST(request: NextRequest) {
       resolvedStateCode = venueRow[0]?.state ?? null;
     }
 
+    // OPE-627 — report-only duplicate check. Writes the flag; merges nothing.
+    const possibleDuplicateOf = await detectPossibleDuplicate(db, {
+      venueId: venueId || null,
+      startDate: normalizeEventDate(startDate),
+      endDate: normalizeEventDate(endDate),
+      name,
+      promoterId: promoter.id,
+    });
     await db.insert(events).values({
+      possibleDuplicateOf,
       id: eventId,
       name,
       slug,

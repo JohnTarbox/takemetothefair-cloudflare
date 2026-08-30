@@ -1,5 +1,6 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
+import { detectPossibleDuplicate } from "@/lib/duplicates/venue-date-collision";
 import { withAuth } from "@/lib/api/with-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { events, contentLinks, blogPosts, venues } from "@/lib/db/schema";
@@ -207,7 +208,16 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
     const gateFlagsJson = gateResult.reasons.length > 0 ? JSON.stringify(gateResult.reasons) : null;
     const sourceClassification = classifySource(data.sourceName, data.sourceUrl);
 
+    // OPE-627 — report-only duplicate check. Writes the flag; merges nothing.
+    const possibleDuplicateOf = await detectPossibleDuplicate(db, {
+      venueId: data.venueId,
+      startDate,
+      endDate,
+      name: data.name,
+      promoterId: data.promoterId,
+    });
     await db.insert(events).values({
+      possibleDuplicateOf,
       id: eventId,
       name: data.name,
       slug: unsafeSlug(slug),

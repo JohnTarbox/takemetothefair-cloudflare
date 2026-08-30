@@ -1,5 +1,6 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
+import { detectPossibleDuplicate } from "@/lib/duplicates/venue-date-collision";
 import { withAuth } from "@/lib/api/with-auth";
 import { recordMutation } from "@/lib/audit/record-mutation";
 import { events, venues, promoters, eventSchemaOrg } from "@/lib/db/schema";
@@ -220,7 +221,16 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
 
     // Create the event
     const newEventId = crypto.randomUUID();
+    // OPE-627 — report-only duplicate check. Writes the flag; merges nothing.
+    const possibleDuplicateOf = await detectPossibleDuplicate(db, {
+      venueId,
+      startDate,
+      endDate,
+      name: event.name,
+      promoterId,
+    });
     await db.insert(events).values({
+      possibleDuplicateOf,
       id: newEventId,
       name: event.name,
       slug: finalEventSlug,
