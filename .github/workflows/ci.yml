@@ -131,6 +131,9 @@ jobs:
       - name: Guard against LIKE patterns built from user input (OPE-565)
         run: npx tsx scripts/check-d1-like-user-input.ts
 
+      - name: Guard against Web APIs above the browser support floor (OPE-640)
+        run: npx tsx scripts/check-browser-api-floor.ts
+
   e2e:
     name: E2E Tests
     runs-on: ubuntu-latest

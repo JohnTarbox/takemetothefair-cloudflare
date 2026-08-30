@@ -7,6 +7,7 @@
 import { describe, it, expect } from "vitest";
 import {
   createSlug,
+  generateMultiDayICSContent,
   formatDate,
   formatDateRange,
   formatPrice,
@@ -305,5 +306,64 @@ describe("getSlugPrefixBounds", () => {
     expect("my-events" > lower && "my-events" < upper).toBe(false);
     // "my-event" without suffix should NOT be captured
     expect("my-event" > lower && "my-event" < upper).toBe(false);
+  });
+});
+
+/**
+ * OPE-640 — the multi-day ICS UID.
+ *
+ * Nine logged occurrences of `TypeError: crypto.randomUUID is not a function`
+ * on `/events/*`, all `react-error-boundary` — i.e. the visitor got the
+ * "Something went wrong" boundary INSTEAD OF THE PAGE. Captured agents were
+ * Safari 14.1.2 and Chrome 90; `crypto.randomUUID` needs Safari 15.4 / Chrome 92.
+ *
+ * The first test reproduces THE CONDITION (the API is absent) rather than its
+ * neighbourhood — it deletes `randomUUID` and asserts the render survives, so
+ * it fails against the old line and cannot pass by accident. The second pins
+ * the reason a polyfill would have been the wrong fix.
+ */
+describe("multi-day ICS UID (OPE-640)", () => {
+  const params = {
+    title: "Cannon Grange Agricultural Fair",
+    url: "https://meetmeatthefair.com/events/cannon-grange-agricultural-fair/2026",
+    eventDays: [
+      { date: "2026-08-22", openTime: "09:00", closeTime: "17:00" },
+      { date: "2026-08-23", openTime: "09:00", closeTime: "17:00" },
+    ],
+  };
+
+  it("renders on a browser that has no crypto.randomUUID (Safari 14 / Chrome 90)", () => {
+    // `delete globalThis.crypto.randomUUID` does NOT work here and this test
+    // was decorative until that was caught: in Node the method lives on
+    // `Crypto.prototype`, so there is no OWN property to delete and the API
+    // stayed reachable — the test passed against the unfixed line. Shadowing
+    // it with an own `undefined` is what actually reproduces a pre-2022
+    // browser, and makes the call throw the exact production TypeError.
+    const c = globalThis.crypto as unknown as Record<string, unknown>;
+    const hadOwn = Object.prototype.hasOwnProperty.call(c, "randomUUID");
+    const prior = Object.getOwnPropertyDescriptor(c, "randomUUID");
+    Object.defineProperty(c, "randomUUID", { value: undefined, configurable: true });
+    try {
+      expect(typeof globalThis.crypto.randomUUID).toBe("undefined"); // the condition really holds
+      expect(() => generateMultiDayICSContent(params)).not.toThrow();
+    } finally {
+      if (hadOwn && prior) Object.defineProperty(c, "randomUUID", prior);
+      else delete c.randomUUID;
+    }
+  });
+
+  it("is stable across renders, so re-importing UPDATES instead of duplicating", () => {
+    // The random UID made every download a new calendar identity: importing
+    // the .ics twice added every day twice. Stability is the correctness
+    // property, not just a side effect of dropping the UUID.
+    expect(generateMultiDayICSContent(params)).toBe(generateMultiDayICSContent(params));
+  });
+
+  it("still gives each day its own distinct UID", () => {
+    const uids = [...generateMultiDayICSContent(params).matchAll(/UID:([^\r\n]+)/g)].map(
+      (m) => m[1]
+    );
+    expect(uids).toHaveLength(2);
+    expect(new Set(uids).size).toBe(2);
   });
 });
