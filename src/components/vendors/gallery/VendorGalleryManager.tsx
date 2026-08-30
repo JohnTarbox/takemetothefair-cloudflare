@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Image from "next/image";
-import { Star, Trash2, ArrowUp, ArrowDown, Loader2 } from "lucide-react";
+import { Star, Trash2, ArrowUp, ArrowDown, Loader2, Upload } from "lucide-react";
 
 /**
  * OPE-211 increments 2b + 3 — manage a vendor's gallery.
@@ -119,11 +119,66 @@ export function VendorGalleryManager({ vendorId, photos: initial, onChanged }: P
     );
   }
 
+  async function upload(file: File) {
+    setBusy("upload");
+    setError(null);
+    try {
+      const body = new FormData();
+      body.set("vendorId", vendorId);
+      body.set("file", file);
+      const res = await fetch("/api/vendor-photos/upload", { method: "POST", body });
+      if (!res.ok) {
+        // The server's message is written for the vendor ("Your gallery is
+        // full (20 photos)", "That image is 8.2 MB"). Showing a generic
+        // failure instead would strand them with no idea what to change.
+        const b = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(b.error ?? `Upload failed (${res.status})`);
+        return;
+      }
+      onChanged?.();
+    } catch {
+      setError("Upload failed — check your connection.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const uploader = (
+    <label className="mt-3 inline-flex cursor-pointer items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-foreground hover:bg-muted">
+      {busy === "upload" ? (
+        <Loader2 className="h-4 w-4 animate-spin" />
+      ) : (
+        <Upload className="h-4 w-4" />
+      )}
+      {busy === "upload" ? "Uploading…" : "Add a photo"}
+      <input
+        type="file"
+        accept="image/jpeg,image/png,image/webp"
+        className="sr-only"
+        disabled={busy !== null}
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          // Reset the input so re-picking the SAME file fires change again —
+          // otherwise a failed upload cannot be retried without picking a
+          // different file, which reads as the button being dead.
+          e.target.value = "";
+          if (f) void upload(f);
+        }}
+      />
+    </label>
+  );
+
   if (photos.length === 0) {
     return (
-      <p className="text-sm text-muted-foreground">
-        No gallery photos yet. Upload one to get started.
-      </p>
+      <div>
+        {error && (
+          <p className="mb-3 rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800">
+            {error}
+          </p>
+        )}
+        <p className="text-sm text-muted-foreground">No gallery photos yet.</p>
+        {uploader}
+      </div>
     );
   }
 
@@ -220,6 +275,7 @@ export function VendorGalleryManager({ vendorId, photos: initial, onChanged }: P
           </li>
         ))}
       </ul>
+      {uploader}
     </div>
   );
 }
