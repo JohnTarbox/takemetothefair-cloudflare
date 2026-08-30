@@ -57,7 +57,7 @@ import { eq, and, sql } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "@/lib/db/schema";
 import { venues } from "@/lib/db/schema";
-import { createSlug, appendSlugSegment } from "@/lib/utils";
+import { createSlug, slugCandidates } from "@/lib/utils";
 import { recordMutation } from "@/lib/audit/record-mutation";
 // OPE-600 — extracted to `@/lib/names/normalized-name` so the signup-collision
 // lookup reuses this exact pair rather than becoming a third implementation.
@@ -187,8 +187,11 @@ export async function mintVenueFromIngest(db: Db, input: MintVenueInput): Promis
   // check-then-assign shape (assign a suffix, loop, exit) leaves the final
   // value unverified, which is precisely the one that reaches the insert.
   let slug: Slug | null = null;
-  for (let attempt = 0; attempt < SLUG_ATTEMPTS; attempt++) {
-    const candidate: Slug = attempt === 0 ? base : appendSlugSegment(base, attempt + 1);
+  // OPE-665 — the candidate SEQUENCE now comes from the shared generator, so
+  // the import route and MCP suggest_event resolve collisions the same way
+  // this path always has. The emitted sequence is identical to the inline loop
+  // it replaces; this file's existing tests pass unchanged, which is the tell.
+  for (const candidate of slugCandidates(base, SLUG_ATTEMPTS)) {
     const clash = await db
       .select({ id: venues.id })
       .from(venues)

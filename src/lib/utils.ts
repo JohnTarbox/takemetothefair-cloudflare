@@ -18,9 +18,10 @@ import {
   decodeHtmlEntities,
   unsafeSlug,
   appendSlugSegment,
+  slugCandidates,
   type Slug,
 } from "@takemetothefair/utils";
-export { createSlug, decodeHtmlEntities, unsafeSlug, appendSlugSegment };
+export { createSlug, decodeHtmlEntities, unsafeSlug, appendSlugSegment, slugCandidates };
 export type { Slug };
 
 import { SITE_HOSTNAME } from "@takemetothefair/constants";
