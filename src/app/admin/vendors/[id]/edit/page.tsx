@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { VendorGalleryLoader } from "@/components/vendors/gallery/VendorGalleryLoader";
 import { useRouter, useParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
@@ -309,6 +310,24 @@ export default function EditVendorPage() {
               </CardContent>
             </Card>
           )}
+          {/* OPE-211 increment 2b — staff gallery management. Same component
+              and same routes the vendor self-service surface uses; the SERVER
+              decides who may act, so this carries no admin-specific logic.
+              John's greenlight: "Admin retains override — staff can delete or
+              reorder any vendor's photos even after the vendor uploaded." */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Photo gallery</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground mb-4">
+                Booth and product photos. Reorder, caption, feature or delete any of them — staff
+                override applies even to photos the vendor uploaded themselves. Photos display on
+                the public page only with an Enhanced Profile.
+              </p>
+              <VendorGalleryLoader vendorId={vendor.id} />
+            </CardContent>
+          </Card>
           <VendorEnhancedProfilePanel
             vendorId={vendor.id}
             enhancedProfile={vendor.enhancedProfile}

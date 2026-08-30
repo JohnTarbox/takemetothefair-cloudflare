@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { VendorGalleryLoader } from "@/components/vendors/gallery/VendorGalleryLoader";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -454,6 +455,23 @@ export default function VendorProfilePage() {
               onChange={handleChange}
               placeholder="https://..."
             />
+
+            {/* OPE-211 increment 3 — vendor self-service gallery.
+                Greenlit by John on the issue 2026-07-15: "A logged-in vendor
+                can upload / reorder / caption / set-featured / delete their own
+                logo and gallery photos." Session-required; every action is
+                authorised server-side, so this component carries no permission
+                logic of its own. */}
+            <div className="border-t pt-6 mt-6">
+              <h3 className="text-lg font-medium text-foreground mb-1">Photo gallery</h3>
+              <p className="text-sm text-muted-foreground mb-4">
+                Booth and product photos for your listing. Captions and alt text are optional, but
+                alt text is what a screen reader announces — worth writing.{" "}
+                <strong>The gallery displays on your public page with an Enhanced Profile.</strong>{" "}
+                Photos you add now are kept either way.
+              </p>
+              <VendorGalleryLoader vendorId={profile.id} />
+            </div>
 
             {/* Contact Information Section */}
             <div className="border-t pt-6 mt-6">
