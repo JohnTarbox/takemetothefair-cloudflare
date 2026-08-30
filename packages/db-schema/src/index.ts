@@ -5635,6 +5635,81 @@ export type TunableThreshold = typeof tunableThresholds.$inferSelect;
 // OPE-528 — the shared "is this a roster-research target" predicate.
 export * from "./roster-research-queue";
 
+/**
+ * OPE-634 — a durable trace of a registration that did NOT happen.
+ *
+ * ## Why this table has to exist
+ *
+ * The cohort blocked by a registration outage is, by construction, exactly the
+ * set of people with **no `users` row**. They cannot be found by querying the
+ * thing they failed to create. When OPE-150 broke Turnstile on 2026-07-08, the
+ * only reason we know one specific prospect existed is that she wrote to
+ * `support@` about it — and 51 days later she still had no account, because
+ * "the bug is fixed" and "the people it blocked are whole again" were treated
+ * as the same event.
+ *
+ * The funnel telemetry cannot answer it either: every `register_view` /
+ * `register_submitted` series in `analytics_events` begins 2026-08-16, five
+ * weeks after that outage. For OPE-150 and OPE-173 the cohort is not
+ * reconstructable at any price. This is what makes the NEXT one recoverable.
+ *
+ * ## Failures only, and that is deliberate
+ *
+ * A successful registration already leaves a `users` row, so the blocked cohort
+ * is simply the attempts whose email STILL has no user. That makes the set
+ * self-healing — someone who retries successfully drops out of it without any
+ * reconciliation step — and it keeps this table to the minimum data that
+ * answers the question.
+ *
+ * ## On the data
+ *
+ * `email` is an address a person deliberately typed in order to give it to us,
+ * captured at the moment we refused it. It is admin-read-only and exists to let
+ * an operator apologise to a real human. It is not a marketing list, and
+ * OPE-634 STOP-gates any send against it.
+ */
+export const registrationAttempts = sqliteTable(
+  "registration_attempts",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    /** Normalized (lower-cased) — matches `users.email` so the join is exact. */
+    email: text("email").notNull(),
+    attemptedAt: integer("attempted_at", { mode: "timestamp" }).notNull(),
+    /**
+     * Why the attempt did not produce an account. Categorical so a future
+     * outage can be sliced by cause: `turnstile` is the OPE-150/OPE-173 shape.
+     */
+    outcome: text("outcome").notNull(),
+    /** Free text — Turnstile error codes, a validation message. Never a secret. */
+    detail: text("detail"),
+    /** Set when an operator has closed this person out, either way. */
+    recoveredAt: integer("recovered_at", { mode: "timestamp" }),
+    /** What was decided — contacted, or consciously skipped. */
+    recoveryNote: text("recovery_note"),
+  },
+  (table) => [
+    index("idx_registration_attempts_at").on(table.attemptedAt),
+    index("idx_registration_attempts_email").on(table.email),
+  ]
+);
+
+export type RegistrationAttempt = typeof registrationAttempts.$inferSelect;
+
+/** Categorical `outcome` values. */
+export const REGISTRATION_ATTEMPT_OUTCOME = {
+  /** The OPE-150 / OPE-173 shape: the human-verification wall refused them. */
+  TURNSTILE: "turnstile",
+  /** The payload failed schema validation before anything else ran. */
+  VALIDATION: "validation",
+  /** Rate limiter refused the attempt. */
+  RATE_LIMITED: "rate_limited",
+} as const;
+
+export type RegistrationAttemptOutcome =
+  (typeof REGISTRATION_ATTEMPT_OUTCOME)[keyof typeof REGISTRATION_ATTEMPT_OUTCOME];
+
 // OPE-630 — the LIKE-cap-safe substring predicate, shared by the app AND the
 // MCP Worker. Two deploy artifacts, one implementation.
 export * from "./contains-ci";

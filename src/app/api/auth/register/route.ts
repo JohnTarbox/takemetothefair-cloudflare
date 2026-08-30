@@ -1,5 +1,7 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
+import { recordRegistrationAttempt } from "@/lib/auth/record-registration-attempt";
+import { REGISTRATION_ATTEMPT_OUTCOME } from "@/lib/db/schema";
 import { normalizeEmail } from "@/lib/auth/normalize-email";
 import { z } from "zod";
 import { getCloudflareDb } from "@/lib/cloudflare";
@@ -137,6 +139,13 @@ export async function POST(request: NextRequest) {
 
     if (!validation.success) {
       const issues = validation.error.issues;
+      // OPE-634 — capture the attempt before the refusal, while the address the
+      // person typed still exists. Fail-soft; see the helper.
+      await recordRegistrationAttempt(db, {
+        email: (body as { email?: unknown })?.email,
+        outcome: REGISTRATION_ATTEMPT_OUTCOME.VALIDATION,
+        detail: issues[0]?.message ?? null,
+      });
       return NextResponse.json(
         { error: issues[0]?.message || "Validation failed" },
         { status: 400 }
@@ -162,6 +171,16 @@ export async function POST(request: NextRequest) {
     // Verify Turnstile token (required for all registration attempts)
     const turnstileResult = await verifyTurnstileToken(turnstileToken || "", request);
     if (!turnstileResult.success) {
+      // OPE-634 — THE case this table exists for. When OPE-150 broke the widget,
+      // everyone who reached exactly here vanished without trace; the one person
+      // we know about is the one who happened to email support@. The address is
+      // already parsed at this point, so the refusal is recoverable as a person
+      // rather than as a page view.
+      await recordRegistrationAttempt(db, {
+        email: rawEmail,
+        outcome: REGISTRATION_ATTEMPT_OUTCOME.TURNSTILE,
+        detail: turnstileResult.errorCodes?.join(",") ?? null,
+      });
       return NextResponse.json(
         { error: getTurnstileErrorMessage(turnstileResult.errorCodes) },
         { status: 400 }
