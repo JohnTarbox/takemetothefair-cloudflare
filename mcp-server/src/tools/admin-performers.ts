@@ -21,7 +21,7 @@ import {
   performerSlugHistory,
   adminActions,
   events,
-  containsCI,
+  nameOrSlugContains,
 } from "../schema.js";
 import {
   appendSlugSegment,
@@ -339,7 +339,11 @@ export function registerPerformerTools(server: McpServer, db: Db, auth: AuthCont
     },
     async (params) => {
       try {
-        const conds = [containsCI(performers.name, params.query)];
+        // OPE-653 — name OR slug. Prod had ZERO non-ASCII performer names on
+        // 2026-08-30 (0 of 307), so this fixes nothing visible today; it is
+        // here because leaving one of four identical call sites unpatched is
+        // how a fix ends up wired into one path of several.
+        const conds = [nameOrSlugContains(params.query, performers.name, performers.slug)];
         if (!params.include_deleted) conds.push(isNull(performers.deletedAt));
         const rows = await db
           .select()
