@@ -30,6 +30,7 @@ import {
   decodeHtmlEntities,
   coerceVenueNameAtIngest,
   VALID_TRANSITIONS,
+  reportedNewValue,
 } from "../helpers.js";
 import { rosterResearchTargetWhere } from "@takemetothefair/db-schema";
 import { recordSlugRename } from "../slug-history.js";
@@ -1786,10 +1787,23 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         }
       }
 
-      // Build new values for confirmation
+      // Build new values for confirmation.
+      //
+      // OPE-645 — read what was WRITTEN (`updates`, keyed by column) rather than
+      // what was passed. `previousValues` reads the stored column, so echoing the
+      // raw argument put the two sides of the same key in different units for
+      // every field with a `transform`: a no-op re-write of ticket_price_min
+      // reported 1300 -> 13 and read as a 100x price cut. This response is the
+      // only audit record a field edit leaves (OPE-505).
       const newValues: Record<string, unknown> = {};
       for (const field of requestedFields) {
-        newValues[field] = (params as Record<string, unknown>)[field];
+        const mapping = fieldMap.find((f) => f.param === field);
+        newValues[field] = reportedNewValue(
+          field,
+          mapping,
+          updates,
+          params as Record<string, unknown>
+        );
       }
       if (params.name !== undefined && updates.slug) {
         newValues.slug = updates.slug;
