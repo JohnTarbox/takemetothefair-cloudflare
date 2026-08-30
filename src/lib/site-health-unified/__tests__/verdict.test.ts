@@ -245,3 +245,29 @@ describe("readings", () => {
     expect(at(0.5)).toBe("ok");
   });
 });
+
+describe("every link a reading emits points somewhere real (OPE-391)", () => {
+  it("has a matching id= anchor on the analytics page for each fragment", async () => {
+    // A dead in-page anchor is invisible: the browser silently stays put, so
+    // nothing errors and nobody notices the "view" link does nothing. I shipped
+    // exactly that in the first cut of this ticket — `#technical` was linked
+    // before the anchor existed. Derived from the source rather than
+    // hard-coded, so a new reading with a new fragment fails here until its
+    // anchor is added.
+    const fs = await import("node:fs/promises");
+    const path = await import("node:path");
+    // Repo-root relative: `import.meta.url` is not a file: URL under this
+    // vitest environment, and the app suite always runs from the root.
+    const at = (rel: string) => path.resolve(process.cwd(), rel);
+    const readings = await fs.readFile(at("src/lib/site-health-unified/readings.ts"), "utf8");
+    const page = await fs.readFile(at("src/app/admin/analytics/page.tsx"), "utf8");
+    const fragments = [...readings.matchAll(/href: "[^"#]*#([\w-]+)"/g)].map((m) => m[1]);
+
+    // Guard the guard: if the regex stops matching, this test would otherwise
+    // pass vacuously over an empty list.
+    expect(fragments.length).toBeGreaterThanOrEqual(2);
+    for (const frag of fragments) {
+      expect(page, `no id="${frag}" anchor on the analytics page`).toContain(`id="${frag}"`);
+    }
+  });
+});
