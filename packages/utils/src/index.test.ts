@@ -5,6 +5,7 @@ import {
   stripToolCallMarkup,
   createSlug,
   createSlugFromName,
+  type Slug,
   dollarsToCents,
   formatPrice,
 } from "./index";
@@ -159,6 +160,42 @@ describe("createSlugFromName (legacy, scraper-stable)", () => {
 
   it("trims hyphens at the boundaries", () => {
     expect(createSlugFromName("---Hello World---")).toBe("hello-world");
+  });
+
+  /**
+   * OPE-659 — this function is NOT a slug generator, and the tests above do not
+   * say why it must survive unchanged. It feeds `events.source_id` from four
+   * scrapers (mafa, vtnhfairs, joycescraftshows, newenglandcraftfairs): the
+   * stable external identifier that recognises an event already imported from
+   * that source. Its value is that it NEVER changes.
+   *
+   * The strings below are the exact divergence signatures found in prod
+   * 2026-08-30 — 139 of the 161 search-unreachable rows are reproduced
+   * byte-for-byte by this function. That makes them the highest-value pins:
+   * anyone "improving" the algorithm to match createSlug breaks source_id
+   * stability and the next scrape re-creates the whole catalogue as duplicates.
+   */
+  it("keeps its two divergence signatures — apostrophe to hyphen, & DROPPED", () => {
+    // createSlug gives "daves-world" / "starland-sports-and-fun-park". The
+    // difference is the point, not a bug to be fixed.
+    expect(createSlugFromName("Dave's World")).toBe("dave-s-world");
+    expect(createSlugFromName("Starland Sports & Fun Park")).toBe("starland-sports-fun-park");
+    expect(createSlugFromName("O'Neill Center, Western Connecticut State University")).toBe(
+      "o-neill-center-western-connecticut-state-university"
+    );
+  });
+
+  it("returns a plain string, NOT the branded Slug type", () => {
+    // OPE-659 — it used to return `Slug`, which made it an authorised producer
+    // of the brand that layers 1 and 2 of the #120 defense rely on, while
+    // producing a format createSlug would never emit. Nothing was exploiting
+    // that, but the type now forbids it. The @ts-expect-error IS the assertion:
+    // this file stops compiling if the return type widens back to Slug.
+    const id: string = createSlugFromName("Dave's World");
+    expect(id).toBe("dave-s-world");
+    // @ts-expect-error — a legacy source_id must not be assignable to a Slug.
+    const notASlug: Slug = createSlugFromName("Dave's World");
+    expect(notASlug).toBe("dave-s-world");
   });
 
   it("preserves accented chars unchanged (legacy behavior)", () => {
