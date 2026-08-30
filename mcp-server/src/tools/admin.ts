@@ -2166,8 +2166,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
     targetType: "vendor" | "venue" | "promoter",
     targetId: string,
     imageUrl: string,
-    // OPE-33 — promoter logo-vs-hero target; ignored for vendor/venue.
-    imageRole?: "logo" | "hero"
+    // OPE-33 — promoter logo-vs-hero target; ignored for venue.
+    // OPE-211 increment 5 — "gallery" appends a `vendor_photos` row instead of
+    // setting a scalar column. The app route already accepted it; only this
+    // signature and the vendor tool's schema were withholding it.
+    imageRole?: "logo" | "hero" | "gallery"
   ) => {
     if (!env?.MAIN_APP_URL || !env?.INTERNAL_API_KEY) {
       return {
@@ -2248,9 +2251,13 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         targetId,
         source: "manual_admin",
         status: "success",
-        fieldsChanged: ["logo_url"],
+        // OPE-211 increment 5 — a gallery upload does not touch logo_url, and
+        // recording that it did would put a false statement in the enrichment
+        // audit trail. The log is read to answer "what changed on this vendor";
+        // a wrong answer there is worse than no answer.
+        fieldsChanged: imageRole === "gallery" ? ["vendor_photos"] : ["logo_url"],
         actorUserId: auth.userId,
-        notes: `MCP upload_vendor_image_from_url from ${imageUrl}`,
+        notes: `MCP upload_vendor_image_from_url (${imageRole ?? "logo"}) from ${imageUrl}`,
       });
     }
 
@@ -2268,12 +2275,19 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
 
   server.tool(
     "upload_vendor_image_from_url",
-    "Fetch an image from a public URL and store it on cdn.meetmeatthefair.com, then set the vendor's logo_url. The main app SSRF-guards + fetches + optimizes (EXIF strip, auto-orient, resize, WebP). Use this instead of update_vendor(logo_url=...) when the source isn't on a stable host, or instead of upload_image_bytes for images >100KB. Max 5MB; allowed types: jpg, png, webp, svg. Admin only.",
+    "Fetch an image from a public URL and store it on cdn.meetmeatthefair.com, then set the vendor's logo_url OR append it to the vendor's photo gallery. The main app SSRF-guards + fetches + optimizes (EXIF strip, auto-orient, resize, WebP). Use this instead of update_vendor(logo_url=...) when the source isn't on a stable host, or instead of upload_image_bytes for images >100KB. Max 5MB; allowed types: jpg, png, webp, svg. Admin only.",
     {
-      vendor_id: z.string().describe("Vendor ID (UUID) to attach the logo to."),
+      vendor_id: z.string().describe("Vendor ID (UUID) to attach the image to."),
       image_url: z.string().url().describe("Publicly fetchable URL of the source image."),
+      image_role: z
+        .enum(["logo", "gallery"])
+        .optional()
+        .describe(
+          "OPE-211 — 'logo' (default) REPLACES the vendor's single brand logo; 'gallery' APPENDS a photo to their gallery and leaves the logo alone. Use 'gallery' for booth/product shots — passing 'logo' for one would silently destroy the brand logo."
+        ),
     },
-    async (params) => uploadImageFromUrl("vendor", params.vendor_id, params.image_url)
+    async (params) =>
+      uploadImageFromUrl("vendor", params.vendor_id, params.image_url, params.image_role)
   );
 
   server.tool(

@@ -1,5 +1,6 @@
 import { notFound, permanentRedirect } from "next/navigation";
 import { TrackedActionLink } from "@/components/analytics/TrackedActionLink";
+import { getVendorGallery } from "@/lib/vendor-photos";
 import Link from "next/link";
 import {
   Globe,
@@ -859,13 +860,18 @@ export default async function VendorDetailPage({ params }: Props) {
 
   // Enhanced Profile state — drives several render branches below.
   const isEnhanced = !!vendor.enhancedProfile;
-  let galleryImages: GalleryImage[] = [];
-  try {
-    const parsed = JSON.parse(vendor.galleryImages || "[]");
-    if (Array.isArray(parsed)) galleryImages = parsed.slice(0, 2);
-  } catch {
-    // malformed JSON in gallery_images; treat as empty rather than throw
-  }
+  // OPE-211 increment 2 — read `vendor_photos` first, falling back to the
+  // legacy `gallery_images` JSON per vendor. The backfill that would retire
+  // the JSON is increment 4 and is STOP-gated, so both must render until then.
+  //
+  // Until PR #740's table is read by something, it is write-only: prod held
+  // 0 rows and no code selected from it.
+  const galleryPhotos = await getVendorGallery(getCloudflareDb(), vendor.id, vendor.galleryImages);
+  const galleryImages: GalleryImage[] = galleryPhotos.map((p) => ({
+    url: p.url,
+    alt: p.alt,
+    caption: p.caption,
+  }));
   const expiresAt = vendor.enhancedProfileExpiresAt
     ? new Date(vendor.enhancedProfileExpiresAt)
     : null;
