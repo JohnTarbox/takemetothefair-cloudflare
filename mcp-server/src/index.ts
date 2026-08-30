@@ -21,6 +21,7 @@ import { registerAdminTools } from "./tools/admin.js";
 import { registerMarketPlayerTools } from "./tools/admin-market-players.js";
 import { registerInboundReadTools } from "./tools/admin-inbound-read.js";
 import { registerAdminEventReadTools } from "./tools/admin-event-read.js";
+import { registerAdminVendorReadTools } from "./tools/admin-vendor-read.js";
 import { registerAdminProblemReportTools } from "./tools/admin-problem-reports.js";
 import { correlateProblemReportCore } from "./problem-reports/correlate.js";
 import { registerMergeEntitiesTools } from "./tools/admin-merge-entities.js";
@@ -336,6 +337,7 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
         registerInboundReadTools(this.server, db, auth, this.env);
         // OPE-500 — read an event at ANY status (the public reader is APPROVED-only).
         registerAdminEventReadTools(this.server, db, auth);
+        registerAdminVendorReadTools(this.server, db, auth);
         // OPE-414 — market-player register (competitors, aggregators, and the
         // civic citation sources that are deliberately NOT competitors).
         registerMarketPlayerTools(this.server, db, auth);
@@ -627,6 +629,7 @@ async function handleLegacyMcpRequest(request: Request, env: Env): Promise<Respo
       registerAdminProblemReportTools(server, db);
       registerInboundReadTools(server, db, auth, env);
       registerAdminEventReadTools(server, db, auth);
+      registerAdminVendorReadTools(server, db, auth);
       registerMergeEntitiesTools(server, db, auth);
       registerMergeVendorTool(server, db, auth);
       registerVendorHierarchyTools(server, db, auth);
