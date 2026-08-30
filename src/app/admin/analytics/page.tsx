@@ -68,6 +68,8 @@ import {
   type Trend,
   type WindowKey,
 } from "@/lib/analytics-overview";
+import type { SiteHealthVerdict, InstrumentReading } from "@/lib/site-health-unified/verdict";
+import { ENGAGEMENT_WINDOW_DAYS } from "@/lib/site-health-unified/engagement";
 import { KPI_THRESHOLDS, formatStaleAge, type KpiName, type KpiState } from "@/lib/kpi-thresholds";
 import { isExpectedNonIndexing } from "@/lib/site-health-classify";
 import {
@@ -4337,8 +4339,102 @@ function SiteHealthIssueGroups({
   );
 }
 
+// ─── OPE-391 unified Site Health presentation ───────────────────────
+// Types only — the readers themselves are dynamically imported inside the
+// tab so this page's other tabs do not pay for them.
+
+const VERDICT_STYLES: Record<
+  SiteHealthVerdict["status"],
+  { wrap: string; dot: string; label: string }
+> = {
+  healthy: { wrap: "border-green-300 bg-green-50", dot: "bg-green-600", label: "Healthy" },
+  // Deliberately amber, not grey. "We could not measure this" must look like
+  // something to fix, not like a disabled feature.
+  unknown: { wrap: "border-amber-300 bg-amber-50", dot: "bg-amber-500", label: "Unverified" },
+  attention: { wrap: "border-amber-300 bg-amber-50", dot: "bg-amber-600", label: "Attention" },
+  critical: { wrap: "border-red-300 bg-red-50", dot: "bg-red-600", label: "Needs attention" },
+};
+
+function VerdictBanner({ verdict }: { verdict: SiteHealthVerdict }) {
+  const style = VERDICT_STYLES[verdict.status];
+  return (
+    <div className={`mb-6 rounded-lg border px-4 py-3 ${style.wrap}`}>
+      <div className="flex items-start gap-3">
+        <span className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ${style.dot}`} />
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-foreground">{verdict.headline}</p>
+          {verdict.problems.length > 0 && (
+            <ul className="mt-1.5 space-y-0.5">
+              {verdict.problems.map((p) => (
+                <li key={p.key} className="text-xs text-muted-foreground">
+                  <span className="font-medium text-foreground">{p.label}:</span> {p.detail}
+                  {p.href && (
+                    <Link href={p.href} className="ml-1.5 text-royal hover:text-navy">
+                      view
+                    </Link>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function InstrumentTile({ reading }: { reading: InstrumentReading }) {
+  const tone =
+    reading.severity === "critical"
+      ? "text-red-700"
+      : reading.severity === "attention"
+        ? "text-amber-700"
+        : reading.severity === "unknown"
+          ? "text-muted-foreground"
+          : "text-green-700";
+  return (
+    <Card>
+      <CardContent className="p-5">
+        <div className="flex items-baseline justify-between gap-2">
+          <p className="text-sm text-muted-foreground">{reading.label}</p>
+          <span className={`text-xs font-medium uppercase tracking-wide ${tone}`}>
+            {reading.severity === "ok" ? "ok" : reading.severity}
+          </span>
+        </div>
+        <p className={`mt-1 text-3xl font-bold tabular-nums ${tone}`}>
+          {/* An em dash, never 0 — see verdict.ts. */}
+          {reading.actionItems === null ? "—" : fmt(reading.actionItems)}
+        </p>
+        <p className="mt-1 text-xs text-muted-foreground">{reading.detail}</p>
+        {reading.href && (
+          <Link
+            href={reading.href}
+            className="mt-2 inline-flex items-center gap-1 text-xs text-royal hover:text-navy"
+          >
+            Detail <ArrowRight className="w-3 h-3" />
+          </Link>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/** A labelled count row, used across the data/engagement/email blocks. */
+function StatRow({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3 py-1.5 border-b border-border/50 last:border-0">
+      <span className="text-sm text-muted-foreground">
+        {label}
+        {hint && <span className="ml-1 text-xs opacity-70">({hint})</span>}
+      </span>
+      <span className="text-sm font-semibold text-foreground tabular-nums">{value}</span>
+    </div>
+  );
+}
+
 async function SiteHealthTab() {
   const db = getCloudflareDb();
+  const env = getCloudflareEnv() as unknown as Ga4Env;
   const { getCurrentIssues } = await import("@/lib/site-health");
   const { getUnclassifiedOutboundDestinations } =
     await import("@/lib/url-classification-discovery");
@@ -4346,11 +4442,27 @@ async function SiteHealthTab() {
   const { SiteHealthSweepButton } = await import("@/components/admin/site-health-sweep-button");
   const { gscInspectionState } = await import("@/lib/db/schema");
   const { count: dCount } = await import("drizzle-orm");
-  const [issues, unclassifiedDestinations, inspectionRow] = await Promise.all([
-    getCurrentIssues(db, { hideSnoozed: false }),
-    getUnclassifiedOutboundDestinations(db, { days: 7, minClicks: 5 }),
-    db.select({ c: dCount() }).from(gscInspectionState),
-  ]);
+  // OPE-391 — the three instruments "site health" actually spans. Loaded in
+  // parallel; each reader degrades to an explicit unknown rather than a zero,
+  // and `computeSiteHealthVerdict` refuses to say "healthy" while any of them
+  // is unmeasured.
+  const { getDataHealthReport } = await import("@/lib/site-health-unified/data-health");
+  const { getEngagementReport, getEmailFacet } =
+    await import("@/lib/site-health-unified/engagement");
+  const { getTrafficReport } = await import("@/lib/site-health-unified/traffic");
+  const { computeSiteHealthVerdict } = await import("@/lib/site-health-unified/verdict");
+  const { technicalReading, dataReading, trafficReading } =
+    await import("@/lib/site-health-unified/readings");
+  const [issues, unclassifiedDestinations, inspectionRow, dataHealth, traffic, engagement, email] =
+    await Promise.all([
+      getCurrentIssues(db, { hideSnoozed: false }),
+      getUnclassifiedOutboundDestinations(db, { days: 7, minClicks: 5 }),
+      db.select({ c: dCount() }).from(gscInspectionState),
+      getDataHealthReport(db),
+      getTrafficReport(env),
+      getEngagementReport(db),
+      getEmailFacet(db),
+    ]);
   const inspectionCount = inspectionRow[0]?.c ?? 0;
   const now = Date.now();
   const isActivelySnoozed = (snoozedUntil: Date | null | undefined) =>
@@ -4374,8 +4486,39 @@ async function SiteHealthTab() {
   const actionGroups = groups.filter((g) => g.tier === "ACTION");
   const expectedGroups = groups.filter((g) => g.tier === "EXPECTED");
 
+  // OPE-391 — the rich-result subset drives the verdict's lead clause, because
+  // it is the one technical issue class that is a real defect on a real page
+  // rather than a coverage state. Counted from the same ACTION-tier filter as
+  // the cards above, so the banner and the table can never disagree.
+  const richResultFailCount = issues.filter(
+    (i) =>
+      i.issueType === "GSC_RICH_RESULT_FAIL" &&
+      !isExpectedRow(i) &&
+      !isActivelySnoozed(i.snoozedUntil)
+  ).length;
+  const readings = [
+    technicalReading({ errorCount, warningCount, richResultFailCount }),
+    dataReading(dataHealth),
+    trafficReading(traffic),
+  ];
+  const verdict = computeSiteHealthVerdict(readings);
+
   return (
     <>
+      {/* ── OPE-391 Block 0 — verdict ─────────────────────────────────
+          One line answering "is the whole site healthy?" across all three
+          instruments. `unknown` is a distinct state and never renders green:
+          a health page that says "Healthy" because its data source is down
+          would be the purest form of the failure it exists to catch. */}
+      <VerdictBanner verdict={verdict} />
+
+      {/* ── OPE-391 Block A — unified KPI header ──────────────────────── */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        {readings.map((r) => (
+          <InstrumentTile key={r.key} reading={r} />
+        ))}
+      </div>
+
       <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-6">
         <Card>
           <CardContent className="p-6">
@@ -4533,6 +4676,294 @@ async function SiteHealthTab() {
               )}
             </tbody>
           </table>
+        </CardContent>
+      </Card>
+
+      {/* ── OPE-391 Block B — data health ─────────────────────────────────
+          Net-new: there was no Data Health surface anywhere in admin before
+          this (/admin/data-health, /admin/recommendations and /admin/cpi all
+          404). Counts are LIVE, not read from the nightly snapshot, so a dead
+          canary cannot freeze them at their last good value. */}
+      <Card className="mt-8" id="data-health">
+        <CardHeader>
+          <CardTitle>Data health — Goodwill discrepancy pipeline</CardTitle>
+          <p className="text-sm text-muted-foreground mt-1">
+            Where our event data disagrees with a source we trust. Counts are queried live; the
+            trend comes from the nightly snapshot.
+          </p>
+        </CardHeader>
+        <CardContent>
+          {dataHealth.snapshotStale && (
+            <p className="mb-3 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              <strong>Trend is stale.</strong>{" "}
+              {dataHealth.latestSnapshotAgeDays === null
+                ? "No health snapshot has ever been written — the nightly canary has never run."
+                : `The newest snapshot is ${dataHealth.latestSnapshotAgeDays} days old, so the line below is not current.`}{" "}
+              The live counts above it are unaffected.
+            </p>
+          )}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8">
+            <div>
+              <StatRow label="Open discrepancies" value={fmt(dataHealth.liveOpen)} hint="live" />
+              <StatRow label="Outreach candidates" value={fmt(dataHealth.liveOutreachCandidates)} />
+              <StatRow
+                label="Weighted priority"
+                value={dataHealth.liveWeightedPriority.toFixed(1)}
+              />
+              <StatRow
+                label="Operator overrides"
+                value={fmt(dataHealth.operatorOverrides28d)}
+                hint="28d"
+              />
+            </div>
+            <div>
+              {/* The honest coverage figure. `ground_truth_coverage` in the MCP
+                  report counts superseded_* bookkeeping closures as resolved and
+                  reads ~0.999 while meaning nothing — on 2026-08-30, 6,574 of its
+                  7,039 numerator was one bulk duplicate cleanup. */}
+              <StatRow
+                label="Adjudicated coverage"
+                value={
+                  dataHealth.resolutions.adjudicatedCoverage === null
+                    ? "—"
+                    : fmtPct(dataHealth.resolutions.adjudicatedCoverage * 100)
+                }
+                hint="judged rows only, 28d"
+              />
+              <StatRow
+                label="Adjudicated"
+                value={fmt(dataHealth.resolutions.adjudicated)}
+                hint="28d"
+              />
+              <StatRow label="Dismissed" value={fmt(dataHealth.resolutions.dismissed)} hint="28d" />
+              <StatRow
+                label="Superseded"
+                value={fmt(dataHealth.resolutions.superseded)}
+                hint="bookkeeping, 28d"
+              />
+            </div>
+          </div>
+
+          {dataHealth.trend.length > 1 ? (
+            <div className="mt-5">
+              <p className="text-xs text-muted-foreground mb-1">
+                Open discrepancies, {dataHealth.trend.length} days
+                {dataHealth.liveVsSnapshotDelta !== null &&
+                  Math.abs(dataHealth.liveVsSnapshotDelta) > 0 &&
+                  ` · live count differs from the newest snapshot by ${dataHealth.liveVsSnapshotDelta > 0 ? "+" : ""}${dataHealth.liveVsSnapshotDelta}`}
+              </p>
+              <Sparkline
+                points={dataHealth.trend.map((t) => ({ date: t.date, value: t.openCount }))}
+                colorClass="stroke-amber-600"
+                fillClass="fill-amber-100"
+              />
+            </div>
+          ) : (
+            <p className="mt-5 text-xs text-muted-foreground">
+              Not enough snapshot history to draw a trend yet.
+            </p>
+          )}
+
+          {/* B8 — never a silent zero. These metrics have no data source until
+              the outreach communication layer ships. */}
+          <p className="mt-4 text-xs text-muted-foreground">
+            <strong>Awaiting Phase 2 promoter-reply data:</strong> calibration vs promoter-confirmed
+            truth, false-flag rate, promoter reply rate. These are pending, not zero.
+          </p>
+        </CardContent>
+      </Card>
+
+      {/* ── OPE-391 Block D1 — traffic ────────────────────────────────── */}
+      <Card className="mt-6">
+        <CardHeader>
+          <CardTitle>Traffic</CardTitle>
+          <p className="text-sm text-muted-foreground mt-1">
+            Organic search sessions, not raw active users — the raw figure is inflated by (direct)
+            and bot traffic. Window ends {traffic.windowEndDate}, two days back, because GA4
+            back-fills for roughly 48h and a window ending today invents a decline.
+          </p>
+        </CardHeader>
+        <CardContent>
+          {traffic.current === null ? (
+            <p className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              <strong>GA4 did not report.</strong> This is not zero traffic — the query failed or
+              GA4 is misconfigured. The verdict above is marked unverified accordingly.
+            </p>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8">
+              <div>
+                <StatRow
+                  label="Organic sessions"
+                  value={fmt(traffic.current)}
+                  hint={`${traffic.windowDays}d`}
+                />
+                <StatRow
+                  label="Previous period"
+                  value={traffic.previous === null ? "—" : fmt(traffic.previous)}
+                />
+                <StatRow
+                  label="Week over week"
+                  value={
+                    traffic.deltaPct === null
+                      ? "—"
+                      : `${traffic.deltaPct >= 0 ? "+" : ""}${Math.round(traffic.deltaPct * 100)}%`
+                  }
+                />
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ── OPE-391 Block D2 — first-party engagement ──────────────────
+          GA4 traffic is not engagement. These are the site's own beacons,
+          which fire before any consent/adblock layer can drop them — on
+          2026-08-25 GA4 saw 3,151 blog outbound clicks against our 4,113. */}
+      <Card className="mt-6">
+        <CardHeader>
+          <CardTitle>On-site engagement — first-party</CardTitle>
+          <p className="text-sm text-muted-foreground mt-1">
+            Last {engagement.windowDays} days, from our own beacons. Anonymous behaviour; the email
+            facet below is the identity-bearing half and is deliberately kept separate.
+          </p>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">
+                Engagement
+              </p>
+              {engagement.engagement.length === 0 ? (
+                <p className="text-xs text-muted-foreground">No engagement events in window.</p>
+              ) : (
+                engagement.engagement.map((e) => (
+                  <StatRow key={e.name} label={e.name} value={fmt(e.count)} />
+                ))
+              )}
+            </div>
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">
+                Conversion
+              </p>
+              {engagement.conversion.length === 0 ? (
+                <p className="text-xs text-muted-foreground">No conversion events in window.</p>
+              ) : (
+                engagement.conversion.map((e) => (
+                  <StatRow key={e.name} label={e.name} value={fmt(e.count)} />
+                ))
+              )}
+            </div>
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">
+                Blog outbound clicks by target
+              </p>
+              {engagement.blogTargetMix.map((t) => (
+                <StatRow
+                  key={t.name}
+                  label={t.name}
+                  value={`${fmt(t.count)} · ${
+                    engagement.blogClickTotal === 0
+                      ? "—"
+                      : fmtPct((t.count / engagement.blogClickTotal) * 100)
+                  }`}
+                />
+              ))}
+            </div>
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">
+                Top source posts
+              </p>
+              {engagement.topSourcePosts.map((t) => (
+                <StatRow key={t.name} label={t.name} value={fmt(t.count)} />
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">
+              Internal searches returning nothing
+            </p>
+            {engagement.zeroResultSearches.length === 0 ? (
+              <p className="text-xs text-muted-foreground">
+                No zero-result searches in window — every search found something.
+              </p>
+            ) : (
+              <>
+                <p className="text-xs text-muted-foreground mb-1">
+                  Each of these is a visitor who asked for something we do not have or cannot match.
+                  Search fires as you type, so a real query also leaves its own prefixes here
+                  (&quot;two brothers m&quot;, &quot;two brothers ma&quot;…) — read the longest form
+                  of a repeated stem, not the count.
+                </p>
+                {engagement.zeroResultSearches.map((q) => (
+                  <StatRow key={q.name} label={`"${q.name}"`} value={fmt(q.count)} />
+                ))}
+              </>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ── OPE-391 Block E — email & relationship ─────────────────────── */}
+      <Card className="mt-6">
+        <CardHeader>
+          <CardTitle>Email &amp; relationships</CardTitle>
+          <p className="text-sm text-muted-foreground mt-1">
+            Higher-intent, identity-bearing engagement — read by intent, not volume. Queue counts
+            are all-time (an obligation stays open until closed); click-back rates cover the last{" "}
+            {ENGAGEMENT_WINDOW_DAYS} days.
+          </p>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">
+                Inbound support queue
+              </p>
+              <StatRow label="Open obligations" value={fmt(email.openCount)} />
+              <StatRow
+                label="Oldest open"
+                value={email.oldestOpenDays === null ? "—" : `${email.oldestOpenDays} days`}
+              />
+              {/* Triaged-out rows are cold outreach and clutter. Shown apart so
+                  the open count is not read as "N people waiting on us". */}
+              <StatRow
+                label="Triaged out"
+                value={fmt(email.triagedOutCount)}
+                hint="not an obligation / duplicate"
+              />
+              {email.byStatus.map((sRow) => (
+                <StatRow key={sRow.name} label={sRow.name} value={fmt(sRow.count)} />
+              ))}
+            </div>
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">
+                Confirm click-back
+              </p>
+              <StatRow label="Newsletter submits" value={fmt(email.newsletterSubmits)} />
+              <StatRow label="Newsletter confirms" value={fmt(email.newsletterConfirms)} />
+              <StatRow
+                label="Confirm rate"
+                value={
+                  email.newsletterConfirmRate === null
+                    ? "—"
+                    : fmtPct(email.newsletterConfirmRate * 100)
+                }
+              />
+              <StatRow label="Register views" value={fmt(email.registerViews)} />
+              <StatRow label="Register interacted" value={fmt(email.registerInteracted)} />
+              <StatRow label="Register submitted" value={fmt(email.registerSubmitted)} />
+            </div>
+          </div>
+
+          {/* Never a zero. There is no open/click telemetry to report. */}
+          <p className="mt-4 rounded border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+            <strong>Blind spot, not zero:</strong> outbound opens, click-through and deliverability
+            are <em>not measurable</em> on Cloudflare <code>cf-email</code> — there is no tracking
+            pixel and no delivery-event feed (OPE-177). Any dashboard showing 0% open rate here
+            would be reporting an absent instrument as a result. Reply counts also undercount:
+            replies sent outside the ledger are invisible (OPE-361/353).
+          </p>
         </CardContent>
       </Card>
     </>

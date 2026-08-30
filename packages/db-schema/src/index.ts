@@ -5713,3 +5713,6 @@ export type RegistrationAttemptOutcome =
 // OPE-630 — the LIKE-cap-safe substring predicate, shared by the app AND the
 // MCP Worker. Two deploy artifacts, one implementation.
 export * from "./contains-ci";
+
+// OPE-391 — shared with the MCP Worker; see the file header.
+export * from "./data-health-kpis";
