@@ -2987,7 +2987,20 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .describe("Venue name (also regenerates slug)"),
       address: z.string().optional().describe("Street address"),
       city: z.string().optional().describe("City"),
-      state: z.string().optional().describe("State (2-letter code)"),
+      state: z
+        .string()
+        .max(2)
+        .optional()
+        // OPE-643 — the description promised "2-letter code" and the schema
+        // enforced nothing, on update_venue / update_vendor / create_promoter /
+        // update_promoter. `create_venue` was the ONE writer that enforced
+        // .min(1).max(2), and correspondingly `venues.state` holds zero non-US
+        // values in prod while `vendors.state` holds "FINLAND". The gap between
+        // a described contract and an enforced one is exactly the width of the
+        // bad row. Format only — a valid 2-letter non-US code like "ON" stays
+        // storable; whether it gets a browse facet is a separate vocabulary
+        // decision, made in isBrowseStateCode().
+        .describe("State (2-letter code)"),
       zip: z.string().optional().describe("ZIP code"),
       latitude: z.number().optional().describe("Latitude coordinate"),
       longitude: z.number().optional().describe("Longitude coordinate"),
@@ -3665,7 +3678,20 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       contact_email: z.string().optional().describe("Contact email"),
       contact_phone: z.string().optional().describe("Contact phone"),
       city: z.string().optional().describe("City"),
-      state: z.string().optional().describe("State (2-letter code)"),
+      state: z
+        .string()
+        .max(2)
+        .optional()
+        // OPE-643 — the description promised "2-letter code" and the schema
+        // enforced nothing, on update_venue / update_vendor / create_promoter /
+        // update_promoter. `create_venue` was the ONE writer that enforced
+        // .min(1).max(2), and correspondingly `venues.state` holds zero non-US
+        // values in prod while `vendors.state` holds "FINLAND". The gap between
+        // a described contract and an enforced one is exactly the width of the
+        // bad row. Format only — a valid 2-letter non-US code like "ON" stays
+        // storable; whether it gets a browse facet is a separate vocabulary
+        // decision, made in isBrowseStateCode().
+        .describe("State (2-letter code)"),
       address: z.string().optional().describe("Street address"),
       zip: z.string().optional().describe("ZIP code"),
       logo_url: z.string().optional().describe("Logo image URL"),
@@ -4196,7 +4222,20 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .optional()
         .describe("Promoter description"),
       city: z.string().optional().describe("City"),
-      state: z.string().optional().describe("State (2-letter code)"),
+      state: z
+        .string()
+        .max(2)
+        .optional()
+        // OPE-643 — the description promised "2-letter code" and the schema
+        // enforced nothing, on update_venue / update_vendor / create_promoter /
+        // update_promoter. `create_venue` was the ONE writer that enforced
+        // .min(1).max(2), and correspondingly `venues.state` holds zero non-US
+        // values in prod while `vendors.state` holds "FINLAND". The gap between
+        // a described contract and an enforced one is exactly the width of the
+        // bad row. Format only — a valid 2-letter non-US code like "ON" stays
+        // storable; whether it gets a browse facet is a separate vocabulary
+        // decision, made in isBrowseStateCode().
+        .describe("State (2-letter code)"),
       contact_email: z.string().optional().describe("Primary contact email address"),
       contact_phone: z.string().optional().describe("Contact phone number"),
       logo_url: z.string().optional().describe("URL to promoter logo image"),
@@ -4361,7 +4400,20 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       description: z.string().transform(sanitizeProse).optional().describe("Promoter description"),
       website: z.string().optional().describe("Website URL"),
       city: z.string().optional().describe("City"),
-      state: z.string().optional().describe("State (2-letter code)"),
+      state: z
+        .string()
+        .max(2)
+        .optional()
+        // OPE-643 — the description promised "2-letter code" and the schema
+        // enforced nothing, on update_venue / update_vendor / create_promoter /
+        // update_promoter. `create_venue` was the ONE writer that enforced
+        // .min(1).max(2), and correspondingly `venues.state` holds zero non-US
+        // values in prod while `vendors.state` holds "FINLAND". The gap between
+        // a described contract and an enforced one is exactly the width of the
+        // bad row. Format only — a valid 2-letter non-US code like "ON" stays
+        // storable; whether it gets a browse facet is a separate vocabulary
+        // decision, made in isBrowseStateCode().
+        .describe("State (2-letter code)"),
       contact_email: z.string().optional().describe("Contact email"),
       contact_phone: z.string().optional().describe("Contact phone"),
       logo_url: z.string().optional().describe("Logo image URL (small square avatar)"),

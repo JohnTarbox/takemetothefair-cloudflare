@@ -3,6 +3,7 @@ import {
   browseInitial,
   groupByInitial,
   groupByState,
+  isBrowseStateCode,
   stateLabel,
   stateSlug,
   BROWSE_LETTERS,
@@ -56,6 +57,70 @@ describe("groupByState", () => {
     expect(g.has("")).toBe(false);
     // blank/null states are dropped entirely
     expect(Array.from(g.keys()).sort()).toEqual(["ME", "VT"]);
+  });
+});
+
+/**
+ * OPE-643 — the by-state facet enumerated whatever sat in `state`.
+ *
+ * Every row below is real, read from prod D1 on 2026-08-30. They are NOT dirty
+ * data: "Axopar Boats Oy" is a Finnish company in Helsinki, and both ON rows
+ * are Ontario businesses. The column is being used as a region field for
+ * non-US vendors; the defect is that a facet built on US state names
+ * enumerated it and labelled Ontario a state.
+ */
+describe("groupByState — the facet vocabulary (OPE-643)", () => {
+  const PROD = [
+    E("Axopar Boats Oy", "FINLAND"),
+    E("Rossiter Boats", "ON"),
+    E("Allanson Inc", "ON"),
+    E("Maine Maple Co", "ME"),
+    E("Bay State Crafts", "ma"),
+  ];
+
+  it("drops a country name sitting in the state column", () => {
+    expect(Array.from(groupByState(PROD).keys())).not.toContain("FINLAND");
+  });
+
+  it("drops a Canadian province code", () => {
+    // Two-letter and uppercase, so a format check alone would let it through.
+    // Only a vocabulary check catches it.
+    expect(Array.from(groupByState(PROD).keys())).not.toContain("ON");
+  });
+
+  it("keeps every US state and territory, case-insensitively", () => {
+    expect(Array.from(groupByState(PROD).keys()).sort()).toEqual(["MA", "ME"]);
+    expect(groupByState([E("x", "dc"), E("y", "PR")]).size).toBe(2);
+  });
+
+  it("does NOT orphan the excluded vendors — they stay in the A-Z facet", () => {
+    // The guard that makes this fix safe. OPE-40 exists so every entity is
+    // reachable within ~3 clicks; dropping rows from one facet would break
+    // that promise if the letter facet also filtered. It does not.
+    const byLetter = groupByInitial(PROD);
+    expect(byLetter.get("A")?.map((e) => e.name)).toEqual(["Allanson Inc", "Axopar Boats Oy"]);
+    expect(byLetter.get("R")?.map((e) => e.name)).toEqual(["Rossiter Boats"]);
+  });
+
+  it("never yields a key the detail route would 404 on", () => {
+    // The browse INDEX builds its hrefs from these keys, and the [state] route
+    // requires /^[A-Z]{2}$/ then a non-empty bucket. Before the fix the index
+    // emitted /vendors/browse/state/finland, which 404s — a crawlable hub
+    // linking to a dead page. Encoded as an invariant over the keys.
+    for (const code of groupByState(PROD).keys()) {
+      expect(code).toMatch(/^[A-Z]{2}$/);
+      expect(stateLabel(code)).not.toBe(code); // resolves to a real name
+    }
+  });
+});
+
+describe("isBrowseStateCode (OPE-643)", () => {
+  it("accepts US states and territories in any case or padding", () => {
+    for (const c of ["ME", "me", " vt ", "DC", "pr"]) expect(isBrowseStateCode(c)).toBe(true);
+  });
+  it("rejects non-US values, blanks and unknown codes", () => {
+    for (const c of ["ON", "FINLAND", "XX", "", "   ", null, undefined])
+      expect(isBrowseStateCode(c)).toBe(false);
   });
 });
 

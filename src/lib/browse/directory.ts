@@ -42,12 +42,60 @@ export function groupByInitial(entries: BrowseEntry[]): Map<string, BrowseEntry[
   return map;
 }
 
-/** Group entries by 2-letter state code (uppercased); blanks bucket to "". */
+/**
+ * Is this a code the by-state browse facet is actually about?
+ *
+ * OPE-643 — the rule, written down: **the facet's vocabulary is
+ * `US_STATE_NAMES`, exactly.** It has no opinion about what may be STORED in
+ * `state`; it only decides what gets a "By state" page.
+ *
+ * That distinction is the whole ticket. The three rows this excludes are not
+ * dirty data — they are accurate:
+ *
+ *   Axopar Boats Oy    Helsinki   FINLAND    (a genuinely Finnish company)
+ *   Rossiter Boats     Markdale   ON         (Ontario)
+ *   Allanson Inc       Markham    ON         (Ontario)
+ *
+ * So "correct the rows" would have destroyed true information. The column is
+ * being used as a region field for non-US businesses, and the defect is that a
+ * facet built on US state names enumerated it anyway: `stateLabel` falls back
+ * to `code.toUpperCase()`, which is how "finland" rendered as "FINLAND" and
+ * "on" as "ON" — a heading claiming Ontario is a state.
+ *
+ * Worse than a bad page: `/vendors/browse/state/finland` 404s (the detail
+ * route requires /^[A-Z]{2}$/), while `/vendors/browse` still LINKED to it. A
+ * crawlable hub emitting a link to a 404 is a worse signal than a thin page.
+ *
+ * Excluded vendors are NOT orphaned — `groupByInitial` has no state filter, so
+ * all three remain reachable at `/vendors/browse/letter/<x>`, which preserves
+ * OPE-40's "every entity within ~3 clicks" guarantee that this whole subtree
+ * exists to provide.
+ *
+ * To add Canadian provinces later, extend the vocabulary and rename the
+ * heading — a deliberate product change, not a loosened filter.
+ */
+export function isBrowseStateCode(code: string | null | undefined): boolean {
+  if (!code) return false;
+  return Object.prototype.hasOwnProperty.call(US_STATE_NAMES, code.trim().toUpperCase());
+}
+
+/**
+ * Group entries by 2-letter state code (uppercased); blanks bucket to "".
+ *
+ * OPE-643 — codes outside the facet vocabulary are skipped. Filtering HERE
+ * rather than in the page covers all four surfaces at once: the vendor and
+ * venue browse indexes and both `[state]` detail routes share this grouper.
+ * `venues.state` happens to be clean today (0 non-US values on 2026-08-30)
+ * precisely because `create_venue` is the one writer that enforces max-2 — but
+ * the code path is identical, and patching only the vendor side would be the
+ * one-of-two-parallel-paths defect again.
+ */
 export function groupByState(entries: BrowseEntry[]): Map<string, BrowseEntry[]> {
   const map = new Map<string, BrowseEntry[]>();
   for (const e of entries) {
     const k = (e.state ?? "").trim().toUpperCase();
     if (!k) continue;
+    if (!isBrowseStateCode(k)) continue;
     (map.get(k) ?? map.set(k, []).get(k)!).push(e);
   }
   for (const list of map.values()) list.sort((a, b) => a.name.localeCompare(b.name));
