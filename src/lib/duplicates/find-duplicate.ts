@@ -11,8 +11,8 @@
  * generator divergence in [[project_event_insert_paths]].
  *
  * Match-stage order (first hit wins):
- *   1. exact_url       — events.source_url equality AND dates agree
- *      series_url      — events.source_url equality, dates DISAGREE
+ *   1. exact_url       — events.source_url equality AND the SAME CALENDAR DAY
+ *      series_url      — events.source_url equality, a different day (OPE-650)
  *   2. venue_date      — autoLinkVenue resolves a venueId; existing
  *                        events at that venue within ±dateWindowDays
  *   3. city_state_date — venues.city + venues.state join; existing
@@ -47,9 +47,15 @@
  *
  * So the split is by meaning, not by strictness:
  *
- *   exact_url  — same URL AND the dates agree (or there is no candidate
+ *   exact_url  — same URL AND the same calendar day (or there is no candidate
  *                date and the URL identifies exactly one event). This
  *                really is the same event. Still a blocking duplicate.
+ *
+ *                OPE-650: "the dates agree" was implemented as the ±7-day
+ *                window shared with stages 2-4, and a weekly series is 7 days
+ *                apart — so an organizer listing a season on one page had every
+ *                event after the first refused against its sibling. Same day is
+ *                what this stage always meant.
  *   series_url — same URL, dates disagree (or the URL is a directory page
  *                on 2+ events, so it cannot identify which). Same source,
  *                different edition. NOT a blocking duplicate.
@@ -66,14 +72,25 @@
  * rule would not have fired. The date comparison is what does the work; the
  * 2+ count only covers the undated case.
  *
- * Deferred to a follow-up PR (per the K2 plan): rewire the
- * suggest_event / update_event MCP tools (vendor.ts:772-788,
- * admin.ts:861-911) through this helper. Those paths today use an
- * overlap-based date predicate (`existing.start <= newEnd AND
- * coalesce(existing.end, existing.start) >= newStart`) instead of the
- * ±7-day window used here, and surface possible_duplicates as
- * warnings rather than blocking duplicates. Unifying them is a
- * behavior change that needs its own audit + PR.
+ * ⚠️ STALE NOTE CORRECTED (OPE-650, 2026-08-30). This paragraph used to say the
+ * suggest_event / update_event rewire was "deferred to a follow-up PR" and that
+ * those tools still ran their own overlap-based dedup. That has been untrue
+ * since the K2 rewire. Verified by reading the chain:
+ *
+ *   suggest_event (mcp-server/src/tools/vendor.ts:1024)
+ *     -> checkDuplicateViaMainApp (mcp-server/src/duplicates/check-duplicate.ts:94)
+ *       -> POST /api/suggest-event/check-duplicate
+ *         -> findDuplicate  (this file)
+ *
+ * So there is exactly ONE dedup implementation and a change here reaches the MCP
+ * tools too — which is why OPE-650's fix below needed no second edit. Left as a
+ * correction rather than deleted: a stale "this is deferred" note is precisely
+ * what produces a fix wired into one of two parallel paths, and this one had
+ * already outlived its truth by ten weeks.
+ *
+ * What still differs between the tools is what they DO with a hit, not how they
+ * find it: `suggest_event` blocks (overridable by `force_create`), while
+ * `update_event` is warning-only.
  */
 
 import { and, asc, eq, gte, isNull, lte, sql } from "drizzle-orm";
@@ -252,6 +269,64 @@ export async function findDuplicate(
   const minDate = haveDate ? new Date(eventDate.getTime() - dateRangeMs) : null;
   const maxDate = haveDate ? new Date(eventDate.getTime() + dateRangeMs) : null;
 
+  // OPE-650 — stage 1 stops using a fixed window and asks the right question.
+  //
+  // Stage 1 used to reuse `dateWindowDays` (default 7). That window is a "the
+  // organizer nudged the date" tolerance, which is right for venue+date
+  // matching and WRONG here, because a weekly series is exactly 7 days apart —
+  // so every consecutive pair lands on the inclusive boundary.
+  //
+  // Live case: Brookfield Orchards lists its whole season on one home page.
+  // "The Kids Market" (Sep 19) and "Local Author's Fair" (Sep 26) are 7 days
+  // apart, so `Sep 26 - 7 = Sep 19` matched, and the second event was refused
+  // as an `exact_url` duplicate of the first. Different name, different date,
+  // different event; the only thing shared was the URL.
+  //
+  // The semantics this stage already claims for itself (OPE-454, above) are
+  // "same URL AND the dates agree ... This really is the same event." The right
+  // test for that is not a window at all: it is whether the candidate day falls
+  // inside the existing event's OWN RUN, `[start_date, end_date]`.
+  //
+  // That is what makes the two cases separable, and a symmetric window cannot:
+  //
+  //   a source reporting the fair's SECOND DAY   -> inside that event's run  -> same event
+  //   the next weekly edition on the same page   -> outside it               -> a sibling
+  //
+  // A fixed ±N days has to choose between them and gets one wrong either way;
+  // the event's own span already carries the answer.
+  //
+  // Nothing is lost. A genuine re-submission whose date moved outside the run
+  // is still caught by stage 2 (venue+date, ±7d) or stage 4 (similar name +
+  // date), both equally blocking. Stage 1 does not need to be the wide net.
+  const urlDayStart = haveDate
+    ? new Date(
+        Date.UTC(
+          eventDate.getUTCFullYear(),
+          eventDate.getUTCMonth(),
+          eventDate.getUTCDate(),
+          0,
+          0,
+          0,
+          0
+        )
+      )
+    : null;
+  // Day-bounded, so a noon-UTC-anchored row and a midnight-anchored one both
+  // compare as the same calendar day rather than missing by twelve hours.
+  const urlDayEnd = haveDate
+    ? new Date(
+        Date.UTC(
+          eventDate.getUTCFullYear(),
+          eventDate.getUTCMonth(),
+          eventDate.getUTCDate(),
+          23,
+          59,
+          59,
+          999
+        )
+      )
+    : null;
+
   // OPE-477 — every stage that could not evaluate, so "no match" is
   // distinguishable from "never checked".
   const stagesSkipped: SkippedStage[] = [];
@@ -278,8 +353,16 @@ export async function findDuplicate(
         .where(
           and(
             eq(events.sourceUrl, input.sourceUrl),
-            gte(events.startDate, minDate!),
-            lte(events.startDate, maxDate!),
+            // OPE-650 — does the candidate day fall inside this event's own run?
+            // `end_date` is nullable, so a single-day event collapses to its
+            // start and the test degrades to same-day, which is correct for it.
+            lte(events.startDate, urlDayEnd!),
+            // Raw fragment, so the bound value must be EPOCH SECONDS — Drizzle
+            // only converts a Date for a typed column comparison, and these
+            // columns are integer seconds.
+            sql`COALESCE(${events.endDate}, ${events.startDate}) >= ${Math.floor(
+              urlDayStart!.getTime() / 1000
+            )}`,
             notAMergeTombstone()
           )
         )
