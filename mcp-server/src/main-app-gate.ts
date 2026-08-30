@@ -69,6 +69,32 @@ export function isWorkerOom(bodyExcerpt: string | null | undefined): boolean {
   return typeof bodyExcerpt === "string" && bodyExcerpt.toLowerCase().includes("exceeded memory");
 }
 
+/**
+ * OPE-641 — classify a non-2xx cron response.
+ *
+ * Three shapes, not two. An isolate OOM kill and an ordinary upstream error
+ * were separated by OPE-489; this adds the case that was still ambiguous —
+ * a 5xx that returns NO BODY AT ALL.
+ *
+ * gsc-metrics-sync failed 503-with-no-body on 2026-08-30, one day after a
+ * confirmed `worker-oom` on the same endpoint in the same 06:02Z cron slot.
+ * It matched neither branch and was filed as a plain `non-2xx`, i.e. the same
+ * bucket as a genuine upstream error page. OPE-489 hit the same ambiguity from
+ * the other direction: two sweeps failed 503-shaped and later CONVERGED onto
+ * the memory 500.
+ *
+ * This deliberately does NOT guess which one an empty-body 5xx is. Naming it
+ * is the point — an unclassifiable failure should say so rather than borrow a
+ * label that implies a diagnosis nobody made.
+ */
+export type CronFailureCause = "worker-oom" | "5xx-no-body" | "non-2xx";
+
+export function classifyCronFailure(status: number, bodyExcerpt: string): CronFailureCause {
+  if (isWorkerOom(bodyExcerpt)) return "worker-oom";
+  if (status >= 500 && bodyExcerpt.trim() === "") return "5xx-no-body";
+  return "non-2xx";
+}
+
 /** Test-only: reset the gate between cases. */
 export function __resetMainAppGate(): void {
   active = 0;

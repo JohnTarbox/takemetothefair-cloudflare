@@ -2,7 +2,7 @@ import OAuthProvider from "@cloudflare/workers-oauth-provider";
 import { McpAgent } from "agents/mcp";
 import { getCurrentAgent } from "agents";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { withMainAppSlot, isWorkerOom } from "./main-app-gate.js";
+import { withMainAppSlot, isWorkerOom, classifyCronFailure } from "./main-app-gate.js";
 import { LoginHandler } from "./oauth/login-handler.js";
 import {
   decideSendRouting,
@@ -726,18 +726,36 @@ async function runMainAppSweep(
       // OPE-489 §4 — an isolate OOM kill and a transient blip used to log
       // identically, which is why this read as flakiness for two weeks. Name it.
       const oom = isWorkerOom(text);
+      // OPE-641 §1 — a 5xx with an EMPTY body is its own shape and must not be
+      // filed as an ordinary non-2xx.
+      //
+      // gsc-metrics-sync failed 503-with-no-body on 2026-08-30, one day after a
+      // confirmed `worker-oom`, same endpoint and same 06:02Z slot. It could not
+      // be classified from the log, because an empty body matches neither
+      // `isWorkerOom` nor anything else — so it landed in the same bucket as a
+      // genuine upstream 500 that returned an error page. OPE-489 saw the same
+      // ambiguity from the other side: two sweeps failed 503-shaped and later
+      // CONVERGED onto the memory 500.
+      //
+      // This does not guess which it is. It stops the two from being
+      // indistinguishable, so the next occurrence is classifiable instead of
+      // being re-litigated from a transcript.
+      const cause = classifyCronFailure(response.status, text);
+      const emptyBody5xx = cause === "5xx-no-body";
       await logError(env.DB, {
         source: `mcp:schedule:${label.replace(/\s+/g, "-")}`,
         message: oom
           ? `cron task '${label}' killed by Worker memory limit`
-          : `cron task '${label}' returned non-2xx`,
+          : emptyBody5xx
+            ? `cron task '${label}' returned ${response.status} with no body (unclassified — see OPE-641)`
+            : `cron task '${label}' returned non-2xx`,
         statusCode: response.status,
         sessionId,
         context: {
           path,
           status: response.status,
           bodyExcerpt: text,
-          cause: oom ? "worker-oom" : "non-2xx",
+          cause,
         },
       });
       return;
