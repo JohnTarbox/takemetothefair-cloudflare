@@ -11,11 +11,20 @@ import { IconButton } from "@/components/ui/icon-button";
 interface FavoriteButtonProps {
   type: FavoritableType;
   id: string;
+  /**
+   * OPE-392 — REQUIRED. The analytics join key.
+   *
+   * `id` is a UUID, which identifies the row but tells an analyst nothing and
+   * joins to nothing they can read. Every favourite event was landing with
+   * `entity_slug` unset for exactly this reason. Required rather than optional
+   * so a new call site cannot silently drop it.
+   */
+  slug: string;
   className?: string;
   size?: "sm" | "md" | "lg";
 }
 
-export function FavoriteButton({ type, id, className, size = "md" }: FavoriteButtonProps) {
+export function FavoriteButton({ type, id, slug, className, size = "md" }: FavoriteButtonProps) {
   // Cohort 4 (2026-06-01) — pull favorited state from per-page
   // FavoritesProvider cache instead of fetching on every mount. One
   // fetch per type per page-load, shared across all FavoriteButtons.
@@ -69,7 +78,7 @@ export function FavoriteButton({ type, id, className, size = "md" }: FavoriteBut
     // add_to_favorites/remove_from_favorites (GA4 Recommended). Helper
     // owns the 30-day cutover window; see src/lib/analytics.ts and
     // docs/eng1-audit.md §B.1 for the safe-to-cutover invariant.
-    trackFavoriteToggle(type, id, newState ? "add" : "remove");
+    trackFavoriteToggle(type, id, newState ? "add" : "remove", slug);
 
     startTransition(async () => {
       try {

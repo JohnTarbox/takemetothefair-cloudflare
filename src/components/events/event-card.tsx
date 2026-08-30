@@ -305,6 +305,7 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
           <FavoriteButton
             type="EVENT"
             id={event.id}
+            slug={event.slug}
             className="absolute top-3 right-3 z-10"
             size="sm"
           />

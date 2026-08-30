@@ -4,6 +4,7 @@
  */
 
 import { ALL_FUNNEL_STEP_NAMES } from "@/lib/analytics/funnel-steps";
+import { findTrackedEvent } from "@/lib/analytics/event-sinks";
 
 declare global {
   interface Window {
@@ -59,13 +60,17 @@ export function trackViewVenueDetail(venueSlug: string, venueName: string) {
   });
 }
 
-/** Track "add to calendar" clicks */
+/** Track "add to calendar" clicks.
+ *
+ *  OPE-392 Ask A — was GA4-only, with no comment saying why. Now dual-emits
+ *  through `track()`, so the attendance-intent strip on the Site Health tab
+ *  can count it and it is joinable to a specific fair. */
 export function trackAddToCalendar(eventSlug: string, calendarType: string) {
-  trackEvent("add_to_calendar", {
-    category: "conversion",
-    label: eventSlug,
-    calendar_type: calendarType,
-  });
+  track(
+    "add_to_calendar",
+    { entityType: "EVENT", entitySlug: eventSlug, calendarType },
+    { label: eventSlug, entity_type: "EVENT", entity_slug: eventSlug, calendar_type: calendarType }
+  );
 }
 
 /** Track when search returns zero results */
@@ -141,6 +146,40 @@ function sendBeacon(name: string, category: BeaconCategory, properties?: Record<
   }).catch(() => {
     // Beacon failures are non-critical — never surface to the user.
   });
+}
+
+/**
+ * OPE-392 Ask C — emit an event to exactly the sinks its registry entry
+ * declares.
+ *
+ * The value is not that it writes to two places; `sendBeacon` and `trackEvent`
+ * already did that. It is that the sink set is DECLARED, so an event cannot
+ * reach one sink because somebody forgot the other — the failure that left
+ * `add_to_calendar` GA4-only with no comment while `share` was GA4-only on
+ * purpose, indistinguishable in the source.
+ *
+ * Throws for an undeclared name rather than guessing a sink set. A silent
+ * default would recreate exactly the ambiguity this replaces, and the throw
+ * fires in development the first time a new event is wired, not in production.
+ */
+export function track(
+  name: string,
+  properties: Record<string, unknown> = {},
+  ga4Extra: Record<string, unknown> = {}
+) {
+  const def = findTrackedEvent(name);
+  if (!def) {
+    throw new Error(
+      `track("${name}") — event is not declared in TRACKED_EVENTS. ` +
+        `Add it to src/lib/analytics/event-sinks.ts with its sinks.`
+    );
+  }
+  if (def.sinks.includes("ga4")) {
+    trackEvent(name, { category: def.category, ...properties, ...ga4Extra });
+  }
+  if (def.sinks.includes("beacon")) {
+    sendBeacon(name, def.category, properties);
+  }
 }
 
 /** Track a click on an outbound application URL on an event detail page. */
@@ -320,19 +359,34 @@ export type FavoritableType = "EVENT" | "VENUE" | "VENDOR" | "PROMOTER";
 export function trackFavoriteToggle(
   entityType: FavoritableType,
   entityId: string,
-  action: "add" | "remove"
+  action: "add" | "remove",
+  // OPE-392 Ask A — REQUIRED, not optional, and that is the fix.
+  //
+  // `entity_slug` was already a registered GA4 custom dimension and came back
+  // `(not set)` on 102 of 106 `add_to_calendar` events. The gap was never
+  // registration, it was emission: when a join key is optional, it is omitted,
+  // and the dimension exists while answering nothing. Typing it required makes
+  // every call site supply it or fail to compile.
+  entitySlug: string
 ) {
   const params = {
     category: "engagement",
-    label: `${entityType}:${entityId}`,
+    label: `${entityType}:${entitySlug}`,
     entity_type: entityType,
     entity_id: entityId,
+    entity_slug: entitySlug,
     favorite_action: action,
   };
-  // Legacy name — 30-day overlap window, dropped 2026-07-09.
+  // Legacy name — 30-day overlap window, dropped 2026-07-09. GA4-only and
+  // undeclared on purpose: it is a duplicate of the Recommended-Events name
+  // below, kept for trendline continuity, and beaconing it too would
+  // double-count favourites in D1.
   trackEvent("favorite_toggle", params);
-  // GA4 Recommended Events naming.
-  trackEvent(action === "add" ? "add_to_favorites" : "remove_from_favorites", params);
+  track(
+    action === "add" ? "add_to_favorites" : "remove_from_favorites",
+    { entityType, entityId, entitySlug, favoriteAction: action },
+    params
+  );
 }
 
 /** Share methods exposed by ShareButtons. */
@@ -343,24 +397,32 @@ export type ShareEntityType = "EVENT" | "BLOG";
 
 /** ENG1.2 (2026-06-09) — share-button instrumentation.
  *
- *  No beacon mirror: share volume is naturally low (~tens/day at current
- *  scale) and the D1 mirror is not justified until we know the GA4 stream
- *  is yielding usable per-method breakdowns. Revisit once `share_method`
- *  custom dimension propagates and we have a baseline. */
+ *  OPE-392 Ask A — the original "no beacon mirror" note said to revisit once
+ *  `share_method` propagated as a GA4 custom dimension and a baseline existed.
+ *  Revisited: OPE-391's Block D2 puts share in the attendance-intent strip
+ *  beside calendar and favourites, and a four-member strip missing one member
+ *  is worse than storing ~72 events per 90 days. Now dual-emits.
+ *
+ *  That earlier decision is exactly why this registry exists — it was correct
+ *  and documented, and from the source alone it was indistinguishable from
+ *  `trackAddToCalendar` simply forgetting. */
 export function trackShare(
   method: ShareMethod,
   entityType: ShareEntityType,
   entityId: string,
   entitySlug: string
 ) {
-  trackEvent("share", {
-    category: "engagement",
-    label: `${entityType}:${entitySlug}`,
-    share_method: method,
-    entity_type: entityType,
-    entity_id: entityId,
-    entity_slug: entitySlug,
-  });
+  track(
+    "share",
+    { entityType, entityId, entitySlug, shareMethod: method },
+    {
+      label: `${entityType}:${entitySlug}`,
+      share_method: method,
+      entity_type: entityType,
+      entity_id: entityId,
+      entity_slug: entitySlug,
+    }
+  );
 }
 
 /** Auth methods used by login + sign_up. */

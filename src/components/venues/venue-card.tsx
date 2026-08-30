@@ -140,6 +140,7 @@ export function VenueCard({ venue, priority = false }: VenueCardProps) {
           <FavoriteButton
             type="VENUE"
             id={venue.id}
+            slug={venue.slug}
             className="absolute top-3 right-3 z-10"
             size="sm"
           />

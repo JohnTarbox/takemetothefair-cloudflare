@@ -134,6 +134,9 @@ jobs:
       - name: Guard against Web APIs above the browser support floor (OPE-640)
         run: npx tsx scripts/check-browser-api-floor.ts
 
+      - name: Guard against direct gtag() call sites (OPE-392)
+        run: npx tsx scripts/check-gtag-call-sites.ts
+
   e2e:
     name: E2E Tests
     runs-on: ubuntu-latest

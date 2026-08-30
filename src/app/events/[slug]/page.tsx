@@ -873,7 +873,7 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
                         {event.name}
                       </h1>
                       <div className="flex items-center gap-2 print:hidden">
-                        <FavoriteButton type="EVENT" id={event.id} size="lg" />
+                        <FavoriteButton type="EVENT" id={event.id} slug={event.slug} size="lg" />
                         <ShareButtons
                           url={`https://meetmeatthefair.com/events/${event.slug}`}
                           title={event.name}
