@@ -642,3 +642,41 @@ export function vendorSearchWhere(params: {
 
   return conditions.length > 0 ? and(...conditions) : undefined;
 }
+
+/**
+ * OPE-645 — the value `update_event` REPORTS for a changed field.
+ *
+ * `previousValues` reads the STORED column; `newValues` used to echo the raw
+ * argument. For any field with a `transform` those are different units, and the
+ * response says so with the same key twice:
+ *
+ *     previousValues: { ticket_price_min: 1300 }   // cents, from the column
+ *     newValues:      { ticket_price_min: 13   }   // dollars, from the argument
+ *
+ * Nothing had changed. A no-op confirmation of $13 was indistinguishable from
+ * someone cutting the price to 13¢ — and `update_event`'s own response warns
+ * that field-level edits leave no audit trail (OPE-505), so this IS the record.
+ *
+ * The fix is structural rather than a per-field conversion: report the value
+ * that was actually written. `updates` is keyed by column, exactly like the row
+ * `previousValues` reads, so both sides describe the same representation by
+ * construction and a diff means what it looks like.
+ *
+ * That also closes the same latent divergence on every OTHER transformed field
+ * — `application_deadline` (date-normalized), `ticket_url` (URL-gated), the
+ * image focal clamps. The ticket found it on money; money was not special.
+ *
+ * Fields with no mapping (`name`, `slug`) are handled by the caller and fall
+ * back to the argument, which for them is already the stored form.
+ */
+export function reportedNewValue(
+  field: string,
+  mapping: { column: string } | undefined,
+  updates: Record<string, unknown>,
+  params: Record<string, unknown>
+): unknown {
+  if (mapping && Object.prototype.hasOwnProperty.call(updates, mapping.column)) {
+    return updates[mapping.column];
+  }
+  return params[field];
+}
