@@ -12,6 +12,7 @@ import {
 } from "@/lib/ga4-measurement-protocol";
 import { trackClaimViewServer } from "@/lib/analytics/claim-funnel";
 import { classifyDevice, NEW_FUNNEL_STEP_NAMES } from "@/lib/analytics/funnel-steps";
+import { BEACON_EVENT_NAMES } from "@/lib/analytics/event-sinks";
 
 const MAX_BODY_BYTES = 4_000;
 const MAX_PROPERTY_BYTES = 2_000;
@@ -65,6 +66,12 @@ const ALLOWED_EVENT_NAMES = [
   // test asserts every registered step is allowlisted here, so the read path
   // and the write path cannot drift apart silently.
   ...NEW_FUNNEL_STEP_NAMES,
+  // OPE-392 — derived from TRACKED_EVENTS in src/lib/analytics/event-sinks.ts,
+  // same contract as NEW_FUNNEL_STEP_NAMES above. A beacon event missing from
+  // this list is rejected 400 and vanishes silently, so the sink declaration
+  // and the accept list must come from one source. A test asserts every
+  // beacon-sinked event appears here.
+  ...BEACON_EVENT_NAMES,
 ] as const;
 
 // ENG1.8 — outbound-click event names mirrored to GA4 server-side via the

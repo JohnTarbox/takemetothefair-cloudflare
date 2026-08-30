@@ -169,7 +169,13 @@ export function VendorCard({ vendor, brandParent, operatorParent }: VendorCardPr
                 size="sm"
               />
               {vendor.commercial && <Badge variant="default">Commercial</Badge>}
-              <FavoriteButton type="VENDOR" id={vendor.id} className="ml-auto" size="sm" />
+              <FavoriteButton
+                type="VENDOR"
+                id={vendor.id}
+                slug={vendor.slug}
+                className="ml-auto"
+                size="sm"
+              />
             </div>
             <div className="flex items-center gap-2 text-sm text-muted-foreground mt-1">
               {vendor.vendorType && <span>{vendor.vendorType}</span>}

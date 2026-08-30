@@ -85,6 +85,7 @@ import { OutboundEventLink } from "@/components/OutboundEventLink";
 import { getPromoterResponseStats } from "@/lib/promoter-stats";
 import { StickyApplyBar } from "@/components/events/StickyApplyBar";
 import { FavoriteButton } from "@/components/FavoriteButton";
+import { TrackedActionLink } from "@/components/analytics/TrackedActionLink";
 import { EventCard } from "@/components/events/event-card";
 import { DetailPageTracker } from "@/components/DetailPageTracker";
 import { ScrollDepthTracker } from "@/components/ScrollDepthTracker";
@@ -767,14 +768,21 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
                       <p className={`text-sm ${categoryColors.icon} opacity-80 mt-1`}>
                         {event.venue.city}, {event.venue.state}
                       </p>
-                      <a
+                      {/* OPE-392 Ask B — directions is attendance intent, and
+                          the strongest pre-visit signal we have. It probed zero
+                          not because nobody clicks it but because nothing
+                          recorded the click. */}
+                      <TrackedActionLink
+                        event="directions_click"
+                        entityType="EVENT"
+                        entitySlug={event.slug}
                         href={mapsUrl}
                         target="_blank"
                         rel="noopener noreferrer"
                         className={`inline-flex items-center min-h-[24px] gap-1 mt-3 text-sm ${categoryColors.icon} underline hover:no-underline`}
                       >
                         View on Map <ExternalLink className="w-3 h-3" />
-                      </a>
+                      </TrackedActionLink>
                     </div>
                   </div>
                 );
@@ -873,7 +881,7 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
                         {event.name}
                       </h1>
                       <div className="flex items-center gap-2 print:hidden">
-                        <FavoriteButton type="EVENT" id={event.id} size="lg" />
+                        <FavoriteButton type="EVENT" id={event.id} slug={event.slug} size="lg" />
                         <ShareButtons
                           url={`https://meetmeatthefair.com/events/${event.slug}`}
                           title={event.name}

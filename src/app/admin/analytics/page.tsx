@@ -4828,6 +4828,31 @@ async function SiteHealthTab() {
           </p>
         </CardHeader>
         <CardContent>
+          {/* OPE-392 — the two named strips. Attendance intent is pre-visit
+              (deciding to go); connected-to-source is the hand-off (leaving us
+              for the organiser). Blended into one number, neither question has
+              an answer. A zero here is real: these events ship with OPE-392 and
+              their first-party series starts at deploy, since GA4's ~90 days
+              cannot be backfilled into D1. */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4 mb-4">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">
+                Attendance intent
+              </p>
+              {engagement.intentStrip.map((e) => (
+                <StatRow key={e.name} label={e.name} value={fmt(e.count)} />
+              ))}
+            </div>
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">
+                Connected to the source
+              </p>
+              {engagement.connectedStrip.map((e) => (
+                <StatRow key={e.name} label={e.name} value={fmt(e.count)} />
+              ))}
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4">
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">

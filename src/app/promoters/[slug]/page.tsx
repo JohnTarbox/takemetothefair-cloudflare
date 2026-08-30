@@ -19,7 +19,7 @@
  */
 
 import { notFound } from "next/navigation";
-import Link from "next/link";
+import { TrackedActionLink } from "@/components/analytics/TrackedActionLink";
 import Image from "next/image";
 import { MapPin, Phone, Mail, Globe, Calendar, ShieldCheck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -332,33 +332,50 @@ export default async function PromoterDetailPage({ params }: Props) {
                 {promoter.website && (
                   <p className="flex items-center gap-2 text-sm">
                     <Globe className="w-4 h-4 text-muted-foreground" />
-                    <Link
+                    {/* Was next/link — an external, nofollow'd destination
+                        gains nothing from client-side routing, and the anchor
+                        is what carries the tracking. */}
+                    <TrackedActionLink
+                      event="outbound_website_click"
+                      entityType="PROMOTER"
+                      entitySlug={promoter.slug}
                       href={promoter.website}
                       target="_blank"
                       rel="noopener noreferrer nofollow"
                       className="text-navy hover:underline break-all"
                     >
                       {promoter.website.replace(/^https?:\/\//, "")}
-                    </Link>
+                    </TrackedActionLink>
                   </p>
                 )}
                 {promoter.contactEmail && (
                   <p className="flex items-center gap-2 text-sm">
                     <Mail className="w-4 h-4 text-muted-foreground" />
-                    <a
+                    <TrackedActionLink
+                      event="contact_click"
+                      entityType="PROMOTER"
+                      entitySlug={promoter.slug}
+                      method="email"
                       href={`mailto:${promoter.contactEmail}`}
                       className="text-navy hover:underline break-all"
                     >
                       {promoter.contactEmail}
-                    </a>
+                    </TrackedActionLink>
                   </p>
                 )}
                 {promoter.contactPhone && (
                   <p className="flex items-center gap-2 text-sm">
                     <Phone className="w-4 h-4 text-muted-foreground" />
-                    <a href={`tel:${promoter.contactPhone}`} className="text-navy hover:underline">
+                    <TrackedActionLink
+                      event="contact_click"
+                      entityType="PROMOTER"
+                      entitySlug={promoter.slug}
+                      method="phone"
+                      href={`tel:${promoter.contactPhone}`}
+                      className="text-navy hover:underline"
+                    >
                       {promoter.contactPhone}
-                    </a>
+                    </TrackedActionLink>
                   </p>
                 )}
                 {!promoter.website && !promoter.contactEmail && !promoter.contactPhone && (
