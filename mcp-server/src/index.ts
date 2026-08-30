@@ -956,6 +956,21 @@ async function runScheduledGscMetricsSync(env: Env): Promise<void> {
     const bing = (r.bing ?? {}) as Record<string, unknown>;
     return `gsc=${gsc.upserted ?? "?"} ga4=${ga4.upserted ?? "?"} bing=${bing.upserted ?? "?"} ok=${r.ok}`;
   });
+
+  // OPE-637 constraint 3 — self-tune the verification staleness window.
+  //
+  // Moves `verification_alert_threshold_hours` to the p90 of observed confirm
+  // delays, clamped to [12,168], and refuses to move on under 20 samples. It
+  // logs on every run whether or not the value changes, which is what the
+  // heartbeat probe watches — the tuner writes only on a real move, so a stable
+  // threshold and a dead cron are indistinguishable in the config table.
+  await runMainAppSweep(
+    env,
+    "verification threshold tune",
+    "/api/admin/thresholds/tune-verification",
+    (r) =>
+      `changed=${r.changed} previous=${r.previous ?? "?"} tuned=${r.tuned ?? "-"} n=${r.samples ?? 0}`
+  );
 }
 
 /**

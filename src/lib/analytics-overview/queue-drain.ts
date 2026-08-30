@@ -14,6 +14,10 @@
  */
 import { and, count, eq, gte, inArray, isNotNull, isNull, like, lt, not, sql } from "drizzle-orm";
 import {
+  DEFAULT_VERIFICATION_GRACE_HOURS,
+  loadVerificationGraceHours,
+} from "@/lib/verification-threshold";
+import {
   emailSendLedger,
   emailDeliveryEvents,
   events,
@@ -634,9 +638,23 @@ export async function undeliveredAuthEmailFlow(db: Db, now: Date): Promise<Queue
  * what was passed to the mailer. An exact-equality join would silently
  * undercount, and a signal that quietly reads low is worse than no signal.
  */
-export async function unconfirmedAuthEmailFlow(db: Db, now: Date): Promise<QueueDrainRow> {
-  /** Hours a delivered verification email is given before it counts as stuck. */
-  const GRACE_H = 24;
+export async function unconfirmedAuthEmailFlow(
+  db: Db,
+  now: Date,
+  /**
+   * OPE-637 — hours a delivered verification email is given before it counts
+   * as stuck. Supplied by the caller from `tunable_thresholds`.
+   *
+   * This was `const GRACE_H = 24`, which was the exact thing John's 2026-08-14
+   * constraint 1 ruled out ("No magic 24/48 baked into code") and half the
+   * specified 48h seed. The window decides who appears in the queue, so it was
+   * a live operator threshold that could not be changed without a deploy.
+   *
+   * The default is the fail-open path only — see verification-threshold.ts.
+   */
+  graceHours: number = DEFAULT_VERIFICATION_GRACE_HOURS
+): Promise<QueueDrainRow> {
+  const GRACE_H = graceHours;
   const d = (days: number) => new Date(now.getTime() - days * DAY_MS);
   const graceCutoff = new Date(now.getTime() - GRACE_H * 60 * 60 * 1000);
 
@@ -940,7 +958,7 @@ export async function gatherQueueFlows(db: Db, now: Date): Promise<QueueDrainRow
     // dominant cause of a stuck signup: 14 delivered vs 1 bounced on
     // auth.register. Counting only undelivered mail would have reported 1 while
     // ~19 people sat unverified.
-    unconfirmedAuthEmailFlow(db, now),
+    unconfirmedAuthEmailFlow(db, now, await loadVerificationGraceHours(db)),
     // OPE-365 (R1) — people owed a human response. Distinct from
     // inbound_exceptions, which counts classifier UNCERTAINTY: that queue has
     // held depth 33 with outflow_1d=0 while a real customer's blocker passed
