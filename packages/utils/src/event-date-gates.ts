@@ -20,6 +20,7 @@
  */
 
 import { decodeHtmlEntities } from "./index";
+import { hasCalendarDayPassed } from "@takemetothefair/datetime";
 
 // ---------------------------------------------------------------------------
 // Source credibility tiers
@@ -405,7 +406,19 @@ export function dateLooksImplausible(input: DateGateInput): DateGateResult {
     reasons.push("start_too_far_future");
   }
 
-  if (input.endDate && input.endDate.getTime() < now.getTime()) {
+  // OPE-651 — a DAY comparison, not an instant one.
+  //
+  // This was `input.endDate.getTime() < now.getTime()`. Event dates are anchored
+  // at noon UTC, so that flipped to "past" at 12:00Z — 08:00 Eastern — on the
+  // event's OWN MORNING. A car show running 10:00-15:00 EDT was flagged
+  // `end_date_in_past` about two hours before it opened, and stayed flagged all
+  // day; the flag then demoted the row out of the publication path on the one
+  // day the directory most needed to say "this is on today".
+  //
+  // The Cape Cod Chamber case this gate exists for — prior-year dates carried
+  // forward in an aggregator feed — is unaffected: those are months past, not
+  // hours.
+  if (input.endDate && hasCalendarDayPassed(input.endDate, now)) {
     // Past end date for a newly-ingested event. The Cape Cod Chamber
     // failure mode: prior-year dates carried forward in the aggregator
     // feed. APPROVED past-end-date events are also caught by
@@ -414,7 +427,10 @@ export function dateLooksImplausible(input: DateGateInput): DateGateResult {
     reasons.push("end_date_in_past");
   }
 
-  if (input.startDate && input.startDate.getTime() < now.getTime() && !input.endDate) {
+  // OPE-651 — same day-vs-instant correction as `end_date_in_past` above. A
+  // single-day event with no end date was "in the past" from 08:00 Eastern on
+  // the morning it happened.
+  if (input.startDate && hasCalendarDayPassed(input.startDate, now) && !input.endDate) {
     // OPE-201: a single-day auto-create whose START is already past (no end
     // date) is almost always a real PAST EDITION — the Washington County Fair
     // 2025 poster case. A fully-past multi-day event is caught by
