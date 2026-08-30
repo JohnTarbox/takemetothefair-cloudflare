@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { searchSlugForm } from "@takemetothefair/utils";
 import Link from "next/link";
 import { Search, X, Heart, Calendar } from "lucide-react";
 import { getCloudflareDb } from "@/lib/cloudflare";
@@ -111,6 +112,9 @@ async function getVendors(searchParams: SearchParams, favoriteUserId?: string) {
     // Filter by search query if provided
     if (searchParams.q) {
       const lowerQuery = searchParams.q.toLowerCase();
+      // OPE-647 — `toLowerCase()` does not fold diacritics, so `aehko` never
+      // matched `aéhkō`. The slug column already holds the transliterated form.
+      const slugQuery = searchSlugForm(searchParams.q);
       // EH2.1 — match against either business_name or the brand display_name
       // override so brand searches surface rows whose only-the-override
       // stores the brand surface (e.g. "LeafFilter" matches the row whose
@@ -121,7 +125,8 @@ async function getVendors(searchParams: SearchParams, favoriteUserId?: string) {
           v.vendors.businessName.toLowerCase().includes(lowerQuery) ||
           v.vendors.displayName?.toLowerCase().includes(lowerQuery) ||
           v.vendors.description?.toLowerCase().includes(lowerQuery) ||
-          v.vendors.vendorType?.toLowerCase().includes(lowerQuery)
+          v.vendors.vendorType?.toLowerCase().includes(lowerQuery) ||
+          (slugQuery ? v.vendors.slug.includes(slugQuery) : false)
       );
     }
 

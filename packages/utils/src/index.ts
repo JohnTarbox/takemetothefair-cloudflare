@@ -207,6 +207,41 @@ export function createSlug(text: string): Slug {
  *
  * Do NOT use this for new slug generation — use `createSlug`.
  */
+/**
+ * OPE-647 — the slug-shaped form of a SEARCH QUERY, for matching `slug`.
+ *
+ * A vendor named `aéhkō` could not be found by anyone typing `aehko`, which
+ * includes the owner: she searched her own business 16 minutes after creating
+ * it, got 0 results, concluded the profile was broken, and emailed support. Her
+ * data was never lost — only unfindable by the spelling her keyboard produces.
+ *
+ * SQLite cannot fix this on the stored side: its `LIKE`, `lower()` and
+ * `upper()` are ASCII-only, so `é` and `ō` never fold. But the `slug` column
+ * ALREADY holds the transliterated ASCII form (`aehko`), written by
+ * `createSlug` at insert. So folding the QUERY through the same function and
+ * matching it against `slug` closes both directions with no schema change, no
+ * backfill, and no stored-normalized column:
+ *
+ *     "aehko"  -> createSlug -> "aehko"  -> matches slug        ✅ (was 0 results)
+ *     "aéhkō"  -> createSlug -> "aehko"  -> matches slug        ✅
+ *     "aéhkō"                            -> matches business_name (unchanged)
+ *
+ * It handles multi-word queries too, because both sides go through the same
+ * slugifier: `"Café Crème"` -> `cafe-creme`, which is exactly what the column
+ * stores. A raw diacritic-fold would produce `"cafe creme"` and miss the dash.
+ *
+ * Returns null when the query slugifies to nothing (punctuation only), so
+ * callers can omit the clause rather than match everything.
+ *
+ * ⚠️ Do NOT "fix" this family by rewriting stored `business_name` values to
+ * ASCII. Their name is `aéhkō`; the display is correct and the SEARCH is what
+ * was wrong.
+ */
+export function searchSlugForm(query: string): string | null {
+  const slug = createSlug(query);
+  return slug.length > 0 ? (slug as string) : null;
+}
+
 export function createSlugFromName(name: string): Slug {
   return (
     name

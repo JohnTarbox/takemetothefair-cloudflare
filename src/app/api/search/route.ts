@@ -1,5 +1,6 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
+import { searchSlugForm } from "@takemetothefair/utils";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, vendors, blogPosts } from "@/lib/db/schema";
 import {
@@ -111,6 +112,9 @@ export const GET = withErrorHandler(async (request: Request) => {
   // per-section failure logs to D1 at `warn` so we keep visibility on the
   // (now-graceful) degradation; previously these manifested as hard 500s
   // in `error_logs` under source=`api/search`.
+  // OPE-647 — computed once; see searchSlugForm.
+  const vendorSlugQuery = searchSlugForm(q);
+
   const [eventsSettled, venuesSettled, vendorsSettled, blogSettled] = await Promise.allSettled([
     db
       .select({
@@ -166,7 +170,13 @@ export const GET = withErrorHandler(async (request: Request) => {
       .where(
         or(
           containsCI(vendors.businessName, q),
-          containsCI(sql`COALESCE(${vendors.displayName}, '')`, q)
+          containsCI(sql`COALESCE(${vendors.displayName}, '')`, q),
+          // OPE-647 — the diacritic bridge. SQLite's LIKE/lower() are ASCII-only,
+          // so `aehko` never matched the stored `aéhkō`. `slug` already holds the
+          // transliterated form, so folding the QUERY the same way closes it with
+          // no schema change. Null-guarded: a punctuation-only query slugifies to
+          // nothing and must not match every row.
+          ...(vendorSlugQuery ? [containsCI(vendors.slug, vendorSlugQuery)] : [])
         )
       )
       .orderBy(vendors.businessName)
