@@ -4552,7 +4552,7 @@ async function SiteHealthTab() {
         </Card>
       </div>
 
-      <Card>
+      <Card id="technical">
         <CardHeader>
           <CardTitle>Action needed</CardTitle>
           <p className="text-sm text-muted-foreground mt-1">
