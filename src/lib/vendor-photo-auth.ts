@@ -21,6 +21,17 @@ import { vendors, vendorPhotos } from "@/lib/db/schema";
 
 type Db = DrizzleD1Database<typeof schema>;
 
+/**
+ * John's greenlight: "upper-bounded gallery size (whatever the spec/UX picks;
+ * sane default ~20 photos)".
+ *
+ * Lives here rather than in the upload route because a Next.js route file may
+ * only export handlers and known config — exporting a constant from one fails
+ * the build with "does not match the required types of a Next.js Route", which
+ * is how this landed here.
+ */
+export const MAX_GALLERY_PHOTOS = 20;
+
 export type PhotoAuthResult =
   | { ok: true; vendorId: string; isAdmin: boolean }
   | { ok: false; status: 401 | 403 | 404; error: string };

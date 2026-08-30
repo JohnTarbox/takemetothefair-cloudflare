@@ -135,6 +135,19 @@ export const RATE_LIMITS = {
     authenticatedLimit: 120,
     windowMs: 60 * 60 * 1000, // 1 hour
   },
+  // OPE-211 increment 3 — vendor self-service gallery upload. John's greenlight
+  // asked for one explicitly: "Rate limit the self-service upload path …
+  // typical failure modes are enthusiastic new vendors + bots. Small budget per
+  // vendor per day is fine."
+  //
+  // Anonymous is 0 because the route requires a session — the number is there
+  // so an unauthenticated flood is refused by the cheap check before it reaches
+  // auth, not because anonymous upload is a supported path.
+  "vendor-photo-upload": {
+    anonymousLimit: 0,
+    authenticatedLimit: 20,
+    windowMs: 24 * 60 * 60 * 1000, // 1 day
+  },
 } as const;
 
 export type RateLimitEndpoint = keyof typeof RATE_LIMITS;
