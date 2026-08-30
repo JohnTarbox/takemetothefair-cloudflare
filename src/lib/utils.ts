@@ -288,7 +288,28 @@ export function generateMultiDayICSContent(params: MultiDayCalendarParams): stri
 
     return [
       "BEGIN:VEVENT",
-      `UID:${day.date}-${crypto.randomUUID()}@${SITE_HOSTNAME}`,
+      // OPE-640 — deterministic, and deliberately NOT `crypto.randomUUID()`.
+      //
+      // Two separate bugs in the random version, one cosmetic and one not:
+      //
+      // 1. `crypto.randomUUID` does not exist below Safari 15.4 (2022-03) or
+      //    Chrome 92 (2021-07), and this runs during RENDER inside a client
+      //    component on every `/events/*` page — so a visitor on Safari 14 or
+      //    Chrome 90 got the React error boundary INSTEAD OF THE PAGE. Nine
+      //    logged occurrences, eight distinct events, accelerating. It is also
+      //    `undefined` in any non-secure context.
+      //
+      // 2. An ICS UID is the calendar's IDENTITY for an entry. A fresh random
+      //    UID on every render means re-downloading the .ics DUPLICATES every
+      //    day in the user's calendar instead of updating it in place. So the
+      //    random value was never right here, and guarding it with `?.()` plus
+      //    a polyfill would have preserved a real defect.
+      //
+      // The event URL (falling back to the title) plus the day's date is
+      // already unique per VEVENT and stable across renders, which is exactly
+      // what RFC 5545 wants. `createSlug` keeps it free of characters that
+      // would need escaping in a UID value.
+      `UID:${day.date}-${createSlug(url || title)}@${SITE_HOSTNAME}`,
       startIcs ? `DTSTART;TZID=${startIcs.tzid}:${startIcs.value}` : "",
       endIcs ? `DTEND;TZID=${endIcs.tzid}:${endIcs.value}` : "",
       `SUMMARY:${dayTitle}`,

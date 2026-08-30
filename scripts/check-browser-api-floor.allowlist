@@ -1,0 +1,16 @@
+# Client-reachable above-floor Web API calls that are genuinely safe.
+#
+# One `repo-relative/path.ts` per line, optionally `:<line>` to pin one site.
+# `#` starts a comment.
+#
+# EMPTY ON PURPOSE. An entry here accepts a BLANK PAGE for anyone below the
+# declared floor — the failure mode is the React error boundary, not a
+# graceful degradation. Prefer one of:
+#
+#   - derive the value deterministically (what OPE-640 did — the random UUID
+#     was also corrupting ICS identity, so the guard exposed a second bug)
+#   - guard the call: `typeof x === "function"` or `x?.()` with a real fallback
+#   - move the work to the server
+#
+# If you must add an entry, say which browsers it breaks and why that is
+# acceptable, with an issue link.

@@ -123,5 +123,15 @@
     "typescript": "^5",
     "vitest": "^2.1.9",
     "wrangler": "^4.60.0"
-  }
+  },
+  "browserslist": [
+    "defaults",
+    "Safari >= 14",
+    "iOS >= 14",
+    "Chrome >= 90",
+    "Firefox >= 88",
+    "Edge >= 90",
+    "not dead",
+    "not op_mini all"
+  ]
 }
