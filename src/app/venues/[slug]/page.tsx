@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { TrackedActionLink } from "@/components/analytics/TrackedActionLink";
 import Link from "next/link";
 import {
   MapPin,
@@ -441,7 +442,10 @@ export default async function VenueDetailPage({ params }: Props) {
                     <p className="text-muted-foreground">
                       {venue.city}, {venue.state} {venue.zip}
                     </p>
-                    <a
+                    <TrackedActionLink
+                      event="directions_click"
+                      entityType="VENUE"
+                      entitySlug={venue.slug}
                       href={
                         venue.googleMapsUrl ||
                         `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${venue.address}, ${venue.city}, ${venue.state} ${venue.zip}`)}`
@@ -452,7 +456,7 @@ export default async function VenueDetailPage({ params }: Props) {
                     >
                       <ExternalLink className="w-4 h-4" />
                       View on Google Maps
-                    </a>
+                    </TrackedActionLink>
                   </div>
                 </div>
                 {venue.capacity && (
@@ -478,25 +482,36 @@ export default async function VenueDetailPage({ params }: Props) {
               </CardHeader>
               <CardContent className="space-y-3">
                 {venue.contactPhone && (
-                  <a
+                  <TrackedActionLink
+                    event="contact_click"
+                    entityType="VENUE"
+                    entitySlug={venue.slug}
+                    method="phone"
                     href={`tel:${venue.contactPhone}`}
                     className="flex items-center gap-3 text-foreground hover:text-navy"
                   >
                     <Phone className="w-5 h-5 text-royal" />
                     {venue.contactPhone}
-                  </a>
+                  </TrackedActionLink>
                 )}
                 {venue.contactEmail && (
-                  <a
+                  <TrackedActionLink
+                    event="contact_click"
+                    entityType="VENUE"
+                    entitySlug={venue.slug}
+                    method="email"
                     href={`mailto:${venue.contactEmail}`}
                     className="flex items-center gap-3 text-foreground hover:text-navy"
                   >
                     <Mail className="w-5 h-5 text-royal" />
                     {venue.contactEmail}
-                  </a>
+                  </TrackedActionLink>
                 )}
                 {venue.website && (
-                  <a
+                  <TrackedActionLink
+                    event="outbound_website_click"
+                    entityType="VENUE"
+                    entitySlug={venue.slug}
                     href={venue.website}
                     target="_blank"
                     rel="noopener noreferrer"
@@ -504,7 +519,7 @@ export default async function VenueDetailPage({ params }: Props) {
                   >
                     <Globe className="w-5 h-5 text-royal" />
                     Visit Website
-                  </a>
+                  </TrackedActionLink>
                 )}
               </CardContent>
             </Card>

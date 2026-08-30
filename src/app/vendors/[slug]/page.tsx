@@ -1,4 +1,5 @@
 import { notFound, permanentRedirect } from "next/navigation";
+import { TrackedActionLink } from "@/components/analytics/TrackedActionLink";
 import Link from "next/link";
 import {
   Globe,
@@ -1495,25 +1496,36 @@ export default async function VendorDetailPage({ params }: Props) {
                   </div>
                 )}
                 {vendor.contactEmail && (
-                  <a
+                  <TrackedActionLink
+                    event="contact_click"
+                    entityType="VENDOR"
+                    entitySlug={vendor.slug}
+                    method="email"
                     href={`mailto:${vendor.contactEmail}`}
                     className="flex items-center gap-3 text-foreground hover:text-navy"
                   >
                     <Mail className="w-5 h-5 text-royal" />
                     {vendor.contactEmail}
-                  </a>
+                  </TrackedActionLink>
                 )}
                 {vendor.contactPhone && (
-                  <a
+                  <TrackedActionLink
+                    event="contact_click"
+                    entityType="VENDOR"
+                    entitySlug={vendor.slug}
+                    method="phone"
                     href={`tel:${vendor.contactPhone}`}
                     className="flex items-center gap-3 text-foreground hover:text-navy"
                   >
                     <Phone className="w-5 h-5 text-royal" />
                     {vendor.contactPhone}
-                  </a>
+                  </TrackedActionLink>
                 )}
                 {vendor.website && (
-                  <a
+                  <TrackedActionLink
+                    event="outbound_website_click"
+                    entityType="VENDOR"
+                    entitySlug={vendor.slug}
                     href={vendor.website}
                     target="_blank"
                     rel="noopener noreferrer"
@@ -1521,7 +1533,7 @@ export default async function VendorDetailPage({ params }: Props) {
                   >
                     <Globe className="w-5 h-5 text-royal" />
                     Visit Website
-                  </a>
+                  </TrackedActionLink>
                 )}
                 {Object.entries(parseVendorSocialLinks(vendor.socialLinks)).map(
                   ([platform, url]) => (

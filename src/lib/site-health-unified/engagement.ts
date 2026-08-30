@@ -32,8 +32,39 @@ export interface NamedCount {
   count: number;
 }
 
+/**
+ * OPE-392 — the two strips OPE-391 Block D2 was left room for.
+ *
+ * `intent` is pre-visit: someone deciding whether to go. `connected` is the
+ * hand-off: someone leaving us for the organiser. They are separated because
+ * they answer different questions — the first is "is the listing persuading
+ * anyone", the second is "did we successfully connect them to the source" —
+ * and a single blended engagement number answers neither.
+ *
+ * Names are derived from TRACKED_EVENTS rather than typed out again, so an
+ * event added to the registry without a home here is a compile-visible gap
+ * rather than a silently missing bar.
+ */
+export const INTENT_EVENT_NAMES = [
+  "add_to_calendar",
+  "add_to_favorites",
+  "share",
+  "directions_click",
+] as const;
+
+export const CONNECTED_EVENT_NAMES = [
+  "outbound_ticket_click",
+  "outbound_application_click",
+  "outbound_website_click",
+  "contact_click",
+] as const;
+
 export interface EngagementReport {
   windowDays: number;
+  /** Attendance intent — deciding to go. */
+  intentStrip: NamedCount[];
+  /** Connected to the source — leaving us for the organiser. */
+  connectedStrip: NamedCount[];
   /** `event_category` = "engagement" — attention, not intent. */
   engagement: NamedCount[];
   /** `event_category` = "conversion" — kept visually separate on purpose. */
@@ -142,8 +173,24 @@ export async function getEngagementReport(
       .filter((r) => r.category === category)
       .map((r) => ({ name: r.name, count: Number(r.count) }));
 
+  /**
+   * Zero is a REAL answer here and must render, not vanish.
+   *
+   * These events ship with OPE-392 and the first-party series starts at deploy
+   * — GA4's ~90 days cannot be backfilled into D1. A strip that dropped absent
+   * names would show three bars where there should be four and give no hint
+   * that the fourth is new rather than unpopular.
+   */
+  const strip = (names: readonly string[]): NamedCount[] =>
+    names.map((name) => ({
+      name,
+      count: Number(byCategory.find((r) => r.name === name)?.count ?? 0),
+    }));
+
   return {
     windowDays,
+    intentStrip: strip(INTENT_EVENT_NAMES),
+    connectedStrip: strip(CONNECTED_EVENT_NAMES),
     engagement: pick("engagement"),
     conversion: pick("conversion"),
     blogTargetMix: blogMix,

@@ -49,6 +49,15 @@
  * path and the accept path cannot drift apart.
  */
 
+/**
+ * Entities an intent event can be about.
+ *
+ * PROMOTER is included because promoter pages carry an official-site link;
+ * it has no favourite or calendar affordance, which is why the favourites
+ * type union (`FavoritableType`) and this one are not the same list.
+ */
+export type TrackedEntityType = "EVENT" | "VENUE" | "VENDOR" | "PROMOTER";
+
 /** The two places an event can land. */
 export type AnalyticsSink = "ga4" | "beacon";
 
