@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { eq, and, like, inArray, isNull, sql, desc, asc } from "drizzle-orm";
+import { eq, and, inArray, isNull, sql, desc, asc } from "drizzle-orm";
 import {
   events,
   eventVendors,
@@ -15,11 +15,11 @@ import {
   venueSlugHistory,
   adminActions,
   eventDataCitations,
+  containsCI,
 } from "../schema.js";
 import {
   formatDateRange,
   parseJsonArray,
-  escapeLike,
   jsonContent,
   createSlug,
   appendSlugSegment,
@@ -417,7 +417,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         conditions.push(eq(events.status, params.status));
       }
       if (params.search) {
-        conditions.push(like(events.name, `%${escapeLike(params.search)}%`));
+        conditions.push(containsCI(events.name, params.search));
       }
       if (params.state) {
         conditions.push(sql`upper(${venues.state}) = upper(${params.state})`);

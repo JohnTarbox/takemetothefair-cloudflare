@@ -14,19 +14,19 @@
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { and, desc, eq, isNull, like } from "drizzle-orm";
+import { and, desc, eq, isNull } from "drizzle-orm";
 import {
   performers,
   eventPerformers,
   performerSlugHistory,
   adminActions,
   events,
+  containsCI,
 } from "../schema.js";
 import {
   appendSlugSegment,
   createSlug,
   decodeHtmlEntities,
-  escapeLike,
   jsonContent,
   unsafeSlug,
 } from "../helpers.js";
@@ -339,7 +339,7 @@ export function registerPerformerTools(server: McpServer, db: Db, auth: AuthCont
     },
     async (params) => {
       try {
-        const conds = [like(performers.name, `%${escapeLike(params.query)}%`)];
+        const conds = [containsCI(performers.name, params.query)];
         if (!params.include_deleted) conds.push(isNull(performers.deletedAt));
         const rows = await db
           .select()

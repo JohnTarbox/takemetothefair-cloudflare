@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { eq, and, or, gte, lte, like, inArray, isNull, sql, desc } from "drizzle-orm";
+import { eq, and, or, gte, lte, inArray, isNull, sql, desc } from "drizzle-orm";
 import {
   events,
   eventNameVariants,
@@ -14,13 +14,14 @@ import {
   vendorSlugHistory,
   venueSlugHistory,
   promoterSlugHistory,
+  // OPE-630 — LIKE-cap-safe substring predicate, shared with the Next.js app.
+  containsCI,
 } from "../schema.js";
 import { PRIMARY_AUDIENCE, PUBLIC_ACCESS, EVENT_STATUS_VALUES } from "@takemetothefair/constants";
 import {
   parseJsonArray,
   formatDateRange,
   formatPrice,
-  escapeLike,
   fuzzyTokenScore,
   tokenize,
   PUBLIC_VENDOR_STATUSES,
@@ -36,6 +37,7 @@ import {
   type ParentDisplayInput,
   type VendorDisplayInput,
 } from "@takemetothefair/utils";
+import { logError } from "../logger.js";
 import type { Db } from "../db.js";
 import type { SQLiteColumn } from "drizzle-orm/sqlite-core";
 import type { SQL } from "drizzle-orm";
@@ -96,6 +98,69 @@ async function resolveSlugHistory(
 
 export function registerPublicTools(server: McpServer, db: Db) {
   /**
+   * OPE-630 — a thrown tool fault must be LOGGED and BRANCHABLE.
+   *
+   * Two separate failures, both real on 2026-08-30:
+   *
+   * 1. `error_logs` held ZERO `mcp:*` rows for the "LIKE or GLOB pattern too
+   *    complex" family while `search_events` was actively throwing on it in
+   *    production. Every logged row came from the Next.js app. MCP tool faults
+   *    were not recorded anywhere, so the family was invisible on this lane and
+   *    the ticket that found it had to be filed from a hand-run transcript.
+   *
+   * 2. `search_events` is what the discovery dedup passes call, and the skill's
+   *    rule is "if ANY pass returns a hit → SKIP creation." A pass that THROWS
+   *    returns no hit, so a crash is indistinguishable from "no duplicate
+   *    exists" and the default behaviour on failure is to CREATE the duplicate.
+   *    Dedup failed OPEN. A structured `error` field gives the caller something
+   *    to branch on instead of an opaque thrown string.
+   *
+   * This is deliberately a wrapper and not a try/catch inside each handler:
+   * the point is that it cannot be forgotten on the next tool added here.
+   */
+  function withFaultLog<A extends Record<string, unknown>, R>(
+    toolName: string,
+    handler: (params: A) => Promise<R>
+  ): (params: A) => Promise<R> {
+    return async (params: A) => {
+      try {
+        return await handler(params);
+      } catch (err) {
+        await logError(db, {
+          message: `MCP tool ${toolName} threw`,
+          error: err,
+          source: `mcp:tool:${toolName}`,
+          context: {
+            tool: toolName,
+            params,
+            // Scope item 1 of OPE-630: capture the SHAPE that failed, so the
+            // real threshold is measured next time rather than guessed. The
+            // filed ticket guessed "4 tokens"; the actual cap is a 50-char
+            // pattern, which is a length fact, not a count fact.
+            query_length: typeof params.query === "string" ? params.query.length : null,
+            fuzzy: params.fuzzy ?? null,
+          },
+        });
+        // `as R` — the error branch returns a valid CallToolResult, but R is
+        // inferred from the success branch so TS cannot see that. Generic-in,
+        // generic-out is what keeps the SDK's exact result type at the call
+        // site; widening the signature to `{content: unknown[]}` instead makes
+        // every wrapped tool fail its `server.tool` overload.
+        return {
+          content: [
+            jsonContent({
+              error: "tool_failed",
+              tool: toolName,
+              message: err instanceof Error ? err.message : String(err),
+            }),
+          ],
+          isError: true,
+        } as R;
+      }
+    };
+  }
+
+  /**
    * OPE-517 — match a pattern against the event's name OR any of its recorded
    * name variants.
    *
@@ -116,12 +181,26 @@ export function registerPublicTools(server: McpServer, db: Db) {
    */
   const MAX_FUZZY_TOKENS = 24;
 
-  function nameOrVariantLike(pattern: string) {
+  /**
+   * OPE-630 — takes a NEEDLE, not a LIKE pattern.
+   *
+   * It used to take `%...%` and hand it to `like()`, which throws
+   * `LIKE or GLOB pattern too complex` once the pattern passes 50 characters
+   * (measured on prod: 48 passes, 52 throws). `params.query` is free text, so
+   * any event name over ~48 chars crashed the tool — and because this is the
+   * predicate the discovery dedup passes call, a crash reads as "no duplicate
+   * found" and the duplicate gets created. Dedup failed OPEN.
+   *
+   * `containsCI`/`instr()` has no pattern ceiling, so the error class is gone
+   * rather than pushed further out.
+   */
+  function nameOrVariantContains(needle: string) {
     return or(
-      like(events.name, pattern),
+      containsCI(events.name, needle),
       sql`EXISTS (
       SELECT 1 FROM event_name_variants v
-       WHERE v.event_id = ${events.id} AND v.variant LIKE ${pattern}
+       WHERE v.event_id = ${events.id}
+         AND instr(lower(v.variant), ${needle.toLowerCase()}) > 0
     )`
     );
   }
@@ -206,7 +285,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
         .optional()
         .describe("Number of results to skip for pagination (default 0)"),
     },
-    async (params) => {
+    withFaultLog("search_events", async (params) => {
       // Default is byte-for-byte the old predicate, so every existing caller is
       // unaffected. An explicit list swaps ONLY the editorial-status half and
       // keeps the lifecycle filter — a CANCELLED event is not a dedup target.
@@ -234,7 +313,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
 
       if (params.query && !params.fuzzy) {
         // OPE-517 — the organizer's name for a fair must find the same page.
-        const p = nameOrVariantLike(`%${escapeLike(params.query)}%`);
+        const p = nameOrVariantContains(params.query);
         if (p) conditions.push(p);
       } else if (params.query && params.fuzzy) {
         // Fuzzy mode: pre-filter the SQL candidate set to rows whose name
@@ -260,7 +339,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
         //
         // This path built one predicate per query token and OR'd them, and
         // `tokenize()` has no ceiling while `params.query` is free text. Worse,
-        // `nameOrVariantLike` is itself `or(like, EXISTS)`, so each token costs
+        // `nameOrVariantContains` is itself `or(instr, EXISTS)`, so each token costs
         // about TWO levels of depth. Roughly 50 tokens — an ordinary pasted
         // event blurb — would have thrown. It had not fired only because
         // callers happened to send short queries, which is a fact about today's
@@ -279,7 +358,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
         if (tokens.length > 0) {
           // OPE-517 — variants join the candidate gate too, or a variant-only
           // match is filtered out before the scorer ever sees it.
-          const tokenLikes = tokens.map((t) => nameOrVariantLike(`%${escapeLike(t)}%`));
+          const tokenLikes = tokens.map((t) => nameOrVariantContains(t));
           // OPE-434 superset invariant: enabling fuzzy must never DROP a row
           // that exact matching would have returned. The token ORs alone don't
           // guarantee that — the candidate set is capped at `sqlLimit` with no
@@ -287,7 +366,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
           // the whole-query LIKE (the exact-mode predicate) in keeps it in the
           // candidate set, and it scores 1.0 because every query token is
           // present in the name by construction.
-          tokenLikes.push(nameOrVariantLike(`%${escapeLike(params.query)}%`));
+          tokenLikes.push(nameOrVariantContains(params.query));
           // OR — match any token. The JS scorer then ranks by weighted fraction
           // of tokens that match.
           const fuzzyOr = tokenLikes.length === 1 ? tokenLikes[0] : or(...tokenLikes);
@@ -342,11 +421,11 @@ export function registerPublicTools(server: McpServer, db: Db) {
       // rows, and a caller doing dedup should filter on `state` (now fixed)
       // rather than on `city`.
       if (params.venue_name && !params.venue_id) {
-        conditions.push(like(venues.name, `%${escapeLike(params.venue_name)}%`));
+        conditions.push(containsCI(venues.name, params.venue_name));
       }
 
       if (params.city) {
-        conditions.push(like(venues.city, `%${escapeLike(params.city)}%`));
+        conditions.push(containsCI(venues.city, params.city));
       }
 
       if (params.promoter_id) {
@@ -394,10 +473,9 @@ export function registerPublicTools(server: McpServer, db: Db) {
               // Whole-query match counts double — an exact substring is the
               // strongest possible signal and must never be truncated away.
               const terms = [
-                sql`(CASE WHEN ${events.name} LIKE ${`%${escapeLike(params.query!)}%`} THEN 2 ELSE 0 END)`,
+                sql`(CASE WHEN ${containsCI(events.name, params.query!)} THEN 2 ELSE 0 END)`,
                 ...toks.map(
-                  (t) =>
-                    sql`(CASE WHEN ${events.name} LIKE ${`%${escapeLike(t)}%`} THEN 1 ELSE 0 END)`
+                  (t) => sql`(CASE WHEN ${containsCI(events.name, t)} THEN 1 ELSE 0 END)`
                 ),
               ];
               return sql.join(terms, sql` + `);
@@ -520,7 +598,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
           }),
         ],
       };
-    }
+    })
   );
 
   // ── get_event_details ──────────────────────────────────────────
@@ -895,16 +973,16 @@ export function registerPublicTools(server: McpServer, db: Db) {
         // EH2.1 — match on either business_name OR display_name so a query
         // for the brand surface ("LeafFilter") finds the office row whose
         // only-the-override stores that surface ("LeafFilter North LLC").
-        const q = `%${escapeLike(params.query)}%`;
+        const q = params.query;
         conditions.push(
           or(
-            like(vendors.businessName, q),
-            sql`${vendors.displayName} IS NOT NULL AND ${like(vendors.displayName, q)}`
+            containsCI(vendors.businessName, q),
+            sql`${vendors.displayName} IS NOT NULL AND ${containsCI(vendors.displayName, q)}`
           )!
         );
       }
       if (params.type) {
-        conditions.push(like(vendors.vendorType, `%${escapeLike(params.type)}%`));
+        conditions.push(containsCI(vendors.vendorType, params.type));
       }
 
       const rows = await db
@@ -975,10 +1053,10 @@ export function registerPublicTools(server: McpServer, db: Db) {
       const conditions = [eq(venues.status, "ACTIVE")];
 
       if (params.query) {
-        conditions.push(like(venues.name, `%${escapeLike(params.query)}%`));
+        conditions.push(containsCI(venues.name, params.query));
       }
       if (params.city) {
-        conditions.push(like(venues.city, `%${escapeLike(params.city)}%`));
+        conditions.push(containsCI(venues.city, params.city));
       }
       if (params.state) {
         conditions.push(sql`upper(${venues.state}) = upper(${params.state})`);
@@ -1454,7 +1532,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
       const conditions = [];
 
       if (params.query) {
-        conditions.push(like(promoters.companyName, `%${escapeLike(params.query)}%`));
+        conditions.push(containsCI(promoters.companyName, params.query));
       }
 
       const rows = await db

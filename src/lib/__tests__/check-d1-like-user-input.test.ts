@@ -112,3 +112,64 @@ describe("the fix it points at", () => {
     expect(checkFile("src/app/events/page.tsx", src)).toEqual([]);
   });
 });
+
+/**
+ * OPE-630 — the MCP Worker's taint shape.
+ *
+ * `mcp-server/src` was in SCAN_DIRS from day one and the guard still reported
+ * it clean while ten tainted sites sat in it, because the taint model only
+ * understood ONE arrival shape for user input: over HTTP, into a Next.js route
+ * handler. In the MCP Worker input arrives as tool-call arguments, so
+ * `taintedIdentifiers` returned an empty set for the whole file and every site
+ * read as a safe literal.
+ *
+ * These lock the second arrival shape. The precision case is the one that
+ * decides whether the rule survives: `params` also names Next.js route
+ * segments, and flagging those would get the rule bulk-allowlisted.
+ */
+describe("MCP tool arguments are user input too (OPE-630)", () => {
+  it("flags a LIKE pattern built from an MCP tool argument", () => {
+    // mcp-server/src/tools/admin-performers.ts:342, verbatim as it shipped.
+    const src = `
+      async (params) => {
+        const conds = [like(performers.name, \`%\${escapeLike(params.query)}%\`)];
+      }
+    `;
+    const v = checkFile("mcp-server/src/tools/admin-performers.ts", src);
+    expect(v).toHaveLength(1);
+    expect(v[0].why).toMatch(/MCP tool argument/);
+  });
+
+  it("flags an identifier assigned from a tool argument", () => {
+    // search_vendors laundered it through `q` before interpolating.
+    const src = `
+      async (params) => {
+        const q = \`%\${escapeLike(params.query)}%\`;
+        conditions.push(like(vendors.businessName, q));
+      }
+    `;
+    expect(checkFile("mcp-server/src/tools/public.ts", src).length).toBeGreaterThan(0);
+  });
+
+  it("stays quiet on the same spelling OUTSIDE mcp-server", () => {
+    // `params` in a Next.js route is the route SEGMENT, not user free text —
+    // and it is already covered by the `.get(...)` rule where it matters. If
+    // this case flagged, the rule would be bulk-allowlisted within a week.
+    const src = `
+      export default async function Page({ params }) {
+        rows = await db.select().from(events).where(like(events.slug, \`%\${params.slug}%\`));
+      }
+    `;
+    expect(checkFile("src/app/events/[slug]/page.tsx", src)).toHaveLength(0);
+  });
+
+  it("passes the converted containsCI form", () => {
+    // What the fix looks like — no pattern, so no ceiling to cross.
+    const src = `
+      async (params) => {
+        const conds = [containsCI(performers.name, params.query)];
+      }
+    `;
+    expect(checkFile("mcp-server/src/tools/admin-performers.ts", src)).toHaveLength(0);
+  });
+});
