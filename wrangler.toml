@@ -50,10 +50,23 @@ CAL1_SSR_MONTH = "true"
 CAL2_VIEWS = "true"
 # OPE-163 — customer-facing reply send gate for the /admin/inbound-emails Reply
 # panel. The endpoint refuses to enqueue unless this is "true"; the MCP consumer
-# enforces the same flag as the authoritative hard stop. Shipped OFF (OPE-6).
-# To go live, flip to "true" here AND on the MCP Worker (mcp-server/wrangler.toml),
-# then redeploy — or override both in the dashboard.
-EMAIL_REPLY_ENABLED = "false"
+# enforces the same flag as the authoritative hard stop.
+#
+# ON since 2026-08-30, on John's explicit instruction ("flip it to true in both
+# files and ship it"). Must be "true" HERE and in mcp-server/wrangler.toml — the
+# two Workers enforce it independently.
+#
+# ⚠️ OPE-648 — DO NOT flip this in the dashboard. `wrangler deploy` replaces
+# `[vars]` WHOLESALE, so a dashboard edit survives only until the next deploy.
+# The previous version of this comment recommended the dashboard, and that
+# advice is what produced the "the flag flips without notice" reports logged
+# since 2026-08-13: on 2026-08-30 a queue drain merged 11 PRs between 13:54Z and
+# 15:27Z, and each deploy silently reverted the operator's flip. A reply was
+# refused at 15:14Z for exactly that reason.
+#
+# This committed line is the source of truth. Change it here, deploy, and read
+# the resolved runtime value at GET /api/admin/capability-flags.
+EMAIL_REPLY_ENABLED = "true"
 # OPE-412 — submission-received acknowledgment. OFF until John approves the
 # copy (OPE-6 gate on new customer-facing templates). While off, a submission
 # still succeeds and the skip is logged, so "we chose not to send" stays

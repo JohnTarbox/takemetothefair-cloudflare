@@ -54,10 +54,21 @@ CLOUDFLARE_ACCOUNT_ID = "e6011e48b7014ef83c77e3c767dac6cf"
 PROMOTER_OUTREACH_ENABLED = "false"
 ENRICHMENT_DRY_RUN = "true"
 # OPE-163 — customer-facing reply send gate. reply_to_inbound_email (and the
-# forthcoming /admin/inbound-emails compose UI) refuse to send unless this is
-# "true". Shipped OFF (OPE-6); flip to "true" here + redeploy, or override in
-# the dashboard, when replies are cleared to go live.
-EMAIL_REPLY_ENABLED = "false"
+# /admin/inbound-emails compose UI) refuse to send unless this is "true".
+#
+# ON since 2026-08-30, on John's explicit instruction. Must match the main app's
+# wrangler.toml — both Workers enforce this independently, and a reply can be
+# composed on one and refused by the other if they disagree.
+#
+# ⚠️ OPE-648 — DO NOT flip this in the dashboard. `wrangler deploy` replaces
+# `[vars]` WHOLESALE, so a dashboard edit lasts only until the next deploy. That
+# is the mechanism behind every "the flag flips without notice" note since
+# 2026-08-13, confirmed on 08-30 against the deploy history.
+#
+# ⚠️ This gate does NOT stop the inbound workflow's auto-reply path, which sends
+# via env.EMAIL directly (OPE-626). Turning this on changes operator-initiated
+# replies only.
+EMAIL_REPLY_ENABLED = "true"
 # OPE-357 — STOP-gate on asking UNROUTED (unknown) senders which project they
 # meant. Separate from EMAIL_REPLY_ENABLED on purpose: enabling ordinary replies
 # must never silently start mailing strangers as a side effect. Flip to "true"
