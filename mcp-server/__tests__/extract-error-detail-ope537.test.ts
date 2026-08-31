@@ -50,8 +50,22 @@ describe("submitExtract / submitFreeTextExtract carry the endpoint's message", (
 
 describe("the fetch route refuses to report an empty page as success", () => {
   it("checks extractable text and escalates instead of returning success", () => {
-    expect(FETCH_ROUTE).toContain("if (isEmptyExtraction(content)) {");
+    // OPE-537 item 3 widened this condition: a bot-check interstitial escalates
+    // on the same branch, because it is the same failure wearing content. The
+    // assertion now names BOTH triggers rather than the old exact line — the
+    // emptiness check must survive the widening, which is what this pins.
+    expect(FETCH_ROUTE).toMatch(
+      /if \(isEmptyExtraction\(content\) \|\| challenge\.isChallenge\) \{/
+    );
     expect(FETCH_ROUTE).toContain("fetchViaBrowserRendering(parsedUrl.href, cfEnv)");
+  });
+
+  it("treats a bot-check interstitial as a fetch failure too (OPE-537 item 3)", () => {
+    // A challenge page yields real, extractable text about nothing, so it
+    // clears the 32-char floor that isEmptyExtraction enforces. Specimen
+    // `1da06d90` — an event named "Just a moment...".
+    expect(FETCH_ROUTE).toContain("detectChallengePage");
+    expect(FETCH_ROUTE).toContain("CHALLENGE_USER_MESSAGE");
   });
 
   it("names THIS cause in the failure rather than leaving it to a downstream validator", () => {
