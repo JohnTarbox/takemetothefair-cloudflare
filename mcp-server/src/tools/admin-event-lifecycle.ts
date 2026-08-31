@@ -138,6 +138,12 @@ export function registerEventLifecycleTools(
               from,
               to,
               allowed_targets: check.allowed,
+              // OPE-675 — `allowed_targets` answers "what can I do from
+              // here". A caller who asked for OCCURRED wants to know how to
+              // GET there, and an unattended run that is told only what is
+              // legal from here simply stops and leaves the row behind.
+              ...(check.route ? { route: check.route } : {}),
+              ...(check.hint ? { hint: check.hint } : {}),
             }),
           ],
           isError: true,
