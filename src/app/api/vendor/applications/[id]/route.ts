@@ -2,6 +2,7 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
+import { requireVerifiedSession } from "@/lib/api-auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { eventVendors, vendors } from "@/lib/db/schema";
 import { isValidTransition } from "@/lib/vendor-status";
@@ -21,6 +22,12 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const db = getCloudflareDb();
+  // OPE-238 — withdrawing an application is a write on the same resource whose
+  // POST already calls requireVerifiedSession. Gating one direction and not the
+  // other let an unverified account delete an application it could not have
+  // created, which is an asymmetry rather than a policy.
+  const gate = await requireVerifiedSession();
+  if (!gate.ok) return gate.response;
   const session = await auth();
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

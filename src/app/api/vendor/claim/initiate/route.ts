@@ -2,6 +2,7 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
+import { requireVerifiedSession } from "@/lib/api-auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { vendors, users } from "@/lib/db/schema";
 import { createClaimToken } from "@/lib/vendor-claim-token";
@@ -26,6 +27,13 @@ function maskEmail(addr: string): string {
 }
 
 export async function POST() {
+  // OPE-238 — `/api/vendor/claim/direct` already refuses an unverified account
+  // ("Please verify your email before claiming a listing"). Starting the
+  // token-based claim is the same act by a slower route, so it takes the same
+  // precondition; leaving it open meant the stricter path could be walked
+  // around rather than satisfied.
+  const gate = await requireVerifiedSession();
+  if (!gate.ok) return gate.response;
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

@@ -181,6 +181,15 @@ async function getVendors(searchParams: SearchParams, favoriteUserId?: string) {
     // the union.
     const vendorRowById = new Map<string, VendorRow>();
     for (const v of vendorResults) vendorRowById.set(v.vendors.id, v.vendors);
+
+    // OPE-238 — the ownership badge needs the OWNER's verification state, and
+    // the map above keeps only the `vendors` half of the join. Carried
+    // separately rather than by widening VendorRow, which is threaded through
+    // the EH1 hierarchy resolution and means "a vendors row" everywhere else.
+    const ownerVerifiedById = new Map<string, boolean>();
+    for (const v of vendorResults) {
+      ownerVerifiedById.set(v.vendors.id, Boolean(v.users?.emailVerified));
+    }
     for (const v of extraBrandParentRows) vendorRowById.set(v.id, v);
     const brandParentsForGrouping = new Map<string, GroupableVendor>();
     for (const id of brandParentIdsNeeded) {
@@ -354,6 +363,9 @@ async function getVendors(searchParams: SearchParams, favoriteUserId?: string) {
 
         return {
           id: v.id,
+          // OPE-238 — `false` when the vendor has no owner row at all. A
+          // missing owner is not a confirmed one, and the badge must withhold.
+          ownerEmailVerified: ownerVerifiedById.get(v.id) ?? false,
           businessName: v.businessName,
           displayName: v.displayName,
           role: v.role,
@@ -475,10 +487,16 @@ async function getFeaturedVendors(typeFilter?: string): Promise<FeaturedVendor[]
         logoUrl: vendors.logoUrl,
         featuredPriority: vendors.featuredPriority,
         claimed: vendors.claimed,
+        // OPE-238 — the ownership badge needs the OWNER's verification state,
+        // not the claim flag alone. LEFT JOIN so a listing with no owner row
+        // still returns; `ownerEmailVerified` is then null and the badge is
+        // correctly withheld.
+        ownerEmailVerified: sql<boolean>`${users.emailVerified} IS NOT NULL`,
         enhancedProfile: vendors.enhancedProfile,
         verifiedPro: vendors.verifiedPro,
       })
       .from(vendors)
+      .leftJoin(users, eq(vendors.userId, users.id))
       .where(and(...conditions));
     return rows;
   } catch (e) {

@@ -4,6 +4,7 @@ import { Store, CheckCircle, Sparkles } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { rotateFeaturedVendors } from "@/lib/featured-rotation";
 import { VendorTierBadges } from "./VendorTierBadges";
+import { isOwnerConfirmed } from "@/lib/claims/owner-confirmed";
 
 export interface FeaturedVendor {
   id: string;
@@ -17,6 +18,12 @@ export interface FeaturedVendor {
   logoUrl: string | null;
   featuredPriority: number | null;
   claimed?: boolean | null;
+  /**
+   * OPE-238 — `users.email_verified IS NOT NULL` for this row's owner.
+   * Optional and falsy-by-default so a query that has not been updated shows
+   * NO ownership badge rather than an unearned one.
+   */
+  ownerEmailVerified?: boolean | null;
   enhancedProfile?: boolean | null;
   verifiedPro?: boolean | null;
 }
@@ -90,7 +97,10 @@ export function FeaturedVendorsSection({ vendors, date }: Props) {
                       aria-label="Verified"
                     />
                     <VendorTierBadges
-                      claimed={v.claimed}
+                      ownerConfirmed={isOwnerConfirmed({
+                        claimed: v.claimed,
+                        ownerEmailVerified: v.ownerEmailVerified,
+                      })}
                       enhancedProfile={v.enhancedProfile}
                       verifiedPro={v.verifiedPro}
                       className="inline-flex items-center gap-1"

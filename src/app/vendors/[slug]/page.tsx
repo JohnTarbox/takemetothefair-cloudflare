@@ -50,6 +50,7 @@ import { buildVendorMetaDescription } from "@/lib/seo-utils";
 import { getDirectlyLinkedBlogPosts } from "@/lib/content-links-query";
 import { VendorSchema } from "@/components/seo/VendorSchema";
 import { VendorTierBadges } from "@/components/vendors/VendorTierBadges";
+import { isOwnerConfirmed } from "@/lib/claims/owner-confirmed";
 import { VendorProfileCompleteness } from "@/components/vendor/profile-completeness";
 import { ClaimListingCTA } from "@/components/vendors/ClaimListingCTA";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
@@ -518,6 +519,11 @@ async function getVendor(slug: string) {
       user: vendor.users
         ? { name: vendor.users.name, email: vendor.users.email }
         : { name: null, email: null },
+      // OPE-238 — whether the OWNER has confirmed their email. The page already
+      // joins `users`; this surfaces the one column the ownership badge needs.
+      // A row with no owner is `false`, not null: "we do not know" and "not
+      // confirmed" must render the same way, and only one of them is a boolean.
+      ownerEmailVerified: Boolean(vendor.users?.emailVerified),
       eventVendors: vendorEvents,
       seriesShows,
       seoEventAssociationCount: Number(seoCounts?.eventAssociationCount ?? 0),
@@ -1064,7 +1070,10 @@ export default async function VendorDetailPage({ params }: Props) {
                     </span>
                   )}
                   <VendorTierBadges
-                    claimed={vendor.claimed}
+                    ownerConfirmed={isOwnerConfirmed({
+                      claimed: vendor.claimed,
+                      ownerEmailVerified: vendor.ownerEmailVerified,
+                    })}
                     enhancedProfile={vendor.enhancedProfile}
                     verifiedPro={vendor.verifiedPro}
                     className="inline-flex items-center gap-1.5"
