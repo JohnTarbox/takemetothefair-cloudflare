@@ -957,3 +957,47 @@ export const TERMINAL_UNHANDLED_REPLY_KINDS = [
  * rejecting a held photo would leave it counted for ever.
  */
 export const DISPOSED_INBOUND_STATUSES = ["rejected", "audit-noop", "salvaged"] as const;
+
+/**
+ * OPE-532 ruling part 2 — the AWAITING-SUBMITTER queue, and its expiry.
+ *
+ * The mirror image of `TERMINAL_UNHANDLED_REPLY_KINDS` above. There, we owe the
+ * reply and a human can salvage the row. Here, WE asked and are waiting: the
+ * ball is in the submitter's court, so no amount of triage moves it.
+ *
+ * John's ruling, 2026-08-27: *"Add a bounded no-reply expiry so `no-url` rows
+ * (and any 'awaiting submitter' state) auto-close after ~21 days instead of
+ * accumulating silently — the real fix, since the state otherwise has no
+ * reader."*
+ *
+ * ── Why this list has exactly one entry ──────────────────────────────────
+ *
+ * The reopening comment proposed `no-url-prose-failed` as "the obvious
+ * sibling". It is not, and the distinction is the whole content of this
+ * change. That kind means *we had the content and got nothing out of it* —
+ * fault ours, salvageable by a human — which is why it sits in
+ * `TERMINAL_UNHANDLED_REPLY_KINDS` above and is counted by the OPE-17 triage
+ * notice. Expiring it would silently remove 14 live rows from the queue
+ * PR #1010 built to hold them, undoing that fix under a tidier name.
+ *
+ * `unfetchable-url` is excluded for the same reason, stated in its own module
+ * (`no-url-reply-kind.ts`): *"you included one, we couldn't read it. Fault:
+ * ours."* An expiry cannot discharge an obligation we hold.
+ *
+ * ⚠️ `support-ack` is the trap worth naming, because it is structurally
+ * IDENTICAL to `no-url` — `status='replied'`, `resulting_event_id` NULL, ageing
+ * quietly, 30 live rows at 72 days — and points the opposite way: the customer
+ * asked US. A predicate keyed on the row's SHAPE rather than on who owes the
+ * reply would auto-close genuine unanswered customer questions and call it
+ * hygiene. Key on the obligation, never on the shape.
+ */
+export const AWAITING_SUBMITTER_REPLY_KINDS = ["no-url"] as const;
+
+/**
+ * How long a submitter gets before their silence is taken as an answer.
+ *
+ * 21 days per the ruling. Long enough that a real person who meant to reply has
+ * had several weekends; short enough that the queue has a ceiling. The oldest
+ * live row when this shipped was 89 days, so the bound is the point.
+ */
+export const AWAITING_SUBMITTER_EXPIRY_DAYS = 21;

@@ -97,6 +97,14 @@ const NON_EVENT_INTENTS = ["spam", "unsubscribe"] as const;
 // Values live in @takemetothefair/constants so the main app's queue-drain row
 // and this notice cannot drift apart. See the doc comment there.
 export { TERMINAL_UNHANDLED_REPLY_KINDS };
+// OPE-532 ruling part 2 — the awaiting-submitter queue, reported alongside but
+// NOT folded into the salvage count. See the block above for why `no-url` is
+// excluded from salvage; the ruling asked for it to be bounded, not triaged.
+import { summariseAwaitingSubmitter } from "./inbound/awaiting-submitter.js";
+import {
+  AWAITING_SUBMITTER_REPLY_KINDS,
+  AWAITING_SUBMITTER_EXPIRY_DAYS,
+} from "@takemetothefair/constants";
 const DISPOSED_STATUSES = DISPOSED_INBOUND_STATUSES;
 
 /** The TRUE salvage-candidate predicate — the human-triage queue. Exported so
@@ -387,6 +395,46 @@ export async function runInboundExceptionNotice(env: Env): Promise<void> {
     });
   }
 
+  // OPE-532 ruling part 2 — the awaiting-submitter line.
+  //
+  // Read separately from the salvage query on purpose: these rows are NOT
+  // salvage candidates (nobody here can act on them — we are waiting on the
+  // sender), so folding them into `count` would put them under a subject line
+  // that says a human needs to salvage them. They get their own sentence.
+  //
+  // Reporting BOTH waiting and expired is the point. Publishing only a total
+  // would make "the bound is working" and "the backlog is growing" look
+  // identical, which is the exact failure this whole ticket is about.
+  let awaiting = { waiting: 0, expired: 0, oldestWaitingDays: null as number | null };
+  try {
+    const awaitingRows = await db
+      .select({
+        replyKind: inboundEmails.replyKind,
+        status: inboundEmails.status,
+        receivedAt: inboundEmails.receivedAt,
+        resultingEventId: inboundEmails.resultingEventId,
+      })
+      .from(inboundEmails)
+      .where(inArray(inboundEmails.replyKind, [...AWAITING_SUBMITTER_REPLY_KINDS]));
+    awaiting = summariseAwaitingSubmitter(awaitingRows, new Date());
+  } catch (e) {
+    // Fail soft — this line is additive. A broken awaiting-submitter read must
+    // not suppress the salvage notice, which is the load-bearing half.
+    await logError(env.DB, {
+      level: "warn",
+      source: "mcp:inbound-exception-notice",
+      message: "awaiting-submitter summary failed; notice sent without that line",
+      context: { error: e instanceof Error ? e.message : String(e) },
+    });
+  }
+  const awaitingLine =
+    awaiting.waiting > 0 || awaiting.expired > 0
+      ? `Awaiting submitter: ${awaiting.waiting} still within the ` +
+        `${AWAITING_SUBMITTER_EXPIRY_DAYS}-day window` +
+        (awaiting.oldestWaitingDays !== null ? ` (oldest ${awaiting.oldestWaitingDays}d)` : "") +
+        `, ${awaiting.expired} past it and auto-closed. No action — the ball is with the sender.`
+      : "";
+
   const noun = count === 1 ? "email" : "emails";
   // The age goes in the SUBJECT, not just the body. A subject that reads the
   // same every morning is the one that stops being opened, which is the
@@ -402,6 +450,7 @@ export async function runInboundExceptionNotice(env: Env): Promise<void> {
     `either a failed extraction or a reply that closed the thread without acting. They need a ` +
     `human to salvage. Oldest has been waiting ${oldestAgeDays} day(s).\n\n` +
     sampleBlock +
+    (awaitingLine ? `${awaitingLine}\n\n` : "") +
     `Drain them interactively (the OPE-16 triage task). This run also auto-corrected ` +
     `${reconciled.autoSalvaged} already-handled row(s) → salvaged and auto-disposed ` +
     `${reconciled.autoRejected} non-event row(s) → rejected (reversible).\n`;
@@ -418,6 +467,7 @@ export async function runInboundExceptionNotice(env: Env): Promise<void> {
     `need a human to salvage — no event created, and either a failed extraction or a reply that ` +
     `closed the thread without acting. Oldest has been waiting <strong>${oldestAgeDays}</strong> day(s).</p>` +
     sampleHtml +
+    (awaitingLine ? `<p>${escapeHtml(awaitingLine)}</p>` : "") +
     `<p>Drain them interactively (the OPE-16 triage task). This run also auto-corrected ` +
     `<strong>${reconciled.autoSalvaged}</strong> already-handled row(s) → salvaged and auto-disposed ` +
     `<strong>${reconciled.autoRejected}</strong> non-event row(s) → rejected (reversible).</p>`;
