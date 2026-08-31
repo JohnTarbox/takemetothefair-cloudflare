@@ -1725,6 +1725,91 @@ export const eventDataCitations = sqliteTable(
 );
 
 // Event Days table - per-day schedules for multi-day events
+/**
+ * OPE-709 — application ROUTES per event, one row per route.
+ *
+ * `events.application_url` / `application_instructions` / `application_deadline`
+ * held exactly ONE route, and all 105 rows using it were the commercial-vendor
+ * lane. A photographer asking how to enter the Cummington photography contest
+ * could not be answered from our own data — not because we lacked coverage, but
+ * because there was nowhere to put the answer. Cummington's own
+ * `application_instructions` says "entries run through the Exhibitor Entry page"
+ * and then offers no link, because no column existed to hold it.
+ *
+ * ── Two levels, not three (ruled 2026-08-31) ──────────────────────────────
+ *
+ * A lane can repeat with a free-text `department`, rather than a second table
+ * and a department taxonomy we have no evidence for. This is forced by the data:
+ * Topsfield's single exhibitor lane spreads TWENTY-EIGHT DAYS internally —
+ * Farm Photography closes 9/5, Fine Arts and Crafts 9/7, Beekeeping 9/23,
+ * Cattle 10/3 — and Durham splits inside photography alone (prints close 9/14,
+ * digital 9/11). One deadline per lane would be wrong on arrival.
+ *
+ * ── The dates are nullable and that is load-bearing ───────────────────────
+ *
+ * Same rule as `event_days.openTime` (DQ4): NULL means "not confirmed", and
+ * NOTHING may fabricate a default. In particular a deadline must NEVER be
+ * inferred from the event's own start date — The Big E's photography entries
+ * closed in JUNE for a September fair, while Topsfield's close five days before
+ * theirs. There is no rule to infer from, and a guessed deadline that makes
+ * someone miss an entry is worse than no deadline at all. This is the
+ * `dates_confirmed` failure (OPE-433) waiting to happen in a new table.
+ *
+ * ── `contactEmail` exists because two live rows needed it ─────────────────
+ *
+ * Two APPROVED events stored a bare `mailto:` in `application_url` — their
+ * application route genuinely IS "email the secretary". Dropping them would
+ * discard a working route for two public events; storing them as a URL is a lie
+ * about what they are. See the migration for the four values cleaned.
+ */
+export const eventApplications = sqliteTable(
+  "event_applications",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    eventId: text("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    /** One of EVENT_APPLICATION_LANES. Text rather than a CHECK so a new lane
+     *  does not need a table rebuild; the Zod layer is the gate. */
+    lane: text("lane").notNull(),
+    /** Free text as printed by the fair — "Farm Photography", "Cattle",
+     *  "Digital Division 4". NULL means the row covers the whole lane. */
+    department: text("department"),
+    url: text("url"),
+    /** For routes that are an email address, not a page. */
+    contactEmail: text("contact_email"),
+    notes: text("notes"),
+    /** Epoch seconds, or NULL for "not confirmed". NEVER defaulted. */
+    opensAt: integer("opens_at", { mode: "timestamp" }),
+    closesAt: integer("closes_at", { mode: "timestamp" }),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .notNull()
+      .$defaultFn(() => new Date())
+      .$onUpdateFn(() => new Date()),
+  },
+  (t) => ({
+    byEvent: index("idx_event_applications_event").on(t.eventId),
+    byLane: index("idx_event_applications_lane").on(t.lane),
+    /**
+     * At most ONE whole-lane row per event. Department rows are unconstrained,
+     * because a fair legitimately has many.
+     *
+     * Partial, and on `department IS NULL` specifically: SQLite treats NULLs as
+     * DISTINCT in a unique index, so a plain unique on (event_id, lane,
+     * department) would permit unlimited duplicate whole-lane rows — the exact
+     * hole it would look like it was closing.
+     */
+    oneWholeLanePerEvent: uniqueIndex("idx_event_applications_one_per_lane")
+      .on(t.eventId, t.lane)
+      .where(sql`${t.department} IS NULL`),
+  })
+);
+
 export const eventDays = sqliteTable("event_days", {
   id: text("id")
     .primaryKey()

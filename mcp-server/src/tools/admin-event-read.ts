@@ -21,7 +21,15 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { and, eq, isNull, inArray } from "drizzle-orm";
 import { unsafeSlug, centsToDollars } from "@takemetothefair/utils";
-import { events, eventDays, eventVendors, promoters, vendors, venues } from "../schema.js";
+import {
+  events,
+  eventApplications,
+  eventDays,
+  eventVendors,
+  promoters,
+  vendors,
+  venues,
+} from "../schema.js";
 import { jsonContent } from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
@@ -176,6 +184,29 @@ export function registerAdminEventReadTools(server: McpServer, db: Db, auth: Aut
         .from(eventDays)
         .where(eq(eventDays.eventId, event.id));
 
+      // OPE-709 hazard 4 — the reader lands BEFORE any writer, deliberately.
+      //
+      // `application_url` shipped invisible to this tool and stayed that way
+      // until OPE-534 noticed. A field the admin reader cannot see is a field
+      // nobody can verify was written correctly, so `event_applications` is
+      // readable here from its first commit — before anything can put a row in
+      // it. Every lane is returned, unfiltered: a lane missing from this list is
+      // indistinguishable from a lane with no rows, and that ambiguity is the
+      // whole defect being fixed.
+      const applications = await db
+        .select({
+          id: eventApplications.id,
+          lane: eventApplications.lane,
+          department: eventApplications.department,
+          url: eventApplications.url,
+          contactEmail: eventApplications.contactEmail,
+          notes: eventApplications.notes,
+          opensAt: eventApplications.opensAt,
+          closesAt: eventApplications.closesAt,
+        })
+        .from(eventApplications)
+        .where(eq(eventApplications.eventId, event.id));
+
       return {
         content: [
           jsonContent({
@@ -236,6 +267,9 @@ export function registerAdminEventReadTools(server: McpServer, db: Db, auth: Aut
             vendor_fee_min: centsToDollars(event.vendorFeeMinCents),
             vendor_fee_max: centsToDollars(event.vendorFeeMaxCents),
             vendor_fee_notes: event.vendorFeeNotes,
+            // OPE-709 — the legacy single-route columns. Retained as a
+            // read-through for the commercial lane; `applications` below is the
+            // model. Do not add a second lane here.
             application_url: event.applicationUrl,
             application_instructions: event.applicationInstructions,
             application_deadline: event.applicationDeadline
@@ -272,6 +306,20 @@ export function registerAdminEventReadTools(server: McpServer, db: Db, auth: Aut
               ? { id: event.promoterId, name: event.promoterName, slug: event.promoterSlug }
               : null,
             vendor_count: vendorRows.length,
+            // OPE-709 — every application route, one row per route. `department`
+            // NULL means the row covers the whole lane; dates NULL mean "not
+            // confirmed" and are NEVER inferred (Topsfield spreads 28 days
+            // inside one lane; The Big E's photography closes in June).
+            applications: applications.map((a) => ({
+              id: a.id,
+              lane: a.lane,
+              department: a.department,
+              url: a.url,
+              contact_email: a.contactEmail,
+              notes: a.notes,
+              opens_at: a.opensAt ? new Date(a.opensAt).toISOString() : null,
+              closes_at: a.closesAt ? new Date(a.closesAt).toISOString() : null,
+            })),
             schedule: days.map((d) => ({
               date: d.date ? new Date(d.date).toISOString().slice(0, 10) : null,
               open_time: d.openTime,

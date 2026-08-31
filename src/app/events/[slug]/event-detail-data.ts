@@ -11,7 +11,7 @@
  */
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { eq, and, sql, isNull, inArray } from "drizzle-orm";
+import { eq, and, ne, sql, isNull, inArray } from "drizzle-orm";
 import { SITE_URL } from "@takemetothefair/constants";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import {
@@ -22,6 +22,7 @@ import {
   vendors,
   users,
   eventDays,
+  eventApplications,
   eventSeries,
 } from "@/lib/db/schema";
 import { unsafeSlug } from "@/lib/utils";
@@ -121,6 +122,28 @@ export async function getEvent(slug: string) {
       .where(eq(eventDays.eventId, eventData.events.id))
       .orderBy(eventDays.date);
 
+    // OPE-709 — application routes other than the commercial-vendor one.
+    //
+    // Scoped to the NON-commercial lanes on purpose. The existing "Vendor
+    // Applications" block still reads `events.application_url` and is left
+    // exactly as it was: it is the only application information 105 events have,
+    // and re-pointing it at this table would put those 105 live pages at risk to
+    // gain nothing today. The ruling allows that — the legacy columns become "at
+    // most a read-through for the commercial lane".
+    //
+    // Ordered so the rendering is stable: lane, then department, then a row with
+    // no department first within its lane.
+    const applicationRouteResults = await db
+      .select()
+      .from(eventApplications)
+      .where(
+        and(
+          eq(eventApplications.eventId, eventData.events.id),
+          ne(eventApplications.lane, "commercial_vendor")
+        )
+      )
+      .orderBy(eventApplications.lane, eventApplications.department);
+
     // Increment view count.
     //
     // RAW SQL DELIBERATELY (OPE-332). `events.updatedAt` now carries
@@ -182,6 +205,10 @@ export async function getEvent(slug: string) {
         };
       }),
       eventDays: eventDayResults,
+      // OPE-709 — non-commercial application routes (exhibitor/competition,
+      // performer, volunteer). Empty for almost every event today; that is the
+      // gap this table exists to let us close.
+      applicationRoutes: applicationRouteResults,
     };
   } catch (e) {
     await logError(db, {

@@ -683,6 +683,26 @@ const SCHEMA_SQL = `
     ON event_vendors (event_id, vendor_id, event_day_id)
     WHERE event_day_id IS NOT NULL;
 
+  -- OPE-709 (drizzle/0257) — application routes per event, one row per route.
+  -- The admin reader selects from this unconditionally, so every test using the
+  -- shared harness needs it present; without it the reader throws and the
+  -- failure looks like a reader bug rather than a missing fixture.
+  CREATE TABLE event_applications (
+    id TEXT PRIMARY KEY,
+    event_id TEXT NOT NULL,
+    lane TEXT NOT NULL,
+    department TEXT,
+    url TEXT,
+    contact_email TEXT,
+    notes TEXT,
+    -- Nullable, and never defaulted: NULL means "not confirmed". See the
+    -- schema docblock for why a deadline must not be inferred.
+    opens_at INTEGER,
+    closes_at INTEGER,
+    created_at INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL DEFAULT 0
+  );
+
   CREATE TABLE event_days (
     id TEXT PRIMARY KEY,
     event_id TEXT NOT NULL,

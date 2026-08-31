@@ -603,6 +603,32 @@ export const PERFORMER_ROSTER_STATUS_VALUES = [
 ] as const;
 export type PerformerRosterStatus = (typeof PERFORMER_ROSTER_STATUS_VALUES)[number];
 
+/**
+ * OPE-709 — the application ROUTES an event can publish. One event routinely has
+ * several, and until now `events.application_url` held exactly one.
+ *
+ * All 105 rows carrying an `application_url` on 2026-08-31 were the COMMERCIAL
+ * lane — booth space for a business. Zero were exhibitor entries. That is not a
+ * coverage gap: every county fair here has a few dozen commercial vendors and
+ * HUNDREDS of exhibitors (bakers, quilters, photographers, 4-H animals), and the
+ * single field was built for the smaller half.
+ *
+ * The lanes are genuinely different products, not variants: a booth costs
+ * hundreds of dollars and closes months ahead; an exhibit entry costs $1–2 and
+ * closes two to four weeks out, through a different department.
+ */
+export const EVENT_APPLICATION_LANES = [
+  /** Booth space for a business. The lane `events.application_url` always held. */
+  "commercial_vendor",
+  /** Entering an item to be judged — premium books, exhibit halls, contests. */
+  "exhibitor_competition",
+  /** Acts, bands, demonstrations. */
+  "performer",
+  /** Help at the fair. */
+  "volunteer",
+] as const;
+export type EventApplicationLane = (typeof EVENT_APPLICATION_LANES)[number];
+
 // "Producer-class" events — the big PRODUCED shows that publish a
 // web exhibitor directory worth backfilling (home/garden, boat/RV,
 // sportsman, trade, fiber, craft-festival, fairs). Deliberately
