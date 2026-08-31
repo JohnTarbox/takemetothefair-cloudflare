@@ -61,6 +61,7 @@ import { inboundEmails } from "./schema.js";
 import type { EmailIntent } from "./email-intents.js";
 import { buildReply } from "./email-reply-builder.js";
 import { ledgerEmailSend } from "./mailer.js";
+import { isAutoReplyEnabled, AUTO_REPLY_HELD_REASON, type EmailGateEnv } from "./email-gates.js";
 
 const SOURCE = "mcp:inbound-email:stale-sweep";
 const DEFAULT_FROM = "Meet Me at the Fair <notify@meetmeatthefair.com>";
@@ -106,7 +107,10 @@ const MAX_RECOVERY_ATTEMPTS = 3;
  *  with a warn log, matching the workflow's own send-reply behavior. The
  *  actual SELECT/UPDATE flows through the caller-provided `db` so tests
  *  can inject a better-sqlite3-backed Drizzle instance. */
-interface SweepEnv {
+// OPE-626 — extends EmailGateEnv rather than re-declaring the flags, which is
+// the point of that module: `EMAIL_REPLY_ENABLED` previously had no single
+// declaration anywhere and each caller invented its own local shape.
+interface SweepEnv extends EmailGateEnv {
   DB: D1Database;
   INBOUND_EMAIL: Workflow<{ messageRowId: string; intent: EmailIntent }>;
   EMAIL?: SendEmail;
@@ -421,6 +425,29 @@ async function terminallyFailRow(
       headers["In-Reply-To"] = row.messageId;
       headers["References"] = row.messageId;
     }
+    // OPE-626 — the SECOND ungated sender, which the ticket did not name.
+    //
+    // `reply:sweep-exceeded` is a `reply:*` source sent via `env.EMAIL` direct,
+    // so it too never reaches the queue consumer's gate. Dormant (0 sends in
+    // 30d at time of writing) but live code — a fix aimed only at
+    // `inbound-email.ts` would have left a second bypass behind, which is how
+    // this class of defect survives its own fix.
+    if (!isAutoReplyEnabled(env)) {
+      await ledgerEmailSend(db, {
+        messageId: `sweep-exceeded-${row.id}`,
+        recipient: msg.to,
+        source: "reply:sweep-exceeded",
+        subject: msg.subject,
+        status: "stubbed",
+        provider: "stub",
+        error: AUTO_REPLY_HELD_REASON,
+        inboundEmailId: row.id,
+        bodyHtml: msg.html,
+        bodyText: msg.text,
+      });
+      return;
+    }
+
     const sendRes = await env.EMAIL.send({
       from: msg.from ?? DEFAULT_FROM,
       to: msg.to,
