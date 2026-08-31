@@ -43,6 +43,7 @@ import { withAuthorized } from "@/lib/api/with-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { venues } from "@/lib/db/schema";
 import { logError } from "@/lib/logger";
+import { recordMutation } from "@/lib/audit/record-mutation";
 import {
   acceptCandidateImage,
   extensionForContentType,
@@ -191,7 +192,22 @@ export const POST = withAuthorized(async ({ request, db, userId }) => {
         continue;
       }
       // The ruling's explicit instruction: clear to null, never substitute.
+      //
+      // Audited, and this is the write that most needs it: it destroys the only
+      // image a venue page has, and the OPE-433 specimen is a production venue
+      // that changed at 04:00:20Z with the candidate causes indistinguishable
+      // from the evidence. Six weeks from now "why did this venue lose its
+      // photo?" must be answerable from the row, not reconstructed.
       await db.update(venues).set({ imageUrl: null }).where(eq(venues.id, v.id));
+      await recordMutation(db, {
+        entityType: "venue",
+        entityId: v.id,
+        verb: "update",
+        actor: `venue-image-heal:${actorId}`,
+        before: { imageUrl: v.imageUrl },
+        after: { imageUrl: null },
+        note: `OPE-294 cleared borrowed image from ${verdict.host ?? "unknown host"} — ${reason}`,
+      });
       outcomes.push({ ...base, outcome: "cleared", reason });
       continue;
     }
@@ -271,6 +287,18 @@ export const POST = withAuthorized(async ({ request, db, userId }) => {
     const cdnUrl = `${CDN_BASE}/${key}`;
     try {
       await db.update(venues).set({ imageUrl: cdnUrl }).where(eq(venues.id, v.id));
+      // Audited too, though it is the benign direction: it still changes what a
+      // public page shows, and an audit trail with only the destructive half
+      // recorded cannot answer "when did this venue's image last change?".
+      await recordMutation(db, {
+        entityType: "venue",
+        entityId: v.id,
+        verb: "update",
+        actor: `venue-image-heal:${actorId}`,
+        before: { imageUrl: v.imageUrl },
+        after: { imageUrl: cdnUrl },
+        note: `OPE-294 re-hosted ${verdict.host ?? "unknown host"} image as owned bytes from ${sourced.url}`,
+      });
     } catch (e) {
       // R2 holds the object but the row still points at the borrowed host.
       // Loud, because the next run will re-download and re-upload it.
