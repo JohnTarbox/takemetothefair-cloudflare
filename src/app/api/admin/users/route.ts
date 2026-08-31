@@ -2,8 +2,9 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/api/with-auth";
 import { users, promoters, vendors } from "@/lib/db/schema";
-import { notInArray, isNotNull, ne } from "drizzle-orm";
+import { notInArray, isNotNull } from "drizzle-orm";
 import { logError } from "@/lib/logger";
+import { realUserWhere } from "@takemetothefair/db-schema";
 
 export const GET = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
   const searchParams = request.nextUrl.searchParams;
@@ -75,7 +76,7 @@ export const GET = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
         origin: users.origin,
       })
       .from(users)
-      .where(includePlaceholders ? undefined : ne(users.origin, "ingestion"))
+      .where(includePlaceholders ? undefined : realUserWhere())
       .orderBy(users.email);
 
     return NextResponse.json(userList);
