@@ -57,6 +57,7 @@ import { NonRetryableError } from "cloudflare:workflows";
 import { and, eq, gte, sql } from "drizzle-orm";
 import { getDb } from "../db.js";
 import { ledgerEmailSend } from "../mailer.js";
+import { isAutoReplyEnabled, AUTO_REPLY_HELD_REASON, type EmailGateEnv } from "../email-gates.js";
 import { inboundEmails, adminActions, events } from "../schema.js";
 import { logError } from "../logger.js";
 import { classifyDomainTier, isHigherTier, classifyDedupTier } from "@takemetothefair/utils";
@@ -155,7 +156,10 @@ type SubmitSource =
   // `body` source for extraction (submitFreeTextExtract over `text`).
   | { kind: "attachment"; text: string; name: string; imageKey?: string };
 
-type Env = {
+// OPE-626 — `& EmailGateEnv` gives the auto-reply gate a declared home here.
+// The workflow is the highest-volume `reply:*` sender and, until this ticket,
+// the flag governing it existed in neither this type nor mcp-server's own Env.
+type Env = EmailGateEnv & {
   DB: D1Database;
   /** Cloudflare Email Service outbound binding. Replaces the prior
    *  EMAIL_JOBS queue hop for 1:1 auto-replies — Workflow steps already
@@ -967,6 +971,39 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             if (rows[0].messageId) {
               headers["In-Reply-To"] = rows[0].messageId;
               headers["References"] = rows[0].messageId;
+            }
+
+            // OPE-626 — the gate this path never had.
+            //
+            // `EMAIL_REPLY_ENABLED` is enforced only in the EMAIL_JOBS consumer,
+            // and this send never goes near it, so 106 customer `reply:*` mails
+            // in 30 days across 19 sources went out ungated. `AUTO_REPLY_ENABLED`
+            // is that gate, and it defaults to ENABLED when unset — suppressing
+            // legitimate acks is the failure being avoided here, not the one
+            // being introduced.
+            //
+            // Held mail is LEDGERED as 'stubbed', not dropped, mirroring what
+            // the queue consumer does for the operator flag. An ack that
+            // vanished with no row is indistinguishable from one that was never
+            // composed, and this whole ticket exists because a send path was
+            // invisible.
+            if (!isAutoReplyEnabled(this.env)) {
+              await ledgerEmailSend(db, {
+                messageId: `reply-${messageRowId}`,
+                recipient: msg.to,
+                source: `reply:${replyKind}`,
+                subject: msg.subject,
+                status: "stubbed",
+                provider: "stub",
+                error: AUTO_REPLY_HELD_REASON,
+                inboundEmailId: messageRowId,
+                bodyHtml: msg.html,
+                bodyText: msg.text,
+              });
+              console.warn(
+                `[workflow:send-reply] auto-reply held (disabled) inbound=${messageRowId} kind=${replyKind}`
+              );
+              return;
             }
 
             const sendRes = await this.env.EMAIL.send({

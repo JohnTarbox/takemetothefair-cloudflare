@@ -65,10 +65,22 @@ ENRICHMENT_DRY_RUN = "true"
 # is the mechanism behind every "the flag flips without notice" note since
 # 2026-08-13, confirmed on 08-30 against the deploy history.
 #
-# ⚠️ This gate does NOT stop the inbound workflow's auto-reply path, which sends
-# via env.EMAIL directly (OPE-626). Turning this on changes operator-initiated
-# replies only.
+# ⚠️ This gate covers operator-initiated replies ONLY. The inbound workflow's
+# auto-reply path sends via env.EMAIL directly and never reaches it; as of
+# OPE-626 that path has its own gate, AUTO_REPLY_ENABLED, below. Turning this
+# one on or off does not affect the automated acks.
 EMAIL_REPLY_ENABLED = "true"
+# OPE-626 — the inbound workflow's AUTOMATED acks (`reply:*` sent with no human
+# reading them). Separate from EMAIL_REPLY_ENABLED on purpose: that flag governs
+# operator-composed replies to a named person, and it has moved on its own
+# (OPE-509 plaintext-var revert, OPE-648). Putting 106 customer acknowledgements
+# per 30 days behind a flag that flips without notice is how a submitter stops
+# hearing that we received their email.
+#
+# ⚠️ Shipped "true", and the code defaults to ENABLED when this is unset, so
+# nothing changes on deploy. That was a requirement of the ruling, not a hope.
+# Only the exact string "false" holds the acks — see mcp-server/src/email-gates.ts.
+AUTO_REPLY_ENABLED = "true"
 # OPE-357 — STOP-gate on asking UNROUTED (unknown) senders which project they
 # meant. Separate from EMAIL_REPLY_ENABLED on purpose: enabling ordinary replies
 # must never silently start mailing strangers as a side effect. Flip to "true"

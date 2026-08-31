@@ -1,4 +1,5 @@
 import OAuthProvider from "@cloudflare/workers-oauth-provider";
+import type { EmailGateEnv } from "./email-gates.js";
 import { McpAgent } from "agents/mcp";
 import { getCurrentAgent } from "agents";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -90,7 +91,11 @@ import type { UserProps } from "./oauth/utils.js";
 // ---------------------------------------------------------------------------
 // Env
 // ---------------------------------------------------------------------------
-interface Env {
+// OPE-626 — the worker Env now declares BOTH email gates, via the shared
+// EmailGateEnv. It previously declared neither, which is a large part of why
+// EMAIL_REPLY_ENABLED had no single enforcement point: three modules each read
+// it through a local interface of their own and nothing tied them together.
+interface Env extends EmailGateEnv {
   DB: D1Database;
   OAUTH_KV: KVNamespace;
   MCP_OBJECT: DurableObjectNamespace;
