@@ -30,6 +30,7 @@ import {
   FETCH_UA,
 } from "@takemetothefair/site-fetch";
 import { logError } from "@/lib/logger";
+import { recordBrowserRenderingAttempt } from "@/lib/browser-rendering-attempt";
 
 const bodySchema = z.object({ url: z.string().url() });
 
@@ -144,6 +145,18 @@ export const POST = withInternalKey({ source: "harvest-fetch" }, async ({ reques
     } else if (shouldEscalate(standard.status)) {
       // 2) WAF-blocked (Simpleview DMOs) → Cloudflare Browser Rendering.
       const escalated = await fetchViaBrowserRendering(parsedUrl.href, env);
+      // OPE-694 — the THIRD Browser Rendering call site, which that ticket did
+      // not name. Instrumenting only the two in import-url would have left the
+      // harvest lane's attempts as invisible as the others were, and a
+      // half-instrumented signal is worse than none: the count would read low
+      // and nobody would know why.
+      await recordBrowserRenderingAttempt(db, {
+        url: parsedUrl.href,
+        trigger: "status-escalation",
+        ok: escalated.ok,
+        status: escalated.ok ? 200 : escalated.status,
+        error: escalated.ok ? null : escalated.error,
+      });
       if (!escalated.ok) {
         await logError(db, {
           level: "warn",
