@@ -5737,3 +5737,6 @@ export * from "./promoter-outreach-metrics";
 export * from "./promoter-outreach-state";
 export * from "./promoter-reply-link";
 export * from "./gallery-photos";
+
+// OPE-236 §4 — the canonical claim row, shared by the app AND the MCP Worker.
+export * from "./entity-claim-record";

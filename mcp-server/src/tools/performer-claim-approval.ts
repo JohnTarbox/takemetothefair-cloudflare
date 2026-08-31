@@ -18,8 +18,9 @@
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { eq } from "drizzle-orm";
-import { performers, users, adminActions } from "../schema.js";
+import { and, eq } from "drizzle-orm";
+import { performers, users, adminActions, entityClaims } from "../schema.js";
+import { buildSettledEntityClaim, shouldRecordEntityClaim } from "@takemetothefair/db-schema";
 import { jsonContent } from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
@@ -90,6 +91,29 @@ export async function approvePerformerClaim(
       .update(performers)
       .set({ userId, claimed: true, claimedAt: now, claimedBy: userId, updatedAt: now })
       .where(eq(performers.id, performerId));
+  }
+
+  // OPE-236 §4 — the canonical claim row. PERFORMER was added to the
+  // `entity_claims` enum by OPE-318 precisely so performer claims could be
+  // reviewed, and this path — the only one that grants one — never wrote a row.
+  // Found by the OPE-236 structural guard, two entities from where it was filed.
+  const priorClaims = await db
+    .select({ userId: entityClaims.userId, status: entityClaims.status })
+    .from(entityClaims)
+    .where(and(eq(entityClaims.entityType, "PERFORMER"), eq(entityClaims.entityId, performerId)));
+
+  if (shouldRecordEntityClaim(priorClaims, userId)) {
+    await db.insert(entityClaims).values(
+      buildSettledEntityClaim({
+        entityType: "PERFORMER",
+        entityId: performerId,
+        userId,
+        method: "ADMIN",
+        decidedBy: actorUserId,
+        at: now,
+        evidence: reason ?? null,
+      })
+    );
   }
 
   await db.insert(adminActions).values({

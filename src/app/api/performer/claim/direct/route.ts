@@ -26,7 +26,8 @@ import { and, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
-import { adminActions, performers, users } from "@/lib/db/schema";
+import { adminActions, entityClaims, performers, users } from "@/lib/db/schema";
+import { buildSettledEntityClaim, shouldRecordEntityClaim } from "@takemetothefair/db-schema";
 import { logError } from "@/lib/logger";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 import { unsafeSlug } from "@/lib/utils";
@@ -129,6 +130,31 @@ export async function POST(request: Request) {
         .update(performers)
         .set({ userId: user.id, claimed: true, claimedAt: now, claimedBy: user.id, updatedAt: now })
         .where(and(eq(performers.id, performer.id), isNull(performers.userId)));
+    }
+
+    // OPE-236 §4 — the canonical claim row. The performer mirror of
+    // /api/vendor/claim/direct, and it had the same gap: ownership granted on a
+    // pre-existing listing with nothing in `entity_claims`, so `/admin/claims`
+    // could not see it. OPE-318 widened the enum to PERFORMER for exactly this.
+    const priorClaims = await db
+      .select({ userId: entityClaims.userId, status: entityClaims.status })
+      .from(entityClaims)
+      .where(
+        and(eq(entityClaims.entityType, "PERFORMER"), eq(entityClaims.entityId, performer.id))
+      );
+
+    if (shouldRecordEntityClaim(priorClaims, user.id)) {
+      await db.insert(entityClaims).values(
+        buildSettledEntityClaim({
+          entityType: "PERFORMER",
+          entityId: performer.id,
+          userId: user.id,
+          method: "EMAIL_MATCH",
+          decidedBy: user.id,
+          at: now,
+          evidence: `account email matches performer.contact_email (${performer.contactEmail})`,
+        })
+      );
     }
 
     await db.insert(adminActions).values({
