@@ -206,9 +206,29 @@ jobs:
       # not — those live in the runner image, not in ~/.cache/ms-playwright, and
       # webkit in particular needs several that ubuntu-latest does not preinstall.
       # So a hit still runs deps-only, which is the cheap half of `--with-deps`.
+      #
+      # OPE-705 — the timeout is 10, not 5, and the number is measured rather
+      # than picked. Across 20 samples of this step on SUCCESSFUL runs
+      # (2026-08-31, `actions/runs/<id>/jobs`):
+      #
+      #     min 12s · median ~25s · mean 53s · max 275s
+      #     7 of 20 exceeded 60s
+      #
+      # The old limit was 300s, so the slowest run that PASSED did so with 25
+      # seconds to spare — an 8% margin on a step whose spread is 20x. It read
+      # as a rare flake (0 of the last 100 CI runs failed on it) only because it
+      # was squeaking under, not because the tail is unlikely. The cost is paid
+      # by a step that is normally 25s: a timeout raise costs nothing on the
+      # median path and only spends the extra minutes on the days apt is slow.
+      #
+      # 10 matches the sibling browsers step above. Do NOT tighten this back
+      # toward the observed maximum — `__tests__/ci-playwright-timeouts.test.ts`
+      # fails if either Playwright step drops below 10, precisely because
+      # "5 minutes is plenty for a 25-second step" is the reasoning that set it
+      # there the first time.
       - name: Install Playwright system dependencies (cache hit)
         if: steps.playwright-cache.outputs.cache-hit == 'true'
-        timeout-minutes: 5
+        timeout-minutes: 10
         run: npx playwright install-deps chromium webkit
 
       # mobile-safari is testMatch-scoped to *-mobile-*.spec.ts, so this adds
@@ -275,9 +295,14 @@ jobs:
         timeout-minutes: 10
         run: npx playwright install --with-deps chromium
 
+      # OPE-705 — same raise as the E2E job's step; see the measurement recorded
+      # there. Smoke installs chromium deps only and its own samples are milder
+      # (12-87s over the same 20-run window), but it hits the SAME apt mirror on
+      # the same runners, so leaving it at 5 would be fixing one of two identical
+      # paths — this repo's most-repeated defect shape.
       - name: Install Playwright system dependencies (cache hit)
         if: steps.playwright-cache.outputs.cache-hit == 'true'
-        timeout-minutes: 5
+        timeout-minutes: 10
         run: npx playwright install-deps chromium
 
       - name: Run smoke tests
