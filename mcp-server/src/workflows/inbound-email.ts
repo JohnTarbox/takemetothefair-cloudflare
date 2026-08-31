@@ -58,6 +58,7 @@ import { and, eq, gte, sql } from "drizzle-orm";
 import { getDb } from "../db.js";
 import { ledgerEmailSend } from "../mailer.js";
 import { isAutoReplyEnabled, AUTO_REPLY_HELD_REASON, type EmailGateEnv } from "../email-gates.js";
+import { shouldUseThreadReplyAck } from "../email-handlers/thread-reply-ack.js";
 import { inboundEmails, adminActions, events } from "../schema.js";
 import { logError } from "../logger.js";
 import { classifyDomainTier, isHigherTier, classifyDedupTier } from "@takemetothefair/utils";
@@ -769,6 +770,10 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
                 // header often sits past the 500-char preview, so the excerpt
                 // would silently never match (the same trap OPE-459 hit).
                 bodyText: inboundEmails.bodyText,
+                // OPE-706 — needed by the thread-reply guard below. Both
+                // headers, because the sender's client may thread on either.
+                inReplyTo: inboundEmails.inReplyTo,
+                emailReferences: inboundEmails.emailReferences,
               })
               .from(inboundEmails)
               .where(eq(inboundEmails.id, messageRowId))
@@ -778,6 +783,32 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
                 `inbound_emails row not found for reply: ${messageRowId}`
               );
             }
+            // OPE-706 — a generic ack must not tell someone their message
+            // "hasn't been read by a person yet" when they are replying to a
+            // person who read it. Same shape as the `no-url` invariant below
+            // (OPE-453), one template over: a reply template asserting a fact
+            // about the inbound, checked against the field that falsifies it.
+            //
+            // Placed HERE rather than beside that guard, deliberately. The
+            // receipt-widget and correction-form branches immediately below
+            // both switch on `replyKind`, and overriding after them would leave
+            // a widget attached to copy that is approved verbatim and does not
+            // mention one. Everything downstream now sees the final kind.
+            //
+            // Reword, not suppress (ruled 2026-08-31): the specimen sat 30 days
+            // with an obligation open and the ack was the only thing that ever
+            // reached her, so silence is the worse failure.
+            if (shouldUseThreadReplyAck(replyKind, rows[0].inReplyTo, rows[0].emailReferences)) {
+              await logError(this.env.DB, {
+                level: "info",
+                source: SOURCE,
+                message: `reply is on a thread we started — '${replyKind}' replaced with 'thread-reply-ack'`,
+                sessionId,
+                context: { messageRowId, replyKind, inReplyTo: rows[0].inReplyTo },
+              });
+              replyKind = "thread-reply-ack";
+            }
+
             // Use replyParams.subject if the handler provided one (e.g.,
             // submit pipeline's success path); otherwise fall back to the
             // row's subject (covers the dispatch-failed synthetic-result

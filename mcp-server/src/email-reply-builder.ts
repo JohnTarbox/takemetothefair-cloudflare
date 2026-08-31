@@ -534,6 +534,27 @@ If you're reporting something that isn't working, it helps to know which page yo
 
 ${SIGN_OFF}`;
     }
+    case "thread-reply-ack": {
+      // OPE-706 — copy approved by John 2026-08-31, verbatim, in the ruling
+      // comment. Do NOT edit it without a fresh approval.
+      //
+      // Why this wording, so it is not "improved" back into the defect:
+      //
+      //  - Every clause is checkable against a row: the mail arrived, it is
+      //    threaded, and an obligation exists against the same conversation.
+      //  - THE READING-STATE CLAIM IS GONE, DELIBERATELY. "It hasn't been read
+      //    by a person yet" is the actual defect; no rewording of that sentence
+      //    survives contact with a thread where someone plainly has read them.
+      //    Do not reintroduce a variant of it.
+      //  - No promise about WHEN. Per OPE-367: do not promise what nothing
+      //    keeps. That constraint has not changed just because a human is in
+      //    the thread — the support-obligations queue is still not drained.
+      return `Thanks for writing back.
+
+This is an automatic note to confirm your reply reached us — there's no need to send it again. It's attached to your existing thread, and it's gone to the person you've been corresponding with.
+
+${SIGN_OFF}`;
+    }
     case "problem-report-ack": {
       // UR1 Phase 1 (2026-06-04). Sent in response to anything landing on
       // report@ / feedback@. Intentionally short — we don't want to
