@@ -36,6 +36,7 @@ import { loadLocationsUniverse } from "../locations-universe.js";
 import { listBalance } from "../newsletter-list-balance.js";
 import { readOperatorQueues } from "../operator-queue-notice.js";
 import { readDayCoverage } from "../events/day-coverage.js";
+import { readElapsedTentative } from "../events/elapsed-tentative.js";
 import type { Db } from "../db.js";
 import { findSlugCollisionPairs } from "../slug-collision-invariant.js";
 import type { AuthContext } from "../auth.js";
@@ -820,6 +821,21 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
         };
       }
 
+      // OPE-702 — a POPULATION, not a fault. The whole explanation, including
+      // why sweeping it to zero is the one thing that must not be done, lives
+      // with the query in `events/elapsed-tentative.ts`.
+      let elapsedTentative: Record<string, unknown>;
+      try {
+        elapsedTentative = { ...(await readElapsedTentative(db)) };
+      } catch (err) {
+        // Fail loudly in the payload rather than reporting a clean zero, which
+        // would read exactly like an empty population (B8).
+        elapsedTentative = {
+          error: "elapsed_tentative_failed",
+          detail: err instanceof Error ? err.message : String(err),
+        };
+      }
+
       return {
         content: [
           jsonContent({
@@ -920,6 +936,10 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
               rule: "an upcoming APPROVED event with day rows must have at least one public row inside its own span, and no row outside it",
               ...dayCoverage,
             },
+            // OPE-702 — see the comment at the query. A POPULATION, not a
+            // fault: it has no target of zero, and driving it to zero is the
+            // one thing that must not be done to it.
+            elapsed_tentative: elapsedTentative,
             // OPE-615 — the fault ledger's coverage of what production throws.
             //
             // A detector pointed at a subset of production reports a clean
