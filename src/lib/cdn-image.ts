@@ -118,6 +118,20 @@ export interface CdnImageOpts {
   quality?: number;
   /** Graceful fallback when the transform fails; see {@link CdnImageOnError}. */
   onerror?: CdnImageOnError;
+  /**
+   * OPE-686 — clockwise rotation in degrees, 90 / 180 / 270.
+   *
+   * A gallery photo stored sideways is corrected at RENDER time rather than by
+   * re-encoding the object: the Workers runtime has no image encoder, and a
+   * re-encode would degrade the master every time somebody rotated a photo
+   * twice.
+   *
+   * Pass `undefined` (not 0) for an unrotated image. The options string is the
+   * CDN cache key, so emitting `rotate=0` everywhere would invalidate every
+   * derivative cached for the whole site. `rotationCdnOption` in
+   * `@takemetothefair/db-schema` returns exactly that shape.
+   */
+  rotate?: 90 | 180 | 270;
 }
 
 // Hosts whose URLs we can transform via Cloudflare's same-zone
@@ -197,6 +211,7 @@ export function cdnImage(src: string | null | undefined, opts: CdnImageOpts): st
   if (opts.format) params.push(`format=${opts.format}`);
   if (opts.quality != null) params.push(`quality=${opts.quality}`);
   if (opts.onerror) params.push(`onerror=${opts.onerror}`);
+  if (opts.rotate) params.push(`rotate=${opts.rotate}`);
 
   return `https://meetmeatthefair.com/cdn-cgi/image/${params.join(",")}/${src}`;
 }

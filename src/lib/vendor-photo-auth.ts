@@ -33,7 +33,13 @@ type Db = DrizzleD1Database<typeof schema>;
 export const MAX_GALLERY_PHOTOS = 20;
 
 export type PhotoAuthResult =
-  | { ok: true; vendorId: string; isAdmin: boolean }
+  | {
+      ok: true;
+      vendorId: string;
+      isAdmin: boolean;
+      /** OPE-686 — true when the photo is a tombstone. Only the per-photo gate sets it. */
+      deleted?: boolean;
+    }
   | { ok: false; status: 401 | 403 | 404; error: string };
 
 /**
@@ -54,7 +60,11 @@ export async function authorizePhotoMutation(
   const isAdmin = role === "ADMIN";
 
   const rows = await db
-    .select({ vendorId: vendorPhotos.vendorId, ownerId: vendors.userId })
+    .select({
+      vendorId: vendorPhotos.vendorId,
+      ownerId: vendors.userId,
+      deletedAt: vendorPhotos.deletedAt,
+    })
     .from(vendorPhotos)
     .innerJoin(vendors, eq(vendors.id, vendorPhotos.vendorId))
     .where(eq(vendorPhotos.id, photoId))
@@ -65,7 +75,12 @@ export async function authorizePhotoMutation(
   if (!isAdmin && row.ownerId !== userId) {
     return { ok: false, status: 404, error: "Photo not found" };
   }
-  return { ok: true, vendorId: row.vendorId, isAdmin };
+  // NOTE: a tombstone is deliberately NOT rejected here. DELETE has to stay
+  // idempotent — an agent retrying a timed-out call should not have to tell
+  // "it failed" apart from "it worked and I missed the reply". The PATCH
+  // handler refuses a deleted photo itself, which is the operation that would
+  // otherwise silently edit something invisible.
+  return { ok: true, vendorId: row.vendorId, isAdmin, deleted: !!row.deletedAt };
 }
 
 /**

@@ -28,7 +28,7 @@
  * upload_image_bytes MCP tool.
  */
 
-import { eq, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 
 import * as schema from "@/lib/db/schema";
@@ -36,6 +36,7 @@ import { events, vendors, venues, promoters, vendorPhotos, eventPhotos } from "@
 import { logError } from "@/lib/logger";
 import { recordMutation } from "@/lib/audit/record-mutation";
 import { recomputeEventCompleteness } from "@/lib/completeness";
+import { sha256Hex } from "@takemetothefair/db-schema";
 import {
   stripExifFromJpeg,
   transformViaCloudflare,
@@ -241,6 +242,13 @@ export interface PipelineResponseBody {
   soft_size_limit_bytes: number;
   optimization: "phase-2b";
   phase2b: Phase2bMeta;
+  /**
+   * OPE-686 — set when identical bytes were already in this gallery. The
+   * upload is reported as a SUCCESS: the caller asked for this photo to be in
+   * the gallery, and it is. `photo_id` names the row that already held it, so
+   * a retrying agent converges instead of appending.
+   */
+  duplicate?: true;
 }
 
 function extensionFor(contentType: string): string | null {
@@ -406,6 +414,11 @@ export async function runUploadPipeline(args: RunPipelineArgs): Promise<Pipeline
   let finalKey = originalKey;
   let finalContentType: string = declaredType;
   let finalBytesCount = bytes.length;
+  // OPE-686 — the bytes AS STORED, kept so the gallery insert can dedup on
+  // their digest. Starts as the (EXIF-stripped) source and is replaced by the
+  // WebP body when Phase 2b succeeds, so the digest always describes what is
+  // actually in the bucket rather than what we hoped to put there.
+  let storedBytes: Uint8Array = bytes;
   let phase2bStatus: "applied" | "skipped" | "fallback" = skipPhase2bReason ? "skipped" : "applied";
   const phase2bSkipReason: string | null = skipPhase2bReason;
   let phase2bWidth: number | null = null;
@@ -455,6 +468,7 @@ export async function runUploadPipeline(args: RunPipelineArgs): Promise<Pipeline
       finalKey = webpKey;
       finalContentType = "image/webp";
       finalBytesCount = transform.finalBytes;
+      storedBytes = transform.bytes;
       phase2bWidth = transform.width;
       phase2bHeight = transform.height;
       phase2bDurationMs = transform.durationMs;
@@ -508,6 +522,8 @@ export async function runUploadPipeline(args: RunPipelineArgs): Promise<Pipeline
 
   const url = `${CDN_BASE}/${finalKey}`;
   let photoId: string | undefined;
+  /** OPE-686 — set when the digest matched a live row; suppresses the insert. */
+  let duplicateOfPhotoId: string | undefined;
 
   try {
     if (isGallery) {
@@ -516,8 +532,58 @@ export async function runUploadPipeline(args: RunPipelineArgs): Promise<Pipeline
       // two tables are column-identical, so the only difference is which FK the
       // row is keyed on — keep it that way.
       const now = new Date();
-      photoId = crypto.randomUUID();
+
+      // OPE-686 — reject an exact duplicate rather than growing the gallery.
+      //
+      // The incident was two byte-identical rows eighteen seconds apart: an
+      // obvious double-submit that the append-only path had no way to notice.
+      // The digest is of the STORED bytes, so the same photo re-submitted with
+      // different EXIF or a different filename still collapses to one row.
+      //
+      // Checked against LIVE rows only. A photo somebody deleted must be
+      // re-uploadable; treating a tombstone as a duplicate would make the
+      // delete irreversible in the one way that matters.
+      //
+      // The R2 object for the duplicate is left behind, deliberately: the put
+      // already happened by the time the digest is known, objects are cheap,
+      // and this pipeline already leaves the object on delete. Reaping orphans
+      // stays one auditable sweep rather than two half-sweeps.
+      const digest = await sha256Hex(storedBytes);
+      const existingDup =
+        targetType === "event"
+          ? await db
+              .select({ id: eventPhotos.id, photoUrl: eventPhotos.photoUrl })
+              .from(eventPhotos)
+              .where(
+                and(
+                  eq(eventPhotos.eventId, targetId),
+                  eq(eventPhotos.contentSha256, digest),
+                  isNull(eventPhotos.deletedAt)
+                )
+              )
+              .limit(1)
+          : await db
+              .select({ id: vendorPhotos.id, photoUrl: vendorPhotos.photoUrl })
+              .from(vendorPhotos)
+              .where(
+                and(
+                  eq(vendorPhotos.vendorId, targetId),
+                  eq(vendorPhotos.contentSha256, digest),
+                  isNull(vendorPhotos.deletedAt)
+                )
+              )
+              .limit(1);
+
+      if (existingDup[0]) {
+        // Not an error: the caller wanted this photo in this gallery, and it
+        // is. Returning the existing id lets a retrying agent converge rather
+        // than append, which is the whole point.
+        duplicateOfPhotoId = existingDup[0].id;
+      }
+
+      photoId = duplicateOfPhotoId ?? crypto.randomUUID();
       const common = {
+        contentSha256: digest,
         id: photoId,
         photoUrl: url,
         caption,
@@ -528,7 +594,10 @@ export async function runUploadPipeline(args: RunPipelineArgs): Promise<Pipeline
         createdAt: now,
         updatedAt: now,
       };
-      if (targetType === "event") {
+      if (duplicateOfPhotoId) {
+        // Nothing to insert. Completeness is unchanged too — the gallery
+        // already had this photo, so recomputing would be a no-op write.
+      } else if (targetType === "event") {
         const [maxRow] = await db
           .select({ max: sql<number | null>`MAX(${eventPhotos.sortOrder})` })
           .from(eventPhotos)
@@ -609,6 +678,7 @@ export async function runUploadPipeline(args: RunPipelineArgs): Promise<Pipeline
       target_id: targetId,
       image_column: imageColumn,
       ...(photoId ? { photo_id: photoId } : {}),
+      ...(duplicateOfPhotoId ? { duplicate: true as const } : {}),
       bytes_stored: finalBytesCount,
       bytes_removed_by_exif_strip: bytesRemovedByExifStrip,
       exif_segments_stripped: exifSegmentsStripped,

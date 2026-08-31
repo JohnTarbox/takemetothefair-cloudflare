@@ -17,10 +17,11 @@
  * are separate slots. OPE-204/205's "hero-if-blank" writes target `image_url`,
  * which is why a gallery photo structurally cannot clobber an existing hero.
  */
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq, isNull } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "@/lib/db/schema";
 import { eventPhotos } from "@/lib/db/schema";
+import { rotationCdnOption } from "@takemetothefair/db-schema";
 
 type Db = DrizzleD1Database<typeof schema>;
 
@@ -31,6 +32,13 @@ export interface EventGalleryPhoto {
   alt: string;
   caption?: string;
   isFeatured: boolean;
+  /**
+   * OPE-686 — degrees to rotate at render time, or undefined when upright.
+   *
+   * Undefined rather than 0 on purpose: it feeds `cdnImage`'s `rotate`, and the
+   * options string is the CDN cache key.
+   */
+  rotation?: 90 | 180 | 270;
 }
 
 /**
@@ -76,9 +84,12 @@ export async function getEventGallery(
       alt: eventPhotos.altText,
       caption: eventPhotos.caption,
       isFeatured: eventPhotos.isFeatured,
+      rotation: eventPhotos.rotation,
     })
     .from(eventPhotos)
-    .where(eq(eventPhotos.eventId, eventId))
+    // OPE-686 — tombstones stay in the table so a delete is reversible; a
+    // reader that forgot this would republish every deleted photo.
+    .where(and(eq(eventPhotos.eventId, eventId), isNull(eventPhotos.deletedAt)))
     .orderBy(asc(eventPhotos.sortOrder));
 
   return orderEventPhotos(
@@ -88,6 +99,7 @@ export async function getEventGallery(
       alt: resolvePhotoAlt(r.alt, r.caption, eventName),
       caption: r.caption ?? undefined,
       isFeatured: !!r.isFeatured,
+      rotation: rotationCdnOption(r.rotation),
     }))
   );
 }

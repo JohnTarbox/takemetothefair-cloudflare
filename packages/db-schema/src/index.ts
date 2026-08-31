@@ -1014,6 +1014,12 @@ export const vendorPhotos = sqliteTable(
     isFeatured: integer("is_featured", { mode: "boolean" }).notNull().default(false),
     /** users.id of the uploader, or null for MCP/system writes. */
     uploadedBy: text("uploaded_by"),
+    /** OPE-686 — tombstone. A live gallery read is `deleted_at IS NULL`. */
+    deletedAt: integer("deleted_at", { mode: "timestamp" }),
+    /** OPE-686 — digest of the post-processing bytes; dedups a double-submit. */
+    contentSha256: text("content_sha256"),
+    /** OPE-686 — render-time rotation in degrees (0/90/180/270), not baked in. */
+    rotation: integer("rotation").notNull().default(0),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
   },
@@ -1058,6 +1064,12 @@ export const eventPhotos = sqliteTable(
     photoType: text("photo_type").notNull().default("other"),
     isFeatured: integer("is_featured", { mode: "boolean" }).notNull().default(false),
     uploadedBy: text("uploaded_by"),
+    /** OPE-686 — tombstone. A live gallery read is `deleted_at IS NULL`. */
+    deletedAt: integer("deleted_at", { mode: "timestamp" }),
+    /** OPE-686 — digest of the post-processing bytes; dedups a double-submit. */
+    contentSha256: text("content_sha256"),
+    /** OPE-686 — render-time rotation in degrees (0/90/180/270), not baked in. */
+    rotation: integer("rotation").notNull().default(0),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
   },
@@ -5724,3 +5736,4 @@ export * from "./promoter-outreach-queue";
 export * from "./promoter-outreach-metrics";
 export * from "./promoter-outreach-state";
 export * from "./promoter-reply-link";
+export * from "./gallery-photos";

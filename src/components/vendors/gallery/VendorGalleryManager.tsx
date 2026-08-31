@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Image from "next/image";
 import { Star, Trash2, ArrowUp, ArrowDown, Loader2, Upload } from "lucide-react";
+import { ConfirmButton } from "@/components/ui/confirm-button";
 
 /**
  * OPE-211 increments 2b + 3 — manage a vendor's gallery.
@@ -86,7 +87,9 @@ export function VendorGalleryManager({
   }
 
   async function remove(id: string) {
-    if (!confirm("Delete this photo? This cannot be undone.")) return;
+    // OPE-686 — no `window.confirm`. The native dialog blocks the renderer,
+    // which froze browser automation outright on 2026-08-31 and left a human
+    // clicking OK by hand. The second click now happens in the page.
     if (await send(`${apiBase}/${id}`, { method: "DELETE" }, id)) {
       setPhotos((p) => p.filter((x) => x.id !== id));
     }
@@ -279,11 +282,12 @@ export function VendorGalleryManager({
                 >
                   <Star className="h-4 w-4" fill={photo.isFeatured ? "currentColor" : "none"} />
                 </button>
-                <button
-                  type="button"
-                  onClick={() => remove(photo.id!)}
+                <ConfirmButton
+                  onConfirm={() => remove(photo.id!)}
                   disabled={busy !== null}
                   aria-label="Delete photo"
+                  prompt="Delete?"
+                  confirmLabel="Delete"
                   className="rounded p-1.5 text-red-600 hover:bg-red-50 disabled:opacity-40"
                 >
                   {busy === photo.id ? (
@@ -291,7 +295,7 @@ export function VendorGalleryManager({
                   ) : (
                     <Trash2 className="h-4 w-4" />
                   )}
-                </button>
+                </ConfirmButton>
               </div>
             )}
           </li>

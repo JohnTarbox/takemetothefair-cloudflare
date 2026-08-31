@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
  */
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { withAuth } from "@/lib/api/with-auth";
 import { eventPhotos } from "@/lib/db/schema";
 import { assertPhotosBelongTo } from "@/lib/vendor-photo-auth";
@@ -40,7 +40,9 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
   const owned = await db
     .select({ id: eventPhotos.id })
     .from(eventPhotos)
-    .where(eq(eventPhotos.eventId, eventId));
+    // OPE-686 — LIVE rows only. A tombstone in the owned set would let a
+    // reorder silently resurrect a deleted photo into the middle of the order.
+    .where(and(eq(eventPhotos.eventId, eventId), isNull(eventPhotos.deletedAt)));
 
   const belong = assertPhotosBelongTo(
     photoIds,
