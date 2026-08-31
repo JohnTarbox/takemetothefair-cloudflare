@@ -25,11 +25,37 @@
  * default; acceptable because og:image failures only break social
  * previews and the presets are deterministic.
  *
+ * OPE-686 — the `#rot=<deg>` convention.
+ *
+ * A gallery photo's rotation is stored in D1 and applied at render, not baked
+ * into the object. Next/Image's loader contract passes only `{src, width,
+ * quality}`, so there is nowhere to hand it a fourth argument — and building
+ * the transform URL in the component instead would collapse the responsive
+ * srcSet, because `cdnImage` returns an already-transformed URL unchanged and
+ * every width would then point at the same derivative.
+ *
+ * So the caller appends a URL FRAGMENT: `photo.webp#rot=90`. Fragments are
+ * never sent to a server, so a raw `<img src>` carrying one still resolves to
+ * the same object; this loader strips it and turns it into `rotate=90`. The
+ * photo stays responsive and comes out the right way up.
+ *
  * Edge-runtime safe: pure string composition, no I/O, no Node APIs.
  * Must be a default export per Next's loader contract.
  */
 
 import { cdnImage } from "./cdn-image";
+import { rotationCdnOption } from "@takemetothefair/db-schema";
+
+/** Split `…/photo.webp#rot=90` into its source and its rotation. */
+export function parseRotationFragment(src: string): {
+  src: string;
+  rotate: 90 | 180 | 270 | undefined;
+} {
+  const hash = src.indexOf("#rot=");
+  if (hash === -1) return { src, rotate: undefined };
+  const deg = Number(src.slice(hash + 5));
+  return { src: src.slice(0, hash), rotate: rotationCdnOption(deg) };
+}
 
 export default function imageLoader({
   src,
@@ -40,10 +66,12 @@ export default function imageLoader({
   width: number;
   quality?: number;
 }): string {
-  return cdnImage(src, {
+  const { src: bare, rotate } = parseRotationFragment(src);
+  return cdnImage(bare, {
     width,
     format: "auto",
     quality: quality ?? 80,
     onerror: "redirect",
+    ...(rotate ? { rotate } : {}),
   });
 }

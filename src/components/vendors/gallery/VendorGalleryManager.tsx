@@ -27,6 +27,12 @@ export interface ManagedPhoto {
   caption?: string;
   isFeatured: boolean;
   isLegacy: boolean;
+  /**
+   * OPE-686 — render-time rotation. Without it the admin thumbnail keeps
+   * showing the photo sideways after a successful rotate, which reads as the
+   * tool having done nothing.
+   */
+  rotation?: 90 | 180 | 270;
 }
 
 interface Props {
@@ -221,7 +227,16 @@ export function VendorGalleryManager({
             className="flex gap-3 rounded-lg border border-border p-3"
           >
             <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded">
-              <Image src={photo.url} alt={photo.alt} fill sizes="80px" className="object-cover" />
+              <Image
+                // `#rot=` is stripped by the Next/Image loader and turned into
+                // `rotate=`; a fragment never reaches a server, so the URL
+                // still resolves to the same object.
+                src={photo.rotation ? `${photo.url}#rot=${photo.rotation}` : photo.url}
+                alt={photo.alt}
+                fill
+                sizes="80px"
+                className="object-cover"
+              />
             </div>
             <div className="min-w-0 flex-1">
               {photo.isLegacy ? (
