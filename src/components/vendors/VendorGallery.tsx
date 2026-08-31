@@ -8,6 +8,19 @@ export interface GalleryImage {
   url: string;
   alt: string;
   caption?: string;
+  /** OPE-686 — render-time rotation; see EventGallery for why it must be threaded. */
+  rotation?: 90 | 180 | 270;
+}
+
+/**
+ * OPE-686 — append the render-time rotation as a URL fragment.
+ *
+ * These images go through the Next/Image loader, which is where the rotation
+ * is turned into `rotate=`. Building the transform URL here instead would
+ * collapse the responsive srcSet to a single derivative.
+ */
+function withRotation(url: string, rotation?: 90 | 180 | 270): string {
+  return rotation ? `${url}#rot=${rotation}` : url;
 }
 
 interface Props {
@@ -42,7 +55,7 @@ export function VendorGallery({ images, vendorName }: Props) {
             aria-label={`Open ${img.alt || "image"} from ${vendorName} gallery`}
           >
             <Image
-              src={img.url}
+              src={withRotation(img.url, img.rotation)}
               alt={img.alt}
               fill
               sizes="(max-width: 768px) 50vw, 300px"
@@ -71,7 +84,7 @@ export function VendorGallery({ images, vendorName }: Props) {
           <div className="relative max-w-4xl max-h-full w-full h-full flex flex-col items-center justify-center">
             <div className="relative w-full max-h-[80vh] aspect-[4/3]">
               <Image
-                src={images[open].url}
+                src={withRotation(images[open].url, images[open].rotation)}
                 alt={images[open].alt}
                 fill
                 sizes="100vw"

@@ -871,6 +871,9 @@ export default async function VendorDetailPage({ params }: Props) {
     url: p.url,
     alt: p.alt,
     caption: p.caption,
+    // OPE-686 — carry the rotation to the renderer. Dropping it here is how
+    // the correction becomes inert while every test still passes.
+    rotation: p.rotation,
   }));
   const expiresAt = vendor.enhancedProfileExpiresAt
     ? new Date(vendor.enhancedProfileExpiresAt)

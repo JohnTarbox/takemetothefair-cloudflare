@@ -11,6 +11,14 @@ export interface EventGalleryImage {
   /** Guaranteed non-empty by `resolvePhotoAlt` — see event-photos.ts. */
   alt: string;
   caption?: string;
+  /**
+   * OPE-686 — render-time rotation, or undefined when upright.
+   *
+   * Stored rather than baked into the object, so it has to reach the URL
+   * builder or the correction is inert: the photo stays sideways and the
+   * rotate tool looks like it did nothing.
+   */
+  rotation?: 90 | 180 | 270;
 }
 
 /**
@@ -53,7 +61,7 @@ export function EventGallery({
             aria-label={`Open photo: ${img.alt}`}
           >
             <Image
-              src={cdnImage(img.url, CARD_THUMB)}
+              src={cdnImage(img.url, { ...CARD_THUMB, rotate: img.rotation })}
               alt={img.alt}
               fill
               sizes="(max-width: 640px) 50vw, 300px"
@@ -88,7 +96,7 @@ export function EventGallery({
                 lightbox needs intrinsic sizing on an already-transformed URL;
                 next/image would re-wrap a CDN-sized image for no gain. */}
             <img
-              src={cdnImage(images[open].url, HERO_DESKTOP)}
+              src={cdnImage(images[open].url, { ...HERO_DESKTOP, rotate: images[open].rotation })}
               alt={images[open].alt}
               className="max-h-[80vh] w-auto rounded-lg"
             />
