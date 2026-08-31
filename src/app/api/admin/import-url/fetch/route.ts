@@ -14,6 +14,7 @@ import {
 } from "@takemetothefair/site-fetch";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { logError } from "@/lib/logger";
+import { recordBrowserRenderingAttempt } from "@/lib/browser-rendering-attempt";
 
 // The fetch-with-Browser-Rendering-escalation primitives (fetchStandard,
 // fetchViaBrowserRendering, shouldEscalate) moved to
@@ -98,6 +99,17 @@ export const GET = withAuthorized({ allowReadonlyBearer: false }, async ({ reque
       // Escalate to Browser Rendering. Logs the upstream signal so post-deploy
       // analytics can show which standard-fetch failure modes are recovered.
       const escalated = await fetchViaBrowserRendering(parsedUrl.href, cfEnv);
+      // OPE-694 — count the attempt whatever it returns. Without this, a
+      // fallback that never fires and one that always fails are the same
+      // observation, which is how BR came to be reported "0-for-2" when the
+      // data supported "not exercised since the 2026-08-24 remedy".
+      await recordBrowserRenderingAttempt(db, {
+        url: parsedUrl.href,
+        trigger: "status-escalation",
+        ok: escalated.ok,
+        status: escalated.ok ? 200 : escalated.status,
+        error: escalated.ok ? null : escalated.error,
+      });
       if (escalated.ok) {
         html = escalated.html;
         fetchMethod = "browser-rendering";
@@ -181,6 +193,18 @@ export const GET = withAuthorized({ allowReadonlyBearer: false }, async ({ reque
       const rendered = alreadyRendered
         ? null
         : await fetchViaBrowserRendering(parsedUrl.href, cfEnv);
+      // OPE-694 — the escalation OPE-537's approved fix routes into. This is
+      // the path whose success or failure decides that ticket's acceptance, so
+      // it is the one that most needs to be countable.
+      if (rendered) {
+        await recordBrowserRenderingAttempt(db, {
+          url: parsedUrl.href,
+          trigger: "empty-extraction",
+          ok: rendered.ok,
+          status: rendered.ok ? 200 : rendered.status,
+          error: rendered.ok ? null : rendered.error,
+        });
+      }
       // The rendered page must clear BOTH bars. Browser Rendering follows the
       // challenge like any browser would, so it can return a second
       // interstitial that is merely longer; accepting it on the emptiness test
