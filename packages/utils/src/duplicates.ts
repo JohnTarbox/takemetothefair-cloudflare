@@ -404,6 +404,18 @@ export function classifyDedupTier(matchType: string): DedupTier {
   if (matchType === "series_url") {
     return "medium";
   }
+  // OPE-450 — a human already ruled this candidate a duplicate. That outranks
+  // every matcher verdict below, so it is HIGH: no new row, and the existing
+  // `already-exists` reply points the submitter at the keeper.
+  //
+  // Named here rather than left to the default, for the reason the comment
+  // above gives: `series_url` reached medium by accident through that default,
+  // and "we did not think about it" is indistinguishable from "we chose it"
+  // once the behaviour is in production. Medium would be actively wrong here —
+  // it CREATES the row, which is the entire defect OPE-450 exists to fix.
+  if (matchType === "prior_adjudication") {
+    return "high";
+  }
   // city_state_date, similar_name_date — both surface for operator
   // review rather than auto-routing to already-exists. Unknown strings
   // fall to medium too: safer to PENDING-with-tag than to silently

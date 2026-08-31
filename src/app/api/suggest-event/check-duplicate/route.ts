@@ -6,6 +6,7 @@ import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { events, venues } from "@/lib/db/schema";
 import { findDuplicate } from "@/lib/duplicates/find-duplicate";
+import { findPriorAdjudication } from "@/lib/duplicates/prior-adjudication";
 import { compareForIngest } from "@/lib/goodwill/ingest-discrepancy";
 import {
   lookupReliability,
@@ -61,6 +62,33 @@ export async function POST(request: NextRequest) {
 
     const db = getCloudflareDb();
     const result = await findDuplicate(db, validation.data);
+
+    // OPE-450 — has a human already ruled on this exact candidate?
+    //
+    // Deliberately independent of `findDuplicate`'s verdict, and checked on
+    // BOTH branches. A prior ruling is a fact about the candidate, not about
+    // whether a live duplicate happens to match today — and it often will not:
+    // OPE-432 makes every `findDuplicate` stage skip rows with `merged_into`
+    // set, which is exactly what an adjudicated shell row carries. Putting this
+    // behind `if (result.isDuplicate)` would have missed the reported incident
+    // for that reason alone.
+    //
+    // Placed AFTER findDuplicate so none of its side effects are skipped: the
+    // GW1.1 ingest-discrepancy capture below runs on the real match, and a
+    // settled candidate should still contribute that signal.
+    const prior = await findPriorAdjudication(db, {
+      name: validation.data.name,
+      startDate: validation.data.startDate,
+    });
+
+    // A ruling is only actionable if the keeper it points at still exists and
+    // can be named in a reply. Without that we would tell a submitter their
+    // event is "already listed" and be unable to say where — so we fall back
+    // to normal handling rather than send a reply that points nowhere.
+    const settled = prior ? await resolveSettledKeeper(db, prior) : null;
+    if (settled) {
+      return NextResponse.json(settled);
+    }
 
     if (!result.isDuplicate) {
       return NextResponse.json({ success: true, isDuplicate: false });
@@ -339,4 +367,71 @@ function safeHostFromUrl(url: string | null): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * OPE-450 — turn a prior human ruling into the settled-path wire response.
+ *
+ * Returns null when the ruling cannot be acted on, and the caller then falls
+ * back to normal dedup handling. That is the safe direction: suppressing a
+ * submission while being unable to name what it duplicates would leave the
+ * submitter with nothing, which is worse than the redundant PENDING row this
+ * whole ticket is about.
+ *
+ * `matchType: "prior_adjudication"` is a NEW match type, named explicitly in
+ * `classifyDedupTier` rather than left to fall through its unknown-string
+ * default. OPE-454 is the precedent: `series_url` landed on medium by accident
+ * via that default, and the comment there asks for this to be a decision
+ * instead of a coincidence.
+ *
+ * ⚠️ Nothing here writes. The ruling was explicit that `rejected_as_duplicate_of`
+ * is not to be backfilled — inventing an adjudication record after the fact
+ * fabricates the human decision the column exists to represent.
+ */
+async function resolveSettledKeeper(
+  db: ReturnType<typeof getCloudflareDb>,
+  prior: NonNullable<Awaited<ReturnType<typeof findPriorAdjudication>>>
+) {
+  if (!prior.keeperEventId) return null;
+
+  const [keeper] = await db
+    .select({
+      id: events.id,
+      slug: events.slug,
+      name: events.name,
+      startDate: events.startDate,
+      status: events.status,
+      sourceUrl: events.sourceUrl,
+      mergedInto: events.mergedInto,
+    })
+    .from(events)
+    .where(eq(events.id, prior.keeperEventId))
+    .limit(1);
+
+  // A keeper that has itself been merged away is a redirect, not a
+  // destination. Pointing a submitter at one hands them a URL that 301s
+  // elsewhere — the OPE-432 failure, arriving from a new direction.
+  if (!keeper || keeper.mergedInto) return null;
+
+  return {
+    success: true as const,
+    isDuplicate: true as const,
+    matchType: "prior_adjudication" as const,
+    // This IS the same event — a human said so. The flag exists so remote
+    // consumers do not re-derive blocking semantics from the label.
+    identifiesSameEvent: true,
+    priorAdjudication: {
+      rejectedEventId: prior.rejectedEventId,
+      rejectedEventName: prior.rejectedEventName,
+      basis: prior.basis,
+    },
+    existingEvent: {
+      id: keeper.id,
+      slug: keeper.slug,
+      name: keeper.name,
+      startDate: keeper.startDate,
+      status: keeper.status,
+      sourceUrl: keeper.sourceUrl,
+    },
+  };
 }

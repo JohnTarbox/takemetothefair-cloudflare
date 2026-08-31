@@ -206,6 +206,20 @@ export interface SubmitCheckDuplicateResult {
    *  incoming source is a higher tier than what's already on file.
    *  See src/lib/source-tier.ts for the tier rules. */
   existingEventSourceUrl?: string | null;
+  /**
+   * OPE-450 — set when a human already ruled this candidate a duplicate.
+   *
+   * Informational at the call sites: the disposition is already carried by
+   * `matchType === "prior_adjudication"`, which `classifyDedupTier` calls HIGH.
+   * This exists so the workflow's step output records WHY a submission was
+   * settled rather than created, which is otherwise unrecoverable from a
+   * reply kind alone.
+   */
+  priorAdjudication?: {
+    rejectedEventId: string;
+    rejectedEventName: string;
+    basis: string;
+  };
 }
 
 interface ExtractedEvent {
@@ -579,6 +593,12 @@ export async function submitCheckDuplicate(
         success: true;
         isDuplicate: boolean;
         matchType?: string;
+        // OPE-450 — present when a human already ruled on this candidate.
+        priorAdjudication?: {
+          rejectedEventId?: string;
+          rejectedEventName?: string;
+          basis?: string;
+        };
         existingEvent?: {
           id?: string;
           name?: string;
@@ -595,6 +615,21 @@ export async function submitCheckDuplicate(
   return {
     isDuplicate: true,
     matchType: data.matchType,
+    // OPE-450 — relayed so the workflow can say WHY it took the settled path
+    // in its step output. The behaviour itself needs no branch here: the
+    // endpoint returns matchType "prior_adjudication", `classifyDedupTier`
+    // calls that HIGH, and every one of the five call sites already routes
+    // HIGH to already-exists without creating a row. Wiring this at the one
+    // shared relay rather than at five decision points is deliberate — a fix
+    // wired into one of N parallel paths is this codebase's most-repeated
+    // defect, and there are five paths here.
+    priorAdjudication: data.priorAdjudication
+      ? {
+          rejectedEventId: data.priorAdjudication.rejectedEventId ?? "",
+          rejectedEventName: data.priorAdjudication.rejectedEventName ?? "",
+          basis: data.priorAdjudication.basis ?? "",
+        }
+      : undefined,
     existingEventId: data.existingEvent?.id,
     existingEventName: data.existingEvent?.name,
     existingEventSlug: data.existingEvent?.slug,
