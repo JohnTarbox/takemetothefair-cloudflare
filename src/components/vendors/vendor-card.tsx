@@ -10,6 +10,7 @@ import { parseJsonArray } from "@/types";
 import { formatDateRange } from "@/lib/utils";
 import { FavoriteButton } from "@/components/FavoriteButton";
 import { VendorTierBadges } from "./VendorTierBadges";
+import { isOwnerConfirmed } from "@/lib/claims/owner-confirmed";
 import { cdnImage, focalPointGravity } from "@/lib/cdn-image";
 import { VendorMonogramLogo } from "./VendorMonogramLogo";
 import {
@@ -48,6 +49,14 @@ interface VendorCardProps {
     verified: boolean | null;
     commercial: boolean | null;
     claimed?: boolean | null;
+    /**
+     * OPE-238 — `users.email_verified IS NOT NULL` for this row's owner.
+     * OPTIONAL and falsy-by-default on purpose: a listing query that has not
+     * been updated to fetch it renders NO ownership badge rather than the old
+     * unconditional "Claimed". Fail-closed — a missing badge is a smaller
+     * error than a badge that was not earned.
+     */
+    ownerEmailVerified?: boolean | null;
     enhancedProfile?: boolean | null;
     verifiedPro?: boolean | null;
     city?: string | null;
@@ -162,7 +171,10 @@ export function VendorCard({ vendor, brandParent, operatorParent }: VendorCardPr
               </Link>
               {vendor.verified && <CheckCircle className="w-4 h-4 text-royal flex-shrink-0" />}
               <VendorTierBadges
-                claimed={vendor.claimed}
+                ownerConfirmed={isOwnerConfirmed({
+                  claimed: vendor.claimed,
+                  ownerEmailVerified: vendor.ownerEmailVerified,
+                })}
                 enhancedProfile={vendor.enhancedProfile}
                 verifiedPro={vendor.verifiedPro}
                 className="inline-flex items-center gap-1"
