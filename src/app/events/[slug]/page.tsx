@@ -1393,6 +1393,67 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
                   </div>
                 )}
 
+                {/* OPE-709 — application routes that are NOT commercial-vendor.
+                    Rendered as its OWN section, deliberately separate from
+                    "Vendor Applications" above: a booth costs hundreds of
+                    dollars and closes months ahead, an exhibit entry costs $1–2
+                    and closes two to four weeks out through a different
+                    department. Merging them is what left a photographer with a
+                    sentence saying the page she needed exists, and no link. */}
+                {event.applicationRoutes?.length > 0 && (
+                  <div className="flex items-start gap-3">
+                    <FileText className="w-5 h-5 text-amber-500 mt-0.5" />
+                    <div className="min-w-0">
+                      <p className="text-sm text-muted-foreground">
+                        Exhibitor &amp; Competition Entries
+                      </p>
+                      {event.applicationRoutes.map((route) => (
+                        <div key={route.id} className="mt-1">
+                          {route.department && (
+                            <p className="text-sm font-medium text-foreground">
+                              {route.department}
+                            </p>
+                          )}
+                          {/* Dates render ONLY when stored. NULL means "not
+                              confirmed" and is never filled in from the event's
+                              own dates — there is no rule to infer from, and a
+                              guessed deadline that makes someone miss an entry
+                              is worse than no deadline. */}
+                          {route.closesAt && (
+                            <p
+                              className={`text-sm ${new Date(route.closesAt) < new Date() ? "text-destructive" : "text-foreground"}`}
+                            >
+                              Entries close: {formatDateMedium(route.closesAt)}
+                              {new Date(route.closesAt) < new Date() && " (Passed)"}
+                            </p>
+                          )}
+                          {route.notes && (
+                            <p className="text-xs text-muted-foreground mt-0.5">{route.notes}</p>
+                          )}
+                          {route.url && (
+                            <OutboundEventLink
+                              kind="application"
+                              eventSlug={event.slug}
+                              href={route.url}
+                              className="text-sm text-royal hover:underline mt-1 inline-block"
+                            >
+                              Enter or view rules →
+                            </OutboundEventLink>
+                          )}
+                          {!route.url && route.contactEmail && (
+                            <a
+                              href={`mailto:${route.contactEmail}`}
+                              className="text-sm text-royal hover:underline mt-1 inline-block break-all"
+                            >
+                              {route.contactEmail}
+                            </a>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {event.ticketUrl && (
                   <OutboundEventLink kind="ticket" eventSlug={event.slug} href={event.ticketUrl}>
                     <Button className="w-full" size="lg">
