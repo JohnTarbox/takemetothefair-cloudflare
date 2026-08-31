@@ -90,6 +90,9 @@ export async function PATCH(request: NextRequest, { params }: Params) {
           from,
           to,
           allowed: check.allowed,
+          // OPE-675 — see the MCP tool: the route, plus what taking it costs.
+          ...(check.route ? { route: check.route } : {}),
+          ...(check.hint ? { hint: check.hint } : {}),
         },
         { status: 400 }
       );

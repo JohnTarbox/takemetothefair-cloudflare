@@ -136,8 +136,27 @@ export const PUBLIC_LIFECYCLE_STATUSES = [
  *  - CANCELLED → SCHEDULED is allowed (uncancellation). Rare but real.
  *  - OCCURRED ↔ NO_SHOW only — both are terminal for the event itself, but
  *    admins can correct between them if reality didn't match the backfill.
- *  - There is no transition INTO OCCURRED or NO_SHOW from a future-state
- *    lifecycle except via RESCHEDULED, and SCHEDULED → OCCURRED/NO_SHOW.
+ *  - **OCCURRED and NO_SHOW are reachable only from a state in which the event
+ *    was CONFIRMED to be going ahead** — SCHEDULED, RESCHEDULED, MOVED_ONLINE.
+ *
+ * ⚠️ That last rule is the one people try to "fix", so it is worth stating why
+ * TENTATIVE is excluded (OPE-675, asked and answered 2026-08-31).
+ *
+ * A tentative event is one we never confirmed was happening. Marking it
+ * OCCURRED asserts it took place, and marking it NO_SHOW asserts it did not —
+ * both are claims nobody made. The truthful lifecycle for an elapsed
+ * unconfirmed event is TENTATIVE: over, and never corroborated.
+ *
+ * This is not incidental. The K27 OCCURRED sweep measured the population (126
+ * past+TENTATIVE rows), deliberately declined to widen its Pass 1 to include
+ * them, and widened Pass 3 instead — see the reasoning at
+ * `mcp-server/src/event-occurred-sweep.ts` under "past + TENTATIVE". Adding
+ * TENTATIVE → OCCURRED here would silently overturn that decision.
+ *
+ * The earlier wording of this rule said "no transition INTO OCCURRED from a
+ * future-state lifecycle except via RESCHEDULED, and SCHEDULED →", which the
+ * table itself contradicted: MOVED_ONLINE has both. The rule was never about
+ * whether a state points forward; it is about whether the event was confirmed.
  */
 export const LIFECYCLE_TRANSITIONS: Record<EventLifecycle, EventLifecycle[]> = {
   SCHEDULED: [
@@ -192,7 +211,19 @@ export interface LifecycleTransitionContext {
 
 export type TransitionResult =
   | { ok: true; terminalCorrection?: boolean }
-  | { ok: false; reason: string; allowed: readonly EventLifecycle[] };
+  | {
+      ok: false;
+      reason: string;
+      allowed: readonly EventLifecycle[];
+      /**
+       * OPE-675 — the shortest legal path to the target, when one exists.
+       * `allowed` answers "what can I do from here"; this answers "how do I
+       * get where I asked to go", which is what the caller actually wanted.
+       */
+      route?: readonly EventLifecycle[] | null;
+      /** Prose for the operator, including what the detour costs. */
+      hint?: string;
+    };
 
 /**
  * OPE-487 — is this terminal value provably spurious rather than merely
@@ -234,6 +265,66 @@ function isSpuriousTerminalValue(
 }
 
 /**
+ * The shortest legal path from `from` to `to`, or null when there is none.
+ *
+ * OPE-675 — the refusal used to say only which targets were legal from here,
+ * which answers "what CAN I do" and not "how do I get where I asked to go".
+ * A caller told `TENTATIVE → OCCURRED is not permitted` has to reconstruct the
+ * two-hop route from the table, and an unattended run simply gives up and
+ * leaves the row where it started.
+ *
+ * Breadth-first, so the answer is the shortest route and the search terminates
+ * on a table with cycles (CANCELLED ↔ SCHEDULED, OCCURRED ↔ NO_SHOW).
+ */
+export function lifecycleRoute(from: EventLifecycle, to: EventLifecycle): EventLifecycle[] | null {
+  if (from === to) return null;
+  const queue: EventLifecycle[][] = [[from]];
+  const seen = new Set<EventLifecycle>([from]);
+  while (queue.length > 0) {
+    const path = queue.shift()!;
+    for (const next of LIFECYCLE_TRANSITIONS[path[path.length - 1]] ?? []) {
+      if (seen.has(next)) continue;
+      const extended = [...path, next];
+      if (next === to) return extended;
+      seen.add(next);
+      queue.push(extended);
+    }
+  }
+  return null;
+}
+
+/**
+ * Why a refused transition was refused, in words a caller can act on.
+ *
+ * The route is offered, NOT recommended. Reaching OCCURRED from TENTATIVE
+ * means passing through SCHEDULED, which writes "this event is going to
+ * happen" onto an event whose date has passed — a false statement that lands
+ * in `admin_actions` permanently. So the hint names the intermediate state and
+ * says what asserting it costs, rather than presenting the detour as the
+ * answer.
+ */
+export function describeLifecycleRefusal(
+  from: EventLifecycle,
+  to: EventLifecycle
+): { allowed: EventLifecycle[]; route: EventLifecycle[] | null; hint: string } {
+  const allowed = LIFECYCLE_TRANSITIONS[from] ?? [];
+  const route = lifecycleRoute(from, to);
+  if (!route) {
+    return { allowed, route: null, hint: `${to} is not reachable from ${from} at all.` };
+  }
+  const via = route.slice(1, -1);
+  return {
+    allowed,
+    route,
+    hint:
+      `${to} is reachable via ${route.join(" → ")}, but each hop is a real ` +
+      `transition: it writes an admin_actions row and its own lifecycle_reason. ` +
+      `Passing through ${via.join(", ")} asserts that state on the record. ` +
+      `Only take the route if the intermediate state is TRUE of this event.`,
+  };
+}
+
+/**
  * Validates that a lifecycle transition is permitted. Use server-side in EVERY
  * write surface before persisting.
  *
@@ -262,10 +353,13 @@ export function validateLifecycleTransition(
     return { ok: true, terminalCorrection: true };
   }
 
+  const refusal = describeLifecycleRefusal(from, to);
   return {
     ok: false,
     reason: `transition ${from} → ${to} is not permitted`,
     allowed,
+    route: refusal.route,
+    hint: refusal.hint,
   };
 }
 
