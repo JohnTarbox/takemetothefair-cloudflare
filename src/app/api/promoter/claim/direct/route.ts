@@ -4,9 +4,11 @@ export const dynamic = "force-dynamic";
  *
  * Parallels src/app/api/vendor/claim/direct/route.ts. Differences from
  * the vendor variant:
- *   - promoters has NO `claimed` column today (most promoter rows
- *     are created at signup with role=PROMOTER, so the "is this
- *     claimed?" notion is implicit in user_id being non-null).
+ *   - promoters.user_id is the ownership FK; `promoters.claimed` is the
+ *     flag the admin and public surfaces actually read. (OPE-697: this
+ *     comment used to say promoters had NO `claimed` column. That stopped
+ *     being true, and the route kept reasoning from it — transferring
+ *     user_id while stamping neither the flag nor a claim row.)
  *   - promoters.user_id is UNIQUE — only one user can own a given
  *     promoter row. So the contention case ("already claimed by
  *     another live user") is enforced by the FK constraint itself.
@@ -22,15 +24,28 @@ export const dynamic = "force-dynamic";
  *
  * Side effects on success:
  *   - promoters.user_id transferred to current user (if was NULL)
+ *   - promoters.claimed / claimedAt / claimedBy stamped
+ *   - entity_claims PROMOTER row (settled, method EMAIL_MATCH)
  *   - user_roles += {PROMOTER} (idempotent via onConflictDoNothing)
  *   - admin_actions row
+ *
+ * ⚠️ REACHABILITY (OPE-697, measured 2026-08-31): nothing in the app calls
+ * this endpoint. `PromoterClaimCTA` links to the claim WIZARD
+ * (/claim/promoter/<slug>) instead — switched in OPE-64 — and the wizard
+ * resolves claims correctly via resolve-claim-in-wizard.ts. Prod holds ZERO
+ * `promoter.claim_self_serve_email_match` rows in admin_actions, i.e. this
+ * route has never successfully executed. It is kept correct and consistent
+ * with its two WIRED siblings (vendor + performer direct claim) rather than
+ * left broken awaiting a caller; whether to wire or delete it is open on
+ * OPE-697.
  */
 import { NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
-import { adminActions, promoters, userRoles, users } from "@/lib/db/schema";
+import { adminActions, entityClaims, promoters, userRoles, users } from "@/lib/db/schema";
+import { buildSettledEntityClaim, shouldRecordEntityClaim } from "@takemetothefair/db-schema";
 import { logError } from "@/lib/logger";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 import { unsafeSlug } from "@/lib/utils";
@@ -134,14 +149,47 @@ export async function POST(request: Request) {
     // promoters.user_id is UNIQUE — the FK enforces that no two users
     // own the same promoter row. If userId was already === user.id
     // (the idempotent re-claim case), this is a no-op set.
-    if (promoter.userId !== user.id) {
-      await db.update(promoters).set({ userId: user.id }).where(eq(promoters.id, promoter.id));
-    }
+    //
+    // OPE-697 — the stamp is deliberately NOT conditional on the id changing.
+    // On an idempotent re-claim the id is already ours while `claimed` may
+    // still be 0 — which is exactly the row this defect leaves behind, so
+    // skipping the update there would make the bug unfixable by retrying.
+    await db
+      .update(promoters)
+      .set({ userId: user.id, claimed: true, claimedAt: now, claimedBy: user.id })
+      .where(eq(promoters.id, promoter.id));
 
     await db
       .insert(userRoles)
       .values({ userId: user.id, role: "PROMOTER", grantedAt: now, grantedBy: user.id })
       .onConflictDoNothing();
+
+    // OPE-236 §4 / OPE-697 — the canonical claim row. Email-match is a claim
+    // over a listing that ALREADY EXISTED, so unlike the register-at-signup
+    // branch it belongs in `entity_claims`; without it the claim is granted and
+    // no admin surface can see it.
+    //
+    // Born APPROVED: the preconditions above — a verified account whose email
+    // equals `promoters.contact_email` — ARE the proof. A PENDING row would
+    // queue an admin to approve access the claimant already holds.
+    const priorClaims = await db
+      .select({ userId: entityClaims.userId, status: entityClaims.status })
+      .from(entityClaims)
+      .where(and(eq(entityClaims.entityType, "PROMOTER"), eq(entityClaims.entityId, promoter.id)));
+
+    if (shouldRecordEntityClaim(priorClaims, user.id)) {
+      await db.insert(entityClaims).values(
+        buildSettledEntityClaim({
+          entityType: "PROMOTER",
+          entityId: promoter.id,
+          userId: user.id,
+          method: "EMAIL_MATCH",
+          decidedBy: user.id,
+          at: now,
+          evidence: `account email matches promoter.contact_email (${promoter.contactEmail})`,
+        })
+      );
+    }
 
     await db.insert(adminActions).values({
       action: "promoter.claim_self_serve_email_match",
