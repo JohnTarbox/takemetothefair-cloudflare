@@ -9,6 +9,8 @@ import {
   isBlockedSsrfHost,
   FETCH_TIMEOUT,
   isEmptyExtraction,
+  detectChallengePage,
+  CHALLENGE_USER_MESSAGE,
 } from "@takemetothefair/site-fetch";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { logError } from "@/lib/logger";
@@ -152,12 +154,44 @@ export const GET = withAuthorized({ allowReadonlyBearer: false }, async ({ reque
     // path is also empty we say so plainly instead of passing "" off as a
     // fetched page. Only attempted once: if we already came from Browser
     // Rendering there is nothing further to escalate to.
-    if (isEmptyExtraction(content)) {
+    // OPE-537 item 3 — a bot-check interstitial is a FETCH FAILURE, not a page.
+    //
+    // `isEmptyExtraction` catches the shell that yields no text. It cannot
+    // catch the other half of the same problem: a challenge page yields text
+    // that is real, extractable and about nothing, so it clears the 32-char
+    // floor and is handed downstream as the page we asked for. That is how
+    // `1da06d90` became an event named "Just a moment...", slug
+    // `just-a-moment`, with the submitter told `ok-low`.
+    //
+    // `detectChallengePage` already existed in @takemetothefair/site-fetch,
+    // fully implemented and tested — and NOTHING called it. Wiring it rather
+    // than writing a second detector: a duplicate would drift from the vendor
+    // marker list, and that list is the part that has to stay current.
+    //
+    // ⚠️ Headers are NOT passed, and that is a real limitation rather than an
+    // oversight: `FetchOutcome` does not carry them, so Cloudflare's
+    // `cf-mitigated: challenge` header — the strongest and cheapest signal the
+    // detector supports — is unavailable at this call site. Body markers alone
+    // cover the reported specimen. Plumbing headers through `FetchOutcome`
+    // would strengthen this and is deliberately left out of scope here.
+    const challenge = detectChallengePage(html, null);
+
+    if (isEmptyExtraction(content) || challenge.isChallenge) {
       const alreadyRendered = fetchMethod === "browser-rendering";
       const rendered = alreadyRendered
         ? null
         : await fetchViaBrowserRendering(parsedUrl.href, cfEnv);
-      if (rendered?.ok && !isEmptyExtraction(extractTextFromHtml(rendered.html))) {
+      // The rendered page must clear BOTH bars. Browser Rendering follows the
+      // challenge like any browser would, so it can return a second
+      // interstitial that is merely longer; accepting it on the emptiness test
+      // alone would re-open the hole one hop further along. No headers are
+      // available on that path, which is why the body markers carry it.
+      const renderedText = rendered?.ok ? extractTextFromHtml(rendered.html) : "";
+      const renderedChallenge = rendered?.ok
+        ? detectChallengePage(rendered.html, null)
+        : { isChallenge: false, vendor: null, signal: null };
+
+      if (rendered?.ok && !isEmptyExtraction(renderedText) && !renderedChallenge.isChallenge) {
         html = rendered.html;
         metadata = extractMetadata(html);
         content = extractTextFromHtml(html);
@@ -166,7 +200,9 @@ export const GET = withAuthorized({ allowReadonlyBearer: false }, async ({ reque
         await logError(db, {
           level: "warn",
           message:
-            `Fetch returned 200 with no extractable text: ${fetchMethod}` +
+            (challenge.isChallenge
+              ? `Fetch returned a ${challenge.vendor} bot-check interstitial, not the page: ${fetchMethod}`
+              : `Fetch returned 200 with no extractable text: ${fetchMethod}`) +
             (alreadyRendered
               ? " (already rendered)"
               : ` br=${rendered?.ok ? "empty" : rendered?.error}`),
@@ -183,6 +219,10 @@ export const GET = withAuthorized({ allowReadonlyBearer: false }, async ({ reque
             // empty CMS shell are indistinguishable by length. A prefix
             // separates them on the first occurrence instead of the second.
             htmlPrefix: htmlLogPrefix(html),
+            // OPE-537 — which vendor's interstitial, so the log distinguishes
+            // "this origin blocks us" from "this page has no text".
+            challengeVendor: challenge.vendor,
+            challengeSignal: challenge.signal,
             // Present only when Browser Rendering DID return a page that we
             // then failed to extract text from — that is a different bug from
             // the origin refusing us, and it needs its own sample.
@@ -194,8 +234,12 @@ export const GET = withAuthorized({ allowReadonlyBearer: false }, async ({ reque
         return NextResponse.json(
           {
             success: false,
-            error:
-              "Fetched the page but found no readable text on it. It may require JavaScript or be blocking automated access. Try pasting the content manually.",
+            // The challenge case gets its own copy: the URL loads perfectly in
+            // the submitter's own browser, so "no readable text" reads as us
+            // being broken and invites them to re-send the same link.
+            error: challenge.isChallenge
+              ? CHALLENGE_USER_MESSAGE
+              : "Fetched the page but found no readable text on it. It may require JavaScript or be blocking automated access. Try pasting the content manually.",
             fetchMethod: "failed",
           },
           { status: 200 }
