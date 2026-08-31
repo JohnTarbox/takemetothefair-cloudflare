@@ -34,11 +34,12 @@ export const dynamic = "force-dynamic";
  *   - IndexNow ping for vendor URL
  */
 import { NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
-import { adminActions, userRoles, users, vendors } from "@/lib/db/schema";
+import { adminActions, entityClaims, userRoles, users, vendors } from "@/lib/db/schema";
+import { buildSettledEntityClaim, shouldRecordEntityClaim } from "@takemetothefair/db-schema";
 import { recomputeVendorCompleteness } from "@/lib/completeness";
 import { logEnrichment } from "@/lib/enrichment-log";
 import { logError } from "@/lib/logger";
@@ -170,6 +171,33 @@ export async function POST(request: Request) {
       .insert(userRoles)
       .values({ userId: user.id, role: "VENDOR", grantedAt: now, grantedBy: user.id })
       .onConflictDoNothing();
+
+    // OPE-236 §4 — the canonical claim row. Email-match is a claim over a
+    // listing that already existed, so unlike the register-at-signup branch it
+    // belongs in `entity_claims`; without this the claim is granted and no
+    // admin surface can see it.
+    //
+    // Born APPROVED: the two preconditions above (a verified account, whose
+    // email equals `vendor.contact_email`) ARE the proof. A PENDING row would
+    // queue an admin to approve access the claimant already has.
+    const priorClaims = await db
+      .select({ userId: entityClaims.userId, status: entityClaims.status })
+      .from(entityClaims)
+      .where(and(eq(entityClaims.entityType, "VENDOR"), eq(entityClaims.entityId, vendor.id)));
+
+    if (shouldRecordEntityClaim(priorClaims, user.id)) {
+      await db.insert(entityClaims).values(
+        buildSettledEntityClaim({
+          entityType: "VENDOR",
+          entityId: vendor.id,
+          userId: user.id,
+          method: "EMAIL_MATCH",
+          decidedBy: user.id,
+          at: now,
+          evidence: `account email matches vendor.contact_email (${vendor.contactEmail})`,
+        })
+      );
+    }
 
     await recomputeVendorCompleteness(db, vendor.id);
 

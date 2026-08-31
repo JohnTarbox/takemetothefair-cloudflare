@@ -23,8 +23,9 @@
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { eq } from "drizzle-orm";
-import { adminActions, userRoles, users, vendors } from "../schema.js";
+import { and, eq } from "drizzle-orm";
+import { adminActions, entityClaims, userRoles, users, vendors } from "../schema.js";
+import { buildSettledEntityClaim, shouldRecordEntityClaim } from "@takemetothefair/db-schema";
 import { jsonContent } from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
@@ -34,7 +35,7 @@ export function registerAdminClaimApprovalTool(server: McpServer, db: Db, auth: 
 
   server.tool(
     "admin_approve_vendor_claim",
-    "Manually approve a vendor claim that can't go through the normal email-match or contact-email flows. Used when vendors.contact_email is null/empty (no business mailbox to verify against) and the admin has verified ownership out-of-band (phone, registration docs, etc.). Sets vendors.claimed=true, transfers user_id, grants the user the VENDOR role, and writes an admin_actions audit row. Idempotent — re-running for an already-claimed vendor with the same user is a no-op. Refuses to overwrite a claim by a different user; admin must explicitly transfer first if that's the intent. Admin only.",
+    "Manually approve a vendor claim that can't go through the normal email-match or contact-email flows. Used when vendors.contact_email is null/empty (no business mailbox to verify against) and the admin has verified ownership out-of-band (phone, registration docs, etc.). Sets vendors.claimed=true, transfers user_id, grants the user the VENDOR role, records the canonical entity_claims row (method=ADMIN, status=APPROVED) so /admin/claims and list_claims can see it, and writes an admin_actions audit row. Idempotent — re-running for an already-claimed vendor with the same user is a no-op. Refuses to overwrite a claim by a different user; admin must explicitly transfer first if that's the intent. Admin only.",
     {
       vendor_id: z.string().min(1).describe("ID of the vendor row to approve the claim for"),
       user_id: z
@@ -127,6 +128,35 @@ export function registerAdminClaimApprovalTool(server: McpServer, db: Db, auth: 
         .values({ userId: user_id, role: "VENDOR", grantedAt: now, grantedBy: auth.userId })
         .onConflictDoNothing();
 
+      // OPE-236 §4 — the canonical claim row. This tool stamped `claimed=1` and
+      // wrote only `admin_actions` for its whole life, so every claim it granted
+      // was invisible to `/admin/claims` and `list_claims`, which read
+      // `entity_claims`. Measured live on `21-street-beads`, 2026-08-30 17:46:49.
+      //
+      // Recorded even on the already-claimed path: `wasAlreadyClaimed` skips the
+      // vendor mutation, but a claim granted by an EARLIER run of this tool is
+      // exactly the row that is missing, and re-running is how an admin would
+      // repair one. `shouldRecordEntityClaim` keeps that from duplicating.
+      const priorClaims = await db
+        .select({ userId: entityClaims.userId, status: entityClaims.status })
+        .from(entityClaims)
+        .where(and(eq(entityClaims.entityType, "VENDOR"), eq(entityClaims.entityId, vendor_id)));
+
+      const claimRecorded = shouldRecordEntityClaim(priorClaims, user_id);
+      if (claimRecorded) {
+        await db.insert(entityClaims).values(
+          buildSettledEntityClaim({
+            entityType: "VENDOR",
+            entityId: vendor_id,
+            userId: user_id,
+            method: "ADMIN",
+            decidedBy: auth.userId,
+            at: now,
+            evidence: reason,
+          })
+        );
+      }
+
       await db.insert(adminActions).values({
         action: "vendor.claim_admin_approve",
         actorUserId: auth.userId,
@@ -137,6 +167,7 @@ export function registerAdminClaimApprovalTool(server: McpServer, db: Db, auth: 
           approvedFor: { userId: user_id, email: user.email },
           reason,
           wasAlreadyClaimed,
+          claimRecorded,
         }),
         createdAt: now,
       });
@@ -149,6 +180,9 @@ export function registerAdminClaimApprovalTool(server: McpServer, db: Db, auth: 
             grantedTo: { userId: user.id, email: user.email },
             grantedRole: "VENDOR",
             wasAlreadyClaimed,
+            // false means a matching APPROVED row already existed, not that the
+            // write was skipped by accident.
+            claimRecorded,
           }),
         ],
       };

@@ -1,9 +1,10 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
-import { adminActions, users, vendors } from "@/lib/db/schema";
+import { adminActions, entityClaims, users, vendors } from "@/lib/db/schema";
+import { buildSettledEntityClaim, shouldRecordEntityClaim } from "@takemetothefair/db-schema";
 import { recomputeVendorCompleteness } from "@/lib/completeness";
 import { logEnrichment } from "@/lib/enrichment-log";
 import { consumeClaimToken } from "@/lib/vendor-claim-token";
@@ -46,6 +47,39 @@ export async function GET(request: NextRequest) {
       .update(vendors)
       .set({ claimed: true, claimedAt: now, claimedBy: result.userId })
       .where(eq(vendors.id, result.vendorId));
+
+    // OPE-236 §4 — the canonical claim row. Same proof class as the email-match
+    // route: the confirmation link was delivered to `vendor.contact_email`, so
+    // clicking it demonstrates control of the listing's own mailbox. Recorded as
+    // EMAIL_MATCH rather than INVITE_TOKEN — INVITE_TOKEN means an invite WE
+    // minted for a cold contact (see redeemClaimToken); this one the claimant
+    // initiated themselves, and what a reviewer needs from `method` is what was
+    // proved, not who started it.
+    //
+    // The idempotency guard is load-bearing here specifically: a claim-
+    // confirmation link is the kind of thing a mail client prefetches and a
+    // person then clicks, and `consumeClaimToken` returning ok twice would
+    // otherwise mint two APPROVED rows for one claim.
+    const priorClaims = await db
+      .select({ userId: entityClaims.userId, status: entityClaims.status })
+      .from(entityClaims)
+      .where(
+        and(eq(entityClaims.entityType, "VENDOR"), eq(entityClaims.entityId, result.vendorId))
+      );
+
+    if (shouldRecordEntityClaim(priorClaims, result.userId)) {
+      await db.insert(entityClaims).values(
+        buildSettledEntityClaim({
+          entityType: "VENDOR",
+          entityId: result.vendorId,
+          userId: result.userId,
+          method: "EMAIL_MATCH",
+          decidedBy: result.userId,
+          at: now,
+          evidence: "clicked the confirmation link delivered to vendor.contact_email",
+        })
+      );
+    }
 
     await recomputeVendorCompleteness(db, result.vendorId);
 

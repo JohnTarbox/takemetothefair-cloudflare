@@ -12,6 +12,7 @@
  */
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { listReviewableClaims } from "@/lib/claims/admin-review";
+import { getClaimEstate, DIVERGENCE_WINDOW_DAYS } from "@/lib/claims/claim-estate";
 import {
   listRegistrationEvidence,
   type RegistrationEvidenceRow,
@@ -52,9 +53,10 @@ function corroborationClasses(c: string): string {
 
 export default async function AdminClaimsPage() {
   const db = getCloudflareDb();
-  const [claims, evidence] = await Promise.all([
+  const [claims, evidence, estate] = await Promise.all([
     listReviewableClaims(db),
     listRegistrationEvidence(db),
+    getClaimEstate(db),
   ]);
 
   return (
@@ -73,6 +75,29 @@ export default async function AdminClaimsPage() {
         <Stat label="Disputed" value={claims.filter((c) => c.status === "DISPUTED").length} />
         <Stat label="Pending" value={claims.filter((c) => c.status === "PENDING").length} />
       </div>
+
+      {/*
+        OPE-236 §5 — the queue above is nearly always short, which made this page
+        read as "nothing to do" while dozens of listings sat claimed by accounts
+        that had never verified an email address. The queue and the estate are
+        different questions and now both get answered.
+      */}
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+        <Stat label="Owner-occupied listings" value={estate.ownerOccupied} />
+        <Stat label="Unverified claimants" value={estate.unverifiedClaimants} />
+        <Stat
+          label={`Missing claim row (last ${DIVERGENCE_WINDOW_DAYS}d)`}
+          value={estate.divergentRecent}
+        />
+      </div>
+      <p className="text-xs text-muted-foreground -mt-3">
+        &ldquo;Missing claim row&rdquo; counts claimed vendor listings with no{" "}
+        <code>entity_claims</code> row, so a claim granted without one is visible here rather than
+        silently absent from this queue. The last-{DIVERGENCE_WINDOW_DAYS}-day figure is the one
+        that should stay at <strong>0</strong>; the all-time count is{" "}
+        <strong>{estate.divergent}</strong> and is expected to be large, because most claimed
+        listings were authored by their own registrant at signup and authoring is not claiming.
+      </p>
 
       <Card>
         <CardHeader>

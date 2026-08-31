@@ -12,8 +12,9 @@
  * Idempotent for the same user: re-running is a no-op flip but still grants the
  * role (onConflictDoNothing) and writes a fresh audit row noting the duplicate.
  */
-import { eq } from "drizzle-orm";
-import { adminActions, promoters, userRoles, users } from "../schema.js";
+import { and, eq } from "drizzle-orm";
+import { adminActions, entityClaims, promoters, userRoles, users } from "../schema.js";
+import { buildSettledEntityClaim, shouldRecordEntityClaim } from "@takemetothefair/db-schema";
 import type { Db } from "../db.js";
 
 export type ApprovePromoterClaimArgs = {
@@ -104,6 +105,31 @@ export async function approvePromoterClaim(
     .insert(userRoles)
     .values({ userId, role: "PROMOTER", grantedAt: now, grantedBy: actorUserId })
     .onConflictDoNothing();
+
+  // OPE-236 §4 — the canonical claim row. Same defect as the vendor tool, one
+  // entity over: this stamped `claimed=1` and wrote only `admin_actions`, so an
+  // approved promoter claim never appeared in `/admin/claims` or `list_claims`,
+  // both of which read `entity_claims` for PROMOTER as well as VENDOR. Found by
+  // the OPE-236 structural guard rather than by hand — the vendor-scoped
+  // investigation would not have reached it.
+  const priorClaims = await db
+    .select({ userId: entityClaims.userId, status: entityClaims.status })
+    .from(entityClaims)
+    .where(and(eq(entityClaims.entityType, "PROMOTER"), eq(entityClaims.entityId, promoterId)));
+
+  if (shouldRecordEntityClaim(priorClaims, userId)) {
+    await db.insert(entityClaims).values(
+      buildSettledEntityClaim({
+        entityType: "PROMOTER",
+        entityId: promoterId,
+        userId,
+        method: "ADMIN",
+        decidedBy: actorUserId,
+        at: now,
+        evidence: reason ?? null,
+      })
+    );
+  }
 
   await db.insert(adminActions).values({
     action: "promoter.claim.approve",
