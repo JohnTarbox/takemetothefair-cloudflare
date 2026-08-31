@@ -1,9 +1,15 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
-import { and, eq, gte, inArray, isNull, like, or, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, isNull, sql } from "drizzle-orm";
 import { isAuthorized } from "@/lib/api-auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { rosterResearchTargetWhere, isNonResearchCategory } from "@takemetothefair/db-schema";
+import {
+  rosterResearchTargetWhere,
+  isNonResearchCategory,
+  pastProducerClassWhere,
+  pastNonProducerClassWhere,
+  hasNoCategories,
+} from "@takemetothefair/db-schema";
 import { events, eventVendors } from "@/lib/db/schema";
 import { PRODUCER_CLASS_CATEGORIES, ROSTER_EVIDENCE_MIN } from "@takemetothefair/constants";
 
@@ -31,14 +37,13 @@ export async function GET(request: NextRequest) {
 
     // Producer-class match: categories is a JSON array of quoted values, so
     // match `%"Home Show"%` to avoid substring bleed across category names.
-    const producerCond = or(
-      ...PRODUCER_CLASS_CATEGORIES.map((c) => like(events.categories, `%"${c}"%`))
-    );
-    const pastProducer = and(
-      eq(events.lifecycleStatus, "OCCURRED"),
-      isNull(events.mergedInto),
-      producerCond
-    );
+    // OPE-713 — the predicate now lives in `@takemetothefair/db-schema`
+    // alongside `rosterResearchTargetWhere`, for the reason `vendorSearchWhere`
+    // was extracted (OPE-632/OPE-566): a rule that decides a published metric's
+    // denominator, and that nothing outside this route could run, is a rule
+    // readers will infer wrongly from its outcomes. One did — see the note at
+    // `producerClassExcluded` below.
+    const pastProducer = pastProducerClassWhere(PRODUCER_CLASS_CATEGORIES);
 
     // Status breakdown among past producer-class events.
     const statusRows = await db
@@ -178,6 +183,60 @@ export async function GET(request: NextRequest) {
         and(rosterResearchTargetWhere(), eq(events.vendorRosterStatus, "HAS_LINKS_UNVERIFIED"))
       );
 
+    // ── OPE-713: why the drain's biggest wins do not move coveragePct ──────
+    //
+    // Measured 2026-08-31: a roster pass added 530 vendor links and took 11
+    // events to a terminal status, and `producerClass.coveragePct` moved 0.4pp.
+    // The two largest rosters it completed were invisible to the metric:
+    //
+    //   Kill Tide Arts & Craft Festival 2026    93 exhibitors  categories []
+    //   Nauset Summer Craft Festival 2026       81 exhibitors  categories []
+    //   Great Falls Balloon Festival 2026       58 exhibitors  ["Festival","Community Event"]
+    //   Quechee Scottish Games & Festival 2026  37 exhibitors  ["Festival","Cultural Festival",...]
+    //
+    // The ticket reasonably suspected `event_scale`, because a LARGE show
+    // counted while two null-scale shows did not. Scale is not in this
+    // predicate at all. Membership keys on `categories`, and the LARGE show
+    // that counted carries "Craft Fair" while the two that did not carry
+    // nothing. The confusion is the point: the denominator was not legible
+    // from the outside, so a reader inferred the wrong rule from the outcomes.
+    //
+    // These are TWO different problems that look like one:
+    //
+    //   1. Empty `categories` is a DATA gap. "Craft Festival" is not a category
+    //      value; these rows carry no categories at all, so no widening of the
+    //      list would reach them. Fixing the metric cannot fix them, and
+    //      widening it to admit uncategorised rows would drag in every
+    //      uncategorised event in the table.
+    //
+    //   2. "Festival" / "Community Event" is the definition WORKING. Producer
+    //      class deliberately means "shows that publish a web exhibitor
+    //      directory worth backfilling". But these two published rosters of 58
+    //      and 37 — so the premise is at least partly falsified, and that is a
+    //      judgement for an operator, not something to quietly widen.
+    //
+    // So `producerClass` is left exactly as it is. Rewriting a published series
+    // would silently restate every past reading of it, and this rail has been
+    // bitten by a number that changed meaning without saying so. Instead the
+    // excluded population is reported as its own sibling — the same doctrine as
+    // `unevaluated` (OPE-547) and the queue's `excluded` block above: EXCLUDED,
+    // NOT DISCARDED.
+    const pastNonProducer = pastNonProducerClassWhere(PRODUCER_CLASS_CATEGORIES);
+    const [nonProducerRow] = await db
+      .select({
+        total: sql<number>`count(*)`,
+        hasRoster: sql<number>`sum(case when ${events.vendorRosterStatus} = 'HAS_ROSTER' then 1 else 0 end)`,
+        // The drain's invisible output: rows already holding roster-grade links
+        // that the primary coverage number will never count.
+        withRosterGradeLinks: sql<number>`sum(case when ${rosterGradeLinks} >= ${ROSTER_EVIDENCE_MIN} then 1 else 0 end)`,
+        // Split by CAUSE, because the two need opposite remedies — one is a
+        // data fix, the other a definition decision.
+        emptyCategories: sql<number>`sum(case when ${hasNoCategories()} then 1 else 0 end)`,
+        emptyCategoriesWithRosterGradeLinks: sql<number>`sum(case when ${hasNoCategories()} and ${rosterGradeLinks} >= ${ROSTER_EVIDENCE_MIN} then 1 else 0 end)`,
+      })
+      .from(events)
+      .where(pastNonProducer);
+
     // 8-week links-added trend. Bucket in JS (Drizzle returns Date objects, so
     // we sidestep any epoch-unit ambiguity in the stored integer timestamps).
     const WEEKS = 8;
@@ -227,6 +286,41 @@ export async function GET(request: NextRequest) {
         coveragePct: pct(hasRoster, total),
         coverageOfResearchablePct: pct(hasRoster, researchable),
         coverageInclUnverifiedPct: pct(hasRoster + hasLinksUnverified, total),
+      },
+      // OPE-713 — what the producer-class denominator cannot see, and why.
+      // Sibling, not nested: these rows are not producer-class and pretending
+      // otherwise is the thing this block exists to prevent.
+      producerClassExcluded: {
+        total: nonProducerRow?.total ?? 0,
+        hasRoster: nonProducerRow?.hasRoster ?? 0,
+        withRosterGradeLinks: nonProducerRow?.withRosterGradeLinks ?? 0,
+        // Cause 1 — a DATA gap. Categorise the event and it joins the
+        // denominator; no metric change can reach these.
+        emptyCategories: nonProducerRow?.emptyCategories ?? 0,
+        emptyCategoriesWithRosterGradeLinks:
+          nonProducerRow?.emptyCategoriesWithRosterGradeLinks ?? 0,
+      },
+      // OPE-713 — the number a roster drain can actually move. Same past +
+      // OCCURRED + non-tombstone frame, with the category filter dropped, so a
+      // pass can see its own output without `producerClass` changing meaning.
+      // Report BOTH: the gap between them is the size of the question in
+      // `producerClassExcluded`.
+      allPastOccurred: {
+        total: total + (nonProducerRow?.total ?? 0),
+        hasRoster: hasRoster + (nonProducerRow?.hasRoster ?? 0),
+        coveragePct: pct(
+          hasRoster + (nonProducerRow?.hasRoster ?? 0),
+          total + (nonProducerRow?.total ?? 0)
+        ),
+      },
+      // OPE-713 — the predicate, returned rather than described, so a caller
+      // can tell IN ADVANCE whether its target will register instead of
+      // inferring the rule from which of its writes counted.
+      producerClassDefinition: {
+        lifecycleStatus: "OCCURRED",
+        excludesMergeTombstones: true,
+        categories: [...PRODUCER_CLASS_CATEGORIES],
+        note: "Membership keys on the `categories` JSON array. event_scale is NOT part of this predicate.",
       },
       // OPE-547 — see the computation above. Deliberately a SIBLING of `queue`
       // rather than a field inside it: these rows are not in the queue, and

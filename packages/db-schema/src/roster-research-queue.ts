@@ -86,3 +86,67 @@ export function rosterResearchTargetWhere(): SQL {
     not(isNonResearchCategory())
   ) as SQL;
 }
+
+/**
+ * OPE-713 — "is this row producer-class", as one testable expression.
+ *
+ * Extracted for the reason `vendorSearchWhere` was (OPE-632/OPE-566): a
+ * predicate that decides a published metric's denominator, and that nothing
+ * outside the route could run, drifted from what readers believed it did. A
+ * roster pass on 2026-08-31 added 530 links and moved `coveragePct` by 0.4pp;
+ * the ticket inferred from the outcomes that `event_scale` gated membership.
+ * Scale is not in this predicate at all — membership keys on `categories`. The
+ * wrong inference was reasonable precisely because the rule was unreadable
+ * from outside.
+ *
+ * The category list is a PARAMETER rather than an import so this package does
+ * not take a dependency on `@takemetothefair/constants` (the caller owns the
+ * vocabulary; this owns the SQL). It also lets a test pin the NULL-handling
+ * without pinning the business list.
+ *
+ * ⚠️ `coalesce` here is load-bearing for the NEGATED form, exactly as it is in
+ * `isNonResearchCategory` above, and for the same reason: `NULL LIKE '%x%'` is
+ * NULL, so `NOT (...)` is NULL and the row fails the filter. An uncategorised
+ * event would drop out of `pastNonProducerClassWhere` — the one query whose
+ * whole job is to count uncategorised events. Covered by a test that seeds a
+ * row with NULL categories and requires it to appear.
+ */
+export function producerClassCond(categories: readonly string[]): SQL {
+  const text = sql`coalesce(${events.categories}, '[]')`;
+  // Match `%"Home Show"%` including the quotes: the column holds a JSON array,
+  // and an unquoted match would let "Craft Fair" hit a hypothetical
+  // "Craft Fairground". These are constants, never user input, so the pattern
+  // cannot approach D1's 50-character LIKE cap.
+  const clauses = categories.map((c) => like(text, `%"${c}"%`));
+  if (clauses.length === 0) return sql`0`;
+  return clauses.length === 1 ? clauses[0] : sql`(${sql.join(clauses, sql` OR `)})`;
+}
+
+/** Past producer-class events: the `producerClass` coverage denominator. */
+export function pastProducerClassWhere(categories: readonly string[]): SQL {
+  return and(
+    eq(events.lifecycleStatus, "OCCURRED"),
+    isNull(events.mergedInto),
+    producerClassCond(categories)
+  ) as SQL;
+}
+
+/**
+ * Past OCCURRED events that are NOT producer-class — the population
+ * `coveragePct` cannot see. Reported, never dropped: a drain that completes a
+ * 93-exhibitor roster deserves to find out why its number did not move.
+ */
+export function pastNonProducerClassWhere(categories: readonly string[]): SQL {
+  return and(
+    eq(events.lifecycleStatus, "OCCURRED"),
+    isNull(events.mergedInto),
+    not(producerClassCond(categories))
+  ) as SQL;
+}
+
+/** True when a row carries no categories at all — a DATA gap, distinct from
+ *  carrying categories that are simply not producer-class. The two need
+ *  opposite remedies, so they are counted separately. */
+export function hasNoCategories(): SQL {
+  return sql`coalesce(${events.categories}, '[]') in ('[]', '')`;
+}
