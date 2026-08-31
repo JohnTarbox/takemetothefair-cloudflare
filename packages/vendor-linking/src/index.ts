@@ -18,9 +18,10 @@
  * (`wasCreated`, `linkIsPublic`, `vendorSlug`, `eventSlug`) and each adapter fires
  * those its own way. The core's job is the data, not the notifications.
  */
-import { and, eq, isNull, like, sql } from "drizzle-orm";
+import { and, eq, isNull, sql, type SQL } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "@takemetothefair/db-schema";
+import { containsCI } from "@takemetothefair/db-schema";
 import {
   appendSlugSegment,
   createSlug,
@@ -50,11 +51,6 @@ const REDIRECT_CHAIN_MAX_DEPTH = 5;
 
 export const DEDUP_STRATEGY_VALUES = ["strict", "fuzzy", "skip"] as const;
 export type DedupStrategy = (typeof DEDUP_STRATEGY_VALUES)[number];
-
-/** SQLite LIKE-escape: strip the wildcard metacharacters. */
-export function escapeLike(s: string): string {
-  return s.replace(/[%_]/g, "");
-}
 
 /** "City, ST" → {city, state}. Splits on the LAST comma. */
 export function parseLocation(location: string): { city: string | null; state: string | null } {
@@ -225,19 +221,39 @@ export async function findStrictMatch(
 }
 
 /**
- * Shared LIKE-stem narrowing used by both dedup strategies. Caps the in-memory
- * set to bound CPU on large tables.
+ * The token this repo's `slug` column synthesizes but a raw business name need
+ * not contain. `createSlug` (and `normalizeVendorName`) both expand `&` to
+ * "and", so "and" is present in the slug of a row whose stored name has only
+ * an ampersand — and absent from the name itself. It is therefore never a
+ * distinctive stem, and never a safe one.
  */
-async function selectStemCandidates(db: VendorLinkDb, businessName: string): Promise<VendorRow[]> {
-  const stem = businessName
-    .toLowerCase()
-    .replace(/[^a-z0-9 ]/g, " ")
-    .trim()
-    .split(/\s+/)
-    .filter((t) => t.length >= 3)[0];
+const SYNTHESIZED_SLUG_TOKEN = "and";
 
+/**
+ * The slug-space stem: the LONGEST token of the incoming name's slug form,
+ * ignoring the synthesized "and".
+ *
+ * Longest rather than first, deliberately. The first token of
+ * "m-and-d-fine-jewelry" that clears 3 characters is "and" — and `LIKE '%and%'`
+ * matches "candle", "island", "grand", "handmade"…, which on 6,567 rows would
+ * fill the 200-row cap with noise and could push the true match out of it. The
+ * longest token is the most distinctive one, which is what a narrowing filter
+ * wants.
+ */
+function slugStem(businessName: string): string | undefined {
+  const slug = createSlug(businessName) as string;
+  if (!slug) return undefined;
+  let best: string | undefined;
+  for (const token of slug.split("-")) {
+    if (token.length < 3 || token === SYNTHESIZED_SLUG_TOKEN) continue;
+    if (!best || token.length > best.length) best = token;
+  }
+  return best;
+}
+
+async function fetchCandidates(db: VendorLinkDb, narrowing?: SQL): Promise<VendorRow[]> {
   const filters = [isNull(vendors.deletedAt)];
-  if (stem) filters.push(like(vendors.businessName, `%${escapeLike(stem)}%`));
+  if (narrowing) filters.push(narrowing);
 
   return db
     .select({
@@ -250,6 +266,88 @@ async function selectStemCandidates(db: VendorLinkDb, businessName: string): Pro
     .from(vendors)
     .where(and(...filters))
     .limit(FUZZY_CANDIDATE_CAP);
+}
+
+/**
+ * Shared LIKE-stem narrowing used by both dedup strategies. Caps the in-memory
+ * set to bound CPU on large tables.
+ *
+ * ── OPE-712: narrowing on RAW text while judging on NORMALIZED text ───────
+ *
+ * The scorer compares `getVendorComparisonString`, i.e. `normalizeVendorName`,
+ * which folds `&`↔"and". The narrowing below compares the raw stored
+ * `business_name`. Those two disagree, and the disagreement DELETES candidates
+ * before they are ever scored — so the miss is invisible to every test that
+ * exercises the scorer.
+ *
+ * Measured instance, prod, 2026-08-31: a roster pass wrote "M and D Fine
+ * Jewelry" while "M & D Fine Jewelry" (created 2026-07-27) already existed.
+ * The stem rule takes the first token of ≥3 characters, which for "M and D
+ * Fine Jewelry" is literally **"and"** — and `LIKE '%and%'` does not match
+ * "M & D Fine Jewelry". The existing row was never fetched, so it was never
+ * scored. Scoring was never the problem: both names normalize to
+ * "m and d fine jewelry" and score **1.0**, comfortably over the 0.92 gate.
+ *
+ * It is also ASYMMETRIC, which is why it hid. Writing "M & D Fine Jewelry"
+ * against a stored "M and D Fine Jewelry" picks the stem "fine" and matches
+ * fine. Only the "and"-spelled direction fails, and only when the ampersand
+ * follows a token too short to be a stem (`M & D`, `B & B`) — so "Lemon &
+ * Maisey" and 189 other ampersand writes in the same run were unaffected and
+ * the rails looked healthy.
+ *
+ * The fix adds a SECOND narrowing over the `slug` column, whose stored value
+ * already went through `createSlug` — the same `&`→"and" fold. Both sides then
+ * meet in one space. It SUPPLEMENTS rather than replaces the name clause,
+ * because a slug is SEO-stable: renaming a vendor deliberately does not move
+ * its slug, so the two columns legitimately drift and neither alone is
+ * sufficient.
+ *
+ * Two capped queries, merged — not one query with `OR`. Under a single
+ * `LIMIT 200` the noisy clause can crowd the precise one out of the result
+ * set, which would reintroduce the same silent miss with extra steps.
+ *
+ * Both passes use `containsCI` (`instr(lower(col), ?) > 0`) rather than `LIKE`.
+ * The stem is derived from a caller-supplied business name, and D1 throws
+ * `LIKE or GLOB pattern too complex` once the PATTERN exceeds 50 characters
+ * while local SQLite allows 50,000 — so a long single-token name would have
+ * failed only in production, and only for the writer unlucky enough to have
+ * one. `instr` is exactly equivalent for a substring test, has no pattern-length
+ * limit, and needs no metacharacter escaping. See `packages/db-schema/src/contains-ci.ts`.
+ *
+ * ⚠️ NOT closed by this: `VENDOR_ABBREVIATION_MAP` is the same shape of hole
+ * ("Assn Of X" vs "Association Of X" — `assn` is not a substring of
+ * `association`, and `createSlug` does not expand abbreviations either). No
+ * instance of it has been measured in prod, so it is filed rather than fixed
+ * on speculation.
+ */
+async function selectStemCandidates(db: VendorLinkDb, businessName: string): Promise<VendorRow[]> {
+  const stem = businessName
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter((t) => t.length >= 3)[0];
+
+  const byName = await fetchCandidates(
+    db,
+    stem ? containsCI(vendors.businessName, stem) : undefined
+  );
+
+  const slugToken = slugStem(businessName);
+  // No stem at all already means "scan the cap unfiltered"; a second pass over
+  // the same unfiltered set would add nothing.
+  if (!slugToken || !stem) return byName;
+
+  const bySlug = await fetchCandidates(db, containsCI(vendors.slug, slugToken));
+
+  const seen = new Set(byName.map((r) => r.id));
+  const merged = byName.slice();
+  for (const row of bySlug) {
+    if (seen.has(row.id)) continue;
+    seen.add(row.id);
+    merged.push(row);
+  }
+  return merged;
 }
 
 /**
