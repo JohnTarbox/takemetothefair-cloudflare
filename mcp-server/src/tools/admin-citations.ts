@@ -328,7 +328,7 @@ export function registerCitationTools(server: McpServer, db: Db, auth: AuthConte
   // ── create_event_citation ─────────────────────────────────────
   server.tool(
     "create_event_citation",
-    "Record provenance for a single event field value (e.g. estimated_attendance=260000 cited on fryeburgfair.org). Stores the cited value verbatim as text; optionally updates the denormalized events column to match. Auto-supersedes the prior `active` citation for the same (event, field, year). Admin only.",
+    "Record provenance for a single event field value (e.g. estimated_attendance=260000 cited on fryeburgfair.org). Stores the cited value verbatim as text; optionally updates the denormalized events column to match. Auto-supersedes the prior `active` citation for the same (event, field, year). OPE-692: ALSO pass source_title / source_excerpt / source_content_hash whenever you actually read the page — an unattended pass cannot re-fetch this URL later (web_fetch provenance is origin-scoped and a URL from our own DB is not in the accepted set), so what you capture at write time is the only evidence a future check will have. Admin only.",
     {
       // K5 (analyst, 2026-05-31): accept legacy 32-char hex ids alongside dashed
       // UUIDs to match `get_event_lifecycle_history` and friends. The DB column
@@ -349,6 +349,34 @@ export function registerCitationTools(server: McpServer, db: Db, auth: AuthConte
         .describe("Cited value, stored verbatim as text (e.g. '260,000' or '$50')."),
       source_url: z.string().url().describe("URL where the value was cited"),
       source_type: z.enum(SOURCE_TYPE_VALUES).describe("Category of the source"),
+      // OPE-692 — the citation's own evidence. Optional so every existing
+      // caller keeps working, but supply it whenever you actually fetched the
+      // page: an unattended pass CANNOT re-fetch this URL later (web_fetch
+      // provenance is origin-scoped and a URL from our DB is not in the set),
+      // so what you capture now is the only thing a future check will have.
+      source_title: z
+        .string()
+        .max(300)
+        .transform(decodeHtmlEntities)
+        .optional()
+        .describe(
+          "OPE-692: the page <title> or main heading AS SERVED when you read it. The single most useful field for spotting a stale or swapped source later."
+        ),
+      source_excerpt: z
+        .string()
+        .max(1000)
+        .transform(decodeHtmlEntities)
+        .optional()
+        .describe(
+          "OPE-692: a short VERBATIM extract that supports `value` — the sentence you would quote to justify it. Not a summary; a later reader needs the source's words, not yours."
+        ),
+      source_content_hash: z
+        .string()
+        .max(64)
+        .optional()
+        .describe(
+          "OPE-692: sha256 of the extracted page text, first 16 hex chars (same convention as inbound_emails.content_sha256_first16). Lets a later pass detect that a page changed without re-reading it."
+        ),
       source_name: z
         .string()
         .max(200)
@@ -482,6 +510,19 @@ export function registerCitationTools(server: McpServer, db: Db, auth: AuthConte
         state: "active",
         notes: params.notes ?? null,
         supersedesCitationId: supersededId,
+        // OPE-692 — snapshot the source alongside the claim about it.
+        //
+        // `sourceFetchedAt` is set ONLY when something was actually captured.
+        // A timestamp with no title, excerpt or hash would assert "we read the
+        // page at this time" while carrying no evidence that we did, which is
+        // the fabricated-provenance shape this ticket is about.
+        sourceTitle: params.source_title ?? null,
+        sourceExcerpt: params.source_excerpt ?? null,
+        sourceContentHash: params.source_content_hash ?? null,
+        sourceFetchedAt:
+          params.source_title || params.source_excerpt || params.source_content_hash
+            ? new Date()
+            : null,
         createdBy: auth.userId ?? null,
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -773,6 +814,16 @@ export function registerCitationTools(server: McpServer, db: Db, auth: AuthConte
             state: eventDataCitations.state,
             notes: eventDataCitations.notes,
             supersedesCitationId: eventDataCitations.supersedesCitationId,
+            // OPE-692 — the citation's own evidence, so a reader can judge
+            // whether it still supports its field WITHOUT re-fetching a URL an
+            // unattended pass cannot reach.
+            sourceTitle: eventDataCitations.sourceTitle,
+            sourceExcerpt: eventDataCitations.sourceExcerpt,
+            sourceContentHash: eventDataCitations.sourceContentHash,
+            sourceFetchedAt: eventDataCitations.sourceFetchedAt,
+            recheckState: eventDataCitations.recheckState,
+            recheckAt: eventDataCitations.recheckAt,
+            recheckNote: eventDataCitations.recheckNote,
             createdBy: eventDataCitations.createdBy,
             createdAt: eventDataCitations.createdAt,
             updatedAt: eventDataCitations.updatedAt,
@@ -818,6 +869,21 @@ export function registerCitationTools(server: McpServer, db: Db, auth: AuthConte
               state: r.state,
               notes: r.notes,
               supersedes_citation_id: r.supersedesCitationId,
+              // OPE-692 — what the source SAID when we read it, so this row can
+              // be judged without re-fetching a URL nothing can reach.
+              // `source_verifiable` is the headline: it answers "is there
+              // anything here to check against?" in one boolean, so a pass does
+              // not have to infer it from three nullable fields.
+              source_title: r.sourceTitle,
+              source_excerpt: r.sourceExcerpt,
+              source_content_hash: r.sourceContentHash,
+              source_fetched_at: r.sourceFetchedAt,
+              source_verifiable: Boolean(r.sourceTitle || r.sourceExcerpt || r.sourceContentHash),
+              // Null recheck_state means never attempted — deliberately
+              // distinct from 'unreachable', which means tried and refused.
+              recheck_state: r.recheckState ?? null,
+              recheck_at: r.recheckAt,
+              recheck_note: r.recheckNote,
               created_by: r.createdBy,
               created_at: r.createdAt,
               updated_at: r.updatedAt,
@@ -836,7 +902,7 @@ export function registerCitationTools(server: McpServer, db: Db, auth: AuthConte
   // ── update_event_citation ─────────────────────────────────────
   server.tool(
     "update_event_citation",
-    "Correct or transition a citation. Setting state to 'active' supersedes other active citations for the same (event, field, year). Use this — not delete — for the rejection / staleness flow.",
+    "Correct or transition a citation. Setting state to 'active' supersedes other active citations for the same (event, field, year). Use this — not delete — for the rejection / staleness flow. OPE-692: also records the outcome of RE-READING a source via recheck_state / recheck_note — in particular 'unreachable', which turns a dead end into a fact about the URL rather than something each pass rediscovers privately.",
     {
       citation_id: z.string().uuid().describe("Citation ID"),
       state: z.enum(STATE_VALUES).optional().describe("New lifecycle state"),
@@ -849,6 +915,27 @@ export function registerCitationTools(server: McpServer, db: Db, auth: AuthConte
         .describe("Replace notes (decoded)"),
       value: z.string().min(1).max(500).optional().describe("Correction: updated cited value"),
       source_url: z.string().url().optional().describe("Correction: updated source URL"),
+      // OPE-692 — record the OUTCOME of trying to re-read the source.
+      //
+      // The point is `unreachable`. A pass that cannot fetch a citation's URL
+      // currently learns that privately and the next pass rediscovers it; worse,
+      // it cannot tell "the source is gone" from "I am not allowed to look",
+      // and those justify opposite actions. Writing it down converts a dead end
+      // into a fact about the URL.
+      recheck_state: z
+        .enum(["unchecked", "confirmed", "changed", "unreachable"])
+        .optional()
+        .describe(
+          "OPE-692: outcome of re-reading source_url. 'confirmed' = still says what we recorded; 'changed' = says something else (say what in recheck_note, and consider a new citation); 'unreachable' = could not be read, INCLUDING refused by web_fetch provenance — that is a fact about the URL, not about the event, and must not be read as the record being wrong."
+        ),
+      recheck_note: z
+        .string()
+        .max(500)
+        .transform(decodeHtmlEntities)
+        .optional()
+        .describe(
+          "OPE-692: why — the refusal reason, or what changed. Required in practice for 'changed' and 'unreachable': a state with no reason is the dead end this ticket exists to remove."
+        ),
       source_name: z
         .string()
         .max(200)
@@ -877,6 +964,15 @@ export function registerCitationTools(server: McpServer, db: Db, auth: AuthConte
       if (params.value !== undefined) updates.value = params.value;
       if (params.source_url !== undefined) updates.sourceUrl = params.source_url;
       if (params.source_name !== undefined) updates.sourceName = params.source_name;
+      // OPE-692 — stamp recheck_at from the recheck_state write, not from the
+      // caller. A self-reported "I checked at T" is exactly the claim this
+      // ticket is about not being able to trust; the server knows when it was
+      // told, and that is the honest timestamp.
+      if (params.recheck_state !== undefined) {
+        updates.recheckState = params.recheck_state;
+        updates.recheckAt = new Date();
+      }
+      if (params.recheck_note !== undefined) updates.recheckNote = params.recheck_note;
 
       // If transitioning TO active, supersede other actives for the same key.
       let supersededCount = 0;
