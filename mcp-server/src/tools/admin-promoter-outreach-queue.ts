@@ -37,6 +37,7 @@ import {
   buildOutreachQueueRow,
   type OutreachQueueRow,
 } from "../schema.js";
+import { chunkIds } from "@takemetothefair/utils";
 import { jsonContent } from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
@@ -129,34 +130,56 @@ export function registerPromoterOutreachQueueTool(server: McpServer, db: Db, aut
 
       const ids = rows.map((r) => r.id);
 
-      // Batched, because a per-event count would be three queries per row.
-      const [dayCounts, citationCounts, openAttempts] = await Promise.all([
-        db
-          .select({ eventId: eventDays.eventId, n: sql<number>`COUNT(*)` })
-          .from(eventDays)
-          .where(inArray(eventDays.eventId, ids))
-          .groupBy(eventDays.eventId),
-        db
-          .select({ eventId: eventDataCitations.eventId, n: sql<number>`COUNT(*)` })
-          .from(eventDataCitations)
-          .where(
-            and(
-              inArray(eventDataCitations.eventId, ids),
-              inArray(eventDataCitations.fieldName, DATE_CITATION_FIELDS),
-              eq(eventDataCitations.state, "active")
+      // CHUNKED, because D1 caps a statement at 100 bind parameters.
+      //
+      // The first cut passed all ~200 scanned ids straight into three
+      // `inArray`s and threw `D1_ERROR: too many SQL variables` on the very
+      // first prod call. Local SQLite allows 32,766 parameters, so every unit
+      // test and the whole better-sqlite3 harness passed — this is the exact
+      // trap the repo already documents, and the exact shape it warns about:
+      // an `inArray` fed by a previous query's rows.
+      //
+      // The chunk size accounts for the OTHER bound parameters in the same
+      // statement (the two citation field names, the two open statuses), so
+      // the widest of the three still fits under 100.
+      const chunks = chunkIds(ids, 80);
+
+      const dayCounts: Array<{ eventId: string; n: number }> = [];
+      const citationCounts: Array<{ eventId: string; n: number }> = [];
+      const openAttempts: Array<{ eventId: string | null }> = [];
+
+      for (const chunk of chunks) {
+        const [days, cites, open] = await Promise.all([
+          db
+            .select({ eventId: eventDays.eventId, n: sql<number>`COUNT(*)` })
+            .from(eventDays)
+            .where(inArray(eventDays.eventId, chunk))
+            .groupBy(eventDays.eventId),
+          db
+            .select({ eventId: eventDataCitations.eventId, n: sql<number>`COUNT(*)` })
+            .from(eventDataCitations)
+            .where(
+              and(
+                inArray(eventDataCitations.eventId, chunk),
+                inArray(eventDataCitations.fieldName, DATE_CITATION_FIELDS),
+                eq(eventDataCitations.state, "active")
+              )
             )
-          )
-          .groupBy(eventDataCitations.eventId),
-        db
-          .select({ eventId: promoterOutreachAttempts.eventId })
-          .from(promoterOutreachAttempts)
-          .where(
-            and(
-              inArray(promoterOutreachAttempts.eventId, ids),
-              inArray(promoterOutreachAttempts.status, ["queued", "sent"])
-            )
-          ),
-      ]);
+            .groupBy(eventDataCitations.eventId),
+          db
+            .select({ eventId: promoterOutreachAttempts.eventId })
+            .from(promoterOutreachAttempts)
+            .where(
+              and(
+                inArray(promoterOutreachAttempts.eventId, chunk),
+                inArray(promoterOutreachAttempts.status, ["queued", "sent"])
+              )
+            ),
+        ]);
+        dayCounts.push(...days.map((d) => ({ eventId: d.eventId, n: Number(d.n) })));
+        citationCounts.push(...cites.map((c) => ({ eventId: c.eventId, n: Number(c.n) })));
+        openAttempts.push(...open);
+      }
 
       const days = new Map(dayCounts.map((d) => [d.eventId, Number(d.n)]));
       const cites = new Map(citationCounts.map((c) => [c.eventId, Number(c.n)]));
