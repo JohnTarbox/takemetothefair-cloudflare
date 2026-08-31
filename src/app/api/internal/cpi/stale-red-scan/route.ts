@@ -23,6 +23,7 @@ import { gatherQueueFlows, persistQueueSnapshots } from "@/lib/analytics-overvie
 import { assessAllHeartbeat } from "@/lib/heartbeat";
 import { assessPhotoEffectiveness } from "@/lib/photo-effectiveness/load";
 import { assessPhotoIntakeStorage } from "@/lib/photo-intake-reconcile";
+import { assessAllUncitedConfirmedDates } from "@/lib/uncited-confirmed-dates";
 import {
   formatStaleRedDigest,
   selectStaleFaultReds,
@@ -259,6 +260,25 @@ export const POST = withInternalKey({ source: "cpi:stale-red-scan" }, async ({ d
       });
     }
 
+    // OPE-384 stage 5 — the Dartmouth failure, escalated rather than counted.
+    //
+    // `dates_confirmed = 1` with no citation behind it looks exactly like a
+    // date somebody verified, and stage 6 already counts these. Counting is not
+    // escalation: a number on a dashboard is the same pull-only posture that
+    // let IndexNow sit dead for two weeks in plain sight. One red for the
+    // condition, not one per event. Defensive, like every block above.
+    let uncitedDateReds: StaleRed[] = [];
+    try {
+      uncitedDateReds = await assessAllUncitedConfirmedDates(db, now);
+    } catch (err) {
+      await logError(db, {
+        level: "warn",
+        source: "cpi:stale-red-scan",
+        message: "uncited confirmed-dates scan failed; degrading to the prior reds",
+        error: err,
+      });
+    }
+
     const allReds = [
       ...reds,
       ...faultReds,
@@ -267,6 +287,7 @@ export const POST = withInternalKey({ source: "cpi:stale-red-scan" }, async ({ d
       ...heartbeatReds,
       ...photoReds,
       ...photoIntakeReds,
+      ...uncitedDateReds,
     ];
 
     // OPE-308 — push on CHANGE, not on existence.
