@@ -1101,6 +1101,12 @@ export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> =
         // publication that did not happen.
         photosStored: storage.stored,
         photosStorageBlocked: storage.blockedReason,
+        // OPE-205 §1 — "couldn't identify" belongs in the reply, not only in a
+        // discrepancy row John has to go looking for. A photo the model made
+        // nothing of is indistinguishable, from his side, from one we simply
+        // ignored; saying so is the difference between "they missed it" and
+        // "they looked and could not tell".
+        photosUnidentified: (booths?.visionFailures ?? []).length,
       },
       // The downstream OPE-204 vendor pipeline reads this off the row.
       resultingEventId: resolution.eventId,
