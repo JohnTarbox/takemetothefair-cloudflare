@@ -5719,3 +5719,6 @@ export * from "./data-health-kpis";
 
 // OPE-384 stage 2 — shared with the MCP queue tool.
 export * from "./promoter-outreach-queue";
+
+// OPE-384 stage 6 — shared with the metrics tool.
+export * from "./promoter-outreach-metrics";
