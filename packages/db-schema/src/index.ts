@@ -5716,3 +5716,6 @@ export * from "./contains-ci";
 
 // OPE-391 — shared with the MCP Worker; see the file header.
 export * from "./data-health-kpis";
+
+// OPE-384 stage 2 — shared with the MCP queue tool.
+export * from "./promoter-outreach-queue";
