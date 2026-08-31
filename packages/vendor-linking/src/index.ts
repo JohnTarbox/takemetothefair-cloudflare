@@ -18,9 +18,10 @@
  * (`wasCreated`, `linkIsPublic`, `vendorSlug`, `eventSlug`) and each adapter fires
  * those its own way. The core's job is the data, not the notifications.
  */
-import { and, eq, isNull, like, sql, type SQL } from "drizzle-orm";
+import { and, eq, isNull, sql, type SQL } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "@takemetothefair/db-schema";
+import { containsCI } from "@takemetothefair/db-schema";
 import {
   appendSlugSegment,
   createSlug,
@@ -50,11 +51,6 @@ const REDIRECT_CHAIN_MAX_DEPTH = 5;
 
 export const DEDUP_STRATEGY_VALUES = ["strict", "fuzzy", "skip"] as const;
 export type DedupStrategy = (typeof DEDUP_STRATEGY_VALUES)[number];
-
-/** SQLite LIKE-escape: strip the wildcard metacharacters. */
-export function escapeLike(s: string): string {
-  return s.replace(/[%_]/g, "");
-}
 
 /** "City, ST" → {city, state}. Splits on the LAST comma. */
 export function parseLocation(location: string): { city: string | null; state: string | null } {
@@ -310,6 +306,14 @@ async function fetchCandidates(db: VendorLinkDb, narrowing?: SQL): Promise<Vendo
  * `LIMIT 200` the noisy clause can crowd the precise one out of the result
  * set, which would reintroduce the same silent miss with extra steps.
  *
+ * Both passes use `containsCI` (`instr(lower(col), ?) > 0`) rather than `LIKE`.
+ * The stem is derived from a caller-supplied business name, and D1 throws
+ * `LIKE or GLOB pattern too complex` once the PATTERN exceeds 50 characters
+ * while local SQLite allows 50,000 — so a long single-token name would have
+ * failed only in production, and only for the writer unlucky enough to have
+ * one. `instr` is exactly equivalent for a substring test, has no pattern-length
+ * limit, and needs no metacharacter escaping. See `packages/db-schema/src/contains-ci.ts`.
+ *
  * ⚠️ NOT closed by this: `VENDOR_ABBREVIATION_MAP` is the same shape of hole
  * ("Assn Of X" vs "Association Of X" — `assn` is not a substring of
  * `association`, and `createSlug` does not expand abbreviations either). No
@@ -326,7 +330,7 @@ async function selectStemCandidates(db: VendorLinkDb, businessName: string): Pro
 
   const byName = await fetchCandidates(
     db,
-    stem ? like(vendors.businessName, `%${escapeLike(stem)}%`) : undefined
+    stem ? containsCI(vendors.businessName, stem) : undefined
   );
 
   const slugToken = slugStem(businessName);
@@ -334,7 +338,7 @@ async function selectStemCandidates(db: VendorLinkDb, businessName: string): Pro
   // the same unfiltered set would add nothing.
   if (!slugToken || !stem) return byName;
 
-  const bySlug = await fetchCandidates(db, like(vendors.slug, `%${escapeLike(slugToken)}%`));
+  const bySlug = await fetchCandidates(db, containsCI(vendors.slug, slugToken));
 
   const seen = new Set(byName.map((r) => r.id));
   const merged = byName.slice();
