@@ -13,7 +13,7 @@ export const dynamic = "force-dynamic";
  */
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { vendorPhotos } from "@/lib/db/schema";
@@ -51,7 +51,8 @@ export async function POST(request: Request) {
   const owned = await db
     .select({ id: vendorPhotos.id })
     .from(vendorPhotos)
-    .where(eq(vendorPhotos.vendorId, vendorId));
+    // OPE-686 — LIVE rows only; see the event reorder route.
+    .where(and(eq(vendorPhotos.vendorId, vendorId), isNull(vendorPhotos.deletedAt)));
 
   const belong = assertPhotosBelongTo(
     photoIds,

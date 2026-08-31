@@ -39,6 +39,7 @@ import { registerPromoterOutreachQueueTool } from "./tools/admin-promoter-outrea
 import { registerPromoterOutreachMetricsTool } from "./tools/admin-promoter-outreach-metrics.js";
 import { registerPromoterOutreachLifecycleTools } from "./tools/admin-promoter-outreach-lifecycle.js";
 import { registerPromoterReplyIngestTools } from "./tools/admin-promoter-reply-ingest.js";
+import { registerGalleryPhotoTools } from "./tools/admin-gallery-photos.js";
 import { registerSendNewsletterBroadcastTool } from "./tools/admin-send-newsletter-broadcast.js";
 import { registerCreateClaimInviteTool } from "./tools/admin-claim-invite.js";
 import { registerClaimReviewTools } from "./tools/admin-claim-review.js";
@@ -368,6 +369,7 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
         registerPromoterOutreachMetricsTool(this.server, db, auth);
         registerPromoterOutreachLifecycleTools(this.server, db, auth);
         registerPromoterReplyIngestTools(this.server, db, auth);
+        registerGalleryPhotoTools(this.server, auth, this.env);
         // OPE-190 (2026-07-13) — send_newsletter_broadcast (wraps the OPE-169
         // broadcast endpoint; STOP-gated real broadcast, unattended test/preview).
         registerSendNewsletterBroadcastTool(this.server, db, auth, this.env);
@@ -652,6 +654,7 @@ async function handleLegacyMcpRequest(request: Request, env: Env): Promise<Respo
       registerPromoterOutreachMetricsTool(server, db, auth);
       registerPromoterOutreachLifecycleTools(server, db, auth);
       registerPromoterReplyIngestTools(server, db, auth);
+      registerGalleryPhotoTools(server, auth, env);
       registerSendNewsletterBroadcastTool(server, db, auth, env);
       registerCreateClaimInviteTool(server, db, auth, env);
       registerClaimReviewTools(server, db, auth);

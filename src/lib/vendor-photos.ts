@@ -23,10 +23,11 @@
  * the backfill is approved, the fallback stops being reached on its own — no
  * second change needed, and no flag day.
  */
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq, isNull } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "@/lib/db/schema";
 import { vendorPhotos } from "@/lib/db/schema";
+import { rotationCdnOption } from "@takemetothefair/db-schema";
 
 type Db = DrizzleD1Database<typeof schema>;
 
@@ -39,6 +40,8 @@ export interface VendorGalleryPhoto {
   isFeatured: boolean;
   /** True when this came from the legacy column — the UI cannot edit it. */
   isLegacy: boolean;
+  /** OPE-686 — render-time rotation; undefined when upright. See event-photos.ts. */
+  rotation?: 90 | 180 | 270;
 }
 
 /**
@@ -107,9 +110,11 @@ export async function getVendorGallery(
       alt: vendorPhotos.altText,
       caption: vendorPhotos.caption,
       isFeatured: vendorPhotos.isFeatured,
+      rotation: vendorPhotos.rotation,
     })
     .from(vendorPhotos)
-    .where(eq(vendorPhotos.vendorId, vendorId))
+    // OPE-686 — tombstones stay in the table; see event-photos.ts.
+    .where(and(eq(vendorPhotos.vendorId, vendorId), isNull(vendorPhotos.deletedAt)))
     .orderBy(asc(vendorPhotos.sortOrder));
 
   if (rows.length === 0) return orderGalleryPhotos(parseLegacyGallery(legacyGalleryJson));
@@ -122,6 +127,7 @@ export async function getVendorGallery(
       caption: r.caption ?? undefined,
       isFeatured: !!r.isFeatured,
       isLegacy: false,
+      rotation: rotationCdnOption(r.rotation),
     }))
   );
 }
