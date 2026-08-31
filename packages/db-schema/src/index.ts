@@ -5722,3 +5722,4 @@ export * from "./promoter-outreach-queue";
 
 // OPE-384 stage 6 — shared with the metrics tool.
 export * from "./promoter-outreach-metrics";
+export * from "./promoter-outreach-state";
