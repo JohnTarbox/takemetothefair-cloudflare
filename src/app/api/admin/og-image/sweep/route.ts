@@ -15,6 +15,23 @@ export const dynamic = "force-dynamic";
  * Deferred to Phase 2: real dimension parsing (JPEG SOF0 / PNG IHDR);
  * web-search dead-URL fallback for source_url 404s; logo down-ranking.
  *
+ * Phase 3 (OPE-294, 2026-08-31): the sweep now REPLACES a borrowed image, not
+ * only fills an empty slot. It selected `image_url IS NULL OR ''` for its whole
+ * life, which meant a hotlinked row was permanently invisible to the one tool
+ * meant to clean it up — and that is why the event hotlink count climbed
+ * 28 (07-28) → 51 (08-18) → 55 (08-31) while the sweep ran happily against the
+ * rows that had no image at all.
+ *
+ * A row is now eligible when `classifyImageHost` calls its current image
+ * `invalid` (no image) or `third_party` (borrowed). An `owned` image is never
+ * touched: re-sweeping our own R2 bytes would burn the budget re-downloading
+ * what we already host, and a failed gate could cost us an image we own.
+ *
+ * The replacement is always to OWNED bytes — the row is re-hosted in R2 before
+ * `image_url` is written — so this can never swap one third-party host for
+ * another. That is the standing photo-lane guardrail ("clear or hold, never
+ * guess"), and here it holds by construction rather than by a check.
+ *
  * Auth: admin session OR X-Internal-Key (mirrors upload-image route).
  *
  * Budget: each call processes up to MAX_LIMIT events. Each event = 1
@@ -37,6 +54,8 @@ import {
   urlLooksLikeJunk,
 } from "@/lib/og-image";
 import { extractDomain, shouldIngestFromSource } from "@/lib/url-classification";
+import { classifyImageHost } from "@takemetothefair/utils";
+import { ogSweepCandidatePredicate } from "@/lib/images/borrowed";
 import { urlDomainClassifications } from "@/lib/db/schema";
 
 const DEFAULT_LIMIT = 5;
@@ -49,7 +68,13 @@ interface EventOutcome {
   source_url: string;
   outcome:
     | "updated"
+    /** Same write as `updated`, but over a borrowed image rather than an empty
+     *  slot. Reported separately so a run's effect on the hotlink count is
+     *  readable without diffing the table. */
+    | "replaced"
     | "would_update"
+    | "would_replace"
+    | "skipped_owned_image"
     | "skipped_no_source"
     | "skipped_aggregator"
     | "skipped_no_meta"
@@ -58,6 +83,8 @@ interface EventOutcome {
     | "skipped_download_failed"
     | "skipped_r2_failed";
   image_url?: string;
+  /** The host being replaced, when this row had a borrowed image. */
+  previous_host?: string;
   reason?: string;
 }
 
@@ -90,17 +117,13 @@ export const POST = withAuthorized(async ({ request, db, userId }) => {
       sourceUrl: events.sourceUrl,
       slug: events.slug,
       name: events.name,
+      imageUrl: events.imageUrl,
     })
     .from(events)
-    .where(
-      and(
-        eq(events.status, "APPROVED"),
-        or(isNull(events.imageUrl), eq(events.imageUrl, "")),
-        isNotNull(events.sourceUrl),
-        sql`TRIM(IFNULL(${events.sourceUrl}, '')) != ''`,
-        isNull(events.ogImageSweepAttemptedAt)
-      )
-    )
+    // OPE-294 — "no image" OR "an image we do not own". The second half is new;
+    // without it a hotlinked row could never be reached by the one tool meant
+    // to clean it up.
+    .where(ogSweepCandidatePredicate())
     .orderBy(asc(events.id))
     .limit(limit);
 
@@ -132,6 +155,21 @@ export const POST = withAuthorized(async ({ request, db, userId }) => {
       outcomes.push({ event_id: ev.id, source_url: "", outcome: "skipped_no_source" });
       continue;
     }
+
+    // OPE-294 — the authoritative verdict, before any network work. The SQL
+    // above is a coarse pre-filter; anything it let through that we actually
+    // own is dropped here rather than re-downloaded and re-hosted.
+    const currentHost = classifyImageHost(ev.imageUrl);
+    if (currentHost.kind === "owned") {
+      outcomes.push({
+        event_id: ev.id,
+        source_url: sourceUrl,
+        outcome: "skipped_owned_image",
+        reason: ev.imageUrl ?? "",
+      });
+      continue;
+    }
+    const isReplacement = currentHost.kind === "third_party";
 
     if (!shouldIngestFromSource(sourceUrl, classMap)) {
       outcomes.push({
@@ -196,8 +234,9 @@ export const POST = withAuthorized(async ({ request, db, userId }) => {
       outcomes.push({
         event_id: ev.id,
         source_url: sourceUrl,
-        outcome: "would_update",
+        outcome: isReplacement ? "would_replace" : "would_update",
         image_url: candidate.url,
+        ...(isReplacement ? { previous_host: currentHost.host ?? undefined } : {}),
         reason: `${candidate.source} · ${gate.contentType} · ${dimsLabel} · ${gate.contentLength === -1 ? "unknown size" : `${gate.contentLength} bytes`}`,
       });
       continue;
@@ -309,8 +348,9 @@ export const POST = withAuthorized(async ({ request, db, userId }) => {
     outcomes.push({
       event_id: ev.id,
       source_url: sourceUrl,
-      outcome: "updated",
+      outcome: isReplacement ? "replaced" : "updated",
       image_url: cdnUrl,
+      ...(isReplacement ? { previous_host: currentHost.host ?? undefined } : {}),
       reason: `${candidate.source} · ${gate.contentType}`,
     });
   }
@@ -332,6 +372,9 @@ export const POST = withAuthorized(async ({ request, db, userId }) => {
     scanned: candidates.length,
     updated: outcomes.filter((o) => o.outcome === "updated").length,
     would_update: outcomes.filter((o) => o.outcome === "would_update").length,
+    // OPE-294 — the figures that say what a run did to the hotlink count.
+    replaced: outcomes.filter((o) => o.outcome === "replaced").length,
+    would_replace: outcomes.filter((o) => o.outcome === "would_replace").length,
     skipped: outcomes.filter((o) => o.outcome.startsWith("skipped_")).length,
     by_outcome: outcomes.reduce<Record<string, number>>((acc, o) => {
       acc[o.outcome] = (acc[o.outcome] ?? 0) + 1;
@@ -354,15 +397,7 @@ export const GET = withAuthorized(async ({ db }) => {
   const [{ remaining = 0 } = { remaining: 0 }] = await db
     .select({ remaining: sql<number>`COUNT(*)` })
     .from(events)
-    .where(
-      and(
-        eq(events.status, "APPROVED"),
-        or(isNull(events.imageUrl), eq(events.imageUrl, "")),
-        isNotNull(events.sourceUrl),
-        sql`TRIM(IFNULL(${events.sourceUrl}, '')) != ''`,
-        isNull(events.ogImageSweepAttemptedAt)
-      )
-    );
+    .where(ogSweepCandidatePredicate());
   // Also report the count of attempted-but-still-imageless rows so admin
   // can see how many were burned on the Phase 2a gates (would benefit
   // from Phase 2b's dead-URL fallback once that lands).
