@@ -2,6 +2,7 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { detectPossibleDuplicate } from "@/lib/duplicates/venue-date-collision";
 import { auth } from "@/lib/auth";
+import { requireVerifiedSession } from "@/lib/api-auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { promoters, events, venues } from "@/lib/db/schema";
 import { attachEventToSeries } from "@/lib/series/resolve-or-create-series";
@@ -62,6 +63,17 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   const db = getCloudflareDb();
+  // OPE-703 — a verified email before publishing to a public directory.
+  //
+  // Approved by John 2026-08-31 on a measured recommendation: this route's
+  // ONLY callers are the promoter's own browser UI (src/app/promoter/events/
+  // new/page.tsx), ingestion creates events through direct inserts and never
+  // touches it, and all 6 real registered promoters were already verified when
+  // this shipped. So it closes the last ungated owner-facing write at a cost of
+  // zero affected accounts — the 717 "unverified" promoter owners are
+  // `pending+…` ingestion placeholders that hold no session.
+  const gate = await requireVerifiedSession();
+  if (!gate.ok) return gate.response;
   const session = await auth();
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

@@ -33,10 +33,14 @@ const API_ROOTS = ["src/app/api/vendor", "src/app/api/promoter", "src/app/api/pe
  * defend in review, which is the entire point.
  */
 const KNOWN_UNGATED: Record<string, string> = {
-  "src/app/api/promoter/events/route.ts":
-    "Promoter event creation. Gating it is probably right but was NOT covered by John's 2026-08-31 approval, which addressed the vendor badge and vendor profile-edit rights. Raised as a follow-up rather than widened silently.",
-  "src/app/api/promoter/events/draft/route.ts":
-    "Same decision as promoter/events — the draft sibling of the same flow, and it must move with it rather than separately.",
+  // OPE-703 — EMPTY, and that is the goal state rather than an oversight.
+  //
+  // Both promoter event-creation routes were listed here when OPE-238 shipped,
+  // because gating them exceeded the approval that covered the vendor badge and
+  // vendor profile-edit. John approved them separately on 2026-08-31 and they
+  // are now gated, so every owner-facing write in the three API trees proves
+  // email control. An entry added here again is a deliberate, reviewable claim
+  // that a route may write on an unverified session.
 };
 
 /** A route file proves email control if it does either of these. */
@@ -78,6 +82,11 @@ describe("OPE-238 — owner-facing writes require a verified email", () => {
     "src/app/api/vendor/self-reported-events/route.ts",
     "src/app/api/vendor/claim/initiate/route.ts",
     "src/app/api/vendor/claim/direct/route.ts",
+    // OPE-703 — the last two, approved by John 2026-08-31. Pinned positively
+    // here as well as by the sweep below, so removing a gate fails a test that
+    // NAMES the route rather than one that reports a count.
+    "src/app/api/promoter/events/route.ts",
+    "src/app/api/promoter/events/draft/route.ts",
   ])("%s requires a verified email before writing", (rel) => {
     const found = routes.find((r) => r.rel === rel);
     expect(found, `${rel} no longer exposes a write method`).toBeDefined();
@@ -98,8 +107,11 @@ describe("OPE-238 — owner-facing writes require a verified email", () => {
     ).toEqual([]);
   });
 
-  it("the known-ungated list stays short and each entry carries a reason", () => {
-    // A growing exemption list is the failure this guard would decay into.
+  it("the known-ungated list is empty, and any entry carries a reason", () => {
+    // A growing exemption list is the failure this guard would decay into. It
+    // is empty as of OPE-703 and the cap is kept at 2 rather than 0 on purpose:
+    // a legitimate exemption may exist one day, and forcing it to 0 would push
+    // the next author to delete the guard instead of arguing for the entry.
     expect(Object.keys(KNOWN_UNGATED).length).toBeLessThanOrEqual(2);
     for (const [rel, reason] of Object.entries(KNOWN_UNGATED)) {
       expect(reason.length, `${rel} needs a real reason`).toBeGreaterThan(40);
