@@ -5,7 +5,7 @@ import { notFound } from "next/navigation";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { newsletterIssues } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
-import { NewsletterSignup } from "@/components/layout/newsletter-signup";
+import { NewsletterSignupBlock } from "@/components/newsletter/newsletter-signup-block";
 import { NEWSLETTER_NAME, newsletterMastheadHtml } from "@/lib/newsletter-masthead";
 
 /**
@@ -93,12 +93,20 @@ export default async function NewsletterIssuePage({ params }: Props) {
         <p className="mt-3 text-sm text-muted-foreground">Sent {fmtDate(issue.sentAt)}</p>
       )}
 
-      <div className="mt-10 border-t border-border pt-8">
-        <h2 className="text-lg font-semibold text-foreground mb-3">
-          Get the next issue in your inbox
-        </h2>
-        <NewsletterSignup />
-      </div>
+      {/* OPE-317 scope item 3 — the archive gets the SAME block as the event
+          and blog templates.
+          
+          It already had a signup form, but called `<NewsletterSignup />` with
+          no `source`, which defaults to "footer". So every archive signup was
+          being counted as a footer signup — exactly the failure
+          NewsletterSignupBlock's own comment names ("a forgotten source
+          silently attributes a signup to the wrong surface"), and the reason
+          that component requires the prop instead of defaulting it.
+          
+          Live on 2026-08-31: footer 51 of 73 subscribers, a bucket that
+          silently absorbed this page's share. Nothing is lost retroactively —
+          past rows stay as they are — but from here the archive is countable. */}
+      <NewsletterSignupBlock source="newsletter-archive" />
     </div>
   );
 }

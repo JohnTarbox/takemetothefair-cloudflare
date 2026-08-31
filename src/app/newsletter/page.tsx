@@ -69,7 +69,11 @@ export default async function NewsletterArchivePage() {
       </p>
 
       <div className="mb-10">
-        <NewsletterSignup />
+        {/* OPE-317 — an explicit source. This defaulted to "footer", so the
+            people who navigated to /newsletter ON PURPOSE were counted as
+            footer signups. That is the most intentional traffic on the page
+            and it was invisible; "footer" now means the footer. */}
+        <NewsletterSignup source="newsletter-page" />
       </div>
 
       {issues.length === 0 ? (
