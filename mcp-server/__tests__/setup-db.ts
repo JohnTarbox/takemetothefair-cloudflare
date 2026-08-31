@@ -1022,10 +1022,20 @@ const SCHEMA_SQL = `
     notes TEXT,
     supersedes_citation_id TEXT,
     created_by TEXT,
+    -- OPE-692 (drizzle/0256) — the citation's own evidence, so a later pass can
+    -- judge it without re-fetching a URL an unattended run cannot reach.
+    source_title TEXT,
+    source_excerpt TEXT,
+    source_content_hash TEXT,
+    source_fetched_at INTEGER,
+    recheck_state TEXT,
+    recheck_at INTEGER,
+    recheck_note TEXT,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   );
 
+  CREATE INDEX idx_citations_recheck_state ON event_data_citations (recheck_state, recheck_at);
   CREATE INDEX idx_citations_event_field ON event_data_citations (event_id, field_name);
   CREATE INDEX idx_citations_event_state ON event_data_citations (event_id, state);
   CREATE INDEX idx_citations_state ON event_data_citations (state);

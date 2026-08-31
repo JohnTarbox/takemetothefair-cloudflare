@@ -1671,6 +1671,37 @@ export const eventDataCitations = sqliteTable(
       { onDelete: "set null" }
     ),
     createdBy: text("created_by").references(() => users.id, { onDelete: "set null" }),
+    // OPE-692 (drizzle/0256) — the citation's own evidence, captured at write
+    // time so a later pass need not re-fetch a URL it cannot reach.
+    //
+    // An unattended pass's `web_fetch` accepts a URL only from a user message, a
+    // prior fetch, or a search result. A URL read from THIS table is none of
+    // those, so `source_url` has been write-only: it records that a source
+    // existed, and nothing can ask it a second question. These four turn "the
+    // URL is unreachable" from evidence about the EVENT into evidence about the
+    // URL — which is a different and much safer conclusion.
+    /** `<title>` / main heading as served when the citation was written. */
+    sourceTitle: text("source_title"),
+    /** Short verbatim extract that supports `value`. The quotable part. */
+    sourceExcerpt: text("source_excerpt"),
+    /** sha256 of the extracted text, first 16 hex chars — same convention as
+     *  `inbound_emails.content_sha256_first16`. Cheap change detection. */
+    sourceContentHash: text("source_content_hash"),
+    sourceFetchedAt: integer("source_fetched_at", { mode: "timestamp" }),
+    /**
+     * OPE-692 — the outcome of the last attempt to re-read `source_url`.
+     *
+     * `unreachable` is the load-bearing value: recording it makes a dead end a
+     * FACT ON THE CITATION rather than something each pass rediscovers
+     * privately and then has to guess about. Null means never attempted, which
+     * is different from attempted-and-failed.
+     */
+    recheckState: text("recheck_state", {
+      enum: ["unchecked", "confirmed", "changed", "unreachable"],
+    }),
+    recheckAt: integer("recheck_at", { mode: "timestamp" }),
+    /** Why, in words — the refusal reason, or what changed. */
+    recheckNote: text("recheck_note"),
     createdAt: integer("created_at", { mode: "timestamp" })
       .notNull()
       .$defaultFn(() => new Date()),
@@ -1680,6 +1711,8 @@ export const eventDataCitations = sqliteTable(
   },
   (table) => [
     index("idx_citations_event_field").on(table.eventId, table.fieldName),
+    // OPE-692 — "which citations has nobody been able to re-check?"
+    index("idx_citations_recheck_state").on(table.recheckState, table.recheckAt),
     index("idx_citations_event_state").on(table.eventId, table.state),
     index("idx_citations_state").on(table.state),
     // OPE-502 (drizzle/0220) — source-first reads. Every index above leads
