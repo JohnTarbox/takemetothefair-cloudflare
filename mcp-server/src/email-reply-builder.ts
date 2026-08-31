@@ -594,12 +594,82 @@ ${SIGN_OFF}`;
       // OPE-204 Milestone A — report what the vision pass staged, if it ran.
       const staged = Number(params.boothsStaged ?? 0);
       const names = Array.isArray(params.boothNames) ? (params.boothNames as string[]) : [];
-      const boothLine =
-        staged > 0
-          ? `\n\nWe spotted ${staged} booth${staged === 1 ? "" : "s"}${
-              names.length > 0 ? `: ${names.join(", ")}` : ""
-            }. These are held for review — nothing has been added to the site yet.`
-          : "";
+
+      // OPE-205 §1 — itemize the booths that were actually WRITTEN.
+      //
+      // The handler has been sending these four fields since OPE-204 Milestone
+      // B landed, and this builder dropped every one of them. That is a
+      // producer/consumer gap of the kind that costs nothing while a flag is
+      // off and lies the moment it flips: the old copy said flatly "nothing has
+      // been added to the site yet", which is true only while
+      // PHOTO_AUTOWRITE_ENABLED is "false". Turn the gate on and the same
+      // sentence would go out beside vendors this run had just created.
+      //
+      // So the claim is now derived from what happened rather than asserted.
+      const autoCreated = Number(params.autoCreated ?? 0);
+      const autoLinked = Number(params.autoLinked ?? 0);
+      const autoFailed = Number(params.autoFailed ?? 0);
+      const autoNames = Array.isArray(params.autoWrittenNames)
+        ? (params.autoWrittenNames as string[])
+        : [];
+      const autoTotal = autoCreated + autoLinked;
+
+      const spotted = staged + autoTotal;
+      const spottedNames = [...autoNames, ...names];
+
+      const addedParts: string[] = [];
+      if (autoCreated > 0) {
+        addedParts.push(`${autoCreated} new vendor${autoCreated === 1 ? "" : "s"} added`);
+      }
+      if (autoLinked > 0) {
+        // "already existed, now linked" and "already linked" are one line on
+        // purpose: from the sender's side both mean "that booth is on the
+        // fair's page now", and splitting them would ask John to care about an
+        // internal distinction to read his own reply.
+        addedParts.push(
+          `${autoLinked} existing vendor${autoLinked === 1 ? "" : "s"} linked to this fair`
+        );
+      }
+
+      const boothParts: string[] = [];
+      if (spotted > 0) {
+        boothParts.push(
+          `We spotted ${spotted} booth${spotted === 1 ? "" : "s"}${
+            spottedNames.length > 0 ? `: ${spottedNames.join(", ")}` : ""
+          }.`
+        );
+      }
+      if (addedParts.length > 0) boothParts.push(`${addedParts.join(", ")}.`);
+      if (staged > 0) {
+        boothParts.push(
+          `${autoTotal > 0 ? `${staged} more ${staged === 1 ? "is" : "are"}` : `${staged === 1 ? "This is" : "These are"}`} held for review — not added yet.`
+        );
+      }
+      // Failures are REPORTED, never swallowed. A booth we recognised and then
+      // failed to write is the case most worth hearing about, because it looks
+      // identical to "not recognised" from the outside.
+      if (autoFailed > 0) {
+        boothParts.push(
+          `${autoFailed} booth${autoFailed === 1 ? "" : "s"} could not be saved — we have kept ${autoFailed === 1 ? "it" : "them"} and will look.`
+        );
+      }
+      // OPE-205 §1 — the "couldn't identify" bucket.
+      //
+      // The ticket also asks for the photo itself to come BACK attached. The
+      // outbound rail cannot do that: Cloudflare's send path here carries text
+      // and HTML only, with no attachment support (the attachment handling in
+      // this file is all INBOUND-facing). Saying the count is the half that is
+      // buildable today; re-attaching needs an outbound-attachment capability
+      // that does not exist and is called out in the AGENT DONE note rather
+      // than quietly dropped.
+      const unidentified = Number(params.photosUnidentified ?? 0);
+      if (unidentified > 0) {
+        boothParts.push(
+          `We could not make out ${unidentified} photo${unidentified === 1 ? "" : "s"} — if ${unidentified === 1 ? "it was a booth" : "those were booths"}, reply with the name and we will add ${unidentified === 1 ? "it" : "them"}.`
+        );
+      }
+
+      const boothLine = boothParts.length > 0 ? `\n\n${boothParts.join(" ")}` : "";
 
       // OPE-403 — say what happened to the PHOTOS, not just which fair we
       // matched. This reply used to stop after "Matched by:", and a submitter
