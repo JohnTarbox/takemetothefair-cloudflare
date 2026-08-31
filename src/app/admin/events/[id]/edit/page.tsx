@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, use, useCallback } from "react";
+import { VendorGalleryLoader } from "@/components/vendors/gallery/VendorGalleryLoader";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
@@ -327,6 +328,32 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
           Back to Events
         </Link>
       </div>
+
+      {/* OPE-212 §5 — admin gallery management. Ungated per John's note
+          ("greenlight is not required, ship whenever it fits"). Same component
+          the vendor surface uses, pointed at the event routes; uploads are off
+          because events have no self-service upload path — photos arrive via
+          the MCP surface or OPE-205's photo lane. */}
+      {event && (
+        <Card className="max-w-2xl mb-6">
+          <CardHeader>
+            <CardTitle>Photo gallery</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-muted-foreground mb-4">
+              Reorder, caption, feature or delete this event&apos;s gallery photos. The featured
+              photo leads the gallery — it does <strong>not</strong> replace the hero image above,
+              which stays the canonical one.
+            </p>
+            <VendorGalleryLoader
+              vendorId={event.id}
+              apiBase="/api/event-photos"
+              ownerField="eventId"
+              uploadEnabled={false}
+            />
+          </CardContent>
+        </Card>
+      )}
 
       <Card className="max-w-2xl">
         <CardHeader>
