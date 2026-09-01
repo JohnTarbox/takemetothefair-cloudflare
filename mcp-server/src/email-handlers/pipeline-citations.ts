@@ -24,8 +24,15 @@
  *     safe under Workflow step retries and email redelivery.
  */
 import { and, eq } from "drizzle-orm";
+import { chunkIds } from "@takemetothefair/utils";
 import { eventDataCitations } from "../schema.js";
 import type { Db } from "../db.js";
+
+/**
+ * Citation rows per INSERT statement. See the chunked insert in
+ * `recordSourceCitations` for why this is not "all of them at once".
+ */
+const CITATION_INSERT_CHUNK = 6;
 
 /**
  * The origin of a citation. A structural subset of the workflow's
@@ -45,6 +52,22 @@ interface ExtractedForCitations {
     name?: string | null;
     startDate?: string | null;
     endDate?: string | null;
+    // OPE-744 — the numeric/date tracked fields the pipeline also carries.
+    // `submit.ts`'s local ExtractedEvent declares the vendor-application family
+    // explicitly (OPE-198); ticketPrice* is NOT declared there but still
+    // arrives at runtime, because submitEvent forwards the extractor payload
+    // with a blanket `...extracted.event` spread (submit.ts:662) and a
+    // TypeScript interface is an annotation, not a runtime filter. The main
+    // app's extractor does produce them (url-import/types.ts:42-44), the
+    // submit schema accepts them (suggest-event/submit/schema.ts:34) and the
+    // route writes them (route.ts:697). Optional here because any of them may
+    // legitimately be absent.
+    ticketPriceMin?: number | null;
+    ticketPriceMax?: number | null;
+    vendorFeeMin?: number | null;
+    vendorFeeMax?: number | null;
+    estimatedAttendance?: number | null;
+    applicationDeadline?: string | null;
   };
   /** Per-field confidence from the extractor, keyed by the camelCase field
    *  name ("name", "startDate", "endDate", …). Sparsely populated. */
@@ -52,11 +75,37 @@ interface ExtractedForCitations {
 }
 
 /**
+ * A numeric extracted value as the citation `value` string.
+ *
+ * `event_data_citations.value` is TEXT and the DENORM_FIELD_MAP parsers read it
+ * back with `parseDollarsToCents` / `parseInt`, so the stored string must be the
+ * plain number as the source stated it — money in DOLLARS, matching what the
+ * extractor produced and what the submit route hands to `dollarsToCents`.
+ *
+ * 0 is a REAL value here (free admission is the single most common price on
+ * this site — 13 of the 31 recently-created priced events are 0/0), so this
+ * deliberately tests for null/undefined rather than falsiness.
+ */
+function numericValue(v: number | null | undefined): string | undefined {
+  if (v === null || v === undefined || !Number.isFinite(v)) return undefined;
+  return String(v);
+}
+
+/**
  * Tracked ExtractedEvent fields → citation `field_name` (snake_case, matching
  * the DENORM_FIELD_MAP allow-list in admin-citations.ts) + the fieldConfidence
- * key. ExtractedEvent only carries these three of the tracked fields — it has
- * no attendance / fee / ticket / deadline data at this layer, and venue_id is
- * intentionally skipped (the pipeline has a venue NAME, not an id).
+ * key.
+ *
+ * ⚠️ This list previously held only name/start_date/end_date, above a comment
+ * asserting the layer "has no attendance / fee / ticket / deadline data". That
+ * was false in two ways (OPE-744): `submit.ts`'s ExtractedEvent explicitly
+ * declares the vendorFee / estimatedAttendance / applicationDeadline family,
+ * and the ticket-price fields reach the database anyway through the untyped
+ * `...extracted.event` spread at submit.ts:662. The comment is why
+ * nobody added them — a wrong explanation is more durable than a missing one,
+ * because it answers the question that would otherwise get asked.
+ *
+ * venue_id stays out on purpose: the pipeline has a venue NAME, not an id.
  */
 const CITATION_FIELDS: ReadonlyArray<{
   fieldName: string;
@@ -66,6 +115,36 @@ const CITATION_FIELDS: ReadonlyArray<{
   { fieldName: "name", confKey: "name", get: (e) => e.name },
   { fieldName: "start_date", confKey: "startDate", get: (e) => e.startDate },
   { fieldName: "end_date", confKey: "endDate", get: (e) => e.endDate },
+  {
+    fieldName: "ticket_price_min",
+    confKey: "ticketPriceMin",
+    get: (e) => numericValue(e.ticketPriceMin),
+  },
+  {
+    fieldName: "ticket_price_max",
+    confKey: "ticketPriceMax",
+    get: (e) => numericValue(e.ticketPriceMax),
+  },
+  {
+    fieldName: "vendor_fee_min",
+    confKey: "vendorFeeMin",
+    get: (e) => numericValue(e.vendorFeeMin),
+  },
+  {
+    fieldName: "vendor_fee_max",
+    confKey: "vendorFeeMax",
+    get: (e) => numericValue(e.vendorFeeMax),
+  },
+  {
+    fieldName: "estimated_attendance",
+    confKey: "estimatedAttendance",
+    get: (e) => numericValue(e.estimatedAttendance),
+  },
+  {
+    fieldName: "application_deadline",
+    confKey: "applicationDeadline",
+    get: (e) => e.applicationDeadline,
+  },
 ];
 
 /** Map extractor confidence buckets to a numeric score, or null when absent. */
@@ -299,6 +378,25 @@ export async function recordSourceCitations(
     );
   }
   if (keep.length === 0) return { inserted: 0, reason: "all-fields-contradicted" };
-  await db.insert(eventDataCitations).values(keep);
+  // OPE-744 — CHUNKED, and it must stay chunked.
+  //
+  // A multi-row Drizzle insert binds every column of every row in ONE
+  // statement, and D1 refuses a statement with more than 100 bound parameters
+  // (D1_MAX_BIND_PARAMS). `event_data_citations` binds ~13 per row here: the
+  // ten set below plus the three `$defaultFn` columns (id, created_at,
+  // updated_at) that Drizzle generates in JS and binds.
+  //
+  // While CITATION_FIELDS held three entries this could never exceed ~39 and a
+  // single insert was safe. Widening it to nine (this ticket) takes the worst
+  // case to ~117 — over the ceiling. The failure would have been INVISIBLE in
+  // test: better-sqlite3 allows 32766 bound parameters, so every unit test
+  // passes while production throws "too many SQL variables". Same family as
+  // OPE-79/OPE-241/OPE-548.
+  //
+  // 6 rows ≈ 78 parameters, leaving headroom if a column is added to the table.
+  // If you add fields to CITATION_FIELDS, this constant is the thing to check.
+  for (const batch of chunkIds(keep, CITATION_INSERT_CHUNK)) {
+    await db.insert(eventDataCitations).values(batch);
+  }
   return { inserted: keep.length, reason: null };
 }
