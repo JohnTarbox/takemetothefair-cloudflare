@@ -18,7 +18,7 @@
  * assert the hole is closed — it asserts that nobody widens it without saying so.
  */
 import { describe, it, expect } from "vitest";
-import { VENDOR_ABBREVIATION_MAP } from "@takemetothefair/utils";
+import { US_STATE_ABBREVIATION_MAP, VENDOR_ABBREVIATION_MAP } from "@takemetothefair/utils";
 
 /**
  * Abbreviations known NOT to be substrings of their expansion, each measured
@@ -83,5 +83,53 @@ describe("every abbreviation is either substring-safe or measured", () => {
   it("detects list rot — a MEASURED_UNSAFE entry no longer in the map", () => {
     const stale = Object.keys(MEASURED_UNSAFE).filter((k) => !(k in VENDOR_ABBREVIATION_MAP));
     expect(stale, "remove these from MEASURED_UNSAFE").toEqual([]);
+  });
+});
+
+/**
+ * OPE-739 added a SECOND map folded in the same token pass. The guard has to
+ * cover it or the rule holds for one map and not the other — which is how a
+ * "fix wired into one of two parallel paths" happens, the failure mode this
+ * repo has hit repeatedly.
+ *
+ * State codes are held to a STRICTER bar than legal-form abbreviations. `mfg`
+ * cannot be an English word; `me` and `ma` obviously can, and a wrong expansion
+ * there produces a wrong MERGE, which `merge_vendor` cannot undo.
+ */
+const STATE_CODE_MEASUREMENTS: Record<string, string> = {
+  nh: "9 colliding pairs on 2026-09-01, 2 still live; nh is the state in every prod occurrence",
+};
+
+describe("state codes are an allow-list, and every entry names its measurement", () => {
+  it("no state code is present without one", () => {
+    const unrecorded = Object.keys(US_STATE_ABBREVIATION_MAP).filter(
+      (k) => !(k in STATE_CODE_MEASUREMENTS)
+    );
+    expect(unrecorded).toEqual([]);
+  });
+
+  it("refuses the codes that are also ordinary English words", () => {
+    // `me` is the pronoun in nine live vendor names ("The Sea by Me" x3,
+    // "Waffle Me", "Love Rocks Me", ...). `ma`, `in`, `or`, `hi`, `ok`, `de`
+    // and `pa` are words or names too. None may be expanded, whatever a future
+    // measurement says about colliding pairs — a pair count cannot see the rows
+    // a wrong expansion would damage.
+    for (const word of ["me", "ma", "in", "or", "hi", "ok", "de", "pa", "id", "la"]) {
+      expect(
+        US_STATE_ABBREVIATION_MAP,
+        `${word} is an English word, not just a state`
+      ).not.toHaveProperty(word);
+    }
+  });
+
+  it("does not go vacuously green on an empty map", () => {
+    expect(Object.keys(US_STATE_ABBREVIATION_MAP).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("detects list rot in the state measurements", () => {
+    const stale = Object.keys(STATE_CODE_MEASUREMENTS).filter(
+      (k) => !(k in US_STATE_ABBREVIATION_MAP)
+    );
+    expect(stale, "remove these from STATE_CODE_MEASUREMENTS").toEqual([]);
   });
 });
