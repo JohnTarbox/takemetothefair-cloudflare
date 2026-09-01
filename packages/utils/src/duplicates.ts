@@ -269,7 +269,47 @@ export const VENDOR_FORM_WORDS = new Set([
   "lp",
   "llp",
 ]);
-const VENDOR_ABBREVIATION_MAP: Record<string, string> = {
+/**
+ * Abbreviations folded to their expansion before comparison.
+ *
+ * ## OPE-723 — measured against prod 2026-09-01, no fix needed
+ *
+ * OPE-712 found that `selectStemCandidates` narrows with `LIKE '%<stem>%'`
+ * against the RAW `business_name` while `combinedSimilarity` judges the
+ * NORMALIZED one. Any entry here whose short form is not a literal substring of
+ * its expansion inherits that hole in BOTH directions, because neither spelling
+ * contains the other. Only `assoc` is safe, and only by accident — it happens to
+ * be a prefix of `association`. **Four of the five entries are exposed**, not
+ * the three OPE-723 filed: `bros` was filed as safe "because bros IS a substring
+ * of brothers", and it is not — b-r-o-s does not occur in b-r-o-t-h-e-r-s. The
+ * guard test below is what caught that.
+ *
+ * Measured before building anything, per the ticket's own instruction:
+ *
+ * - `assn` — **0 rows in the whole vendors table.** Cannot collide.
+ * - `intl` — **0 rows.** Cannot collide.
+ * - `mfg` — 2 rows ("Spurs Marine Mfg, Inc.", "Ultra Tec Mfg Inc.") against 1
+ *   `manufacturing` row ("Wolfe Ridge Manufacturing"). Three distinct
+ *   businesses; no pair normalizes together.
+ * - `bros` — 1 row ("Geaghan Bros. Brewing Co.") against 12 `brothers` rows.
+ *   No shared business.
+ *
+ * So the predicted defect is real in shape and empty in practice, and adding a
+ * third narrowing clause would be code nothing needs. Recorded here rather than
+ * fixed. **Re-check this if an entry is added below** — a new unsafe
+ * abbreviation reopens it silently, because the failure is a candidate that is
+ * never fetched and therefore never scored, which looks exactly like no match.
+ * `src/lib/__tests__/abbreviation-map-narrowing-guard-ope723.test.ts` enforces
+ * it: an unsafe entry added here without a recorded measurement fails CI.
+ *
+ * ⚠️ The shape IS live in prod under a token that is NOT in this map:
+ * `NH` ↔ `New Hampshire`. Nine such pairs exist; seven of the long-form rows
+ * were soft-deleted by hand in a single 40-second pass, and two are still live
+ * ("NH Trappers Association", "NH Bear Hunters Assoc."). Do not "fix" that by
+ * dropping state abbreviations in here — an entry added here is scored but
+ * still not narrowed on, so it needs the narrowing pass too. Tracked separately.
+ */
+export const VENDOR_ABBREVIATION_MAP: Record<string, string> = {
   assoc: "association",
   assn: "association",
   mfg: "manufacturing",
