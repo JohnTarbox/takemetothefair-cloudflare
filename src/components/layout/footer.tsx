@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { NewsletterSignup } from "./newsletter-signup";
 import { SOCIAL_LINKS } from "@/lib/social-links";
+import { isEntryDeadlinesIndexEnabled } from "@/lib/flags";
 
 export function Footer() {
   const currentYear = new Date().getFullYear();
@@ -21,6 +22,12 @@ export function Footer() {
       { name: "Performers", href: "/performers" },
       { name: "Blog", href: "/blog" },
       { name: "Suggest an Event", href: "/suggest-event" },
+      // OPE-738 — gated with the page itself. A permanent footer link to a
+      // route that 404s while the flag is OFF would be worse than no link, so
+      // the entry point and the page flip together on one variable.
+      ...(isEntryDeadlinesIndexEnabled()
+        ? [{ name: "Fair Entry Deadlines", href: "/fair-entry-deadlines" }]
+        : []),
       { name: "Help", href: "/help" },
     ],
     forBusiness: [
