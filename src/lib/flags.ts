@@ -36,3 +36,19 @@ export function isCal1SsrMonthEnabled(): boolean {
 export function isCal2ViewsEnabled(): boolean {
   return isOn("CAL2_VIEWS");
 }
+
+/**
+ * OPE-738 — when ON, `/fair-entry-deadlines` serves the cross-event exhibitor
+ * entry-deadline index. Default OFF: the route 404s exactly as it does today.
+ *
+ * This is a STOP gate made structural rather than a note in a ticket, the same
+ * reasoning as VENDOR_DIGEST_SEND_ENABLED and CONDITIONAL_GET_PUBLIC_CACHE.
+ * OPE-738 requires issue-level approval before a NEW customer-facing surface
+ * goes live, so the code ships and deploys dark and only John flips it. It must
+ * be flipped in wrangler.toml, never the dashboard — a dashboard [vars]
+ * override is silently wiped by the next deploy (OPE-284/OPE-509), which for an
+ * OFF-by-default gate at least fails safe.
+ */
+export function isEntryDeadlinesIndexEnabled(): boolean {
+  return isOn("ENTRY_DEADLINES_INDEX");
+}

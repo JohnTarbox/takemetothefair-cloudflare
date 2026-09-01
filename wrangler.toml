@@ -40,6 +40,15 @@ VENDOR_DIGEST_SEND_ENABLED = "true"
 # (OPE-284). While "false", validators are still emitted but the 304 path is
 # largely inert, because a client told no-store has nothing to revalidate.
 CONDITIONAL_GET_PUBLIC_CACHE = "false"
+# OPE-738 — flip to "true" to serve /fair-entry-deadlines, the cross-event
+# exhibitor & competition entry-deadline index, and to show its footer link.
+# GATED: a NEW customer-facing surface, STOP-gated on John's approval by the
+# ticket, so it ships OFF and only John flips it. While "false" the route 404s
+# and the footer link is absent — the code is deployed but dark.
+# Must live HERE, not in the dashboard: a dashboard [vars] override is silently
+# wiped by the next deploy (OPE-284/OPE-509). For an OFF-by-default gate that
+# at least fails in the safe direction.
+ENTRY_DEADLINES_INDEX = "false"
 # CAL1 — flip to "true" to serve the SSR Month calendar at /events?view=calendar
 # (Month-only @jonnyboats/calendar-react). Default OFF = legacy client calendar.
 # Temporarily ON for live prod verification (Step 7) — flip back to "false" after.
