@@ -15,9 +15,14 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { and, asc, eq, gte, isNull } from "drizzle-orm";
-import { supportObligations, SUPPORT_OBLIGATION_STATUS, inboundEmails } from "../schema.js";
-import { decideObligation, extractEmailAddress } from "@takemetothefair/utils";
+import { and, asc, eq, gte, inArray, isNull, like } from "drizzle-orm";
+import {
+  supportObligations,
+  SUPPORT_OBLIGATION_STATUS,
+  emailSendLedger,
+  inboundEmails,
+} from "../schema.js";
+import { chunkIds, decideObligation, extractEmailAddress } from "@takemetothefair/utils";
 import { jsonContent } from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
@@ -55,6 +60,74 @@ export function registerSupportObligationTools(server: McpServer, db: Db, auth: 
         .orderBy(asc(supportObligations.openedAt))
         .limit(limit);
 
+      // ── OPE-725: has anyone actually answered these? ────────────────────
+      //
+      // `status` is not the oracle. On 2026-08-29 a re-triage of 21 `open` rows
+      // found the true waiting count was ZERO — every one had been answered and
+      // never closed. Distinguishing the two needed a second query per row, so
+      // nobody did it.
+      //
+      // Joined on `inbound_email_id` where the ledger carries one (exact) and on
+      // recipient otherwise, restricted to `reply:manual%` sends at or after the
+      // obligation opened. A send that PREDATES the obligation cannot have
+      // answered it — the same rule OPE-706 applied to inbound replies.
+      //
+      // ⚠️ CHUNKED. `limit` allows 200 obligations and D1 caps a statement at
+      // 100 bind parameters; an unchunked inArray here throws
+      // `too many SQL variables` on the first real call, which is exactly how
+      // OPE-384 stage 2 failed in prod.
+      const addresses = [...new Set(rows.map((r) => r.fromAddress).filter(Boolean))];
+      const inboundIds = [...new Set(rows.map((r) => r.inboundEmailId).filter(Boolean))];
+      const ledgerRows: {
+        recipient: string | null;
+        inboundEmailId: string | null;
+        source: string | null;
+        sentAt: Date;
+      }[] = [];
+      try {
+        for (const chunk of chunkIds(addresses)) {
+          ledgerRows.push(
+            ...(await db
+              .select({
+                recipient: emailSendLedger.recipient,
+                inboundEmailId: emailSendLedger.inboundEmailId,
+                source: emailSendLedger.source,
+                sentAt: emailSendLedger.sentAt,
+              })
+              .from(emailSendLedger)
+              .where(
+                and(
+                  inArray(emailSendLedger.recipient, chunk),
+                  like(emailSendLedger.source, "reply:manual%")
+                )
+              ))
+          );
+        }
+        for (const chunk of chunkIds(inboundIds)) {
+          ledgerRows.push(
+            ...(await db
+              .select({
+                recipient: emailSendLedger.recipient,
+                inboundEmailId: emailSendLedger.inboundEmailId,
+                source: emailSendLedger.source,
+                sentAt: emailSendLedger.sentAt,
+              })
+              .from(emailSendLedger)
+              .where(
+                and(
+                  inArray(emailSendLedger.inboundEmailId, chunk),
+                  like(emailSendLedger.source, "reply:manual%")
+                )
+              ))
+          );
+        }
+      } catch {
+        // Best-effort: the obligation list is the caller's actual request and
+        // must not fail because the answer-signal lookup did. Every row then
+        // reports `unknown`, which is the honest value and the pre-OPE-725
+        // state.
+      }
+
       const [oldest] = await db
         .select({ openedAt: supportObligations.openedAt })
         .from(supportObligations)
@@ -70,7 +143,39 @@ export function registerSupportObligationTools(server: McpServer, db: Db, auth: 
             oldestOpenAgeHours: oldest?.openedAt
               ? Math.floor((Date.now() - oldest.openedAt.getTime()) / 3_600_000)
               : null,
-            obligations: rows,
+            // ⚠️ `no_ledger_row` means WE HAVE NO RECORD, not "nobody answered".
+            // A reply sent from Gmail never reaches `email_send_ledger` at all
+            // (the off-ledger gap on OPE-361/OPE-353) — OPE-706 measured the
+            // ledger side at 4 rows against the header side's 5, and the
+            // undercount is exactly the manual replies this field cares about.
+            // Do not present it as evidence of silence.
+            answerSignalCaveat:
+              "answerSignal='no_ledger_row' means no matching reply:manual* row was found, NOT that nobody answered — replies sent outside the app (e.g. from Gmail) never reach email_send_ledger. Nothing here auto-closes an obligation.",
+            obligations: rows.map((r) => {
+              // Newest qualifying send wins. A send before the obligation opened
+              // cannot have answered it.
+              const hit = ledgerRows
+                .filter(
+                  (l) =>
+                    (l.inboundEmailId && l.inboundEmailId === r.inboundEmailId) ||
+                    (l.recipient && r.fromAddress && l.recipient === r.fromAddress)
+                )
+                .filter((l) => l.sentAt.getTime() >= r.openedAt.getTime())
+                .sort((a, b) => b.sentAt.getTime() - a.sentAt.getTime())[0];
+              return {
+                ...r,
+                lastManualReplySource: hit?.source ?? null,
+                lastManualReplyAt: hit?.sentAt ?? null,
+                // Three-valued on purpose. `answered_not_closed` is the state
+                // that cost the 2026-08-29 re-triage; `no_ledger_row` is
+                // explicitly NOT "unanswered".
+                answerSignal: hit
+                  ? r.status === "open"
+                    ? "answered_not_closed"
+                    : "manual_reply_on_record"
+                  : "no_ledger_row",
+              };
+            }),
           }),
         ],
       };
