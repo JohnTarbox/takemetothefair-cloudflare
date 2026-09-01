@@ -99,6 +99,7 @@ import {
   countContentFreeBurst,
   BURST_DEBOUNCE_SECONDS,
 } from "../email-handlers/empty-message.js";
+import { resolveFanoutReplyRole } from "../email-handlers/fanout-reply-leader.js";
 import { extractAllUrls, type AttachmentRef } from "../email-handler.js";
 import {
   submitFetch,
@@ -731,6 +732,47 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     // OPE-407 — `suppressReply` is NOT the same as `replyKind: null`. A
     // suppressed row keeps its reply_kind (so it stays countable) and simply
     // isn't the message that speaks for its burst.
+    // ───── OPE-720: one reply per RECEIVED MESSAGE, not per routed child ─────
+    //
+    // A multi-intent email is fanned out into one child row per intent, each
+    // with its own workflow, and each child was sending its own acknowledgement.
+    // Emma Welford got two `correction-ack`s for one message on 2026-08-17.
+    //
+    // The children are a routing artefact; the person sent one email. Exactly
+    // one child — the highest-ranked intent in the family, see
+    // FANOUT_REPLY_RANK — speaks for it, and its reply names the other topics.
+    //
+    // Placed AFTER dispatch on purpose: every child still runs its handler, so
+    // the unsubscribe still flips the row and the claim is still recorded. Only
+    // the outbound reply is coalesced. Losers keep their `reply_kind` (OPE-407's
+    // burst-follower convention) so they stay countable.
+    //
+    // Returns null for a row with no parent, which is every ordinary inbound —
+    // that path is byte-for-byte unchanged.
+    const fanoutRole = await step.do(
+      "fanout-reply/role",
+      { retries: { limit: 2, delay: "5 seconds", backoff: "constant" }, timeout: "10 seconds" },
+      async () => resolveFanoutReplyRole(getDb(this.env.DB), messageRowId)
+    );
+    if (fanoutRole && !fanoutRole.isLeader) {
+      await logError(this.env.DB, {
+        level: "info",
+        source: SOURCE,
+        message: `fan-out reply coalesced: another child of this message is answering`,
+        sessionId,
+        context: { messageRowId, replyKind: result.replyKind, intent },
+      });
+      result = { ...result, suppressReply: true };
+    } else if (fanoutRole && fanoutRole.otherIntents.length > 0) {
+      result = {
+        ...result,
+        replyParams: {
+          ...(result.replyParams ?? {}),
+          fanoutOtherIntents: fanoutRole.otherIntents,
+        },
+      };
+    }
+
     if (result.replyKind !== null && !result.suppressReply) {
       // OPE-453 — `let`, not `const`: the invariant guard immediately before the
       // send may downgrade `no-url` to `unfetchable-url` when parsed_url is set.
