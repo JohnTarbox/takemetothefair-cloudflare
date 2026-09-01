@@ -109,6 +109,16 @@ export async function enqueueNewsletterDigest(args: {
    * only, never a broadcast.
    */
   approveDisabled?: boolean;
+  /**
+   * OPE-711 — the newsletter NAME shown in the masthead and in the footer's
+   * "you subscribed to ..." sentence. Defaults to the consumer name.
+   *
+   * Threaded on the SHARED rail rather than set inside either composer, for the
+   * same reason `listUnsubscribe` is: both audiences enqueue through here, so
+   * both inherit one behaviour. Two copies is how OPE-359's audience bug
+   * happened.
+   */
+  wordmark?: string;
 }): Promise<number> {
   let queued = 0;
   for (const email of args.recipients) {
@@ -123,6 +133,7 @@ export async function enqueueNewsletterDigest(args: {
       mailingAddress: args.mailingAddress,
       approveUrl: args.approveUrl,
       approveDisabled: args.approveDisabled,
+      wordmark: args.wordmark,
     });
     await enqueueEmail({
       to: email,

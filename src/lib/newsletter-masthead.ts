@@ -59,8 +59,32 @@ export const NEWSLETTER_EYEBROW = "New England's Fair & Festival Almanac";
  */
 export const NEWSLETTER_NAME = "This Weekend at the Fair";
 
-/** Default masthead wordmark; the OPE-191 vendor digest overrides it ("New This Week"). */
+/** Default masthead wordmark. */
 export const NEWSLETTER_WORDMARK = NEWSLETTER_NAME;
+
+/**
+ * THE product name of the VENDOR newsletter — the second list, which John ruled
+ * on 2026-08-21 must be "completely separate" from the consumer one.
+ *
+ * ⚠️ OPE-711: the comment that used to sit here said the vendor digest
+ * "overrides" the wordmark. IT DID NOT. Nothing passed one, so every vendor
+ * issue rendered — masthead AND footer — as "This Weekend at the Fair", telling
+ * vendor subscribers they had signed up for the attendee newsletter. A docblock
+ * asserting an override that no caller performs is worth less than no comment,
+ * because it stops the next reader looking.
+ *
+ * This is NOT new customer-facing copy: it is the name already on every vendor
+ * issue's SUBJECT line ("New This Week — shows just added (N)") since OPE-191.
+ * The footer is being brought into line with what the subject already says.
+ */
+export const VENDOR_NEWSLETTER_NAME = "New This Week";
+
+/** Resolve the newsletter name for an audience. `newsletter_issues.audience`
+ *  (OPE-359) is the discriminator; anything unknown falls back to the consumer
+ *  name, which is the pre-OPE-711 behaviour and the safe direction. */
+export function newsletterNameForAudience(audience: string | null | undefined): string {
+  return audience === "vendor" ? VENDOR_NEWSLETTER_NAME : NEWSLETTER_NAME;
+}
 
 function escapeHtmlText(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
