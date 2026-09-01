@@ -44,17 +44,17 @@
  * "show me the people".
  */
 import { and, ne, notLike, sql, type SQL } from "drizzle-orm";
-import { isPlaceholderEmail } from "@takemetothefair/utils";
 import { users } from "./index";
 
 /**
- * The email test is NOT reimplemented here. `isPlaceholderEmail` has lived in
- * `@takemetothefair/utils/placeholder-account` since OPE-293 and is the
- * authority on the address shape (it checks the domain too, and normalizes
- * case/whitespace — both of which a hand-rolled `startsWith` would miss).
+ * ⚠️ There is no in-memory counterpart here on purpose.
  *
- * This module adds only what did not exist: the SQL-side predicate, and the
- * combination with `users.origin`.
+ * One was written and REMOVED the same day (OPE-726): nothing called it, and
+ * "a caller might want it later" is exactly the reason this codebase has
+ * shipped fully-tested predicates that nothing ever invoked. For a row already
+ * in hand, use `isPlaceholderEmail` from `@takemetothefair/utils` (the OPE-293
+ * authority on the address shape, which also checks the domain) together with
+ * an `origin === "ingestion"` check at the call site.
  */
 export const PLACEHOLDER_EMAIL_PREFIX = "pending+";
 
@@ -76,19 +76,4 @@ export function realUserWhere(): SQL {
     ne(sql`coalesce(${users.origin}, '')`, PLACEHOLDER_ORIGIN),
     notLike(sql`coalesce(${users.email}, '')`, `${PLACEHOLDER_EMAIL_PREFIX}%`)
   ) as SQL;
-}
-
-/**
- * In-memory equivalent, for rows already fetched.
- *
- * Delegates the address test to `isPlaceholderEmail` rather than restating it —
- * a second spelling of "what a placeholder address looks like" is how the two
- * drift apart, and this codebase has shipped that defect enough times to know.
- */
-export function isPlaceholderUser(user: {
-  origin?: string | null;
-  email?: string | null;
-}): boolean {
-  if (user.origin === PLACEHOLDER_ORIGIN) return true;
-  return isPlaceholderEmail(user.email);
 }
