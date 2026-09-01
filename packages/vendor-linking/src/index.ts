@@ -29,6 +29,7 @@ import {
   combinedSimilarity,
   getVendorComparisonString,
   normalizeVendorName,
+  VENDOR_FORM_WORDS,
   type Slug,
 } from "@takemetothefair/utils";
 import {
@@ -236,7 +237,44 @@ export async function findStrictMatch(
  * an ampersand — and absent from the name itself. It is therefore never a
  * distinctive stem, and never a safe one.
  */
-const SYNTHESIZED_SLUG_TOKEN = "and";
+/**
+ * Tokens too common to narrow on.
+ *
+ * `and` is here because the slugifier SYNTHESIZES it from `&` (OPE-712), so it
+ * may be absent from a stored raw name.
+ *
+ * `the` is here for a different and sharper reason (OPE-715): it is not
+ * distinctive. Measured against prod 2026-09-01 — **439 of 6,805 live vendors
+ * contain "the"**, against a `FUZZY_CANDIDATE_CAP` of **200**. So a stem of
+ * "the" fetches an arbitrary 200 of 439 and the true match is crowded out
+ * roughly half the time.
+ *
+ * That is not hypothetical. All SEVEN duplicate vendor rows minted after
+ * OPE-451 closed the type-veto defect begin with "The ": The Knotty Cod, The
+ * Sea by Me (x3), The Savage Light (x2), The Wine Slushie Guy. 176 live vendors
+ * start with "The ", and the drains kept minting second copies of them.
+ */
+const LOW_SELECTIVITY_TOKENS = new Set(["and", "the"]);
+
+/**
+ * Tokens that are unsafe to narrow on because NORMALIZATION CHANGES THEM.
+ *
+ * The rule underneath both sets: a stem is a raw-text filter, but equality is
+ * judged on the NORMALIZED string, so any token normalization can add or remove
+ * is a stem that can delete the very row it should find.
+ *
+ *  - `and`  — normalize ADDS it, from `&` (OPE-712).
+ *  - `the`  — not added or removed, but matches 439 of 6,805 vendors against a
+ *             200-row cap, so it fails the same way for a different reason
+ *             (OPE-715).
+ *  - legal forms — normalize REMOVES them, so "Soap Company" narrowing on
+ *             `%company%` cannot find the stored "Soap Co." This is caught by
+ *             OPE-451's "folds a trailing legal form" test, which failed the
+ *             first time this selector was changed to prefer the longest token.
+ */
+function isUnsafeStem(token: string): boolean {
+  return LOW_SELECTIVITY_TOKENS.has(token) || VENDOR_FORM_WORDS.has(token);
+}
 
 /**
  * The slug-space stem: the LONGEST token of the incoming name's slug form,
@@ -254,7 +292,7 @@ function slugStem(businessName: string): string | undefined {
   if (!slug) return undefined;
   let best: string | undefined;
   for (const token of slug.split("-")) {
-    if (token.length < 3 || token === SYNTHESIZED_SLUG_TOKEN) continue;
+    if (token.length < 3 || isUnsafeStem(token)) continue;
     if (!best || token.length > best.length) best = token;
   }
   return best;
@@ -329,13 +367,43 @@ async function fetchCandidates(db: VendorLinkDb, narrowing?: SQL): Promise<Vendo
  * instance of it has been measured in prod, so it is filed rather than fixed
  * on speculation.
  */
-async function selectStemCandidates(db: VendorLinkDb, businessName: string): Promise<VendorRow[]> {
-  const stem = businessName
+/**
+ * The raw-name stem: the LONGEST token of >= 3 characters, skipping the
+ * low-selectivity set.
+ *
+ * OPE-715 — this used to take the FIRST token of >= 3 characters, which for any
+ * name beginning "The " is "the". `LIKE '%the%'` matches 439 of 6,805 live
+ * vendors against a 200-row cap, so the true match was crowded out about half
+ * the time and a second row was minted. Every duplicate created after OPE-451
+ * closed the previous cause begins with "The ".
+ *
+ * Longest rather than first, because the longest token is the most distinctive
+ * one — which is the entire job of a narrowing filter. "The Wine Slushie Guy"
+ * now stems on "slushie" instead of "the".
+ */
+function rawNameStem(businessName: string): string | undefined {
+  const tokens = businessName
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter((t) => t.length >= 3 && !isUnsafeStem(t));
+  let best: string | undefined;
+  for (const t of tokens) if (!best || t.length > best.length) best = t;
+  // Fall back to the old rule when EVERY token is low-selectivity ("The And"),
+  // so a name made only of stopwords still narrows on something rather than
+  // scanning the cap unfiltered.
+  if (best) return best;
+  return businessName
     .toLowerCase()
     .replace(/[^a-z0-9 ]/g, " ")
     .trim()
     .split(/\s+/)
     .filter((t) => t.length >= 3)[0];
+}
+
+async function selectStemCandidates(db: VendorLinkDb, businessName: string): Promise<VendorRow[]> {
+  const stem = rawNameStem(businessName);
 
   const byName = await fetchCandidates(
     db,

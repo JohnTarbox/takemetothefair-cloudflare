@@ -248,7 +248,16 @@ export function getEventComparisonString(event: {
  * punctuation and legal-form variants of one business collapse to one key.
  * Whole-word matched against the punctuation-stripped, lower-cased token stream.
  */
-const VENDOR_FORM_WORDS = new Set([
+/**
+ * Trailing legal-form words that `normalizeVendorName` STRIPS.
+ *
+ * Exported (OPE-715) so the dedup stem selector can skip them. A token the
+ * normalizer removes is normalization-UNSTABLE and therefore an unsafe stem:
+ * "Center Street Soap Company" narrowing on `%company%` cannot find the stored
+ * "Center Street Soap Co.", because the two differ by exactly the token being
+ * searched for. Same class as `and` (which the normalizer ADDS from `&`).
+ */
+export const VENDOR_FORM_WORDS = new Set([
   "llc",
   "inc",
   "incorporated",
