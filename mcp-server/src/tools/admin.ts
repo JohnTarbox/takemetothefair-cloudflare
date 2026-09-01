@@ -2320,7 +2320,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   // ── list_event_vendors_admin ───────────────────────────────────
   server.tool(
     "list_event_vendors_admin",
-    "List all vendors for any event with full status details. Admin only. K18 Phase 1: each row returns its `event_day_id` + resolved date; series-wide links have `event_day_id: null`. Optional `event_day_id` filter narrows to one occurrence.",
+    "List all vendors for any event with full status details. Admin only. Returns EVERY link regardless of status or visibility — including links with `public_visible: false`, which are deliberately hidden from `list_event_vendors` and the public roster (OPE-316/OPE-716). That asymmetry is intentional: this is the reader that shows what is really there. Check `public_visible` on each row to see which links the public cannot see. K18 Phase 1: each row returns its `event_day_id` + resolved date; series-wide links have `event_day_id: null`. Optional `event_day_id` filter narrows to one occurrence.",
     {
       event_id: z.string().describe("Event ID"),
       status: z.enum(VENDOR_STATUS_ENUM).optional().describe("Filter by vendor application status"),
@@ -2374,6 +2374,14 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           applicationId: eventVendors.id,
           vendorId: eventVendors.vendorId,
           status: eventVendors.status,
+          // OPE-716 — the OPE-316 suppression flag, surfaced because the
+          // operator had no way to SEE it. This reader deliberately does not
+          // filter on it (that is the point of an admin view), but it was also
+          // not returning it, so a suppressed link looked identical to a visible
+          // one on the only surface that still shows it. Between that omission
+          // and the public reader's missing WHERE clause, the flag was
+          // unobservable everywhere — which is why it went unnoticed.
+          publicVisible: eventVendors.publicVisible,
           paymentStatus: eventVendors.paymentStatus,
           boothInfo: eventVendors.boothInfo,
           createdAt: eventVendors.createdAt,
@@ -2400,6 +2408,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       const output = rows.map((r) => ({
         applicationId: r.applicationId,
         status: r.status,
+        // OPE-716 — false means this link is deliberately hidden from
+        // list_event_vendors and the public roster while remaining tracked here.
+        public_visible: r.publicVisible,
         paymentStatus: r.paymentStatus,
         boothInfo: r.boothInfo,
         appliedAt: r.createdAt?.toISOString() || null,

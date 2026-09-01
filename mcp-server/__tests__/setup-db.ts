@@ -1383,6 +1383,10 @@ export class CapturingMcpServer {
    *  (`Record<string, ZodTypeAny>`), not a ZodObject, so it is wrapped at
    *  validation time rather than stored pre-wrapped. */
   schemas = new Map<string, Record<string, z.ZodTypeAny>>();
+  /** Tool descriptions, by tool name. Captured (OPE-716) because a description
+   *  can carry a contract — "this reader deliberately shows suppressed links" —
+   *  and a contract nothing asserts is one edit from being untrue. */
+  descriptions = new Map<string, string>();
 
   private readonly validate: boolean;
 
@@ -1398,11 +1402,12 @@ export class CapturingMcpServer {
 
   tool(
     name: string,
-    _description: string,
+    description: string,
     schema: unknown,
     handler: (params: Record<string, unknown>) => Promise<unknown>
   ) {
     this.handlers.set(name, handler);
+    if (typeof description === "string") this.descriptions.set(name, description);
     if (schema && typeof schema === "object") {
       this.schemas.set(name, schema as Record<string, z.ZodTypeAny>);
     }

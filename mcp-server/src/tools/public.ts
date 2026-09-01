@@ -801,7 +801,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
   // ── list_event_vendors ─────────────────────────────────────────
   server.tool(
     "list_event_vendors",
-    "List vendors participating in an event (approved/confirmed only). Pass either event_id or event_slug — adjacent tools (get_event_lifecycle_history, list_event_citations, update_event_status) key on event_id, so accepting both keeps the MCP surface consistent. K18 Phase 1: each link returns its `event_day_id` + resolved date when scoped to a specific occurrence; series-wide links have `event_day_id: null`. Optional `event_day_id` filter narrows results to one occurrence.",
+    "List vendors participating in an event (approved/confirmed only, and excluding links marked `public_visible: false` per OPE-316). A link suppressed that way is still tracked — use `list_event_vendors_admin` to see it, which returns every link with its `public_visible` value. Pass either event_id or event_slug — adjacent tools (get_event_lifecycle_history, list_event_citations, update_event_status) key on event_id, so accepting both keeps the MCP surface consistent. K18 Phase 1: each link returns its `event_day_id` + resolved date when scoped to a specific occurrence; series-wide links have `event_day_id: null`. Optional `event_day_id` filter narrows results to one occurrence.",
     {
       // K6 (analyst, 2026-05-31): accept event_id OR event_slug to match the
       // rest of the event-tool surface. One must be provided; if both are,
