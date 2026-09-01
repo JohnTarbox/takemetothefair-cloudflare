@@ -54,9 +54,28 @@ describe("OPE-316 — hidden participation never renders publicly", () => {
   it("the public predicate requires BOTH status and visibility", () => {
     // If it ever collapses to one condition, hidden links leak (dropped
     // visibility) or rejected ones surface (dropped status).
+    //
+    // OPE-716 — the visibility half MOVED to @takemetothefair/db-schema so the
+    // MCP `list_event_vendors` tool could import the same definition; that tool
+    // had no visibility filter at all and `public_visible=false` did nothing
+    // through it. So this no longer looks for the `publicVisible` literal here.
+    // It follows the composition instead, and then asserts the literal in the
+    // shared module — strictly more than before, because it now pins that the
+    // shared half really is the flag rather than something that merely compiles.
     const src = read("src/lib/vendor-status.ts");
     const fn = src.slice(src.indexOf("export function isPubliclyVisibleVendorLink"));
     expect(fn).toContain("isPublicVendorStatus()");
-    expect(fn).toContain("publicVisible");
+    expect(fn).toMatch(/vendorLinkIsPublicallyVisible\s*\(/);
+
+    const shared = read("packages/db-schema/src/vendor-link-visibility.ts");
+    expect(shared).toContain("eventVendors.publicVisible");
+  });
+
+  it("the MCP public reader applies the same visibility half", () => {
+    // The defect OPE-716 fixed: this file is the OTHER public boundary, and it
+    // filtered status and soft-deletes while never looking at the flag. A
+    // caller got `ok` and the vendor kept rendering.
+    const src = read("mcp-server/src/tools/public.ts");
+    expect(src).toMatch(/vendorLinkIsPublicallyVisible\s*\(\s*\)/);
   });
 });
