@@ -37,6 +37,7 @@ import { listBalance } from "../newsletter-list-balance.js";
 import { readOperatorQueues } from "../operator-queue-notice.js";
 import { readDayCoverage } from "../events/day-coverage.js";
 import { readElapsedTentative } from "../events/elapsed-tentative.js";
+import { readCitationCoverage } from "../events/citation-coverage.js";
 import type { Db } from "../db.js";
 import { findSlugCollisionPairs } from "../slug-collision-invariant.js";
 import type { AuthContext } from "../auth.js";
@@ -466,6 +467,8 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
       // Scoped to upcoming APPROVED events: a past fair's schedule cannot be
       // acted on, and this is a worklist rather than an audit.
       const dayCoverage = await readDayCoverage(db);
+      // OPE-745 — the provenance gap, kept visible rather than backfilled away.
+      const citationCoverage = await readCitationCoverage(db);
       // ── OPE-615: does the fault ledger SEE what production is throwing? ──
       //
       // The emitter scanned only `source IN ('server-render','client')`, so
@@ -935,6 +938,17 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
             event_day_coverage: {
               rule: "an upcoming APPROVED event with day rows must have at least one public row inside its own span, and no row outside it",
               ...dayCoverage,
+            },
+            // OPE-745 — visitor-facing values that assert a source we cannot
+            // name. A POPULATION, not a fault: OPE-744 ruled that most create
+            // paths cannot tell an EXTRACTED value from a TYPED one, so the
+            // remedy is NOT a backfill — a synthesised citation looks like
+            // provenance and is not. Split by ingestion path on purpose: the
+            // single total hides that the only path which cites at all is also
+            // the smallest slice of the gap.
+            citation_coverage: {
+              rule: "a visitor-facing value on a public event should carry an active event_data_citations row naming its source",
+              ...citationCoverage,
             },
             // OPE-702 — see the comment at the query. A POPULATION, not a
             // fault: it has no target of zero, and driving it to zero is the
