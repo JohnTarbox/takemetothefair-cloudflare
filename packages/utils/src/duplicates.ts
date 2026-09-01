@@ -309,6 +309,45 @@ export const VENDOR_FORM_WORDS = new Set([
  * dropping state abbreviations in here — an entry added here is scored but
  * still not narrowed on, so it needs the narrowing pass too. Tracked separately.
  */
+/**
+ * US state abbreviations folded to their expansion — currently exactly one.
+ *
+ * ## OPE-739 — why `nh` is in and the other forty-nine are not
+ *
+ * Kept SEPARATE from `VENDOR_ABBREVIATION_MAP` because it is a different kind of
+ * claim. That map says "this word is a shortening of that word", which is true
+ * everywhere. This one says "these two letters name a place", which is true only
+ * where the letters are not also an ordinary English word — and that difference
+ * is the whole safety argument.
+ *
+ * Measured against prod 2026-09-01, over vendor names beginning with a
+ * two-letter code and their spelled-out counterparts:
+ *
+ * - **`nh` — 9 colliding pairs**, e.g. "NH Trappers Association" /
+ *   "New Hampshire Trappers Association". Seven of the long-form rows were
+ *   soft-deleted by hand inside a single 41-second window, which is what a
+ *   person cleaning up duplicates looks like in the data. Two pairs are still
+ *   live. `nh` also appears mid-name ("League of NH Craftsmen", "Society for the
+ *   Protection of NH Forests") and in every occurrence it is the state.
+ * - `vt`, `me`, `ct`, `ma`, `ri`, `ny` — **zero colliding pairs.** Adding them
+ *   would be a fix for nothing, which is what OPE-723 was filed to avoid.
+ *
+ * ⚠️ **`me` must never be added, and not merely because it measured zero.** It
+ * is the English pronoun far more often than the state: "The Sea by Me" (three
+ * rows), "Waffle Me", "Love Rocks Me", "Keep Me Kickin' Pottery", "Knot Me Knot
+ * You", "Picture Me 3D", "Magic Me Vacations", "Dottie And Me Designs", "Em Plus
+ * Me LLC" — nine live vendors whose names this would silently rewrite to end in
+ * "maine". Expansion happens BEFORE scoring, so the damage would be a wrong
+ * merge, and `merge_vendor` is one-way.
+ *
+ * That asymmetry is why this is a measured allow-list and not a state table. A
+ * short code is safe only when it is never also a word, and that has to be
+ * checked per code against real names rather than assumed.
+ */
+export const US_STATE_ABBREVIATION_MAP: Record<string, string> = {
+  nh: "new hampshire",
+};
+
 export const VENDOR_ABBREVIATION_MAP: Record<string, string> = {
   assoc: "association",
   assn: "association",
@@ -362,7 +401,9 @@ export function normalizeVendorName(name: string | null | undefined): string {
   while (tokens.length > 1 && VENDOR_FORM_WORDS.has(tokens[tokens.length - 1])) {
     tokens.pop();
   }
-  tokens = tokens.map((t) => VENDOR_ABBREVIATION_MAP[t] ?? t);
+  // OPE-739 — state codes fold in the same token pass. Token-wise, never a
+  // substring replace: "nhl" and "nhra" must not become "new hampshirel".
+  tokens = tokens.map((t) => VENDOR_ABBREVIATION_MAP[t] ?? US_STATE_ABBREVIATION_MAP[t] ?? t);
   return tokens.join(" ").trim();
 }
 
