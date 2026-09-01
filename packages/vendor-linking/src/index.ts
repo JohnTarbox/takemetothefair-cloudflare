@@ -32,6 +32,7 @@ import {
   type Slug,
 } from "@takemetothefair/utils";
 import {
+  SITE_URL,
   PUBLIC_VENDOR_STATUSES,
   VENDOR_STATUS_TRANSITIONS,
   type EventVendorStatus,
@@ -39,7 +40,15 @@ import {
   type ParticipationType,
 } from "@takemetothefair/constants";
 
-const { adminActions, eventDays, eventVendors, events, users, vendors } = schema;
+const {
+  adminActions,
+  eventDays,
+  eventVendors,
+  events,
+  users,
+  vendorEnrichmentCandidates,
+  vendors,
+} = schema;
 
 /** Both runtimes' Db satisfy this (the app's adds `$client`, still assignable). */
 export type VendorLinkDb = DrizzleD1Database<typeof schema>;
@@ -417,7 +426,14 @@ export async function createOrLinkVendor(
 
   // 1. Event resolve
   const eventRows = await db
-    .select({ id: events.id, slug: events.slug, name: events.name })
+    .select({
+      id: events.id,
+      slug: events.slug,
+      name: events.name,
+      // OPE-714 — the roster page the caller read, when we have it. It is the
+      // honest source for a type disagreement raised off that page.
+      sourceUrl: events.sourceUrl,
+    })
     .from(events)
     .where(eq(events.id, input.eventId))
     .limit(1);
@@ -444,6 +460,53 @@ export async function createOrLinkVendor(
       } catch (err) {
         return { ok: false, error: err instanceof Error ? err.message : String(err) };
       }
+    }
+  }
+
+  // ── OPE-714: a discarded `type` leaves a receipt ─────────────────────────
+  //
+  // `type` is applied ONLY on create. On a dedup match the caller's value is
+  // dropped and the tool returns ok — and the caller has just read the vendor's
+  // own category off the organizer's page, the best evidence available.
+  //
+  // Not overwriting is the right DEFAULT: a link call must not be able to
+  // clobber a curated field merely by mentioning a vendor. The defect is that
+  // there was no other path, so the rail with the evidence could not write it
+  // and no rail that could write it had the evidence. Six live rows were met
+  // and re-discarded in a single 2026-08-31 drain — `Fine Fettle` stored as
+  // "Home Improvement" (a cannabis dispensary), `Cutco` as "RV Accessories".
+  //
+  // So the value is preserved as a PENDING proposal rather than applied. The
+  // silent loss becomes a reviewable one; nothing is overwritten; a reviewer can
+  // drain or ignore the queue. `vendor_enrichment_candidates` already carries a
+  // partial unique on (vendor, field) WHERE decision='pending', so the fiftieth
+  // drain to meet Cutco does not create a fiftieth row.
+  if (matched && vendorType && matched.row.vendorType !== vendorType) {
+    try {
+      await db
+        .insert(vendorEnrichmentCandidates)
+        .values({
+          vendorId: matched.row.id,
+          jobRunId: `roster-link-${crypto.randomUUID()}`,
+          proposedField: "vendor_type",
+          currentValue: matched.row.vendorType ?? null,
+          proposedValue: vendorType,
+          // The organizer's page when the event has one; otherwise our own event
+          // record, which is where the claim demonstrably came from. Never a
+          // fabricated URL — the column is how a reviewer retraces the claim.
+          sourceUrl: event.sourceUrl ?? `${SITE_URL}/events/${event.slug}`,
+          extractionMethod: "roster-link",
+          confidence: 0,
+          flags: JSON.stringify(["type_disagreement"]),
+          createdAt: new Date(),
+        })
+        // A pending proposal for this (vendor, field) already exists. That is
+        // the normal case on a re-drain and is not an error.
+        .onConflictDoNothing();
+    } catch {
+      // Best-effort by design: the link is the caller's actual request, and a
+      // receipt failing must not fail it. A dropped receipt returns us to
+      // today's behaviour, which is the floor, not a regression.
     }
   }
 
