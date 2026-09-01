@@ -5844,6 +5844,7 @@ export type RegistrationAttemptOutcome =
 // MCP Worker. Two deploy artifacts, one implementation.
 export * from "./contains-ci";
 export * from "./real-users";
+export * from "./vendor-link-visibility";
 
 // OPE-391 — shared with the MCP Worker; see the file header.
 export * from "./data-health-kpis";

@@ -18,6 +18,7 @@ import {
   containsCI,
   nameOrSlugContains,
 } from "../schema.js";
+import { vendorLinkIsPublicallyVisible } from "@takemetothefair/db-schema";
 import { PRIMARY_AUDIENCE, PUBLIC_ACCESS, EVENT_STATUS_VALUES } from "@takemetothefair/constants";
 import {
   parseJsonArray,
@@ -885,6 +886,16 @@ export function registerPublicTools(server: McpServer, db: Db) {
             // link symptom this task fixes at the source. Mirrors the
             // isNull(vendors.deletedAt) guard in create_or_link_vendor.
             isNull(vendors.deletedAt),
+            // OPE-716 — the OPE-316 suppression flag. This reader filtered
+            // status and soft-deletes and never looked at it, so
+            // `public_visible=false` returned ok and the vendor kept rendering.
+            // The app's `isPubliclyVisibleVendorLink()` had the guard; this tool
+            // did not — one of two parallel public boundaries.
+            //
+            // The failure was invisible from the caller's side: the write
+            // applied (LeafFilter on Marshfield reads public_visible=0 in prod)
+            // and only a read-back looking for an absent row would show it.
+            vendorLinkIsPublicallyVisible(),
             ...(eventDayFilter ? [eventDayFilter] : [])
           )
         )

@@ -3,8 +3,9 @@
  * for the eventVendors application lifecycle.
  */
 
-import { and, eq, inArray } from "drizzle-orm";
+import { and, inArray } from "drizzle-orm";
 import { eventVendors } from "@/lib/db/schema";
+import { vendorLinkIsPublicallyVisible } from "@takemetothefair/db-schema";
 import {
   EVENT_VENDOR_STATUS,
   PUBLIC_VENDOR_STATUSES,
@@ -39,7 +40,15 @@ export function isPublicVendorStatus() {
  * and a less visible one.
  */
 export function isPubliclyVisibleVendorLink() {
-  return and(isPublicVendorStatus(), eq(eventVendors.publicVisible, true));
+  // OPE-716 — the visibility half comes from @takemetothefair/db-schema so the
+  // app and the MCP `list_event_vendors` tool cannot disagree about it again.
+  // They already did: this function had the guard and that tool did not, so
+  // `public_visible=false` suppressed the vendor here and not there.
+  //
+  // The status half stays local because it needs PUBLIC_VENDOR_STATUSES from
+  // @takemetothefair/constants, which db-schema deliberately does not depend on
+  // — and both artifacts already had the status filter right.
+  return and(isPublicVendorStatus(), vendorLinkIsPublicallyVisible());
 }
 
 // ---------------------------------------------------------------------------
