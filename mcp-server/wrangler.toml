@@ -192,8 +192,27 @@ new_sqlite_classes = ["MeetMeAtTheFairMCP"]
 # "0 7 * * *"     → I1 vendor-enrichment nightly sweep (≤100 vendors). Fires
 #                   after the 06:00/06:10 heavy batch so Browser-Rendering
 #                   fetches don't contend with the recommendations/GSC work.
-# "0 11 * * 1"   → OPE-191 Monday vendor digest ("New This Week"). 11:00 UTC is
-#                   07:00 EDT, the time John asked for; it lands 06:00 during EST.
+# "0 11 * * 1"   → REMOVED 2026-09-01 (OPE-711, under the OPE-710(a) ruling).
+#                   Composition moves to the curated Monday desktop task, which
+#                   calls send_newsletter_broadcast with audience='vendor'. The
+#                   endpoint and template stay; only the unattended trigger goes.
+#
+#   ⚠️ AND IT NEVER RAN ON MONDAY. Cloudflare's weekday field is 1-7 with
+#   **1 = SUNDAY**, not the Unix 0-6 where 0 = Sunday:
+#
+#     "Days of the week go from 1 = Sunday to 7 = Saturday, which is different
+#      on some other cron systems (where 0 = Sunday and 6 = Saturday)."
+#      — developers.cloudflare.com/workers/configuration/cron-triggers/
+#
+#   So "0 11 * * 1" meant SUNDAY 11:00 UTC, and newsletter_issues confirms it:
+#   three consecutive vendor issues sent 2026-08-16, 08-23 and 08-30, every one
+#   a Sunday, all at 11:00:0X. The OPE-191/OPE-358 spec said Monday and the
+#   expression looks like Monday to anyone who knows crontab(5).
+#
+#   ⚠️ IF YOU ADD A WEEKDAY CRON HERE, USE THE THREE-LETTER FORM ("MON"), which
+#   is unambiguous. Monday as a number is 2, not 1. This is the only weekday
+#   cron this Worker has ever had, so nothing else is affected — but the next
+#   one will be written by someone reading a Unix crontab reference.
 #                   A dedicated trigger rather than a day-gate on an existing
 #                   daily cron, because those fire at 06:00-08:00 UTC — i.e. the
 #                   small hours in ET, which is not when you send a newsletter.
@@ -201,7 +220,7 @@ new_sqlite_classes = ["MeetMeAtTheFairMCP"]
 #                   staggered 1h after the vendor sweep to space Browser-Rendering.
 # "30 8 * * *"   → OPE-408 venue-geocode safety net (missing_only, <=25/run).
 #                  After the 08:00 promoter sweep so the two do not contend.
-crons = ["0 6 * * *", "10 6 * * *", "*/10 * * * *", "0 * * * *", "0 7 * * *", "0 8 * * *", "30 8 * * *", "0 11 * * 1"]
+crons = ["0 6 * * *", "10 6 * * *", "*/10 * * * *", "0 * * * *", "0 7 * * *", "0 8 * * *", "30 8 * * *"]
 
 # Cloudflare Email Service — outbound sending binding (public beta).
 # Replaced Resend HTTP integration in the EMAIL_JOBS consumer. Without

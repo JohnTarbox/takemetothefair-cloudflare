@@ -34,6 +34,7 @@ import { selectNewThisWeekEvents } from "@/lib/newsletter/new-this-week";
 import { renderVendorDigestContent } from "@/lib/email/vendor-digest";
 import { getSiteUrl } from "@/lib/email/send";
 import { createSlug } from "@takemetothefair/utils";
+import { newsletterNameForAudience } from "@/lib/newsletter-masthead";
 
 /** Subject stem; the ISO date is appended so each week gets its own slug. */
 const SUBJECT_STEM = "New This Week — shows just added";
@@ -148,6 +149,10 @@ export const POST = withAuthorized(async ({ request, db }) => {
     siteUrl,
     secret,
     mailingAddress: env.MAILING_ADDRESS,
+    // OPE-711 — audience-aware masthead + footer. Without this the issue tells
+    // a vendor subscriber they signed up for "This Weekend at the Fair", which
+    // is the OTHER list.
+    wordmark: newsletterNameForAudience("vendor"),
     source: VENDOR_DIGEST_SOURCE,
   });
 
