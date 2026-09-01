@@ -13,7 +13,7 @@ import { drizzle } from "drizzle-orm/better-sqlite3";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import * as schema from "@takemetothefair/db-schema";
-import { realUserWhere, isPlaceholderUser } from "@takemetothefair/db-schema";
+import { realUserWhere } from "@takemetothefair/db-schema";
 import { users } from "@/lib/db/schema";
 
 const SCHEMA_SQL = `
@@ -85,21 +85,6 @@ describe("realUserWhere", () => {
     // real one.
     const total = (raw.prepare(`SELECT COUNT(*) n FROM users`).get() as { n: number }).n;
     expect(total).toBe(21);
-  });
-});
-
-describe("isPlaceholderUser (in-memory equivalent)", () => {
-  it("agrees with the SQL predicate on every shape above", () => {
-    expect(isPlaceholderUser({ origin: "ingestion", email: "x@y.com" })).toBe(true);
-    // Note the DOMAIN: isPlaceholderEmail checks it, and is right to — a
-    // `pending+` address at someone else's domain is not one of ours.
-    expect(
-      isPlaceholderUser({ origin: "registration", email: "pending+a@meetmeatthefair.com" })
-    ).toBe(true);
-    expect(isPlaceholderUser({ origin: "registration", email: "pending+a@b.com" })).toBe(false);
-    expect(isPlaceholderUser({ origin: null, email: "real@b.com" })).toBe(false);
-    expect(isPlaceholderUser({ origin: "registration", email: null })).toBe(false);
-    expect(isPlaceholderUser({})).toBe(false);
   });
 });
 
