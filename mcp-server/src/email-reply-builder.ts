@@ -70,8 +70,10 @@ export function buildReply(
   const replySubject = `Re: ${subjectIn || "your message"}`.slice(0, 200);
 
   const baseText = renderText(kind, params);
+  // OPE-720 — before the stale note and the widget, so the sign-off lands last.
+  const withFanoutNote = appendFanoutTopicsNote(baseText, params);
   // OPE-458 scope 2 — before the widget, so the sign-off still lands last.
-  const withStaleNote = appendStaleSourceNote(baseText, params);
+  const withStaleNote = appendStaleSourceNote(withFanoutNote, params);
   // Phase D.3 widget: append a "was this what you wanted?" block when
   // the workflow's send-reply step issued a receipt-moment token.
   const text = appendReceiptWidget(withStaleNote, params);
@@ -85,6 +87,71 @@ export function buildReply(
     source: `email:${kind}`,
   };
 }
+
+/**
+ * OPE-720 — say out loud that the message covered more than this reply answers.
+ *
+ * A multi-intent email now draws exactly ONE reply, chosen by
+ * FANOUT_REPLY_RANK. Without this note that reply would be correct about its own
+ * topic and silently mute about the rest: Emma Welford both corrected a listing
+ * and asked to claim it, and a bare `correction-ack` would leave the claim
+ * looking ignored.
+ *
+ * Applied to every reply kind rather than written into each one, for the same
+ * reason as the stale-source note: the observation is about the MESSAGE, not the
+ * intent, and is equally true whichever child ended up answering.
+ *
+ * It names the other topics and says they are being handled — it does not
+ * promise an outcome for them, because this reply's sender has no idea what the
+ * sibling handlers decided.
+ */
+function appendFanoutTopicsNote(baseText: string, params: ReplyParams): string {
+  const raw = params.fanoutOtherIntents;
+  if (!Array.isArray(raw) || raw.length === 0) return baseText;
+  const labels = raw
+    .filter((i): i is string => typeof i === "string" && i.length > 0)
+    .map((i) => FANOUT_INTENT_LABELS[i] ?? null)
+    .filter((l): l is string => l !== null);
+  if (labels.length === 0) return baseText;
+
+  const unique = [...new Set(labels)];
+  const list =
+    unique.length === 1
+      ? unique[0]
+      : `${unique.slice(0, -1).join(", ")} and ${unique[unique.length - 1]}`;
+  const note =
+    `\n\nYour message covered more than one thing — we also read it as ${list}. ` +
+    `That part is being handled separately, so you may hear from us again about it. ` +
+    `We're sending one reply rather than one per topic.`;
+
+  const splitIdx = baseText.lastIndexOf("\n— ");
+  if (splitIdx === -1) return `${baseText}${note}`;
+  return `${baseText.slice(0, splitIdx)}${note}${baseText.slice(splitIdx)}`;
+}
+
+/**
+ * Sender-facing wording for a routed intent. Deliberately plain English — the
+ * raw enum values (`claim_request`, `source_suggestion`) are internal routing
+ * vocabulary and mean nothing to the person reading the email.
+ *
+ * An intent absent from this map is omitted from the note rather than printed
+ * raw: `spam` and `unclear` are triage states, and telling a sender we also read
+ * their message as spam would be worse than saying nothing.
+ */
+const FANOUT_INTENT_LABELS: Record<string, string> = {
+  new_event: "an event submission",
+  submit: "an event submission",
+  correction: "a correction to a listing",
+  claim_request: "a request to claim a listing",
+  vendor_inquiry: "a vendor question",
+  source_suggestion: "a suggestion for a source to follow",
+  press: "a press inquiry",
+  support: "a general question",
+  unsubscribe: "an unsubscribe request",
+  newsletter_subscribe: "a newsletter sign-up",
+  problem_report: "a report of something wrong on the site",
+  photo_intake: "photos for a listing",
+};
 
 /**
  * OPE-458 scope 2 — tell the sender their SOURCE looks stale, not just that
