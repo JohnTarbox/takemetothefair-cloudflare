@@ -22,7 +22,7 @@ import { join } from "node:path";
 const ROOT = process.cwd();
 const read = (...p: string[]) => readFileSync(join(ROOT, ...p), "utf8");
 
-describe("OPE-738 — /fair-entry-deadlines ships behind an OFF gate", () => {
+describe("OPE-738 — /fair-entry-deadlines and its flag", () => {
   it("declares ENTRY_DEADLINES_INDEX in the committed wrangler.toml", () => {
     // It must live in the committed file, not the dashboard: a dashboard
     // [vars] override is wiped wholesale by the next `wrangler deploy`
@@ -30,9 +30,20 @@ describe("OPE-738 — /fair-entry-deadlines ships behind an OFF gate", () => {
     expect(read("wrangler.toml")).toMatch(/^ENTRY_DEADLINES_INDEX\s*=/m);
   });
 
-  it('has that flag committed as "false"', () => {
+  it('has that flag committed as "true" — LIVE since 2026-09-02', () => {
+    // Flipped on John's direct in-session approval, 2026-09-02, executing the
+    // issue-level sign-off recorded on OPE-738 the previous day.
+    //
+    // ⚠️ This assertion is kept, not deleted, and it still has to be able to
+    // FAIL. Its job was never "the page is off"; it is "the flag's live value
+    // is a deliberate, reviewed constant in the committed file". Deleting it
+    // on go-live would remove the only thing that notices a silent flip back —
+    // and would leave the dashboard-override hazard below asserted by nothing.
+    //
+    // So the expected value moves with the decision, and changing it stays a
+    // reviewed edit rather than a drive-by.
     const m = read("wrangler.toml").match(/^ENTRY_DEADLINES_INDEX\s*=\s*"([^"]*)"/m);
-    expect(m?.[1]).toBe("false");
+    expect(m?.[1]).toBe("true");
   });
 
   it("404s the route when the flag is off — the page actually consults it", () => {
