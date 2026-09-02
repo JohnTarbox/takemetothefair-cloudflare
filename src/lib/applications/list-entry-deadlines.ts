@@ -17,6 +17,7 @@
 import { and, eq, isNull } from "drizzle-orm";
 import { eventApplications, events, venues } from "@/lib/db/schema";
 import { publicEventWhere } from "@/lib/event-lifecycle";
+import { hasCalendarDayPassed } from "@/lib/datetime";
 import type { getCloudflareDb } from "@/lib/cloudflare";
 
 /**
@@ -75,6 +76,29 @@ export interface GroupedEntryDeadlines {
  * design — a fair that publishes an entry URL without a date is a legal,
  * correct row — and dropping it would make the index quietly wrong in the one
  * direction that matters, hiding routes that are very likely still open.
+ *
+ * ⚠️ OPEN-vs-CLOSED IS A CALENDAR-DAY TEST, NOT AN INSTANT COMPARISON (OPE-750).
+ *
+ * This used to read `closesAt.getTime() >= now.getTime()`, which is the exact
+ * defect OPE-651 fixed on the event date gates: an instant comparison against a
+ * value that, for some writers, means a DAY. `event_applications` carried three
+ * encodings of the same closing date — 23:59:59 ET (74 rows), noon UTC (8), and
+ * 23:59:59 UTC (1) — because drizzle/0257 backfilled the noon-anchored
+ * `events.application_deadline` straight in. Under an instant comparison a
+ * noon-anchored deadline flips to "closed" at 08:00 ET on its own closing
+ * morning, telling a visitor they have missed an entry that is still open for
+ * another sixteen hours.
+ *
+ * drizzle/0258 re-anchored those nine rows, so today every row is 23:59:59 ET.
+ * That is NOT why this test is a calendar-day test. Normalised data is a fact
+ * about the rows that exist now; nothing stops the next writer — there is
+ * currently no code write path at all, so rows arrive by hand — from inventing
+ * a fourth convention. Deciding on the calendar day makes the time-of-day
+ * component irrelevant, which is the only version of this that stays fixed.
+ *
+ * The window arithmetic still uses the raw delta: how FAR away a deadline is
+ * is a real duration question, and only the open/closed boundary was ever
+ * ambiguous.
  */
 export function bucketEntryDeadline(
   closesAt: Date | null,
@@ -87,7 +111,9 @@ export function bucketEntryDeadline(
   const forwardWindowDays = opts.forwardWindowDays ?? FORWARD_WINDOW_DAYS;
 
   const delta = closesAt.getTime() - now.getTime();
-  if (delta >= 0) return delta <= forwardWindowDays * DAY_MS ? "open" : null;
+  if (!hasCalendarDayPassed(closesAt, now)) {
+    return delta <= forwardWindowDays * DAY_MS ? "open" : null;
+  }
   return -delta <= recentlyClosedDays * DAY_MS ? "recently_closed" : null;
 }
 
