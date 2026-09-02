@@ -46,3 +46,79 @@ export function parseEmailAuth(headerRaw: string | null | undefined): EmailAuthV
 
   return "unknown";
 }
+
+/**
+ * OPE-763 — the same header, kept rather than collapsed.
+ *
+ * `parseEmailAuth` above condenses `Authentication-Results` to the three
+ * values the WS3e trusted-sender gate needs, uses it, and throws the rest
+ * away. That was right for a gate and wrong for a record: John's framing —
+ * *"an email from a spammer in China … spoofing someone else's email is of a
+ * far different caliber from an email from someone like Jeremy Hall, Assistant
+ * Division Director … CT DEEP"* — is a question about a specific message that
+ * we could not answer, because the distinguishing bytes were read and
+ * discarded in the same function call.
+ *
+ * ⚠️ `parseEmailAuth` IS DELIBERATELY UNTOUCHED. It gates a live path (the
+ * trusted-sender fast-path), and the whole point of this ticket is capture:
+ * an auth-parsing change that quietly altered routing is precisely the failure
+ * OPE-763 scope 5 exists to prevent. The agreement between the two is asserted
+ * by test rather than by construction, so this function is free to be more
+ * expressive without the gate inheriting it.
+ *
+ * The fourth value, `partial`, is the one the 3-value verdict cannot express:
+ * "something authenticated, but not everything, and nothing failed". A
+ * mailing-list forward with `spf=fail dkim=pass` lands here, and so does a
+ * plain `spf=pass` with no DKIM at all. Both are ordinary; neither is a clean
+ * DMARC pass; and lumping them in with a full pass is what makes an audit
+ * trail useless later.
+ */
+export type SenderAuthVerdict = "pass" | "partial" | "fail" | "unknown";
+
+export interface EmailAuthDetail {
+  /** The header verbatim, or null when the transport supplied none. */
+  raw: string | null;
+  /** Individual method results as reported, lowercased. Null when absent. */
+  spf: string | null;
+  dkim: string | null;
+  dmarc: string | null;
+  verdict: SenderAuthVerdict;
+}
+
+export function parseEmailAuthDetail(headerRaw: string | null | undefined): EmailAuthDetail {
+  const raw = headerRaw ?? null;
+  if (!raw) return { raw: null, spf: null, dkim: null, dmarc: null, verdict: "unknown" };
+
+  const header = raw.toLowerCase();
+  const spf = methodResult(header, "spf");
+  const dkim = methodResult(header, "dkim");
+  const dmarc = methodResult(header, "dmarc");
+
+  // Failure first, and in the same order as `parseEmailAuth`, so the two can
+  // never disagree about a spoof. DMARC is authoritative; an SPF hard-fail
+  // with no compensating DKIM pass catches domains with no DMARC record.
+  let verdict: SenderAuthVerdict;
+  if (dmarc === "fail" || (spf === "fail" && dkim !== "pass")) {
+    verdict = "fail";
+  } else if (dmarc === "pass" && spf === "pass" && dkim === "pass") {
+    verdict = "pass";
+  } else if (dmarc === "pass" || spf === "pass" || dkim === "pass") {
+    // At least one method authenticated and none failed authoritatively.
+    verdict = "partial";
+  } else {
+    verdict = "unknown";
+  }
+
+  return { raw, spf, dkim, dmarc, verdict };
+}
+
+/**
+ * The 4-value verdict collapsed to the 3-value one, for the equivalence test.
+ *
+ * Exported so the test asserts a relationship that is stated in code rather
+ * than restated in the test — if this mapping ever stops being true, the
+ * failure names the mapping instead of an opaque table of examples.
+ */
+export function collapseSenderAuth(v: SenderAuthVerdict): EmailAuthVerdict {
+  return v === "partial" ? "pass" : v;
+}

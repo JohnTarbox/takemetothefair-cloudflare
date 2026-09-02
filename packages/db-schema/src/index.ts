@@ -4647,6 +4647,38 @@ export const inboundEmails = sqliteTable(
      *  the ORIGINAL inbound's id here even when `In-Reply-To` points at our
      *  bounce. NULL when absent. Added drizzle/0162. */
     emailReferences: text("email_references"),
+    /**
+     * OPE-763 (drizzle/0259) — the sender-authenticity signals.
+     *
+     * Cloudflare Email Routing attaches `Authentication-Results`, and the
+     * handler has read it since WS3e (2026-06-11) to gate the trusted-sender
+     * fast-path — then discarded it. So a DMARC-passing message from a
+     * Microsoft 365 `ct.gov` tenant and a forged one were indistinguishable in
+     * our records: not hard to tell apart, but *identical*, because the
+     * distinguishing bytes were never written down.
+     *
+     * ⚠️ REPORT-ONLY. Nothing branches on these. No routing, no template
+     * choice, no send decision, no blocking. Acting on `senderAuth` belongs to
+     * OPE-764/OPE-765, kept separate so an auth-parsing bug cannot quietly
+     * begin dropping real mail.
+     *
+     * NULL vs 'unknown' is load-bearing: NULL means the row predates capture
+     * (no backfill is possible — the headers were never stored), while
+     * `senderAuth='unknown'` means we looked and the transport supplied
+     * nothing usable.
+     */
+    authResultsRaw: text("auth_results_raw"),
+    spfResult: text("spf_result"),
+    dkimResult: text("dkim_result"),
+    dmarcResult: text("dmarc_result"),
+    /** `pass` | `partial` | `fail` | `unknown` — see `parseEmailAuthDetail`. */
+    senderAuth: text("sender_auth"),
+    /** The display name, which is where `"Jeremy Hall" <random@gmail.com>` shows. */
+    fromDisplayName: text("from_display_name"),
+    replyTo: text("reply_to"),
+    returnPath: text("return_path"),
+    /** Originating host from the last `Received` hop, e.g. a `*.outlook.com` tenant. */
+    sendingHost: text("sending_host"),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   },
   (t) => [
@@ -4660,6 +4692,11 @@ export const inboundEmails = sqliteTable(
     index("idx_inbound_emails_content_hash")
       .on(t.contentSha256First16)
       .where(sql`${t.contentSha256First16} IS NOT NULL`),
+    // OPE-763 — partial, because the overwhelming majority of rows will be
+    // `pass` and the query worth running is "show me everything that wasn't".
+    index("idx_inbound_emails_sender_auth")
+      .on(t.senderAuth)
+      .where(sql`${t.senderAuth} IS NOT NULL AND ${t.senderAuth} <> 'pass'`),
     // Partial-unique on message_id (NULLs are exempt — SQLite already
     // treats them as distinct, but spelled explicitly via WHERE for
     // clarity). Added 0073 for inbound idempotency.
