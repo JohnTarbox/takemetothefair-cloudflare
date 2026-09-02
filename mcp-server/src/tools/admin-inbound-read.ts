@@ -218,6 +218,31 @@ export function registerInboundReadTools(
                 }
               : {}),
             reply_kind: row.replyKind,
+            /**
+             * OPE-763 — the sender-authenticity signals, report-only.
+             *
+             * `sender_auth` is derived so a consumer never re-parses the
+             * header; `auth_results_raw` is kept verbatim so a consumer can
+             * disagree with our derivation.
+             *
+             * NULL across the board means the row PREDATES capture
+             * (drizzle/0259) — no backfill is possible, the headers were never
+             * stored. That is a different fact from `sender_auth: "unknown"`,
+             * which means we looked and the transport gave us nothing usable.
+             */
+            sender_auth: row.senderAuth,
+            auth_results_raw: row.authResultsRaw,
+            spf_result: row.spfResult,
+            dkim_result: row.dkimResult,
+            dmarc_result: row.dmarcResult,
+            from_display_name: row.fromDisplayName,
+            reply_to: row.replyTo,
+            return_path: row.returnPath,
+            sending_host: row.sendingHost,
+            sender_auth_note:
+              row.senderAuth === null
+                ? "NULL — this row predates OPE-763 capture (drizzle/0259). Not recoverable; the headers were never stored."
+                : "Report-only. Nothing routes, blocks or sends on this value. A display name that disagrees with the address, or a reply_to/return_path pointing elsewhere, is the classic spoof tell — read them together with sender_auth, not instead of it.",
             // OPE-761 — read this instead of `reply_kind` when the question is
             // "did we acknowledge them?". `null` means the ledger read failed,
             // which is distinguishable from `{auto_acked: false}`.
@@ -481,6 +506,13 @@ export function registerInboundReadTools(
           intent: inboundEmails.intent,
           status: inboundEmails.status,
           replyKind: inboundEmails.replyKind,
+          // OPE-763 — the two auth signals worth having in a LIST view. The
+          // raw header and the per-method results stay on the detail read:
+          // scanning a list, the question is "which of these did not
+          // authenticate", and a NULL here means the row predates capture
+          // rather than that the message failed.
+          senderAuth: inboundEmails.senderAuth,
+          fromDisplayName: inboundEmails.fromDisplayName,
           attachmentCount: inboundEmails.attachmentCount,
           attachmentOcr: inboundEmails.attachmentOcr,
           resultingEventId: inboundEmails.resultingEventId,
