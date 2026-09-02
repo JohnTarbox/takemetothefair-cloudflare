@@ -14,6 +14,7 @@
  * clock reading, and not an assertion that the parameter exists.
  */
 import { describe, it, expect, beforeEach } from "vitest";
+import { readFile } from "node:fs/promises";
 import { createTestDb, type TestDb } from "./setup-db.js";
 import {
   checkOperatorQueues,
@@ -21,6 +22,7 @@ import {
   readOperatorQueues,
   NOTICE_EMAIL_SOURCE,
   QUEUE_SLA_HOURS,
+  ADMIN_DECISION_TIMEOUT_HOURS,
 } from "../src/operator-queue-notice.js";
 import { emailSendLedger } from "../src/schema.js";
 
@@ -83,6 +85,114 @@ describe("decideOperatorQueueNotice", () => {
 
   it("sends at most once a day", () => {
     expect(decideOperatorQueueNotice({ agedClaims: 3, agedReplies: 2 }, true)).toBe(false);
+  });
+});
+
+/**
+ * OPE-761 — the fifth queue: inbound mail hibernating on the workflow's
+ * `admin-decision` pause.
+ *
+ * Jeremy Hall (Assistant Division Director, CT DEEP) wrote to `hello@` on
+ * 2026-09-02 and got five hours of silence; `advisor@flippa.com`'s `press` row
+ * sat two days. Both were CORRECTLY parked — the routing worked. Nothing
+ * announced them, and the clock they are on ends in a generic auto-ack rather
+ * than an answer.
+ */
+describe("OPE-761 — inbound awaiting admin decision", () => {
+  /** Seed an inbound row `ageHours` old, parked in `waiting`. */
+  function seedWaiting(id: string, intent: string, ageHours: number, from = "jeremy.hall@ct.gov") {
+    raw["prepare"](
+      `INSERT INTO inbound_emails (id, received_at, from_address, to_address, subject, intent, status, created_at)
+       VALUES (?, ?, ?, 'hello@meetmeatthefair.com', ?, ?, 'waiting', ?)`
+    ).run(
+      id,
+      Math.floor((NOW.getTime() - ageHours * 3600_000) / 1000),
+      from,
+      `Subject for ${id}`,
+      intent,
+      Math.floor((NOW.getTime() - ageHours * 3600_000) / 1000)
+    );
+  }
+
+  it("stays SILENT when a waiting row is younger than the SLA", async () => {
+    // The landmark for every assertion below. Without it, a version that
+    // simply counts every `waiting` row passes the aging tests too — and the
+    // wallpaper failure is the one this whole file exists to avoid.
+    seedWaiting("i-fresh", "correction", QUEUE_SLA_HOURS - 1);
+    await checkOperatorQueues(db, env, NOW);
+    expect(sent).toHaveLength(0);
+  });
+
+  it("alerts on Jeremy's shape — a `correction` parked past the SLA", async () => {
+    seedWaiting("i-jeremy", "correction", 72);
+    await checkOperatorQueues(db, env, NOW);
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0].text).toContain("jeremy.hall@ct.gov");
+    expect(sent[0].text).toContain("correction");
+  });
+
+  it("alerts on specimen B's shape too — `press`, the intent with no handler", async () => {
+    // The acceptance criterion is that ANY intent with no handler can no longer
+    // sit unannounced. Reading `status='waiting'` rather than an allow-list of
+    // intents is what makes that true for the next lane as well as this one.
+    seedWaiting("i-flippa", "press", 50, "advisor@flippa.com");
+    await checkOperatorQueues(db, env, NOW);
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0].text).toContain("advisor@flippa.com");
+  });
+
+  it("reports hours REMAINING before the auto-ack cliff, not just age", async () => {
+    // Depth cannot show a row approaching the cliff, and the cliff is where the
+    // loss happens: at ADMIN_DECISION_TIMEOUT_HOURS the sender is posted a
+    // generic ack and the thing they wrote in about is never answered.
+    seedWaiting("i-approaching", "correction", ADMIN_DECISION_TIMEOUT_HOURS - 10);
+    await checkOperatorQueues(db, env, NOW);
+
+    expect(sent[0].text).toContain("auto-ack in 10h");
+  });
+
+  it("says PAST THE CLIFF rather than counting down past zero", async () => {
+    // "expires in -14h" would be both wrong and quietly reassuring. A row on
+    // the far side of the cliff is the worst case, not a stale one: it has
+    // stopped looking unanswered without having been answered.
+    seedWaiting("i-expired", "correction", ADMIN_DECISION_TIMEOUT_HOURS + 14);
+    await checkOperatorQueues(db, env, NOW);
+
+    expect(sent[0].text).toContain("PAST the 168h cliff");
+    expect(sent[0].text).not.toContain("auto-ack in -");
+  });
+
+  it("ignores rows that are not in `waiting` — a replied row is not a queue item", async () => {
+    raw["prepare"](
+      `INSERT INTO inbound_emails (id, received_at, from_address, to_address, subject, intent, status, created_at)
+       VALUES ('i-done', ?, 'x@y.com', 'hello@meetmeatthefair.com', 'done', 'correction', 'replied', ?)`
+    ).run(
+      Math.floor((NOW.getTime() - 30 * 86400_000) / 1000),
+      Math.floor((NOW.getTime() - 30 * 86400_000) / 1000)
+    );
+
+    await checkOperatorQueues(db, env, NOW);
+    expect(sent).toHaveLength(0);
+  });
+
+  it("keeps the constant in step with the workflow's actual timeout", async () => {
+    // The comment on ADMIN_DECISION_TIMEOUT_HOURS claims it mirrors the
+    // workflow's `timeout: "7 days"`. That claim has to be a control, not a
+    // note: the two live in different modules, and a silent drift would make
+    // every countdown in the notice wrong while everything still passed.
+    const src = await readFile(
+      new URL("../src/workflows/inbound-email.ts", import.meta.url),
+      "utf8"
+    );
+    const m = src.match(/waitForEvent<AdminDecision>\([\s\S]{0,200}?timeout:\s*"([^"]+)"/);
+    expect(
+      m,
+      "could not find the admin-decision waitForEvent timeout in the workflow"
+    ).toBeTruthy();
+    expect(m![1]).toBe("7 days");
+    expect(ADMIN_DECISION_TIMEOUT_HOURS).toBe(7 * 24);
   });
 });
 
