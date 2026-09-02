@@ -42,13 +42,18 @@ VENDOR_DIGEST_SEND_ENABLED = "true"
 CONDITIONAL_GET_PUBLIC_CACHE = "false"
 # OPE-738 — flip to "true" to serve /fair-entry-deadlines, the cross-event
 # exhibitor & competition entry-deadline index, and to show its footer link.
-# GATED: a NEW customer-facing surface, STOP-gated on John's approval by the
-# ticket, so it ships OFF and only John flips it. While "false" the route 404s
-# and the footer link is absent — the code is deployed but dark.
+# LIVE since 2026-09-02 — /fair-entry-deadlines is public.
+# Shipped dark on 2026-09-01 (OPE-738) as a NEW customer-facing surface behind
+# a STOP-gate; John approved publishing at issue level, then confirmed it
+# directly in session on 2026-09-02, and this line is that approval.
+# Reversal is this one line: set "false", deploy, and the route 404s with the
+# footer link gone. No data is written and no mail sends either way.
 # Must live HERE, not in the dashboard: a dashboard [vars] override is silently
-# wiped by the next deploy (OPE-284/OPE-509). For an OFF-by-default gate that
-# at least fails in the safe direction.
-ENTRY_DEADLINES_INDEX = "false"
+# wiped by the next deploy (OPE-284/OPE-509) — which for an ON gate would mean
+# the page quietly going dark again, so the committed value is the only value.
+# `entry-deadlines-gate-ope738.test.ts` asserts this literal, so changing it
+# stays a reviewed edit rather than a drive-by.
+ENTRY_DEADLINES_INDEX = "true"
 # CAL1 — flip to "true" to serve the SSR Month calendar at /events?view=calendar
 # (Month-only @jonnyboats/calendar-react). Default OFF = legacy client calendar.
 # Temporarily ON for live prod verification (Step 7) — flip back to "false" after.
