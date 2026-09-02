@@ -48,10 +48,19 @@
 --   SELECT strftime('%H:%M:%S', closes_at, 'unixepoch') tod, COUNT(*)
 --   FROM event_applications WHERE closes_at IS NOT NULL GROUP BY tod;
 --
--- Expected after: a single row, `03:59:59` = 83. (Not 84: the count of rows
--- with a non-NULL `closes_at` is 83 — 74 exhibitor + 9 commercial.) A second
--- `tod` bucket surviving means a statement did not match, which is the
--- outcome this file is written to make visible rather than silent.
+-- Expected after: a single row, `03:59:59` = 84 — 74 exhibitor + 10
+-- commercial. A second `tod` bucket surviving means a statement did not match,
+-- which is the outcome this file is written to make visible rather than silent.
+--
+-- ⚠️ This line said 83 when the migration shipped, and 83 was wrong: the
+-- commercial lane has TEN rows with a `closes_at` (1 already at 03:59:59, plus
+-- the 8 noon and 1 UTC-EOD rows moved below), not nine. Corrected after
+-- reading the post-deploy state back out of prod, which returned 84. Left as a
+-- comment-only edit — the file is recorded in `d1_migrations` by FILENAME and
+-- will not re-run, and on a fresh CI database every UPDATE below still matches
+-- zero rows. A verification note that disagrees with the database is worse
+-- than no note: the next person to run this query would read a correct result
+-- as a failure.
 --
 -- Targets computed with Intl in America/New_York, so each keeps its own ET
 -- calendar date across the EDT/EST boundary; the +57599s rows are EDT-summer
