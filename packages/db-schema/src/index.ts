@@ -4679,6 +4679,32 @@ export const inboundEmails = sqliteTable(
     returnPath: text("return_path"),
     /** Originating host from the last `Received` hop, e.g. a `*.outlook.com` tenant. */
     sendingHost: text("sending_host"),
+    /**
+     * OPE-764 (drizzle/0260) — who this sender resolves to in our own data.
+     *
+     * Five high-value correspondents measured 2026-09-02 were all already
+     * entities here when they wrote, and none was recognised.
+     *
+     * `matchedEntities` is the answer — a JSON array of EVERY match, because
+     * picking one would be a fabrication dressed as a result: `portal.ct.gov`
+     * legitimately matches two CT DEEP vendor rows. The four scalars beside it
+     * are the highest-confidence match, for list views and indexing.
+     *
+     * ⚠️ REPORT-ONLY, like OPE-763's auth columns. Nothing routes, blocks,
+     * sends or changes trust on these. 90.7% of live events claim confirmed
+     * dates with no citation, so an auto-responder quoting a matched record
+     * would sound authoritative while being wrong.
+     *
+     * NULL = the row predates capture. `matchBasis='none'` = we looked and
+     * found nobody. Not backfilled, deliberately: resolution reflects the
+     * entity graph AT RECEIPT, and stamping today's graph onto a July row
+     * would record a match that did not exist when the person wrote.
+     */
+    matchedEntities: text("matched_entities"),
+    matchedEntityType: text("matched_entity_type"),
+    matchedEntityId: text("matched_entity_id"),
+    matchBasis: text("match_basis"),
+    matchConfidence: real("match_confidence"),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   },
   (t) => [
@@ -4697,6 +4723,10 @@ export const inboundEmails = sqliteTable(
     index("idx_inbound_emails_sender_auth")
       .on(t.senderAuth)
       .where(sql`${t.senderAuth} IS NOT NULL AND ${t.senderAuth} <> 'pass'`),
+    // OPE-764 — supports "recognition rate at receipt", which is 0% today.
+    index("idx_inbound_emails_match_basis")
+      .on(t.matchBasis)
+      .where(sql`${t.matchBasis} IS NOT NULL`),
     // Partial-unique on message_id (NULLs are exempt — SQLite already
     // treats them as distinct, but spelled explicitly via WHERE for
     // clarity). Added 0073 for inbound idempotency.

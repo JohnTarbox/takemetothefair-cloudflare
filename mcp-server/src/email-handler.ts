@@ -60,6 +60,7 @@ import {
 } from "./intent-classifier.js";
 import { hasMultiIntentOrSpecialSignal, isReplyToOurThread } from "./intent-fastpath.js";
 import { isDenylistedHost } from "./url-denylist.js";
+import { resolveSenderIdentity } from "./inbound/resolve-sender-identity.js";
 import {
   parseEmailAuth,
   parseEmailAuthDetail,
@@ -189,6 +190,8 @@ export async function handleInboundEmail(
     const attachmentCount = parsed.attachments?.length ?? 0;
     // OPE-763 — computed once here, spread into every insert below.
     const senderSignals = extractSenderSignals(message.headers, parsed);
+    // OPE-764 — likewise. Fail-soft: never takes a message down.
+    const senderIdentity = await resolveSenderColumns(env, sessionId, fromAddr, bodyText);
 
     if (!fromAddr) {
       await logError(env.DB, {
@@ -224,6 +227,7 @@ export async function handleInboundEmail(
           bodyTextStored,
           bodyHtmlStored,
           senderSignals,
+          senderIdentity,
           attachmentCount,
           rawSize: message.rawSize,
           messageId: (parsed.messageId || "").trim() || null,
@@ -430,6 +434,7 @@ export async function handleInboundEmail(
               bodyTextStored,
               bodyHtmlStored,
               senderSignals,
+              senderIdentity,
               attachmentCount,
               rawSize: message.rawSize,
               messageId: (parsed.messageId || "").trim() || null,
@@ -516,6 +521,7 @@ export async function handleInboundEmail(
         bodyTextStored,
         bodyHtmlStored,
         senderSignals,
+        senderIdentity,
         message,
         parsed,
         attachmentCount,
@@ -671,8 +677,9 @@ export async function handleInboundEmail(
             bodyTextExcerpt: bodyTextExcerpt || null,
             bodyText: bodyTextStored,
             bodyHtml: bodyHtmlStored,
-            // OPE-763 — report-only capture; nothing branches on these.
+            // OPE-763 / OPE-764 — report-only capture; nothing branches on these.
             ...senderSignals,
+            ...senderIdentity,
             parsedUrl,
             attachmentCount,
             attachmentRefs: attachmentRefsJson,
@@ -742,8 +749,9 @@ export async function handleInboundEmail(
             bodyTextExcerpt: bodyTextExcerpt || null,
             bodyText: bodyTextStored,
             bodyHtml: bodyHtmlStored,
-            // OPE-763 — report-only capture; nothing branches on these.
+            // OPE-763 / OPE-764 — report-only capture; nothing branches on these.
             ...senderSignals,
+            ...senderIdentity,
             parsedUrl: r.refUrl ?? parsedUrl,
             attachmentCount,
             attachmentRefs: attachmentRefsJson,
@@ -1526,6 +1534,77 @@ function buildRoutedEntry(
 }
 
 /**
+ * OPE-764 — the sender-identity columns, shaped for the insert.
+ *
+ * Same one-object-spread discipline as `SenderSignals`, and for the same
+ * reason: four insert sites, and OPE-762 is the standing proof that hand-copied
+ * fields diverge.
+ */
+export interface SenderIdentityColumns {
+  matchedEntities: string | null;
+  matchedEntityType: string | null;
+  matchedEntityId: string | null;
+  matchBasis: string;
+  matchConfidence: number | null;
+}
+
+/** What we record when we looked and found nobody — distinct from NULL. */
+export const NO_SENDER_MATCH: SenderIdentityColumns = {
+  matchedEntities: "[]",
+  matchedEntityType: null,
+  matchedEntityId: null,
+  matchBasis: "none",
+  matchConfidence: null,
+};
+
+/**
+ * Resolve the sender, FAIL-SOFT.
+ *
+ * This runs on the receive path, where the budget is tight and the stakes are
+ * asymmetric: a missing identity costs an operator one lookup, and a thrown
+ * exception costs the message. So every failure — a slow query, a schema
+ * surprise, anything — degrades to `NO_SENDER_MATCH` and is logged, never
+ * propagated.
+ *
+ * ⚠️ That means a total resolver outage looks exactly like "nobody matched",
+ * which is the inert-guard problem. It is logged at `warn` with the sender, so
+ * the difference is recoverable from `error_logs`; and `match_basis='none'`
+ * with a NULL `matched_entities` would be the tell if it ever mattered, since
+ * the success path always writes at least `[]`.
+ */
+async function resolveSenderColumns(
+  env: EmailHandlerEnv,
+  sessionId: string,
+  fromAddr: string,
+  bodyText: string
+): Promise<SenderIdentityColumns> {
+  try {
+    const identity = await resolveSenderIdentity(getDb(env.DB), {
+      fromAddress: fromAddr,
+      bodyText,
+    });
+    if (identity.matches.length === 0) return NO_SENDER_MATCH;
+    return {
+      matchedEntities: JSON.stringify(identity.matches),
+      matchedEntityType: identity.best?.entityType ?? null,
+      matchedEntityId: identity.best?.entityId ?? null,
+      matchBasis: identity.best?.basis ?? "none",
+      matchConfidence: identity.best?.confidence ?? null,
+    };
+  } catch (err) {
+    await logError(env.DB, {
+      level: "warn",
+      source: SOURCE,
+      message: "sender identity resolution failed; recording no-match",
+      error: err,
+      sessionId,
+      context: { from: fromAddr },
+    }).catch(() => {});
+    return { ...NO_SENDER_MATCH, matchedEntities: null };
+  }
+}
+
+/**
  * OPE-763 — every sender-authenticity signal on the message, captured once.
  *
  * Returned as ONE object that is spread into every `inbound_emails` insert,
@@ -1638,6 +1717,8 @@ export async function insertSpamAuditRow(
     bodyHtmlStored: string | null;
     /** OPE-763 — captured once by `extractSenderSignals`, spread into the row. */
     senderSignals: SenderSignals;
+    /** OPE-764 — resolved once at ingest, spread into the row. */
+    senderIdentity: SenderIdentityColumns;
     message: import("@cloudflare/workers-types").ForwardableEmailMessage;
     parsed: Email;
     attachmentCount: number;
@@ -1654,6 +1735,7 @@ export async function insertSpamAuditRow(
     bodyTextStored,
     bodyHtmlStored,
     senderSignals,
+    senderIdentity,
     message,
     parsed,
     attachmentCount,
@@ -1677,6 +1759,7 @@ export async function insertSpamAuditRow(
         bodyText: bodyTextStored,
         bodyHtml: bodyHtmlStored,
         ...senderSignals,
+        ...senderIdentity,
         parsedUrl: null,
         attachmentCount,
         rawSize: message.rawSize,
@@ -1746,6 +1829,8 @@ export async function insertAuditNoopRow(
     bodyHtmlStored: string | null;
     /** OPE-763 — same object, same reason: a spread cannot be half-applied. */
     senderSignals: SenderSignals;
+    /** OPE-764 — likewise. */
+    senderIdentity: SenderIdentityColumns;
     attachmentCount: number;
     rawSize: number | null;
     messageId: string | null;
@@ -1769,6 +1854,7 @@ export async function insertAuditNoopRow(
       bodyText: args.bodyTextStored,
       bodyHtml: args.bodyHtmlStored,
       ...args.senderSignals,
+      ...args.senderIdentity,
       parsedUrl: null,
       attachmentCount: args.attachmentCount,
       rawSize: args.rawSize,
