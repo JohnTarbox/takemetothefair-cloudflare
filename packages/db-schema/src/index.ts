@@ -1781,7 +1781,31 @@ export const eventApplications = sqliteTable(
     /** For routes that are an email address, not a page. */
     contactEmail: text("contact_email"),
     notes: text("notes"),
-    /** Epoch seconds, or NULL for "not confirmed". NEVER defaulted. */
+    /**
+     * Epoch seconds, or NULL for "not confirmed". NEVER defaulted.
+     *
+     * ── The `closes_at` contract (OPE-750, decided 2026-09-02) ──────────────
+     *
+     * `closes_at` is an INSTANT: the last moment an entry is accepted. The
+     * stored convention is **23:59:59 in `VENUE_TZ`** on the date the organizer
+     * published — which lands at `03:59:59Z` the following day in EDT. 74 of
+     * the 74 live `exhibitor_competition` rows already hold exactly that.
+     *
+     * It is NOT the noon-UTC anchor used by `events.start_date` /
+     * `events.application_deadline` (OPE-307). That anchor is correct for a
+     * value meaning "a calendar DAY" and wrong for one meaning "a deadline",
+     * because an instant comparison against a noon anchor marks entries closed
+     * at 08:00 ET on the closing morning — sixteen hours early, in the
+     * direction that costs someone their entry. drizzle/0257 backfilled
+     * `events.application_deadline` straight into this column and so imported
+     * nine noon/UTC-anchored rows; drizzle/0258 re-anchored them.
+     *
+     * ⚠️ Readers must NOT lean on the stored time-of-day being correct.
+     * `bucketEntryDeadline` decides open-vs-closed with `hasCalendarDayPassed`
+     * precisely so a fourth convention arriving from some future writer is
+     * harmless rather than silently early. Normalising the data and hardening
+     * the reader are both required; neither alone survives the next writer.
+     */
     opensAt: integer("opens_at", { mode: "timestamp" }),
     closesAt: integer("closes_at", { mode: "timestamp" }),
     createdAt: integer("created_at", { mode: "timestamp" })

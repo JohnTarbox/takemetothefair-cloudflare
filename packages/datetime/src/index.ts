@@ -369,9 +369,15 @@ export function hasCalendarDayPassed(date: Date, now: Date, tz: string = VENUE_T
 // ── Formatters ─────────────────────────────────────────────────────
 
 /**
- * Date-only display, e.g. "Sat, Apr 30, 2026". Renders in UTC because event
- * dates are stored as midnight UTC. No timezone label — date-only fields
- * don't carry meaningful tz semantics.
+ * Date-only display, e.g. "Sat, Apr 30, 2026". Renders in `VENUE_TZ`, without
+ * a timezone label — date-only fields don't carry meaningful tz semantics.
+ *
+ * ⚠️ This comment read "Renders in UTC because event dates are stored as
+ * midnight UTC" until OPE-750. BOTH halves were false: the default `tz`
+ * parameter has been `VENUE_TZ` since the OPE-482 render-policy change, and
+ * event dates are anchored at NOON UTC, not midnight (drizzle/0232 re-anchored
+ * the legacy rows). It is corrected here because a reader who believed it
+ * would "fix" a correct Eastern render by passing `"UTC"` explicitly.
  *
  * Optional `locale` for venue-specific display (e.g. "sam. 30 avr. 2026"
  * with `"fr-CA"`). Defaults to `"en-US"` for backward compatibility.
@@ -420,7 +426,8 @@ export function formatDateRange(
 }
 
 /**
- * Date-only display without weekday, e.g. "Apr 30, 2026". UTC-anchored.
+ * Date-only display without weekday, e.g. "Apr 30, 2026". Renders in `VENUE_TZ`
+ * (see `formatDateOnly` — the "UTC-anchored" note here was stale).
  * Use when the weekday is noise — compact card metadata, table rows,
  * deadline labels, blog publish dates. Existing call sites previously
  * stripped the weekday from `formatDateOnly` output via regex; this is the
@@ -445,7 +452,8 @@ export function formatDateMedium(
 }
 
 /**
- * Date-only display with long month name, e.g. "April 30, 2026". UTC-anchored.
+ * Date-only display with long month name, e.g. "April 30, 2026". Renders in `VENUE_TZ`
+ * (see `formatDateOnly` — the "UTC-anchored" note here was stale).
  * Use for marketing-style display (blog post bylines, hero metadata).
  *
  * Optional `locale` — see `formatDateOnly`.
@@ -467,7 +475,8 @@ export function formatDateLong(
 }
 
 /**
- * Compact date display without year, e.g. "Apr 30". UTC-anchored.
+ * Compact date display without year, e.g. "Apr 30". Renders in `VENUE_TZ`
+ * (see `formatDateOnly` — the "UTC-anchored" note here was stale).
  * Use for near-term chips/badges where the year is implied (the deadline
  * chip on event cards: "Applies by Apr 30").
  *
@@ -489,7 +498,8 @@ export function formatDateShort(
 }
 
 /**
- * Month abbreviation only, e.g. "Apr". UTC-anchored.
+ * Month abbreviation only, e.g. "Apr". Renders in `VENUE_TZ`
+ * (see `formatDateOnly` — the "UTC-anchored" note here was stale).
  * Use for calendar-style badges where the day number is rendered as a
  * separate visual element (e.g. event-card date badge: month on top,
  * day-of-month below).
