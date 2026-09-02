@@ -183,7 +183,17 @@ export function registerInboundReadTools(
       // it. The row is what the operator came for; the briefing is an aid.
       let briefing: Awaited<ReturnType<typeof buildVendorInquiryBriefing>> | null = null;
       let briefingError: string | null = null;
-      if (row.intent === "vendor_inquiry") {
+      // OPE-764 scope 4 — the briefing runs on EVERY intent, not just
+      // `vendor_inquiry`.
+      //
+      // OPE-604 scoped it to `vendor_inquiry`, which is 5 emails in the entire
+      // record. The five correspondents whose cases motivated OPE-764 were
+      // `correction`, `support` and `claim_request` — the intents where the
+      // value actually is, and precisely the ones the narrow scope excluded.
+      // The assembly is intent-agnostic: it looks up the sender, the event the
+      // subject names, and what we already sent them, and every intent's
+      // operator needs those.
+      if (row.intent !== null) {
         try {
           briefing = await buildVendorInquiryBriefing(db, {
             id: row.id,
@@ -207,11 +217,13 @@ export function registerInboundReadTools(
             subject: row.subject,
             intent: row.intent,
             status: row.status,
-            // OPE-604. Present only for `vendor_inquiry`; null elsewhere so a
-            // consumer can tell "not applicable" from "assembly failed".
+            // OPE-604, widened to every intent by OPE-764 scope 4. Null only
+            // when the row has no classified intent at all, so a consumer can
+            // still tell "not applicable" from "assembly failed" (which sets
+            // `vendor_inquiry_briefing_error`).
             vendor_inquiry_briefing: briefing,
             ...(briefingError ? { vendor_inquiry_briefing_error: briefingError } : {}),
-            ...(row.intent === "vendor_inquiry"
+            ...(row.intent !== null
               ? {
                   vendor_inquiry_briefing_note:
                     "Assembled inputs only — NO reply prose is generated here, deliberately (OPE-604). Read `warnings` before quoting any date or figure to the sender: a `dates_confirmed=true with 0 active citations` row asserts dates nothing supports.",
@@ -239,6 +251,24 @@ export function registerInboundReadTools(
             reply_to: row.replyTo,
             return_path: row.returnPath,
             sending_host: row.sendingHost,
+            /**
+             * OPE-764 — who this sender resolves to in our own data.
+             *
+             * `matched_entities` is the answer and carries EVERY match;
+             * the scalars are the highest-confidence one. `portal.ct.gov`
+             * legitimately matches two CT DEEP vendor rows, and reporting one
+             * of them as "the" match would be a fabrication dressed as a
+             * result.
+             */
+            matched_entities: safeJson<unknown[]>(row.matchedEntities, []),
+            matched_entity_type: row.matchedEntityType,
+            matched_entity_id: row.matchedEntityId,
+            match_basis: row.matchBasis,
+            match_confidence: row.matchConfidence,
+            match_note:
+              row.matchBasis === null
+                ? "NULL — this row predates OPE-764 resolution (drizzle/0260). Not backfilled by design: resolution reflects the entity graph AT RECEIPT, and stamping today's graph onto an older row would record a match that did not exist when the person wrote."
+                : "Report-only — nothing routes, blocks, sends or changes trust on this. `confidence` is ORDINAL (contact-email 1 > website-domain 0.7 > brand-name 0.4), NOT a probability. Do NOT quote a matched record back to the sender unchecked: 90.7% of live events claim confirmed dates with no citation.",
             sender_auth_note:
               row.senderAuth === null
                 ? "NULL — this row predates OPE-763 capture (drizzle/0259). Not recoverable; the headers were never stored."
@@ -513,6 +543,12 @@ export function registerInboundReadTools(
           // rather than that the message failed.
           senderAuth: inboundEmails.senderAuth,
           fromDisplayName: inboundEmails.fromDisplayName,
+          // OPE-764 — the recognition answer in a list view: WAS this sender
+          // somebody we already hold, and on what evidence. The full match
+          // array stays on the detail read.
+          matchBasis: inboundEmails.matchBasis,
+          matchedEntityType: inboundEmails.matchedEntityType,
+          matchedEntityId: inboundEmails.matchedEntityId,
           attachmentCount: inboundEmails.attachmentCount,
           attachmentOcr: inboundEmails.attachmentOcr,
           resultingEventId: inboundEmails.resultingEventId,
