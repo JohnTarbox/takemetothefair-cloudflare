@@ -115,16 +115,6 @@ export function registerInboundReadTools(
             .limit(1)
         : [];
 
-      // OPE-604 — on a `vendor_inquiry`, assemble the answer's inputs.
-      //
-      // Attached to the READ rather than left to the operator because the six
-      // lookups are the same every time and three of them are invisible from
-      // /admin: whether the event's dates are supported by anything, whether
-      // the sender is already a vendor under a differently-spaced name, and
-      // what we already sent them.
-      //
-      // Fail-soft: a briefing that throws must not take the email read with
-      // it. The row is what the operator came for; the briefing is an aid.
       // OPE-761 scope 5 — "was this auto-acked?" answered here, not by a
       // second query.
       //
@@ -181,6 +171,16 @@ export function registerInboundReadTools(
         acknowledgment = null;
       }
 
+      // OPE-604 — on a `vendor_inquiry`, assemble the answer's inputs.
+      //
+      // Attached to the READ rather than left to the operator because the six
+      // lookups are the same every time and three of them are invisible from
+      // /admin: whether the event's dates are supported by anything, whether
+      // the sender is already a vendor under a differently-spaced name, and
+      // what we already sent them.
+      //
+      // Fail-soft: a briefing that throws must not take the email read with
+      // it. The row is what the operator came for; the briefing is an aid.
       let briefing: Awaited<ReturnType<typeof buildVendorInquiryBriefing>> | null = null;
       let briefingError: string | null = null;
       if (row.intent === "vendor_inquiry") {
