@@ -30,6 +30,10 @@ describe("insertAuditNoopRow — terminal write", () => {
       toAddr: "submit@meetmeatthefair.com",
       subject: "We mentioned your fair on our blog",
       bodyTextExcerpt: "audit copy body",
+      // OPE-762 — now required. The existing call sites all had these in scope;
+      // making them required is what makes the compiler catch the next caller.
+      bodyTextStored: "audit copy body, in full",
+      bodyHtmlStored: null,
       attachmentCount: 0,
       rawSize: 1234,
       messageId: "<audit-1@meetmeatthefair.com>",
@@ -61,6 +65,8 @@ describe("insertAuditNoopRow — terminal write", () => {
       toAddr: "submit@meetmeatthefair.com",
       subject: "dup",
       bodyTextExcerpt: "",
+      bodyTextStored: null,
+      bodyHtmlStored: null,
       attachmentCount: 0,
       rawSize: 10,
       messageId: "<same@meetmeatthefair.com>",
@@ -135,6 +141,8 @@ describe("salvage-candidate count — audit/system exclusion (OPE-17 triage queu
       toAddr: "submit@meetmeatthefair.com",
       subject: "x",
       bodyTextExcerpt: "",
+      bodyTextStored: null,
+      bodyHtmlStored: null,
       attachmentCount: 0,
       rawSize: 1,
       messageId: null,

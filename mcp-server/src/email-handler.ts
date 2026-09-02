@@ -214,6 +214,8 @@ export async function handleInboundEmail(
           toAddr,
           subject,
           bodyTextExcerpt,
+          bodyTextStored,
+          bodyHtmlStored,
           attachmentCount,
           rawSize: message.rawSize,
           messageId: (parsed.messageId || "").trim() || null,
@@ -417,6 +419,8 @@ export async function handleInboundEmail(
               toAddr,
               subject,
               bodyTextExcerpt,
+              bodyTextStored,
+              bodyHtmlStored,
               attachmentCount,
               rawSize: message.rawSize,
               messageId: (parsed.messageId || "").trim() || null,
@@ -493,13 +497,15 @@ export async function handleInboundEmail(
     //    no workflow create, no auto-reply. Mirrors the rate-limit
     //    silent-drop pattern above.
     if (routing.spamQuarantine) {
-      await insertSpamAuditRow({
+      await insertSpamAuditRow(getDb(env.DB), {
         env,
         sessionId,
         fromAddr,
         toAddr,
         subject,
         bodyTextExcerpt,
+        bodyTextStored,
+        bodyHtmlStored,
         message,
         parsed,
         attachmentCount,
@@ -1508,18 +1514,42 @@ function buildRoutedEntry(
 /** Persist the audit row for a spam-quarantined message. Mirrors the
  *  normal INSERT path but writes intent='spam', skips forward, skips
  *  workflow create. */
-async function insertSpamAuditRow(args: {
-  env: EmailHandlerEnv;
-  sessionId: string;
-  fromAddr: string;
-  toAddr: string;
-  subject: string;
-  bodyTextExcerpt: string;
-  message: import("@cloudflare/workers-types").ForwardableEmailMessage;
-  parsed: Email;
-  attachmentCount: number;
-  routing: RoutingDecision;
-}): Promise<void> {
+export async function insertSpamAuditRow(
+  // OPE-762 — takes a `db` like its sibling `insertAuditNoopRow`, rather than
+  // building one from `env.DB` internally. The docblock has always claimed the
+  // two mirror each other; they did not, and the drift is why one of them grew
+  // the body columns and the other did not. `env` stays for error logging only.
+  db: Db,
+  args: {
+    env: EmailHandlerEnv;
+    sessionId: string;
+    fromAddr: string;
+    toAddr: string;
+    subject: string;
+    bodyTextExcerpt: string;
+    /**
+     * OPE-762 — the full stored body, on the SPAM path too.
+     *
+     * These two were simply absent from this insert. The values are computed at
+     * the top of `email()` and were already in scope at the call site; nobody
+     * passed them. OPE-156 added `body_text`/`body_html` to the main insert and
+     * the two terminal audit inserts that "mirror" it were not updated — the
+     * divergence a mirror comment invites.
+     *
+     * Effect measured in prod 2026-09-02: 14 of 14 `intent='spam'` rows since
+     * 2026-07-01 have NULL for both columns. 100%, not a sample. So a spam
+     * misclassification destroys its own evidence in the same transaction as it
+     * is made, and the classifier's accuracy is not merely unmeasured but
+     * unmeasurable — the cases most worth reviewing are exactly the ones erased.
+     */
+    bodyTextStored: string | null;
+    bodyHtmlStored: string | null;
+    message: import("@cloudflare/workers-types").ForwardableEmailMessage;
+    parsed: Email;
+    attachmentCount: number;
+    routing: RoutingDecision;
+  }
+): Promise<void> {
   const {
     env,
     sessionId,
@@ -1527,6 +1557,8 @@ async function insertSpamAuditRow(args: {
     toAddr,
     subject,
     bodyTextExcerpt,
+    bodyTextStored,
+    bodyHtmlStored,
     message,
     parsed,
     attachmentCount,
@@ -1535,7 +1567,6 @@ async function insertSpamAuditRow(args: {
   const now = new Date();
   const messageId = (parsed.messageId || "").trim() || null;
   try {
-    const db = getDb(env.DB);
     await db
       .insert(inboundEmails)
       .values({
@@ -1548,6 +1579,8 @@ async function insertSpamAuditRow(args: {
         status: "forwarded",
         workflowInstanceId: null,
         bodyTextExcerpt: bodyTextExcerpt || null,
+        bodyText: bodyTextStored,
+        bodyHtml: bodyHtmlStored,
         parsedUrl: null,
         attachmentCount,
         rawSize: message.rawSize,
@@ -1600,6 +1633,21 @@ export async function insertAuditNoopRow(
     toAddr: string;
     subject: string;
     bodyTextExcerpt: string;
+    /**
+     * OPE-762 — scope 1 says "every inbound row regardless of classified
+     * intent", and this terminal path is an inbound row. It carried the same
+     * omission as the spam path for the same reason (both "mirror" the main
+     * insert, which grew the columns later).
+     *
+     * REQUIRED, not optional. Both existing callers already have these values
+     * in scope (computed near the top of `email()`), so requiring them costs
+     * nothing today and makes the compiler — rather than a reviewer — the thing
+     * that catches the third caller. An optional field with `?? null` would
+     * have reproduced this ticket exactly: silently absent, indistinguishable
+     * from a message that genuinely had no body.
+     */
+    bodyTextStored: string | null;
+    bodyHtmlStored: string | null;
     attachmentCount: number;
     rawSize: number | null;
     messageId: string | null;
@@ -1620,6 +1668,8 @@ export async function insertAuditNoopRow(
       status: "audit-noop",
       workflowInstanceId: null,
       bodyTextExcerpt: args.bodyTextExcerpt || null,
+      bodyText: args.bodyTextStored,
+      bodyHtml: args.bodyHtmlStored,
       parsedUrl: null,
       attachmentCount: args.attachmentCount,
       rawSize: args.rawSize,
