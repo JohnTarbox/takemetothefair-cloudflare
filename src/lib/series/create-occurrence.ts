@@ -16,6 +16,7 @@ import {
   type SeriesRow,
   type OccurrenceOverrides,
 } from "./create-occurrence-core";
+import { raiseHoursReviewFlag } from "@/lib/events/hours-review-flag";
 
 type Db = Database;
 
@@ -104,6 +105,10 @@ async function attachDateAsEventDay(
     date: dateKey,
     createdAt: now,
   });
+  // OPE-759 — a day inserted with no hours at all. This writer never raised
+  // the hours flag, so a series occurrence built date-by-date stayed unflagged
+  // however many hourless days it accumulated.
+  await raiseHoursReviewFlag(db, occurrenceId);
   await db
     .update(events)
     .set({

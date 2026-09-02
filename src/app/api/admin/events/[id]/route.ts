@@ -28,6 +28,7 @@ import { evaluateGates, mirroredFieldsChanged, nextGateFlags } from "@takemetoth
 import { eventSyndicationStatements } from "@/lib/syndication/outbox";
 import { enqueueSyndicationChange } from "@/lib/queues/producers";
 import { repairBlogLinksForSlugChange } from "@/lib/content-links-sync";
+import { raiseHoursReviewFlag } from "@/lib/events/hours-review-flag";
 
 const PUBLIC_EVENT_SET = new Set<string>(PUBLIC_EVENT_STATUSES);
 
@@ -521,6 +522,18 @@ export const PATCH = withAuth<{ id: string }>(
         // whole batch; convert to a friendly 409. Any other failure rolls back
         // every statement above and falls through to the outer catch.
         await db.batch(batchStatements as unknown as Parameters<typeof db.batch>[0]);
+
+        // OPE-759 — this route REPLACES the whole day set (delete + re-insert),
+        // so the hours axis has to be re-derived after the batch commits rather
+        // than inside it: the count must see the finished set, and a statement
+        // inside the batch would read the pre-delete rows.
+        //
+        // Only when days were actually touched. `data.eventDays === undefined`
+        // means this request was about something else entirely, and re-deriving
+        // then would raise the flag on an event nobody edited the hours of.
+        if (data.eventDays !== undefined) {
+          await raiseHoursReviewFlag(db, id);
+        }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         if (msg.includes("UNIQUE constraint failed: events.slug")) {
