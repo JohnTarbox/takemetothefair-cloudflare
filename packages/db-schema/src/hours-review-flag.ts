@@ -35,7 +35,7 @@
  * have fixed the specimen and left all seven exactly as they were.
  */
 import { isNull, or, sql, type SQL } from "drizzle-orm";
-import { eventDays } from "./index.js";
+import { eventDays } from "./index";
 
 /** A day whose hours are not fully known. */
 export function hoursUnknownWhere(): SQL {

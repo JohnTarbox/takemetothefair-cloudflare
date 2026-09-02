@@ -522,18 +522,6 @@ export const PATCH = withAuth<{ id: string }>(
         // whole batch; convert to a friendly 409. Any other failure rolls back
         // every statement above and falls through to the outer catch.
         await db.batch(batchStatements as unknown as Parameters<typeof db.batch>[0]);
-
-        // OPE-759 — this route REPLACES the whole day set (delete + re-insert),
-        // so the hours axis has to be re-derived after the batch commits rather
-        // than inside it: the count must see the finished set, and a statement
-        // inside the batch would read the pre-delete rows.
-        //
-        // Only when days were actually touched. `data.eventDays === undefined`
-        // means this request was about something else entirely, and re-deriving
-        // then would raise the flag on an event nobody edited the hours of.
-        if (data.eventDays !== undefined) {
-          await raiseHoursReviewFlag(db, id);
-        }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         if (msg.includes("UNIQUE constraint failed: events.slug")) {
@@ -562,6 +550,24 @@ export const PATCH = withAuth<{ id: string }>(
             after: { date: r.date, openTime: r.openTime, closeTime: r.closeTime },
             note: `admin day-set replace on event ${id}`,
           });
+        }
+
+        // OPE-759 — re-derive the hours flag once the day set is final.
+        //
+        // Placed AFTER the audit above, and inside the same `data.eventDays`
+        // guard, for two reasons: the count must see the committed set, and
+        // nothing may sit between the `eventDays` write and its audit evidence
+        // — the OPE-433 guard scans a 1600-character window for it, and an
+        // earlier placement of this block pushed `recordMutation` out of range
+        // and failed CI on a rule this route has always satisfied.
+        //
+        // Non-fatal: the flag is an internal review signal, the save is already
+        // committed, and the next day-write re-derives it. Turning a successful
+        // edit into a 500 over it would be the wrong trade.
+        try {
+          await raiseHoursReviewFlag(db, id);
+        } catch (flagErr) {
+          console.error("[OPE-759] hours-review flag update failed", { eventId: id, flagErr });
         }
       }
 
