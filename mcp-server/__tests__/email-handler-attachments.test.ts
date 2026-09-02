@@ -69,7 +69,13 @@ describe("captureAttachments — media selection + refs", () => {
     const pdf = refs.find((r) => r.mimeType === "application/pdf") as AttachmentRef;
     expect(pdf.key).toBe("inbound-attachments/grp1/1-flyer.pdf");
     // Content-Type is carried into R2 metadata so the OCR step can read it back.
-    expect(puts[0].contentType).toBe("image/png");
+    //
+    // Looked up by key rather than by position: OPE-760 ranks attachments by
+    // payload value before storing, so the PUT ORDER is deliberately no longer
+    // arrival order. What this test is actually about is that the metadata
+    // travels with the object, and that is unchanged.
+    const pngPut = puts.find((p) => p.key === png.key);
+    expect(pngPut?.contentType).toBe("image/png");
     // Nothing was dropped, and the record says so positively rather than by
     // the absence of evidence.
     expect(skipped).toEqual([]);
@@ -135,6 +141,10 @@ describe("captureAttachments — media selection + refs", () => {
         mimeType: "image/png",
         size: 10 * 1024 * 1024 + 1,
         reason: "too-large",
+        // OPE-760 — every skip now records whether it was signature furniture,
+        // so a monitor can be silent about a dropped icon and loud about a
+        // dropped poster. A 10 MB PNG is emphatically not furniture.
+        furniture: false,
       },
     ]);
   });
@@ -152,7 +162,14 @@ describe("captureAttachments — best-effort isolation", () => {
     // A put failure is the one reason here that is unambiguously a fault
     // rather than a policy decision, so it must never be silent.
     expect(skipped).toEqual([
-      { index: 0, name: "poster.png", mimeType: "image/png", size: 200, reason: "put-failed" },
+      {
+        index: 0,
+        name: "poster.png",
+        mimeType: "image/png",
+        size: 200,
+        reason: "put-failed",
+        furniture: false, // OPE-760 — a plain attachment, not signature furniture.
+      },
     ]);
   });
 

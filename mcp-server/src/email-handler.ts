@@ -142,7 +142,20 @@ const SOURCE = "mcp:email-handler";
 // and a total-count ceiling (only the first N image/PDF attachments) so a
 // pathological many-attachment message can't blow the receive-time budget.
 const ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024; // 10 MB per attachment
-const ATTACHMENT_MAX_COUNT = 5; // first 5 image/PDF attachments
+const ATTACHMENT_MAX_COUNT = 5; // payload image/PDF attachments per email
+/**
+ * OPE-760 — separate, smaller quota for signature furniture.
+ *
+ * Furniture no longer competes with real files for the main cap. It keeps a
+ * small allowance of its own so an admin viewing the message still sees the
+ * sender's branding, without six social icons costing a poster its slot.
+ *
+ * ⚠️ NOT shared with OPE-459's URL cap. That was worth checking and the answer
+ * is no: this file's `ATTACHMENT_MAX_COUNT` is the only definition, and the
+ * URL-side cap OPE-459 describes lives elsewhere. Two coincidental fives, not
+ * one constant — so fixing this one does not fix that one.
+ */
+const ATTACHMENT_MAX_FURNITURE = 2;
 
 // ---------------------------------------------------------------------------
 // Entry point — wired from src/index.ts default export
@@ -978,6 +991,62 @@ interface CapturableAttachment {
   filename: string | null;
   mimeType: string;
   content: ArrayBuffer | Uint8Array | string;
+  /**
+   * OPE-760 — the signals that make the cap content-aware.
+   *
+   * These were the actual defect. PostalMime supplies `contentId`,
+   * `disposition` and `related` on every attachment, and this interface threw
+   * all three away — so `captureAttachments` COULD NOT tell a 600-byte
+   * LinkedIn icon from a 900 KB poster even in principle, and fell back to
+   * arrival order. The cap was not content-blind by choice; it was blind
+   * because the type it operates on is.
+   *
+   * Optional so existing callers keep compiling; absent simply means "no
+   * signal", which classifies as payload — the safe direction, since a
+   * misclassified payload is merely stored, while a misclassified poster is
+   * lost.
+   */
+  contentId?: string;
+  disposition?: "attachment" | "inline" | null;
+  related?: boolean;
+}
+
+/**
+ * Largest an inline, `cid:`-referenced image can be and still be assumed to be
+ * signature furniture rather than a payload.
+ *
+ * 64 KB. The observed specimen (inbound `ce16f4a1`, jeremy.hall@ct.gov) is the
+ * calibration: four social icons at 498–713 B, a LinkedIn icon at 1,083 B, and
+ * a CT DEEP logo at 24,897 B — all six `cid:`-referenced Outlook signature
+ * graphics. 64 KB clears the logo with room to spare.
+ *
+ * Deliberately generous, and the asymmetry is why: a poster misread as
+ * furniture is only DEPRIORITISED, never discarded, because furniture has its
+ * own quota below. A payload misread the other way costs a slot. So the
+ * threshold errs toward calling small inline images furniture.
+ */
+const SIGNATURE_MAX_BYTES = 64 * 1024;
+
+/**
+ * Is this attachment signature furniture rather than something the sender
+ * meant to send us?
+ *
+ * Two signals, BOTH required: it is referenced from the body (`cid:` /
+ * `inline` / `related`) AND it is small. Either alone is wrong — a fair
+ * routinely embeds its poster inline, and plenty of real files are small.
+ *
+ * Pure, and exported, so the classification can be tested against the real
+ * specimen without a mailbox.
+ */
+export function isSignatureFurniture(
+  a: Pick<CapturableAttachment, "mimeType" | "contentId" | "disposition" | "related">,
+  sizeBytes: number
+): boolean {
+  const mime = (a.mimeType || "").toLowerCase();
+  // A PDF is never signature furniture, whatever its disposition says.
+  if (!mime.startsWith("image/")) return false;
+  const embedded = !!a.contentId || a.disposition === "inline" || a.related === true;
+  return embedded && sizeBytes > 0 && sizeBytes <= SIGNATURE_MAX_BYTES;
 }
 
 /** Filesystem-safe attachment name for the R2 key. Collapses anything that
@@ -1036,6 +1105,22 @@ export interface AttachmentSkip {
   mimeType: string;
   size: number;
   reason: AttachmentSkipReason;
+  /**
+   * OPE-760 — was this skip signature furniture rather than something the
+   * sender meant to send?
+   *
+   * Recorded at capture time rather than re-derived later, because the signals
+   * that decide it (`contentId`, `disposition`, `related`) exist only on the
+   * live MIME part and are gone by the time anything reads this column.
+   *
+   * It exists so a monitor can be silent about the ordinary case. With a
+   * furniture quota of 2, a six-icon Outlook signature now skips four icons on
+   * EVERY message from that sender — an alert that reported those would be
+   * pure wallpaper within a week, and the one real dropped file would arrive
+   * in a stream nobody reads. Absent means "classified before this field
+   * existed", which is not the same as `false`.
+   */
+  furniture?: boolean;
 }
 
 export interface AttachmentCapture {
@@ -1078,14 +1163,52 @@ export async function captureAttachments(
   const skipped: AttachmentSkip[] = [];
   if (!attachments || attachments.length === 0) return { refs, skipped };
 
+  // ── OPE-760: classify and RANK before the cap applies ───────────────────
+  //
+  // The cap used to fill in arrival order, so six Outlook signature icons
+  // could exhaust it before the sender's actual poster was reached. Observed
+  // on inbound `ce16f4a1` (jeremy.hall@ct.gov): five icons stored, the sixth
+  // skipped `over-count-cap`, and every one of them decorative.
+  //
+  // Nothing of value was lost that time. The defect is that nothing about the
+  // mechanism made that luck rather than design — any correspondent on a
+  // corporate mail system with a branded signature hits it, which is most
+  // organizers, chambers and agencies.
+  //
+  // Ordering, not filtering: furniture keeps its own quota and its own place in
+  // the list, so a MISCLASSIFIED payload is merely later, never dropped. The
+  // original arrival index travels with every ref and skip, so this reorder is
+  // invisible to anything that keyed on it.
+  const ordered = attachments
+    .map((a, index) => {
+      const bytes = attachmentBytes(a.content);
+      const size = bytes?.byteLength ?? 0;
+      return { a, index, bytes, size, furniture: isSignatureFurniture(a, size) };
+    })
+    .sort((x, y) => {
+      // Payload before furniture; then largest first, because between two
+      // genuine attachments the bigger one is likelier to be the poster or the
+      // roster rather than a second logo.
+      if (x.furniture !== y.furniture) return x.furniture ? 1 : -1;
+      if (y.size !== x.size) return y.size - x.size;
+      return x.index - y.index;
+    });
+
   let stored = 0;
-  for (let i = 0; i < attachments.length; i++) {
-    const a = attachments[i];
+  let storedFurniture = 0;
+  for (const item of ordered) {
+    const { a, index: i, bytes } = item;
     const mimeType = a.mimeType || "application/octet-stream";
     const name = sanitizeAttachmentName(a.filename, i);
-    const bytes = attachmentBytes(a.content);
     const note = (reason: AttachmentSkipReason) =>
-      skipped.push({ index: i, name, mimeType, size: bytes?.byteLength ?? 0, reason });
+      skipped.push({
+        index: i,
+        name,
+        mimeType,
+        size: bytes?.byteLength ?? 0,
+        reason,
+        furniture: item.furniture,
+      });
 
     // No bucket binding (tests / non-R2 envs): nothing can be stored, but the
     // sender still sent these, so they are reported rather than vanishing.
@@ -1093,10 +1216,17 @@ export async function captureAttachments(
       note("put-failed");
       continue;
     }
-    if (stored >= ATTACHMENT_MAX_COUNT) {
-      note("over-count-cap");
-      continue;
-    }
+    // ⚠️ ORDER MATTERS, and it changed with OPE-760's reorder.
+    //
+    // The count cap now runs LAST of the filters, after type / empty / size.
+    // Before the reorder it ran first and got away with it, because arrival
+    // order happened to put a non-media part ahead of the media that filled
+    // the cap. Ranking by size broke that coincidence: a 10-byte .ics sorted
+    // to the end and came back `over-count-cap` instead of `unsupported-type`,
+    // which is a worse diagnosis of the same event — it blames a quota for a
+    // part that could never have been stored under any quota.
+    //
+    // Only a thing we would otherwise KEEP may consume or be refused a slot.
     const mime = mimeType.toLowerCase();
     if (!mime.startsWith("image/") && mime !== "application/pdf") {
       note("unsupported-type");
@@ -1110,11 +1240,22 @@ export async function captureAttachments(
       note("too-large");
       continue;
     }
+    // Two quotas, so furniture cannot consume a payload slot. This is the
+    // whole fix: the acceptance case is "six icons plus one real poster stores
+    // the poster", and it holds because the poster is not furniture and the
+    // icons are not competing for its quota.
+    if (
+      item.furniture ? storedFurniture >= ATTACHMENT_MAX_FURNITURE : stored >= ATTACHMENT_MAX_COUNT
+    ) {
+      note("over-count-cap");
+      continue;
+    }
     const key = `inbound-attachments/${groupId}/${i}-${name}`;
     try {
       await bucket.put(key, bytes, { httpMetadata: { contentType: mimeType } });
       refs.push({ key, name, mimeType, size: bytes.byteLength });
-      stored++;
+      if (item.furniture) storedFurniture++;
+      else stored++;
     } catch {
       // A failed put for one attachment must not block the others or the
       // ingestion flow — but it is now recorded rather than swallowed.

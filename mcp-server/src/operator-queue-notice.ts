@@ -118,6 +118,16 @@ export interface OperatorQueueCounts {
    * an answer.
    */
   agedAwaitingDecision: number;
+  /**
+   * OPE-760 — inbound emails in the last 7 days where a NON-furniture
+   * attachment was dropped by the count cap. A file the sender meant to send
+   * and we did not keep.
+   *
+   * Like the ungated-reply line this is an INVARIANT, not a work queue: it
+   * should be zero, and a non-zero value means data was lost, not that
+   * somebody has not got to it yet.
+   */
+  droppedRealAttachments: number;
   /** Oldest waiting row in either queue, in days. */
   oldestDays: number;
   /** Human-readable lines for the alert body. */
@@ -139,6 +149,7 @@ export function decideOperatorQueueNotice(
     | "ungatedReplies"
     | "pendingOperatorDrafts"
     | "agedAwaitingDecision"
+    | "droppedRealAttachments"
   >,
   alreadySentToday: boolean
 ): boolean {
@@ -164,6 +175,7 @@ export function totalWaiting(
     | "ungatedReplies"
     | "pendingOperatorDrafts"
     | "agedAwaitingDecision"
+    | "droppedRealAttachments"
   >
 ): number {
   // `?? 0` per term is not defensive clutter — it is load-bearing, and adding
@@ -186,7 +198,8 @@ export function totalWaiting(
     // carries `?? 0` like every other: a term omitted at an untypechecked test
     // call site makes the sum NaN, and `NaN <= 0` is false, so the notice fires
     // on a completely empty queue.
-    (counts.agedAwaitingDecision ?? 0)
+    (counts.agedAwaitingDecision ?? 0) +
+    (counts.droppedRealAttachments ?? 0)
   );
 }
 
@@ -409,6 +422,51 @@ export async function readOperatorQueues(
     });
   }
 
+  // OPE-760 — a real attachment dropped by the count cap.
+  //
+  // Filtered to NON-furniture deliberately. With a furniture quota of 2, a
+  // six-icon Outlook signature skips four icons on every message from that
+  // sender; reporting those would be wallpaper inside a week, and the one real
+  // dropped file would arrive in a stream nobody reads.
+  //
+  // Measured over all history 2026-09-02: ONE row has any skip at all — the
+  // specimen — against 94 rows carrying attachments. So the expected steady
+  // state is zero, which is what makes a non-zero worth an email.
+  let droppedRealAttachments = 0;
+  try {
+    const recent = await db
+      .select({ id: inboundEmails.id, skips: inboundEmails.attachmentSkips })
+      .from(inboundEmails)
+      .where(
+        and(
+          gte(inboundEmails.receivedAt, new Date(now.getTime() - 7 * 24 * 3600_000)),
+          sql`${inboundEmails.attachmentSkips} IS NOT NULL AND ${inboundEmails.attachmentSkips} <> '[]'`
+        )
+      );
+    for (const r of recent) {
+      let parsed: Array<{ name?: string; reason?: string; furniture?: boolean; size?: number }> =
+        [];
+      try {
+        parsed = JSON.parse(r.skips ?? "[]");
+      } catch {
+        continue;
+      }
+      // `furniture === true` is the only thing that suppresses. An older row
+      // where the field is ABSENT is reported — it predates the classifier, and
+      // "we do not know" must not read as "it was only an icon".
+      const real = parsed.filter((k) => k.reason === "over-count-cap" && k.furniture !== true);
+      if (real.length > 0) {
+        droppedRealAttachments += real.length;
+        lines.push(
+          `⚠️ ${real.length} real attachment(s) dropped by the count cap on inbound ${r.id} — ` +
+            `${real.map((k) => k.name ?? "(unnamed)").join(", ")} (OPE-760)`
+        );
+      }
+    }
+  } catch {
+    // Observability must not take the notice down with it.
+  }
+
   return {
     agedClaims: claims.length,
     agedReplies: replies.length,
@@ -416,6 +474,7 @@ export async function readOperatorQueues(
     ungatedReplies,
     pendingOperatorDrafts,
     agedAwaitingDecision,
+    droppedRealAttachments,
     oldestDays: Math.floor(oldestMs / 86400_000),
     lines,
   };
