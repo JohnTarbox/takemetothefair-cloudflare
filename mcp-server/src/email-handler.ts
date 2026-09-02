@@ -60,7 +60,12 @@ import {
 } from "./intent-classifier.js";
 import { hasMultiIntentOrSpecialSignal, isReplyToOurThread } from "./intent-fastpath.js";
 import { isDenylistedHost } from "./url-denylist.js";
-import { parseEmailAuth, type EmailAuthVerdict } from "./email-auth.js";
+import {
+  parseEmailAuth,
+  parseEmailAuthDetail,
+  type EmailAuthVerdict,
+  type SenderAuthVerdict,
+} from "./email-auth.js";
 import { isNonActionableSender } from "./email-handlers/audit-sender.js";
 
 // ---------------------------------------------------------------------------
@@ -182,6 +187,8 @@ export async function handleInboundEmail(
     const bodyTextStored = bodyText || null;
     const bodyHtmlStored = bodyHtml ? bodyHtml.slice(0, BODY_STORE_MAX) : null;
     const attachmentCount = parsed.attachments?.length ?? 0;
+    // OPE-763 — computed once here, spread into every insert below.
+    const senderSignals = extractSenderSignals(message.headers, parsed);
 
     if (!fromAddr) {
       await logError(env.DB, {
@@ -216,6 +223,7 @@ export async function handleInboundEmail(
           bodyTextExcerpt,
           bodyTextStored,
           bodyHtmlStored,
+          senderSignals,
           attachmentCount,
           rawSize: message.rawSize,
           messageId: (parsed.messageId || "").trim() || null,
@@ -421,6 +429,7 @@ export async function handleInboundEmail(
               bodyTextExcerpt,
               bodyTextStored,
               bodyHtmlStored,
+              senderSignals,
               attachmentCount,
               rawSize: message.rawSize,
               messageId: (parsed.messageId || "").trim() || null,
@@ -506,6 +515,7 @@ export async function handleInboundEmail(
         bodyTextExcerpt,
         bodyTextStored,
         bodyHtmlStored,
+        senderSignals,
         message,
         parsed,
         attachmentCount,
@@ -661,6 +671,8 @@ export async function handleInboundEmail(
             bodyTextExcerpt: bodyTextExcerpt || null,
             bodyText: bodyTextStored,
             bodyHtml: bodyHtmlStored,
+            // OPE-763 — report-only capture; nothing branches on these.
+            ...senderSignals,
             parsedUrl,
             attachmentCount,
             attachmentRefs: attachmentRefsJson,
@@ -730,6 +742,8 @@ export async function handleInboundEmail(
             bodyTextExcerpt: bodyTextExcerpt || null,
             bodyText: bodyTextStored,
             bodyHtml: bodyHtmlStored,
+            // OPE-763 — report-only capture; nothing branches on these.
+            ...senderSignals,
             parsedUrl: r.refUrl ?? parsedUrl,
             attachmentCount,
             attachmentRefs: attachmentRefsJson,
@@ -1511,6 +1525,84 @@ function buildRoutedEntry(
   };
 }
 
+/**
+ * OPE-763 — every sender-authenticity signal on the message, captured once.
+ *
+ * Returned as ONE object that is spread into every `inbound_emails` insert,
+ * rather than nine fields threaded through four call sites. That shape is the
+ * point: OPE-762 landed the same week because `body_text`/`body_html` were
+ * added to the main insert and the two "mirror" inserts were not updated. Nine
+ * more fields copied by hand into four places would have reproduced it at
+ * scale. A spread cannot be half-applied.
+ *
+ * ⚠️ REPORT-ONLY. Nothing here branches, blocks, routes or sends. The
+ * trusted-sender fast-path still calls `parseEmailAuth` on its own, and that
+ * function is untouched — see the note on `parseEmailAuthDetail`.
+ */
+export interface SenderSignals {
+  authResultsRaw: string | null;
+  spfResult: string | null;
+  dkimResult: string | null;
+  dmarcResult: string | null;
+  senderAuth: SenderAuthVerdict;
+  fromDisplayName: string | null;
+  replyTo: string | null;
+  returnPath: string | null;
+  sendingHost: string | null;
+}
+
+/** Cap on each captured header, so a pathological one cannot bloat the row. */
+const HEADER_STORE_MAX = 2_000;
+
+const clip = (v: string | null | undefined): string | null => {
+  const t = (v ?? "").trim();
+  return t ? t.slice(0, HEADER_STORE_MAX) : null;
+};
+
+export function extractSenderSignals(
+  headers: { get(name: string): string | null } | undefined,
+  parsed: Email
+): SenderSignals {
+  const auth = parseEmailAuthDetail(headers?.get("Authentication-Results"));
+
+  // The LAST `Received` hop is the one closest to the origin in a header block
+  // that reads newest-first, so `parsed.headers` order matters. Take the first
+  // `from <host>` token: on the OPE-763 specimen that is
+  // `PH0PR09MB11424.namprd09.prod.outlook.com`, which is checkable.
+  let sendingHost: string | null = null;
+  const received = parsed.headers?.filter((h) => h.key?.toLowerCase() === "received") ?? [];
+  for (const h of received) {
+    const m = /\bfrom\s+([A-Za-z0-9._-]+\.[A-Za-z]{2,})/i.exec(h.value ?? "");
+    if (m) {
+      sendingHost = m[1].toLowerCase();
+      break;
+    }
+  }
+
+  // `replyTo` is an array and each entry may be a group rather than a mailbox;
+  // `address` is undefined on a group, so filter rather than assume.
+  const replyTo =
+    parsed.replyTo
+      ?.map((a) => ("address" in a ? a.address : null))
+      .filter((a): a is string => !!a)
+      .join(", ") || null;
+
+  return {
+    authResultsRaw: clip(auth.raw),
+    spfResult: auth.spf,
+    dkimResult: auth.dkim,
+    dmarcResult: auth.dmarc,
+    senderAuth: auth.verdict,
+    // Deliberately NOT lowercased and NOT defaulted to the address: a display
+    // name that merely repeats the address is a real, different observation
+    // from having none, and both differ from `"Jeremy Hall" <random@gmail.com>`.
+    fromDisplayName: clip(parsed.from && "name" in parsed.from ? parsed.from.name : null),
+    replyTo: clip(replyTo),
+    returnPath: clip(parsed.returnPath),
+    sendingHost: clip(sendingHost),
+  };
+}
+
 /** Persist the audit row for a spam-quarantined message. Mirrors the
  *  normal INSERT path but writes intent='spam', skips forward, skips
  *  workflow create. */
@@ -1544,6 +1636,8 @@ export async function insertSpamAuditRow(
      */
     bodyTextStored: string | null;
     bodyHtmlStored: string | null;
+    /** OPE-763 — captured once by `extractSenderSignals`, spread into the row. */
+    senderSignals: SenderSignals;
     message: import("@cloudflare/workers-types").ForwardableEmailMessage;
     parsed: Email;
     attachmentCount: number;
@@ -1559,6 +1653,7 @@ export async function insertSpamAuditRow(
     bodyTextExcerpt,
     bodyTextStored,
     bodyHtmlStored,
+    senderSignals,
     message,
     parsed,
     attachmentCount,
@@ -1581,6 +1676,7 @@ export async function insertSpamAuditRow(
         bodyTextExcerpt: bodyTextExcerpt || null,
         bodyText: bodyTextStored,
         bodyHtml: bodyHtmlStored,
+        ...senderSignals,
         parsedUrl: null,
         attachmentCount,
         rawSize: message.rawSize,
@@ -1648,6 +1744,8 @@ export async function insertAuditNoopRow(
      */
     bodyTextStored: string | null;
     bodyHtmlStored: string | null;
+    /** OPE-763 — same object, same reason: a spread cannot be half-applied. */
+    senderSignals: SenderSignals;
     attachmentCount: number;
     rawSize: number | null;
     messageId: string | null;
@@ -1670,6 +1768,7 @@ export async function insertAuditNoopRow(
       bodyTextExcerpt: args.bodyTextExcerpt || null,
       bodyText: args.bodyTextStored,
       bodyHtml: args.bodyHtmlStored,
+      ...args.senderSignals,
       parsedUrl: null,
       attachmentCount: args.attachmentCount,
       rawSize: args.rawSize,

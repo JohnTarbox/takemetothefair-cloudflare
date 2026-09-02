@@ -1107,6 +1107,16 @@ const SCHEMA_SQL = `
     -- OPE-254 (2026-07-18) — drizzle/0162 inbound reply threading headers.
     in_reply_to TEXT,
     email_references TEXT,
+    -- OPE-763 (drizzle/0259) — sender-authenticity capture. Report-only.
+    auth_results_raw TEXT,
+    spf_result TEXT,
+    dkim_result TEXT,
+    dmarc_result TEXT,
+    sender_auth TEXT,
+    from_display_name TEXT,
+    reply_to TEXT,
+    return_path TEXT,
+    sending_host TEXT,
     created_at INTEGER NOT NULL
   );
 
