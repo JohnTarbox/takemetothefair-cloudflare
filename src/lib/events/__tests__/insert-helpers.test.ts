@@ -8,9 +8,20 @@ import {
 
 type Row = Record<string, unknown>;
 
-/** Minimal drizzle-shaped mock that records each `.insert().values(rows)` batch. */
-function mockInsertDb() {
+/**
+ * Minimal drizzle-shaped mock that records each `.insert().values(rows)` batch.
+ *
+ * OPE-759 added `select` and `update`: `insertEventDaysBatched` now re-derives
+ * the hours-review flag after the batch, because this was one of four
+ * `event_days` writers that never maintained it — seven events with every day
+ * hourless sat unflagged as a result.
+ *
+ * `unknownDays` is settable so the flag decision can be asserted rather than
+ * merely tolerated; `flagUpdates` records whether the raise actually fired.
+ */
+function mockInsertDb(opts: { daysChecked?: number; unknownDays?: number } = {}) {
   const batches: Row[][] = [];
+  const flagUpdates: Row[] = [];
   const db = {
     insert: () => ({
       values: (rows: Row[]) => {
@@ -18,8 +29,27 @@ function mockInsertDb() {
         return Promise.resolve();
       },
     }),
+    select: () => ({
+      from: () => ({
+        where: () =>
+          Promise.resolve([
+            {
+              daysChecked: opts.daysChecked ?? 0,
+              unknownDays: opts.unknownDays ?? 0,
+            },
+          ]),
+      }),
+    }),
+    update: () => ({
+      set: (vals: Row) => ({
+        where: () => {
+          flagUpdates.push(vals);
+          return Promise.resolve();
+        },
+      }),
+    }),
   };
-  return { db, batches };
+  return { db, batches, flagUpdates };
 }
 
 /** Minimal drizzle-shaped mock whose select() resolves to the given slugs. */
@@ -118,5 +148,26 @@ describe("resolveUniqueEventSlug", () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const slug = await resolveUniqueEventSlug(db as any, unsafeSlug("acton-fair"));
     expect(slug).toBe("acton-fair-4");
+  });
+});
+
+describe("insertEventDaysBatched — OPE-759 hours flag", () => {
+  it("raises flagged_for_review when a written day lacks hours", async () => {
+    // The defect: this writer inserted days and never touched the flag, so an
+    // 18-date farmers market with no hours at all stayed unflagged.
+    const { db, flagUpdates } = mockInsertDb({ daysChecked: 3, unknownDays: 3 });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await insertEventDaysBatched(db as any, "evt", [day("2026-07-01")] as any);
+    expect(flagUpdates).toHaveLength(1);
+    expect(flagUpdates[0].flaggedForReview).toBe(1);
+  });
+
+  it("LANDMARK: does not raise when every day has hours", async () => {
+    // Without this, a version that raises unconditionally passes the test above
+    // — and would flag all 502 correctly-houred events in the census.
+    const { db, flagUpdates } = mockInsertDb({ daysChecked: 3, unknownDays: 0 });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await insertEventDaysBatched(db as any, "evt", [day("2026-07-01")] as any);
+    expect(flagUpdates).toHaveLength(0);
   });
 });

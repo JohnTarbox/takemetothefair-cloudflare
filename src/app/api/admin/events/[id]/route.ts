@@ -28,6 +28,7 @@ import { evaluateGates, mirroredFieldsChanged, nextGateFlags } from "@takemetoth
 import { eventSyndicationStatements } from "@/lib/syndication/outbox";
 import { enqueueSyndicationChange } from "@/lib/queues/producers";
 import { repairBlogLinksForSlugChange } from "@/lib/content-links-sync";
+import { raiseHoursReviewFlag } from "@/lib/events/hours-review-flag";
 
 const PUBLIC_EVENT_SET = new Set<string>(PUBLIC_EVENT_STATUSES);
 
@@ -549,6 +550,24 @@ export const PATCH = withAuth<{ id: string }>(
             after: { date: r.date, openTime: r.openTime, closeTime: r.closeTime },
             note: `admin day-set replace on event ${id}`,
           });
+        }
+
+        // OPE-759 — re-derive the hours flag once the day set is final.
+        //
+        // Placed AFTER the audit above, and inside the same `data.eventDays`
+        // guard, for two reasons: the count must see the committed set, and
+        // nothing may sit between the `eventDays` write and its audit evidence
+        // — the OPE-433 guard scans a 1600-character window for it, and an
+        // earlier placement of this block pushed `recordMutation` out of range
+        // and failed CI on a rule this route has always satisfied.
+        //
+        // Non-fatal: the flag is an internal review signal, the save is already
+        // committed, and the next day-write re-derives it. Turning a successful
+        // edit into a 500 over it would be the wrong trade.
+        try {
+          await raiseHoursReviewFlag(db, id);
+        } catch (flagErr) {
+          console.error("[OPE-759] hours-review flag update failed", { eventId: id, flagErr });
         }
       }
 

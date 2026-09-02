@@ -20,6 +20,7 @@ import {
   type CitationSourceType,
 } from "@takemetothefair/utils";
 import { findUniqueSlug, getSlugPrefixBounds, unsafeSlug, type Slug } from "@/lib/utils";
+import { raiseHoursReviewFlag } from "@/lib/events/hours-review-flag";
 
 type Db = DrizzleD1Database<typeof schema>;
 
@@ -101,6 +102,12 @@ export async function insertEventDaysBatched(
   for (let i = 0; i < rows.length; i += EVENT_DAYS_BATCH_SIZE) {
     await db.insert(eventDays).values(rows.slice(i, i + EVENT_DAYS_BATCH_SIZE));
   }
+
+  // OPE-759 — this was one of four `event_days` writers that never touched
+  // `flagged_for_review`, which is why seven events whose days are ALL hourless
+  // sat unflagged. Raised AFTER the whole batch, not per chunk, so the count is
+  // taken over the finished day set.
+  await raiseHoursReviewFlag(db, eventId);
 
   // OPE-433 scope 5 — WHO. One row per day rather than one for the batch: the
   // question asked later is "where did THIS day's hours come from", and a

@@ -31,6 +31,11 @@ const SCHEMA_SQL = `
     start_date INTEGER,
     end_date INTEGER,
     discontinuous_dates INTEGER DEFAULT 0,
+    -- OPE-759: this writer now re-derives the hours-review flag after
+    -- attaching a day, because it was one of four event_days writers that
+    -- never maintained it. (No backticks in this comment: it lives inside a
+    -- JS template literal, and a backtick here terminates the string.)
+    flagged_for_review INTEGER NOT NULL DEFAULT 0,
     updated_at INTEGER
   );
   CREATE TABLE event_days (

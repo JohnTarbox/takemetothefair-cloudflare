@@ -29,6 +29,7 @@ import {
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 import { evaluateGates } from "@/lib/event-date-gates";
 import { classifySource } from "@/lib/source-classification";
+import { raiseHoursReviewFlag } from "@/lib/events/hours-review-flag";
 
 // Helper function to find or create a venue
 // Matches on BOTH name (slug) AND city to avoid matching venues with same name in different cities
@@ -622,6 +623,10 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
           for (let i = 0; i < dayRows.length; i += CHUNK) {
             await db.insert(eventDays).values(dayRows.slice(i, i + CHUNK));
           }
+          // OPE-759 — importer-written days are exactly the ones most likely to
+          // carry no hours, and this writer never raised the flag. Raised after
+          // the full batch so the count is taken over the finished day set.
+          await raiseHoursReviewFlag(db, newEventId);
           // OPE-433 scope 5 — importer-created day rows. These are the ones
           // most likely to carry hours nobody published, so which importer
           // wrote them is the first question anyone asks.
