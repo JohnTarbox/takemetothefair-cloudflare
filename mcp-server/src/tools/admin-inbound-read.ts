@@ -125,6 +125,62 @@ export function registerInboundReadTools(
       //
       // Fail-soft: a briefing that throws must not take the email read with
       // it. The row is what the operator came for; the briefing is an aid.
+      // OPE-761 scope 5 — "was this auto-acked?" answered here, not by a
+      // second query.
+      //
+      // `inbound_emails.reply_kind` is SINGLE-VALUED and is overwritten by
+      // whatever replied last. Jeremy Hall's `ce16f4a1` row reads
+      // `reply_kind='manual'` because a human eventually answered it by hand —
+      // which makes it look handled and destroys the evidence that no automated
+      // acknowledgment ever fired. The ledger keeps every send, so it is the
+      // only surviving record of what actually left the building, and the
+      // distinction it preserves is the one that matters: an automated ack is
+      // the machine saying "received", a manual reply is a person having
+      // noticed. Reading the first as the second is how a five-hour silence to
+      // a state agency reads as a handled row.
+      //
+      // Fail-soft for the same reason as the briefing below: the row is what
+      // the caller came for.
+      let acknowledgment: {
+        auto_acked: boolean;
+        auto_acked_at: string | null;
+        auto_ack_source: string | null;
+        manual_replied_at: string | null;
+        total_sends: number;
+        note: string;
+      } | null = null;
+      try {
+        const sends = await db
+          .select({
+            source: emailSendLedger.source,
+            sentAt: emailSendLedger.sentAt,
+            status: emailSendLedger.status,
+          })
+          .from(emailSendLedger)
+          .where(eq(emailSendLedger.inboundEmailId, row.id))
+          .orderBy(emailSendLedger.sentAt);
+
+        // "Automated" is every `reply:*` send that is not the manual one. Kept
+        // as an explicit exclusion rather than an allow-list of known ack
+        // sources: a new lane's ack must count as an ack the day it ships, and
+        // an allow-list that has not heard of it would report `false` — the
+        // silent direction.
+        const auto = sends.find(
+          (s) => s.source?.startsWith("reply:") && s.source !== "reply:manual"
+        );
+        const manual = sends.find((s) => s.source === "reply:manual");
+        acknowledgment = {
+          auto_acked: !!auto,
+          auto_acked_at: auto?.sentAt?.toISOString() ?? null,
+          auto_ack_source: auto?.source ?? null,
+          manual_replied_at: manual?.sentAt?.toISOString() ?? null,
+          total_sends: sends.length,
+          note: "Derived from email_send_ledger, NOT from inbound_emails.reply_kind — that column is single-valued and a later manual reply overwrites the automated one. On the correction/press/claim_request lanes an `auto_acked_at` roughly 7 days after `received_at` is the workflow's admin-decision waitForEvent TIMING OUT, not a prompt acknowledgment (OPE-761).",
+        };
+      } catch {
+        acknowledgment = null;
+      }
+
       let briefing: Awaited<ReturnType<typeof buildVendorInquiryBriefing>> | null = null;
       let briefingError: string | null = null;
       if (row.intent === "vendor_inquiry") {
@@ -162,6 +218,10 @@ export function registerInboundReadTools(
                 }
               : {}),
             reply_kind: row.replyKind,
+            // OPE-761 — read this instead of `reply_kind` when the question is
+            // "did we acknowledge them?". `null` means the ledger read failed,
+            // which is distinguishable from `{auto_acked: false}`.
+            acknowledgment,
             workflow_instance_id: row.workflowInstanceId,
             message_id: row.messageId,
             parsed_url: row.parsedUrl,

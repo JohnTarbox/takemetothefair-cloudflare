@@ -37,6 +37,7 @@ import {
   pendingEmailReplies,
   emailSendLedger,
   operatorOutboundDrafts,
+  inboundEmails,
   users,
 } from "@takemetothefair/db-schema";
 import type { Env } from "./index.js";
@@ -69,6 +70,24 @@ export const NOTICE_EMAIL_SOURCE = "operator-queue-notice";
  */
 export const QUEUE_SLA_HOURS = 48;
 
+/**
+ * OPE-761 — how long the inbound workflow hibernates on its `admin-decision`
+ * `waitForEvent` before giving up and sending a generic acknowledgment.
+ *
+ * Mirrors `timeout: "7 days"` at `mcp-server/src/workflows/inbound-email.ts`
+ * (the `step.waitForEvent<AdminDecision>("admin-decision", …)` call). Kept as a
+ * named constant HERE rather than imported because the workflow module pulls in
+ * the Workflows runtime; the number is asserted against that literal by test.
+ *
+ * This is the cliff, and it is why this queue's line reports time REMAINING
+ * rather than only time elapsed. Measured in prod 2026-09-02: every automated
+ * acknowledgment ever sent on the correction / press / claim_request lanes —
+ * 10 of 10 in `email_send_ledger` — fired at a gap of 7.0001 days. Not one is
+ * a prompt ack; every single one is this timeout expiring. Past the cliff the
+ * sender gets a generic reply and the correction they wrote in never happens.
+ */
+export const ADMIN_DECISION_TIMEOUT_HOURS = 168;
+
 export interface OperatorQueueCounts {
   /** entity_claims rows PENDING or DISPUTED past the SLA. */
   agedClaims: number;
@@ -92,6 +111,13 @@ export interface OperatorQueueCounts {
    * moving toward them, not by sitting still.
    */
   imminentTentative: number;
+  /**
+   * OPE-761 — inbound emails hibernating on the workflow's `admin-decision`
+   * pause (`status='waiting'`) past the SLA. Each is a person who wrote to us
+   * and has had no answer, on a clock that ends in a generic ack rather than
+   * an answer.
+   */
+  agedAwaitingDecision: number;
   /** Oldest waiting row in either queue, in days. */
   oldestDays: number;
   /** Human-readable lines for the alert body. */
@@ -107,7 +133,12 @@ export interface OperatorQueueCounts {
 export function decideOperatorQueueNotice(
   counts: Pick<
     OperatorQueueCounts,
-    "agedClaims" | "agedReplies" | "imminentTentative" | "ungatedReplies" | "pendingOperatorDrafts"
+    | "agedClaims"
+    | "agedReplies"
+    | "imminentTentative"
+    | "ungatedReplies"
+    | "pendingOperatorDrafts"
+    | "agedAwaitingDecision"
   >,
   alreadySentToday: boolean
 ): boolean {
@@ -127,7 +158,12 @@ export function decideOperatorQueueNotice(
 export function totalWaiting(
   counts: Pick<
     OperatorQueueCounts,
-    "agedClaims" | "agedReplies" | "imminentTentative" | "ungatedReplies" | "pendingOperatorDrafts"
+    | "agedClaims"
+    | "agedReplies"
+    | "imminentTentative"
+    | "ungatedReplies"
+    | "pendingOperatorDrafts"
+    | "agedAwaitingDecision"
   >
 ): number {
   // `?? 0` per term is not defensive clutter — it is load-bearing, and adding
@@ -145,7 +181,12 @@ export function totalWaiting(
     (counts.agedReplies ?? 0) +
     (counts.imminentTentative ?? 0) +
     (counts.ungatedReplies ?? 0) +
-    (counts.pendingOperatorDrafts ?? 0)
+    (counts.pendingOperatorDrafts ?? 0) +
+    // OPE-761 is the fifth term, and this file's own warning above is why it
+    // carries `?? 0` like every other: a term omitted at an untypechecked test
+    // call site makes the sum NaN, and `NaN <= 0` is false, so the notice fires
+    // on a completely empty queue.
+    (counts.agedAwaitingDecision ?? 0)
   );
 }
 
@@ -315,12 +356,66 @@ export async function readOperatorQueues(
     // The table may not exist on an older deploy; never take the notice down.
   }
 
+  // OPE-761 — inbound mail hibernating on the workflow's `admin-decision`
+  // pause. This is the fifth queue, and it arrived exactly the way this file's
+  // docblock predicted the third would.
+  //
+  // What makes it different from the four above: this queue has a DEADLINE of
+  // its own. The other queues sit still until someone acts. This one ends by
+  // itself after ADMIN_DECISION_TIMEOUT_HOURS, when `waitForEvent` gives up and
+  // the sender is posted a generic acknowledgment instead of an answer — so the
+  // row stops looking unhandled at precisely the moment it becomes unhandleable.
+  //
+  // Hence the line reports hours REMAINING, not just days waited. Depth alone
+  // cannot show a row approaching the cliff, and the cliff is where the loss is.
+  // (`queue-drain.ts:388` reports the same queue's depth on the analytics page
+  // and makes the same point; what it cannot do is reach anybody.)
+  let agedAwaitingDecision = 0;
+  try {
+    const waitingRows = await db
+      .select({
+        id: inboundEmails.id,
+        fromAddress: inboundEmails.fromAddress,
+        subject: inboundEmails.subject,
+        intent: inboundEmails.intent,
+        receivedAt: inboundEmails.receivedAt,
+      })
+      .from(inboundEmails)
+      .where(and(eq(inboundEmails.status, "waiting"), lte(inboundEmails.receivedAt, cutoff)));
+
+    agedAwaitingDecision = waitingRows.length;
+    for (const w of waitingRows) {
+      const ageMs = now.getTime() - (w.receivedAt?.getTime() ?? now.getTime());
+      oldestMs = Math.max(oldestMs, ageMs);
+      const hoursLeft = ADMIN_DECISION_TIMEOUT_HOURS - ageMs / 3600_000;
+      // Past the cliff the auto-ack has already gone out, so "expires in -3h"
+      // would be both wrong and quietly reassuring. Say which side it is on.
+      const cliff =
+        hoursLeft > 0
+          ? `auto-ack in ${Math.floor(hoursLeft)}h`
+          : `⚠️ PAST the ${ADMIN_DECISION_TIMEOUT_HOURS}h cliff — generic auto-ack already sent, the ask was never answered`;
+      lines.push(
+        `inbound ${w.intent ?? "(no intent)"} awaiting decision ${Math.floor(ageMs / 86400_000)}d — ` +
+          `${w.fromAddress ?? "(no sender)"} — ${w.subject ?? "(no subject)"} — ${cliff}`
+      );
+    }
+  } catch (error) {
+    // Never take the notice down for one queue's read — the other four still
+    // have people waiting in them.
+    await logError(db, {
+      source: SOURCE,
+      message: "[operator-queue] awaiting-decision read failed",
+      error,
+    });
+  }
+
   return {
     agedClaims: claims.length,
     agedReplies: replies.length,
     imminentTentative: tentative.length,
     ungatedReplies,
     pendingOperatorDrafts,
+    agedAwaitingDecision,
     oldestDays: Math.floor(oldestMs / 86400_000),
     lines,
   };
@@ -392,16 +487,26 @@ export async function checkOperatorQueues(db: Db, env: Env, now: Date = new Date
         `TENTATIVE despite organizer-grade sources, so the digest and every ` +
         `SCHEDULED-filtered feed drop them.`
       : "";
+  // OPE-761 — omitted entirely when the queue is empty, so the notice reads
+  // exactly as it did before this queue existed.
+  const awaitingClause =
+    counts.agedAwaitingDecision > 0
+      ? ` ${counts.agedAwaitingDecision} inbound email(s) are hibernating on the admin-decision ` +
+        `pause: someone wrote to us and has had no answer. Each expires after ` +
+        `${ADMIN_DECISION_TIMEOUT_HOURS}h into a GENERIC auto-ack, which is the only automated ` +
+        `reply this lane has ever sent — so an unanswered row does not stay unanswered, it stops ` +
+        `looking unanswered.`
+      : "";
   const textBody =
     `${counts.agedClaims} entity claim(s) and ${counts.agedReplies} written reply draft(s) ` +
-    `have been waiting more than ${QUEUE_SLA_HOURS}h.${tentativeClause}${draftsClause}\n\n` +
+    `have been waiting more than ${QUEUE_SLA_HOURS}h.${awaitingClause}${tentativeClause}${draftsClause}\n\n` +
     counts.lines.map((l) => `  - ${l}`).join("\n") +
     `\n\nA claim is a real person asking to own their listing; a reply draft is an ` +
     `answer already written to a real person and not yet sent.\n`;
   const htmlBody =
     `<p><strong>${counts.agedClaims}</strong> entity claim(s) and <strong>${counts.agedReplies}</strong> ` +
     `written reply draft(s) have been waiting more than ${QUEUE_SLA_HOURS}h.` +
-    `${esc(tentativeClause)}${esc(draftsClause)}</p>` +
+    `${esc(awaitingClause)}${esc(tentativeClause)}${esc(draftsClause)}</p>` +
     `<ul>${counts.lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>`;
 
   const alertEmail = env.ALERT_EMAIL_TECHNICAL;
