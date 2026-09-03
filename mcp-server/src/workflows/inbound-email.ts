@@ -65,7 +65,7 @@ import { classifyDomainTier, isHigherTier, classifyDedupTier } from "@takemetoth
 import type { EmailIntent } from "../email-intents.js";
 import type { SenderTrustTier } from "../intent-classifier.js";
 import type { EmailAuthVerdict } from "../email-auth.js";
-import type { HandlerFn, HandlerResult, ReplyKind } from "../email-handlers/types.js";
+import type { HandlerFn, HandlerResult, ReplyKind, ReplyParams } from "../email-handlers/types.js";
 import {
   chooseNoUrlReplyKind,
   violatesNoUrlInvariant,
@@ -683,40 +683,23 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     const needsAdminDecision =
       (intent === "correction" || intent === "press" || intent === "claim_request") &&
       !result.skipAdminDecision;
-    if (!caughtError && needsAdminDecision) {
-      await step.do(
-        "mark-waiting",
-        { retries: { limit: 1, delay: "5 seconds", backoff: "constant" }, timeout: "5 seconds" },
-        async () => {
-          const db = getDb(this.env.DB);
-          await db
-            .update(inboundEmails)
-            .set({ status: "waiting" })
-            .where(eq(inboundEmails.id, messageRowId));
-        }
-      );
 
-      let decision: AdminDecision | null = null;
-      try {
-        // step.waitForEvent returns a WorkflowStepEvent<T> wrapper
-        // (`{payload, type, timestamp}`); we only care about the payload
-        // shape sent via instance.sendEvent in handleInboundEmailsApi.
-        const evt = await step.waitForEvent<AdminDecision>("admin-decision", {
-          type: "admin-decision",
-          timeout: "7 days",
-        });
-        decision = evt.payload as AdminDecision;
-      } catch {
-        // Timeout — falls through with decision=null, generic ack reply.
-        decision = null;
-      }
-
-      result = {
-        replyKind: decisionToReplyKind(intent, decision),
-        replyParams: decision?.note ? { note: decision.note } : undefined,
-        status: "replied",
-      };
-    }
+    // ⚠️ OPE-766 — THE PAUSE NO LONGER RUNS HERE. It moved to AFTER send-reply.
+    //
+    // It used to sit between dispatch and the reply, and that ordering was the
+    // whole defect: the handler had already chosen `correction-ack` /
+    // `press-ack`, and this block overwrote it with the SAME kind seven days
+    // later. Measured over the entire history of `email_send_ledger`: ten
+    // automated acks on these three lanes, every one at a gap of 7.0001 days.
+    // Not one prompt acknowledgement has ever been sent.
+    //
+    // The copy makes the point by itself — "our team will review it shortly"
+    // and "a team member will follow up shortly" are written for a message
+    // that arrives in minutes. Delivered a week after silence they read as an
+    // insult. Sending them promptly is closer to what they always meant.
+    //
+    // John approved this directly, 2026-09-02: prompt ack on all three lanes,
+    // keeping the 7-day decision window. See the block below `send-reply`.
 
     // ───── Step 3: send-reply (skipped if replyKind null) ───────────
     // Wrapped in try/catch so a send-reply failure (exhausted retries)
@@ -1132,6 +1115,164 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         // (rather than 'replied') and the error is visible in the
         // /admin/inbound-emails UI.
         caughtError = caughtError ?? `send-reply: ${sendReplyErr}`;
+      }
+    }
+
+    // ───── OPE-766: the human-in-the-loop pause, now AFTER the ack ─────
+    //
+    // Same 7-day `waitForEvent`, same durable hibernation, same admin-decision
+    // event — only the ORDER changed. The sender has already been acknowledged
+    // by the block above, so this window is now what it always claimed to be:
+    // time for a human to decide the substance, not time before we say hello.
+    //
+    // Only runs when dispatch succeeded (no caughtError) — a failed dispatch
+    // means we never recorded the admin_actions row, so there is nothing to
+    // decide on. `claim_request` joins correction + press because
+    // `decisionToReplyKind` collapses it onto correction's decision shape.
+    // OPE-254 — a handler may decline the pause via `skipAdminDecision`.
+    if (!caughtError && needsAdminDecision) {
+      await step.do(
+        "mark-waiting",
+        { retries: { limit: 1, delay: "5 seconds", backoff: "constant" }, timeout: "5 seconds" },
+        async () => {
+          const db = getDb(this.env.DB);
+          await db
+            .update(inboundEmails)
+            .set({ status: "waiting" })
+            .where(eq(inboundEmails.id, messageRowId));
+        }
+      );
+
+      let decision: AdminDecision | null = null;
+      try {
+        const evt = await step.waitForEvent<AdminDecision>("admin-decision", {
+          type: "admin-decision",
+          timeout: "7 days",
+        });
+        decision = evt.payload as AdminDecision;
+      } catch {
+        decision = null;
+      }
+
+      // ⚠️ ON TIMEOUT WE NOW SEND NOTHING, and that is the point.
+      //
+      // `decisionToReplyKind(intent, null)` returns the generic ack, and its
+      // own docblock says why: "fall back to the generic ack so the sender
+      // doesn't go forever without acknowledgement." That fallback existed
+      // ONLY because nothing acknowledged on arrival. Now something does, so
+      // firing it here would deliver a second, identical email a week later —
+      // which is precisely the OPE-720 defect (Emma Welford received two
+      // `correction-ack`s for one message).
+      //
+      // A real decision still produces its tailored reply, which is the entire
+      // reason the pause exists.
+      if (decision !== null) {
+        const decisionKind = decisionToReplyKind(intent, decision);
+        try {
+          await step.do(
+            "send-decision-reply",
+            {
+              retries: { limit: 3, delay: "10 seconds", backoff: "exponential" },
+              timeout: "10 seconds",
+            },
+            async () => {
+              if (!this.env.EMAIL) {
+                await logError(this.env.DB, {
+                  level: "warn",
+                  source: SOURCE,
+                  message: "EMAIL binding unbound; decision reply skipped",
+                  sessionId,
+                  context: { messageRowId, intent, replyKind: decisionKind },
+                });
+                return;
+              }
+              const db = getDb(this.env.DB);
+              const rows = await db
+                .select({
+                  fromAddress: inboundEmails.fromAddress,
+                  subject: inboundEmails.subject,
+                  messageId: inboundEmails.messageId,
+                })
+                .from(inboundEmails)
+                .where(eq(inboundEmails.id, messageRowId))
+                .limit(1);
+              if (rows.length === 0) {
+                throw new NonRetryableError(
+                  `inbound_emails row not found for decision reply: ${messageRowId}`
+                );
+              }
+
+              const params: ReplyParams = {
+                subject: rows[0].subject ?? "",
+                ...(decision?.note ? { note: decision.note } : {}),
+              };
+              const msg = buildReply(decisionKind, rows[0].fromAddress, params);
+
+              // Threading headers only — CF Email Sending rejects a custom
+              // Message-ID (see the send-reply block above).
+              const headers: Record<string, string> = {};
+              if (rows[0].messageId) {
+                headers["In-Reply-To"] = rows[0].messageId;
+                headers["References"] = rows[0].messageId;
+              }
+
+              // ⚠️ A DISTINCT ledger key. The ack above uses
+              // `reply-${messageRowId}`; reusing it here would make the two
+              // sends collide on the idempotency key, and the decision reply —
+              // the one carrying an actual answer — would be the one dropped.
+              const ledgerKey = `decision-${messageRowId}`;
+
+              // Same gate as the ack path (OPE-626), and held mail is
+              // LEDGERED rather than dropped for the same reason.
+              if (!isAutoReplyEnabled(this.env)) {
+                await ledgerEmailSend(db, {
+                  messageId: ledgerKey,
+                  recipient: msg.to,
+                  source: `reply:${decisionKind}`,
+                  subject: msg.subject,
+                  status: "stubbed",
+                  provider: "stub",
+                  error: AUTO_REPLY_HELD_REASON,
+                  inboundEmailId: messageRowId,
+                  bodyHtml: msg.html,
+                  bodyText: msg.text,
+                });
+                return;
+              }
+
+              await this.env.EMAIL.send({
+                from: msg.from ?? DEFAULT_FROM,
+                to: msg.to,
+                subject: msg.subject,
+                text: msg.text,
+                html: msg.html,
+                headers,
+              });
+              await ledgerEmailSend(db, {
+                messageId: ledgerKey,
+                recipient: msg.to,
+                source: `reply:${decisionKind}`,
+                subject: msg.subject,
+                status: "sent",
+                provider: "cf-email",
+                inboundEmailId: messageRowId,
+                bodyHtml: msg.html,
+                bodyText: msg.text,
+              });
+            }
+          );
+          result = { ...result, replyKind: decisionKind, status: "replied" };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          await logError(this.env.DB, {
+            source: SOURCE,
+            message: "decision reply failed",
+            error: err,
+            sessionId,
+            context: { messageRowId, intent, replyKind: decisionKind },
+          });
+          caughtError = caughtError ?? `send-decision-reply: ${msg}`;
+        }
       }
     }
 
