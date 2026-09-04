@@ -14,6 +14,7 @@
  */
 
 import type { ReplyKind, ReplyParams } from "./email-handlers/types.js";
+import { resolveReplyKind, type InboundFacts } from "./email-handlers/template-assertions.js";
 // OPE-431 — one definition of "may this event URL go in an email".
 import { isEmailableEventStatus } from "./email-handlers/public-event-url.js";
 
@@ -69,7 +70,23 @@ export function buildReply(
   const subjectIn = (params.subject as string | undefined) ?? "";
   const replySubject = `Re: ${subjectIn || "your message"}`.slice(0, 200);
 
-  const baseText = renderText(kind, params);
+  // OPE-771 — refuse to render a template whose factual claim about the inbound
+  // is contradicted by the inbound row itself.
+  //
+  // Placed HERE because every auto-reply passes through this function, so a new
+  // send path inherits the check instead of having to remember it. All three
+  // historical instances (OPE-453 "you forgot the link", OPE-706 "hasn't been
+  // read by a person", OPE-460 "thanks for submitting 6 events") were paths
+  // that each did their own thing and each shipped a claim nothing verified.
+  //
+  // On a violation we substitute an ALREADY-APPROVED sibling template, never
+  // silence and never new copy. `violations` rides on the returned job so the
+  // caller can record the fault; a substitution that nobody could see would be
+  // its own silent failure.
+  const resolved = resolveReplyKind(kind, (params.assertionFacts as InboundFacts) ?? {});
+  const effectiveKind = resolved.kind as Exclude<ReplyKind, null>;
+
+  const baseText = renderText(effectiveKind, params);
   // OPE-720 — before the stale note and the widget, so the sign-off lands last.
   const withFanoutNote = appendFanoutTopicsNote(baseText, params);
   // OPE-458 scope 2 — before the widget, so the sign-off still lands last.
@@ -84,7 +101,15 @@ export function buildReply(
     subject: replySubject,
     text,
     html,
-    source: `email:${kind}`,
+    // The ledger records what was actually SENT, not what was asked for.
+    source: `email:${effectiveKind}`,
+    ...(resolved.violations.length > 0
+      ? {
+          assertionViolations: resolved.violations,
+          assertionSubstituted: resolved.substituted,
+          requestedKind: kind,
+        }
+      : {}),
   };
 }
 

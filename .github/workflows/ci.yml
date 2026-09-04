@@ -134,6 +134,9 @@ jobs:
       - name: Guard against Web APIs above the browser support floor (OPE-640)
         run: npx tsx scripts/check-browser-api-floor.ts
 
+      - name: Guard against unfalsified template assertions (OPE-771)
+        run: npx tsx scripts/check-template-assertions.ts
+
       - name: Guard against direct gtag() call sites (OPE-392)
         run: npx tsx scripts/check-gtag-call-sites.ts
 
