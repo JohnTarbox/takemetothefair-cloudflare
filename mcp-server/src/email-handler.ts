@@ -36,7 +36,7 @@ import PostalMime, { type Email } from "postal-mime";
 import { logError } from "./logger.js";
 import { stripQuotedReply } from "./email-handlers/strip-quoted-reply.js";
 import { getDb, type Db } from "./db.js";
-import { inboundEmails, inboundEmailSenders, users } from "./schema.js";
+import { inboundEmails, inboundEmailSenders, users, adminActions } from "./schema.js";
 import { desc, eq, inArray, sql } from "drizzle-orm";
 import {
   participantKey,
@@ -65,6 +65,11 @@ import {
   DEFAULT_CONFIDENCE_THRESHOLD,
   SPAM_QUARANTINE_THRESHOLD,
 } from "./intent-classifier.js";
+import {
+  detectEventTriple,
+  shouldRecoverSpamRow,
+  type TripleResult,
+} from "./email-handlers/spam-event-triple.js";
 import { hasMultiIntentOrSpecialSignal, isReplyToOurThread } from "./intent-fastpath.js";
 import { isDenylistedHost } from "./url-denylist.js";
 import { resolveSenderIdentity } from "./inbound/resolve-sender-identity.js";
@@ -82,6 +87,19 @@ import { isNonActionableSender } from "./email-handlers/audit-sender.js";
 export interface EmailHandlerEnv {
   /** D1 binding — `inbound_emails` persistence + error_logs. */
   DB: D1Database;
+  /**
+   * OPE-803 — `"true"` routes a quarantined-spam row that names a specific
+   * event to admin triage instead of terminating it.
+   *
+   * ⚠️ Ships **"false"**. Detection runs and is recorded either way; only the
+   * routing change is gated. The STOP-gate on the ticket is explicit that the
+   * recovery path must not go live until John has seen a dry-run — and it is
+   * a plaintext `[vars]` entry, so it must be flipped in
+   * `mcp-server/wrangler.toml` and deployed. A dashboard edit is reverted by
+   * the next `wrangler deploy`, which replaces the whole block from the
+   * committed file.
+   */
+  SPAM_EVENT_RECOVERY_ENABLED?: string;
   /** OAuth KV is reused with an "email-submit:" prefix for per-sender
    *  rate limiting. Intentional cross-use to avoid a dedicated binding. */
   OAUTH_KV: KVNamespace;
@@ -541,7 +559,7 @@ export async function handleInboundEmail(
     //    no workflow create, no auto-reply. Mirrors the rate-limit
     //    silent-drop pattern above.
     if (routing.spamQuarantine) {
-      await insertSpamAuditRow(getDb(env.DB), {
+      const spamRowId = await insertSpamAuditRow(getDb(env.DB), {
         env,
         sessionId,
         fromAddr,
@@ -558,6 +576,27 @@ export async function handleInboundEmail(
         attachmentCount,
         routing,
       });
+      // OPE-803 — record what the triple detector saw on this quarantined row.
+      //
+      // This runs while `SPAM_EVENT_RECOVERY_ENABLED` is "false", and that is
+      // the point: a flag shipped dark with no telemetry gives John nothing to
+      // decide on, and "we built it and turned it off" is indistinguishable
+      // from "we built it and it never ran". These rows ARE the dry-run.
+      //
+      // Only the quarantine path needs this. A RECOVERED row marks itself —
+      // `flagged_for_review = 1` and `routing_source = 'spam_event_recovery'`
+      // sit on the inbound row — whereas a quarantined row leaves no trace at
+      // all, which is the condition this ticket was filed about.
+      //
+      // Misses are recorded too, carrying `read`/`truncated`, because a miss on
+      // a 500-char excerpt means "the body was discarded before OPE-762 landed
+      // on 2026-09-02", not "there was no event in it".
+      if (routing.eventTriple && spamRowId) {
+        await recordSpamTripleObservation(getDb(env.DB), {
+          inboundEmailId: spamRowId,
+          triple: routing.eventTriple,
+        });
+      }
       return;
     }
 
@@ -1421,6 +1460,20 @@ interface RoutingDecision {
   flaggedForReview: boolean;
   spamQuarantine: boolean;
   spamRationale: string;
+  /**
+   * OPE-803 — what the event-triple detector found on a row the classifier
+   * called spam. Populated whenever the quarantine branch is reached, hit or
+   * miss, so the miss is recorded too: a miss read off a 500-char excerpt is
+   * not the same fact as a miss read off a full body.
+   */
+  eventTriple?: TripleResult;
+  /**
+   * True when a triple hit AND `SPAM_EVENT_RECOVERY_ENABLED` is on, so the row
+   * was routed for review instead of terminating. Deliberately distinct from
+   * `eventTriple.hit`, which says what was FOUND regardless of the flag —
+   * keeping them separate is what lets the dark period accumulate evidence.
+   */
+  tripleRecovered?: boolean;
 }
 
 /** Map a classifier intent to the routed `intent` column value used by
@@ -1593,15 +1646,75 @@ async function computeRouting(args: {
   // confident this is junk. Use the top result only for this check.
   const top = result.intents[0];
   if (top.intent === "spam" && top.confidence >= SPAM_QUARANTINE_THRESHOLD && result.fromAi) {
+    // OPE-803 — does this message name a specific event?
+    //
+    // John's framing: sender credibility and message value are independent
+    // axes. The classifier's spam call is NOT revisited here and `top.intent`
+    // stays `spam` on the stored row — a broker stays a broker. The only
+    // question asked is whether the message names something checkable.
+    //
+    // The detector runs on EVERY quarantined row, hit or miss, and its result
+    // is carried out on the decision so the caller can record it. That is
+    // deliberate: during the dark period the misses are the evidence base for
+    // whether the flag is worth flipping, and a miss read off a truncated
+    // excerpt is a different fact from a miss read off a full body.
+    const eventTriple = detectEventTriple({
+      bodyText,
+      bodyTextExcerpt: bodyText ? bodyText.slice(0, 500) : null,
+      subject,
+    });
+    const recover = shouldRecoverSpamRow(eventTriple, env.SPAM_EVENT_RECOVERY_ENABLED);
+
+    if (!recover) {
+      return {
+        routed: [],
+        classifierVersion: result.version,
+        routingSource: "classifier",
+        aggregateConfidence: top.confidence,
+        aggregateRationale: top.rationale,
+        flaggedForReview: false,
+        spamQuarantine: true,
+        spamRationale: top.rationale,
+        eventTriple,
+      };
+    }
+
+    // Recovered. Route to `unknown` — the admin triage disposition — rather
+    // than to any creating lane.
+    //
+    // ⚠️ `unknown` is chosen because it does not reply to the sender
+    // (`fanout-reply-leader.ts:57-58`, from source). That property is
+    // load-bearing, not incidental: answering an attendee-list broker is the
+    // entire purpose of their send, because it confirms the address is live.
+    // Nothing downstream of `unknown` creates an event either — creation
+    // happens only through the independent-confirmation gate, never from the
+    // message.
     return {
-      routed: [],
+      // `classifiedIntent` is left as `spam` by passing `top` through
+      // untouched — the classifier's call stays on the row, auditable, exactly
+      // as the acceptance criteria require. Only the ROUTED intent changes,
+      // to `unclear`, which the workflow dispatch table maps to
+      // `handleUnknown`. `spam` has its own dedicated handler and routing
+      // there would land straight back in the terminal state this recovers
+      // from.
+      routed: [
+        {
+          ...buildRoutedEntry(top, addressIntent, "spam_event_recovery"),
+          intent: "unclear" as EmailIntent,
+          routingSource: "spam_event_recovery",
+          flaggedForReview: true,
+        },
+      ],
       classifierVersion: result.version,
-      routingSource: "classifier",
+      routingSource: "spam_event_recovery",
       aggregateConfidence: top.confidence,
       aggregateRationale: top.rationale,
-      flaggedForReview: false,
-      spamQuarantine: true,
+      // Surfaced in the admin review queue — the whole point of recovering it.
+      flaggedForReview: true,
+      spamQuarantine: false,
       spamRationale: top.rationale,
+      eventTriple,
+      tripleRecovered: true,
     };
   }
 
@@ -1998,7 +2111,11 @@ export async function insertSpamAuditRow(
     attachmentCount: number;
     routing: RoutingDecision;
   }
-): Promise<void> {
+  // OPE-803 — returns the id it generated, so the caller can attach the
+  // triple observation to the row it just wrote. `null` on the catch path:
+  // the audit insert is best-effort and always has been, and a failed insert
+  // must not become a failed handler.
+): Promise<string | null> {
   const {
     env,
     sessionId,
@@ -2018,11 +2135,12 @@ export async function insertSpamAuditRow(
   } = args;
   const now = new Date();
   const messageId = (parsed.messageId || "").trim() || null;
+  const rowId = crypto.randomUUID();
   try {
     await db
       .insert(inboundEmails)
       .values({
-        id: crypto.randomUUID(),
+        id: rowId,
         receivedAt: now,
         fromAddress: fromAddr,
         toAddress: toAddr,
@@ -2054,6 +2172,7 @@ export async function insertSpamAuditRow(
         createdAt: now,
       })
       .onConflictDoNothing();
+    return rowId;
   } catch (err) {
     await logError(env.DB, {
       source: SOURCE,
@@ -2062,6 +2181,53 @@ export async function insertSpamAuditRow(
       sessionId,
       context: { from: fromAddr, to: toAddr, subject },
     });
+    // No row, so nothing to attach an observation to.
+    return null;
+  }
+}
+
+/**
+ * OPE-803 — record what the event-triple detector saw on a quarantined row.
+ *
+ * Written to `admin_actions`, alongside the `dedup.*` observations, rather than
+ * to a new column: this is evidence for a decision John has not made yet, and
+ * a decision that may be "no". A migration would outlive the question.
+ *
+ * ⚠️ Records MISSES as well as hits. A row that says
+ * `{hit:false, read:"excerpt", truncated:true}` is saying "I could not see the
+ * text", which is a different fact from "there was no event here" — and the
+ * difference is the whole of OPE-804, one lane over. Without it, the dry-run
+ * that gates the flag would count 18 discarded bodies as 18 clean negatives.
+ *
+ * Never throws. This is telemetry attached to a message that has already been
+ * quarantined; failing the handler over it would turn an observation into an
+ * outage.
+ */
+async function recordSpamTripleObservation(
+  db: ReturnType<typeof getDb>,
+  args: { inboundEmailId: string; triple: TripleResult }
+): Promise<void> {
+  try {
+    await db.insert(adminActions).values({
+      action: "spam.event_triple",
+      actorUserId: null,
+      targetType: "inbound_email",
+      targetId: args.inboundEmailId,
+      payloadJson: JSON.stringify({
+        hit: args.triple.hit,
+        // Verbatim spans, never parsed values. These are evidence that a claim
+        // was MADE, never evidence that it is true — the sender is a broker and
+        // nothing here is ever a citation.
+        name: args.triple.name,
+        dateText: args.triple.dateText,
+        place: args.triple.place,
+        read: args.triple.read,
+        truncated: args.triple.truncated,
+      }),
+      createdAt: new Date(),
+    });
+  } catch {
+    // Intentionally silent — see the note above.
   }
 }
 

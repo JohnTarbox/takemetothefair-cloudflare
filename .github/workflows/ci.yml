@@ -143,6 +143,9 @@ jobs:
       - name: Guard the blind-dedup flag across the app/MCP seam (OPE-804)
         run: npx tsx scripts/check-dedup-blind-contract.ts
 
+      - name: Guard the spam-recovery gate stays wired and gated (OPE-803)
+        run: npx tsx scripts/check-spam-recovery-wiring.ts
+
   e2e:
     name: E2E Tests
     runs-on: ubuntu-latest
