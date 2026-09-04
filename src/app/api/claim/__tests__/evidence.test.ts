@@ -1,6 +1,12 @@
 /**
  * OPE-59 — POST /api/claim/evidence: attaches evidence to the user's PENDING
- * claim and surfaces it to operators via a problem_reports row.
+ * claim.
+ *
+ * OPE-769 — it used to ALSO write a problem_reports row "to surface it to
+ * operators". That was a duplicate of the entity_claims write in the same
+ * request, and it polluted the defect queue: four of the five open `web` rows
+ * were claim evidence, so "5 unresolved problem reports" read as five open bugs
+ * when it was one. The row is gone; the evidence is unaffected.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
@@ -108,7 +114,7 @@ describe("POST /api/claim/evidence", () => {
     expect(res.status).toBe(404);
   });
 
-  it("creates a PENDING claim with evidence and a problem_report", async () => {
+  it("creates a PENDING claim with the evidence, and NO problem_report (OPE-769)", async () => {
     const res = await POST(
       makeRequest({
         entityType: "VENDOR",
@@ -134,16 +140,11 @@ describe("POST /api/claim/evidence", () => {
       evidence: "I can reply from our business email.",
     });
 
-    const reports = raw.prepare(`SELECT * FROM problem_reports`).all() as Array<{
-      body: string;
-      source: string;
-      reporter_email: string;
-    }>;
-    expect(reports).toHaveLength(1);
-    expect(reports[0].source).toBe("web");
-    expect(reports[0].reporter_email).toBe("claimant@example.com");
-    expect(reports[0].body).toContain("Claim evidence");
-    expect(reports[0].body).toContain("acme-foods");
+    // OPE-769 — the defect queue stays a defect queue. The assertion above is
+    // the positive landmark for this one: the evidence IS persisted, so an
+    // empty problem_reports means "we stopped duplicating", not "we lost it".
+    const reports = raw.prepare(`SELECT * FROM problem_reports`).all();
+    expect(reports).toHaveLength(0);
   });
 
   it("reuses the existing PENDING claim (from signup) instead of duplicating", async () => {

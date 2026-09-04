@@ -4,7 +4,7 @@ import { z } from "zod";
 import { and, eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { vendors, promoters, performers, entityClaims, problemReports } from "@/lib/db/schema";
+import { vendors, promoters, performers, entityClaims } from "@/lib/db/schema";
 import { unsafeSlug } from "@/lib/utils";
 import { parseGaClientId } from "@/lib/ga4-measurement-protocol";
 import { trackClaimVerificationAttemptedServer } from "@/lib/analytics/claim-funnel";
@@ -51,7 +51,6 @@ export async function POST(request: NextRequest) {
 
     // Resolve the entity id from the slug (polymorphic entity_claims has no FK).
     let entityId: string | undefined;
-    let entityName = slug;
     if (entityType === "VENDOR") {
       const [row] = await db
         .select({ id: vendors.id, businessName: vendors.businessName })
@@ -59,7 +58,6 @@ export async function POST(request: NextRequest) {
         .where(eq(vendors.slug, unsafeSlug(slug)))
         .limit(1);
       entityId = row?.id;
-      if (row) entityName = row.businessName;
     } else if (entityType === "PERFORMER") {
       const [row] = await db
         .select({ id: performers.id, name: performers.name })
@@ -67,7 +65,6 @@ export async function POST(request: NextRequest) {
         .where(eq(performers.slug, unsafeSlug(slug)))
         .limit(1);
       entityId = row?.id;
-      if (row) entityName = row.name;
     } else {
       const [row] = await db
         .select({ id: promoters.id, companyName: promoters.companyName })
@@ -75,7 +72,6 @@ export async function POST(request: NextRequest) {
         .where(eq(promoters.slug, unsafeSlug(slug)))
         .limit(1);
       entityId = row?.id;
-      if (row) entityName = row.companyName;
     }
     if (!entityId) {
       return NextResponse.json({ error: "Listing not found" }, { status: 404 });
@@ -115,20 +111,22 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Surface to operators via the existing problem-report queue.
-    const who = session.user.email || userId;
-    await db.insert(problemReports).values({
-      id: crypto.randomUUID(),
-      reporterEmail: session.user.email ?? null,
-      body: `Claim evidence: ${who} for ${entityType.toLowerCase()} ${slug} (${entityName})\n\n${evidence}`,
-      source: "web",
-      path: `/claim/verify/${entityType.toLowerCase()}/${slug}`,
-      userAgent: request.headers.get("user-agent"),
-      inboundEmailId: null,
-      severity: "LOW",
-      correlatedErrorCount: 0,
-      createdAt: now,
-    });
+    // OPE-769 — the problem_reports row that used to be written here is gone.
+    //
+    // It was a notification hack, and the evidence is ALREADY persisted: the
+    // `entity_claims` write above is the same request, so the row was
+    // double-filed. The copy in `problem_reports` then polluted the defect
+    // queue — four of its five open `web` rows were claim evidence, so
+    // "5 unresolved problem reports" read as five open bugs when it was one.
+    //
+    // A claim reviewer's surface is `list_claims` / `/admin/claims`, reading
+    // `entity_claims`, which is where this evidence now lives and only lives.
+    //
+    // ⚠️ This DOES remove a (weak) operator signal, and nothing here replaces
+    // it — notifying on a pending claim is OPE-599, which is open and is the
+    // right place for it. The signal was reaching the wrong queue anyway:
+    // Emma Welford's promoter evidence sat in `problem_reports` from 08-17 and
+    // no claim reviewer would ever have looked there.
 
     // OPE-66 — filing evidence IS the rung-4 (EVIDENCE) verification attempt.
     // Server-side, ad-block-proof; `slug` is the public `entity_id` custom dim.

@@ -4335,6 +4335,22 @@ export const problemReports = sqliteTable(
       .notNull()
       .default("LOW"),
     correlatedErrorCount: integer("correlated_error_count").notNull().default(0),
+    /**
+     * OPE-769 — WHICH QUEUE this row belongs to.
+     *
+     * The table held two unrelated kinds of work: actual defect reports, and
+     * claim-verification evidence that `/api/claim/evidence` wrote here as an
+     * operator notification. Four of the five open `web` rows were the latter,
+     * so "5 unresolved problem reports" read as five open bugs when it was one.
+     *
+     * An unresolved count that mixes two work types is worse than no count: it
+     * looks drained when it is not, and alarming when it is fine.
+     *
+     * `'defect'` is the default — the overwhelming majority, and the safe
+     * direction: a new row of an unclassified kind shows up in the queue
+     * somebody drains rather than vanishing from it.
+     */
+    kind: text("kind").notNull().default("defect"),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
     resolvedAt: integer("resolved_at", { mode: "timestamp" }),
     resolvedByUserId: text("resolved_by_user_id"), // FK to users(id), set on resolve
