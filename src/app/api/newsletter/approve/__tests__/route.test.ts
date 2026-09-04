@@ -31,9 +31,15 @@ const { POST } = await import("../route");
 
 /** Mock: first select → issue row; used for both the issue lookup and, in the
  *  broadcast branch, the recipient + suppression selects. Configured per test. */
-function mockIssue(row: { subject: string; html: string; sentAt: Date | null } | null) {
+function mockIssue(
+  row: { subject: string; html: string; sentAt: Date | null; audience?: string } | null
+) {
+  // OPE-795 — the route now reads `audience` off the issue to pick its list, and
+  // refuses an unrecognised one. These cases all predate the vendor list and
+  // meant the attendee digest, so default rather than restate it in each.
+  const full = row ? { audience: "weekend", ...row } : null;
   selectMock.mockReturnValueOnce({
-    from: () => ({ where: () => ({ limit: () => Promise.resolve(row ? [row] : []) }) }),
+    from: () => ({ where: () => ({ limit: () => Promise.resolve(full ? [full] : []) }) }),
   });
 }
 

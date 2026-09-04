@@ -22,18 +22,24 @@ export const dynamic = "force-dynamic";
  * MCP-server `send_newsletter_broadcast` tool can forward here without a
  * Next.js session cookie (mirrors the /api/admin/duplicates/merge pattern).
  *
- * Body: { subject, content_html, content_text?, test_recipient?, preview_only? }.
+ * Body: { subject, content_html, audience, content_text?, test_recipient?,
+ * preview_only? }. `audience` ('weekend' | 'vendor') is REQUIRED with no default
+ * (OPE-795) — this route previously hardcoded 'weekend', so the vendor list had
+ * no manual send path and any caller assuming one would have mailed the vendor
+ * newsletter to 39 attendees and 0 vendors.
  */
 import { NextResponse } from "next/server";
 import { withAuthorized } from "@/lib/api/with-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
-import { newsletterIssues } from "@/lib/db/schema";
+import { NEWSLETTER_LISTS, newsletterIssues } from "@/lib/db/schema";
 import { resolveUnsubscribeSecret } from "@/lib/email/newsletter-unsubscribe-token";
 import { resolveApproveSecret, signApproveToken } from "@/lib/email/newsletter-approve-token";
 import {
   enqueueNewsletterDigest,
+  parseNewsletterList,
   selectBroadcastRecipients,
 } from "@/lib/email/newsletter-broadcast";
+import { newsletterNameForAudience } from "@/lib/newsletter-masthead";
 import { getSiteUrl } from "@/lib/email/send";
 import { createSlug } from "@takemetothefair/utils";
 
@@ -47,6 +53,7 @@ type Body = {
   content_text?: unknown;
   test_recipient?: unknown;
   preview_only?: unknown;
+  audience?: unknown;
 };
 
 export const POST = withAuthorized(async ({ request, db }) => {
@@ -65,6 +72,28 @@ export const POST = withAuthorized(async ({ request, db }) => {
   if (!subject || !contentHtml) {
     return NextResponse.json(
       { error: "missing_fields", message: "`subject` and `content_html` are required." },
+      { status: 400 }
+    );
+  }
+
+  // OPE-795 — `audience` is REQUIRED, with no default, on every mode.
+  //
+  // This route used to pass the literal "weekend" to selectBroadcastRecipients,
+  // so the only reachable audience was the attendee list (39 addresses) and the
+  // vendor list (3) had no manual send path at all. A default here would keep
+  // the defect dangerous rather than fix it: an omitted argument would silently
+  // resolve to the LARGER list, and a broadcast to too many people is
+  // indistinguishable from a successful one. Erroring is the whole point.
+  const audience = parseNewsletterList(body.audience);
+  if (!audience) {
+    return NextResponse.json(
+      {
+        error: "invalid_audience",
+        message:
+          "`audience` is required and must be one of: " +
+          `${NEWSLETTER_LISTS.join(", ")}. There is deliberately no default — ` +
+          "an omitted audience would resolve to the larger list and mail the wrong people.",
+      },
       { status: 400 }
     );
   }
@@ -96,7 +125,7 @@ export const POST = withAuthorized(async ({ request, db }) => {
   // the same suppression list.
   const recipients = testRecipient
     ? [testRecipient]
-    : await selectBroadcastRecipients(db, "weekend");
+    : await selectBroadcastRecipients(db, audience);
 
   // OPE-190 — read-only preview. Return the resolved recipients + the issue
   // shape that WOULD be written, with zero side effects (no upsert, no enqueue,
@@ -109,9 +138,14 @@ export const POST = withAuthorized(async ({ request, db }) => {
       issue: {
         slug,
         subject,
+        audience,
         html_length: contentHtml.length,
         would_set_sent_at: isBroadcast,
       },
+      // OPE-795 — echoed at the top level too, so a pre-flight reader cannot
+      // mistake WHICH list the count below belongs to. The count alone is what
+      // made the original defect legible only by recognising 39 addresses.
+      audience,
       view_in_browser: viewInBrowserUrl,
       recipient_count: recipients.length,
       recipients: recipients.slice(0, PREVIEW_RECIPIENT_CAP),
@@ -140,13 +174,17 @@ export const POST = withAuthorized(async ({ request, db }) => {
       slug,
       subject,
       html: contentHtml,
-      audience: "weekend",
+      audience,
       sentAt: isBroadcast ? now : null,
       createdAt: now,
     })
     .onConflictDoUpdate({
       target: newsletterIssues.slug,
-      set: { subject, html: contentHtml, ...(isBroadcast ? { sentAt: now } : {}) },
+      // OPE-795 — `audience` is set on the UPDATE branch too, matching the
+      // vendor-digest route's OPE-359 reasoning: an issue re-composed under a
+      // different audience must not keep the first one, or the approve route
+      // (which reads this column to pick its recipients) targets the wrong list.
+      set: { subject, html: contentHtml, audience, ...(isBroadcast ? { sentAt: now } : {}) },
     });
   const mailingAddress = env.MAILING_ADDRESS;
 
@@ -187,6 +225,11 @@ export const POST = withAuthorized(async ({ request, db }) => {
     mailingAddress,
     approveUrl,
     approveDisabled,
+    // OPE-795 / OPE-711 §2 — the masthead + "you subscribed to ..." footer follow
+    // the audience on the manual path too. Without this a vendor issue sent from
+    // here would tell vendors they had signed up for the attendee newsletter,
+    // which is exactly the defect OPE-711 fixed on the generator path.
+    wordmark: newsletterNameForAudience(audience),
   });
 
   return NextResponse.json({

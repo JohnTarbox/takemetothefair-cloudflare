@@ -11,6 +11,11 @@
  * broadcast flag. Auth moved to withAuthorized (admin session OR X-Internal-Key)
  * so the MCP `send_newsletter_broadcast` tool can forward server-to-server; the
  * session path still authorizes via the mocked auth() below.
+ *
+ * OPE-795 — every call below now passes `audience: "weekend"` explicitly. These
+ * cases always MEANT the attendee list; the route just had no way to be told, so
+ * it hardcoded it. The audience wiring itself is covered in route.audience.test.ts
+ * against real SQLite, because a mock chain cannot distinguish the two lists.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
@@ -103,7 +108,11 @@ describe("POST /api/admin/newsletter/send — guard rails (OPE-169)", () => {
   it("409 for a broadcast when NEWSLETTER_SEND_ENABLED is off; nothing enqueued", async () => {
     admin();
     sendEnabled = "false";
-    const res = await call({ subject: "Weekend digest", content_html: "<p>hi</p>" });
+    const res = await call({
+      subject: "Weekend digest",
+      content_html: "<p>hi</p>",
+      audience: "weekend",
+    });
     expect(res.status).toBe(409);
     const j = (await res.json()) as { error: string };
     expect(j.error).toBe("broadcast_disabled");
@@ -131,6 +140,7 @@ describe("POST /api/admin/newsletter/send — preview_only (OPE-190)", () => {
     const res = await call({
       subject: "Weekend digest",
       content_html: "<p>hi</p>",
+      audience: "weekend",
       preview_only: true,
     });
     expect(res.status).toBe(200);
@@ -153,6 +163,7 @@ describe("POST /api/admin/newsletter/send — preview_only (OPE-190)", () => {
     const res = await call({
       subject: "Weekend digest",
       content_html: "<p>hi</p>",
+      audience: "weekend",
       preview_only: true,
       test_recipient: "me@x.com",
     });
@@ -174,7 +185,12 @@ describe("POST /api/admin/newsletter/send — preview_only (OPE-190)", () => {
 // main-app worker that renders). This catches that whole class.
 describe("POST /api/admin/newsletter/send — rendered HTML on a real test send (OPE-232)", () => {
   const sendTest = () =>
-    call({ subject: "Weekend digest", content_html: "<p>hi</p>", test_recipient: "me@x.com" });
+    call({
+      subject: "Weekend digest",
+      content_html: "<p>hi</p>",
+      audience: "weekend",
+      test_recipient: "me@x.com",
+    });
   const enqueuedHtml = () =>
     (enqueueEmailMock.mock.calls[0]?.[0] as { html: string } | undefined)?.html ?? "";
 
@@ -222,7 +238,12 @@ describe("POST /api/admin/newsletter/send — rendered HTML on a real test send 
 // an action the system will refuse.
 describe("POST /api/admin/newsletter/send — approve CTA checks the gate at compose time (OPE-284)", () => {
   const sendPreview = () =>
-    call({ subject: "Weekend digest", content_html: "<p>hi</p>", test_recipient: "me@x.com" });
+    call({
+      subject: "Weekend digest",
+      content_html: "<p>hi</p>",
+      audience: "weekend",
+      test_recipient: "me@x.com",
+    });
   const enqueuedHtml = () =>
     (enqueueEmailMock.mock.calls[0]?.[0] as { html: string } | undefined)?.html ?? "";
 
@@ -261,7 +282,11 @@ describe("POST /api/admin/newsletter/send — approve CTA checks the gate at com
         }),
       })
       .mockReturnValueOnce({ from: () => Promise.resolve([]) });
-    const res = await call({ subject: "Weekend digest", content_html: "<p>hi</p>" });
+    const res = await call({
+      subject: "Weekend digest",
+      content_html: "<p>hi</p>",
+      audience: "weekend",
+    });
     expect(res.status).toBe(200);
     const html = enqueuedHtml();
     expect(html).not.toContain("Approve &amp; send to everyone");
@@ -289,6 +314,7 @@ describe("sent_at is set ONLY by a real broadcast (OPE-285)", () => {
     await call({
       subject: "This Weekend at the Fair — preview",
       content_html: "<p>hi</p>",
+      audience: "weekend",
       test_recipient: "me@x.com",
     });
     expect(insertedValues).toHaveLength(1);
@@ -303,6 +329,7 @@ describe("sent_at is set ONLY by a real broadcast (OPE-285)", () => {
     await call({
       subject: "This Weekend at the Fair — preview",
       content_html: "<p>hi</p>",
+      audience: "weekend",
       test_recipient: "me@x.com",
     });
     expect(conflictSets).toHaveLength(1);
@@ -324,6 +351,7 @@ describe("sent_at is set ONLY by a real broadcast (OPE-285)", () => {
     const res = await call({
       subject: "This Weekend at the Fair — Jul 31",
       content_html: "<p>hi</p>",
+      audience: "weekend",
     });
     expect(res.status).toBe(200);
     expect(insertedValues[0].sentAt).toBeInstanceOf(Date);
@@ -344,11 +372,16 @@ describe("sent_at is set ONLY by a real broadcast (OPE-285)", () => {
         }),
       })
       .mockReturnValueOnce({ from: () => Promise.resolve([]) });
-    await call({
+    const res = await call({
       subject: "This Weekend at the Fair — dry run",
       content_html: "<p>hi</p>",
+      audience: "weekend",
       preview_only: true,
     });
+    // OPE-795 — assert the 200 as well. Without `audience` this call would 400,
+    // and a rejected request also writes nothing: the two "no insert" assertions
+    // below would have gone green for entirely the wrong reason.
+    expect(res.status).toBe(200);
     expect(insertMock).not.toHaveBeenCalled();
     expect(insertedValues).toHaveLength(0);
   });

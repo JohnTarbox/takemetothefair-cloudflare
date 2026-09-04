@@ -1,6 +1,12 @@
 /**
  * `send_newsletter_broadcast` admin MCP tool (OPE-190, 2026-07-13).
  *
+ * OPE-795 — `audience` ('weekend' | 'vendor') is a REQUIRED argument and is
+ * forwarded to the endpoint. Before it existed, this tool could only ever reach
+ * the attendee list: the endpoint hardcoded "weekend" in its recipient
+ * selection, so a caller intending the 3-address vendor list would have mailed
+ * the vendor newsletter to 39 attendees and 0 vendors.
+ *
  * A thin authenticated forwarder to the OPE-169 broadcast endpoint
  * (`POST /api/admin/newsletter/send`) so the analyst runtime can run test
  * sends + read-only previews unattended and — with an explicit human nod —
@@ -46,7 +52,11 @@ export function registerSendNewsletterBroadcastTool(
     [
       "Send (or preview) the newsletter via the OPE-169 broadcast endpoint. Thin",
       "forwarder — the server renders the masthead/unsubscribe footer, resolves the",
-      "confirmed & non-suppressed recipient list, sends, and ledgers each message.",
+      "confirmed & non-suppressed recipient list for the REQUESTED audience, sends,",
+      "and ledgers each message.",
+      "",
+      "audience is REQUIRED: 'weekend' (attendee digest) or 'vendor' (New This Week).",
+      "There is no default — omitting it is an error, not a fallback (OPE-795).",
       "",
       "THREE modes, gated by the STOP-gate below:",
       "• test_recipient set → one-off test send to that address only (unattended-OK).",
@@ -58,6 +68,15 @@ export function registerSendNewsletterBroadcastTool(
       "  analyst runtime supplies ONLY after John's explicit chat approval (OPE-6).",
     ].join(" "),
     {
+      audience: z
+        .enum(["weekend", "vendor"])
+        .describe(
+          "REQUIRED, no default. Which list to resolve: 'weekend' = the attendee " +
+            "digest (This Weekend at the Fair); 'vendor' = the vendor digest (New " +
+            "This Week). The two lists are kept completely separate — there is " +
+            "deliberately no default, because an omitted audience would resolve to " +
+            "the larger list and mail the wrong newsletter to the wrong people."
+        ),
       subject: z.string().min(1).max(200).describe("Email subject line."),
       content_html: z
         .string()
@@ -124,6 +143,7 @@ export function registerSendNewsletterBroadcastTool(
           "x-internal-key": env.INTERNAL_API_KEY,
         },
         body: JSON.stringify({
+          audience: params.audience,
           subject: params.subject,
           content_html: params.content_html,
           ...(params.content_text ? { content_text: params.content_text } : {}),

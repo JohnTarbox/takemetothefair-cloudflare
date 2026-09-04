@@ -32,8 +32,10 @@ import { resolveUnsubscribeSecret } from "@/lib/email/newsletter-unsubscribe-tok
 import { resolveApproveSecret, verifyApproveToken } from "@/lib/email/newsletter-approve-token";
 import {
   enqueueNewsletterDigest,
+  parseNewsletterList,
   selectBroadcastRecipients,
 } from "@/lib/email/newsletter-broadcast";
+import { newsletterNameForAudience } from "@/lib/newsletter-masthead";
 
 /** All outcomes redirect to the confirm/result page with a status. Zero sends
  *  on every branch except the one that wins the latch. */
@@ -82,6 +84,9 @@ export async function POST(request: NextRequest) {
         subject: newsletterIssues.subject,
         html: newsletterIssues.html,
         sentAt: newsletterIssues.sentAt,
+        // OPE-795 — which list this issue belongs to. Read, never assumed: this
+        // route used to broadcast every approved issue to 'weekend'.
+        audience: newsletterIssues.audience,
       })
       .from(newsletterIssues)
       .where(eq(newsletterIssues.slug, slug))
@@ -89,6 +94,19 @@ export async function POST(request: NextRequest) {
 
     if (!issue) return redirect("not_found");
     if (issue.sentAt) return redirect("already_sent");
+
+    // OPE-795 — resolve the issue's own audience, and refuse an unrecognised one.
+    //
+    // Checked HERE, above the sent_at latch, deliberately. The latch below is a
+    // one-way claim: once it flips, `already_sent` is the answer forever. A
+    // refusal placed after it would mark the issue broadcast while sending to
+    // nobody, and the issue could never be re-approved.
+    //
+    // Refusing beats defaulting for the same reason parseNewsletterList returns
+    // null: 'weekend' is the larger list, so guessing sends a vendor issue to 39
+    // attendees. That is the OPE-795 defect, one path over.
+    const audience = parseNewsletterList(issue.audience);
+    if (!audience) return redirect("server_error");
 
     // OPE-6 gate, re-checked server-side. The page shows a "disabled" state, but
     // the API must independently refuse so it can never broadcast while off.
@@ -112,7 +130,7 @@ export async function POST(request: NextRequest) {
     // We own the latch — broadcast the stored issue. If enqueue throws partway,
     // sent_at is already set (the issue won't double-send); the partial failure
     // is logged, consistent with the existing broadcast path's best-effort send.
-    const recipients = await selectBroadcastRecipients(db, "weekend");
+    const recipients = await selectBroadcastRecipients(db, audience);
     const siteUrl = getSiteUrl();
     const queued = await enqueueNewsletterDigest({
       recipients,
@@ -123,6 +141,8 @@ export async function POST(request: NextRequest) {
       secret,
       mailingAddress: env.MAILING_ADDRESS,
       // No approveUrl — a broadcast never carries the approve button.
+      // OPE-795 / OPE-711 §2 — masthead + footer follow the issue's audience.
+      wordmark: newsletterNameForAudience(audience),
     });
 
     return redirect("sent", { count: String(queued) });
