@@ -35,8 +35,19 @@ import { buildEventTitle, buildEventMetaDescription } from "@/lib/seo-utils";
 import { cdnImage, OG_EVENT } from "@/lib/cdn-image";
 import { getSeriesLanding } from "@/lib/series/get-series-landing";
 import { chunkedInArray } from "@takemetothefair/utils";
+import { withD1ReadLogged } from "@/lib/db/d1-resilience";
 
-export async function getEvent(slug: string) {
+/**
+ * OPE-790 — one jittered retry on a Cloudflare-side D1 blip before the failure
+ * reaches the user. Wraps the fetcher rather than its body so every call site
+ * inherits it, and so the diagnostic catch inside stays exactly as OPE-548 left
+ * it. Only a PLATFORM fault is retried; a query defect fails the same way twice.
+ */
+export function getEvent(slug: string) {
+  return withD1ReadLogged("app/events/[slug]/page.tsx:getEvent", () => getEventOnce(slug));
+}
+
+async function getEventOnce(slug: string) {
   const db = getCloudflareDb();
 
   try {
