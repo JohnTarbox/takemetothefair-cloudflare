@@ -699,6 +699,11 @@ const SCHEMA_SQL = `
     -- schema docblock for why a deadline must not be inferred.
     opens_at INTEGER,
     closes_at INTEGER,
+    -- OPE-794. DEFAULT 'UNKNOWN', never 'OPEN': an optimistic default asserts
+    -- something nobody checked (the OPE-433 dates_confirmed failure).
+    capacity_status TEXT NOT NULL DEFAULT 'UNKNOWN',
+    capacity_as_of INTEGER,
+    capacity_note TEXT,
     created_at INTEGER NOT NULL DEFAULT 0,
     updated_at INTEGER NOT NULL DEFAULT 0
   );

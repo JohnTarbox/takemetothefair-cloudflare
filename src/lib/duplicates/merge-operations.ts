@@ -583,6 +583,37 @@ async function getEventMergePreview(
     );
   }
 
+  // OPE-793 — say what the merge will do to the SERIES hubs.
+  //
+  // The commit path retires any series whose `canonical_slug` is the
+  // duplicate's slug. Until this warning existed the preview was silent about
+  // it, and on the Manchester Grange pair it reported `canMerge:true,
+  // warnings:[]` moments before the commit died on a UNIQUE violation against
+  // exactly this row — an operator got a green light and then a raw D1 error.
+  //
+  // ⚠️ `canMerge` below is a hardcoded `true` and has no false branch, so it is
+  // not a gate and must not be read as one: it cannot report that a merge is
+  // impossible, only that one was requested. The collision it failed to predict
+  // is fixed at the commit path rather than blocked here — but the operator
+  // should still be told a live, indexed hub URL is about to move.
+  const seriesRetiredByMerge = await db
+    .select({ canonicalSlug: eventSeries.canonicalSlug })
+    .from(eventSeries)
+    .where(eq(eventSeries.canonicalSlug, unsafeSlug(duplicate.slug)));
+
+  if (seriesRetiredByMerge.length > 0) {
+    const keeperSeries = await db
+      .select({ id: eventSeries.id })
+      .from(eventSeries)
+      .where(eq(eventSeries.canonicalSlug, unsafeSlug(primary.slug)))
+      .limit(1);
+    warnings.push(
+      keeperSeries.length > 0
+        ? `The duplicate's event series "/events/${duplicate.slug}" will be retired and 301'd to "/events/${primary.slug}". The keeper already has its own series, so the retired one is tombstoned rather than renamed onto the keeper's slug.`
+        : `The event series "/events/${duplicate.slug}" will be repointed to "/events/${primary.slug}", and the old series URL will 301.`
+    );
+  }
+
   const relationshipsToTransfer: RelationshipCounts = {
     eventVendors: (duplicateEventVendorCount?.count || 0) - overlappingVendors.length,
     favorites: favoritesCount?.count || 0,
@@ -927,6 +958,52 @@ async function mergeEvents(
     .from(eventSeries)
     .where(eq(eventSeries.canonicalSlug, originalDupSlug));
 
+  // OPE-793 — `event_series.canonical_slug` is UNIQUE, and the repoint below
+  // was written as though it never could be taken.
+  //
+  // When the two merged events carry SEPARATE series — which is the normal
+  // shape for a duplicate submission, because each row minted its own series —
+  // the keeper's series already holds `keeper.slug`. Repointing the duplicate's
+  // series onto the same string is a UNIQUE violation, and the whole merge
+  // aborts with a raw `D1_ERROR: UNIQUE constraint failed:
+  // event_series.canonical_slug`. Reproduced in production twice on the
+  // Manchester Grange pair (2026-09-03), whose two series rows were minted four
+  // seconds apart by one submission.
+  //
+  // ⚠️ Note what the selector keys on: `canonical_slug`, NOT the event's
+  // `series_id`. That is why repointing the duplicate EVENT's `series_id` at
+  // the keeper's series did not help — the duplicate's series row still carried
+  // the duplicate's slug, so it was still selected and still collided. That
+  // probe was reported on the ticket as ruling out "two series on two events",
+  // and it does; the selector simply never looked at `series_id` in the first
+  // place.
+  const [seriesHoldingKeeperSlug] = await db
+    .select({ id: eventSeries.id })
+    .from(eventSeries)
+    .where(eq(eventSeries.canonicalSlug, unsafeSlug(keeper.slug)))
+    .limit(1);
+
+  /**
+   * The slug this series should end up with.
+   *
+   * Free → take the keeper's slug, which is the OPE-423 behaviour and still
+   * right when the two events shared one series.
+   *
+   * Taken by a DIFFERENT series → tombstone this one, mirroring the event
+   * rename three lines below. Either way a `series_slug_history` row (inserted
+   * in the same batch) points the retired slug at the keeper, so the redirect
+   * OPE-471 added is identical in both branches.
+   *
+   * Deleting the now-eventless series would ALSO avoid the collision, and is
+   * what "no orphan series" superficially suggests — but `series_slug_history`
+   * cascades on `series_id`, so the delete would take the redirect with it. The
+   * row is kept as a tombstone for the same reason the duplicate event row is.
+   */
+  const repointedSeriesSlug = (currentSlug: string) =>
+    seriesHoldingKeeperSlug && seriesHoldingKeeperSlug.id !== null
+      ? unsafeSlug(`${currentSlug}-merged-${duplicateId.slice(0, 8)}`)
+      : unsafeSlug(keeper.slug);
+
   // K3 Steps 1-3 + cleanup, in one db.batch so the slug rename + history
   // insert + status update are atomic. Order matters: the rename must
   // commit BEFORE the history row is inserted, so eventSlugHistory's
@@ -965,12 +1042,20 @@ async function mergeEvents(
     // Step 4 (OPE-423): repoint the series canonical off the slug that is
     // about to stop resolving. In the SAME batch as the rename, so the loop
     // described above cannot exist even momentarily.
-    ...seriesToRepoint.map((row) =>
-      db
-        .update(eventSeries)
-        .set({ canonicalSlug: unsafeSlug(keeper.slug), updatedAt: new Date() })
-        .where(eq(eventSeries.id, row.id))
-    ),
+    ...seriesToRepoint
+      // A series that IS the one already holding the keeper's slug needs no
+      // repoint — it is already correct, and "updating" it to its own value
+      // would be a no-op that only muddies updated_at.
+      .filter((row) => row.id !== seriesHoldingKeeperSlug?.id)
+      .map((row) =>
+        db
+          .update(eventSeries)
+          .set({
+            canonicalSlug: repointedSeriesSlug(row.canonicalSlug),
+            updatedAt: new Date(),
+          })
+          .where(eq(eventSeries.id, row.id))
+      ),
     // OPE-471 — record the retired series slug so it 301s instead of 404ing.
     //
     // The repoint above (added by OPE-423) renames a LIVE, INDEXED hub. Until
@@ -982,7 +1067,12 @@ async function mergeEvents(
     // In the same batch as the rename, so a crawler can never observe the new
     // slug without the redirect for the old one existing.
     ...seriesToRepoint
-      .filter((row) => row.canonicalSlug && row.canonicalSlug !== keeper.slug)
+      .filter(
+        (row) =>
+          row.canonicalSlug &&
+          row.canonicalSlug !== keeper.slug &&
+          row.id !== seriesHoldingKeeperSlug?.id
+      )
       .map((row) =>
         db.insert(seriesSlugHistory).values({
           seriesId: row.id,
