@@ -54,6 +54,57 @@ for (const file of files) {
   }
 }
 
+// ── OPE-796 — the other side of the same rule ────────────────────────────────
+//
+// Everything above checks HOW a counter is written. It is structurally blind to
+// one that is never written at all, which is the defect OPE-796 found:
+// `performers.view_count` shipped with OPE-112, was read by the weekly digest's
+// `ORDER BY view_count DESC`, and had 0 across all 309 rows because nothing
+// incremented it. The guard passed the whole time — correctly, and uselessly.
+//
+// So: any table that HAS a view_count column must also have an incrementer.
+// Keyed on the ACT (a counter exists ⇒ something must feed it) rather than on
+// the fix, because a guard keyed on the fix cannot see the fix being omitted.
+const SCHEMA = readFileSync("packages/db-schema/src/index.ts", "utf8");
+
+/** Tables declaring a `view_count` column, read from the schema itself. */
+const tablesWithCounter = ENTITY_TABLES.filter((t) => {
+  const start = SCHEMA.indexOf(`export const ${t} = sqliteTable`);
+  if (start === -1) return false;
+  const end = SCHEMA.indexOf("\n);", start);
+  return SCHEMA.slice(start, end === -1 ? undefined : end).includes("viewCount");
+});
+
+/** snake_case table name as it appears in the raw UPDATE. */
+const sqlName = (t: string) => t.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
+
+const allSource = files.map((f) => readFileSync(f, "utf8")).join("\n");
+const uncounted = tablesWithCounter.filter(
+  (t) => !allSource.includes(`UPDATE ${sqlName(t)} SET view_count`)
+);
+
+// Positive landmark: if the schema parse breaks, `tablesWithCounter` empties and
+// `uncounted` is trivially [] — a clean bill of health for nothing.
+if (tablesWithCounter.length < 3) {
+  console.error(
+    `View-counter guard FAILED (OPE-796):\n\n  Found only ${tablesWithCounter.length} tables with a view_count column.\n  The schema parse has stopped matching — fix it rather than trusting the\n  "no offenders" result.\n`
+  );
+  process.exit(1);
+}
+
+if (uncounted.length > 0) {
+  console.error(
+    "A view_count column with nothing to increment it (OPE-796).\n\n" +
+      uncounted
+        .map((t) => `  ${t}.view_count — no \`UPDATE ${sqlName(t)} SET view_count\` anywhere`)
+        .join("\n") +
+      "\n\nA counter that is read and never written reports 0 forever, and an" +
+      "\nORDER BY over it is an arbitrary tie. Either wire the increment on the" +
+      "\ndetail page (see vendors/[slug]/page.tsx) or drop the column."
+  );
+  process.exit(1);
+}
+
 if (violations.length > 0) {
   console.error("View counters must not go through Drizzle (OPE-332).\n");
   for (const v of violations) console.error(`  ${v}`);
@@ -65,4 +116,8 @@ if (violations.length > 0) {
   process.exit(1);
 }
 
-console.log(`✓ no Drizzle-routed view counters (${files.length} files checked)`);
+console.log(
+  `✓ view counters: ${files.length} files checked, none Drizzle-routed; ` +
+    `${tablesWithCounter.length} tables declare view_count and all ${tablesWithCounter.length} have an incrementer ` +
+    `(${tablesWithCounter.join(", ")})`
+);
