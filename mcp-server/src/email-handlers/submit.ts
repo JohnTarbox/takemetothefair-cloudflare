@@ -26,7 +26,11 @@
  */
 
 import { NonRetryableError } from "cloudflare:workflows";
+import { eq } from "drizzle-orm";
 import type { HandlerEnv } from "./types.js";
+import { adminActions, inboundEmails } from "../schema.js";
+import { getDb } from "../db.js";
+import { logError } from "../logger.js";
 
 const SOURCE_FETCH = "mcp:email-handler:extract:fetch";
 const SOURCE_EXTRACT = "mcp:email-handler:extract:ai";
@@ -183,6 +187,22 @@ export interface SubmitEventResult {
 
 export interface SubmitCheckDuplicateResult {
   isDuplicate: boolean;
+  /**
+   * OPE-804 — TRUE when no dedup stage could evaluate, so `isDuplicate: false`
+   * carries no information.
+   *
+   * `source_url` NULL blinds stage 1; a missing `startDate` returns early and
+   * blinds stages 2–5 together. A candidate with neither is compared to
+   * nothing and still comes back "not a duplicate" — which is how the
+   * CraftFest Cotuit duplicate (`4c1dd636`, 2026-07-17) was created against a
+   * byte-identical APPROVED row committed 74 days earlier.
+   *
+   * ⚠️ Defaults to FALSE on every failure path below (network error, non-2xx,
+   * unparseable body) DELIBERATELY. Those are dedup-endpoint failures, which
+   * this function has always failed open on; turning them into "blind" would
+   * flag every transient blip for review and bury the real cases.
+   */
+  dedupWasBlind?: boolean;
   /** Match type when isDuplicate is true: "exact_url" or "similar_name_date".
    *  Empty when isDuplicate is false. Used by the workflow to pick the right
    *  reply phrasing. */
@@ -592,6 +612,9 @@ export async function submitCheckDuplicate(
     | {
         success: true;
         isDuplicate: boolean;
+        // OPE-804 — the endpoint now says whether any stage could run.
+        stagesSkipped?: string[];
+        dedupWasBlind?: boolean;
         matchType?: string;
         // OPE-450 — present when a human already ruled on this candidate.
         priorAdjudication?: {
@@ -610,7 +633,13 @@ export async function submitCheckDuplicate(
     | { success: false; error: string }
     | null;
   if (!data || !data.success || !data.isDuplicate) {
-    return { isDuplicate: false };
+    // OPE-804 — relay the blindness on the NOT-duplicate shape. This is the
+    // shape that creates a row, so it is the one where "we checked" versus
+    // "we could not check" actually changes what should happen.
+    return {
+      isDuplicate: false,
+      ...(data?.success && data.dedupWasBlind ? { dedupWasBlind: true } : {}),
+    };
   }
   return {
     isDuplicate: true,
@@ -645,17 +674,47 @@ export async function submitCheckDuplicate(
  *   - 4xx response → NonRetryableError "submit-${status}"
  *   - 5xx response or network → plain Error, workflow retries
  */
+/**
+ * What the dedup step concluded, handed to the creation step that acts on it.
+ *
+ * OPE-804 — this parameter is **required**, and that is the point of it.
+ *
+ * Every event this workflow creates is created because a dedup verdict said it
+ * was safe to. Before this type existed, that verdict was consumed at four
+ * separate call sites and a fifth pipeline could create events without ever
+ * consulting one — silently, because "no duplicate found" and "nothing was
+ * compared" are the same boolean. Making the context mandatory means a new
+ * creation path cannot compile until it states which verdict permitted it.
+ */
+export interface SubmitEventContext {
+  /**
+   * The inbound row this creation came from. Used to flag the row for review
+   * when the verdict was blind.
+   */
+  inboundEmailId: string;
+  /**
+   * True when NO dedup stage could evaluate — see
+   * `SubmitCheckDuplicateResult.dedupWasBlind`. Not "we found nothing";
+   * "we compared nothing".
+   */
+  dedupWasBlind: boolean;
+  /**
+   * Cohort 2 (analyst, 2026-06-01) — optional MEDIUM-confidence dedup tag.
+   * When set, the route writes events.possible_duplicate_of so /admin/events
+   * PENDING queue can surface the candidate inline with a merge button.
+   * HIGH-confidence dedup short-circuits before calling submitEvent, so this
+   * is only ever set on the MEDIUM path.
+   */
+  possibleDuplicateOf?: string | null;
+}
+
 export async function submitEvent(
   env: HandlerEnv,
   extracted: SubmitExtractResult,
   fromAddress: string,
-  // Cohort 2 (analyst, 2026-06-01) — optional MEDIUM-confidence dedup
-  // tag. When set, the route writes events.possible_duplicate_of so
-  // /admin/events PENDING queue can surface the candidate inline with
-  // a merge button. HIGH-confidence dedup short-circuits before
-  // calling submitEvent, so this is only ever set on the MEDIUM path.
-  possibleDuplicateOf?: string | null
+  context: SubmitEventContext
 ): Promise<SubmitEventResult> {
+  const possibleDuplicateOf = context.possibleDuplicateOf;
   let res: Response;
   try {
     const submitBody: Record<string, unknown> = {
@@ -691,7 +750,70 @@ export async function submitEvent(
     }
     throw new Error(`submit-${res.status}: ${upstream}`);
   }
-  return { id: body.event.id, slug: body.event.slug, eventName: extracted.event.name };
+  const created = { id: body.event.id, slug: body.event.slug, eventName: extracted.event.name };
+
+  // OPE-804 — the event exists now. If the dedup that permitted it compared
+  // nothing, say so where a person will see it, because the row itself looks
+  // identical to one that passed a real check.
+  if (context.dedupWasBlind) {
+    await recordBlindDedupCreation(env, extracted, created, context.inboundEmailId);
+  }
+
+  return created;
+}
+
+/**
+ * Record that an event was created behind a dedup verdict that evaluated
+ * nothing (OPE-804).
+ *
+ * Two writes, matching what the adjacent dedup paths already do rather than
+ * inventing a third channel:
+ *
+ *  1. `admin_actions(action='dedup.blind')` — the durable, queryable trail,
+ *     alongside `dedup.would_enrich` and `dedup.enrich_proposed`.
+ *  2. `inbound_emails.flagged_for_review = 1` — puts the row in the queue an
+ *     operator actually opens. SET only; never clears an operator's own flag.
+ *
+ * ⚠️ Never throws. A failure to *annotate* a created event must not fail the
+ * submission that already succeeded — the event is in the database by the time
+ * we get here, and throwing would make the workflow retry a create that
+ * already happened.
+ */
+async function recordBlindDedupCreation(
+  env: HandlerEnv,
+  extracted: SubmitExtractResult,
+  created: SubmitEventResult,
+  inboundEmailId: string
+): Promise<void> {
+  try {
+    const db = getDb(env.DB);
+    await db.insert(adminActions).values({
+      action: "dedup.blind",
+      actorUserId: null,
+      targetType: "event",
+      targetId: created.id,
+      payloadJson: JSON.stringify({
+        inboundEmailId,
+        eventName: created.eventName,
+        eventSlug: created.slug,
+        // The two facts that made the check impossible, recorded so the
+        // review does not have to re-derive them.
+        hadSourceUrl: Boolean(extracted.url),
+        startDate: extracted.event.startDate ?? null,
+      }),
+      createdAt: new Date(),
+    });
+    await db
+      .update(inboundEmails)
+      .set({ flaggedForReview: 1 })
+      .where(eq(inboundEmails.id, inboundEmailId));
+  } catch (err) {
+    await logError(getDb(env.DB), {
+      source: SOURCE_SUBMIT,
+      message: "blind-dedup annotation failed",
+      error: err,
+    }).catch(() => {});
+  }
 }
 
 // SOURCE_* constants exported for the workflow's error-log calls.

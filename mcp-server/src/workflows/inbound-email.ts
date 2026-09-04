@@ -1803,6 +1803,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           rowSnapshot.fromAddress,
           rowSnapshot.attachmentCount > 0,
           overflowed,
+          messageRowId,
           rowSnapshot.bodyTextExcerpt ?? ""
         );
       }
@@ -2193,7 +2194,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         subject,
         fromAddress,
         hasAttachments,
-        fetchMethod
+        fetchMethod,
+        messageRowId
       );
     }
     // Duplicate-check before insert. Two-stage (exact source_url, then
@@ -2417,7 +2419,12 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           retries: { limit: 3, delay: "5 seconds", backoff: "exponential" },
           timeout: "15 seconds",
         },
-        () => submitEvent(this.env, extracted, fromAddress, dedup.existingEventId ?? null)
+        () =>
+          submitEvent(this.env, extracted, fromAddress, {
+            inboundEmailId: messageRowId,
+            dedupWasBlind: dedup.dedupWasBlind === true,
+            possibleDuplicateOf: dedup.existingEventId ?? null,
+          })
       );
 
       return {
@@ -2445,7 +2452,11 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     const submitted = await step.do(
       "submit/submit-event",
       { retries: { limit: 3, delay: "5 seconds", backoff: "exponential" }, timeout: "15 seconds" },
-      () => submitEvent(this.env, extracted, fromAddress)
+      () =>
+        submitEvent(this.env, extracted, fromAddress, {
+          inboundEmailId: messageRowId,
+          dedupWasBlind: dedup.dedupWasBlind === true,
+        })
     );
 
     // B3 confidence-aware reply. Pick HIGH/MEDIUM/LOW based on min
@@ -2522,7 +2533,12 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     subject: string,
     fromAddress: string,
     hasAttachments: boolean,
-    fetchMethod: "standard" | "browser-rendering" | null
+    fetchMethod: "standard" | "browser-rendering" | null,
+    // OPE-804 — threaded so a blind dedup on any fanned-out child can flag the
+    // inbound row it came from. Two of the four creation pipelines could not
+    // name their own source row before this, which is why "flag the email for
+    // review" was never available to them.
+    messageRowId: string
   ): Promise<HandlerResult> {
     interface EventOutcome {
       eventName: string;
@@ -2569,7 +2585,11 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             retries: { limit: 3, delay: "5 seconds", backoff: "exponential" },
             timeout: "15 seconds",
           },
-          () => submitEvent(this.env, perEvent, fromAddress)
+          () =>
+            submitEvent(this.env, perEvent, fromAddress, {
+              inboundEmailId: messageRowId,
+              dedupWasBlind: dedup.dedupWasBlind === true,
+            })
         );
         outcomes.push({
           eventName: submitted.eventName,
@@ -3567,7 +3587,11 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             retries: { limit: 3, delay: "5 seconds", backoff: "exponential" },
             timeout: "15 seconds",
           },
-          () => submitEvent(this.env, extracted, fromAddress)
+          () =>
+            submitEvent(this.env, extracted, fromAddress, {
+              inboundEmailId: messageRowId,
+              dedupWasBlind: dedup.dedupWasBlind === true,
+            })
         );
         outcomes.push({
           kind: "created",
@@ -3740,6 +3764,9 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     fromAddress: string,
     hasAttachments: boolean,
     overflowed: boolean,
+    // OPE-804 — see runMultiEventFanOut. Required, and placed BEFORE the
+    // defaulted `emailBody` so it cannot be silently omitted.
+    messageRowId: string,
     // D1 (analyst, 2026-05-29 PM): pass the email body in so the
     // per-URL submitExtract calls can prefer body dates over the
     // per-page form's dates. Empty string when no body.
@@ -3805,7 +3832,11 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             retries: { limit: 3, delay: "5 seconds", backoff: "exponential" },
             timeout: "15 seconds",
           },
-          () => submitEvent(this.env, extracted, fromAddress)
+          () =>
+            submitEvent(this.env, extracted, fromAddress, {
+              inboundEmailId: messageRowId,
+              dedupWasBlind: dedup.dedupWasBlind === true,
+            })
         );
         outcomes.push({
           url,

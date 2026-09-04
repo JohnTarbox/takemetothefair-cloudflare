@@ -742,7 +742,15 @@ async function stagePosterAsPendingEvent(
       };
     }
 
-    const created = await submitEvent(env, extracted, row.fromAddress);
+    // OPE-804 — the poster lane is the sharpest case of a blind verdict: OCR
+    // extraction passes `url: ""`, so `source_url` is NULL by construction and
+    // stage 1 can NEVER evaluate here. A poster with no readable date is
+    // compared against nothing at all, and the "not a duplicate" it returns
+    // means only that.
+    const created = await submitEvent(env, extracted, row.fromAddress, {
+      inboundEmailId: row.id,
+      dedupWasBlind: dup.dedupWasBlind === true,
+    });
     await logError(env.DB, {
       level: "info",
       source: "mcp:photo-intake:poster-staged",

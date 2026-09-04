@@ -140,6 +140,9 @@ jobs:
       - name: Guard against direct gtag() call sites (OPE-392)
         run: npx tsx scripts/check-gtag-call-sites.ts
 
+      - name: Guard the blind-dedup flag across the app/MCP seam (OPE-804)
+        run: npx tsx scripts/check-dedup-blind-contract.ts
+
   e2e:
     name: E2E Tests
     runs-on: ubuntu-latest

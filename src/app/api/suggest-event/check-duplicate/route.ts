@@ -5,6 +5,7 @@ import { checkDuplicateSchema } from "./schema";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { events, venues } from "@/lib/db/schema";
+import { dedupWasBlind } from "@/lib/duplicates/find-duplicate";
 import { findDuplicate } from "@/lib/duplicates/find-duplicate";
 import { findPriorAdjudication } from "@/lib/duplicates/prior-adjudication";
 import { compareForIngest } from "@/lib/goodwill/ingest-discrepancy";
@@ -91,7 +92,23 @@ export async function POST(request: NextRequest) {
     }
 
     if (!result.isDuplicate) {
-      return NextResponse.json({ success: true, isDuplicate: false });
+      // OPE-804 — say WHY there was no match.
+      //
+      // `stagesSkipped` has existed since OPE-477 and was dropped right here:
+      // computed in findDuplicate, never returned, read by nothing. So
+      // "checked four ways, genuinely new" and "every stage was blind" arrived
+      // at the caller as the identical `{ isDuplicate: false }`.
+      //
+      // That is why the CraftFest Cotuit duplicate (4c1dd636, 2026-07-17)
+      // cannot be explained 49 days later: the row carries no record of
+      // whether dedup evaluated. `dedupWasBlind` is the one bit a caller
+      // actually needs — no stage could run, so this verdict means nothing.
+      return NextResponse.json({
+        success: true,
+        isDuplicate: false,
+        stagesSkipped: result.stagesSkipped,
+        dedupWasBlind: dedupWasBlind(result.stagesSkipped),
+      });
     }
 
     // GW1.1 (2026-06-03) — ingest_addverify discrepancy capture.
@@ -136,6 +153,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       isDuplicate: true,
+      // OPE-477 asked for this on BOTH shapes: a hit on a weak stage while the
+      // strong ones were blind is still worth knowing about.
+      stagesSkipped: result.stagesSkipped,
+      dedupWasBlind: dedupWasBlind(result.stagesSkipped),
       matchType: result.matchType,
       // OPE-454 — the wire contract has to carry the MEANING, not just the
       // label, or every remote consumer re-derives "is series_url blocking?"
