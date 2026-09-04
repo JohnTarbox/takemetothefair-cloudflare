@@ -1106,6 +1106,10 @@ const SCHEMA_SQL = `
     content_length_chars INTEGER,
     -- OPE-254 (2026-07-18) — drizzle/0162 inbound reply threading headers.
     in_reply_to TEXT,
+    -- OPE-768 — conversation key, assigned at ingest by resolveThread.
+    thread_id TEXT,
+    thread_position INTEGER,
+    thread_basis TEXT,
     email_references TEXT,
     -- OPE-763 (drizzle/0259) — sender-authenticity capture. Report-only.
     auth_results_raw TEXT,

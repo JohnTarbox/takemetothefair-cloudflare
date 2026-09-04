@@ -4648,6 +4648,30 @@ export const inboundEmails = sqliteTable(
      *  bounce. NULL when absent. Added drizzle/0162. */
     emailReferences: text("email_references"),
     /**
+     * OPE-768 — which CONVERSATION this message belongs to.
+     *
+     * Every table in this lane was keyed to a single message, so a person who
+     * wrote twice read as two waiting people: Heather Santiago sat as two open
+     * support obligations for eight weeks after one reply had discharged both.
+     * `in_reply_to` was already captured and drove nothing.
+     *
+     * Assigned at ingest by `resolveThread`. A message that starts a
+     * conversation gets its own new id, so this is never NULL on a row written
+     * after drizzle/0263 — a NULL means the row predates it.
+     */
+    threadId: text("thread_id"),
+    /** 1-based position within the thread, in receipt order. */
+    threadPosition: integer("thread_position"),
+    /**
+     * How `threadId` was decided: 'header_chain' (RFC 5322 In-Reply-To /
+     * References — exact), 'subject_participants' (heuristic), or 'new'.
+     *
+     * Stored because the heuristic tier must be auditable. A thread assembled
+     * from a guess and one assembled from headers are different claims, and a
+     * backfill that cannot tell them apart cannot be reviewed.
+     */
+    threadBasis: text("thread_basis"),
+    /**
      * OPE-763 (drizzle/0259) — the sender-authenticity signals.
      *
      * Cloudflare Email Routing attaches `Authentication-Results`, and the
