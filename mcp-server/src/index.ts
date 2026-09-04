@@ -42,6 +42,15 @@ import { registerPromoterOutreachLifecycleTools } from "./tools/admin-promoter-o
 import { registerPromoterReplyIngestTools } from "./tools/admin-promoter-reply-ingest.js";
 import { registerGalleryPhotoTools } from "./tools/admin-gallery-photos.js";
 import { registerSendNewsletterBroadcastTool } from "./tools/admin-send-newsletter-broadcast.js";
+import { registerSendGatesTool } from "./tools/admin-send-gates.js";
+
+/** OPE-772 — the env shape `get_send_gates` reads.
+ *
+ *  Aliased purely so both registration sites fit on ONE line each. The OPE-469
+ *  CI guard matches a register call and its server argument on a single line, so
+ *  a call wrapped across lines reads to it as a tool registered on the legacy
+ *  path only — it caught exactly that here before this alias existed. */
+type GateEnv = Record<string, string | undefined>;
 import { registerCreateClaimInviteTool } from "./tools/admin-claim-invite.js";
 import { registerClaimReviewTools } from "./tools/admin-claim-review.js";
 import { registerResolveHeldPhotosTool } from "./tools/admin-resolve-held-photos.js";
@@ -378,6 +387,7 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
         // OPE-190 (2026-07-13) — send_newsletter_broadcast (wraps the OPE-169
         // broadcast endpoint; STOP-gated real broadcast, unattended test/preview).
         registerSendNewsletterBroadcastTool(this.server, db, auth, this.env);
+        registerSendGatesTool(this.server, db, auth, this.env as unknown as GateEnv);
         // OPE-67 (2026-07-02) — claim tooling: create_claim_invite (cold invite)
         // + list_claims / approve_claim / reject_claim (review queue).
         registerCreateClaimInviteTool(this.server, db, auth, this.env);
@@ -661,6 +671,7 @@ async function handleLegacyMcpRequest(request: Request, env: Env): Promise<Respo
       registerPromoterReplyIngestTools(server, db, auth);
       registerGalleryPhotoTools(server, auth, env);
       registerSendNewsletterBroadcastTool(server, db, auth, env);
+      registerSendGatesTool(server, db, auth, env as unknown as GateEnv);
       registerCreateClaimInviteTool(server, db, auth, env);
       registerClaimReviewTools(server, db, auth);
       registerResolveHeldPhotosTool(server, db, auth, env);
