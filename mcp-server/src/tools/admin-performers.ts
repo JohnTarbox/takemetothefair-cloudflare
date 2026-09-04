@@ -960,13 +960,33 @@ export async function linkAppearance(
     sourceUrl: string;
   }
 ): Promise<{ row: typeof eventPerformers.$inferSelect; created: boolean }> {
+  const now = new Date();
   const existing = await db
     .select()
     .from(eventPerformers)
     .where(appearanceWhere(a.eventId, a.performerId, a.eventDayId, a.performanceStart))
     .limit(1);
-  if (existing.length > 0) return { row: existing[0], created: false };
-  const now = new Date();
+
+  if (existing.length > 0) {
+    // OPE-791 — a repeat call is a RE-VERIFICATION, not a no-op.
+    //
+    // `source_url` is required on both callers, so reaching here means somebody
+    // has just re-grounded this appearance against the organizer's own page.
+    // Returning the row untouched threw that fact away and left an appearance
+    // verified today looking as stale as one nobody had checked in a month.
+    //
+    // Only the verification stamp moves. `source_url` keeps the provenance of
+    // the ORIGINAL write — where the appearance came from and where it was last
+    // confirmed are different questions, and overwriting the first with the
+    // second loses the answer to it.
+    const refreshed = await db
+      .update(eventPerformers)
+      .set({ lastVerifiedAt: now, lastVerifiedSource: a.sourceUrl, updatedAt: now })
+      .where(eq(eventPerformers.id, existing[0].id))
+      .returning();
+    return { row: refreshed[0] ?? existing[0], created: false };
+  }
+
   const rows = await db
     .insert(eventPerformers)
     .values({
@@ -979,6 +999,16 @@ export async function linkAppearance(
       billing: a.billing,
       status: a.status,
       sourceUrl: a.sourceUrl,
+      // OPE-791 — the write IS the verification.
+      //
+      // Both callers require `source_url`, so an appearance cannot be created
+      // without the caller having grounded it. Leaving these NULL meant a
+      // just-grounded appearance was born "never verified" and immediately read
+      // as stale to the OPE-123 freshness rail. 25 of 26 rows since 2026-08-25
+      // survived only because an agent happened to follow the link call with a
+      // status call; that habit was the only thing holding the invariant.
+      lastVerifiedAt: now,
+      lastVerifiedSource: a.sourceUrl,
       createdAt: now,
       updatedAt: now,
     })
