@@ -1027,3 +1027,7 @@ export const AWAITING_SUBMITTER_REPLY_KINDS = ["no-url"] as const;
  * live row when this shipped was 89 days, so the bound is the point.
  */
 export const AWAITING_SUBMITTER_EXPIRY_DAYS = 21;
+
+// OPE-772 — the send-gate allowlist + resolver, shared by both Workers so the
+// MCP Worker can report the gates only it enforces (OPERATOR_OUTBOUND_ENABLED).
+export * from "./send-gates";

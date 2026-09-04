@@ -87,6 +87,25 @@ AUTO_REPLY_ENABLED = "true"
 # only with John's explicit approval (OPE-6). While "false" the mail is still
 # stored, queued and forwarded to admin — only the question is withheld.
 UNROUTED_ASK_ENABLED = "false"
+# OPE-596 / OPE-772 — delivery gate for the operator-initiated outbound queue
+# (compose_operator_email → review_operator_draft). Enforced HERE and nowhere
+# else: the main app neither reads nor honours it.
+#
+# ⚠️ Declared explicitly at "false" rather than left unset, and that is the
+# entire point of the line. `operatorOutboundEnabled()` is `=== "true"`, so an
+# absent binding and "false" behave identically at the send site — but only one
+# of them is also indistinguishable from a BROKEN READ. Unset, an operator sent
+# to turn it on finds nothing to turn on (John, 2026-09-02: "I don't see it on
+# meetmeatthefair-app" — correctly, it was never anywhere), and an agent asking
+# "is delivery on?" cannot tell "off" from "I failed to read it".
+#
+# NOT flipped by this ticket. The value is John's call, made separately; OPE-772
+# was scoped to make the flag exist and be readable, explicitly not to enable it.
+# Three drafts are waiting on that decision: cfb242dd, 7d26f538, fb2ff331.
+#
+# Lives here, not in the dashboard: a dashboard [vars] value is silently wiped by
+# the next `wrangler deploy` (OPE-284/OPE-509).
+OPERATOR_OUTBOUND_ENABLED = "false"
 # OPE-204 — booth-photo vision gate. When "true", a fair-resolved photos@ email
 # runs each photo through the vision model (@cf/meta/llama-3.2-11b-vision-instruct)
 # and STAGES what it identifies to admin_actions + flagged_for_review for
