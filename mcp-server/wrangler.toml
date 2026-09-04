@@ -106,6 +106,25 @@ UNROUTED_ASK_ENABLED = "false"
 # Lives here, not in the dashboard: a dashboard [vars] value is silently wiped by
 # the next `wrangler deploy` (OPE-284/OPE-509).
 OPERATOR_OUTBOUND_ENABLED = "false"
+
+# OPE-803 — spam-lane event recovery. When "true", a quarantined-spam row whose
+# body names a specific event (name + date + place) is routed to admin triage
+# (`unclear` -> handleUnknown) instead of terminating. `classified_intent` still
+# reads `spam`; the classifier's call is never revisited.
+#
+# ⚠️ SHIPS "false" and must stay that way until John says otherwise. The ticket
+# carries an explicit STOP-gate: the recovery path may not go live before he has
+# seen a dry-run of what it would surface. Detection RUNS and is recorded while
+# this is "false" — that is how the evidence for the decision accumulates.
+#
+# ⚠️ This is a plaintext [vars] entry. Flipping it in the dashboard is reverted
+# by the next `wrangler deploy`, which replaces the whole block from this file.
+# Edit this line and deploy.
+#
+# Even at "true", nothing is created from the email: `handleUnknown` returns
+# replyKind null (no sender reply, no email_send_ledger row), and event creation
+# happens only through the independent-confirmation gate, never from the message.
+SPAM_EVENT_RECOVERY_ENABLED = "false"
 # OPE-204 — booth-photo vision gate. When "true", a fair-resolved photos@ email
 # runs each photo through the vision model (@cf/meta/llama-3.2-11b-vision-instruct)
 # and STAGES what it identifies to admin_actions + flagged_for_review for
