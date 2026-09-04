@@ -1808,6 +1808,36 @@ export const eventApplications = sqliteTable(
      */
     opensAt: integer("opens_at", { mode: "timestamp" }),
     closesAt: integer("closes_at", { mode: "timestamp" }),
+    /**
+     * OPE-794 — is there a booth to apply FOR? One of VENDOR_CAPACITY_STATUSES.
+     *
+     * Per-LANE deliberately: a fair can be full for crafters and open for food
+     * trucks, and OPE-709 already made the lane the unit an applicant deals
+     * with. Putting it on `events` would force one answer for all of them.
+     *
+     * ⚠️ Defaults to 'UNKNOWN', NOT 'OPEN'. An optimistic default asserts
+     * something nobody checked — the `dates_confirmed DEFAULT true` failure
+     * (OPE-433) in a new column. Readers must not render UNKNOWN as "open".
+     */
+    capacityStatus: text("capacity_status").notNull().default("UNKNOWN"),
+    /**
+     * When the capacity claim was true. NULL for UNKNOWN.
+     *
+     * Capacity is the most perishable field on the record: "full" in September
+     * says nothing about January, and a stale FULL is exactly as wrong as a
+     * stale OPEN — it hides a show a vendor could have applied to. Nullable and
+     * never inferred, same contract as `closesAt`.
+     */
+    capacityAsOf: integer("capacity_as_of", { mode: "timestamp" }),
+    /**
+     * The qualifier a bare enum cannot hold — "first floor sold out, second
+     * floor tables still available" (Manchester Grange, 2026-08-27).
+     *
+     * Free text on purpose. Partial capacity is real but its shape is not:
+     * modelling floors, sections and categories would be inventing a taxonomy
+     * from one specimen. The enum carries the decision; this carries the detail.
+     */
+    capacityNote: text("capacity_note"),
     createdAt: integer("created_at", { mode: "timestamp" })
       .notNull()
       .$defaultFn(() => new Date()),

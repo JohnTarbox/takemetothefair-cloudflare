@@ -20,7 +20,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { and, eq, isNull, inArray } from "drizzle-orm";
-import { unsafeSlug, centsToDollars } from "@takemetothefair/utils";
+import { unsafeSlug, centsToDollars, classifyVendorCapacity } from "@takemetothefair/utils";
+import { isOpenToVendorApplications } from "@takemetothefair/constants";
 import {
   events,
   eventApplications,
@@ -203,6 +204,12 @@ export function registerAdminEventReadTools(server: McpServer, db: Db, auth: Aut
           notes: eventApplications.notes,
           opensAt: eventApplications.opensAt,
           closesAt: eventApplications.closesAt,
+          // OPE-794 — same reasoning as hazard 4 above, applied to the new
+          // columns: a field the admin reader cannot see is a field nobody can
+          // verify was written correctly. Surfaced from their first commit.
+          capacityStatus: eventApplications.capacityStatus,
+          capacityAsOf: eventApplications.capacityAsOf,
+          capacityNote: eventApplications.capacityNote,
         })
         .from(eventApplications)
         .where(eq(eventApplications.eventId, event.id));
@@ -267,6 +274,33 @@ export function registerAdminEventReadTools(server: McpServer, db: Db, auth: Aut
             vendor_fee_min: centsToDollars(event.vendorFeeMinCents),
             vendor_fee_max: centsToDollars(event.vendorFeeMaxCents),
             vendor_fee_notes: event.vendorFeeNotes,
+            /**
+             * OPE-794 — what the event's OWN PROSE says about vendor capacity.
+             *
+             * The ticket's complaint was that "we are full for 2026" and "first
+             * floor sold out" survived only as hand-written text in
+             * `vendor_fee_notes` and the description, where nothing could query
+             * them and the next writer could overwrite them without knowing they
+             * mattered. This surfaces that text as a reading.
+             *
+             * ⚠️ It is DERIVED, not stored. It is a hint about the prose in this
+             * response, not a fact about the event, and it must never be treated
+             * as the stored `event_applications.capacity_status`. `null` means
+             * the prose said nothing recognisable — which is UNKNOWN, and
+             * UNKNOWN is never "open".
+             */
+            vendor_capacity_reading: (() => {
+              const reading = classifyVendorCapacity(
+                [event.vendorFeeNotes, event.description].filter(Boolean).join("\n")
+              );
+              if (!reading) return null;
+              return {
+                status: reading.status,
+                evidence: reading.evidence,
+                open_to_applications: isOpenToVendorApplications(reading.status),
+                derived_from: "prose",
+              };
+            })(),
             // OPE-709 — the legacy single-route columns. Retained as a
             // read-through for the commercial lane; `applications` below is the
             // model. Do not add a second lane here.

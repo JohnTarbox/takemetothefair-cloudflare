@@ -629,6 +629,56 @@ export const EVENT_APPLICATION_LANES = [
 ] as const;
 export type EventApplicationLane = (typeof EVENT_APPLICATION_LANES)[number];
 
+/**
+ * OPE-794 — whether there is a booth to apply FOR.
+ *
+ * We could record what a booth costs and when applications close, but not
+ * whether the show was already full. Two of six events approved on 2026-09-03
+ * were not open to new vendors — the Ogunquit Chamber's own page says "We are
+ * full for 2026", and Manchester Grange's first floor had sold out — and both
+ * facts survived only as hand-written prose in `vendor_fee_notes`, where
+ * nothing can query them and the next writer can overwrite them without knowing
+ * they mattered.
+ *
+ * That is a correctness problem, not a nicety: "Shows Now Open for Vendors" is
+ * the literal subject line of the weekly vendor digest, and its selection had no
+ * way to exclude a show that is full. A CTA telling a vendor to apply to a
+ * closed show is the fastest way to lose their trust in the digest.
+ *
+ * ⚠️ `UNKNOWN` is the default and it is NOT a synonym for `OPEN`. Defaulting to
+ * the optimistic value would assert something nobody checked — the
+ * `dates_confirmed DEFAULT true` failure (OPE-433), repeated in a new column.
+ * A reader must never render `UNKNOWN` to a vendor as "open".
+ */
+export const VENDOR_CAPACITY_STATUSES = [
+  /** No evidence either way. The default. Never render this as "open". */
+  "UNKNOWN",
+  /** Organizer copy says space is available. */
+  "OPEN",
+  /** Full, but taking names — "anyone on our waitlist is to be notified". */
+  "WAITLIST",
+  /** No space and no waitlist mentioned. */
+  "FULL",
+  /** Applications are not being accepted at all (closed, cancelled lane). */
+  "CLOSED",
+] as const;
+
+export type VendorCapacityStatus = (typeof VENDOR_CAPACITY_STATUSES)[number];
+
+/**
+ * The statuses a vendor may be invited to APPLY to.
+ *
+ * Expressed as the allow-list rather than as "not FULL and not CLOSED", so a
+ * status added later is excluded until somebody decides otherwise. A denylist
+ * would silently admit it.
+ */
+export const VENDOR_CAPACITY_OPEN_TO_APPLICATIONS: readonly VendorCapacityStatus[] = ["OPEN"];
+
+/** True only when we have positive evidence a vendor can still apply. */
+export function isOpenToVendorApplications(status: string | null | undefined): boolean {
+  return VENDOR_CAPACITY_OPEN_TO_APPLICATIONS.includes(status as VendorCapacityStatus);
+}
+
 // "Producer-class" events — the big PRODUCED shows that publish a
 // web exhibitor directory worth backfilling (home/garden, boat/RV,
 // sportsman, trade, fiber, craft-festival, fairs). Deliberately
