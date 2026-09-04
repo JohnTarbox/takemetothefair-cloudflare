@@ -37,7 +37,14 @@ import { logError } from "./logger.js";
 import { stripQuotedReply } from "./email-handlers/strip-quoted-reply.js";
 import { getDb, type Db } from "./db.js";
 import { inboundEmails, inboundEmailSenders, users } from "./schema.js";
-import { eq, sql } from "drizzle-orm";
+import { desc, eq, inArray, sql } from "drizzle-orm";
+import {
+  participantKey,
+  parseMessageIdList,
+  normalizeThreadSubject,
+  resolveThread,
+  type ThreadBasis,
+} from "@takemetothefair/utils";
 import {
   isPhotoOnlySubmission,
   resolveIntent,
@@ -205,6 +212,14 @@ export async function handleInboundEmail(
     const senderSignals = extractSenderSignals(message.headers, parsed);
     // OPE-764 — likewise. Fail-soft: never takes a message down.
     const senderIdentity = await resolveSenderColumns(env, sessionId, fromAddr, bodyText);
+    // OPE-768 — likewise: computed once, spread into every insert below.
+    const threadColumns = await resolveThreadColumns(env, sessionId, {
+      fromAddr,
+      toAddr,
+      subject,
+      inReplyTo: parsed.inReplyTo ?? null,
+      emailReferences: parsed.references ?? null,
+    });
 
     if (!fromAddr) {
       await logError(env.DB, {
@@ -241,6 +256,7 @@ export async function handleInboundEmail(
           bodyHtmlStored,
           senderSignals,
           senderIdentity,
+          threadColumns,
           attachmentCount,
           rawSize: message.rawSize,
           messageId: (parsed.messageId || "").trim() || null,
@@ -448,6 +464,7 @@ export async function handleInboundEmail(
               bodyHtmlStored,
               senderSignals,
               senderIdentity,
+              threadColumns,
               attachmentCount,
               rawSize: message.rawSize,
               messageId: (parsed.messageId || "").trim() || null,
@@ -535,6 +552,7 @@ export async function handleInboundEmail(
         bodyHtmlStored,
         senderSignals,
         senderIdentity,
+        threadColumns,
         message,
         parsed,
         attachmentCount,
@@ -693,6 +711,7 @@ export async function handleInboundEmail(
             // OPE-763 / OPE-764 — report-only capture; nothing branches on these.
             ...senderSignals,
             ...senderIdentity,
+            ...threadColumns,
             parsedUrl,
             attachmentCount,
             attachmentRefs: attachmentRefsJson,
@@ -765,6 +784,7 @@ export async function handleInboundEmail(
             // OPE-763 / OPE-764 — report-only capture; nothing branches on these.
             ...senderSignals,
             ...senderIdentity,
+            ...threadColumns,
             parsedUrl: r.refUrl ?? parsedUrl,
             attachmentCount,
             attachmentRefs: attachmentRefsJson,
@@ -1713,6 +1733,118 @@ export const NO_SENDER_MATCH: SenderIdentityColumns = {
  * with a NULL `matched_entities` would be the tell if it ever mattered, since
  * the success path always writes at least `[]`.
  */
+/**
+ * OPE-768 — assign the conversation this message belongs to.
+ *
+ * Spread into every insert below, exactly like `senderSignals` and
+ * `senderIdentity`, because there are FOUR insert sites in this file and a
+ * thread key applied to three of them would be worse than none: the queue would
+ * count people correctly except on the paths nobody looks at.
+ *
+ * Fail-soft by the same contract as sender identity — threading is bookkeeping,
+ * and it must never be the reason a real message fails to land. On error the
+ * message still gets a thread: its own new one.
+ */
+interface ThreadColumns {
+  threadId: string;
+  threadPosition: number;
+  threadBasis: ThreadBasis;
+}
+
+/** Recent rows scanned for the weak (subject+participants) tier. */
+const THREAD_CANDIDATE_WINDOW = 60;
+
+async function resolveThreadColumns(
+  env: EmailHandlerEnv,
+  sessionId: string,
+  args: {
+    fromAddr: string;
+    toAddr: string;
+    subject: string | null;
+    inReplyTo: string | null;
+    emailReferences: string | null;
+  }
+): Promise<ThreadColumns> {
+  const newThreadId = crypto.randomUUID();
+  const participants = participantKey([args.fromAddr, args.toAddr]);
+  try {
+    const db = getDb(env.DB);
+    const referenced = [
+      ...new Set([
+        ...parseMessageIdList(args.inReplyTo),
+        ...parseMessageIdList(args.emailReferences),
+      ]),
+    ];
+
+    // Two bounded reads, not a table scan. The header tier is an exact lookup;
+    // the weak tier only ever needs rows this person is already party to.
+    const byMessageId = referenced.length
+      ? await db
+          .select({
+            threadId: inboundEmails.threadId,
+            messageId: inboundEmails.messageId,
+            subject: inboundEmails.subject,
+            fromAddress: inboundEmails.fromAddress,
+            toAddress: inboundEmails.toAddress,
+          })
+          .from(inboundEmails)
+          .where(inArray(inboundEmails.messageId, referenced))
+          .limit(referenced.length)
+      : [];
+
+    const recent = await db
+      .select({
+        threadId: inboundEmails.threadId,
+        messageId: inboundEmails.messageId,
+        subject: inboundEmails.subject,
+        fromAddress: inboundEmails.fromAddress,
+        toAddress: inboundEmails.toAddress,
+      })
+      .from(inboundEmails)
+      .where(eq(inboundEmails.fromAddress, args.fromAddr))
+      .orderBy(desc(inboundEmails.receivedAt))
+      .limit(THREAD_CANDIDATE_WINDOW);
+
+    const candidates = [...byMessageId, ...recent].map((r) => ({
+      threadId: r.threadId,
+      messageId: r.messageId,
+      normalizedSubject: normalizeThreadSubject(r.subject),
+      participants: participantKey([r.fromAddress, r.toAddress]),
+    }));
+
+    const { threadId, basis } = resolveThread(
+      {
+        inReplyTo: args.inReplyTo,
+        emailReferences: args.emailReferences,
+        subject: args.subject,
+        participants,
+      },
+      candidates,
+      newThreadId
+    );
+
+    const [existing] = await db
+      .select({ n: sql<number>`count(*)` })
+      .from(inboundEmails)
+      .where(eq(inboundEmails.threadId, threadId));
+
+    return {
+      threadId,
+      threadPosition: Number(existing?.n ?? 0) + 1,
+      threadBasis: basis,
+    };
+  } catch (err) {
+    await logError(env.DB, {
+      level: "warn",
+      source: SOURCE,
+      message: "thread resolution failed; starting a new thread",
+      error: err,
+      sessionId,
+    });
+    return { threadId: newThreadId, threadPosition: 1, threadBasis: "new" };
+  }
+}
+
 async function resolveSenderColumns(
   env: EmailHandlerEnv,
   sessionId: string,
@@ -1860,6 +1992,7 @@ export async function insertSpamAuditRow(
     senderSignals: SenderSignals;
     /** OPE-764 — resolved once at ingest, spread into the row. */
     senderIdentity: SenderIdentityColumns;
+    threadColumns: ThreadColumns;
     message: import("@cloudflare/workers-types").ForwardableEmailMessage;
     parsed: Email;
     attachmentCount: number;
@@ -1877,6 +2010,7 @@ export async function insertSpamAuditRow(
     bodyHtmlStored,
     senderSignals,
     senderIdentity,
+    threadColumns,
     message,
     parsed,
     attachmentCount,
@@ -1901,6 +2035,7 @@ export async function insertSpamAuditRow(
         bodyHtml: bodyHtmlStored,
         ...senderSignals,
         ...senderIdentity,
+        ...threadColumns,
         parsedUrl: null,
         attachmentCount,
         rawSize: message.rawSize,
@@ -1972,6 +2107,7 @@ export async function insertAuditNoopRow(
     senderSignals: SenderSignals;
     /** OPE-764 — likewise. */
     senderIdentity: SenderIdentityColumns;
+    threadColumns: ThreadColumns;
     attachmentCount: number;
     rawSize: number | null;
     messageId: string | null;
@@ -1996,6 +2132,7 @@ export async function insertAuditNoopRow(
       bodyHtml: args.bodyHtmlStored,
       ...args.senderSignals,
       ...args.senderIdentity,
+      ...args.threadColumns,
       parsedUrl: null,
       attachmentCount: args.attachmentCount,
       rawSize: args.rawSize,

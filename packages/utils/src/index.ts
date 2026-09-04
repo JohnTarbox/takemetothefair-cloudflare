@@ -626,3 +626,6 @@ export * from "./placeholder-account";
 
 // OPE-794 — vendor-capacity phrase classifier; shared with the MCP Worker.
 export * from "./vendor-capacity";
+
+// OPE-768 — inbound email thread resolution; shared with the MCP Worker.
+export * from "./email-thread";
