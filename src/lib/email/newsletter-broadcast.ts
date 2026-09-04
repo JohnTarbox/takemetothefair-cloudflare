@@ -13,6 +13,7 @@ import {
   newsletterSubscribers,
   newsletterListSubscriptions,
   emailSuppressionList,
+  NEWSLETTER_LISTS,
   type NewsletterList,
 } from "@/lib/db/schema";
 import { enqueueEmail } from "@/lib/queues/producers";
@@ -48,6 +49,24 @@ export const NEWSLETTER_FROM = "Meet Me at the Fair <hello@meetmeatthefair.com>"
  * unsubscribe must mean "stop all mail", and a stale list row must never be
  * able to resurrect someone.
  */
+/**
+ * Narrow an untrusted string (a request body field, a `newsletter_issues.audience`
+ * column read) to a real audience list, or `null`.
+ *
+ * OPE-795 — returns `null` rather than falling back to a default ON PURPOSE, and
+ * the direction matters. `newsletterNameForAudience()` falls back to the consumer
+ * NAME for an unknown audience, which is the safe direction for a wordmark: the
+ * worst case is a mislabelled masthead. Falling back for RECIPIENT SELECTION is
+ * the opposite — 'weekend' is the larger list (39 vs 3), so a default sends the
+ * wrong newsletter to more people than intended, and a send to too many looks
+ * exactly like a successful send. Callers must refuse, not guess.
+ */
+export function parseNewsletterList(value: unknown): NewsletterList | null {
+  if (typeof value !== "string") return null;
+  const v = value.trim().toLowerCase();
+  return (NEWSLETTER_LISTS as readonly string[]).includes(v) ? (v as NewsletterList) : null;
+}
+
 export async function selectBroadcastRecipients(db: Db, list: NewsletterList): Promise<string[]> {
   const subs = await db
     .select({ email: newsletterSubscribers.email })

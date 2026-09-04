@@ -57,7 +57,11 @@ describe("send_newsletter_broadcast — STOP-gate (OPE-190)", () => {
   it("refuses a real broadcast without require_human_confirmation:'GO' — no HTTP call", async () => {
     const s = server();
     const res = toolResult(
-      await s.invoke("send_newsletter_broadcast", { subject: "Hi", content_html: "<p>x</p>" })
+      await s.invoke("send_newsletter_broadcast", {
+        audience: "weekend",
+        subject: "Hi",
+        content_html: "<p>x</p>",
+      })
     );
     expect(res.json.stopped).toBe(true);
     expect(res.json.reason).toBe("stop_gate");
@@ -68,6 +72,7 @@ describe("send_newsletter_broadcast — STOP-gate (OPE-190)", () => {
     const s = server();
     const res = toolResult(
       await s.invoke("send_newsletter_broadcast", {
+        audience: "weekend",
         subject: "Hi",
         content_html: "<p>x</p>",
         require_human_confirmation: "go", // wrong case
@@ -82,6 +87,7 @@ describe("send_newsletter_broadcast — STOP-gate (OPE-190)", () => {
     const s = server();
     const res = toolResult(
       await s.invoke("send_newsletter_broadcast", {
+        audience: "weekend",
         subject: "Hi",
         content_html: "<p>x</p>",
         require_human_confirmation: "GO",
@@ -101,6 +107,7 @@ describe("send_newsletter_broadcast — STOP-gate (OPE-190)", () => {
     stubFetch({ success: true, mode: "test", recipients: 1 });
     const s = server();
     await s.invoke("send_newsletter_broadcast", {
+      audience: "weekend",
       subject: "Hi",
       content_html: "<p>x</p>",
       test_recipient: "me@x.com",
@@ -114,6 +121,7 @@ describe("send_newsletter_broadcast — STOP-gate (OPE-190)", () => {
     const s = server();
     const res = toolResult(
       await s.invoke("send_newsletter_broadcast", {
+        audience: "weekend",
         subject: "Hi",
         content_html: "<p>x</p>",
         preview_only: true,
@@ -129,6 +137,7 @@ describe("send_newsletter_broadcast — STOP-gate (OPE-190)", () => {
     const s = server();
     const res = toolResult(
       await s.invoke("send_newsletter_broadcast", {
+        audience: "weekend",
         subject: "Hi",
         content_html: "<p>x</p>",
         require_human_confirmation: "GO",
@@ -137,5 +146,63 @@ describe("send_newsletter_broadcast — STOP-gate (OPE-190)", () => {
     expect(res.isError).toBe(true);
     expect(res.json.error).toBe("broadcast_disabled");
     expect(res.json.http_status).toBe(409);
+  });
+});
+
+// OPE-795 — the tool could previously reach only ONE list. The endpoint hardcoded
+// "weekend" in its recipient selection, so an analyst composing the 3-address
+// vendor digest through this tool would have mailed it to 39 attendees and 0
+// vendors — the inverse of the intent, and a breach of the ruling that the two
+// lists stay completely separate.
+describe("send_newsletter_broadcast — audience is required and forwarded (OPE-795)", () => {
+  it("forwards audience:'vendor' to the endpoint", async () => {
+    stubFetch({ success: true, preview: true, audience: "vendor", recipient_count: 3 });
+    const s = server();
+    await s.invoke("send_newsletter_broadcast", {
+      audience: "vendor",
+      subject: "New This Week",
+      content_html: "<p>x</p>",
+      preview_only: true,
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].body.audience).toBe("vendor");
+  });
+
+  it("forwards audience:'weekend' unchanged", async () => {
+    stubFetch({ success: true, preview: true, audience: "weekend", recipient_count: 39 });
+    const s = server();
+    await s.invoke("send_newsletter_broadcast", {
+      audience: "weekend",
+      subject: "This Weekend",
+      content_html: "<p>x</p>",
+      preview_only: true,
+    });
+    expect(calls[0].body.audience).toBe("weekend");
+  });
+
+  it("REJECTS a call with no audience rather than defaulting — and issues no HTTP call", async () => {
+    stubFetch({ success: true });
+    const s = server();
+    const res = (await s.invoke("send_newsletter_broadcast", {
+      subject: "New This Week",
+      content_html: "<p>x</p>",
+      preview_only: true,
+    })) as { isError?: boolean; content: Array<{ text: string }> };
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toContain("audience");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("REJECTS an audience outside the two known lists", async () => {
+    stubFetch({ success: true });
+    const s = server();
+    const res = (await s.invoke("send_newsletter_broadcast", {
+      audience: "everyone",
+      subject: "x",
+      content_html: "<p>x</p>",
+      preview_only: true,
+    })) as { isError?: boolean; content: Array<{ text: string }> };
+    expect(res.isError).toBe(true);
+    expect(calls).toHaveLength(0);
   });
 });
