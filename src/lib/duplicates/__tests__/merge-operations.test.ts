@@ -34,6 +34,22 @@ function createMockDb() {
   };
 }
 
+/**
+ * A `where()` result that is BOTH awaitable and chainable.
+ *
+ * OPE-793 added a `.limit(1)` lookup to the merge's series handling, and every
+ * mock here returned a bare promise from `where()` — so the new call died on
+ * `.limit is not a function`. That is the recurring cost of mocking the query
+ * BUILDER rather than the database: the fixture encodes the exact chain shape
+ * the implementation happened to use that day, and any new clause breaks it
+ * without saying anything about correctness. (The OPE-793 regression test uses
+ * real SQLite for precisely this reason.)
+ */
+function resolvable<T>(value: T) {
+  const p = Promise.resolve(value);
+  return Object.assign(p, { limit: () => p });
+}
+
 describe("getMergePreview", () => {
   describe("unknown entity type", () => {
     it("throws error for unknown entity type", async () => {
@@ -206,16 +222,16 @@ describe("executeMerge", () => {
       const db = {
         select: vi.fn().mockImplementation(() => ({
           from: vi.fn().mockImplementation(() => ({
-            where: vi.fn().mockResolvedValue([primaryVenue]),
+            where: vi.fn(() => resolvable([primaryVenue])),
           })),
         })),
         update: vi.fn().mockImplementation(() => ({
           set: vi.fn().mockImplementation(() => ({
-            where: vi.fn().mockResolvedValue(updateResults),
+            where: vi.fn(() => resolvable(updateResults)),
           })),
         })),
         delete: vi.fn().mockImplementation(() => ({
-          where: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
+          where: vi.fn(() => resolvable({ rowsAffected: 1 })),
         })),
         batch: vi.fn().mockImplementation(() => {
           batchCallCount++;
@@ -266,16 +282,16 @@ describe("executeMerge", () => {
         // Outside-of-batch SELECT for the dupDayDates intermediate read.
         select: vi.fn().mockImplementation(() => ({
           from: vi.fn().mockImplementation(() => ({
-            where: vi.fn().mockResolvedValue([]),
+            where: vi.fn(() => resolvable([])),
           })),
         })),
         update: vi.fn().mockImplementation(() => ({
           set: vi.fn().mockImplementation(() => ({
-            where: vi.fn().mockResolvedValue({ rowsAffected: 2 }),
+            where: vi.fn(() => resolvable({ rowsAffected: 2 })),
           })),
         })),
         delete: vi.fn().mockImplementation(() => ({
-          where: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
+          where: vi.fn(() => resolvable({ rowsAffected: 1 })),
         })),
         insert: vi.fn().mockImplementation(() => ({
           values: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
@@ -330,7 +346,7 @@ describe("executeMerge", () => {
       const db = {
         select: vi.fn().mockImplementation(() => ({
           from: vi.fn().mockImplementation(() => ({
-            where: vi.fn().mockResolvedValue([]),
+            where: vi.fn(() => resolvable([])),
           })),
         })),
         update: vi.fn().mockImplementation(() => ({
@@ -340,7 +356,7 @@ describe("executeMerge", () => {
           }),
         })),
         delete: vi.fn().mockImplementation(() => ({
-          where: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
+          where: vi.fn(() => resolvable({ rowsAffected: 1 })),
         })),
         insert: vi.fn().mockImplementation(() => ({
           values: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
@@ -417,16 +433,16 @@ describe("executeMerge", () => {
         // keeperDayDates read → the keeper already has these two days.
         select: vi.fn().mockImplementation(() => ({
           from: vi.fn().mockImplementation(() => ({
-            where: vi.fn().mockResolvedValue([{ date: "2026-09-12" }, { date: "2026-09-13" }]),
+            where: vi.fn(() => resolvable([{ date: "2026-09-12" }, { date: "2026-09-13" }])),
           })),
         })),
         update: vi.fn().mockImplementation(() => ({
           set: vi.fn().mockImplementation(() => ({
-            where: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
+            where: vi.fn(() => resolvable({ rowsAffected: 1 })),
           })),
         })),
         delete: vi.fn().mockImplementation(() => ({
-          where: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
+          where: vi.fn(() => resolvable({ rowsAffected: 1 })),
         })),
         insert: vi.fn().mockImplementation(() => ({
           values: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
@@ -478,7 +494,7 @@ describe("executeMerge", () => {
       const db = {
         select: vi.fn().mockImplementation(() => ({
           from: vi.fn().mockImplementation(() => ({
-            where: vi.fn().mockResolvedValue([]),
+            where: vi.fn(() => resolvable([])),
           })),
         })),
         update: vi.fn().mockImplementation(() => ({
@@ -488,7 +504,7 @@ describe("executeMerge", () => {
           }),
         })),
         delete: vi.fn().mockImplementation(() => ({
-          where: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
+          where: vi.fn(() => resolvable({ rowsAffected: 1 })),
         })),
         insert: vi.fn().mockImplementation(() => ({
           values: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
@@ -551,7 +567,7 @@ describe("executeMerge", () => {
     const selectChain = () => ({
       select: vi.fn().mockImplementation(() => ({
         from: vi.fn().mockImplementation(() => ({
-          where: vi.fn().mockResolvedValue([]),
+          where: vi.fn(() => resolvable([])),
         })),
       })),
     });
@@ -621,15 +637,18 @@ describe("executeMerge", () => {
               if (outsideSelectCount === 2) {
                 // The K9 keeper-key lookup. Returns the Bar-Harbor-shape
                 // colliding key (one blog post links both events).
-                return Promise.resolve([{ sourceType: "BLOG_POST", sourceId: "blog-8ede7fd4" }]);
+                return resolvable([{ sourceType: "BLOG_POST", sourceId: "blog-8ede7fd4" }]);
               }
-              return Promise.resolve([]);
+              // OPE-793 — the series lookups are outside-selects 3 and 4, after
+              // this one, so the `=== 2` ordering above is unchanged. They need
+              // the chainable form for their `.limit(1)`.
+              return resolvable([]);
             }),
           })),
         })),
         update: vi.fn().mockImplementation(() => ({
           set: vi.fn().mockImplementation(() => ({
-            where: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
+            where: vi.fn(() => resolvable({ rowsAffected: 1 })),
           })),
         })),
         // Capture each .delete().where() invocation so we can assert
@@ -708,16 +727,16 @@ describe("executeMerge", () => {
           from: vi.fn().mockImplementation(() => ({
             // Every outside-of-batch SELECT returns []. The K9 keeper-key
             // lookup gets [] back so the DELETE branch is skipped.
-            where: vi.fn().mockResolvedValue([]),
+            where: vi.fn(() => resolvable([])),
           })),
         })),
         update: vi.fn().mockImplementation(() => ({
           set: vi.fn().mockImplementation(() => ({
-            where: vi.fn().mockResolvedValue({ rowsAffected: 0 }),
+            where: vi.fn(() => resolvable({ rowsAffected: 0 })),
           })),
         })),
         delete: vi.fn().mockImplementation(() => ({
-          where: vi.fn().mockResolvedValue({ rowsAffected: 0 }),
+          where: vi.fn(() => resolvable({ rowsAffected: 0 })),
         })),
         insert: vi.fn().mockImplementation(() => ({
           values: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
@@ -786,11 +805,11 @@ describe("executeMerge", () => {
         })),
         update: vi.fn().mockImplementation(() => ({
           set: vi.fn().mockImplementation(() => ({
-            where: vi.fn().mockResolvedValue({ rowsAffected: 2 }),
+            where: vi.fn(() => resolvable({ rowsAffected: 2 })),
           })),
         })),
         delete: vi.fn().mockImplementation(() => ({
-          where: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
+          where: vi.fn(() => resolvable({ rowsAffected: 1 })),
         })),
       } as unknown;
 
@@ -820,11 +839,11 @@ describe("executeMerge", () => {
         })),
         update: vi.fn().mockImplementation(() => ({
           set: vi.fn().mockImplementation(() => ({
-            where: vi.fn().mockResolvedValue({ rowsAffected: 3 }),
+            where: vi.fn(() => resolvable({ rowsAffected: 3 })),
           })),
         })),
         delete: vi.fn().mockImplementation(() => ({
-          where: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
+          where: vi.fn(() => resolvable({ rowsAffected: 1 })),
         })),
       } as unknown;
 
@@ -845,16 +864,16 @@ describe("merge operation edge cases", () => {
     const db = {
       select: vi.fn().mockImplementation(() => ({
         from: vi.fn().mockImplementation(() => ({
-          where: vi.fn().mockResolvedValue([primaryVenue]),
+          where: vi.fn(() => resolvable([primaryVenue])),
         })),
       })),
       update: vi.fn().mockImplementation(() => ({
         set: vi.fn().mockImplementation(() => ({
-          where: vi.fn().mockResolvedValue({ rowsAffected: 0 }),
+          where: vi.fn(() => resolvable({ rowsAffected: 0 })),
         })),
       })),
       delete: vi.fn().mockImplementation(() => ({
-        where: vi.fn().mockResolvedValue({ rowsAffected: 0 }),
+        where: vi.fn(() => resolvable({ rowsAffected: 0 })),
       })),
       batch: vi.fn().mockImplementation(() => {
         batchCallCount++;
