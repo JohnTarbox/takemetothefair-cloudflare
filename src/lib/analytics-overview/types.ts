@@ -1,3 +1,4 @@
+import type { Measurement } from "./render-state";
 /**
  * Public types + value constants for the /admin/analytics Overview snapshot.
  *
@@ -71,6 +72,18 @@ export type SiteHealthCard = {
 };
 
 export type IndexNowCard = {
+  /**
+   * OPE-808 — the success rate as a MEASUREMENT, which can decline to be a
+   * number. With zero attempts the rate is undefined, not 0% and not 100%;
+   * the old boolean-ish fallback returned both, on different page loads, from
+   * the same data.
+   */
+  todayRate: Measurement<number>;
+  /**
+   * Last date Bing was actually contacted (`success`/`failure`) — a `skipped`
+   * row is the breaker declining to send. Renders as "paused since ...".
+   */
+  lastAttemptAt: string | null;
   todaySubmissions: number;
   todaySuccessRate: number; // 0..1 — over attempts (success+failure); 0 when only deferrals (OPE-243)
   todayFailures: number;
@@ -172,6 +185,8 @@ export type BrandVsNonBrandCard =
 
 /** Sitemap quality ratio: rows passing the completeness gate / total. */
 export type SitemapQualityCard = {
+  /** OPE-808 — pass rate that can decline to be a number. */
+  overallRate: Measurement<number>;
   vendors: { pass: number; total: number };
   events: { pass: number; total: number };
   overall_pass_rate: number; // 0..1
@@ -203,7 +218,24 @@ export type RenderFaultHealthCard = {
 
 /** Time-to-index summary computed from time_to_index_log. */
 export type TimeToIndexCard = {
+  /**
+   * Rows the statistics were computed over — the SAMPLE, capped at
+   * `sampleCap`. ⚠️ OPE-808: this used to be rendered as the resolved count.
+   * It is a LIMIT. `resolvedTotal` is the population.
+   */
   resolved: number;
+  /** True population of resolved rows (5,501 on 2026-09-05 vs a 1,000 sample). */
+  resolvedTotal: number;
+  sampleCap: number;
+  /** The sample hit the cap AND the population exceeds it. */
+  truncated: boolean;
+  /**
+   * Last date the feed ADMITTED a row (`indexnow_submitted_at`), not the last
+   * date anything in it changed. Frozen at 2026-06-13 while `first_crawl_at`
+   * keeps advancing — which is why the median climbs on its own.
+   */
+  feedLastAt: string | null;
+  feedStale: boolean;
   unresolved: number;
   median_seconds: number | null;
   p90_seconds: number | null;
