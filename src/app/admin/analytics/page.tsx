@@ -968,8 +968,22 @@ function TimeToIndexCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
         <p className="text-xs text-muted-foreground mt-4">
           {state === "INDETERMINATE"
             ? "Data collection in progress — first results expected ~7 days post-deploy."
-            : `${fmt(c.resolved)} resolved · ${fmt(c.unresolved)} unresolved`}
+            : // OPE-808 — `c.resolved` is a LIMIT, not a count. Rendering it
+              // bare read "1,000 resolved" against a store holding 5,501, and
+              // the capped sample reported 61.6d where the population mean is
+              // 40.8d. Say which number is which.
+              `${c.truncated ? `${fmt(c.resolved)} of ${fmt(c.resolvedTotal)} sampled` : `${fmt(c.resolved)} resolved`} · ${fmt(c.unresolved)} unresolved`}
         </p>
+        {c.feedStale && (
+          // The 🕒 state the Overview legend has always documented and nothing
+          // rendered. A closed cohort is not a live KPI: this feed is admitted
+          // by IndexNow submission, which is paused, while crawls keep
+          // resolving — so the median climbs on its own and the figure can only
+          // worsen regardless of real indexing performance.
+          <p className="text-xs text-orange-600 mt-1">
+            🕒 feed closed {c.feedLastAt ?? "unknown"} — closed cohort, not a live breach
+          </p>
+        )}
       </CardContent>
     </Card>
   );
@@ -1217,7 +1231,9 @@ function RecommendationsSummaryCardView({ snapshot }: { snapshot: OverviewSnapsh
 function IndexNowCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
   const c = snapshot.indexnow;
   const hasFailures = c.todayFailures > 0;
-  const successPct = Math.round(c.todaySuccessRate * 100);
+  // OPE-808 — the rate may legitimately have no value. `todayRate` says which;
+  // `todaySuccessRate` is retained only for callers not yet migrated.
+  const successPct = c.todayRate.value == null ? null : Math.round(c.todayRate.value * 100);
   return (
     <Link href="/admin/analytics?tab=indexnow" className="block hover:opacity-90">
       <Card className={`h-full ${hasFailures ? "border-red-300" : ""}`}>
@@ -1234,7 +1250,20 @@ function IndexNowCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
                 <span
                   className={hasFailures ? "text-red-700 font-semibold" : "text-muted-foreground"}
                 >
-                  {successPct}% success
+                  {successPct == null ? (
+                    // No attempts → the rate does not exist. Say what happened
+                    // and when, rather than picking 0% or 100% — the old
+                    // expression returned BOTH on different loads of the same
+                    // data, depending on whether a `skipped` row landed.
+                    <>
+                      — ·{" "}
+                      {c.lastAttemptAt
+                        ? `paused since ${c.lastAttemptAt}`
+                        : c.todayRate.reason || "no sends"}
+                    </>
+                  ) : (
+                    `${successPct}% success`
+                  )}
                 </span>
                 {c.quota && (
                   <span className="text-muted-foreground ml-2">

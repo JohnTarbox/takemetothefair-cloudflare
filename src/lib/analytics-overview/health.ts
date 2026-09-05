@@ -6,6 +6,7 @@
 
 import { and, count, desc, gte, sql } from "drizzle-orm";
 import { errorLogs, events, indexnowSubmissions, timeToIndexLog, vendors } from "@/lib/db/schema";
+import { freshness, rate } from "./render-state";
 import {
   BingApiError,
   BingConfigError,
@@ -53,6 +54,16 @@ export async function loadIndexNow(
     .where(gte(indexnowSubmissions.timestamp, todayStartDate))
     .groupBy(indexnowSubmissions.status);
 
+  // The last date Bing was ACTUALLY contacted (success or failure) — a
+  // `skipped` row is the breaker declining to send, not a send. This is what
+  // "paused since ..." means on the tile.
+  const lastAttemptRow = await db
+    .select({
+      lastAt: sql<string | null>`MAX(date(${indexnowSubmissions.timestamp}, 'unixepoch'))`,
+    })
+    .from(indexnowSubmissions)
+    .where(sql`${indexnowSubmissions.status} IN ('success','failure')`);
+
   let total = 0;
   let success = 0;
   let failures = 0;
@@ -78,13 +89,27 @@ export async function loadIndexNow(
     else quotaError = e instanceof Error ? e.message : "Bing unknown error";
   }
 
+  // ⚠️ OPE-808 — a rate needs a denominator.
+  //
+  // OPE-243 half-saw this and picked two different wrong answers: with no
+  // attempts it returned 0 when deferrals existed and 1 when they did not. That
+  // is why the same tile read "100% success" on one page load and "0% success"
+  // on the next, from the same data — the branch flipped on whether a `skipped`
+  // row happened to land that day. Zero attempts is not 0% and not 100%; it is
+  // "we did not contact Bing", and the tile must say so.
+  //
+  // Measured 2026-09-05: last actual attempt was 2026-08-11 (a failure); 975
+  // `skipped` rows since, zero successes in 40 days.
+  const rateReason =
+    deferred > 0 ? `breaker deferring — ${deferred} skipped today` : "no sends today";
+  const todayRate = rate(success, attempts, rateReason);
+
   return {
     todaySubmissions: total,
-    // OPE-243: rate over ATTEMPTS (success+failure), not all rows. And when
-    // there were no attempts but deferrals piled up (breaker paused), that is
-    // NOT 100% success — it's a silent integration, so report 0. Only a truly
-    // idle day (no attempts, no deferrals) reads as healthy (1).
+    /** @deprecated OPE-808 — read `todayRate`, which can say "undefined". */
     todaySuccessRate: attempts > 0 ? success / attempts : deferred > 0 ? 0 : 1,
+    todayRate,
+    lastAttemptAt: lastAttemptRow[0]?.lastAt ?? null,
     todayFailures: failures,
     todayDeferred: deferred,
     quota,
@@ -141,34 +166,70 @@ export async function loadSitemapQuality(db: Db): Promise<SitemapQualityCard> {
   return {
     vendors: { pass: vPassN, total: vTotalN },
     events: { pass: ePassN, total: eTotalN },
+    /** @deprecated OPE-808 — read `overallRate`, which can say "undefined". */
     overall_pass_rate: overallTotal > 0 ? (vPassN + ePassN) / overallTotal : 0,
+    // An empty catalogue is not a 0% pass rate — it is no measurement. Latent
+    // today (the site has vendors and events), fixed because it is the same
+    // shape that made the IndexNow tile report 100% and 0% from one dataset.
+    overallRate: rate(vPassN + ePassN, overallTotal, "no vendors or events to measure"),
     threshold: SITEMAP_MIN_COMPLETENESS,
   };
 }
 
+/** The in-memory sort cap. Named, because it is reported rather than hidden. */
+export const TIME_TO_INDEX_SAMPLE_CAP = 1000;
+
 export async function loadTimeToIndex(db: Db): Promise<TimeToIndexCard> {
   // Median computed in JS — SQLite has no MEDIAN aggregate. Pull resolved
-  // lag values up to 1000 most recent (cheap to sort in-memory).
-  const [resolvedRows, unresolvedRow] = await Promise.all([
+  // lag values up to the cap (cheap to sort in-memory).
+  //
+  // ⚠️ OPE-808 — this query samples, and the tile used to print the sample size
+  // as `resolved`. On 2026-09-05 that read "1,000 resolved" against a store
+  // holding 5,501, and the capped sample reported a 61.6d mean where the true
+  // population mean is 40.8d. A LIMIT is not a count. Both the population total
+  // and the feed's last admission are now fetched so the card can say which.
+  const [resolvedRows, unresolvedRow, resolvedTotalRow, feedRow] = await Promise.all([
     db
       .select({ lagSeconds: timeToIndexLog.lagSeconds })
       .from(timeToIndexLog)
       .where(sql`${timeToIndexLog.lagSeconds} IS NOT NULL`)
       .orderBy(desc(timeToIndexLog.firstCrawlAt))
-      .limit(1000),
+      .limit(TIME_TO_INDEX_SAMPLE_CAP),
     db
       .select({ n: count() })
       .from(timeToIndexLog)
       .where(sql`${timeToIndexLog.firstCrawlAt} IS NULL`),
+    db
+      .select({ n: count() })
+      .from(timeToIndexLog)
+      .where(sql`${timeToIndexLog.lagSeconds} IS NOT NULL`),
+    // Freshness is judged on the column that ADMITS rows. `first_crawl_at`
+    // still advances (stragglers resolving), which is exactly why reading
+    // freshness off it reports a healthy feed that has in fact been closed
+    // since 2026-06-13.
+    db
+      .select({ maxAdmitted: sql<number | null>`MAX(${timeToIndexLog.indexnowSubmittedAt})` })
+      .from(timeToIndexLog),
   ]);
   const lags = resolvedRows
     .map((r) => r.lagSeconds)
     .filter((n): n is number => typeof n === "number")
     .sort((a, b) => a - b);
   const n = lags.length;
+  const resolvedTotal = resolvedTotalRow[0]?.n ?? n;
+  const rawAdmitted = feedRow[0]?.maxAdmitted ?? null;
+  // D1 stores these columns as epoch SECONDS in raw SQL.
+  const feedAdmitsRowsAt = rawAdmitted == null ? null : new Date(Number(rawAdmitted) * 1000);
+  const freshnessState = freshness(null, "time_to_index_log", feedAdmitsRowsAt);
+
   if (n === 0) {
     return {
       resolved: 0,
+      resolvedTotal,
+      sampleCap: TIME_TO_INDEX_SAMPLE_CAP,
+      truncated: false,
+      feedLastAt: freshnessState.feedLastAt ?? null,
+      feedStale: freshnessState.state === "stale",
       unresolved: unresolvedRow[0]?.n ?? 0,
       median_seconds: null,
       p90_seconds: null,
@@ -179,7 +240,15 @@ export async function loadTimeToIndex(db: Db): Promise<TimeToIndexCard> {
   const p90 = lags[Math.floor(n * 0.9)];
   const avg = Math.round(lags.reduce((s, v) => s + v, 0) / n);
   return {
+    // `resolved` remains the SAMPLE size (what the stats were computed over),
+    // and `resolvedTotal` is the population. The tile renders "N of M sampled"
+    // rather than presenting either number alone as the answer.
     resolved: n,
+    resolvedTotal,
+    sampleCap: TIME_TO_INDEX_SAMPLE_CAP,
+    truncated: n >= TIME_TO_INDEX_SAMPLE_CAP && resolvedTotal > n,
+    feedLastAt: freshnessState.feedLastAt ?? null,
+    feedStale: freshnessState.state === "stale",
     unresolved: unresolvedRow[0]?.n ?? 0,
     median_seconds: median,
     p90_seconds: p90,

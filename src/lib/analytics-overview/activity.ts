@@ -263,7 +263,23 @@ export async function loadThisWeeksActions(db: Db, sinceDate: Date): Promise<Thi
  * GREEN/INDETERMINATE KPI from the queue. The Recent Activity panel surfaces
  * the resolution from admin_actions.
  */
+import { isLiveMeasurement, type MeasurementState } from "./render-state";
+
 const TIER_1_REC_AFFECTED_THRESHOLD = 50;
+
+/**
+ * OPE-808 scope 3 — does this KPI state describe a live measurement?
+ *
+ * `STALE` means the backing feed stopped; the reading describes a closed
+ * cohort. Everything else is a real current observation, breach or not.
+ *
+ * This mapping is what decides whether a queue row AGES. Without it the
+ * time-to-index P0 read "breached · 70d" and got worse every day precisely
+ * because its feed had closed — urgency manufactured out of a rendering fact.
+ */
+function measurementStateForKpi(state: string): MeasurementState {
+  return state === "STALE" ? "stale" : "ok";
+}
 
 export async function loadActionQueue(
   db: Db,
@@ -303,6 +319,11 @@ export async function loadActionQueue(
   // visually as states flip between fires.
   for (const [kpi, row] of kpiStates) {
     const t = KPI_THRESHOLDS[kpi];
+    // A row only ages while it describes something measured now. Computed per
+    // row rather than per branch so a future state cannot be added to one
+    // branch and forgotten in the others.
+    const ages = isLiveMeasurement({ state: measurementStateForKpi(row.state) });
+    const detectedAt = ages ? (row.firstDetectedAt?.toISOString() ?? null) : null;
     if (row.state === "STALE") {
       // STALE = data feed is broken. Surface as P0 with a "fix the source"
       // prompt — broken data invalidates GREEN/YELLOW/RED entirely.
@@ -312,10 +333,18 @@ export async function loadActionQueue(
       base.push({
         priority: "P0",
         source: "kpi",
-        title: `${t.displayName} data feed stale (${ageLabel})`,
+        // OPE-808 scope 3 — badge it, and stop it ageing.
+        //
+        // A stale feed IS actionable (fix the source), so the row stays. What
+        // it is NOT is a live breach, and ageing it manufactures urgency out of
+        // a rendering fact: the time-to-index KPI read "breached · 70d" and got
+        // worse every day precisely BECAUSE its feed closed. `firstDetectedAt`
+        // is dropped so the SLA decorator cannot age it — see
+        // `isLiveMeasurement`.
+        title: `${t.displayName} — stale feed, not a live breach (${ageLabel})`,
         effort: "Investigate data source",
         href: t.href,
-        firstDetectedAt: row.firstDetectedAt?.toISOString() ?? null,
+        firstDetectedAt: detectedAt,
         refKey: kpi,
       });
     } else if (row.state === "RED") {
@@ -325,7 +354,7 @@ export async function loadActionQueue(
         title: actionTitleForKpi(kpi, row.value),
         effort: t.effort,
         href: t.href,
-        firstDetectedAt: row.firstDetectedAt?.toISOString() ?? null,
+        firstDetectedAt: detectedAt,
         refKey: kpi,
       });
     } else if (row.state === "YELLOW" && !redRecently.has(kpi)) {
@@ -335,7 +364,7 @@ export async function loadActionQueue(
         title: actionTitleForKpi(kpi, row.value),
         effort: t.effort,
         href: t.href,
-        firstDetectedAt: row.firstDetectedAt?.toISOString() ?? null,
+        firstDetectedAt: detectedAt,
         refKey: kpi,
       });
     }

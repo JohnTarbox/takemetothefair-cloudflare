@@ -377,9 +377,21 @@ async function readTimeToIndex(db: Db): Promise<KpiValueResult> {
   // MIN_TTI_SAMPLES_30D resolved samples in the last 30d before classifying;
   // below that, the median is too noisy and we return INDETERMINATE.
   //
-  // Staleness signal: max(first_crawl_at) on time_to_index_log. If the URL
-  // Inspection sweep has stopped reconciling rows for >7d, the median is
-  // stale and the KPI is STALE rather than reflecting a real lag.
+  // Staleness signal: max(indexnow_submitted_at) — the column that ADMITS rows.
+  //
+  // ⚠️ OPE-808. This read `max(first_crawl_at)` and that is why the KPI has sat
+  // "breached · 70d" since 2026-06-27 and got worse every day.
+  //
+  // `indexnow_submitted_at` is what puts a row in this table, and it froze on
+  // 2026-06-13 when the IndexNow breaker paused. `first_crawl_at` is when a row
+  // RESOLVES, and it keeps advancing (2026-09-04) as the slowest stragglers from
+  // the closed June cohort finally get crawled. Judging freshness on the second
+  // column reports a healthy feed — while the median climbs mechanically,
+  // because the only rows still arriving are the slow ones.
+  //
+  // So the KPI could only ever worsen, regardless of real indexing performance,
+  // and nothing could say why. Reading the admission column instead makes it
+  // STALE, which is the truth: a closed cohort, not a live breach.
   const thirtyDaysAgo = new Date(Date.now() - 30 * 86400 * 1000);
   const [rows, maxRow] = await Promise.all([
     db
@@ -393,7 +405,9 @@ async function readTimeToIndex(db: Db): Promise<KpiValueResult> {
       )
       .orderBy(desc(timeToIndexLog.firstCrawlAt))
       .limit(1000),
-    db.select({ ts: sql<number | null>`max(${timeToIndexLog.firstCrawlAt})` }).from(timeToIndexLog),
+    db
+      .select({ ts: sql<number | null>`max(${timeToIndexLog.indexnowSubmittedAt})` })
+      .from(timeToIndexLog),
   ]);
   const maxSec = maxRow[0]?.ts ?? null;
   const dataAgeSeconds = ageSecondsFromDate(maxSec != null ? new Date(maxSec * 1000) : null);

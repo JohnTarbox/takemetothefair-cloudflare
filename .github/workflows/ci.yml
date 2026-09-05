@@ -149,6 +149,9 @@ jobs:
       - name: Guard one fault-status vocabulary (OPE-811)
         run: npx tsx scripts/check-fault-status-vocabulary.ts
 
+      - name: Guard analytics render states (OPE-808)
+        run: npx tsx scripts/check-analytics-render-states.ts
+
   e2e:
     name: E2E Tests
     runs-on: ubuntu-latest
