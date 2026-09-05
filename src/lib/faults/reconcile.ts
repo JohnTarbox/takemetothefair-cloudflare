@@ -20,7 +20,8 @@
  *      Linear dup pre-flight) so a recurring fault can't be double-filed.
  *   3. POSTs /api/internal/faults/record-candidate { signature, opeId, status } so
  *      the next scan sees the row as 'filed' (not re-emitted); 'done' closes it.
- *   4. Ignores `existing` (already known / already flagged — no new work).
+ *   4. Ignores `existing` — rows that already carry an `ope_id`. Rows that are
+ *      known but UNFILED come back as `backlog` and ARE work (OPE-811).
  * `deferred` candidates are batch-cap overflow: already persisted 'proposed' (or
  * 'regressed'), so they emit on the next run — a flapping fault can't spam Linear.
  *
@@ -33,6 +34,8 @@ export const DEFAULT_MIN_COUNT = 3;
 export const DEFAULT_MIN_SESSIONS = 2;
 /** NEW/regression candidates emitted per run — the flap guard (batch cap). */
 export const DEFAULT_BATCH_CAP = 5;
+
+import { isFileableStatus, isUnknownStatus } from "./status";
 
 export type FaultStatus = "proposed" | "filed" | "done" | "regressed";
 
@@ -74,7 +77,13 @@ export interface FaultCandidate {
   firstSeen: number;
   lastSeen: number;
   token: string;
-  kind: "new" | "regression";
+  /**
+   * `backlog` (OPE-811) is a fault already in the ledger, fileable, and never
+   * filed. It is a distinct kind from `new` so the rail can say which it is —
+   * filing a 15-day-old stuck row and finding a fault this morning are
+   * different events and should not be reported as the same one.
+   */
+  kind: "new" | "regression" | "backlog";
 }
 
 /**
@@ -121,6 +130,16 @@ export interface SubThresholdDrop {
 export interface ReconcileFaultsResult {
   /** NEW faults to file this run (within the batch cap). */
   toEmit: FaultCandidate[];
+  /**
+   * OPE-811 — signatures already in the ledger, fileable, and carrying no
+   * `ope_id`. Real work the rail could not previously see.
+   *
+   * Computed from the LEDGER, not from this window's groups: the 19 stuck
+   * production rows are old faults that may not recur in any given scan, so a
+   * backlog derived from `grouped` would still miss exactly the rows that have
+   * been stuck longest. Shares the batch cap with new candidates.
+   */
+  backlog: FaultCandidate[];
   /** Already proposed/filed/regressed and still present — no new work. */
   existing: FaultLedgerRow[];
   /** Faults that recurred after being marked done (within the batch cap). */
@@ -155,8 +174,15 @@ function safeNum(value: unknown, fallback: number): number {
  *
  * Per signature:
  *   - not in ledger + eligible → NEW candidate (`kind:"new"`) + `propose`.
- *   - in ledger, 'proposed'/'filed'/'regressed', still present → `existing`
- *     (already known / flagged) + `touch`. NEVER re-emitted.
+ *   - in ledger, 'filed' (or any status carrying an `ope_id`), still present →
+ *     `existing` (already flagged) + `touch`. NEVER re-emitted.
+ *   - in ledger, fileable and UNFILED (`ope_id IS NULL`) → `backlog` candidate.
+ *     ⚠️ OPE-811: this bucket used to be folded into `existing` and described as
+ *     "already known / flagged". A `proposed` row with no `ope_id` is known but
+ *     NOT flagged, and folding the two together meant a signature that was
+ *     minted and never filed could never be filed: not new, so not in `toEmit`;
+ *     in `existing`, which the rail ignores by design. Nineteen production rows
+ *     sat that way for 15 days while every weekly run reported SUCCEEDED.
  *   - in ledger, 'done' → REGRESSION only if occurrences post-date resolvedAt
  *     (`lastSeen > resolvedAt`): `kind:"regression"` candidate + `regress`. If all
  *     occurrences predate resolvedAt (stale rows) → just `touch`.
@@ -289,7 +315,9 @@ export function reconcileFaults(
       continue;
     }
 
-    // 'proposed' | 'filed' | 'regressed' → already known / flagged. Don't re-emit.
+    // Already carries an OPE → genuinely flagged, no new work. Anything else
+    // that is still fileable is UNFILED, and is picked up as backlog below.
+    // (OPE-811: these two were one bucket, and the unfiled half was invisible.)
     existingActive.push(row);
     upserts.push({
       op: "touch",
@@ -320,5 +348,50 @@ export function reconcileFaults(
     }
   });
 
-  return { toEmit, existing: existingActive, regressions, deferred, upserts, subThreshold };
+  // ── OPE-811: the unfiled backlog ────────────────────────────────────────
+  //
+  // Every ledger row that is fileable and carries no `ope_id`, MINUS anything
+  // already being emitted this run. Derived from the ledger rather than from
+  // `grouped`, because a fault that stopped recurring still needs filing — and
+  // those are precisely the rows that had been stuck longest (the oldest of the
+  // 19 had sat 15 days).
+  //
+  // Oldest first: a backlog drained newest-first never reaches its tail.
+  const emittingNow = new Set<string>(candidates.map((c) => c.signature));
+  const backlogAll: FaultCandidate[] = [];
+  for (const row of bySignature.values()) {
+    if (!row || emittingNow.has(row.signature)) continue;
+    if (row.opeId != null) continue;
+    // An UNKNOWN status counts as fileable, never as handled. Reading an
+    // unrecognised value as "already dealt with" is the defect this ticket is.
+    if (!isFileableStatus(row.status) && !isUnknownStatus(row.status)) continue;
+    backlogAll.push({
+      signature: row.signature,
+      route: row.route,
+      errorClass: row.errorClass,
+      count: safeNum(row.count, 0),
+      firstSeen: safeNum(row.firstSeen, nowMs),
+      lastSeen: safeNum(row.lastSeen, nowMs),
+      token: tokenFor(row.signature),
+      kind: "backlog",
+    });
+  }
+  backlogAll.sort((a, b) => a.firstSeen - b.firstSeen || a.signature.localeCompare(b.signature));
+
+  // Shares the batch cap with new + regression candidates, so a 19-row backlog
+  // drains over four runs instead of filing 19 OPEs at once. The flap guard is
+  // the same guard; there is no second budget.
+  const remaining = Math.max(0, batchCap - toEmit.length - regressions.length);
+  const backlog = backlogAll.slice(0, remaining);
+  deferred.push(...backlogAll.slice(remaining));
+
+  return {
+    toEmit,
+    backlog,
+    existing: existingActive,
+    regressions,
+    deferred,
+    upserts,
+    subThreshold,
+  };
 }

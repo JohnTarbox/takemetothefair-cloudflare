@@ -13,11 +13,19 @@ import { count, gte } from "drizzle-orm";
 import { errorLogs, faultSignatures } from "@/lib/db/schema";
 import type { Db } from "./shared";
 import type { RenderFaultHealthCard } from "./types";
+import { isTerminalStatus } from "@/lib/faults/status";
 
 const MS_PER_HOUR = 3_600_000;
-// A signature is still "open" until it's resolved (done). Mirrors the
-// unresolved set the alerting path (selectStaleFaultReds) escalates on.
-const OPEN_STATUSES = new Set(["proposed", "filed", "regressed"]);
+// A signature is still "open" until its disposition is settled.
+//
+// ⚠️ OPE-811 — this was a hand-rolled `new Set(["proposed","filed","regressed"])`
+// that omitted the `open` status, which 8 production rows actually use, and
+// `watch`, which 2 more use. `filed` and `regressed` have ZERO rows in prod, so
+// the set matched `proposed` and nothing else — which is why the tile read
+// "OPEN SIGNATURES 19 / 68" while 29 signatures were genuinely unresolved.
+//
+// Now derived from the canonical vocabulary. The count rises 19 → 29; that is
+// a correction, not a regression.
 
 export async function loadRenderFaultHealth(
   db: Db,
@@ -55,7 +63,7 @@ export async function loadRenderFaultHealth(
   let mttdFiledRows = 0;
 
   for (const r of sigRows) {
-    if (OPEN_STATUSES.has(r.status)) openSignatures++;
+    if (!isTerminalStatus(r.status)) openSignatures++;
     if (r.opeId) autoDetected++;
     if (r.status === "done") doneCount++;
     if (r.status === "regressed") regressedCount++;
