@@ -11,6 +11,7 @@ import {
   type FaultStatus,
   type GroupedFault,
 } from "@/lib/faults/reconcile";
+import { buildRailHealth } from "@/lib/faults/status";
 import { classifyFault } from "@/lib/faults/family-registry";
 
 /**
@@ -398,6 +399,19 @@ export const POST = withInternalKey({ source: "faults:candidates" }, async ({ db
         ...c,
         classification: classifyFault({ errorClass: c.errorClass, route: c.route }),
       })),
+      // OPE-811 — ledger rows that are fileable and were never filed. The rail
+      // files these exactly as it files `toEmit`; they are the same work,
+      // arriving late. Before this they were folded into `existing`, which the
+      // rail ignores by design, so 19 of them sat unrouted for up to 15 days.
+      backlog: result.backlog.map((c) => ({
+        ...c,
+        classification: classifyFault({ errorClass: c.errorClass, route: c.route }),
+      })),
+      // OPE-811 scope 2 — assert on the POPULATION, not on this query's return.
+      // A run that files nothing is only healthy if there was nothing to file,
+      // and the pipeline could not tell those apart: the 2026-09-01 weekly run
+      // reported SUCCEEDED with 19 unrouted candidates in the ledger.
+      health: buildRailHealth(ledger, result),
       deferred: result.deferred,
       // OPE-488 — the discarded-but-real groups, so a consumer can tell "quiet
       // traffic" from "everything fell just under the gate". Capped: this is a

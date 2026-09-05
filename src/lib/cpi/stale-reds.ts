@@ -12,6 +12,7 @@
 
 import type { ActionQueueEntry } from "@/lib/analytics-overview/types";
 import { resolveDigestHref } from "@takemetothefair/utils";
+import { isParked, isTerminalStatus } from "@/lib/faults/status";
 
 export interface StaleRed {
   priority: "P0" | "P1";
@@ -94,8 +95,20 @@ export interface FaultRedInput {
   firstSeen: number; // ms-epoch
 }
 
-/** Statuses that count as still-open — a `done` fault is resolved, never stale. */
-const OPEN_FAULT_STATUSES = new Set(["proposed", "filed", "regressed"]);
+/**
+ * Which faults can go stale-red.
+ *
+ * ⚠️ OPE-811 — was a hand-rolled set omitting `open` (8 production rows) and
+ * `watch` (2). Because `filed` and `regressed` have no rows in prod, the
+ * escalation path could only ever see `proposed` signatures.
+ *
+ * `watch` is excluded deliberately and permanently: it means an operator parked
+ * the row on purpose. Escalating a parked row is how an alert channel earns its
+ * mute, and a muted channel is how the original defect survived 15 days.
+ */
+function isStaleEligible(status: string): boolean {
+  return !isTerminalStatus(status) && !isParked(status);
+}
 
 /**
  * Pick the UNRESOLVED render faults that have been open past `thresholdHours`
@@ -112,7 +125,7 @@ export function selectStaleFaultReds(
   const stale: StaleRed[] = [];
 
   for (const row of rows) {
-    if (!OPEN_FAULT_STATUSES.has(row.status)) continue; // resolved → not stale
+    if (!isStaleEligible(row.status)) continue; // settled or parked → not stale
     if (Number.isNaN(row.firstSeen)) continue; // guard bad stamp, never throw
 
     const hoursInRed = (nowMs - row.firstSeen) / MS_PER_HOUR;
