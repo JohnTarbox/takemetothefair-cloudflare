@@ -19,6 +19,11 @@ import { and, eq } from "drizzle-orm";
 import { eventDiscrepancies } from "../schema.js";
 import type { Db } from "../db.js";
 import { logError } from "../logger.js";
+import {
+  classifyComparisonTarget,
+  isPriorYearDrift,
+  stalePageConfidence,
+} from "./stale-page-scoring.js";
 import { initialCaptureScore } from "./queue-ranking.js";
 
 const OUTREACH_CANDIDATE_THRESHOLD = 0.6;
@@ -55,6 +60,18 @@ export interface CaptureDiscrepancyArgs {
   divergentValue?: string | null;
   divergentSourceKey?: string | null;
   divergentSourceUrl?: string | null;
+  /**
+   * OPE-815 — force `outreach_candidate` off regardless of score.
+   *
+   * A finding can be worth recording and still be something we must never
+   * email a promoter about. An aggregator's stale listing is the aggregator's
+   * error, not theirs, and 8 of the 18 open radar rows carried
+   * `outreach_candidate=1` including aggregator ones.
+   *
+   * `undefined` leaves the normal threshold in charge; `false` overrides it.
+   * Deliberately one-directional — this can suppress, never promote.
+   */
+  forceOutreachCandidate?: false;
   /** 0..1 — confidence this is a real divergence. NULL ⇒ detector doesn't
    *  compute one. */
   confidence?: number | null;
@@ -144,7 +161,10 @@ export async function captureDiscrepancy(
       notes: args.notes ?? null,
       resolutionStatus: "open",
       outreachPriorityScore: initialScore,
-      outreachCandidate: initialScore >= OUTREACH_CANDIDATE_THRESHOLD,
+      outreachCandidate:
+        args.forceOutreachCandidate === false
+          ? false
+          : initialScore >= OUTREACH_CANDIDATE_THRESHOLD,
     });
     return id;
   } catch (err) {
@@ -336,9 +356,19 @@ export async function captureStalePageDiscrepancy(
     canonicalStartDate: Date | null;
     canonicalUrl: string | null;
     driftDays: number;
+    /**
+     * OPE-815 — the promoter's own website, so the comparison target can be
+     * classified organizer vs aggregator. Optional: when absent the target is
+     * `unknown`, which is NOT treated as organizer.
+     */
+    promoterWebsite?: string | null;
   }
 ): Promise<string | null> {
-  const conf = Math.min(1, Math.abs(args.driftDays) / 30);
+  const drift = Math.abs(args.driftDays);
+  const targetClass = classifyComparisonTarget(args.canonicalUrl, args.promoterWebsite);
+  const conf = stalePageConfidence(drift, targetClass);
+  const priorYear = isPriorYearDrift(drift);
+
   return captureDiscrepancy(db, {
     eventId: args.eventId,
     fieldClass: "date",
@@ -350,6 +380,14 @@ export async function captureStalePageDiscrepancy(
     divergentSourceKey: safeHost(args.canonicalUrl),
     divergentSourceUrl: args.canonicalUrl,
     confidence: conf,
-    notes: `drift ${args.driftDays}d between stored start_date and source's canonical date`,
+    // ⚠️ OPE-815 scope 4 — an aggregator's stale listing is not the promoter's
+    // error and must never drive a promoter email. Only an organizer-domain
+    // comparison is theirs to answer for.
+    forceOutreachCandidate: targetClass === "organizer" ? undefined : false,
+    notes:
+      `drift ${args.driftDays}d between stored start_date and source's canonical date` +
+      ` [target=${targetClass}` +
+      (priorYear ? `, source_holds_prior_year` : "") +
+      `]`,
   });
 }

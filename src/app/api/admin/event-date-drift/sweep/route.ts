@@ -1,7 +1,8 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
-import { and, eq, gte, isNotNull, lte, sql } from "drizzle-orm";
+import { and, eq, gte, isNotNull, isNull, lte, sql } from "drizzle-orm";
 import { isAuthorized } from "@/lib/api-auth";
+import { classifySweepOutcome } from "@/lib/goodwill/sweep-outcome";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, eventDateDriftFindings } from "@/lib/db/schema";
 import { parseJsonLd } from "@/lib/schema-org";
@@ -28,6 +29,14 @@ const FETCH_TIMEOUT_MS = 15_000;
 interface SweepResult {
   scanned: number;
   drift_recorded: number;
+  /**
+   * OPE-815 — findings closed because the source now AGREES with us.
+   *
+   * Reported as its own number rather than folded into `drift_recorded`,
+   * because "the organizer fixed their page" and "we found a new conflict" are
+   * different events and a run that only does the former is not a quiet run.
+   */
+  drift_cleared: number;
   fetch_failed: number;
   next_cursor: number | null;
 }
@@ -118,16 +127,26 @@ export async function POST(request: Request): Promise<NextResponse> {
       .limit(chunk)
       .offset(cursor);
 
-    result = { scanned: candidates.length, drift_recorded: 0, fetch_failed: 0, next_cursor: null };
+    result = {
+      scanned: candidates.length,
+      drift_recorded: 0,
+      drift_cleared: 0,
+      fetch_failed: 0,
+      next_cursor: null,
+    };
 
     for (const ev of candidates) {
       if (!ev.startDate || !ev.sourceUrl) continue;
       const { canonicalStartDate, htmlExcerpt } = await fetchCanonicalDate(ev.sourceUrl);
-      if (!canonicalStartDate) {
+      // OPE-815 — the decision lives in `classifySweepOutcome` so it can be
+      // exercised by a test. Inline in this route handler it was unreachable,
+      // which is how the missing `drift-cleared` case stayed invisible.
+      const drift = canonicalStartDate ? daysBetween(ev.startDate, canonicalStartDate) : Number.NaN;
+      const outcome = classifySweepOutcome(canonicalStartDate, drift, DRIFT_THRESHOLD_DAYS);
+      if (outcome === "fetch-failed") {
         result.fetch_failed += 1;
       } else {
-        const drift = daysBetween(ev.startDate, canonicalStartDate);
-        if (drift > DRIFT_THRESHOLD_DAYS) {
+        if (outcome === "drift-recorded") {
           // UPSERT — UNIQUE (event_id, stored_start_date) makes re-runs
           // against the same (event, stored-date) pair idempotent.
           await db
@@ -154,6 +173,35 @@ export async function POST(request: Request): Promise<NextResponse> {
               },
             });
           result.drift_recorded += 1;
+        } else {
+          // ⚠️ OPE-815 — the missing branch, and the whole of Defect 1.
+          //
+          // When the fetch SUCCEEDS and the source now agrees with us, this
+          // block previously did nothing at all. The old unresolved finding
+          // stayed unresolved, `stale-page-radar` lifted it again on the next
+          // run, and `captureDiscrepancy` refreshed `last_seen_at` on the open
+          // discrepancy — so a corrected page produced a row that read
+          // "verified this morning".
+          //
+          // The ticket describes this as re-stamping "without re-reading the
+          // page". The page WAS re-read. The agreement was discarded. That
+          // distinction matters: a fix that only gated the timestamp on a real
+          // fetch would not have closed the specimen row, because its fetch
+          // succeeded.
+          //
+          // Specimen: `jenksproductions.com` recorded divergent 2025-11-15;
+          // the page now reads "November 15, 2026", matching us exactly.
+          const closed = await db
+            .update(eventDateDriftFindings)
+            .set({ resolvedAt: now, checkedAt: now })
+            .where(
+              and(
+                eq(eventDateDriftFindings.eventId, ev.id),
+                eq(eventDateDriftFindings.storedStartDate, ev.startDate),
+                isNull(eventDateDriftFindings.resolvedAt)
+              )
+            );
+          result.drift_cleared += (closed as { meta?: { changes?: number } })?.meta?.changes ?? 0;
         }
       }
       // Throttle fetches to stay polite + fit Cloudflare's 30s per-request
