@@ -35,9 +35,12 @@
  * A gate keyed on either one alone covers one cohort and silently misses the
  * other. Hence `OR`, in one place both surfaces read.
  *
- * ⚠️ Deliberately NOT keyed on `dates_confirmed`. Two of the 121 carry
- * `dates_confirmed = 1` on a projected date — that flag is the bug, so using it
- * as the discriminator would exempt exactly the two worst rows.
+ * ⚠️ `hasDerivedDate` is about ORIGIN and is deliberately not keyed on
+ * `dates_confirmed`. Whether a date started as a projection is a fact about how
+ * the row was born; it does not change. That is the right basis for *scoping* —
+ * which rows the attestation classifier counts.
+ *
+ * It is NOT the right basis for the COPY. See `shouldShowProjectedDateCopy`.
  */
 
 /**
@@ -97,3 +100,54 @@ export const DERIVED_DATE_EXPLANATION =
 
 /** The same fact, compressed for a card where the full sentence will not fit. */
 export const DERIVED_DATE_SHORT = "Projected from last year — not yet published by the organizer";
+
+/**
+ * Should the reader be told these dates are an unconfirmed projection?
+ *
+ * ## Why this is not just `hasDerivedDate`
+ *
+ * `ingestion_method` records how a row was BORN and never changes. A date can
+ * start as a projection and later be confirmed against the organizer — and two
+ * of the 124 did exactly that:
+ *
+ *   - `litchfield-fair-me-2027` — created 2026-06-15 by the rollover, cited
+ *     **2026-08-29** against `maine.gov/dacf/ard/events/fairs/…2026-2029-f…`,
+ *     the state's official multi-year fair schedule.
+ *   - `marthas-vineyard-fair-ma-2027` — created 2026-06-15, cited
+ *     **2026-08-17** against the Agricultural Society's own site.
+ *
+ * Both carry `dates_confirmed = 1` with an `official_website` citation on
+ * `start_date` AND `end_date`. OPE-740's description — and my own first two
+ * restatements of it — treated `dates_confirmed = 1` on a rolled row as
+ * self-evidently the bug. It is not: on these two it is correct, and the
+ * confirmation postdates the projection by ten and eleven weeks.
+ *
+ * ⚠️ Keying the copy on origin alone therefore reproduces the original defect
+ * INVERTED. The first version of this shipped told a reader of the Litchfield
+ * page "the organizer has not published them yet" while we held an official
+ * State of Maine citation for exactly those dates. Wrong in the other
+ * direction, and wrong about a source we had already read.
+ *
+ * ## Why `datesConfirmed` is the right second term
+ *
+ * It is the only field that means "somebody checked", and it is on the event
+ * row, so both render surfaces can consult it without loading citations.
+ *
+ * The obvious objection — OPE-384's Dartmouth case, where `dates_confirmed`
+ * was set with nothing behind it — is already somebody else's job:
+ * `assessAllUncitedConfirmedDates` reds exactly that condition. Making this
+ * predicate re-litigate it would be two controls answering one question, and
+ * the first to drift would be the one nothing tests.
+ *
+ * So: each control does one job. This one asks "do we still believe nobody has
+ * confirmed these?", and OPE-384's asks "is that belief backed?".
+ */
+export function shouldShowProjectedDateCopy(
+  event: (DerivedDateInput & { datesConfirmed?: boolean | number | null }) | null | undefined
+): boolean {
+  if (!hasDerivedDate(event)) return false;
+  const confirmed = event?.datesConfirmed;
+  // D1 stores this as an integer; Drizzle maps it to boolean. Accept both
+  // rather than trusting one — a `1` read as truthy-object would invert this.
+  return !(confirmed === true || confirmed === 1);
+}

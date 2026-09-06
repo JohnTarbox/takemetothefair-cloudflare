@@ -17,6 +17,7 @@ import {
   DERIVED_DATE_SHORT,
   ROLLOVER_INGESTION_METHODS,
   hasDerivedDate,
+  shouldShowProjectedDateCopy,
 } from "../derived-date";
 
 describe("both cohorts are recognised", () => {
@@ -76,11 +77,10 @@ describe("a genuinely submitted date is NOT flagged", () => {
     expect(hasDerivedDate({ rolledFromEventId: "" })).toBe(false);
   });
 
-  it("⚠️ is NOT keyed on dates_confirmed", () => {
-    // Two of the 121 carry dates_confirmed=1 on a projected date. That flag is
-    // the bug, so using it as the discriminator would exempt exactly the two
-    // worst rows. The predicate does not read it at all — asserted by the fact
-    // that the input type has no such field, and by this row still flagging.
+  it("origin is NOT keyed on dates_confirmed", () => {
+    // hasDerivedDate answers "was this born as a projection", which does not
+    // change when someone later confirms the date. That is the right basis for
+    // SCOPING. It is not the right basis for the copy — see the block below.
     expect(hasDerivedDate({ ingestionMethod: "annual_rollover" })).toBe(true);
   });
 });
@@ -109,5 +109,52 @@ describe("the copy says what is true", () => {
       "auto_rollover",
       "manual_rollover",
     ]);
+  });
+});
+
+describe("shouldShowProjectedDateCopy — a later confirmation supersedes the projection", () => {
+  it("⚠️ a rolled row that was SINCE confirmed gets no projection copy", () => {
+    // The two live specimens. Both created 2026-06-15 by the rollover, both
+    // later cited against an official_website source on start_date AND
+    // end_date — Litchfield to maine.gov's 2026-2029 schedule (2026-08-29),
+    // Martha's Vineyard to the Agricultural Society (2026-08-17).
+    //
+    // The first version shipped told a reader of the Litchfield page "the
+    // organizer has not published them yet" while we held a State of Maine
+    // citation for exactly those dates. The original defect, inverted.
+    expect(
+      shouldShowProjectedDateCopy({ ingestionMethod: "annual_rollover", datesConfirmed: true })
+    ).toBe(false);
+    // D1 stores the flag as an integer; accept both representations.
+    expect(
+      shouldShowProjectedDateCopy({ ingestionMethod: "annual_rollover", datesConfirmed: 1 })
+    ).toBe(false);
+  });
+
+  it("an UNCONFIRMED rolled row still gets it — all 122 of them", () => {
+    // Positive landmark. A predicate that always returned false would satisfy
+    // the case above and silently un-hedge every page this ticket is about.
+    for (const c of [false, 0, null, undefined]) {
+      expect(
+        shouldShowProjectedDateCopy({ ingestionMethod: "annual_rollover", datesConfirmed: c })
+      ).toBe(true);
+    }
+    expect(shouldShowProjectedDateCopy({ rolledFromEventId: "evt-1" })).toBe(true);
+  });
+
+  it("a confirmed NON-rolled row is still not a projection", () => {
+    // The flag must not be able to turn an ordinary event INTO one.
+    expect(
+      shouldShowProjectedDateCopy({ ingestionMethod: "email_submission", datesConfirmed: false })
+    ).toBe(false);
+  });
+
+  it("⚠️ scope and copy stay different questions", () => {
+    // hasDerivedDate must keep counting the confirmed rows, or the attestation
+    // classifier's `attested: 2` bucket silently becomes 0 and the population
+    // it reports drops to 122 — losing exactly the rows worth watching.
+    const confirmed = { ingestionMethod: "annual_rollover", datesConfirmed: true };
+    expect(hasDerivedDate(confirmed)).toBe(true);
+    expect(shouldShowProjectedDateCopy(confirmed)).toBe(false);
   });
 });
