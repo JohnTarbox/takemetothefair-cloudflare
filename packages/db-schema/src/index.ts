@@ -5231,6 +5231,13 @@ export const eventDiscrepancies = sqliteTable("event_discrepancies", {
       // the normalizer already fixed it, so the detector short-circuits and
       // would never re-file. Stale, not resolved.
       "superseded_by_normalization",
+      // OPE-813 (GATE-NOISE G4) — the match that opened this row never
+      // established that the two events were the same event. A
+      // `city_state_date` hit is a coincidence of town and week, so there was
+      // never a conflict to resolve. NOT `dismissed` (a human judging the data
+      // and feeding a live metric) and NOT `resolved_authoritative` (nobody
+      // adjudicated anything) — the row should never have been opened.
+      "superseded_by_identity_gate",
     ],
   })
     .notNull()
