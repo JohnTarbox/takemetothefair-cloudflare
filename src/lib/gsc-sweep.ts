@@ -55,6 +55,7 @@ import { buildPageLastChangedMap } from "@/lib/gsc-page-last-changed";
 import { reverifyHealthIssue, LOCALLY_DECIDABLE_SQL_PROBES } from "@/lib/site-health-reverify";
 import { HEALTH_RESOLUTION_REASON } from "@takemetothefair/db-schema";
 import { getIndexableVendorRows } from "@/lib/sitemap/indexable-vendors";
+import { getSimpleEntityAllowList } from "@/lib/sitemap/indexable-simple";
 import {
   getIndexableEventRows,
   getCanonicalEventUrlSet,
@@ -682,6 +683,11 @@ export async function pickUrlsDetailed(
   // vendor URLs (a LIKE scan — avoids the 100-param inArray cap) and sort
   // never/oldest first in JS.
   const indexableVendors = await getIndexableVendorRows(db);
+
+  // OPE-806 — venues / promoters / blog. Fetched here (not lazily at the choke
+  // point) so the whole allow-list is assembled before any tier runs, and one
+  // pass costs three bounded queries rather than a per-URL lookup.
+  const simpleAllowList = await getSimpleEntityAllowList(db, HOST);
   if (indexableVendors.length > 0) {
     const inspectedVendor = await db
       .select({ url: gscInspectionState.url, last: gscInspectionState.lastInspectedAt })
@@ -916,11 +922,44 @@ export async function pickUrlsDetailed(
   // and the queue would keep refilling — the fix would be wired into three of
   // six paths.
   //
-  // Scoped to `/events/` deliberately. We have a canonical allow-list for
-  // events; we do not have one for venues/promoters/blog, and silently dropping
-  // those would be a different bug. Non-event URLs pass through untouched.
-  const isNonCanonicalEventUrl = (u: string) =>
-    u.startsWith(`${HOST}/events/`) && !canonicalEventUrls.has(u);
+  // OPE-806 — widened from `/events/` to EVERY entity type with a published
+  // allow-list.
+  //
+  // The note this replaces read: "Scoped to /events/ deliberately. We have a
+  // canonical allow-list for events; we do not have one for venues/promoters/
+  // blog, and silently dropping those would be a different bug." That was the
+  // right call at the time and it named its own remedy. The allow-lists now
+  // exist (`indexable-simple.ts`), so the scoping reason is gone.
+  //
+  // ⚠️ Note `/vendors/` is in here too. Vendors have had an allow-list since
+  // 2026-06-26, but it only gated the GUARANTEED block — the filler tiers could
+  // still recycle a noindex vendor URL out of `gsc_inspection_state` and no
+  // choke point stopped it. An allow-list that only covers the constructor is
+  // the exact half-fix OPE-372 warned about, one entity type over.
+  //
+  // Membership, never shape: 67 sitemap URLs legitimately match
+  // `/events/<slug>-<year>`, so a regex over the malformed pattern would stop
+  // inspecting 67 real pages — one blind spot traded for another.
+  const allowListsByPrefix = new Map<string, Set<string>>([
+    [`${HOST}/events/`, canonicalEventUrls],
+    [`${HOST}/vendors/`, new Set(indexableVendors.map((v) => `${HOST}/vendors/${v.slug}`))],
+    ...[...simpleAllowList].map(
+      ([prefix, urls]) => [`${HOST}${prefix}`, urls] as [string, Set<string>]
+    ),
+  ]);
+
+  /**
+   * Is this URL outside the published allow-list for its own entity type?
+   *
+   * A URL whose prefix we do not govern passes through untouched — this drops
+   * only what we can positively say the sitemap withholds.
+   */
+  const isOutsideAllowList = (u: string): boolean => {
+    for (const [prefix, allowed] of allowListsByPrefix) {
+      if (u.startsWith(prefix)) return !allowed.has(u);
+    }
+    return false;
+  };
 
   // Tier 0's picks bypass the canonical filter, and ONLY Tier 0's.
   //
@@ -960,7 +999,7 @@ export async function pickUrlsDetailed(
   const urls = ordered.filter((u) => {
     if (seen.has(u)) return false; // openErrorUrls are also in `guaranteed`
     seen.add(u);
-    return isExempt(u) || !isNonCanonicalEventUrl(u);
+    return isExempt(u) || !isOutsideAllowList(u);
   });
   return { urls, fillerSelected: filler.size, guaranteedSelected: guaranteed.size };
 }

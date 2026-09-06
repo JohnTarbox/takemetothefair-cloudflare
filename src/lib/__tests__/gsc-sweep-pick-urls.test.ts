@@ -198,6 +198,18 @@ describe("REL5 — pickUrls surfaces unresolved time_to_index_log URLs", () => {
   });
 
   it("skips non-own-host URLs in the log (the inspector resolves a path on our property)", async () => {
+    // OPE-806 — the own-host example now needs a PUBLISHED post behind it.
+    //
+    // This used `/blog/mine` with no `blog_posts` row, which passed only
+    // because blog had no allow-list. It does now, so an unpublished slug is
+    // correctly dropped — the same treatment the test directly above asserts
+    // for events ("no published event behind it can only ever come back 'not
+    // indexed'"). Seeding the row keeps this test about HOST filtering, which
+    // is what it is named for, instead of quietly depending on the absence of
+    // a guard.
+    raw
+      .prepare(`INSERT INTO blog_posts (id, slug, status) VALUES (?, ?, 'PUBLISHED')`)
+      .run("bp-mine", "mine");
     seedSubmission("https://someoneelse.example/events/x", "2026-06-01T00:00:00Z", null);
     seedSubmission(`${HOST}/blog/mine`, "2026-06-01T00:00:00Z", null);
 
@@ -487,7 +499,17 @@ describe("OPE-588 — the filler budget is no longer structurally zero", () => {
   // That passed with the structurally-zero budget restored, because `guaranteed`
   // alone made the array non-empty — it measured the union again, which is the
   // same mistake this file's REL5 note already warns about.
-  const TIER1_ONLY = `${HOST}/venues/tier1-only-no-venue-row`;
+  // OPE-806 — a STATIC page, not a venue URL with no venue row.
+  //
+  // This was `/venues/tier1-only-no-venue-row`, which worked only because
+  // venues had no published allow-list: a `/venues/<slug>` with no venue row is
+  // now correctly dropped at the choke point, since inspecting it can only ever
+  // return "not indexed". These tests are about the filler-budget ARITHMETIC,
+  // so the fixture needs a URL that reaches Tier 1 on its merits. `/about` has
+  // no allow-list by design (we only drop what we can positively say the
+  // sitemap withholds) and no guaranteed tier claims it, so it stays
+  // filler-only — which is exactly the property this block needs.
+  const TIER1_ONLY = `${HOST}/about`;
 
   function seedTier1Only() {
     raw
