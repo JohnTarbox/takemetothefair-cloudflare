@@ -24,6 +24,7 @@ import { assessAllHeartbeat } from "@/lib/heartbeat";
 import { assessPhotoEffectiveness } from "@/lib/photo-effectiveness/load";
 import { assessPhotoIntakeStorage } from "@/lib/photo-intake-reconcile";
 import { assessAllUncitedConfirmedDates } from "@/lib/uncited-confirmed-dates";
+import { assessAllProjectedDateAttestation } from "@/lib/events/projected-date-attestation";
 import {
   formatStaleRedDigest,
   selectStaleFaultReds,
@@ -279,6 +280,30 @@ export const POST = withInternalKey({ source: "cpi:stale-red-scan" }, async ({ d
       });
     }
 
+    // OPE-740 scope 5 — projected dates nothing can ever check.
+    //
+    // The sibling of the block above, and deliberately a narrower claim. A
+    // rolled-forward date is now visibly labelled "Projected from last year",
+    // which is honest, and for 99 of the 124 the hedge is temporary: OPE-814
+    // widened the drift sweep to reach TENTATIVE promoter-domain rows outside
+    // the forward window, which is exactly what these 2027-dated rows needed.
+    //
+    // The 23 with no citation, no event_days and no source_url have no such
+    // path. There is nowhere to look, so no sweep resolves them and they do not
+    // age out — they age IN, as 2027 approaches. Defensive, like every block
+    // above: a failure here degrades to the prior reds rather than the scan.
+    let projectedDateReds: StaleRed[] = [];
+    try {
+      projectedDateReds = await assessAllProjectedDateAttestation(db, now);
+    } catch (err) {
+      await logError(db, {
+        level: "warn",
+        source: "cpi:stale-red-scan",
+        message: "projected-date attestation scan failed; degrading to the prior reds",
+        error: err,
+      });
+    }
+
     const allReds = [
       ...reds,
       ...faultReds,
@@ -288,6 +313,7 @@ export const POST = withInternalKey({ source: "cpi:stale-red-scan" }, async ({ d
       ...photoReds,
       ...photoIntakeReds,
       ...uncitedDateReds,
+      ...projectedDateReds,
     ];
 
     // OPE-308 — push on CHANGE, not on existence.
