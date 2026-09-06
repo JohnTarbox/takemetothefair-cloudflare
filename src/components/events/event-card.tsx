@@ -19,7 +19,7 @@ import { FavoriteButton } from "@/components/FavoriteButton";
 import { getCategoryColors, getCategoryBadgeClass, getCategoryImage } from "@/lib/category-colors";
 import { getStateName } from "@/lib/states";
 import { formatDateMedium, formatDateShort, formatMonthShort } from "@/lib/datetime";
-import { DERIVED_DATE_SHORT, hasDerivedDate } from "@/lib/events/derived-date";
+import { DERIVED_DATE_SHORT, shouldShowProjectedDateCopy } from "@/lib/events/derived-date";
 
 type Event = typeof events.$inferSelect;
 type Venue = typeof venues.$inferSelect;
@@ -165,7 +165,11 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
   // OPE-740 — shared with the detail page so both cohorts are covered by one
   // definition: the 121-row offline cohort recorded no lineage, so
   // `ingestion_method` is its only tell; the live path sets `rolled_from_event_id`.
-  const dateIsDerived = hasDerivedDate(event);
+  // ⚠️ shouldShowProjectedDateCopy, not hasDerivedDate. A rolled date that has
+  // SINCE been confirmed against the organizer is no longer an unconfirmed
+  // projection, and telling the reader otherwise is the original defect
+  // inverted — see the note in derived-date.ts on the Litchfield row.
+  const dateIsDerived = shouldShowProjectedDateCopy(event);
 
   const dateLabel = showNextOccurrence
     ? occurrence!.isToday
