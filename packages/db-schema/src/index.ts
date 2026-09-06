@@ -3685,6 +3685,61 @@ export const promoterEnrichmentNoticeState = sqliteTable("promoter_enrichment_no
 // attempt (success or failure). source values: ai_workers | scraper |
 // manual_admin | vendor_self | mcp_create. fieldsChanged is JSON array of
 // field names. See src/lib/enrichment-log.ts for the writer.
+/**
+ * OPE-830 — a per-entity write history that can record a save NOT happening.
+ *
+ * `enrichment_log` (below) answers "when was this entity last enriched, and by
+ * which source". It cannot answer "what did this save do", for two reasons
+ * that together made two live "my profile won't save" reports unanswerable:
+ *
+ *   1. **It records successes only.** A save rejected at the auth gate returns
+ *      before any logging, so "no record of a save" and "no save attempted"
+ *      are the same observation.
+ *   2. **`fields_changed` is `Object.keys(updateData)`** — the fields present
+ *      in the payload, not the ones that changed. On the OPE-830 specimen it
+ *      is byte-identical across all 18 saves.
+ *
+ * This table fixes both: `outcome` is explicit, rejections are first-class
+ * rows, and `changesJson` is a real before/after diff against the stored row.
+ */
+export const entityWriteLog = sqliteTable(
+  "entity_write_log",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    /** 'vendor' | 'event' | 'promoter' | 'performer' — mirrors enrichmentLog.targetType. */
+    entityType: text("entity_type").notNull(),
+    entityId: text("entity_id").notNull(),
+    /** Which surface wrote: 'vendor_self', 'admin_ui', 'mcp', … */
+    source: text("source").notNull(),
+    /**
+     * ⚠️ The column this table exists for.
+     *
+     * `noop` is separate from `applied` deliberately — "saved, nothing to do"
+     * and "saved, here is what moved" are different facts, and collapsing them
+     * rebuilds the ambiguity the table was built to remove.
+     */
+    outcome: text("outcome", { enum: ["applied", "noop", "rejected"] }).notNull(),
+    /** Why a `rejected` row was refused. NULL on applied/noop. */
+    rejectReason: text("reject_reason"),
+    /**
+     * JSON `[{field, before, after, truncated?}]`.
+     *
+     * ⚠️ NULL on `rejected` — nothing was compared, which is NOT the same as
+     * an empty diff and must never render as one.
+     */
+    changesJson: text("changes_json"),
+    actorUserId: text("actor_user_id"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    index("idx_entity_write_log_entity").on(t.entityType, t.entityId, t.createdAt),
+    index("idx_entity_write_log_outcome").on(t.outcome, t.createdAt),
+    index("idx_entity_write_log_actor").on(t.actorUserId, t.createdAt),
+  ]
+);
+
 export const enrichmentLog = sqliteTable(
   "enrichment_log",
   {
