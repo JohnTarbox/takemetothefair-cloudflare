@@ -1,10 +1,15 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
-import { and, eq, gte, isNotNull, isNull, lte, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { isAuthorized } from "@/lib/api-auth";
 import { classifySweepOutcome } from "@/lib/goodwill/sweep-outcome";
+import {
+  closestEvent,
+  driftAgainstAll,
+  groupCandidatesByUrl,
+} from "@/lib/goodwill/drift-candidates";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { events, eventDateDriftFindings } from "@/lib/db/schema";
+import { eventDateDriftFindings, events, promoters } from "@/lib/db/schema";
 import { parseJsonLd } from "@/lib/schema-org";
 import { SCRAPER_USER_AGENT } from "@takemetothefair/constants";
 import { logError } from "@/lib/logger";
@@ -21,6 +26,23 @@ import { logError } from "@/lib/logger";
 
 const CHUNK_SIZE = 200;
 const THROTTLE_MS = 500;
+/** Host equality after stripping scheme, `www.` and port — OPE-814. */
+function sameHost(a: string | null, b: string | null): boolean {
+  const norm = (raw: string | null) => {
+    if (!raw) return null;
+    try {
+      return new URL(raw.includes("://") ? raw : `https://${raw}`).hostname
+        .toLowerCase()
+        .replace(/^www\./, "");
+    } catch {
+      return null;
+    }
+  };
+  const ha = norm(a);
+  const hb = norm(b);
+  return ha != null && hb != null && ha === hb;
+}
+
 const FETCH_WINDOW_DAYS_MIN = 30;
 const FETCH_WINDOW_DAYS_MAX = 90;
 const DRIFT_THRESHOLD_DAYS = 1;
@@ -85,10 +107,6 @@ async function fetchCanonicalDate(
   }
 }
 
-function daysBetween(a: Date, b: Date): number {
-  return Math.round(Math.abs(a.getTime() - b.getTime()) / (24 * 60 * 60 * 1000));
-}
-
 export async function POST(request: Request): Promise<NextResponse> {
   if (!(await isAuthorized(request))) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
@@ -108,24 +126,57 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   let result: SweepResult;
   try {
-    const candidates = await db
+    // ⚠️ OPE-814 — the candidate set, widened and de-duplicated.
+    //
+    // This was `status='APPROVED' AND start_date BETWEEN now+30d AND now+90d`,
+    // which is why the radar has touched six domains ever: it fetched whatever
+    // `source_url` happened to hang off events in a 60-day slice, and three
+    // aggregators are the `source_url` on many events at once.
+    //
+    // Two changes, both from the query rather than from a list:
+    //
+    //   TENTATIVE is included. A tentative date is exactly the kind most worth
+    //     checking against the organizer's own page.
+    //   Promoter-own-domain events are included regardless of the forward
+    //     window. That window is the `[[seasonal-markets-break-forward-gates]]`
+    //     shape — a weekly market has most occurrences outside any 60-day slice
+    //     at any moment, so the pages we most want to check were the ones it
+    //     structurally could not reach.
+    const rawCandidates = await db
       .select({
-        id: events.id,
+        eventId: events.id,
         startDate: events.startDate,
         sourceUrl: events.sourceUrl,
+        promoterWebsite: promoters.website,
       })
       .from(events)
+      .leftJoin(promoters, eq(promoters.id, events.promoterId))
       .where(
         and(
-          eq(events.status, "APPROVED"),
+          inArray(events.status, ["APPROVED", "TENTATIVE"]),
           isNotNull(events.sourceUrl),
-          gte(events.startDate, windowMin),
-          lte(events.startDate, windowMax)
+          gte(events.startDate, now),
+          // Either inside the original forward window, OR on the promoter's own
+          // domain at any future date.
+          sql`(
+            (${events.startDate} >= ${Math.floor(windowMin.getTime() / 1000)}
+             AND ${events.startDate} <= ${Math.floor(windowMax.getTime() / 1000)})
+            OR ${promoters.website} IS NOT NULL
+          )`
         )
       )
-      .orderBy(events.startDate)
-      .limit(chunk)
-      .offset(cursor);
+      .orderBy(events.startDate);
+
+    // One entry per distinct URL. The old loop fetched per EVENT, so a page
+    // backing 36 events was fetched 36 times and filed 36 rows for one fact.
+    const candidates = groupCandidatesByUrl(
+      rawCandidates.map((r) => ({
+        eventId: r.eventId,
+        sourceUrl: r.sourceUrl,
+        startDate: r.startDate,
+        promoterOwned: sameHost(r.sourceUrl, r.promoterWebsite),
+      }))
+    ).slice(cursor, cursor + chunk);
 
     result = {
       scanned: candidates.length,
@@ -135,14 +186,31 @@ export async function POST(request: Request): Promise<NextResponse> {
       next_cursor: null,
     };
 
-    for (const ev of candidates) {
-      if (!ev.startDate || !ev.sourceUrl) continue;
-      const { canonicalStartDate, htmlExcerpt } = await fetchCanonicalDate(ev.sourceUrl);
-      // OPE-815 — the decision lives in `classifySweepOutcome` so it can be
-      // exercised by a test. Inline in this route handler it was unreachable,
-      // which is how the missing `drift-cleared` case stayed invisible.
-      const drift = canonicalStartDate ? daysBetween(ev.startDate, canonicalStartDate) : Number.NaN;
-      const outcome = classifySweepOutcome(canonicalStartDate, drift, DRIFT_THRESHOLD_DAYS);
+    for (const cand of candidates) {
+      // ONE fetch per URL, however many events sit behind it.
+      const { canonicalStartDate, htmlExcerpt } = await fetchCanonicalDate(cand.sourceUrl);
+
+      // ⚠️ OPE-814 — compare the page's date against the SET of dates we hold
+      // for this URL, not against one representative event.
+      //
+      // Once the fetch is per-URL, "which of these 36 dates does the page
+      // disagree with?" has no honest answer, and picking one manufactures the
+      // exact defect OPE-815 scope 6 describes: four capecodchamber rows that
+      // are one recurring series matched to different occurrences. A page
+      // listing one occurrence of a weekly market AGREES with our data; scored
+      // against an arbitrary sibling it would show a one-week drift forever.
+      //
+      // `driftAgainstAll` returns null when the page matches any date we hold.
+      const smallestDrift = driftAgainstAll(canonicalStartDate, cand, DRIFT_THRESHOLD_DAYS);
+      // The event the finding is filed against is the one the page is closest
+      // to — the occurrence it most plausibly describes.
+      const closest = closestEvent(canonicalStartDate, cand);
+      const drift = smallestDrift ?? 0;
+      const outcome = classifySweepOutcome(
+        canonicalStartDate,
+        smallestDrift === null ? 0 : smallestDrift,
+        DRIFT_THRESHOLD_DAYS
+      );
       if (outcome === "fetch-failed") {
         result.fetch_failed += 1;
       } else {
@@ -152,11 +220,11 @@ export async function POST(request: Request): Promise<NextResponse> {
           await db
             .insert(eventDateDriftFindings)
             .values({
-              eventId: ev.id,
-              storedStartDate: ev.startDate,
+              eventId: closest.id,
+              storedStartDate: new Date(closest.startDate),
               canonicalStartDate,
               driftDays: drift,
-              canonicalUrl: ev.sourceUrl,
+              canonicalUrl: cand.sourceUrl,
               canonicalHtmlExcerpt: htmlExcerpt,
               checkedAt: now,
             })
@@ -196,8 +264,8 @@ export async function POST(request: Request): Promise<NextResponse> {
             .set({ resolvedAt: now, checkedAt: now })
             .where(
               and(
-                eq(eventDateDriftFindings.eventId, ev.id),
-                eq(eventDateDriftFindings.storedStartDate, ev.startDate),
+                eq(eventDateDriftFindings.eventId, closest.id),
+                eq(eventDateDriftFindings.storedStartDate, new Date(closest.startDate)),
                 isNull(eventDateDriftFindings.resolvedAt)
               )
             );
