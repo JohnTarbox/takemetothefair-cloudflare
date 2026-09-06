@@ -8,6 +8,7 @@ import type {
 import { withTimeout } from "@/lib/fetch-timeout";
 import { EVENT_CATEGORIES } from "@/lib/constants";
 import { groundDateInSource } from "./date-grounding";
+import { reconcileVendorFee } from "./vendor-fee-parse";
 import { WORKERS_AI_MODEL } from "@takemetothefair/constants";
 import { repairFlattenedEditions } from "./deterministic/repair-editions";
 import { parseHoursBlock } from "./deterministic/hours-block";
@@ -558,7 +559,7 @@ function parseMultiEventResponseRaw(
 /**
  * Sanitize a single event from AI response
  */
-function sanitizeEventData(
+export function sanitizeEventData(
   item: Record<string, unknown>,
   index: number,
   metadata: PageMetadata,
@@ -650,9 +651,21 @@ function sanitizeEventData(
     ticketPriceMax: sanitizePrice(item.ticketPriceMax || item.ticket_price_max || item.price_max),
     imageUrl: sanitizeUrl(item.imageUrl || item.image_url || item.image),
     categories: sanitizeCategories(item.categories),
-    vendorFeeMin: sanitizePrice(item.vendorFeeMin || item.vendor_fee_min),
-    vendorFeeMax: sanitizePrice(item.vendorFeeMax || item.vendor_fee_max),
-    vendorFeeNotes: sanitizeString(item.vendorFeeNotes || item.vendor_fee_notes, 500),
+    // ⚠️ OPE-817 — `??`, not `||`. A genuine 0 is a FREE booth, which
+    // organizers do advertise; `||` fell through to a snake_case alias the
+    // model never emits, so free became null. OPE-526 established this and
+    // these three lines still had the old operator.
+    //
+    // The values here are the MODEL's answer. `reconcileVendorFee` below
+    // overrides them when the copy states an explicit per-unit price, because
+    // the model got the arithmetic wrong non-deterministically: it read the
+    // two-table bundle "2/$45" as a $45 per-table maximum on one row and
+    // correctly as $25 on its sibling, from the same email.
+    ...reconcileVendorFee({
+      vendorFeeMin: sanitizePrice(item.vendorFeeMin ?? item.vendor_fee_min),
+      vendorFeeMax: sanitizePrice(item.vendorFeeMax ?? item.vendor_fee_max),
+      vendorFeeNotes: sanitizeString(item.vendorFeeNotes ?? item.vendor_fee_notes, 500),
+    }),
     indoorOutdoor: sanitizeIndoorOutdoor(item.indoorOutdoor || item.indoor_outdoor),
     estimatedAttendance: sanitizePositiveInt(item.estimatedAttendance || item.estimated_attendance),
     applicationUrl: sanitizeUrl(item.applicationUrl || item.application_url),
