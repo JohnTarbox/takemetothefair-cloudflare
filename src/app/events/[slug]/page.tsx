@@ -94,6 +94,7 @@ import { ScrollDepthTracker } from "@/components/ScrollDepthTracker";
 import { PrintBeacon } from "@/components/print/PrintBeacon";
 import { formatDateMedium } from "@/lib/datetime";
 import { cdnImage } from "@/lib/cdn-image";
+import { DERIVED_DATE_EXPLANATION, hasDerivedDate } from "@/lib/events/derived-date";
 
 export const revalidate = 300; // Cache for 5 minutes
 
@@ -628,8 +629,22 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
         {event.status === "TENTATIVE" && (
           <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4">
             <p className="text-sm text-amber-800">
-              <strong>Tentative Event</strong> — This event has not yet been verified by our team.
-              Details may be incomplete or inaccurate.
+              {hasDerivedDate(event) ? (
+                // ⚠️ OPE-740 — the generic wording below is about the EVENT, not
+                // the DATE, and reads as "probably right, we just haven't rung
+                // them". For a projected row the date is the part that is
+                // uncertain, and nobody told it to us: we generated it by
+                // shifting last year's. Say that.
+                <>
+                  <strong>Projected dates</strong> — {DERIVED_DATE_EXPLANATION} We show them so you
+                  can plan roughly, but check with the organizer before travelling.
+                </>
+              ) : (
+                <>
+                  <strong>Tentative Event</strong> — This event has not yet been verified by our
+                  team. Details may be incomplete or inaccurate.
+                </>
+              )}
             </p>
           </div>
         )}

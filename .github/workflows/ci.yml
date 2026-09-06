@@ -152,6 +152,9 @@ jobs:
       - name: Guard analytics render states (OPE-808)
         run: npx tsx scripts/check-analytics-render-states.ts
 
+      - name: Guard auto-rollover writer invariants (OPE-740)
+        run: npx tsx scripts/check-rollover-invariants.ts
+
   e2e:
     name: E2E Tests
     runs-on: ubuntu-latest
