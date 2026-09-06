@@ -343,13 +343,17 @@ describe("captureStalePageDiscrepancy", () => {
     });
   });
 
-  it("emits a 'date' discrepancy with confidence proportional to drift", async () => {
+  it("emits a 'date' discrepancy, scored on whether OUR date is likely wrong", async () => {
+    // ⚠️ OPE-815 — this used to assert confidence ≈ |drift|/30. That formula
+    // measured "how far apart are they", not "is our date the wrong one", and
+    // it sorted the queue almost exactly backwards.
     const id = await captureStalePageDiscrepancy(db, {
       eventId: "evt-1",
       storedStartDate: new Date("2026-06-15T00:00:00Z"),
       canonicalStartDate: new Date("2026-06-22T00:00:00Z"),
       canonicalUrl: "https://organizer.example/events/lupine",
       driftDays: 7,
+      promoterWebsite: "https://organizer.example",
     });
     expect(id).not.toBeNull();
     const rows = await db.select().from(eventDiscrepancies).where(eq(eventDiscrepancies.id, id!));
@@ -358,21 +362,49 @@ describe("captureStalePageDiscrepancy", () => {
     expect(rows[0].authoritativeValue).toBe("2026-06-15");
     expect(rows[0].divergentValue).toBe("2026-06-22");
     expect(rows[0].divergentSourceKey).toBe("organizer.example");
-    // confidence = min(1, |7| / 30) ≈ 0.233
-    expect(rows[0].confidence).toBeGreaterThan(0.2);
-    expect(rows[0].confidence).toBeLessThan(0.25);
+    // The organizer's own page disagrees with us — a real question for them.
+    expect(rows[0].confidence).toBe(0.55);
+    expect(rows[0].notes).toContain("target=organizer");
+    // The drift magnitude is still recorded; it is just no longer the score.
+    expect(rows[0].notes).toContain("drift 7d");
   });
 
-  it("caps confidence at 1 for very large drift", async () => {
+  it("⚠️ a prior-year drift on an AGGREGATOR scores low, where it used to score 1.0", async () => {
+    // The inversion, pinned. Under min(drift/30, 1) a 365-day drift on a
+    // third-party listing was the maximum-confidence finding in the queue. It
+    // is the LEAST informative case about our own data: it says a chamber of
+    // commerce did not update a page.
     const id = await captureStalePageDiscrepancy(db, {
       eventId: "evt-1",
       storedStartDate: new Date("2026-06-15T00:00:00Z"),
       canonicalStartDate: new Date("2027-06-15T00:00:00Z"),
-      canonicalUrl: "https://x.example/",
+      canonicalUrl: "https://capecodchamber.org/event/123",
       driftDays: 365,
+      promoterWebsite: "https://realorganizer.example",
     });
     const rows = await db.select().from(eventDiscrepancies).where(eq(eventDiscrepancies.id, id!));
-    expect(rows[0].confidence).toBe(1);
+    expect(rows[0].confidence).toBeLessThan(0.2);
+    expect(rows[0].notes).toContain("target=aggregator");
+    expect(rows[0].notes).toContain("source_holds_prior_year");
+    // And it must never be able to drive a promoter email: an aggregator's
+    // stale listing is not the promoter's error.
+    expect(rows[0].outreachCandidate).toBeFalsy();
+  });
+
+  it("the same drift on the ORGANIZER's own page outranks it", async () => {
+    // Positive landmark — a change that scored everything low would satisfy
+    // the assertion above.
+    const id = await captureStalePageDiscrepancy(db, {
+      eventId: "evt-1",
+      storedStartDate: new Date("2026-06-15T00:00:00Z"),
+      canonicalStartDate: new Date("2027-06-15T00:00:00Z"),
+      canonicalUrl: "https://organizer.example/our-fair",
+      driftDays: 365,
+      promoterWebsite: "https://www.organizer.example",
+    });
+    const rows = await db.select().from(eventDiscrepancies).where(eq(eventDiscrepancies.id, id!));
+    expect(rows[0].confidence).toBe(0.85);
+    expect(rows[0].notes).toContain("target=organizer");
   });
 });
 

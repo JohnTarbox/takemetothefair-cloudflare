@@ -28,8 +28,8 @@
  * dedupe check) fit easily inside CF's 30s budget.
  */
 
-import { and, isNull, desc, sql } from "drizzle-orm";
-import { eventDateDriftFindings } from "../schema.js";
+import { and, eq, isNull, desc, sql } from "drizzle-orm";
+import { eventDateDriftFindings, events, promoters } from "../schema.js";
 import type { Db } from "../db.js";
 import { captureStalePageDiscrepancy } from "./capture.js";
 import { logError } from "../logger.js";
@@ -65,8 +65,15 @@ export async function runScheduledStalePageRadar(db: Db): Promise<StalePageRadar
         canonicalUrl: eventDateDriftFindings.canonicalUrl,
         driftDays: eventDateDriftFindings.driftDays,
         checkedAt: eventDateDriftFindings.checkedAt,
+        // OPE-815 — the promoter's own site, so the comparison target can be
+        // classified organizer vs aggregator. LEFT joins: an event with no
+        // promoter, or a promoter with no website, yields NULL and the target
+        // classifies as `unknown` — which is never treated as organizer.
+        promoterWebsite: promoters.website,
       })
       .from(eventDateDriftFindings)
+      .leftJoin(events, eq(events.id, eventDateDriftFindings.eventId))
+      .leftJoin(promoters, eq(promoters.id, events.promoterId))
       .where(
         and(
           isNull(eventDateDriftFindings.resolvedAt),
@@ -86,6 +93,7 @@ export async function runScheduledStalePageRadar(db: Db): Promise<StalePageRadar
         canonicalStartDate: f.canonicalStartDate,
         canonicalUrl: f.canonicalUrl,
         driftDays: f.driftDays,
+        promoterWebsite: f.promoterWebsite,
       });
       if (id) {
         result.emitted += 1;
