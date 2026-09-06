@@ -1483,6 +1483,14 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         //
         // Reuses the merged values the gate block already computed, so the
         // classification and the gate verdict always describe the same source.
+        //
+        // ⚠️ `source_id` is deliberately NOT recomputed here (OPE-821). It is an
+        // external-system identity, not a derived field: re-scrape and dedup
+        // keys have to survive the source changing its address. Of 994 rows
+        // with a URL-shaped `source_id`, 70 disagree with their own
+        // `source_domain`, and those inspected are organizer domain migrations
+        // (`nehomeshow.com` -> `newenglandhomeshows.com`) where the old value
+        // is the correct answer to "where did we first find this?".
         if (params.source_url !== undefined || params.source_name !== undefined) {
           const reclassified = classifySource(mergedSourceName, mergedSourceUrl);
           updates.sourceDomain = reclassified.sourceDomain;
