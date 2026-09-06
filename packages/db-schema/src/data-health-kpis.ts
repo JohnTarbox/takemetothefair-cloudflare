@@ -65,6 +65,11 @@ export const SUPERSEDED_STATUSES = [
   "superseded_duplicate",
   "superseded_by_lifecycle",
   "superseded_by_normalization",
+  // OPE-813 — the row was opened by a match that never established identity.
+  // Bookkeeping by the same logic as the two above: closing it says nothing
+  // about whether our data matched the truth, because there was no shared
+  // subject for the data to be right or wrong about.
+  "superseded_by_identity_gate",
 ] as const;
 
 /** The window every "…_last_28d" figure on this surface uses. */
