@@ -437,7 +437,36 @@ export const events = sqliteTable(
     sourceDomain: text("source_domain"), // canonical hostname only
     ingestionMethod: text("ingestion_method"), // enum (see comment above)
     sourceUrl: text("source_url"), // URL of the event on the source site
-    sourceId: text("source_id"), // Unique identifier from the source (e.g., slug or ID)
+    /**
+     * The source system's identifier for this event — its slug, its numeric id,
+     * or (when it has none) a slugified copy of the URL we first found it at.
+     *
+     * ⚠️ **IMMUTABLE AFTER CREATION. This is deliberate.** OPE-821 was filed
+     * because a `source_url` correction left this column holding the previous
+     * organizer's URL, which reads like a bug. It is not.
+     *
+     * `source_domain` and `ingestion_method` ARE derived and are recomputed on
+     * every write (OPE-491 §3, `mcp-server/src/tools/admin.ts`). `source_id` is
+     * excluded from that recompute on purpose: it is an external-system
+     * identity, and re-scrape and dedup keys have to survive the source
+     * changing its address.
+     *
+     * Measured 2026-09-06: of 994 rows with a URL-shaped `source_id`, 70
+     * disagree with their own `source_domain` — and the ones inspected are
+     * organizer domain MIGRATIONS, not errors:
+     *
+     *   hamptonbeachseafoodfestival.com -> seafoodfestivalnh.com
+     *   nehomeshow.com                  -> newenglandhomeshows.com
+     *   feastofthreesaints.com          -> threesaintsinc.org
+     *
+     * In each case the old value is the correct answer to "where did we first
+     * find this?", and recomputing it would erase that.
+     *
+     * See `mcp-server/src/tools/vendor.ts` — "stability matters more than
+     * canonical-slug semantics" — which is why this column is exempt from the
+     * canonical-slug lint rule.
+     */
+    sourceId: text("source_id"),
     /**
      * OPE-433 — defaults to FALSE. This is clobber PERMISSION: it lets a later
      * importer overwrite this row. Granting that by default meant a promoter's
