@@ -240,7 +240,25 @@ export async function requireAdminAuth(request: Request): Promise<NextResponse |
  */
 export type VerifiedSessionResult =
   | { ok: true; userId: string; email: string }
-  | { ok: false; response: NextResponse };
+  | {
+      ok: false;
+      response: NextResponse;
+      /**
+       * OPE-830 — who was refused, and why, so the caller can record the
+       * rejection.
+       *
+       * The failure branch used to carry only the response, which meant a
+       * refused write could not be attributed to anyone and therefore could
+       * not be logged. Two live "my profile won't save" reports were
+       * unanswerable for exactly that reason: the gate returns above the
+       * route's first log call, so a rejected save left no trace, and
+       * "no record of a save" was indistinguishable from "no save attempted".
+       *
+       * `userId` is undefined only when there was no session to identify.
+       */
+      userId?: string;
+      reason: "unauthenticated" | "email_unverified" | "verification_check_failed";
+    };
 
 /**
  * Single-call session + email-verification gate for vendor (and other
@@ -276,6 +294,8 @@ export async function requireVerifiedSession(): Promise<VerifiedSessionResult> {
     return {
       ok: false,
       response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
+      userId: session?.user?.id,
+      reason: "unauthenticated",
     };
   }
 
@@ -299,6 +319,8 @@ export async function requireVerifiedSession(): Promise<VerifiedSessionResult> {
           },
           { status: 403 }
         ),
+        userId: session.user.id,
+        reason: "email_unverified",
       };
     }
 
@@ -317,6 +339,8 @@ export async function requireVerifiedSession(): Promise<VerifiedSessionResult> {
         },
         { status: 503 }
       ),
+      userId: session.user.id,
+      reason: "verification_check_failed",
     };
   }
 }

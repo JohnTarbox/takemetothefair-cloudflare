@@ -155,6 +155,9 @@ jobs:
       - name: Guard auto-rollover writer invariants (OPE-740)
         run: npx tsx scripts/check-rollover-invariants.ts
 
+      - name: Guard the vendor write-log wiring (OPE-830)
+        run: npx tsx scripts/check-write-log-wiring.ts
+
   e2e:
     name: E2E Tests
     runs-on: ubuntu-latest

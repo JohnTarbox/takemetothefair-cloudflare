@@ -19,6 +19,7 @@
  */
 import { eq, isNotNull, sql } from "drizzle-orm";
 import {
+  entityWriteLog,
   adminActions,
   bingLivenessLog,
   eventDataCitations,
@@ -91,6 +92,33 @@ async function maxTs(
  * DORMANT via a null `enabled_at` — it can't false-fire until John flips the flag.
  */
 export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
+  {
+    // OPE-830 — proof the vendor write history is still recording.
+    //
+    // Two live "my profile won't save" reports in ten days could not be
+    // settled because nothing recorded what a save did. This table is the
+    // instrument built to settle the third one — and an instrument that
+    // silently stops recording is worse than no instrument, because the
+    // absence of rows will be read as "no saves happened".
+    //
+    // ⚠️ Evidence is the newest row of ANY outcome, including `rejected`.
+    // Scoping it to `applied` would go red on a quiet week rather than on a
+    // broken writer, and would miss the specific regression most worth
+    // catching: the rejection path being dropped in a refactor of the auth
+    // gate, which compiles clean and breaks no test.
+    //
+    // 72h to match the citation probe: vendor self-edits follow signup
+    // volume, which is bursty, and the 30-day history has legitimate
+    // multi-day gaps. A window that fires on ordinary quiet gets muted.
+    name: "entity-write-log-writer",
+    ownerOpe: "OPE-830",
+    label: "Vendor self-edit write history",
+    // P1 because the type admits only P0/P1 — not because a silent write log
+    // is as urgent as a dead pipeline. Recorded rather than silently rounded.
+    priority: "P1",
+    expectedWindowHours: 72,
+    lastEvidenceAt: (db) => maxTs(db, entityWriteLog, entityWriteLog.createdAt),
+  },
   {
     // OPE-540 — proof that inbound submissions are still producing PROVENANCE.
     //

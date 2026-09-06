@@ -8,6 +8,7 @@ import { and, eq, ne } from "drizzle-orm";
 import { appendSlugSegment, createSlug, type Slug } from "@/lib/utils";
 import { validateRequestBody, vendorProfileUpdateSchema } from "@/lib/validations";
 import { logError } from "@/lib/logger";
+import { ALWAYS_IGNORED, diffFields, recordEntityWrite } from "@/lib/audit/entity-write-log";
 import { recomputeVendorCompleteness } from "@/lib/completeness";
 import { logEnrichment } from "@/lib/enrichment-log";
 import { indexNowUrlFor, pingIndexNow } from "@/lib/indexnow";
@@ -52,7 +53,37 @@ export async function PATCH(request: NextRequest) {
   // link. OAuth signups are auto-verified at user-create time so
   // they pass this gate transparently.
   const gate = await requireVerifiedSession();
-  if (!gate.ok) return gate.response;
+  if (!gate.ok) {
+    // OPE-830 — record the refusal.
+    //
+    // This return sits ABOVE every log call in the route, so until now a
+    // rejected save left no trace anywhere: `enrichment_log` records
+    // successes only, and nothing else fired. That is what made two live
+    // "my profile won't save" reports unanswerable — "no record of a save"
+    // and "no save was attempted" were the same observation.
+    //
+    // The specimen: a vendor uploaded a photo at 21:47:53 (which passes on
+    // the session-only gate) and verified his email at 21:51:18. Whether he
+    // typed into the form during those 3½ minutes is precisely what nothing
+    // could say. It can now.
+    if (gate.reason !== "unauthenticated" && gate.userId) {
+      const [refused] = await db
+        .select({ id: vendors.id })
+        .from(vendors)
+        .where(eq(vendors.userId, gate.userId))
+        .limit(1);
+      if (refused) {
+        await recordEntityWrite(db, {
+          entityType: "vendor",
+          entityId: refused.id,
+          source: "vendor_self",
+          actorUserId: gate.userId,
+          rejectReason: gate.reason === "email_unverified" ? "email_unverified" : "forbidden",
+        });
+      }
+    }
+    return gate.response;
+  }
 
   try {
     const validation = await validateRequestBody(request, vendorProfileUpdateSchema);
@@ -88,25 +119,15 @@ export async function PATCH(request: NextRequest) {
     // src/app/api/admin/vendors/[id]/route.ts — keeping the self-edit
     // surface in parity so renames don't silently break branded URLs.
     // EH1 Phase 1: also reads `role` for the displayMode gate below.
+    // ⚠️ OPE-830 — full row, not a column subset.
+    //
+    // This was a 12-column select. A before/after diff can only report the
+    // fields it can see, and a partial snapshot would silently report every
+    // unselected column as unchanged — the same class of blind spot as the
+    // `fields_changed` this replaces. The row is small and already fetched
+    // once per request; widening it costs nothing and removes the trap.
     const [currentVendor] = await db
-      .select({
-        id: vendors.id,
-        slug: vendors.slug,
-        businessName: vendors.businessName,
-        vendorType: vendors.vendorType,
-        description: vendors.description,
-        city: vendors.city,
-        state: vendors.state,
-        logoUrl: vendors.logoUrl,
-        role: vendors.role,
-        // A5 — prior values for change detection + audit context. The
-        // override flag tells us whether a displayMode preference is actually
-        // honored at render (resolveVendorDisplay), so we record it on the
-        // audit row rather than re-deriving it later.
-        displayMode: vendors.displayMode,
-        displayName: vendors.displayName,
-        displayOverridePermitted: vendors.displayOverridePermitted,
-      })
+      .select()
       .from(vendors)
       .where(eq(vendors.userId, gate.userId))
       .limit(1);
@@ -232,6 +253,13 @@ export async function PATCH(request: NextRequest) {
 
     if (updatedVendor[0]) {
       await recomputeVendorCompleteness(db, updatedVendor[0].id);
+      // ⚠️ `fieldsChanged` here is `Object.keys(updateData)` — the fields
+      // PRESENT in the payload, not the ones that changed. It is byte-identical
+      // across all 18 saves on the OPE-830 specimen and would be identical on a
+      // no-op resubmit. Left as-is because coverage dashboards read this column
+      // and its meaning, though badly named, is stable; the real diff goes to
+      // entity_write_log below. Do not "fix" this in place without checking
+      // those readers first.
       await logEnrichment(db, {
         targetType: "vendor",
         targetId: updatedVendor[0].id,
@@ -239,6 +267,20 @@ export async function PATCH(request: NextRequest) {
         status: "success",
         actorUserId: gate.userId,
         fieldsChanged: Object.keys(updateData),
+      });
+
+      // OPE-830 — what this save actually did.
+      //
+      // Diffed against the pre-update row, so a resubmit records `noop` with
+      // an empty change list rather than looking identical to a real edit.
+      await recordEntityWrite(db, {
+        entityType: "vendor",
+        entityId: updatedVendor[0].id,
+        source: "vendor_self",
+        actorUserId: gate.userId,
+        changes: diffFields(currentVendor as unknown as Record<string, unknown>, updateData, {
+          ignore: ALWAYS_IGNORED,
+        }),
       });
     }
 
