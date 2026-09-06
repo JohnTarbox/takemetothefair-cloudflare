@@ -2968,6 +2968,68 @@ export type CpiSignalFilingRow = typeof cpiSignalFilings.$inferSelect;
 //   filed_at    → seconds-epoch; set when the agent records the OPE id.
 //   resolved_at → seconds-epoch; set when the signature is marked done.
 //   created_at  → seconds-epoch of the first proposal; preserved on reopen.
+/**
+ * OPE-463 — the fault record for inbound extraction.
+ *
+ * A SIBLING of `fault_signatures`, not a widening of it. That table's `route`
+ * means a browser page route and its `error_class` means a JS error class; an
+ * extraction fault has neither. It is also the table `/admin/analytics` counts
+ * as "render fault health", so mixing populations would silently change a
+ * displayed number to mean two things — the exact defect class OPE-808 removed.
+ *
+ * What IS shared is the status vocabulary (`src/lib/faults/status.ts`, OPE-811).
+ * One vocabulary, separable populations.
+ */
+export const extractionFaults = sqliteTable(
+  "extraction_faults",
+  {
+    signature: text("signature").primaryKey(),
+    /** What produced it: 'email_submission' | 'url_import' | 'photo_intake'. */
+    source: text("source").notNull(),
+    /**
+     * The fault family, typed as a `cpi.config` family_id rather than free
+     * text, so CPI stage 2 (Tier-0 classify) resolves with no mapping layer.
+     */
+    familyId: text("family_id").notNull(),
+    detail: text("detail"),
+    firstSeen: integer("first_seen", { mode: "timestamp" }).notNull(),
+    lastSeen: integer("last_seen", { mode: "timestamp" }).notNull(),
+    count: integer("count").notNull().default(1),
+    status: text("status").notNull().default("proposed"),
+    opeId: text("ope_id"),
+    filedAt: integer("filed_at", { mode: "timestamp" }),
+    resolvedAt: integer("resolved_at", { mode: "timestamp" }),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    index("idx_extraction_faults_status").on(t.status),
+    index("idx_extraction_faults_family").on(t.familyId),
+  ]
+);
+
+/**
+ * OPE-463 scope 4 — one inbound email, many events.
+ *
+ * `inbound_emails.resulting_event_id` is singular, so a submission that created
+ * six events recorded one, and per-submission precision was not computable at
+ * all. Additive: `resulting_event_id` is untouched.
+ */
+export const inboundEmailEvents = sqliteTable(
+  "inbound_email_events",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    inboundEmailId: text("inbound_email_id").notNull(),
+    eventId: text("event_id").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    uniqueIndex("idx_inbound_email_events_pair").on(t.inboundEmailId, t.eventId),
+    index("idx_inbound_email_events_event").on(t.eventId),
+  ]
+);
+
 export const faultSignatures = sqliteTable(
   "fault_signatures",
   {

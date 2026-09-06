@@ -33,6 +33,12 @@ import {
   reportedNewValue,
 } from "../helpers.js";
 import { rosterResearchTargetWhere } from "@takemetothefair/db-schema";
+import {
+  EXTRACTION_REJECT_FAMILIES,
+  humanRejectSignature,
+  rejectReasonRequired,
+} from "@takemetothefair/constants";
+import { emitExtractionFault } from "../faults/extraction-emitter.js";
 import { recordSlugRename } from "../slug-history.js";
 import { geocodeNewVenueViaMainApp } from "../venues/geocode-new.js";
 import { checkDuplicateViaMainApp } from "../duplicates/check-duplicate.js";
@@ -580,6 +586,12 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .describe(
           "OPE-450 — when rejecting BECAUSE this row duplicates another, the keeper's event id. Records the adjudication as a fact instead of leaving it inferrable only from the matcher's guess. Omit and it is filled from `possible_duplicate_of` automatically when that is set, so the common case needs nothing extra. Ignored unless status is REJECTED."
         ),
+      reject_reason: z
+        .enum(EXTRACTION_REJECT_FAMILIES)
+        .optional()
+        .describe(
+          "OPE-463 — WHY this extractor-created row is being rejected, as a cpi.config family_id. REQUIRED when rejecting a row whose ingestion_method demands it (today: email_submission); ignored otherwise. Measured 2026-09-06: lifecycle_reason was NULL on all 36 REJECTED email_submission events, so every one of those human adjudications — the highest-quality label this system receives about what the extractor got wrong — was discarded. Typed as family_id rather than free text so CPI Tier-0 classify resolves with no mapping layer."
+        ),
     },
     async (params) => {
       const eventRows = await db
@@ -597,6 +609,8 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           // OPE-450: the matcher's guess, used as the default adjudication
           // target when an operator rejects without naming one.
           possibleDuplicateOf: events.possibleDuplicateOf,
+          // OPE-463: decides whether a reject reason is required.
+          ingestionMethod: events.ingestionMethod,
         })
         .from(events)
         .where(eq(events.id, params.event_id))
@@ -627,6 +641,38 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       const tombstoneReason = mergedTombstoneBlockReason(event, { nextStatus: params.status });
       if (tombstoneReason) {
         return { content: [{ type: "text", text: tombstoneReason }], isError: true };
+      }
+
+      // OPE-463 — a reject on a machine-created row is a verdict on the
+      // extractor, and we have been throwing every one of them away.
+      //
+      // Measured 2026-09-06: `lifecycle_reason` NULL on all 36 REJECTED
+      // `email_submission` events. Those are 36 expert judgements about what
+      // the extractor got wrong, discarded — and the classifier that produced
+      // the rows has never been revised against any of them.
+      //
+      // ⚠️ Scoped to ingestion methods where a machine wrote the row. A human
+      // rejecting a hand-entered admin event is not labelling an extractor;
+      // demanding a family there would collect noise and train the requirement
+      // into a nuisance.
+      if (params.status === "REJECTED" && rejectReasonRequired(event.ingestionMethod)) {
+        if (!params.reject_reason) {
+          return {
+            content: [
+              {
+                type: "text",
+                text:
+                  `This event was created by the ${event.ingestionMethod} extractor, so rejecting it ` +
+                  `requires \`reject_reason\` — the fault family that explains WHY.\n\n` +
+                  `Valid values: ${EXTRACTION_REJECT_FAMILIES.join(", ")}\n\n` +
+                  `Your verdict is the highest-quality signal we get about what the extractor got ` +
+                  `wrong; without it the reject is indistinguishable from any other and the ` +
+                  `extractor never learns. (OPE-463)`,
+              },
+            ],
+            isError: true,
+          };
+        }
       }
 
       // OPE-244 #3 — same ingest gate as the admin approve route: don't let a
@@ -661,8 +707,32 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           // Only written on a REJECTED transition; leaving it untouched
           // otherwise preserves the record if the row is later re-rejected.
           ...(params.status === "REJECTED" ? { rejectedAsDuplicateOf } : {}),
+          // OPE-463 — persist the operator's verdict on the row itself, so the
+          // label survives independently of the fault ledger. Until now this
+          // column was NULL on all 36 REJECTED email-submission events.
+          ...(params.status === "REJECTED" && params.reject_reason
+            ? { lifecycleReason: params.reject_reason }
+            : {}),
         })
         .where(eq(events.id, event.id));
+
+      // OPE-463 emitter 3 — the human verdict becomes a CPI candidate.
+      //
+      // Keyed on the FAMILY, not the event: "the extractor over-splits" is one
+      // fault seen N times, not N faults. Keying on the event id would leave
+      // `count` permanently at 1 and the recurrence threshold could never be
+      // met. Emit-only — nothing here writes an `ope_id` or calls the filing
+      // rail (scope 5: a lane with a 50% hard-fail rate wired to auto-file
+      // would flood the tracker on its first night).
+      if (params.status === "REJECTED" && params.reject_reason) {
+        const source = event.ingestionMethod ?? "unknown";
+        await emitExtractionFault(db, {
+          signature: humanRejectSignature(params.reject_reason, source),
+          source,
+          familyId: params.reject_reason,
+          detail: `${event.slug} rejected by operator`,
+        });
+      }
 
       // Audit log — material status transitions need to land in admin_actions
       // so the Analytics activity feed and any downstream auditing can see

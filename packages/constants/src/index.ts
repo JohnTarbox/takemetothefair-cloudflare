@@ -1081,3 +1081,4 @@ export const AWAITING_SUBMITTER_EXPIRY_DAYS = 21;
 // OPE-772 — the send-gate allowlist + resolver, shared by both Workers so the
 // MCP Worker can report the gates only it enforces (OPERATOR_OUTBOUND_ENABLED).
 export * from "./send-gates";
+export * from "./extraction-families";
