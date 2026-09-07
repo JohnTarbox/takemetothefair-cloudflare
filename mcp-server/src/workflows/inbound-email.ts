@@ -2942,7 +2942,10 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     fromAddress: string,
     // OPE-457 — the text a body/attachment citation rests on, for the
     // contradiction guard. Only meaningful for non-url sources.
-    supportingText?: string
+    supportingText?: string,
+    // OPE-838 — the fetched page, for the snapshot columns. Only meaningful
+    // for url sources; the writer ignores it for the others.
+    snapshot?: import("../email-handlers/pipeline-citations.js").SourceSnapshot
   ): Promise<void> {
     try {
       await step.do(
@@ -2955,6 +2958,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             source,
             fromAddress,
             supportingText,
+            snapshot,
           });
           // OPE-540 — record the OUTCOME, not just the throw.
           //
@@ -2979,6 +2983,11 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
               inserted: result.inserted,
               // Null on success; otherwise names WHICH zero-branch fired.
               reason: result.reason,
+              // OPE-838 — did this write carry the page snapshot? A citation
+              // row with a null source_excerpt is indistinguishable from one
+              // written before this shipped, so the step record is where the
+              // difference stays visible.
+              snapshot: snapshot ? "captured" : "absent",
               source_kind: source.kind,
               source_ref:
                 source.kind === "url"
@@ -3025,6 +3034,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     siblings: ReadonlyArray<{
       source: SubmitSource;
       extracted: import("../email-handlers/submit.js").SubmitExtractResult;
+      snapshot?: import("../email-handlers/pipeline-citations.js").SourceSnapshot;
     }>,
     fromAddress: string,
     emailBody: string
@@ -3039,7 +3049,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         siblings[i].extracted,
         siblings[i].source,
         fromAddress,
-        emailBody
+        emailBody,
+        siblings[i].snapshot
       );
     }
   }
@@ -3097,6 +3108,14 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       // OPE-69 — the originating source, threaded into Phase C so per-source
       // event_data_citations rows can be attributed (url / body / attachment).
       source: SubmitSource;
+      // OPE-838 scope 3/4 — what the fetched page SAID, captured here because
+      // this is the only place that still holds it. `fetched` goes out of scope
+      // at the end of Phase A; by Phase C there is an event id and no page. The
+      // citation writer stores it as source_title / source_excerpt /
+      // source_content_hash / source_fetched_at, which is what makes the
+      // DERIVED `source_verifiable` true. Absent for body/attachment/subject
+      // candidates, which were never fetched.
+      snapshot?: import("../email-handlers/pipeline-citations.js").SourceSnapshot;
       // OPE-378 / OPE-458 — candidates Phase A.9 folded into THIS one. They no
       // longer produce their own event (that was the over-split defect), but
       // they were still independent sources that cited these fields, so their
@@ -3106,6 +3125,10 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       mergedSiblings?: Array<{
         source: SubmitSource;
         extracted: import("../email-handlers/submit.js").SubmitExtractResult;
+        // OPE-838 — the folded sibling's OWN page, not the survivor's. A
+        // sibling is a genuinely independent source; citing it against the
+        // survivor's snapshot would attribute the wrong page's text.
+        snapshot?: import("../email-handlers/pipeline-citations.js").SourceSnapshot;
       }>;
     }
     interface SourceFailure {
@@ -3215,12 +3238,17 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           },
           () => submitExtract(this.env, fetched, emailBody)
         );
+        // `new Date()` rather than a step-recorded timestamp: the fetch just
+        // completed in this same Phase-A iteration, and Workflow step retries
+        // re-run the fetch, so the wall clock here IS when the bytes arrived.
+        const fetchedAt = new Date();
         for (const ev of extracted.events) {
           candidates.push({
             extracted: { ...extracted, event: ev, events: [ev] },
             fetchMethod: fetched.fetchMethod,
             fromAttachment: false,
             source,
+            snapshot: { title: fetched.title, text: fetched.content, fetchedAt },
           });
         }
       } catch {
@@ -3323,6 +3351,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         (winner.mergedSiblings ??= []).push({
           source: loser.source,
           extracted: loser.extracted,
+          snapshot: loser.snapshot,
         });
       }
       // warn, not log: a collapse means the extractor emitted the same event
@@ -3467,7 +3496,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           only.extracted,
           only.source,
           fromAddress,
-          emailBody
+          emailBody,
+          only.snapshot
         );
       }
       if (only.mergedSiblings?.length && res.resultingEventId) {
@@ -3564,7 +3594,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
               extracted,
               cand.source,
               fromAddress,
-              emailBody
+              emailBody,
+              cand.snapshot
             );
             if (cand.mergedSiblings?.length) {
               await this.recordMergedSiblingCitations(
@@ -3611,7 +3642,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           extracted,
           cand.source,
           fromAddress,
-          emailBody
+          emailBody,
+          cand.snapshot
         );
         if (cand.mergedSiblings?.length) {
           await this.recordMergedSiblingCitations(

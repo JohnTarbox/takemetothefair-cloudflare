@@ -24,7 +24,7 @@
  *     safe under Workflow step retries and email redelivery.
  */
 import { and, eq } from "drizzle-orm";
-import { chunkIds } from "@takemetothefair/utils";
+import { chunkIds, classifyDomainTier } from "@takemetothefair/utils";
 import { eventDataCitations } from "../schema.js";
 import type { Db } from "../db.js";
 
@@ -32,7 +32,54 @@ import type { Db } from "../db.js";
  * Citation rows per INSERT statement. See the chunked insert in
  * `recordSourceCitations` for why this is not "all of them at once".
  */
-const CITATION_INSERT_CHUNK = 6;
+const CITATION_INSERT_CHUNK = 5;
+
+/**
+ * OPE-838 scope 4 — how much of the fetched page to keep in `source_excerpt`.
+ *
+ * OPE-692 added the column so a citation can be judged without re-fetching a
+ * URL nothing can reach. 600 chars is enough to recognise the page and see the
+ * lede; it is not a copy of the page, and `source_content_hash` is what detects
+ * a later edit.
+ *
+ * ⚠️ This excerpt is PAGE-level, not field-level. Every citation from one fetch
+ * carries the same leading text, because the extractor returns values without
+ * the spans it read them from. A per-field supporting span is OPE-465's job
+ * (the grounding verifier), and this deliberately does not pretend to be one.
+ */
+const EXCERPT_MAX_CHARS = 600;
+
+/**
+ * A page we actually fetched, captured at extract time.
+ *
+ * The evidence is only cheap at this moment: the workflow holds the title and
+ * body text of the page it just read, and by the time anyone asks "what did
+ * that source say?" the page may have changed or gone. Everything here is
+ * PAGE-level — see the EXCERPT_MAX_CHARS note.
+ */
+export interface SourceSnapshot {
+  /** `<title>` of the fetched page, or null when the fetch returned none. */
+  title: string | null;
+  /** Extracted text content of the page. Truncated into `source_excerpt`. */
+  text: string;
+  /** When the fetch completed. */
+  fetchedAt: Date;
+}
+
+/**
+ * SHA-256 of the fetched page text, lowercase hex.
+ *
+ * `crypto.subtle` is available on the Workers runtime; this is the same digest
+ * shape `admin-citations.ts` stores from the agent-edit path, so a hash written
+ * here is comparable with one written there.
+ */
+async function sha256Hex(text: string): Promise<string> {
+  const bytes = new TextEncoder().encode(text);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
 
 /**
  * The origin of a citation. A structural subset of the workflow's
@@ -52,6 +99,13 @@ interface ExtractedForCitations {
     name?: string | null;
     startDate?: string | null;
     endDate?: string | null;
+    // OPE-838 scope 5 — the fields that distinguish a real extraction from the
+    // OPE-537 fabrication shape. Both are produced by the extractor and were
+    // written to the event while being cited nowhere.
+    description?: string | null;
+    venueName?: string | null;
+    startTime?: string | null;
+    endTime?: string | null;
     // OPE-744 — the numeric/date tracked fields the pipeline also carries.
     // `submit.ts`'s local ExtractedEvent declares the vendor-application family
     // explicitly (OPE-198); ticketPrice* is NOT declared there but still
@@ -105,7 +159,15 @@ function numericValue(v: number | null | undefined): string | undefined {
  * nobody added them — a wrong explanation is more durable than a missing one,
  * because it answers the question that would otherwise get asked.
  *
- * venue_id stays out on purpose: the pipeline has a venue NAME, not an id.
+ * ⚠️ `venue_id` stays out, and that is NOT the same statement as "the venue is
+ * uncited" (OPE-838 scope 5). This layer holds a venue NAME; the id is minted
+ * downstream by `autoLinkVenue`, so a `venue_id` citation written here would
+ * attribute an identifier the source never stated. `venue_name` is what the
+ * page actually said, so that is what gets cited. Hours are likewise absent:
+ * The event's HOURS are cited, as `start_time` / `end_time` — the shape the
+ * extractor produces. The denormalized hours live in `event_days`, which this
+ * helper never sees; what is cited here is what the SOURCE said, which is the
+ * thing provenance is for.
  */
 const CITATION_FIELDS: ReadonlyArray<{
   fieldName: string;
@@ -115,6 +177,13 @@ const CITATION_FIELDS: ReadonlyArray<{
   { fieldName: "name", confKey: "name", get: (e) => e.name },
   { fieldName: "start_date", confKey: "startDate", get: (e) => e.startDate },
   { fieldName: "end_date", confKey: "endDate", get: (e) => e.endDate },
+  { fieldName: "description", confKey: "description", get: (e) => e.description },
+  { fieldName: "venue_name", confKey: "venueName", get: (e) => e.venueName },
+  // The ticket asked for "hours". The extractor carries them as two fields, and
+  // that is how the source stated them, so they are cited as two rather than
+  // concatenated into a display string nothing can parse back.
+  { fieldName: "start_time", confKey: "startTime", get: (e) => e.startTime },
+  { fieldName: "end_time", confKey: "endTime", get: (e) => e.endTime },
   {
     fieldName: "ticket_price_min",
     confKey: "ticketPriceMin",
@@ -205,22 +274,47 @@ function sourceIdentity(
  */
 type CitationSourceType = (typeof eventDataCitations.$inferInsert)["sourceType"];
 
-function sourceTypeFor(kind: CitationSource["kind"]): CitationSourceType {
+/**
+ * OPE-838 scope 2 — `official_website` when, and only when, something
+ * INDEPENDENT of the fetch says the page belongs to the organizer.
+ *
+ * ⚠️ The ticket asked for a different rule: *"when the fetched URL's
+ * registrable domain is the event's own `source_domain`, that is
+ * `official_website`."* **That test is circular and always true here.**
+ * `events.source_domain` is derived from the very URL the citation is
+ * attributed to — `src/app/api/suggest-event/submit/route.ts:712` sets
+ * `sourceDomain: classifySource(sourceName, data.sourceUrl).sourceDomain`, and
+ * `data.sourceUrl` is the fetched URL. Implementing it literally would stamp
+ * `official_website` on every scraped page including aggregators, which is
+ * exactly the over-claim OPE-457 rejected on the record.
+ *
+ * `classifyDomainTier` is the non-circular version of the same intent. T1 means
+ * the page's registrable domain matches a signal that did NOT come from the
+ * fetch — today, the submitting sender's own email domain. An organizer mailing
+ * us their own festival site clears it; a stranger forwarding an aggregator
+ * link does not, and stays `other`.
+ *
+ * Deliberately conservative in one direction: a genuine organizer site
+ * submitted from a gmail address is still `other`. That understates the source,
+ * which is the failure this ticket is about — but the alternative is asserting
+ * an origin we cannot evidence, and a provenance field that over-claims is
+ * worse than one that under-claims, because nothing downstream can tell.
+ */
+function sourceTypeFor(
+  kind: CitationSource["kind"],
+  ctx: { sourceUrl: string; fromAddress: string }
+): CitationSourceType {
   switch (kind) {
-    case "url":
-      // We fetched a page and read the value off it — NOT the sender's claim.
-      //
-      // The ticket asked for `direct_scrape`; this table's enum does not have
-      // it (official_website | news_article | press_release | social_media |
-      // user_submitted | other), and inventing a value would fail the column
-      // constraint. `official_website` would over-claim — we cannot tell
-      // generically whether a linked page is the organizer's own site.
-      //
-      // `other` is the honest bucket, and it buys the thing that actually
-      // matters here: scraped values become DISTINGUISHABLE from typed ones, so
-      // OPE-433 can grade them differently. Nothing ranks source_type today, so
-      // separating the lanes is the whole ask.
-      return "other";
+    case "url": {
+      // The sender's email domain is evidence about the page ONLY because it
+      // was not derived from the page. That independence is the whole point.
+      const at = ctx.fromAddress.lastIndexOf("@");
+      const senderDomain = at >= 0 ? ctx.fromAddress.slice(at + 1).toLowerCase() : null;
+      const tier = classifyDomainTier(ctx.sourceUrl, { contactEmailDomain: senderDomain });
+      // T2 (DMO / .gov / chamber) is real but is NOT the organizer, and this
+      // enum has no bucket for it. `other` remains the honest answer there.
+      return tier === "T1" ? "official_website" : "other";
+    }
     case "attachment":
     case "body":
       // The sender supplied these bytes directly — genuinely user_submitted.
@@ -306,6 +400,9 @@ export async function recordSourceCitations(
     /** OPE-457 — the text a body/attachment citation claims to rest on, used
      *  by the contradiction guard. Omitted → guard is inert. */
     supportingText?: string;
+    /** OPE-838 scope 3/4 — the page this url-source was read from. Omitted →
+     *  the snapshot columns stay null, exactly as before this ticket. */
+    snapshot?: SourceSnapshot;
   }
 ): Promise<CitationWriteResult> {
   const { eventId, extracted, source, fromAddress } = args;
@@ -330,6 +427,29 @@ export async function recordSourceCitations(
     );
   const alreadyCited = new Set(existing.map((r) => r.fieldName));
 
+  // OPE-838 scope 3/4 — what the source SAID, captured at the only moment it is
+  // cheap. Computed once per call, not per row: the digest is over the page.
+  //
+  // ⚠️ `source_verifiable` is NOT a column and is not set here. It is DERIVED at
+  // read time — `admin-citations.ts:881` returns
+  // `Boolean(sourceTitle || sourceExcerpt || sourceContentHash)`. So the
+  // `source_verifiable: false` this ticket reported as an inverted flag was an
+  // honest report that no snapshot existed. Populating these three fields is
+  // what makes it true; there is nothing else to flip.
+  //
+  // Only for url-sources. A body/attachment citation's "source" is the email
+  // itself, which is already stored on `inbound_emails` — re-copying it here
+  // would duplicate it into a second table under a name that implies a fetch.
+  const snap =
+    source.kind === "url" && args.snapshot
+      ? {
+          sourceTitle: args.snapshot.title,
+          sourceExcerpt: args.snapshot.text.trim().slice(0, EXCERPT_MAX_CHARS) || null,
+          sourceContentHash: args.snapshot.text ? await sha256Hex(args.snapshot.text) : null,
+          sourceFetchedAt: args.snapshot.fetchedAt,
+        }
+      : null;
+
   const rows: (typeof eventDataCitations.$inferInsert)[] = [];
   for (const f of CITATION_FIELDS) {
     const raw = f.get(extracted.event);
@@ -344,10 +464,11 @@ export async function recordSourceCitations(
       year: null,
       sourceUrl,
       sourceName,
-      sourceType: sourceTypeFor(source.kind),
+      sourceType: sourceTypeFor(source.kind, { sourceUrl, fromAddress }),
       confidence: confidenceToScore(extracted.fieldConfidence?.[f.confKey]),
       state: "active",
       createdBy: null,
+      ...snap,
     });
   }
 
@@ -382,19 +503,30 @@ export async function recordSourceCitations(
   //
   // A multi-row Drizzle insert binds every column of every row in ONE
   // statement, and D1 refuses a statement with more than 100 bound parameters
-  // (D1_MAX_BIND_PARAMS). `event_data_citations` binds ~13 per row here: the
-  // ten set below plus the three `$defaultFn` columns (id, created_at,
-  // updated_at) that Drizzle generates in JS and binds.
+  // (D1_MAX_BIND_PARAMS). The failure is INVISIBLE in test: better-sqlite3
+  // allows 32766 bound parameters, so every unit test passes while production
+  // throws "too many SQL variables". Same family as OPE-79/OPE-241/OPE-548.
   //
-  // While CITATION_FIELDS held three entries this could never exceed ~39 and a
-  // single insert was safe. Widening it to nine (this ticket) takes the worst
-  // case to ~117 — over the ceiling. The failure would have been INVISIBLE in
-  // test: better-sqlite3 allows 32766 bound parameters, so every unit test
-  // passes while production throws "too many SQL variables". Same family as
-  // OPE-79/OPE-241/OPE-548.
+  // ⚠️ The binding cost is per ROW-SHAPE, not per field. Two things move it,
+  // and OPE-838 moved the second one for the first time:
   //
-  // 6 rows ≈ 78 parameters, leaving headroom if a column is added to the table.
-  // If you add fields to CITATION_FIELDS, this constant is the thing to check.
+  //   * CITATION_FIELDS length → how many ROWS (3 → 9 in OPE-744, 13 here).
+  //   * columns set per row    → how many PARAMETERS EACH ROW BINDS.
+  //
+  // Per row today: 10 set explicitly below, 3 `$defaultFn` columns Drizzle
+  // generates in JS and binds (id, created_at, updated_at), and 4 more from the
+  // OPE-838 snapshot spread (source_title, source_excerpt, source_content_hash,
+  // source_fetched_at) = **17**.
+  //
+  // At the old chunk of 6 that is 6 × 17 = **102, over the ceiling** — a live
+  // D1 failure introduced by adding columns while the row COUNT stayed legal.
+  // 5 × 17 = 85, with headroom for one more column.
+  //
+  // If you add fields to CITATION_FIELDS **or columns to the row**, this
+  // constant is the thing to check — and the OPE-744 param-cap test must
+  // exercise the widest shape (it now passes a snapshot for exactly that
+  // reason; without one it counts 13/row and goes green on a statement
+  // production would reject).
   for (const batch of chunkIds(keep, CITATION_INSERT_CHUNK)) {
     await db.insert(eventDataCitations).values(batch);
   }
