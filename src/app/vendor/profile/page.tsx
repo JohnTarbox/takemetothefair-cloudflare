@@ -14,6 +14,10 @@ import { ResendVerificationButton } from "@/components/auth/ResendVerificationBu
 import { useAutosave, formatSavedAgo } from "@/lib/hooks/use-autosave";
 import { VendorClaimWidget } from "@/components/vendor/claim-widget";
 import { SelfReportedFairsEditor } from "@/components/vendor/SelfReportedFairsEditor";
+// OPE-831 — warns, at the field, that a missing/unrecognised state keeps this
+// listing off every by-state browse page. Keyed on the same predicate the
+// grouper uses, so the warning cannot disagree with the behaviour.
+import { StateBrowseHint } from "@/components/vendor/state-browse-hint";
 
 /**
  * The one string that renders as success.
@@ -602,6 +606,11 @@ export default function VendorProfilePage() {
                     placeholder="04101"
                   />
                 </div>
+                {/* OPE-831 — see StateBrowseHint for why this is a component. */}
+                <StateBrowseHint
+                  state={formData.state}
+                  onUseLookup={() => setShowGoogleLookup(true)}
+                />
                 {formData.latitude && formData.longitude && (
                   <p className="text-xs text-muted-foreground mt-2">
                     Coordinates: {formData.latitude.toFixed(4)}, {formData.longitude.toFixed(4)}{" "}
