@@ -93,6 +93,53 @@ async function maxTs(
  */
 export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
   {
+    // OPE-837 — proof the same-site nav crawl is still executing.
+    //
+    // This is the OPE-246 class in its purest form. The crawl is enrichment:
+    // it fills empty fields and never fails a submission, so if it stops
+    // running, every submission still succeeds, every event is still created,
+    // and the only symptom is that prices and rosters quietly stop appearing —
+    // which is indistinguishable from "the sites we were sent didn't have
+    // them". A crawl that never runs and a crawl that runs and finds nothing
+    // look identical from the outside (OPE-6 v3.8).
+    //
+    // ⚠️ Evidence is the `secondary-page-crawl` STEP ROW, not a filled field.
+    // The step is written whenever the crawl phase executes, including when it
+    // considers zero pages — so it proves EXECUTION rather than yield, which
+    // is the distinction this repo has repeatedly got wrong by probing the
+    // yield and reading a quiet week as a dead path.
+    //
+    // 576h, MEASURED — and measured against the right COHORT, which changed
+    // the answer. The population that emits this evidence is not "URL
+    // submissions" but "URL submissions that produced an event", because the
+    // crawl phase only runs once a URL source has yielded one:
+    //
+    //   all URL submissions, 180d:        151 rows, mean gap 18.0h, MAX 243.2h
+    //   ...that produced an event, 180d:   80 rows, mean gap 33.9h, MAX 371.4h
+    //
+    // Sizing the window on the first number would have put it BELOW the second
+    // cohort's observed maximum, so the probe would have gone red on an
+    // ordinary quiet fortnight. 576h is ~1.55x the real maximum, the same
+    // headroom ratio OPE-803 used, and above every gap in 180 days.
+    //
+    // ⚠️ Detection is therefore slow by construction (up to 24 days). The
+    // signal is slow: this path fires roughly twice a week. A tighter window
+    // would cry wolf, and a probe that cries wolf gets muted, and a muted
+    // probe reads as coverage while covering nothing.
+    name: "submit-secondary-page-crawl",
+    ownerOpe: "OPE-837",
+    label: "submit@ same-site nav crawl (price / roster reach)",
+    priority: "P1",
+    expectedWindowHours: 576,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        workflowRunSteps,
+        workflowRunSteps.recordedAt,
+        eq(workflowRunSteps.stepName, "secondary-page-crawl")
+      ),
+  },
+  {
     // OPE-803 — proof the spam triple-detector is still running.
     //
     // `intent='spam'` is the only terminal state in the inbound lane: across

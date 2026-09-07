@@ -719,6 +719,9 @@ async function stagePosterAsPendingEvent(
         description: null,
         ogImage: null,
         jsonLdSerialized: null,
+        // OPE-837 — this synthetic fetch result feeds the extractor directly
+        // and is not a crawl entry point, so it carries no discovered links.
+        links: [],
         fetchMethod: "standard",
       },
       ""

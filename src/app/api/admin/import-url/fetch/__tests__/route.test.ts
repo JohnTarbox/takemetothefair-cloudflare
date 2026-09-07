@@ -48,6 +48,17 @@ vi.mock("@/lib/url-import/html-parser", () => ({
       "Kingfield Craft Fair — Saturday October 4, 2026, 9am to 4pm at the " +
       "Kingfield Elementary School gym. Over 40 local makers, free admission."
   ),
+  // OPE-837 — the route now also returns the page's anchors so the submit@
+  // pipeline can discover the nav pages that carry price / roster fields.
+  //
+  // This mock must list it: a module mock REPLACES the module, so a newly
+  // imported export is `undefined` here and the route throws into its own
+  // catch and answers `success: false`. That is the same shape as the OPE-537
+  // note above — four routing tests failing for a reason unrelated to routing.
+  extractAnchors: vi.fn(() => [
+    { url: "https://example.com/vendors", text: "Vendors" },
+    { url: "https://someone-else.org/ad", text: "Sponsored" },
+  ]),
 }));
 
 import { GET } from "../route";
@@ -365,5 +376,37 @@ describe("GET /api/admin/import-url/fetch — Browser Rendering escalation", () 
     expect(body.success).toBe(false);
     expect(body.fetchMethod).toBe("pdf_unsupported");
     expect(body.error).toMatch(/PDF/i);
+  });
+});
+
+/**
+ * OPE-837 — the route is the only place the HTML still exists, so it is the
+ * only place an anchor list can be produced. `content` is stripped text by the
+ * time it leaves here, which is why the discovery input has to be built at
+ * this layer rather than in the MCP worker that consumes it.
+ */
+describe("GET /api/admin/import-url/fetch — OPE-837 link discovery", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("returns same-site links and drops unrelated off-site ones", async () => {
+    global.fetch = vi.fn(
+      async () => new Response("<html><body>ok</body></html>", { status: 200 })
+    ) as unknown as typeof fetch;
+
+    const res = await GET(makeRequest("https://example.com/ok"), noParams);
+    const body = (await res.json()) as {
+      success: boolean;
+      links: Array<{ url: string; text: string }>;
+    };
+
+    expect(body.success).toBe(true);
+    // Positive landmark beside the negative assertion: the filter was given
+    // two candidates and kept exactly the same-site one, so a filter that
+    // started rejecting everything cannot pass this as "no off-site links".
+    expect(body.links).toHaveLength(1);
+    expect(body.links[0].url).toBe("https://example.com/vendors");
+    expect(body.links.some((l) => l.url.includes("someone-else.org"))).toBe(false);
   });
 });

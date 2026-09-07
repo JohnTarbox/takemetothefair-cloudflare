@@ -403,6 +403,12 @@ export async function recordSourceCitations(
     /** OPE-838 scope 3/4 — the page this url-source was read from. Omitted →
      *  the snapshot columns stay null, exactly as before this ticket. */
     snapshot?: SourceSnapshot;
+    /** OPE-837 — camelCase field keys this source did NOT produce, because the
+     *  same-site crawl filled them from a DIFFERENT page. Excluded here and
+     *  cited separately against the page they were actually read from, so a
+     *  citation never claims the primary page stated something it does not
+     *  contain (the OPE-457 false-attribution class). */
+    excludeConfKeys?: readonly string[];
   }
 ): Promise<CitationWriteResult> {
   const { eventId, extracted, source, fromAddress } = args;
@@ -452,6 +458,7 @@ export async function recordSourceCitations(
 
   const rows: (typeof eventDataCitations.$inferInsert)[] = [];
   for (const f of CITATION_FIELDS) {
+    if (args.excludeConfKeys?.includes(f.confKey)) continue;
     const raw = f.get(extracted.event);
     if (raw === undefined || raw === null) continue;
     const value = String(raw);
