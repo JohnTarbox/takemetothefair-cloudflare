@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { requireVerifiedSession } from "@/lib/api-auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
-import { vendors, vendorSlugHistory, adminActions } from "@/lib/db/schema";
+import { vendors, vendorSlugHistory, adminActions, users } from "@/lib/db/schema";
 import { and, eq, ne } from "drizzle-orm";
 import { appendSlugSegment, createSlug, type Slug } from "@/lib/utils";
 import { validateRequestBody, vendorProfileUpdateSchema } from "@/lib/validations";
@@ -31,7 +31,33 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Vendor profile not found" }, { status: 404 });
     }
 
-    return NextResponse.json(vendor[0]);
+    // OPE-830 — tell the page whether edits will actually SAVE.
+    //
+    // Without this the form cannot know the caller is unverified until a save
+    // has already been refused, which is how a vendor spent 3½ minutes filling
+    // it in while every PATCH 403'd. The site-wide banner
+    // (components/layout/unverified-banner) does render for these users, but
+    // it says "Please verify your email" — a nag, not a consequence — and it
+    // sits at the top of the page, out of sight on a 276-line form.
+    //
+    // Read from `users`, not from the session: the session is minted at
+    // sign-in and a user who verifies mid-visit would keep a stale `false`.
+    let ownerEmailVerified = true;
+    try {
+      const [owner] = await db
+        .select({ emailVerified: users.emailVerified })
+        .from(users)
+        .where(eq(users.id, session.user.id))
+        .limit(1);
+      ownerEmailVerified = Boolean(owner?.emailVerified);
+    } catch {
+      // ⚠️ Fail OPEN — assume verified. A DB hiccup must not put a scary
+      // "your edits will not save" notice in front of a verified vendor. The
+      // PATCH gate is the real enforcement; this field only drives copy.
+      ownerEmailVerified = true;
+    }
+
+    return NextResponse.json({ ...vendor[0], ownerEmailVerified });
   } catch (error) {
     await logError(db, {
       message: "Failed to fetch vendor profile",

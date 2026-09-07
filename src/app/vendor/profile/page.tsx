@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { VendorGalleryLoader } from "@/components/vendors/gallery/VendorGalleryLoader";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -10,12 +10,32 @@ import { Badge } from "@/components/ui/badge";
 import { GooglePlaceSearch } from "@/components/google-place-search";
 import type { PlaceLookupResult } from "@/lib/google-maps";
 import { WelcomeBanner } from "@/components/onboarding/welcome-banner";
+import { ResendVerificationButton } from "@/components/auth/ResendVerificationButton";
 import { useAutosave, formatSavedAgo } from "@/lib/hooks/use-autosave";
 import { VendorClaimWidget } from "@/components/vendor/claim-widget";
 import { SelfReportedFairsEditor } from "@/components/vendor/SelfReportedFairsEditor";
 
+/**
+ * The one string that renders as success.
+ *
+ * ⚠️ The banner used to colour itself with `message.includes("success")`, and
+ * the server's error text is surfaced verbatim in this same box — so any error
+ * mentioning "successfully" would have painted green. Comparing against the
+ * exact constant removes the class of bug rather than the instance.
+ */
+const SAVE_SUCCESS = "Profile updated successfully";
+
 interface VendorProfile {
   id: string;
+  /**
+   * OPE-830 — whether saves from this page will actually persist.
+   *
+   * The PATCH gate refuses unverified callers, and without this the form has
+   * no way to know until a save has already been refused. Optional so an older
+   * cached response (or a test fixture) reads as verified rather than putting
+   * a false "your edits will not save" notice in front of someone.
+   */
+  ownerEmailVerified?: boolean;
   businessName: string;
   slug: string;
   description: string | null;
@@ -56,6 +76,10 @@ export default function VendorProfilePage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
+  // OPE-830 — bring the result into view. The button sits at the bottom of a
+  // long form, so on a phone the user is already here; this covers the autosave
+  // case and anyone who submits with the keyboard from higher up.
+  const messageRef = useRef<HTMLDivElement | null>(null);
   const [showGoogleLookup, setShowGoogleLookup] = useState(false);
   const [formData, setFormData] = useState({
     businessName: "",
@@ -194,6 +218,14 @@ export default function VendorProfilePage() {
   // nested primitive fields only, so JSON is fine and cheap.
   const serialized = useMemo(() => JSON.stringify(formData), [formData]);
 
+  // Scroll the result into view when it appears. Guarded on the ref existing
+  // and on scrollIntoView being present — jsdom and older WebKit both lack it,
+  // and a save must never fail because feedback could not be scrolled to.
+  useEffect(() => {
+    if (!message) return;
+    messageRef.current?.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
+  }, [message]);
+
   const autosave = useAutosave({
     value: serialized,
     enabled: !loading && !!profile,
@@ -224,7 +256,7 @@ export default function VendorProfilePage() {
       });
 
       if (res.ok) {
-        setMessage("Profile updated successfully");
+        setMessage(SAVE_SUCCESS);
         fetchProfile();
       } else {
         // Surface the server's actual error so we don't paper over the
@@ -327,15 +359,29 @@ export default function VendorProfilePage() {
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
-            {message && (
+            {profile.ownerEmailVerified === false && (
+              // ⚠️ This states the CONSEQUENCE, which the site-wide banner does
+              // not. That banner (components/layout/unverified-banner) already
+              // renders for these users and says "Please verify your email" —
+              // a nag. Nothing connects it to the Save button quietly refusing,
+              // and it sits in the layout, scrolled far out of sight on a form
+              // this long. A vendor spent 3½ minutes filling this in while
+              // every save 403'd, then wrote in to say only his photo saved.
+              // (Photo upload takes auth(); this form takes a verified email.)
               <div
-                className={`p-3 rounded-lg text-sm ${
-                  message.includes("success")
-                    ? "bg-green-50 text-green-700"
-                    : "bg-red-50 text-red-600"
-                }`}
+                role="alert"
+                className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900"
               >
-                {message}
+                <p className="font-semibold">
+                  Your changes here won&apos;t save until you verify your email.
+                </p>
+                <p className="mt-1">
+                  We sent a verification link when you signed up. Photo uploads work either way,
+                  which is why a photo can save when other changes don&apos;t.
+                </p>
+                <div className="mt-3">
+                  <ResendVerificationButton label="Resend verification email" />
+                </div>
               </div>
             )}
 
@@ -610,7 +656,30 @@ export default function VendorProfilePage() {
               </div>
             </div>
 
-            <div className="pt-6">
+            {/* OPE-830 — the result renders WHERE THE ACTION IS.
+                This block used to sit at the top of the form, 276 lines above
+                the button, with no scroll-to and no toast. Tapping Save on a
+                phone produced no visible feedback at all: the spinner stopped
+                and nothing else changed, so a success and a refusal looked
+                identical from where the user was standing. */}
+            <div ref={messageRef} className="pt-6">
+              {message && (
+                <div
+                  role="status"
+                  aria-live="polite"
+                  className={`mb-4 p-3 rounded-lg text-sm ${
+                    // ⚠️ Keyed on the exact success string, not
+                    // `message.includes("success")` — the server's error text
+                    // is passed through verbatim here, and any error mentioning
+                    // "successfully" would have rendered green.
+                    message === SAVE_SUCCESS
+                      ? "bg-green-50 text-green-700"
+                      : "bg-red-50 text-red-600"
+                  }`}
+                >
+                  {message}
+                </div>
+              )}
               <Button type="submit" isLoading={saving} disabled={saving}>
                 Save Changes
               </Button>
