@@ -103,6 +103,40 @@ export const PUBLIC_LIFECYCLE_STATUSES = [
   EVENT_LIFECYCLE.MOVED_ONLINE,
 ] as const;
 
+/** Lifecycle half of the public-visibility test. */
+export function isPublicLifecycle(lifecycle: string): boolean {
+  return (PUBLIC_LIFECYCLE_STATUSES as readonly string[]).includes(lifecycle);
+}
+
+/**
+ * OPE-829 — the ONE in-memory answer to "would the public see this row?",
+ * shared by the app and the MCP server.
+ *
+ * It is the in-memory twin of `publicEventWhere()` in
+ * `src/lib/event-lifecycle.ts`, which is what every public reader actually
+ * filters on — including the MCP `get_event_details` query
+ * (`mcp-server/src/tools/public.ts:659`). Both halves are required, and BOTH
+ * were getting dropped somewhere:
+ *
+ *   status   IN (APPROVED, TENTATIVE)   ← PUBLIC_EVENT_STATUSES
+ *   lifecycle IN (SCHEDULED, TENTATIVE, POSTPONED, RESCHEDULED, OCCURRED,
+ *                 MOVED_ONLINE)         ← PUBLIC_LIFECYCLE_STATUSES
+ *
+ * ⚠️ Why it lives in constants rather than in either caller: the admin tool's
+ * `is_publicly_visible` was a hand-written third copy reading
+ * `status === "APPROVED"` alone, and it disagreed with the reader in BOTH
+ * directions on 236 live rows (OPE-829). That is the same failure OPE-487
+ * moved `LIFECYCLE_TRANSITIONS` here to stop, and `mcp-server/src/lifecycle.ts`
+ * already says why in its own header: a guard kept as hand-synced copies fails
+ * by having one copy widened and the other not, "which looks enforced from
+ * whichever side you test."
+ */
+export function isPubliclyVisible(status: string, lifecycle: string): boolean {
+  return (
+    (PUBLIC_EVENT_STATUSES as readonly string[]).includes(status) && isPublicLifecycle(lifecycle)
+  );
+}
+
 /**
  * State-machine transitions for `events.lifecycle_status`.
  *

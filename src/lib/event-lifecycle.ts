@@ -19,6 +19,8 @@ import {
   EVENT_LIFECYCLE_VALUES,
   PUBLIC_EVENT_STATUSES,
   PUBLIC_LIFECYCLE_STATUSES,
+  isPublicLifecycle as sharedIsPublicLifecycle,
+  isPubliclyVisible as sharedIsPubliclyVisible,
   type EventLifecycle,
 } from "@takemetothefair/constants";
 
@@ -71,8 +73,12 @@ export function schemaOrgEventStatusFor(lifecycle: EventLifecycle): string | nul
 // ("[event] was held annually at [venue]"). MOVED_ONLINE and POSTPONED stay
 // visible so visitors learn about the change.
 
+// OPE-829 — both predicates now come from @takemetothefair/constants so the
+// app, the MCP admin tool and the MCP public reader cannot disagree. Re-exported
+// under their existing names, so every caller and every existing test is
+// untouched.
 export function isPublicLifecycle(lifecycle: EventLifecycle): boolean {
-  return (PUBLIC_LIFECYCLE_STATUSES as readonly string[]).includes(lifecycle);
+  return sharedIsPublicLifecycle(lifecycle);
 }
 
 /** In-memory equivalent of publicEventWhere() — used by callers that
@@ -80,9 +86,7 @@ export function isPublicLifecycle(lifecycle: EventLifecycle): boolean {
  *  fields without a separate DB round-trip. Examples: middleware deciding
  *  404 vs render, post-SELECT visibility refinements. */
 export function isPubliclyVisible(status: string, lifecycle: EventLifecycle): boolean {
-  return (
-    (PUBLIC_EVENT_STATUSES as readonly string[]).includes(status) && isPublicLifecycle(lifecycle)
-  );
+  return sharedIsPubliclyVisible(status, lifecycle);
 }
 
 /** Drizzle WHERE clause combining the editorial visibility set with the
