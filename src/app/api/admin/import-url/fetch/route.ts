@@ -1,7 +1,8 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { withAuthorized } from "@/lib/api/with-auth";
-import { extractTextFromHtml, extractMetadata } from "@/lib/url-import/html-parser";
+import { extractTextFromHtml, extractMetadata, extractAnchors } from "@/lib/url-import/html-parser";
+import { isSameSite, isTicketVendorHost } from "@takemetothefair/utils";
 import {
   fetchStandard,
   fetchViaBrowserRendering,
@@ -271,9 +272,29 @@ export const GET = withAuthorized({ allowReadonlyBearer: false }, async ({ reque
       }
     }
 
+    // OPE-837 — the links the page carries, so the submit@ pipeline can
+    // discover the nav pages where price / roster / application fields live.
+    //
+    // Filtered HERE rather than in the caller because this is the only place
+    // the HTML still exists: `content` is stripped text by the time it leaves
+    // this route, so an anchor list cannot be recovered downstream. Restricted
+    // to same-site links plus known ticket-vendor hosts, which is exactly the
+    // set the crawler is allowed to act on — anything else would be payload
+    // the consumer must discard.
+    const links = extractAnchors(html, parsedUrl.href).filter((link) => {
+      try {
+        return (
+          isSameSite(link.url, parsedUrl.href) || isTicketVendorHost(new URL(link.url).hostname)
+        );
+      } catch {
+        return false;
+      }
+    });
+
     return NextResponse.json({
       success: true,
       content,
+      links,
       title: metadata.title || null,
       description: metadata.description || null,
       ogImage: metadata.ogImage || null,

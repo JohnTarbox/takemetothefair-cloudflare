@@ -42,6 +42,9 @@ const SOURCE_SUBMIT = "mcp:email-handler:submit";
  *  already caps below this. 100 KB is well under both. */
 const MAX_FETCH_CONTENT_LEN = 100_000;
 
+/** OPE-837 — ceiling on discovered anchors carried through a workflow step. */
+const MAX_LINKS = 300;
+
 /**
  * Step output shape. The workflow's `Serializable<T>` constraint trips
  * on `unknown` and recursive JsonValue types (TS2589: type instantiation
@@ -58,6 +61,12 @@ export interface SubmitFetchResult {
   ogImage: string | null;
   /** JSON-stringified `jsonLd`, or null if the page had none. */
   jsonLdSerialized: string | null;
+  /** OPE-837 — same-site anchors (plus known ticket-vendor hosts) found on the
+   *  fetched page, with their visible text. Empty when the main app is on a
+   *  deploy predating OPE-837, which degrades the crawl to today's behaviour
+   *  rather than failing it. The submit@ crawl classifies these to decide
+   *  which secondary pages carry price / roster / application fields. */
+  links: Array<{ url: string; text: string }>;
   /** Which fetch path the main app used. `'standard'` for the cheap path,
    *  `'browser-rendering'` for the Cloudflare Browser Rendering escalation
    *  on 401/403/429/timeout. Forwarded to workflow's mark-done step which
@@ -308,6 +317,7 @@ export async function submitFetch(env: HandlerEnv, url: string): Promise<SubmitF
     | {
         success: true;
         content: string;
+        links?: Array<{ url: string; text: string }>;
         title?: string | null;
         description?: string | null;
         ogImage?: string | null;
@@ -331,6 +341,10 @@ export async function submitFetch(env: HandlerEnv, url: string): Promise<SubmitF
   return {
     url,
     content: body.content.slice(0, MAX_FETCH_CONTENT_LEN),
+    // Capped so a link-farm footer cannot push a Workflow step output toward
+    // the 1 MiB ceiling. The crawl cap is 15 pages; 300 candidates is far more
+    // than that selection ever needs.
+    links: (body.links ?? []).slice(0, MAX_LINKS),
     title: body.title ?? null,
     description: body.description ?? null,
     ogImage: body.ogImage ?? null,

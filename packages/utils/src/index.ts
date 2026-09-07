@@ -629,3 +629,9 @@ export * from "./vendor-capacity";
 
 // OPE-768 — inbound email thread resolution; shared with the MCP Worker.
 export * from "./email-thread";
+
+// OPE-837 — same-domain page discovery for the submit@ crawl, plus the two
+// type-specific extractors it routes to (inline rosters, admission prices).
+export * from "./page-crawl";
+export * from "./inline-roster";
+export * from "./admission-price";

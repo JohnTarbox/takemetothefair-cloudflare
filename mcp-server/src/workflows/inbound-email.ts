@@ -101,6 +101,15 @@ import {
 } from "../email-handlers/empty-message.js";
 import { resolveFanoutReplyRole } from "../email-handlers/fanout-reply-leader.js";
 import { extractAllUrls, type AttachmentRef } from "../email-handler.js";
+// OPE-837 — same-site nav crawl. The fan-out above enumerates URLs in the
+// EMAIL; this enumerates pages on the fetched SITE, which is where price,
+// roster and vendor-application fields actually live.
+import {
+  crawlSecondaryPages,
+  applyCrawlEnrichment,
+  CRAWL_USER_AGENT,
+  type CrawlFetchResult,
+} from "../email-handlers/secondary-crawl.js";
 import {
   submitFetch,
   submitExtract,
@@ -3020,7 +3029,16 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     supportingText?: string,
     // OPE-838 — the fetched page, for the snapshot columns. Only meaningful
     // for url sources; the writer ignores it for the others.
-    snapshot?: import("../email-handlers/pipeline-citations.js").SourceSnapshot
+    snapshot?: import("../email-handlers/pipeline-citations.js").SourceSnapshot,
+    // OPE-837 — fields the same-site crawl filled from a DIFFERENT page than
+    // the one that produced the event. They are withheld from the primary
+    // write and cited against their own page instead, because a citation that
+    // names the wrong page is worse than no citation: it is checkable, and it
+    // is false.
+    crawl?: {
+      filledFields: readonly string[];
+      priceSource: import("../email-handlers/secondary-crawl.js").CrawlFieldSource | null;
+    }
   ): Promise<void> {
     try {
       await step.do(
@@ -3034,7 +3052,45 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             fromAddress,
             supportingText,
             snapshot,
+            excludeConfKeys: crawl?.filledFields,
           });
+
+          // OPE-837 — the crawl-derived fields, attributed to the page they
+          // were actually read from. On the specimen that page is on a
+          // different registrable domain than the submitted URL, so this is
+          // the only write that can honestly carry the price.
+          let crawlInserted = 0;
+          if (crawl?.priceSource && crawl.filledFields.length > 0) {
+            const priceFields = crawl.filledFields.filter((f) =>
+              ["ticketPriceMin", "ticketPriceMax"].includes(f)
+            );
+            if (priceFields.length > 0) {
+              const crawlResult = await recordSourceCitations(getDb(this.env.DB), {
+                eventId,
+                extracted: {
+                  url: crawl.priceSource.url,
+                  event: {
+                    ticketPriceMin: priceFields.includes("ticketPriceMin")
+                      ? (extracted.event as unknown as { ticketPriceMin?: number | null })
+                          .ticketPriceMin
+                      : null,
+                    ticketPriceMax: priceFields.includes("ticketPriceMax")
+                      ? (extracted.event as unknown as { ticketPriceMax?: number | null })
+                          .ticketPriceMax
+                      : null,
+                  },
+                },
+                source: { kind: "url", url: crawl.priceSource.url },
+                fromAddress,
+                snapshot: {
+                  title: crawl.priceSource.title,
+                  text: crawl.priceSource.text,
+                  fetchedAt: new Date(crawl.priceSource.fetchedAt),
+                },
+              });
+              crawlInserted = crawlResult.inserted;
+            }
+          }
           // OPE-540 — record the OUTCOME, not just the throw.
           //
           // Until now this step wrote to `workflow_run_steps` only when it
@@ -3063,6 +3119,12 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
               // written before this shipped, so the step record is where the
               // difference stays visible.
               snapshot: snapshot ? "captured" : "absent",
+              // OPE-837 — separated from `inserted` deliberately: a crawl
+              // citation and a primary citation are evidence about different
+              // pages, and collapsing them into one count would hide which
+              // page carried the price.
+              crawl_inserted: crawlInserted,
+              crawl_source_url: crawl?.priceSource?.url ?? null,
               source_kind: source.kind,
               source_ref:
                 source.kind === "url"
@@ -3075,7 +3137,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             // Cosmetic-failsoft, like every other observability write here:
             // losing the record must not cost the citations we just wrote.
           });
-          return { inserted: result.inserted, reason: result.reason };
+          return { inserted: result.inserted, reason: result.reason, crawlInserted };
         }
       );
     } catch (err) {
@@ -3197,6 +3259,13 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       // provenance is recorded against the survivor's event. Dropping it would
       // trade the over-split defect for a silent loss of the "N sources agreed"
       // signal OPE-69 exists to capture.
+      // OPE-837 — what the same-site nav crawl contributed to THIS candidate.
+      // Carried so the reply and the citation writer can attribute a field to
+      // the secondary page it actually came from, rather than to the primary
+      // page that never mentioned it.
+      crawlFilledFields?: string[];
+      crawlRosterNames?: string[];
+      crawlPriceSource?: import("../email-handlers/secondary-crawl.js").CrawlFieldSource | null;
       mergedSiblings?: Array<{
         source: SubmitSource;
         extracted: import("../email-handlers/submit.js").SubmitExtractResult;
@@ -3212,6 +3281,11 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     }
     const candidates: SourceCandidate[] = [];
     const sourceFailures: SourceFailure[] = [];
+    // OPE-837 — the first URL source that actually produced an event. Its nav
+    // is what Phase A.7 crawls. Only one page per submission is crawled: the
+    // page the submitter pointed at is the authority, and crawling every URL
+    // in a multi-link email would multiply the fetch budget by the link count.
+    let primaryPage: CrawlFetchResult | null = null;
 
     // ── Phase A: extract candidate events from every source. ──────────
     for (let i = 0; i < sources.length; i++) {
@@ -3317,6 +3391,16 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         // completed in this same Phase-A iteration, and Workflow step retries
         // re-run the fetch, so the wall clock here IS when the bytes arrived.
         const fetchedAt = new Date();
+        if (!primaryPage && extracted.events.length > 0) {
+          primaryPage = {
+            url: fetched.url,
+            content: fetched.content,
+            title: fetched.title,
+            // `links` is absent when the main app predates OPE-837; the crawl
+            // then finds no targets and costs nothing, rather than throwing.
+            links: fetched.links ?? [],
+          };
+        }
         for (const ev of extracted.events) {
           candidates.push({
             extracted: { ...extracted, event: ev, events: [ev] },
@@ -3328,6 +3412,147 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         }
       } catch {
         sourceFailures.push({ url: source.url, kind: "extract-failed" });
+      }
+    }
+
+    // ── Phase A.7 (OPE-837): crawl the SITE's own nav. ────────────────
+    //
+    // Phase A fanned out over the URLs in the EMAIL. That axis was never the
+    // problem: a bare-URL submission has exactly one, the extractor read it
+    // correctly, and the price, the 63-name exhibitor roster and the organizer
+    // identity all sat one hop away on nav pages nothing ever opened. OPE-744,
+    // OPE-526 and OPE-175 each ask for a field that lives on such a page, and
+    // none of them can succeed while the extractor never opens it.
+    //
+    // Bounded on purpose: one primary page per submission, same registrable
+    // domain, only links whose text or slug classifies to something carrying
+    // event fields, robots.txt honoured, and fill-empty-only on the way back
+    // in. A site with no such nav performs zero fetches.
+    if (primaryPage) {
+      let crawlStepSeq = 0;
+      const crawlPage = primaryPage;
+      try {
+        const enrichment = await crawlSecondaryPages(crawlPage, {
+          fetchPage: async (url: string) => {
+            const seq = crawlStepSeq++;
+            try {
+              const page = await step.do(
+                `submit/crawl[${seq}]/fetch`,
+                {
+                  retries: { limit: 1, delay: "5 seconds", backoff: "constant" },
+                  timeout: "30 seconds",
+                },
+                () => submitFetch(this.env, url)
+              );
+              return {
+                url: page.url,
+                content: page.content,
+                title: page.title,
+                links: page.links ?? [],
+              };
+            } catch {
+              // One secondary page failing is not a failed submission — the
+              // primary event already exists. Recorded as `fetch-failed` in
+              // the page record so a silent miss stays visible.
+              return null;
+            }
+          },
+          fetchRobots: async (robotsUrl: string) => {
+            try {
+              const res = await fetch(robotsUrl, {
+                headers: { "user-agent": CRAWL_USER_AGENT },
+              });
+              return { status: res.status, body: await res.text() };
+            } catch {
+              return null;
+            }
+          },
+          wait: (ms: number) => new Promise((resolve) => setTimeout(resolve, ms)),
+          userAgent: CRAWL_USER_AGENT,
+        });
+
+        // Scope 5 — every page considered gets a record, INCLUDING the ones
+        // that produced nothing. "Did the crawl run?" has to be answerable
+        // from the workflow record alone, which is the OPE-501 problem this
+        // would otherwise reproduce in a new place. A crawl that finds nothing
+        // and a crawl that never ran must not look the same.
+        await recordWorkflowStep(getDb(this.env.DB), {
+          instanceId,
+          workflowName: "inbound-email",
+          inboundEmailId: messageRowId,
+          stepName: "secondary-page-crawl",
+          status: "ok",
+          detail: {
+            primary_url: crawlPage.url,
+            links_seen: crawlPage.links.length,
+            pages_considered: enrichment.pages.length,
+            pages_fetched: enrichment.fetchCount,
+            robots: enrichment.robots,
+            elapsed_ms: enrichment.elapsedMs,
+            text_chars_fetched: enrichment.textCharsFetched,
+            roster_names: enrichment.rosterNames.length,
+            // The NAMES, not only the count. Scope 3's write half (feeding
+            // these to `create_or_link_vendor`) is deliberately NOT in this
+            // change — see the ticket receipt — so this record is where the
+            // roster durably lives meanwhile. Storing only a count would throw
+            // away the one expensive thing the crawl produced and make the
+            // follow-up re-fetch every page to get it back.
+            roster: enrichment.rosterNames.slice(0, 200),
+            ticket_price_min: enrichment.ticketPriceMin,
+            ticket_price_max: enrichment.ticketPriceMax,
+            ticket_url: enrichment.ticketUrl,
+            pages: enrichment.pages.map((pg) => ({
+              url: pg.url,
+              anchor_text: pg.anchorText,
+              hint_class: pg.hintClass,
+              final_class: pg.finalClass,
+              outcome: pg.outcome,
+              produced_fields: pg.producedFields,
+              roster_count: pg.rosterCount,
+              text_chars: pg.textChars,
+              off_site_ticket_hop: pg.offSiteTicketHop,
+            })),
+          },
+        });
+
+        // Fill-empty-only, and only onto candidates from the page we crawled.
+        for (const candidate of candidates) {
+          if (candidate.source.kind !== "url") continue;
+          if (candidate.source.url !== crawlPage.url && candidate.extracted.url !== crawlPage.url) {
+            continue;
+          }
+          const filled = applyCrawlEnrichment(
+            candidate.extracted.event as unknown as {
+              ticketUrl: string | null;
+              ticketPriceMin: number | null;
+              ticketPriceMax: number | null;
+            },
+            enrichment,
+            crawlPage.url
+          );
+          if (filled.length > 0) {
+            candidate.crawlFilledFields = filled;
+            candidate.crawlPriceSource = enrichment.priceSource;
+          }
+          if (enrichment.rosterNames.length > 0) {
+            candidate.crawlRosterNames = enrichment.rosterNames;
+          }
+        }
+      } catch (err) {
+        // The crawl is enrichment. It must never cost the submission the event
+        // the primary page already produced, so any unexpected failure is
+        // recorded and swallowed rather than thrown.
+        await recordWorkflowStep(getDb(this.env.DB), {
+          instanceId,
+          workflowName: "inbound-email",
+          inboundEmailId: messageRowId,
+          stepName: "secondary-page-crawl",
+          status: "failed",
+          detail: {
+            primary_url: crawlPage.url,
+            error: err instanceof Error ? err.message : String(err),
+          },
+        });
       }
     }
 
@@ -3572,7 +3797,20 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           only.source,
           fromAddress,
           emailBody,
-          only.snapshot
+          only.snapshot,
+          // OPE-837 — this N=1 collapse is the DOMINANT path, not an edge
+          // case: `source_count` is 1 on every fanout run in
+          // `workflow_run_steps`, and a bare-URL submission — the exact shape
+          // this ticket is about — always lands here. Omitting the crawl
+          // context on this branch alone would have wired the provenance fix
+          // into two of three parallel paths and left the specimen itself
+          // mis-attributing its price to the homepage.
+          only.crawlFilledFields
+            ? {
+                filledFields: only.crawlFilledFields,
+                priceSource: only.crawlPriceSource ?? null,
+              }
+            : undefined
         );
       }
       if (only.mergedSiblings?.length && res.resultingEventId) {
@@ -3670,7 +3908,13 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
               cand.source,
               fromAddress,
               emailBody,
-              cand.snapshot
+              cand.snapshot,
+              cand.crawlFilledFields
+                ? {
+                    filledFields: cand.crawlFilledFields,
+                    priceSource: cand.crawlPriceSource ?? null,
+                  }
+                : undefined
             );
             if (cand.mergedSiblings?.length) {
               await this.recordMergedSiblingCitations(
@@ -3718,7 +3962,13 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           cand.source,
           fromAddress,
           emailBody,
-          cand.snapshot
+          cand.snapshot,
+          cand.crawlFilledFields
+            ? {
+                filledFields: cand.crawlFilledFields,
+                priceSource: cand.crawlPriceSource ?? null,
+              }
+            : undefined
         );
         if (cand.mergedSiblings?.length) {
           await this.recordMergedSiblingCitations(
