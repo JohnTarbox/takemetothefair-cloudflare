@@ -107,16 +107,36 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     // catching: the rejection path being dropped in a refactor of the auth
     // gate, which compiles clean and breaks no test.
     //
-    // 72h to match the citation probe: vendor self-edits follow signup
-    // volume, which is bursty, and the 30-day history has legitimate
-    // multi-day gaps. A window that fires on ordinary quiet gets muted.
+    // 336h, MEASURED — not the 72h this shipped with an hour earlier.
+    //
+    // I picked 72h by analogy with the citation probe and then checked it
+    // against the actual signal, which is `enrichment_log` where
+    // `source='vendor_self'` (the same events this table now records). Over
+    // the last 60 days: 29 active days, **mean gap 2.0 days, MAXIMUM gap 12
+    // days**, and 3 gaps exceeding 72h. A 72h window would have fired red
+    // three times in two months on entirely ordinary quiet.
+    //
+    // That is the failure the comment I wrote for it warned about, committed
+    // in the same breath — and it is the exact correction OPE-541 already had
+    // to make (drizzle/0231, 72h → 336h) for `venue-decision-writer`.
+    // `event-series-write-path` uses 336h for the same reason.
+    //
+    // ⚠️ The cost is real and accepted: a dead writer takes up to 14 days to
+    // surface. A probe that cries wolf gets muted, and a muted probe reads as
+    // coverage while covering nothing — strictly worse than a slow one.
+    //
+    // The better instrument here is a DIVERGENCE check — `enrichment_log`
+    // has vendor_self rows in a window but `entity_write_log` has none —
+    // which cannot false-fire on quiet at all. It does not fit the
+    // `lastEvidenceAt: () => timestamp` shape of this rail; noted for whoever
+    // widens that interface.
     name: "entity-write-log-writer",
     ownerOpe: "OPE-830",
     label: "Vendor self-edit write history",
     // P1 because the type admits only P0/P1 — not because a silent write log
     // is as urgent as a dead pipeline. Recorded rather than silently rounded.
     priority: "P1",
-    expectedWindowHours: 72,
+    expectedWindowHours: 336,
     lastEvidenceAt: (db) => maxTs(db, entityWriteLog, entityWriteLog.createdAt),
   },
   {
