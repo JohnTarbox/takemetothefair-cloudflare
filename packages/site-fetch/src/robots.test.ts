@@ -15,6 +15,7 @@ import {
   robotsUrlFor,
   robotsUnavailableMeansStop,
   effectiveCrawlDelayMs,
+  isProbablyHtml,
   DEFAULT_CRAWL_DELAY_MS,
 } from "./robots";
 
@@ -112,5 +113,21 @@ describe("effectiveCrawlDelayMs", () => {
   });
   it("raises a sub-second delay to the floor", () => {
     expect(effectiveCrawlDelayMs(0)).toBe(DEFAULT_CRAWL_DELAY_MS);
+  });
+});
+
+describe("isProbablyHtml — the WordPress catch-all robots.txt", () => {
+  // Measured on the OPE-837 specimen: /robots.txt 301s to /robots.txt/ and
+  // returns 200 with the site homepage. A status-only check reads that as a
+  // valid rule set.
+  it("detects an HTML page served as robots.txt", () => {
+    expect(isProbablyHtml('<!doctype html>\n<html lang="en-US">\n<head>')).toBe(true);
+    expect(isProbablyHtml('<html><head><meta charset="UTF-8" />')).toBe(true);
+  });
+
+  it("does not flag a real robots.txt", () => {
+    expect(isProbablyHtml("User-agent: *\nDisallow: /wp-admin/\n")).toBe(false);
+    expect(isProbablyHtml("# comment\nUser-agent: *\nCrawl-delay: 2\n")).toBe(false);
+    expect(isProbablyHtml("")).toBe(false);
   });
 });

@@ -44,6 +44,7 @@ import {
   robotsUrlFor,
   robotsUnavailableMeansStop,
   effectiveCrawlDelayMs,
+  isProbablyHtml,
   type RobotsRules,
 } from "@takemetothefair/site-fetch";
 
@@ -189,7 +190,13 @@ export async function crawlSecondaryPages(
       // conservative read and costs us one submission's enrichment, not data.
       rules = denyAll();
       robotsState = "unavailable-stop";
-    } else if (res && res.status >= 200 && res.status < 300 && res.body.trim()) {
+    } else if (
+      res &&
+      res.status >= 200 &&
+      res.status < 300 &&
+      res.body.trim() &&
+      !isProbablyHtml(res.body)
+    ) {
       rules = parseRobots(res.body, deps.userAgent ?? CRAWL_USER_AGENT);
       robotsState = "allowed";
     } else {

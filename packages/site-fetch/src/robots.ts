@@ -54,6 +54,26 @@ export function robotsUnavailableMeansStop(status: number): boolean {
   return status >= 500;
 }
 
+/**
+ * True when a "robots.txt" response body is actually an HTML page.
+ *
+ * ⚠️ Not hypothetical. Measured 2026-09-07 on the OPE-837 specimen:
+ * `https://mainecheesefestival.org/robots.txt` 301s to
+ * `.../robots.txt/` and answers **200 with the site's full homepage HTML** —
+ * a WordPress catch-all route. The site has no robots.txt at all, but a
+ * status-only check reads that as "200, here are your rules".
+ *
+ * Parsing the HTML happens to yield no groups today, so the outcome is
+ * accidentally correct. That is not good enough for a permission check: a page
+ * containing a line that merely looks like `user-agent: ...` would silently
+ * become a rule set. Detecting it explicitly makes the "this site published no
+ * robots.txt" case honest, and reportable as such.
+ */
+export function isProbablyHtml(body: string): boolean {
+  const head = body.slice(0, 2000).toLowerCase();
+  return /<!doctype html|<html[\s>]|<head[\s>]|<meta\s/.test(head);
+}
+
 /** The robots.txt URL for a page URL, or null if the URL is unusable. */
 export function robotsUrlFor(pageUrl: string): string | null {
   try {
