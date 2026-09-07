@@ -18,6 +18,7 @@
  * against and would hand un-adjudicated rows to unauthenticated callers.
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { isPubliclyVisible } from "../lifecycle.js";
 import { z } from "zod";
 import { and, eq, isNull, inArray } from "drizzle-orm";
 import { unsafeSlug, centsToDollars, classifyVendorCapacity } from "@takemetothefair/utils";
@@ -225,7 +226,29 @@ export function registerAdminEventReadTools(server: McpServer, db: Db, auth: Aut
             // mistake one for a published event.
             status: event.status,
             lifecycle_status: event.lifecycleStatus,
-            is_publicly_visible: event.status === "APPROVED" && event.mergedInto === null,
+            // OPE-829 — the SAME predicate the public reader filters on
+            // (`publicEventWhere()`), not a third hand-written copy.
+            //
+            // This read `event.status === "APPROVED"` alone and so ignored
+            // `lifecycle_status` entirely, which made it wrong in BOTH
+            // directions on 236 live rows (measured in prod 2026-09-07):
+            //
+            //   6 rows said TRUE while hidden   — APPROVED + CANCELLED (2)
+            //                                     and APPROVED + NO_SHOW (4)
+            //   230 rows said FALSE while live  — status TENTATIVE, which
+            //                                     PUBLIC_EVENT_STATUSES has
+            //                                     always included
+            //
+            // The false-NEGATIVE population is 38x larger and was not in the
+            // ticket: an operator asking "is this live?" was told no for 230
+            // events that are.
+            //
+            // `mergedInto` stays as an extra condition even though it changes
+            // no row today (all 54 merged rows are REJECTED, so `status`
+            // already excludes them). A tombstone 301s away, so it must never
+            // read as live even if a future merge path forgets to set REJECTED.
+            is_publicly_visible:
+              isPubliclyVisible(event.status, event.lifecycleStatus) && event.mergedInto === null,
             merged_into: event.mergedInto,
             description: event.description,
             // OPE-482 — raw values, not just the rendered string. MCP shares the

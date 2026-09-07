@@ -22,7 +22,10 @@
  * copies fails by having one copy widened and the other not, which looks
  * enforced from whichever side you test.
  */
-import { PUBLIC_LIFECYCLE_STATUSES, type EventLifecycle } from "@takemetothefair/constants";
+import {
+  isPublicLifecycle as sharedIsPublicLifecycle,
+  type EventLifecycle,
+} from "@takemetothefair/constants";
 
 export {
   LIFECYCLE_TRANSITIONS,
@@ -31,6 +34,10 @@ export {
 } from "@takemetothefair/constants";
 export type { TransitionResult, LifecycleTransitionContext } from "@takemetothefair/constants";
 
+// OPE-829 — re-exported from constants rather than re-implemented here, for
+// exactly the reason this file's own header gives about LIFECYCLE_TRANSITIONS.
 export function isPublicLifecycle(lifecycle: EventLifecycle): boolean {
-  return (PUBLIC_LIFECYCLE_STATUSES as readonly string[]).includes(lifecycle);
+  return sharedIsPublicLifecycle(lifecycle);
 }
+
+export { isPubliclyVisible } from "@takemetothefair/constants";
