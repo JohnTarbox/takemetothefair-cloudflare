@@ -409,6 +409,18 @@ export async function recordSourceCitations(
      *  citation never claims the primary page stated something it does not
      *  contain (the OPE-457 false-attribution class). */
     excludeConfKeys?: readonly string[];
+    /** OPE-840 — citations for facts that are NOT `ExtractedEvent` fields.
+     *
+     *  `vendor_roster` is the motivating case: a roster is a real, citable
+     *  assertion about an event ("this page lists these 63 exhibitors") but it
+     *  has no column on the extracted record, so `CITATION_FIELDS` cannot
+     *  reach it. Written with the same source, snapshot and per-(event, field,
+     *  sourceUrl) idempotency as every other row here.
+     *
+     *  ⚠️ These field names are deliberately NOT in `DENORM_FIELD_MAP`, so they
+     *  cannot write an events column. That is the point: this records what a
+     *  page said, and nothing downstream promotes it to public data. */
+    extraFields?: ReadonlyArray<{ fieldName: string; value: string }>;
   }
 ): Promise<CitationWriteResult> {
   const { eventId, extracted, source, fromAddress } = args;
@@ -457,6 +469,27 @@ export async function recordSourceCitations(
       : null;
 
   const rows: (typeof eventDataCitations.$inferInsert)[] = [];
+
+  for (const extra of args.extraFields ?? []) {
+    if (alreadyCited.has(extra.fieldName)) continue;
+    if (extra.value.trim().length === 0) continue;
+    rows.push({
+      eventId,
+      fieldName: extra.fieldName,
+      value: extra.value,
+      year: null,
+      sourceUrl,
+      sourceName,
+      sourceType: sourceTypeFor(source.kind, { sourceUrl, fromAddress }),
+      // No extractor verdict exists for these, and OPE-457 settled that a null
+      // beats a constant that merely looks measured.
+      confidence: null,
+      state: "active",
+      createdBy: null,
+      ...(snap ?? {}),
+    });
+  }
+
   for (const f of CITATION_FIELDS) {
     if (args.excludeConfKeys?.includes(f.confKey)) continue;
     const raw = f.get(extracted.event);

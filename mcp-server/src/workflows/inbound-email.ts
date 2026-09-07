@@ -210,6 +210,12 @@ const DEFAULT_FROM = "Meet Me at the Fair <notify@meetmeatthefair.com>";
 // noise (a logo, a blank scan) rather than a flyer with event details.
 const MIN_OCR_CHARS = 20;
 
+// OPE-840 — cap on the roster name list stored in a citation `value`. The full
+// list also lives in the `secondary-page-crawl` step record, so truncating here
+// loses nothing; it keeps one TEXT column from growing without bound on a site
+// that lists several hundred exhibitors.
+const ROSTER_CITATION_MAX_CHARS = 2000;
+
 // OPE-189 — how many times to attempt `toMarkdown` per attachment before giving
 // up. The image→markdown vision model times out on the FIRST (cold-start) call
 // and reads the poster fine on a warm retry, so a single transient miss must not
@@ -3038,6 +3044,11 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     crawl?: {
       filledFields: readonly string[];
       priceSource: import("../email-handlers/secondary-crawl.js").CrawlFieldSource | null;
+      // OPE-840 — the roster and the page it was read from. A separate source
+      // from the price: on the specimen the roster is on the organizer's own
+      // `?page_id=` pages while the price is on a third-party ticketing host.
+      rosterNames?: readonly string[];
+      rosterSource?: import("../email-handlers/secondary-crawl.js").CrawlFieldSource | null;
     }
   ): Promise<void> {
     try {
@@ -3090,6 +3101,38 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
               });
               crawlInserted = crawlResult.inserted;
             }
+          }
+
+          // OPE-840 — the roster, cited against the page that listed it.
+          //
+          // This is the artifact an operator produced BY HAND on this exact
+          // event: a `vendor_roster` citation whose source_url is the roster
+          // page (`?page_id=21`), not the submitted homepage. It records what
+          // a page said and creates NO public data — no vendor rows, no
+          // `event_vendors` links, no `vendor_roster_status`. Turning these
+          // names into actual vendor links is a separate, customer-facing
+          // decision and stays behind John's approval.
+          if (crawl?.rosterSource && (crawl.rosterNames?.length ?? 0) > 0) {
+            const names = crawl.rosterNames as readonly string[];
+            const joined = names.join(", ");
+            const value =
+              `${names.length} exhibitors listed: ` +
+              (joined.length > ROSTER_CITATION_MAX_CHARS
+                ? `${joined.slice(0, ROSTER_CITATION_MAX_CHARS)}… (${names.length} total; full list in the secondary-page-crawl step)`
+                : joined);
+            const rosterResult = await recordSourceCitations(getDb(this.env.DB), {
+              eventId,
+              extracted: { url: crawl.rosterSource.url, event: {} },
+              source: { kind: "url", url: crawl.rosterSource.url },
+              fromAddress,
+              snapshot: {
+                title: crawl.rosterSource.title,
+                text: crawl.rosterSource.text,
+                fetchedAt: new Date(crawl.rosterSource.fetchedAt),
+              },
+              extraFields: [{ fieldName: "vendor_roster", value }],
+            });
+            crawlInserted += rosterResult.inserted;
           }
           // OPE-540 — record the OUTCOME, not just the throw.
           //
@@ -3266,6 +3309,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       crawlFilledFields?: string[];
       crawlRosterNames?: string[];
       crawlPriceSource?: import("../email-handlers/secondary-crawl.js").CrawlFieldSource | null;
+      crawlRosterSource?: import("../email-handlers/secondary-crawl.js").CrawlFieldSource | null;
       mergedSiblings?: Array<{
         source: SubmitSource;
         extracted: import("../email-handlers/submit.js").SubmitExtractResult;
@@ -3536,6 +3580,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           }
           if (enrichment.rosterNames.length > 0) {
             candidate.crawlRosterNames = enrichment.rosterNames;
+            candidate.crawlRosterSource = enrichment.rosterSources[0] ?? null;
           }
         }
       } catch (err) {
@@ -3805,10 +3850,12 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           // context on this branch alone would have wired the provenance fix
           // into two of three parallel paths and left the specimen itself
           // mis-attributing its price to the homepage.
-          only.crawlFilledFields
+          only.crawlFilledFields || only.crawlRosterNames
             ? {
-                filledFields: only.crawlFilledFields,
+                filledFields: only.crawlFilledFields ?? [],
                 priceSource: only.crawlPriceSource ?? null,
+                rosterNames: only.crawlRosterNames,
+                rosterSource: only.crawlRosterSource ?? null,
               }
             : undefined
         );
@@ -3909,10 +3956,12 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
               fromAddress,
               emailBody,
               cand.snapshot,
-              cand.crawlFilledFields
+              cand.crawlFilledFields || cand.crawlRosterNames
                 ? {
-                    filledFields: cand.crawlFilledFields,
+                    filledFields: cand.crawlFilledFields ?? [],
                     priceSource: cand.crawlPriceSource ?? null,
+                    rosterNames: cand.crawlRosterNames,
+                    rosterSource: cand.crawlRosterSource ?? null,
                   }
                 : undefined
             );
@@ -3963,10 +4012,15 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           fromAddress,
           emailBody,
           cand.snapshot,
-          cand.crawlFilledFields
+          // OPE-840 — gated on EITHER signal. Gating on `crawlFilledFields`
+          // alone would drop the roster citation on any site that publishes an
+          // exhibitor list but no price, which is the majority shape.
+          cand.crawlFilledFields || cand.crawlRosterNames
             ? {
-                filledFields: cand.crawlFilledFields,
+                filledFields: cand.crawlFilledFields ?? [],
                 priceSource: cand.crawlPriceSource ?? null,
+                rosterNames: cand.crawlRosterNames,
+                rosterSource: cand.crawlRosterSource ?? null,
               }
             : undefined
         );

@@ -101,6 +101,15 @@ export interface CrawlEnrichment {
   priceSource: CrawlFieldSource | null;
   /** Deduped exhibitor names across every vendor page. */
   rosterNames: string[];
+  /**
+   * The pages the roster names were read from, in the order encountered.
+   *
+   * Separate from `priceSource` because they are genuinely different pages —
+   * on the specimen the roster is on three `?page_id=` pages of the organizer's
+   * own site while the price is on a third-party ticketing host. One
+   * `sourceUrl` for both would put a false page on one of the two citations.
+   */
+  rosterSources: CrawlFieldSource[];
   /** One per page considered; the workflow writes these as steps. */
   pages: CrawledPageRecord[];
   /** Pages actually fetched (excludes robots-disallowed and skipped). */
@@ -139,6 +148,7 @@ function emptyEnrichment(robots: CrawlEnrichment["robots"]): CrawlEnrichment {
     ticketPriceMax: null,
     priceSource: null,
     rosterNames: [],
+    rosterSources: [],
     pages: [],
     fetchCount: 0,
     elapsedMs: 0,
@@ -225,6 +235,7 @@ export async function crawlSecondaryPages(
 
   const pages: CrawledPageRecord[] = [];
   const rosterNames: string[] = [];
+  const rosterSources: CrawlFieldSource[] = [];
   const rosterSeen = new Set<string>();
   let ticketUrl: string | null = null;
   let ticketPriceMin: number | null = null;
@@ -308,7 +319,15 @@ export async function crawlSecondaryPages(
         rosterNames.push(n);
       }
       rosterCount = names.length;
-      if (names.length > 0) producedFields.push("roster");
+      if (names.length > 0) {
+        producedFields.push("roster");
+        rosterSources.push({
+          url: fetched.url,
+          title: fetched.title,
+          text: fetched.content,
+          fetchedAt: new Date(),
+        });
+      }
     }
 
     if (finalClass === "tickets") {
@@ -390,6 +409,7 @@ export async function crawlSecondaryPages(
     ticketPriceMax,
     priceSource,
     rosterNames,
+    rosterSources,
     pages,
     fetchCount,
     elapsedMs: Date.now() - startedAt,
