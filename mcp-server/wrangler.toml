@@ -124,7 +124,7 @@ OPERATOR_OUTBOUND_ENABLED = "false"
 # Even at "true", nothing is created from the email: `handleUnknown` returns
 # replyKind null (no sender reply, no email_send_ledger row), and event creation
 # happens only through the independent-confirmation gate, never from the message.
-SPAM_EVENT_RECOVERY_ENABLED = "false"
+SPAM_EVENT_RECOVERY_ENABLED = "true"
 # OPE-204 — booth-photo vision gate. When "true", a fair-resolved photos@ email
 # runs each photo through the vision model (@cf/meta/llama-3.2-11b-vision-instruct)
 # and STAGES what it identifies to admin_actions + flagged_for_review for
