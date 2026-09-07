@@ -63,3 +63,37 @@ describe("crawl-citation call sites", () => {
     expect(SRC).not.toMatch(/\w+\.crawlFilledFields\s*\n?\s*\?\s*\{/);
   });
 });
+
+/**
+ * OPE-847 — roster LINKING must reach the same three call sites.
+ *
+ * Same reasoning as the citation guard above, and the same history: the
+ * provenance fix on OPE-837 initially reached two of three, and the roster
+ * citation on OPE-840 was gated on the wrong signal at all three. This is the
+ * third change to touch these sites, and it creates PUBLIC vendor rows, so a
+ * path that silently skips it is the most expensive version of the miss.
+ */
+describe("roster vendor-linking call sites", () => {
+  const calls = [...SRC.matchAll(/this\.linkRosterBestEffort\(/g)];
+
+  it("is invoked at all three sites", () => {
+    expect(calls).toHaveLength(3);
+  });
+
+  it("is guarded on a non-empty roster AND a source at every site", () => {
+    const guards = [...SRC.matchAll(/\w+\.crawlRosterNames\?\.length && \w+\.crawlRosterSource/g)];
+    expect(guards).toHaveLength(3);
+  });
+
+  it("covers the dedup-keeper branch, not only newly created events", () => {
+    // OPE-175 ("inbound dedup should enrich with roster") is one of the three
+    // tickets this work exists to unblock; excluding the keeper path would
+    // leave it unaddressed.
+    expect(SRC).toMatch(/`\$\{labelPrefix\}\/keeper`/);
+    expect(SRC).toMatch(/dedup\.existingEventId,\n\s+cand\.crawlRosterNames/);
+  });
+
+  it("never asks for fuzzy dedup anywhere in the workflow", () => {
+    expect(SRC).not.toMatch(/dedupStrategy:\s*"fuzzy"/);
+  });
+});

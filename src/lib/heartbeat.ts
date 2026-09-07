@@ -93,6 +93,47 @@ async function maxTs(
  */
 export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
   {
+    // OPE-847 — proof the roster vendor-linker is still writing.
+    //
+    // This is the only path in the inbound pipeline that creates PUBLIC vendor
+    // profiles, approved by John in session on 2026-09-07. A writer that
+    // silently stops is the OPE-246 class; a writer of public rows that
+    // silently stops is that class on the surface that matters most.
+    //
+    // ⚠️ SHIPS DORMANT — `enabled_at = NULL` in migration 0275, deliberately.
+    //
+    // The emitting population is "submissions whose site publishes a parseable
+    // roster". The crawl that produces it shipped TODAY (OPE-837) and has
+    // produced zero rows, so there is no inter-arrival distribution to size a
+    // window from. Every number I could put here would be an analogy — and a
+    // window chosen by analogy is exactly what produced the wrong 72h figure
+    // on OPE-830. CLAUDE.md explicitly permits a dormant seed for this reason:
+    // a dormant probe never false-fires, whereas a guessed window either cries
+    // wolf and gets muted, or sleeps through a real outage.
+    //
+    // ARMING CONDITION — do not skip this, or the probe is coverage-shaped and
+    // covers nothing: once `secondary-page-crawl` has produced enough rows to
+    // measure (a) the fraction of crawls that find a roster and (b) the gaps
+    // between them, set `enabled_at` and replace the placeholder window with
+    // the measured one. Tracked as its own ticket, not left implicit.
+    //
+    // The 720h below is NOT a measurement and must not be read as one. It is a
+    // deliberately loose placeholder that only takes effect the day someone
+    // arms the probe, and that person is expected to replace it.
+    name: "roster-vendor-link",
+    ownerOpe: "OPE-847",
+    label: "submit@ roster → vendor linking (public writes)",
+    priority: "P1",
+    expectedWindowHours: 720,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        workflowRunSteps,
+        workflowRunSteps.recordedAt,
+        eq(workflowRunSteps.stepName, "roster-vendor-link")
+      ),
+  },
+  {
     // OPE-837 — proof the same-site nav crawl is still executing.
     //
     // This is the OPE-246 class in its purest form. The crawl is enrichment:
