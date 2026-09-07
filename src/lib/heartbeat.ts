@@ -93,6 +93,39 @@ async function maxTs(
  */
 export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
   {
+    // OPE-803 — proof the spam triple-detector is still running.
+    //
+    // `intent='spam'` is the only terminal state in the inbound lane: across
+    // all 19 historical rows, routed_to_workflow / workflow_instance_id /
+    // parsed_url / resulting_event_id are ALL zero. A detector that stops
+    // running there restores exactly that silence, and nothing downstream
+    // would notice, because "no recoveries" is the normal state.
+    //
+    // ⚠️ Evidence is the `spam.event_triple` telemetry row, written on every
+    // QUARANTINED spam row — a MISS, not a hit. That is deliberate: a
+    // dry-run over the 19 historical rows scored 1 hit / 19, so a probe
+    // watching for RECOVERIES would expect roughly one every 2-3 months and
+    // be red almost always. Misses are the high-frequency signal, and they
+    // prove the same thing: the detector executed.
+    //
+    // 504h, MEASURED against spam inter-arrival: 18 gaps, mean 4.3 days,
+    // MAXIMUM 14.0 days, none beyond. 336h would sit exactly ON the observed
+    // maximum and fire on the next slightly-longer quiet spell — the mistake
+    // made on `entity-write-log-writer` a few hours earlier, where a window
+    // was chosen by analogy rather than from the gap distribution.
+    //
+    // ⚠️ Detection is therefore slow by construction: up to 21 days. The
+    // signal is slow. A window tight enough to be fast would be a window that
+    // cries wolf, and a muted probe reads as coverage while covering nothing.
+    name: "spam-event-triple-detector",
+    ownerOpe: "OPE-803",
+    label: "Spam event-triple detector (inbound quarantine)",
+    priority: "P1",
+    expectedWindowHours: 504,
+    lastEvidenceAt: (db) =>
+      maxTs(db, adminActions, adminActions.createdAt, eq(adminActions.action, "spam.event_triple")),
+  },
+  {
     // OPE-830 — proof the vendor write history is still recording.
     //
     // Two live "my profile won't save" reports in ten days could not be
