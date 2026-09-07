@@ -31,6 +31,7 @@ import {
   normalizeVendorName,
   VENDOR_FORM_WORDS,
   type Slug,
+  buildPlaceholderEmail,
 } from "@takemetothefair/utils";
 import {
   SITE_URL,
@@ -614,7 +615,10 @@ export async function createOrLinkVendor(
       }
     }
 
-    const placeholderEmail = `pending+${finalSlug}@meetmeatthefair.com`;
+    // OPE-835 — the third construction site. The filed ticket named only
+    // the promoter one; a fix wired there alone would have left this and
+    // the vendor site in admin.ts still minting invalid addresses.
+    const placeholderEmail = buildPlaceholderEmail("pending+", finalSlug);
     const userId = crypto.randomUUID();
     await db.insert(users).values({
       id: userId,
