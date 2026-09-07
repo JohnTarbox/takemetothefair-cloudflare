@@ -765,6 +765,55 @@ function createFallbackEvent(metadata: PageMetadata): ExtractedEvent[] {
 }
 
 /**
+ * OPE-838 — the ONE confidence ladder, shared by the single- and multi-event
+ * paths so they cannot drift apart again.
+ *
+ *   value is null                  → "low"   (the extractor found nothing)
+ *   JSON-LD names THIS field       → "high"  (a machine-readable assertion)
+ *   otherwise                      → "medium"
+ *
+ * ⚠️ The middle rung is the fix. `calculateMultiEventConfidence` used to test
+ * `!!metadata.jsonLd` — a PAGE-level boolean — and stamp its answer onto every
+ * field of every event. That is one fact wearing the name of a different fact,
+ * and it failed in both directions:
+ *
+ *   * No JSON-LD on the page → EVERY non-null field became "medium" → 0.6.
+ *     That is the constant `0.6` OPE-838 measured on all three citations of the
+ *     Maine Cheese Festival row, and the reason OPE-457 scope 3 could be
+ *     "closed" while the observable never changed: the constant was never in
+ *     the citation writer, it was here.
+ *   * JSON-LD present → EVERY non-null field became "high" → 0.9, including
+ *     fields the JSON-LD says nothing about. The over-claiming direction is the
+ *     more dangerous one, because OPE-433 grades trust by this number.
+ *
+ * `calculateConfidence` (the single-event path) always had the per-field test
+ * and was correct. This is that function's ladder, extracted rather than
+ * re-implemented — a second copy is what produced the divergence.
+ *
+ * Two branches from the old single-event ladder are deliberately NOT carried
+ * over: `key === "name" && metadata.title` and `key === "imageUrl" &&
+ * metadata.ogImage` both returned "medium", which is what the final `else`
+ * already returns. They read as signal and decided nothing.
+ */
+export function fieldConfidenceLadder(
+  data: Record<string, unknown>,
+  metadata: PageMetadata
+): FieldConfidence {
+  const confidence: FieldConfidence = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (key.startsWith("_")) continue; // internal bookkeeping, not a field
+    if (value === null || value === undefined) {
+      confidence[key] = "low";
+    } else if (metadata.jsonLd?.[key] !== undefined && metadata.jsonLd?.[key] !== null) {
+      confidence[key] = "high";
+    } else {
+      confidence[key] = "medium";
+    }
+  }
+  return confidence;
+}
+
+/**
  * Calculate confidence for multiple events
  */
 function calculateMultiEventConfidence(
@@ -772,26 +821,12 @@ function calculateMultiEventConfidence(
   metadata: PageMetadata
 ): EventConfidence {
   const confidence: EventConfidence = {};
-  const hasJsonLd = !!metadata.jsonLd;
-
   for (const event of events) {
-    const eventConf: FieldConfidence = {};
-
-    for (const [key, value] of Object.entries(event)) {
-      if (key.startsWith("_")) continue; // Skip internal fields
-
-      if (value === null) {
-        eventConf[key] = "low";
-      } else if (hasJsonLd) {
-        eventConf[key] = "high";
-      } else {
-        eventConf[key] = "medium";
-      }
-    }
-
-    confidence[event._extractId] = eventConf;
+    confidence[event._extractId] = fieldConfidenceLadder(
+      event as unknown as Record<string, unknown>,
+      metadata
+    );
   }
-
   return confidence;
 }
 
@@ -1038,29 +1073,14 @@ function fallbackFromMetadata(
 }
 
 /**
- * Calculate confidence levels for extracted fields
+ * Calculate confidence levels for extracted fields.
+ *
+ * OPE-838 — delegates to `fieldConfidenceLadder`, which IS this function's
+ * former body. Kept as a named entry point because the single-event call site
+ * reads better for it; the logic must not be duplicated here again.
  */
 function calculateConfidence(data: ExtractedEventData, metadata: PageMetadata): FieldConfidence {
-  const confidence: FieldConfidence = {};
-
-  // Higher confidence if data matches JSON-LD
-  const hasJsonLd = !!metadata.jsonLd;
-
-  for (const [key, value] of Object.entries(data)) {
-    if (value === null) {
-      confidence[key] = "low";
-    } else if (hasJsonLd && metadata.jsonLd?.[key]) {
-      confidence[key] = "high";
-    } else if (key === "name" && metadata.title) {
-      confidence[key] = "medium";
-    } else if (key === "imageUrl" && metadata.ogImage) {
-      confidence[key] = "medium";
-    } else {
-      confidence[key] = "medium";
-    }
-  }
-
-  return confidence;
+  return fieldConfidenceLadder(data as unknown as Record<string, unknown>, metadata);
 }
 
 /**

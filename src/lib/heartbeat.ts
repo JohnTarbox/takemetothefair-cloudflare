@@ -198,6 +198,53 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     lastEvidenceAt: (db) => maxTs(db, eventDataCitations, eventDataCitations.createdAt),
   },
   {
+    // OPE-838 — proof the pipeline is still recording WHAT THE SOURCE SAID,
+    // not merely that it wrote a citation row.
+    //
+    // ⚠️ This exists because the probe directly above it CANNOT catch this
+    // regression. `event-data-citations-writer` counts a citation of any kind,
+    // and a row with a null source_excerpt is still a row — so if the snapshot
+    // capture silently stopped, that probe stays green and reports coverage it
+    // does not have. Asking "what would this look like if it were inert?"
+    // (OPE-6 v3.8) of the existing probe is what produced this one.
+    //
+    // Evidence is `source_content_hash IS NOT NULL`, and that column is the
+    // discriminator on purpose. Measured on prod 2026-09-07 across all 1,539
+    // citation rows: source_content_hash is non-null on **0**, while
+    // source_title / source_fetched_at are non-null on 44 — the rows an agent
+    // wrote by hand through `update_event`'s citation arg. Keying on title or
+    // fetched_at would therefore let a HUMAN edit satisfy a probe that exists
+    // to watch a MACHINE, which is the vacuous-green shape this probe is
+    // guarding against in the first place. Only the automated writer hashes.
+    //
+    // 504h, MEASURED — not borrowed from the 72h probe above it, whose
+    // population (citations from every writer) is an order of magnitude busier
+    // than this one (inbound emails that fetched a URL and created an event).
+    // Over 180 days that population has 43 active days and 42 gaps: mean 2.67
+    // days, MAXIMUM **16 days** (2026-06-05 → 2026-06-21). A 336h window would
+    // have fired once on entirely ordinary quiet, and 384h would sit exactly ON
+    // the observed maximum — the mistake OPE-830 had to correct twice. 504h
+    // clears it with headroom.
+    //
+    // ⚠️ Armed, not dormant: the writer ships unflagged in this same PR, so
+    // there is no flag flip to wait for. With no evidence yet, OPE-243's anchor
+    // falls back to `enabled_at`, which makes this a genuine FIRST-evidence
+    // probe: if no url-sourced submission produces a hashed citation within 21
+    // days of shipping, that is the finding.
+    name: "citation-source-snapshot",
+    ownerOpe: "OPE-838",
+    label: "Citation source snapshot (title/excerpt/hash from the fetch)",
+    priority: "P1",
+    expectedWindowHours: 504,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        eventDataCitations,
+        eventDataCitations.createdAt,
+        isNotNull(eventDataCitations.sourceContentHash)
+      ),
+  },
+  {
     // OPE-547 — proof the daily OCCURRED sweep is executing.
     //
     // This cron had no probe, and that is precisely how its defect survived:
