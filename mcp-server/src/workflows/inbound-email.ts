@@ -104,6 +104,16 @@ import { extractAllUrls, type AttachmentRef } from "../email-handler.js";
 // OPE-837 — same-site nav crawl. The fan-out above enumerates URLs in the
 // EMAIL; this enumerates pages on the fetched SITE, which is where price,
 // roster and vendor-application fields actually live.
+// OPE-847 — the two DB-integrity side-effects `createOrLinkVendor` requires
+// each runtime to supply. Same functions the MCP tool adapter passes.
+import { recomputeVendorCompleteness, logEnrichment } from "../helpers.js";
+import {
+  linkRosterBatch,
+  planRosterBatches,
+  emptyRosterLinkOutcome,
+  mergeRosterLinkOutcomes,
+  ROSTER_LINK_MAX,
+} from "../email-handlers/roster-link.js";
 import {
   crawlSecondaryPages,
   applyCrawlEnrichment,
@@ -3018,6 +3028,93 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     }
   }
 
+  /**
+   * OPE-847 — link the crawled roster to the event.
+   *
+   * Approved by John in session 2026-09-07 ("yes, do option (a)"). This is the
+   * only place in this pipeline that creates PUBLIC vendor profiles, so it is
+   * deliberately the most heavily guarded: `strict` dedup, a per-submission
+   * cap, a write-boundary name gate, per-name isolation, and an outcome record
+   * whether or not anything was written.
+   *
+   * Best-effort throughout. The event already exists by the time this runs;
+   * roster enrichment failing must never undo a successful submission.
+   */
+  private async linkRosterBestEffort(
+    step: WorkflowStep,
+    labelPrefix: string,
+    instanceId: string,
+    messageRowId: string,
+    eventId: string,
+    rosterNames: readonly string[],
+    rosterSourceUrl: string
+  ): Promise<void> {
+    const batches = planRosterBatches(rosterNames);
+    // No roster → no steps at all, rather than one step that does nothing.
+    if (batches.length === 0) return;
+
+    let outcome = emptyRosterLinkOutcome();
+    try {
+      for (let i = 0; i < batches.length; i++) {
+        const batch = batches[i];
+        const batchOutcome = await step.do(
+          `${labelPrefix}/roster-link[${i}]`,
+          {
+            retries: { limit: 1, delay: "5 seconds", backoff: "constant" },
+            timeout: "60 seconds",
+          },
+          () =>
+            linkRosterBatch(
+              getDb(this.env.DB),
+              { eventId, names: batch, sourceUrl: rosterSourceUrl },
+              {
+                // A system write — there is no acting admin behind a crawl.
+                actorUserId: null,
+                recomputeVendorCompleteness,
+                logEnrichment,
+              }
+            )
+        );
+        outcome = mergeRosterLinkOutcomes(outcome, batchOutcome);
+      }
+    } catch (err) {
+      await logError(getDb(this.env.DB), {
+        message: "roster vendor linking failed; event unaffected",
+        error: err,
+        source: SOURCE,
+        context: { eventId, rosterSourceUrl },
+      });
+    }
+
+    // Recorded whether or not anything was written. A roster that linked zero
+    // vendors and a linking step that never ran must not look the same — the
+    // OPE-501 problem, and the reason every other stage here writes its own
+    // decline.
+    await recordWorkflowStep(getDb(this.env.DB), {
+      instanceId,
+      workflowName: "inbound-email",
+      inboundEmailId: messageRowId,
+      stepName: "roster-vendor-link",
+      status: outcome.created + outcome.linked + outcome.alreadyLinked > 0 ? "ok" : "skipped",
+      detail: {
+        event_id: eventId,
+        source_url: rosterSourceUrl,
+        roster_names: rosterNames.length,
+        capped: rosterNames.length > ROSTER_LINK_MAX,
+        batches: batches.length,
+        created: outcome.created,
+        linked: outcome.linked,
+        already_linked: outcome.alreadyLinked,
+        rejected: outcome.rejected,
+        failed: outcome.failed,
+        failure_sample: outcome.failures,
+        dedup_strategy: "strict",
+      },
+    }).catch(() => {
+      // Cosmetic-failsoft, like every other observability write here.
+    });
+  }
+
   private async recordCitationsBestEffort(
     step: WorkflowStep,
     label: string,
@@ -3859,6 +3956,20 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
               }
             : undefined
         );
+        // OPE-847 — link the roster. Same three call sites as the citation
+        // above, deliberately: the previous ticket's provenance fix reached
+        // two of them and missed this one, which is the dominant path.
+        if (only.crawlRosterNames?.length && only.crawlRosterSource) {
+          await this.linkRosterBestEffort(
+            step,
+            "submit/single",
+            instanceId,
+            messageRowId,
+            res.resultingEventId,
+            only.crawlRosterNames,
+            only.crawlRosterSource.url
+          );
+        }
       }
       if (only.mergedSiblings?.length && res.resultingEventId) {
         await this.recordMergedSiblingCitations(
@@ -3965,6 +4076,21 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
                   }
                 : undefined
             );
+            // OPE-847 — the keeper branch is deliberately included: OPE-175
+            // ("inbound dedup should enrich with roster") is one of the three
+            // tickets this work exists to unblock, and excluding it would
+            // leave that ask unaddressed. Higher blast radius, same guards.
+            if (cand.crawlRosterNames?.length && cand.crawlRosterSource) {
+              await this.linkRosterBestEffort(
+                step,
+                `${labelPrefix}/keeper`,
+                instanceId,
+                messageRowId,
+                dedup.existingEventId,
+                cand.crawlRosterNames,
+                cand.crawlRosterSource.url
+              );
+            }
             if (cand.mergedSiblings?.length) {
               await this.recordMergedSiblingCitations(
                 step,
@@ -4024,6 +4150,17 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
               }
             : undefined
         );
+        if (cand.crawlRosterNames?.length && cand.crawlRosterSource) {
+          await this.linkRosterBestEffort(
+            step,
+            labelPrefix,
+            instanceId,
+            messageRowId,
+            submitted.id,
+            cand.crawlRosterNames,
+            cand.crawlRosterSource.url
+          );
+        }
         if (cand.mergedSiblings?.length) {
           await this.recordMergedSiblingCitations(
             step,
