@@ -1347,6 +1347,36 @@ const SCHEMA_SQL = `
     duration_ms INTEGER,
     recorded_at INTEGER NOT NULL
   );
+  -- OPE-832 — the defect queue. The kind column carries OPE-769's row
+  -- discriminator and defaults to 'defect', exactly as in drizzle; the
+  -- defect-candidate path relies on that default being overridable, not
+  -- assumed. (No backticks in here: SCHEMA_SQL is a template literal.)
+  CREATE TABLE problem_reports (
+    id TEXT PRIMARY KEY,
+    reporter_email TEXT,
+    body TEXT NOT NULL,
+    source TEXT NOT NULL,
+    path TEXT,
+    user_agent TEXT,
+    inbound_email_id TEXT,
+    severity TEXT NOT NULL DEFAULT 'LOW',
+    correlated_error_count INTEGER NOT NULL DEFAULT 0,
+    kind TEXT NOT NULL DEFAULT 'defect',
+    resolved_at INTEGER,
+    resolved_by_user_id TEXT,
+    notes TEXT,
+    created_at INTEGER NOT NULL
+  );
+  -- Present so intakeProblemReport's severity correlation runs its real query
+  -- instead of taking the catch branch. An empty table is the honest
+  -- no-outage case and resolves severity to LOW.
+  CREATE TABLE error_logs (
+    id TEXT PRIMARY KEY,
+    source TEXT,
+    level TEXT,
+    message TEXT,
+    created_at INTEGER NOT NULL
+  );
   CREATE INDEX idx_claim_tokens_entity ON claim_tokens (entity_type, entity_id);
   CREATE INDEX idx_claim_tokens_expires ON claim_tokens (expires_at);
 `;

@@ -821,6 +821,52 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       ),
   },
   {
+    // OPE-832 — proof the email defect-CANDIDATE detector is still executing.
+    //
+    // ⚠️ Watches the RUN, never the yield. Measured over 180 days in prod:
+    // three distinct customer defect reports, four emails — roughly one
+    // incident every 60 days. A probe watching for CANDIDATES would be red
+    // almost always, get muted, and a muted probe reads as coverage while
+    // covering nothing. The `defect-candidate` step row is written on EVERY
+    // dispatched email whatever the outcome (`created` / `no-defect-language`
+    // / `already-reported` / `intent-skipped`), so a MISS proves the detector
+    // ran just as well as a hit does. Same reasoning as OPE-803's spam probe.
+    //
+    // Its absence is unambiguous: the step is unconditional on the dispatch
+    // path, so no rows means the path stopped executing, not that nobody
+    // reported a bug.
+    //
+    // 240h, MEASURED on this probe's own population — every inbound email that
+    // reaches the workflow, which is far busier than the citation writer above
+    // it, so 336h would be needlessly slow here. Over 180 days: 83 active days,
+    // 82 gaps, mean 1.37 days, MAXIMUM **6.0 days (144h)**.
+    //
+    //   72h  → would have fired on 4 ordinary-quiet gaps
+    //   120h → 1
+    //   168h → 0, but only 1.17x the observed maximum
+    //   240h → 0, with real headroom
+    //
+    // ⚠️ 168h is NOT chosen despite testing clean, and the reason is a limit of
+    // the measurement rather than of the data: all 180 days sampled are fair
+    // season. Winter inbound volume is unobserved and is very likely quieter,
+    // so a window sized to summer gaps would start crying wolf in January —
+    // a seasonal version of the "chosen by analogy" error OPE-830 corrected
+    // twice. 240h buys that margin for a detection cost of at most four extra
+    // days.
+    name: "email-defect-candidate-detector",
+    ownerOpe: "OPE-832",
+    label: "Email defect-candidate detector (inbound dispatch)",
+    priority: "P1",
+    expectedWindowHours: 240,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        workflowRunSteps,
+        workflowRunSteps.recordedAt,
+        eq(workflowRunSteps.stepName, "defect-candidate")
+      ),
+  },
+  {
     // OPE-510 §3 — the newsletter list-balance canary RAN.
     //
     // Watches the run stamp, not the alert. The alert is the yield and the
