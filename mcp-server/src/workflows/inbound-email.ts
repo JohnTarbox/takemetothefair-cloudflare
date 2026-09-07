@@ -112,6 +112,10 @@ import {
   type SubmitFetchResult,
 } from "../email-handlers/submit.js";
 import { recordSourceCitations } from "../email-handlers/pipeline-citations.js";
+// OPE-832 — a bug described in an email becomes a reviewable candidate in the
+// defect queue. Runs for every intent except problem_report (which already
+// files its own) and spam.
+import { recordDefectCandidate } from "../email-handlers/defect-candidate.js";
 import { bodyHasProseSubstance } from "../email-handlers/body-prose-substance.js";
 import { countOutcomes } from "../email-handlers/outcome-counts.js";
 import { clusterSubmissionCandidates } from "../email-handlers/cluster-candidates.js";
@@ -663,6 +667,77 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           context: { messageRowId, intent, error: caughtError },
         });
       }
+
+      // OPE-832 — defect-candidate detection.
+      //
+      // Placed at the DISPATCH SITE rather than inside `support.ts`, and
+      // outside the dispatch try/catch. Two reasons, both load-bearing:
+      //
+      //  * Coverage. `support` and `vendor_inquiry` share handleSupport, while
+      //    `unclear`/`unknown`/`multi` share handleUnknown. Wiring this into
+      //    the support handler would have covered two of five intents and
+      //    looked complete — the one-of-two-parallel-paths defect. Here it is
+      //    keyed on the ACT (an email was dispatched), so a NEW intent added
+      //    later is covered by construction rather than by remembering.
+      //
+      //  * Failsoft. It runs even when dispatch threw: a customer whose email
+      //    broke the handler is exactly the one most likely to be describing a
+      //    defect. Its own failure can never affect the reply — the sender has
+      //    already been handled by this point.
+      //
+      // The step record is written on EVERY outcome, not just creation. A
+      // detector that only logs its hits is silent when it stops running, and
+      // "no candidates" then reads identically to "not executing" — the OPE-540
+      // lesson, and the signal the heartbeat probe depends on.
+      await step
+        .do(
+          "defect-candidate",
+          { retries: { limit: 1, delay: "5 seconds", backoff: "constant" }, timeout: "10 seconds" },
+          async () => {
+            const db = getDb(this.env.DB);
+            const [row] = await db
+              .select()
+              .from(inboundEmails)
+              .where(eq(inboundEmails.id, messageRowId))
+              .limit(1);
+            if (!row) return { status: "row-missing" as const };
+            const outcome = await recordDefectCandidate(db, {
+              inboundEmailId: messageRowId,
+              intent,
+              subject: row.subject ?? null,
+              // body_text is the full text; the excerpt is the fallback for
+              // rows where only the preview survived.
+              bodyText: row.bodyText ?? row.bodyTextExcerpt ?? null,
+              fromAddress: row.fromAddress ?? null,
+            });
+            await recordWorkflowStep(db, {
+              instanceId: sessionId,
+              workflowName: "inbound-email",
+              inboundEmailId: messageRowId,
+              stepName: "defect-candidate",
+              status: outcome.status === "created" ? "ok" : "skipped",
+              detail: {
+                intent,
+                outcome: outcome.status,
+                matched: outcome.status === "created" ? outcome.matched : [],
+                report_id: outcome.status === "created" ? outcome.reportId : null,
+              },
+            }).catch(() => {
+              // Observability write is cosmetic-failsoft, like every other one
+              // here: losing the record must not cost the candidate.
+            });
+            return outcome;
+          }
+        )
+        .catch(async (err) => {
+          await logError(this.env.DB, {
+            level: "warn",
+            source: SOURCE,
+            message: "defect-candidate detection failed; reply unaffected",
+            sessionId,
+            error: err,
+          }).catch(() => {});
+        });
     }
 
     // ───── Optional: human-in-the-loop pause (correction/press) ─────
