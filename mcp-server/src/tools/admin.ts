@@ -68,6 +68,7 @@ import {
   classifySource,
   assertIngestionMethod,
   nextGateFlags,
+  buildPlaceholderEmail,
 } from "@takemetothefair/utils";
 import {
   eventOutboxStatements,
@@ -2676,7 +2677,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }
 
       // Create placeholder user (vendor table requires userId FK)
-      const placeholderEmail = `pending+${finalSlug}@meetmeatthefair.com`;
+      // OPE-835 — capped to RFC 5321's 64-octet local part. 12 of 7,105
+      // vendor slugs cross it (longest local part 102), and the address
+      // Cloudflare rejects is generated here.
+      const placeholderEmail = buildPlaceholderEmail("pending+", finalSlug);
       const userId = crypto.randomUUID();
 
       await db.insert(users).values({
@@ -4415,7 +4419,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }
 
       // Create placeholder user (promoters table has userId FK)
-      const placeholderEmail = `pending+promoter-${finalSlug}@meetmeatthefair.com`;
+      // OPE-835 — 19 of 747 promoter slugs produce a local part over 64
+      // octets (longest 80), which Cloudflare rejects outright.
+      const placeholderEmail = buildPlaceholderEmail("pending+promoter-", finalSlug);
       const userId = crypto.randomUUID();
 
       await db.insert(users).values({
