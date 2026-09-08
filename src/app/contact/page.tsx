@@ -95,7 +95,20 @@ export default function ContactPage() {
           </CardHeader>
           <CardContent>
             <p className="text-muted-foreground mb-4">
-              For general inquiries, support, or feedback:
+              For questions about the website — your account, a listing, or feedback:
+            </p>
+            {/* OPE-851 Scope C — scope the invitation.
+                This card previously said only "general inquiries, support, or
+                feedback", which is the broadest of the three addresses and the
+                one a fair-goer picked when asking whether he could bring his
+                dog. We could not answer: attendance policies belong to the
+                fair, not to us. Naming the split costs nothing and sends the
+                question to someone who can actually answer it. */}
+            <p className="text-muted-foreground mb-4 text-sm">
+              Attending a specific fair and need details we don&apos;t list — pets, parking,
+              accessibility? Those are set by the fair itself. Open that event&apos;s page and use
+              the organizer&apos;s link, or the &ldquo;Ask about this event&rdquo; link, which tells
+              us which fair you mean.
             </p>
             <a
               href="mailto:hello@meetmeatthefair.com"

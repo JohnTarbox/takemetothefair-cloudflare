@@ -65,6 +65,7 @@ import { SameDayEventsButton } from "@/components/events/SameDayEventsButton";
 import { buildEventFaqItems } from "@/lib/event-faq";
 import { isFaqPilotEvent } from "@/lib/faq-pilot";
 import { SITE_URL } from "@takemetothefair/constants";
+import { buildAskAboutEventMailto } from "@takemetothefair/utils";
 import { getSeriesLanding } from "@/lib/series/get-series-landing";
 import { SeriesLandingPage } from "@/components/series/series-landing-page";
 import { buildSuperEventRef } from "@/lib/series/series-schema-org";
@@ -478,6 +479,20 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
   const isAdmin = session?.user?.role === "ADMIN";
   const isVendor = !!vendorInfo;
   const isPastEvent = event.endDate ? new Date(event.endDate) < new Date() : false;
+
+  // OPE-851 Scope A — the same canonical URL the JSON-LD emits, carried into a
+  // contact link so a question about this event arrives identifying it. Built
+  // here rather than inline so the two cannot drift: a link pointing at a
+  // different URL than the one we publish would match nothing on arrival.
+  const askAboutCanonicalUrl =
+    event.series && event.startDate
+      ? `${SITE_URL}/events/${event.series.canonicalSlug}/${new Date(event.startDate).getUTCFullYear()}`
+      : `${SITE_URL}/events/${event.slug}`;
+  const askAboutHref = buildAskAboutEventMailto({
+    eventName: event.name,
+    year: event.startDate ? new Date(event.startDate).getUTCFullYear() : null,
+    canonicalUrl: askAboutCanonicalUrl,
+  });
   const eventCategories = parseJsonArray(event.categories);
   const [relatedEvents, relatedBlogPosts] = await Promise.all([
     getRelatedEvents(event.id, event.venueId, eventCategories),
@@ -1632,6 +1647,32 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
                       Visit Website <ExternalLink className="w-3 h-3" />
                     </TrackedLink>
                   )}
+                </CardContent>
+              </Card>
+            )}
+
+            {/* OPE-851 Scope A — carry the event with the question.
+                A fair-goer asked us "is it ok to have a well-behaved dog on a
+                leash ?" and it arrived with parsed_url null and match_basis
+                'none', so nobody could tell which of ~13 fairs opening that
+                month he meant. The only recovery was to write back and ask.
+                The canonical URL rides in the mail body, which is what the
+                inbound parser reads — see buildAskAboutEventMailto. */}
+            {askAboutHref && (
+              <Card className="mt-6">
+                <CardContent className="pt-6">
+                  <h3 className="font-semibold text-foreground">Question about this event?</h3>
+                  <p className="mt-2 text-sm text-secondary/80">
+                    For details we don&apos;t list — pets, parking, accessibility — the organizer is
+                    the authority. If you&apos;d rather ask us, this carries the event with it so we
+                    know which one you mean.
+                  </p>
+                  <a
+                    href={askAboutHref}
+                    className="mt-4 inline-flex items-center gap-1 text-sm text-royal hover:text-navy"
+                  >
+                    Ask about this event
+                  </a>
                 </CardContent>
               </Card>
             )}
