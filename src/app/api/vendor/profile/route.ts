@@ -8,7 +8,12 @@ import { and, eq, ne } from "drizzle-orm";
 import { appendSlugSegment, createSlug, type Slug } from "@/lib/utils";
 import { validateRequestBody, vendorProfileUpdateSchema } from "@/lib/validations";
 import { logError } from "@/lib/logger";
-import { ALWAYS_IGNORED, diffFields, recordEntityWrite } from "@/lib/audit/entity-write-log";
+import {
+  ALWAYS_IGNORED,
+  diffFields,
+  isDestructiveBlank,
+  recordEntityWrite,
+} from "@/lib/audit/entity-write-log";
 import { recomputeVendorCompleteness } from "@/lib/completeness";
 import { logEnrichment } from "@/lib/enrichment-log";
 import { indexNowUrlFor, pingIndexNow } from "@/lib/indexnow";
@@ -286,13 +291,40 @@ export async function PATCH(request: NextRequest) {
       // and its meaning, though badly named, is stable; the real diff goes to
       // entity_write_log below. Do not "fix" this in place without checking
       // those readers first.
+      // OPE-849 — compute the real diff ONCE, and use it for both logs.
+      //
+      // `entity_write_log` needs it anyway; `enrichment_log` needs it to stop
+      // calling a data-destroying save an unqualified success.
+      const changes = diffFields(currentVendor as unknown as Record<string, unknown>, updateData, {
+        ignore: ALWAYS_IGNORED,
+      });
+      const blanked = changes
+        .filter((c) => isDestructiveBlank(c.before, c.after))
+        .map((c) => c.field);
+
       await logEnrichment(db, {
         targetType: "vendor",
         targetId: updatedVendor[0].id,
         source: "vendor_self",
+        // ⚠️ `status` deliberately stays "success", and OPE-849's acceptance
+        // asks that this be addressed rather than assumed. The write DID
+        // succeed — it is the OUTCOME that is destructive, not the operation —
+        // and coverage dashboards read this column with the existing
+        // vocabulary. Inventing a new status here would change what those
+        // readers count without their knowing.
+        //
+        // What was actually wrong is that a destructive save was
+        // INDISTINGUISHABLE from a constructive one: identical status,
+        // identical `fieldsChanged`. `notes` removes that, in the same table,
+        // without moving anyone's denominator.
         status: "success",
         actorUserId: gate.userId,
         fieldsChanged: Object.keys(updateData),
+        ...(blanked.length > 0
+          ? {
+              notes: `destructive: blanked ${blanked.length} previously-populated field(s): ${blanked.join(", ")}`,
+            }
+          : {}),
       });
 
       // OPE-830 — what this save actually did.
@@ -304,9 +336,7 @@ export async function PATCH(request: NextRequest) {
         entityId: updatedVendor[0].id,
         source: "vendor_self",
         actorUserId: gate.userId,
-        changes: diffFields(currentVendor as unknown as Record<string, unknown>, updateData, {
-          ignore: ALWAYS_IGNORED,
-        }),
+        changes,
       });
     }
 
