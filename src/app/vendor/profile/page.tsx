@@ -85,6 +85,19 @@ export default function VendorProfilePage() {
   // case and anyone who submits with the keyboard from higher up.
   const messageRef = useRef<HTMLDivElement | null>(null);
   const [showGoogleLookup, setShowGoogleLookup] = useState(false);
+  /**
+   * OPE-849 — the server state this form was last loaded from.
+   *
+   * The payload is diffed against THIS, not sent wholesale. Without it a page
+   * holding stale state overwrites every field it has not got, which is how a
+   * live vendor lost her street address, city, state, zip, description, type,
+   * products and all three contact fields in a single save that set one field.
+   *
+   * Kept as a ref, not state: it must never trigger a render, and it is read
+   * only at submit time. Written by `fetchProfile` — which runs on mount and
+   * again after every successful save, so the baseline follows the server.
+   */
+  const savedSnapshot = useRef<typeof formData | null>(null);
   const [formData, setFormData] = useState({
     businessName: "",
     description: "",
@@ -135,7 +148,7 @@ export default function VendorProfilePage() {
           paymentMethods = [];
         }
 
-        setFormData({
+        const loaded = {
           businessName: data.businessName || "",
           description: data.description || "",
           vendorType: data.vendorType || "",
@@ -161,7 +174,11 @@ export default function VendorProfilePage() {
           // A5 — "" sentinel for unset; displayMode "" === "inherit/none".
           displayName: data.displayName || "",
           displayMode: data.displayMode || "",
-        });
+        };
+        setFormData(loaded);
+        // OPE-849 — the diff baseline, captured from the SAME object the form
+        // is seeded with so the two can never drift apart.
+        savedSnapshot.current = loaded;
       }
     } catch (error) {
       console.error("Failed to fetch profile:", error);
@@ -196,25 +213,88 @@ export default function VendorProfilePage() {
     setMessage("Address auto-filled from Google. Review and save changes.");
   };
 
+  /**
+   * OPE-849 — send only what this form actually CHANGED.
+   *
+   * ## The defect this replaces
+   *
+   * This used to be `{ ...rest }` — every field of `formData`, unconditionally,
+   * on every save. The server's guard is `!== undefined`, not "is non-empty",
+   * so every field was written every time, blank or not. A page holding stale
+   * state therefore overwrote newer server data field-for-field, with no
+   * concurrency control anywhere in the path: no version, no precondition, no
+   * dirty tracking. Last writer wins, and a stale writer wins with blanks.
+   *
+   * Measured cost: vendor `3dc49a04` set her display name at 21:03:38 on
+   * 2026-09-07 and lost description, vendorType, products, contactName,
+   * contactEmail, contactPhone, address, city, state and zip in the same
+   * request. One field set, ten destroyed. `entity_write_log` row `9ef74078`
+   * holds the before/after verbatim. Live since 2026-06-10 (#436).
+   *
+   * ## Why a client-side diff is the fix, and not a server-side rule
+   *
+   * The server CANNOT tell "the user cleared this" from "a stale tab never had
+   * it" — both arrive as `""`. Only the client knows what it loaded. So the
+   * client sends a field only when it differs from the server state this form
+   * was seeded with, and the server's existing `!== undefined` guard then
+   * leaves untouched anything not sent.
+   *
+   * This preserves clearing exactly: a field the user empties DIFFERS from the
+   * snapshot, so it is sent as `""` and cleared, as it should be. What can no
+   * longer happen is a field being blanked because it was never loaded.
+   *
+   * ⚠️ A version/`If-Match` precondition was considered and rejected:
+   * `vendors.updated_at` is bumped by page views through `$onUpdateFn`, so it
+   * does not track edits and a precondition on it would reject honest saves.
+   */
   const buildPayload = (form: typeof formData) => {
+    const snapshot = savedSnapshot.current;
+    // Only keys whose value differs from what the server gave us. Before the
+    // first load completes there is no baseline; autosave is disabled until
+    // then (`enabled: !loading && !!profile`) and a manual submit in that
+    // window should still behave as it always did, so fall back to sending
+    // everything rather than silently sending nothing.
+    const changed = (key: keyof typeof formData): boolean =>
+      snapshot === null || form[key] !== snapshot[key];
+
     const { displayMode, displayName, ...rest } = form;
+    const restChanged = Object.fromEntries(
+      Object.entries(rest).filter(([k]) => changed(k as keyof typeof formData))
+    );
+
     return {
-      ...rest,
-      products: form.products
-        .split(",")
-        .map((p) => p.trim())
-        .filter(Boolean),
-      paymentMethods: form.paymentMethods
-        .split(",")
-        .map((p) => p.trim())
-        .filter(Boolean),
-      yearEstablished: form.yearEstablished ? parseInt(form.yearEstablished, 10) : null,
+      ...restChanged,
+      // Each derived field carries its own `changed` test for the same reason:
+      // the transform must not resurrect a key the diff excluded.
+      ...(changed("products")
+        ? {
+            products: form.products
+              .split(",")
+              .map((p) => p.trim())
+              .filter(Boolean),
+          }
+        : {}),
+      ...(changed("paymentMethods")
+        ? {
+            paymentMethods: form.paymentMethods
+              .split(",")
+              .map((p) => p.trim())
+              .filter(Boolean),
+          }
+        : {}),
+      ...(changed("yearEstablished")
+        ? { yearEstablished: form.yearEstablished ? parseInt(form.yearEstablished, 10) : null }
+        : {}),
       // A5 — empty display name clears the alias (→ business_name at render).
-      displayName: displayName.trim() ? displayName.trim() : null,
+      // Sent only when changed, so a stale form cannot null an alias it never
+      // loaded — which is the exact field the specimen save DID set.
+      ...(changed("displayName")
+        ? { displayName: displayName.trim() ? displayName.trim() : null }
+        : {}),
       // A5 — only send displayMode when the office actually picked one. Sending
       // null/"" for a non-LOCAL_OFFICE vendor would trip the route's role gate
       // (400); `undefined` is dropped by JSON.stringify so the field is omitted.
-      ...(displayMode ? { displayMode } : {}),
+      ...(displayMode && changed("displayMode") ? { displayMode } : {}),
     };
   };
 

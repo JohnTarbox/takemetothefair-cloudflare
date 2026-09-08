@@ -182,3 +182,42 @@ export async function recordEntityWrite(db: Db, p: RecordWriteParams): Promise<v
     console.error("entity_write_log insert failed", err);
   }
 }
+
+/**
+ * OPE-849 — did this field change DESTROY a value?
+ *
+ * True when a field held something and now holds nothing. That is the shape
+ * that cost vendor `3dc49a04` her street address, city, state, zip, description,
+ * type, products and all three contact fields in one save on 2026-09-07, while
+ * `enrichment_log` recorded it as `status='success'` with the same
+ * `fields_changed` list as the saves that had entered the data.
+ *
+ * ⚠️ Deliberately NOT a blocker, and this distinction is the whole design.
+ * Clearing a field is a legitimate thing for an owner to do — a vendor who
+ * deletes their phone number means it. The defect was never that blanks are
+ * writable; it was that a blank write was invisible and could arrive from a
+ * client that never loaded the value. The client-side diff
+ * (`vendor/profile/page.tsx buildPayload`) stops the second; this makes the
+ * first observable.
+ *
+ * `[]` counts: `products` went `["Crystals","crystal jewelry"] → []` in the
+ * specimen, which is a destroyed list, not an unchanged one.
+ */
+export function isDestructiveBlank(before: unknown, after: unknown): boolean {
+  const wasEmpty = isEmptyish(before);
+  const isEmpty = isEmptyish(after);
+  return !wasEmpty && isEmpty;
+}
+
+/** Empty for the purposes of `isDestructiveBlank`: null, undefined, "", "[]". */
+function isEmptyish(v: unknown): boolean {
+  if (v === null || v === undefined) return true;
+  if (typeof v === "string") {
+    const t = v.trim();
+    // The diff stores values normalized to strings, so an emptied array
+    // arrives as the literal "[]" rather than as an array.
+    return t === "" || t === "[]";
+  }
+  if (Array.isArray(v)) return v.length === 0;
+  return false;
+}
