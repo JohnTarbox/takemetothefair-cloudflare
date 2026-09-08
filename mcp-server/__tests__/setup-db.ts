@@ -1370,12 +1370,36 @@ const SCHEMA_SQL = `
   -- Present so intakeProblemReport's severity correlation runs its real query
   -- instead of taking the catch branch. An empty table is the honest
   -- no-outage case and resolves severity to LOW.
+  -- OPE-846 — this DDL was STALE and nothing had noticed.
+  --
+  -- It declared (id, source, level, message, created_at). The real table — prod
+  -- and packages/db-schema alike — has timestamp, context, stack_trace, url,
+  -- method, status_code, user_agent, route, digest, and NO created_at. So every
+  -- insert the MCP logger attempted against this harness failed on
+  -- "table error_logs has no column named timestamp".
+  --
+  -- And it failed SILENTLY: logger.ts wraps its insert in try/catch and only
+  -- console-logs. A test asserting "a fault was logged" would have seen zero
+  -- rows and read that as the emitter being broken — or worse, a test asserting
+  -- "no rows" would have passed for entirely the wrong reason.
+  --
+  -- Nothing depended on the old shape: the one other suite touching this table
+  -- (page-error-canary-hygiene) declares its own correct DDL locally, which is
+  -- exactly why the shared one could rot unobserved.
   CREATE TABLE error_logs (
     id TEXT PRIMARY KEY,
+    timestamp INTEGER NOT NULL,
+    level TEXT NOT NULL DEFAULT 'error',
+    message TEXT NOT NULL,
+    context TEXT DEFAULT '{}',
+    url TEXT,
+    method TEXT,
+    status_code INTEGER,
+    stack_trace TEXT,
+    user_agent TEXT,
     source TEXT,
-    level TEXT,
-    message TEXT,
-    created_at INTEGER NOT NULL
+    route TEXT,
+    digest TEXT
   );
   CREATE INDEX idx_claim_tokens_entity ON claim_tokens (entity_type, entity_id);
   CREATE INDEX idx_claim_tokens_expires ON claim_tokens (expires_at);
