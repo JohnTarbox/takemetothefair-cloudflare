@@ -94,3 +94,35 @@ export function resolveSendGates(
     };
   });
 }
+
+/**
+ * OPE-862 — the human-confirmation token required for a REAL broadcast to a
+ * full subscriber list.
+ *
+ * ## Why this is here and not local to one tool
+ *
+ * `send_newsletter_broadcast` shipped this gate (OPE-795) as a `const
+ * CONFIRM_TOKEN = "GO"` local to its own file. `send_vendor_digest` reaches the
+ * SAME vendor list and shipped with no equivalent — so a no-argument call
+ * broadcast to every confirmed vendor subscriber, which is what happened at
+ * 02:05Z on 2026-09-09.
+ *
+ * That is the identical failure the send-gate allowlist above exists to
+ * prevent, one level up: when the definition of "an operator approved this"
+ * lives inside one sender, the next sender does not inherit it, and nobody
+ * notices until a send nobody authorised has already gone out. A second copy of
+ * a send gate is how one of them stops being enforced.
+ *
+ * So the token is declared once, here, beside the gates it complements, and
+ * every path that can reach a full list imports it. Adding a new broadcast
+ * sender that does NOT import this is now a visible omission in review rather
+ * than an invisible default.
+ *
+ * ## Why a token and not a boolean
+ *
+ * Same reasoning as `=== "true"` above. A boolean `confirmed: true` is
+ * something an agent can produce by filling in a plausible-looking argument; an
+ * opaque token it must be told is one it has to have been GIVEN. The value is
+ * deliberately short enough for John to type in chat.
+ */
+export const BROADCAST_CONFIRM_TOKEN = "GO";
