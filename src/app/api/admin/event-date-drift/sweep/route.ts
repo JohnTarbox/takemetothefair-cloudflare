@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { and, eq, gte, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import { classifyUrlHealth, isActionable, type UrlHealthResult } from "@/lib/goodwill/url-health";
 import { isAuthorized } from "@/lib/api-auth";
 import { classifySweepOutcome } from "@/lib/goodwill/sweep-outcome";
 import {
@@ -9,7 +10,7 @@ import {
   groupCandidatesByUrl,
 } from "@/lib/goodwill/drift-candidates";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { eventDateDriftFindings, events, promoters } from "@/lib/db/schema";
+import { eventDateDriftFindings, events, promoters, urlHealthChecks } from "@/lib/db/schema";
 import { parseJsonLd } from "@/lib/schema-org";
 import { SCRAPER_USER_AGENT } from "@takemetothefair/constants";
 import { logError } from "@/lib/logger";
@@ -60,12 +61,25 @@ interface SweepResult {
    */
   drift_cleared: number;
   fetch_failed: number;
+  /** OPE-860 — URLs whose verdict an operator should look at. */
+  url_health_actionable: number;
   next_cursor: number | null;
 }
 
-async function fetchCanonicalDate(
-  url: string
-): Promise<{ canonicalStartDate: Date | null; htmlExcerpt: string | null }> {
+/**
+ * OPE-860 — this used to return `{null, null}` for FOUR different things: a
+ * non-2xx, a 200 with no readable date, a DNS failure and a timeout. All four
+ * then classified as `fetch-failed` and incremented one counter, which is why a
+ * domain sold to a casino affiliate was, in our data, the same event as a
+ * network blip. It now reports the health verdict alongside the date, so the
+ * caller can tell those apart and persist the distinction.
+ */
+async function fetchCanonicalDate(url: string): Promise<{
+  canonicalStartDate: Date | null;
+  htmlExcerpt: string | null;
+  health: UrlHealthResult;
+  httpStatus: number | null;
+}> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
@@ -74,8 +88,19 @@ async function fetchCanonicalDate(
       signal: controller.signal,
       redirect: "follow",
     });
-    if (!res.ok) return { canonicalStartDate: null, htmlExcerpt: null };
+    if (!res.ok) {
+      return {
+        canonicalStartDate: null,
+        htmlExcerpt: null,
+        health: classifyUrlHealth({ reachedOrigin: true, status: res.status, html: null }),
+        httpStatus: res.status,
+      };
+    }
     const html = await res.text();
+    // Classified from the FULL body, once, before any date parsing — the health
+    // question ("is this still an event page?") is independent of whether we
+    // could read a date off it, and conflating them is the bug being fixed.
+    const health = classifyUrlHealth({ reachedOrigin: true, status: res.status, html });
     // Strip to JSON-LD blocks first — schema.org parser is reliable.
     const ldMatches = html.match(/<script[^>]*application\/ld\+json[^>]*>([\s\S]*?)<\/script>/gi);
     if (ldMatches) {
@@ -88,7 +113,12 @@ async function fetchCanonicalDate(
             // only and full timestamp variants.
             const d = new Date(parsed.data.startDate);
             if (!isNaN(d.getTime())) {
-              return { canonicalStartDate: d, htmlExcerpt: block.slice(0, 500) };
+              return {
+                canonicalStartDate: d,
+                htmlExcerpt: block.slice(0, 500),
+                health,
+                httpStatus: res.status,
+              };
             }
           }
         } catch {
@@ -99,9 +129,15 @@ async function fetchCanonicalDate(
     // Fallback: look for a visible date in OG metadata or microdata. Skip
     // for v1; if drift detection misses these the admin can still manually
     // verify the source. Future enhancement: og:event:start_time, microdata.
-    return { canonicalStartDate: null, htmlExcerpt: null };
+    return { canonicalStartDate: null, htmlExcerpt: null, health, httpStatus: res.status };
   } catch {
-    return { canonicalStartDate: null, htmlExcerpt: null };
+    // Never reached the origin: DNS, TLS, timeout, abort.
+    return {
+      canonicalStartDate: null,
+      htmlExcerpt: null,
+      health: classifyUrlHealth({ reachedOrigin: false, status: null, html: null }),
+      httpStatus: null,
+    };
   } finally {
     clearTimeout(timer);
   }
@@ -183,12 +219,34 @@ export async function POST(request: Request): Promise<NextResponse> {
       drift_recorded: 0,
       drift_cleared: 0,
       fetch_failed: 0,
+      url_health_actionable: 0,
       next_cursor: null,
     };
 
     for (const cand of candidates) {
       // ONE fetch per URL, however many events sit behind it.
-      const { canonicalStartDate, htmlExcerpt } = await fetchCanonicalDate(cand.sourceUrl);
+      const { canonicalStartDate, htmlExcerpt, health, httpStatus } = await fetchCanonicalDate(
+        cand.sourceUrl
+      );
+
+      // OPE-860 — record that we LOOKED, whatever we found. This is the whole
+      // fix: the drift branch below writes a row only when it records drift, so
+      // before this a URL checked and found healthy left no trace and was
+      // indistinguishable from one never checked since 2024.
+      //
+      // Written for EVERY verdict including `ok`, deliberately. A table that
+      // only holds failures cannot answer "when was this last confirmed good?",
+      // which is the question that makes staleness measurable at all.
+      await db.insert(urlHealthChecks).values({
+        url: cand.sourceUrl,
+        sourceField: "events.source_url",
+        verdict: health.verdict,
+        httpStatus,
+        signals: health.signals.join(",") || null,
+        detail: health.detail,
+        checkedAt: now,
+      });
+      if (isActionable(health.verdict)) result.url_health_actionable += 1;
 
       // ⚠️ OPE-814 — compare the page's date against the SET of dates we hold
       // for this URL, not against one representative event.
