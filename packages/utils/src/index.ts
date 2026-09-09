@@ -639,3 +639,4 @@ export * from "./admission-price";
 // OPE-851 — the "Ask about this fair" mailto, shared so the inbound parser
 // test can prove the URL it embeds actually reaches `parsed_url`.
 export * from "./ask-about-event";
+export * from "./promoter-dedup";
