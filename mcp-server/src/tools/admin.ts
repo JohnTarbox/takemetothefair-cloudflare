@@ -33,6 +33,7 @@ import {
   reportedNewValue,
 } from "../helpers.js";
 import { rosterResearchTargetWhere } from "@takemetothefair/db-schema";
+import { findPromoterDuplicates } from "@takemetothefair/utils";
 import {
   EXTRACTION_REJECT_FAMILIES,
   humanRejectSignature,
@@ -4387,6 +4388,36 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         };
       }
 
+      // OPE-858 — warn-only duplicate advisory.
+      //
+      // The exact-name check above is a real gate and stays. It is also why
+      // every specimen got through: `Craftah LLC` and `Craftah, LLC` differ by
+      // one comma, so an exact match saw two different names and waved the
+      // second one in.
+      //
+      // This ADVISORY never refuses. Measured over all 748 promoters, a naive
+      // rule returns more false positives than true ones (4 unrelated orgs on
+      // facebook.com, 2 different Lions clubs on e-clubhouse.org, two real
+      // Washington County Fairs in different states), so there is deliberately
+      // no confidence score and no threshold anyone could tune into a block.
+      //
+      // O(n) over the promoter table on purpose: 748 rows of five small
+      // columns, on a create path that fires a handful of times a day. Revisit
+      // if promoters reach five figures.
+      const dupCandidates = await db
+        .select({
+          id: promoters.id,
+          slug: promoters.slug,
+          companyName: promoters.companyName,
+          website: promoters.website,
+          state: promoters.state,
+        })
+        .from(promoters);
+      const possibleDuplicates = findPromoterDuplicates(
+        { name: params.name, website: params.website ?? null, state: params.state ?? null },
+        dupCandidates
+      );
+
       // Generate unique slug
       const baseSlug = createSlug(params.name);
       if (!baseSlug) {
@@ -4489,6 +4520,21 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
             promoter_id: promoterId,
             slug: finalSlug,
             name: params.name,
+            // OPE-858 — advisory only. `created: true` above is unconditional;
+            // this never becomes a reason the row was not written. Each hit
+            // names the axis that fired so the caller can log it the way the
+            // discovery skill logs Pass A/B/C.
+            ...(possibleDuplicates.length > 0
+              ? {
+                  possible_duplicates: possibleDuplicates,
+                  possible_duplicates_note:
+                    `Created anyway. ${possibleDuplicates.length} existing promoter(s) look ` +
+                    `related — review with get_promoter_details and merge_promoter if they are ` +
+                    `the same organisation. This is advisory: a shared domain can mean a shared ` +
+                    `platform, and an identical name root can be two real organisations in ` +
+                    `different places.`,
+                }
+              : {}),
           }),
         ],
       };
