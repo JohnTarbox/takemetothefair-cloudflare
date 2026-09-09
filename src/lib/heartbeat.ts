@@ -34,6 +34,7 @@ import {
   inboundEmails,
   imageCoverageState,
   newsletterIssues,
+  urlHealthChecks,
   photoCoverageDaily,
   ga4DailyMetrics,
   membraneCrossings,
@@ -688,6 +689,38 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
         newsletterIssues,
         newsletterIssues.sentAt,
         and(isNotNull(newsletterIssues.sentAt), eq(newsletterIssues.audience, "vendor"))
+      ),
+  },
+  {
+    // OPE-868 — the promoter website-health sweep RAN.
+    //
+    // CLAUDE.md (OPE-246) requires a probe in the same PR as a new execution
+    // path, and this is one: a sweep driven from the daily event-date-drift
+    // workflow, writing url_health_checks rows with source_field
+    // 'promoters.website'.
+    //
+    // Evidence is scoped to THAT source_field, deliberately. OPE-860 already
+    // writes to this table from the drift sweep with source_field
+    // 'events.source_url', so an unscoped probe would be kept green by the
+    // other writer while this one was dead — the exact defect OPE-865 fixed on
+    // the newsletter probe hours earlier, and it would have been very easy to
+    // repeat here.
+    //
+    // Window 72h: the driving workflow is on `0 6 * * *`, so the cadence is
+    // daily BY CONSTRUCTION rather than by estimate, and 72h is three missed
+    // runs. That is derived from the schedule, not chosen by analogy with a
+    // neighbouring probe.
+    name: "promoter-url-health-sweep",
+    ownerOpe: "OPE-868",
+    label: "Promoter website health sweep",
+    priority: "P1",
+    expectedWindowHours: 72,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        urlHealthChecks,
+        urlHealthChecks.checkedAt,
+        eq(urlHealthChecks.sourceField, "promoters.website")
       ),
   },
   {
