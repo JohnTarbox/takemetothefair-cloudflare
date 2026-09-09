@@ -640,3 +640,4 @@ export * from "./admission-price";
 // test can prove the URL it embeds actually reaches `parsed_url`.
 export * from "./ask-about-event";
 export * from "./promoter-dedup";
+export * from "./email-providers";

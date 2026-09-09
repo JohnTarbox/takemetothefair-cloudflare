@@ -29,6 +29,7 @@ import {
   promoters,
   vendors,
 } from "@takemetothefair/db-schema";
+import { isGenericEmailProvider, isBareGenericProviderAddress } from "@takemetothefair/utils";
 import type { Db } from "../db.js";
 
 /**
@@ -80,10 +81,28 @@ export function senderNameVariants(fromAddress: string, signatureName?: string |
   const at = fromAddress.indexOf("@");
   if (at > 0) {
     const domain = fromAddress.slice(at + 1).toLowerCase();
-    // Strip the public suffix and any leading `www.`/`mail.` label.
-    const label = domain.replace(/^(www|mail|smtp)\./, "").split(".")[0];
-    push(label);
-    push(domain);
+    // OPE-856 — a mailbox provider is not a business name.
+    //
+    // `someone@gmail.com` used to contribute BOTH `gmail` and `gmail.com`.
+    // `brandKey("gmail.com")` is "gmailcom" — eight characters, so it clears
+    // the fragment matcher's six-character gate — and it substring-matches the
+    // vendor whose businessName is the bare address `craftigalcreative@gmail.com`.
+    // Six of twelve real inbound emails in the 09-09 audit census carried that
+    // false "existing vendor" match.
+    //
+    // Both variants are dropped, not just the full domain: `gmail` alone is
+    // five characters and would fail the fragment gate today, but it would
+    // still reach the exact and brand-key matchers above it, and a vendor
+    // literally named "Gmail" is not the sender's business either.
+    //
+    // The signature name is untouched — that is real evidence about who is
+    // writing, whatever their mailbox provider.
+    if (!isGenericEmailProvider(domain)) {
+      // Strip the public suffix and any leading `www.`/`mail.` label.
+      const label = domain.replace(/^(www|mail|smtp)\./, "").split(".")[0];
+      push(label);
+      push(domain);
+    }
   }
   return out;
 }
@@ -191,10 +210,20 @@ export async function matchVendorByVariants(
         })
         .from(vendors)
         .where(and(isNull(vendors.deletedAt), sql`instr(${despacedCol}, ${key}) > 0`))
-        .limit(1);
-      if (byFragment.length > 0) {
+        // OPE-856 scope 2 — a vendor whose businessName is a bare address on a
+        // generic provider must not be FRAGMENT-reachable. The only
+        // distinctive part of `craftigalcreative@gmail.com` is the local part;
+        // the provider half is what every unrelated sender collides with.
+        //
+        // Filtered in JS rather than SQL because the predicate is "is this
+        // string a bare address on a known provider", which is a set lookup —
+        // expressing it as ~35 SQL LIKEs would be both slower and a second
+        // place for the provider list to live. Bounded by the limit below.
+        .limit(5);
+      const usable = byFragment.filter((v) => !isBareGenericProviderAddress(v.businessName));
+      if (usable.length > 0) {
         return {
-          match: { ...byFragment[0], matchedVariant: "fragment", matchedOn: raw },
+          match: { ...usable[0], matchedVariant: "fragment", matchedOn: raw },
           variantsTried,
         };
       }
