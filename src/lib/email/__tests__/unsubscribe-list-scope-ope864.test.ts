@@ -39,6 +39,13 @@ const SCHEMA_SQL = `
     id TEXT PRIMARY KEY, subscriber_id TEXT NOT NULL, list TEXT NOT NULL,
     created_at INTEGER NOT NULL, unsubscribed_at INTEGER
   );
+  -- OPE-869 — a GLOBAL opt-out now also writes the suppression list, so the
+  -- fixture needs the table this route never used to touch. That it was
+  -- missing is the point: the two stores were disjoint enough that a test of
+  -- one did not need the other to exist.
+  CREATE TABLE email_suppression_list (
+    email TEXT PRIMARY KEY, reason TEXT, source TEXT, created_at INTEGER
+  );
 `;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -175,6 +182,34 @@ describe("OPE-864 — a scoped click leaves the other list alone", () => {
 
 describe("OPE-864 — legacy tokens still mean EVERYTHING", () => {
   beforeEach(() => seedSubscriber("both@x.com", ["weekend", "vendor"]));
+
+  it("OPE-869: a global opt-out also lands in the suppression list", async () => {
+    // The two stores were disjoint: this route wrote the subscriber flag and
+    // the list rows, Path B wrote suppression, and neither wrote the other's.
+    // Landmark: assert the suppression table is EMPTY before the click, or
+    // "it has a row after" is satisfied by a fixture that was seeded with one.
+    const suppressed = () =>
+      (raw.prepare(`SELECT COUNT(*) AS n FROM email_suppression_list`).get() as { n: number }).n;
+    expect(suppressed()).toBe(0);
+
+    await click(await signUnsubscribeToken("both@x.com", SECRET)); // legacy = global
+    expect(suppressed()).toBe(1);
+  });
+
+  it("OPE-869: a LIST-SCOPED opt-out does NOT suppress globally", async () => {
+    // ⚠️ The trap in the ticket's own wording. "Make each path write both"
+    // would put a suppression row here — and suppression is global at send
+    // time, so it would remove the person from the OTHER newsletter too,
+    // reintroducing the exact defect OPE-864 fixed, through a different table.
+    const suppressed = () =>
+      (raw.prepare(`SELECT COUNT(*) AS n FROM email_suppression_list`).get() as { n: number }).n;
+
+    await click(await signUnsubscribeToken("both@x.com", SECRET, "vendor"));
+    expect(suppressed()).toBe(0);
+    // …and the landmark that the click did something at all.
+    expect(isLive("vendor")).toBe(false);
+    expect(isLive("weekend")).toBe(true);
+  });
 
   it("a token signed before this change removes both lists and sets the flag", async () => {
     // Links already delivered were sent under a promise that clicking stops all
