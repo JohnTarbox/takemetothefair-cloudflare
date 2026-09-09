@@ -805,6 +805,63 @@ export const eventDateDriftFindings = sqliteTable(
   ]
 );
 
+/**
+ * OPE-860 — the last time we LOOKED at an outbound URL, and what we saw.
+ *
+ * ## Why a table and not a column
+ *
+ * The URLs we publish live in at least two places (`events.source_url`,
+ * `promoters.website`) and will live in more. A `last_verified_at` column per
+ * field means the next field added quietly has no history and nobody notices —
+ * the same shape as the gate that was enforced on one of two senders (OPE-862).
+ * Keyed by the URL itself, one row answers the question for every field that
+ * points at it.
+ *
+ * ## What the absence of a row means
+ *
+ * Before this table, a URL checked yesterday and found healthy and a URL last
+ * looked at in 2024 were **the same state**: the drift sweep writes a row only
+ * on `drift-recorded`, so a clean check left no trace at all. That is the
+ * amendment-H shape in storage form — a successful control that is
+ * indistinguishable from one that never ran.
+ *
+ * So: a row means we looked. No row means we have never looked. Those are now
+ * different, which is the precondition for any staleness question at all.
+ *
+ * ## Append-only
+ *
+ * One row per look, never updated. "This domain has read `no_event_signal`
+ * every day for three weeks" and "it blipped once" need very different
+ * responses, and an in-place update destroys the only thing that tells them
+ * apart. Same reasoning as `market_player_snapshots`.
+ */
+export const urlHealthChecks = sqliteTable(
+  "url_health_checks",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    /** The URL as fetched, after redirects were followed. */
+    url: text("url").notNull(),
+    /** Which field this URL was reached from, e.g. `events.source_url`. */
+    sourceField: text("source_field").notNull(),
+    /** `ok` | `no_event_signal` | `http_error` | `unreachable` — see url-health.ts. */
+    verdict: text("verdict").notNull(),
+    /** HTTP status when there was one; NULL means we never reached the origin. */
+    httpStatus: integer("http_status"),
+    /** Which signals fired, comma-separated, so a surprising verdict is auditable. */
+    signals: text("signals"),
+    /** Short human-readable reason. Never the whole page. */
+    detail: text("detail"),
+    checkedAt: integer("checked_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    index("idx_url_health_checks_url").on(t.url),
+    index("idx_url_health_checks_checked_at").on(t.checkedAt),
+    index("idx_url_health_checks_verdict").on(t.verdict),
+  ]
+);
+
 // Vendors table
 export const vendors = sqliteTable("vendors", {
   id: text("id")
