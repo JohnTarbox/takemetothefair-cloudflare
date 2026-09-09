@@ -17,7 +17,7 @@
  *    flag is never a false RED).
  *  - auto-file dedup reuses OPE-76's `cpi_signal_filings` ledger — nothing new.
  */
-import { eq, isNotNull, sql } from "drizzle-orm";
+import { and, eq, isNotNull, sql } from "drizzle-orm";
 import {
   entityWriteLog,
   adminActions,
@@ -619,13 +619,76 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     // the flow is broken — which is exactly the failure that hid here before
     // (the gate silently reverted to "false" on a deploy and no one knew until
     // an approve click failed).
-    name: "newsletter-broadcast",
+    //
+    // ⚠️ OPE-865 — this used to have NO `audience` filter, and covered two
+    // independent newsletters through one query. The weekend digest sends far
+    // more often than every 21 days, so the vendor digest could be silent
+    // indefinitely without this ever going stale — the vendor list going dark
+    // being precisely the failure it read as covering. Worse: the accidental
+    // vendor broadcast of 2026-09-09 stamped `sent_at` and refreshed the probe
+    // for BOTH audiences, so the incident cleared the only signal that could
+    // have reported it.
+    //
+    // It was never inert. It ran, and it would have fired if BOTH newsletters
+    // died. It simply could not distinguish the case anyone cares about, which
+    // is the amendment-H shape: a control whose population is wider than the
+    // condition it claims to watch.
+    name: "newsletter-broadcast-weekend",
     ownerOpe: "OPE-284",
-    label: "Newsletter broadcast (real sends)",
+    label: "Newsletter broadcast — weekend digest (real sends)",
     priority: "P1",
     expectedWindowHours: 21 * 24,
     lastEvidenceAt: (db) =>
-      maxTs(db, newsletterIssues, newsletterIssues.sentAt, isNotNull(newsletterIssues.sentAt)),
+      maxTs(
+        db,
+        newsletterIssues,
+        newsletterIssues.sentAt,
+        and(isNotNull(newsletterIssues.sentAt), eq(newsletterIssues.audience, "weekend"))
+      ),
+  },
+  {
+    // OPE-865 — the vendor half, and it ships DORMANT.
+    //
+    // ⚠️ `enabled_at` is NULL on purpose (drizzle/0277). Two independent
+    // reasons, either of which alone would justify it:
+    //
+    //   1. Under the PARKED OPE-710(a) ruling, Path A — the only thing that
+    //      stamps `newsletter_issues.sent_at` for the vendor audience — is
+    //      SUPPOSED to be silent. An armed probe keyed on `sent_at` would be a
+    //      permanent false positive, which is exactly the naive canary OPE-855
+    //      item H proposed and then withdrew.
+    //   2. Path B, the rail that actually sends today, writes NO
+    //      `newsletter_issues` row at all while it rides `send_test_email`, so
+    //      there is no evidence stream to measure a window from. Any number
+    //      written now would be an analogy, and a window chosen by analogy is
+    //      what produced the wrong 72h figure on OPE-830 (real gap: 12 days).
+    //
+    // The 21 * 24 below is the weekend probe's window copied across as a
+    // PLACEHOLDER so the registry type-checks. It is not a measurement and must
+    // be replaced before arming.
+    //
+    // ARMING CONDITION (a dormant probe nobody arms is the OPE-6 v3.8 failure
+    // wearing a different hat):
+    //   1. OPE-610 §4 lands — Path B moves onto a rail that writes a real
+    //      `newsletter_issues` row with `audience='vendor'`.
+    //   2. Measure the real send cadence from those rows. OPE-855 item H
+    //      observed Mondays 11:18–14:09Z with one 23:59Z outlier; that is a
+    //      starting point, not the answer.
+    //   3. Set `expectedWindowHours` from that measurement, THEN
+    //      `UPDATE heartbeat_probes SET enabled_at = unixepoch()
+    //         WHERE probe_name = 'newsletter-broadcast-vendor';`
+    name: "newsletter-broadcast-vendor",
+    ownerOpe: "OPE-865",
+    label: "Newsletter broadcast — vendor digest (real sends)",
+    priority: "P1",
+    expectedWindowHours: 21 * 24,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        newsletterIssues,
+        newsletterIssues.sentAt,
+        and(isNotNull(newsletterIssues.sentAt), eq(newsletterIssues.audience, "vendor"))
+      ),
   },
   {
     name: "vendor-enrichment",
