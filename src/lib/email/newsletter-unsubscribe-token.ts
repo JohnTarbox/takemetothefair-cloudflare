@@ -51,18 +51,63 @@ export function resolveUnsubscribeSecret(
   return env.NEWSLETTER_UNSUBSCRIBE_SECRET || env.AUTH_SECRET || env.NEXTAUTH_SECRET;
 }
 
-/** Sign a one-click unsubscribe token for `email`. */
-export async function signUnsubscribeToken(email: string, secret: string): Promise<string> {
-  const payload = b64urlEncode(new TextEncoder().encode(email.trim().toLowerCase()));
+/**
+ * OPE-864 — the separator between the email and the list inside the payload.
+ *
+ * `|` is not legal in an unquoted email local part, and every address we sign is
+ * `.trim().toLowerCase()`d and came through a Zod `.email()` validator, so it
+ * cannot appear in the address half. If that ever stops being true, the split
+ * below takes everything BEFORE the last separator as the email, which
+ * degrades to "unrecognised list" rather than to a wrong address.
+ */
+const LIST_SEP = "|";
+
+export interface UnsubscribeTokenClaims {
+  /** Normalized (trimmed, lowercased) address. */
+  email: string;
+  /**
+   * Which list this token unsubscribes from, or `null` for a LEGACY token.
+   *
+   * ⚠️ `null` means "every list", and that is deliberate. Tokens signed before
+   * OPE-864 are sitting in people's inboxes with no list component, and they
+   * were sent under a promise that clicking them stops all our mail. Narrowing
+   * a legacy token to one list would leave someone subscribed who believes they
+   * unsubscribed — a strictly worse failure than the one being fixed.
+   */
+  list: string | null;
+}
+
+/**
+ * Sign a one-click unsubscribe token for `email`, optionally scoped to `list`.
+ *
+ * The list travels INSIDE the signed payload rather than as a separate URL
+ * parameter, so it cannot be edited in transit. An attacker who could change
+ * `?list=vendor` to `?list=weekend` on someone else's link could unsubscribe
+ * them from a list they never asked to leave.
+ */
+export async function signUnsubscribeToken(
+  email: string,
+  secret: string,
+  list?: string | null
+): Promise<string> {
+  const normalized = email.trim().toLowerCase();
+  const claim = list ? `${normalized}${LIST_SEP}${list}` : normalized;
+  const payload = b64urlEncode(new TextEncoder().encode(claim));
   const sig = await hmacB64url(secret, payload);
   return `${payload}.${sig}`;
 }
 
-/** Verify a token; returns the (normalized) email if valid, else null. */
+/**
+ * Verify a token; returns the claims if valid, else null.
+ *
+ * Legacy tokens (no separator in the payload) verify exactly as before and
+ * report `list: null`. That path is not incidental — it is tested, because it
+ * is what every link already delivered depends on.
+ */
 export async function verifyUnsubscribeToken(
   token: string,
   secret: string
-): Promise<string | null> {
+): Promise<UnsubscribeTokenClaims | null> {
   const dot = token.indexOf(".");
   if (dot <= 0 || dot === token.length - 1) return null;
   const payload = token.slice(0, dot);
@@ -70,8 +115,12 @@ export async function verifyUnsubscribeToken(
   const expected = await hmacB64url(secret, payload);
   if (!timingSafeEqual(sig, expected)) return null;
   try {
-    const email = b64urlDecodeToString(payload);
-    return email.includes("@") ? email : null;
+    const claim = b64urlDecodeToString(payload);
+    const sep = claim.lastIndexOf(LIST_SEP);
+    const email = sep === -1 ? claim : claim.slice(0, sep);
+    const list = sep === -1 ? null : claim.slice(sep + 1);
+    if (!email.includes("@")) return null;
+    return { email, list: list || null };
   } catch {
     return null;
   }

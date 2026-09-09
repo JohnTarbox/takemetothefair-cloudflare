@@ -19,6 +19,7 @@ import {
 import { enqueueEmail } from "@/lib/queues/producers";
 import { newsletterDigestTemplate } from "@/lib/email/templates";
 import { signUnsubscribeToken } from "@/lib/email/newsletter-unsubscribe-token";
+import { listForSource } from "@/lib/email/newsletter-list-membership";
 
 type Db = DrizzleD1Database<Record<string, unknown>>;
 
@@ -141,7 +142,16 @@ export async function enqueueNewsletterDigest(args: {
 }): Promise<number> {
   let queued = 0;
   for (const email of args.recipients) {
-    const token = await signUnsubscribeToken(email, args.secret);
+    // OPE-864 — scope the token to the list this send belongs to, so clicking
+    // unsubscribe in the vendor digest does not also remove the person from the
+    // weekend digest. `listForSource` is the existing source→list map; deriving
+    // it here rather than taking a new argument means a caller cannot pass a
+    // list that disagrees with the ledger source it also passes.
+    const token = await signUnsubscribeToken(
+      email,
+      args.secret,
+      listForSource(args.source === VENDOR_DIGEST_SOURCE ? "vendor-form" : "footer")
+    );
     const unsubscribeUrl = `${args.siteUrl}/api/newsletter/unsubscribe?token=${token}`;
     const tpl = newsletterDigestTemplate({
       subject: args.subject,

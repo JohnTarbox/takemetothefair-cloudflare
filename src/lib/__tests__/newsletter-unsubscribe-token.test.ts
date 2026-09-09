@@ -16,7 +16,14 @@ describe("newsletter unsubscribe token (OPE-169)", () => {
     const token = await signUnsubscribeToken("Carol@Example.com", SECRET);
     expect(token).toContain(".");
     // Email is normalized (trim + lowercase) before signing.
-    expect(await verifyUnsubscribeToken(token, SECRET)).toBe("carol@example.com");
+    // OPE-864 — the verifier now returns claims rather than a bare string, so
+    // the LIST can travel inside the signature. A token signed with no list
+    // (this one) still means "every list", which is what every link already in
+    // someone's inbox depends on.
+    expect(await verifyUnsubscribeToken(token, SECRET)).toEqual({
+      email: "carol@example.com",
+      list: null,
+    });
   });
 
   it("rejects a token signed with a different secret", async () => {
