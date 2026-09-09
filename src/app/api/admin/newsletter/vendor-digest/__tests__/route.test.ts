@@ -265,13 +265,21 @@ describe("refusal 3 — test_recipient", () => {
     expect(enqueueEmailMock).toHaveBeenCalledTimes(1);
     expect(enqueueEmailMock).toHaveBeenCalledWith({
       to: "me@example.com",
-      source: "newsletter:vendor-digest",
+      source: "newsletter:vendor-digest:test",
     });
   });
 
-  it("a test send does NOT stamp sent_at", async () => {
-    await call({ test_recipient: "me@example.com" });
-    expect(insertedValues[0].sentAt).toBeNull();
+  it("a test send writes NO issue row at all (OPE-866)", async () => {
+    // Was: "does NOT stamp sent_at" — it wrote a row with a null sent_at, which
+    // published a world-readable /newsletter/<slug> page as a side effect of
+    // asking to look at the thing. Now it writes nothing, matching
+    // send_newsletter_broadcast's identically-named argument.
+    const res = await call({ test_recipient: "me@example.com" });
+    const json = (await res.json()) as Record<string, unknown>;
+    expect(insertedValues).toHaveLength(0);
+    // Positive landmark: the week was NON-EMPTY, so we exercised the preview
+    // path and not refusal 1 (`no_new_events`), which also writes nothing.
+    expect(json).toMatchObject({ sent: true, persisted: false, event_count: 1 });
   });
 
   it("works even with the broadcast flag on — a test is still just a test", async () => {
@@ -280,7 +288,7 @@ describe("refusal 3 — test_recipient", () => {
     expect(selectRecipientsMock).not.toHaveBeenCalled();
     expect(enqueueEmailMock).toHaveBeenCalledWith({
       to: "me@example.com",
-      source: "newsletter:vendor-digest",
+      source: "newsletter:vendor-digest:test",
     });
   });
 
@@ -289,9 +297,16 @@ describe("refusal 3 — test_recipient", () => {
     // under `newsletter:weekly-digest`, making a vendor send indistinguishable
     // from an attendee one — so "did the vendor digest go out?" was
     // unanswerable from the ledger.
+    // OPE-866 — still the vendor lane's own source, now with a `:test` suffix
+    // so a preview is distinguishable from a broadcast in one ledger query.
+    // `LIKE 'newsletter%'` and `LIKE 'newsletter:vendor-digest%'` both still
+    // match, so no existing reader loses the row.
     await call({ test_recipient: "me@example.com" });
     expect(enqueueEmailMock).toHaveBeenCalledWith(
-      expect.objectContaining({ source: "newsletter:vendor-digest" })
+      expect.objectContaining({ source: "newsletter:vendor-digest:test" })
+    );
+    expect(String((enqueueEmailMock.mock.calls[0][0] as { source: string }).source)).toContain(
+      "vendor-digest"
     );
   });
 });

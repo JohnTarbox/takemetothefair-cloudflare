@@ -134,6 +134,51 @@ export const POST = withAuthorized(async ({ request, db }) => {
     });
   }
 
+  // OPE-866 — a TEST SEND WRITES NOTHING.
+  //
+  // This insert used to run for every non-dry-run call, including
+  // `test_recipient`. That made "send it to me so I can look at it" publish a
+  // world-readable /newsletter/<slug> page as a side effect — while
+  // `send_newsletter_broadcast`'s identically-named argument genuinely writes
+  // nothing. The same argument name meant two different things on two adjacent
+  // tools, and several tickets tell reviewers to "use test_recipient for
+  // renders".
+  //
+  // Refusal 2's compose-and-persist behaviour is deliberately UNCHANGED: with
+  // the flag off and no test_recipient, the Monday job still produces a real
+  // reviewable issue each week. That is the case this insert exists for, and it
+  // is not the case that was leaking.
+  if (testRecipient) {
+    const queuedTest = await enqueueNewsletterDigest({
+      recipients: [testRecipient],
+      subject,
+      contentHtml,
+      viewInBrowserUrl,
+      siteUrl,
+      secret: resolveUnsubscribeSecret(env) ?? "",
+      mailingAddress: env.MAILING_ADDRESS,
+      wordmark: newsletterNameForAudience("vendor"),
+      // OPE-866 — a distinct ledger source, so one query can answer "did this
+      // reach the list?". Previously a preview and a real broadcast wrote
+      // identical `source` values and the only discriminator lived in another
+      // table (`newsletter_issues.sent_at`) — which is a direct contributing
+      // cause of the 2026-09-09 misdiagnosis, per OPE-855's own provenance
+      // section. `LIKE 'newsletter%'` still matches both.
+      source: `${VENDOR_DIGEST_SOURCE}:test`,
+    });
+    return NextResponse.json({
+      success: true,
+      sent: true,
+      broadcast: false,
+      test_recipient: testRecipient,
+      event_count: events.length,
+      slug,
+      queued: queuedTest,
+      // No `view_in_browser`: there is no page, by design.
+      persisted: false,
+    });
+  }
+
   // Persist the issue even when not sending. That is the point of refusal 2:
   // /newsletter/{slug} renders a real, reviewable issue each Monday while the
   // flag is off. sent_at stays null so it is excluded from the public archive
