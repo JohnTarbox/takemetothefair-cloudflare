@@ -41,6 +41,11 @@ export function registerVendorDigestTools(server: McpServer, auth: AuthContext, 
       "composes and persists the issue at /newsletter/<slug> and mails nobody. Pass dry_run to",
       "write nothing at all, or test_recipient to send to exactly one address and never the list.",
       "",
+      "OPE-866 — test_recipient is now a ZERO-WRITE mode: it mails one address and writes no",
+      "newsletter_issues row, so it no longer publishes a /newsletter/<slug> page as a side",
+      "effect. It ledgers under a distinct ':test' source so a preview can be told apart from a",
+      "real broadcast in one query.",
+      "",
       "An empty week sends nothing and reports success — that is normal, not a failure.",
       "Admin only.",
     ].join(" "),
@@ -49,7 +54,10 @@ export function registerVendorDigestTools(server: McpServer, auth: AuthContext, 
         .string()
         .email()
         .optional()
-        .describe("Send to this one address instead of the vendor list. Never touches the list."),
+        .describe(
+          "Send to this one address instead of the vendor list. Never touches the list, and " +
+            "writes nothing (OPE-866) — no issue row, no public page."
+        ),
       dry_run: z
         .boolean()
         .optional()
