@@ -132,11 +132,77 @@ export class EventDateDriftWorkflow extends WorkflowEntrypoint<Env, EventDateDri
       cursor = result.next_cursor;
     }
 
+    // OPE-868 — promoter website health, on the same daily run.
+    //
+    // A separate sweep with its own endpoint and cursor (its contract is link
+    // health, not date drift), but driven from here rather than from a new cron
+    // trigger. Two reasons: this workflow already holds the MAIN_APP binding
+    // and the internal key, and a sweep nobody schedules is inert — which is
+    // the amendment-H failure wearing a different hat.
+    //
+    // Sized from a real count: 612 DISTINCT promoter websites in prod on
+    // 2026-09-09, so 13 chunks of 50 covers the estate. 15 is that plus
+    // headroom for growth. It runs AFTER the drift loop and its failures are
+    // logged and swallowed — a link-health problem must never abort the date
+    // sweep, which is the older and more load-bearing job.
+    const urlHealth = { chunks: 0, examined: 0, actionable: 0, failed: false };
+    let uhCursor = 0;
+    for (let i = 0; i < 15; i++) {
+      try {
+        const res = await step.do(
+          `promoter-url-health-${i + 1}`,
+          { retries: { limit: 1, delay: "10 seconds" }, timeout: "5 minutes" },
+          async (): Promise<{
+            examined: number;
+            actionable: number;
+            next_cursor: number | null;
+          }> => {
+            // chunk=50 for the same MEASURED reason as the drift loop above:
+            // 50 URLs x one per-URL fetch is ~30-45s, under the ~100s
+            // Worker->Pages edge budget. Same operation, same bound.
+            const u = `${this.env.MAIN_APP_URL}/api/admin/url-health/promoters/sweep?cursor=${uhCursor}&chunk=50`;
+            const init: RequestInit = {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-Internal-Key": this.env.INTERNAL_API_KEY,
+              },
+            };
+            const r = this.env.MAIN_APP
+              ? await this.env.MAIN_APP.fetch(new Request(u, init))
+              : await fetch(u, init);
+            if (!r.ok) throw new Error(`url-health ${r.status}@${uhCursor}`);
+            return (await r.json()) as {
+              examined: number;
+              actionable: number;
+              next_cursor: number | null;
+            };
+          }
+        );
+        urlHealth.chunks++;
+        urlHealth.examined += res.examined ?? 0;
+        urlHealth.actionable += res.actionable ?? 0;
+        if (res.next_cursor == null) break;
+        uhCursor = res.next_cursor;
+      } catch (err) {
+        urlHealth.failed = true;
+        await logError(this.env.DB, {
+          source: SOURCE,
+          message: "promoter url-health chunk failed; drift results are unaffected",
+          error: err,
+          sessionId: event.instanceId,
+          context: { cursor: uhCursor, chunk: i + 1, urlHealth },
+        });
+        break;
+      }
+    }
+
     return {
       chunks,
       cursorReached: cursor,
       cappedAtMaxChunks: chunks >= maxChunks,
       ...totals,
+      url_health: urlHealth,
     };
   }
 }
