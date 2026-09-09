@@ -54,8 +54,16 @@ const DEFAULT_CHUNK = 50;
 const MAX_CHUNK = 100;
 const FETCH_TIMEOUT_MS = 10_000;
 
-/** The field name recorded on every row this sweep writes. */
-export const SOURCE_FIELD = "promoters.website";
+/**
+ * The field name recorded on every row this sweep writes.
+ *
+ * ⚠️ NOT exported. A Next.js route module may only export a fixed set of names
+ * (the HTTP verbs, `dynamic`, `revalidate`, …) and the build rejects anything
+ * else with "is not a valid Route export field". `tsc --noEmit` and vitest both
+ * pass on it — only `npm run build` catches it, which is why CI found this and
+ * my local gate did not.
+ */
+const SOURCE_FIELD = "promoters.website";
 
 interface Probe {
   reachedOrigin: boolean;
