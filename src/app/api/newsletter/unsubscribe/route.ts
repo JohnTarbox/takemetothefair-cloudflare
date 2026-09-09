@@ -13,6 +13,7 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { newsletterSubscribers } from "@/lib/db/schema";
+import { applyGlobalOptOut } from "@/lib/email/unsubscribe-stores";
 import {
   removeFromAllLists,
   removeFromList,
@@ -96,25 +97,20 @@ async function performUnsubscribe(token: string): Promise<string> {
     // they did not.
     const nowOffEverything = sub ? !(await hasAnyActiveList(db, sub.id)) : true;
     if (!list || nowOffEverything) {
-      // Idempotent — affects 0 rows if the address isn't on the list; still
-      // "ok" so we never reveal subscription status.
-      await db
-        .update(newsletterSubscribers)
-        // OPE-389 — one of TWO unsubscribe writers; the other is the
-        // inbound-email handler (mcp-server/src/email-handlers/unsubscribe.ts).
-        // Both stamp the time, or the column would be silently right only half
-        // the time.
-        // OPE-466 — and both stamp the EVIDENCE, for the same reason. This path
-        // needs no phrase matching: arriving here means a signed link was
-        // followed, which is the least ambiguous request there is.
-        .set({
-          unsubscribed: true,
-          unsubscribedAt: new Date(),
-          unsubscribeEvidence: "signed-unsubscribe-link",
-        })
-        .where(eq(newsletterSubscribers.email, email));
+      // OPE-869 — a GLOBAL opt-out writes every store a send path consults,
+      // including `email_suppression_list`, which this route never touched.
+      // Path B wrote only that table; this route wrote only the other two. Two
+      // disjoint answers to "did this person unsubscribe?", decided by which
+      // mail they happened to receive.
+      //
+      // ⚠️ Deliberately INSIDE this branch. Suppression is global by
+      // construction — `selectBroadcastRecipients` drops a suppressed address
+      // from every audience — so writing it on a LIST-SCOPED unsubscribe would
+      // remove the person from the other newsletter too, reintroducing the
+      // exact defect OPE-864 shipped to fix, through a different table. The
+      // ticket's "make each path write both" would have done precisely that.
+      await applyGlobalOptOut(db, email, { source: "newsletter-unsubscribe-link" });
     }
-
     return "ok";
   } catch (e) {
     await logError(db, {
