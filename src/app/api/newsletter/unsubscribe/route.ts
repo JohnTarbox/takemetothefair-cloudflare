@@ -13,7 +13,12 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { newsletterSubscribers } from "@/lib/db/schema";
-import { removeFromAllLists } from "@/lib/email/newsletter-list-membership";
+import {
+  removeFromAllLists,
+  removeFromList,
+  hasAnyActiveList,
+} from "@/lib/email/newsletter-list-membership";
+import type { NewsletterList } from "@takemetothefair/db-schema";
 import {
   verifyUnsubscribeToken,
   resolveUnsubscribeSecret,
@@ -52,39 +57,63 @@ async function performUnsubscribe(token: string): Promise<string> {
   }
 
   try {
-    const email = await verifyUnsubscribeToken(token, secret);
-    if (!email) return "invalid";
-    // Idempotent — affects 0 rows if the address isn't on the list; still "ok"
-    // so we never reveal subscription status.
-    await db
-      .update(newsletterSubscribers)
-      // OPE-389 — one of TWO unsubscribe writers; the other is the inbound-email
-      // handler (mcp-server/src/email-handlers/unsubscribe.ts). Both stamp the
-      // time, or the column would be silently right only half the time.
-      // OPE-466 — and both stamp the EVIDENCE, for the same reason. This path
-      // needs no phrase matching: arriving here means a signed link was
-      // followed, which is the least ambiguous request there is.
-      .set({
-        unsubscribed: true,
-        unsubscribedAt: new Date(),
-        unsubscribeEvidence: "signed-unsubscribe-link",
-      })
-      .where(eq(newsletterSubscribers.email, email));
+    const claims = await verifyUnsubscribeToken(token, secret);
+    if (!claims) return "invalid";
+    const { email, list } = claims;
 
-    // OPE-510 scope 2 — unsubscribing must reach the LIST table too.
-    //
-    // The weekend broadcast selects from `newsletter_list_subscriptions`, so
-    // without this the two tables disagree about who is subscribed. The sharp
-    // edge is the resubscribe: a returning subscriber reads `unsubscribed=0`,
-    // the canary counts them as balanced, and the broadcast still skips them
-    // because their list row stays tombstoned. `addToList` clears the stamp on
-    // re-confirm, and this is its counterpart.
     const [sub] = await db
       .select({ id: newsletterSubscribers.id })
       .from(newsletterSubscribers)
       .where(eq(newsletterSubscribers.email, email))
       .limit(1);
-    if (sub) await removeFromAllLists(db, sub.id);
+
+    // OPE-510 scope 2 — unsubscribing must reach the LIST table too.
+    //
+    // The broadcast selects from `newsletter_list_subscriptions`, so without
+    // this the two tables disagree about who is subscribed. The sharp edge is
+    // the resubscribe: a returning subscriber reads `unsubscribed=0`, the
+    // canary counts them as balanced, and the broadcast still skips them
+    // because their list row stays tombstoned. `addToList` clears the stamp on
+    // re-confirm, and this is its counterpart.
+    //
+    // OPE-864 — but WHICH lists. See below.
+    if (sub) {
+      if (list) await removeFromList(db, sub.id, list as NewsletterList);
+      else await removeFromAllLists(db, sub.id);
+    }
+
+    // OPE-864 — the global flag is now conditional, and this is the crux.
+    //
+    // `selectBroadcastRecipients` requires BOTH `unsubscribed = false` AND a
+    // live row in `newsletter_list_subscriptions`. So the flag alone is a
+    // kill-switch across every list. Setting it on a list-scoped unsubscribe
+    // would remove the person from the other newsletter too — exactly the
+    // defect this ticket exists to fix, reintroduced one line further down.
+    //
+    // So: set it when the token was LEGACY (no list — means everything), or
+    // when this was the person's last remaining list. Leave it alone while they
+    // are still subscribed to something, or we would be claiming they left when
+    // they did not.
+    const nowOffEverything = sub ? !(await hasAnyActiveList(db, sub.id)) : true;
+    if (!list || nowOffEverything) {
+      // Idempotent — affects 0 rows if the address isn't on the list; still
+      // "ok" so we never reveal subscription status.
+      await db
+        .update(newsletterSubscribers)
+        // OPE-389 — one of TWO unsubscribe writers; the other is the
+        // inbound-email handler (mcp-server/src/email-handlers/unsubscribe.ts).
+        // Both stamp the time, or the column would be silently right only half
+        // the time.
+        // OPE-466 — and both stamp the EVIDENCE, for the same reason. This path
+        // needs no phrase matching: arriving here means a signed link was
+        // followed, which is the least ambiguous request there is.
+        .set({
+          unsubscribed: true,
+          unsubscribedAt: new Date(),
+          unsubscribeEvidence: "signed-unsubscribe-link",
+        })
+        .where(eq(newsletterSubscribers.email, email));
+    }
 
     return "ok";
   } catch (e) {

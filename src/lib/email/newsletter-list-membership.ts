@@ -119,6 +119,63 @@ export async function removeFromAllLists(
     );
 }
 
+/**
+ * OPE-864 — remove a subscriber from ONE list.
+ *
+ * The scoped counterpart of `removeFromAllLists` above. Both exist on purpose:
+ * a legacy unsubscribe token carries no list and must keep meaning "all", while
+ * a token signed after OPE-864 names the list that sent the mail and must mean
+ * only that one.
+ *
+ * Same "still live" scoping as the bulk version, for the same reason: a second
+ * unsubscribe must not rewrite the original timestamp, because when someone
+ * left is a fact worth keeping.
+ *
+ * Returns the number of list rows actually closed, so a caller can tell "we
+ * unsubscribed them" from "they were not on that list anyway" — which the
+ * route needs in order to decide whether the person is now off everything.
+ */
+export async function removeFromList(
+  db: Db,
+  subscriberId: string,
+  list: NewsletterList,
+  now: Date = new Date()
+): Promise<void> {
+  await db
+    .update(newsletterListSubscriptions)
+    .set({ unsubscribedAt: now })
+    .where(
+      and(
+        eq(newsletterListSubscriptions.subscriberId, subscriberId),
+        eq(newsletterListSubscriptions.list, list),
+        isNull(newsletterListSubscriptions.unsubscribedAt)
+      )
+    );
+}
+
+/**
+ * OPE-864 — is this subscriber still on any list at all?
+ *
+ * Used to decide whether a list-scoped unsubscribe should ALSO set the global
+ * `newsletter_subscribers.unsubscribed` flag. `selectBroadcastRecipients`
+ * requires both that flag to be false AND a live list row, so setting it on a
+ * scoped unsubscribe would silently kill the other list — which is the whole
+ * defect this ticket is about.
+ */
+export async function hasAnyActiveList(db: Db, subscriberId: string): Promise<boolean> {
+  const rows = await db
+    .select({ list: newsletterListSubscriptions.list })
+    .from(newsletterListSubscriptions)
+    .where(
+      and(
+        eq(newsletterListSubscriptions.subscriberId, subscriberId),
+        isNull(newsletterListSubscriptions.unsubscribedAt)
+      )
+    )
+    .limit(1);
+  return rows.length > 0;
+}
+
 export interface ListBalance {
   confirmed_active: number;
   on_any_list: number;
