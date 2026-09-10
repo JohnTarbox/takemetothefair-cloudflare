@@ -1,0 +1,109 @@
+# OPE-908 — dependency update automation.
+#
+# Dependabot rather than Renovate, deliberately: Renovate needs a GitHub App
+# installed on the account, which is a repo-owner action nobody can take from a
+# PR. Dependabot is native, so this committed file IS the whole setup — no
+# out-of-band step that can be forgotten and leave the config inert.
+#
+# The motivating case: OPE-896 shipped `next` 15.5.19 carrying an unauthenticated
+# RCE (GHSA-2xp9-vwfh-vxw4, fixed in 15.5.24) and `next-auth` beta.30 carrying an
+# auth-checks-fail-open critical. Both fixes had been published for a while.
+# Nothing was watching, so nothing said so.
+#
+# ⚠️ SECURITY updates are a REPO SETTING, not this file. Dependabot only raises
+# security PRs when "Dependabot alerts" and "Dependabot security updates" are
+# enabled in Settings → Code security. This file governs the *version* updates
+# below. See the ticket comment for the measured state of those settings.
+version: 2
+
+updates:
+  # ---- npm -------------------------------------------------------------
+  # Grouped so a week's patches arrive as a few reviewable PRs rather than
+  # thirty. Ungrouped Dependabot is the classic way to get a bot everybody
+  # learns to ignore, which is the same failure as having no bot.
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 8
+    versioning-strategy: "increase"
+    groups:
+      # The runtime the site actually serves on. Kept separate because these
+      # are the ones worth reading carefully.
+      cloudflare-runtime:
+        patterns:
+          - "@opennextjs/*"
+          - "wrangler"
+          - "@cloudflare/*"
+          - "miniflare"
+      next-and-auth:
+        patterns:
+          - "next"
+          - "next-auth"
+          - "@auth/*"
+          - "react"
+          - "react-dom"
+          - "@types/react*"
+      database:
+        patterns:
+          - "drizzle-orm"
+          - "drizzle-kit"
+      # Everything else, split by risk rather than by name.
+      dev-tooling:
+        dependency-type: "development"
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "@opennextjs/*"
+          - "wrangler"
+          - "@cloudflare/*"
+          - "next*"
+          - "drizzle*"
+      production-minor-and-patch:
+        dependency-type: "production"
+        update-types:
+          - "minor"
+          - "patch"
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "@opennextjs/*"
+          - "wrangler"
+          - "@cloudflare/*"
+          - "next*"
+          - "@auth/*"
+          - "react*"
+          - "drizzle*"
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "deps"
+      prefix-development: "deps-dev"
+      include: "scope"
+
+  # ---- GitHub Actions --------------------------------------------------
+  # This repo pins every action to a 40-character SHA (OPE-908). Dependabot
+  # understands SHA pins and bumps the SHA *and* the trailing `# vX.Y.Z`
+  # comment together, so pinning does not mean going stale — which is the
+  # usual objection to pinning.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 4
+    groups:
+      actions:
+        patterns:
+          - "*"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "ci"
+      include: "scope"
