@@ -15,6 +15,51 @@ const compat = new FlatCompat({
 
 export default [
   ...compat.extends("next/core-web-vitals", "next/typescript"),
+  // OPE-902 — type-aware promise rules, scoped to the two directories where a
+  // dropped `await` is a security bug rather than a latency bug.
+  //
+  // The motivating defect: `src/lib/api-auth.ts` did
+  //     const ok = timingSafeEqualString(internalKey, expected);
+  // without `await`. `ok` was a Promise, so `!ok` was always false and the
+  // OPE-258 refusal log never ran ONCE. The function still returned the right
+  // answer, because callers awaited what it handed back — so the only symptom
+  // was a security log that was silently empty. Nothing in the suite could see
+  // it; only a rule that knows `timingSafeEqualString` returns a Promise can.
+  //
+  // Scoped rather than repo-wide on purpose: these rules need type information
+  // (`projectService`), which is slow, and a repo-wide switch-on would bury the
+  // signal in pre-existing React/event-handler noise. src/lib and mcp-server/src
+  // are where the secrets are compared.
+  {
+    // ⚠️ Scope is the SECRET-COMPARISON surface, not all of src/lib. Enabling
+    // these across src/lib/** + mcp-server/src/** needs the full type graph and
+    // OOMs a 2GB Node heap locally (verified 2026-09-10: "Reached heap limit").
+    // A rule that cannot be run is not a rule, so this is the subset that fits
+    // and that covers every place a credential is checked. Widening it needs
+    // NODE_OPTIONS=--max-old-space-size on the lint job first.
+    files: [
+      "src/lib/api-auth.ts",
+      "src/lib/api/with-auth.ts",
+      "src/lib/rate-limit.ts",
+      "mcp-server/src/auth.ts",
+      "mcp-server/src/oauth/**/*.ts",
+    ],
+    languageOptions: {
+      parserOptions: {
+        projectService: true,
+        tsconfigRootDir: __dirname,
+      },
+    },
+    rules: {
+      "@typescript-eslint/no-floating-promises": "error",
+      "@typescript-eslint/no-misused-promises": [
+        "error",
+        // The half that catches the OPE-902 shape: a Promise used where a
+        // boolean was meant.
+        { checksConditionals: true, checksVoidReturn: false },
+      ],
+    },
+  },
   {
     rules: {
       "@typescript-eslint/no-unused-vars": [

@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { checkDuplicateSchema } from "./schema";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
+import { internalKeyMatches } from "@/lib/api-auth";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { events, venues } from "@/lib/db/schema";
 import { dedupWasBlind } from "@/lib/duplicates/find-duplicate";
@@ -35,13 +36,11 @@ export async function POST(request: NextRequest) {
   // present `X-Internal-Key` matching INTERNAL_API_KEY. They've already gated
   // on their own per-sender / per-tier limits, so skip the IP-based rate limit
   // here. Same pattern as /api/suggest-event/submit's internal-key bypass.
-  const internalKey = request.headers.get("x-internal-key");
-  const cfEnv = getCloudflareEnv() as unknown as { INTERNAL_API_KEY?: string };
-  const isInternal = !!(
-    internalKey &&
-    cfEnv.INTERNAL_API_KEY &&
-    internalKey === cfEnv.INTERNAL_API_KEY
-  );
+  // OPE-902 — was a `===` on the secret, which compares byte-by-byte and
+  // returns early on the first mismatch. `internalKeyMatches` digests both
+  // sides and XOR-accumulates over the digests with no early exit, and it is
+  // the one audited implementation both deploy artifacts share.
+  const isInternal = await internalKeyMatches(request);
 
   if (!isInternal) {
     const rateLimitResult = await checkRateLimit(request, "suggest-event-check-duplicate");
