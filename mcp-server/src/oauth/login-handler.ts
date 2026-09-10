@@ -7,7 +7,28 @@ import { lookupUser, verifyPassword, resolveUserProps } from "./utils.js";
 interface Env {
   DB: D1Database;
   OAUTH_PROVIDER: OAuthHelpers;
+  /** OPE-900 — holds the pending authorization request; see PENDING_STATE_PREFIX. */
+  OAUTH_KV: KVNamespace;
 }
+
+/**
+ * OPE-900 — the login form used to carry the whole authorization request as
+ * `btoa(JSON.stringify(oauthReqInfo))` and trust it back verbatim on POST.
+ * Nothing signed it, so a client could rewrite any field — including
+ * `redirectUri`, which is where `completeAuthorization` sends the auth code.
+ *
+ * The request now lives in KV under an opaque random id and the browser only
+ * ever sees the id. That is stronger than signing it: there is no secret to
+ * manage or rotate, and nothing to forge — an id that was never minted simply
+ * is not there. It also buys expiry and single-use, which an HMAC would not.
+ */
+const PENDING_STATE_PREFIX = "login:state:";
+
+/** Matches the __Host-CSRF cookie's Max-Age, so both halves expire together. */
+const PENDING_STATE_TTL_SECONDS = 600;
+
+/** Only ids we minted are ever looked up — never caller-controlled key text. */
+const STATE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -48,9 +69,12 @@ app.get("/authorize", async (c) => {
   }
 
   const csrfToken = crypto.randomUUID();
-  const stateData = btoa(JSON.stringify(oauthReqInfo));
+  const stateId = crypto.randomUUID();
+  await c.env.OAUTH_KV.put(PENDING_STATE_PREFIX + stateId, JSON.stringify(oauthReqInfo), {
+    expirationTtl: PENDING_STATE_TTL_SECONDS,
+  });
 
-  return c.html(renderLoginPage(csrfToken, stateData, null), 200, {
+  return c.html(renderLoginPage(csrfToken, stateId, null), 200, {
     "Set-Cookie": `__Host-CSRF=${csrfToken}; HttpOnly; Secure; Path=/; SameSite=Lax; Max-Age=600`,
   });
 });
@@ -79,16 +103,39 @@ app.post("/authorize", async (c) => {
   const password = (formData.get("password") as string) || "";
   const stateData = (formData.get("state") as string) || "";
 
-  // Decode the original OAuth request
+  // OPE-900 — resolve the authorization request from KV by id. The body no
+  // longer carries the request itself, so there is nothing in it to tamper
+  // with. A tampered, unknown or expired id is indistinguishable from here and
+  // all three get the same 400: the request was never minted, or is gone.
+  if (!STATE_ID_RE.test(stateData)) {
+    await logError(c.env.DB, {
+      source: "mcp:oauth",
+      message: "POST /authorize state id malformed",
+      context: { stateLen: stateData.length },
+    });
+    return c.text("Invalid authorization state. Please start the connection again.", 400);
+  }
+
+  const pending = await c.env.OAUTH_KV.get(PENDING_STATE_PREFIX + stateData);
+  if (pending === null) {
+    await logError(c.env.DB, {
+      level: "warn",
+      source: "mcp:oauth",
+      message: "POST /authorize state id not found or expired",
+      context: { stateId: stateData },
+    });
+    return c.text("Invalid authorization state. Please start the connection again.", 400);
+  }
+
   let oauthReqInfo;
   try {
-    oauthReqInfo = JSON.parse(atob(stateData));
+    oauthReqInfo = JSON.parse(pending);
   } catch (err) {
     await logError(c.env.DB, {
       source: "mcp:oauth",
-      message: "POST /authorize state parameter failed to decode/parse",
+      message: "POST /authorize stored state failed to parse",
       error: err,
-      context: { stateLen: stateData.length },
+      context: { stateId: stateData },
     });
     return c.text("Invalid authorization state. Please start the connection again.", 400);
   }
@@ -131,6 +178,11 @@ app.post("/authorize", async (c) => {
     props,
     metadata: {},
   });
+
+  // OPE-900 — single-use. The auth code exists now; replaying this id must not
+  // mint a second one. Deleted AFTER completeAuthorization so a failure there
+  // leaves the user able to retry rather than stranded on a dead id.
+  await c.env.OAUTH_KV.delete(PENDING_STATE_PREFIX + stateData);
 
   console.log("[LOGIN] Redirecting to:", redirectTo.slice(0, 100) + "...");
   return new Response(null, {
