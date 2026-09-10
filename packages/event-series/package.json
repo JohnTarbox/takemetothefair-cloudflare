@@ -17,6 +17,6 @@
   "dependencies": {
     "@takemetothefair/db-schema": "*",
     "@takemetothefair/utils": "*",
-    "drizzle-orm": "^0.38.3"
+    "drizzle-orm": "^0.45.2"
   }
 }
