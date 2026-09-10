@@ -24,6 +24,18 @@ binding = "AI"
 # Browser Rendering account id (non-secret); the token is a Worker secret
 # CLOUDFLARE_BROWSER_RENDERING_TOKEN. Used by import-url/fetch escalation.
 [vars]
+# OPE-931 — "this is a deployed Worker". Read by isDeployedEnvironment() in
+# src/lib/runtime-env.ts, which decides whether a MISSING binding fails closed.
+#
+# It replaces `!!env.CF_PAGES`, a Cloudflare PAGES variable that this app has
+# not had since the 2026-06-10 OpenNext cutover — so two fail-closed branches
+# had been evaluating false in production and would have failed OPEN instead.
+#
+# A plain [vars] line, deliberately: `wrangler deploy` replaces the whole block
+# from this file on every deploy (OPE-284/OPE-509), so the committed value IS
+# the live value and a dashboard edit cannot drift it. Local dev and tests have
+# no Cloudflare env at all, so they read `false` and keep the dev-mode paths.
+DEPLOY_ENV = "production"
 CLOUDFLARE_ACCOUNT_ID = "e6011e48b7014ef83c77e3c767dac6cf"
 # OPE-191 — flip to "true" to let the Monday vendor digest actually BROADCAST to
 # the vendor list. While "false" the cron still runs every Monday: it composes

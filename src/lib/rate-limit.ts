@@ -1,4 +1,5 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
+import { isDeployedEnvironment } from "@/lib/runtime-env";
 import { auth } from "@/lib/auth";
 
 // Rate limit configuration per endpoint
@@ -228,18 +229,6 @@ function getClientIp(request: Request): string {
 }
 
 /**
- * Detect if running on Cloudflare Pages (production/preview)
- */
-function isProductionEnvironment(): boolean {
-  try {
-    const { env } = getCloudflareContext();
-    return !!(env as unknown as Record<string, unknown>).CF_PAGES;
-  } catch {
-    return false;
-  }
-}
-
-/**
  * Get the Cloudflare KV binding for rate limiting
  */
 function getRateLimitKv(): KVNamespace | null {
@@ -318,7 +307,8 @@ export async function checkRateLimit(
 
   // If KV is not available, allow in dev but deny in production
   if (!kv) {
-    const isProduction = isProductionEnvironment();
+    // OPE-931 — one shared predicate; see src/lib/runtime-env.ts.
+    const isProduction = isDeployedEnvironment();
     if (isProduction) {
       console.error("[Rate Limit] KV not available in production — denying request");
       return {
