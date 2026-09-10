@@ -59,16 +59,16 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           # OPE-901 — the commit CI actually tested. Empty on workflow_dispatch,
           # where the fallback is the branch this run was dispatched against.
           ref: ${{ github.event.workflow_run.head_sha || github.ref }}
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
-          node-version: "20"
+          node-version: "22"
           cache: "npm"
           registry-url: "https://npm.pkg.github.com"
           scope: "@johntarbox"
@@ -106,16 +106,16 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           # OPE-901 — the commit CI actually tested. Empty on workflow_dispatch,
           # where the fallback is the branch this run was dispatched against.
           ref: ${{ github.event.workflow_run.head_sha || github.ref }}
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
-          node-version: "20"
+          node-version: "22"
           cache: "npm"
           registry-url: "https://npm.pkg.github.com"
           scope: "@johntarbox"
@@ -214,7 +214,7 @@ jobs:
           fi
 
       - name: Deploy Worker
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3.15.0
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -269,16 +269,16 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           # OPE-901 — the commit CI actually tested. Empty on workflow_dispatch,
           # where the fallback is the branch this run was dispatched against.
           ref: ${{ github.event.workflow_run.head_sha || github.ref }}
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
-          node-version: "20"
+          node-version: "22"
           cache: "npm"
           registry-url: "https://npm.pkg.github.com"
           scope: "@johntarbox"
@@ -301,7 +301,7 @@ jobs:
           echo "build_time=$RUN_STARTED" >> "$GITHUB_OUTPUT"
 
       - name: Deploy MCP Worker
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3.15.0
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
