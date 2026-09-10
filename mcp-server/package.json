@@ -11,7 +11,7 @@
     "test": "vitest --run"
   },
   "dependencies": {
-    "@cloudflare/workers-oauth-provider": "^0.3.3",
+    "@cloudflare/workers-oauth-provider": "^0.10.3",
     "@modelcontextprotocol/sdk": "^1.12.1",
     "@takemetothefair/constants": "*",
     "@takemetothefair/datetime": "*",
@@ -28,7 +28,7 @@
     "@takemetothefair/event-series": "*"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20241230.0",
+    "@cloudflare/workers-types": "^5.20260907.1",
     "@types/better-sqlite3": "^7.6.13",
     "better-sqlite3": "^12.6.2",
     "typescript": "^5",
