@@ -85,7 +85,7 @@
     "qrcode": "^1.5.4",
     "react": "^18",
     "react-dom": "^18",
-    "react-hook-form": "^7.71.1",
+    "react-hook-form": "^7.87.0",
     "react-markdown": "^10.1.0",
     "rehype-external-links": "^3.0.0",
     "remark-directive": "^4.0.0",
