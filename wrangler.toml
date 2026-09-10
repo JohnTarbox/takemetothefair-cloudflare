@@ -132,6 +132,34 @@ database_name = "takemetothefair-db"
 database_id = "d449e416-3814-48a6-b9e8-b676333b2cdc"
 migrations_dir = "drizzle"
 
+# OPE-904 — Workers Rate Limiting binding: the BURST half of the two-layer
+# limiter John approved (option (c) for the eight abuse-prone policies).
+#
+# Why a second mechanism rather than a replacement: the binding's `period`
+# accepts ONLY 10 or 60 seconds, and all 22 of our policies are hourly (one is
+# daily). So it cannot express the hourly quotas at all. Measured on production
+# 2026-09-10, the KV counter alone let 81 origin-reaching requests through a
+# 60/hour cap while recording 27 and refusing none — the read-modify-write
+# loses increments faster than a burst adds them. The binding closes the burst
+# hole; KV stays as the soft hourly quota, at the values John set.
+#
+# One binding, one threshold (5 per 60s), keyed per policy AND per identifier,
+# so the eight policies get independent counters rather than a shared budget.
+# 5/60s is above anything a human does — nobody legitimately registers six
+# accounts or submits six events in a minute — and below any useful burst.
+#
+# ⚠️ namespace_id is GLOBAL to the account: two bindings sharing one id share
+# counters across Workers. "1001" is claimed here for the main app. OPE-900's
+# MCP /authorize limiter must use a DIFFERENT id, or MCP sign-in attempts and
+# public form posts would consume one another's budget.
+[[ratelimits]]
+name = "BURST_LIMITER"
+namespace_id = "1001"
+
+[ratelimits.simple]
+limit = 5
+period = 60
+
 # KV namespace for rate limiting
 [[kv_namespaces]]
 binding = "RATE_LIMIT_KV"

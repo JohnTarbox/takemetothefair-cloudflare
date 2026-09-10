@@ -152,6 +152,55 @@ export const RATE_LIMITS = {
 
 export type RateLimitEndpoint = keyof typeof RATE_LIMITS;
 
+/**
+ * OPE-904 — the eight policies that get the BURST layer as well as the KV
+ * quota (John's ruling 2026-09-10: option (c) here, option (a) everywhere else).
+ *
+ * These are the routes where a burst is the attack: each one either creates an
+ * account, sends mail, moves ownership, or writes a public record. The other
+ * fourteen keep KV alone and are documented as SOFT below.
+ */
+const BURST_POLICIES: ReadonlySet<RateLimitEndpoint> = new Set([
+  "auth-register",
+  "auth-forgot-password",
+  "auth-reset-password",
+  "auth-verify-email-send",
+  "newsletter-subscribe",
+  "vendor-contact",
+  "suggest-event-submit",
+  "claim-wizard",
+]);
+
+/** The binding's period is fixed at 60s in wrangler.toml; used for Retry-After. */
+const BURST_WINDOW_SECONDS = 60;
+
+interface RateLimiterBinding {
+  limit(options: { key: string }): Promise<{ success: boolean }>;
+}
+
+/**
+ * ⚠️ The KV layer is a SOFT, BEST-EFFORT quota and must not be read as a hard
+ * cap (OPE-904, option (a) for the fourteen policies that have only this).
+ *
+ * It is a read-modify-write across an eventually-consistent store: concurrent
+ * requests read the same count and each writes back its own view, so increments
+ * are LOST under exactly the burst it exists to stop. Measured on production
+ * 2026-09-10: 81 origin-reaching requests against a 60/hour cap produced 27
+ * recorded increments and zero refusals.
+ *
+ * It still earns its place — it is the only thing that can express an hourly or
+ * daily quota, which the Workers binding cannot (period is 10s or 60s only) —
+ * but treat it as attrition, not enforcement.
+ */
+function getBurstLimiter(): RateLimiterBinding | null {
+  try {
+    const { env } = getCloudflareContext();
+    return (env as { BURST_LIMITER?: RateLimiterBinding }).BURST_LIMITER ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export interface RateLimitResult {
   allowed: boolean;
   remaining: number;
@@ -236,6 +285,33 @@ export async function checkRateLimit(
   // Build the rate limit key
   const identifier = isAuthenticated && userId ? `user:${userId}` : `ip:${getClientIp(request)}`;
   const key = `rate:${endpoint}:${identifier}`;
+
+  // OPE-904 — BURST layer, before the KV quota. This is the half that actually
+  // holds under concurrency: the binding counts at the edge with no
+  // read-modify-write, so parallel requests cannot all read the same value.
+  //
+  // Absent binding (unit tests, `next dev`) skips this layer and falls through
+  // to KV. That is deliberate and is NOT the fail-open shape of OPE-931: the KV
+  // quota still runs, so the request is still checked — it just loses the burst
+  // half. A missing binding cannot make an unchecked request look checked.
+  if (BURST_POLICIES.has(endpoint)) {
+    const burst = getBurstLimiter();
+    if (burst) {
+      const { success } = await burst.limit({ key });
+      if (!success) {
+        return {
+          allowed: false,
+          remaining: 0,
+          limit,
+          // The binding's window, not the policy's — Retry-After must describe
+          // the limit that actually refused, or the caller waits an hour for a
+          // 60-second block.
+          resetAt: Math.floor(now / 1000) + BURST_WINDOW_SECONDS,
+          isAuthenticated,
+        };
+      }
+    }
+  }
 
   // Get KV binding
   const kv = getRateLimitKv();
