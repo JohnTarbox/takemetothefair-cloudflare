@@ -43,6 +43,7 @@ import { registerPromoterReplyIngestTools } from "./tools/admin-promoter-reply-i
 import { registerGalleryPhotoTools } from "./tools/admin-gallery-photos.js";
 import { registerSendNewsletterBroadcastTool } from "./tools/admin-send-newsletter-broadcast.js";
 import { registerSendGatesTool } from "./tools/admin-send-gates.js";
+import { registerApiTokenTools } from "./tools/admin-api-tokens.js";
 
 /** OPE-772 — the env shape `get_send_gates` reads.
  *
@@ -388,6 +389,7 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
         // broadcast endpoint; STOP-gated real broadcast, unattended test/preview).
         registerSendNewsletterBroadcastTool(this.server, db, auth, this.env);
         registerSendGatesTool(this.server, db, auth, this.env as unknown as GateEnv);
+        registerApiTokenTools(this.server, db, auth);
         // OPE-67 (2026-07-02) — claim tooling: create_claim_invite (cold invite)
         // + list_claims / approve_claim / reject_claim (review queue).
         registerCreateClaimInviteTool(this.server, db, auth, this.env);
@@ -619,7 +621,13 @@ function getCorsOrigin(request: Request): string {
 // ---------------------------------------------------------------------------
 // Legacy stateless handler for mmatf_ Bearer tokens
 // ---------------------------------------------------------------------------
-async function handleLegacyMcpRequest(request: Request, env: Env): Promise<Response> {
+async function handleLegacyMcpRequest(
+  request: Request,
+  env: Env,
+  // OPE-903 — threaded through so the token's `last_used_at` write survives
+  // the response instead of racing it.
+  ctx?: ExecutionContext
+): Promise<Response> {
   const { WebStandardStreamableHTTPServerTransport } =
     await import("@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js");
 
@@ -643,7 +651,7 @@ async function handleLegacyMcpRequest(request: Request, env: Env): Promise<Respo
   registerPublicTools(server, db);
 
   const authHeader = request.headers.get("Authorization");
-  const auth = await authenticateToken(db, authHeader);
+  const auth = await authenticateToken(db, authHeader, ctx);
 
   if (auth) {
     registerUserTools(server, db, auth);
@@ -672,6 +680,7 @@ async function handleLegacyMcpRequest(request: Request, env: Env): Promise<Respo
       registerGalleryPhotoTools(server, auth, env);
       registerSendNewsletterBroadcastTool(server, db, auth, env);
       registerSendGatesTool(server, db, auth, env as unknown as GateEnv);
+      registerApiTokenTools(server, db, auth);
       registerCreateClaimInviteTool(server, db, auth, env);
       registerClaimReviewTools(server, db, auth);
       registerResolveHeldPhotosTool(server, db, auth, env);
@@ -2069,7 +2078,7 @@ export default {
 
     // Legacy mmatf_ tokens bypass OAuth and use the stateless handler
     if (url.pathname === "/mcp" && authHeader?.includes("mmatf_")) {
-      return handleLegacyMcpRequest(request, env);
+      return handleLegacyMcpRequest(request, env, ctx);
     }
 
     // Internal endpoints — Pages (which can't bind workflows directly per
