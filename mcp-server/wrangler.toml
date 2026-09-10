@@ -1,12 +1,20 @@
 name = "meetmeatthefair-mcp"
 main = "src/index.ts"
-workers_dev = true
+# OPE-905 — was `true`, which also served this Worker on *.workers.dev, OUTSIDE
+# the zone's WAF rules. Nothing references a meetmeatthefair-mcp workers.dev URL:
+# the only workers.dev mentions in the repo are two historical cutover docs
+# naming the MAIN APP's preview URL (docs/opennext-cutover-runbook.md,
+# docs/opennext-migration-plan.md). The connector uses the custom domain.
+workers_dev = false
 # Bumped from 2025-04-01 to 2026-04-21 for the Email Service Sending public
 # beta, which requires this compat date or newer for the unrestricted
 # `send_email` binding (no `destination_address`) to behave as the new
 # outbound-anywhere binding rather than the old verified-destinations-only
 # one. See CHANGELOG note 2026-04-16 (Email Sending public beta).
-compatibility_date = "2026-04-21"
+# OPE-905 — bumped 2026-04-21 -> 2026-09-10 (was 142 days old).
+compatibility_date = "2026-09-10"
+# OPE-905 — so a production stack trace names our source, not the bundle.
+upload_source_maps = true
 compatibility_flags = ["nodejs_compat"]
 
 # Smart Placement: same rationale as the main app — most MCP tools are
@@ -14,6 +22,26 @@ compatibility_flags = ["nodejs_compat"]
 # default. No code change.
 [placement]
 mode = "smart"
+
+# OPE-905 — logs at full rate, traces sampled. Cloudflare's Workers Best
+# Practices (2026-02) asks for both with an explicit head_sampling_rate rather
+# than the bare `enabled = true` this file used to carry.
+#
+# logs 1.0 / traces 0.1 chosen deliberately: a log line is what you read during
+# an incident and this Worker's volume makes 100% affordable, while traces are
+# per-request spans whose value is statistical — 10% is enough to see a latency
+# shape and cheap enough not to think about. If a specific investigation needs
+# more, raise it for that investigation and put it back.
+[observability]
+enabled = true
+
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+
+[observability.traces]
+enabled = true
+head_sampling_rate = 0.1
 
 [[d1_databases]]
 binding = "DB"
