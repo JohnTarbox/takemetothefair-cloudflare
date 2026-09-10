@@ -60,7 +60,12 @@ export async function internalKeyMatches(request: Request): Promise<boolean> {
   const internalKey = request.headers.get("x-internal-key");
   const env = getCloudflareEnv() as unknown as Record<string, string | undefined>;
   const expected = env.INTERNAL_API_KEY;
-  const ok = timingSafeEqualString(internalKey, expected);
+  // OPE-902 — `await`. Without it `ok` is a PROMISE, which is always truthy,
+  // so `!ok` was always false and the refusal log below never ran once. The
+  // RETURN was still correct, because callers await the promise this handed
+  // back — which is why a whole security log could be empty and nothing else
+  // looked wrong.
+  const ok = await timingSafeEqualString(internalKey, expected);
   if (!ok && internalKey) {
     // OPE-258 — a caller that PRESENTED a key and was refused. Record why.
     //

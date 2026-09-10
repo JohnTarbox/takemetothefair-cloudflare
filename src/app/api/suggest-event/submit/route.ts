@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { detectPossibleDuplicate } from "@/lib/duplicates/venue-date-collision";
+import { internalKeyMatches } from "@/lib/api-auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { events, promoters, eventSchemaOrg } from "@/lib/db/schema";
 import { parseJsonLd } from "@/lib/schema-org";
@@ -57,13 +58,11 @@ export async function POST(request: NextRequest) {
   // their own gating (per-sender rate limit, CF Email Routing spam filter),
   // so we skip IP rate limit + Turnstile. Same pattern as the admin routes
   // that accept MCP-server writes (see admin/vendors/[id]/route.ts).
-  const internalKey = request.headers.get("x-internal-key");
-  const cfEnv = getCloudflareEnv() as unknown as { INTERNAL_API_KEY?: string };
-  const isInternal = !!(
-    internalKey &&
-    cfEnv.INTERNAL_API_KEY &&
-    internalKey === cfEnv.INTERNAL_API_KEY
-  );
+  // OPE-902 — was a `===` on the secret, which compares byte-by-byte and
+  // returns early on the first mismatch. `internalKeyMatches` digests both
+  // sides and XOR-accumulates over the digests with no early exit, and it is
+  // the one audited implementation both deploy artifacts share.
+  const isInternal = await internalKeyMatches(request);
 
   let rateLimitResult: Awaited<ReturnType<typeof checkRateLimit>> | null = null;
   if (!isInternal) {

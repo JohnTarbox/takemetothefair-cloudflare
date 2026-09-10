@@ -31,6 +31,11 @@ vi.mock("../src/oauth/utils.js", () => ({
       : null,
   verifyPassword: async (password: string) => password === "correct-horse",
   resolveUserProps: async () => ({ userId: "u1" }),
+  // OPE-902 added a legacy-hash upgrade to the success path; this mock has to
+  // grow with it or the "authorization completes" cases throw instead of
+  // asserting. Reporting `false` keeps this file about state tampering.
+  isLegacyPasswordHash: () => false,
+  upgradePasswordHash: async () => {},
 }));
 
 /** Minimal KV double — enough to hold, expire and delete a pending state. */
