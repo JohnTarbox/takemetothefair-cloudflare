@@ -51,6 +51,7 @@ import { eventJoinProjection } from "@/lib/db/event-join-projection";
 import { DailyScheduleDisplay } from "@/components/events/DailyScheduleDisplay";
 import { EventDayImageStrip } from "@/components/events/EventDayImageStrip";
 import { parseJsonArray } from "@/types";
+import { filterPublicTags } from "@/lib/events/public-tags";
 import type { Metadata } from "next";
 import { auth } from "@/lib/auth";
 import { logError } from "@/lib/logger";
@@ -851,40 +852,15 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
             {(() => {
               const categories = parseJsonArray(event.categories);
               const tags = parseJsonArray(event.tags);
-              // UX-A1 item 4 (2026-06-04) — extended INTERNAL_TAGS to suppress
-              // operational/admin tags that don't belong on the public chip row.
-              // The earlier set covered ingest-source tags; the additions here
-              // catch scheduling-shape ("weekends-only"), workflow-state
-              // ("needs-review"), and admin-flag ("dedup-suspect") tags that
-              // operators apply for internal triage. Tags containing `.` are
-              // already excluded (versioned/qualified, e.g. "fmt.v2").
-              const INTERNAL_TAGS = new Set([
-                // Ingest-source
-                "imported",
-                "url-import",
-                "community-suggestion",
-                "vendor-submission",
-                // Scheduling-shape (UX-A1)
-                "weekends-only",
-                "weekdays-only",
-                "recurring",
-                "ongoing",
-                // Workflow/admin (UX-A1)
-                "needs-review",
-                "needs-image",
-                "needs-dates",
-                "dedup-suspect",
-                "draft",
-                "internal",
-              ]);
-              const publicTags = tags.filter(
-                (tag) =>
-                  !INTERNAL_TAGS.has(tag) &&
-                  !tag.includes(".") &&
-                  // Hide anything obviously admin-prefixed (e.g. "admin:hold").
-                  !tag.startsWith("admin:") &&
-                  !tag.startsWith("internal:")
-              );
+              // OPE-884 — the split moved to src/lib/events/public-tags.ts.
+              // What lived here was a denylist of NAMES, so every tag a new
+              // emitter invented walked straight through it: by 2026-09-10
+              // `src:daily-discovery`, `needs-enrichment` and
+              // `needs-enrichment:image` were leaking to visitors on 64 of 573
+              // upcoming events. The replacement keys on the SHAPE of an
+              // internal tag (namespaced / versioned / `needs-*`), which is the
+              // only form that holds without the emitters telling us first.
+              const publicTags = filterPublicTags(tags);
               return (
                 <>
                   <div>
