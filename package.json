@@ -59,7 +59,7 @@
     ]
   },
   "dependencies": {
-    "@auth/drizzle-adapter": "^1.7.4",
+    "@auth/drizzle-adapter": "1.11.3",
     "@hookform/resolvers": "^5.2.2",
     "@johntarbox/calendar-grid": "^0.1.0",
     "@jonnyboats/calendar-contract": "^1.2.0",
@@ -69,6 +69,7 @@
     "@tailwindcss/typography": "^0.5.19",
     "@takemetothefair/constants": "*",
     "@takemetothefair/datetime": "*",
+    "@takemetothefair/event-series": "*",
     "@takemetothefair/site-fetch": "*",
     "@takemetothefair/utils": "*",
     "@takemetothefair/validation": "*",
@@ -79,7 +80,7 @@
     "drizzle-orm": "^0.38.3",
     "jose": "^6.2.2",
     "lucide-react": "^0.563.0",
-    "next-auth": "^5.0.0-beta.30",
+    "next-auth": "5.0.0-beta.32",
     "next-themes": "^0.4.6",
     "qrcode": "^1.5.4",
     "react": "^18",
@@ -93,8 +94,7 @@
     "tailwind-merge": "^3.4.0",
     "tldts": "^7.4.6",
     "web-vitals": "^5.2.0",
-    "zod": "^4.3.6",
-    "@takemetothefair/event-series": "*"
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241230.0",
@@ -115,7 +115,7 @@
     "husky": "^9.1.7",
     "jsdom": "^24.0.0",
     "lint-staged": "^16.4.0",
-    "next": "^15.5.19",
+    "next": "15.5.25",
     "postcss": "^8",
     "prettier": "^3.8.1",
     "tailwindcss": "^3.4.1",
