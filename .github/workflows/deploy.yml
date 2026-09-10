@@ -1,9 +1,32 @@
 name: Deploy to Cloudflare
 
+# OPE-901 — the deploy is GATED ON CI. It used to trigger on `push: main`,
+# independently of ci.yml, so both ran in parallel and the deploy never looked
+# at the test result: a red commit on main applied D1 migrations to production
+# and shipped. `main` carries no branch protection either (verified 2026-09-10:
+# the branch-protection API returns 404 "Branch not protected"), so nothing
+# upstream was enforcing green merges — the only thing standing between a
+# failing test and production was whoever pressed merge.
+#
+# `workflow_run` fires after CI *completes*; the `if:` on d1-migrate below
+# admits only `conclusion == 'success'`. deploy-worker and deploy-mcp-server
+# already `needs: d1-migrate`, so both are skipped with it.
+#
+# ⚠️ Every checkout in this file must use the triggering run's head SHA. A
+# `workflow_run` event checks out the default branch by default, which is the
+# right content only by coincidence and the wrong content the moment two
+# commits land close together.
 on:
-  push:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
+    inputs:
+      reason:
+        description: "Why this production deploy is being run by hand (bypasses the CI gate)"
+        required: true
+        type: string
 
 concurrency:
   group: deploy-production
@@ -21,6 +44,13 @@ jobs:
   # push to main, even when no migration files changed.
   d1-migrate:
     name: Apply D1 migrations
+    # OPE-901 — the gate. A manual run is a deliberate act and carries a reason;
+    # an automatic run must be a SUCCESSFUL CI run. Anything else (failure,
+    # cancelled, timed_out, skipped) falls through to no deploy, which is the
+    # safe direction for a mistake in this expression to fail in.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -30,6 +60,10 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
+        with:
+          # OPE-901 — the commit CI actually tested. Empty on workflow_dispatch,
+          # where the fallback is the branch this run was dispatched against.
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -73,6 +107,10 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
+        with:
+          # OPE-901 — the commit CI actually tested. Empty on workflow_dispatch,
+          # where the fallback is the branch this run was dispatched against.
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -232,6 +270,10 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
+        with:
+          # OPE-901 — the commit CI actually tested. Empty on workflow_dispatch,
+          # where the fallback is the branch this run was dispatched against.
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
