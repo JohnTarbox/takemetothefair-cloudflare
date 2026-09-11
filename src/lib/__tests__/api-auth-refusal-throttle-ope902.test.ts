@@ -26,7 +26,20 @@ vi.mock("@/lib/cloudflare", () => ({
 
 vi.mock("@/lib/auth", () => ({ auth: vi.fn(async () => null) }));
 
-const logError = vi.fn(async () => {});
+/**
+ * Typed to the shape the recorder actually calls, so `mock.calls[0][1]` is a
+ * real tuple element rather than an index into `[]` — the zero-arg version of
+ * this mock typechecked under vitest and failed `npm run typecheck`.
+ */
+interface LoggedEntry {
+  level: string;
+  source: string;
+  message: string;
+  statusCode: number;
+  route: string;
+  context: Record<string, unknown>;
+}
+const logError = vi.fn(async (_db: unknown, _entry: LoggedEntry) => {});
 vi.mock("@/lib/logger", () => ({ logError }));
 
 /** What the burst binding will answer, and what keys it was asked about. */
@@ -169,8 +182,7 @@ describe("the missing-binding branch fails CLOSED on a deployed Worker", () => {
 describe("the record describes the PRESENTED value and nothing about the real secret", () => {
   async function contextOf(): Promise<Record<string, unknown>> {
     await refuseAndSettle();
-    const arg = logError.mock.calls[0][1] as { context: Record<string, unknown> };
-    return arg.context;
+    return logError.mock.calls[0][1].context;
   }
 
   it("no longer carries the real key's length or fingerprint", async () => {
