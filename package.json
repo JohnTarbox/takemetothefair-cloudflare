@@ -12,13 +12,13 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit",
-    "typecheck:mcp": "tsc --noEmit -p mcp-server/tsconfig.json",
+    "typecheck": "NODE_OPTIONS=--max-old-space-size=4096 tsc --noEmit",
+    "typecheck:mcp": "NODE_OPTIONS=--max-old-space-size=4096 tsc --noEmit -p mcp-server/tsconfig.json",
     "typecheck:all": "npm run typecheck && npm run typecheck:mcp",
     "cf:build": "opennextjs-cloudflare build",
     "cf:preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "cf:deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
-    "cf:typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts",
+    "cf:typegen": "wrangler types --env-interface CloudflareEnv --strict-vars false cloudflare-env.d.ts && cd mcp-server && wrangler types --env-interface WorkerEnv --strict-vars false worker-env.d.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "wrangler d1 migrations apply takemetothefair-db --local",
     "db:migrate:prod": "wrangler d1 migrations apply takemetothefair-db --remote",
@@ -47,7 +47,8 @@
     "gvalidate:urls": "npx tsx gvalidate/index.ts --urls-only",
     "prepare": "husky",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "cf:typecheck": "wrangler types --env-interface CloudflareEnv --strict-vars false cloudflare-env.d.ts --check && cd mcp-server && wrangler types --env-interface WorkerEnv --strict-vars false worker-env.d.ts --check"
   },
   "lint-staged": {
     "*.{ts,tsx,js,jsx}": [
@@ -97,7 +98,6 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20260907.1",
     "@eslint/eslintrc": "^3.3.5",
     "@opennextjs/cloudflare": "^1.20.6",
     "@playwright/test": "^1.40.0",

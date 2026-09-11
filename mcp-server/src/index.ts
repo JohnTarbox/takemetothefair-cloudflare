@@ -105,112 +105,125 @@ import type { UserProps } from "./oauth/utils.js";
 // EmailGateEnv. It previously declared neither, which is a large part of why
 // EMAIL_REPLY_ENABLED had no single enforcement point: three modules each read
 // it through a local interface of their own and nothing tied them together.
-interface Env extends EmailGateEnv {
-  DB: D1Database;
-  OAUTH_KV: KVNamespace;
-  MCP_OBJECT: DurableObjectNamespace;
-  MAIN_APP_URL: string;
-  INTERNAL_API_KEY: string;
-  // K36 (2026-06-25) — outbound CAN-SPAM footer. MAILING_ADDRESS is the
-  // physical postal address (§5(a)(5)); UNSUBSCRIBE_SECRET signs the one-click
-  // unsubscribe token (falls back to INTERNAL_API_KEY when unset). Both
-  // optional — set MAILING_ADDRESS before sending real outbound mail at volume.
-  MAILING_ADDRESS?: string;
-  UNSUBSCRIBE_SECRET?: string;
-  // Optional Pages service binding — bound in production via wrangler.toml,
-  // typically absent in local dev. When present, internal API calls (IndexNow
-  // ping, future cross-Worker calls) skip the public-internet round-trip.
-  MAIN_APP?: Fetcher;
-  // Cloudflare Queues — producer side. Same bindings as the main app, so
-  // MCP tools can enqueue work to the same consumer (this Worker, below).
-  EMAIL_JOBS?: Queue;
-  /**
-   * OPE-357 — the STOP-gate on mailing STRANGERS.
-   *
-   * Deliberately separate from EMAIL_REPLY_ENABLED. That flag governs replies to
-   * people who wrote to a lane we understood; this one governs asking someone we
-   * could not place "which fair did you mean?". Sharing a flag would mean the day
-   * somebody enables ordinary replies, we also silently start mailing unknown
-   * senders — a customer-facing behaviour change nobody asked for, arriving as a
-   * side effect. When not "true" the mail is still stored, queued and forwarded
-   * to admin; only the outbound question is withheld.
-   */
-  UNROUTED_ASK_ENABLED?: string;
-  INDEXNOW_PINGS?: Queue;
-  // GW1.1 (2026-06-03) — ingest_addverify discrepancy capture. Producer
-  // here is used by the /api/admin/internal/enqueue-discrepancy proxy
-  // (Pages → MCP HTTP hop); consumer drains and writes via captureDiscrepancy.
-  EVENT_DISCREPANCIES?: Queue;
-  // SYN1 (2026-06-12) — syndication change triggers. Producer (MCP update_*
-  // tools + main-app PATCH routes) and consumer (handleSyndicationBatch) both
-  // bound here.
-  SYNDICATION_CHANGES?: Queue;
-  // I1 (2026-06-13) — vendor-enrichment jobs. Producer (nightly cron selector +
-  // enrich_vendor tool) and consumer (handleEnrichmentBatch) both bound here.
-  VENDOR_ENRICHMENT?: Queue;
-  // OPE-36 (2026-07-01) — promoter-enrichment jobs. Producer (nightly selector +
-  // enrich_promoter tool) and consumer (handlePromoterEnrichmentBatch) bound here.
-  PROMOTER_ENRICHMENT?: Queue;
-  // I1 — Browser-Rendering REST credentials for the enrichment fetch path.
-  // Account id is a [vars] entry; the token is a secret (same value the main
-  // app holds). When the token is unset the BR escalation no-ops cleanly.
-  CLOUDFLARE_ACCOUNT_ID?: string;
-  CLOUDFLARE_BROWSER_RENDERING_TOKEN?: string;
-  // I1 — "false" enables Phase-2 auto-merge; anything else (incl. unset) keeps
-  // the Phase-1 dry-run-only behavior.
-  ENRICHMENT_DRY_RUN?: string;
-  // Cloudflare Email Service outbound binding (public beta). The EMAIL_JOBS
-  // consumer uses this to send transactional/auto-reply mail. Bound via
-  // `[[send_email]]` in wrangler.toml — no API key needed.
-  EMAIL?: SendEmail;
-  // IndexNow API key — same pattern, for the queue consumer to call
-  // api.indexnow.org directly without going through the main app.
-  INDEXNOW_KEY?: string;
-  // Where inbound emails are forwarded when we can't process them
-  // (parse failure, no URL, extract/submit failure). Must be a verified
-  // destination address in Cloudflare Email Routing. Set via
-  // `wrangler secret put SUBMIT_ADMIN_FORWARD` (or as a [vars] entry).
-  SUBMIT_ADMIN_FORWARD?: string;
-  // Cloudflare Workflows bindings. SCHEMA_ORG_SYNC is also reachable
-  // from Pages via the HTTP escape hatch at
-  // /api/admin/workflows/schema-org-sync/*. The other two are
-  // cron-only (fired from scheduled() below).
-  SCHEMA_ORG_SYNC: Workflow<SchemaOrgSyncParams>;
-  RECOMMENDATIONS_SCAN: Workflow<RecommendationsScanParams>;
-  EVENT_DATE_DRIFT: Workflow<EventDateDriftParams>;
-  /** Inbound email orchestrator. Created from email() entrypoint, one
-   *  instance per received message. See workflows/inbound-email.ts. */
-  INBOUND_EMAIL: Workflow<InboundEmailParams>;
-  // Build fingerprint — injected by `wrangler deploy --var` at deploy time.
-  // Empty in local dev; populated in production so `whoami` can answer
-  // "which bundle is the server running?" without a client round-trip.
-  GIT_SHA?: string;
-  BUILD_TIME?: string;
-  // A3 / PR-6 (2026-06-01 EVE) — Slack incoming-webhook URL for technical
-  // alerts (KPI alerts + dedup-sweep canary). Set via
-  // `wrangler secret put SLACK_WEBHOOK_URL_TECHNICAL` on the MCP Worker.
-  // Same channel as the main app's SLACK_WEBHOOK_URL_TECHNICAL secret
-  // (which feeds src/lib/kpi-alerts.ts); they're independently bound
-  // per-artifact per [[feedback_pages_secret_requires_redeploy]]. When
-  // unset, the dedup canary no-ops cleanly (logs configuration note,
-  // never throws), so local dev / CI without secrets keeps working.
-  SLACK_WEBHOOK_URL_TECHNICAL?: string;
-  // PR-8 (2026-06-02) — Email alternative to Slack for the dedup-sweep
-  // canary. Set to a destination email address via
-  // `wrangler secret put ALERT_EMAIL_TECHNICAL` on the MCP Worker. When
-  // set, RED/YELLOW canary transitions push to env.EMAIL_JOBS for
-  // delivery via the same queue-consumer path that handles every other
-  // outbound MCP email. Independent of the Slack webhook — set either,
-  // both, or neither.
-  ALERT_EMAIL_TECHNICAL?: string;
-  // OPE-68 (2026-07-03) — shared vendor-assets R2 bucket (same bucket the main
-  // app binds as VENDOR_ASSETS). The email() entrypoint persists inbound
-  // poster/PDF attachment bytes here at receive-time; the inbound-email
-  // Workflow reads them back to OCR via env.AI.toMarkdown. Optional so unit
-  // tests / non-R2 environments can omit it — capture + OCR no-op gracefully
-  // when unbound.
-  VENDOR_ASSETS?: R2Bucket;
-}
+/**
+ * OPE-906 — the hand-written half of this Worker's env.
+ *
+ * `WorkerEnv` is GENERATED from mcp-server/wrangler.toml (`npm run cf:typegen`)
+ * and is the source of truth for every binding and `[vars]` entry. Extending it
+ * means a binding added to the config appears here without anyone remembering
+ * to mirror it — which is exactly what had stopped happening.
+ *
+ * The drift this replaced, reported by tsc the moment the hand-written version
+ * was checked against the real config: it was missing SIX real bindings —
+ * AI, PROMOTER_OUTREACH_ENABLED, OPERATOR_OUTBOUND_ENABLED,
+ * SPAM_EVENT_RECOVERY_ENABLED, and two more. Code reaching for any of those got
+ * a type error or an `as unknown as` cast, which is how the casts accumulated.
+ *
+ * What stays hand-written below is only what wrangler cannot know: SECRETS
+ * (never in wrangler.toml) and optional vars that may be unset.
+ */
+type Env = WorkerEnv &
+  EmailGateEnv & {
+    INTERNAL_API_KEY: string;
+    // K36 (2026-06-25) — outbound CAN-SPAM footer. MAILING_ADDRESS is the
+    // physical postal address (§5(a)(5)); UNSUBSCRIBE_SECRET signs the one-click
+    // unsubscribe token (falls back to INTERNAL_API_KEY when unset). Both
+    // optional — set MAILING_ADDRESS before sending real outbound mail at volume.
+    MAILING_ADDRESS?: string;
+    UNSUBSCRIBE_SECRET?: string;
+    // Optional Pages service binding — bound in production via wrangler.toml,
+    // typically absent in local dev. When present, internal API calls (IndexNow
+    // ping, future cross-Worker calls) skip the public-internet round-trip.
+    MAIN_APP?: Fetcher;
+    // Cloudflare Queues — producer side. Same bindings as the main app, so
+    // MCP tools can enqueue work to the same consumer (this Worker, below).
+    EMAIL_JOBS?: Queue;
+    /**
+     * OPE-357 — the STOP-gate on mailing STRANGERS.
+     *
+     * Deliberately separate from EMAIL_REPLY_ENABLED. That flag governs replies to
+     * people who wrote to a lane we understood; this one governs asking someone we
+     * could not place "which fair did you mean?". Sharing a flag would mean the day
+     * somebody enables ordinary replies, we also silently start mailing unknown
+     * senders — a customer-facing behaviour change nobody asked for, arriving as a
+     * side effect. When not "true" the mail is still stored, queued and forwarded
+     * to admin; only the outbound question is withheld.
+     */
+    UNROUTED_ASK_ENABLED?: string;
+    INDEXNOW_PINGS?: Queue;
+    // GW1.1 (2026-06-03) — ingest_addverify discrepancy capture. Producer
+    // here is used by the /api/admin/internal/enqueue-discrepancy proxy
+    // (Pages → MCP HTTP hop); consumer drains and writes via captureDiscrepancy.
+    EVENT_DISCREPANCIES?: Queue;
+    // SYN1 (2026-06-12) — syndication change triggers. Producer (MCP update_*
+    // tools + main-app PATCH routes) and consumer (handleSyndicationBatch) both
+    // bound here.
+    SYNDICATION_CHANGES?: Queue;
+    // I1 (2026-06-13) — vendor-enrichment jobs. Producer (nightly cron selector +
+    // enrich_vendor tool) and consumer (handleEnrichmentBatch) both bound here.
+    VENDOR_ENRICHMENT?: Queue;
+    // OPE-36 (2026-07-01) — promoter-enrichment jobs. Producer (nightly selector +
+    // enrich_promoter tool) and consumer (handlePromoterEnrichmentBatch) bound here.
+    PROMOTER_ENRICHMENT?: Queue;
+    // I1 — Browser-Rendering REST credentials for the enrichment fetch path.
+    // Account id is a [vars] entry; the token is a secret (same value the main
+    // app holds). When the token is unset the BR escalation no-ops cleanly.
+    CLOUDFLARE_ACCOUNT_ID?: string;
+    CLOUDFLARE_BROWSER_RENDERING_TOKEN?: string;
+    // I1 — "false" enables Phase-2 auto-merge; anything else (incl. unset) keeps
+    // the Phase-1 dry-run-only behavior.
+    ENRICHMENT_DRY_RUN?: string;
+    // Cloudflare Email Service outbound binding (public beta). The EMAIL_JOBS
+    // consumer uses this to send transactional/auto-reply mail. Bound via
+    // `[[send_email]]` in wrangler.toml — no API key needed.
+    EMAIL?: SendEmail;
+    // IndexNow API key — same pattern, for the queue consumer to call
+    // api.indexnow.org directly without going through the main app.
+    INDEXNOW_KEY?: string;
+    // Where inbound emails are forwarded when we can't process them
+    // (parse failure, no URL, extract/submit failure). Must be a verified
+    // destination address in Cloudflare Email Routing. Set via
+    // `wrangler secret put SUBMIT_ADMIN_FORWARD` (or as a [vars] entry).
+    SUBMIT_ADMIN_FORWARD?: string;
+    // Cloudflare Workflows bindings. SCHEMA_ORG_SYNC is also reachable
+    // from Pages via the HTTP escape hatch at
+    // /api/admin/workflows/schema-org-sync/*. The other two are
+    // cron-only (fired from scheduled() below).
+    SCHEMA_ORG_SYNC: Workflow<SchemaOrgSyncParams>;
+    RECOMMENDATIONS_SCAN: Workflow<RecommendationsScanParams>;
+    EVENT_DATE_DRIFT: Workflow<EventDateDriftParams>;
+    /** Inbound email orchestrator. Created from email() entrypoint, one
+     *  instance per received message. See workflows/inbound-email.ts. */
+    INBOUND_EMAIL: Workflow<InboundEmailParams>;
+    // Build fingerprint — injected by `wrangler deploy --var` at deploy time.
+    // Empty in local dev; populated in production so `whoami` can answer
+    // "which bundle is the server running?" without a client round-trip.
+    GIT_SHA?: string;
+    BUILD_TIME?: string;
+    // A3 / PR-6 (2026-06-01 EVE) — Slack incoming-webhook URL for technical
+    // alerts (KPI alerts + dedup-sweep canary). Set via
+    // `wrangler secret put SLACK_WEBHOOK_URL_TECHNICAL` on the MCP Worker.
+    // Same channel as the main app's SLACK_WEBHOOK_URL_TECHNICAL secret
+    // (which feeds src/lib/kpi-alerts.ts); they're independently bound
+    // per-artifact per [[feedback_pages_secret_requires_redeploy]]. When
+    // unset, the dedup canary no-ops cleanly (logs configuration note,
+    // never throws), so local dev / CI without secrets keeps working.
+    SLACK_WEBHOOK_URL_TECHNICAL?: string;
+    // PR-8 (2026-06-02) — Email alternative to Slack for the dedup-sweep
+    // canary. Set to a destination email address via
+    // `wrangler secret put ALERT_EMAIL_TECHNICAL` on the MCP Worker. When
+    // set, RED/YELLOW canary transitions push to env.EMAIL_JOBS for
+    // delivery via the same queue-consumer path that handles every other
+    // outbound MCP email. Independent of the Slack webhook — set either,
+    // both, or neither.
+    ALERT_EMAIL_TECHNICAL?: string;
+    // OPE-68 (2026-07-03) — shared vendor-assets R2 bucket (same bucket the main
+    // app binds as VENDOR_ASSETS). The email() entrypoint persists inbound
+    // poster/PDF attachment bytes here at receive-time; the inbound-email
+    // Workflow reads them back to OCR via env.AI.toMarkdown. Optional so unit
+    // tests / non-R2 environments can omit it — capture + OCR no-op gracefully
+    // when unbound.
+  };
 
 // Re-export for the canary helper, which needs the same Env type.
 export type { Env };
