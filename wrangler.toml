@@ -4,15 +4,35 @@
 # *gzipped* size (~3.85 MiB here vs 10 MiB paid) gives real headroom.
 name = "meetmeatthefair-app"
 main = ".open-next/worker.js"
-compatibility_date = "2026-06-10"
+# OPE-905 — bumped 2026-06-10 -> 2026-09-10.
+compatibility_date = "2026-09-10"
+# OPE-905 — so a production stack trace names our source, not the bundle.
+upload_source_maps = true
 compatibility_flags = ["nodejs_compat"]
 
 [assets]
 directory = ".open-next/assets"
 binding = "ASSETS"
 
+# OPE-905 — logs at full rate, traces sampled. Cloudflare's Workers Best
+# Practices (2026-02) asks for both with an explicit head_sampling_rate rather
+# than the bare `enabled = true` this file used to carry.
+#
+# logs 1.0 / traces 0.1 chosen deliberately: a log line is what you read during
+# an incident and this Worker's volume makes 100% affordable, while traces are
+# per-request spans whose value is statistical — 10% is enough to see a latency
+# shape and cheap enough not to think about. If a specific investigation needs
+# more, raise it for that investigation and put it back.
 [observability]
 enabled = true
+
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+
+[observability.traces]
+enabled = true
+head_sampling_rate = 0.1
 
 # Smart Placement: run near the slow dependency (D1) rather than the user.
 [placement]
