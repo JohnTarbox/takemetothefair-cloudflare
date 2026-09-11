@@ -351,7 +351,14 @@ jobs:
           node-version: "22"
           cache: "npm"
 
+      # The repo pulls a PRIVATE GitHub Packages dep (@johntarbox/calendar-grid).
+      # Without NODE_AUTH_TOKEN `npm ci` dies with E401 before any step of this
+      # job runs — which is exactly how this job failed on its first attempt:
+      # the drift check itself was never reached, and the red tick said
+      # "Generated env types are current: fail" anyway.
       - name: Install dependencies
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm ci
 
       # OPE-906 — `wrangler types --check` validates the committed .d.ts against
