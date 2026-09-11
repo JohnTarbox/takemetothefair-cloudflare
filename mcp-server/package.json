@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "^0.10.3",
-    "@modelcontextprotocol/sdk": "^1.12.1",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@takemetothefair/constants": "*",
     "@takemetothefair/datetime": "*",
     "@takemetothefair/db-schema": "*",
@@ -20,11 +20,11 @@
     "@takemetothefair/utils": "*",
     "@takemetothefair/validation": "*",
     "@takemetothefair/vendor-linking": "*",
-    "agents": "^0.8.7",
+    "agents": "^0.22.0",
     "drizzle-orm": "^0.45.2",
-    "hono": "^4.12.9",
+    "hono": "^4.13.7",
     "postal-mime": "^2.7.4",
-    "zod": "^4.3.6",
+    "zod": "^4.5.4",
     "@takemetothefair/event-series": "*"
   },
   "devDependencies": {
