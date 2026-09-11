@@ -361,6 +361,12 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm ci
 
+      # ⚠️ This job is the AUTHORITY on the generated types, and a developer box
+      # will disagree with it. `--check` compares a config hash that covers local
+      # `.env` / `.dev.vars`, so anyone holding those sees "out of date" locally.
+      # Regenerating to silence that is what turns this red. Regenerate with
+      # neither file present. (Three CI failures were spent learning this.)
+      #
       # OPE-906 — `wrangler types --check` validates the committed .d.ts against
       # the real wrangler config WITHOUT regenerating it. That matters: a
       # regenerate-then-`git diff` check can pass by writing the very file it is

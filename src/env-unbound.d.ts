@@ -56,8 +56,20 @@ interface CloudflareEnv {
    * date"); with it absent, exit 0. The committed types therefore describe the
    * COMMITTED CONFIG only, and these are declared by hand.
    *
-   * ⚠️ Run `npm run cf:typegen` with no `.dev.vars` present, or you will commit
-   * the shape of your own local secrets file.
+   * ⚠️ Run `npm run cf:typegen` with NEITHER `.env` NOR `.dev.vars` present.
+   *
+   * `wrangler types --check` compares a CONFIG HASH embedded in the generated
+   * file's header, and that hash covers the resolved config INCLUDING local env
+   * files. Generating with yours present bakes in a hash CI cannot reproduce:
+   *
+   *     with .env present   header hash ca1c23c3…   CI computes 925bfd5d…  ✘
+   *     with both absent    header hash 925bfd5d…   CI computes 925bfd5d…  ✔
+   *
+   * Consequence worth knowing before you "fix" it: on a developer box that HAS
+   * those files, `npm run cf:typecheck` reports "out of date" and that is
+   * CORRECT AND EXPECTED. Regenerating to make your local check green is what
+   * turns CI red. CI is the authority here, because CI is the only environment
+   * every contributor shares.
    */
   GOOGLE_MAPS_API_KEY?: string;
   GA4_MEASUREMENT_ID?: string;
