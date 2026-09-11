@@ -175,25 +175,26 @@ const BURST_POLICIES: ReadonlySet<RateLimitEndpoint> = new Set([
 /** The binding's period is fixed at 60s in wrangler.toml; used for Retry-After. */
 const BURST_WINDOW_SECONDS = 60;
 
-interface RateLimiterBinding {
+export interface RateLimiterBinding {
   limit(options: { key: string }): Promise<{ success: boolean }>;
 }
 
 /**
- * ⚠️ The KV layer is a SOFT, BEST-EFFORT quota and must not be read as a hard
- * cap (OPE-904, option (a) for the fourteen policies that have only this).
+ * The Workers Rate Limiting binding — a HARD cap enforced by the runtime, in
+ * contrast to the KV quota below.
  *
- * It is a read-modify-write across an eventually-consistent store: concurrent
- * requests read the same count and each writes back its own view, so increments
- * are LOST under exactly the burst it exists to stop. Measured on production
- * 2026-09-10: 81 origin-reaching requests against a 60/hour cap produced 27
- * recorded increments and zero refusals.
+ * ⚠️ This docblock previously sat here describing the KV layer's lossiness,
+ * which is the opposite of what this binding does. It has been moved onto
+ * `getRateLimitKv`, where it belongs. The distinction is load-bearing: callers
+ * choose this binding precisely when they need a cap that cannot be outrun.
  *
- * It still earns its place — it is the only thing that can express an hourly or
- * daily quota, which the Workers binding cannot (period is 10s or 60s only) —
- * but treat it as attrition, not enforcement.
+ * The binding is configured once in `wrangler.toml` (`limit = 5`,
+ * `period = 60`) and that budget applies PER KEY, so unrelated callers get
+ * independent buckets by choosing distinct key namespaces. Two use it today:
+ * the eight `BURST_POLICIES` above, and the internal-key refusal log in
+ * `api-auth.ts`.
  */
-function getBurstLimiter(): RateLimiterBinding | null {
+export function getBurstLimiter(): RateLimiterBinding | null {
   try {
     const { env } = getCloudflareContext();
     return (env as { BURST_LIMITER?: RateLimiterBinding }).BURST_LIMITER ?? null;
@@ -229,7 +230,20 @@ function getClientIp(request: Request): string {
 }
 
 /**
- * Get the Cloudflare KV binding for rate limiting
+ * Get the Cloudflare KV binding for rate limiting.
+ *
+ * ⚠️ The KV layer is a SOFT, BEST-EFFORT quota and must not be read as a hard
+ * cap (OPE-904, option (a) for the fourteen policies that have only this).
+ *
+ * It is a read-modify-write across an eventually-consistent store: concurrent
+ * requests read the same count and each writes back its own view, so increments
+ * are LOST under exactly the burst it exists to stop. Measured on production
+ * 2026-09-10: 81 origin-reaching requests against a 60/hour cap produced 27
+ * recorded increments and zero refusals.
+ *
+ * It still earns its place — it is the only thing that can express an hourly or
+ * daily quota, which the Workers binding cannot (period is 10s or 60s only) —
+ * but treat it as attrition, not enforcement.
  */
 function getRateLimitKv(): KVNamespace | null {
   try {
