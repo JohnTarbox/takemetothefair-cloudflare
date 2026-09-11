@@ -53,7 +53,7 @@ import { registerApiTokenTools } from "./tools/admin-api-tokens.js";
  *  path only — it caught exactly that here before this alias existed. */
 type GateEnv = Record<string, string | undefined>;
 import { registerCreateClaimInviteTool } from "./tools/admin-claim-invite.js";
-import { registerClaimReviewTools } from "./tools/admin-claim-review.js";
+import { registerClaimReviewTools, type ClaimReviewEnv } from "./tools/admin-claim-review.js";
 import { registerResolveHeldPhotosTool } from "./tools/admin-resolve-held-photos.js";
 import { registerReplayInboundAttachmentTool } from "./tools/admin-replay-inbound-attachment.js";
 import { registerAnalyticsTools } from "./tools/analytics.js";
@@ -393,7 +393,7 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
         // OPE-67 (2026-07-02) — claim tooling: create_claim_invite (cold invite)
         // + list_claims / approve_claim / reject_claim (review queue).
         registerCreateClaimInviteTool(this.server, db, auth, this.env);
-        registerClaimReviewTools(this.server, db, auth);
+        registerClaimReviewTools(this.server, db, auth, this.env as unknown as ClaimReviewEnv);
         // OPE-254 (2026-07-18) — resolve_held_photos (recover held photo batches).
         registerResolveHeldPhotosTool(this.server, db, auth, this.env);
         // OPE-469 (2026-08-18) — replay_inbound_attachment. Re-runs a RETAINED
@@ -682,7 +682,7 @@ async function handleLegacyMcpRequest(
       registerSendGatesTool(server, db, auth, env as unknown as GateEnv);
       registerApiTokenTools(server, db, auth);
       registerCreateClaimInviteTool(server, db, auth, env);
-      registerClaimReviewTools(server, db, auth);
+      registerClaimReviewTools(server, db, auth, env as unknown as ClaimReviewEnv);
       registerResolveHeldPhotosTool(server, db, auth, env);
       // OPE-469 — MUST be registered here as well as in the OAuth path above.
       // This file has TWO registration lists: the McpAgent class (OAuth) and
