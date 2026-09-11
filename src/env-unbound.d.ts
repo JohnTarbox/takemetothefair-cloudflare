@@ -1,5 +1,5 @@
 /**
- * OPE-906 — env keys the code READS that have no binding behind them.
+ * OPE-906 — env keys the code READS that `wrangler types` cannot portably emit.
  *
  * Everything else in `CloudflareEnv` is now GENERATED from the real wrangler
  * config into `cloudflare-env.d.ts` (`npm run cf:typegen`). This file is for the
@@ -42,4 +42,24 @@ interface CloudflareEnv {
    * file comment above before relying on this being flippable.
    */
   ALLOW_GOOGLE_PLACES_PHOTOS?: string;
+
+  /**
+   * ## Secrets — declared here because generated types cannot carry them
+   *
+   * These three are real secrets on the deployed Worker (`wrangler secret
+   * list`), but they are NOT in `wrangler.toml`. `wrangler types` only sees
+   * them when a local, gitignored `.dev.vars` happens to exist — so generating
+   * with one present produces a file CI can never reproduce, and the drift
+   * check goes red for everyone but the developer who made it.
+   *
+   * Measured 2026-09-11: with `.dev.vars` present `--check` exits 1 ("out of
+   * date"); with it absent, exit 0. The committed types therefore describe the
+   * COMMITTED CONFIG only, and these are declared by hand.
+   *
+   * ⚠️ Run `npm run cf:typegen` with no `.dev.vars` present, or you will commit
+   * the shape of your own local secrets file.
+   */
+  GOOGLE_MAPS_API_KEY?: string;
+  GA4_MEASUREMENT_ID?: string;
+  GA4_MP_API_SECRET?: string;
 }
