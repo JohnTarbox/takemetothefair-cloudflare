@@ -12,7 +12,7 @@
     "test": "vitest --run --passWithNoTests"
   },
   "devDependencies": {
-    "vitest": "^2.1.9"
+    "vitest": "^5.0.0"
   },
   "dependencies": {
     "@takemetothefair/db-schema": "*",
