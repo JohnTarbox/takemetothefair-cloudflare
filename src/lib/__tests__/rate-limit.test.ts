@@ -19,6 +19,13 @@ interface FakeKv {
 
 interface FakeEnv {
   RATE_LIMIT_KV?: FakeKv;
+  /** OPE-931 — the real deployed-Worker signal. */
+  DEPLOY_ENV?: string;
+  /**
+   * OPE-931 — kept ONLY so the test below can prove this no longer works.
+   * `CF_PAGES` is a Cloudflare PAGES variable; this app has been a Worker
+   * since the 2026-06-10 cutover and never receives it.
+   */
   CF_PAGES?: string;
 }
 
@@ -56,7 +63,7 @@ describe("checkRateLimit", () => {
 
   describe("KV unavailable", () => {
     it("allows the request in dev when KV binding is missing", async () => {
-      fakeEnv = {}; // no RATE_LIMIT_KV, no CF_PAGES → dev fallback
+      fakeEnv = {}; // no RATE_LIMIT_KV, no DEPLOY_ENV → dev fallback
       const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
       const result = await checkRateLimit(makeRequest(), "newsletter-subscribe");
@@ -68,10 +75,15 @@ describe("checkRateLimit", () => {
     });
 
     it("denies the request in production when KV binding is missing", async () => {
-      // CF_PAGES presence is the runtime signal that we're on Cloudflare;
-      // we never want to silently fail-open in prod since that defeats
+      // OPE-931 — DEPLOY_ENV is the runtime signal that we're on the deployed
+      // Worker. We never want to silently fail-open in prod, since that defeats
       // the whole purpose of the limiter.
-      fakeEnv = { CF_PAGES: "1" };
+      //
+      // This assertion previously used `CF_PAGES: "1"`, which encoded the SAME
+      // false assumption as the code it was testing — so it passed in both
+      // directions and could never have caught the defect. See the regression
+      // test at the bottom of this file.
+      fakeEnv = { DEPLOY_ENV: "production" };
       const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
       const result = await checkRateLimit(makeRequest(), "newsletter-subscribe");
@@ -272,5 +284,46 @@ describe("rateLimitResponse", () => {
 
     const response = rateLimitResponse(result);
     expect(response.headers.get("Retry-After")).toBe("0");
+  });
+});
+
+describe("OPE-931 — the deployed-Worker signal", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAuth.mockResolvedValue(null);
+  });
+
+  it("REFUSES when deployed and the KV binding is missing", () => {
+    // The case the old suite never had: production + missing binding must fail
+    // CLOSED. With the pre-OPE-931 predicate this returned `allowed: true`.
+    fakeEnv = { DEPLOY_ENV: "production" };
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    return checkRateLimit(makeRequest(), "newsletter-subscribe").then((result) => {
+      expect(result.allowed).toBe(false);
+      expect(result.remaining).toBe(0);
+      errSpy.mockRestore();
+    });
+  });
+
+  it("does NOT treat CF_PAGES as a production signal any more", async () => {
+    // The regression guard. `CF_PAGES` was a Pages variable; a Worker never
+    // sets it, so honouring it meant the fail-closed branch was unreachable in
+    // production. If someone reinstates that predicate, this goes red.
+    fakeEnv = { CF_PAGES: "1" };
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const result = await checkRateLimit(makeRequest(), "newsletter-subscribe");
+    // Not deployed as far as we are concerned → dev fallback, request allowed.
+    expect(result.allowed).toBe(true);
+    warnSpy.mockRestore();
+  });
+
+  it("a wrong DEPLOY_ENV value is not production either", async () => {
+    // Pins the comparison to the exact string rather than truthiness, so a
+    // stray `DEPLOY_ENV=preview` cannot start failing requests closed.
+    fakeEnv = { DEPLOY_ENV: "preview" };
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const result = await checkRateLimit(makeRequest(), "newsletter-subscribe");
+    expect(result.allowed).toBe(true);
+    warnSpy.mockRestore();
   });
 });
