@@ -138,7 +138,10 @@ export interface EmailHandlerEnv {
 }
 
 // ForwardableEmailMessage is global per @cloudflare/workers-types.
-export type { ForwardableEmailMessage } from "@cloudflare/workers-types";
+// OPE-906 — `ForwardableEmailMessage` is a GLOBAL in the generated runtime
+// types, so it is re-exported from the ambient declaration rather than imported
+// from a package this repo no longer depends on directly.
+export type ForwardableEmailMessage = globalThis.ForwardableEmailMessage;
 
 // Per-sender rate-limit tiers. Daily quota varies by sender's account
 // state. The anonymous floor preserves anti-reflection behavior for
@@ -186,7 +189,7 @@ const ATTACHMENT_MAX_FURNITURE = 2;
 // Entry point — wired from src/index.ts default export
 // ---------------------------------------------------------------------------
 export async function handleInboundEmail(
-  message: import("@cloudflare/workers-types").ForwardableEmailMessage,
+  message: ForwardableEmailMessage,
   env: EmailHandlerEnv,
   ctx: ExecutionContext
 ): Promise<void> {
@@ -1396,7 +1399,7 @@ export async function checkSenderRateLimit(
 // ---------------------------------------------------------------------------
 
 async function forwardToAdminBestEffort(
-  message: import("@cloudflare/workers-types").ForwardableEmailMessage,
+  message: ForwardableEmailMessage,
   env: EmailHandlerEnv,
   reason: string,
   sessionId: string
@@ -2106,7 +2109,7 @@ export async function insertSpamAuditRow(
     /** OPE-764 — resolved once at ingest, spread into the row. */
     senderIdentity: SenderIdentityColumns;
     threadColumns: ThreadColumns;
-    message: import("@cloudflare/workers-types").ForwardableEmailMessage;
+    message: ForwardableEmailMessage;
     parsed: Email;
     attachmentCount: number;
     routing: RoutingDecision;

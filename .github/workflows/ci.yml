@@ -336,3 +336,28 @@ jobs:
           name: smoke-test-report
           path: playwright-report/
           retention-days: 7
+
+  env-types-drift:
+    name: Generated env types are current
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      # OPE-906 — `wrangler types --check` validates the committed .d.ts against
+      # the real wrangler config WITHOUT regenerating it. That matters: a
+      # regenerate-then-`git diff` check can pass by writing the very file it is
+      # meant to be checking if the diff step is ever skipped or mis-scoped.
+      # This one has nothing to write.
+      - name: Check generated env types are up to date
+        run: npm run cf:typecheck
