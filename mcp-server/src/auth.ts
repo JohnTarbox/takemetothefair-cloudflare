@@ -29,6 +29,12 @@ async function hashToken(token: string): Promise<string> {
 export async function authenticateToken(
   db: Db,
   authHeader: string | null,
+  /**
+   * OPE-903 — pass the Worker's ExecutionContext so the `last_used_at` write
+   * survives the response. Optional so existing callers and tests keep
+   * compiling; without it the write is awaited inline instead of dropped.
+   */
+  ctxOrUndefined?: { waitUntil(promise: Promise<unknown>): void }
 ): Promise<AuthContext | null> {
   if (!authHeader?.startsWith("Bearer ")) return null;
 
@@ -42,6 +48,8 @@ export async function authenticateToken(
     .select({
       tokenId: apiTokens.id,
       userId: apiTokens.userId,
+      expiresAt: apiTokens.expiresAt,
+      revokedAt: apiTokens.revokedAt,
     })
     .from(apiTokens)
     .where(eq(apiTokens.tokenHash, tokenHash))
@@ -49,7 +57,15 @@ export async function authenticateToken(
 
   if (tokenRows.length === 0) return null;
 
-  const { tokenId, userId } = tokenRows[0];
+  const { tokenId, userId, expiresAt, revokedAt } = tokenRows[0];
+
+  // OPE-903 — a revoked or expired token is refused exactly like an unknown
+  // one: same `null`, same 401, no hint about which it was. Both columns are
+  // NULL on every pre-existing row, so this changes nothing for them.
+  if (revokedAt !== null && revokedAt !== undefined) return null;
+  if (expiresAt !== null && expiresAt !== undefined && expiresAt.getTime() <= Date.now()) {
+    return null;
+  }
 
   // Get user with role
   const userRows = await db
@@ -65,12 +81,22 @@ export async function authenticateToken(
 
   const user = userRows[0];
 
-  // Update last_used_at (fire-and-forget, don't await)
-  db.update(apiTokens)
+  // OPE-903 — this was `.then(() => {})` with no await and no waitUntil, so
+  // the runtime was free to cancel it the moment the response was sent: the
+  // column meant to answer "is this token still in use?" could silently stop
+  // moving. Hand it to waitUntil when we have a context, and await it when we
+  // do not, so it is never merely hoped for.
+  const touch = db
+    .update(apiTokens)
     .set({ lastUsedAt: new Date() })
     .where(eq(apiTokens.id, tokenId))
     .then(() => {})
     .catch(() => {});
+  if (ctxOrUndefined?.waitUntil) {
+    ctxOrUndefined.waitUntil(touch);
+  } else {
+    await touch;
+  }
 
   const ctx: AuthContext = {
     userId: user.id,

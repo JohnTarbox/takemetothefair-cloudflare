@@ -2278,6 +2278,16 @@ export const apiTokens = sqliteTable("api_tokens", {
   name: text("name").notNull().default("Default"),
   lastUsedAt: integer("last_used_at", { mode: "timestamp" }),
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  /**
+   * OPE-903 — NULL means "never expires". Nullable with no default so every
+   * pre-existing token keeps working until somebody deliberately sets one.
+   */
+  expiresAt: integer("expires_at", { mode: "timestamp" }),
+  /**
+   * OPE-903 — NULL means "not revoked". Set it and the next MCP call using
+   * this token gets the same 401 an unknown token gets.
+   */
+  revokedAt: integer("revoked_at", { mode: "timestamp" }),
 });
 
 // Blog Posts table

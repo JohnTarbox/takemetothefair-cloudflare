@@ -29,6 +29,13 @@
       "when": 1782934102821,
       "tag": "0142_ope37_promoter_enrichment_notice",
       "breakpoints": true
+    },
+    {
+      "idx": 143,
+      "version": "6",
+      "when": 1782934102822,
+      "tag": "0279_ope903_api_token_lifecycle",
+      "breakpoints": true
     }
   ]
 }
