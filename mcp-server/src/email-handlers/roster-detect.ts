@@ -25,6 +25,29 @@ const MAX_ROSTER = 300;
 const MAX_NAME_LEN = 80;
 const MAX_NAME_WORDS = 10;
 
+/**
+ * OPE-943 — the flat numbered form needs a HIGHER floor than MIN_ROSTER.
+ *
+ * The bullet and table forms each carry a delimiter of their own (a bullet
+ * glyph, a pipe). The flat form has none: its only structure is a run of
+ * consecutive integers embedded in running text. Three of those is a shape
+ * ordinary prose produces by accident ("1 ... 2 ... 3 ..."); eight is not.
+ * So the floor is the structure here, not a recall preference.
+ */
+const MIN_FLAT_ROSTER = 8;
+
+/**
+ * OPE-943 — how far past one row's number the next one may be.
+ *
+ * A roster cell is short. Without a bound, a failed search for "47" would scan
+ * to the end of the document and glue whatever digit it found onto the row,
+ * turning a parse failure into a confident wrong answer. The longest real cell
+ * in the New Gloucester specimen is "Martin New Gloucester Public Library"
+ * (36 chars) plus a page break; 120 leaves generous headroom and still fails
+ * closed.
+ */
+const MAX_FLAT_CELL = 120;
+
 function cleanName(raw: string): string {
   let s = raw.trim();
   // Strip surrounding Gmail bold/italic markers (**name**, *name*, _name_).
@@ -81,6 +104,56 @@ const FORM_FIELD_LABELS = new Set([
   "notes",
 ]);
 
+/**
+ * OPE-943 — `env.AI.toMarkdown` prefixes EVERY PDF with a metadata block:
+ *
+ *   # Vendorlist.pdf
+ *   ## Metadata
+ *   - PDFFormatVersion=1.7
+ *   - Author=Jennifer Bragdon
+ *   - Title=masterNGF26.xlsx
+ *   ## Contents
+ *   ### Page 1
+ *   ...
+ *
+ * Those are `- Key=Value` bullets under a heading, and when the FILENAME
+ * carries a roster keyword ("Vendorlist.pdf" → `vendors?`) the bullet path's
+ * heading lookback walks straight past `## Metadata` and finds it. Prod
+ * `9fc287ef` staged all 11 of them as exhibitors — `PDFFormatVersion=1.7`,
+ * `IsLinearized=false`, `Author=…` — while the real 78-space list underneath
+ * was never reached, because the bullet path had already returned.
+ *
+ * This is a property of the OCR renderer, not of that one PDF, so every PDF
+ * roster we will ever read is exposed to it. Strip it before ANY form runs.
+ *
+ * Terminates on the next h1/h2 (`## Contents`). `### Page 1` is h3 and must
+ * NOT terminate the block — hence `#{1,2}` followed by a space, which "###"
+ * cannot match.
+ */
+export function stripToMarkdownMetadata(text: string): string {
+  const lines = text.split(/\r?\n/);
+  const start = lines.findIndex((l) => /^##\s*Metadata\s*$/i.test(l));
+  if (start < 0) return text;
+
+  let end = lines.length;
+  for (let k = start + 1; k < lines.length; k++) {
+    if (/^#{1,2}\s+\S/.test(lines[k])) {
+      end = k;
+      break;
+    }
+  }
+  return [...lines.slice(0, start), ...lines.slice(end)].join("\n");
+}
+
+/**
+ * OPE-943 defence in depth — a `Key=Value` token is machine structure, never a
+ * person or a business. Even with the metadata block stripped above, any
+ * renderer that emits `Producer=Microsoft: Print To PDF` inline would otherwise
+ * read as an exhibitor. Anchored so a legitimate name containing "=" mid-string
+ * is not caught by accident.
+ */
+const KEY_VALUE = /^[A-Za-z][A-Za-z0-9_]*=\S/;
+
 function isPlausibleName(s: string): boolean {
   if (s.length === 0 || s.length > MAX_NAME_LEN) return false;
   if (s.split(/\s+/).length > MAX_NAME_WORDS) return false; // reject prose
@@ -113,6 +186,10 @@ function isPlausibleName(s: string): boolean {
   if (s.includes("**")) return false;
 
   if (FORM_FIELD_LABELS.has(s.toLowerCase())) return false;
+
+  // OPE-943 — `PDFFormatVersion=1.7`, `Author=Jennifer Bragdon`. Machine
+  // structure, not an exhibitor. See KEY_VALUE above.
+  if (KEY_VALUE.test(s)) return false;
 
   // A sentence, not a name: "Stalls 32, 33, and 34." Gated on word count so a
   // legitimate "Smith & Sons Inc." (4 words) still passes.
@@ -201,20 +278,137 @@ export function detectRosterTable(text: string): RosterEntry[] {
 }
 
 /**
+ * OPE-943 — a roster FLATTENED into running text, the third shape.
+ *
+ * `toMarkdown` renders a spreadsheet-printed PDF as one run-on line per page,
+ * with each row's number glued to the END of the previous row's value:
+ *
+ *   # Last Name Activity - Org Name1 Goss Maine Community Robotics2 Danforth
+ *   The Salty Bee Maine3 Gray Animal GNG Animal Hospital4 Smith maine card works5 …
+ *
+ * There is no bullet and no pipe, so neither existing form can see it. The only
+ * structure left is the integer sequence, so that is what this walks: 1, 2, 3 …
+ * taking the text between consecutive numbers as the row.
+ *
+ * **The right-hand boundary is "followed by whitespace", and nothing else.**
+ * The obvious rule — "a row number is not preceded by a digit" — is exactly
+ * wrong on this data. Space 10 is "Lord Squirrely Works 207", so the text reads
+ * `…Works 20711 Lord…` and the correct split is `207` | `11`: the row number IS
+ * preceded by a digit. Same again at `20712`, `4-H10`, and `Dahlia Co.61`.
+ *
+ * Fails closed rather than guessing: the search for the next number is bounded
+ * to MAX_FLAT_CELL characters, so a row that cannot be found ends the roster
+ * instead of reaching across the document for a stray digit.
+ */
+export function detectRosterFlatNumbered(text: string): RosterEntry[] {
+  // A weak keyword gate, carrying much less weight than it does on the bullet
+  // path: the strong signal here is the consecutive run itself (MIN_FLAT_ROSTER).
+  // Scanned over the whole text because the only keyword in the New Gloucester
+  // specimen is the FILENAME heading, `# Vendorlist.pdf` — the column header
+  // ("Last Name Activity - Org Name") carries none.
+  if (!ROSTER_KEYWORD.test(text)) return [];
+
+  // `### Page 2` would otherwise offer a bare "2" followed by a newline, and the
+  // walk would take the page number as row 2.
+  const cleaned = text
+    .split(/\r?\n/)
+    .filter((l) => !/^\s*#{1,6}\s*Page\s+\d+\s*$/i.test(l))
+    .join("\n");
+
+  /** Index of `n` used as a row marker: the whole number, then whitespace. */
+  const findMarker = (n: number, from: number): number => {
+    const needle = String(n);
+    let idx = from;
+    for (;;) {
+      const at = cleaned.indexOf(needle, idx);
+      if (at < 0 || at - from > MAX_FLAT_CELL) return -1;
+      // Whitespace after is what makes this the COMPLETE number: it rules out
+      // "207" when we are looking for "20". A digit BEFORE is allowed, and must
+      // be — see the `20711` case in the doc comment.
+      const after = cleaned[at + needle.length];
+      if (after !== undefined && /\s/.test(after)) return at;
+      idx = at + 1;
+    }
+  };
+
+  const first = findMarker(1, 0);
+  if (first < 0) return [];
+
+  const out: RosterEntry[] = [];
+  const seen = new Set<string>();
+  let n = 1;
+  let valueStart = first + 1;
+
+  for (;;) {
+    const next = findMarker(n + 1, valueStart);
+    // The last row has no following number, so it runs to the end of its LINE.
+    // Not to the end of the text: the specimen trails an unnumbered
+    // "Pelletier 9-1-1" row that would otherwise be glued onto space 78.
+    const rawValue =
+      next < 0
+        ? (cleaned.slice(valueStart).split(/\r?\n/)[0] ?? "")
+        : cleaned.slice(valueStart, next);
+
+    const name = cleanName(rawValue);
+    // An unassigned space is not an exhibitor. Spaces 39/52/63 read "OPEN".
+    if (name.toUpperCase() !== "OPEN" && isPlausibleName(name)) {
+      const key = name.toLowerCase();
+      // Spaces 10/11 and 37/38 are one vendor holding two spaces; the first
+      // position is kept, exactly as the bullet and table forms dedupe.
+      if (!seen.has(key)) {
+        seen.add(key);
+        out.push({ position: n, name, detail: null });
+      }
+    }
+
+    if (next < 0 || out.length >= MAX_ROSTER) break;
+    n += 1;
+    valueStart = next + String(n).length + 1;
+  }
+
+  // `n` is the highest row number REACHED, which is the length of the
+  // consecutive run — the actual structural evidence. `out.length` is smaller
+  // (OPEN rows and duplicates drop out) and gating on it would let a long,
+  // mostly-empty run qualify on a handful of survivors.
+  return n >= MIN_FLAT_ROSTER && out.length >= MIN_ROSTER ? out : [];
+}
+
+/**
  * OPE-405 — the roster in a piece of text, whatever shape it arrived in.
  *
- * Tries the bullet form first (the OPE-176 body-email case), then the markdown
- * table form (an OCR'd PDF placement list). One entry point so a caller cannot
- * accidentally support only the shape it happened to be written for — which is
- * exactly how the attachment half went missing for a year.
+ * Tries the bullet form (the OPE-176 body-email case), the markdown table form
+ * (an OCR'd PDF placement list), and the flat numbered form (OPE-943). One
+ * entry point so a caller cannot accidentally support only the shape it
+ * happened to be written for — which is exactly how the attachment half went
+ * missing for a year.
+ *
+ * **OPE-943 — the STRONGEST form wins, not the first one to return anything.**
+ * This used to return the bullet result the moment it was non-empty, which made
+ * an early weak match permanently mask a later strong one. On prod `9fc287ef`
+ * that cost the whole roster: 11 metadata bullets returned, and the 78-space
+ * list below them was never tried. Stripping the metadata (above) fixes that
+ * one input; ordering by evidence fixes the CLASS, because any 3-item run
+ * anywhere in a document could otherwise outrank a 70-row table beneath it.
+ *
+ * Ties keep the declared order, so the bullet form still wins a genuine tie and
+ * the existing OPE-176/405 expectations are unchanged.
  */
 export function detectRosterEntries(text: string | null | undefined): RosterEntry[] {
   if (!text) return [];
-  const bulleted = detectRosterNames(text);
-  if (bulleted.length > 0) {
-    return bulleted.map((name) => ({ position: null, name, detail: null }));
+  // Applies to every form: the metadata block is noise to all three.
+  const body = stripToMarkdownMetadata(text);
+
+  const candidates: RosterEntry[][] = [
+    detectRosterNames(body).map((name) => ({ position: null, name, detail: null })),
+    detectRosterTable(body),
+    detectRosterFlatNumbered(body),
+  ];
+
+  let best: RosterEntry[] = [];
+  for (const c of candidates) {
+    if (c.length > best.length) best = c;
   }
-  return detectRosterTable(text);
+  return best;
 }
 
 export function detectRosterNames(body: string | null | undefined): string[] {
