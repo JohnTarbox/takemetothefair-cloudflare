@@ -608,6 +608,55 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       maxTs(db, inboundEmails, inboundEmails.receivedAt, eq(inboundEmails.intent, "submit")),
   },
   {
+    // OPE-944 — proof the original-sender forward analysis is still executing.
+    //
+    // The path this guards is the OPE-246 class at its sharpest. Forward
+    // analysis is PURE ENRICHMENT: it records who really wrote a forwarded
+    // message and never fails a submission. If `analyzeForward` starts throwing
+    // — a DoH outage, a postal-mime upgrade, a bad deploy — the handler's
+    // fail-soft catch logs a warn and ingestion continues perfectly. Every
+    // email still lands, every event is still created, and the only symptom is
+    // that `original_sender_auth` quietly goes NULL on new rows. Nothing else
+    // in the system would ever mention it.
+    //
+    // ⚠️ EVIDENCE IS THE COLUMN BEING WRITTEN, NOT AN .EML BEING RECOVERED —
+    // probe the RUN, never the yield (this file's own rule, OPE-488).
+    //
+    // Probing "a forwarded message was recovered" would be the yield, and it
+    // would be wrong in the expensive direction: that depends on a human
+    // choosing Gmail's "Forward as attachment", which had happened ZERO times
+    // in the whole archive as of 2026-09-11. Such a probe would fire forever,
+    // get muted, and cover nothing. `analyzeForward` by contrast runs on EVERY
+    // inbound email and stamps a verdict on every row — including the
+    // overwhelmingly common `not_forwarded` — so a NULL on fresh mail is
+    // unambiguous evidence the path died.
+    //
+    // 72h, MEASURED on 195 rows over 22 days (2026-08-21 → 09-11): median
+    // inter-arrival gap 0.03h, p90 9.3h, p99 17.5h, WORST OBSERVED 18.0h. So
+    // 72h is 4x the worst real gap — loose enough that a quiet weekend cannot
+    // cry wolf, tight enough that a dead path reaches the OPE-75 digest within
+    // three days. Not an analogy: a window chosen by analogy is what produced
+    // the wrong 72h figure on OPE-830, where the real max gap was 12 days.
+    //
+    // Ships ARMED (`enabled_at` set in drizzle/0281), not dormant. The dormant
+    // cases are a flag-gated path or an unmeasurable window; this is neither —
+    // OPE-944 is live on every inbound email and the window is measured above.
+    // Pre-OPE-944 rows are NULL, so the first evidence is the first mail to
+    // arrive after the deploy, which the measurement says is inside 18h.
+    name: "inbound-forward-analysis",
+    ownerOpe: "OPE-944",
+    label: "Inbound original-sender forward analysis (verdict writer)",
+    priority: "P1",
+    expectedWindowHours: 72,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        inboundEmails,
+        inboundEmails.receivedAt,
+        isNotNull(inboundEmails.originalSenderAuth)
+      ),
+  },
+  {
     // OPE-284 — the newsletter broadcast path. Evidence is deliberately
     // `newsletter_issues.sent_at`, NOT the send ledger: a `test_recipient`
     // preview writes ledger rows with the same `newsletter:weekly-digest`
