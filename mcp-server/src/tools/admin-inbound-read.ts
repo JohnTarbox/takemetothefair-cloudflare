@@ -27,6 +27,7 @@ import { buildVendorInquiryBriefing } from "../inbound/vendor-inquiry-briefing.j
 import { jsonContent } from "../helpers.js";
 import { mainAppFetch, type MainAppEnv } from "../main-app-fetch.js";
 import type { Db } from "../db.js";
+import type { AuthContext } from "../auth.js";
 
 /**
  * OPE-944 — what each `original_sender_auth` value licenses a reader to say.
@@ -51,7 +52,6 @@ const ORIGINAL_SENDER_NOTES: Record<string, string> = {
   not_forwarded:
     "Not a forward. `sender_auth` and the fields above already describe this message completely.",
 };
-import type { AuthContext } from "../auth.js";
 
 /** MCP tool envelope around `jsonContent`, which returns a content ITEM. */
 function contentOf(payload: unknown) {
