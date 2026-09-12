@@ -1521,6 +1521,11 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             // details often fall outside it, so free-text extract must see the
             // whole body (forwarded-header-stripped inside submitFreeTextExtract).
             bodyText: inboundEmails.bodyText,
+            // OPE-944 — who really wrote this content, when it was forwarded.
+            // Read here so citations can record the ORIGINAL sender rather than
+            // attributing an organizer's packet to whoever passed it along.
+            originalSenderAddress: inboundEmails.originalSenderAddress,
+            originalSenderAuth: inboundEmails.originalSenderAuth,
           })
           .from(inboundEmails)
           .where(eq(inboundEmails.id, messageRowId))
@@ -3153,6 +3158,30 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         label,
         { retries: { limit: 2, delay: "5 seconds", backoff: "constant" }, timeout: "10 seconds" },
         async () => {
+          // OPE-944 — read the forward verdict here rather than threading it
+          // through four positional call sites across three methods, none of
+          // which holds the row. One indexed PK lookup inside a step that is
+          // already best-effort, and it cannot be wired into some paths and not
+          // others — which is the `[[feedback_fix_wired_into_one_of_two_parallel_paths]]`
+          // failure this codebase keeps re-learning.
+          let originalSender:
+            | import("../email-handlers/pipeline-citations.js").OriginalSenderContext
+            | undefined;
+          try {
+            const [fwd] = await getDb(this.env.DB)
+              .select({
+                address: inboundEmails.originalSenderAddress,
+                auth: inboundEmails.originalSenderAuth,
+              })
+              .from(inboundEmails)
+              .where(eq(inboundEmails.id, messageRowId))
+              .limit(1);
+            if (fwd?.auth) originalSender = { address: fwd.address, auth: fwd.auth };
+          } catch {
+            // Provenance detail is an enrichment of the citation, never a
+            // precondition for writing one. Losing it must not lose the row.
+          }
+
           const result = await recordSourceCitations(getDb(this.env.DB), {
             eventId,
             extracted,
@@ -3161,6 +3190,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             supportingText,
             snapshot,
             excludeConfKeys: crawl?.filledFields,
+            originalSender,
           });
 
           // OPE-837 — the crawl-derived fields, attributed to the page they

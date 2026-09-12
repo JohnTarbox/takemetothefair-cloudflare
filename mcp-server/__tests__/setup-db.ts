@@ -1122,6 +1122,11 @@ const SCHEMA_SQL = `
     dkim_result TEXT,
     dmarc_result TEXT,
     sender_auth TEXT,
+    -- OPE-944 (drizzle/0280) — the ORIGINAL sender on a forwarded message,
+    -- kept separate from the forwarder's verdict above it.
+    original_sender_address TEXT,
+    original_sender_auth TEXT,
+    original_sender_domain_aligned INTEGER,
     from_display_name TEXT,
     reply_to TEXT,
     return_path TEXT,
