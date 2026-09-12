@@ -167,6 +167,12 @@ describe("extractSenderSignals — the classic tells", () => {
       replyTo: null,
       returnPath: null,
       sendingHost: null,
+      // OPE-944 — NULL because this function is pure over HEADERS and never
+      // sees the body, so it cannot know whether the message was a forward.
+      // `withForwardSignals` supplies the verdict.
+      originalSenderAddress: null,
+      originalSenderAuth: null,
+      originalSenderDomainAligned: null,
     });
   });
 

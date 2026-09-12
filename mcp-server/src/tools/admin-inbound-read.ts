@@ -29,6 +29,30 @@ import { mainAppFetch, type MainAppEnv } from "../main-app-fetch.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 
+/**
+ * OPE-944 — what each `original_sender_auth` value licenses a reader to say.
+ *
+ * A bare enum invites the reader to supply their own meaning, and the meaning
+ * that gets supplied is usually "pass/fail". Four of these six are neither.
+ * The notes are the point of the field: `key_unavailable` on a two-year-old
+ * forward is ordinary key rotation, and reading it as forgery is the expensive
+ * mistake this whole ticket exists to prevent.
+ */
+const ORIGINAL_SENDER_NOTES: Record<string, string> = {
+  verified:
+    "The forwarded message carried a DKIM signature that validates against the signing domain's published key. The signed headers and covered body are byte-identical to what that domain sent. Check `original_sender_domain_aligned` before treating it as the From domain vouching for the content. Report-only.",
+  failed:
+    "A signature was present and did NOT validate. Could be tampering, but a rewriting relay or mailing list produces this too. Report-only — nothing routes or blocks on it.",
+  no_signature:
+    "The forwarded message carried no DKIM signature at all. Common and not suspicious; plenty of small-town senders do not sign. It means we have no evidence either way, not evidence against.",
+  key_unavailable:
+    "A signature was present but its public key could not be read (DNS, or a retired selector). Deliberately NOT reported as a failure: selectors rotate, so an old but perfectly genuine forward loses its key long before it loses its authenticity.",
+  unverifiable_inline_forward:
+    "The body is a forward, but no message was attached — so the quoted `From:` line is prose that anyone could type, and there is nothing to check. Read `sender_auth` as describing the FORWARDER only. To get a verifiable forward, the sender must use 'Forward as attachment'.",
+  not_forwarded:
+    "Not a forward. `sender_auth` and the fields above already describe this message completely.",
+};
+
 /** MCP tool envelope around `jsonContent`, which returns a content ITEM. */
 function contentOf(payload: unknown) {
   return { content: [jsonContent(payload)] };
@@ -251,6 +275,32 @@ export function registerInboundReadTools(
             reply_to: row.replyTo,
             return_path: row.returnPath,
             sending_host: row.sendingHost,
+            /**
+             * OPE-944 — the ORIGINAL sender, sitting next to the forwarder's
+             * verdict so the two can never be confused for one another.
+             *
+             * Every field above describes the hop that reached us. On a forward
+             * that is the FORWARDER: `9fc287ef` reads `dkim=pass
+             * header.d=gmail.com`, `sender_auth: partial` — all true, and all
+             * about Carolyn's Gmail, not the Town of New Gloucester whose
+             * packet we published a 59-vendor roster from.
+             *
+             * `unverifiable_inline_forward` is the value to read carefully: it
+             * means the body IS a forward and the quoted `From:` line is prose
+             * that nothing can check. It is not a failure — it is the absence
+             * of evidence, stated so it cannot be mistaken for a pass.
+             */
+            original_sender_address: row.originalSenderAddress,
+            original_sender_auth: row.originalSenderAuth,
+            original_sender_domain_aligned:
+              row.originalSenderDomainAligned === null
+                ? null
+                : row.originalSenderDomainAligned === 1,
+            original_sender_note:
+              row.originalSenderAuth === null
+                ? "NULL — this row predates OPE-944 capture (drizzle/0280). An inline forward could in principle be re-read from the stored body; a signature never can, because no .eml was ever stored."
+                : (ORIGINAL_SENDER_NOTES[row.originalSenderAuth] ??
+                  "Report-only. Nothing routes, blocks, sends or changes trust on this value."),
             /**
              * OPE-764 — who this sender resolves to in our own data.
              *

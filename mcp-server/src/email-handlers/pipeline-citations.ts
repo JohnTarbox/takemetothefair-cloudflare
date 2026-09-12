@@ -235,10 +235,38 @@ function confidenceToScore(c: "high" | "medium" | "low" | undefined): number | n
  * source kind. source_url is NOT NULL in the schema, so body / attachment
  * sources synthesize an `email://` URL keyed on the sender.
  */
+/**
+ * OPE-944 — who the content actually came from, when it was forwarded.
+ *
+ * Optional everywhere: absent means "not a forward, or we don't know", and
+ * every citation behaves exactly as it did before this ticket.
+ */
+export interface OriginalSenderContext {
+  address: string | null;
+  auth: string | null;
+}
+
+/**
+ * OPE-944 — the provenance suffix a forwarded source carries.
+ *
+ * Recorded on EVERY forward verdict, including the ones that prove nothing.
+ * `unverifiable_inline_forward` is the important one: a citation that silently
+ * reads `email://<forwarder>` invites a later reader to treat the forwarder as
+ * the source, and on `9fc287ef` that would credit a 59-vendor roster and a
+ * no-pets rule to a private Gmail account rather than to the Town of New
+ * Gloucester. The suffix makes the second-hand hop visible in the record.
+ */
+function forwardSuffix(original: OriginalSenderContext | undefined): string {
+  if (!original?.auth || original.auth === "not_forwarded") return "";
+  const who = original.address ? ` from ${original.address}` : "";
+  return ` (forwarded${who}; original sender ${original.auth})`;
+}
+
 function sourceIdentity(
   source: CitationSource,
   fromAddress: string,
-  extracted: ExtractedForCitations
+  extracted: ExtractedForCitations,
+  original?: OriginalSenderContext
 ): { sourceUrl: string; sourceName: string | null } {
   switch (source.kind) {
     case "url": {
@@ -251,13 +279,33 @@ function sourceIdentity(
       }
       return { sourceUrl: url, sourceName: hostname };
     }
-    case "body":
-      return { sourceUrl: `email://${fromAddress}`, sourceName: "Email body" };
-    case "attachment":
+    // OPE-944 — a VERIFIED original sender becomes the cited identity.
+    //
+    // Only when verified, and the asymmetry is the point: a validated signature
+    // means the signing domain really did send these bytes, so `email://<them>`
+    // is a true statement of provenance. Every other verdict leaves the
+    // identity on the forwarder — the only party we can actually place — and
+    // records the hop in `source_name` instead.
+    //
+    // This moves the per-(event, field, source_url) idempotency key, which
+    // would normally risk duplicate citations for one fact. It cannot here: no
+    // .eml has ever been stored (all 118 attachments on record are png, jpeg or
+    // pdf), so there are zero existing rows keyed on a verified forward.
+    case "body": {
+      const verified = original?.auth === "verified" && original.address;
       return {
-        sourceUrl: `email://${fromAddress}/attachment/${encodeURIComponent(source.name)}`,
-        sourceName: `Attachment: ${source.name}`,
+        sourceUrl: verified ? `email://${original.address}` : `email://${fromAddress}`,
+        sourceName: `Email body${forwardSuffix(original)}`,
       };
+    }
+    case "attachment": {
+      const verified = original?.auth === "verified" && original.address;
+      const who = verified ? original.address : fromAddress;
+      return {
+        sourceUrl: `email://${who}/attachment/${encodeURIComponent(source.name)}`,
+        sourceName: `Attachment: ${source.name}${forwardSuffix(original)}`,
+      };
+    }
   }
 }
 
@@ -421,10 +469,13 @@ export async function recordSourceCitations(
      *  cannot write an events column. That is the point: this records what a
      *  page said, and nothing downstream promotes it to public data. */
     extraFields?: ReadonlyArray<{ fieldName: string; value: string }>;
+    /** OPE-944 — the original sender when this content was forwarded. Omitted
+     *  → citations read exactly as they did before that ticket. */
+    originalSender?: OriginalSenderContext;
   }
 ): Promise<CitationWriteResult> {
-  const { eventId, extracted, source, fromAddress } = args;
-  const { sourceUrl, sourceName } = sourceIdentity(source, fromAddress, extracted);
+  const { eventId, extracted, source, fromAddress, originalSender } = args;
+  const { sourceUrl, sourceName } = sourceIdentity(source, fromAddress, extracted, originalSender);
   // A url-source with no URL has no provenance to attach — bail rather than
   // insert a NOT-NULL-violating empty source_url.
   if (!sourceUrl) return { inserted: 0, reason: "no-source-url" };

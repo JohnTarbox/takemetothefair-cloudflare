@@ -35,6 +35,12 @@
 import PostalMime, { type Email } from "postal-mime";
 import { logError } from "./logger.js";
 import { stripQuotedReply } from "./email-handlers/strip-quoted-reply.js";
+import {
+  analyzeForward,
+  isRfc822Attachment,
+  type ForwardAnalysis,
+} from "./email-handlers/forwarded-message.js";
+import { createDohResolver } from "./email-handlers/dkim-verify.js";
 import { getDb, type Db } from "./db.js";
 import { inboundEmails, inboundEmailSenders, users, adminActions } from "./schema.js";
 import { desc, eq, inArray, sql } from "drizzle-orm";
@@ -221,16 +227,66 @@ export async function handleInboundEmail(
 
     const fromAddr = (parsed.from?.address || message.from || "").toLowerCase().trim();
     const subject = (parsed.subject || "").slice(0, 200);
-    const bodyText = (parsed.text || "").slice(0, MAX_BODY_LEN);
+
+    // ── OPE-944 — recover a "Forward as attachment", and say WHOSE auth we have.
+    //
+    // postal-mime already opens a `message/rfc822` part when it judges it
+    // `inline`: it merges the submessage text into `.text` and hoists the
+    // nested attachments into `.attachments`. It declines when the part carries
+    // `Content-Disposition: attachment` — which is precisely the Gmail "Forward
+    // as attachment" shape, and precisely the one that preserves the
+    // organizer's DKIM signature. So we open that one ourselves, and mirror
+    // what postal-mime does for the inline shape, so both forms reach the
+    // extractor identically.
+    //
+    // Fail-soft: a forward we cannot analyse must never cost us the email.
+    let forward: ForwardAnalysis | null = null;
+    try {
+      forward = await analyzeForward({
+        attachments: parsed.attachments,
+        bodyText: parsed.text,
+        resolveTxt: createDohResolver(),
+      });
+    } catch (err) {
+      await logError(env.DB, {
+        level: "warn",
+        source: SOURCE,
+        message: "forward analysis failed; ingestion continues unaffected",
+        error: err,
+        sessionId,
+      });
+    }
+
+    // The nested message's own attachments join the outer ones, so the existing
+    // ocr-attachments → multi-source-fanout → roster-capture path sees a
+    // forwarded roster PDF exactly as it would an attached one.
+    const effectiveAttachments = forward?.nested
+      ? [...(parsed.attachments ?? []), ...forward.nested.attachments]
+      : (parsed.attachments ?? []);
+
+    // Nested body APPENDED rather than substituted: the forwarder's covering
+    // note ("here's the packet, deadline is Friday") is often the only place a
+    // human says why they sent it, and dropping it to make room for the
+    // organizer's prose would lose real information.
+    const mergedText = forward?.nested?.text
+      ? `${parsed.text ?? ""}\n\n${forward.nested.text}`.trim()
+      : (parsed.text ?? "");
+    const bodyText = mergedText.slice(0, MAX_BODY_LEN);
     const bodyHtml = parsed.html || "";
     const bodyTextExcerpt = bodyText.slice(0, BODY_EXCERPT_LEN);
     // OPE-156 — full body persisted for the admin viewer (list preview stays
     // the excerpt). null-coalesced to keep empty parts out of the row.
     const bodyTextStored = bodyText || null;
     const bodyHtmlStored = bodyHtml ? bodyHtml.slice(0, BODY_STORE_MAX) : null;
-    const attachmentCount = parsed.attachments?.length ?? 0;
+    // OPE-944 — counts the EFFECTIVE set, so the OPE-467 accounting invariant
+    // (every attachment either stored or explained) still balances once a
+    // forwarded message's nested parts are in play.
+    const attachmentCount = effectiveAttachments.length;
     // OPE-763 — computed once here, spread into every insert below.
-    const senderSignals = extractSenderSignals(message.headers, parsed);
+    const senderSignals = withForwardSignals(
+      extractSenderSignals(message.headers, parsed),
+      forward
+    );
     // OPE-764 — likewise. Fail-soft: never takes a message down.
     const senderIdentity = await resolveSenderColumns(env, sessionId, fromAddr, bodyText);
     // OPE-768 — likewise: computed once, spread into every insert below.
@@ -390,7 +446,7 @@ export async function handleInboundEmail(
     if (
       addressIntent !== "photo_intake" &&
       senderTrust === "trusted" &&
-      isPhotoOnlySubmission({ attachments: parsed.attachments, bodyText })
+      isPhotoOnlySubmission({ attachments: effectiveAttachments, bodyText })
     ) {
       effectiveAddressIntent = "photo_intake";
       await logError(env.DB, {
@@ -552,7 +608,7 @@ export async function handleInboundEmail(
       inReplyTo: parsed.inReplyTo ?? null,
       references: parsed.references ?? null,
       attachmentCount,
-      attachmentTypes: (parsed.attachments ?? [])
+      attachmentTypes: effectiveAttachments
         .map((a) => a.mimeType || "")
         .filter((t) => t.length > 0),
     });
@@ -669,7 +725,7 @@ export async function handleInboundEmail(
         const { refs, skipped } = await captureAttachments(
           env.VENDOR_ASSETS,
           groupId,
-          parsed.attachments
+          effectiveAttachments
         );
         if (refs.length > 0) attachmentRefsJson = JSON.stringify(refs);
         if (skipped.length > 0) attachmentSkipsJson = JSON.stringify(skipped);
@@ -1289,8 +1345,21 @@ export async function captureAttachments(
     // part that could never have been stored under any quota.
     //
     // Only a thing we would otherwise KEEP may consume or be refused a slot.
+    // OPE-944 — a forwarded message is now a KEEPABLE type.
+    //
+    // Before this, the allow-list was image/* + application/pdf, so a Gmail
+    // "Forward as attachment" arrived as `message/rfc822`, came back
+    // `unsupported-type`, and was discarded ALONG WITH every PDF and image
+    // nested inside it. Measured on D1 2026-09-11: all 118 attachments ever
+    // stored are png, jpeg or pdf — so this path had never once run, and
+    // nothing about the silence distinguished "never happened" from "broken".
+    //
+    // It is stored VERBATIM and never re-encoded: DKIM canonicalizes octets,
+    // so a single byte of normalisation turns a genuine organizer signature
+    // into a forgery verdict.
     const mime = mimeType.toLowerCase();
-    if (!mime.startsWith("image/") && mime !== "application/pdf") {
+    const forwardedMessage = isRfc822Attachment({ filename: a.filename ?? null, mimeType });
+    if (!mime.startsWith("image/") && mime !== "application/pdf" && !forwardedMessage) {
       note("unsupported-type");
       continue;
     }
@@ -2017,6 +2086,20 @@ export interface SenderSignals {
   replyTo: string | null;
   returnPath: string | null;
   sendingHost: string | null;
+  /**
+   * OPE-944 — who really wrote the content, when this is a forward.
+   *
+   * Carried on SenderSignals rather than passed separately so it inherits the
+   * all-or-nothing spread this type exists for: every insert that records the
+   * forwarder's authentication records the original sender's in the same
+   * object, and neither can be half-applied.
+   *
+   * ⚠️ REPORT-ONLY, like every field above it.
+   */
+  originalSenderAddress: string | null;
+  originalSenderAuth: string | null;
+  /** SQLite integer boolean; null when no signature actually verified. */
+  originalSenderDomainAligned: number | null;
 }
 
 /** Cap on each captured header, so a pathological one cannot bloat the row. */
@@ -2068,6 +2151,41 @@ export function extractSenderSignals(
     replyTo: clip(replyTo),
     returnPath: clip(parsed.returnPath),
     sendingHost: clip(sendingHost),
+    // NULL, not "not_forwarded". This function is PURE OVER HEADERS and never
+    // sees the body, so it cannot know whether the message was forwarded —
+    // stamping a verdict here would assert something it never measured.
+    // `withForwardSignals` overlays the real value, including the
+    // `not_forwarded` that ordinary mail gets. NULL therefore survives only on
+    // rows predating capture, or where the analysis threw (which logs a warn,
+    // so the two remain distinguishable).
+    originalSenderAddress: null,
+    originalSenderAuth: null,
+    originalSenderDomainAligned: null,
+  };
+}
+
+/**
+ * OPE-944 — overlay a forward analysis onto the sender signals.
+ *
+ * Separate from `extractSenderSignals` because that function is pure over
+ * headers, while this needs an async DKIM check. Keeping them apart means the
+ * header capture cannot be broken by a DNS failure.
+ */
+export function withForwardSignals(
+  base: SenderSignals,
+  forward: ForwardAnalysis | null
+): SenderSignals {
+  if (!forward) return base;
+  return {
+    ...base,
+    originalSenderAddress: clip(forward.originalSenderAddress),
+    originalSenderAuth: forward.originalSenderAuth,
+    originalSenderDomainAligned:
+      forward.originalSenderDomainAligned === null
+        ? null
+        : forward.originalSenderDomainAligned
+          ? 1
+          : 0,
   };
 }
 

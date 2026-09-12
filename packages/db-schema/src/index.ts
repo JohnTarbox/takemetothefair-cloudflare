@@ -4956,6 +4956,48 @@ export const inboundEmails = sqliteTable(
     dmarcResult: text("dmarc_result"),
     /** `pass` | `partial` | `fail` | `unknown` — see `parseEmailAuthDetail`. */
     senderAuth: text("sender_auth"),
+    /**
+     * OPE-944 — the ORIGINAL sender, when this message is a forward.
+     *
+     * Every column above describes the hop that reached us. When a contributor
+     * forwards an organizer's mail, that is the CONTRIBUTOR: on inbound
+     * `9fc287ef` the stored verdict is `dkim=pass header.d=gmail.com`,
+     * `dmarc=pass`, `sender_auth='partial'` — all true, and all about Carolyn's
+     * Gmail, while the packet we published from was the Town of New
+     * Gloucester's. A reader cannot tell those apart from the row alone, which
+     * is what these three columns fix.
+     *
+     * `originalSenderAuth` is deliberately SIX values, not a boolean:
+     *   verified / failed / no_signature / key_unavailable
+     *     — a `message/rfc822` part was attached and its DKIM was checked.
+     *       `key_unavailable` is separate from `failed` because selectors get
+     *       rotated, so an old but genuine forward loses its key long before it
+     *       loses its authenticity.
+     *   unverifiable_inline_forward
+     *     — the body is a forward with no attached message. The quoted `From:`
+     *       is prose. This is the honest verdict, and the reason the outer
+     *       pass can never be read as the organizer's.
+     *   not_forwarded — `senderAuth` already describes this row fully.
+     *
+     * `originalSenderDomainAligned` is set only when a signature actually
+     * VERIFIED; a `d=` on a failed signature says nothing about who sent it.
+     *
+     * ⚠️ REPORT-ONLY, same contract as the block above. Nothing branches on
+     * these — not routing, not trust, not auto-publication, not a reply. That
+     * remains John's call on OPE-765 / OPE-839.
+     *
+     * NULL means no verdict was recorded: the row predates capture, or the
+     * analysis threw (which logs a warn, so the two stay distinguishable). It
+     * is NOT the same as `'not_forwarded'`, which is a positive finding that
+     * the message was examined and was not a forward.
+     *
+     * Unlike `senderAuth` a backfill IS partly possible here, because an inline
+     * forward can be re-read from the stored body — but never for a signature,
+     * since no .eml was ever stored.
+     */
+    originalSenderAddress: text("original_sender_address"),
+    originalSenderAuth: text("original_sender_auth"),
+    originalSenderDomainAligned: integer("original_sender_domain_aligned"),
     /** The display name, which is where `"Jeremy Hall" <random@gmail.com>` shows. */
     fromDisplayName: text("from_display_name"),
     replyTo: text("reply_to"),
