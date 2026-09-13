@@ -34,6 +34,7 @@ import type { Db } from "../db.js";
 import {
   identifyBooth,
   disposition,
+  unidentified,
   type BoothIdentification,
   type Disposition,
   type StageKind,
@@ -49,6 +50,13 @@ export const BOOTH_PROPOSED_ACTION = "vendor.photo_proposed";
 export const PERFORMER_PROPOSED_ACTION = "performer.photo_proposed";
 /** OPE-969 — a performer photo matched to an appearance already on the lineup. Nothing created. */
 export const PERFORMER_CONFIRMED_ACTION = "performer.photo_confirmed";
+/**
+ * OPE-978 — a scenery photo attached to the event gallery. Before this the
+ * gallery path wrote no decision row, so a photo classified as scenery was
+ * indistinguishable from one that vanished: two of the 2026-09-12 New Gloucester
+ * emails read "0 proposals, 0 failures" while their photos sat in the gallery.
+ */
+export const GALLERY_ATTACHED_ACTION = "photo.gallery_attached";
 /** OPE-969 — a sign whose owner is not the subject. Recorded; nothing else written. */
 export const SIGNAGE_RECORDED_ACTION = "photo.signage_not_presence";
 
@@ -196,15 +204,26 @@ export async function runBoothPipeline(
   const results: Array<{ photo: PipelinePhoto; d: Disposition }> = [];
 
   for (const photo of photos.slice(0, MAX_PHOTOS_PER_EMAIL)) {
+    // OPE-978 — a photo that cannot be read or identified still gets a
+    // disposition: an `unclear` stage carrying WHY. Both branches below used to
+    // `continue`, which dropped the photo with no row and no reason.
     try {
       const obj = await bucket.get(photo.key);
-      if (!obj) continue;
+      if (!obj) {
+        results.push({ photo, d: disposition(unidentified(`r2-object-missing key=${photo.key}`)) });
+        continue;
+      }
       const bytes = new Uint8Array(await obj.arrayBuffer());
       const id = await identifyBooth(ai, bytes);
       results.push({ photo, d: disposition(id) });
-    } catch {
-      // One unreadable photo must not sink the batch.
-      continue;
+    } catch (e) {
+      // One unreadable photo must not sink the batch — and must not vanish.
+      results.push({
+        photo,
+        d: disposition(
+          unidentified(`pipeline-threw: ${e instanceof Error ? e.message : String(e)}`)
+        ),
+      });
     }
   }
 
@@ -500,12 +519,30 @@ export async function runBoothPipeline(
   // resolved event's gallery. Re-attaching the same bytes converges on the
   // existing row (OPE-686 content digest), so a replay does not duplicate it.
   // Fail-soft: this must never cost us the staging or the fair match.
-  let gallery = { attached: 0, failed: 0 };
-  if (galleryPhotos.length > 0) {
+  const gallery = { attached: 0, failed: 0 };
+  const confirmedKeys = new Set(confirmed.map((c) => c.photo.key));
+  for (const p of galleryPhotos) {
+    // One photo at a time so each gets its own outcome (≤5 per email).
+    let one: { attached: number; failed: number; failures?: string[]; disabledReason?: string };
     try {
-      gallery = await attachGeneralPhotos(env, eventId, galleryPhotos);
-    } catch {
-      gallery = { attached: 0, failed: galleryPhotos.length };
+      one = await attachGeneralPhotos(env, eventId, [p]);
+    } catch (e) {
+      one = {
+        attached: 0,
+        failed: 1,
+        failures: [`threw:${e instanceof Error ? e.message : String(e)}`],
+      };
+    }
+    gallery.attached += one.attached;
+    gallery.failed += one.failed;
+    // OPE-978 — scenery's decision row. A confirmed performer photo already has
+    // its own (performer.photo_confirmed), so it is not recorded twice.
+    if (!confirmedKeys.has(p.key)) {
+      await record(GALLERY_ATTACHED_ACTION, p, {
+        photo_class: "scenery",
+        attached: one.attached > 0,
+        failure: one.failures?.[0] ?? one.disabledReason ?? null,
+      });
     }
   }
 

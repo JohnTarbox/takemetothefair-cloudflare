@@ -913,6 +913,8 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
           "performer.photo_proposed",
           "performer.photo_confirmed",
           "photo.signage_not_presence",
+          // OPE-978 — scenery now records its gallery decision too.
+          "photo.gallery_attached",
         ])
       ),
   },
