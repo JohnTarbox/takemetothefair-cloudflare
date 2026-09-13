@@ -87,6 +87,9 @@ export const PATCH = withAuth<{ id: string }>(
 
       // OPE-35 — recompute enrichment from the merged final values. hero/contact/
       // socials aren't editable via this API, so they carry over from `prior`.
+      const websiteChanged =
+        updateData.website !== undefined &&
+        (updateData.website ?? null) !== (prior?.website ?? null);
       const enrichment = computePromoterEnrichment(
         {
           website: (updateData.website ?? prior?.website) as string | null,
@@ -97,10 +100,12 @@ export const PATCH = withAuth<{ id: string }>(
           contactEmail: prior?.contactEmail ?? null,
           contactPhone: prior?.contactPhone ?? null,
         },
-        prior?.enrichmentStatus
+        // OPE-962 — a new website re-opens an EXHAUSTED (or any sticky) promoter.
+        websiteChanged ? null : prior?.enrichmentStatus
       );
       updateData.enrichmentStatus = enrichment.status;
       updateData.enrichmentCoverage = enrichment.coverageJson;
+      if (websiteChanged) updateData.enrichmentZeroYieldStreak = 0;
 
       await db.update(promoters).set(updateData).where(eq(promoters.id, id));
 

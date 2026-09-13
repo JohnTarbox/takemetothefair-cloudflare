@@ -57,6 +57,13 @@
       "when": 1782934102825,
       "tag": "0282_ope951_burst_cap_selftest_probe",
       "breakpoints": true
+    },
+    {
+      "idx": 147,
+      "version": "6",
+      "when": 1782934102826,
+      "tag": "0283_ope962_promoter_enrichment_exhausted",
+      "breakpoints": true
     }
   ]
 }

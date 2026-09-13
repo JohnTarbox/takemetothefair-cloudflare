@@ -4731,7 +4731,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
 
       // OPE-35 — recompute enrichment status/coverage from the merged final
       // values (current row overlaid with this patch). Preserve IN_PROGRESS /
-      // BLOCKED sticky states unless the edit now completes coverage.
+      // BLOCKED / EXHAUSTED sticky states unless the edit now completes coverage.
+      const websiteChanged =
+        updates.website !== undefined && (updates.website ?? null) !== (promoter.website ?? null);
       const enrichment = computePromoterEnrichment(
         {
           website: (updates.website ?? promoter.website) as string | null,
@@ -4742,10 +4744,13 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           contactEmail: (updates.contactEmail ?? promoter.contactEmail) as string | null,
           contactPhone: (updates.contactPhone ?? promoter.contactPhone) as string | null,
         },
-        promoter.enrichmentStatus
+        // OPE-962 — a NEW website re-opens a promoter that exhausted the old one:
+        // EXHAUSTED is a fact about a site, not about the organizer.
+        websiteChanged ? null : promoter.enrichmentStatus
       );
       updates.enrichmentStatus = enrichment.status;
       updates.enrichmentCoverage = enrichment.coverageJson;
+      if (websiteChanged) updates.enrichmentZeroYieldStreak = 0;
 
       await db.update(promoters).set(updates).where(eq(promoters.id, promoter.id));
 
