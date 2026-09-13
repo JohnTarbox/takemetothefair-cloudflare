@@ -1,16 +1,9 @@
 import OAuthProvider from "@cloudflare/workers-oauth-provider";
 import type { EmailGateEnv } from "./email-gates.js";
 import { McpAgent } from "agents/mcp";
-import { getCurrentAgent } from "agents";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { withMainAppSlot, isWorkerOom, classifyCronFailure } from "./main-app-gate.js";
 import { LoginHandler } from "./oauth/login-handler.js";
-import {
-  decideSendRouting,
-  sendViaConnection,
-  type ConnectionLike,
-  type TransportPrivates,
-} from "./transport-collision-fix.js";
 import { timingSafeEqualString } from "@takemetothefair/utils";
 import { getDb } from "./db.js";
 import { authenticateToken } from "./auth.js";
@@ -432,173 +425,18 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
     }
   }
 
-  // ───────────────────────────────────────────────────────────────────────
-  // Routing fix for upstream MCP TS SDK #1186 (open) / our issue #121:
-  // "Zombie Task Collision in StreamableHTTPServerTransport"
-  //
-  // The agents package's StreamableHTTPServerTransport.send() routes responses
-  // by walking agent.getConnections() and picking the first connection whose
-  // state.requestIds includes the response's request id. When two concurrent
-  // clients (or one client reusing JSON-RPC ids across parallel requests) end
-  // up with the same id in their per-connection state, find() returns either
-  // connection arbitrarily. Result: the response is written to the wrong
-  // client's HTTP socket — silently, with the wrong shape.
-  //
-  // Production manifestations:
-  //   - 2026-05-10: 8 parallel update_event MCP calls, 3 returned
-  //     page_analytics-shaped responses.
-  //   - 2026-05-24 (analyst report): update_blog_post / get_blog_links_in_post
-  //     during a bulk blog-linking session, several echoed an unrelated
-  //     post or event payload. Writes landed correctly; responses didn't.
-  //
-  // What this wrap does:
-  //   1. Hook transport.onmessage to record (requestId -> connection.id) at
-  //      intake. The agents transport sets connection.state.requestIds in
-  //      handlePostRequest before calling onmessage, so by intake time the
-  //      async-context connection from getCurrentAgent() is the originating
-  //      connection.
-  //   2. Replace transport.send with a router that:
-  //        - passes through to original when no collision (≤1 match);
-  //        - direct-writes to the tracked connection on a fixable collision,
-  //          bypassing the buggy find();
-  //        - throws a structured error when collision is unfixable (intake
-  //          record missing), surfacing as a JSON-RPC error to the caller
-  //          rather than a silent wrong-shape response.
-  //
-  // Removable when: agents package upgrades past the upstream SDK fix for
-  // #1186, OR the agents transport switches to composite (streamId,
-  // requestId) keys. The pure routing logic and direct-write helper live in
-  // ./transport-collision-fix.ts and are unit-tested there.
-  async onStart(props?: UserProps) {
-    await super.onStart(props);
-    const transport = (this as unknown as { _transport?: unknown })._transport as
-      | (TransportPrivates & {
-          send?: (m: unknown, o?: { relatedRequestId?: unknown }) => Promise<unknown>;
-          onmessage?: (m: unknown, extra: unknown) => unknown;
-        })
-      | undefined;
-    if (!transport || typeof transport.send !== "function") return;
-
-    // Per-DO map of intake-recorded (requestId -> Set<connection.id>).
-    //
-    // K19 (2026-06-07): upgraded from `Map<unknown, string>` to a multi-
-    // valued set so two concurrent intakes that share a JSON-RPC id no
-    // longer clobber each other. The original wrap correctly handled the
-    // single-collision case at send time, but `intakeConnByReqId.set(id,
-    // connId)` overwrote on key collision — so when subagent B's intake
-    // arrived after A's with id=1, A's tracking was lost, A's send picked
-    // up B's connection id from the map, and A's response was routed to
-    // B's socket. The test file explicitly documented this gap at
-    // transport-collision-fix.test.ts:213-251 but didn't fix it.
-    //
-    // We remove a specific connection.id from its set at send time once
-    // we know which connection that response was for (via the routing
-    // decision). If the set goes empty, the key is dropped. Memory is
-    // bounded by concurrent in-flight count, same as the single-valued
-    // version was.
-    const intakeConnByReqId = new Map<unknown, Set<string>>();
-
-    // Hook onmessage to record the originating connection at intake time.
-    // Defense in depth: any throw inside the recording branch is caught so
-    // a tracking failure can never block message intake.
-    const originalOnMessage = transport.onmessage;
-    if (typeof originalOnMessage === "function") {
-      const boundOnMessage = originalOnMessage.bind(transport);
-      transport.onmessage = (m: unknown, extra: unknown) => {
-        try {
-          const message = m as { id?: unknown };
-          if (message && message.id !== undefined && message.id !== null) {
-            const { connection } = getCurrentAgent();
-            if (connection?.id) {
-              let set = intakeConnByReqId.get(message.id);
-              if (!set) {
-                set = new Set<string>();
-                intakeConnByReqId.set(message.id, set);
-              }
-              set.add(connection.id);
-            }
-          }
-        } catch {
-          /* never block intake on tracking failure */
-        }
-        return boundOnMessage(m, extra);
-      };
-    }
-
-    const originalSend = transport.send.bind(transport);
-    const getConnsArr = (): ConnectionLike[] =>
-      Array.from(this.getConnections() ?? []) as ConnectionLike[];
-
-    // Remove a single connection.id from the intake set for `reqId`,
-    // dropping the key when the set is exhausted. No-op if reqId is
-    // nullish or the set is missing. Called from each routing branch
-    // with the connection.id we actually routed to (or attempted to);
-    // the surviving entries belong to other concurrent in-flight calls.
-    const consumeIntake = (reqId: unknown, connectionId: string | undefined): void => {
-      if (reqId === undefined || reqId === null) return;
-      const set = intakeConnByReqId.get(reqId);
-      if (!set) return;
-      if (connectionId) set.delete(connectionId);
-      // Clear the key if exhausted, OR if we couldn't identify the
-      // connection (no connectionId) — that branch falls back to the
-      // pre-K19 behavior of dropping the key, preventing an unbounded
-      // leak when both signals are unavailable.
-      if (!connectionId || set.size === 0) {
-        intakeConnByReqId.delete(reqId);
-      }
-    };
-
-    transport.send = async (m: unknown, o?: { relatedRequestId?: unknown }) => {
-      const message = m as { id?: unknown };
-      const reqId = o?.relatedRequestId ?? message?.id;
-
-      const intakeConnectionIds =
-        reqId !== undefined && reqId !== null ? intakeConnByReqId.get(reqId) : undefined;
-
-      // K19: read the send-time async-context connection as the strongest
-      // disambiguating signal. When ALS propagates from intake → tool
-      // callback → send (the common case), this uniquely identifies the
-      // originating connection regardless of how many concurrent intakes
-      // collided on the same id. Wrapped in try/catch because some SDK
-      // paths historically broke ALS, in which case we fall back to the
-      // intake set.
-      let sendTimeConnectionId: string | undefined;
-      try {
-        sendTimeConnectionId = getCurrentAgent().connection?.id;
-      } catch {
-        /* ALS unavailable — rely on intake set */
-      }
-
-      const decision = decideSendRouting(getConnsArr(), reqId, {
-        sendTimeConnectionId,
-        intakeConnectionIds,
-      });
-
-      if (decision.kind === "passthrough") {
-        consumeIntake(reqId, decision.matched?.id ?? sendTimeConnectionId);
-        return originalSend(m, o);
-      }
-
-      if (decision.kind === "ambiguous") {
-        // Broken request — drop the entire key so subsequent calls aren't
-        // poisoned by stale intake entries from the failed batch.
-        if (reqId !== undefined && reqId !== null) intakeConnByReqId.delete(reqId);
-        console.error(
-          `[MCP/#121] response routing ambiguous for request id ${String(reqId)} — refusing send to prevent wrong-shape response. Matching connections: ${decision.matchedIds.join(", ")}; sendTimeConn=${sendTimeConnectionId ?? "none"}; intakeConns=${intakeConnectionIds ? Array.from(intakeConnectionIds).join(",") : "none"}`
-        );
-        throw new Error(
-          `MCP response routing ambiguous for request id ${String(reqId)}; ${decision.matchedIds.length} connections collide and no send-time signal disambiguates. Caller should re-fetch the underlying record.`
-        );
-      }
-
-      // decision.kind === "fixed" — direct-write to the correct connection.
-      consumeIntake(reqId, decision.connection.id);
-      console.warn(
-        `[MCP/#121] collision routed to connection ${decision.connection.id} via ${decision.via} for request id ${String(reqId)} (bypassed buggy find())`
-      );
-      await sendViaConnection(transport, decision.connection, m, reqId);
-    };
-  }
+  // OPE-900 step 1 (2026-09-13) — the onStart transport wrap for upstream MCP
+  // TS SDK #1186 / our #121 ("Zombie Task Collision": a response written to
+  // the wrong client's socket when two in-flight requests share a JSON-RPC id)
+  // is REMOVED, on the removal condition it named: agents upgraded past the
+  // upstream fix. Read from agents@0.23.0 `StreamableHTTPServerTransport
+  // .sendForRequest`: it routes to the ORIGINATING connection via
+  // getCurrentAgent() (our K19 send-time signal), falls back to a single
+  // match, and on true ambiguity sends a JSON-RPC internal error to every
+  // candidate instead of guessing. Keeping the wrap would have been harmful,
+  // not redundant: its direct-write path bypassed the new `sendOnStream`
+  // (event-store cleanup) and depended on `_requestResponseMap`, which 0.23
+  // no longer has.
 }
 
 // ---------------------------------------------------------------------------

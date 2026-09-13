@@ -58,7 +58,22 @@ app.get("/", async (c) => {
 // ---------------------------------------------------------------------------
 app.get("/authorize", async (c) => {
   console.log("[LOGIN] GET /authorize", c.req.url);
-  const oauthReqInfo = await c.env.OAUTH_PROVIDER.parseAuthRequest(c.req.raw);
+  // OPE-900 — the provider THROWS for an unregistered client_id or a redirect
+  // URI the client did not register, which surfaced as a bare 500. It is a bad
+  // request, and says so.
+  let oauthReqInfo: AuthRequest;
+  try {
+    oauthReqInfo = await c.env.OAUTH_PROVIDER.parseAuthRequest(c.req.raw);
+  } catch (err) {
+    await logError(c.env.DB, {
+      level: "warn",
+      source: "mcp:oauth",
+      message: "GET /authorize rejected by the provider",
+      error: err,
+      context: { url: c.req.url },
+    });
+    return c.text("Invalid authorization request", 400);
+  }
   console.log(
     "[LOGIN] Parsed auth request:",
     JSON.stringify({
