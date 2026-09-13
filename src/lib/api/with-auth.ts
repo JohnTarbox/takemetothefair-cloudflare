@@ -136,8 +136,8 @@ export interface WithInternalKeyOptions {
 /**
  * Gate on a constant-time `X-Internal-Key` match — the main-app side of the
  * cross-Worker contract (MCP server + cron sweeps). No user session. Use this
- * instead of inlining `key === env.INTERNAL_API_KEY`, which is timing-unsafe
- * (the WS3 auth-centralization sweep tracks migrating those ~19 routes).
+ * rather than an inline string comparison of the key, which is timing-unsafe.
+ * (The WS3 sweep that removed every inline comparison is complete — OPE-994.)
  */
 export function withInternalKey<P = Record<string, never>>(
   handler: InternalHandler<P>

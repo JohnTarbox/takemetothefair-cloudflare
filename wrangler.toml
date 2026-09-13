@@ -4,6 +4,11 @@
 # *gzipped* size (~3.85 MiB here vs 10 MiB paid) gives real headroom.
 name = "meetmeatthefair-app"
 main = ".open-next/worker.js"
+# OPE-994 — explicit, not the account default. The app is served only on
+# meetmeatthefair.com/* (see [[routes]]); a *.workers.dev hostname would be a
+# second front door outside every zone rule (the OPE-929 Cardworks incident).
+# Top-level on purpose: a key placed after a [table] header belongs to that table.
+workers_dev = false
 # OPE-905 — bumped 2026-06-10 -> 2026-09-10.
 compatibility_date = "2026-09-10"
 # OPE-905 — so a production stack trace names our source, not the bundle.

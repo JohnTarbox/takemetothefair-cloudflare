@@ -234,8 +234,10 @@ export const PATCH = withAuth<{ id: string }>(
 
         updateData.status = data.status;
 
-        // Track the status change for analytics
-        trackVendorStatusChange(
+        // Track the status change for analytics. Awaited (OPE-994): unawaited in a
+        // request context it can be cancelled when the response returns;
+        // trackServerEvent swallows its own errors, so this cannot fail the save.
+        await trackVendorStatusChange(
           db,
           data.eventVendorId,
           id,
