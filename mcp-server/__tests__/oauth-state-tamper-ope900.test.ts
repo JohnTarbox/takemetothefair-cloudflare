@@ -16,6 +16,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { LoginHandler } from "../src/oauth/login-handler.js";
+import { makeFakeBurstCounter } from "./_mocks/fake-burst-counter.js";
 
 vi.mock("../src/logger.js", () => ({ logError: async () => {} }));
 vi.mock("../src/db.js", () => ({ getDb: () => ({}) }));
@@ -67,8 +68,15 @@ beforeEach(() => {
     OAUTH_KV: kv,
     OAUTH_PROVIDER: {
       parseAuthRequest: async () => AUTH_REQ,
+      // Step 2 added a client lookup to GET /authorize; step 4 a limiter to POST.
+      lookupClient: async () => ({
+        clientId: "client-abc",
+        clientName: "Claude",
+        redirectUris: [],
+      }),
       completeAuthorization,
     },
+    BURST_COUNTER: makeFakeBurstCounter().ns,
   };
 });
 

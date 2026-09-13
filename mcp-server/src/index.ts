@@ -613,6 +613,10 @@ const oauthProvider = new OAuthProvider({
   authorizeEndpoint: "/authorize",
   tokenEndpoint: "/token",
   clientRegistrationEndpoint: "/register",
+  // OPE-900 step 5 — S256 only. Live metadata already reads ["S256"], but only
+  // because 0.10.x flipped the library DEFAULT (0.3.3 advertised "plain" too);
+  // nothing here asked for it. Explicit, so a future release cannot re-enable it.
+  allowPlainPKCE: false,
 });
 
 // ---------------------------------------------------------------------------
