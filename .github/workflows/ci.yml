@@ -164,6 +164,12 @@ jobs:
       - name: Guard heartbeat probe coverage
         run: npx tsx scripts/check-heartbeat-probes.ts
 
+      # OPE-949 — generated env types match the wrangler configs: binding names
+      # and kinds, regenerated from a lone copy of each config so no .env,
+      # .dev.vars or entry module changes the answer between machines.
+      - name: Guard generated env types against wrangler config drift
+        run: npx tsx scripts/check-env-types-drift.ts
+
   e2e:
     name: E2E Tests
     runs-on: ubuntu-latest
