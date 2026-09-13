@@ -1056,6 +1056,15 @@ export function computePerformerEnrichment(
  */
 export const REQUEST_SAMPLE_RETENTION_DAYS = 60;
 
+/**
+ * OPE-993 — error_logs and indexnow_submissions retention. Both were a 1%
+ * dice roll on their own write paths (src/lib/logger.ts, src/lib/indexnow.ts)
+ * with a 30-day cutoff; now enforced by the MCP daily cron
+ * (mcp-server/src/log-table-retention.ts). Same 30 days as before.
+ */
+export const ERROR_LOG_RETENTION_DAYS = 30;
+export const INDEXNOW_SUBMISSION_RETENTION_DAYS = 30;
+
 export const SEARCH_PING_RETENTION_DAYS = 7;
 
 /** Env override, so the window is tunable without a deploy-time code change. */

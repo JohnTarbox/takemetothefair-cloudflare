@@ -9,8 +9,8 @@
  *   - Adds `sessionId` so all log lines from one inbound email (or one
  *     cron run, one workflow execution) tie together. Filterable via
  *     the existing admin-logs search box.
- *   - Skips the 1% probabilistic cleanup — the main app's higher write
- *     volume already maintains the table.
+ *   - Never prunes. error_logs retention (30 days) runs on the MCP daily
+ *     cron — see log-table-retention.ts (OPE-993).
  *   - Source naming convention: `mcp:<area>[:<sub>]`. Examples in use:
  *       `mcp:email-handler`       — inbound email pipeline
  *       `mcp:email-queue`         — EMAIL_JOBS consumer

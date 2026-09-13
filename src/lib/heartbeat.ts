@@ -1447,6 +1447,42 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
         eq(agentHeartbeats.agentCode, "watchdog:request-sample-retention")
       ),
   },
+  {
+    // OPE-993 — error_logs 30-day retention, moved off a 1%-per-write dice roll
+    // (src/lib/logger.ts) onto the MCP 06:00Z cron. Evidence is the RUN STAMP,
+    // which is written only when the prune SUCCEEDED (0 deleted included): a
+    // delete that throws writes no stamp, so a broken prune goes silent here
+    // within one missed day. 48h matches the other 06:00Z cron probes.
+    name: "error-log-retention",
+    ownerOpe: "OPE-993",
+    label: "error_logs 30-day retention (daily MCP cron)",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        agentHeartbeats,
+        agentHeartbeats.lastSeenAt,
+        eq(agentHeartbeats.agentCode, "watchdog:error-log-retention")
+      ),
+  },
+  {
+    // OPE-993 — indexnow_submissions 30-day retention, moved off a 1% dice
+    // roll (src/lib/indexnow.ts recordSubmission) onto the MCP 06:00Z cron.
+    // Same run-stamp evidence and same success-only stamping as above.
+    name: "indexnow-submission-retention",
+    ownerOpe: "OPE-993",
+    label: "indexnow_submissions 30-day retention (daily MCP cron)",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        agentHeartbeats,
+        agentHeartbeats.lastSeenAt,
+        eq(agentHeartbeats.agentCode, "watchdog:indexnow-submission-retention")
+      ),
+  },
 ];
 
 /** A probe joined to its enablement anchor + newest evidence — the input to the

@@ -3173,6 +3173,7 @@ export const faultSignatures = sqliteTable(
 export type FaultSignatureRow = typeof faultSignatures.$inferSelect;
 
 // IndexNow Submissions table — records every pingIndexNow() attempt for observability.
+// Pruned to 30 days by the MCP daily cron (OPE-993, mcp-server/src/log-table-retention.ts).
 // timestamp: seconds-epoch (mode:"timestamp"). Migrated from raw seconds in 0043.
 export const indexnowSubmissions = sqliteTable(
   "indexnow_submissions",
@@ -3423,7 +3424,8 @@ export const urlDomainClassifications = sqliteTable(
   (table) => [index("idx_udc_domain_type").on(table.domainType)]
 );
 
-// Error Logs table.
+// Error Logs table. Pruned to 30 days by the MCP daily cron (OPE-993,
+// mcp-server/src/log-table-retention.ts).
 // timestamp: seconds-epoch (mode:"timestamp"). Migrated from raw seconds in 0043.
 export const errorLogs = sqliteTable("error_logs", {
   id: text("id").primaryKey(),
