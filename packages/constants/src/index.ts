@@ -806,8 +806,19 @@ export const PROMOTER_ENRICHMENT_STATUS_VALUES = [
   "ENRICHED",
   "NO_SOURCE",
   "BLOCKED",
+  // OPE-962 — the site was fetched successfully and staged ZERO candidates on
+  // PROMOTER_ENRICHMENT_EXHAUST_AFTER consecutive attempts: there is nothing
+  // more to extract. Distinct from NO_SOURCE (no website at all) and BLOCKED
+  // (the fetch failed). Without it NEEDS_ENRICHMENT had no exit short of every
+  // field filling, so unenrichable promoters were re-fetched every ~30 days
+  // forever and the queue could only grow (485 on 08-19, 516 on 09-13).
+  // Sticky like BLOCKED; a WEBSITE change re-opens it (see the edit paths).
+  "EXHAUSTED",
 ] as const;
 export type PromoterEnrichmentStatus = (typeof PROMOTER_ENRICHMENT_STATUS_VALUES)[number];
+
+/** OPE-962 — consecutive zero-candidate attempts before a promoter is EXHAUSTED. */
+export const PROMOTER_ENRICHMENT_EXHAUST_AFTER = 3;
 
 // The five enrichment target fields tracked in `promoters.enrichment_coverage`
 // (a JSON snapshot of which are filled). Fill-rate metrics aggregate these.
@@ -883,8 +894,8 @@ export function isPlaceholderDescription(desc: string | null | undefined): boole
  *
  * - all five fields covered → ENRICHED (even if it was IN_PROGRESS/BLOCKED)
  * - no website → NO_SOURCE (nothing to enrich from)
- * - IN_PROGRESS/BLOCKED preserved on edits that don't complete coverage
- *   (mirrors vendor-roster not overwriting terminal states on re-sweep)
+ * - IN_PROGRESS/BLOCKED/EXHAUSTED preserved on edits that don't complete
+ *   coverage (mirrors vendor-roster not overwriting terminal states on re-sweep)
  * - otherwise → NEEDS_ENRICHMENT
  */
 export function computePromoterEnrichment(
@@ -906,7 +917,11 @@ export function computePromoterEnrichment(
     status = "ENRICHED";
   } else if (!hasWebsite) {
     status = "NO_SOURCE";
-  } else if (currentStatus === "IN_PROGRESS" || currentStatus === "BLOCKED") {
+  } else if (
+    currentStatus === "IN_PROGRESS" ||
+    currentStatus === "BLOCKED" ||
+    currentStatus === "EXHAUSTED"
+  ) {
     status = currentStatus;
   } else {
     status = "NEEDS_ENRICHMENT";

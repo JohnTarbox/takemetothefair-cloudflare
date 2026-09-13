@@ -23,6 +23,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { and, desc, eq, gte, sql } from "drizzle-orm";
+import type { AnyColumn } from "drizzle-orm";
 import { computePromoterEnrichment, isPlaceholderDescription } from "@takemetothefair/constants";
 import { adminActions, events, promoterEnrichmentCandidates, promoters } from "../schema.js";
 import { jsonContent, logEnrichment, publicUrlFor, triggerIndexNow } from "../helpers.js";
@@ -91,7 +92,7 @@ export function registerPromoterEnrichmentReviewTools(
   // on the right column; this gives the interactive lane the same guarantee.
   server.tool(
     "list_promoter_enrichment_queue",
-    "Select the next batch of promoters to research for enrichment — the ENTITY queue (promoters.enrichment_status), not the staged-candidate queue. Filters to promoters with a website that still need enrichment and have not been ATTEMPTED within `stale_after_days`, newest-neglected first, ordered by upcoming approved-event count so the highest-traffic promoters are researched first. Use this instead of hand-writing the selection: the recency filter keys on enrichment_attempted_at ('when did we last look'), NOT last_enriched_at ('when did we last write a field'), and the latter is NULL for most of the queue. Read-only. Admin only.",
+    "Select the next batch of promoters to research for enrichment — the ENTITY queue (promoters.enrichment_status), not the staged-candidate queue. Filters to promoters with a website that still need enrichment and have not been ATTEMPTED within `stale_after_days`. Default order: never-attempted first, then longest-neglected, then upcoming approved-event count. `order_by: \"gap\"` orders instead by APPLIABLE gap — how many of the five auto-appliable fields (description, contact_email, contact_phone, social_links, hero; NOT logo, which always stages) are empty — and each row reports `appliable_gap`. EXHAUSTED promoters (OPE-962: three consecutive attempts found nothing to stage) are never selected. Use this instead of hand-writing the selection: the recency filter keys on enrichment_attempted_at ('when did we last look'), NOT last_enriched_at ('when did we last write a field'), and the latter is NULL for most of the queue. Read-only. Admin only.",
     {
       stale_after_days: z
         .number()
@@ -104,10 +105,26 @@ export function registerPromoterEnrichmentReviewTools(
           "Skip promoters attempted within this many days. Default 30, matching the nightly cron selector."
         ),
       limit: z.number().int().min(1).max(100).optional().default(25),
+      order_by: z
+        .enum(["neglected", "gap"])
+        .optional()
+        .default("neglected")
+        .describe(
+          "'neglected' (default): never-attempted, then oldest attempt, then upcoming events. 'gap': most empty auto-appliable fields first — the ordering that actually yields fills (OPE-962)."
+        ),
+      min_gap: z
+        .number()
+        .int()
+        .min(0)
+        .max(5)
+        .optional()
+        .describe("Only promoters with at least this many empty auto-appliable fields."),
     },
     async (params) => {
       const staleDays = params.stale_after_days ?? 30;
       const limit = params.limit ?? 25;
+      const orderBy = params.order_by ?? "neglected";
+      const minGap = params.min_gap ?? 0;
       const cutoff = Math.floor(Date.now() / 1000) - staleDays * 86_400;
 
       const upcoming = sql<number>`(
@@ -115,6 +132,28 @@ export function registerPromoterEnrichmentReviewTools(
          WHERE ${events.promoterId} = ${promoters.id}
            AND ${events.status} = 'APPROVED'
            AND ${events.endDate} >= unixepoch()
+      )`;
+
+      // OPE-962 — the fields a render can actually APPLY. `logo` is excluded on
+      // purpose: its rule agreement is 66.7%, so it always stages for review and
+      // a logo-only gap is not work the drain can finish. The description test
+      // mirrors isPlaceholderDescription (@takemetothefair/constants): blank, or
+      // the auto-generated "…is an event organizer" boilerplate.
+      const empty = (col: AnyColumn) =>
+        sql`(CASE WHEN ${col} IS NULL OR TRIM(${col}) = '' THEN 1 ELSE 0 END)`;
+      const gap = sql<number>`(
+        (CASE WHEN ${promoters.description} IS NULL OR TRIM(${promoters.description}) = ''
+              OR LOWER(TRIM(${promoters.description})) IN ('event organizer', 'event organizer.')
+              OR (LENGTH(TRIM(${promoters.description})) < 60
+                  AND LOWER(${promoters.description}) LIKE '%is an event organizer%')
+         THEN 1 ELSE 0 END)
+        + ${empty(promoters.contactEmail)}
+        + ${empty(promoters.contactPhone)}
+        + (CASE WHEN ${promoters.socialLinks} IS NULL
+                  OR TRIM(${promoters.socialLinks}) IN ('', '[]', '{}')
+                  OR LOWER(TRIM(${promoters.socialLinks})) = 'null'
+           THEN 1 ELSE 0 END)
+        + ${empty(promoters.heroImageUrl)}
       )`;
 
       const rows = await db
@@ -127,6 +166,7 @@ export function registerPromoterEnrichmentReviewTools(
           enrichmentAttemptedAt: promoters.enrichmentAttemptedAt,
           lastEnrichedAt: promoters.lastEnrichedAt,
           upcomingEvents: upcoming,
+          appliableGap: gap,
         })
         .from(promoters)
         .where(
@@ -138,14 +178,19 @@ export function registerPromoterEnrichmentReviewTools(
             AND (
               ${promoters.enrichmentAttemptedAt} IS NULL
               OR ${promoters.enrichmentAttemptedAt} < ${cutoff}
-            )`
+            )
+            AND ${gap} >= ${minGap}`
         )
-        // Never-attempted first (they carry the least information), then the
-        // longest-neglected, then by traffic value.
         .orderBy(
-          sql`${promoters.enrichmentAttemptedAt} IS NULL DESC`,
-          sql`${promoters.enrichmentAttemptedAt} ASC`,
-          desc(upcoming)
+          ...(orderBy === "gap"
+            ? [desc(gap), sql`${promoters.enrichmentAttemptedAt} ASC`]
+            : // Never-attempted first (they carry the least information), then
+              // the longest-neglected, then by traffic value.
+              [
+                sql`${promoters.enrichmentAttemptedAt} IS NULL DESC`,
+                sql`${promoters.enrichmentAttemptedAt} ASC`,
+                desc(upcoming),
+              ])
         )
         .limit(limit);
 
@@ -158,6 +203,7 @@ export function registerPromoterEnrichmentReviewTools(
         content: [
           jsonContent({
             stale_after_days: staleDays,
+            order_by: orderBy,
             queue_depth: total,
             returned: rows.length,
             // Named so a caller cannot mistake which column drove the filter.
@@ -173,6 +219,7 @@ export function registerPromoterEnrichmentReviewTools(
                 : null,
               last_enriched_at: r.lastEnrichedAt ? new Date(r.lastEnrichedAt).toISOString() : null,
               upcoming_approved_events: Number(r.upcomingEvents ?? 0),
+              appliable_gap: Number(r.appliableGap ?? 0),
             })),
           }),
         ],

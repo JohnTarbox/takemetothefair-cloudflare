@@ -278,10 +278,14 @@ export const promoters = sqliteTable("promoters", {
   // present + any target field empty → NEEDS_ENRICHMENT. IN_PROGRESS/BLOCKED are
   // agent/operator-owned; ENRICHED/NO_SOURCE are derived-terminal.
   enrichmentStatus: text("enrichment_status", {
-    enum: ["NEEDS_ENRICHMENT", "IN_PROGRESS", "ENRICHED", "NO_SOURCE", "BLOCKED"],
+    enum: ["NEEDS_ENRICHMENT", "IN_PROGRESS", "ENRICHED", "NO_SOURCE", "BLOCKED", "EXHAUSTED"],
   }),
   // JSON snapshot of which target fields are filled: {hero,logo,description,socials,contact}.
   enrichmentCoverage: text("enrichment_coverage"),
+  // OPE-962 (drizzle/0283) — consecutive successful fetches that staged ZERO
+  // candidates. Reset to 0 by any attempt that stages one, and by a website
+  // change. At PROMOTER_ENRICHMENT_EXHAUST_AFTER the promoter becomes EXHAUSTED.
+  enrichmentZeroYieldStreak: integer("enrichment_zero_yield_streak").notNull().default(0),
   /**
    * When a render last WROTE a field to this row. NOT "when did we last look".
    *
