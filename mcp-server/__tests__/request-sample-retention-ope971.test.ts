@@ -105,7 +105,7 @@ describe("OPE-971 — scheduled retention", () => {
     expect(warns.map((w) => w.message).join("\n")).toMatch(/retention incomplete/);
   });
 
-  it("a delete that throws is reported and the run is still stamped", async () => {
+  it("a delete that throws is reported and the run is NOT stamped — the probe must be able to go red", async () => {
     seed("old", 5, 90);
     const broken = new Proxy(db as object, {
       get(t, k) {
@@ -120,7 +120,9 @@ describe("OPE-971 — scheduled retention", () => {
     const r = await runRequestSampleRetention(broken as never, { now: NOW });
     expect(r.errors).toBe(1);
     expect(r.windowExceeded).toBe(true);
-    expect((await stamp())?.note).toMatch(/errors=1/);
+    expect(await stamp()).toBeUndefined();
+    const logged = (await db.select().from(errorLogs)).map((e) => e.message).join("\n");
+    expect(logged).toMatch(/request_samples prune failed/);
     vi.restoreAllMocks();
   });
 });

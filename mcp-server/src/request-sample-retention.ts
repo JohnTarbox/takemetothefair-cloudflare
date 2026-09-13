@@ -13,6 +13,10 @@
  * then records what it did and what the oldest remaining row is. The run
  * stamp (`agent_heartbeats`) is what the heartbeat probe watches, because the
  * deleted count is legitimately 0 on most days.
+ *
+ * The stamp is written ONLY when the run had no errors. Stamping a failed run
+ * kept the probe green while the prune was broken — the very "a control that
+ * cannot fail" shape this replaced (found by OPE-993's sibling module, 2026-09-13).
  */
 import { REQUEST_SAMPLE_RETENTION_DAYS } from "@takemetothefair/constants";
 import { inArray, lt, sql } from "drizzle-orm";
@@ -118,6 +122,9 @@ export async function runRequestSampleRetention(
       context: { ...result },
     }).catch(() => {});
   }
+
+  // A failed run is logged above and NOT stamped, so the probe goes red.
+  if (result.errors > 0) return result;
 
   try {
     await db
