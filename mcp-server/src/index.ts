@@ -1094,6 +1094,10 @@ export { RecommendationsScanWorkflow } from "./workflows/recommendations-scan.js
 export { EventDateDriftWorkflow } from "./workflows/event-date-drift.js";
 export { InboundEmailWorkflow } from "./workflows/inbound-email.js";
 
+// OPE-951 — the hard burst cap. Bound here as BURST_COUNTER and, cross-script,
+// by the main app (its wrangler.toml names script_name = "meetmeatthefair-mcp").
+export { BurstCounter } from "./burst-counter.js";
+
 // ---------------------------------------------------------------------------
 // Workflow trigger endpoints (HTTP escape hatch for Pages)
 // ---------------------------------------------------------------------------

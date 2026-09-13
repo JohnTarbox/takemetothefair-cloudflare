@@ -233,12 +233,20 @@ bucket_name = "mmatf-vendor-assets"
 
 [durable_objects]
 bindings = [
-  { name = "MCP_OBJECT", class_name = "MeetMeAtTheFairMCP" }
+  { name = "MCP_OBJECT", class_name = "MeetMeAtTheFairMCP" },
+  # OPE-951 — hard burst cap, one instance per rate-limit key. The main app
+  # binds this SAME class cross-script, so this Worker must deploy the class
+  # before the main app's binding lands (hence two PRs, in that order).
+  { name = "BURST_COUNTER", class_name = "BurstCounter" }
 ]
 
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["MeetMeAtTheFairMCP"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["BurstCounter"]
 
 # Cron Triggers — scheduled tasks fan out to main-app sweep endpoints via
 # the MAIN_APP service binding. Conservative rollout: only the
