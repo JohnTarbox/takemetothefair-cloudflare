@@ -38,7 +38,8 @@ import {
   unsafeSlug,
   type Slug,
 } from "@takemetothefair/utils";
-import { events, eventDays, adminActions } from "./schema.js";
+import { events, eventDays, adminActions, promoters } from "./schema.js";
+import { isCeasedPromoter } from "./promoters/succession.js";
 import { recomputeEventCompleteness } from "./helpers.js";
 import type { Db } from "./db.js";
 
@@ -99,6 +100,21 @@ export async function rolloverEventIfRecurring(
   if (parsed.freq !== "YEARLY") return { created: false, skipReason: "unsupported-cadence" };
   if (source.discontinuousDates) return { created: false, skipReason: "discontinuous-dates" };
   if (!source.startDate || !source.endDate) return { created: false, skipReason: "missing-dates" };
+
+  // OPE-979 — a promoter that stopped trading does not run next year's show.
+  // Rolling it would publish a TENTATIVE edition under a dead company (the
+  // Eagle Shows Marlborough series). Whoever took the shows over creates their
+  // own edition; the handover is recorded on promoters.succeeded_by_promoter_id.
+  if (source.promoterId) {
+    const [owner] = await db
+      .select({ operatingStatus: promoters.operatingStatus })
+      .from(promoters)
+      .where(eq(promoters.id, source.promoterId))
+      .limit(1);
+    if (isCeasedPromoter(owner?.operatingStatus)) {
+      return { created: false, skipReason: "promoter-ceased" };
+    }
+  }
 
   const [{ count: dayCount }] = await db
     .select({ count: sql<number>`count(*)` })

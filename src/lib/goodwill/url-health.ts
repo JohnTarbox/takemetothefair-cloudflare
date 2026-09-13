@@ -61,7 +61,13 @@ export type UrlHealthVerdict =
   /** Reached the origin, got a non-2xx. */
   | "http_error"
   /** Never reached the origin: DNS failure, TLS failure, timeout, abort. */
-  | "unreachable";
+  | "unreachable"
+  /**
+   * OPE-979 — the page ANNOUNCES the organization is gone: closing its doors,
+   * taken over, ceased trading. Checked BEFORE the status code, because the
+   * specimen serves it as a 503 maintenance page (see CLOSURE_STRONG_RE).
+   */
+  | "closure_notice";
 
 export interface UrlHealthInput {
   /** False when the fetch threw or timed out — we never saw a response. */
@@ -110,6 +116,50 @@ const EVENT_LANGUAGE_RE =
 const JSONLD_EVENT_RE = /"@type"\s*:\s*"[^"]*Event[^"]*"/i;
 
 /**
+ * OPE-979 — an organization announcing that it is finished.
+ *
+ * The specimen (`eagleshows.com`, 2026-09-13) defeats every other signal here:
+ * it is the promoter's own domain, on-topic, with the promoter's name in the
+ * title — token overlap is HIGH, not zero. It also does not return 200: it is
+ * a WordPress maintenance page served as **HTTP 503**, measured with our
+ * scraper UA and with a browser UA. So before this, the sweep called it
+ * `http_error` and never read the body — indistinguishable from an outage.
+ *
+ * Explicit announcement phrasing only, because a false closure verdict on a
+ * trading organizer would be worse than the silence it replaces. Phrases that
+ * also describe an ordinary season ("final day", "our last show of the year")
+ * are deliberately not here.
+ */
+const CLOSURE_STRONG_RE =
+  /\b(clos(ing|ed)\s+(it[’']?s|its|our)\s+doors|(has|have)\s+taken\s+over|no\s+longer\s+(operating|in\s+business)|ceased\s+(trading|operations)|out\s+of\s+business|permanently\s+closed|has\s+been\s+acquired|under\s+new\s+(ownership|management))\b/i;
+
+/** Corroborating only — true of healthy sites during a deploy. Never a verdict alone. */
+const MAINTENANCE_RE = /\bmaintenance\s+mode\b/i;
+
+function titleOf(html: string): string {
+  const m = /<title\b[^>]*>([\s\S]*?)<\/title>/i.exec(html);
+  return m ? m[1].replace(/\s+/g, " ").trim() : "";
+}
+
+/**
+ * The closure check on its own, exported so the sweep can run it on a non-2xx
+ * body without letting that body influence the event-signal verdicts.
+ */
+export function detectClosureNotice(html: string | null): {
+  fired: boolean;
+  signals: string[];
+  phrase: string | null;
+} {
+  if (!html) return { fired: false, signals: [], phrase: null };
+  const text = `${titleOf(html)} ${visibleText(html)}`;
+  const signals: string[] = [];
+  const strong = CLOSURE_STRONG_RE.exec(text);
+  if (strong) signals.push("closure-phrase");
+  if (MAINTENANCE_RE.test(text)) signals.push("maintenance-mode");
+  return { fired: Boolean(strong), signals, phrase: strong ? strong[0] : null };
+}
+
+/**
  * Strip markup so the text checks read prose, not attributes.
  *
  * `<script>` and `<style>` go first and entirely, contents included — otherwise
@@ -153,6 +203,16 @@ export function classifyUrlHealth(input: UrlHealthInput): UrlHealthResult {
       verdict: "unreachable",
       signals: [],
       detail: "fetch threw or timed out before a response",
+    };
+  }
+
+  // OPE-979 — before the status code: a closure page is often a 503.
+  const closure = detectClosureNotice(input.html);
+  if (closure.fired) {
+    return {
+      verdict: "closure_notice",
+      signals: closure.signals,
+      detail: `HTTP ${input.status ?? "?"}; page announces closure/handover: "${closure.phrase}"`,
     };
   }
 
@@ -211,5 +271,32 @@ export function classifyUrlHealth(input: UrlHealthInput): UrlHealthResult {
  * history, not of one look.
  */
 export function isActionable(verdict: UrlHealthVerdict): boolean {
-  return verdict === "no_event_signal" || verdict === "http_error";
+  return verdict === "no_event_signal" || verdict === "http_error" || verdict === "closure_notice";
+}
+
+/**
+ * OPE-979 — the structural companion: several distinct paths on one host all
+ * serving the SAME visible text is a parked, maintenance or handover page.
+ *
+ * Compared on visible text, not bytes: the specimen's two paths differ by ~300
+ * bytes (77,707 vs 77,407 — per-URL markup) and have identical visible text
+ * (192 chars). A byte-hash check would have passed it. Needs at least two
+ * distinct paths and a non-trivial amount of text, so an empty JS shell does
+ * not count as "the same page everywhere".
+ */
+export function samePageOnEveryPath(pages: Array<{ url: string; html: string | null }>): boolean {
+  const byPath = new Map<string, string>();
+  for (const p of pages) {
+    if (!p.html) continue;
+    let path: string;
+    try {
+      path = new URL(p.url).pathname.replace(/\/+$/, "") || "/";
+    } catch {
+      continue;
+    }
+    byPath.set(path, visibleText(p.html));
+  }
+  if (byPath.size < 2) return false;
+  const texts = [...byPath.values()];
+  return texts[0].length >= 50 && texts.every((t) => t === texts[0]);
 }

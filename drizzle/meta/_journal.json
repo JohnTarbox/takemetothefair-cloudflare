@@ -71,6 +71,13 @@
       "when": 1782934162826,
       "tag": "0284_ope971_request_sample_retention_probe",
       "breakpoints": true
+    },
+    {
+      "idx": 149,
+      "version": "6",
+      "when": 1782934222826,
+      "tag": "0285_ope979_promoter_operating_status",
+      "breakpoints": true
     }
   ]
 }

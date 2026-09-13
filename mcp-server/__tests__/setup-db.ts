@@ -108,7 +108,12 @@ const SCHEMA_SQL = `
     -- WS2b schema-sync guard covers promoters, so these are required here.
     claimed INTEGER NOT NULL DEFAULT 0,
     claimed_at INTEGER,
-    claimed_by TEXT
+    claimed_by TEXT,
+    -- OPE-979 (drizzle/0285) — operating status + succession.
+    operating_status TEXT,
+    succeeded_by_promoter_id TEXT,
+    operating_status_source_url TEXT,
+    operating_status_verified_at INTEGER
   );
 
   CREATE TABLE events (

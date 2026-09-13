@@ -323,6 +323,28 @@ export const promoters = sqliteTable("promoters", {
   claimed: integer("claimed", { mode: "boolean" }).notNull().default(false),
   claimedAt: integer("claimed_at", { mode: "timestamp" }),
   claimedBy: text("claimed_by").references(() => users.id, { onDelete: "set null" }),
+  /**
+   * OPE-979 (drizzle/0285) — is this business still trading?
+   *
+   * NULL = never assessed (every row at ship). CEASED means the company closed;
+   * `succeededByPromoterId` names who took its shows over, when anyone did. That
+   * is deliberately NOT a merge: merge_promoter erases one of two real companies,
+   * and the handover is the fact worth keeping.
+   *
+   * Readers today: the enrichment selector and dispatcher (a CEASED promoter is
+   * never re-fetched) and rollover (a CEASED promoter's event is not rolled into
+   * next year). Nothing sets it automatically — the url-health closure_notice
+   * verdict surfaces a candidate; a person records the status.
+   */
+  operatingStatus: text("operating_status", {
+    enum: ["ACTIVE", "CEASED", "MERGED", "UNKNOWN"],
+  }),
+  succeededByPromoterId: text("succeeded_by_promoter_id").references(
+    (): AnySQLiteColumn => promoters.id,
+    { onDelete: "set null" }
+  ),
+  operatingStatusSourceUrl: text("operating_status_source_url"),
+  operatingStatusVerifiedAt: integer("operating_status_verified_at", { mode: "timestamp" }),
 });
 
 // Event series — EH3 P0 (drizzle/0127, 2026-06-21). Thin parent table: the

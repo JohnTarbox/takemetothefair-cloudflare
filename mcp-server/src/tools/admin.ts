@@ -155,6 +155,10 @@ import {
   SOURCE_TYPE_VALUES as CITATION_SOURCE_TYPE_VALUES,
 } from "./admin-citations.js";
 import { registerEventNameVariantTools } from "./admin-event-name-variants.js";
+import {
+  PROMOTER_OPERATING_STATUSES,
+  validatePromoterSuccession,
+} from "../promoters/succession.js";
 
 const PUBLIC_EVENT_SET = new Set<string>(PUBLIC_EVENT_STATUSES);
 const PUBLIC_VENDOR_SET = new Set<string>(PUBLIC_VENDOR_STATUSES);
@@ -4687,6 +4691,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
             "logo_url",
             "hero_image_url",
             "social_links",
+            "succeeded_by_promoter_id",
           ])
         )
         .optional()
@@ -4704,6 +4709,25 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .describe(
           "Whether this producer ever publishes a public exhibitor roster. Set false to auto-mark their future events NO_PUBLIC_LIST (skip research)."
         ),
+      // OPE-979 — succession. Two real companies stay two rows; this records
+      // that one stopped trading and who took its shows over.
+      operating_status: z
+        .enum(PROMOTER_OPERATING_STATUSES)
+        .optional()
+        .describe(
+          "OPE-979: whether the business is still trading. CEASED/MERGED require operating_status_source_url (where you read it). Stamps operating_status_verified_at. A CEASED promoter is skipped by enrichment and by next-year rollover. Use get_promoter_blast_radius first to see what it still owns."
+        ),
+      succeeded_by_promoter_id: z
+        .string()
+        .optional()
+        .describe(
+          "OPE-979: the promoter that took this one's shows over (must exist, must not be this promoter). Not a merge — both rows stay."
+        ),
+      operating_status_source_url: z
+        .string()
+        .url()
+        .optional()
+        .describe("OPE-979: the page that shows the status, e.g. the closure notice."),
       defer_search_ping: z
         .boolean()
         .optional()
@@ -4740,6 +4764,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         { param: "social_links", column: "socialLinks" },
         { param: "verified", column: "verified" },
         { param: "vendor_roster_publishes_lists", column: "vendorRosterPublishesLists" },
+        { param: "operating_status", column: "operatingStatus" },
+        { param: "succeeded_by_promoter_id", column: "succeededByPromoterId" },
+        { param: "operating_status_source_url", column: "operatingStatusSourceUrl" },
       ];
 
       const updates: Record<string, unknown> = {};
@@ -4802,6 +4829,13 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }
 
       const promoter = promoterRows[0];
+
+      // OPE-979 — succession is only as good as its evidence and its target.
+      const succession = await validatePromoterSuccession(db, promoter, updates);
+      if (succession) {
+        return { content: [{ type: "text", text: succession }], isError: true };
+      }
+      if (params.operating_status !== undefined) updates.operatingStatusVerifiedAt = new Date();
 
       // If name changed, regenerate slug
       if (params.name !== undefined) {
