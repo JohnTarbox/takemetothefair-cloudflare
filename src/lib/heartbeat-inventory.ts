@@ -37,7 +37,6 @@ export type InventoryEntry =
 /** The only paths allowed to be `unreviewed`. A new path must choose. */
 export const GRANDFATHERED_UNREVIEWED = new Set<string>([
   "queue:syndication-changes",
-  "workflow:EventDateDriftWorkflow",
   "workflow:SchemaOrgSyncWorkflow",
   "cron:runInboundExceptionNotice",
   "cron:main-app:/api/admin/content-links/audit",
@@ -100,7 +99,10 @@ export const HEARTBEAT_INVENTORY: Record<string, InventoryEntry> = {
     note: "Writers inside this Workflow each carry their own probe; a new writer here needs one too, and this check cannot see it (see header).",
   },
   "workflow:RecommendationsScanWorkflow": { probes: ["recommendation-scan"] },
-  "workflow:EventDateDriftWorkflow": U,
+  "workflow:EventDateDriftWorkflow": {
+    probes: ["promoter-url-health-sweep", "organizer-cancellation-recheck"],
+    note: "OPE-987 moved this off `unreviewed`: its promoter sweep (OPE-868) and cancellation recheck (OPE-987) each carry a probe. ⚠️ The date-drift loop itself — the workflow's original writer of event_date_drift_findings — still has NONE; that debt did not go away, it is now named here instead of counted.",
+  },
   "workflow:SchemaOrgSyncWorkflow": U,
 
   // ── scheduled() jobs ────────────────────────────────────────────────────

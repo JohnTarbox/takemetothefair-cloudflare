@@ -376,6 +376,18 @@ const SCHEMA_SQL = `
     note TEXT
   );
 
+  -- OPE-987: mirrors drizzle/0276 (the cancellation recheck's rotation state).
+  CREATE TABLE url_health_checks (
+    id TEXT PRIMARY KEY,
+    url TEXT NOT NULL,
+    source_field TEXT NOT NULL,
+    verdict TEXT NOT NULL,
+    http_status INTEGER,
+    signals TEXT,
+    detail TEXT,
+    checked_at INTEGER NOT NULL
+  );
+
   CREATE TABLE weekly_inventory_state (
     id TEXT PRIMARY KEY,
     last_sent_date TEXT,

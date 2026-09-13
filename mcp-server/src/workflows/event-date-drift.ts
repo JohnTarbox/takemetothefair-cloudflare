@@ -23,6 +23,8 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { NonRetryableError } from "cloudflare:workflows";
 import { logError } from "../logger.js";
+import { getDb } from "../db.js";
+import { DEFAULT_URLS_PER_CALL, runCancellationRecheck } from "../goodwill/cancellation-recheck.js";
 
 export type EventDateDriftParams = {
   maxChunks?: number;
@@ -197,12 +199,72 @@ export class EventDateDriftWorkflow extends WorkflowEntrypoint<Env, EventDateDri
       }
     }
 
+    // OPE-987 — re-read upcoming events' organizer pages for a cancellation
+    // notice (cape-cod-brew-fest sat SCHEDULED for ~39 days after its page said
+    // "2026 Festival Canceled").
+    //
+    // On this daily run for the same reason as the promoter sweep above: a pass
+    // nobody schedules is inert. It runs IN this Worker, not through a main-app
+    // route, because the discrepancy writer (captureDiscrepancy) lives here and
+    // the main app deliberately does not write event_discrepancies directly.
+    //
+    // Sized from the measured candidate set, not by analogy: 186 events in the
+    // 30-day window on 2026-09-13 → 136 DISTINCT organizer urls after the
+    // third-party exclusion. 20 urls per step (worst case 20 × 10s fetch
+    // timeout = 200s, inside the 5-minute step) × 10 steps = 200 covers that
+    // with headroom; the loop stops as soon as nothing is due. Failures are
+    // logged and swallowed — this must never abort the date sweep.
+    const cancellation = {
+      steps: 0,
+      examined: 0,
+      notices: 0,
+      opened: 0,
+      remaining: 0,
+      failed: false,
+    };
+    for (let i = 0; i < 10; i++) {
+      try {
+        const res = await step.do(
+          `organizer-cancellation-recheck-${i + 1}`,
+          { retries: { limit: 1, delay: "10 seconds" }, timeout: "5 minutes" },
+          async () => {
+            const r = await runCancellationRecheck(getDb(this.env.DB), {
+              limit: DEFAULT_URLS_PER_CALL,
+            });
+            return {
+              examined: r.examined,
+              notices: r.notices,
+              opened: r.discrepanciesOpened,
+              remaining: r.remaining,
+            };
+          }
+        );
+        cancellation.steps++;
+        cancellation.examined += res.examined;
+        cancellation.notices += res.notices;
+        cancellation.opened += res.opened;
+        cancellation.remaining = res.remaining;
+        if (res.remaining === 0 || res.examined === 0) break;
+      } catch (err) {
+        cancellation.failed = true;
+        await logError(this.env.DB, {
+          source: SOURCE,
+          message: "organizer cancellation recheck step failed; drift results are unaffected",
+          error: err,
+          sessionId: event.instanceId,
+          context: { step: i + 1, cancellation },
+        });
+        break;
+      }
+    }
+
     return {
       chunks,
       cursorReached: cursor,
       cappedAtMaxChunks: chunks >= maxChunks,
       ...totals,
       url_health: urlHealth,
+      cancellation_recheck: cancellation,
     };
   }
 }
