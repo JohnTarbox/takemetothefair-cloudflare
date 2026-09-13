@@ -77,6 +77,40 @@ updates:
           - "@auth/*"
           - "react*"
           - "drizzle*"
+      # OPE-992 — production MAJOR updates get their own group, kept apart from
+      # minor/patch on purpose: a breaking major must not hold the safe patches
+      # in the group above hostage while it waits for a migration.
+      #
+      # ORDER MATTERS. Dependabot assigns each update to the FIRST group (top to
+      # bottom) whose rules match, so this group only ever sees what nothing
+      # above claimed:
+      #   - cloudflare-runtime / next-and-auth / database have no update-types
+      #     filter, so their packages' majors (e.g. next 15→16) stay in those
+      #     named groups — the precedence is unchanged by adding this one;
+      #   - dev-tooling already takes every development major;
+      #   - production-minor-and-patch filters to minor/patch, so a production
+      #     major falls through it to here.
+      # Keep this group LAST, and keep its exclude-patterns identical to the one
+      # above, or it will start swallowing packages the named groups own.
+      #
+      # Measured before this change: ungrouped production majors were already
+      # raised, one PR per package (#1236 postal-mime 2→3, #1237 lucide-react
+      # 0→1, #1239 @next/third-parties 15→16), each spending a slot of
+      # open-pull-requests-limit. This group makes them one reviewable PR.
+      production-major:
+        dependency-type: "production"
+        update-types:
+          - "major"
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "@opennextjs/*"
+          - "wrangler"
+          - "@cloudflare/*"
+          - "next*"
+          - "@auth/*"
+          - "react*"
+          - "drizzle*"
     labels:
       - "dependencies"
     commit-message:
