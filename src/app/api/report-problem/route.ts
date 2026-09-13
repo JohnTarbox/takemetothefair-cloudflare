@@ -154,10 +154,7 @@ const CORRELATION_TIMEOUT_MS = 5000;
  *                                 misconfig and logged as error.
  */
 async function triggerCorrelation(problemReportId: string): Promise<void> {
-  const env = getCloudflareEnv() as unknown as {
-    MCP_SERVER_URL?: string;
-    INTERNAL_API_KEY?: string;
-  };
+  const env = getCloudflareEnv();
   const baseUrl = env.MCP_SERVER_URL || MCP_DEFAULT_URL;
   const apiKey = env.INTERNAL_API_KEY;
   if (!apiKey) {

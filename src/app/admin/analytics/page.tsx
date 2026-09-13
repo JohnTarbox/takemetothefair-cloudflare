@@ -35,7 +35,6 @@ import {
   getIndexNowQuota,
   getTrafficStats,
   getSitemaps,
-  type BingEnv,
   type BingQueryRow,
   type BingPageRow,
   type BingCrawlStatsRow,
@@ -50,7 +49,6 @@ import {
   getSiteSearchQueries,
   getSitePropertyTotals,
   getSitemapStatus,
-  type ScEnv,
   type SitePropertyTotals,
   type SiteSearchQueriesResult,
   type SitemapStatus,
@@ -184,7 +182,7 @@ async function loadAeoReferralsSafe(env: Ga4Env): Promise<AeoReferralsResult | n
 
 async function OverviewTab({ window }: { window: WindowKey }) {
   const db = getCloudflareDb();
-  const env = getCloudflareEnv() as unknown as ScEnv & BingEnv & Ga4Env;
+  const env = getCloudflareEnv();
   const [snapshot, aeo, fb] = await Promise.all([
     loadOverviewSnapshot(db, env, window),
     loadAeoReferralsSafe(env),
@@ -2961,7 +2959,7 @@ type GscLoad =
 
 async function loadGscData(): Promise<GscLoad> {
   try {
-    const env = getCloudflareEnv() as unknown as ScEnv;
+    const env = getCloudflareEnv();
     const settled = await Promise.allSettled([
       getSiteSearchQueries(env, { rowLimit: 25 }),
       getSitemapStatus(env),
@@ -3401,7 +3399,7 @@ interface BingTabData {
 
 async function loadBingData(): Promise<BingLoad> {
   try {
-    const env = getCloudflareEnv() as unknown as BingEnv;
+    const env = getCloudflareEnv();
     // Run all Bing reports in parallel. Each result is independently catchable
     // so a transient failure on one (e.g. site-scan returning 404 before Bing
     // has completed a scan) doesn't blank the whole tab.
@@ -4463,7 +4461,7 @@ function StatRow({ label, value, hint }: { label: string; value: string; hint?: 
 
 async function SiteHealthTab() {
   const db = getCloudflareDb();
-  const env = getCloudflareEnv() as unknown as Ga4Env;
+  const env = getCloudflareEnv();
   const { getCurrentIssues } = await import("@/lib/site-health");
   const { getUnclassifiedOutboundDestinations } =
     await import("@/lib/url-classification-discovery");

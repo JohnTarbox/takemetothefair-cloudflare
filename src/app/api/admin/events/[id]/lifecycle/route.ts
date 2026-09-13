@@ -166,7 +166,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     // matter — going private (→ CANCELLED) should remove from index; going
     // public again (CANCELLED → SCHEDULED) should re-submit.
     if (isPublicLifecycle(from) !== isPublicLifecycle(to)) {
-      const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+      const env = getCloudflareEnv();
       await pingIndexNow(
         db,
         indexNowUrlFor("events", current.slug),

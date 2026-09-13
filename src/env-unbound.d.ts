@@ -74,4 +74,70 @@ interface CloudflareEnv {
   GOOGLE_MAPS_API_KEY?: string;
   GA4_MEASUREMENT_ID?: string;
   GA4_MP_API_SECRET?: string;
+
+  /**
+   * ## OPE-950 — keys the code read through `as unknown as` casts
+   *
+   * Removing ~130 env casts meant the keys behind them had to be typed
+   * somewhere, and the generated `CloudflareEnv` carries NONE of them: it is
+   * built from `wrangler.toml`, and every key below is absent from it.
+   *
+   * Evidence, measured 2026-09-13 on origin/main (`grep -c <KEY> wrangler.toml`
+   * → 0 for every key in both groups; the only hit is a COMMENT at
+   * wrangler.toml:45 naming CLOUDFLARE_BROWSER_RENDERING_TOKEN as a secret).
+   *
+   * ⚠️ Whether each is set as a secret on the deployed `meetmeatthefair-app`
+   * is UNVERIFIED here — `wrangler secret list` was out of scope for OPE-950.
+   * The groups record what the REPO says, not what production has.
+   */
+
+  // ── Group A — named as a Worker SECRET somewhere in the repo ───────────────
+  // docs/opennext-cutover-runbook.md:36-39 lists AUTH_SECRET, NEXTAUTH_SECRET,
+  // RESEND_API_KEY, INTERNAL_API_KEY, GOOGLE_CLIENT_ID/SECRET,
+  // FACEBOOK_CLIENT_ID/SECRET, CLAUDE_READONLY_TOKEN, INDEXNOW_KEY,
+  // CLOUDFLARE_BROWSER_RENDERING_TOKEN as `wrangler secret put` on this Worker.
+  // scripts/set-ga4-key.sh:40-42 puts GA4_SA_CLIENT_EMAIL/GA4_SA_PRIVATE_KEY;
+  // scripts/verify-bing-key.sh:2 calls BING_WEBMASTER_API_KEY a worker secret;
+  // .env.example names GA4_PROPERTY_ID.
+  AUTH_SECRET?: string;
+  NEXTAUTH_SECRET?: string;
+  RESEND_API_KEY?: string;
+  INTERNAL_API_KEY?: string;
+  GOOGLE_CLIENT_ID?: string;
+  GOOGLE_CLIENT_SECRET?: string;
+  FACEBOOK_CLIENT_ID?: string;
+  FACEBOOK_CLIENT_SECRET?: string;
+  CLAUDE_READONLY_TOKEN?: string;
+  INDEXNOW_KEY?: string;
+  CLOUDFLARE_BROWSER_RENDERING_TOKEN?: string;
+  GA4_PROPERTY_ID?: string;
+  GA4_SA_CLIENT_EMAIL?: string;
+  GA4_SA_PRIVATE_KEY?: string;
+  BING_WEBMASTER_API_KEY?: string;
+
+  // ── Group B — FINDING: read by code, named NOWHERE as configured ───────────
+  // Absent from wrangler.toml AND from docs/, scripts/, .github/ and
+  // .env.example (grep, 2026-09-13). Every read site already tolerates
+  // `undefined` (all were optional in the casts they came from); if a key is
+  // not set as a secret, that undefined branch is what production runs.
+  // Reported on OPE-950 — no binding added.
+  /**
+   * ⚠️ Bound as a [vars] entry on the MCP Worker (mcp-server/wrangler.toml:64)
+   * but NOT on this one — the main app's IndexNow auto-pause alert, CPI
+   * stale-red digest, KPI alerts and GSC milestone ingest all read it here.
+   */
+  ALERT_EMAIL_TECHNICAL?: string;
+  ALERT_EMAIL_BUSINESS?: string;
+  SLACK_WEBHOOK_URL_TECHNICAL?: string;
+  SLACK_WEBHOOK_URL_BUSINESS?: string;
+  SC_SITE_URL?: string;
+  UNSUBSCRIBE_SECRET?: string;
+  NEWSLETTER_APPROVE_SECRET?: string;
+  NEWSLETTER_UNSUBSCRIBE_SECRET?: string;
+  MCP_SERVER_URL?: string;
+  /** docs/mcp-write-invariants.md:193 describes the flag; nothing binds it. */
+  EH3_P1_BACKFILL_ENABLED?: string;
+  GOODWILL_FLIP_ENABLED?: string;
+  SITE_HEALTH_EXPIRE_DAYS?: string;
+  NEXT_PUBLIC_SITE_URL?: string;
 }

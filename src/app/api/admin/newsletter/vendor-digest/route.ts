@@ -82,7 +82,7 @@ export const POST = withAuthorized(async ({ request, db }) => {
   // non-empty string, and "no" is a non-empty string.
   const humanConfirmed = body.require_human_confirmation === BROADCAST_CONFIRM_TOKEN;
 
-  const env = getCloudflareEnv() as unknown as Record<string, string | undefined>;
+  const env = getCloudflareEnv();
   const siteUrl = getSiteUrl();
   const now = new Date();
 

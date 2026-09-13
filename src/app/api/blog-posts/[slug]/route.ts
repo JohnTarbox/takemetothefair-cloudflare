@@ -315,7 +315,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
     // an already-published post don't ping.
     if (data.status === "PUBLISHED" && existing.status !== "PUBLISHED") {
       const finalSlug = (updateData.slug as string | undefined) ?? existing.slug;
-      const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+      const env = getCloudflareEnv();
       await pingIndexNow(db, indexNowUrlFor("blog", finalSlug), env, "blog-patch");
     }
 

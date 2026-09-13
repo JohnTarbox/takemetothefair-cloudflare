@@ -279,9 +279,7 @@ async function enqueueDiscrepanciesAsync(
     // GOODWILL_FLIP_ENABLED env flag is set) or log a 'would_flip'
     // shadow note. Spec requires the discrepancy to be emitted in
     // all cases — the decision augments notes, never gates emit.
-    const flipEnabled =
-      (getCloudflareEnv() as unknown as { GOODWILL_FLIP_ENABLED?: string })
-        .GOODWILL_FLIP_ENABLED === "1";
+    const flipEnabled = getCloudflareEnv().GOODWILL_FLIP_ENABLED === "1";
     // Read the flip margin once per request — cheap (single-row table)
     // and avoids per-disagreement query amplification on multi-field
     // discrepancies.

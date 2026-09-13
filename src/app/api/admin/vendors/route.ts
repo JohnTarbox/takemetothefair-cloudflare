@@ -86,7 +86,7 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db, session })
     const [newVendor] = await db.select().from(vendors).where(eq(vendors.id, vendorId)).limit(1);
 
     if (newVendor?.slug) {
-      const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+      const env = getCloudflareEnv();
       await pingIndexNow(db, indexNowUrlFor("vendors", newVendor.slug), env, "vendor-create");
     }
 

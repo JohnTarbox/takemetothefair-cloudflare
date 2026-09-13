@@ -4,12 +4,11 @@ import { eq } from "drizzle-orm";
 import { isAuthorized } from "@/lib/api-auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { events, promoters, venues } from "@/lib/db/schema";
-import { Ga4ApiError, Ga4ConfigError, getPageMetrics, type Ga4Env } from "@/lib/ga4";
+import { Ga4ApiError, Ga4ConfigError, getPageMetrics } from "@/lib/ga4";
 import {
   getSearchQueriesForPage,
   ScApiError,
   ScConfigError,
-  type ScEnv,
   type SearchQueryRow,
 } from "@/lib/search-console";
 import { DateRangeError, parseAnalyticsParams, resolveDateRange } from "@/lib/analytics-params";
@@ -75,8 +74,8 @@ export async function GET(request: NextRequest) {
   const path = `/events/${event.slug}`;
 
   try {
-    const ga4Env = getCloudflareEnv() as unknown as Ga4Env;
-    const scEnv = getCloudflareEnv() as unknown as ScEnv;
+    const ga4Env = getCloudflareEnv();
+    const scEnv = getCloudflareEnv();
 
     const ga4Promise = getPageMetrics(ga4Env, path, {
       skipCache: params.refresh,

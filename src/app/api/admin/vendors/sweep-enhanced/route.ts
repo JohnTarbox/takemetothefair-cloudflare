@@ -31,7 +31,7 @@ export async function POST(request: Request) {
   }
 
   const db = getCloudflareDb();
-  const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+  const env = getCloudflareEnv();
   const now = new Date();
   const cutoff = new Date(now.getTime() - GRACE_MS);
 

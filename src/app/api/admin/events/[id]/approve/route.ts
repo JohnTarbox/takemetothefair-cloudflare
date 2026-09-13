@@ -62,7 +62,7 @@ export const POST = withAuth<{ id: string }>(
       // won't re-send. Non-blocking on failure: log + continue so a
       // queue-bound issue doesn't fail the admin's approve action.
       try {
-        const cfEnv = getCloudflareEnv() as unknown as { EMAIL_JOBS?: Queue<unknown> };
+        const cfEnv = getCloudflareEnv();
         await notifyApprovalIfNeeded(db, { EMAIL_JOBS: cfEnv.EMAIL_JOBS }, id);
       } catch (notifyError) {
         await logError(db, {

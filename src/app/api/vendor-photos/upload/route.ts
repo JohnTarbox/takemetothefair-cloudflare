@@ -28,7 +28,7 @@ import { auth } from "@/lib/auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { vendorPhotos } from "@/lib/db/schema";
 import { authorizeVendorGallery, MAX_GALLERY_PHOTOS } from "@/lib/vendor-photo-auth";
-import { runUploadPipeline, type PipelineEnv } from "@/lib/upload-image-pipeline";
+import { runUploadPipeline } from "@/lib/upload-image-pipeline";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
 const MAX_BYTES = 5 * 1024 * 1024;
@@ -104,7 +104,7 @@ export async function POST(request: Request) {
     actorId: session!.user!.id,
     uploadSource: "vendor-self-service",
     db,
-    env: getCloudflareEnv() as unknown as PipelineEnv,
+    env: getCloudflareEnv(),
   });
 
   if (!result.ok) return NextResponse.json(result.body, { status: result.status });

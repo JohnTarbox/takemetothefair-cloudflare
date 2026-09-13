@@ -64,7 +64,7 @@ export async function GET(
     return notFound();
   }
 
-  const env = getCloudflareEnv() as unknown as { VENDOR_ASSETS?: R2Bucket };
+  const env = getCloudflareEnv();
   return streamAttachment(env.VENDOR_ASSETS, resolved.ref, claims.index, {
     // Always a download: the slot exists for programmatic recovery, and an
     // inline render is the browser use case the session route already serves.

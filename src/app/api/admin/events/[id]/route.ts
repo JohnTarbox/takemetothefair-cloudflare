@@ -671,7 +671,7 @@ export const PATCH = withAuth<{ id: string }>(
 
       if (indexNowSource) {
         const slug = (updateData.slug as string | undefined) ?? currentEvent.slug;
-        const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+        const env = getCloudflareEnv();
         await pingIndexNow(db, indexNowUrlFor("events", slug), env, indexNowSource);
       }
 
@@ -682,7 +682,7 @@ export const PATCH = withAuth<{ id: string }>(
       // so a queue-bound issue doesn't fail the admin's PATCH.
       if (currentEvent.status !== "APPROVED" && newStatus === "APPROVED") {
         try {
-          const cfEnv = getCloudflareEnv() as unknown as { EMAIL_JOBS?: Queue<unknown> };
+          const cfEnv = getCloudflareEnv();
           await notifyApprovalIfNeeded(db, { EMAIL_JOBS: cfEnv.EMAIL_JOBS }, id);
         } catch (notifyError) {
           await logError(db, {

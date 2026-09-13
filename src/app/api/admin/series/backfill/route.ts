@@ -197,7 +197,7 @@ async function commitBackfill(
   db: ReturnType<typeof getCloudflareDb>,
   body: { confirm_series_slugs?: string[] }
 ): Promise<NextResponse> {
-  const env = getCloudflareEnv() as unknown as { EH3_P1_BACKFILL_ENABLED?: string };
+  const env = getCloudflareEnv();
   if (env.EH3_P1_BACKFILL_ENABLED !== "true") {
     return NextResponse.json(
       {

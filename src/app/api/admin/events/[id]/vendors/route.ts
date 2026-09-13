@@ -271,7 +271,7 @@ export const PATCH = withAuth<{ id: string }>(
           .where(eq(events.id, id))
           .limit(1);
         if (eventRow) {
-          const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+          const env = getCloudflareEnv();
           await pingIndexNow(
             db,
             indexNowUrlFor("events", eventRow.slug),

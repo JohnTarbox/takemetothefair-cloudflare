@@ -12,7 +12,7 @@
 import { and, isNotNull, isNull } from "drizzle-orm";
 import { events, vendors, venues } from "@/lib/db/schema";
 import { getCloudflareEnv } from "@/lib/cloudflare";
-import { ScApiError, ScConfigError, getSiteSearchQueries, type ScEnv } from "@/lib/search-console";
+import { ScApiError, ScConfigError, getSiteSearchQueries } from "@/lib/search-console";
 import type { ItemMatch, RuleDefinition } from "../engine";
 import { resolveGscPath } from "../resolve-gsc-path";
 
@@ -36,7 +36,7 @@ export const cannibalizationDetectionRule: RuleDefinition = {
   category: "seo",
   // No autoResolve: GSC API failures return [] silently.
   async run(db): Promise<ItemMatch[]> {
-    const env = getCloudflareEnv() as unknown as ScEnv;
+    const env = getCloudflareEnv();
     let queries;
     try {
       const result = await getSiteSearchQueries(env, {

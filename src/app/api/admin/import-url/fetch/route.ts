@@ -53,10 +53,7 @@ export const GET = withAuthorized(
     if (!rate.allowed) return rateLimitResponse(rate);
 
     // Browser-Rendering credentials for the escalation path below.
-    const cfEnv = getCloudflareEnv() as unknown as {
-      CLOUDFLARE_ACCOUNT_ID?: string;
-      CLOUDFLARE_BROWSER_RENDERING_TOKEN?: string;
-    };
+    const cfEnv = getCloudflareEnv();
 
     const url = request.nextUrl.searchParams.get("url");
 

@@ -178,7 +178,7 @@ export async function POST(request: NextRequest) {
     const slugs = Array.isArray(body.reping_slugs) ? body.reping_slugs : [];
     if (verified && slugs.length > 0) {
       try {
-        const env = getCloudflareEnv() as unknown as Parameters<typeof pingIndexNow>[2];
+        const env = getCloudflareEnv();
         const urls = slugs.map((s) => `https://meetmeatthefair.com/events/${s}`);
         await pingIndexNow(db, urls, env, "series.evergreen_names");
         repinged = slugs;

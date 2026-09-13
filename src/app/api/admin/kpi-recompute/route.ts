@@ -3,8 +3,6 @@ import { NextResponse } from "next/server";
 import { requireAdminAuth } from "@/lib/api-auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { pruneKpiStateHistory, recomputeKpiStates } from "@/lib/kpi-states";
-import type { Ga4Env } from "@/lib/ga4";
-import type { ScEnv } from "@/lib/search-console";
 
 /**
  * §6.3 KPI state-machine recompute endpoint.
@@ -23,7 +21,7 @@ export async function POST(request: Request) {
   if (fail) return fail;
 
   const db = getCloudflareDb();
-  const env = getCloudflareEnv() as unknown as ScEnv & Ga4Env;
+  const env = getCloudflareEnv();
 
   const recomputed = await recomputeKpiStates(db, env);
   const pruned = await pruneKpiStateHistory(db);

@@ -24,7 +24,7 @@ export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
 import { withAuthorized } from "@/lib/api/with-auth";
-import { getCloudflareEnv } from "@/lib/cloudflare";
+import { getCloudflareStringVars } from "@/lib/cloudflare";
 import {
   CAPABILITY_FLAGS,
   resolveCapabilityFlags,
@@ -33,7 +33,8 @@ import {
 
 function runtimeEnv(): Record<string, string | undefined> {
   try {
-    return getCloudflareEnv() as unknown as Record<string, string | undefined>;
+    // Dynamic by design: flags are resolved by NAME from CAPABILITY_FLAGS.
+    return getCloudflareStringVars();
   } catch {
     // Off-CF (local `next build`, tests): process.env is the equivalent source.
     return process.env as Record<string, string | undefined>;

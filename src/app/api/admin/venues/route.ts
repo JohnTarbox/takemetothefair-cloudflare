@@ -112,7 +112,7 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db, session })
     const [newVenue] = await db.select().from(venues).where(eq(venues.id, venueId)).limit(1);
 
     if (newVenue?.status === "ACTIVE") {
-      const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+      const env = getCloudflareEnv();
       await pingIndexNow(db, indexNowUrlFor("venues", newVenue.slug), env, "venue-create");
     }
 

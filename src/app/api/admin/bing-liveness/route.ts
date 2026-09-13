@@ -4,7 +4,7 @@ import { desc } from "drizzle-orm";
 import { requireAdminAuth } from "@/lib/api-auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { adminActions, bingLivenessLog } from "@/lib/db/schema";
-import { getCrawlStats, type BingEnv } from "@/lib/bing-webmaster";
+import { getCrawlStats } from "@/lib/bing-webmaster";
 import {
   classifyBingLiveness,
   nextConsecutiveFailures,
@@ -49,7 +49,7 @@ export async function POST(request: Request) {
   if (fail) return fail;
 
   const db = getCloudflareDb();
-  const env = getCloudflareEnv() as unknown as BingEnv;
+  const env = getCloudflareEnv();
   const now = new Date();
 
   // A ping that throws IS the signal — capture it rather than 500ing, so a

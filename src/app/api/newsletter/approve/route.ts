@@ -63,7 +63,7 @@ async function readToken(request: NextRequest): Promise<string> {
 export async function POST(request: NextRequest) {
   const db = getCloudflareDb();
   try {
-    const env = getCloudflareEnv() as unknown as Record<string, string | undefined>;
+    const env = getCloudflareEnv();
 
     const token = await readToken(request);
     if (!token) return redirect("invalid");

@@ -29,7 +29,7 @@
  * `wrangler deploy` silently wipes (OPE-284 / OPE-509).
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { resolveSendGates, SEND_GATE_NAMES } from "@takemetothefair/constants";
+import { resolveSendGates, SEND_GATE_NAMES, type SendGateName } from "@takemetothefair/constants";
 import { jsonContent } from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
@@ -38,7 +38,9 @@ export function registerSendGatesTool(
   server: McpServer,
   _db: Db,
   auth: AuthContext,
-  env?: Record<string, string | undefined>
+  // OPE-950 — typed to the gate allowlist, so the Worker's own Env passes
+  // without a cast (it used to arrive through an `as unknown as Record<…>` cast).
+  env?: Partial<Record<SendGateName, string>>
 ) {
   if (auth.role !== "ADMIN") return;
 

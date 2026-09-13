@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { isAuthorized } from "@/lib/api-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
-import { getSitemapStatus, ScApiError, ScConfigError, type ScEnv } from "@/lib/search-console";
+import { getSitemapStatus, ScApiError, ScConfigError } from "@/lib/search-console";
 import { parseAnalyticsParams } from "@/lib/analytics-params";
 
 /**
@@ -19,7 +19,7 @@ export async function GET(request: NextRequest) {
   const params = parseAnalyticsParams(url.searchParams);
 
   try {
-    const env = getCloudflareEnv() as unknown as ScEnv;
+    const env = getCloudflareEnv();
     const result = await getSitemapStatus(env, { skipCache: params.refresh });
     return NextResponse.json({ success: true, ...result });
   } catch (error) {

@@ -25,7 +25,11 @@ import {
 import { inArray, lt } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import { SITE_HOSTNAME } from "@takemetothefair/constants";
-import { getCloudflareRateLimitKv, getCloudflareEnv } from "@/lib/cloudflare";
+import {
+  getCloudflareRateLimitKv,
+  getCloudflareEnv,
+  type CloudflareStringEnvKey,
+} from "@/lib/cloudflare";
 import {
   armIndexNowCooldown,
   checkIndexNowBreaker,
@@ -353,10 +357,9 @@ export interface PingResult {
 
 /** REL6: read a runtime env var via CF bindings; falls back to process.env for
  *  local/dev. Mirrors the kpi-alerts pattern. */
-function getRuntimeEnv(key: string): string | undefined {
+function getRuntimeEnv(key: CloudflareStringEnvKey): string | undefined {
   try {
-    const env = getCloudflareEnv() as unknown as Record<string, string | undefined>;
-    return env[key];
+    return getCloudflareEnv()[key];
   } catch {
     return process.env[key];
   }

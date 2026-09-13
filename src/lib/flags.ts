@@ -3,16 +3,17 @@
 // for local/dev. Unset/anything-but-true ⇒ OFF.
 
 import { getCloudflareContext } from "@opennextjs/cloudflare";
+import type { CloudflareStringEnvKey } from "./cloudflare";
 
-function readVar(name: string): string | undefined {
+function readVar(name: CloudflareStringEnvKey): string | undefined {
   try {
-    return (getCloudflareContext().env as unknown as Record<string, string | undefined>)[name];
+    return getCloudflareContext().env[name];
   } catch {
     return process.env[name];
   }
 }
 
-function isOn(name: string): boolean {
+function isOn(name: CloudflareStringEnvKey): boolean {
   const raw = readVar(name);
   return raw === "true" || raw === "1";
 }

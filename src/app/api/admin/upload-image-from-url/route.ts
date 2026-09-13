@@ -129,7 +129,7 @@ async function authorize(
 }
 
 export async function POST(request: NextRequest) {
-  const env = getCloudflareEnv() as unknown as { VENDOR_ASSETS?: R2Bucket };
+  const env = getCloudflareEnv();
 
   const authResult = await authorize(request);
   if (!authResult.ok) {

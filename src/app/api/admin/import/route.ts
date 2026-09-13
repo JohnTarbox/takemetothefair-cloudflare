@@ -669,7 +669,7 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
     // the PATCH-based hooks. Batch-ping all imported event URLs and any
     // newly-created venue URLs in two POSTs (max 10k URLs each).
     {
-      const cfEnv = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+      const cfEnv = getCloudflareEnv();
       if (results.importedEvents.length > 0) {
         const eventUrls = results.importedEvents.map((e) => indexNowUrlFor("events", e.slug));
         await pingIndexNow(db, eventUrls, cfEnv, "event-create");

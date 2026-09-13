@@ -65,7 +65,11 @@ function timingSafeEqual(a: string, b: string): boolean {
 /** Signing secret for approve tokens. Reuses AUTH_SECRET (a stable server
  *  secret) unless a dedicated NEWSLETTER_APPROVE_SECRET is set. Kept here (not
  *  in a route file) so route modules only export handlers. */
-export function resolveApproveSecret(env: Record<string, string | undefined>): string | undefined {
+export function resolveApproveSecret(env: {
+  NEWSLETTER_APPROVE_SECRET?: string;
+  AUTH_SECRET?: string;
+  NEXTAUTH_SECRET?: string;
+}): string | undefined {
   return env.NEWSLETTER_APPROVE_SECRET || env.AUTH_SECRET || env.NEXTAUTH_SECRET;
 }
 
