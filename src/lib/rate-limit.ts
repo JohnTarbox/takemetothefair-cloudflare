@@ -149,6 +149,40 @@ export const RATE_LIMITS = {
     authenticatedLimit: 20,
     windowMs: 24 * 60 * 60 * 1000, // 1 day
   },
+  // OPE-972 — the three routes that spend metered Browser Rendering / Workers AI
+  // per call. All three are gated (admin session or X-Internal-Key), so the
+  // exposure is billing and runaway automation, not anonymous abuse. They are
+  // called through checkRateLimit's `metered` option: keyed by the caller the
+  // route already knows, and FAIL-CLOSED (see there).
+  //
+  // Sized from the account's own 30-day reading (2026-08-14 → 09-13): Browser
+  // Rendering ≈ 5 sessions / 31s of browser time in total; zero OCR attempts on
+  // extract-image and zero Browser Rendering attempts in the retained error log.
+  // So these are CEILINGS on a runaway, far above real use — not throttles on
+  // normal work. anonymousLimit 0: none of these has an anonymous path.
+  //
+  // KV quota layer only — deliberately NOT in BURST_POLICIES. TODO(OPE-951):
+  // reconsider once the burst layer is proven to enforce.
+  "import-url-fetch": {
+    anonymousLimit: 0,
+    // Each call may escalate to Browser Rendering at most twice.
+    authenticatedLimit: 60,
+    windowMs: 60 * 60 * 1000, // 1 hour
+  },
+  "import-url-extract-image": {
+    anonymousLimit: 0,
+    // Each call OCRs up to 5 images × 2 attempts = 10 Workers AI calls.
+    authenticatedLimit: 30,
+    windowMs: 60 * 60 * 1000,
+  },
+  "harvest-fetch": {
+    anonymousLimit: 0,
+    // Automation: a sitemap harvest legitimately fetches in batches, so the
+    // window is a day, not an hour. Replaces the old global 60/min cap, which
+    // failed open and allowed 86,400 calls a day.
+    authenticatedLimit: 2000,
+    windowMs: 24 * 60 * 60 * 1000,
+  },
 } as const;
 
 export type RateLimitEndpoint = keyof typeof RATE_LIMITS;
@@ -240,34 +274,78 @@ function getRateLimitKv(): KVNamespace | null {
  * Key format: `rate:{endpoint}:{identifier}`
  * Value format: JSON array of timestamps within the current window
  */
+/**
+ * OPE-972 — options for a route that spends metered resources per call.
+ *
+ * `identifier` is the already-authorized caller, supplied by the route (which
+ * knows it better than a session lookup would: an X-Internal-Key caller has no
+ * session at all). It is counted against `authenticatedLimit`.
+ *
+ * Metered calls are FAIL-CLOSED: with no KV binding, or a KV read/write that
+ * throws, the request is refused. Every other policy allows in dev and fails
+ * open on a KV error, which is right for a login form and wrong for an endpoint
+ * that bills per call — one that cannot find out its quota must not spend.
+ */
+export interface MeteredRateLimitOptions {
+  metered: { identifier: string };
+}
+
+/**
+ * The key a metered route counts under. Session user first; otherwise the MCP
+ * entrypoint stamp for internal callers, because every internal call arrives
+ * from the same place and an IP key would put all of them in one bucket; the
+ * client IP only as a last resort.
+ */
+export function meteredCallerIdentifier(request: Request, userId: string | null): string {
+  if (userId) return `user:${userId}`;
+  const entrypoint = request.headers.get("x-mmatf-entrypoint");
+  if (entrypoint) return `caller:${entrypoint}`;
+  return `ip:${getClientIp(request)}`;
+}
+
 export async function checkRateLimit(
   request: Request,
-  endpoint: RateLimitEndpoint
+  endpoint: RateLimitEndpoint,
+  options?: MeteredRateLimitOptions
 ): Promise<RateLimitResult> {
   const config = RATE_LIMITS[endpoint];
   const now = Date.now();
   const windowStart = now - config.windowMs;
+  const failClosed = options?.metered !== undefined;
 
   // Check if user is authenticated
   let userId: string | null = null;
   let isAuthenticated = false;
 
-  try {
-    const session = await auth();
-    if (session?.user?.id) {
-      userId = session.user.id;
-      isAuthenticated = true;
+  if (options?.metered) {
+    isAuthenticated = true; // the route authorized the caller before calling
+  } else {
+    try {
+      const session = await auth();
+      if (session?.user?.id) {
+        userId = session.user.id;
+        isAuthenticated = true;
+      }
+    } catch {
+      // Auth check failed, treat as anonymous
     }
-  } catch {
-    // Auth check failed, treat as anonymous
   }
 
   // Determine rate limit based on auth status
   const limit = isAuthenticated ? config.authenticatedLimit : config.anonymousLimit;
 
   // Build the rate limit key
-  const identifier = isAuthenticated && userId ? `user:${userId}` : `ip:${getClientIp(request)}`;
+  const identifier =
+    options?.metered?.identifier ??
+    (isAuthenticated && userId ? `user:${userId}` : `ip:${getClientIp(request)}`);
   const key = `rate:${endpoint}:${identifier}`;
+  const refuse = (): RateLimitResult => ({
+    allowed: false,
+    remaining: 0,
+    limit,
+    resetAt: Math.floor((now + config.windowMs) / 1000),
+    isAuthenticated,
+  });
 
   // OPE-904 / OPE-951 — BURST layer, before the KV quota. This is the half that
   // holds under concurrency: one Durable Object per key counts every hit in
@@ -321,6 +399,12 @@ export async function checkRateLimit(
   if (!kv) {
     // OPE-931 — one shared predicate; see src/lib/runtime-env.ts.
     const isProduction = isDeployedEnvironment();
+    if (failClosed) {
+      // OPE-972 — a metered route with no quota backend refuses in every
+      // environment, dev included: the call it would make is still billed.
+      console.error(`[Rate Limit] KV not available for metered ${endpoint} — denying request`);
+      return refuse();
+    }
     if (isProduction) {
       console.error("[Rate Limit] KV not available in production — denying request");
       return {
@@ -377,6 +461,11 @@ export async function checkRateLimit(
       isAuthenticated,
     };
   } catch (error) {
+    if (failClosed) {
+      // OPE-972 — fail CLOSED for metered routes; see MeteredRateLimitOptions.
+      console.error(`[Rate Limit] KV error on metered ${endpoint} — denying request:`, error);
+      return refuse();
+    }
     // On KV error, log and allow the request (fail open)
     console.error("[Rate Limit] KV error:", error);
     return {

@@ -19,6 +19,7 @@ import { NextResponse } from "next/server";
 import { withAuthorized } from "@/lib/api/with-auth";
 import { getCloudflareAi } from "@/lib/cloudflare";
 import { logError } from "@/lib/logger";
+import { checkRateLimit, meteredCallerIdentifier, rateLimitResponse } from "@/lib/rate-limit";
 import { toMarkdownWithRetry, type ToMarkdownAi } from "@takemetothefair/utils";
 
 /** Per-image ceiling. A phone screenshot is ~1-3 MB; 10 MB is generous. */
@@ -30,7 +31,14 @@ const OCR_MAX_ATTEMPTS = 2;
 
 const ACCEPTED_PREFIX = "image/";
 
-export const POST = withAuthorized(async ({ request, db }) => {
+export const POST = withAuthorized(async ({ request, db, userId }) => {
+  // OPE-972 — each call is up to MAX_IMAGES × OCR_MAX_ATTEMPTS Workers AI calls.
+  // Metered: keyed on the admin (or the internal caller), fail-closed.
+  const rate = await checkRateLimit(request, "import-url-extract-image", {
+    metered: { identifier: meteredCallerIdentifier(request, userId) },
+  });
+  if (!rate.allowed) return rateLimitResponse(rate);
+
   let form: FormData;
   try {
     form = await request.formData();
