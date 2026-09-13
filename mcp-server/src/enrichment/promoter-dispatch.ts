@@ -125,6 +125,106 @@ function isEmpty(v: string | null | undefined): boolean {
   return v == null || v.trim() === "" || v.trim() === "{}" || v.trim() === "[]";
 }
 
+const AFFINITY_STOPWORDS = new Set(["the", "and", "inc", "llc", "org", "com", "net", "www"]);
+
+function nameTokens(s: string | null | undefined): string[] {
+  return (s ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, " ")
+    .split(" ")
+    .filter((t) => t.length >= 3 && !AFFINITY_STOPWORDS.has(t));
+}
+
+/** The website's host label without www/TLD: `worcester4h.org` → `worcester4h`. */
+function siteLabel(website: string | null | undefined): string | null {
+  try {
+    const host = new URL(website ?? "").hostname.toLowerCase().replace(/^www\./, "");
+    const parts = host.split(".");
+    return parts.length >= 2 ? parts[parts.length - 2] : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A handle that identifies an account without NAMING it — a YouTube channel id
+ * (`UCLn8aDb85tYvY…`), `profile.php?id=…`, a numeric group/page, or a bare path
+ * word. It cannot show affinity either way, so it is not evidence.
+ */
+const SOCIAL_PATH_WORDS = new Set([
+  "profilephp",
+  "groups",
+  "pages",
+  "channel",
+  "events",
+  "showcase",
+  "videos",
+  "streams",
+  "featured",
+  "about",
+  "user",
+  "c",
+]);
+
+function isOpaqueHandle(handle: string): boolean {
+  if (/^uc[a-z0-9]{20,}$/.test(handle)) return true;
+  if (/^\d+$/.test(handle) || /\d{6,}/.test(handle)) return true;
+  return SOCIAL_PATH_WORDS.has(handle);
+}
+
+/** The NAMED handle: the last path segment that is not a path word
+ *  (`youtube.com/@holycrosslutheran-kennebunk/streams` → `holycrosslutherankennebunk`). */
+function namedHandleOf(url: string): string | null {
+  let segments: string[];
+  try {
+    segments = new URL(url).pathname.split("/").filter(Boolean);
+  } catch {
+    return null;
+  }
+  const words = segments.map((seg) => seg.toLowerCase().replace(/[^a-z0-9]/g, ""));
+  while (words.length > 0 && SOCIAL_PATH_WORDS.has(words[words.length - 1])) words.pop();
+  return words.length > 0 ? words[words.length - 1] || null : null;
+}
+
+/**
+ * OPE-963 — does this social payload look like the promoter's OWN accounts?
+ *
+ * True when at least one NAMED handle contains one of the promoter's name
+ * tokens (≥3 chars, stopwords removed), or it and the website's host label
+ * contain one another. Opaque handles (channel ids, profile.php, numeric groups)
+ * are ignored; a payload with no named handle at all is NOT affine — a human
+ * looks.
+ *
+ * Why "at least one" and not "every": measured against the 205 social rows
+ * already auto-applied in prod, requiring every link staged 67 (33%), most of
+ * them genuine accounts that failed only on a YouTube channel id or a
+ * profile.php URL. The specimens this exists for — state 4-H + UMass CAFE on a
+ * county chapter, a theme vendor's accounts on SoWa Boston — have NO affine
+ * handle at all, so "at least one" still stages them. Exported for tests.
+ */
+export function socialLinksHaveNameAffinity(
+  socialJson: string,
+  companyName: string | null | undefined,
+  website: string | null | undefined
+): boolean {
+  let links: Record<string, string>;
+  try {
+    links = JSON.parse(socialJson) as Record<string, string>;
+  } catch {
+    return false;
+  }
+  const tokens = nameTokens(companyName);
+  const label = siteLabel(website);
+  return Object.values(links).some((url) => {
+    const handle = namedHandleOf(url);
+    if (!handle || handle.length < 3 || isOpaqueHandle(handle)) return false;
+    if (tokens.some((t) => handle.includes(t))) return true;
+    return (
+      label !== null && label.length >= 3 && (label.includes(handle) || handle.includes(label))
+    );
+  });
+}
+
 /**
  * Build the fill-empty-only proposal set from a promoter row + the extraction
  * (og:image already probed into hero/logo). Pure — no DB.
@@ -182,14 +282,23 @@ async function buildProposals(
 
   // --- social_links (fill-empty-only; recognized domains only) ---
   if (ex.socialLinks && isEmpty(row.socialLinks as string | null)) {
+    // OPE-963 — name affinity. Worcester County 4-H auto-applied the STATE 4-H
+    // and UMass CAFE accounts: real, related, and not the chapter's. A handle
+    // that shares nothing with the promoter's name or website is staged,
+    // flagged, for a human — never applied. Mirrors OPE-249 fix #5's domain
+    // affinity for regex-scraped email.
+    const affine = socialLinksHaveNameAffinity(
+      ex.socialLinks.value,
+      row.companyName as string | null,
+      row.website as string | null
+    );
     proposals.push({
       field: "social_links",
       proposedValue: ex.socialLinks.value,
       method: ex.socialLinks.method,
-      confidence: ex.socialLinks.confidence,
-      flags: [],
-      // extractVendorContact only yields recognized social hosts → auto-apply.
-      autoApply: true,
+      confidence: affine ? ex.socialLinks.confidence : ex.socialLinks.confidence * 0.5,
+      flags: affine ? [] : ["social_no_name_affinity"],
+      autoApply: affine,
     });
   }
 

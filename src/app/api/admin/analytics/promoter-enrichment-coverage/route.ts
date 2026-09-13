@@ -129,7 +129,8 @@ export async function GET(request: NextRequest) {
       // Candidates created per Monday-anchored week (last 12 weeks).
       candidatesTrend,
       // Per (proposed_field, extraction_method) agreement %, sample size, and a
-      // `promotable` flag (≥95% over ≥20 settled decisions).
+      // `promotable` flag — OPE-963: ≥95% over ≥20 HUMAN decisions (approved/
+      // rejected); auto_merged can no longer self-certify a rule.
       ruleAgreement,
     });
   } catch (error) {

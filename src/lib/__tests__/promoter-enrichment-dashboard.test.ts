@@ -73,17 +73,50 @@ describe("computeRuleAgreement", () => {
     expect(mail.agreementPct).toBe(100);
   });
 
-  it("marks a rule promotable at ≥95% over ≥ threshold sample", () => {
-    // 20 agreements, 0 disagreements → 100% over 20.
+  it("marks a rule promotable at ≥95% over ≥ threshold HUMAN-decided sample", () => {
+    // 20 human approvals, 0 rejections → 100% over 20.
+    const rows = Array.from({ length: RULE_PROMOTE_MIN_SAMPLE }, () => ({
+      proposedField: "hero",
+      extractionMethod: "jsonld",
+      decision: "approved",
+    }));
+    const [entry] = computeRuleAgreement(rows);
+    expect(entry.humanAgreementPct).toBeGreaterThanOrEqual(RULE_PROMOTE_MIN_PCT);
+    expect(entry.humanSampleSize).toBe(RULE_PROMOTE_MIN_SAMPLE);
+    expect(entry.promotable).toBe(true);
+  });
+
+  it("OPE-963 — auto_merged cannot self-certify: 20 auto-applies alone are NOT promotable", () => {
+    // This test previously asserted the opposite (20 auto_merged → promotable),
+    // which pinned the defect: a rule that auto-applies was approving itself.
     const rows = Array.from({ length: RULE_PROMOTE_MIN_SAMPLE }, () => ({
       proposedField: "hero",
       extractionMethod: "jsonld",
       decision: "auto_merged",
     }));
     const [entry] = computeRuleAgreement(rows);
-    expect(entry.agreementPct).toBeGreaterThanOrEqual(RULE_PROMOTE_MIN_PCT);
-    expect(entry.sampleSize).toBe(RULE_PROMOTE_MIN_SAMPLE);
-    expect(entry.promotable).toBe(true);
+    expect(entry.agreementPct).toBe(100); // the old figure still reads perfect…
+    expect(entry.humanSampleSize).toBe(0); // …over zero human decisions
+    expect(entry.promotable).toBe(false);
+  });
+
+  it("OPE-963 — the social-link shape: high blended agreement, human figure tells the truth", () => {
+    // 170 auto-applies + 17 approved + 9 rejected ≈ the prod 95.4% @ n=196.
+    const mk = (decision: string, n: number) =>
+      Array.from({ length: n }, () => ({
+        proposedField: "social_links",
+        extractionMethod: "social-link",
+        decision,
+      }));
+    const [e] = computeRuleAgreement([
+      ...mk("auto_merged", 170),
+      ...mk("approved", 17),
+      ...mk("rejected", 9),
+    ]);
+    expect(e.agreementPct).toBe(95.4);
+    expect(e.humanAgreementPct).toBe(65.4);
+    expect(e.autoMerged).toBe(170);
+    expect(e.promotable).toBe(false);
   });
 
   it("not promotable when sample too small even at 100%", () => {
