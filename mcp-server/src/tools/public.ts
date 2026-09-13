@@ -42,6 +42,11 @@ import {
 } from "@takemetothefair/utils";
 import { logError } from "../logger.js";
 import type { Db } from "../db.js";
+import {
+  ACTIVE_FROM_DESCRIPTION,
+  ACTIVE_TO_DESCRIPTION,
+  parseActiveWindow,
+} from "./event-window.js";
 import type { SQLiteColumn } from "drizzle-orm/sqlite-core";
 import type { SQL } from "drizzle-orm";
 
@@ -246,6 +251,8 @@ export function registerPublicTools(server: McpServer, db: Db) {
         .describe("Filter by promoter ID (UUID) — returns all events by a specific promoter"),
       start_after: z.string().optional().describe("Events starting after this date (YYYY-MM-DD)"),
       start_before: z.string().optional().describe("Events starting before this date (YYYY-MM-DD)"),
+      active_from: z.string().optional().describe(ACTIVE_FROM_DESCRIPTION),
+      active_to: z.string().optional().describe(ACTIVE_TO_DESCRIPTION),
       // TAX1 Phase 1 (2026-06-02) — audience / access filters.
       // Defaults aren't applied here; omitting either param skips
       // the filter so existing callers see no behavior change.
@@ -313,6 +320,15 @@ export function registerPublicTools(server: McpServer, db: Db) {
       }
 
       const conditions = [searchEventStatusWhere(requested)];
+
+      const window = parseActiveWindow(params);
+      if (!window.ok) {
+        return {
+          content: [jsonContent({ error: "invalid_window", message: window.message })],
+          isError: true,
+        };
+      }
+      conditions.push(...window.conditions);
 
       if (params.query && !params.fuzzy) {
         // OPE-517 — the organizer's name for a fair must find the same page.
@@ -516,6 +532,21 @@ export function registerPublicTools(server: McpServer, db: Db) {
 
       const rows = await query.limit(sqlLimit).offset(sqlOffset);
 
+      // OPE-960 scope 3 — a total, so a sweep can prove coverage. Exact only
+      // when SQL decides membership: the category filter (JSON column) and the
+      // fuzzy scorer both drop rows in JS after an over-fetch capped at
+      // `sqlLimit`, so no SQL count equals what they would return. Those paths
+      // say so rather than report a number that looks authoritative.
+      let totalMatching: number | null = null;
+      if (!needsOverfetch) {
+        const [{ n }] = await db
+          .select({ n: sql<number>`count(*)` })
+          .from(events)
+          .leftJoin(venues, eq(events.venueId, venues.id))
+          .where(and(...conditions));
+        totalMatching = Number(n);
+      }
+
       // Post-filter by category (stored as JSON, can't filter in SQL)
       let results = rows;
       if (params.category) {
@@ -598,7 +629,17 @@ export function registerPublicTools(server: McpServer, db: Db) {
           jsonContent({
             count: output.length,
             offset,
-            has_more: output.length === limit,
+            total_matching: totalMatching,
+            ...(totalMatching == null
+              ? {
+                  total_matching_unavailable:
+                    "category and fuzzy filter rows after a capped over-fetch, so no exact total exists; page until has_more is false",
+                }
+              : {}),
+            has_more:
+              totalMatching == null
+                ? output.length === limit
+                : offset + output.length < totalMatching,
             events: output,
           }),
         ],
