@@ -4038,9 +4038,12 @@ export const promoterEnrichmentCandidates = sqliteTable(
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
     reviewedAt: integer("reviewed_at", { mode: "timestamp" }),
     reviewedBy: text("reviewed_by"),
-    // pending | approved | rejected | auto_merged
+    // pending | approved | rejected | auto_merged | reverted
+    // OPE-964 — `reverted`: an auto_merged value a human undid. Distinct from
+    // `rejected` (declined before it applied) so the agreement metric can tell
+    // them apart; both count as a human disagreement.
     decision: text("decision", {
-      enum: ["pending", "approved", "rejected", "auto_merged"],
+      enum: ["pending", "approved", "rejected", "auto_merged", "reverted"],
     })
       .notNull()
       .default("pending"),

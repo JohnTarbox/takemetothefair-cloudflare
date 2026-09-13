@@ -4666,6 +4666,24 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .optional()
         .describe("Vertical focal point for logo/hero crops, 0–1. Default 0.5."),
       social_links: z.string().optional().describe("Social media links (JSON string)"),
+      // OPE-964 — the explicit clear. Every other field here is a value-setter,
+      // and "" is NOT a clear: it writes a literal empty string (a blank
+      // logo_url reaches the OG-image builder, which only falls back on NULL).
+      clear_fields: z
+        .array(
+          z.enum([
+            "description",
+            "contact_email",
+            "contact_phone",
+            "logo_url",
+            "hero_image_url",
+            "social_links",
+          ])
+        )
+        .optional()
+        .describe(
+          "OPE-964: set these fields to NULL (empty). The public promoter page hides description, contact_email, contact_phone, logo and hero when NULL; social_links is not rendered on the public page. A field may not be both set and cleared in one call. To undo a single auto-applied enrichment value, prefer review_promoter_enrichment_candidate action 'revert', which also keeps it from being re-applied."
+        ),
       verified: z.boolean().optional().describe("Verified status"),
       // OPE-31 — producer-wide roster-publishing behavior. Set false for a
       // producer that never publishes a public exhibitor roster; the
@@ -4729,6 +4747,26 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       if (params.name !== undefined) {
         updates.companyName = params.name;
         requestedFields.push("name");
+      }
+
+      // OPE-964 — clears, after the setters so a conflict is detectable.
+      for (const param of params.clear_fields ?? []) {
+        if (requestedFields.includes(param)) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `"${param}" is both set and listed in clear_fields — pick one.`,
+              },
+            ],
+            isError: true,
+          };
+        }
+        const mapping = fieldMap.find((f) => f.param === param);
+        if (mapping) {
+          updates[mapping.column] = null;
+          requestedFields.push(param);
+        }
       }
 
       if (requestedFields.length === 0) {
@@ -4806,15 +4844,22 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       // BLOCKED / EXHAUSTED sticky states unless the edit now completes coverage.
       const websiteChanged =
         updates.website !== undefined && (updates.website ?? null) !== (promoter.website ?? null);
+      // OPE-964 — `in`, not `??`: a cleared field is an explicit NULL, and `??`
+      // would read the OLD value back and compute coverage for a field that is
+      // no longer there.
+      const merged = (column: string) =>
+        (column in updates ? updates[column] : (promoter as Record<string, unknown>)[column]) as
+          | string
+          | null;
       const enrichment = computePromoterEnrichment(
         {
-          website: (updates.website ?? promoter.website) as string | null,
-          heroImageUrl: (updates.heroImageUrl ?? promoter.heroImageUrl) as string | null,
-          logoUrl: (updates.logoUrl ?? promoter.logoUrl) as string | null,
-          description: (updates.description ?? promoter.description) as string | null,
-          socialLinks: (updates.socialLinks ?? promoter.socialLinks) as string | null,
-          contactEmail: (updates.contactEmail ?? promoter.contactEmail) as string | null,
-          contactPhone: (updates.contactPhone ?? promoter.contactPhone) as string | null,
+          website: merged("website"),
+          heroImageUrl: merged("heroImageUrl"),
+          logoUrl: merged("logoUrl"),
+          description: merged("description"),
+          socialLinks: merged("socialLinks"),
+          contactEmail: merged("contactEmail"),
+          contactPhone: merged("contactPhone"),
         },
         // OPE-962 — a NEW website re-opens a promoter that exhausted the old one:
         // EXHAUSTED is a fact about a site, not about the organizer.
