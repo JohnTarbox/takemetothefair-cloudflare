@@ -146,6 +146,14 @@ export function stripToMarkdownMetadata(text: string): string {
 }
 
 /**
+ * OPE-952 — final-token business suffixes ("Co.", "Inc.", "L.L.C."). Matched
+ * against the LAST word only and anchored both ends, so "Co." inside a name
+ * does nothing and "34." never matches.
+ */
+const BUSINESS_SUFFIX =
+  /^(co|cos|inc|ltd|llc|l\.l\.c|llp|lp|plc|pllc|corp|assn|assoc|bros|mfg|intl)\.$/i;
+
+/**
  * OPE-943 defence in depth — a `Key=Value` token is machine structure, never a
  * person or a business. Even with the metadata block stripped above, any
  * renderer that emits `Producer=Microsoft: Print To PDF` inline would otherwise
@@ -193,7 +201,16 @@ function isPlausibleName(s: string): boolean {
 
   // A sentence, not a name: "Stalls 32, 33, and 34." Gated on word count so a
   // legitimate "Smith & Sons Inc." (4 words) still passes.
-  if (s.endsWith(".") && s.split(/\s+/).length > 4) return false;
+  //
+  // OPE-952 — and a name whose FINAL token is a business-suffix abbreviation is
+  // not a sentence at any length. The flat-numbered form (OPE-943) emits
+  // `<surname> <org name>`, one word longer than a bare name, so "Robbins
+  // Granite Ridge Dahlia Co." crossed the threshold that "Granite Ridge Dahlia
+  // Co." passes. The suffix, not the count, separates it from "…and 34.".
+  const words = s.split(/\s+/);
+  if (s.endsWith(".") && words.length > 4 && !BUSINESS_SUFFIX.test(words[words.length - 1])) {
+    return false;
+  }
 
   return true;
 }
