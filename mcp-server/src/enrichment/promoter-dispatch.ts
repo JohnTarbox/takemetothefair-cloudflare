@@ -12,7 +12,11 @@
 // site is itself a signal; we mark BLOCKED (+ reason) and ack. Only an
 // unexpected DB error retries → DLQ after max_retries.
 import { and, eq, inArray } from "drizzle-orm";
-import { computePromoterEnrichment, isPlaceholderDescription } from "@takemetothefair/constants";
+import {
+  computePromoterEnrichment,
+  isPlaceholderDescription,
+  PROMOTER_ENRICHMENT_EXHAUST_AFTER,
+} from "@takemetothefair/constants";
 import { sanitizeScrapedDescription } from "@takemetothefair/utils";
 import { promoters, promoterEnrichmentCandidates } from "../schema.js";
 import { getDb, type Db } from "../db.js";
@@ -99,6 +103,7 @@ const PROMOTER_COLUMNS = {
   contactEmail: promoters.contactEmail,
   contactPhone: promoters.contactPhone,
   enrichmentStatus: promoters.enrichmentStatus,
+  enrichmentZeroYieldStreak: promoters.enrichmentZeroYieldStreak,
 } as const;
 
 /** Proposed-field → live promoter column (all six are review-applicable). */
@@ -333,7 +338,7 @@ async function buildProposals(
 
 export interface PromoterEnrichmentRunSummary {
   promoterId: string;
-  outcome: "staged" | "merged" | "blocked" | "no_source" | "not_found";
+  outcome: "staged" | "merged" | "blocked" | "no_source" | "not_found" | "exhausted";
   candidateCount?: number;
   appliedFields?: string[];
   blockedReason?: BlockedReason;
@@ -433,11 +438,24 @@ export async function processPromoterEnrichmentJob(
 
   const stagedFields = proposals.map((p) => p.field);
 
+  // OPE-962 — count consecutive successful fetches that found NOTHING to stage.
+  // (A failed fetch never reaches here: that is BLOCKED, a different fact.) At
+  // the threshold a queue-selectable promoter becomes EXHAUSTED and the nightly
+  // selector stops re-fetching it. Operator-owned states are left alone.
+  const streak = proposals.length === 0 ? (row.enrichmentZeroYieldStreak ?? 0) + 1 : 0;
+  const exhaust =
+    streak >= PROMOTER_ENRICHMENT_EXHAUST_AFTER &&
+    (row.enrichmentStatus === null || row.enrichmentStatus === "NEEDS_ENRICHMENT");
+
   // --- Dry-run: stage only, stamp the attempt ---
   if (msg.dryRun) {
     await db
       .update(promoters)
-      .set({ enrichmentAttemptedAt: now })
+      .set({
+        enrichmentAttemptedAt: now,
+        enrichmentZeroYieldStreak: streak,
+        ...(exhaust ? { enrichmentStatus: "EXHAUSTED" as const } : {}),
+      })
       .where(eq(promoters.id, msg.promoterId));
     await logEnrichment(db, {
       targetType: "promoter",
@@ -445,11 +463,13 @@ export async function processPromoterEnrichmentJob(
       source: "browser_enrich",
       status: proposals.length > 0 ? "success" : "skipped",
       fieldsChanged: stagedFields,
-      notes: `dry-run: ${proposals.length} candidate(s) staged`,
+      notes:
+        `dry-run: ${proposals.length} candidate(s) staged` +
+        (exhaust ? ` — EXHAUSTED after ${streak} consecutive zero-candidate attempts` : ""),
     });
     return {
       promoterId: msg.promoterId,
-      outcome: "staged",
+      outcome: exhaust ? "exhausted" : "staged",
       candidateCount: proposals.length,
       fetchMethod: fetched.fetchMethod,
     };
@@ -458,6 +478,21 @@ export async function processPromoterEnrichmentJob(
   // --- Live: auto-apply the high-confidence fills (fill-empty-only) ---
   const applied = await applyFills(db, msg.promoterId, proposals);
   await recomputeAndStamp(db, msg.promoterId, applied.length > 0);
+  // OPE-962 — same streak on a live run. Zero proposals means nothing was
+  // applied either, so recompute cannot have completed coverage; exhaust only
+  // if the recomputed status is still the queue-selectable one.
+  await db
+    .update(promoters)
+    .set({ enrichmentZeroYieldStreak: streak })
+    .where(eq(promoters.id, msg.promoterId));
+  if (exhaust) {
+    await db
+      .update(promoters)
+      .set({ enrichmentStatus: "EXHAUSTED" })
+      .where(
+        and(eq(promoters.id, msg.promoterId), eq(promoters.enrichmentStatus, "NEEDS_ENRICHMENT"))
+      );
+  }
   await logEnrichment(db, {
     targetType: "promoter",
     targetId: msg.promoterId,

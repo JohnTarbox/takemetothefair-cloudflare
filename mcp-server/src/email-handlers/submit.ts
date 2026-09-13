@@ -40,7 +40,7 @@ const SOURCE_SUBMIT = "mcp:email-handler:submit";
 /** Cap the fetched content stored as step output. CF Workflows allows
  *  1 MiB per step output but smaller is better — and the AI prompt
  *  already caps below this. 100 KB is well under both. */
-const MAX_FETCH_CONTENT_LEN = 100_000;
+export const MAX_FETCH_CONTENT_LEN = 100_000;
 
 /** OPE-837 — ceiling on discovered anchors carried through a workflow step. */
 const MAX_LINKS = 300;

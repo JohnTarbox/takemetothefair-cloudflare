@@ -101,6 +101,8 @@ const SCHEMA_SQL = `
     enrichment_blocked_reason TEXT,
     -- OPE-36 (drizzle/0141) — pre-extraction last-attempt marker.
     enrichment_attempted_at INTEGER,
+    -- OPE-962 (drizzle/0283) — consecutive zero-candidate attempts.
+    enrichment_zero_yield_streak INTEGER NOT NULL DEFAULT 0,
     -- OPE-63 (drizzle/0144) — promoter claim state (parity with vendors.claimed
     -- trio). approvePromoterClaim writes claimed/claimed_at/claimed_by, and the
     -- WS2b schema-sync guard covers promoters, so these are required here.

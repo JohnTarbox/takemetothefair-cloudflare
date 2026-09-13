@@ -1470,7 +1470,7 @@ export function registerAnalyticsTools(server: McpServer, auth: AuthContext, env
     [
       "Promoter-enrichment coverage + flywheel telemetry (OPE-35/OPE-38). Per-field",
       "fill rates (hero/logo/description/socials/contact), the enrichment-status",
-      "breakdown (NEEDS_ENRICHMENT/IN_PROGRESS/ENRICHED/NO_SOURCE/BLOCKED + unassessed),",
+      "breakdown (NEEDS_ENRICHMENT/IN_PROGRESS/ENRICHED/NO_SOURCE/BLOCKED/EXHAUSTED + unassessed; queue depth excludes EXHAUSTED),",
       "the NEEDS_ENRICHMENT queue depth, plus OPE-38 flywheel metrics: `autoApply`",
       "(auto-apply share = auto_merged / (auto_merged + approved)), `blocked`",
       "(blocked-rate grouped by enrichment_blocked_reason), `candidatesTrend`",
