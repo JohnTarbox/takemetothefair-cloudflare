@@ -405,6 +405,30 @@ export async function processPromoterEnrichmentJob(
   const extraction = extractPromoterSignals(fetched.html, sourceUrl);
   const proposals = await buildProposals(row as Record<string, unknown>, extraction);
 
+  // OPE-964 — a value a human REVERTED is never auto-applied again. Under
+  // fill-empty-only the revert leaves the field empty, so without this the next
+  // render would re-propose the identical value and auto-merge it straight
+  // back — the undo would last one cycle. It still stages (a human may change
+  // their mind); the flag keeps it out of applyFills, which skips flagged rows.
+  const reverted = await db
+    .select({
+      field: promoterEnrichmentCandidates.proposedField,
+      value: promoterEnrichmentCandidates.proposedValue,
+    })
+    .from(promoterEnrichmentCandidates)
+    .where(
+      and(
+        eq(promoterEnrichmentCandidates.promoterId, msg.promoterId),
+        eq(promoterEnrichmentCandidates.decision, "reverted")
+      )
+    );
+  const revertedKeys = new Set(reverted.map((r) => `${r.field}\n${r.value.trim()}`));
+  for (const p of proposals) {
+    if (revertedKeys.has(`${p.field}\n${p.proposedValue.trim()}`)) {
+      p.flags = [...p.flags, "previously_reverted"];
+    }
+  }
+
   // Idempotent re-run: clear this promoter's still-open proposals, then restage
   // (honors the one-pending-per-field partial unique index).
   await db
@@ -423,7 +447,11 @@ export async function processPromoterEnrichmentJob(
         promoterId: msg.promoterId,
         jobRunId: msg.jobRunId,
         proposedField: p.field,
-        currentValue: null,
+        // OPE-964 — what the field holds NOW, so a later revert restores it
+        // exactly (a placeholder description, an empty "{}") instead of NULL.
+        currentValue: (FIELD_TO_COLUMN[p.field]
+          ? ((row as Record<string, unknown>)[FIELD_TO_COLUMN[p.field]] ?? null)
+          : null) as string | null,
         proposedValue: p.proposedValue,
         sourceUrl,
         extractionMethod: p.method,
