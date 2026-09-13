@@ -130,6 +130,15 @@ describe("step 2 — consent", () => {
     expect(html).toContain("&lt;img src=x onerror=&quot;alert(1)&quot;&gt;");
   });
 
+  it("a request the provider rejects (unregistered client / redirect) is a 400, not a 500", async () => {
+    (env.OAUTH_PROVIDER as Record<string, unknown>).parseAuthRequest = async () => {
+      throw new Error("Invalid client. The clientId provided does not match to this client.");
+    };
+    const { res } = await beginLogin();
+    expect(res.status).toBe(400);
+    expect(kv.put).not.toHaveBeenCalled();
+  });
+
   it("an unknown client gets 400 and no state is minted", async () => {
     client = null;
     const { res } = await beginLogin();
