@@ -76,8 +76,8 @@ const CANARY_STATE_DECAY_DAYS = 14;
 /**
  * OPE-252 — transient-D1 patterns. The 2026-07-13 outage failed the canary's
  * own aggregate query with "D1_ERROR: Network connection lost" — a shared-fate
- * blip that resolves on a retry. (Note: the main app's withD1Retry list does
- * NOT include this string, so it wouldn't have helped even if importable.)
+ * blip that resolves on a retry. (The main app's withD1Retry — never called,
+ * deleted in OPE-909 — did not include this string either.)
  */
 const TRANSIENT_D1_PATTERNS = ["network connection lost", "internal error", "connection reset"];
 

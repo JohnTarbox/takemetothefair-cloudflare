@@ -1,3 +1,4 @@
+import { opaqueErrorResponse } from "./error-response.js";
 import OAuthProvider from "@cloudflare/workers-oauth-provider";
 import type { EmailGateEnv } from "./email-gates.js";
 import { McpAgent } from "agents/mcp";
@@ -1019,13 +1020,14 @@ async function handleWorkflowEndpoints(
       const state = await instance.status();
       return jsonResponse({ workflowId: id, ...state });
     } catch (err) {
-      return jsonResponse(
-        {
-          error: "workflow_not_found",
-          message: err instanceof Error ? err.message : "unknown",
-        },
-        404
-      );
+      return opaqueErrorResponse(env.DB, request, {
+        source: "mcp:workflows-api",
+        message: "schema-org-sync status lookup failed",
+        err,
+        code: "workflow_not_found",
+        status: 404,
+        context: { workflowId: id },
+      });
     }
   }
 
@@ -1043,10 +1045,14 @@ async function handleWorkflowEndpoints(
       const state = await instance.status();
       return jsonResponse({ workflowId: id, ...state });
     } catch (err) {
-      return jsonResponse(
-        { error: "workflow_not_found", message: err instanceof Error ? err.message : "unknown" },
-        404
-      );
+      return opaqueErrorResponse(env.DB, request, {
+        source: "mcp:workflows-api",
+        message: "inbound-email status lookup failed",
+        err,
+        code: "workflow_not_found",
+        status: 404,
+        context: { workflowId: id },
+      });
     }
   }
 
@@ -1981,11 +1987,15 @@ export default {
       const response = await oauthProvider.fetch(request, env, ctx);
       console.log(`[MCP] ${url.pathname} → ${response.status}`);
       return response;
-    } catch (err: any) {
-      console.error("[MCP] OAuthProvider error:", err?.message, err?.stack);
-      return new Response(JSON.stringify({ error: err?.message || "Internal error" }), {
+    } catch (err) {
+      // OPE-909 — this path is reachable unauthenticated; the thrown message is
+      // logged under the request id and never returned.
+      return opaqueErrorResponse(env.DB, request, {
+        source: "mcp:oauth-provider",
+        message: `OAuthProvider threw on ${request.method} ${url.pathname}`,
+        err,
+        code: "internal_error",
         status: 500,
-        headers: { "Content-Type": "application/json" },
       });
     }
   },
