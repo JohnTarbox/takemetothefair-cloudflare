@@ -8,9 +8,10 @@ name: Deploy to Cloudflare
 # upstream was enforcing green merges — the only thing standing between a
 # failing test and production was whoever pressed merge.
 #
-# `workflow_run` fires after CI *completes*; the `if:` on d1-migrate below
-# admits only `conclusion == 'success'`. deploy-worker and deploy-mcp-server
-# already `needs: d1-migrate`, so both are skipped with it.
+# `workflow_run` fires after CI *completes*; the `gate` job below decides whether
+# this run may deploy (OPE-934 — a green PUSH to main in THIS repository, still
+# main's HEAD; or a manual dispatch on main). d1-migrate needs the gate, and
+# deploy-worker / deploy-mcp-server need d1-migrate, so a skip stops all three.
 #
 # ⚠️ Every checkout in this file must use the triggering run's head SHA. A
 # `workflow_run` event checks out the default branch by default, which is the
@@ -33,6 +34,55 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # OPE-934 — who may reach production, decided by a TESTED script rather than a
+  # job-level `if:`. The old gate admitted any successful CI run whose head
+  # branch was named `main` — including a fork PR's, on a public repository —
+  # and then checked out and deployed that commit. See scripts/deploy-gate.mjs
+  # for every rule and src/lib/__tests__/deploy-gate-ope934.test.ts for proof.
+  #
+  # This job checks out MAIN, never the triggering commit: the gate's own code
+  # must not come from the thing it is judging. Every later checkout uses the
+  # SHA it emits, so all jobs build one commit.
+  gate:
+    name: Deploy gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      decision: ${{ steps.decide.outputs.decision }}
+      sha: ${{ steps.decide.outputs.sha }}
+    steps:
+      - name: Checkout main (trusted gate code)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+
+      - name: Resolve main's current HEAD
+        id: head
+        # `origin` carries the checkout's token, so this keeps working if the repo is
+        # ever made private. An empty result makes the gate SKIP, never deploy.
+        run: echo "sha=$(git ls-remote origin refs/heads/main | cut -f1)" >> "$GITHUB_OUTPUT"
+
+      # Only consulted when the triggering run is STALE (see deploy-gate.mjs):
+      # the conclusion of the push-to-main CI run for main's HEAD, if one exists.
+      - name: Main HEAD's CI conclusion
+        id: headci
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.head.outputs.sha }}
+        run: |
+          c=$(gh api "repos/${{ github.repository }}/actions/workflows/ci.yml/runs?head_sha=${SHA}&event=push&branch=main" --jq '.workflow_runs[0].conclusion // ""' 2>/dev/null || true)
+          echo "conclusion=${c}" >> "$GITHUB_OUTPUT"
+
+      - name: Decide
+        id: decide
+        run: node scripts/deploy-gate.mjs
+        env:
+          MAIN_HEAD_SHA: ${{ steps.head.outputs.sha }}
+          MAIN_HEAD_CI_CONCLUSION: ${{ steps.headci.outputs.conclusion }}
+
   # D1 migrations must apply BEFORE either the Pages or MCP Worker deploy
   # so the new code never runs against an old schema. Added 2026-05-21
   # after PR-D's drizzle/0084 collision incident — three migrations
@@ -48,9 +98,8 @@ jobs:
     # an automatic run must be a SUCCESSFUL CI run. Anything else (failure,
     # cancelled, timed_out, skipped) falls through to no deploy, which is the
     # safe direction for a mistake in this expression to fail in.
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
+    needs: gate
+    if: needs.gate.outputs.decision == 'deploy'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -61,9 +110,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # OPE-901 — the commit CI actually tested. Empty on workflow_dispatch,
-          # where the fallback is the branch this run was dispatched against.
-          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
+          # OPE-934 — the SHA the gate approved (a green push-to-main run that is
+          # still main's HEAD, or main's HEAD on a manual dispatch from main).
+          ref: ${{ needs.gate.outputs.sha }}
 
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -96,7 +145,7 @@ jobs:
   # (next-on-pages and @opennextjs/cloudflare can't coexist, so the Pages build
   # can't run from this branch) — see docs/opennext-cutover-runbook.md.
   deploy-worker:
-    needs: d1-migrate
+    needs: [gate, d1-migrate]
     name: Build & Deploy Main App (Worker / OpenNext)
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -108,9 +157,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # OPE-901 — the commit CI actually tested. Empty on workflow_dispatch,
-          # where the fallback is the branch this run was dispatched against.
-          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
+          # OPE-934 — the SHA the gate approved (a green push-to-main run that is
+          # still main's HEAD, or main's HEAD on a manual dispatch from main).
+          ref: ${{ needs.gate.outputs.sha }}
 
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -259,7 +308,7 @@ jobs:
           echo "Smoke passed."
 
   deploy-mcp-server:
-    needs: d1-migrate
+    needs: [gate, d1-migrate]
     name: Build & Deploy MCP Server (Worker)
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -271,9 +320,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # OPE-901 — the commit CI actually tested. Empty on workflow_dispatch,
-          # where the fallback is the branch this run was dispatched against.
-          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
+          # OPE-934 — the SHA the gate approved (a green push-to-main run that is
+          # still main's HEAD, or main's HEAD on a manual dispatch from main).
+          ref: ${{ needs.gate.outputs.sha }}
 
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -288,13 +337,15 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Use trusted GitHub Actions context (github.sha is the 40-char commit SHA,
-      # github.run_started_at is the workflow start in ISO 8601). Routed through
+      # OPE-934 — the SHA the gate approved and this job checked out, so /version
+      # names what actually shipped. (`github.sha` on a workflow_run is main's
+      # HEAD when the EVENT fired, which is not guaranteed to be the commit built.)
+      # github.run_started_at is the workflow start in ISO 8601. Routed through
       # env vars to avoid embedding ${{ }} expressions inside shell command bodies.
       - name: Compute build vars
         id: vars
         env:
-          FULL_SHA: ${{ github.sha }}
+          FULL_SHA: ${{ needs.gate.outputs.sha }}
           RUN_STARTED: ${{ github.run_started_at }}
         run: |
           echo "git_sha=${FULL_SHA:0:7}" >> "$GITHUB_OUTPUT"
