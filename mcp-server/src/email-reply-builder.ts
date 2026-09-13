@@ -1003,6 +1003,10 @@ Our team has reviewed your inquiry and a member should have followed up directly
 
 ${SIGN_OFF}`;
     }
+    case "blank-question":
+      // OPE-985 — recorded, never sent. Reaching here means the suppression in
+      // the inbound workflow was bypassed; refuse rather than invent copy.
+      throw new Error("blank-question is never sent — the inbound workflow suppresses it");
     case "press-needs-info": {
       const note = (params.note as string | undefined) ?? "";
       const noteBlock = note

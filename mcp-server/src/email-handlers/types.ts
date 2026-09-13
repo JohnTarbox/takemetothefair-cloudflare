@@ -65,6 +65,11 @@ export type ReplyKind =
   // attachment never left the phone, and each got a `no-url` reply that gave
   // the sender no reason to suspect anything had gone wrong on their end.
   | "empty-message"
+  // OPE-985 — the "ask about this event" mailto sent untouched: the fence and
+  // our event URL, no question. NEVER SENT. Recorded so the row is countable
+  // and flagged for a human; the standard acknowledgement would have thanked
+  // the sender for a question nobody can read.
+  | "blank-question"
   // OPE-357 (Demux D-1b) — the project router could not place this email and the
   // OPE-327 guard allowed a question. We asked the sender WHICH project/fair they
   // meant rather than telling them we could not understand them. The row carrying

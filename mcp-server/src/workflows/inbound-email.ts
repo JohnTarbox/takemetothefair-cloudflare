@@ -61,7 +61,12 @@ import { isAutoReplyEnabled, AUTO_REPLY_HELD_REASON, type EmailGateEnv } from ".
 import { shouldUseThreadReplyAck } from "../email-handlers/thread-reply-ack.js";
 import { inboundEmails, adminActions, events } from "../schema.js";
 import { logError } from "../logger.js";
-import { classifyDomainTier, isHigherTier, classifyDedupTier } from "@takemetothefair/utils";
+import {
+  classifyDomainTier,
+  isHigherTier,
+  classifyDedupTier,
+  isBlankAskAboutEventBody,
+} from "@takemetothefair/utils";
 import type { EmailIntent } from "../email-intents.js";
 import type { SenderTrustTier } from "../intent-classifier.js";
 import type { EmailAuthVerdict } from "../email-auth.js";
@@ -620,7 +625,60 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       }
     );
 
-    if (unrouted?.ask) {
+    // ───── OPE-985: the ask-about-event mailto sent with no question ─────
+    //
+    // Before dispatch, beside the content-free check and for the same reason:
+    // the fact is about the MESSAGE, not the intent. The subject alone classifies
+    // (Nancy Lasson's classified `correction` at 0.9), so every lane would
+    // otherwise send its standard acknowledgement for a question we do not have.
+    // Nothing is sent. The row is flagged for review so a person writes back,
+    // and `extract_fail_reason` says why it carried nothing to act on.
+    const blankQuestion = await step.do(
+      "blank-question/detect",
+      { retries: { limit: 2, delay: "5 seconds", backoff: "constant" }, timeout: "10 seconds" },
+      async () => {
+        const db = getDb(this.env.DB);
+        const [row] = await db
+          .select({
+            bodyText: inboundEmails.bodyText,
+            bodyTextExcerpt: inboundEmails.bodyTextExcerpt,
+            attachmentCount: inboundEmails.attachmentCount,
+          })
+          .from(inboundEmails)
+          .where(eq(inboundEmails.id, messageRowId))
+          .limit(1);
+        if (
+          !row ||
+          (row.attachmentCount ?? 0) > 0 ||
+          !isBlankAskAboutEventBody(row.bodyText ?? row.bodyTextExcerpt)
+        ) {
+          return false;
+        }
+        await db
+          .update(inboundEmails)
+          .set({ flaggedForReview: 1, extractFailReason: "blank-question" })
+          .where(eq(inboundEmails.id, messageRowId));
+        await logError(this.env.DB, {
+          level: "warn",
+          source: "mcp:inbound-blank-question",
+          message: "ask-about-event mailto arrived with no question — no acknowledgement sent",
+          sessionId,
+          context: { messageRowId, intent },
+        });
+        return true;
+      }
+    );
+
+    if (blankQuestion) {
+      routedToWorkflow = "short-circuit:blank-question";
+      result = {
+        replyKind: "blank-question",
+        status: "replied",
+        suppressReply: true,
+        skipAdminDecision: true,
+        extractFailReason: "blank-question",
+      };
+    } else if (unrouted?.ask) {
       // The row carrying this reply_kind IS the open hold — it is what the
       // ceiling counts next time this sender writes.
       routedToWorkflow = "short-circuit:unrouted-hold-ask";
