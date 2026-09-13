@@ -82,7 +82,19 @@ import {
   PUBLIC_ACCESS,
   computePromoterEnrichment,
   VENDOR_ROSTER_STATUS_VALUES,
+  PERFORMER_ROSTER_STATUS_VALUES,
 } from "@takemetothefair/constants";
+import {
+  ACTIVE_FROM_DESCRIPTION,
+  ACTIVE_TO_DESCRIPTION,
+  parseActiveWindow,
+} from "./event-window.js";
+import {
+  PERFORMER_ROSTER_UNSET,
+  countPerformersByEvent,
+  hasPerformersWhere,
+  performerRosterStatusWhere,
+} from "./performer-selection.js";
 import { attachEventToSeries } from "@takemetothefair/event-series";
 import { dollarsToCents } from "../helpers.js";
 import { recordMutation } from "../audit/record-mutation.js";
@@ -394,11 +406,29 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .describe(
           "OPE-13 rails: filter by vendor-roster research state (multi-valued OR). E.g. ['NEEDS_RESEARCH'] lists the un-researched drain queue; ['PARTIAL'] locates a crashed run's resume point. Each row returns vendor_roster_status / _checked_at / _source_url / _offset + vendor_count so the roster drain can select targets in ONE call instead of pre-checking events one at a time."
         ),
+      performer_roster_status: z
+        // OPE-960 — the performer twin of vendor_roster_status (OPE-264), over
+        // the OPE-123 columns. UNSET selects NULL: most events have never had
+        // a lineup verdict written, and OPE-547 is the record of what happens
+        // when that third population is silently unselectable.
+        .array(z.enum([...PERFORMER_ROSTER_STATUS_VALUES, PERFORMER_ROSTER_UNSET]))
+        .optional()
+        .describe(
+          "OPE-960: filter by performer-lineup research state (multi-valued OR). 'UNSET' selects events with NO status written yet (the majority). E.g. ['NEEDS_RESEARCH','UNSET'] is the full un-researched worklist. Each row returns performer_roster_status / _checked_at / _source_url + performer_count. Same research-target default as vendor_roster_status (see include_non_research_targets)."
+        ),
+      has_performers: z
+        .boolean()
+        .optional()
+        .describe(
+          "OPE-960: true = only events with at least one event_performers row (any status); false = only events with none. With active_from/active_to this is the nightly re-verification set in one call."
+        ),
+      active_from: z.string().optional().describe(ACTIVE_FROM_DESCRIPTION),
+      active_to: z.string().optional().describe(ACTIVE_TO_DESCRIPTION),
       include_non_research_targets: z
         .boolean()
         .optional()
         .describe(
-          "OPE-528: by default a vendor_roster_status filter returns only rows a drain could close — APPROVED, not a merge tombstone, and not a recurring farmers market (they publish no exhibitor roster and the recurrence re-mints one row per week). Set true to see the excluded rows; they are excluded from the worklist, not hidden."
+          "OPE-528: by default a vendor_roster_status or performer_roster_status filter returns only rows a drain could close — APPROVED, not a merge tombstone, and not a recurring farmers market (they publish no exhibitor roster and the recurrence re-mints one row per week). Set true to see the excluded rows; they are excluded from the worklist, not hidden."
         ),
       sort: z
         .enum(["end_date_desc", "end_date_asc", "start_date_desc", "start_date_asc"])
@@ -439,6 +469,29 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           }
         }
       }
+      const window = parseActiveWindow(params);
+      if (!window.ok) {
+        return {
+          content: [jsonContent({ error: "invalid_window", message: window.message })],
+          isError: true,
+        };
+      }
+      conditions.push(...window.conditions);
+      if (params.has_performers !== undefined) {
+        conditions.push(
+          params.has_performers ? hasPerformersWhere() : sql`NOT ${hasPerformersWhere()}`
+        );
+      }
+      const performerRoster = params.performer_roster_status ?? [];
+      if (performerRoster.length > 0) {
+        conditions.push(performerRosterStatusWhere(performerRoster));
+      }
+      const rosterFilterActive =
+        (params.vendor_roster_status?.length ?? 0) > 0 || performerRoster.length > 0;
+      if (rosterFilterActive && !params.include_non_research_targets) {
+        // OPE-528 — see below; applied once whichever roster filter asked.
+        conditions.push(rosterResearchTargetWhere());
+      }
       if (params.vendor_roster_status && params.vendor_roster_status.length > 0) {
         // Index-backed by idx_events_vendor_roster_status (partial, IS NOT NULL).
         conditions.push(inArray(events.vendorRosterStatus, params.vendor_roster_status));
@@ -453,10 +506,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         // Shares ONE definition with the main app's get_roster_coverage
         // totals, which is the point: the two counts differed by exactly 3
         // (merge tombstones, dropped by coverage and not here) with no rule
-        // stated anywhere.
-        if (!params.include_non_research_targets) {
-          conditions.push(rosterResearchTargetWhere());
-        }
+        // stated anywhere. (Pushed above, shared with performer_roster_status.)
       }
 
       // Default is insertion order (unchanged behaviour); an explicit sort lets the
@@ -493,19 +543,33 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           vendorRosterCheckedAt: events.vendorRosterCheckedAt,
           vendorRosterSourceUrl: events.vendorRosterSourceUrl,
           vendorRosterOffset: events.vendorRosterOffset,
+          performerRosterStatus: events.performerRosterStatus,
+          performerRosterCheckedAt: events.performerRosterCheckedAt,
+          performerRosterSourceUrl: events.performerRosterSourceUrl,
         })
         .from(events)
         .leftJoin(venues, eq(events.venueId, venues.id))
         .leftJoin(promoters, eq(events.promoterId, promoters.id));
 
-      const filtered = conditions.length > 0 ? query.where(and(...conditions)) : query;
+      const where = conditions.length > 0 ? and(...conditions) : undefined;
+      const filtered = where ? query.where(where) : query;
       const sorted = orderByClause ? filtered.orderBy(orderByClause) : filtered;
       const eventRows = await sorted.limit(limit).offset(offset);
+
+      // OPE-960 scope 3 — the same joins and WHERE, counted, so a sweep can
+      // prove it saw every row instead of inferring it from a short page.
+      const countQuery = db
+        .select({ n: sql<number>`count(*)` })
+        .from(events)
+        .leftJoin(venues, eq(events.venueId, venues.id));
+      const [{ n: totalMatching }] = await (where ? countQuery.where(where) : countQuery);
 
       // Batch-fetch vendor counts per event
       const eventIds = eventRows.map((e) => e.id);
       const vendorCounts: Record<string, { total: number; applied: number; confirmed: number }> =
         {};
+
+      const performerCounts = await countPerformersByEvent(db, eventIds);
 
       if (eventIds.length > 0) {
         const allApps = await db
@@ -553,6 +617,13 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           : null,
         vendor_roster_source_url: e.vendorRosterSourceUrl ?? null,
         vendor_roster_offset: e.vendorRosterOffset ?? null,
+        // OPE-960 — performer twin of the four fields above.
+        performer_count: performerCounts.get(e.id) ?? 0,
+        performer_roster_status: e.performerRosterStatus ?? null,
+        performer_roster_checked_at: e.performerRosterCheckedAt
+          ? e.performerRosterCheckedAt.toISOString()
+          : null,
+        performer_roster_source_url: e.performerRosterSourceUrl ?? null,
       }));
 
       return {
@@ -560,7 +631,8 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           jsonContent({
             count: output.length,
             offset,
-            has_more: output.length === limit,
+            total_matching: Number(totalMatching),
+            has_more: offset + output.length < Number(totalMatching),
             events: output,
           }),
         ],
