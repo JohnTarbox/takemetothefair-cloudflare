@@ -25,6 +25,10 @@ import { NonRetryableError } from "cloudflare:workflows";
 import { logError } from "../logger.js";
 import { getDb } from "../db.js";
 import { DEFAULT_URLS_PER_CALL, runCancellationRecheck } from "../goodwill/cancellation-recheck.js";
+import {
+  captureSourceAgreementDisagreements,
+  type SourceDisagreementFinding,
+} from "../goodwill/source-agreement-capture.js";
 
 export type EventDateDriftParams = {
   maxChunks?: number;
@@ -258,6 +262,93 @@ export class EventDateDriftWorkflow extends WorkflowEntrypoint<Env, EventDateDri
       }
     }
 
+    // OPE-988 — does each organizer page an event cites name that event's
+    // town, and is its domain still the organizer's? Same daily run, same
+    // reasons as the promoter sweep above: this workflow holds the binding and
+    // the key, and a sweep nobody schedules is inert. Also after the drift loop,
+    // also swallowed on failure.
+    //
+    // Sized from a real count, not by analogy: 516 distinct source URLs on
+    // events starting within [-30d, +120d] in prod on 2026-09-13 (before the
+    // aggregator/platform filter, which only shrinks it) = 11 chunks of 50.
+    // 15 is that plus headroom. The route reports `organizer_urls_total`, so a
+    // cap that stops being enough is visible in this return value.
+    const sourceAgreement = {
+      chunks: 0,
+      examined: 0,
+      organizer_urls_total: 0,
+      disagreements: 0,
+      filed: 0,
+      takeovers: 0,
+      failed: false,
+    };
+    let saCursor = 0;
+    for (let i = 0; i < 15; i++) {
+      try {
+        const res = await step.do(
+          `source-agreement-${i + 1}`,
+          { retries: { limit: 1, delay: "10 seconds" }, timeout: "5 minutes" },
+          async (): Promise<{
+            examined: number;
+            organizer_urls_total: number;
+            domain_takeover: number;
+            disagreements: SourceDisagreementFinding[];
+            next_cursor: number | null;
+          }> => {
+            // chunk=50: the same measured per-URL fetch bound as both loops above.
+            const u = `${this.env.MAIN_APP_URL}/api/admin/url-health/source-agreement/sweep?cursor=${saCursor}&chunk=50`;
+            const init: RequestInit = {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-Internal-Key": this.env.INTERNAL_API_KEY,
+              },
+            };
+            const r = this.env.MAIN_APP
+              ? await this.env.MAIN_APP.fetch(new Request(u, init))
+              : await fetch(u, init);
+            if (!r.ok) throw new Error(`source-agreement ${r.status}@${saCursor}`);
+            return (await r.json()) as {
+              examined: number;
+              organizer_urls_total: number;
+              domain_takeover: number;
+              disagreements: SourceDisagreementFinding[];
+              next_cursor: number | null;
+            };
+          }
+        );
+        sourceAgreement.chunks++;
+        sourceAgreement.examined += res.examined ?? 0;
+        sourceAgreement.organizer_urls_total = res.organizer_urls_total ?? 0;
+        sourceAgreement.takeovers += res.domain_takeover ?? 0;
+        const findings = Array.isArray(res.disagreements) ? res.disagreements : [];
+        sourceAgreement.disagreements += findings.length;
+        if (findings.length > 0) {
+          // Its own step so a retried fetch step never re-files, and a failed
+          // write retries without re-fetching 50 pages. captureDiscrepancy is
+          // idempotent on the open row either way.
+          const captured = await step.do(
+            `source-agreement-capture-${i + 1}`,
+            { retries: { limit: 2, delay: "5 seconds" }, timeout: "1 minute" },
+            async () => captureSourceAgreementDisagreements(getDb(this.env.DB), findings)
+          );
+          sourceAgreement.filed += captured.filed;
+        }
+        if (res.next_cursor == null) break;
+        saCursor = res.next_cursor;
+      } catch (err) {
+        sourceAgreement.failed = true;
+        await logError(this.env.DB, {
+          source: SOURCE,
+          message: "source-agreement chunk failed; drift results are unaffected",
+          error: err,
+          sessionId: event.instanceId,
+          context: { cursor: saCursor, chunk: i + 1, sourceAgreement },
+        });
+        break;
+      }
+    }
+
     return {
       chunks,
       cursorReached: cursor,
@@ -265,6 +356,7 @@ export class EventDateDriftWorkflow extends WorkflowEntrypoint<Env, EventDateDri
       ...totals,
       url_health: urlHealth,
       cancellation_recheck: cancellation,
+      source_agreement: sourceAgreement,
     };
   }
 }

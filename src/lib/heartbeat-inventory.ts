@@ -100,8 +100,12 @@ export const HEARTBEAT_INVENTORY: Record<string, InventoryEntry> = {
   },
   "workflow:RecommendationsScanWorkflow": { probes: ["recommendation-scan"] },
   "workflow:EventDateDriftWorkflow": {
-    probes: ["promoter-url-health-sweep", "organizer-cancellation-recheck"],
-    note: "OPE-987 moved this off `unreviewed`: its promoter sweep (OPE-868) and cancellation recheck (OPE-987) each carry a probe. ⚠️ The date-drift loop itself — the workflow's original writer of event_date_drift_findings — still has NONE; that debt did not go away, it is now named here instead of counted.",
+    probes: [
+      "promoter-url-health-sweep",
+      "organizer-cancellation-recheck",
+      "source-agreement-sweep",
+    ],
+    note: "OPE-987 moved this off `unreviewed`: its promoter sweep (OPE-868) cancellation recheck (OPE-987) and source-agreement sweep (OPE-988) each carry a probe. ⚠️ The date-drift loop itself — the workflow's original writer of event_date_drift_findings — still has NONE; that debt did not go away, it is now named here instead of counted.",
   },
   "workflow:SchemaOrgSyncWorkflow": U,
 
