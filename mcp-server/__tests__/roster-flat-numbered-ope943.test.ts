@@ -109,30 +109,18 @@ describe("OPE-943 — the defect, on the exact production input", () => {
 
   it("splits on the other digit-adjacent rows too (`4-H10`, `Dahlia Co.61`)", () => {
     expect(entries.find((e) => e.position === 9)?.name).toBe("Mcgrath 4-H");
-    // Space 61 proves the `Dahlia Co.61` boundary was split correctly even
-    // though space 60 itself is then dropped by a pre-existing gate — see the
-    // known-gap test below.
+    // Space 61 proves the `Dahlia Co.61` boundary was split correctly.
     expect(entries.find((e) => e.position === 61)?.name).toBe("Harris");
   });
 
-  it("KNOWN GAP: space 60 is lost to OPE-405's sentence rule, not to this parser", () => {
-    // "Robbins Granite Ridge Dahlia Co." is 5 words and ends in a period, so
-    // isPlausibleName (roster-detect.ts:196, OPE-405) rejects it as a sentence.
-    // The boundary itself parses fine — space 61 above proves the split landed.
-    //
-    // The flat form makes this gate bite systematically harder than the other
-    // two forms do: its cell is `<surname> <org name>`, one word longer than a
-    // bare business name, so a 4-word company ending in "Co."/"Inc." crosses
-    // the >4 threshold that was tuned against bare names.
-    //
-    // Measured on this specimen: exactly ONE row of 78. Left alone deliberately
-    // — widening an OPE-405 precision gate is that ticket's call, not this
-    // one's, and the gate is what keeps "Stalls 32, 33, and 34." out.
-    // Tracked as an OPE-943 follow-up. If that lands, this test should flip.
-    expect(entries.find((e) => e.position === 60)).toBeUndefined();
+  it("OPE-952: space 60 survives OPE-405's sentence rule because it ends in a business suffix", () => {
+    // "Robbins Granite Ridge Dahlia Co." is 5 words and ends in a period. Until
+    // OPE-952 the sentence rule dropped it; the flat form's `<surname> <org>`
+    // cell is one word longer than a bare name, so this was systematic.
+    expect(entries.find((e) => e.position === 60)?.name).toBe("Robbins Granite Ridge Dahlia Co.");
   });
 
-  it("loses exactly the rows it should: 2 duplicates, 3 OPEN, 1 known gap", () => {
+  it("loses exactly the rows it should: 2 duplicates, 3 OPEN", () => {
     // The positive landmark for every "not captured" assertion above: this
     // pins the FULL set, so a parser that silently started dropping rows would
     // turn this red instead of quietly shrinking the roster.
@@ -143,10 +131,9 @@ describe("OPE-943 — the defect, on the exact production input", () => {
       38, // same vendor as space 37 (P & K Cardinal Crafts)
       39, // OPEN
       52, // OPEN
-      60, // known gap — OPE-405 sentence rule, see above
       63, // OPEN
     ]);
-    expect(entries).toHaveLength(72);
+    expect(entries).toHaveLength(73);
   });
 
   it("drops the three unassigned OPEN spaces (39, 52, 63)", () => {

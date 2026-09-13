@@ -56,6 +56,45 @@ The form requests the following:
   });
 });
 
+describe("OPE-952 — the sentence rule exempts a final business suffix, and nothing else", () => {
+  // Plain bullets, no `**` and no trailing colon, so the ONLY gate that can
+  // reject a line here is the sentence rule itself. (The prod payloads above are
+  // also caught by the `**` / `:` gates, so they cannot prove this one.)
+  const roster = (extra: string) => `Vendors 2026
+- Sea Glass Studio
+- Kennebec Pottery
+- Downeast Woodworks
+- ${extra}`;
+  const names = (extra: string) => detectRosterEntries(roster(extra)).map((e) => e.name);
+
+  it("a 5+ word name ending in Co. / Inc. / LLC. / L.L.C. is kept", () => {
+    for (const n of [
+      "Robbins Granite Ridge Dahlia Co.",
+      "Smith And Sons Stone Works Inc.",
+      "Maine Coast Maple Syrup LLC.",
+      "Downeast Salt Water Taffy L.L.C.",
+    ]) {
+      expect(names(n)).toContain(n);
+    }
+  });
+
+  it('DRIVEN TO FAILURE: a 5-word sentence ending "and 34." is still rejected', () => {
+    expect(names("Stalls 32, 33, and 34.")).not.toContain("Stalls 32, 33, and 34.");
+    // Positive landmark: the roster itself was detected, so the line was judged.
+    expect(names("Stalls 32, 33, and 34.")).toContain("Sea Glass Studio");
+  });
+
+  it("a suffix word mid-name does not exempt a sentence that ends otherwise", () => {
+    const line = "Booths for Smith Co. are by the gate.";
+    expect(names(line)).not.toContain(line);
+  });
+
+  it("the suffix must be the WHOLE final word — a sentence ending in 'taco.' is not 'Co.'", () => {
+    const line = "Stalls 32 and 33 sell the taco.";
+    expect(names(line)).not.toContain(line);
+  });
+});
+
 describe("true positives still detected — the gate must not cost recall", () => {
   it("the Winthrop numbered placement table (the ticket's own specimen)", () => {
     const ocr = `| # | Name | Type of Work |
