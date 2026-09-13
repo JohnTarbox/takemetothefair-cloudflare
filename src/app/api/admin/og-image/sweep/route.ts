@@ -89,7 +89,7 @@ interface EventOutcome {
 }
 
 export const POST = withAuthorized(async ({ request, db, userId }) => {
-  const env = getCloudflareEnv() as unknown as { VENDOR_ASSETS?: R2Bucket };
+  const env = getCloudflareEnv();
 
   // Audit actor for R2 customMetadata: the admin user id, or the "internal"
   // sentinel when authorized via X-Internal-Key (userId is null then).

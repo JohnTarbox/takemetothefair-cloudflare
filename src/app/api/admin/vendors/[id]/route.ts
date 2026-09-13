@@ -495,7 +495,7 @@ export const PATCH = withAuth<{ id: string }>(
         (updateData.slug !== undefined && updateData.slug !== currentVendor.slug);
       if (vendorMaterialChanged) {
         const finalSlug = (updateData.slug as string | undefined) ?? currentVendor.slug;
-        const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+        const env = getCloudflareEnv();
         await pingIndexNow(db, indexNowUrlFor("vendors", finalSlug), env, "vendor-update");
       }
 
@@ -824,7 +824,7 @@ export const DELETE = withAuthorized<{ id: string }>(async ({ request, db, userI
         })
         .returning({ id: adminActions.id });
 
-      const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+      const env = getCloudflareEnv();
       await pingIndexNow(db, indexNowUrlFor("vendors", vendor.slug), env, "vendor-delete");
 
       return NextResponse.json({
@@ -895,7 +895,7 @@ export const DELETE = withAuthorized<{ id: string }>(async ({ request, db, userI
       })
       .returning({ id: adminActions.id });
 
-    const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+    const env = getCloudflareEnv();
     await pingIndexNow(db, indexNowUrlFor("vendors", vendor.slug), env, "vendor-purge");
 
     return NextResponse.json({

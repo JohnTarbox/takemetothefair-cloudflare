@@ -524,7 +524,7 @@ export default async function AdminCoveragePage({
     rawSort === "views" ? "views" : rawSort === "favorites" ? "favorites" : "coverage";
 
   const db = getCloudflareDb();
-  const env = getCloudflareEnv() as unknown as Ga4Env;
+  const env = getCloudflareEnv();
 
   const [
     eventRowsRaw,

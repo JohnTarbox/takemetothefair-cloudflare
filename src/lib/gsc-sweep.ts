@@ -1077,7 +1077,7 @@ export async function resolveNonCanonicalEventIssues(
 /** Run a single sweep batch. */
 export async function runSweep(
   db: Db,
-  env: ScEnv,
+  env: ScEnv & { SITE_HEALTH_EXPIRE_DAYS?: string },
   opts: { batchSize?: number } = {}
 ): Promise<SweepResult> {
   const batchSize = opts.batchSize ?? DEFAULT_BATCH_SIZE;
@@ -1124,12 +1124,7 @@ export async function runSweep(
   // rather than by email, since email is the channel under suspicion.
   await checkStubbedSends(db, now, result);
   await reverifyOpenIssues(db, now, result);
-  await expireUndetectedIssues(
-    db,
-    now,
-    expireDaysFrom(env as unknown as { SITE_HEALTH_EXPIRE_DAYS?: string }),
-    result
-  );
+  await expireUndetectedIssues(db, now, expireDaysFrom(env), result);
 
   if (urls.length === 0) return result;
 

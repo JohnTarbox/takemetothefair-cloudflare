@@ -117,7 +117,7 @@ export default async function NewsletterApprovePage({ searchParams }: Props) {
 
   if (!token) return <ResultView copy={resultCopy("invalid")} />;
 
-  const env = getCloudflareEnv() as unknown as Record<string, string | undefined>;
+  const env = getCloudflareEnv();
   const secret = resolveApproveSecret(env);
   if (!secret) return <ResultView copy={resultCopy("server_error")} />;
 

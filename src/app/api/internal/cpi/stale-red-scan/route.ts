@@ -2,7 +2,11 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { SITE_URL } from "@takemetothefair/constants";
 import { withInternalKey } from "@/lib/api/with-auth";
-import { getCloudflareEnv, getCloudflareRateLimitKv } from "@/lib/cloudflare";
+import {
+  getCloudflareEnv,
+  getCloudflareRateLimitKv,
+  type CloudflareStringEnvKey,
+} from "@/lib/cloudflare";
 import { getLatestKpiStates } from "@/lib/kpi-states";
 import { loadActionQueue } from "@/lib/analytics-overview/activity";
 import { enqueueEmail } from "@/lib/queues/producers";
@@ -15,7 +19,7 @@ import {
   staleRedSignals,
 } from "@/lib/db/schema";
 import { and, count, desc, eq, isNull, notInArray } from "drizzle-orm";
-import { getIndexNowQuota, type BingEnv } from "@/lib/bing-webmaster";
+import { getIndexNowQuota } from "@/lib/bing-webmaster";
 import { assessAllIntegrationSilence, type IntegrationActivity } from "@/lib/integration-silence";
 import { assessAllQueueFreeze } from "@/lib/queue-freeze";
 import { loadQueueFreezeThresholds } from "@/lib/queue-freeze-thresholds";
@@ -55,10 +59,9 @@ const STALE_RED_FINGERPRINT_KEY = "cpi:stale-red:last-fingerprint";
  */
 
 /** Read a runtime env var via CF bindings; falls back to process.env for local/dev. */
-function getRuntimeEnv(key: string): string | undefined {
+function getRuntimeEnv(key: CloudflareStringEnvKey): string | undefined {
   try {
-    const env = getCloudflareEnv() as unknown as Record<string, string | undefined>;
-    return env[key];
+    return getCloudflareEnv()[key];
   } catch {
     return process.env[key];
   }
@@ -102,7 +105,7 @@ async function gatherIntegrationActivity(
 
   let quotaNote = "quota unknown";
   try {
-    const env = getCloudflareEnv() as unknown as BingEnv;
+    const env = getCloudflareEnv();
     const quota = await getIndexNowQuota(env);
     quotaNote = `Bing monthly quota ${quota.monthlyRemaining}/${quota.monthlyQuota} unspent`;
   } catch {

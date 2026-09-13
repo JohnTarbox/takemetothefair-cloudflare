@@ -45,9 +45,11 @@ function timingSafeEqual(a: string, b: string): boolean {
 /** The signing secret for unsubscribe tokens. Reuses AUTH_SECRET (a stable
  *  server secret) unless a dedicated NEWSLETTER_UNSUBSCRIBE_SECRET is set. Kept
  *  here (not in the route file) so route modules only export handlers. */
-export function resolveUnsubscribeSecret(
-  env: Record<string, string | undefined>
-): string | undefined {
+export function resolveUnsubscribeSecret(env: {
+  NEWSLETTER_UNSUBSCRIBE_SECRET?: string;
+  AUTH_SECRET?: string;
+  NEXTAUTH_SECRET?: string;
+}): string | undefined {
   return env.NEWSLETTER_UNSUBSCRIBE_SECRET || env.AUTH_SECRET || env.NEXTAUTH_SECRET;
 }
 

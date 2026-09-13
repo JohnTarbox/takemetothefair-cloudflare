@@ -118,7 +118,7 @@ export const PATCH = withAuth<{ id: string }>(
       // IndexNow: ping on every update (content changed). Include the prior
       // slug too if it differs, so search engines can crawl-and-redirect.
       if (updatedPromoter?.slug) {
-        const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+        const env = getCloudflareEnv();
         const urls = [indexNowUrlFor("promoters", updatedPromoter.slug)];
         if (prior?.slug && prior.slug !== updatedPromoter.slug) {
           urls.push(indexNowUrlFor("promoters", prior.slug));

@@ -42,7 +42,7 @@ import { logError } from "../logger.js";
 import { chunkedInArray, createSlug } from "@takemetothefair/utils";
 import { runBoothPipeline, type BoothPipelineResult } from "../photo/booth-pipeline.js";
 import { classifyPosterText, type PosterClassification } from "../photo/poster-classify.js";
-import { mainAppFetch, type MainAppEnv } from "../main-app-fetch.js";
+import { mainAppFetch } from "../main-app-fetch.js";
 import { submitCheckDuplicate, submitEvent, submitExtract } from "./submit.js";
 import { parseExif, type ExifData } from "../photo/exif.js";
 import {
@@ -617,12 +617,10 @@ async function classifyAsPoster(
     const bytes = await obj.arrayBuffer();
 
     const form = buildExtractImageForm(bytes, images[0]);
-    const res = await mainAppFetch(
-      env as unknown as MainAppEnv,
-      "/api/admin/import-url/extract-image",
-      "workflow",
-      { method: "POST", body: form }
-    );
+    const res = await mainAppFetch(env, "/api/admin/import-url/extract-image", "workflow", {
+      method: "POST",
+      body: form,
+    });
     if (!res.ok) {
       return giveUp("extract-image returned non-OK", {
         status: res.status,

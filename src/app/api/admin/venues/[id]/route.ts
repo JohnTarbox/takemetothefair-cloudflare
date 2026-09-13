@@ -229,7 +229,7 @@ export const PATCH = withAuth<{ id: string }>(
 
       if (venueIndexNowSource) {
         const finalSlug = (updateData.slug as string | undefined) ?? currentVenue.slug;
-        const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+        const env = getCloudflareEnv();
         await pingIndexNow(db, indexNowUrlFor("venues", finalSlug), env, venueIndexNowSource);
       }
 

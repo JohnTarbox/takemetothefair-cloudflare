@@ -473,7 +473,7 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
     // any newly-created venue. Reused/existing venues are skipped — they're
     // already indexed.
     {
-      const cfEnv = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+      const cfEnv = getCloudflareEnv();
       if (newVenueSlug) {
         await pingIndexNow(db, indexNowUrlFor("venues", newVenueSlug), cfEnv, "venue-create");
       }

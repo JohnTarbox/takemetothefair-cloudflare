@@ -30,7 +30,7 @@ const bodySchema = z.object({
  * callers (`triggerIndexNow`) ignore the body as before.
  */
 export const POST = withInternalKey(async ({ request, db }) => {
-  const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+  const env = getCloudflareEnv();
 
   let raw: unknown;
   try {

@@ -58,7 +58,7 @@ import {
   shouldForwardToAdmin,
   type EmailIntent,
 } from "./email-intents.js";
-import { mainAppFetch, type MainAppEnv } from "./main-app-fetch.js";
+import { mainAppFetch } from "./main-app-fetch.js";
 import { routeToProject } from "./inbound/project-router.js";
 import { handleNewsletterSubscribeEmail } from "./email-handlers/newsletter-subscribe.js";
 import {
@@ -493,21 +493,16 @@ export async function handleInboundEmail(
     //     inbound email over, so any error is logged and ingestion continues.
     if (looksLikeGscMilestone(fromAddr, subject)) {
       try {
-        const res = await mainAppFetch(
-          env as unknown as MainAppEnv,
-          "/api/admin/analytics/gsc-milestone-ingest",
-          "fetch",
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              subject,
-              body: bodyText,
-              email_date: new Date().toISOString(),
-              note: `auto-ingested from inbound email (OPE-311), from=${fromAddr}`,
-            }),
-          }
-        );
+        const res = await mainAppFetch(env, "/api/admin/analytics/gsc-milestone-ingest", "fetch", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            subject,
+            body: bodyText,
+            email_date: new Date().toISOString(),
+            note: `auto-ingested from inbound email (OPE-311), from=${fromAddr}`,
+          }),
+        });
         await logError(env.DB, {
           level: res.ok ? "info" : "warn",
           source: "email-handler:ope-311-gsc-milestone",
@@ -591,10 +586,7 @@ export async function handleInboundEmail(
     //     Failsoft: a subscribe that doesn't reach the endpoint is logged and
     //     the email still records normally, rather than throwing away the row.
     if (effectiveAddressIntent === "newsletter_subscribe") {
-      await handleNewsletterSubscribeEmail(
-        env as unknown as MainAppEnv & { DB: D1Database },
-        fromAddr
-      );
+      await handleNewsletterSubscribeEmail(env, fromAddr);
     }
 
     // 3c. Compute the routing decision: maybe run the classifier, maybe

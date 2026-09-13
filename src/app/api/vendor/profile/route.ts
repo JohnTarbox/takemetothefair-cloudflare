@@ -363,7 +363,7 @@ export async function PATCH(request: NextRequest) {
       resolvedSlug !== null;
     if (materialChanged) {
       const finalSlug = resolvedSlug ?? currentVendor.slug;
-      const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+      const env = getCloudflareEnv();
       await pingIndexNow(db, indexNowUrlFor("vendors", finalSlug), env, "vendor-self-update");
     }
 

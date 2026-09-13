@@ -42,7 +42,7 @@ export async function bearerTokenMatches(request: Request): Promise<boolean> {
   if (!header || !header.startsWith("Bearer ")) return false;
   const presented = header.slice("Bearer ".length).trim();
   if (!presented) return false;
-  const env = getCloudflareEnv() as unknown as Record<string, string | undefined>;
+  const env = getCloudflareEnv();
   const expected = env.CLAUDE_READONLY_TOKEN;
   if (!expected) return false;
   return timingSafeEqualString(presented, expected);
@@ -61,7 +61,7 @@ export async function bearerTokenMatches(request: Request): Promise<boolean> {
  */
 export async function internalKeyMatches(request: Request): Promise<boolean> {
   const internalKey = request.headers.get("x-internal-key");
-  const env = getCloudflareEnv() as unknown as Record<string, string | undefined>;
+  const env = getCloudflareEnv();
   const expected = env.INTERNAL_API_KEY;
   // OPE-902 — `await`. Without it `ok` is a PROMISE, which is always truthy,
   // so `!ok` was always false and the refusal log below never ran once. The

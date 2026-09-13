@@ -14,7 +14,6 @@ import {
   summarizeFacebookTraffic,
   type AeoReferralsResult,
   type DashboardMetrics,
-  type Ga4Env,
 } from "@/lib/ga4";
 import { formatTimestampForServer } from "@/lib/datetime";
 
@@ -26,7 +25,7 @@ type LoadResult =
 
 async function load(skipCache: boolean): Promise<LoadResult> {
   try {
-    const env = getCloudflareEnv() as unknown as Ga4Env;
+    const env = getCloudflareEnv();
     const [data, aeo] = await Promise.all([
       getDashboardMetrics(env, { skipCache }),
       getAeoReferrals(env, { skipCache }),

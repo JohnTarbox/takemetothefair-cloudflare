@@ -18,10 +18,7 @@ export async function GET(request: Request) {
   const email = url.searchParams.get("e") ?? "";
   const token = url.searchParams.get("t") ?? "";
 
-  const env = getCloudflareEnv() as unknown as {
-    UNSUBSCRIBE_SECRET?: string;
-    INTERNAL_API_KEY?: string;
-  };
+  const env = getCloudflareEnv();
   const secret = env.UNSUBSCRIBE_SECRET || env.INTERNAL_API_KEY || "";
   const db = getCloudflareDb();
 

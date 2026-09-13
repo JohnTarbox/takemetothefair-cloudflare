@@ -148,7 +148,6 @@ import { registerGa4LivenessTool } from "./admin-ga4-liveness.js";
 import { registerLogVendorOutreachTool } from "./admin-log-vendor-outreach.js";
 import { registerClaimCorroborateTool } from "./admin-claim-corroborate.js";
 import { registerPhotoProposalTools } from "./admin-photo-proposals.js";
-import type { MainAppEnv as MainAppEnvForCorroborate } from "../main-app-fetch.js";
 import {
   registerCitationTools,
   DENORM_FIELD_MAP as CITATION_DENORM_FIELD_MAP,
@@ -345,7 +344,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
 
   // OPE-237 — the declared-website corroboration pass. The classifier shipped
   // with PR #791 and had no caller; this is its trigger.
-  registerClaimCorroborateTool(server, auth, env as unknown as MainAppEnvForCorroborate);
+  registerClaimCorroborateTool(server, auth, env);
 
   // OPE-240 — read the staged booth-photo proposals. The PHOTO_AUTOWRITE_ENABLED
   // gate is meant to be judged on these, and they were unreadable outside /admin.

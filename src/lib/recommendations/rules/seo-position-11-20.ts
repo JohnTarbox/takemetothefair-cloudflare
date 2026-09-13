@@ -9,7 +9,7 @@
  */
 
 import { getCloudflareEnv } from "@/lib/cloudflare";
-import { ScApiError, ScConfigError, getSiteSearchQueries, type ScEnv } from "@/lib/search-console";
+import { ScApiError, ScConfigError, getSiteSearchQueries } from "@/lib/search-console";
 import { resolveGscPath } from "../resolve-gsc-path";
 import type { ItemMatch, RuleDefinition } from "../engine";
 
@@ -30,7 +30,7 @@ export const seoPosition1120Rule: RuleDefinition = {
   // No autoResolve: GSC API failures return [] silently (see catch below);
   // auto-resolving on empty would clobber valid items during a transient outage.
   async run(db): Promise<ItemMatch[]> {
-    const env = getCloudflareEnv() as unknown as ScEnv;
+    const env = getCloudflareEnv();
     let queries;
     try {
       const result = await getSiteSearchQueries(env, {

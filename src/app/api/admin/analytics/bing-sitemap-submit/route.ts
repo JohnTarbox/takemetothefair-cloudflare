@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { isAuthorized } from "@/lib/api-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
-import { BingApiError, BingConfigError, submitFeed, type BingEnv } from "@/lib/bing-webmaster";
+import { BingApiError, BingConfigError, submitFeed } from "@/lib/bing-webmaster";
 
 type PostBody = { sitemap_url?: unknown };
 
@@ -43,7 +43,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const env = getCloudflareEnv() as unknown as BingEnv;
+  const env = getCloudflareEnv();
   try {
     const result = await submitFeed(env, sitemapUrl);
     return NextResponse.json({

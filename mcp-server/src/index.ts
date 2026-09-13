@@ -40,13 +40,11 @@ import { registerSendNewsletterBroadcastTool } from "./tools/admin-send-newslett
 import { registerSendGatesTool } from "./tools/admin-send-gates.js";
 import { registerApiTokenTools } from "./tools/admin-api-tokens.js";
 
-/** OPE-772 — the env shape `get_send_gates` reads.
- *
- *  Aliased purely so both registration sites fit on ONE line each. The OPE-469
- *  CI guard matches a register call and its server argument on a single line, so
- *  a call wrapped across lines reads to it as a tool registered on the legacy
- *  path only — it caught exactly that here before this alias existed. */
-type GateEnv = Record<string, string | undefined>;
+// OPE-772 / OPE-950 — both `registerSendGatesTool` call sites must stay on ONE
+// line each. The OPE-469 CI guard matches a register call and its server
+// argument on a single line, so a call wrapped across lines reads to it as a
+// tool registered on the legacy path only. (A `GateEnv` alias used to exist to
+// keep the `as unknown as` cast short enough; OPE-950 removed the cast.)
 import { registerCreateClaimInviteTool } from "./tools/admin-claim-invite.js";
 import { registerClaimReviewTools } from "./tools/admin-claim-review.js";
 import { registerResolveHeldPhotosTool } from "./tools/admin-resolve-held-photos.js";
@@ -196,6 +194,14 @@ type Env = WorkerEnv &
     // "which bundle is the server running?" without a client round-trip.
     GIT_SHA?: string;
     BUILD_TIME?: string;
+    /**
+     * OPE-370 — override for the pending-search-ping retention window (days).
+     * ⚠️ OPE-950 FINDING: read by the cron prune, bound NOWHERE — absent from
+     * mcp-server/wrangler.toml (grep -c → 0) and from docs/. Until someone sets
+     * it (a deployed secret is UNVERIFIED), `searchPingRetentionDays` returns
+     * its built-in default. Previously reachable only through a cast.
+     */
+    SEARCH_PING_RETENTION_DAYS?: string;
     // A3 / PR-6 (2026-06-01 EVE) — Slack incoming-webhook URL for technical
     // alerts (KPI alerts + dedup-sweep canary). Set via
     // `wrangler secret put SLACK_WEBHOOK_URL_TECHNICAL` on the MCP Worker.
@@ -398,7 +404,7 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
         // OPE-190 (2026-07-13) — send_newsletter_broadcast (wraps the OPE-169
         // broadcast endpoint; STOP-gated real broadcast, unattended test/preview).
         registerSendNewsletterBroadcastTool(this.server, db, auth, this.env);
-        registerSendGatesTool(this.server, db, auth, this.env as unknown as GateEnv);
+        registerSendGatesTool(this.server, db, auth, this.env);
         registerApiTokenTools(this.server, db, auth);
         // OPE-67 (2026-07-02) — claim tooling: create_claim_invite (cold invite)
         // + list_claims / approve_claim / reject_claim (review queue).
@@ -539,7 +545,7 @@ async function handleLegacyMcpRequest(
       registerPromoterReplyIngestTools(server, db, auth);
       registerGalleryPhotoTools(server, auth, env);
       registerSendNewsletterBroadcastTool(server, db, auth, env);
-      registerSendGatesTool(server, db, auth, env as unknown as GateEnv);
+      registerSendGatesTool(server, db, auth, env);
       registerApiTokenTools(server, db, auth);
       registerCreateClaimInviteTool(server, db, auth, env);
       registerClaimReviewTools(server, db, auth);
@@ -902,9 +908,7 @@ async function runScheduledPendingPingsFlush(env: Env): Promise<void> {
     //
     // Deliberately does NOT touch the circuit breaker and submits nothing —
     // breaker-clear is John-owned per OPE-243.
-    const retentionDays = searchPingRetentionDays(
-      env as unknown as { SEARCH_PING_RETENTION_DAYS?: string }
-    );
+    const retentionDays = searchPingRetentionDays(env);
     const pruned = await prunePendingPings(db, new Date(), retentionDays);
     // Logged every run, including zero: the point of the prune is that the
     // discard is VISIBLE. A silent delete is the defect class this repo keeps

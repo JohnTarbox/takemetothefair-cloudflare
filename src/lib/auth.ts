@@ -7,7 +7,7 @@ import Facebook from "next-auth/providers/facebook";
 import { isPlaceholderEmail, PLACEHOLDER_REFUSAL } from "@/lib/auth/placeholder-account";
 import { normalizeEmail } from "@/lib/auth/normalize-email";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
-import { getCloudflareDb } from "./cloudflare";
+import { getCloudflareDb, type CloudflareStringEnvKey } from "./cloudflare";
 import * as schema from "./db/schema";
 import { eq, and } from "drizzle-orm";
 import { logError } from "./logger";
@@ -168,10 +168,10 @@ function scheduleSignInRefusalRecord(result: SignInThrottleResult, request: Requ
 
 // Read env vars at runtime from Cloudflare Pages env
 // (process.env values are inlined at build time and won't have production secrets)
-function getRuntimeEnv(key: string): string | undefined {
+function getRuntimeEnv(key: CloudflareStringEnvKey): string | undefined {
   try {
     const { env } = getCloudflareContext();
-    return (env as unknown as Record<string, string>)[key];
+    return env[key];
   } catch {
     return process.env[key];
   }

@@ -109,10 +109,7 @@ export const POST = withInternalKey({ source: "harvest-fetch" }, async ({ reques
     return NextResponse.json({ success: false, error: "forbidden_host" }, { status: 400 });
   }
 
-  const env = getCloudflareEnv() as unknown as {
-    CLOUDFLARE_ACCOUNT_ID?: string;
-    CLOUDFLARE_BROWSER_RENDERING_TOKEN?: string;
-  };
+  const env = getCloudflareEnv();
 
   try {
     // 1) Cheap standard fetch (works for public sitemaps + non-WAF hosts).

@@ -45,7 +45,7 @@ import { enqueueEmail } from "@/lib/queues/producers";
 import { logError } from "@/lib/logger";
 import { formatTimestampForServer } from "@/lib/datetime";
 import type { KpiName, KpiState } from "@/lib/kpi-thresholds";
-import { getCloudflareEnv } from "@/lib/cloudflare";
+import { getCloudflareEnv, type CloudflareStringEnvKey } from "@/lib/cloudflare";
 
 type Db = DrizzleD1Database<typeof schema>;
 
@@ -73,10 +73,9 @@ const YELLOW_DEBOUNCE_HOURS = 72;
 
 /** Pull a runtime env var via the Cloudflare bindings. Missing keys
  *  return undefined; caller no-ops if the channel isn't configured. */
-function getEnvVar(key: string): string | undefined {
+function getEnvVar(key: CloudflareStringEnvKey): string | undefined {
   try {
-    const env = getCloudflareEnv() as unknown as Record<string, string | undefined>;
-    return env[key];
+    return getCloudflareEnv()[key];
   } catch {
     // Local/dev outside CF context — fall through to process.env.
     return process.env[key];

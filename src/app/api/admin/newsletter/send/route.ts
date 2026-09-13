@@ -99,7 +99,7 @@ export const POST = withAuthorized(async ({ request, db }) => {
   }
 
   const isBroadcast = !testRecipient;
-  const env = getCloudflareEnv() as unknown as Record<string, string | undefined>;
+  const env = getCloudflareEnv();
 
   // OPE-6 gate — a real broadcast to the list needs the flag. A single-address
   // test send and a read-only preview are always allowed (a preview sends

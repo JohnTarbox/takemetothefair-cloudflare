@@ -38,7 +38,7 @@ async function nudgePerformerIndexNow(db: Database, performerId: string, reason:
       .where(eq(performers.id, performerId))
       .limit(1);
     if (p) {
-      const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+      const env = getCloudflareEnv();
       await pingIndexNow(db, indexNowUrlFor("performers", p.slug), env, reason);
     }
   } catch {

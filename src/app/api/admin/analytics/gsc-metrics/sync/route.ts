@@ -36,9 +36,9 @@ import {
   ga4DailyMetrics,
   bingDailyMetrics,
 } from "@/lib/db/schema";
-import { getDailyTotals, getSearchMetricsByDateQueryPage, type ScEnv } from "@/lib/search-console";
-import { getDailySiteTotals, type Ga4Env } from "@/lib/ga4";
-import { getTrafficStats, type BingEnv } from "@/lib/bing-webmaster";
+import { getDailyTotals, getSearchMetricsByDateQueryPage } from "@/lib/search-console";
+import { getDailySiteTotals } from "@/lib/ga4";
+import { getTrafficStats } from "@/lib/bing-webmaster";
 import { logError } from "@/lib/logger";
 import { upsertInChunks } from "@/lib/db/upsert-in-chunks";
 
@@ -83,7 +83,7 @@ export async function POST(request: Request) {
   const endDate = body.end_date ?? isoDaysAgo(3);
 
   const db = getCloudflareDb();
-  const env = getCloudflareEnv() as unknown as ScEnv & Ga4Env & BingEnv;
+  const env = getCloudflareEnv();
   const siteUrl = env.SC_SITE_URL?.trim() || "https://meetmeatthefair.com/";
   const now = new Date();
 

@@ -245,7 +245,7 @@ export async function POST(request: NextRequest) {
 
     // IndexNow: ping when a new post is created already PUBLISHED.
     if (data.status === "PUBLISHED") {
-      const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+      const env = getCloudflareEnv();
       await pingIndexNow(db, indexNowUrlFor("blog", slug), env, "blog-create");
     }
 

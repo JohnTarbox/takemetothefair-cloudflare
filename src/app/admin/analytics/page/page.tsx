@@ -16,7 +16,6 @@ import {
   Ga4ApiError,
   Ga4ConfigError,
   getPageMetrics,
-  type Ga4Env,
   type PageMetrics,
   type PageViewsDay,
 } from "@/lib/ga4";
@@ -24,7 +23,6 @@ import {
   getSearchQueriesForPage,
   ScApiError,
   ScConfigError,
-  type ScEnv,
   type SearchQueryRow,
 } from "@/lib/search-console";
 
@@ -44,7 +42,7 @@ type ScResult =
 
 async function loadGa4(path: string, skipCache: boolean): Promise<Ga4Result> {
   try {
-    const env = getCloudflareEnv() as unknown as Ga4Env;
+    const env = getCloudflareEnv();
     const data = await getPageMetrics(env, path, { skipCache });
     return { ok: true, data };
   } catch (error) {
@@ -61,7 +59,7 @@ async function loadGa4(path: string, skipCache: boolean): Promise<Ga4Result> {
 
 async function loadSc(path: string, skipCache: boolean): Promise<ScResult> {
   try {
-    const env = getCloudflareEnv() as unknown as ScEnv;
+    const env = getCloudflareEnv();
     const data = await getSearchQueriesForPage(env, path, { skipCache });
     return { ok: true, data };
   } catch (error) {

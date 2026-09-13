@@ -45,7 +45,7 @@ function redirectTo(status: string) {
 async function performUnsubscribe(token: string): Promise<string> {
   if (!token) return "missing_token";
 
-  const env = getCloudflareEnv() as unknown as Record<string, string | undefined>;
+  const env = getCloudflareEnv();
   const secret = resolveUnsubscribeSecret(env);
   const db = getCloudflareDb();
 

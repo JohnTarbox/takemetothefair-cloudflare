@@ -21,17 +21,10 @@ import type {
   SyndicationChangeMessage,
 } from "./types";
 
-type QueueEnv = {
-  EMAIL_JOBS?: { send: (msg: unknown) => Promise<void> };
-  INDEXNOW_PINGS?: { send: (msg: unknown) => Promise<void> };
-  EVENT_DISCREPANCIES?: { send: (msg: unknown) => Promise<void> };
-  SYNDICATION_CHANGES?: { send: (msg: unknown) => Promise<void> };
-  INTERNAL_API_KEY?: string;
-  /** Override for the MCP proxy URL. Defaults to the production custom
-   *  domain; useful for staging / local-dev overrides. */
-  MCP_SERVER_URL?: string;
-};
-
+// OPE-950 — the queue bindings, INTERNAL_API_KEY and the MCP_SERVER_URL
+// override (proxy URL; defaults to MCP_DEFAULT_URL) are read off the typed
+// `CloudflareEnv` directly. MCP_SERVER_URL is bound nowhere — see
+// src/env-unbound.d.ts.
 const MCP_DEFAULT_URL = "https://mcp.meetmeatthefair.com";
 
 /**
@@ -56,7 +49,7 @@ const MCP_DEFAULT_URL = "https://mcp.meetmeatthefair.com";
  * delivery.
  */
 export async function enqueueEmail(args: SendEmailArgs & { source: string }): Promise<void> {
-  const env = getCloudflareEnv() as unknown as QueueEnv;
+  const env = getCloudflareEnv();
 
   // Path 1: direct queue binding — the NORMAL path on this stack.
   //
@@ -183,9 +176,7 @@ export async function enqueueIndexNow(urls: string | string[], source: string): 
   const list = Array.isArray(urls) ? urls : [urls];
   if (list.length === 0) return;
 
-  const env = getCloudflareEnv() as unknown as QueueEnv & {
-    INDEXNOW_KEY?: string;
-  };
+  const env = getCloudflareEnv();
 
   if (env.INDEXNOW_PINGS) {
     const msg: IndexNowMessage = { urls: list, source };
@@ -225,7 +216,7 @@ export async function enqueueIndexNow(urls: string | string[], source: string): 
  * fire-and-forget. Errors get logged via the standard error_logs path.
  */
 export async function enqueueIngestDiscrepancy(msg: IngestDiscrepancyMessage): Promise<void> {
-  const env = getCloudflareEnv() as unknown as QueueEnv;
+  const env = getCloudflareEnv();
 
   // Path 1: direct binding (no-op on Pages, kept for shape parity).
   if (env.EVENT_DISCREPANCIES) {
@@ -307,7 +298,7 @@ export async function enqueueIngestDiscrepancy(msg: IngestDiscrepancyMessage): P
  */
 export async function enqueueSyndicationChange(msg: SyndicationChangeMessage): Promise<void> {
   try {
-    const env = getCloudflareEnv() as unknown as QueueEnv;
+    const env = getCloudflareEnv();
     if (env.SYNDICATION_CHANGES) {
       await env.SYNDICATION_CHANGES.send(msg);
       return;

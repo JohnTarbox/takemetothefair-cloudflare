@@ -67,7 +67,7 @@ export async function GET(
     return NextResponse.json({ error: resolved.err.error }, { status: resolved.err.status });
   }
 
-  const env = getCloudflareEnv() as unknown as { VENDOR_ASSETS?: R2Bucket };
+  const env = getCloudflareEnv();
   return streamAttachment(env.VENDOR_ASSETS, resolved.ref, idx, {
     download: request.nextUrl.searchParams.get("dl") === "1",
   });

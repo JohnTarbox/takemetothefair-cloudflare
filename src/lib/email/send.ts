@@ -1,4 +1,5 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
+import type { CloudflareStringEnvKey } from "@/lib/cloudflare";
 import { logError } from "@/lib/logger";
 import { SITE_URL, SUPPORT_EMAIL } from "@takemetothefair/constants";
 import { formatRecipientsForLedger, normalizeRecipients } from "@takemetothefair/utils";
@@ -83,10 +84,10 @@ export type SendResult =
   | { ok: true; provider: "resend" | "stub" }
   | { ok: false; provider: "resend"; error: string };
 
-function getRuntimeEnv(key: string): string | undefined {
+function getRuntimeEnv(key: CloudflareStringEnvKey): string | undefined {
   try {
     const { env } = getCloudflareContext();
-    return (env as unknown as Record<string, string | undefined>)[key];
+    return env[key];
   } catch {
     return process.env[key];
   }

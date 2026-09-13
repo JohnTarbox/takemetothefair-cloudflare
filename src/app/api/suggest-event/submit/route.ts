@@ -863,7 +863,7 @@ export async function POST(request: NextRequest) {
     // bypass the PATCH-based hooks. Ping for those; PENDING community
     // suggestions stay non-public until an admin promotes them.
     if (PUBLIC_EVENT_SET.has(eventStatus)) {
-      const cfEnv = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+      const cfEnv = getCloudflareEnv();
       await pingIndexNow(db, indexNowUrlFor("events", finalEventSlug), cfEnv, "event-create");
     }
 
@@ -878,21 +878,14 @@ export async function POST(request: NextRequest) {
     // (gate off, suppressed, rate-limited) and "we tried and failed" are
     // different facts, and a fail-soft path that records neither is how a
     // silent no-op survives for months.
-    const ackOutcome = await sendSubmissionReceivedAck(
-      db,
-      getCloudflareEnv() as unknown as {
-        EMAIL_JOBS?: Queue<unknown>;
-        SUBMISSION_ACK_ENABLED?: string;
-      },
-      {
-        toEmail: data.suggesterEmail,
-        eventName: effectiveName,
-        eventId: newEventId,
-        whenText: effectiveStartDate ? formatDateRange(effectiveStartDate, effectiveEndDate) : null,
-        whereText:
-          [data.venueName, data.venueCity, resolvedStateCode].filter(Boolean).join(", ") || null,
-      }
-    );
+    const ackOutcome = await sendSubmissionReceivedAck(db, getCloudflareEnv(), {
+      toEmail: data.suggesterEmail,
+      eventName: effectiveName,
+      eventId: newEventId,
+      whenText: effectiveStartDate ? formatDateRange(effectiveStartDate, effectiveEndDate) : null,
+      whereText:
+        [data.venueName, data.venueCity, resolvedStateCode].filter(Boolean).join(", ") || null,
+    });
     if (ackOutcome !== "sent" && ackOutcome !== "skipped:no-email") {
       await logError(db, {
         level: "info",

@@ -49,7 +49,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const env = getCloudflareEnv() as unknown as Record<string, string | undefined>;
+  const env = getCloudflareEnv();
   const replyEnabled = env.EMAIL_REPLY_ENABLED === "true";
 
   // OPE-368 (R4): the gate check MOVED below body parsing.

@@ -21,7 +21,7 @@ import type { AuthContext } from "../auth.js";
 export function registerClaimCorroborateTool(
   server: McpServer,
   auth: AuthContext,
-  env: MainAppEnv
+  env?: MainAppEnv
 ): void {
   server.tool(
     "corroborate_vendor_claims",
@@ -45,6 +45,21 @@ export function registerClaimCorroborateTool(
       if (auth.role !== "ADMIN") {
         return {
           content: [{ type: "text" as const, text: "Admin role required." }],
+          isError: true,
+        };
+      }
+      // OPE-950 — `env` is optional at the registration funnel (registerAdminTools
+      // takes `env?: Env`). This used to be hidden by an `as unknown as
+      // MainAppEnv` cast, and an undefined env would have thrown a TypeError on
+      // `env.INTERNAL_API_KEY` inside mainAppFetch.
+      if (!env) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: "corroborate_vendor_claims requires MAIN_APP_URL and INTERNAL_API_KEY in the MCP server environment.",
+            },
+          ],
           isError: true,
         };
       }

@@ -285,7 +285,7 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
 
     // IndexNow: ping if the admin created this event already publicly visible.
     if (newEvent && PUBLIC_EVENT_SET.has(newEvent.status)) {
-      const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+      const env = getCloudflareEnv();
       await pingIndexNow(db, indexNowUrlFor("events", newEvent.slug), env, "event-create");
     }
 

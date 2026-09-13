@@ -42,7 +42,7 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db, session })
   const note =
     typeof body.note === "string" && body.note.length > 0 ? body.note.slice(0, 500) : undefined;
 
-  const cfEnv = getCloudflareEnv() as unknown as { INTERNAL_API_KEY?: string };
+  const cfEnv = getCloudflareEnv();
   if (!cfEnv.INTERNAL_API_KEY) {
     return NextResponse.json(
       { error: "internal_misconfigured", message: "INTERNAL_API_KEY missing on Pages env" },

@@ -74,4 +74,57 @@ interface CloudflareEnv {
   GOOGLE_MAPS_API_KEY?: string;
   GA4_MEASUREMENT_ID?: string;
   GA4_MP_API_SECRET?: string;
+
+  /**
+   * ## OPE-950 — keys the code read through `as unknown as` casts
+   *
+   * Removing ~130 env casts meant the keys behind them had to be typed
+   * somewhere, and the generated `CloudflareEnv` carries NONE of them: it is
+   * built from `wrangler.toml`, and secrets set with `wrangler secret put` never
+   * appear there. `grep -c <KEY> wrangler.toml` → 0 for every key below.
+   *
+   * Checked against PRODUCTION, 2026-09-13: binding NAMES (no values) of the
+   * deployed `meetmeatthefair-app`, via
+   * `GET /accounts/:id/workers/scripts/meetmeatthefair-app/settings`.
+   */
+
+  // ── Group A — SET on the deployed Worker (secret or dashboard var) ─────────
+  AUTH_SECRET?: string;
+  INTERNAL_API_KEY?: string;
+  GOOGLE_CLIENT_ID?: string;
+  GOOGLE_CLIENT_SECRET?: string;
+  CLAUDE_READONLY_TOKEN?: string;
+  INDEXNOW_KEY?: string;
+  CLOUDFLARE_BROWSER_RENDERING_TOKEN?: string;
+  GA4_PROPERTY_ID?: string;
+  GA4_SA_CLIENT_EMAIL?: string;
+  GA4_SA_PRIVATE_KEY?: string;
+  BING_WEBMASTER_API_KEY?: string;
+  ALERT_EMAIL_TECHNICAL?: string;
+  SC_SITE_URL?: string;
+
+  // ── Group B — FINDING: read by code, NOT set on the deployed Worker ────────
+  // Every read site tolerates `undefined` (all were optional in the casts they
+  // came from), so the undefined branch is what production runs today.
+  // Reported on OPE-950; no binding added.
+  //
+  // Named as a secret in docs/opennext-cutover-runbook.md:36-39 but absent in
+  // production — each read has a fallback or a disabled path:
+  NEXTAUTH_SECRET?: string;
+  RESEND_API_KEY?: string;
+  FACEBOOK_CLIENT_ID?: string;
+  FACEBOOK_CLIENT_SECRET?: string;
+  // Named nowhere as configured (not in docs/, scripts/, .github/, .env.example):
+  ALERT_EMAIL_BUSINESS?: string;
+  SLACK_WEBHOOK_URL_TECHNICAL?: string;
+  SLACK_WEBHOOK_URL_BUSINESS?: string;
+  UNSUBSCRIBE_SECRET?: string;
+  NEWSLETTER_APPROVE_SECRET?: string;
+  NEWSLETTER_UNSUBSCRIBE_SECRET?: string;
+  MCP_SERVER_URL?: string;
+  /** docs/mcp-write-invariants.md:193 describes the flag; nothing binds it. */
+  EH3_P1_BACKFILL_ENABLED?: string;
+  GOODWILL_FLIP_ENABLED?: string;
+  SITE_HEALTH_EXPIRE_DAYS?: string;
+  NEXT_PUBLIC_SITE_URL?: string;
 }
