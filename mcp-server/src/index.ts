@@ -13,6 +13,7 @@ import {
 } from "./transport-collision-fix.js";
 import { timingSafeEqualString } from "@takemetothefair/utils";
 import { getDb } from "./db.js";
+import { runRequestSampleRetention } from "./request-sample-retention.js";
 import { authenticateToken } from "./auth.js";
 import { registerPublicTools } from "./tools/public.js";
 import { registerUserTools } from "./tools/user.js";
@@ -2047,6 +2048,9 @@ export default {
         // "how big is the backlog", which has a weekly rhythm, and daily sends
         // are how a channel stops being read. The sweep itself is unchanged.
         runOccurredTransitionSweep(getDb(env.DB)).then(() => undefined),
+        // OPE-971 — request_samples retention on a schedule (was a 1% dice roll
+        // on the middleware's write path). Stamps watchdog:request-sample-retention.
+        runRequestSampleRetention(getDb(env.DB)).then(() => undefined),
         // OPE-17 (2026-06-29) — inbound-email exception rails. Reconciles
         // exception statuses (already-handled → salvaged; spam/unsubscribe →
         // reversible rejected) then notifies the operator when the human-triage
