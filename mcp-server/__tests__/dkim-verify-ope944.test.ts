@@ -329,3 +329,152 @@ describe("OPE-944 — canonicalization units (RFC 6376)", () => {
     expect(domainsAlign(null, "x.com")).toBe(false);
   });
 });
+
+// ── OPE-953 — several signatures: which one speaks for the message ─────────
+
+/** Prepend another hop's signature, signing over what the previous hop sent. */
+async function addHop(
+  raw: string,
+  domain: string,
+  selector: string
+): Promise<{ raw: string; publicKeyB64: string }> {
+  const { headerBlock, body } = splitMessage(raw);
+  const headers = parseHeaderLines(headerBlock).map(
+    (h) =>
+      [h.line.slice(0, h.line.indexOf(":")), h.line.slice(h.line.indexOf(":") + 1).trimStart()] as [
+        string,
+        string,
+      ]
+  );
+  return signMessage({
+    headers,
+    body,
+    domain,
+    selector,
+    signedHeaders: ["from", "subject", "date"],
+  });
+}
+
+/** A resolver that answers per `<selector>._domainkey.<domain>`. */
+function keyring(keys: Record<string, string>): TxtResolver {
+  return async (name) => (keys[name] ? [`v=DKIM1; k=rsa; p=${keys[name]}`] : []);
+}
+
+describe("OPE-953 — the aligned signature wins over relay signatures stacked above it", () => {
+  it("f8ef71e5 shape: relay, relay, aligned original → verified AND aligned, attributed to signature 3 of 3", async () => {
+    const organizer = await signMessage({
+      headers: ORGANIZER_HEADERS,
+      body: ORGANIZER_BODY,
+      domain: "newgloucester.com",
+      selector: "google",
+      signedHeaders: ["from", "to", "subject", "date"],
+    });
+    const hop2 = await addHop(organizer.raw, "symdak.com", "cf2024-1");
+    const hop1 = await addHop(hop2.raw, "cloudflare-email.net", "cf2024-1");
+
+    // Landmark: the stack really is relay-first, as on the specimen.
+    const order = parseHeaderLines(splitMessage(hop1.raw).headerBlock)
+      .filter((h) => h.name === "dkim-signature")
+      .map((h) => parseTagList(h.line.slice(h.line.indexOf(":") + 1)).d);
+    expect(order).toEqual(["cloudflare-email.net", "symdak.com", "newgloucester.com"]);
+
+    const r = await verifyDkim(
+      hop1.raw,
+      keyring({
+        "cf2024-1._domainkey.cloudflare-email.net": hop1.publicKeyB64,
+        "cf2024-1._domainkey.symdak.com": hop2.publicKeyB64,
+        "google._domainkey.newgloucester.com": organizer.publicKeyB64,
+      })
+    );
+    expect(r).toMatchObject({
+      verdict: "verified",
+      alignedWithFrom: true,
+      domain: "newgloucester.com",
+      selector: "google",
+      signatureCount: 3,
+      signatureIndex: 3,
+    });
+    expect(r.detail).toContain("signature 3 of 3");
+  });
+
+  it("a lone UNALIGNED relay signature still reads verified + aligned:false — unchanged", async () => {
+    const relayOnly = await signMessage({
+      headers: ORGANIZER_HEADERS,
+      body: ORGANIZER_BODY,
+      domain: "cloudflare-email.net",
+      selector: "cf2024-1",
+      signedHeaders: ["from", "subject"],
+    });
+    const r = await verifyDkim(
+      relayOnly.raw,
+      keyring({ "cf2024-1._domainkey.cloudflare-email.net": relayOnly.publicKeyB64 })
+    );
+    expect(r).toMatchObject({
+      verdict: "verified",
+      alignedWithFrom: false,
+      signatureCount: 1,
+      signatureIndex: 1,
+    });
+    expect(r.detail).not.toContain("of 1");
+  });
+
+  it("an aligned signature that FAILS surfaces — a passing relay is never reported instead", async () => {
+    const organizer = await signMessage({
+      headers: ORGANIZER_HEADERS,
+      body: ORGANIZER_BODY,
+      domain: "newgloucester.com",
+      selector: "google",
+      signedHeaders: ["from", "subject"],
+    });
+    const hop = await addHop(organizer.raw, "cloudflare-email.net", "cf2024-1");
+    const r = await verifyDkim(
+      hop.raw,
+      keyring({
+        "cf2024-1._domainkey.cloudflare-email.net": hop.publicKeyB64, // relay verifies
+        "google._domainkey.newgloucester.com": hop.publicKeyB64, // WRONG key for the organizer
+      })
+    );
+    expect(r.verdict).toBe("failed");
+    expect(r.domain).toBe("newgloucester.com");
+    expect(r.alignedWithFrom).toBe(true);
+    expect(r.signatureIndex).toBe(2);
+  });
+
+  it("with two aligned signatures, a later one that verifies beats an earlier one that fails", async () => {
+    const first = await signMessage({
+      headers: ORGANIZER_HEADERS,
+      body: ORGANIZER_BODY,
+      domain: "newgloucester.com",
+      selector: "old",
+      signedHeaders: ["from", "subject"],
+    });
+    const second = await addHop(first.raw, "newgloucester.com", "new");
+    const r = await verifyDkim(
+      second.raw,
+      keyring({
+        "new._domainkey.newgloucester.com": first.publicKeyB64, // wrong → the top one fails
+        "old._domainkey.newgloucester.com": first.publicKeyB64, // right → the lower one verifies
+      })
+    );
+    expect(r).toMatchObject({ verdict: "verified", selector: "old", signatureIndex: 2 });
+  });
+
+  it("with NO aligned signature, only the first is consulted — today's behaviour, pinned", async () => {
+    const inner = await signMessage({
+      headers: ORGANIZER_HEADERS,
+      body: ORGANIZER_BODY,
+      domain: "list.example",
+      selector: "s1",
+      signedHeaders: ["from", "subject"],
+    });
+    const outer = await addHop(inner.raw, "relay.example", "s2");
+    const r = await verifyDkim(
+      outer.raw,
+      keyring({
+        "s2._domainkey.relay.example": inner.publicKeyB64, // first (top) fails
+        "s1._domainkey.list.example": inner.publicKeyB64, // second would verify
+      })
+    );
+    expect(r).toMatchObject({ verdict: "failed", domain: "relay.example", signatureIndex: 1 });
+  });
+});

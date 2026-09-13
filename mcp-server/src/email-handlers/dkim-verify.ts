@@ -68,6 +68,14 @@ export interface DkimResult {
   alignedWithFrom: boolean;
   /** Human-readable reason, for the audit trail. Never used for control flow. */
   detail: string;
+  /**
+   * OPE-953 — how many DKIM-Signature headers the message carried, and which
+   * one (1-based, header order) produced this verdict. `null` / 0 when there
+   * was none. Lets a reader tell "one signature, unaligned" from "an aligned
+   * signature won over two relay signatures stacked above it".
+   */
+  signatureCount: number;
+  signatureIndex: number | null;
 }
 
 /** TXT lookup, injected so tests never touch the network. */
@@ -233,13 +241,41 @@ async function importVerifyKey(
   return { key, algo: { name: "RSASSA-PKCS1-v1_5" } };
 }
 
+/** The `d=` of one DKIM-Signature header, lowercased, or null. */
+function signingDomainOf(sigLine: string): string | null {
+  const tags = parseTagList(sigLine.slice(sigLine.indexOf(":") + 1).replace(/\r?\n/g, ""));
+  return (tags.d ?? "").toLowerCase() || null;
+}
+
 /**
- * Verify the first DKIM-Signature on a raw message.
+ * Verify a raw message's DKIM, choosing WHICH signature speaks for it.
  *
  * `raw` must be the message EXACTLY as received — any re-encoding (line-ending
  * normalisation, header reordering, MIME re-serialisation) invalidates the
  * signature, which is why the .eml is stored unmodified rather than round-
  * tripped through a parser.
+ *
+ * ## Why not just the first signature (OPE-953)
+ *
+ * This used to verify `headers.find(dkim-signature)` — the FIRST one — and
+ * nothing else. A forwarding hop PREPENDS its own signature above the
+ * original, so on a genuine organizer forward the first signature belongs to
+ * the relay. The first real specimen (inbound f8ef71e5, UMF Chester Greenwood)
+ * carried three, in order `d=cloudflare-email.net`, `d=symdak.com`,
+ * `d=maine.edu`, and the aligned third one fully verified — yet the stored
+ * verdict read `verified` + `aligned: false`, about a relay, on exactly the
+ * mail this feature exists to vouch for.
+ *
+ * ## The selection policy
+ *
+ * 1. If ANY signature's `d=` aligns with the `From:` domain, only aligned
+ *    signatures may produce the verdict. They are tried in header order and
+ *    the first `verified` wins. If none verifies, the FIRST aligned result is
+ *    returned — an aligned signature that failed is a real signal about the
+ *    organizer's domain, and must never be papered over by a passing relay.
+ * 2. If NO signature aligns, the first signature alone is verified — exactly
+ *    the behaviour before this change, so unaligned and single-signature mail
+ *    reads identically.
  */
 export async function verifyDkim(raw: string, resolveTxt: TxtResolver): Promise<DkimResult> {
   const { headerBlock, body } = splitMessage(raw);
@@ -251,23 +287,59 @@ export async function verifyDkim(raw: string, resolveTxt: TxtResolver): Promise<
     : null;
   const fromDomain = fromAddress ? (fromAddress.split("@")[1] ?? null) : null;
 
-  const base: DkimResult = {
-    verdict: "no_signature",
-    domain: null,
-    selector: null,
-    fromAddress,
-    alignedWithFrom: false,
-    detail: "no DKIM-Signature header",
-  };
+  const sigHeaders = headers.filter((h) => h.name === "dkim-signature");
+  const signatureCount = sigHeaders.length;
 
-  const sigHeader = headers.find((h) => h.name === "dkim-signature");
-  if (!sigHeader) return base;
+  if (signatureCount === 0) {
+    return {
+      verdict: "no_signature",
+      domain: null,
+      selector: null,
+      fromAddress,
+      alignedWithFrom: false,
+      detail: "no DKIM-Signature header",
+      signatureCount: 0,
+      signatureIndex: null,
+    };
+  }
 
+  const ctx = { headers, body, fromAddress, fromDomain, resolveTxt, signatureCount };
+  const alignedIdx = sigHeaders
+    .map((h, i) => (domainsAlign(signingDomainOf(h.line), fromDomain) ? i : -1))
+    .filter((i) => i >= 0);
+
+  if (alignedIdx.length === 0) {
+    return verifyOneSignature(sigHeaders[0], 0, ctx);
+  }
+
+  let firstAligned: DkimResult | null = null;
+  for (const i of alignedIdx) {
+    const r = await verifyOneSignature(sigHeaders[i], i, ctx);
+    if (r.verdict === "verified") return r;
+    firstAligned ??= r;
+  }
+  return firstAligned as DkimResult;
+}
+
+async function verifyOneSignature(
+  sigHeader: { name: string; line: string },
+  index: number,
+  ctx: {
+    headers: Array<{ name: string; line: string }>;
+    body: string;
+    fromAddress: string | null;
+    fromDomain: string | null;
+    resolveTxt: TxtResolver;
+    signatureCount: number;
+  }
+): Promise<DkimResult> {
+  const { headers, body, fromAddress, fromDomain, resolveTxt, signatureCount } = ctx;
   const sigValue = sigHeader.line.slice(sigHeader.line.indexOf(":") + 1);
   const tags = parseTagList(sigValue.replace(/\r?\n/g, ""));
   const domain = (tags.d ?? "").toLowerCase() || null;
   const selector = tags.s ?? null;
   const aligned = domainsAlign(domain, fromDomain);
+  const which = signatureCount > 1 ? ` (signature ${index + 1} of ${signatureCount})` : "";
 
   const fail = (detail: string, verdict: DkimVerdict = "failed"): DkimResult => ({
     verdict,
@@ -275,7 +347,9 @@ export async function verifyDkim(raw: string, resolveTxt: TxtResolver): Promise<
     selector,
     fromAddress,
     alignedWithFrom: aligned,
-    detail,
+    detail: `${detail}${which}`,
+    signatureCount,
+    signatureIndex: index + 1,
   });
 
   if (!domain || !selector || !tags.b || !tags.bh) return fail("malformed DKIM-Signature tag list");
@@ -374,7 +448,9 @@ export async function verifyDkim(raw: string, resolveTxt: TxtResolver): Promise<
         selector,
         fromAddress,
         alignedWithFrom: aligned,
-        detail: `signature valid for d=${domain} s=${selector}`,
+        detail: `signature valid for d=${domain} s=${selector}${which}`,
+        signatureCount,
+        signatureIndex: index + 1,
       }
     : fail("signature did not validate against the published key");
 }
