@@ -45,8 +45,8 @@ import { NextResponse } from "next/server";
 import { and, isNotNull, ne, sql } from "drizzle-orm";
 import { isAuthorized } from "@/lib/api-auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { promoters, urlHealthChecks } from "@/lib/db/schema";
-import { classifyUrlHealth, isActionable } from "@/lib/goodwill/url-health";
+import { events, promoters, urlHealthChecks } from "@/lib/db/schema";
+import { classifyUrlHealth, isActionable, samePageOnEveryPath } from "@/lib/goodwill/url-health";
 import { SCRAPER_USER_AGENT } from "@takemetothefair/constants";
 import { logError } from "@/lib/logger";
 
@@ -80,9 +80,16 @@ async function probe(url: string): Promise<Probe> {
       signal: controller.signal,
       redirect: "follow",
     });
-    // Only read a body on a 2xx — a 404 page's prose is not evidence about the
-    // organizer, and reading it would let a themed error page score as healthy.
-    const html = res.ok ? await res.text() : null;
+    // OPE-979 — the body is read on EVERY status. The classifier still
+    // ignores a non-2xx body for its event-signal verdicts (a themed 404 must
+    // not score as healthy), but a closure announcement is routinely served as
+    // a 503 maintenance page — eagleshows.com is — and was never being read.
+    // A 2xx body is read whole, as before — a JS-heavy organizer page can carry
+    // its event text past any fixed cap (easterngunexpo.com reads `ok` whole and
+    // `no_event_signal` cut at 300 KB, measured). Only a non-2xx body, which
+    // feeds nothing but the closure check, is capped.
+    const body = await res.text().catch(() => "");
+    const html = (res.ok ? body : body.slice(0, 300_000)) || null;
     return { reachedOrigin: true, status: res.status, html };
   } catch {
     return { reachedOrigin: false, status: null, html: null };
@@ -134,6 +141,9 @@ export async function POST(request: Request): Promise<NextResponse> {
       no_event_signal: 0,
       http_error: 0,
       unreachable: 0,
+      closure_notice: 0,
+      /** OPE-979 — hosts where a second stored path served the same page. */
+      same_page_on_every_path: 0,
       actionable: 0,
       next_cursor: null as number | null,
     };
@@ -143,6 +153,39 @@ export async function POST(request: Request): Promise<NextResponse> {
       if (!website) continue;
       const p = await probe(website);
       const health = classifyUrlHealth(p);
+
+      // OPE-979 structural companion — compare against ONE stored event URL on
+      // the same host (a different path). Parked, maintenance and handover pages
+      // serve the same page everywhere; token overlap cannot see that.
+      try {
+        const host = new URL(website).host;
+        const [other] = await db
+          .select({ url: events.sourceUrl })
+          .from(events)
+          // instr, not LIKE: D1 caps LIKE patterns at 50 chars and a host is data.
+          .where(
+            and(isNotNull(events.sourceUrl), sql`instr(${events.sourceUrl}, ${`://${host}/`}) > 0`)
+          )
+          .limit(1);
+        if (
+          other?.url &&
+          new URL(other.url).pathname.replace(/\/+$/, "") !==
+            new URL(website).pathname.replace(/\/+$/, "")
+        ) {
+          const q = await probe(other.url);
+          if (
+            samePageOnEveryPath([
+              { url: website, html: p.html },
+              { url: other.url, html: q.html },
+            ])
+          ) {
+            health.signals.push("same-page-on-every-path");
+            result.same_page_on_every_path += 1;
+          }
+        }
+      } catch {
+        // a bad stored URL must not stop the sweep
+      }
 
       await db.insert(urlHealthChecks).values({
         url: website,
@@ -156,6 +199,16 @@ export async function POST(request: Request): Promise<NextResponse> {
 
       result[health.verdict] += 1;
       if (isActionable(health.verdict)) result.actionable += 1;
+      if (health.verdict === "closure_notice") {
+        // OPE-979 — surface, never act: the review row above plus an alert. What
+        // a detector may DO about a closure is John's decision (filed apart).
+        await logError(db, {
+          level: "warn",
+          message: `promoter website announces closure/handover: ${website}`,
+          source: "url-health:closure-notice",
+          context: { website, detail: health.detail, signals: health.signals },
+        });
+      }
     }
 
     result.next_cursor = rows.length === chunk ? cursor + chunk : null;
@@ -210,7 +263,7 @@ export async function GET(request: Request): Promise<NextResponse> {
              (SELECT COUNT(*) FROM url_health_checks h
                WHERE h.url = r.url AND h.verdict = r.verdict) AS consecutive
       FROM ranked r
-      WHERE r.rn = 1 AND r.verdict IN ('no_event_signal', 'http_error')
+      WHERE r.rn = 1 AND r.verdict IN ('closure_notice', 'no_event_signal', 'http_error')
       ORDER BY r.checked_at DESC
       LIMIT 200
     `);
