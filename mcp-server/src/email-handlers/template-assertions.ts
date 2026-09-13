@@ -125,6 +125,9 @@ export const TEMPLATE_ASSERTIONS: Record<string, TemplateAssertion[]> = {
           : null,
     },
   ],
+  // OPE-985 — never rendered or sent (the workflow always suppresses it), so it
+  // makes no claim about the inbound. Reviewed, not forgotten.
+  "blank-question": [],
   "empty-message": [
     {
       claim: "your message arrived carrying nothing usable",
