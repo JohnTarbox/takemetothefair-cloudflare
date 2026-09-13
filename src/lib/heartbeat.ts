@@ -47,6 +47,9 @@ import {
   vendorEnrichmentCandidates,
   queueDrainSnapshots,
   workflowRunSteps,
+  gscMonthlyOracle,
+  vendorSelfReportedEvents,
+  performerEnrichmentCandidates,
 } from "@/lib/db/schema";
 import { SITE_URL } from "@takemetothefair/constants";
 import type { StaleRed } from "@/lib/cpi/stale-reds";
@@ -1315,6 +1318,51 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     priority: "P1",
     expectedWindowHours: 14 * 24,
     lastEvidenceAt: (db) => maxTs(db, promoterOutreachAttempts, promoterOutreachAttempts.createdAt),
+  },
+  // ── OPE-975 — three seeds that existed with NO registry entry ─────────
+  //
+  // Found by scripts/check-heartbeat-probes.ts on its first run. A seed row
+  // with no registry entry is read by nothing: `enabled_at` means nothing, and
+  // arming it later does nothing. Registered rather than deleted because each
+  // seed records a real decision about a real path.
+  {
+    // OPE-344 — Google's monthly Search email, stored as an external oracle.
+    // Its seed (drizzle/0181) was ARMED on 2026-08-09 with "~40 days covers a
+    // late send" — and has had no registry entry since, so nothing watched it.
+    // Measured 2026-09-13: ONE row (2026-07, ingested 08-09); the August email
+    // (~Sept 4, per the seed) never landed. With this entry that silence
+    // becomes visible at 40 days instead of never.
+    name: "gsc-monthly-oracle",
+    ownerOpe: "OPE-344",
+    label: "GSC monthly oracle (Google's own monthly email figures)",
+    priority: "P1",
+    expectedWindowHours: 40 * 24,
+    lastEvidenceAt: (db) => maxTs(db, gscMonthlyOracle, gscMonthlyOracle.updatedAt),
+  },
+  {
+    // OPE-239 — vendor self-attested event participation. Seeded DORMANT
+    // (drizzle/0170): a demand-driven writer has no honest window until a
+    // baseline rate exists. The window here is a PLACEHOLDER, not a
+    // measurement — measure the real cadence, set it, THEN set enabled_at.
+    name: "vendor-self-reported-events",
+    ownerOpe: "OPE-239",
+    label: "Vendor self-reported event participation (dormant)",
+    priority: "P1",
+    expectedWindowHours: 30 * 24,
+    lastEvidenceAt: (db) => maxTs(db, vendorSelfReportedEvents, vendorSelfReportedEvents.createdAt),
+  },
+  {
+    // OPE-375 — seeded DORMANT (drizzle/0197) because the scheduled performer
+    // enrichment producer does not exist; performer-dispatch is reachable only
+    // via the manual enrich_performer tool. Arm when a scheduled selector ships
+    // (and measure its window then; this one is a placeholder).
+    name: "performer-enrichment-producer",
+    ownerOpe: "OPE-375",
+    label: "Performer enrichment producer (dormant — no scheduled selector yet)",
+    priority: "P1",
+    expectedWindowHours: 7 * 24,
+    lastEvidenceAt: (db) =>
+      maxTs(db, performerEnrichmentCandidates, performerEnrichmentCandidates.createdAt),
   },
 ];
 
