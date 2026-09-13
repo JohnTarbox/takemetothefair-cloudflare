@@ -31,6 +31,7 @@ import {
 } from "@takemetothefair/db-schema";
 import { isGenericEmailProvider, isBareGenericProviderAddress } from "@takemetothefair/utils";
 import type { Db } from "../db.js";
+import { resolveOwnEventUrl } from "./own-event-url.js";
 
 /**
  * Brand key: lowercase, alphanumerics only.
@@ -324,8 +325,14 @@ export interface VendorInquiryBriefing {
     slug: string;
     name: string;
     url: string;
-    matchedOn: "source_url" | "subject";
+    matchedOn: "own_event_url" | "source_url" | "subject";
   } | null;
+  /**
+   * OPE-977 — what happened to `parsed_url`, stated rather than implied:
+   * absent · not-ours (another host) · ours-not-an-event-page · ours-unresolved
+   * · resolved (with how). The warnings below are derived from this.
+   */
+  urlResolution: { status: string; detail?: string };
   confidence: EventConfidence | null;
   handoff: {
     sourceUrl: string | null;
@@ -439,7 +446,35 @@ export async function buildVendorInquiryBriefing(
   // an inference, and conflating the two is how the wrong event's dates end up
   // in a reply.
   let matched: VendorInquiryBriefing["matchedEvent"] = null;
-  if (inbound.parsedUrl) {
+
+  // OPE-977 — our OWN event URL first. A reader linking the exact page they are
+  // looking at is the strongest identification this lane ever receives.
+  const own = await resolveOwnEventUrl(db, inbound.parsedUrl);
+  let urlResolution: VendorInquiryBriefing["urlResolution"] = { status: own.status };
+  if (own.status === "resolved") {
+    matched = {
+      ...own.event,
+      url: `https://meetmeatthefair.com/events/${own.event.slug}`,
+      matchedOn: "own_event_url",
+    };
+    urlResolution = { status: "resolved", detail: `${own.path} via ${own.via}` };
+    if (own.via === "merged-into" || own.via === "slug-history") {
+      warnings.push(
+        `The linked page ${own.path} is an OLD address (${own.via}); resolved to the current event "${own.event.name}".`
+      );
+    }
+  } else if (own.status === "ours-unresolved" || own.status === "ours-not-an-event-page") {
+    urlResolution = { status: own.status, detail: own.path };
+    warnings.push(
+      own.status === "ours-unresolved"
+        ? `The email links OUR page ${own.path}, but it resolves to no current event (deleted, or a year with no occurrence). Matching fell back to the subject.`
+        : `The email links a meetmeatthefair.com page that is not an event page (${own.path}). Matching fell back to the subject.`
+    );
+  } else if (own.status === "not-ours") {
+    urlResolution = { status: "not-ours", detail: own.host };
+  }
+
+  if (!matched && inbound.parsedUrl) {
     const [byUrl] = await db
       .select({ id: events.id, slug: events.slug, name: events.name })
       .from(events)
@@ -516,7 +551,17 @@ export async function buildVendorInquiryBriefing(
       }
     }
   }
-  if (!matched) warnings.push("No event matched from the subject or a parsed URL.");
+  if (!matched) {
+    // OPE-977 — say which evidence existed; the old single line asserted a URL
+    // attempt whether or not there was a URL, and whether or not it was ours.
+    const why =
+      own.status === "absent"
+        ? "the email carries no URL"
+        : own.status === "not-ours"
+          ? `its URL is on another site (${own.host}) and matches no event's source_url`
+          : "its link to our site did not resolve";
+    warnings.push(`No event matched: ${why}, and the subject did not identify a single event.`);
+  }
 
   // ── Confidence + hand-off ───────────────────────────────────────────────
   let confidence: EventConfidence | null = null;
@@ -572,6 +617,7 @@ export async function buildVendorInquiryBriefing(
   return {
     inboundEmailId: inbound.id,
     matchedEvent: matched,
+    urlResolution,
     confidence,
     handoff,
     vendor,
