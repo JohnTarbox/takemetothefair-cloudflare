@@ -172,35 +172,74 @@ const BURST_POLICIES: ReadonlySet<RateLimitEndpoint> = new Set([
   "claim-wizard",
 ]);
 
-/** The binding's period is fixed at 60s in wrangler.toml; used for Retry-After. */
-const BURST_WINDOW_SECONDS = 60;
+/** The hard cap: this many hits per key per window. */
+export const BURST_LIMIT = 5;
+/** The window, in seconds. Also the ceiling on a burst refusal's Retry-After. */
+export const BURST_WINDOW_SECONDS = 60;
 
-export interface RateLimiterBinding {
-  limit(options: { key: string }): Promise<{ success: boolean }>;
+export interface BurstLimiter {
+  limit(options: { key: string }): Promise<{ success: boolean; retryAfterSeconds?: number }>;
+}
+
+/** What `BurstCounter.hit()` returns over RPC (mcp-server/src/burst-counter.ts). */
+interface BurstCounterStub {
+  hit(
+    limit: number,
+    periodSeconds: number
+  ): Promise<{ success: boolean; count: number; retryAfterSeconds: number }>;
+}
+
+/** The slice of `DurableObjectNamespace` this module uses. */
+interface BurstCounterNamespace {
+  idFromName(name: string): unknown;
+  get(id: never): unknown;
 }
 
 /**
- * The Workers Rate Limiting binding — a HARD cap enforced by the runtime, in
- * contrast to the KV quota below.
+ * OPE-951 — the HARD burst cap: a Durable Object per key.
  *
- * ⚠️ This docblock previously sat here describing the KV layer's lossiness,
- * which is the opposite of what this binding does. It has been moved onto
- * `getRateLimitKv`, where it belongs. The distinction is load-bearing: callers
- * choose this binding precisely when they need a cap that cannot be outrun.
+ * ## Why not the Workers Rate Limiting binding
  *
- * The binding is configured once in `wrangler.toml` (`limit = 5`,
- * `period = 60`) and that budget applies PER KEY, so unrelated callers get
- * independent buckets by choosing distinct key namespaces. Two use it today:
- * the eight `BURST_POLICIES` above, and the internal-key refusal log in
+ * OPE-904 shipped this layer on the `BURST_LIMITER` ratelimit binding. In
+ * production it returned `success: true` for every call — 7+ requests per colo
+ * inside one 60 s window on a 5/60 s budget, none refused — while the same
+ * binding refused at call 7 in an isolated Worker. Cloudflare documents it as
+ * "permissive, eventually consistent, and intentionally designed to not be used
+ * as an accurate accounting system". The eight policies this layer guards need
+ * a cap that holds, so the binding is gone.
+ *
+ * A Durable Object named by the key receives every hit for that key and
+ * processes them one at a time, reading and writing synchronous storage with
+ * no await between — so no two hits can both read the old count.
+ *
+ * The class lives in the MCP Worker (`BurstCounter`); this app binds it
+ * cross-script as `BURST_COUNTER`. Two callers share it with distinct key
+ * namespaces: the eight `BURST_POLICIES` and the internal-key refusal log in
  * `api-auth.ts`.
+ *
+ * Returns null when there is no binding (unit tests, `next dev`). What a caller
+ * does with null is its own stated posture — see both call sites.
  */
-export function getBurstLimiter(): RateLimiterBinding | null {
+export function getBurstLimiter(): BurstLimiter | null {
+  let ns: BurstCounterNamespace | undefined;
   try {
     const { env } = getCloudflareContext();
-    return (env as { BURST_LIMITER?: RateLimiterBinding }).BURST_LIMITER ?? null;
+    ns = (env as { BURST_COUNTER?: BurstCounterNamespace }).BURST_COUNTER;
   } catch {
     return null;
   }
+  if (!ns) return null;
+  const namespace = ns;
+  return {
+    async limit({ key }) {
+      // The one cast here: a cross-script Durable Object namespace is typed
+      // without its class (wrangler types cannot see into the MCP Worker), so
+      // the RPC method is declared locally above, matching BurstCounter.hit.
+      const stub = namespace.get(namespace.idFromName(key) as never) as BurstCounterStub;
+      const r = await stub.hit(BURST_LIMIT, BURST_WINDOW_SECONDS);
+      return { success: r.success, retryAfterSeconds: r.retryAfterSeconds };
+    },
+  };
 }
 
 export interface RateLimitResult {
@@ -289,27 +328,45 @@ export async function checkRateLimit(
   const identifier = isAuthenticated && userId ? `user:${userId}` : `ip:${getClientIp(request)}`;
   const key = `rate:${endpoint}:${identifier}`;
 
-  // OPE-904 — BURST layer, before the KV quota. This is the half that actually
-  // holds under concurrency: the binding counts at the edge with no
-  // read-modify-write, so parallel requests cannot all read the same value.
+  // OPE-904 / OPE-951 — BURST layer, before the KV quota. This is the half that
+  // holds under concurrency: one Durable Object per key counts every hit in
+  // order, so parallel requests cannot all read the same value.
   //
-  // Absent binding (unit tests, `next dev`) skips this layer and falls through
-  // to KV. That is deliberate and is NOT the fail-open shape of OPE-931: the KV
-  // quota still runs, so the request is still checked — it just loses the burst
-  // half. A missing binding cannot make an unchecked request look checked.
+  // Failure posture (OPE-970) — both non-answers fall through to the KV quota:
+  //   - NO binding (unit tests, `next dev`): skip this layer.
+  //   - a limiter that THROWS: log it with the endpoint, then skip this layer.
+  // Neither is the fail-open shape of OPE-931, because the KV quota still runs
+  // — the request is still checked, it only loses the burst half — and neither
+  // can turn into a 500. A throw is logged rather than swallowed, because a
+  // burst layer that has quietly stopped working is exactly OPE-951.
+  // A refusal is not an error, and returns 429 directly.
   if (BURST_POLICIES.has(endpoint)) {
     const burst = getBurstLimiter();
     if (burst) {
-      const { success } = await burst.limit({ key });
-      if (!success) {
+      let verdict: { success: boolean; retryAfterSeconds?: number } | null = null;
+      try {
+        verdict = await burst.limit({ key });
+      } catch (error) {
+        console.error(
+          `[Rate Limit] burst limiter threw for ${endpoint}; falling through to the KV quota`,
+          error
+        );
+      }
+      if (verdict && !verdict.success) {
         return {
           allowed: false,
           remaining: 0,
           limit,
-          // The binding's window, not the policy's — Retry-After must describe
-          // the limit that actually refused, or the caller waits an hour for a
-          // 60-second block.
-          resetAt: Math.floor(now / 1000) + BURST_WINDOW_SECONDS,
+          // The burst window, not the policy's — Retry-After must describe the
+          // limit that actually refused, or the caller waits an hour for a
+          // 60-second block. The counter reports the time left in ITS window;
+          // clamp so a bad value can never exceed the window.
+          resetAt:
+            Math.floor(now / 1000) +
+            Math.min(
+              BURST_WINDOW_SECONDS,
+              Math.max(1, verdict.retryAfterSeconds ?? BURST_WINDOW_SECONDS)
+            ),
           isAuthenticated,
         };
       }

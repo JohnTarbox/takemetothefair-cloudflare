@@ -68,6 +68,7 @@ import {
 import { runScheduledDedupSweepCanary } from "./dedup-sweep-canary.js";
 import { runScheduledCpiStaleRedCanary } from "./cpi-stale-red-canary.js";
 import { runScheduledNewsletterListBalanceCanary } from "./newsletter-list-balance-canary.js";
+import { runScheduledBurstCapSelfTest } from "./burst-cap-selftest-canary.js";
 import { runScheduledOperatorQueueNotice } from "./operator-queue-notice.js";
 import { runAgentSilenceWatchdog } from "./agent-silence-watchdog.js";
 import { runScheduledCpiScanWatchdog } from "./cpi-scan-watchdog.js";
@@ -1958,6 +1959,11 @@ export default {
         // is an invariant violation, not a backlog, and a steady count of 4 is
         // four people still receiving nothing. Failsoft; never throws.
         runScheduledNewsletterListBalanceCanary(env),
+        // OPE-951 (2026-09-13) — burst-cap self-test. The Workers Rate Limiting
+        // binding it replaced was inert in production for its whole life while
+        // every mocked test passed. This drives the REAL cap to a refusal once a
+        // day and stamps a heartbeat only on a pass. Failsoft; never throws.
+        runScheduledBurstCapSelfTest(env),
         // OPE-599 (2026-08-28) — operator work queues with something waiting.
         //
         // A vendor's claim on his own listing sat PENDING for 36 DAYS in a
