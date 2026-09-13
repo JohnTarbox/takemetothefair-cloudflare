@@ -22,6 +22,7 @@ import { promoters, promoterEnrichmentCandidates } from "../schema.js";
 import { getDb, type Db } from "../db.js";
 import { logError } from "../logger.js";
 import { logEnrichment } from "../helpers.js";
+import { isCeasedPromoter } from "../promoters/succession.js";
 import { fetchVendorSite } from "./fetch-site.js";
 import { extractPromoterSignals, type PromoterExtraction } from "./promoter-extract.js";
 import { probePromoterImage } from "./promoter-image.js";
@@ -104,6 +105,7 @@ const PROMOTER_COLUMNS = {
   contactPhone: promoters.contactPhone,
   enrichmentStatus: promoters.enrichmentStatus,
   enrichmentZeroYieldStreak: promoters.enrichmentZeroYieldStreak,
+  operatingStatus: promoters.operatingStatus,
 } as const;
 
 /** Proposed-field → live promoter column (all six are review-applicable). */
@@ -338,7 +340,7 @@ async function buildProposals(
 
 export interface PromoterEnrichmentRunSummary {
   promoterId: string;
-  outcome: "staged" | "merged" | "blocked" | "no_source" | "not_found" | "exhausted";
+  outcome: "staged" | "merged" | "blocked" | "no_source" | "not_found" | "exhausted" | "ceased";
   candidateCount?: number;
   appliedFields?: string[];
   blockedReason?: BlockedReason;
@@ -361,6 +363,22 @@ export async function processPromoterEnrichmentJob(
     .limit(1);
 
   if (!row) return { promoterId: msg.promoterId, outcome: "not_found" };
+
+  // --- OPE-979: a business that stopped trading is not re-enriched ---
+  // Its site now says it closed; anything extracted from it is either the
+  // closure notice or a stale fact. Checked here, not only in the selector, so
+  // enrich_promoter and an already-queued message obey it too. Nothing is
+  // written: the row's enrichment state stays as the operator left it.
+  if (isCeasedPromoter(row.operatingStatus)) {
+    await logEnrichment(db, {
+      targetType: "promoter",
+      targetId: msg.promoterId,
+      source: "browser_enrich",
+      status: "skipped",
+      notes: `operating_status ${row.operatingStatus} — not re-enriched (OPE-979)`,
+    });
+    return { promoterId: msg.promoterId, outcome: "ceased" };
+  }
 
   // --- No website → NO_SOURCE, nothing to enrich from ---
   if (!row.website || row.website.trim() === "") {
