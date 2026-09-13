@@ -1,0 +1,14 @@
+{
+  "_note": "OPE-934 — trimmed from GET /repos/JohnTarbox/takemetothefair-cloudflare/actions/runs/34664725569 (the last successful push-to-main CI run on 2026-09-13), keeping only the fields the gate reads. deploy.yml receives this object as github.event.workflow_run.",
+  "workflow_run": {
+    "id": 34664725569,
+    "name": "CI",
+    "event": "push",
+    "status": "completed",
+    "conclusion": "success",
+    "head_branch": "main",
+    "head_sha": "da47994d0bfab591c9f16de746624277b31f4f03",
+    "head_repository": { "full_name": "JohnTarbox/takemetothefair-cloudflare" },
+    "repository": { "full_name": "JohnTarbox/takemetothefair-cloudflare" }
+  }
+}
