@@ -776,6 +776,38 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       ),
   },
   {
+    // OPE-987 — the organizer-page cancellation recheck RAN.
+    //
+    // A new pass inside the daily EventDateDriftWorkflow
+    // (mcp-server/src/goodwill/cancellation-recheck.ts). check-heartbeat-probes
+    // cannot see it — a step inside an existing Workflow is not a new path by
+    // its definition — so this rests on the OPE-246 rule, not the check.
+    //
+    // ⚠️ Evidence is the RUN STAMP, not discrepancies and not url_health_checks.
+    // Discrepancies are the yield: organizers almost never cancel, so a probe on
+    // them would be red nearly always (the OPE-541 false-fire). url_health_checks
+    // rows are only written when a url is DUE, and a window with no candidates
+    // writes none. The stamp is written on every completed call, including one
+    // with nothing to read, and NOT when the pass throws — so a broken selector
+    // goes red instead of looking like a quiet week.
+    //
+    // 48h, derived from the schedule: the workflow is on `0 6 * * *`, so one
+    // missed run is tolerated and two are not — the same reasoning as the other
+    // 06:00Z run-stamp probes, from the same cron.
+    name: "organizer-cancellation-recheck",
+    ownerOpe: "OPE-987",
+    label: "Organizer-page cancellation recheck (daily drift workflow)",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        agentHeartbeats,
+        agentHeartbeats.lastSeenAt,
+        eq(agentHeartbeats.agentCode, "watchdog:organizer-cancellation-recheck")
+      ),
+  },
+  {
     name: "vendor-enrichment",
     ownerOpe: "OPE-I1",
     label: "Vendor enrichment cron",
