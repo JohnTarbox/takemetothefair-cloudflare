@@ -14,8 +14,9 @@ export const dynamic = "force-dynamic";
  *   - `jsonLdEvents` — per-event Schema.org JSON-LD when the doc is an HTML page
  *
  * Internal-key auth (withInternalKey) — same gate as the other /api/internal/*
- * routes; not exposed publicly. Best-effort global rate limit guards Browser
- * Rendering cost. SSRF-guarded (public http/https hosts only).
+ * routes; not exposed publicly. OPE-972 metered rate limit (per caller
+ * entrypoint, fail-closed) guards Browser Rendering cost. SSRF-guarded (public
+ * http/https hosts only).
  */
 import { NextResponse } from "next/server";
 import { z } from "zod";
@@ -31,13 +32,9 @@ import {
 } from "@takemetothefair/site-fetch";
 import { logError } from "@/lib/logger";
 import { recordBrowserRenderingAttempt } from "@/lib/browser-rendering-attempt";
+import { checkRateLimit, meteredCallerIdentifier, rateLimitResponse } from "@/lib/rate-limit";
 
 const bodySchema = z.object({ url: z.string().url() });
-
-// Best-effort global cap on Browser-Rendering-backed fetches per minute. Keyed
-// globally (not per-IP): every caller is the internal harvest, so a shared
-// fixed window is the meaningful guard on managed-Chrome cost.
-const RATE_LIMIT_PER_MIN = 60;
 
 type RawFetch =
   | { ok: true; body: string; contentType: string; finalUrl: string }
@@ -81,6 +78,14 @@ function shouldEscalate(status: number | null): boolean {
 }
 
 export const POST = withInternalKey({ source: "harvest-fetch" }, async ({ request, db }) => {
+  // OPE-972 — replaces a global 60/min KV cap that failed open (and allowed
+  // 86,400 calls a day). Keyed on the MCP entrypoint stamp, not IP: every
+  // internal call arrives from the same place.
+  const rate = await checkRateLimit(request, "harvest-fetch", {
+    metered: { identifier: meteredCallerIdentifier(request, null) },
+  });
+  if (!rate.allowed) return rateLimitResponse(rate);
+
   let raw: unknown;
   try {
     raw = await request.json();
@@ -107,25 +112,7 @@ export const POST = withInternalKey({ source: "harvest-fetch" }, async ({ reques
   const env = getCloudflareEnv() as unknown as {
     CLOUDFLARE_ACCOUNT_ID?: string;
     CLOUDFLARE_BROWSER_RENDERING_TOKEN?: string;
-    RATE_LIMIT_KV?: KVNamespace;
   };
-
-  // Best-effort global rate limit (fail-open if KV is unbound).
-  if (env.RATE_LIMIT_KV) {
-    try {
-      const windowKey = `harvest-fetch:${Math.floor(Date.now() / 60000)}`;
-      const current = parseInt((await env.RATE_LIMIT_KV.get(windowKey)) || "0", 10);
-      if (current >= RATE_LIMIT_PER_MIN) {
-        return NextResponse.json(
-          { success: false, error: "rate_limited" },
-          { status: 429, headers: { "Retry-After": "60" } }
-        );
-      }
-      await env.RATE_LIMIT_KV.put(windowKey, String(current + 1), { expirationTtl: 120 });
-    } catch {
-      // KV hiccup — don't block the fetch on the soft cost-guard.
-    }
-  }
 
   try {
     // 1) Cheap standard fetch (works for public sitemaps + non-WAF hosts).

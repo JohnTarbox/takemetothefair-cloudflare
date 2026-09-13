@@ -26,6 +26,22 @@ vi.mock("@/lib/logger", () => ({
   logError: vi.fn(),
 }));
 
+// OPE-972 — this route is now metered and fail-CLOSED: with no quota backend it
+// refuses every call. These tests are about fetching, so give it one.
+vi.mock("@opennextjs/cloudflare", () => {
+  const store = new Map<string, string>();
+  return {
+    getCloudflareContext: () => ({
+      env: {
+        RATE_LIMIT_KV: {
+          get: async (k: string) => store.get(k) ?? null,
+          put: async (k: string, v: string) => void store.set(k, v),
+        },
+      },
+    }),
+  };
+});
+
 vi.mock("@/lib/url-import/html-parser", () => ({
   extractMetadata: vi.fn(() => ({
     title: "Test Page",

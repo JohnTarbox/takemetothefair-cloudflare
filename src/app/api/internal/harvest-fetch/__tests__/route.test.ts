@@ -13,10 +13,25 @@ vi.mock("@/lib/cloudflare", () => ({
     INTERNAL_API_KEY: "test-key",
     CLOUDFLARE_ACCOUNT_ID: "acct",
     CLOUDFLARE_BROWSER_RENDERING_TOKEN: "br-token",
-    // no RATE_LIMIT_KV → rate-limit block is skipped (fail-open)
   }),
 }));
 vi.mock("@/lib/logger", () => ({ logError: vi.fn(async () => {}) }));
+
+// OPE-972 — this route is now metered and fail-CLOSED: with no quota backend it
+// refuses every call. These tests are about fetching, so give it one.
+vi.mock("@opennextjs/cloudflare", () => {
+  const store = new Map<string, string>();
+  return {
+    getCloudflareContext: () => ({
+      env: {
+        RATE_LIMIT_KV: {
+          get: async (k: string) => store.get(k) ?? null,
+          put: async (k: string, v: string) => void store.set(k, v),
+        },
+      },
+    }),
+  };
+});
 
 import { POST } from "../route";
 
