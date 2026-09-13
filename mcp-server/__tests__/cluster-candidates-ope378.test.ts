@@ -22,7 +22,9 @@
  */
 import { describe, expect, it } from "vitest";
 import {
+  candidatesDenoteSameEvent,
   clusterSubmissionCandidates,
+  namesDenoteSameEvent,
   richness,
   type ClusterableCandidate,
 } from "../src/email-handlers/cluster-candidates.js";
@@ -148,5 +150,76 @@ describe("degenerate input", () => {
   it("passes a single candidate straight through", () => {
     const one = [{ name: "Solo Fair", startDate: "2026-11-01" }];
     expect(clusterSubmissionCandidates(one).kept).toEqual(one);
+  });
+});
+
+describe("the Manchester Grange submission — host on one sibling, year on the other", () => {
+  // Inbound 614d0dfb (2026-08-28). Names as they stood AT CLUSTERING TIME, read
+  // back from the stored rows: B was stored "Manchester Grange 2026 Fall Craft
+  // Fair" with host_qualified_name, and qualifyNameWithHost only prepends.
+  const body = {
+    name: "Manchester Grange Fall Craft Fair",
+    startDate: "2026-10-24T12:00:00Z",
+    venueName: "Manchester Grange",
+    description: "Fall craft fair, tables $25 each, first floor sold out, second floor open.",
+  };
+  const pdf = {
+    name: "2026 Fall Craft Fair",
+    startDate: "2026-10-24T12:00:00Z",
+    venueName: "Manchester Grange",
+    imageKey: "inbound-attachments/x/2026-Fall-Craft-Fair-Call-for-Vendors.pdf",
+  };
+
+  it("the old name-only rule really did keep them apart (the specimen, pinned)", () => {
+    expect(namesDenoteSameEvent(body.name, pdf.name)).toBe(false);
+  });
+
+  it("collapses the two to one", () => {
+    const r = clusterSubmissionCandidates([body, pdf]);
+    expect(r.kept).toHaveLength(1);
+    expect(r.collapsed).toHaveLength(1);
+  });
+
+  it("clusters when only the PDF sibling names its venue", () => {
+    const r = clusterSubmissionCandidates([{ ...body, venueName: null }, pdf]);
+    expect(r.kept).toHaveLength(1);
+  });
+
+  it("still keeps a different fair at the same grange apart", () => {
+    const spring = { ...pdf, name: "2026 Spring Craft Fair" };
+    expect(clusterSubmissionCandidates([body, spring]).kept).toHaveLength(2);
+  });
+
+  it("still keeps a different edition apart", () => {
+    const nextYear = { ...pdf, name: "2027 Fall Craft Fair", startDate: "2027-10-23T12:00:00Z" };
+    expect(clusterSubmissionCandidates([body, nextYear]).kept).toHaveLength(2);
+  });
+
+  it("drops a YEAR token — when the year is on the SMALLER name, containment alone cannot", () => {
+    // {2026, craft, fair} is not a subset of {fall, craft, fair}; only removing
+    // the year makes the smaller core {craft, fair} fit.
+    const a = {
+      name: "2026 Craft Fair",
+      venueName: "Manchester Grange",
+      startDate: body.startDate,
+    };
+    expect(candidatesDenoteSameEvent(a, body)).toBe(true);
+  });
+
+  it("keeps the two-token floor — a one-word core must not swallow a different event", () => {
+    // Core of "Manchester Grange 2026 Fair" is {fair}. Without the floor it
+    // would be a subset of any fair at that grange.
+    const a = {
+      name: "Manchester Grange 2026 Fair",
+      venueName: "Manchester Grange",
+      startDate: body.startDate,
+    };
+    const b = {
+      name: "Harvest Supper and Fair",
+      venueName: "Manchester Grange",
+      startDate: body.startDate,
+    };
+    expect(namesDenoteSameEvent(a.name, b.name)).toBe(false); // the old rule is not what decides this
+    expect(candidatesDenoteSameEvent(a, b)).toBe(false);
   });
 });

@@ -109,6 +109,51 @@ export function namesDenoteSameEvent(a: string, b: string): boolean {
   return isSubset(small, big);
 }
 
+/** A bare four-digit year token ("2026") — edition noise, not identity. */
+const YEAR_TOKEN = /^(19|20)\d{2}$/;
+
+/**
+ * OPE-378 defect 1, second specimen — the HOST and a mid-name YEAR.
+ *
+ * Manchester Grange (inbound `614d0dfb`, 2026-08-28) produced two rows from
+ * one email. Read from the stored rows, not inferred: row A was extracted as
+ * "Manchester Grange Fall Craft Fair"; row B was stored as "Manchester Grange
+ * 2026 Fall Craft Fair" WITH the `host_qualified_name` flag, and
+ * `qualifyNameWithHost` only ever prepends `${host} ` — so at clustering time
+ * B's name was "2026 Fall Craft Fair". Token sets
+ *   {manchester, grange, fall, craft, fair}  vs  {2026, fall, craft, fair}
+ * neither contains the other, so `namesDenoteSameEvent` kept both. The host
+ * is added AFTER this phase, in the submit route, so one sibling carrying it
+ * and the other not is the normal case, not an edge.
+ *
+ * So compare a second way: drop year tokens, and drop the tokens of either
+ * candidate's venue name (the host the submit route would prepend), then apply
+ * the same equality-or-containment rule with the same two-token floor.
+ * "Fall Craft Fair" vs "Spring Craft Fair" at one grange still differ.
+ */
+function coreTokens(name: string, strip: ReadonlySet<string>): Set<string> {
+  const out = new Set<string>();
+  for (const t of tokensOf(name)) if (!YEAR_TOKEN.test(t) && !strip.has(t)) out.add(t);
+  return out;
+}
+
+export function candidatesDenoteSameEvent(
+  a: ClusterableCandidate,
+  b: ClusterableCandidate
+): boolean {
+  if (!a.name || !b.name) return false;
+  if (namesDenoteSameEvent(a.name, b.name)) return true;
+  const host = new Set<string>([
+    ...(a.venueName ? tokensOf(a.venueName) : []),
+    ...(b.venueName ? tokensOf(b.venueName) : []),
+  ]);
+  const ca = coreTokens(a.name, host);
+  const cb = coreTokens(b.name, host);
+  const [small, big] = ca.size <= cb.size ? [ca, cb] : [cb, ca];
+  if (small.size < 2) return false;
+  return isSubset(small, big);
+}
+
 /** Same edition? Both dated and more than a week apart means different ones. */
 function sameEdition(a: ClusterableCandidate, b: ClusterableCandidate): boolean {
   if (!a.startDate || !b.startDate) return true; // one is undated — assume same
@@ -161,9 +206,7 @@ export function clusterSubmissionCandidates<T extends ClusterableCandidate>(
       kept.push(c);
       continue;
     }
-    const matchIdx = kept.findIndex(
-      (k) => k.name && namesDenoteSameEvent(k.name, c.name as string) && sameEdition(k, c)
-    );
+    const matchIdx = kept.findIndex((k) => candidatesDenoteSameEvent(k, c) && sameEdition(k, c));
     if (matchIdx === -1) {
       kept.push(c);
       continue;
