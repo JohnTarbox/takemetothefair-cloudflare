@@ -11,6 +11,9 @@ import { getCloudflareDb } from "./cloudflare";
 import * as schema from "./db/schema";
 import { eq, and } from "drizzle-orm";
 import { logError } from "./logger";
+import { authorizeCredentials } from "@/lib/auth/credentials-authorize";
+import { signInThrottle, type SignInThrottleResult } from "@/lib/auth/signin-throttle";
+import { getBurstLimiter } from "@/lib/burst-limiter";
 
 type UserRole = "ADMIN" | "PROMOTER" | "VENDOR" | "USER";
 
@@ -138,6 +141,31 @@ export async function verifyPassword(password: string, storedHash: string): Prom
   return verifyLegacySha256(password, storedHash);
 }
 
+/**
+ * OPE-935 — a refused sign-in is a security event, so it is recorded; but the
+ * refusal path is exactly what an attacker drives in volume, so the record is
+ * itself budgeted (5 per 60 s, one shared key) and handed to `waitUntil` so it
+ * never delays or fails the response. The same shape OPE-902 uses for refused
+ * internal keys. The IP is not stored — only which budget refused.
+ */
+function scheduleSignInRefusalRecord(result: SignInThrottleResult, request: Request | undefined) {
+  const work = (async () => {
+    const limiter = getBurstLimiter();
+    if (!limiter || !(await limiter.limit({ key: "auth-signin-refusal-log" })).success) return;
+    await logError(getCloudflareDb(), {
+      level: "warn",
+      source: "auth:signin-throttled",
+      message: `sign-in refused by the burst cap (${result.reason})`,
+      context: { reason: result.reason, path: request ? new URL(request.url).pathname : null },
+    });
+  })().catch(() => {});
+  try {
+    getCloudflareContext().ctx.waitUntil(work);
+  } catch {
+    // No request context (tests, local dev): the promise still runs.
+  }
+}
+
 // Read env vars at runtime from Cloudflare Pages env
 // (process.env values are inlined at build time and won't have production secrets)
 function getRuntimeEnv(key: string): string | undefined {
@@ -161,74 +189,31 @@ function createAuthConfig(): NextAuthConfig {
         email: { label: "Email", type: "email" },
         password: { label: "Password", type: "password" },
       },
-      async authorize(credentials) {
-        if (!credentials?.email || !credentials?.password) {
-          return null;
-        }
-
-        // OPE-293 — an ingestion placeholder never logs in. Redundant today
-        // (0 of 6,824 hold a password_hash, so the `!user.passwordHash` check
-        // below already refuses them) and deliberately kept anyway: the
-        // password-reset path is what would mint that hash, and a guard that
-        // only works while a second guard holds is not a guard.
-        if (isPlaceholderEmail(credentials.email as string)) {
-          console.warn(`[auth] credentials refused — ${PLACEHOLDER_REFUSAL}`);
-          return null;
-        }
-
+      // OPE-935 — body extracted to `authorizeCredentials` so the throttle-before-
+      // password ordering is testable. `request` is Auth.js's second argument.
+      async authorize(credentials, request) {
         const db = getCloudflareDb();
-
-        try {
-          // OPE-601 — the identity key is case-insensitive.
-          //
-          // This lookup was the worse half of that bug: it locks people out of
-          // accounts they already own. Jan Merrill reset her password
-          // successfully on 2026-08-07 (that route folds case), then could not
-          // sign in as `Admin@kewlkandylz.com`, and registered again 48 minutes
-          // later — which 500'd on her own vendor slug.
-          const user = await db.query.users.findFirst({
-            where: eq(schema.users.email, normalizeEmail(credentials.email as string)),
-          });
-
-          if (!user || !user.passwordHash) {
-            return null;
-          }
-
-          const isValid = await verifyPassword(credentials.password as string, user.passwordHash);
-
-          if (!isValid) {
-            return null;
-          }
-
-          // Re-hash legacy SHA-256 passwords to PBKDF2 on successful login
-          if (!user.passwordHash.includes(":")) {
-            try {
-              const newHash = await hashPassword(credentials.password as string);
-              await db
-                .update(schema.users)
-                .set({ passwordHash: newHash })
-                .where(eq(schema.users.id, user.id));
-            } catch {
-              // Non-fatal: login still succeeds even if re-hash fails
-            }
-          }
-
-          return {
-            id: user.id,
-            email: user.email,
-            name: user.name,
-            image: user.image,
-            role: user.role as UserRole,
-          };
-        } catch (error) {
-          await logError(db, {
-            message: "Auth error",
-            error,
-            source: "lib/auth.ts:authorize",
-            context: { email: credentials.email },
-          });
-          return null;
-        }
+        return authorizeCredentials(credentials, request, {
+          throttle: signInThrottle,
+          findUserByEmail: (email) =>
+            db.query.users.findFirst({ where: eq(schema.users.email, email) }),
+          verifyPassword,
+          hashPassword,
+          updatePasswordHash: async (userId, hash) => {
+            await db
+              .update(schema.users)
+              .set({ passwordHash: hash })
+              .where(eq(schema.users.id, userId));
+          },
+          onRefusedByThrottle: scheduleSignInRefusalRecord,
+          logAuthError: (error, email) =>
+            logError(db, {
+              message: "Auth error",
+              error,
+              source: "lib/auth.ts:authorize",
+              context: { email },
+            }),
+        });
       },
     }),
   ];
