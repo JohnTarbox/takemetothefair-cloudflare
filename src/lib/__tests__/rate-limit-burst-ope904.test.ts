@@ -14,7 +14,7 @@ vi.mock("@/lib/auth", () => ({ auth: () => mockAuth() }));
 
 interface FakeEnv {
   RATE_LIMIT_KV?: { get: ReturnType<typeof vi.fn>; put: ReturnType<typeof vi.fn> };
-  BURST_LIMITER?: { limit: ReturnType<typeof vi.fn> };
+  BURST_COUNTER?: ReturnType<typeof asNamespace>;
 }
 let fakeEnv: FakeEnv | null = null;
 
@@ -49,6 +49,23 @@ function makeBurst(n: number) {
   };
 }
 
+/**
+ * OPE-951 — wrap a limiter in the Durable Object namespace shape the app binds:
+ * `idFromName(key)` → `get(id)` → `stub.hit(limit, period)`. The fake passes the
+ * key through as the id so `makeBurst` still counts per key.
+ */
+function asNamespace(b: { limit: (o: { key: string }) => Promise<{ success: boolean }> }) {
+  return {
+    idFromName: vi.fn((name: string) => name),
+    get: vi.fn((id: string) => ({
+      hit: vi.fn(async (limit: number, period: number) => {
+        const r = await b.limit({ key: id });
+        return { ...r, count: 0, retryAfterSeconds: 42, limit, period };
+      }),
+    })),
+  };
+}
+
 function req(ip = "1.2.3.4") {
   return new Request("https://example.com/api/x", { headers: { "CF-Connecting-IP": ip } });
 }
@@ -61,7 +78,7 @@ beforeEach(() => {
   mockAuth.mockResolvedValue(null);
   kv = makeKv();
   burst = makeBurst(5);
-  fakeEnv = { RATE_LIMIT_KV: kv, BURST_LIMITER: burst };
+  fakeEnv = { RATE_LIMIT_KV: kv, BURST_COUNTER: asNamespace(burst) };
 });
 
 describe("the burst layer refuses what KV cannot", () => {
@@ -160,7 +177,7 @@ describe("the cohort is exactly the eight John approved", () => {
 });
 
 describe("a missing binding degrades to the KV quota rather than to nothing", () => {
-  it("still enforces the hourly quota when BURST_LIMITER is absent", async () => {
+  it("still enforces the hourly quota when BURST_COUNTER is absent", async () => {
     // Unit tests and `next dev` have no binding. That must not turn a checked
     // request into an unchecked one — the KV layer still runs.
     fakeEnv = { RATE_LIMIT_KV: kv };

@@ -105,13 +105,17 @@ export async function internalKeyMatches(request: Request): Promise<boolean> {
  *   src/app/api/suggest-event/submit/route.ts:65   internalKeyMatches(request)
  *   src/app/api/suggest-event/submit/route.ts:69   checkRateLimit(...)
  *
- * ## Why the Workers binding and not the KV counter
+ * ## Why the burst counter and not the KV counter
  *
  * OPE-904 measured the KV quota losing increments under exactly the burst it
  * exists to stop — 81 requests against a 60/hour cap produced 27 recorded
  * increments and zero refusals. A cap that undercounts is a cap that
- * over-writes, which is the failure being fixed. The binding is enforced by
- * the runtime and does not lose.
+ * over-writes, which is the failure being fixed.
+ *
+ * ⚠️ This budget first shipped on the Workers Rate Limiting binding, and
+ * OPE-951 measured it inert in production: 25 junk-key POSTs in one 60 s
+ * window wrote 25 rows against a budget of 5. It now runs on the Durable
+ * Object counter behind `getBurstLimiter()`, which cannot lose an increment.
  *
  * ## Why the key is the route
  *

@@ -1143,6 +1143,32 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       ),
   },
   {
+    // OPE-951 — proof the HARD burst cap still refuses, measured in production.
+    //
+    // Evidence is a PASS of the daily self-test, not a run: the main app drives
+    // `getBurstLimiter()` — the function the eight abuse-prone routes call — to
+    // a refusal on a throwaway key and stamps this row only when calls 1–5 are
+    // admitted AND call 6 is refused. So the probe goes silent on all three
+    // failures that matter: the cron stops, the binding disappears, or the cap
+    // stops refusing. The last is what OPE-904's binding did, invisibly, while
+    // every mocked unit test stayed green.
+    //
+    // 48h against a once-daily cron (06:00Z): tolerates one missed fire without
+    // crying wolf, the same headroom as newsletter-list-balance-canary.
+    name: "burst-cap-selftest",
+    ownerOpe: "OPE-951",
+    label: "Burst cap self-test (daily cron — the cap still refuses)",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        agentHeartbeats,
+        agentHeartbeats.lastSeenAt,
+        eq(agentHeartbeats.agentCode, "watchdog:burst-cap-selftest")
+      ),
+  },
+  {
     name: "fault-emitter-run",
     ownerOpe: "OPE-488",
     label: "Render-fault emitter run (hourly cron)",

@@ -10,7 +10,7 @@ interface __BaseEnv_CloudflareEnv {
   INDEXNOW_PINGS: Queue;
   EVENT_DISCREPANCIES: Queue;
   SYNDICATION_CHANGES: Queue;
-  BURST_LIMITER: RateLimit;
+  BURST_COUNTER: DurableObjectNamespace /* BurstCounter from meetmeatthefair-mcp */;
   AI: Ai;
   ASSETS: Fetcher;
   DEPLOY_ENV: string;
