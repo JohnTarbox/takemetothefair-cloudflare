@@ -33,7 +33,11 @@ import {
   reportedNewValue,
 } from "../helpers.js";
 import { rosterResearchTargetWhere } from "@takemetothefair/db-schema";
-import { findPromoterDuplicates } from "@takemetothefair/utils";
+import {
+  fetchImageWithFallback,
+  findPromoterDuplicates,
+  imageFetchHeaders,
+} from "@takemetothefair/utils";
 import {
   EXTRACTION_REJECT_FAMILIES,
   humanRejectSignature,
@@ -2166,35 +2170,40 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       // Fetch the source image. Cap timeout at 15s — Workers have a 30s
       // budget total; 15s for the fetch + headroom for the multipart POST
       // to the main app + the main app's R2 put fits comfortably.
+      // OPE-968 — honest UA first, legacy UA only after a block; and a failure
+      // says what came back (see packages/utils/src/image-fetch.ts).
       let imageResponse: Response;
       try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 15_000);
-        imageResponse = await fetch(params.image_url, {
-          // Some CDN hosts (Facebook, image-proxy services) reject the
-          // default User-Agent; setting a plausible one materially improves
-          // hit rate without any additional auth.
-          headers: { "User-Agent": "Mozilla/5.0 (compatible; MMATFBot/1.0)" },
-          signal: controller.signal,
+        const fetched = await fetchImageWithFallback(async (userAgent) => {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 15_000);
+          try {
+            return await fetch(params.image_url, {
+              headers: imageFetchHeaders(userAgent),
+              signal: controller.signal,
+            });
+          } finally {
+            clearTimeout(timeout);
+          }
         });
-        clearTimeout(timeout);
+        if (!fetched.ok) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `${fetched.verdict.message} Attempts: ${fetched.attempts.join("; ")}.`,
+              },
+            ],
+            isError: true,
+          };
+        }
+        imageResponse = fetched.response;
       } catch (err) {
         return {
           content: [
             {
               type: "text",
               text: `Failed to fetch source image: ${err instanceof Error ? err.message : "unknown error"}`,
-            },
-          ],
-          isError: true,
-        };
-      }
-      if (!imageResponse.ok) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Source image fetch returned HTTP ${imageResponse.status} — verify the URL is publicly accessible.`,
             },
           ],
           isError: true,

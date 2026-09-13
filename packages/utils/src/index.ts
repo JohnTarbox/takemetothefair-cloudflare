@@ -612,6 +612,7 @@ export * from "./mutation-audit";
 // classification only: it never rewrites or re-hosts, because re-hosting may be
 // MORE restricted than hotlinking and that read is John's.
 export * from "./image-host";
+export * from "./image-fetch";
 export * from "./gsc-milestones";
 
 /**
