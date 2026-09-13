@@ -21,7 +21,13 @@ const cspFrom = (src: string, re: RegExp) => {
   if (!m) throw new Error("CSP not found");
   return m[1];
 };
-const configCsp = cspFrom(nextConfig, /key: "Content-Security-Policy", value: "([^"]+)"/);
+// The config builds the CSP as `"<prefix>" + (dev ? " 'unsafe-eval'" : "") + "<rest>"`;
+// the production value is prefix + rest.
+const cspExpr = nextConfig.match(
+  /key: "Content-Security-Policy",\s*value:\s*"([^"]+)"\s*\+\s*\(process\.env\.NODE_ENV === "development" \? " 'unsafe-eval'" : ""\)\s*\+\s*"([^"]+)"/
+);
+if (!cspExpr) throw new Error("CSP expression not found in next.config.mjs");
+const configCsp = cspExpr[1] + cspExpr[2];
 const headersCsp = cspFrom(headersFile, /Content-Security-Policy: (.+)/);
 
 describe("OPE-909 — security headers", () => {
@@ -35,6 +41,10 @@ describe("OPE-909 — security headers", () => {
 
   it("next.config.mjs and public/_headers declare the same CSP", () => {
     expect(headersCsp.trim()).toBe(configCsp.trim());
+  });
+
+  it("'unsafe-eval' is allowed ONLY for the dev server (E2E runs `next dev`)", () => {
+    expect(cspExpr[0]).toContain(`process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : ""`);
   });
 
   it("poweredByHeader is off", () => {
