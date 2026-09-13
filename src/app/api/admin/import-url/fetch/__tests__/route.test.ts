@@ -403,7 +403,12 @@ describe("GET /api/admin/import-url/fetch — Browser Rendering escalation", () 
  */
 describe("GET /api/admin/import-url/fetch — OPE-837 link discovery", () => {
   beforeEach(() => {
-    vi.restoreAllMocks();
+    // OPE-907 (vitest 2 → 4) — `vi.restoreAllMocks()` no longer resets `vi.fn()`
+    // module-factory mocks (vitest 3 narrowed it to `vi.spyOn` spies only), so the
+    // `extractTextFromHtml.mockReturnValue("")` from the escalation block above leaked
+    // in and the route answered `success: false`. `vi.resetAllMocks()` is what restores
+    // each `vi.fn(impl)` to its factory implementation now — the behaviour this relied on.
+    vi.resetAllMocks();
   });
 
   it("returns same-site links and drops unrelated off-site ones", async () => {

@@ -65,7 +65,11 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm ci
 
-      - name: Run MCP server tests
+      # OPE-907 — `npm test` in mcp-server runs BOTH projects: the Node suite
+      # (vitest.config.ts) and then the workerd suite (vitest.workerd.config.ts,
+      # @cloudflare/vitest-plugin: real local D1 + the BurstCounter Durable
+      # Object inside workerd). Either failing fails this step.
+      - name: Run MCP server tests (Node + workerd)
         run: npm test --workspace mcp-server
 
   lint:

@@ -8,7 +8,9 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy --var GIT_SHA:$(git describe --always --dirty --abbrev=7) --var BUILD_TIME:$(date -u +%FT%TZ)",
     "typecheck": "tsc --noEmit",
-    "test": "vitest --run"
+    "test": "vitest --run && vitest --run --config vitest.workerd.config.ts",
+    "test:node": "vitest --run",
+    "test:workerd": "vitest --run --config vitest.workerd.config.ts"
   },
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "^0.10.3",
@@ -28,10 +30,11 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@cloudflare/vitest-plugin": "^1.1.8",
     "@types/better-sqlite3": "^7.6.13",
     "better-sqlite3": "^12.6.2",
     "typescript": "^5",
-    "vitest": "^3.2.4",
+    "vitest": "^4.1.11",
     "wrangler": "^4.60.0"
   }
 }

@@ -72,9 +72,19 @@ export default defineConfig({
         // unblock Smoke Tests. Follow-up test coverage tracked in #142.
         //
         // Current measured: lines/statements ~35.06%, functions ~70.5%, branches ~80%.
+        //
+        // Adjusted 2026-09-13 (OPE-907, vitest 2.1.9 → 4.1.11): same 414 files /
+        // 4967 tests, but the v8 provider now remaps through the AST
+        // (ast-v8-to-istanbul — the only mode in vitest 4; the old v8-range
+        // remapping is gone). It counts branches the way istanbul does, so the
+        // branch figure moved from 87.49% to 64.74% (6023/9302) with no test
+        // removed. Re-floored branches only, ~2.7 points below the new
+        // measurement. v2 measured: stmts 70.11 / branches 87.49 / funcs 74.88 /
+        // lines 70.11; v4 measured: stmts 70.13 / branches 64.74 / funcs 70.2 /
+        // lines 70.7.
         lines: 34,
         functions: 68,
-        branches: 78,
+        branches: 62,
         statements: 34,
       },
     },
