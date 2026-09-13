@@ -53,11 +53,11 @@ export async function bearerTokenMatches(request: Request): Promise<boolean> {
  * `INTERNAL_API_KEY` secret — the main-app side of the cross-Worker contract
  * (MCP server + cron sweeps authenticate this way).
  *
- * This is the single source of truth for that check. ~16 route handlers still
- * inline their own `internalKey === env.INTERNAL_API_KEY` (a timing-unsafe
- * `===`, copy-pasted); migrating them to this helper is tracked as part of the
- * auth-centralization sweep (WS3). `Headers.get` is case-insensitive, so this
- * matches both `X-Internal-Key` and `x-internal-key` spellings.
+ * This is the single source of truth for that check. The WS3 sweep that moved
+ * every route off an inline timing-unsafe string comparison is complete — no
+ * inline comparison remains (OPE-994, measured 2026-09-13). `Headers.get` is
+ * case-insensitive, so this matches both `X-Internal-Key` and `x-internal-key`
+ * spellings.
  */
 export async function internalKeyMatches(request: Request): Promise<boolean> {
   const internalKey = request.headers.get("x-internal-key");

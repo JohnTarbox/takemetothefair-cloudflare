@@ -31,19 +31,15 @@ export default [
   // signal in pre-existing React/event-handler noise. src/lib and mcp-server/src
   // are where the secrets are compared.
   {
-    // ⚠️ Scope is the SECRET-COMPARISON surface, not all of src/lib. Enabling
-    // these across src/lib/** + mcp-server/src/** needs the full type graph and
-    // OOMs a 2GB Node heap locally (verified 2026-09-10: "Reached heap limit").
-    // A rule that cannot be run is not a rule, so this is the subset that fits
-    // and that covers every place a credential is checked. Widening it needs
-    // NODE_OPTIONS=--max-old-space-size on the lint job first.
-    files: [
-      "src/lib/api-auth.ts",
-      "src/lib/api/with-auth.ts",
-      "src/lib/rate-limit.ts",
-      "mcp-server/src/auth.ts",
-      "mcp-server/src/oauth/**/*.ts",
-    ],
+    // OPE-994 — widened from the 5 secret-comparison files. Measured
+    // 2026-09-13 over src/lib + src/app/api + mcp-server/src: 35 s wall, 4.1 GB
+    // peak RSS — it OOMed only because the default Node heap is ~2 GB. The lint
+    // script runs with NODE_OPTIONS=--max-old-space-size=6144 (package.json);
+    // the CI runner has 7 GB. It found one real floating promise on arrival
+    // (admin events/[id]/vendors trackVendorStatusChange), now awaited.
+    // ⚠️ `void x()` is an explicit ignore to this rule, so it does NOT flag the
+    // `void logError(...)` shape — review those by hand.
+    files: ["src/lib/**/*.ts", "src/app/api/**/*.ts", "mcp-server/src/**/*.ts"],
     languageOptions: {
       parserOptions: {
         projectService: true,

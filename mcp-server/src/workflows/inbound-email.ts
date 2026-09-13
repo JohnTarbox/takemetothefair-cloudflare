@@ -2950,6 +2950,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           outcome = "object-not-found";
         } else {
           const blob = await obj.blob();
+          const ocrAttemptLogs: Promise<void>[] = [];
           // OPE-189 — retry a transient (cold-start timeout / capacity) failure in
           // place so a first-call miss doesn't strand a poster a warm retry reads
           // fine. Every attempt is logged (incl. the attempt-1 timeout) so a
@@ -2959,13 +2960,18 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             { name: ref.name || ref.key, blob },
             MAX_OCR_ATTEMPTS,
             (attempt, attemptOutcome) => {
-              void logError(getDb(this.env.DB), {
-                level: attemptOutcome.startsWith("ok:") ? "info" : "warn",
-                source: "mcp:workflow:ocr-attachments",
-                message: `attachment "${ref.name || ref.key}" attempt ${attempt}/${MAX_OCR_ATTEMPTS}: ${attemptOutcome}`,
-              }).catch(() => {});
+              // OPE-994 — collected and awaited once the retries finish, so the
+              // step does not complete (and memoize) ahead of its own attempt log.
+              ocrAttemptLogs.push(
+                logError(getDb(this.env.DB), {
+                  level: attemptOutcome.startsWith("ok:") ? "info" : "warn",
+                  source: "mcp:workflow:ocr-attachments",
+                  message: `attachment "${ref.name || ref.key}" attempt ${attempt}/${MAX_OCR_ATTEMPTS}: ${attemptOutcome}`,
+                }).catch(() => {})
+              );
             }
           );
+          await Promise.all(ocrAttemptLogs.splice(0));
           markdownForRecord = result.text;
           if (result.text !== null) {
             const len = result.text.trim().length;

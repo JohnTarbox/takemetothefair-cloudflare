@@ -89,6 +89,7 @@ export const POST = withAuthorized(async ({ request, db, userId }) => {
   // usually enough to extract from.
   const perImage: { name: string; chars: number; outcome: string }[] = [];
   const sections: string[] = [];
+  const attemptLogs: Promise<void>[] = [];
   for (const [i, file] of files.entries()) {
     const name = file.name || `pasted-image-${i + 1}`;
     const result = await toMarkdownWithRetry(
@@ -98,14 +99,21 @@ export const POST = withAuthorized(async ({ request, db, userId }) => {
       // Record EVERY attempt, not just the winner — the OPE-189 observability
       // contract. A cold-start timeout that a retry recovers is still the most
       // useful signal we get about AI-binding health.
+      //
+      // OPE-994 — collected and awaited below, not fired with `void`: in a
+      // request context an unawaited write can be cancelled when the response
+      // returns, which silently under-records exactly what this contract promises.
       (attempt, outcome) => {
-        void logError(db, {
-          level: "info",
-          source: "import-url:extract-image",
-          message: `OCR attempt ${attempt} for '${name}': ${outcome}`,
-        });
+        attemptLogs.push(
+          logError(db, {
+            level: "info",
+            source: "import-url:extract-image",
+            message: `OCR attempt ${attempt} for '${name}': ${outcome}`,
+          }).catch(() => {})
+        );
       }
     );
+    await Promise.all(attemptLogs.splice(0));
     perImage.push({ name, chars: result.text?.trim().length ?? 0, outcome: result.outcome });
     const text = result.text?.trim();
     if (text) sections.push(text);

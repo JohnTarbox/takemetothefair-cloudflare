@@ -34,6 +34,7 @@
  * OPE-790 scopes 1–2 ask for the swap; the conflict is recorded on the ticket
  * rather than resolved unilaterally here.
  */
+import { getCloudflareContext } from "@opennextjs/cloudflare";
 
 /** What kind of failure this is, and therefore whether a retry can help. */
 export type D1FaultClass =
@@ -191,6 +192,14 @@ export async function recordD1RetryOutcome(source: string, outcome: D1RetryOutco
 /** `withD1Read` + `recordD1RetryOutcome`, which is how every caller uses it. */
 export function withD1ReadLogged<T>(source: string, fn: () => Promise<T>): Promise<T> {
   return withD1Read(fn, (outcome) => {
-    void recordD1RetryOutcome(source, outcome);
+    // OPE-994 — registered with the request's waitUntil rather than fired with
+    // `void`: an unawaited write in a request context can be cancelled when the
+    // response returns. recordD1RetryOutcome never throws.
+    const work = recordD1RetryOutcome(source, outcome);
+    try {
+      getCloudflareContext().ctx.waitUntil(work);
+    } catch {
+      // No request context (tests, build-time rendering): the promise still runs.
+    }
   });
 }
