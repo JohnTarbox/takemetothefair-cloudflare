@@ -1,0 +1,249 @@
+{
+  "_source": "OPE-969: @cf/meta/llama-3.2-11b-vision-instruct with VISION_PROMPT + VISION_RESPONSE_FORMAT, one call per photo, 2026-09-13, over the 18 New Gloucester Community Fair photos staged 2026-09-12 (event 4fde2cf7). 'truth' is the photo's actual subject, checked against the ticket and list_photo_proposals. Raw result.response values, unedited.",
+  "replies": [
+    {
+      "label": "hats-by-lise",
+      "truth": "booth",
+      "photo_key": "inbound-attachments/CAEv_qqmSvyQvF5wkU3h5esDzPft13ten_Y-35rs3jb5YS-5Q9A-mail.gmail.com/0-IMG_20260912_143202299_BURST000_COVER.jpg",
+      "response": {
+        "kind": "booth",
+        "name": "Hats by Lise",
+        "website": null,
+        "products": ["HATS"],
+        "confidence": 0.9,
+        "rationale": "clear sign, well-lit booth",
+        "identifiable_minor": false
+      }
+    },
+    {
+      "label": "denim-river",
+      "truth": "booth",
+      "photo_key": "inbound-attachments/CAEv_qqn3Dh-UDFSrGphLGQBxLkttZw-vypp_Baq3nGp9nWDpZg-mail.gmail.com/0-IMG_20260912_143225845_BURST000_COVER.jpg",
+      "response": "The image shows a woman sitting in a chair at a craft fair or agricultural show. \n\n{\"kind\":\"booth\",\"name\":null,\"website\":null,\"products\":[\"wreaths\",\"floral arrangements\"],\"confidence\":0.9,\"rationale\":null,\"identifiable_minor\":false}"
+    },
+    {
+      "label": "welded-worn",
+      "truth": "booth",
+      "photo_key": "inbound-attachments/CAEv_qqnLj_ZzSb-4487OVBDoaDKOVRvrSxfd-ZX-3-gd9B0_w-mail.gmail.com/0-IMG_20260912_142849150_BURST000_COVER.jpg",
+      "response": {
+        "kind": "booth",
+        "name": "Welded & Worn",
+        "website": null,
+        "products": ["jewelry"],
+        "confidence": 0.7,
+        "rationale": "sign is partially obscured by the photographer's finger",
+        "identifiable_minor": false
+      }
+    },
+    {
+      "label": "amaizing-soaps",
+      "truth": "booth",
+      "photo_key": "inbound-attachments/CAEv_qqmoWn7H7xUf1xfGyeL4DD2kSyjZTNVZt-Z99UPEphJzuA-mail.gmail.com/0-IMG_20260912_142841337_BURST000_COVER.jpg",
+      "response": {
+        "kind": "booth",
+        "name": "aMAIzing Soaps & Sundries",
+        "website": null,
+        "products": [
+          "soap",
+          "wax",
+          "melts",
+          "body butter",
+          "lip balm",
+          "bath fizzies",
+          "showers",
+          "steamers"
+        ],
+        "confidence": 1,
+        "rationale": "clearly visible and legible",
+        "identifiable_minor": false
+      }
+    },
+    {
+      "label": "manes",
+      "truth": "booth",
+      "photo_key": "inbound-attachments/CAEv_qq-jtY9_BFTX6WNYz7fhpijUME-M38aiQFHPgX7TS24W_Q-mail.gmail.com/0-IMG_20260912_142959817_BURST000_COVER.jpg",
+      "response": "**Photo Description:**\n\n* Kind: booth\n* Name: Manes, Muzzles, & More\n* Website: null\n* Products: null\n* Confidence: 1.0\n* Rationale: The sign is clearly visible and legible.\n* Identifiable Minor: false"
+    },
+    {
+      "label": "shimmer",
+      "truth": "booth",
+      "photo_key": "inbound-attachments/CAEv_qqkQ7_Ny2Lbr12NWzhvCFWHK8qMYkKXTYg-7yu-jCE6cDg-mail.gmail.com/0-IMG_20260912_142914295_BURST000_COVER.jpg",
+      "response": {
+        "kind": "booth",
+        "name": "Shimmer Crafts",
+        "website": null,
+        "products": ["crafts"],
+        "confidence": 1,
+        "rationale": "The sign is clearly visible and legible.",
+        "identifiable_minor": false
+      }
+    },
+    {
+      "label": "trailmap",
+      "truth": "booth",
+      "photo_key": "inbound-attachments/CAEv_qqk_aAuJ-8-FckX44jADEWO4-BXPbSe02swefSB-oFrx-w-mail.gmail.com/0-IMG_20260912_143132609_BURST000_COVER.jpg",
+      "response": {
+        "kind": "booth",
+        "name": "Casco Bay Trail",
+        "website": "www.cascobaytrail.org",
+        "products": ["maps", "trail", "bikeway"],
+        "confidence": 1,
+        "rationale": "clearly visible sign in the foreground",
+        "identifiable_minor": false
+      }
+    },
+    {
+      "label": "utopian",
+      "truth": "booth",
+      "photo_key": "inbound-attachments/CAEv_qqmAdoF2g4DUKOuDgpb8mgOVRUpd-NoT3AxwvgnF8VB6KA-mail.gmail.com/0-IMG_20260912_143238598_BURST000_COVER.jpg",
+      "response": {
+        "kind": "booth",
+        "name": "Utopian Utensils",
+        "website": null,
+        "products": ["wooden spoons", "wooden spatulas"],
+        "confidence": 1,
+        "rationale": "The sign is clearly visible and legible.",
+        "identifiable_minor": false
+      }
+    },
+    {
+      "label": "cobb3d",
+      "truth": "booth",
+      "photo_key": "inbound-attachments/CAEv_qq-ubk3F_Ly_wn30Q5JfOn9y-DLDLJWhf-huVE48uW_42A-mail.gmail.com/0-IMG_20260912_142826230_BURST000_COVER.jpg",
+      "response": {
+        "kind": "booth",
+        "name": "Cobb3DPrinting",
+        "website": null,
+        "products": ["3D printed items"],
+        "confidence": 1,
+        "rationale": "clearly visible sign with legible text",
+        "identifiable_minor": false
+      }
+    },
+    {
+      "label": "connections",
+      "truth": "booth",
+      "photo_key": "inbound-attachments/CAEv_qqnotizVA-R-7yksPP7UB-yCCreHyb3MZCpdvATbhbMqeQ-mail.gmail.com/0-IMG_20260912_143250918_BURST000_COVER.jpg",
+      "response": {
+        "kind": "booth",
+        "name": "Connections Community Group",
+        "website": null,
+        "products": ["None visible"],
+        "confidence": 0.8,
+        "rationale": "Sign is clear, but partially obscured by the canopy.",
+        "identifiable_minor": true
+      }
+    },
+    {
+      "label": "joelsa",
+      "truth": "booth",
+      "photo_key": "inbound-attachments/CAEv_qqnjOOU3iWECwad9PRAqNLAwqUNDpCDB-ouWhLHi4AyTEg-mail.gmail.com/0-IMG_20260912_093253128_BURST000_COVER.jpg",
+      "response": {
+        "kind": "booth",
+        "name": "Toolsa Farm Fiber",
+        "website": null,
+        "products": ["Wool", "Angora", "Wool Garden Pellets"],
+        "confidence": 0.9,
+        "rationale": "The sign is clear and well-lit, but the bottom of the sign is slightly cut off.",
+        "identifiable_minor": false
+      }
+    },
+    {
+      "label": "livestock",
+      "truth": "scenery",
+      "photo_key": "inbound-attachments/CAEv_qqn-BQ-0q7jnwObYZgu4EnZE6MdZziSfsYSY6BER-snQ-Q-mail.gmail.com/0-IMG_20260912_093318616_BURST000_COVER.jpg",
+      "response": {
+        "kind": "scenery",
+        "name": null,
+        "website": null,
+        "products": [],
+        "confidence": 1,
+        "rationale": null,
+        "identifiable_minor": true
+      }
+    },
+    {
+      "label": "cheer",
+      "truth": "performer",
+      "photo_key": "inbound-attachments/CAEv_qqmrYgJ-i72jAsEjVOTLyLiGos-t8bZZ_cCcGUpawgU-4w-mail.gmail.com/0-IMG_20260912_093200770_BURST000_COVER.jpg",
+      "response": {
+        "kind": "performer",
+        "name": "Cheerleading",
+        "website": null,
+        "products": ["cheerleading uniforms"],
+        "confidence": 1,
+        "rationale": "The cheerleaders are standing in a line, wearing matching uniforms, and appear to be preparing for a performance.",
+        "identifiable_minor": true
+      }
+    },
+    {
+      "label": "bouncehouse",
+      "truth": "scenery",
+      "photo_key": "inbound-attachments/CAEv_qqn0AMtx-a11ZbCr8-_nt2HycNrqhM6-7t_d-f1CwCujWA-mail.gmail.com/0-IMG_20260912_093137611_BURST000_COVER.jpg",
+      "response": {
+        "kind": "booth",
+        "name": null,
+        "website": null,
+        "products": ["inflatable", "jump", "slide", "bounce", "house"],
+        "confidence": 1,
+        "rationale": "clear sign and prominent display",
+        "identifiable_minor": true
+      }
+    },
+    {
+      "label": "by-b",
+      "truth": "booth",
+      "photo_key": "inbound-attachments/CAEv_qqkDme7uPvg8RU9vhnLJRerx-qCn8QK5GTy3PisiNt1z9w-mail.gmail.com/0-IMG_20260912_102448752_BURST000_COVER.jpg",
+      "response": {
+        "kind": "booth",
+        "name": "By-B",
+        "website": "noshop/bybinkcrafts",
+        "products": ["unique and fun crafts"],
+        "confidence": 1,
+        "rationale": "clearly legible sign",
+        "identifiable_minor": false
+      }
+    },
+    {
+      "label": "ccfcu",
+      "truth": "booth",
+      "photo_key": "inbound-attachments/CAEv_qqnO24knmiG17KQ85V-Ma8-R5MnY-7kqwZO1MWWXZMaiJQ-mail.gmail.com/0-IMG_20260912_090102608_BURST000_COVER.jpg",
+      "response": {
+        "kind": "booth",
+        "name": "Cumberland County Federal Credit Union",
+        "website": null,
+        "products": ["glasses", "gloves"],
+        "confidence": 0.8,
+        "rationale": "The sign is clear and legible.",
+        "identifiable_minor": false
+      }
+    },
+    {
+      "label": "mainecardworks",
+      "truth": "booth",
+      "photo_key": "inbound-attachments/CAEv_qqn8q59yFjUANhfMVfd6wX990jAPcZxCfKXPv83znryQsA-mail.gmail.com/0-IMG_20260912_083113653_BURST000_COVER.jpg",
+      "response": {
+        "kind": "booth",
+        "name": "Maine CardWorks.com",
+        "website": "Watercolors by Carolyn Smith",
+        "products": ["cards"],
+        "confidence": 1,
+        "rationale": "clear and visible sign",
+        "identifiable_minor": false
+      }
+    },
+    {
+      "label": "gng-animal-hosp",
+      "truth": "booth",
+      "photo_key": "inbound-attachments/CAEv_qqmSEm5EGt_2yReXvMrgF2x3ZSfPM08i1FJKOw2pYf5hTA-mail.gmail.com/0-IMG_20260912_083124087_BURST000_COVER.jpg",
+      "response": {
+        "kind": "booth",
+        "name": "GRAY-NEW GLOUCESTER ANIMAL HOSPITAL",
+        "products": [],
+        "confidence": 0.9,
+        "rationale": "clear sign on red canopy",
+        "identifiable_minor": false
+      }
+    }
+  ]
+}

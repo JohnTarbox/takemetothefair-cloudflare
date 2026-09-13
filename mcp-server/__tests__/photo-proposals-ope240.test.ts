@@ -14,7 +14,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { CapturingMcpServer, createTestDb, mockIndexNowFetch, type TestDb } from "./setup-db.js";
 import { registerAdminTools } from "../src/tools/admin.js";
 import { adminActions, events, promoters } from "../src/schema.js";
-import { BOOTH_PROPOSED_ACTION } from "../src/photo/booth-pipeline.js";
+import { BOOTH_PROPOSED_ACTION, PERFORMER_PROPOSED_ACTION } from "../src/photo/booth-pipeline.js";
 
 const ADMIN_AUTH = { userId: "u-admin", role: "ADMIN" as const };
 const ENV = { MAIN_APP_URL: "https://meetmeatthefair.com", INTERNAL_API_KEY: "k" };
@@ -110,6 +110,7 @@ describe("list_photo_proposals", () => {
     const out = parse(await server.invoke("list_photo_proposals", {}));
     expect(out.summary).toEqual({
       total_staged: 4,
+      performer_proposals: 0,
       would_have_written: 1,
       vision_failures: 2,
       identified_but_below_threshold: 0,
@@ -172,5 +173,47 @@ describe("list_photo_proposals", () => {
     // A writer change that broke the record format must be visible, not silent.
     expect(out.count).toBe(1);
     expect(out.proposals[0].rationale).toMatch(/did not parse/);
+  });
+
+  it("OPE-969 — returns performer proposals with their class, and reads a pre-split row as a booth", async () => {
+    seedProposal({
+      photo_name: "legacy-booth.jpg",
+      stage_reason: "no legible business name on the booth",
+    });
+    db.insert(adminActions)
+      .values({
+        action: PERFORMER_PROPOSED_ACTION,
+        actorUserId: null,
+        targetType: "inbound_email",
+        targetId: "ie-perf",
+        payloadJson: JSON.stringify({
+          event_id: "e1",
+          photo_name: "cheer.jpg",
+          photo_class: "performer",
+          stage_kind: "performer_unmatched",
+          performer_name: "Cheerleading",
+        }),
+        createdAt: new Date("2026-09-13T12:00:00Z"),
+      })
+      .run();
+
+    const all = parse(await server.invoke("list_photo_proposals", {}));
+    const byName = Object.fromEntries(
+      all.proposals.map((x: { photo_name: string }) => [x.photo_name, x])
+    );
+    expect(byName["legacy-booth.jpg"]).toMatchObject({ photo_class: "booth", stage_kind: null });
+    expect(byName["cheer.jpg"]).toMatchObject({
+      photo_class: "performer",
+      stage_kind: "performer_unmatched",
+      performer_name: "Cheerleading",
+    });
+    expect(all.summary.performer_proposals).toBe(1);
+
+    const perf = parse(await server.invoke("list_photo_proposals", { photo_class: "performer" }));
+    expect(perf.proposals.map((x: { photo_name: string }) => x.photo_name)).toEqual(["cheer.jpg"]);
+    const booth = parse(await server.invoke("list_photo_proposals", { photo_class: "booth" }));
+    expect(booth.proposals.map((x: { photo_name: string }) => x.photo_name)).toEqual([
+      "legacy-booth.jpg",
+    ]);
   });
 });
