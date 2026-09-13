@@ -68,10 +68,51 @@ describe("OPE-934 — automatic deploys (workflow_run)", () => {
     expect(viaWorkflowRun(run({ conclusion: c })).decision).toBe("skip");
   });
 
-  it("SKIPS a green run whose commit is no longer main's HEAD — the newer run deploys", () => {
+  it("SKIPS a green run whose commit is no longer main's HEAD while main's CI is unfinished", () => {
     const d = viaWorkflowRun(realPush, "a".repeat(40));
     expect(d.decision).toBe("skip");
     expect(d.reason).toMatch(/newer run deploys/);
+  });
+
+  it("a STALE run deploys main's HEAD when main's CI is already green (the cancelled-pending case)", () => {
+    const newer = "b".repeat(40);
+    const d = decide({
+      eventName: "workflow_run",
+      event: realPush,
+      repository: REPO,
+      ref: "refs/heads/main",
+      mainHeadSha: newer,
+      mainHeadCiConclusion: "success",
+    });
+    expect(d).toMatchObject({ decision: "deploy", sha: newer });
+  });
+
+  it.each(["failure", "cancelled", "in_progress", null])(
+    "a STALE run does NOT deploy main's HEAD when its CI is %s",
+    (c) => {
+      const d = decide({
+        eventName: "workflow_run",
+        event: realPush,
+        repository: REPO,
+        ref: "refs/heads/main",
+        mainHeadSha: "b".repeat(40),
+        mainHeadCiConclusion: c,
+      });
+      expect(d.decision).toBe("skip");
+    }
+  );
+
+  it("a FORK run never reaches the stale-deploy branch, even with main's CI green", () => {
+    const fork = run({ event: "pull_request", head_repository: { full_name: "attacker/x" } });
+    const d = decide({
+      eventName: "workflow_run",
+      event: fork,
+      repository: REPO,
+      ref: "refs/heads/main",
+      mainHeadSha: "b".repeat(40),
+      mainHeadCiConclusion: "success",
+    });
+    expect(d.decision).toBe("skip");
   });
 
   it("REFUSES when main's HEAD could not be resolved", () => {

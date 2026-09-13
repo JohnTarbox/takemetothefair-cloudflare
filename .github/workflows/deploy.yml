@@ -49,6 +49,7 @@ jobs:
     timeout-minutes: 2
     permissions:
       contents: read
+      actions: read
     outputs:
       decision: ${{ steps.decide.outputs.decision }}
       sha: ${{ steps.decide.outputs.sha }}
@@ -64,11 +65,23 @@ jobs:
         # ever made private. An empty result makes the gate SKIP, never deploy.
         run: echo "sha=$(git ls-remote origin refs/heads/main | cut -f1)" >> "$GITHUB_OUTPUT"
 
+      # Only consulted when the triggering run is STALE (see deploy-gate.mjs):
+      # the conclusion of the push-to-main CI run for main's HEAD, if one exists.
+      - name: Main HEAD's CI conclusion
+        id: headci
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.head.outputs.sha }}
+        run: |
+          c=$(gh api "repos/${{ github.repository }}/actions/workflows/ci.yml/runs?head_sha=${SHA}&event=push&branch=main" --jq '.workflow_runs[0].conclusion // ""' 2>/dev/null || true)
+          echo "conclusion=${c}" >> "$GITHUB_OUTPUT"
+
       - name: Decide
         id: decide
         run: node scripts/deploy-gate.mjs
         env:
           MAIN_HEAD_SHA: ${{ steps.head.outputs.sha }}
+          MAIN_HEAD_CI_CONCLUSION: ${{ steps.headci.outputs.conclusion }}
 
   # D1 migrations must apply BEFORE either the Pages or MCP Worker deploy
   # so the new code never runs against an old schema. Added 2026-05-21

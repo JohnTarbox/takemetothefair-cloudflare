@@ -9,4 +9,5 @@ export function decide(input: {
   repository: string;
   ref: string;
   mainHeadSha: string | null;
+  mainHeadCiConclusion?: string | null;
 }): GateDecision;

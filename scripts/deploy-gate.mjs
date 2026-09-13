@@ -29,10 +29,18 @@
  *   repository: string,
  *   ref: string,
  *   mainHeadSha: string | null,
+ *   mainHeadCiConclusion?: string | null,
  * }} input
  * @returns {GateDecision}
  */
-export function decide({ eventName, event, repository, ref, mainHeadSha }) {
+export function decide({
+  eventName,
+  event,
+  repository,
+  ref,
+  mainHeadSha,
+  mainHeadCiConclusion = null,
+}) {
   const skip = (reason) => ({ decision: "skip", sha: null, reason });
 
   if (!mainHeadSha || !/^[0-9a-f]{40}$/.test(mainHeadSha)) {
@@ -73,11 +81,23 @@ export function decide({ eventName, event, repository, ref, mainHeadSha }) {
     return skip(`CI head_sha ${JSON.stringify(run.head_sha)} is not a commit SHA`);
   }
   if (run.head_sha !== mainHeadSha) {
-    // Two merges close together: this run's commit is no longer main. Deploying
-    // it now could land AFTER the newer one and leave production behind. The
-    // newer commit's own CI run will deploy.
+    // Two merges close together: this run's commit is no longer main, and
+    // deploying it could land AFTER the newer one and leave production behind.
+    //
+    // But "the newer run will deploy" is not guaranteed. The workflow's
+    // concurrency group keeps ONE pending run: if this older run was created
+    // after the newer one was queued, it REPLACED (cancelled) it — the
+    // batch-merge incident where an older commit survived as the deploy. So if
+    // main's HEAD already has a green push CI run, deploy THAT commit here.
+    if (mainHeadCiConclusion === "success") {
+      return {
+        decision: "deploy",
+        sha: mainHeadSha,
+        reason: `CI tested ${run.head_sha.slice(0, 8)}, but main is now ${mainHeadSha.slice(0, 8)} and its CI is already green; deploying main`,
+      };
+    }
     return skip(
-      `CI tested ${run.head_sha.slice(0, 8)} but main is now ${mainHeadSha.slice(0, 8)}; the newer run deploys`
+      `CI tested ${run.head_sha.slice(0, 8)} but main is now ${mainHeadSha.slice(0, 8)} (its CI: ${mainHeadCiConclusion ?? "not finished"}); the newer run deploys`
     );
   }
   return {
@@ -101,6 +121,7 @@ if (isMain) {
     repository: env.GITHUB_REPOSITORY ?? "",
     ref: env.GITHUB_REF ?? "",
     mainHeadSha: (env.MAIN_HEAD_SHA ?? "").trim() || null,
+    mainHeadCiConclusion: (env.MAIN_HEAD_CI_CONCLUSION ?? "").trim() || null,
   });
   console.log(`[deploy-gate] ${result.decision}: ${result.reason}`);
   if (env.GITHUB_OUTPUT) {
