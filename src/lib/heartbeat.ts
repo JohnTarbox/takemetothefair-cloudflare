@@ -1364,6 +1364,25 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     lastEvidenceAt: (db) =>
       maxTs(db, performerEnrichmentCandidates, performerEnrichmentCandidates.createdAt),
   },
+  {
+    // OPE-971 — request_samples retention, moved off a 1%-per-write dice roll
+    // onto the MCP 06:00Z cron. Evidence is the RUN STAMP, not rows deleted:
+    // most days nothing ages past 60 days, and a deleted-count probe would go
+    // red on a quiet table (the OPE-541 false-fire). 48h tolerates one missed
+    // daily run, matching the other 06:00Z cron probes.
+    name: "request-sample-retention",
+    ownerOpe: "OPE-971",
+    label: "request_samples 60-day retention (daily MCP cron)",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        agentHeartbeats,
+        agentHeartbeats.lastSeenAt,
+        eq(agentHeartbeats.agentCode, "watchdog:request-sample-retention")
+      ),
+  },
 ];
 
 /** A probe joined to its enablement anchor + newest evidence — the input to the

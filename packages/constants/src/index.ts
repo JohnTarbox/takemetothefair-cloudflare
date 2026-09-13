@@ -1050,6 +1050,12 @@ export function computePerformerEnrichment(
  * criterion. Widening it would cost essentially nothing operationally — noted
  * on OPE-370 as a decision available to John, not taken unilaterally.
  */
+/**
+ * OPE-971 — request_samples retention. Enforced by the MCP daily cron
+ * (mcp-server/src/request-sample-retention.ts), not on the write path.
+ */
+export const REQUEST_SAMPLE_RETENTION_DAYS = 60;
+
 export const SEARCH_PING_RETENTION_DAYS = 7;
 
 /** Env override, so the window is tunable without a deploy-time code change. */
