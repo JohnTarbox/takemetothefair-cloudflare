@@ -8,6 +8,7 @@ import { LoginHandler } from "./oauth/login-handler.js";
 import { timingSafeEqualString } from "@takemetothefair/utils";
 import { getDb } from "./db.js";
 import { runRequestSampleRetention } from "./request-sample-retention.js";
+import { runErrorLogRetention, runIndexNowSubmissionRetention } from "./log-table-retention.js";
 import { authenticateToken } from "./auth.js";
 import { registerPublicTools } from "./tools/public.js";
 import { registerUserTools } from "./tools/user.js";
@@ -1902,6 +1903,24 @@ export default {
         // OPE-971 — request_samples retention on a schedule (was a 1% dice roll
         // on the middleware's write path). Stamps watchdog:request-sample-retention.
         runRequestSampleRetention(getDb(env.DB)).then(() => undefined),
+        // OPE-993 — error_logs + indexnow_submissions 30-day retention (were 1%
+        // dice rolls on their write paths). Each in its own try/catch so a
+        // throw — sync or async — cannot skip a sibling. Each stamps
+        // watchdog:<table>-retention ONLY on a successful run.
+        (async () => {
+          try {
+            await runErrorLogRetention(getDb(env.DB));
+          } catch (error) {
+            console.error("[cron] runErrorLogRetention threw", error);
+          }
+        })(),
+        (async () => {
+          try {
+            await runIndexNowSubmissionRetention(getDb(env.DB));
+          } catch (error) {
+            console.error("[cron] runIndexNowSubmissionRetention threw", error);
+          }
+        })(),
         // OPE-17 (2026-06-29) — inbound-email exception rails. Reconciles
         // exception statuses (already-handled → salvaged; spam/unsubscribe →
         // reversible rejected) then notifies the operator when the human-triage

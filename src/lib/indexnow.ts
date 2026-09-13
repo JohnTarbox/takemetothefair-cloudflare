@@ -22,7 +22,7 @@ import {
   pendingSearchPings,
   timeToIndexLog,
 } from "@/lib/db/schema";
-import { inArray, lt } from "drizzle-orm";
+import { inArray } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import { SITE_HOSTNAME } from "@takemetothefair/constants";
 import {
@@ -173,12 +173,8 @@ async function recordSubmission(
       httpStatus: httpStatus ?? undefined,
       errorMessage: errorMessage ?? undefined,
     });
-
-    // 1% probabilistic cleanup of submissions older than 30 days
-    if (Math.random() < 0.01) {
-      const thirtyDaysAgo = new Date(Date.now() - 2592000 * 1000);
-      await db.delete(indexnowSubmissions).where(lt(indexnowSubmissions.timestamp, thirtyDaysAgo));
-    }
+    // OPE-993 — no pruning here. The 30-day window is enforced by the MCP
+    // daily cron (mcp-server/src/log-table-retention.ts), not a 1% dice roll.
   } catch (err) {
     // Never throw from the logger
     console.error("[IndexNow] Failed to persist submission record:", err);

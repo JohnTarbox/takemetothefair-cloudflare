@@ -1,5 +1,4 @@
 import { errorLogs } from "@/lib/db/schema";
-import { lt } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 
 interface LogErrorOptions {
@@ -58,20 +57,9 @@ export async function logError(
       route,
       digest,
     });
-
-    // 1% probabilistic cleanup of old logs. If the cleanup itself fails
-    // (D1 transient error, lock contention) the surrounding catch would
-    // swallow it silently, letting `errorLogs` grow unbounded. Wrap the
-    // cleanup so the failure surfaces in `wrangler tail` separately
-    // from the original log-write attempt.
-    if (Math.random() < 0.01) {
-      const thirtyDaysAgo = new Date(Date.now() - 2592000 * 1000);
-      try {
-        await db.delete(errorLogs).where(lt(errorLogs.timestamp, thirtyDaysAgo));
-      } catch (cleanupErr) {
-        console.error("[logger] errorLogs cleanup failed:", cleanupErr);
-      }
-    }
+    // OPE-993 — no pruning here. The 30-day window is enforced by the MCP
+    // daily cron (mcp-server/src/log-table-retention.ts), which reports each
+    // run; this used to be a 1% dice roll whose failures nothing could see.
   } catch (logErr) {
     // Never throw from the logger
     console.error("Failed to write error log to D1:", logErr);
