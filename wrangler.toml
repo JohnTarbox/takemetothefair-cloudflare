@@ -185,6 +185,23 @@ name = "BURST_COUNTER"
 class_name = "BurstCounter"
 script_name = "meetmeatthefair-mcp"
 
+# OPE-899 — OpenNext's ISR revalidation queue (open-next.config.ts `doQueue`).
+# `DOQueueHandler` is exported by OpenNext's own worker template; it dedupes
+# revalidations of the same route and calls back into THIS Worker through
+# `WORKER_SELF_REFERENCE` to regenerate. SQLite-backed (it persists a per-route
+# sync table). Inert today — see open-next.config.ts for the measurement.
+[[durable_objects.bindings]]
+name = "NEXT_CACHE_DO_QUEUE"
+class_name = "DOQueueHandler"
+
+[[migrations]]
+tag = "v1-ope899-isr-do-queue"
+new_sqlite_classes = ["DOQueueHandler"]
+
+[[services]]
+binding = "WORKER_SELF_REFERENCE"
+service = "meetmeatthefair-app"
+
 # KV namespace for rate limiting
 [[kv_namespaces]]
 binding = "RATE_LIMIT_KV"
