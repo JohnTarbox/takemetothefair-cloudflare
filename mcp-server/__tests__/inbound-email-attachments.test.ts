@@ -314,3 +314,88 @@ describe("OPE-68 attachment OCR → pipeline", () => {
     expect(result.replyKind).toBe("no-url");
   });
 });
+
+// ── OPE-954 — the OCR step result cap, and degrading instead of dying ─────
+
+/** A step that behaves like Cloudflare's: a result over 1 MiB throws. */
+function makeCappedStep(row: RowSnapshot, opts: { throwOn?: string } = {}) {
+  const labels: string[] = [];
+  const resultBytes: Record<string, number> = {};
+  const step = {
+    do: async (label: string, optsOrFn: unknown, maybeFn?: unknown) => {
+      labels.push(label);
+      if (label === "submit/load-row") return row;
+      if (opts.throwOn === label) throw new Error(`Step ${label}-1 failed on purpose`);
+      const fn = (typeof optsOrFn === "function" ? optsOrFn : maybeFn) as () => Promise<unknown>;
+      const out = await fn();
+      const n = new TextEncoder().encode(JSON.stringify(out ?? null)).length;
+      resultBytes[label] = n;
+      if (n > 2 ** 20) {
+        throw new Error(`Step ${label}-1 output is too large. Maximum allowed size is 1MiB.`);
+      }
+      return out;
+    },
+  };
+  return { step, labels, resultBytes };
+}
+
+const refs4 = JSON.stringify(
+  [0, 1, 2, 3].map((i) => ({
+    key: `inbound-attachments/g/${i}-p.png`,
+    name: `p${i}.png`,
+    mimeType: "image/png",
+    size: 900_000,
+  }))
+);
+
+describe("OPE-954 — OCR results that sum past 1 MiB", () => {
+  it("poster-only: four huge OCR results still create the event, under the cap", async () => {
+    const row: RowSnapshot = {
+      parsedUrl: null,
+      fromAddress: "alice@example.com",
+      subject: "Posters",
+      attachmentCount: 4,
+      attachmentRefs: refs4,
+      classifiedSubIntent: "new_event",
+      bodyTextExcerpt: "hi", // no body source: the posters are the only way in
+    };
+    const { created } = installFetch({
+      bodyEvents: [{ name: "Poster Fair", startDate: futureDate(40), venueName: "Grange Hall" }],
+    });
+    // ~400 KB of OCR text per image: 4 × 400 KB ≫ 1 MiB unbounded.
+    const { wf } = makeWorkflow({ markdown: `Poster Fair at Grange Hall. ${"x".repeat(400_000)}` });
+    const { step, resultBytes } = makeCappedStep(row);
+
+    const result = await wf.runSubmitPipeline(step, "row-1");
+
+    expect(resultBytes["ocr-attachments"]).toBeLessThan(2 ** 20);
+    expect(created).toEqual(["Poster Fair"]);
+    expect(result.replyKind).not.toBe("extract-failed");
+    expect(result.replyParams?.attachmentsRead).toBe(true);
+  });
+
+  it("a FAILED OCR step no longer kills the run — the body still creates the event", async () => {
+    const row: RowSnapshot = {
+      parsedUrl: null,
+      fromAddress: "alice@example.com",
+      subject: "Harvest Fair",
+      attachmentCount: 4,
+      attachmentRefs: refs4,
+      // Prose-only routing (no URL), so the body alone must carry the event.
+      classifiedSubIntent: "free_text",
+      bodyTextExcerpt:
+        "Harvest Fair is on the Town Green this fall, vendors welcome, details attached below.",
+    };
+    const { created } = installFetch({
+      bodyEvents: [{ name: "Harvest Fair", startDate: futureDate(50), venueName: "Town Green" }],
+    });
+    const { wf } = makeWorkflow({ markdown: "irrelevant" });
+    const { step, labels } = makeCappedStep(row, { throwOn: "ocr-attachments" });
+
+    const result = await wf.runSubmitPipeline(step, "row-1");
+
+    expect(labels).toContain("ocr-attachments"); // it was attempted, and threw
+    expect(created).toEqual(["Harvest Fair"]);
+    expect(result.status).not.toBe("failed");
+  });
+});

@@ -128,8 +128,10 @@ import {
   submitEvent,
   stripSignature,
   stripForwardedPreamble,
+  MAX_FETCH_CONTENT_LEN,
   type SubmitFetchResult,
 } from "../email-handlers/submit.js";
+import { boundOcrSources, OCR_STEP_BUDGET_BYTES } from "../email-handlers/ocr-bounds.js";
 import { recordSourceCitations } from "../email-handlers/pipeline-citations.js";
 // OPE-832 — a bug described in an email becomes a reviewable candidate in the
 // defect queue. Runs for every intent except problem_report (which already
@@ -1613,29 +1615,56 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     if (rowSnapshot.attachmentCount > 0 && rowSnapshot.attachmentRefs) {
       const refsJson = rowSnapshot.attachmentRefs;
       const ocrStartedAt = Date.now();
-      attachmentSources = await step.do(
-        "ocr-attachments",
-        // OPE-189 — the old 60s step timeout EQUALLED the AI binding's own 60s
-        // timeout, so a single cold-start toMarkdown timeout consumed the whole
-        // step budget and the (successful) warm retry was stranded. ocrAttachments
-        // now retries transient failures in-place (MAX_OCR_ATTEMPTS), so the step
-        // budget must cover several ~60s attempts; step-level retry stays as an
-        // outer backstop.
-        { retries: { limit: 1, delay: "10 seconds", backoff: "constant" }, timeout: "200 seconds" },
-        () => this.ocrAttachments(refsJson, messageRowId)
-      );
+      // OPE-954 — attachments are ENRICHMENT. If this step fails for any reason
+      // (the 1 MiB step-result cap was the first; `ocrAttachments` now bounds its
+      // result so it should not recur), the run continues with the body and URL
+      // sources rather than dying with extract-failed. Losing a whole submission
+      // to an image-OCR problem was the wrong failure mode.
+      let ocrError: string | null = null;
+      try {
+        attachmentSources = await step.do(
+          "ocr-attachments",
+          // OPE-189 — the old 60s step timeout EQUALLED the AI binding's own 60s
+          // timeout, so a single cold-start toMarkdown timeout consumed the whole
+          // step budget and the (successful) warm retry was stranded. ocrAttachments
+          // now retries transient failures in-place (MAX_OCR_ATTEMPTS), so the step
+          // budget must cover several ~60s attempts; step-level retry stays as an
+          // outer backstop.
+          {
+            retries: { limit: 1, delay: "10 seconds", backoff: "constant" },
+            timeout: "200 seconds",
+          },
+          () => this.ocrAttachments(refsJson, messageRowId)
+        );
+      } catch (err) {
+        ocrError = err instanceof Error ? err.message : String(err);
+        attachmentSources = [];
+        await logError(getDb(this.env.DB), {
+          level: "error",
+          source: "mcp:workflow:ocr-attachments",
+          message: `ocr-attachments step failed; continuing without attachment sources: ${ocrError}`,
+          error: err,
+        }).catch(() => {});
+      }
       // OPE-501 — the step that could not be answered for. "Ran and produced
       // nothing" and "never ran" are different defects with different fixes, and
       // the output row cannot tell them apart.
+      //
+      // OPE-954 — plus the bytes it carried, so a run approaching the step-result
+      // cap is visible BEFORE it is fatal.
+      const textBytesOut = new TextEncoder().encode(JSON.stringify(attachmentSources)).length;
       await recordWorkflowStep(getDb(this.env.DB), {
         instanceId,
         workflowName: "inbound-email",
         inboundEmailId: messageRowId,
         stepName: "ocr-attachments",
-        status: "ok",
+        status: ocrError ? "failed" : "ok",
         detail: {
           attachments_claimed: rowSnapshot.attachmentCount,
           sources_produced: attachmentSources.length,
+          text_bytes_out: textBytesOut,
+          budget_bytes: OCR_STEP_BUDGET_BYTES,
+          ...(ocrError ? { error: ocrError.slice(0, 300) } : {}),
         },
         durationMs: Date.now() - ocrStartedAt,
       });
@@ -2838,7 +2867,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     } catch {
       return [];
     }
-    const sources: SubmitSource[] = [];
+    const sources: Array<Extract<SubmitSource, { kind: "attachment" }>> = [];
     // OPE-499 — keep what we read, not just what we used. One entry per
     // attachment INCLUDING the ones that yielded nothing, so "the flyer said
     // nothing useful" is distinguishable from "we never read the flyer".
@@ -2922,9 +2951,39 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       });
     }
 
+    // OPE-954 — this array IS the step's result, and a step result over 1 MiB
+    // kills the run. Bound it: each source to what the extractor can read at
+    // all, the total to a byte budget under the cap. Every cut is logged and
+    // stamped on the attachment's OCR record below.
+    const bounded = boundOcrSources(sources, {
+      perSourceMaxChars: MAX_FETCH_CONTENT_LEN,
+      budgetBytes: OCR_STEP_BUDGET_BYTES,
+      minChars: MIN_OCR_CHARS,
+    });
+    for (const t of bounded.truncations) {
+      const src = sources[t.index];
+      const rec = ocrRecords.find((r) => r.name === src.name);
+      if (rec) rec.outcome += `,${t.reason}:${t.originalChars}->${t.keptChars}chars`;
+      await logError(getDb(this.env.DB), {
+        level: "warn",
+        source: "mcp:workflow:ocr-attachments",
+        message: `attachment source ${t.index} ${t.reason}: ${t.originalChars} -> ${t.keptChars} chars (step result ${bounded.bytes}B, budget ${OCR_STEP_BUDGET_BYTES}B)`,
+      }).catch(() => {});
+    }
+
     // OPE-499 — persist what we read. Best-effort by the same contract as the
     // rest of this method: a failure here must never cost us the extraction that
     // already succeeded, so it logs and moves on rather than throwing.
+    //
+    // OPE-954 — the stored markdown is capped per attachment too. A D1 value
+    // has its own size ceiling, and the untruncated markdown of four large
+    // images is exactly what broke the step result.
+    for (const r of ocrRecords) {
+      if (r.markdown && r.markdown.length > MAX_FETCH_CONTENT_LEN) {
+        r.markdown = r.markdown.slice(0, MAX_FETCH_CONTENT_LEN);
+        if (!r.outcome.includes("per-source-cap")) r.outcome += ",record-truncated";
+      }
+    }
     if (ocrRecords.length > 0) {
       try {
         await getDb(this.env.DB)
@@ -2940,7 +2999,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         }).catch(() => {});
       }
     }
-    return sources;
+    return bounded.sources;
   }
 
   /**
