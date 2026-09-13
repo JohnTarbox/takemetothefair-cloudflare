@@ -29,14 +29,28 @@
  * express "maybe a new vendor, maybe existing X, link to event Y".
  */
 import { adminActions, inboundEmails } from "../schema.js";
-import { eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { Db } from "../db.js";
-import { identifyBooth, disposition, type VisionAi, type Disposition } from "./vision.js";
+import {
+  identifyBooth,
+  disposition,
+  type BoothIdentification,
+  type Disposition,
+  type StageKind,
+  type VisionAi,
+} from "./vision.js";
 import { attachGeneralPhotos } from "./general-photos.js";
 import { autoWriteBooths, type AutoWriteOutcome } from "./auto-write.js";
+import { matchRosterPerformer, resolvePerformerPhoto } from "./performer-photos.js";
 
 /** Audit action for a staged booth identification. */
 export const BOOTH_PROPOSED_ACTION = "vendor.photo_proposed";
+/** OPE-969 — a performer photo held for review (unnamed, unmatched, off-roster, or a child). */
+export const PERFORMER_PROPOSED_ACTION = "performer.photo_proposed";
+/** OPE-969 — a performer photo matched to an appearance already on the lineup. Nothing created. */
+export const PERFORMER_CONFIRMED_ACTION = "performer.photo_confirmed";
+/** OPE-969 — a sign whose owner is not the subject. Recorded; nothing else written. */
+export const SIGNAGE_RECORDED_ACTION = "photo.signage_not_presence";
 
 /**
  * Photos to run vision over in one email.
@@ -56,8 +70,15 @@ export interface PipelinePhoto {
 export interface BoothPipelineResult {
   /** Photos actually run through vision. */
   examined: number;
-  /** Identifications staged for review (needs a human). */
+  /** BOOTH identifications staged for review (needs a human). */
   staged: number;
+  /** OPE-969 — performer photos staged for review. Counted apart from booths so
+   *  the reply's booth count means booths. */
+  performerStaged: number;
+  /** OPE-969 — performer photos matched to an appearance already on the event. */
+  performersConfirmed: Array<{ performerId: string; performerName: string; photoName: string }>;
+  /** OPE-969 — signage-not-presence outcomes recorded (no proposal, no write). */
+  signageRecorded: number;
   /** General (non-booth) scenery — the input to the gallery attach below. */
   skipped: number;
   /** Business names staged OR auto-written, for the reply. */
@@ -147,6 +168,9 @@ export async function runBoothPipeline(
   const empty: BoothPipelineResult = {
     examined: 0,
     staged: 0,
+    performerStaged: 0,
+    performersConfirmed: [],
+    signageRecorded: 0,
     skipped: 0,
     identifiedNames: [],
     galleryAttached: 0,
@@ -184,45 +208,184 @@ export async function runBoothPipeline(
     }
   }
 
-  // Milestone B split: when auto-write is ON, the high-confidence "write"
-  // dispositions are auto-created and NOT staged (they need no review); the
-  // "stage" ones still go to the review queue. When auto-write is OFF, every
-  // non-skip disposition stages, exactly as Milestone A did (identify-only).
+  // OPE-969 — resolve performer photos against the performer table and THIS
+  // event's roster. Reads only, so it runs before the dry-run boundary and a
+  // replay reports the same outcome a live run would act on.
+  type Staged = {
+    photo: PipelinePhoto;
+    id: BoothIdentification;
+    action: string;
+    stageKind: StageKind | null;
+    reason: string | null;
+    wouldAutoWrite: boolean;
+    performer?: { id: string | null; name: string | null; appearancesOnEvent: number };
+    /** Set when the model said booth and the roster said performer. */
+    reclassifiedFrom?: "booth";
+  };
   const autoWriteOn = env.PHOTO_AUTOWRITE_ENABLED === "true";
-  const nonSkip = results.filter((r) => r.d.action !== "skip");
-  const skipped = results.length - nonSkip.length;
+  const staged: Staged[] = [];
+  const confirmed: Array<{
+    photo: PipelinePhoto;
+    performerId: string;
+    performerName: string;
+    appearancesOnEvent: number;
+    reclassifiedFrom?: "booth";
+  }> = [];
+  const toAutoWrite: typeof results = [];
 
-  const toAutoWrite = autoWriteOn ? nonSkip.filter((r) => r.d.action === "write") : [];
-  const toStage = autoWriteOn ? nonSkip.filter((r) => r.d.action !== "write") : nonSkip;
+  for (const r of results) {
+    let d: Disposition = r.d;
+    let reclassifiedFrom: "booth" | undefined;
+
+    // OPE-969 — ROSTER FIRST, whatever the model called the photo. Measured on
+    // the Waterford specimen itself: the Axe Women truck came back as a BOOTH
+    // named "AxeWomen" at confidence 1, which is a vendor proposal today and a
+    // created vendor once auto-write is on. A booth name that matches an act
+    // already on this event's lineup is that act.
+    const boothName = d.identification.kind === "booth" ? d.identification.businessName : null;
+    if (boothName && (d.action === "write" || d.action === "stage")) {
+      try {
+        if (await matchRosterPerformer(db, eventId, boothName)) {
+          d = {
+            action: "performer",
+            identification: {
+              ...d.identification,
+              kind: "performer",
+              performerName: boothName,
+              businessName: null,
+              products: [],
+            },
+          };
+          reclassifiedFrom = "booth";
+        }
+      } catch (e) {
+        // The check that keeps an act out of the vendor table failed, so this
+        // photo must not auto-write on the strength of not having been checked.
+        if (d.action === "write") {
+          d = {
+            action: "stage",
+            identification: d.identification,
+            reason:
+              `roster check failed — not auto-written: ${e instanceof Error ? e.message : String(e)}`.slice(
+                0,
+                200
+              ),
+            stageKind: "booth_roster_check_failed",
+          };
+        }
+      }
+    }
+
+    if (d.action === "write") {
+      // Milestone B split: auto-written when the gate is on; otherwise staged
+      // exactly as Milestone A did, marked as a would-have-written.
+      if (autoWriteOn) toAutoWrite.push(r);
+      else
+        staged.push({
+          photo: r.photo,
+          id: d.identification,
+          action: BOOTH_PROPOSED_ACTION,
+          stageKind: null,
+          reason: null,
+          wouldAutoWrite: true,
+        });
+    } else if (d.action === "stage") {
+      staged.push({
+        photo: r.photo,
+        id: d.identification,
+        action:
+          d.identification.kind === "performer" ? PERFORMER_PROPOSED_ACTION : BOOTH_PROPOSED_ACTION,
+        stageKind: d.stageKind,
+        reason: d.reason,
+        wouldAutoWrite: false,
+      });
+    } else if (d.action === "performer") {
+      try {
+        const res = await resolvePerformerPhoto(db, eventId, d.identification);
+        if (res.outcome === "confirmed") {
+          confirmed.push({
+            photo: r.photo,
+            performerId: res.performerId,
+            performerName: res.performerName,
+            appearancesOnEvent: res.appearancesOnEvent,
+            reclassifiedFrom,
+          });
+        } else {
+          staged.push({
+            photo: r.photo,
+            id: d.identification,
+            action: PERFORMER_PROPOSED_ACTION,
+            stageKind: res.stageKind,
+            reason: res.reason,
+            wouldAutoWrite: false,
+            performer: {
+              id: res.performerId,
+              name: res.performerName,
+              appearancesOnEvent: res.appearancesOnEvent,
+            },
+            reclassifiedFrom,
+          });
+        }
+      } catch (e) {
+        // Fail-soft like every photo step: a lookup fault stages, never writes.
+        staged.push({
+          photo: r.photo,
+          id: d.identification,
+          action: PERFORMER_PROPOSED_ACTION,
+          stageKind: "performer_unmatched",
+          reason: `performer lookup failed: ${e instanceof Error ? e.message : String(e)}`.slice(
+            0,
+            200
+          ),
+          wouldAutoWrite: false,
+        });
+      }
+    }
+  }
+
+  const scenery = results.filter((r) => r.d.action === "skip");
+  const signage = results.filter((r) => r.d.action === "record");
+  const boothStaged = staged.filter((x) => x.action === BOOTH_PROPOSED_ACTION);
+  const performerStaged = staged.length - boothStaged.length;
+  const skipped = scenery.length;
+  const galleryPhotos = [...scenery.map((r) => r.photo), ...confirmed.map((c) => c.photo)];
+  const performersConfirmed = confirmed.map((c) => ({
+    performerId: c.performerId,
+    performerName: c.performerName,
+    photoName: c.photo.name,
+  }));
+  const visionFailures = results
+    .map((r) => r.d.identification.failureReason)
+    .filter((f): f is string => Boolean(f));
 
   // OPE-469 — the dry-run boundary. Everything above this line reads (R2 +
-  // vision); everything below writes (auto-write, admin_actions staging,
-  // flagged_for_review, gallery attach). Returning here is what makes a replay
-  // safe to run against a live row.
+  // vision + the performer lookup); everything below writes (auto-write,
+  // admin_actions, flagged_for_review, gallery attach). Returning here is what
+  // makes a replay safe to run against a live row.
   //
   // The counts reported are what the write half WOULD produce, derived from the
-  // same `toStage` / `toAutoWrite` split the writes use — not re-derived, so
-  // the report cannot drift from the behaviour it predicts.
+  // same buckets the writes use — not re-derived, so the report cannot drift
+  // from the behaviour it predicts.
   if (options.dryRun) {
-    const generalCount = results.filter((r) => r.d.action === "skip").length;
     return {
       examined: results.length,
-      staged: toStage.length,
+      staged: boothStaged.length,
+      performerStaged,
+      performersConfirmed,
+      signageRecorded: signage.length,
       skipped,
-      identifiedNames: toStage
-        .map((r) => r.d.identification.businessName)
+      identifiedNames: boothStaged
+        .map((x) => x.id.businessName)
         .concat(toAutoWrite.map((r) => r.d.identification.businessName ?? ""))
         .filter((n): n is string => Boolean(n)),
       // Reported as "would attach". `attachGeneralPhotos` can still fail on a
       // real run, so this is an upper bound rather than a promise — which is
       // why a replay compares against the recorded outcome instead of asserting
       // equality with it.
-      galleryAttached: generalCount,
+      galleryAttached: galleryPhotos.length,
       galleryFailed: 0,
       autoWritten: [],
-      visionFailures: results
-        .map((r) => r.d.identification.failureReason)
-        .filter((f): f is string => Boolean(f)),
+      visionFailures,
       dryRun: true,
       wouldAutoWrite: toAutoWrite
         .map((r) => r.d.identification.businessName)
@@ -252,10 +415,12 @@ export async function runBoothPipeline(
   }
 
   const now = new Date();
-  for (const { photo, d } of toStage) {
-    const id = d.identification;
+  // OPE-969 — every audit row below is written once per (action, email, photo).
+  // A replayed email re-classifies the same photo; it must not re-propose it.
+  const record = async (action: string, photo: PipelinePhoto, payload: Record<string, unknown>) => {
+    if (await alreadyLogged(db, action, inboundEmailId, photo.key)) return;
     await db.insert(adminActions).values({
-      action: BOOTH_PROPOSED_ACTION,
+      action,
       actorUserId: null,
       targetType: "inbound_email",
       targetId: inboundEmailId,
@@ -263,52 +428,96 @@ export async function runBoothPipeline(
         event_id: eventId,
         photo_key: photo.key,
         photo_name: photo.name,
-        business_name: id.businessName,
-        website: id.website,
-        products: id.products,
-        confidence: id.confidence,
-        rationale: id.rationale,
-        // OPE-403 follow-up — which of the five UNIDENTIFIED paths produced
-        // this, when it was a failure. Absent on a successful identification.
-        // Without it, "vision model returned nothing usable" is unactionable.
-        failure_reason: id.failureReason ?? null,
-        // "write" here means Milestone B WOULD have auto-written this one.
-        would_auto_write: d.action === "write",
-        stage_reason: d.action === "stage" ? d.reason : null,
+        ...payload,
       }),
       // admin_actions.createdAt is notNull with NO default — Drizzle won't fill
       // it. Matches the roster-detect precedent (inbound-email.ts:813).
       createdAt: now,
     } as never);
+  };
+
+  for (const x of staged) {
+    const id = x.id;
+    await record(x.action, x.photo, {
+      // OPE-969 — what the photo IS, and a closed reason vocabulary, so "a
+      // booth whose name is unreadable" and "not a booth" never share a label.
+      photo_class: id.kind,
+      stage_kind: x.stageKind,
+      business_name: id.businessName,
+      performer_name: id.performerName,
+      ...(x.performer
+        ? {
+            performer_id: x.performer.id,
+            matched_performer_name: x.performer.name,
+            appearances_on_event: x.performer.appearancesOnEvent,
+          }
+        : {}),
+      website: id.website,
+      products: id.products,
+      confidence: id.confidence,
+      rationale: id.rationale,
+      identifiable_minor: id.identifiableMinor,
+      // OPE-403 follow-up — which of the five UNIDENTIFIED paths produced
+      // this, when it was a failure. Absent on a successful identification.
+      failure_reason: id.failureReason ?? null,
+      // Milestone B WOULD have auto-written this one.
+      would_auto_write: x.wouldAutoWrite,
+      reclassified_from: x.reclassifiedFrom ?? null,
+      stage_reason: x.reason,
+    });
   }
 
-  if (toStage.length > 0) {
+  for (const c of confirmed) {
+    await record(PERFORMER_CONFIRMED_ACTION, c.photo, {
+      photo_class: "performer",
+      performer_id: c.performerId,
+      performer_name: c.performerName,
+      appearances_on_event: c.appearancesOnEvent,
+      reclassified_from: c.reclassifiedFrom ?? null,
+      // Recorded, never acted on: no path sets a hero from a photo.
+      hero_candidate: true,
+    });
+  }
+
+  for (const r of signage) {
+    const id = r.d.identification;
+    await record(SIGNAGE_RECORDED_ACTION, r.photo, {
+      photo_class: "signage",
+      sign_text: id.signText,
+      confidence: id.confidence,
+      rationale: id.rationale,
+    });
+  }
+
+  if (staged.length > 0) {
     await db
       .update(inboundEmails)
       .set({ flaggedForReview: 1 })
       .where(eq(inboundEmails.id, inboundEmailId));
   }
 
-  // OPE-205 §3 — the "skip" bucket is general fair scenery, not a failure.
-  // Attach it to the resolved event as gallery candidates (OPE-212's
-  // event_photos). Fail-soft: this must never cost us the booth staging or the
-  // fair match that already succeeded.
+  // OPE-205 §3 — scenery, plus OPE-969's confirmed performer photos, go to the
+  // resolved event's gallery. Re-attaching the same bytes converges on the
+  // existing row (OPE-686 content digest), so a replay does not duplicate it.
+  // Fail-soft: this must never cost us the staging or the fair match.
   let gallery = { attached: 0, failed: 0 };
-  const generalPhotos = results.filter((r) => r.d.action === "skip").map((r) => r.photo);
-  if (generalPhotos.length > 0) {
+  if (galleryPhotos.length > 0) {
     try {
-      gallery = await attachGeneralPhotos(env, eventId, generalPhotos);
+      gallery = await attachGeneralPhotos(env, eventId, galleryPhotos);
     } catch {
-      gallery = { attached: 0, failed: generalPhotos.length };
+      gallery = { attached: 0, failed: galleryPhotos.length };
     }
   }
 
   return {
     examined: results.length,
-    staged: toStage.length,
+    staged: boothStaged.length,
+    performerStaged,
+    performersConfirmed,
+    signageRecorded: signage.length,
     skipped,
     identifiedNames: [
-      ...toStage.map((r) => r.d.identification.businessName),
+      ...boothStaged.map((x) => x.id.businessName),
       ...autoWritten.map((a) => a.businessName),
     ].filter((n): n is string => Boolean(n)),
     galleryAttached: gallery.attached,
@@ -316,8 +525,27 @@ export async function runBoothPipeline(
     autoWritten,
     // Named per photo so one bad frame in a batch is distinguishable from a
     // systemic failure (e.g. every photo returning `ai-run-threw`).
-    visionFailures: results
-      .map((r) => r.d.identification.failureReason)
-      .filter((f): f is string => Boolean(f)),
+    visionFailures,
   };
+}
+
+/** OPE-969 — has this exact (action, email, photo) already been recorded? */
+async function alreadyLogged(
+  db: Db,
+  action: string,
+  inboundEmailId: string,
+  photoKey: string
+): Promise<boolean> {
+  const rows = await db
+    .select({ id: adminActions.id })
+    .from(adminActions)
+    .where(
+      and(
+        eq(adminActions.action, action),
+        eq(adminActions.targetId, inboundEmailId),
+        sql`json_extract(${adminActions.payloadJson}, '$.photo_key') = ${photoKey}`
+      )
+    )
+    .limit(1);
+  return rows.length > 0;
 }

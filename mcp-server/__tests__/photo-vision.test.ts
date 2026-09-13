@@ -54,10 +54,11 @@ describe("parseVisionReply", () => {
   it("applies the same rules to an object response as to a string one", () => {
     // The general → drop-the-name rule is what stops scenery carrying a vendor
     // into a write. It must not depend on which shape the model replied in.
+    // OPE-969: the old prompt's "general" is read as "scenery".
     const id = parseVisionReply({
       response: { kind: "general", business_name: "Petal & Pearl", confidence: 0.9 },
     });
-    expect(id.kind).toBe("general");
+    expect(id.kind).toBe("scenery");
     expect(id.businessName).toBeNull();
   });
 
@@ -97,7 +98,7 @@ describe("parseVisionReply", () => {
     const id = parseVisionReply({
       response: JSON.stringify({ ...boothJson, kind: "general" }),
     });
-    expect(id.kind).toBe("general");
+    expect(id.kind).toBe("scenery");
     expect(id.businessName).toBeNull();
     expect(id.website).toBeNull();
     expect(id.products).toEqual([]);
@@ -187,7 +188,9 @@ describe("identifyBooth", () => {
     // The binding wants a plain array, not a Uint8Array.
     expect(Array.isArray(input.image)).toBe(true);
     expect(input.image).toEqual([1, 2, 3]);
-    expect(input.prompt).toContain("business_name");
+    // OPE-969 — one `name` field, and JSON mode on every call.
+    expect(input.prompt).toContain('"name"');
+    expect(input.response_format?.type).toBe("json_schema");
   });
 
   // ── Retry on an unusable reply (OPE-403, 2026-08-16) ──────────────────────
@@ -276,7 +279,7 @@ describe("disposition", () => {
   });
 
   it("skips general scenery (OPE-205's job, not a vendor write)", () => {
-    const d = disposition(id({ kind: "general", businessName: null }));
+    const d = disposition(id({ kind: "scenery", businessName: null }));
     expect(d.action).toBe("skip");
   });
 
@@ -288,7 +291,9 @@ describe("disposition", () => {
     const d = disposition(id({ businessName: null }));
     expect(d.action).toBe("stage");
     if (d.action !== "stage") return;
-    expect(d.reason).toContain("no legible business name");
+    // OPE-969 — a closed kind, distinct from every "not a booth" outcome.
+    expect(d.stageKind).toBe("booth_name_unreadable");
+    expect(d.reason).toContain("name is not legible");
   });
 
   it("stages rather than writes when confidence is below threshold", () => {

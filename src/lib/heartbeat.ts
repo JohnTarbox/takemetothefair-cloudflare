@@ -892,13 +892,25 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     //
     // Action strings mirror mcp-server BOOTH_PROPOSED_ACTION (booth-pipeline.ts)
     // and BOOTH_AUTOWRITTEN_ACTION (auto-write.ts).
+    //
+    // OPE-969 (2026-09-13) split the classifier: a performer photo now writes
+    // performer.photo_proposed / performer.photo_confirmed and a neighbour's
+    // banner writes photo.signage_not_presence, instead of a booth proposal. A
+    // batch of only those would otherwise read as "the stage stopped running".
+    // Scenery still writes no audit row, as before.
     expectedWindowHours: 30 * 24,
     lastEvidenceAt: (db) =>
       maxTs(
         db,
         adminActions,
         adminActions.createdAt,
-        inArray(adminActions.action, ["vendor.photo_proposed", "vendor.photo_autowritten"])
+        inArray(adminActions.action, [
+          "vendor.photo_proposed",
+          "vendor.photo_autowritten",
+          "performer.photo_proposed",
+          "performer.photo_confirmed",
+          "photo.signage_not_presence",
+        ])
       ),
   },
   // ── OPE-309 (assurance audit A6 / A7) ──────────────────────────────

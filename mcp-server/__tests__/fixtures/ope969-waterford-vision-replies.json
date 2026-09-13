@@ -1,0 +1,119 @@
+{
+  "_source": "OPE-969: same model, VISION_PROMPT + VISION_RESPONSE_FORMAT, two calls per photo, 2026-09-13, over the 4 stored photos@ intake photos from Waterford World's Fair (event b0657071, 2026-07-19). wf-1411 is the Axe Women Loggers of Maine truck, the ticket's Case 1; Axe Women are HEADLINER x3 on that event. Raw result.response values, unedited.",
+  "replies": [
+    {
+      "label": "wf-0943",
+      "rep": 0,
+      "truth": "booth",
+      "photo_key": "inbound-attachments/CAEv_qqmMQBKc65GVkCrv0PRXu8pTQ2EQQCJCNP-Zhj4FYndMww-mail.gmail.com/0-IMG_20260719_094312988_BURST000_COVER.jpg",
+      "response": "**Booth Report**\n\n* **Kind**: Booth\n* **Name**: Waterford Fair Food Booth\n* **Website**: null\n* **Products**: \n\t+ Bison Burger\n\t+ Loaded Spud\n\t+ BLT\n\t+ Mac and Cheese\n\t+ Grilled Cheese\n* **Confidence**: 1.0\n* **Rationale**: Clear and legible sign with no obstructions.\n* **Identifiable Minor**: false"
+    },
+    {
+      "label": "wf-0943",
+      "rep": 1,
+      "truth": "booth",
+      "photo_key": "inbound-attachments/CAEv_qqmMQBKc65GVkCrv0PRXu8pTQ2EQQCJCNP-Zhj4FYndMww-mail.gmail.com/0-IMG_20260719_094312988_BURST000_COVER.jpg",
+      "response": {
+        "kind": "booth",
+        "name": "Waterford Fair Food Booth",
+        "website": null,
+        "products": [
+          "Lunch",
+          "Dinner",
+          "Bison Burger",
+          "Taco Salad",
+          "Chili Cheese Smash Tacos",
+          "BLT",
+          "Mac N Cheese",
+          "Margarita Slushie",
+          "Grilled Cheese"
+        ],
+        "confidence": 1,
+        "rationale": "Sign is clear and legible",
+        "identifiable_minor": true
+      }
+    },
+    {
+      "label": "wf-1059",
+      "rep": 0,
+      "truth": "booth",
+      "photo_key": "inbound-attachments/CAEv_qqnhsNCbktnadq-7QO8xqvqT7rYQv0sDy6zdTsvY3xjq8Q-mail.gmail.com/0-IMG_20260719_105901209_BURST000_COVER.jpg",
+      "response": {
+        "kind": "booth",
+        "name": null,
+        "website": null,
+        "products": [],
+        "confidence": 0.5,
+        "rationale": "The sign is partially obscured by the roof of the booth.",
+        "identifiable_minor": false
+      }
+    },
+    {
+      "label": "wf-1059",
+      "rep": 1,
+      "truth": "booth",
+      "photo_key": "inbound-attachments/CAEv_qqnhsNCbktnadq-7QO8xqvqT7rYQv0sDy6zdTsvY3xjq8Q-mail.gmail.com/0-IMG_20260719_105901209_BURST000_COVER.jpg",
+      "response": {
+        "kind": "booth",
+        "name": null,
+        "website": null,
+        "products": [],
+        "confidence": 1,
+        "rationale": "Signs are legible, and the booth appears to be well-maintained.",
+        "identifiable_minor": false
+      }
+    },
+    {
+      "label": "wf-1121",
+      "rep": 0,
+      "truth": "booth",
+      "photo_key": "inbound-attachments/CAEv_qq-xG1QKN5F-h-z_K6eCuyFWbyjAqreM9XcXyfQ6RR-MMg-mail.gmail.com/0-IMG_20260719_112146829_BURST000_COVER.jpg",
+      "response": {
+        "kind": "booth",
+        "name": "Central Maine Power",
+        "website": null,
+        "products": ["An Avangrid company"],
+        "confidence": 1,
+        "rationale": null,
+        "identifiable_minor": false
+      }
+    },
+    {
+      "label": "wf-1121",
+      "rep": 1,
+      "truth": "booth",
+      "photo_key": "inbound-attachments/CAEv_qq-xG1QKN5F-h-z_K6eCuyFWbyjAqreM9XcXyfQ6RR-MMg-mail.gmail.com/0-IMG_20260719_112146829_BURST000_COVER.jpg",
+      "response": {
+        "kind": "booth",
+        "name": "Central Maine Power",
+        "website": null,
+        "products": [],
+        "confidence": 1,
+        "rationale": "The sign is clear and legible.",
+        "identifiable_minor": false
+      }
+    },
+    {
+      "label": "wf-1411",
+      "rep": 0,
+      "truth": "performer",
+      "photo_key": "inbound-attachments/CAEv_qq-eqs21V5zpvLK-1-g-y7812QjTgKH09QHYUYZJ43G__w-mail.gmail.com/0-IMG_20260719_141145531_HDR.jpg",
+      "response": "The image shows a black pickup truck parked on a grassy field, with a crowd of people in the background. The truck is parked behind yellow caution tape and has a large pink decal on the side that reads \"AxeWomen\". \n\nHere is the data extracted from the image:\n\n* kind: booth\n* name: AxeWomen\n* website: null\n* products: null\n* confidence: 1.0\n* rationale: The truck is parked behind yellow caution tape, and the decal is clearly visible.\n* identifiable_minor: false\n\nNote that there are no children or teenagers visible in the image."
+    },
+    {
+      "label": "wf-1411",
+      "rep": 1,
+      "truth": "performer",
+      "photo_key": "inbound-attachments/CAEv_qq-eqs21V5zpvLK-1-g-y7812QjTgKH09QHYUYZJ43G__w-mail.gmail.com/0-IMG_20260719_141145531_HDR.jpg",
+      "response": {
+        "kind": "booth",
+        "name": "AxeWomen",
+        "website": null,
+        "products": ["Axes", "Wood"],
+        "confidence": 1,
+        "rationale": "The sign is clearly visible and not obscured.",
+        "identifiable_minor": false
+      }
+    }
+  ]
+}

@@ -841,7 +841,12 @@ export function describePhotoStorage(
   const stored = booths?.galleryAttached ?? 0;
   const staged = booths?.staged ?? 0;
   const autoWritten = (booths?.autoWritten ?? []).filter((a) => !a.error).length;
-  const accountedFor = stored + staged + autoWritten;
+  // OPE-969 — a performer photo held for review and a signage-not-presence
+  // record are both deliberate outcomes, not photos that "landed nowhere".
+  // Without them a batch of only signage would read as an unstored-photo defect.
+  const performerStaged = booths?.performerStaged ?? 0;
+  const signageRecorded = booths?.signageRecorded ?? 0;
+  const accountedFor = stored + staged + autoWritten + performerStaged + signageRecorded;
 
   // No images on the mail, or the photos went somewhere: nothing to explain.
   if (offered === 0 || accountedFor > 0) {
