@@ -32,6 +32,7 @@ import {
 } from "../src/photo/vision.js";
 import {
   BOOTH_PROPOSED_ACTION,
+  GALLERY_ATTACHED_ACTION,
   PERFORMER_CONFIRMED_ACTION,
   PERFORMER_PROPOSED_ACTION,
   SIGNAGE_RECORDED_ACTION,
@@ -396,6 +397,7 @@ describe("OPE-969 — the decision-stage heartbeat probe sees the new actions", 
       PERFORMER_PROPOSED_ACTION,
       PERFORMER_CONFIRMED_ACTION,
       SIGNAGE_RECORDED_ACTION,
+      GALLERY_ATTACHED_ACTION,
     ]) {
       expect(probe).toContain(`"${a}"`);
     }

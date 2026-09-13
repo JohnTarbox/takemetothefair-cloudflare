@@ -27,6 +27,7 @@ import { adminActions, events } from "../schema.js";
 import { jsonContent } from "../helpers.js";
 import { BOOTH_PROPOSED_ACTION, PERFORMER_PROPOSED_ACTION } from "../photo/booth-pipeline.js";
 import type { Db } from "../db.js";
+import { computeIntakeAccounting } from "../photo/intake-accounting.js";
 import type { AuthContext } from "../auth.js";
 
 /** Shape written by the booth pipeline's staging step. */
@@ -80,7 +81,9 @@ export function registerPhotoProposalTools(server: McpServer, db: Db, auth: Auth
         .min(1)
         .max(365)
         .optional()
-        .describe("Only proposals from the last N days. Omit for all time."),
+        .describe(
+          "Only proposals from the last N days. Omit for all time. With a window, the response also carries `intake_accounting` (OPE-978): photo-intake emails and photos in, the outcome each photo got (proposed, auto-written, performer, signage, gallery), and any photo with no recorded outcome, by name."
+        ),
       limit: z.number().int().min(1).max(200).optional().describe("Max rows (default 50)."),
     },
     async (params) => {
@@ -182,6 +185,14 @@ export function registerPhotoProposalTools(server: McpServer, db: Db, auth: Auth
         return true;
       });
 
+      // OPE-978 — with a window, also account for every photo that came IN:
+      // proposals are one outcome among six, and a photo in none of them is
+      // named rather than silently missing from the count.
+      const intakeAccounting =
+        params.days !== undefined
+          ? await computeIntakeAccounting(db, new Date(Date.now() - params.days * 86_400_000))
+          : undefined;
+
       return {
         content: [
           jsonContent({
@@ -199,6 +210,7 @@ export function registerPhotoProposalTools(server: McpServer, db: Db, auth: Auth
                 (x) => x.business_name && !x.would_auto_write
               ).length,
             },
+            ...(intakeAccounting ? { intake_accounting: intakeAccounting } : {}),
             note:
               proposals.length === 0
                 ? "No staged proposals. PHOTO_VISION_ENABLED must be on for the pipeline to produce any."
