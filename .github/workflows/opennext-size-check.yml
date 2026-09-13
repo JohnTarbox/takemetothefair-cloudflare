@@ -16,6 +16,11 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# OPE-908 — least privilege. packages:read for the @johntarbox/* install.
+permissions:
+  contents: read
+  packages: read
+
 jobs:
   size:
     name: OpenNext build + gzipped size

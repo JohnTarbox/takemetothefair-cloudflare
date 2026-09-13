@@ -119,7 +119,8 @@ updates:
       include: "scope"
 
   # ---- GitHub Actions --------------------------------------------------
-  # This repo pins every action to a 40-character SHA (OPE-908). Dependabot
+  # Every `uses:` in .github/workflows is pinned to a 40-character SHA (OPE-908),
+  # enforced in CI by scripts/check-workflow-action-pins.ts. Dependabot
   # understands SHA pins and bumps the SHA *and* the trailing `# vX.Y.Z`
   # comment together, so pinning does not mean going stale — which is the
   # usual objection to pinning.
