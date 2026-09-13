@@ -5414,9 +5414,22 @@ export const eventDiscrepancies = sqliteTable("event_discrepancies", {
    *
    *  holdout_sample added GW1.3 (2026-06-03) — daily random sample of
    *  high-trust source events re-checked against the live source page.
-   *  No CHECK constraint in the DDL so the addition is TS-only. */
+   *  No CHECK constraint in the DDL so the addition is TS-only.
+   *
+   *  source_agreement added OPE-988 (2026-09-13) — the page an event cites as
+   *  its source never names the event's town or venue and places itself in
+   *  another US state. Its own value, not stale_page_radar: the open-row dedup
+   *  keys on (event_id, field_class, detected_by), so sharing a detector name
+   *  would let one finding silently refresh the other's row. TS-only again. */
   detectedBy: text("detected_by", {
-    enum: ["ingest_addverify", "stale_page_radar", "self_consistency", "holdout_sample", "manual"],
+    enum: [
+      "ingest_addverify",
+      "stale_page_radar",
+      "self_consistency",
+      "holdout_sample",
+      "source_agreement",
+      "manual",
+    ],
   }).notNull(),
   /** Epoch seconds — `mode: "timestamp"` convention. */
   detectedAt: integer("detected_at", { mode: "timestamp" }).notNull(),

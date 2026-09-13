@@ -43,6 +43,9 @@ export type DetectedBy =
   | "stale_page_radar"
   | "self_consistency"
   | "holdout_sample"
+  // OPE-988 — the cited source page places itself in another state and never
+  // names the event's town or venue (source-agreement-capture.ts).
+  | "source_agreement"
   | "manual";
 
 export interface CaptureDiscrepancyArgs {

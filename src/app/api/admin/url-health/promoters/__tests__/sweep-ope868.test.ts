@@ -122,7 +122,10 @@ describe("OPE-868 — the estate contains known-bad AND known-good", () => {
 
     // The landmark the ticket asks for by name.
     expect(json.examined).toBe(3);
-    expect(json.no_event_signal).toBe(2);
+    // OPE-988 — the Clinton hijack ("Situs Slot Gacor" in its title) now reads
+    // as the more specific `domain_takeover`; still actionable, still 2 of 3.
+    expect(json.no_event_signal).toBe(1);
+    expect(json.domain_takeover).toBe(1);
     expect(json.ok).toBe(1);
     expect(json.actionable).toBe(2);
   });

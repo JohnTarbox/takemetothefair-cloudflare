@@ -808,6 +808,36 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       ),
   },
   {
+    // OPE-988 — the source-agreement / domain-takeover sweep RAN.
+    //
+    // A new execution path (a loop in the daily event-date-drift workflow
+    // calling /api/admin/url-health/source-agreement/sweep), so it ships its
+    // probe in the same PR. Evidence is url_health_checks rows under
+    // source_field 'events.source_url@source-agreement' — its OWN field, because
+    // the drift sweep writes 'events.source_url' and the promoter sweep
+    // 'promoters.website' to the same table, and either would hold an unscoped
+    // probe green while this path was dead.
+    //
+    // The sweep writes a row for EVERY verdict, including `ok`, so a quiet
+    // estate still produces evidence. Disagreement rows in event_discrepancies
+    // would not do: zero findings is the expected steady state.
+    //
+    // Window 72h = three missed runs of the `0 6 * * *` driver — derived from
+    // the schedule, same as the OPE-868 probe it sits beside.
+    name: "source-agreement-sweep",
+    ownerOpe: "OPE-988",
+    label: "Source-agreement & domain-takeover sweep (events.source_url)",
+    priority: "P1",
+    expectedWindowHours: 72,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        urlHealthChecks,
+        urlHealthChecks.checkedAt,
+        eq(urlHealthChecks.sourceField, "events.source_url@source-agreement")
+      ),
+  },
+  {
     name: "vendor-enrichment",
     ownerOpe: "OPE-I1",
     label: "Vendor enrichment cron",

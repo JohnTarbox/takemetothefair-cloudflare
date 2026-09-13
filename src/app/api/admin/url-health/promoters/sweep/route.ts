@@ -47,6 +47,11 @@ import { isAuthorized } from "@/lib/api-auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, promoters, urlHealthChecks } from "@/lib/db/schema";
 import { classifyUrlHealth, isActionable, samePageOnEveryPath } from "@/lib/goodwill/url-health";
+import {
+  detectDomainTakeover,
+  isSweepActionable,
+  type SweepVerdict,
+} from "@/lib/goodwill/domain-takeover";
 import { SCRAPER_USER_AGENT } from "@takemetothefair/constants";
 import { logError } from "@/lib/logger";
 
@@ -69,6 +74,8 @@ interface Probe {
   reachedOrigin: boolean;
   status: number | null;
   html: string | null;
+  /** OPE-988 — where redirects left us; a hop to another domain is a takeover signal. */
+  finalUrl?: string | null;
 }
 
 async function probe(url: string): Promise<Probe> {
@@ -90,7 +97,7 @@ async function probe(url: string): Promise<Probe> {
     // feeds nothing but the closure check, is capped.
     const body = await res.text().catch(() => "");
     const html = (res.ok ? body : body.slice(0, 300_000)) || null;
-    return { reachedOrigin: true, status: res.status, html };
+    return { reachedOrigin: true, status: res.status, html, finalUrl: res.url || null };
   } catch {
     return { reachedOrigin: false, status: null, html: null };
   } finally {
@@ -118,10 +125,18 @@ export async function POST(request: Request): Promise<NextResponse> {
     // dedup saves little — but it is the right unit regardless: fetching the
     // same page twice because two promoters point at it would double the cost
     // and write two rows asserting one fact.
+    //
+    // OPE-988 — grouped rather than DISTINCT so each row also carries a promoter
+    // name for the takeover detector's title check. Same unit (one row per
+    // distinct website), same order, so cursors mean what they meant before.
     const rows = await db
-      .selectDistinct({ website: promoters.website })
+      .select({
+        website: promoters.website,
+        name: sql<string | null>`min(${promoters.companyName})`,
+      })
       .from(promoters)
       .where(and(isNotNull(promoters.website), ne(promoters.website, "")))
+      .groupBy(promoters.website)
       .orderBy(promoters.website)
       .limit(chunk)
       .offset(cursor);
@@ -142,6 +157,8 @@ export async function POST(request: Request): Promise<NextResponse> {
       http_error: 0,
       unreachable: 0,
       closure_notice: 0,
+      /** OPE-988 — the domain now belongs to someone else (lottery, pharma spam…). */
+      domain_takeover: 0,
       /** OPE-979 — hosts where a second stored path served the same page. */
       same_page_on_every_path: 0,
       actionable: 0,
@@ -153,6 +170,24 @@ export async function POST(request: Request): Promise<NextResponse> {
       if (!website) continue;
       const p = await probe(website);
       const health = classifyUrlHealth(p);
+
+      // OPE-988 — a hijacked domain can read `ok` (a lottery page has month
+      // names, years and "schedule"). Only a 2xx body is read for it; the
+      // verdict overrides, and the base verdict's signals are kept beside it.
+      const takeover =
+        p.status !== null && p.status >= 200 && p.status < 300
+          ? detectDomainTakeover(p.html, {
+              entityName: r.name ?? null,
+              requestedUrl: website,
+              finalUrl: p.finalUrl,
+            })
+          : null;
+      let verdict: SweepVerdict = health.verdict;
+      if (takeover?.takenOver) {
+        verdict = "domain_takeover";
+        health.signals.push(...takeover.signals);
+        health.detail = takeover.detail;
+      }
 
       // OPE-979 structural companion — compare against ONE stored event URL on
       // the same host (a different path). Parked, maintenance and handover pages
@@ -190,15 +225,28 @@ export async function POST(request: Request): Promise<NextResponse> {
       await db.insert(urlHealthChecks).values({
         url: website,
         sourceField: SOURCE_FIELD,
-        verdict: health.verdict,
+        verdict,
         httpStatus: p.status,
         signals: health.signals.join(",") || null,
         detail: health.detail,
         checkedAt: now,
       });
 
-      result[health.verdict] += 1;
-      if (isActionable(health.verdict)) result.actionable += 1;
+      result[verdict] += 1;
+      if (isSweepActionable(verdict, isActionable)) result.actionable += 1;
+      if (verdict === "domain_takeover") {
+        await logError(db, {
+          level: "warn",
+          message: `promoter website looks taken over: ${website}`,
+          source: "url-health:domain-takeover",
+          context: {
+            website,
+            finalUrl: p.finalUrl,
+            detail: health.detail,
+            signals: health.signals,
+          },
+        });
+      }
       if (health.verdict === "closure_notice") {
         // OPE-979 — surface, never act: the review row above plus an alert. What
         // a detector may DO about a closure is John's decision (filed apart).
@@ -263,7 +311,7 @@ export async function GET(request: Request): Promise<NextResponse> {
              (SELECT COUNT(*) FROM url_health_checks h
                WHERE h.url = r.url AND h.verdict = r.verdict) AS consecutive
       FROM ranked r
-      WHERE r.rn = 1 AND r.verdict IN ('closure_notice', 'no_event_signal', 'http_error')
+      WHERE r.rn = 1 AND r.verdict IN ('domain_takeover', 'closure_notice', 'no_event_signal', 'http_error')
       ORDER BY r.checked_at DESC
       LIMIT 200
     `);
