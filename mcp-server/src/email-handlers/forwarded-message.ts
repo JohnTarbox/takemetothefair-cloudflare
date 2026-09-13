@@ -19,7 +19,7 @@
  *
  * ## The two forward shapes, MEASURED (not assumed)
  *
- * Probed against postal-mime 2.7.4, the version in this repo:
+ * Probed against postal-mime 2.7.4, and re-confirmed unchanged on 3.0.0 (OPE-976):
  *
  * | shape | `attachments[]` | inner body in `.text` |
  * |---|---|---|
@@ -47,6 +47,29 @@
  */
 import PostalMime from "postal-mime";
 import { verifyDkim, type DkimResult, type TxtResolver } from "./dkim-verify.js";
+
+/**
+ * OPE-976 — how deep an INLINE `message/rfc822` may nest before postal-mime
+ * stops opening it and emits the part as an attachment instead.
+ *
+ * submit@ is public and unauthenticated. On postal-mime 2.7.4 each nested level
+ * built a fresh parser with a fresh budget, so the depth never accumulated: a
+ * 257 KB message of 2,000 nested layers cost ~120 s of CPU. 3.0.0 carries the
+ * depth down (default 10), and we pass it explicitly so a future default change
+ * cannot silently widen it.
+ *
+ * Why 2 and not the default: even BOUNDED, the cap is a CPU multiplier. Each
+ * opened layer re-parses the bytes inside it, so parse cost is ~(cap + 1) × a
+ * flat message of the same size — measured on a 374 KB fixture: flat 121 ms,
+ * cap 2 → 458 ms, cap 5 → 882 ms, cap 10 → 1,672 ms. Real mail does not nest
+ * inline rfc822 deeper than 2, and Gmail's "Forward as attachment" is not
+ * inline at all (`analyzeForward` opens that one), so 2 costs us nothing.
+ *
+ * Every `PostalMime.parse` in this Worker MUST pass `POSTAL_MIME_OPTIONS`; a
+ * source-level test enforces it.
+ */
+export const RFC822_MAX_NESTING_DEPTH = 2;
+export const POSTAL_MIME_OPTIONS = { maxRfc822NestingDepth: RFC822_MAX_NESTING_DEPTH } as const;
 
 /**
  * How much we can say about who really wrote the forwarded content.
@@ -115,6 +138,8 @@ export interface ForwardCandidateAttachment {
   disposition?: "attachment" | "inline" | null;
   contentId?: string;
   related?: boolean;
+  /** postal-mime sets this on an rfc822 part it refused to open at the depth cap. */
+  rfc822DepthExceeded?: boolean;
 }
 
 /**
@@ -190,7 +215,12 @@ export async function analyzeForward(input: {
   bodyText: string | null | undefined;
   resolveTxt?: TxtResolver;
 }): Promise<ForwardAnalysis> {
-  const rfc822 = (input.attachments ?? []).find((a) => isRfc822Attachment(a));
+  // OPE-976 — never reopen a part postal-mime refused at its depth cap. It
+  // arrives here as a `message/rfc822` attachment, and parsing it would start a
+  // FRESH parser with a FRESH depth budget: the exact recursion the cap stops.
+  const rfc822 = (input.attachments ?? []).find(
+    (a) => isRfc822Attachment(a) && !a.rfc822DepthExceeded
+  );
 
   // ── No attached message: either an inline forward, or not a forward. ──────
   if (!rfc822) {
@@ -221,7 +251,7 @@ export async function analyzeForward(input: {
   const raw = toText(rfc822.content);
   let parsed: Awaited<ReturnType<typeof PostalMime.parse>> | null = null;
   try {
-    parsed = await PostalMime.parse(raw);
+    parsed = await PostalMime.parse(raw, POSTAL_MIME_OPTIONS);
   } catch {
     parsed = null;
   }

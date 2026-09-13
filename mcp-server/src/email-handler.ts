@@ -38,6 +38,7 @@ import { stripQuotedReply } from "./email-handlers/strip-quoted-reply.js";
 import {
   analyzeForward,
   isRfc822Attachment,
+  POSTAL_MIME_OPTIONS,
   type ForwardAnalysis,
 } from "./email-handlers/forwarded-message.js";
 import { createDohResolver } from "./email-handlers/dkim-verify.js";
@@ -212,7 +213,8 @@ export async function handleInboundEmail(
     // 1. Parse
     let parsed: Email;
     try {
-      parsed = await PostalMime.parse(message.raw);
+      // OPE-976 — bounded inline rfc822 nesting; see POSTAL_MIME_OPTIONS.
+      parsed = await PostalMime.parse(message.raw, POSTAL_MIME_OPTIONS);
     } catch (err) {
       await logError(env.DB, {
         source: SOURCE,
@@ -226,7 +228,11 @@ export async function handleInboundEmail(
     }
 
     const fromAddr = (parsed.from?.address || message.from || "").toLowerCase().trim();
-    const subject = (parsed.subject || "").slice(0, 200);
+    // OPE-976 — postal-mime 3.0.0 keeps the whitespace that header folding
+    // introduced ("Fair -\r\n  Information" → "Fair -  Information"); 2.7.4
+    // collapsed every run to one space. Collapse here so the stored subject is
+    // unchanged by the upgrade.
+    const subject = (parsed.subject || "").replace(/\s+/g, " ").trim().slice(0, 200);
 
     // ── OPE-944 — recover a "Forward as attachment", and say WHOSE auth we have.
     //
