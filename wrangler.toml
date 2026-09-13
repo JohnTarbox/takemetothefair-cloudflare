@@ -44,6 +44,7 @@ binding = "AI"
 # Browser Rendering account id (non-secret); the token is a Worker secret
 # CLOUDFLARE_BROWSER_RENDERING_TOKEN. Used by import-url/fetch escalation.
 [vars]
+OPE949_DRIFT_PROBE = "red-run"  # TEMPORARY — proves the drift check fails in CI; reverted in the next commit
 # OPE-931 — "this is a deployed Worker". Read by isDeployedEnvironment() in
 # src/lib/runtime-env.ts, which decides whether a MISSING binding fails closed.
 #
