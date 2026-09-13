@@ -15,8 +15,9 @@ const reply = (over: Record<string, unknown> = {}) => ({
     business_name: "Maple Hollow Farm",
     website: null,
     products: ["syrup"],
-    confidence: 0.9,
+    confidence: 1,
     rationale: "banner on the stall",
+    identifiable_minor: false,
     ...over,
   }),
 });

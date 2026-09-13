@@ -184,6 +184,15 @@ PHOTO_VISION_ENABLED = "true"
 # vision ON + this OFF = identify-only (every booth staged for review). Flip to
 # "true" ONLY after John's explicit go — it creates public vendor records + event
 # links + hero images automatically from an email (OPE-6 STOP-gate).
+#
+# ⏸️ STILL "false" (2026-09-13). John's GO of 2026-09-12 is recorded on OPE-240
+# by an analyst lane, and it was conditional on two gates that now exist in
+# src/photo/vision.ts `disposition()`: the auto-write bar raised 0.75 → 1.0 (a
+# confident 0.90 misread invented "Bayim River Crafts" on the first real batch)
+# and the faces rule (an identifiable child, or an unanswered child check,
+# stages instead of publishing). The flip itself waits for John to confirm
+# directly — a relayed approval is not the approval. When it flips, also set
+# `enabled_at` on the `booth-autowrite` heartbeat probe (drizzle/0164).
 PHOTO_AUTOWRITE_ENABLED = "false"
 # INTERNAL_API_KEY is set via `wrangler secret put INTERNAL_API_KEY`
 # Inbound-email failures (parse / extract / submit) get forwarded here.

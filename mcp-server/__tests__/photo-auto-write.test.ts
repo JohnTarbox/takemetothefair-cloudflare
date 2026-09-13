@@ -35,8 +35,9 @@ const booth = (over: Partial<BoothIdentification> = {}): BoothIdentification => 
   businessName: "Maple Hollow Farm",
   website: null,
   products: ["syrup"],
-  confidence: 0.9,
+  confidence: 1,
   rationale: "banner on the stall",
+  identifiableMinor: false,
   ...over,
 });
 
