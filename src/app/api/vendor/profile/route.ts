@@ -48,13 +48,17 @@ export async function GET(request: NextRequest) {
     // Read from `users`, not from the session: the session is minted at
     // sign-in and a user who verifies mid-visit would keep a stale `false`.
     let ownerEmailVerified = true;
+    // OPE-986 — the caller's own account address, so the page's resend button
+    // shows where the link goes instead of an email box the API ignores.
+    let ownerEmail: string | undefined;
     try {
       const [owner] = await db
-        .select({ emailVerified: users.emailVerified })
+        .select({ emailVerified: users.emailVerified, email: users.email })
         .from(users)
         .where(eq(users.id, session.user.id))
         .limit(1);
       ownerEmailVerified = Boolean(owner?.emailVerified);
+      ownerEmail = owner?.email ?? undefined;
     } catch {
       // ⚠️ Fail OPEN — assume verified. A DB hiccup must not put a scary
       // "your edits will not save" notice in front of a verified vendor. The
@@ -62,7 +66,7 @@ export async function GET(request: NextRequest) {
       ownerEmailVerified = true;
     }
 
-    return NextResponse.json({ ...vendor[0], ownerEmailVerified });
+    return NextResponse.json({ ...vendor[0], ownerEmailVerified, ownerEmail });
   } catch (error) {
     await logError(db, {
       message: "Failed to fetch vendor profile",

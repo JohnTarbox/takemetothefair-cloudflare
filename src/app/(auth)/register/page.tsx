@@ -18,6 +18,7 @@ import {
   trackFunnelSubmitted,
 } from "@/lib/analytics";
 import { type FieldErrors, validateAll, validateField } from "@/lib/validations/field-errors";
+import { checkEmailDomain } from "@/lib/auth/email-domain-check";
 
 // Client-side schema mirrors the server registerSchema but adds the
 // confirmPassword match check and role-specific conditionals the server
@@ -25,7 +26,15 @@ import { type FieldErrors, validateAll, validateField } from "@/lib/validations/
 const registerClientSchema = z
   .object({
     name: z.string().min(2, "Please enter your full name"),
-    email: z.string().email("Please enter a valid email address"),
+    // OPE-986 — same domain check the API runs, so a `gmail.vom` slip is caught
+    // on blur instead of after a round-trip.
+    email: z
+      .string()
+      .email("Please enter a valid email address")
+      .superRefine((value, ctx) => {
+        const verdict = checkEmailDomain(value);
+        if (!verdict.ok) ctx.addIssue({ code: "custom", message: verdict.message });
+      }),
     password: z.string().min(8, "Password must be at least 8 characters"),
     confirmPassword: z.string(),
     role: z.enum(["USER", "PROMOTER", "VENDOR"]),

@@ -40,6 +40,14 @@ interface VendorProfile {
    * a false "your edits will not save" notice in front of someone.
    */
   ownerEmailVerified?: boolean;
+  /**
+   * OPE-986 — the account address the verification link goes to. Passed to
+   * the resend button so it does not render an email box: signed in, the API
+   * sends to the SESSION address and ignores whatever is typed, so a vendor
+   * correcting a typo there was told "a fresh link is on its way" while it went
+   * to the typo again.
+   */
+  ownerEmail?: string;
   businessName: string;
   slug: string;
   description: string | null;
@@ -464,7 +472,10 @@ export default function VendorProfilePage() {
                   which is why a photo can save when other changes don&apos;t.
                 </p>
                 <div className="mt-3">
-                  <ResendVerificationButton label="Resend verification email" />
+                  <ResendVerificationButton
+                    email={profile.ownerEmail}
+                    label="Resend verification email"
+                  />
                 </div>
               </div>
             )}
