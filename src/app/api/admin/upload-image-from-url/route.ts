@@ -21,6 +21,11 @@ export const dynamic = "force-dynamic";
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import {
+  IMAGE_FETCH_USER_AGENT,
+  fetchImageWithFallback,
+  imageFetchHeaders,
+} from "@takemetothefair/utils";
 import { auth } from "@/lib/auth";
 import { internalKeyMatches } from "@/lib/api-auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
@@ -68,7 +73,10 @@ function ssrfCheck(u: URL): { ok: true } | { ok: false; error: string } {
  * each Location before issuing the next request. Returns the first non-3xx
  * response, or a typed error.
  */
-async function fetchWithSsrfGuardedRedirects(start: URL): Promise<GuardedFetch> {
+async function fetchWithSsrfGuardedRedirects(
+  start: URL,
+  userAgent: string = IMAGE_FETCH_USER_AGENT
+): Promise<GuardedFetch> {
   let current = start;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     const check = ssrfCheck(current);
@@ -79,7 +87,7 @@ async function fetchWithSsrfGuardedRedirects(start: URL): Promise<GuardedFetch> 
     const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
     try {
       resp = await fetch(current.href, {
-        headers: { "User-Agent": "Mozilla/5.0 (compatible; MMATFBot/1.0)" },
+        headers: imageFetchHeaders(userAgent),
         signal: controller.signal,
         redirect: "manual",
       });
@@ -198,9 +206,33 @@ export async function POST(request: NextRequest) {
   // Fetch the source image, following redirects manually with a per-hop SSRF
   // re-check. A plausible UA improves hit rate on CDN hosts that reject the
   // default Workers UA.
+  // OPE-968 — honest UA first, legacy UA only after a block; each attempt
+  // re-walks redirects under the SSRF guard. A guard refusal is not a block:
+  // it stops the loop and is reported as itself.
   let fetchResult: GuardedFetch;
+  let attempts: string[] = [];
   try {
-    fetchResult = await fetchWithSsrfGuardedRedirects(parsedUrl);
+    const guard: { failure: GuardedFetch | null } = { failure: null };
+    const fetched = await fetchImageWithFallback(async (userAgent) => {
+      const r = await fetchWithSsrfGuardedRedirects(parsedUrl, userAgent);
+      if (!r.ok) {
+        guard.failure = r;
+        // A synthetic non-block response ends the loop without a retry.
+        return new Response(null, { status: 599 });
+      }
+      return r.response;
+    });
+    attempts = fetched.attempts;
+    if (guard.failure) {
+      fetchResult = guard.failure;
+    } else if (!fetched.ok) {
+      return NextResponse.json(
+        { error: fetched.verdict.message, fetch_verdict: fetched.verdict.kind, attempts },
+        { status: 502 }
+      );
+    } else {
+      fetchResult = { ok: true, response: fetched.response };
+    }
   } catch (e) {
     await logError(db, {
       message: "upload-image-from-url: source fetch failed",
@@ -217,12 +249,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: fetchResult.error }, { status: fetchResult.status });
   }
   const imageResponse = fetchResult.response;
-  if (!imageResponse.ok) {
-    return NextResponse.json(
-      { error: `Source image fetch returned HTTP ${imageResponse.status}.` },
-      { status: 502 }
-    );
-  }
 
   const declaredType = (imageResponse.headers.get("Content-Type") ?? "")
     .split(";")[0]
