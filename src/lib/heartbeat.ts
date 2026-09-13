@@ -17,7 +17,7 @@
  *    flag is never a false RED).
  *  - auto-file dedup reuses OPE-76's `cpi_signal_filings` ledger — nothing new.
  */
-import { and, eq, isNotNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import {
   entityWriteLog,
   adminActions,
@@ -873,17 +873,32 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
   {
     name: "booth-autowrite",
     ownerOpe: "OPE-240",
-    label: "Booth-photo auto-write",
+    label: "Booth-photo decision stage (auto-write + staging)",
     priority: "P1",
-    expectedWindowHours: 14 * 24,
-    // Gated by PHOTO_AUTOWRITE_ENABLED (off). Dormant until enabled_at is set.
-    // Action string mirrors mcp-server BOOTH_AUTOWRITTEN_ACTION (auto-write.ts:30).
+    // DORMANT until PHOTO_AUTOWRITE_ENABLED flips on — set `enabled_at` that day
+    // (drizzle/0164 seeded it NULL). Re-pointed 2026-09-13, while still dormant:
+    //
+    // Evidence is the booth stage's DECISION for any photo — a staged proposal
+    // OR an auto-write — not auto-writes alone. The original watched only
+    // `vendor.photo_autowritten`, which is YIELD: at the 1.0 bar only ~1 in 3
+    // booths auto-writes (4 of 12 on the first real batch), and booths arrive
+    // only when John is at a fair. That probe would page every winter and on
+    // any batch of hand-held shots, then get muted. Every booth photo the stage
+    // examines writes exactly one of these two rows, so their absence means the
+    // stage stopped running, which is what a probe here can honestly assert.
+    //
+    // 30d matches the photo-intake siblings for the same reason they give: the
+    // lane is seasonal and genuinely quiet for weeks at a time.
+    //
+    // Action strings mirror mcp-server BOOTH_PROPOSED_ACTION (booth-pipeline.ts)
+    // and BOOTH_AUTOWRITTEN_ACTION (auto-write.ts).
+    expectedWindowHours: 30 * 24,
     lastEvidenceAt: (db) =>
       maxTs(
         db,
         adminActions,
         adminActions.createdAt,
-        eq(adminActions.action, "vendor.photo_autowritten")
+        inArray(adminActions.action, ["vendor.photo_proposed", "vendor.photo_autowritten"])
       ),
   },
   // ── OPE-309 (assurance audit A6 / A7) ──────────────────────────────

@@ -6,6 +6,7 @@ import {
   UNIDENTIFIED,
   VISION_MODEL,
   AUTO_WRITE_CONFIDENCE,
+  VISION_PROMPT,
   type BoothIdentification,
   type VisionAi,
 } from "../src/photo/vision.js";
@@ -264,12 +265,13 @@ describe("disposition", () => {
     businessName: "Maple Hollow Farm",
     website: null,
     products: [],
-    confidence: 0.9,
+    confidence: 1,
     rationale: "",
+    identifiableMinor: false,
     ...over,
   });
 
-  it("writes a confident, named booth", () => {
+  it("writes a confident, named booth with no identifiable child", () => {
     expect(disposition(id()).action).toBe("write");
   });
 
@@ -298,5 +300,49 @@ describe("disposition", () => {
 
   it("writes exactly at the threshold", () => {
     expect(disposition(id({ confidence: AUTO_WRITE_CONFIDENCE })).action).toBe("write");
+  });
+
+  // ── OPE-240 — John's 2026-09-12 ruling ──────────────────────────────────
+  it("the threshold is 1.0 — the Bayim/Denim misread sat at 0.90 and must STAGE", () => {
+    expect(AUTO_WRITE_CONFIDENCE).toBe(1);
+    const d = disposition(id({ businessName: "Bayim River Crafts", confidence: 0.9 }));
+    expect(d.action).toBe("stage");
+  });
+
+  it("STAGES a confident booth when an identifiable child appears", () => {
+    const d = disposition(id({ identifiableMinor: true }));
+    expect(d.action).toBe("stage");
+    if (d.action !== "stage") return;
+    expect(d.reason).toContain("child");
+  });
+
+  it("STAGES a confident booth when the child check was not answered (null)", () => {
+    const d = disposition(id({ identifiableMinor: null }));
+    expect(d.action).toBe("stage");
+    if (d.action !== "stage") return;
+    expect(d.reason).toContain("not answered");
+  });
+});
+
+describe("OPE-240 — parsing identifiable_minor", () => {
+  const base = { kind: "booth", business_name: "X", confidence: 1 };
+  it("reads a real boolean", () => {
+    expect(
+      parseVisionReply({ response: { ...base, identifiable_minor: false } }).identifiableMinor
+    ).toBe(false);
+    expect(
+      parseVisionReply({ response: { ...base, identifiable_minor: true } }).identifiableMinor
+    ).toBe(true);
+  });
+  it("treats an omitted or non-boolean answer as NOT answered", () => {
+    expect(parseVisionReply({ response: base }).identifiableMinor).toBeNull();
+    expect(
+      parseVisionReply({ response: { ...base, identifiable_minor: "false" } }).identifiableMinor
+    ).toBeNull();
+    expect(parseVisionReply({ response: JSON.stringify(base) }).identifiableMinor).toBeNull();
+  });
+  it("the prompt asks for it, with 'unsure → true'", () => {
+    expect(VISION_PROMPT).toContain('"identifiable_minor":boolean');
+    expect(VISION_PROMPT).toMatch(/When unsure, answer true/);
   });
 });

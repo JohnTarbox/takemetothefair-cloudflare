@@ -54,6 +54,19 @@ export interface BoothIdentification {
   /** Short reason — surfaced to the operator when staging for review. */
   rationale: string;
   /**
+   * OPE-240 — does an identifiable CHILD appear in the photo?
+   *
+   * John's standing rule (2026-07-21): vendor and staff faces are fine, but a
+   * photo where a child is identifiable is never published. With auto-write on,
+   * the booth photo becomes the vendor's public hero with no human in the path,
+   * so that rule has to live in the gate rather than in an analyst's eye.
+   *
+   * `true` / `false` only when the model answered with a boolean. Anything else
+   * — omitted, a string, a malformed reply — is `null`, and `disposition()`
+   * treats null exactly like `true`: an unanswered question does not publish.
+   */
+  identifiableMinor: boolean | null;
+  /**
    * OPE-403 follow-up — WHICH failure produced an UNIDENTIFIED result.
    *
    * `UNIDENTIFIED` was returned from five different places (the `ai.run` catch,
@@ -77,6 +90,7 @@ export const UNIDENTIFIED: BoothIdentification = {
   products: [],
   confidence: 0,
   rationale: "vision model returned nothing usable",
+  identifiableMinor: null,
 };
 
 /**
@@ -124,9 +138,12 @@ Rules — follow exactly:
    blurry, at an angle, or if more than one booth competes to be the subject.
 8. NEVER invent a name, URL, phone number, or town. Missing is correct;
    inventing is a factual error we would publish.
+9. identifiable_minor: true if ANY child or teenager appears whose face could
+   be recognized, anywhere in the photo, including the background. false only
+   if you are sure no identifiable child appears. When unsure, answer true.
 
 Reply with ONLY a JSON object, no prose, no markdown fence:
-{"kind":"booth|general|unclear","business_name":string|null,"website":string|null,"products":[string],"confidence":number,"rationale":string}`;
+{"kind":"booth|general|unclear","business_name":string|null,"website":string|null,"products":[string],"confidence":number,"rationale":string,"identifiable_minor":boolean}`;
 
 /** Minimal shape of the Workers AI binding we need. */
 export interface VisionAi {
@@ -179,6 +196,9 @@ function fromParsedObject(obj: Record<string, unknown>): BoothIdentification {
     products: kind === "booth" ? products : [],
     confidence: clamp01(obj.confidence),
     rationale: cleanString(obj.rationale, 300) ?? "",
+    // Strict: only a real boolean counts. "false" as a STRING is not an answer
+    // we trust to publish a photo on.
+    identifiableMinor: typeof obj.identifiable_minor === "boolean" ? obj.identifiable_minor : null,
   };
 }
 
@@ -333,14 +353,21 @@ export async function identifyBooth(ai: VisionAi, bytes: Uint8Array): Promise<Bo
 }
 
 /**
- * Auto-write threshold.
+ * Auto-write threshold — 1.0, John's ruling 2026-09-12 (OPE-240).
  *
- * 0.75 is deliberately strict. The downstream write publishes a real business
- * as a CONFIRMED exhibitor at a real fair; a false positive is a public factual
- * claim about someone else's company. Staging costs John one review click,
- * so the asymmetry says: when in doubt, stage.
+ * The downstream write publishes a real business as a CONFIRMED exhibitor at a
+ * real fair; a false positive is a public factual claim about someone else's
+ * company. Staging costs John one review click, so: when in doubt, stage.
+ *
+ * Why 1.0 and not the original 0.75: on the first real batch (New Gloucester
+ * Community Fair, 2026-09-12, 12 would-write proposals checked against the
+ * photos by hand) 11 were right and ONE was a fabricated business — a script
+ * "Denim River Crafts" banner read as "Bayim River Crafts" at confidence 0.90.
+ * The failure is confident misreading, not uncertainty, so no bar short of 1.0
+ * catches it. All four 1.0 proposals were correct. n=12 is small: revisit
+ * against accumulated `list_photo_proposals` evidence, not a hunch.
  */
-export const AUTO_WRITE_CONFIDENCE = 0.75;
+export const AUTO_WRITE_CONFIDENCE = 1.0;
 
 export type Disposition =
   | { action: "write"; identification: BoothIdentification }
@@ -367,6 +394,19 @@ export function disposition(id: BoothIdentification): Disposition {
       action: "stage",
       identification: id,
       reason: `confidence ${id.confidence.toFixed(2)} below ${AUTO_WRITE_CONFIDENCE} threshold`,
+    };
+  }
+  // OPE-240 — John's faces rule, as a gate. Checked LAST so a photo that would
+  // otherwise publish is the one that reports it; `null` (the model did not
+  // answer) stages exactly like `true`.
+  if (id.identifiableMinor !== false) {
+    return {
+      action: "stage",
+      identification: id,
+      reason:
+        id.identifiableMinor === true
+          ? "an identifiable child appears in the photo — never auto-published"
+          : "child check not answered — never auto-published without it",
     };
   }
   return { action: "write", identification: id };
