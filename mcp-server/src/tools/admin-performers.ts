@@ -171,7 +171,28 @@ function appearanceOut(row: typeof eventPerformers.$inferSelect) {
     billing: row.billing,
     status: row.status,
     source_url: row.sourceUrl,
+    // OPE-961 — written by the status/slot tools since OPE-123 and returned by
+    // nothing, so a re-verification pass could not confirm its own stamps.
+    last_verified_at: toSec(row.lastVerifiedAt),
+    last_verified_source: row.lastVerifiedSource,
   };
+}
+
+/**
+ * OPE-961 — zero-tolerance check of one appearance against its event's window.
+ * null when either side has no time to compare. The ±2d grace in
+ * get_performer_data_health is deliberately absent: a noon-truncated end_date
+ * puts an evening finale 8 hours outside the window, which 2 days swallows.
+ */
+export function outsideEventWindow(
+  appearance: { performance_start: number | null; performance_end: number | null },
+  window: { start_sec: number | null; end_sec: number | null }
+): boolean | null {
+  const { performance_start: start, performance_end: end } = appearance;
+  if (start === null || window.start_sec === null || window.end_sec === null) return null;
+  return (
+    start < window.start_sec || start > window.end_sec || (end !== null && end > window.end_sec)
+  );
 }
 
 /** Shared writable performer fields (create + update). */
@@ -623,7 +644,7 @@ export function registerPerformerTools(server: McpServer, db: Db, auth: AuthCont
   // ── list_event_performers ─────────────────────────────────────────
   server.tool(
     "list_event_performers",
-    "List all appearances at an event, joined with performer name/slug, ordered by billing then start time. Call this FIRST before bulk-linking (roster-check). Admin only.",
+    "List all appearances at an event, joined with performer name/slug, ordered by billing then start time. Call this FIRST before bulk-linking (roster-check). OPE-961: each appearance carries last_verified_at (epoch seconds) and last_verified_source, so a re-verification pass can read back its own stamps; the top-level `event` carries the event's name, slug and raw window (ISO + epoch seconds), and each appearance carries outside_event_window — a ZERO-tolerance comparison of its times to that window (null when either side has no time). Admin only.",
     { event_id: z.string().min(1) },
     async (params) => {
       try {
@@ -637,13 +658,31 @@ export function registerPerformerTools(server: McpServer, db: Db, auth: AuthCont
           .innerJoin(performers, eq(eventPerformers.performerId, performers.id))
           .where(eq(eventPerformers.eventId, params.event_id))
           .orderBy(desc(eventPerformers.performanceStart));
+        const [event] = await db
+          .select({
+            name: events.name,
+            slug: events.slug,
+            startDate: events.startDate,
+            endDate: events.endDate,
+          })
+          .from(events)
+          .where(eq(events.id, params.event_id))
+          .limit(1);
+        const window = {
+          start_sec: toSec(event?.startDate),
+          end_sec: toSec(event?.endDate),
+        };
         const billingRank: Record<string, number> = { HEADLINER: 0, FEATURED: 1, SUPPORTING: 2 };
         const out = rows
-          .map((r) => ({
-            ...appearanceOut(r.appearance),
-            performer_name: r.name,
-            performer_slug: r.slug,
-          }))
+          .map((r) => {
+            const a = appearanceOut(r.appearance);
+            return {
+              ...a,
+              performer_name: r.name,
+              performer_slug: r.slug,
+              outside_event_window: outsideEventWindow(a, window),
+            };
+          })
           .sort(
             (a, b) =>
               (billingRank[a.billing ?? ""] ?? 3) - (billingRank[b.billing ?? ""] ?? 3) ||
@@ -654,7 +693,17 @@ export function registerPerformerTools(server: McpServer, db: Db, auth: AuthCont
             jsonContent({
               success: true,
               event_id: params.event_id,
+              event: event
+                ? {
+                    name: event.name,
+                    slug: event.slug,
+                    start_date: event.startDate?.toISOString() ?? null,
+                    end_date: event.endDate?.toISOString() ?? null,
+                    ...window,
+                  }
+                : null,
               count: out.length,
+              outside_event_window_count: out.filter((a) => a.outside_event_window === true).length,
               appearances: out,
             }),
           ],
