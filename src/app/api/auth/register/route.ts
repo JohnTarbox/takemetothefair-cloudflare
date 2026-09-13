@@ -3,6 +3,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { recordRegistrationAttempt } from "@/lib/auth/record-registration-attempt";
 import { REGISTRATION_ATTEMPT_OUTCOME } from "@/lib/db/schema";
 import { normalizeEmail } from "@/lib/auth/normalize-email";
+import { checkEmailDomain } from "@/lib/auth/email-domain-check";
+import { flagNearDuplicateVendorRegistration } from "@/lib/auth/near-duplicate-registration";
 import { z } from "zod";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { users, userRoles, promoters, vendors, verificationTokens } from "@/lib/db/schema";
@@ -36,7 +38,17 @@ import { emailVerificationTemplate } from "@/lib/email/templates";
 import { enqueueEmail } from "@/lib/queues/producers";
 
 const registerSchema = z.object({
-  email: z.string().email("Invalid email address"),
+  // OPE-986 — a well-shaped address on a domain that cannot receive mail
+  // (`gmail.vom`) used to pass, hard-bounce its verification email, and leave
+  // an account that could never be verified. Refused here while the person is
+  // still on the form; see @/lib/auth/email-domain-check.
+  email: z
+    .string()
+    .email("Invalid email address")
+    .superRefine((value, ctx) => {
+      const verdict = checkEmailDomain(value);
+      if (!verdict.ok) ctx.addIssue({ code: "custom", message: verdict.message });
+    }),
   password: z.string().min(8, "Password must be at least 8 characters"),
   name: z.string().min(2, "Name must be at least 2 characters"),
   role: z.enum(["USER", "PROMOTER", "VENDOR"]).optional().default("USER"),
@@ -402,6 +414,17 @@ export async function POST(request: NextRequest) {
             context: { vendorId, businessName },
           });
         }
+
+        // OPE-986 — a second signup by the same person under a one-letter
+        // different name slips past the slug pre-flight above. Log it with both
+        // ids; never block or merge. Fail-soft inside the helper.
+        await flagNearDuplicateVendorRegistration(db, {
+          vendorId,
+          userId,
+          businessName,
+          ownerName: name,
+          email,
+        });
       }
     }
 
