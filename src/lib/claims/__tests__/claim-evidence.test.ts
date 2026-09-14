@@ -9,7 +9,9 @@ import { describe, it, expect, vi } from "vitest";
 import { classifyDeclaredPresence, pageReferencesBusiness } from "../claim-evidence";
 
 const live = (html: string) => vi.fn().mockResolvedValue({ ok: true, html });
-const dead = (reason = "404") =>
+// `http_404`, not `404`: the fixture must speak fetchHtmlWithSsrfGuard's real
+// `error` vocabulary, or the classifier's gone-vs-blocked split is untested.
+const dead = (reason = "http_404") =>
   vi.fn().mockResolvedValue({ ok: false, html: null, failReason: reason });
 
 describe("classifyDeclaredPresence (OPE-237 §2)", () => {
@@ -33,7 +35,7 @@ describe("classifyDeclaredPresence (OPE-237 §2)", () => {
     const res = await classifyDeclaredPresence(
       "https://gone.example",
       "SKVL Organic World",
-      dead("404")
+      dead("http_404")
     );
     expect(res.corroboration).toBe("WEAK");
     expect(res.detail).toContain("indexed-but-dead");
@@ -50,11 +52,62 @@ describe("classifyDeclaredPresence (OPE-237 §2)", () => {
     expect(res.detail).toContain("never names the business");
   });
 
-  it("WEAK rather than an exception when the fetcher throws", async () => {
+  // OPE-237, 2026-09-14 — was WEAK. A throw is our fetch failing (including our
+  // own abort timer), which says nothing about whether the vendor exists.
+  it("UNAVAILABLE rather than an exception when the fetcher throws", async () => {
     const boom = vi.fn().mockRejectedValue(new Error("connect ETIMEDOUT"));
     const res = await classifyDeclaredPresence("https://x.example", "Bri Paints", boom);
-    expect(res.corroboration).toBe("WEAK");
+    expect(res.corroboration).toBe("UNAVAILABLE");
     expect(res.detail).toContain("ETIMEDOUT");
+  });
+
+  it.each(["http_404", "http_410", "network: getaddrinfo ENOTFOUND gone.example"])(
+    "WEAK when the failure says the site is gone (%s)",
+    async (reason) => {
+      const res = await classifyDeclaredPresence(
+        "https://gone.example",
+        "Bri Paints",
+        dead(reason)
+      );
+      expect(res.corroboration).toBe("WEAK");
+    }
+  );
+
+  it.each(["http_400", "http_403", "http_429", "http_503", "timeout", "challenge-page:cloudflare"])(
+    "UNAVAILABLE when the failure only means we could not look (%s)",
+    async (reason) => {
+      const res = await classifyDeclaredPresence(
+        "https://busy.example",
+        "Bri Paints",
+        dead(reason)
+      );
+      expect(res.corroboration).toBe("UNAVAILABLE");
+      expect(res.detail).toContain(reason);
+    }
+  );
+
+  it.each([
+    ["https://www.instagram.com/blendofelements", "Instagram"],
+    ["https://www.facebook.com/profile.php?id=100091806549416", "Facebook"],
+    ["https://m.facebook.com/somecraft", "Facebook"],
+    ["https://www.tiktok.com/@maker", "TikTok"],
+  ])("a walled platform (%s) is UNAVAILABLE and never fetched", async (url, name) => {
+    const fetcher = live("<html>Log in to continue</html>");
+    const res = await classifyDeclaredPresence(url, "Blend of Elements", fetcher);
+    expect(res.corroboration).toBe("UNAVAILABLE");
+    expect(res.detail).toContain(name);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("a host that merely CONTAINS a walled domain is fetched normally", async () => {
+    const fetcher = live("<h1>Bri Paints</h1>");
+    const res = await classifyDeclaredPresence(
+      "https://notinstagram.com.example",
+      "Bri Paints",
+      fetcher
+    );
+    expect(res.corroboration).toBe("STRONG");
+    expect(fetcher).toHaveBeenCalled();
   });
 });
 

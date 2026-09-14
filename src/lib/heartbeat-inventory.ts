@@ -115,6 +115,7 @@ export const HEARTBEAT_INVENTORY: Record<string, InventoryEntry> = {
   "cron:runInboundExceptionNotice": U,
   "cron:runIndexNowSubmissionRetention": { probes: ["indexnow-submission-retention"] },
   "cron:main-app:/api/admin/venues/geocode-venues": { probes: ["venue-geocode-sweep"] },
+  "cron:main-app:/api/admin/claims/corroborate": { probes: ["claim-corroboration-sweep"] },
   "cron:main-app:/api/admin/content-links/audit": U,
   "cron:runOccurredTransitionSweep": { probes: ["occurred-transition-sweep"] },
   "cron:runRequestSampleRetention": { probes: ["request-sample-retention"] },
