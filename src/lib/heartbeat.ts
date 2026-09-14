@@ -905,6 +905,26 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     lastEvidenceAt: (db) => maxTs(db, vendorClaimEvidence, vendorClaimEvidence.createdAt),
   },
   {
+    // OPE-237 — the nightly corroboration pass RAN (MCP 08:30Z cron →
+    // /api/admin/claims/corroborate). Probes the run, not the yield: at ~1
+    // declared website a day most nights corroborate nothing, and a yield
+    // probe would be red by construction. `claim.corroborate.sweep` is written
+    // on every completed sweep call and not on a single-vendor re-check.
+    // 48h on a daily cron: one missed fire is a blip, two is a fault.
+    name: "claim-corroboration-sweep",
+    ownerOpe: "OPE-237",
+    label: "Vendor claim corroboration pass (nightly 08:30 cron)",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        adminActions,
+        adminActions.createdAt,
+        eq(adminActions.action, "claim.corroborate.sweep")
+      ),
+  },
+  {
     name: "promoter-enrichment",
     ownerOpe: "OPE-36",
     label: "Promoter enrichment cron",

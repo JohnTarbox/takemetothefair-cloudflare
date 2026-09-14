@@ -1690,6 +1690,21 @@ export default {
           { missing_only: true }
         )
       );
+      // OPE-237 — the vendor-registration corroboration pass. It shipped
+      // 2026-08-20 as admin-triggered only and nobody triggered it: on
+      // 2026-09-14, 22 evidence rows had a declared website and none had ever
+      // been checked. Fetches only rows never attempted (≈1 new a day), each
+      // through the SSRF guard; writes the realness row, never the public
+      // profile. Behind the same main-app slot gate as the geocode sweep.
+      ctx.waitUntil(
+        runMainAppSweep(
+          env,
+          "claim corroboration",
+          "/api/admin/claims/corroborate",
+          (r) => `eligible=${r.eligible ?? "?"} corroborated=${r.corroborated ?? "?"}`,
+          { limit: 20 }
+        )
+      );
       // OPE-489 — this `return` was MISSING. Every other cron branch has one;
       // without it, 08:30 ran the venue geocode and then FELL THROUGH into the
       // default daily batch, so the entire ~20-task daily fan-out executed a
