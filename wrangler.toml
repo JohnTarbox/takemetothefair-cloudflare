@@ -91,13 +91,15 @@ CONDITIONAL_GET_PUBLIC_CACHE = "false"
 # `entry-deadlines-gate-ope738.test.ts` asserts this literal, so changing it
 # stays a reviewed edit rather than a drive-by.
 ENTRY_DEADLINES_INDEX = "true"
-# CAL1 — flip to "true" to serve the SSR Month calendar at /events?view=calendar
-# (Month-only @jonnyboats/calendar-react). Default OFF = legacy client calendar.
-# Temporarily ON for live prod verification (Step 7) — flip back to "false" after.
+# CAL1 — serves the SSR Month calendar at /events?view=calendar
+# (@jonnyboats/calendar-react). "false" = the legacy client calendar.
+# ON PERMANENTLY since the 2026-06 prod verification: the SSR calendar is the
+# shipped calendar (OPE-994, John 2026-09-14). Turning this off reverts
+# /events?view=calendar to the legacy client calendar and disables CAL2 below.
 CAL1_SSR_MONTH = "true"
-# CAL2 — flip to "true" to add the Agenda + Year sub-views to the SSR calendar
-# (?cal_view=agenda|year). Requires CAL1_SSR_MONTH = "true". Default OFF = Month only.
-# Temporarily ON for live prod verification — flip back to "false" after.
+# CAL2 — adds the Agenda + Year sub-views to the SSR calendar
+# (?cal_view=agenda|year). Requires CAL1_SSR_MONTH = "true"; "false" = Month only.
+# ON PERMANENTLY alongside CAL1 (OPE-994, John 2026-09-14).
 CAL2_VIEWS = "true"
 # OPE-163 — customer-facing reply send gate for the /admin/inbound-emails Reply
 # panel. The endpoint refuses to enqueue unless this is "true"; the MCP consumer
