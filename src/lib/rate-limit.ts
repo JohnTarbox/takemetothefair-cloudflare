@@ -194,6 +194,14 @@ export type RateLimitEndpoint = keyof typeof RATE_LIMITS;
  * These are the routes where a burst is the attack: each one either creates an
  * account, sends mail, moves ownership, or writes a public record. The other
  * fourteen keep KV alone and are documented as SOFT below.
+ *
+ * ⚠️ Sign-in is burst-covered too, but NOT through this set (OPE-935/OPE-994):
+ * `src/lib/auth/signin-throttle.ts` calls the same BurstCounter Durable Object
+ * directly as policy `auth-signin`, with two keys — `rate:auth-signin:ip:<ip>`
+ * and `rate:auth-signin:email:<sha256(email)>`. It has to run inside NextAuth's
+ * `authorize()` before password verification, where there is no Request-shaped
+ * path through checkRateLimit. Do not route it through here to tidy this list;
+ * read this note when auditing burst coverage.
  */
 const BURST_POLICIES: ReadonlySet<RateLimitEndpoint> = new Set([
   "auth-register",
