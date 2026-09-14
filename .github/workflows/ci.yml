@@ -7,6 +7,12 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# OPE-908 — least privilege. packages:read is what setup-node's NODE_AUTH_TOKEN
+# needs to install @johntarbox/* from GitHub Packages; nothing here writes.
+permissions:
+  contents: read
+  packages: read
+
 jobs:
   test:
     name: Unit Tests
@@ -173,6 +179,11 @@ jobs:
       # .dev.vars or entry module changes the answer between machines.
       - name: Guard generated env types against wrangler config drift
         run: npx tsx scripts/check-env-types-drift.ts
+
+      # OPE-908 — every third-party action is SHA-pinned and every workflow
+      # declares its token permissions.
+      - name: Guard workflow action pins and permissions
+        run: npx tsx scripts/check-workflow-action-pins.ts
 
   e2e:
     name: E2E Tests

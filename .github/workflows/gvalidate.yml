@@ -25,6 +25,10 @@ on:
         default: true
         type: boolean
 
+# OPE-908 — least privilege: checkout + artifact upload only.
+permissions:
+  contents: read
+
 jobs:
   validate:
     name: Google Rich Results Validation

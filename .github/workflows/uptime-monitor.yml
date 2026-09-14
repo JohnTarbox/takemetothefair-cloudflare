@@ -5,6 +5,12 @@ on:
     - cron: "*/30 * * * *" # Every 30 minutes
   workflow_dispatch:
 
+# OPE-908 — least privilege. issues:write is declared, not inherited: the
+# github-script step opens or comments on the downtime issue.
+permissions:
+  contents: read
+  issues: write
+
 jobs:
   uptime:
     name: Health Check

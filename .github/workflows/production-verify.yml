@@ -5,6 +5,10 @@ on:
     - cron: "0 6 * * 1" # Weekly on Monday 6 AM UTC
   workflow_dispatch:
 
+# OPE-908 — least privilege: checkout + artifact upload only.
+permissions:
+  contents: read
+
 jobs:
   verify:
     name: Verify Production Site

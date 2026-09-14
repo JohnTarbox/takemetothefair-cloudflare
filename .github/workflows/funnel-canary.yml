@@ -15,6 +15,10 @@ on:
     - cron: "0 11 * * *"
   workflow_dispatch:
 
+# OPE-908 — least privilege: checkout + artifact upload only.
+permissions:
+  contents: read
+
 jobs:
   canary:
     name: Funnel canary (production, mobile + desktop)

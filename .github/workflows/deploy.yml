@@ -33,6 +33,9 @@ concurrency:
   group: deploy-production
   cancel-in-progress: false
 
+# OPE-908 — deny by default; each job below declares exactly what it needs.
+permissions: {}
+
 jobs:
   # OPE-934 — who may reach production, decided by a TESTED script rather than a
   # job-level `if:`. The old gate admitted any successful CI run whose head
@@ -231,7 +234,7 @@ jobs:
           echo "this build: $(find /tmp/next-static-current -type f | wc -l) files"
 
       - name: Restore previous build's static tree
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: /tmp/next-static-previous
           # Unique per commit so the save below is never a no-op on an existing
@@ -283,7 +286,7 @@ jobs:
 
       - name: Save this build's static tree
         if: success()
-        uses: actions/cache/save@v6
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: /tmp/next-static-previous
           key: next-static-${{ github.sha }}
