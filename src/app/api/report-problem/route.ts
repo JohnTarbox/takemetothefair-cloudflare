@@ -26,6 +26,7 @@ export const dynamic = "force-dynamic";
  */
 
 import { NextResponse } from "next/server";
+import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { problemReports } from "@/lib/db/schema";
 import { logError } from "@/lib/logger";
@@ -121,12 +122,16 @@ export async function POST(req: Request): Promise<Response> {
     );
   }
 
-  // D — Phase 2: fire-and-forget burst-watch correlation against
-  // mcp-server. Fails open on any error (timeout, 5xx, network) — the
-  // operator's correlate_problem_report MCP tool remains the backstop.
-  // We don't await this; the user's redirect should not block on
-  // mcp-server availability.
-  triggerCorrelation(id).catch(async (e) => {
+  // D — Phase 2: burst-watch correlation against mcp-server. Fails open on
+  // any error (timeout, 5xx, network) — the operator's correlate_problem_report
+  // MCP tool remains the backstop. Not awaited: the user's redirect should not
+  // block on mcp-server availability.
+  //
+  // OPE-1019 — but it IS registered with waitUntil. It used to be a bare
+  // `triggerCorrelation(id).catch(...)`: never awaited, never registered, so the
+  // Workers runtime was free to tear it down the moment the redirect was sent.
+  // Same fix, same reason, as `scheduleRefusalRecord` in src/lib/api-auth.ts.
+  const correlation = triggerCorrelation(id).catch(async (e) => {
     await logError(db, {
       level: "warn",
       message: "triggerCorrelation threw",
@@ -135,6 +140,12 @@ export async function POST(req: Request): Promise<Response> {
       context: { id },
     });
   });
+  try {
+    getCloudflareContext().ctx.waitUntil(correlation);
+  } catch {
+    // Outside the Cloudflare runtime (unit tests, local dev) there is no ctx.
+    // The promise still runs; there is nothing to register it with.
+  }
 
   return NextResponse.redirect(new URL("/report-problem/thanks", req.url), 303);
 }

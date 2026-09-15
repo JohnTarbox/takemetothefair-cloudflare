@@ -39,14 +39,50 @@ export default [
     // (admin events/[id]/vendors trackVendorStatusChange), now awaited.
     // ⚠️ `void x()` is an explicit ignore to this rule, so it does NOT flag the
     // `void logError(...)` shape — review those by hand.
-    files: ["src/lib/**/*.ts", "src/app/api/**/*.ts", "mcp-server/src/**/*.ts"],
+    // ⚠️ OPE-1019 — `.catch(handler)` is ALSO "handled" to no-floating-promises,
+    // and no option changes that (checkThenables / ignoreVoid do not). That is
+    // how `triggerCorrelation(id).catch(...)` in src/app/api/report-problem sat
+    // inside this scope, un-awaited and un-registered, and was never flagged.
+    // `local/no-catch-only-promise` below closes that one shape: a statement
+    // that is nothing but `x.catch(...)`. It does NOT see `x.then(a, b)` or a
+    // promise passed to a function that drops it — review those by hand. An
+    // assigned promise (`const work = x.catch(...)`, then `ctx.waitUntil(work)`)
+    // is the pattern it steers toward and is not flagged.
+    // OPE-1019 — packages/*/src added to BOTH the lint script and this block:
+    // `timingSafeEqualString` (the helper OPE-902 exists to await) lives in
+    // packages/utils, which was never linted at all.
+    files: [
+      "src/lib/**/*.ts",
+      "src/app/api/**/*.ts",
+      "mcp-server/src/**/*.ts",
+      "packages/*/src/**/*.ts",
+    ],
     languageOptions: {
       parserOptions: {
         projectService: true,
         tsconfigRootDir: __dirname,
       },
     },
+    plugins: {
+      local: {
+        rules: {
+          "no-catch-only-promise": {
+            meta: { type: "problem", schema: [] },
+            create: (context) => ({
+              "ExpressionStatement > CallExpression[callee.type='MemberExpression'][callee.property.name='catch']":
+                (node) =>
+                  context.report({
+                    node,
+                    message:
+                      "A promise whose only handling is .catch() still floats: on Workers the runtime may tear it down when the response is sent. Await it, or assign it and register it with ctx.waitUntil (see scheduleRefusalRecord in src/lib/api-auth.ts). OPE-1019.",
+                  }),
+            }),
+          },
+        },
+      },
+    },
     rules: {
+      "local/no-catch-only-promise": "error",
       "@typescript-eslint/no-floating-promises": "error",
       "@typescript-eslint/no-misused-promises": [
         "error",
@@ -85,7 +121,7 @@ export default [
         {
           selector: "Literal[regex.pattern='[^a-z0-9]+']",
           message:
-            "Use createSlug() from @takemetothefair/utils instead of inline /[^a-z0-9]+/ regex. The slugify library handles & → \"and\", apostrophes, and accented chars; this regex doesn't. See issue #120.",
+            'Use createSlug() from @takemetothefair/utils instead of inline /[^a-z0-9]+/ regex. The slugify library handles & → "and", apostrophes, and accented chars; this regex doesn\'t. See issue #120.',
         },
         // Cohort 5 follow-up (2026-06-01) — flag raw <button><svg/></button>
         // and <a><svg/></a> patterns. Cohort 5 (PR #293) shipped IconButton +
@@ -162,7 +198,7 @@ export default [
         {
           selector: "Literal[regex.pattern='[^a-z0-9]+']",
           message:
-            "Use createSlug() from @takemetothefair/utils instead of inline /[^a-z0-9]+/ regex. The slugify library handles & → \"and\", apostrophes, and accented chars; this regex doesn't. See issue #120.",
+            'Use createSlug() from @takemetothefair/utils instead of inline /[^a-z0-9]+/ regex. The slugify library handles & → "and", apostrophes, and accented chars; this regex doesn\'t. See issue #120.',
         },
         {
           selector:
@@ -188,12 +224,6 @@ export default [
     },
   },
   {
-    ignores: [
-      ".next/**",
-      ".vercel/**",
-      ".open-next/**",
-      "node_modules/**",
-      "packages/**/dist/**",
-    ],
+    ignores: [".next/**", ".vercel/**", ".open-next/**", "node_modules/**", "packages/**/dist/**"],
   },
 ];

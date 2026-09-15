@@ -11,7 +11,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "NODE_OPTIONS=--max-old-space-size=6144 eslint src mcp-server/src",
+    "lint": "NODE_OPTIONS=--max-old-space-size=6144 eslint src mcp-server/src packages/*/src",
     "typecheck": "NODE_OPTIONS=--max-old-space-size=4096 tsc --noEmit",
     "typecheck:mcp": "NODE_OPTIONS=--max-old-space-size=4096 tsc --noEmit -p mcp-server/tsconfig.json",
     "typecheck:all": "npm run typecheck && npm run typecheck:mcp",

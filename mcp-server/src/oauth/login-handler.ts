@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { timingSafeEqualString } from "@takemetothefair/utils";
 import type { AuthRequest, ClientInfo, OAuthHelpers } from "@cloudflare/workers-oauth-provider";
 import { getDb } from "../db.js";
 import { logError } from "../logger.js";
@@ -127,7 +128,10 @@ app.post("/authorize", async (c) => {
   const csrfToken = formData.get("csrf_token") as string;
   const cookies = c.req.raw.headers.get("Cookie") || "";
   const match = cookies.match(/__Host-CSRF=([^;]+)/);
-  if (!match || match[1] !== csrfToken) {
+  // OPE-1019 — constant-time, like every other secret on this path (OPE-902).
+  // `timingSafeEqualString` is async; awaiting it is load-bearing — a bare
+  // Promise in this condition is always truthy (the OPE-902 shape).
+  if (!match || !(await timingSafeEqualString(match[1], csrfToken))) {
     await logError(c.env.DB, {
       source: "mcp:oauth",
       message: "POST /authorize CSRF validation failed",
