@@ -294,9 +294,10 @@ async function recordIndexNowSuccess(db: Db, urls: string[], at: Date): Promise<
   // leave the other silently un-anchored
   // ([[feedback_fix_wired_into_one_of_two_parallel_paths]]).
   //
-  // It cannot rely on `indexnow_submissions` alone: recordSubmission prunes
-  // that table at 30 days, so during a longer outage the last success row is
-  // guaranteed to vanish and the age would revert to the seeded floor.
+  // It cannot rely on `indexnow_submissions` alone: the MCP daily retention cron
+  // (mcp-server/src/log-table-retention.ts, OPE-993) prunes that table at 30
+  // days, so during a longer outage the last success row is guaranteed to vanish
+  // and the age would revert to the seeded floor.
   await advanceIndexNowOutageAnchor(db, at);
 }
 

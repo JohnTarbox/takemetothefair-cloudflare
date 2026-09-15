@@ -122,9 +122,13 @@ async function runLogTableRetention(
     return result;
   }
 
+  // OPE-1024 — `errors=0` so all three retention stamps carry the same fields
+  // as request-sample-retention's. A literal, not a counter: this line is only
+  // reached when the prune did not throw — the failure path above returns
+  // without stamping — so on this path the error count is zero by construction.
   const note =
     `deleted=${result.deleted} batches=${result.batches} capped=${result.capped} ` +
-    `oldest=${result.oldestRemaining ?? "none"} cutoff=${result.cutoff}`;
+    `oldest=${result.oldestRemaining ?? "none"} cutoff=${result.cutoff} errors=0`;
 
   await logError(db, {
     level: "info",
