@@ -26,12 +26,18 @@
  *    value (the two agree somewhere) suppresses it.
  */
 
-export type FaqConflictType = "distance_miles" | "attendance_count" | "price_usd";
+export type FaqConflictType =
+  | "distance_miles"
+  | "attendance_count"
+  | "price_usd"
+  | "admission_free_vs_paid"
+  | "venue_all_events";
 
 export interface FaqCoherenceConflict {
   type: FaqConflictType;
-  bodyValues: number[];
-  columnValues: number[];
+  /** Numbers for the numeric types (free admission is 0); place names for `venue_all_events`. */
+  bodyValues: Array<number | string>;
+  columnValues: Array<number | string>;
 }
 
 export interface FaqCoherenceResult {
@@ -204,6 +210,152 @@ const TYPES: { type: FaqConflictType; re: RegExp; wholeBodyToo: boolean }[] = [
   // not lost, because the type never produced a true positive to lose.
 ];
 
+// ── OPE-1018 → OPE-1015: word-valued prices ────────────────────────────────
+//
+// The specimen (`old-deerfield-craft-fairs-vendors-and-visitors-guide`, pre-fix):
+// body "Admission is free." ×3 in prose sections; column "Adult gate admission …
+// is approximately $8-$10". `faq_coherence` said clean, for TWO reasons, only one
+// of which the filer could see without the source:
+//
+//   1. `PRICE_RE` captures numerals only. "Free" is a price written as a word.
+//   2. `price_usd` is FAQ-region-only (`wholeBodyToo: false`), and the body's
+//      "free" sits in ordinary prose sections — so even a free→0 extractor on
+//      that type would never have looked there.
+//
+// So this is its own BINARY type rather than a widening of `price_usd`. Free vs
+// paid is the one price contradiction that survives a whole-body comparison,
+// because it fires only when a side is free-ONLY: one side claims admission is
+// free and states no paid admission price anywhere, the other states a paid
+// admission price and never says free. A guide listing "fall show $7, spring
+// sampler free" has both on the body side and can never fire it — which is the
+// precision OPE-280 bought `price_usd` by restricting its region.
+
+/** "free" that is about someone other than the general public is not a price claim. */
+const FREE_EXCEPTION =
+  "(?:child|children|kids?|seniors?|members?|students?|veterans?|military|under|ages?|toddlers?|infants?|babies)";
+const FREE_ADMISSION_RE = new RegExp(
+  [
+    // "Admission is free", "entry is always free" — not "admission is free for kids"
+    `\\b(?:admission|entry|entrance)\\s+(?:is\\s+|are\\s+)?(?:always\\s+|completely\\s+|entirely\\s+|totally\\s+)?free\\b(?![^.\\n]{0,25}\\b${FREE_EXCEPTION}\\b)`,
+    // "Free admission" — not "children receive free admission" / "free admission for seniors"
+    `(?<!\\b${FREE_EXCEPTION}\\b[^.\\n]{0,25})\\bfree\\s+(?:admission|entry|entrance)\\b(?![^.\\n]{0,25}\\b${FREE_EXCEPTION}\\b)`,
+    `\\bno\\s+(?:admission|entry|entrance)\\s+(?:fee|charge|cost)\\b`,
+  ].join("|"),
+  "gi"
+);
+
+/**
+ * A paid admission price, for the free-vs-paid rule ONLY. Same anchoring as
+ * `PRICE_RE` but sentence-bounded at 80 chars: the specimen column puts 51
+ * characters between "admission" and "$8", past `PRICE_RE`'s 40. Widening
+ * `PRICE_RE` itself would re-open the booth-fee noise OPE-280 measured; here
+ * the other side must be free-only, so the wider window cannot pair two
+ * different kinds of money.
+ */
+const PAID_ADMISSION_RE = new RegExp(
+  `(?:${ADMISSION}[^.\\n]{0,80}?\\$\\s*([\\d,]+(?:\\.\\d{1,2})?))` +
+    `|(?:\\$\\s*([\\d,]+(?:\\.\\d{1,2})?)[^.\\n]{0,30}?${ADMISSION})`,
+  "gi"
+);
+
+function freeVsPaid(bodyText: string, colText: string): FaqCoherenceConflict | null {
+  FREE_ADMISSION_RE.lastIndex = 0;
+  const bodyFree = new RegExp(FREE_ADMISSION_RE.source, "i").test(bodyText);
+  const colFree = new RegExp(FREE_ADMISSION_RE.source, "i").test(colText);
+  const bodyPaid = extract(bodyText, PAID_ADMISSION_RE).filter((n) => n > 0);
+  const colPaid = extract(colText, PAID_ADMISSION_RE).filter((n) => n > 0);
+  if (bodyFree && bodyPaid.length === 0 && !colFree && colPaid.length > 0) {
+    return { type: "admission_free_vs_paid", bodyValues: [0], columnValues: colPaid };
+  }
+  if (colFree && colPaid.length === 0 && !bodyFree && bodyPaid.length > 0) {
+    return { type: "admission_free_vs_paid", bodyValues: bodyPaid, columnValues: [0] };
+  }
+  return null;
+}
+
+// ── OPE-1015: a categorical type — the venue of ALL events ──────────────────
+//
+// Specimen column: "All three events are held at Memorial Hall Museum in Old
+// Deerfield, Massachusetts." Specimen body: "The Spring and Holiday Samplers are
+// held at the Eastern States Exposition's indoor facility about 35 miles south,
+// in West Springfield."
+//
+// Deliberately the narrowest place rule that catches it:
+//  - The column side must be a UNIVERSAL claim ("all events", "both shows",
+//    "every fair" … held at X). A column naming one event's venue while the body
+//    names another event's is a multi-show post doing its job, not a
+//    contradiction — the failure the ticket warns is worse than no type.
+//  - The body side is any "held/hosted at|in Y" with a capitalised place.
+//  - It fires only when Y's SENTENCE shares no distinctive token with X. Venue
+//    names have aliases ("the Eastern States Exposition (the Big E)") and towns
+//    ("held in Deerfield" vs "Memorial Hall Museum in Old Deerfield"); a sentence
+//    that names any part of X anywhere is treated as agreeing.
+//  - Generic venue words (hall, museum, fairgrounds …) are not distinctive, so
+//    "Memorial Hall" and "Town Hall" do not share a token.
+// Note it CANNOT use "does the body mention X at all": the specimen body names
+// Memorial Hall Museum for the fall festival, which is correct — the error is
+// the word "all".
+
+const PLACE_STOP = new Set(
+  (
+    "the and of at in on for hall museum center centre park fairgrounds fairground grounds " +
+    "fair fairs festival exposition expo building arena club church school street road town " +
+    "city county common green farm events event show shows indoor outdoor facility old new " +
+    "north south east west massachusetts maine connecticut vermont hampshire rhode island"
+  ).split(" ")
+);
+const PLACE_PHRASE = "((?:[A-Z][\\w'’.&-]*)(?:\\s+(?:of|the|and|&)?\\s*[A-Z][\\w'’.&-]*)*)";
+const UNIVERSAL_VENUE_RE = new RegExp(
+  `\\b(?:[Aa]ll|[Bb]oth|[Ee]very|[Ee]ach)\\b[^.\\n]{0,40}?\\b(?:held|hosted|take place|takes place)\\s+(?:at|in)\\s+(?:the\\s+)?${PLACE_PHRASE}(?:\\s+in\\s+${PLACE_PHRASE})?`,
+  "g"
+);
+const BODY_VENUE_RE = new RegExp(
+  `\\b(?:held|hosted|take place|takes place)\\s+(?:at|in)\\s+(?:the\\s+)?${PLACE_PHRASE}`,
+  "g"
+);
+
+function placeTokens(text: string): string[] {
+  return text
+    .replace(/['’]s\b/g, "")
+    .toLowerCase()
+    .split(/[^a-z]+/)
+    .filter((t) => t.length >= 3 && !PLACE_STOP.has(t));
+}
+
+function venueAllEvents(wholeBody: string, colText: string): FaqCoherenceConflict | null {
+  const colPlaces: string[] = [];
+  const colTokens = new Set<string>();
+  for (const m of colText.matchAll(UNIVERSAL_VENUE_RE)) {
+    const name = [m[1], m[2]].filter(Boolean).join(" in ");
+    const toks = placeTokens(name);
+    if (toks.length === 0) continue;
+    colPlaces.push(name);
+    toks.forEach((t) => colTokens.add(t));
+  }
+  if (colPlaces.length === 0) return null;
+
+  const bodyPlaces: string[] = [];
+  for (const sentence of wholeBody.split(/(?<=[.!?])\s+|\n+/)) {
+    for (const m of sentence.matchAll(BODY_VENUE_RE)) {
+      const toks = placeTokens(m[1]);
+      if (toks.length === 0) continue;
+      const sentenceToks = new Set(placeTokens(sentence));
+      const agrees = [...colTokens].some((t) => sentenceToks.has(t));
+      if (!agrees) bodyPlaces.push(m[1].replace(/['’]s$/, ""));
+    }
+  }
+  if (bodyPlaces.length === 0) return null;
+  return {
+    type: "venue_all_events",
+    bodyValues: uniqStrings(bodyPlaces),
+    columnValues: uniqStrings(colPlaces),
+  };
+}
+
+function uniqStrings(xs: string[]): string[] {
+  return [...new Set(xs)];
+}
+
 /**
  * Compare the body's `## Q:` FAQ blocks against the column `faqs` for conflicting
  * typed numeric claims. Returns { incoherent, conflicts } — empty when either
@@ -234,6 +386,13 @@ export function detectFaqIncoherence(
       conflicts.push({ type, bodyValues, columnValues });
     }
   }
+
+  // OPE-1015 — both compare against the WHOLE body; see each rule for why that
+  // is precise despite prices and venues being multi-valued in a guide.
+  const fvp = freeVsPaid(`${faqText}\n${wholeBody}`, colText);
+  if (fvp) conflicts.push(fvp);
+  const venue = venueAllEvents(wholeBody, colText);
+  if (venue) conflicts.push(venue);
 
   return { incoherent: conflicts.length > 0, conflicts };
 }
