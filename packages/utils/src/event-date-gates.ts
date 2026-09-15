@@ -20,7 +20,11 @@
  */
 
 import { decodeHtmlEntities } from "./index";
-import { hasCalendarDayPassed } from "@takemetothefair/datetime";
+import {
+  hasCalendarDayPassed,
+  toIsoDateOnly,
+  toIsoDateOnlyInVenueZone,
+} from "@takemetothefair/datetime";
 
 // ---------------------------------------------------------------------------
 // Source credibility tiers
@@ -202,6 +206,18 @@ const NON_SUBVENUE_SUFFIX_PATTERNS = [
   /,\s*[A-Z]{2}\s*$/,
   // mm/dd/yyyy or mm/dd/yy date format.
   /\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/,
+  // OPE-1032 (ratified 2026-09-15) — edition / series / town qualifiers that the
+  // weekly drain measured at 9 of 9 false positives:
+  //   "— June 29", "— November"            a month (with or without a day)
+  //   "— 500th Lighting", "— 25th Annual"  an ordinal edition
+  //   "— America 250"                      a 3-digit anniversary number
+  //   "— West Kingston RI", "— Westerly RI" a town with a bare state code (the
+  //     comma form above missed these, and renaming one town to another
+  //     re-tripped the gate on the corrective edit itself)
+  /\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b/i,
+  /\b\d+(?:st|nd|rd|th)\b/i,
+  /\b\d{3}\b/,
+  /^[A-Z][A-Za-z.'-]*(?:\s+[A-Z][A-Za-z.'-]*){0,3}\s+(?:AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY)$/,
 ];
 
 /** Decide whether an em-dash suffix represents a sub-venue (= flag) or a
@@ -261,6 +277,9 @@ export interface DateGateInput {
    *  the duration check is bypassed (mirrors discontinuousDates). At
    *  ingest time event_days may not exist yet; pass the flag instead. */
   eventDaysCount?: number | null | undefined;
+  /** OPE-1032 — `events.categories` (JSON array string or array). A season-long
+   *  category (Holiday Market) bypasses the duration-too-long gate. */
+  categories?: string | readonly string[] | null | undefined;
 }
 
 export type DateGateResult = { ok: true } | { ok: false; reasons: string[] };
@@ -303,17 +322,6 @@ function sameDay(a: Date, b: Date): boolean {
   );
 }
 
-/** Pattern that catches mentions of a specific time-of-day in a description.
- *  When present, a non-midnight-UTC start_date is legitimately preserving the
- *  source's intended time; when absent, it's a likely timezone-confused parse
- *  of a date-only source field. Matches "2 PM", "14:30", "noon", "morning"
- *  (the latter signals intentional time semantics even if non-numeric). */
-const DESCRIPTION_HAS_TIME_PATTERNS = [
-  /\b\d{1,2}\s*(?::\d{2})?\s*(?:am|pm)\b/i,
-  /\b\d{1,2}:\d{2}\b/,
-  /\b(?:noon|midnight|morning|afternoon|evening|night)\b/i,
-];
-
 /** Gate A4 (analyst spec 2026-05-16; C1 noon-anchor flip 2026-06-05):
  *  catches the date-only-misparsed-as-timestamp bug. When a source provides
  *  a date-only ISO ("2026-07-15") or a date with an explicit non-UTC zone
@@ -337,34 +345,66 @@ const DESCRIPTION_HAS_TIME_PATTERNS = [
  *      the source mentions a time, the stored value is legitimately
  *      preserving it. */
 function dateLooksTimezoneConfused(input: DateGateInput): boolean {
-  if (!input.startDate) return false;
-  const h = input.startDate.getUTCHours();
-  const m = input.startDate.getUTCMinutes();
-  const s = input.startDate.getUTCSeconds();
+  // OPE-1032 (ratified by John 2026-09-15) — fire ONLY when the stored instant
+  // puts the event on a different calendar day in the venue zone than in UTC.
+  //
+  // The rules this replaces — "any quarter-hour time is confused unless the
+  // description mentions a time", "non-quarter-hour minutes are confused" —
+  // flagged the platform's own storage shapes: local midnight at 04:00Z and
+  // real start times at 13:00–15:00Z. Three weekly drains (09-01, 09-09,
+  // 09-15) measured that class at ~100% false positive; 12 of 12 on 09-15.
+  // A corrected start time also re-tripped the gate on the very edit that
+  // fixed it (the Ricker Hill 10am specimen).
+  //
+  // The date comparison is what the harm actually is: date-only fields render
+  // in America/New_York (OPE-482), so a start whose Eastern day differs from
+  // its UTC day is shown on the wrong day. It still catches every case the old
+  // gate existed for — 00:00:00Z is the previous Eastern day, and so is a
+  // 04:00Z local-midnight value on a winter date, which the old gate passed
+  // whenever the description happened to mention a time.
+  if (!input.startDate || isNaN(input.startDate.getTime())) return false;
+  return toIsoDateOnly(input.startDate) !== toIsoDateOnlyInVenueZone(input.startDate);
+}
 
-  // Noon UTC is the canonical anchor for date-only ingests
-  // (normalizeEventDate). Always clean.
-  if (h === 12 && m === 0 && s === 0) return false;
+const SEASON_LONG_CATEGORIES = new Set(["holiday market"]);
 
-  // Midnight UTC is the A3 / K14 symptom — date-only ingest path
-  // bypassed normalizeEventDate and parsed as midnight. Always
-  // suspicious, even when the description mentions a time (a 5pm EDT
-  // event would correctly store at 21:00:00 UTC, not 00:00:00).
-  if (h === 0 && m === 0 && s === 0) return true;
-
-  // Non-quarter-hour minutes or non-zero seconds don't correspond to
-  // any human-meaningful event time. Always suspicious.
-  if (m % 15 !== 0 || s !== 0) return true;
-
-  // For other quarter-hour-aligned times (e.g. 18:00:00 = 2pm EDT,
-  // 14:30:00 = 10:30am EDT), defer to the description.
-  if (input.description) {
-    const decoded = decodeHtmlEntities(input.description);
-    if (DESCRIPTION_HAS_TIME_PATTERNS.some((p) => p.test(decoded))) {
+function hasSeasonLongCategory(categories: DateGateInput["categories"]): boolean {
+  if (!categories) return false;
+  let list: unknown = categories;
+  if (typeof categories === "string") {
+    try {
+      list = JSON.parse(categories);
+    } catch {
       return false;
     }
   }
-  return true;
+  return (
+    Array.isArray(list) &&
+    list.some((c) => typeof c === "string" && SEASON_LONG_CATEGORIES.has(c.trim().toLowerCase()))
+  );
+}
+
+const MONTH_NAME =
+  "(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\\.?";
+/** "November 7 – December 28", "Nov 24 through Jan 3", "November to December". */
+const MONTH_SPAN_RE = new RegExp(
+  `\\b${MONTH_NAME}(?:\\s+\\d{1,2}(?:st|nd|rd|th)?)?,?\\s*(?:-|–|—|to|through|thru|until)\\s*${MONTH_NAME}\\b`,
+  "i"
+);
+
+function descriptionStatesMonthSpan(description: string | null | undefined): boolean {
+  if (!description) return false;
+  const decoded = decodeHtmlEntities(description);
+  for (const m of decoded.matchAll(new RegExp(MONTH_SPAN_RE.source, "gi"))) {
+    // Two DIFFERENT month names — "June 5 - June 7" is a short run, not a season.
+    const names = m[0].toLowerCase().match(new RegExp(MONTH_NAME, "gi")) ?? [];
+    const first = names[0];
+    const last = names[names.length - 1];
+    if (first && last && names.length >= 2 && first.slice(0, 3) !== last.slice(0, 3)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export function dateLooksImplausible(input: DateGateInput): DateGateResult {
@@ -372,9 +412,9 @@ export function dateLooksImplausible(input: DateGateInput): DateGateResult {
   const now = new Date();
 
   if (dateLooksTimezoneConfused(input)) {
-    // Gate A4: start_date stored off UTC-midnight, description has no time
-    // mention. Likely a misparsed date-only source or a timestamp with a
-    // non-UTC offset that wasn't normalized through parseDateOnly.
+    // Gate A4 (OPE-1032 semantics): the stored start renders on a different
+    // calendar day in the venue zone than in UTC — a misparsed date-only
+    // source or an un-normalized offset timestamp that is visibly wrong.
     reasons.push("start_date_timezone_confused");
   }
 
@@ -448,13 +488,20 @@ export function dateLooksImplausible(input: DateGateInput): DateGateResult {
   //   - discontinuousDates flag set at ingest, OR
   //   - ≥3 event_days rows already persisted (admin PATCH path).
   const isRecurringSeries = input.discontinuousDates === true || (input.eventDaysCount ?? 0) >= 3;
+  // OPE-1032 (ratified 2026-09-15) — genuinely season-long events: a Holiday
+  // Market category, or a description that states the span itself ("November 7
+  // through December 28"). Specimens: Snowport `2594da27` (Nov 7–Dec 28),
+  // Christmas at Blithewold `bd8d3228` (Nov 24–Jan 3).
+  const isStatedSeason =
+    hasSeasonLongCategory(input.categories) || descriptionStatesMonthSpan(input.description);
 
   if (
     input.startDate &&
     input.endDate &&
     input.endDate.getTime() - input.startDate.getTime() > MAX_DURATION_MS_NON_MAJOR &&
     input.eventScale !== "MAJOR" &&
-    !isRecurringSeries
+    !isRecurringSeries &&
+    !isStatedSeason
   ) {
     // Multi-week storage of an event with no MAJOR scale tag. Most often
     // this is a recurring weekly market or seasonal series row that got
@@ -492,6 +539,9 @@ export interface IngestEvaluationInput {
   /** Count of associated event_days rows. ≥3 also bypasses the
    *  duration-too-long gate. See DateGateInput. */
   eventDaysCount?: number | null | undefined;
+  /** OPE-1032 — `events.categories` (JSON array string or array). A season-long
+   *  category (Holiday Market) bypasses the duration-too-long gate. */
+  categories?: string | readonly string[] | null | undefined;
 }
 
 export interface IngestEvaluationResult {
@@ -531,6 +581,7 @@ export function evaluateGates(input: IngestEvaluationInput): IngestEvaluationRes
     eventScale: input.eventScale,
     discontinuousDates: input.discontinuousDates,
     eventDaysCount: input.eventDaysCount,
+    categories: input.categories,
   });
   if (!dateCheck.ok) reasons.push(...dateCheck.reasons);
 
