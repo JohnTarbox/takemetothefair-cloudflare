@@ -15,7 +15,7 @@
  * Promise.all siblings.
  */
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { eventDiscrepancies } from "../schema.js";
 import type { Db } from "../db.js";
 import { logError } from "../logger.js";
@@ -204,6 +204,14 @@ export async function captureDiscrepancy(
  */
 const LIFECYCLE_OWNED_REASONS: ReadonlySet<string> = new Set(["end_date_in_past"]);
 
+/** OPE-1032 — statuses where a PERSON decided the condition. Bookkeeping closures
+ *  (superseded_*) are not here: they settle nothing about the data. */
+const HUMAN_ADJUDICATED_STATUSES = [
+  "dismissed",
+  "resolved_authoritative",
+  "resolved_divergent",
+] as const;
+
 /**
  * Map an `evaluateGates` reason code to a discrepancy `field_class`.
  * Centralized so the GW1b self-consistency cron and any future caller
@@ -275,6 +283,28 @@ export async function captureSelfConsistencyDiscrepancy(
 
   const fieldClass = gateReasonToFieldClass(args.reason);
   if (!fieldClass) return null;
+
+  // OPE-1032 — a human already adjudicated this exact condition. If a row for
+  // the same (event, reason) was dismissed or resolved while the value it was
+  // about is unchanged, re-filing it only re-asks a settled question — which is
+  // how dismissed rows reappeared in every weekly drain. A changed value (a new
+  // date, a renamed event) is a new condition and files normally.
+  const adjudicated = await db
+    .select({ id: eventDiscrepancies.id })
+    .from(eventDiscrepancies)
+    .where(
+      and(
+        eq(eventDiscrepancies.eventId, args.eventId),
+        eq(eventDiscrepancies.detectedBy, "self_consistency"),
+        eq(eventDiscrepancies.divergentValue, args.reason),
+        inArray(eventDiscrepancies.resolutionStatus, [...HUMAN_ADJUDICATED_STATUSES]),
+        args.authoritativeValue == null
+          ? isNull(eventDiscrepancies.authoritativeValue)
+          : eq(eventDiscrepancies.authoritativeValue, args.authoritativeValue)
+      )
+    )
+    .limit(1);
+  if (adjudicated.length > 0) return null;
 
   return captureDiscrepancy(db, {
     eventId: args.eventId,

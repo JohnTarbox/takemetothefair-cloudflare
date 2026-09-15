@@ -478,6 +478,7 @@ describe("runScheduledSelfConsistencyCron - cron handler", () => {
       emitted: 0,
       skipped_dedup: 0,
       skipped_no_field_class: 0,
+      superseded: 0,
     });
   });
 
