@@ -3,8 +3,11 @@
  * by rows written before OPE-971 (2026-09-13 20:23Z) to the same /24 and /48
  * prefixes new writes store. `ip` column only; no row is deleted.
  *
- * STATUS: NOT YET RUN AGAINST PRODUCTION. Update this line with the run date
- * and totals once it has been.
+ * STATUS: RUN AGAINST PRODUCTION 2026-09-15T23:43:28Z → 23:49:31Z, on John's
+ * direct in-session authorization. 102,235 rows updated, 0 set to NULL, 52
+ * batches. Re-query afterwards: 0 rows left with a full address, 109,230
+ * total, none lost. It is idempotent (`ip NOT LIKE '%/%'`), so a re-run is a
+ * no-op — but it has served its purpose and should not need one.
  *
  * Dry run green 2026-09-15 (48-row CASE path): 1,067 seeded full addresses
  * detected before, 0 after, 1,200 rows in and 1,200 out, maxParams 98, second
@@ -51,6 +54,20 @@ const DATABASE_ID = "d449e416-3814-48a6-b9e8-b676333b2cdc";
 const BATCH = 2000; // read page size; reads are cheap, writes are what cost
 const ROWS_PER_STATEMENT = 48; // 48*2 id/prefix params + 2 range bounds = 98, under D1's 100 cap
 
+/** A uuid as stored in `request_samples.id`. Anything else aborts the run. */
+export function assertSafeId(id: string): string {
+  if (!/^[0-9a-fA-F-]{36}$/.test(id)) throw new Error(`unsafe id: ${JSON.stringify(id)}`);
+  return id;
+}
+
+/** truncateIp's own output shape: hex, dots, colons, then /24 or /48. */
+export function assertSafePrefix(prefix: string): string {
+  if (!/^[0-9a-fA-F.:]{1,45}\/(24|48)$/.test(prefix)) {
+    throw new Error(`unsafe prefix: ${JSON.stringify(prefix)}`);
+  }
+  return prefix;
+}
+
 export interface Executor {
   all(sql: string, params: unknown[]): Promise<Record<string, unknown>[]>;
   run(sql: string, params: unknown[]): Promise<number>; // rows changed
@@ -84,6 +101,15 @@ export async function truncateAll(
       // rows arrive ORDER BY id, so the chunk's own ends are its range bounds
       const lo = chunk[0].id;
       const hi = chunk[chunk.length - 1].id;
+      // Values are bound, never interpolated, so this is not escaping — it is
+      // a shape assertion. An id that is not a uuid, or a "prefix" that is not
+      // truncateIp's own output, means something upstream is wrong, and on a
+      // one-shot rewrite of 102k production rows that must stop the run rather
+      // than be written.
+      for (const c of chunk) {
+        assertSafeId(c.id);
+        if (c.prefix !== null) assertSafePrefix(c.prefix);
+      }
       const cases = chunk.map(() => "WHEN ? THEN ?").join(" ");
       const params: (string | null)[] = [];
       for (const c of chunk) params.push(c.id, c.prefix);
@@ -166,11 +192,13 @@ async function dryRun() {
   const insert = db.prepare(
     "INSERT INTO request_samples (id, timestamp, ip, user_agent) VALUES (?, 0, ?, 'ua')"
   );
-  let n = 0;
-  // 1,200 rows so the loop crosses batch and 99-id chunk boundaries.
+  // 1,200 rows so the loop crosses batch and chunk boundaries.
   for (let i = 0; i < 1200; i++) {
     const [, ip] = shapes[i % shapes.length];
-    insert.run(`row-${String(n++).padStart(5, "0")}`, ip);
+    // Real uuids, not `row-00001`: `request_samples.id` is a uuid in prod and
+    // the shape assertion rejects anything else, so a synthetic id would make
+    // the dry run exercise a code path production never takes.
+    insert.run(crypto.randomUUID(), ip);
   }
   const exec = sqliteExecutor(db);
   const totalBefore = (db.prepare("SELECT COUNT(*) n FROM request_samples").get() as { n: number })
@@ -212,7 +240,13 @@ async function dryRun() {
 
 async function applyProduction() {
   const env = readFileSync(new URL("../.env", import.meta.url), "utf8");
-  const token = env.match(/^CLOUDFLARE_API_TOKEN=(.+)$/m)?.[1]?.trim();
+  // The value is quote-wrapped in this repo's .env; keeping the quotes sends a
+  // 42-char bearer token and earns a bare `D1 401: Authentication error`,
+  // which reads like a scope problem rather than a parse one.
+  const token = env
+    .match(/^CLOUDFLARE_API_TOKEN=(.+)$/m)?.[1]
+    ?.trim()
+    .replace(/^["']|["']$/g, "");
   if (!token) throw new Error("CLOUDFLARE_API_TOKEN not found in .env");
   const exec = d1RestExecutor(token);
   const before = await exec.all(
