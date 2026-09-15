@@ -23,7 +23,16 @@ import { desc, eq, gte, inArray, and, type SQL } from "drizzle-orm";
  *  for submit-intent emails; 10 min is generous enough to cover retries. */
 const EVENT_LOOKUP_WINDOW_SECONDS = 600;
 
-const ALLOWED_STATUSES = ["received", "processing", "replied", "forwarded", "failed"] as const;
+// OPE-1018 — `awaiting_human`: a customer answered a question a person asked
+// them. The one status here that means "someone is waiting on us".
+const ALLOWED_STATUSES = [
+  "received",
+  "processing",
+  "replied",
+  "forwarded",
+  "failed",
+  "awaiting_human",
+] as const;
 
 export async function GET(request: NextRequest) {
   const session = await auth();
