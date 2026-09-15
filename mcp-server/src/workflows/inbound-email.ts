@@ -59,6 +59,13 @@ import { getDb } from "../db.js";
 import { ledgerEmailSend } from "../mailer.js";
 import { isAutoReplyEnabled, AUTO_REPLY_HELD_REASON, type EmailGateEnv } from "../email-gates.js";
 import { shouldUseThreadReplyAck } from "../email-handlers/thread-reply-ack.js";
+import {
+  resolveOwedHuman,
+  buildOwedHumanNotice,
+  OWED_HUMAN_STATUS,
+  OWED_HUMAN_NOTICE_SOURCE,
+  type OwedHumanVerdict,
+} from "../email-handlers/owed-human.js";
 import { inboundEmails, adminActions, events } from "../schema.js";
 import { logError } from "../logger.js";
 import {
@@ -218,6 +225,11 @@ type Env = EmailGateEnv & {
    * and forwarded to admin — only the outbound question is withheld.
    */
   UNROUTED_ASK_ENABLED?: string;
+  /** OPE-1018 — the operator notice for a reply owed a human. Same Worker, same
+   *  bindings as the canaries; optional so tests / unconfigured envs can omit it
+   *  (the step then logs instead of sending). */
+  EMAIL_JOBS?: Queue;
+  ALERT_EMAIL_TECHNICAL?: string;
 };
 
 const SOURCE = "mcp:workflow:inbound-email";
@@ -840,9 +852,35 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     // when the reply named a fair and its held photos are already attached:
     // there is no judgement left to make, and the block below would overwrite
     // the handler's replyKind and resultingEventId with a generic ack.
+    // OPE-1018 — is this someone answering a question a PERSON asked them?
+    //
+    // Resolved before the admin-decision gate because it changes that gate: a
+    // reply to our own offer ("yes, please add us") has no decision to make, it
+    // needs someone to act. Failure resolves to NOT owed — today's behaviour —
+    // and is logged, so a broken lookup degrades to the status quo rather than
+    // to a wrong status or a silent skip of the pause.
+    let owedHuman: OwedHumanVerdict | null = null;
+    try {
+      owedHuman = await step.do(
+        "thread/owed-human",
+        { retries: { limit: 2, delay: "5 seconds", backoff: "constant" }, timeout: "10 seconds" },
+        async () => resolveOwedHuman(getDb(this.env.DB), messageRowId)
+      );
+    } catch (err) {
+      await logError(this.env.DB, {
+        source: SOURCE,
+        message: "owed-human lookup failed; treating as not owed",
+        sessionId,
+        error: err,
+        context: { messageRowId, intent },
+      });
+    }
+    const isOwedHuman = owedHuman?.owed === true;
+
     const needsAdminDecision =
       (intent === "correction" || intent === "press" || intent === "claim_request") &&
-      !result.skipAdminDecision;
+      !result.skipAdminDecision &&
+      !isOwedHuman;
 
     // ⚠️ OPE-766 — THE PAUSE NO LONGER RUNS HERE. It moved to AFTER send-reply.
     //
@@ -1503,7 +1541,9 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         await db
           .update(inboundEmails)
           .set({
-            status: caughtError ? "failed" : result.status,
+            // OPE-1018 — the thread-reply-ack must not be what marks a waiting
+            // customer as handled.
+            status: caughtError ? "failed" : isOwedHuman ? OWED_HUMAN_STATUS : result.status,
             error: caughtError ?? null,
             replyKind: result.replyKind ?? null,
             resultingEventId: result.resultingEventId ?? null,
@@ -1532,6 +1572,55 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           .where(eq(inboundEmails.id, messageRowId));
       }
     );
+
+    // ───── OPE-1018: tell the operator, promptly ─────
+    //
+    // Regardless of caughtError: a failed ack does not make the person any less
+    // owed an answer. This notice is what makes the approved `thread-reply-ack`
+    // copy ("it has gone to the person you've been corresponding with") true.
+    // Internal mail to ALERT_EMAIL_TECHNICAL on a non-`reply:` source, so the
+    // EMAIL_REPLY_ENABLED gate (which holds only customer `reply:*` mail) does
+    // not apply.
+    if (isOwedHuman && owedHuman) {
+      const verdict = owedHuman;
+      try {
+        await step.do(
+          "notify/owed-human",
+          {
+            retries: { limit: 2, delay: "10 seconds", backoff: "exponential" },
+            timeout: "10 seconds",
+          },
+          async () => {
+            const to = this.env.ALERT_EMAIL_TECHNICAL;
+            if (!to || !this.env.EMAIL_JOBS) {
+              await logError(this.env.DB, {
+                source: SOURCE,
+                message: `owed-human reply from ${verdict.fromAddress} and no ALERT_EMAIL_TECHNICAL/EMAIL_JOBS to notify`,
+                sessionId,
+                context: { messageRowId, threadId: verdict.threadId },
+              });
+              return;
+            }
+            const notice = buildOwedHumanNotice(messageRowId, intent, verdict);
+            await this.env.EMAIL_JOBS.send({
+              to,
+              subject: notice.subject,
+              text: notice.text,
+              html: notice.html,
+              source: OWED_HUMAN_NOTICE_SOURCE,
+            });
+          }
+        );
+      } catch (err) {
+        await logError(this.env.DB, {
+          source: SOURCE,
+          message: "owed-human operator notice failed after retries",
+          sessionId,
+          error: err,
+          context: { messageRowId },
+        });
+      }
+    }
 
     return {
       messageRowId,

@@ -925,6 +925,33 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       ),
   },
   {
+    // OPE-1018 — the operator notice for a customer answering a question a
+    // PERSON asked them. Evidence is the notice's own ledger row
+    // (`operator-owed-human-notice`, written by the EMAIL_JOBS consumer).
+    //
+    // ⚠️ SHIPS DORMANT — `enabled_at = NULL` in migration 0290, deliberately.
+    // `inbound_emails.thread_id` only exists from 2026-09-04, and across those
+    // 11 days exactly TWO rows qualified (both on 2026-09-14, the specimens).
+    // Two arrivals are not an inter-arrival distribution, so any window here
+    // would be a guess — and a guessed window either cries wolf on a quiet
+    // fortnight or sleeps through a dead path. A dormant probe never
+    // false-fires. ARMING CONDITION: once ≥8 qualifying replies exist, set
+    // `enabled_at` and replace this window with ~3× the measured p90 gap
+    // (tracked as its own date-gated ticket).
+    name: "owed-human-notice",
+    ownerOpe: "OPE-1018",
+    label: "Operator notice: a customer answered a human's email",
+    priority: "P1",
+    expectedWindowHours: 30 * 24,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        emailSendLedger,
+        emailSendLedger.sentAt,
+        eq(emailSendLedger.source, "operator-owed-human-notice")
+      ),
+  },
+  {
     name: "promoter-enrichment",
     ownerOpe: "OPE-36",
     label: "Promoter enrichment cron",
