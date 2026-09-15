@@ -43,6 +43,7 @@ import {
 import type { Env } from "./index.js";
 import { getDb, type Db } from "./db.js";
 import { logError } from "./logger.js";
+import { toIsoDateOnly, toIsoDateOnlyInVenueZone } from "@takemetothefair/datetime";
 // OPE-611 — the third queue. This file's own docblock predicted it ("a third
 // is a few lines"); the alternative was a bespoke notifier, which is how the
 // fourth silent queue gets missed.
@@ -128,6 +129,14 @@ export interface OperatorQueueCounts {
    * somebody has not got to it yet.
    */
   droppedRealAttachments: number;
+  /**
+   * OPE-1011 — upcoming public events whose `start_date` or `public_start_date`
+   * renders a DIFFERENT calendar date in America/New_York than in UTC.
+   *
+   * An INVARIANT, like the two above: it should be zero, and a non-zero value is
+   * a wrong date on a live page, not a queue somebody has not got to.
+   */
+  venueDateShifts: number;
   /** Oldest waiting row in either queue, in days. */
   oldestDays: number;
   /** Human-readable lines for the alert body. */
@@ -150,6 +159,7 @@ export function decideOperatorQueueNotice(
     | "pendingOperatorDrafts"
     | "agedAwaitingDecision"
     | "droppedRealAttachments"
+    | "venueDateShifts"
   >,
   alreadySentToday: boolean
 ): boolean {
@@ -176,6 +186,7 @@ export function totalWaiting(
     | "pendingOperatorDrafts"
     | "agedAwaitingDecision"
     | "droppedRealAttachments"
+    | "venueDateShifts"
   >
 ): number {
   // `?? 0` per term is not defensive clutter — it is load-bearing, and adding
@@ -199,7 +210,8 @@ export function totalWaiting(
     // call site makes the sum NaN, and `NaN <= 0` is false, so the notice fires
     // on a completely empty queue.
     (counts.agedAwaitingDecision ?? 0) +
-    (counts.droppedRealAttachments ?? 0)
+    (counts.droppedRealAttachments ?? 0) +
+    (counts.venueDateShifts ?? 0)
   );
 }
 
@@ -467,6 +479,53 @@ export async function readOperatorQueues(
     // Observability must not take the notice down with it.
   }
 
+  // OPE-1011 — a start date that renders as a different day in Eastern.
+  //
+  // Date-only fields render in America/New_York since OPE-482, and the storage
+  // convention is noon UTC. Measured 2026-09-14/15 over 1,718 public rows:
+  // 1,282 at noon, 99 at local midnight (04:00Z/05:00Z), 337 at a clock time.
+  // None rendered a different day that week — every 04:00Z row was dated in
+  // EDT — but a 04:00Z value on a winter date is 23:00 EST the previous day.
+  // `start_date_timezone_confused` flags the whole off-noon population on the
+  // row it is evaluating and nothing else; this watches the subset that is
+  // actually wrong on the page, across every row.
+  //
+  // Pre-filter is exact, not a heuristic: Eastern is UTC−4 or UTC−5, so only an
+  // instant before 05:00 UTC can fall on the previous Eastern calendar day.
+  let venueDateShifts = 0;
+  try {
+    const cutoffSec = Math.floor(now.getTime() / 1000) - 86400;
+    const candidates = await db.all<{
+      slug: string;
+      start_date: number | null;
+      public_start_date: number | null;
+    }>(sql`
+      SELECT slug, start_date, public_start_date
+      FROM events
+      WHERE status IN ('APPROVED', 'TENTATIVE')
+        AND merged_into IS NULL
+        AND start_date >= ${cutoffSec}
+        AND (start_date % 86400 < 18000 OR public_start_date % 86400 < 18000)
+    `);
+    for (const c of candidates) {
+      const shifted = (["start_date", "public_start_date"] as const).filter((col) => {
+        const v = c[col];
+        if (v == null) return false;
+        const d = new Date(Number(v) * 1000);
+        return toIsoDateOnly(d) !== toIsoDateOnlyInVenueZone(d);
+      });
+      if (shifted.length > 0) {
+        venueDateShifts++;
+        lines.push(
+          `⚠️ ${c.slug}: ${shifted.join(" + ")} renders a different calendar day in Eastern than it stores ` +
+            `(${new Date(Number(c[shifted[0]]) * 1000).toISOString()}) — re-anchor at noon UTC (OPE-1011)`
+        );
+      }
+    }
+  } catch {
+    // Observability must not take the notice down with it.
+  }
+
   return {
     agedClaims: claims.length,
     agedReplies: replies.length,
@@ -475,6 +534,7 @@ export async function readOperatorQueues(
     pendingOperatorDrafts,
     agedAwaitingDecision,
     droppedRealAttachments,
+    venueDateShifts,
     oldestDays: Math.floor(oldestMs / 86400_000),
     lines,
   };

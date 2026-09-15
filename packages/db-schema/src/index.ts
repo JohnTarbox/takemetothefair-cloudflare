@@ -405,6 +405,9 @@ export const events = sqliteTable(
     stateCode: text("state_code"),
     // True for events with no single physical venue (statewide tours, multi-location trails).
     isStatewide: integer("is_statewide", { mode: "boolean" }).notNull().default(false),
+    // Calendar date stored at NOON UTC (normalizeEventDate, OPE-307); rendered in
+    // America/New_York (OPE-482). Route every write through normalizeEventDate —
+    // a local midnight stored as 04:00Z renders a day early in winter (OPE-1011).
     startDate: integer("start_date", { mode: "timestamp" }),
     endDate: integer("end_date", { mode: "timestamp" }),
     publicStartDate: integer("public_start_date", { mode: "timestamp" }),

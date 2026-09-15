@@ -17,6 +17,26 @@ describe("normalizeEventDate", () => {
       );
     });
 
+    it("OPE-1011: LOCAL midnight with an offset anchors its own calendar date at noon UTC", () => {
+      // The oxford-fair shape: midnight EDT, stored as 04:00Z before this.
+      expect(normalizeEventDate("2026-09-16T00:00:00-04:00")?.toISOString()).toBe(
+        "2026-09-16T12:00:00.000Z"
+      );
+      // The winter case that actually renders a day early under an Eastern render.
+      expect(normalizeEventDate("2026-11-15T00:00:00-05:00")?.toISOString()).toBe(
+        "2026-11-15T12:00:00.000Z"
+      );
+      expect(normalizeEventDate("2026-11-15T00:00-0500")?.toISOString()).toBe(
+        "2026-11-15T12:00:00.000Z"
+      );
+    });
+
+    it("OPE-1011: a real local clock time with an offset is NOT treated as date-only", () => {
+      expect(normalizeEventDate("2026-09-16T09:00:00-04:00")?.toISOString()).toBe(
+        "2026-09-16T13:00:00.000Z"
+      );
+    });
+
     it("non-midnight ISO passes through unchanged", () => {
       expect(normalizeEventDate("2026-07-15T17:30:00Z")?.toISOString()).toBe(
         "2026-07-15T17:30:00.000Z"
