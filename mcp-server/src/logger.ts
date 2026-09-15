@@ -24,6 +24,7 @@
  * uninterrupted. Logging is best-effort by design.
  */
 
+import { describeError } from "@takemetothefair/utils";
 import { errorLogs } from "./schema.js";
 import { getDb, type Db } from "./db.js";
 
@@ -69,7 +70,8 @@ export async function logError(
     error instanceof Error ? error.stack : error !== undefined ? String(error) : undefined;
   const fullMessage =
     error instanceof Error
-      ? `${message}: ${error.message}`
+      ? // OPE-1030 — with the cause chain (Drizzle keeps the D1 error on `.cause`).
+        `${message}: ${describeError(error)}`
       : error !== undefined
         ? `${message}: ${String(error)}`
         : message;

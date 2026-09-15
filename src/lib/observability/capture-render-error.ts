@@ -18,6 +18,7 @@
  */
 import { errorLogs } from "@/lib/db/schema";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
+import { errorCauseMessages } from "@takemetothefair/utils";
 
 /** Truncation caps — keep a single row bounded even for pathological errors. */
 const MAX_MESSAGE_CHARS = 4_000;
@@ -56,11 +57,20 @@ export async function captureServerRenderError(
       | null
       | undefined;
 
+    // OPE-1030 — with the cause chain, and truncation applied to the wrapper
+    // text rather than the cause: 225 `/blog` render errors on 2026-09-12 were
+    // stored as `Failed query: … params: …` with the D1 error only on `.cause`.
     const rawMessage =
       err && typeof err.message === "string" && err.message.length > 0
         ? err.message
         : String(error);
-    const message = truncate(rawMessage, MAX_MESSAGE_CHARS);
+    const causeTail = errorCauseMessages(error)
+      .filter((c) => !rawMessage.includes(c))
+      .map((c) => `\ncause: ${c}`)
+      .join("");
+    // No cause → byte-identical to the old `truncate(rawMessage, MAX)`.
+    const message =
+      truncate(rawMessage, Math.max(0, MAX_MESSAGE_CHARS - causeTail.length)) + causeTail;
 
     const stackTrace =
       err && typeof err.stack === "string" && err.stack.length > 0
