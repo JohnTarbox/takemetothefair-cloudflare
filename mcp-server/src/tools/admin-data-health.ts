@@ -754,6 +754,7 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
         pending_claims: number;
         pending_reply_drafts: number;
         oldest_waiting_days: number;
+        venue_date_shifts: number;
       } | null = null;
       try {
         newsletterListBalance = await listBalance(db);
@@ -765,6 +766,9 @@ export function registerDataHealthTool(server: McpServer, db: Db, auth: AuthCont
             pending_claims: q.agedClaims,
             pending_reply_drafts: q.agedReplies,
             oldest_waiting_days: q.oldestDays,
+            // OPE-1011 — upcoming public events whose start renders as a
+            // different day in Eastern than it stores. Expected 0.
+            venue_date_shifts: q.venueDateShifts,
           };
         })();
       } catch (err) {

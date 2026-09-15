@@ -910,7 +910,12 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           "Custom slug. When provided, takes priority over the name-derived slug. The old slug is captured in event_slug_history for 301-redirect. Mirrors update_vendor.slug."
         ),
       description: z.string().transform(sanitizeProse).optional().describe("Event description"),
-      start_date: z.string().optional().describe("Start date as ISO 8601 string"),
+      start_date: z
+        .string()
+        .optional()
+        .describe(
+          "Start date. Prefer a bare YYYY-MM-DD: it is stored at noon UTC, the house convention. A full timestamp with a real clock time is kept as that instant; a local midnight (…T00:00:00-04:00) is anchored to noon UTC of that date."
+        ),
       end_date: z.string().optional().describe("End date as ISO 8601 string"),
       dates_confirmed: z.boolean().optional().describe("Whether dates are confirmed"),
       venue_id: z.string().optional().describe("Venue ID (FK to venues table)"),
