@@ -13,6 +13,7 @@
  * Cloudflare's tighter-schedule cron retry.
  */
 import type { Env } from "./index.js";
+import { mainAppBindingRequest } from "./main-app-fetch.js";
 import { logError } from "./logger.js";
 
 export async function runScheduledCpiStaleRedCanary(env: Env): Promise<void> {
@@ -29,7 +30,7 @@ export async function runScheduledCpiStaleRedCanary(env: Env): Promise<void> {
 
   try {
     const response = env.MAIN_APP
-      ? await env.MAIN_APP.fetch(new Request(url, init))
+      ? await env.MAIN_APP.fetch(mainAppBindingRequest(url, init))
       : await fetch(url, init);
     if (!response.ok) {
       const body = (await response.text()).slice(0, 300);

@@ -27,6 +27,8 @@
  * asks for.
  */
 
+import { mainAppBindingRequest } from "../main-app-fetch.js";
+
 export interface GeneralPhoto {
   /** R2 key under inbound-attachments/... */
   key: string;
@@ -109,7 +111,7 @@ export async function attachGeneralPhotos(
         body: formData,
       };
       const res = env.MAIN_APP
-        ? await env.MAIN_APP.fetch(new Request(url, init))
+        ? await env.MAIN_APP.fetch(mainAppBindingRequest(url, init))
         : await fetch(url, init);
 
       if (res.ok) {

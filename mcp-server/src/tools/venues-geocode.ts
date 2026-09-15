@@ -22,6 +22,7 @@
  * as `forced` with an `admin_actions` row.
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { mainAppBindingRequest } from "../main-app-fetch.js";
 import { z } from "zod";
 import { jsonContent } from "../helpers.js";
 import type { AuthContext } from "../auth.js";
@@ -135,7 +136,7 @@ export function registerVenuesGeocodeTool(server: McpServer, auth: AuthContext, 
           }),
         };
         response = env.MAIN_APP
-          ? await env.MAIN_APP.fetch(new Request(url, init))
+          ? await env.MAIN_APP.fetch(mainAppBindingRequest(url, init))
           : await fetch(url, init);
       } catch (err) {
         return {
