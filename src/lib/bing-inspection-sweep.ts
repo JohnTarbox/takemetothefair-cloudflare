@@ -19,7 +19,7 @@ import { asc, eq, sql } from "drizzle-orm";
 import type { Database } from "@/lib/db";
 import { blogPosts, bingInspectionState } from "@/lib/db/schema";
 import { SITE_URL } from "@takemetothefair/constants";
-import { getUrlInfo, type BingEnv } from "@/lib/bing-webmaster";
+import { BingApiError, getUrlInfo, type BingEnv } from "@/lib/bing-webmaster";
 
 const DEFAULT_BATCH_SIZE = 10;
 const HOST = SITE_URL;
@@ -28,6 +28,8 @@ export interface BingSweepResult {
   inspected: number;
   skipped: number;
   errors: string[];
+  /** OPE-1026 — the batch stopped because Bing is throttling us. */
+  throttled: boolean;
 }
 
 /**
@@ -56,7 +58,7 @@ export async function runBingSweep(
   opts: { batchSize?: number } = {}
 ): Promise<BingSweepResult> {
   const batchSize = opts.batchSize ?? DEFAULT_BATCH_SIZE;
-  const result: BingSweepResult = { inspected: 0, skipped: 0, errors: [] };
+  const result: BingSweepResult = { inspected: 0, skipped: 0, errors: [], throttled: false };
 
   const urls = await pickBingUrls(db, batchSize);
   if (urls.length === 0) return result;
@@ -91,6 +93,12 @@ export async function runBingSweep(
     } catch (error) {
       result.skipped++;
       result.errors.push(`${url}: ${error instanceof Error ? error.message : "unknown"}`);
+      // OPE-1026: a throttle is not a per-URL failure — every remaining call
+      // would be refused too, and sending them prolongs the throttle.
+      if (error instanceof BingApiError && error.throttled) {
+        result.throttled = true;
+        break;
+      }
     }
   }
 

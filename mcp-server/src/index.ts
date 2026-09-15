@@ -754,7 +754,10 @@ async function runScheduledBingInspectionSweep(env: Env): Promise<void> {
     env,
     "bing inspection sweep",
     "/api/admin/analytics/bing/inspection-sweep",
-    (r) => `inspected=${r.inspected ?? "?"} skipped=${r.skipped ?? "?"}`
+    (r) => {
+      const d = (r.data ?? r) as Record<string, unknown>;
+      return `inspected=${d.inspected ?? "?"} skipped=${d.skipped ?? "?"} throttled=${d.throttled ?? "?"}`;
+    }
   );
 }
 

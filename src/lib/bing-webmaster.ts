@@ -38,13 +38,44 @@ export class BingConfigError extends Error {
 export class BingApiError extends Error {
   status: number;
   detail: string;
+  /** OPE-1026 — Bing is refusing us for request RATE, not for this request. */
+  throttled: boolean;
   constructor(status: number, detail: string) {
     super(`Bing Webmaster API error ${status}: ${detail}`);
     this.status = status;
     this.detail = detail;
+    this.throttled = isBingThrottleResponse(status, detail);
     this.name = "BingApiError";
   }
 }
+
+/**
+ * OPE-1026 — Bing's throttle is NOT an HTTP 429.
+ *
+ * Every row in `bing_liveness_log` from 2026-09-09 to 09-15 records
+ * `400` + `17: ERROR!!! ThrottleIP` (ErrorCode 17, undocumented by Microsoft).
+ * Two loops only stopped on `status === 429`, so a throttled morning still sent
+ * ~210 requests into the refusal. Match the message family (ThrottleIP /
+ * ThrottleUser / ThrottleHost) as well as the status code.
+ */
+export function isBingThrottleResponse(status: number, detail: string): boolean {
+  return status === 429 || /throttl/i.test(detail);
+}
+
+/**
+ * OPE-1026 — back-off latch. Set when Bing answers with a throttle; while it is
+ * present every Bing call fails fast WITHOUT a request, except a caller that
+ * passes `ignoreThrottleLatch` — the daily liveness check, which is the one
+ * re-probe and clears the latch on success.
+ *
+ * The TTL outlives a daily cron so a throttle at 06:00 still blocks tomorrow's
+ * sweeps, but it does expire: if the liveness cron itself dies, the latch cannot
+ * silence Bing forever.
+ */
+export const BING_THROTTLE_LATCH_KEY = "bing:throttle-latch";
+export const BING_THROTTLE_LATCH_TTL_SECONDS = 26 * 3600;
+
+export type BingThrottleLatch = { since: string; endpoint: string; detail: string };
 
 function requireApiKey(env: BingEnv): string {
   const key = env.BING_WEBMASTER_API_KEY?.trim();
@@ -96,6 +127,8 @@ interface BingFetchOptions {
   method?: "GET" | "POST";
   query?: Record<string, string | number | undefined>;
   body?: unknown;
+  /** OPE-1026 — send the request even while the throttle latch is set. */
+  ignoreThrottleLatch?: boolean;
 }
 
 async function bingFetch<T>(
@@ -104,6 +137,16 @@ async function bingFetch<T>(
   opts: BingFetchOptions = {}
 ): Promise<T> {
   const apiKey = requireApiKey(env);
+  const kv = env.RATE_LIMIT_KV;
+  if (kv && !opts.ignoreThrottleLatch) {
+    const latch = await kv.get<BingThrottleLatch>(BING_THROTTLE_LATCH_KEY, "json");
+    if (latch) {
+      throw new BingApiError(
+        429,
+        `backing off, no request sent: Bing throttled ${latch.endpoint} at ${latch.since} (${latch.detail})`
+      );
+    }
+  }
   const qs = new URLSearchParams();
   qs.set("siteUrl", SITE_URL);
   qs.set("apikey", apiKey);
@@ -138,7 +181,23 @@ async function bingFetch<T>(
       /* keep raw */
     }
     console.error(`[Bing] ${endpoint} ${res.status}: ${detail}`);
-    throw new BingApiError(res.status, detail);
+    const err = new BingApiError(res.status, detail);
+    if (err.throttled && kv) {
+      const latch: BingThrottleLatch = { since: new Date().toISOString(), endpoint, detail };
+      // A KV failure must not replace the Bing error the caller needs to see.
+      await kv
+        .put(BING_THROTTLE_LATCH_KEY, JSON.stringify(latch), {
+          expirationTtl: BING_THROTTLE_LATCH_TTL_SECONDS,
+        })
+        .catch((e) => console.error("[Bing] throttle latch write failed", e));
+    }
+    throw err;
+  }
+  if (opts.ignoreThrottleLatch && kv) {
+    // The re-probe got through, so Bing has lifted the throttle.
+    await kv
+      .delete(BING_THROTTLE_LATCH_KEY)
+      .catch((e) => console.error("[Bing] throttle latch clear failed", e));
   }
 
   // Diagnostic: log a shape hint + a longer snippet of the raw response so
@@ -299,11 +358,13 @@ export type BingCrawlStatsRow = {
 
 export async function getCrawlStats(
   env: BingEnv,
-  opts: { skipCache?: boolean } = {}
+  opts: { skipCache?: boolean; ignoreThrottleLatch?: boolean } = {}
 ): Promise<BingCrawlStatsRow[]> {
   const cacheKey = `bing:crawl:${await hashRequest({ site: SITE_URL })}`;
   return withCache(env, cacheKey, REPORT_CACHE_TTL, opts.skipCache ?? false, async () => {
-    const data = await bingFetch<unknown>(env, "GetCrawlStats");
+    const data = await bingFetch<unknown>(env, "GetCrawlStats", {
+      ignoreThrottleLatch: opts.ignoreThrottleLatch,
+    });
     const rows = extractRows<{
       Date?: unknown;
       CrawledPages?: number;
