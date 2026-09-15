@@ -185,6 +185,36 @@ function taintedIdentifiers(lines: string[], mcp: boolean): Set<string> {
       }
     }
   }
+
+  // One hop was not enough (OPE-1030's 4th call site). A Next.js PAGE reads
+  // its input as `const params = await searchParams` — which the pass above
+  // taints — and then derives the value it interpolates:
+  //
+  //     const safeTag = params.tag.replace(/["%_\\]/g, "");   // ← underived
+  //     sql`${blogPosts.tags} LIKE ${'%"' + safeTag + '"%'}`  // ← unflagged
+  //
+  // `safeTag` is request-derived and the guard could not see it, so
+  // `/blog?tag=` threw 225 times in one day while this check reported 0
+  // errors. Propagate to a fixpoint: anything declared from a tainted name is
+  // tainted, no matter how it was laundered. Sanitising does not untaint,
+  // because the cap is on pattern LENGTH, not on metacharacters.
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const raw of lines) {
+      const l = raw.trim();
+      if (l.startsWith("//") || l.startsWith("*")) continue;
+      const decl = l.match(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=(.*)$/);
+      if (!decl || tainted.has(decl[1])) continue;
+      const rhs = decl[2];
+      for (const name of tainted) {
+        if (new RegExp(`\\b${name}\\b`).test(rhs)) {
+          tainted.add(decl[1]);
+          changed = true;
+          break;
+        }
+      }
+    }
+  }
   return tainted;
 }
 
@@ -247,8 +277,10 @@ export function checkFile(rel: string, src: string): Violation[] {
       const hit = interpolations(line).find((expr) => {
         if (REQUEST_SOURCE.test(expr)) return true;
         if (mcp && MCP_PARAM_SOURCE.test(expr)) return true;
-        const ident = expr.match(/^([A-Za-z_$][\w$]*)/)?.[1];
-        return !!ident && tainted.has(ident);
+        // EVERY identifier in the expression, not just the leading one: the
+        // /blog?tag= site spelled its pattern `'%"' + safeTag + '"%'`, which
+        // begins with a quote, so a leading-identifier match saw nothing.
+        return (expr.match(/[A-Za-z_$][\w$]*/g) ?? []).some((id) => tainted.has(id));
       });
       if (hit)
         why = mcp

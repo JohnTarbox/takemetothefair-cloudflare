@@ -2,6 +2,7 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { blogPosts, users } from "@/lib/db/schema";
+import { containsCI } from "@/lib/db/contains-ci";
 import { isAuthorized, getAuthorizedSession } from "@/lib/api-auth";
 import { blogPostCreateSchema, validateRequestBody } from "@/lib/validations";
 import { findBrokenContentLinksInDb, findBrokenLinksInDb } from "@/lib/blog-links";
@@ -34,8 +35,11 @@ export async function GET(request: NextRequest) {
     }
 
     if (tag) {
-      // Tags stored as JSON array text, e.g. '["fair","summer"]'
-      conditions.push(sql`${blogPosts.tags} LIKE ${'%"' + tag.replace(/["%_\\]/g, "") + '"%'}`);
+      // Tags stored as JSON array text, e.g. '["fair","summer"]'. instr(), not
+      // LIKE: D1 caps LIKE pattern LENGTH at ~50 chars, so a long ?tag= was a
+      // 500 here exactly as it was on /blog (OPE-1030, 4th call site of the
+      // OPE-548/565/630 family). Stripping metacharacters never addressed it.
+      conditions.push(containsCI(blogPosts.tags, `"${tag.replace(/["\\]/g, "")}"`));
     }
 
     if (after) {
