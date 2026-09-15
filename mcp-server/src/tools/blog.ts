@@ -154,7 +154,7 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
   // ── get_blog_post ────────────────────────────────────────────────
   server.tool(
     "get_blog_post",
-    "Retrieve a single blog post by its slug. Returns full post including Markdown body, tags, categories, author info, and a computed `faq_source` ('column' | 'markdown' | 'none') indicating which source is currently driving the post's FAQPage JSON-LD emission on the public detail page, plus `faq_coherence` ({incoherent, conflicts[]}) flagging a body-vs-column numeric contradiction (OPE-280).",
+    "Retrieve a single blog post by its slug. Returns full post including Markdown body, tags, categories, author info, and a computed `faq_source` ('column' | 'markdown' | 'none') indicating which source is currently driving the post's FAQPage JSON-LD emission on the public detail page, plus `faq_coherence` ({incoherent, conflicts[]}) flagging a body-vs-column contradiction: route miles, attendance, admission price, free-vs-paid admission, or a column claiming ALL events share a venue the body places elsewhere (OPE-280, OPE-1015). A clean result means none of those typed checks fired, not that the post was verified.",
     {
       slug: z.string().min(1).describe("The URL slug of the blog post"),
     },
@@ -219,7 +219,7 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
   // ── list_blog_posts ──────────────────────────────────────────────
   server.tool(
     "list_blog_posts",
-    "List blog posts with optional filters for status and tag. Returns posts ordered by publish date (newest first). Admin sees all posts including drafts. Each row includes a computed `faq_source` ('column' | 'markdown' | 'none') so FAQPage emission drift after an edit is visible at a glance, plus `faq_coherence` ({incoherent, conflicts[]}) flagging posts whose body `## Q:` FAQ blocks and `faqs` column assert conflicting numeric claims (route miles, attendance counts, prices, years) — the column emits as JSON-LD while the stale body is what readers see (OPE-280).",
+    "List blog posts with optional filters for status and tag. Returns posts ordered by publish date (newest first). Admin sees all posts including drafts. Each row includes a computed `faq_source` ('column' | 'markdown' | 'none') so FAQPage emission drift after an edit is visible at a glance, plus `faq_coherence` ({incoherent, conflicts[]}) flagging posts whose body and `faqs` column assert conflicting typed claims (route miles, attendance counts, admission prices, free-vs-paid admission, an all-events venue) — the column emits as JSON-LD while the stale body is what readers see (OPE-280).",
     {
       status: z.enum(BLOG_STATUS_ENUM).optional().describe("Filter by status: DRAFT or PUBLISHED"),
       tag: z.string().optional().describe("Filter by tag name"),
