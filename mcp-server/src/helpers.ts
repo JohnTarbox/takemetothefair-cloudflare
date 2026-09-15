@@ -24,7 +24,14 @@ export {
 export type { Slug } from "@takemetothefair/utils";
 
 import { eq } from "drizzle-orm";
-import { vendors, events, enrichmentLog, containsCI, nameOrSlugContains } from "./schema.js";
+import {
+  vendors,
+  events,
+  enrichmentLog,
+  containsCI,
+  nameOrSlugContains,
+  eventInStateWhere,
+} from "./schema.js";
 import {
   computeVendorCompletenessScore as _scoreVendor,
   computeEventCompletenessScore as _scoreEvent,
@@ -186,7 +193,6 @@ export {
 } from "@takemetothefair/constants";
 
 import { and, inArray as inArrayMcp, isNull as isNullMcp, or as orMcp, sql } from "drizzle-orm";
-import { venues } from "./schema.js";
 import {
   PUBLIC_EVENT_STATUSES as PE,
   PUBLIC_LIFECYCLE_STATUSES as PL,
@@ -261,12 +267,12 @@ export function searchEventStatusWhere(includeStatuses?: readonly string[]) {
  * therefore only ADDS rows that currently match nothing, and changes no
  * existing match.
  *
- * NOTE the caller must still LEFT-join `venues` for this to mean anything; an
- * inner join would drop the rows before the predicate is reached.
+ * OPE-1028 — now delegates to the shared `eventInStateWhere`, so the public list
+ * pages run this exact SQL. Same semantics as the join form it replaces, but a
+ * correlated EXISTS, so it no longer depends on the caller joining `venues`.
  */
 export function searchEventStateWhere(state: string) {
-  return sql`(upper(${venues.state}) = upper(${state})
-              OR (${events.venueId} IS NULL AND upper(${events.stateCode}) = upper(${state})))`;
+  return eventInStateWhere(state);
 }
 
 /** Build a concise text content response for MCP */

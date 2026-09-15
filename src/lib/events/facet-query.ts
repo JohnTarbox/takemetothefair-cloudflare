@@ -10,7 +10,14 @@
  * construction rather than by discipline (`feedback_classifier_window_must_match_display`).
  */
 import { and, count, eq, gte, isNotNull, inArray, lt, sql } from "drizzle-orm";
-import { events, venues, promoters, eventVendors, vendors } from "@/lib/db/schema";
+import {
+  events,
+  venues,
+  promoters,
+  eventVendors,
+  vendors,
+  eventInStateWhere,
+} from "@/lib/db/schema";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { upcomingEndPredicate } from "@/lib/event-dates";
 import { isPubliclyVisibleVendorLink } from "@/lib/vendor-status";
@@ -45,7 +52,7 @@ type FacetDb = ReturnType<typeof getCloudflareDb>;
 function baseConditions(stateCode: string, now: Date) {
   return [
     isPublicEventStatus(),
-    eq(events.stateCode, stateCode),
+    eventInStateWhere(stateCode),
     isNotNull(events.startDate),
     upcomingEndPredicate(now),
   ];
@@ -99,7 +106,7 @@ export async function countFacetDepth(
     .where(
       and(
         isPublicEventStatus(),
-        eq(events.stateCode, stateCode),
+        eventInStateWhere(stateCode),
         isNotNull(events.startDate),
         gte(events.startDate, start),
         lt(events.startDate, end),
@@ -175,7 +182,7 @@ export async function getFacetSeasonality(
     .where(
       and(
         isPublicEventStatus(),
-        eq(events.stateCode, stateCode),
+        eventInStateWhere(stateCode),
         isNotNull(events.startDate),
         gte(events.startDate, start),
         lt(events.startDate, end),
@@ -241,7 +248,10 @@ export async function getFacetEvents(
     .leftJoin(venues, eq(events.venueId, venues.id))
     .leftJoin(promoters, eq(events.promoterId, promoters.id))
     .where(and(...conditions))
-    .orderBy(sql`COALESCE(${events.startDate}, 9999999999) ASC`)
+    // OPE-1028 — `id` breaks start_date ties. Most events sit at noon UTC, so a
+    // whole day ties; without a unique key SQLite may order that tie differently
+    // for the page-1 and page-2 OFFSET queries, and a row can land on both or neither.
+    .orderBy(sql`COALESCE(${events.startDate}, 9999999999) ASC`, events.id)
     .limit(limit)
     .offset(offset);
 

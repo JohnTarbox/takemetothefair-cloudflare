@@ -6312,6 +6312,9 @@ export type RegistrationAttemptOutcome =
 export * from "./contains-ci";
 export * from "./real-users";
 export * from "./vendor-link-visibility";
+// OPE-1028 — "is this event in state X?", shared so list pages and the MCP
+// reader run the same SQL.
+export * from "./event-state";
 
 // OPE-391 — shared with the MCP Worker; see the file header.
 export * from "./data-health-kpis";

@@ -3,7 +3,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { Calendar, MapPin, Store, FileText, HelpCircle, Search } from "lucide-react";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { events, venues, vendors, blogPosts, users } from "@/lib/db/schema";
+import { events, venues, vendors, blogPosts, users, eventInStateWhere } from "@/lib/db/schema";
 import { and, eq, or, sql, desc, inArray, isNull } from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
 import {
@@ -41,7 +41,7 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
   // OPE-172 — optional region filter (events only; vendors travel across states).
   const stateCode = params.state?.trim().toUpperCase();
   const stateFilter =
-    stateCode && /^[A-Z]{2}$/.test(stateCode) ? eq(events.stateCode, stateCode) : undefined;
+    stateCode && /^[A-Z]{2}$/.test(stateCode) ? eventInStateWhere(stateCode) : undefined;
 
   if (!q || q.length < 2) {
     return (

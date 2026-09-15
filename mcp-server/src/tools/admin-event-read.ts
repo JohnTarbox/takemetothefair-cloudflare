@@ -46,7 +46,8 @@ export function registerAdminEventReadTools(server: McpServer, db: Db, auth: Aut
     "Read one event in full by slug OR id, at ANY status — including PENDING, DRAFT and REJECTED rows that get_event_details filters out. " +
       "NOTE: TENTATIVE is NOT one of them — the public reader SERVES TENTATIVE events in full, badged as such, so `get_event_details` returns them normally. " +
       "The public gate is publicEventWhere(): status IN (APPROVED, TENTATIVE) AND lifecycle_status IN (PUBLIC_LIFECYCLE_STATUSES, which excludes CANCELLED/NO_SHOW). " +
-      "The public LIST pages share that exact predicate (isPublicEventStatus() delegates to it), so list and detail agree by construction rather than by coincidence. " +
+      "The public LIST pages share that exact STATUS predicate (isPublicEventStatus() delegates to it), so list and detail agree on which statuses are public. " +
+      "That is NOT a promise that every public event appears on a list: lists also filter by state (eventInStateWhere — venue state, or state_code when venue-less; shared with search_events since OPE-1028) and by end date (an event with end_date NULL is excluded from upcoming lists but still returned by search_events). " +
       "Returns the same record plus status, lifecycle_status, dates_confirmed, and RAW ISO start/end dates alongside the formatted string. " +
       "Use this to review an un-adjudicated submission: the public reader reports PENDING/DRAFT/REJECTED as 'not found'. Read-only. Admin only.",
     {

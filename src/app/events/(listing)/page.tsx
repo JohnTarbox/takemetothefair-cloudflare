@@ -19,6 +19,7 @@ import {
   vendors,
   userFavorites,
   eventDays,
+  eventInStateWhere,
 } from "@/lib/db/schema";
 import {
   eq,
@@ -345,7 +346,7 @@ async function getEventsOnce(
     // Get events with joins
     // Build separate queries for calendar (no pagination) vs cards/table (paginated)
     const stateConditions = searchParams.state
-      ? [...conditions, eq(events.stateCode, searchParams.state)]
+      ? [...conditions, eventInStateWhere(searchParams.state)]
       : conditions;
 
     // COALESCE protects ORDER BY against NULL start_date even though the
