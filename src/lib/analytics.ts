@@ -138,6 +138,10 @@ function sendBeacon(name: string, category: BeaconCategory, properties?: Record<
     const blob = new Blob([payload], { type: "application/json" });
     if (navigator.sendBeacon("/api/analytics/track", blob)) return;
   }
+  // Browser code (returns early without `window`): `keepalive` is what keeps this
+  // request alive past navigation, not a Workers ctx — so there is nothing to
+  // register it with, and awaiting it would block the click handler.
+  // eslint-disable-next-line local/no-catch-only-promise
   fetch("/api/analytics/track", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
