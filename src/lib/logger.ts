@@ -1,5 +1,6 @@
 import { errorLogs } from "@/lib/db/schema";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
+import { describeError } from "@takemetothefair/utils";
 
 interface LogErrorOptions {
   message: string;
@@ -34,7 +35,9 @@ export async function logError(
   } = options;
 
   const stackTrace = error instanceof Error ? error.stack : error ? String(error) : undefined;
-  const fullMessage = error instanceof Error ? `${message}: ${error.message}` : message;
+  // OPE-1030 — include the cause chain: a Drizzle `Failed query:` wrapper keeps
+  // the D1 error only on `.cause`.
+  const fullMessage = error instanceof Error ? `${message}: ${describeError(error)}` : message;
 
   // Always log to console
   console.error(fullMessage, error);
