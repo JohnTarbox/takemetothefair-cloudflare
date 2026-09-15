@@ -127,6 +127,8 @@ for (const c of CASES) {
       expect(s?.lastSeenAt?.getTime()).toBe(NOW.getTime());
       expect(s?.kind).toBe("watchdog");
       expect(s?.note).toMatch(/^deleted=0 batches=1 capped=false oldest=2026-09-11/);
+      // OPE-1024 — the same fields as request-sample-retention's stamp.
+      expect(s?.note).toMatch(/ cutoff=\S+ errors=0$/);
     });
 
     it("stamps the run on an EMPTY table", async () => {

@@ -3451,10 +3451,11 @@ export const errorLogs = sqliteTable("error_logs", {
 // A9 (drizzle/0130, 2026-06-26) — edge request sampling to identify the
 // recurring 21st-of-month bot inflating GA4. The zone is on the FREE plan (no
 // Logpush — the only CF-native raw-UA capture, and it's Enterprise-only), so we
-// sample a small slice of page requests at the middleware edge: UA + IP + ASN
-// (from getCloudflareContext().cf) + path. Written fire-and-forget via
-// ctx.waitUntil (never blocks the response) and pruned to ~60 days
-// probabilistically. Aggregated via GET /api/admin/request-samples.
+// sample a small slice of page requests at the middleware edge: UA + a network
+// prefix of the IP + ASN (from getCloudflareContext().cf) + path. Written via
+// ctx.waitUntil (never blocks the response). Pruned at 60 days by the daily MCP
+// cron (mcp-server/src/request-sample-retention.ts, OPE-971) — no longer the
+// per-write dice roll. Aggregated via GET /api/admin/request-samples.
 export const requestSamples = sqliteTable(
   "request_samples",
   {
@@ -3465,6 +3466,9 @@ export const requestSamples = sqliteTable(
     path: text("path"),
     method: text("method"),
     userAgent: text("user_agent"),
+    // A /24 (IPv4) or /48 (IPv6) PREFIX, not the address — truncateIp in
+    // src/lib/request-sampling.ts records why (OPE-971). Rows before 2026-09-13
+    // hold full addresses and age out by 2026-11-12.
     ip: text("ip"),
     asn: integer("asn"),
     asOrganization: text("as_organization"),
