@@ -40,6 +40,7 @@
  */
 
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
+import { mainAppBindingRequest } from "../main-app-fetch.js";
 import { NonRetryableError } from "cloudflare:workflows";
 import { eq } from "drizzle-orm";
 import { recommendationScanState } from "@takemetothefair/db-schema";
@@ -158,7 +159,7 @@ export class RecommendationsScanWorkflow extends WorkflowEntrypoint<
               },
             };
             const response = this.env.MAIN_APP
-              ? await this.env.MAIN_APP.fetch(new Request(url, init))
+              ? await this.env.MAIN_APP.fetch(mainAppBindingRequest(url, init))
               : await fetch(url, init);
             if (response.status >= 500) {
               const text = await response.text().catch(() => "<unreadable>");
@@ -288,7 +289,7 @@ export class RecommendationsScanWorkflow extends WorkflowEntrypoint<
           },
         };
         const response = this.env.MAIN_APP
-          ? await this.env.MAIN_APP.fetch(new Request(url, init))
+          ? await this.env.MAIN_APP.fetch(mainAppBindingRequest(url, init))
           : await fetch(url, init);
         if (!response.ok) {
           await logError(this.env.DB, {

@@ -1,4 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { mainAppBindingRequest } from "../main-app-fetch.js";
 import { z } from "zod";
 import { jsonContent } from "../helpers.js";
 import type { AuthContext } from "../auth.js";
@@ -147,7 +148,7 @@ export function registerUploadImageBytesTool(server: McpServer, auth: AuthContex
           body: formData,
         };
         response = env.MAIN_APP
-          ? await env.MAIN_APP.fetch(new Request(url, init))
+          ? await env.MAIN_APP.fetch(mainAppBindingRequest(url, init))
           : await fetch(url, init);
       } catch (err) {
         return {

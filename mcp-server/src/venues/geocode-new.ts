@@ -36,6 +36,8 @@
  * (`missing_only`) is the retry, so nothing is lost by giving up here.
  */
 
+import { mainAppBindingRequest } from "../main-app-fetch.js";
+
 export interface GeocodeNewVenueEnv {
   MAIN_APP?: { fetch: typeof fetch };
   MAIN_APP_URL?: string;
@@ -67,7 +69,7 @@ export async function geocodeNewVenueViaMainApp(
     // Prefer the service binding (no public hop); fall back to fetch, the same
     // order `venues_geocode` and `main-app-fetch.ts` use.
     if (env.MAIN_APP) {
-      await env.MAIN_APP.fetch(new Request(url, init));
+      await env.MAIN_APP.fetch(mainAppBindingRequest(url, init));
     } else {
       await fetch(url, init);
     }

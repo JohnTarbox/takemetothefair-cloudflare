@@ -1,6 +1,7 @@
 /** Shared helpers for MCP tool implementations */
 
 import { formatDateOnly as canonicalFormatDateOnly } from "@takemetothefair/datetime";
+import { mainAppBindingRequest } from "./main-app-fetch.js";
 
 // Canonical decodeHtmlEntities, createSlug, dollarsToCents, formatPrice all
 // live in packages/utils. Re-exported here so all existing
@@ -374,7 +375,7 @@ export async function triggerIndexNow(
         // Hostname is irrelevant for service bindings, but `fetch()` requires
         // a valid URL — use the public host so the route resolves identically
         // to a public call.
-        new Request("https://meetmeatthefair.com/api/internal/indexnow", {
+        mainAppBindingRequest("https://meetmeatthefair.com/api/internal/indexnow", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",

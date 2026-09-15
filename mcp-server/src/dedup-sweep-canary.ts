@@ -39,6 +39,7 @@
  * failure doesn't trigger Cloudflare's tighter-schedule cron retry.
  */
 import { eq, and, gte, sql, desc } from "drizzle-orm";
+import { mainAppBindingRequest } from "./main-app-fetch.js";
 import { dedupSweepSnapshots } from "@takemetothefair/db-schema";
 import type { Env } from "./index.js";
 import { getDb } from "./db.js";
@@ -225,7 +226,7 @@ export async function runScheduledDedupSweepCanary(
       headers: { "X-Internal-Key": env.INTERNAL_API_KEY ?? "" },
     };
     const response = env.MAIN_APP
-      ? await env.MAIN_APP.fetch(new Request(sweepUrl, init))
+      ? await env.MAIN_APP.fetch(mainAppBindingRequest(sweepUrl, init))
       : await fetch(sweepUrl, init);
     if (!response.ok) {
       const body = (await response.text()).slice(0, 300);
