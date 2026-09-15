@@ -18,6 +18,7 @@
  * stale and the silence escalates through the OPE-75 digest.
  */
 import type { Env } from "./index.js";
+import { mainAppBindingRequest } from "./main-app-fetch.js";
 import { withMainAppSlot, isWorkerOom } from "./main-app-gate.js";
 import { logError } from "./logger.js";
 
@@ -38,7 +39,7 @@ export async function runScheduledPhotoCoverageScan(env: Env): Promise<void> {
     // sibling in the daily Promise.all, so without the gate it contributed to
     // (and died from) the shared-isolate OOM alongside the other sweeps.
     const response = await withMainAppSlot(() =>
-      env.MAIN_APP ? env.MAIN_APP.fetch(new Request(url, init)) : fetch(url, init)
+      env.MAIN_APP ? env.MAIN_APP.fetch(mainAppBindingRequest(url, init)) : fetch(url, init)
     );
     if (!response.ok) {
       const body = (await response.text()).slice(0, 300);
@@ -106,7 +107,7 @@ export async function runScheduledImageUrlHealthSweep(env: Env): Promise<void> {
 
   try {
     const response = env.MAIN_APP
-      ? await env.MAIN_APP.fetch(new Request(url, init))
+      ? await env.MAIN_APP.fetch(mainAppBindingRequest(url, init))
       : await fetch(url, init);
     if (!response.ok) {
       const body = (await response.text()).slice(0, 300);

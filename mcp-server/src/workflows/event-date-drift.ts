@@ -21,6 +21,7 @@
  */
 
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
+import { mainAppBindingRequest } from "../main-app-fetch.js";
 import { NonRetryableError } from "cloudflare:workflows";
 import { logError } from "../logger.js";
 import { getDb } from "../db.js";
@@ -93,7 +94,7 @@ export class EventDateDriftWorkflow extends WorkflowEntrypoint<Env, EventDateDri
               },
             };
             const response = this.env.MAIN_APP
-              ? await this.env.MAIN_APP.fetch(new Request(url, init))
+              ? await this.env.MAIN_APP.fetch(mainAppBindingRequest(url, init))
               : await fetch(url, init);
             if (response.status >= 500) {
               // Transient — step retries.
@@ -175,7 +176,7 @@ export class EventDateDriftWorkflow extends WorkflowEntrypoint<Env, EventDateDri
               },
             };
             const r = this.env.MAIN_APP
-              ? await this.env.MAIN_APP.fetch(new Request(u, init))
+              ? await this.env.MAIN_APP.fetch(mainAppBindingRequest(u, init))
               : await fetch(u, init);
             if (!r.ok) throw new Error(`url-health ${r.status}@${uhCursor}`);
             return (await r.json()) as {
@@ -305,7 +306,7 @@ export class EventDateDriftWorkflow extends WorkflowEntrypoint<Env, EventDateDri
               },
             };
             const r = this.env.MAIN_APP
-              ? await this.env.MAIN_APP.fetch(new Request(u, init))
+              ? await this.env.MAIN_APP.fetch(mainAppBindingRequest(u, init))
               : await fetch(u, init);
             if (!r.ok) throw new Error(`source-agreement ${r.status}@${saCursor}`);
             return (await r.json()) as {
