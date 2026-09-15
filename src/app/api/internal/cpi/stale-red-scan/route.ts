@@ -11,14 +11,14 @@ import { getLatestKpiStates } from "@/lib/kpi-states";
 import { loadActionQueue } from "@/lib/analytics-overview/activity";
 import { enqueueEmail } from "@/lib/queues/producers";
 import { logError } from "@/lib/logger";
+import { persistStaleRedSignals } from "@/lib/cpi/stale-red-persistence";
 import {
   faultSignatures,
   indexnowSubmissions,
   pendingSearchPings,
   weeklyInventoryState,
-  staleRedSignals,
 } from "@/lib/db/schema";
-import { and, count, desc, eq, isNull, notInArray } from "drizzle-orm";
+import { count, desc, eq, isNull } from "drizzle-orm";
 import { getIndexNowQuota } from "@/lib/bing-webmaster";
 import { assessAllIntegrationSilence, type IntegrationActivity } from "@/lib/integration-silence";
 import { assessAllQueueFreeze } from "@/lib/queue-freeze";
@@ -391,50 +391,16 @@ export const POST = withInternalKey({ source: "cpi:stale-red-scan" }, async ({ d
     // so `resolved_at IS NULL` is the answer to "what is red right now".
     // Best-effort, like the count write: the scan's job is the digest.
     try {
-      const seenAt = new Date();
-      for (const red of allReds) {
-        await db
-          .insert(staleRedSignals)
-          .values({
-            refKey: red.refKey,
-            priority: red.priority,
-            title: red.title,
-            href: red.href ?? null,
-            firstDetectedAt: red.firstDetectedAt ? new Date(red.firstDetectedAt) : null,
-            hoursInRed: red.hoursInRed ?? null,
-            lastSeenAt: seenAt,
-            resolvedAt: null,
-          })
-          .onConflictDoUpdate({
-            target: staleRedSignals.refKey,
-            set: {
-              priority: red.priority,
-              title: red.title,
-              href: red.href ?? null,
-              hoursInRed: red.hoursInRed ?? null,
-              lastSeenAt: seenAt,
-              // A signal that went green and came back is red again. Clearing
-              // this is what makes recurrence visible rather than looking like
-              // one continuous outage.
-              resolvedAt: null,
-            },
-          });
-      }
-      // Anything still open but not seen this run has recovered.
-      const openKeys = allReds.map((r) => r.refKey);
-      await db
-        .update(staleRedSignals)
-        .set({ resolvedAt: seenAt })
-        .where(
-          openKeys.length > 0
-            ? and(isNull(staleRedSignals.resolvedAt), notInArray(staleRedSignals.refKey, openKeys))
-            : isNull(staleRedSignals.resolvedAt)
-        );
+      await persistStaleRedSignals(db, allReds, new Date());
     } catch (err) {
       await logError(db, {
         level: "warn",
         source: "cpi:stale-red-scan",
-        message: "stale-red signal persistence failed; digest unaffected",
+        // OPE-1029 — "digest unaffected" was true of delivery and false of what
+        // the digest says: a failure here freezes resolution state, so reds that
+        // have cleared keep reporting as open.
+        message:
+          "stale-red signal persistence failed — resolution state did NOT advance (digest delivery unaffected)",
         error: err,
       });
     }

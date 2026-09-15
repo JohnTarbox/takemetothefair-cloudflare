@@ -44,6 +44,19 @@
  *   4. `const c = xs.slice(i, i + N)` → `inArray(col, c)`
  *   5. Upstream `.limit(N)` with N <= 90
  *   6. file (or file:line) listed in check-d1-inarray-params.allowlist
+ *
+ * OPE-1029 — two blind spots, both found by a 391-bind statement failing in prod
+ * ------------------------------------------------------------------------
+ *   1. `notInArray` was never scanned. The pattern was `\binArray\(`, and in
+ *      `notInArray(` the capital I does not match — the file pre-filter
+ *      `includes("inArray(")` skipped such files outright. The stale-red resolve
+ *      pass bound `ref_key NOT IN (<391 keys>)` and failed on every run.
+ *   2. An UNRESOLVABLE bind list is INFO for reads (precision over recall, as
+ *      above) but an ERROR on a WRITE statement (`.update(` / `.delete(`). A read
+ *      that blows the cap 500s visibly; a write that blows it fails inside a
+ *      best-effort try/catch and silently never happens — the stale-red row read
+ *      "digest unaffected" for two days. Writes must be provably bounded (a
+ *      recognised safe form) or allowlisted with a reason.
  */
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -318,6 +331,20 @@ function classifySelectSource(
   return { verdict: "bounded", detail: `.limit(${n})` };
 }
 
+const WRITE_UNBOUNDED_REASON =
+  "bind list on an UPDATE/DELETE that the scanner cannot prove is bounded (OPE-1029: a write that exceeds the cap fails silently inside best-effort catches)";
+
+/**
+ * True when the call sits in a statement that contains `.update(` or `.delete(`
+ * before it — i.e. the IN-list is a write predicate. The statement start is the
+ * nearest preceding `;` or block opener, which is exact for the chained Drizzle
+ * builder shape this repo writes.
+ */
+function inWriteStatement(src: string, idx: number): boolean {
+  const start = Math.max(src.lastIndexOf(";", idx), src.lastIndexOf("{\n", idx));
+  return /\.\s*(?:update|delete)\s*\(/.test(src.slice(start < 0 ? 0 : start, idx));
+}
+
 // ── scan one file ────────────────────────────────────────────────────────
 
 function findViolations(
@@ -327,7 +354,7 @@ function findViolations(
   const violations: Violation[] = [];
   let unresolved = 0;
 
-  const re = /\binArray\s*\(/g;
+  const re = /\b(?:inArray|notInArray)\s*\(/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(src)) !== null) {
     const open = m.index + m[0].length - 1;
@@ -347,8 +374,25 @@ function findViolations(
     // Strip a trailing cast (`ids as Slug[]`) before identifier analysis.
     const bare = arg.replace(/\s+as\s+[\w[\]<>. |]+$/, "").trim();
 
+    // OPE-1029 — an inline batch slice, `xs.slice(i, i + N)`, is the loop-chunk
+    // form written in place; `inArray(col, db.select(...))` is a SUBQUERY and
+    // binds no list at all. Both are bounded by construction. They were never
+    // reached before only because unresolvable sites were INFO; on a write they
+    // must be recognised, not merely tolerated.
+    if (/^[\w$.]+\.slice\(\s*([\w$]+)\s*,\s*\1\s*\+\s*[\w$]+\s*\)$/.test(bare)) continue;
+    if (/^(?:db|tx)\s*\.\s*select\s*\(/.test(bare)) continue;
+
     // 3/4. A chunk-loop variable or an explicit .slice() batch.
     if (/^[A-Za-z_$][\w$]*$/.test(bare) && isChunkVariable(src, bare)) continue;
+
+    // OPE-1029 — a name bound to an UN-awaited `db.select()` builder is a
+    // subquery (`const doomed = db.select(...).limit(batch)` → `inArray(col,
+    // doomed)`), which binds no list. An awaited select is rows, not a subquery,
+    // and goes on to the row-count analysis below.
+    if (/^[A-Za-z_$][\w$]*$/.test(bare)) {
+      const init0 = findConstInit(src, bare, m.index);
+      if (init0 !== null && /^(?:db|tx)\s*\.\s*select\s*\(/.test(init0.trim())) continue;
+    }
 
     // Resolve the source the list is derived from.
     let source: string | null = null;
@@ -361,8 +405,13 @@ function findViolations(
       // Inline expression, e.g. `rows.map(r => r.id)`.
       source = rootIdentifier(bare);
     }
+    const write = inWriteStatement(src, m.index);
     if (!source) {
-      unresolved++;
+      if (write) {
+        violations.push({ file: relPath, line, arg, reason: WRITE_UNBOUNDED_REASON });
+      } else {
+        unresolved++;
+      }
       continue;
     }
 
@@ -371,7 +420,11 @@ function findViolations(
 
     const cls = classifySelectSource(src, source, m.index);
     if (cls === null) {
-      unresolved++;
+      if (write) {
+        violations.push({ file: relPath, line, arg, reason: WRITE_UNBOUNDED_REASON });
+      } else {
+        unresolved++;
+      }
       continue;
     }
     if (cls.verdict === "unbounded") {
@@ -401,11 +454,11 @@ function main() {
   for (const dir of SCAN_DIRS) {
     for (const file of walk(dir)) {
       const raw = readFileSync(file, "utf8");
-      if (!raw.includes("inArray(")) continue;
+      if (!/[iI]nArray\(/.test(raw)) continue;
       // Comments/string bodies blanked (offsets preserved) so prose describing
       // an inArray call isn't mistaken for one.
       const src = blankNonCode(raw);
-      if (!src.includes("inArray(")) continue;
+      if (!/[iI]nArray\(/.test(src)) continue;
       scanned++;
       const rel = relative(ROOT, file);
       const { violations, unresolved } = findViolations(rel, src);
