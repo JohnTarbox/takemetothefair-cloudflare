@@ -5482,6 +5482,10 @@ export const eventDiscrepancies = sqliteTable("event_discrepancies", {
       // and feeding a live metric) and NOT `resolved_authoritative` (nobody
       // adjudicated anything) — the row should never have been opened.
       "superseded_by_identity_gate",
+      // OPE-1032 — the self-consistency cron re-evaluated the event and the
+      // gate no longer fires this reason (retuned gate or corrected event).
+      // Bookkeeping like the three above: it settles nothing about the data.
+      "superseded_by_reevaluation",
     ],
   })
     .notNull()

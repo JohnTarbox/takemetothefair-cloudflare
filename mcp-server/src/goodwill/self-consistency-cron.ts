@@ -25,9 +25,9 @@
  * events; today the priority-by-checkedAt heuristic suffices.
  */
 
-import { eq, sql } from "drizzle-orm";
-import { events } from "../schema.js";
-import { evaluateGates } from "@takemetothefair/utils";
+import { and, eq, inArray, sql } from "drizzle-orm";
+import { events, eventDiscrepancies } from "../schema.js";
+import { chunkIds, evaluateGates } from "@takemetothefair/utils";
 import type { Db } from "../db.js";
 import { captureSelfConsistencyDiscrepancy } from "./capture.js";
 import { logError } from "../logger.js";
@@ -40,7 +40,20 @@ export interface SelfConsistencyResult {
   emitted: number;
   skipped_dedup: number;
   skipped_no_field_class: number;
+  /** OPE-1032 — open rows closed because re-evaluation no longer fires their reason. */
+  superseded: number;
 }
+
+/**
+ * OPE-1032 — the bookkeeping status for "the gate no longer fires on this row".
+ * A SUPERSEDED status, not `self_resolved`: re-evaluation under a retuned gate
+ * says nothing about whether the data matched the truth, so it must not feed the
+ * reliability learner (scoring skips every status except the resolved ones).
+ */
+export const SUPERSEDED_BY_REEVALUATION = "superseded_by_reevaluation";
+
+/** Reasons closed by their own owner, never by re-evaluation here (OPE-306). */
+const REEVALUATION_EXCLUDED_REASONS: ReadonlySet<string> = new Set(["end_date_in_past"]);
 
 /**
  * Per [[feedback_drizzle_d1_unit_test_inject_db]] — accept `db: Db`
@@ -56,6 +69,7 @@ export async function runScheduledSelfConsistencyCron(db: Db): Promise<SelfConsi
     emitted: 0,
     skipped_dedup: 0,
     skipped_no_field_class: 0,
+    superseded: 0,
   };
 
   try {
@@ -71,6 +85,12 @@ export async function runScheduledSelfConsistencyCron(db: Db): Promise<SelfConsi
         sourceName: events.sourceName,
         sourceUrl: events.sourceUrl,
         description: events.description,
+        // OPE-1032 — without these the gate's existing MAJOR / recurring-series
+        // exemptions could never apply here, and season-long rows re-filed daily.
+        eventScale: events.eventScale,
+        discontinuousDates: events.discontinuousDates,
+        categories: events.categories,
+        eventDaysCount: sql<number>`(SELECT COUNT(*) FROM event_days WHERE event_days.event_id = ${events.id})`,
       })
       .from(events)
       .where(eq(events.status, "APPROVED"))
@@ -78,6 +98,34 @@ export async function runScheduledSelfConsistencyCron(db: Db): Promise<SelfConsi
       .limit(MAX_PER_RUN);
 
     result.scanned = rows.length;
+
+    // OPE-1032 — the open self_consistency rows for this batch, loaded once
+    // (chunked under D1's bound-param cap) so re-evaluation can close the ones
+    // whose reason no longer fires. Without this, a retuned gate or a corrected
+    // event left its row open forever and the weekly drain re-adjudicated it.
+    const openByEvent = new Map<string, { id: string; reason: string | null }[]>();
+    for (const batch of chunkIds(rows.map((r) => r.id))) {
+      const open = await db
+        .select({
+          id: eventDiscrepancies.id,
+          eventId: eventDiscrepancies.eventId,
+          reason: eventDiscrepancies.divergentValue,
+        })
+        .from(eventDiscrepancies)
+        .where(
+          and(
+            inArray(eventDiscrepancies.eventId, batch),
+            eq(eventDiscrepancies.detectedBy, "self_consistency"),
+            eq(eventDiscrepancies.resolutionStatus, "open")
+          )
+        );
+      for (const o of open) {
+        const list = openByEvent.get(o.eventId) ?? [];
+        list.push({ id: o.id, reason: o.reason });
+        openByEvent.set(o.eventId, list);
+      }
+    }
+    const toSupersede: string[] = [];
 
     for (const ev of rows) {
       const gate = evaluateGates({
@@ -88,7 +136,20 @@ export async function runScheduledSelfConsistencyCron(db: Db): Promise<SelfConsi
         endDate: ev.endDate,
         applicationDeadline: null, // not on the events table
         description: ev.description ?? null,
+        eventScale: ev.eventScale ?? null,
+        discontinuousDates: ev.discontinuousDates ?? null,
+        eventDaysCount: Number(ev.eventDaysCount ?? 0),
+        categories: ev.categories ?? null,
       });
+      for (const o of openByEvent.get(ev.id) ?? []) {
+        if (
+          o.reason &&
+          !REEVALUATION_EXCLUDED_REASONS.has(o.reason) &&
+          !gate.reasons.includes(o.reason)
+        ) {
+          toSupersede.push(o.id);
+        }
+      }
       if (gate.route !== "PENDING_REVIEW") continue;
       result.flagged += 1;
 
@@ -99,7 +160,13 @@ export async function runScheduledSelfConsistencyCron(db: Db): Promise<SelfConsi
           eventId: ev.id,
           reason,
           sourceUrl: ev.sourceUrl,
-          authoritativeValue: ev.startDate ? ev.startDate.toISOString().slice(0, 10) : null,
+          // OPE-1032 — a NAME reason is about the name, so an adjudication
+          // stays valid until the name changes (see captureSelfConsistencyDiscrepancy).
+          authoritativeValue: reason.startsWith("name_")
+            ? ev.name
+            : ev.startDate
+              ? ev.startDate.toISOString().slice(0, 10)
+              : null,
           confidence: 0.9,
         });
         if (id === null) {
@@ -113,8 +180,25 @@ export async function runScheduledSelfConsistencyCron(db: Db): Promise<SelfConsi
       }
     }
 
+    for (const batch of chunkIds(toSupersede)) {
+      await db
+        .update(eventDiscrepancies)
+        .set({
+          resolutionStatus: SUPERSEDED_BY_REEVALUATION,
+          resolvedAt: new Date(),
+          notes: sql`COALESCE(${eventDiscrepancies.notes}, '') || ' | OPE-1032: gate no longer fires on re-evaluation'`,
+        })
+        .where(
+          and(
+            inArray(eventDiscrepancies.id, batch),
+            eq(eventDiscrepancies.resolutionStatus, "open")
+          )
+        );
+    }
+    result.superseded = toSupersede.length;
+
     console.log(
-      `[cron] self-consistency ok — scanned=${result.scanned} flagged=${result.flagged} emitted=${result.emitted} skipped=${result.skipped_dedup}`
+      `[cron] self-consistency ok — scanned=${result.scanned} flagged=${result.flagged} emitted=${result.emitted} skipped=${result.skipped_dedup} superseded=${result.superseded}`
     );
     return result;
   } catch (error) {

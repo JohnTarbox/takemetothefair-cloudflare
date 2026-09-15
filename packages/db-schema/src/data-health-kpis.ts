@@ -70,6 +70,8 @@ export const SUPERSEDED_STATUSES = [
   // about whether our data matched the truth, because there was no shared
   // subject for the data to be right or wrong about.
   "superseded_by_identity_gate",
+  // OPE-1032 — the self-consistency gate no longer fires on re-evaluation.
+  "superseded_by_reevaluation",
 ] as const;
 
 /** The window every "…_last_28d" figure on this surface uses. */

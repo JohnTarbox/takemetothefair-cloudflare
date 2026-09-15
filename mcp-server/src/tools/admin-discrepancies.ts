@@ -49,6 +49,9 @@ const RESOLUTION_STATUS_VALUES = [
   "superseded_by_lifecycle",
   // OPE-307 — closed because normalization already fixed the underlying date.
   "superseded_by_normalization",
+  // OPE-1032 — closed by the self-consistency cron because re-evaluation no
+  // longer fires the row's gate reason (retuned gate, or corrected event).
+  "superseded_by_reevaluation",
 ] as const;
 
 const RESOLUTION_SOURCE_VALUES = ["higher_tier", "post_event", "operator"] as const;
