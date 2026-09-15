@@ -22,6 +22,7 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { events, vendorSelfReportedEvents, venues } from "@/lib/db/schema";
 import type { Db } from "@/lib/analytics-overview/shared";
+import { chunkIds } from "@takemetothefair/utils";
 
 /** How many fairs one vendor may assert. A generous ceiling, not a quota. */
 export const MAX_SELF_REPORTED_PER_VENDOR = 100;
@@ -149,13 +150,14 @@ export async function setSelfReportedEvents(
       .onConflictDoNothing();
   }
 
-  if (removed.length > 0) {
+  // OPE-1029 — chunked: `removed` is as long as the list the vendor just cleared.
+  for (const batch of chunkIds(removed)) {
     await db
       .delete(vendorSelfReportedEvents)
       .where(
         and(
           eq(vendorSelfReportedEvents.vendorId, args.vendorId),
-          inArray(vendorSelfReportedEvents.eventId, removed)
+          inArray(vendorSelfReportedEvents.eventId, batch)
         )
       );
   }
