@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { containsCI } from "@takemetothefair/db-schema";
 import { z } from "zod";
-import { eq, and, desc, sql } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import { blogPosts, users } from "../schema.js";
 import {
   parseJsonArray,
@@ -246,8 +247,12 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
       }
 
       if (params.tag) {
-        const safeTag = params.tag.replace(/["%_\\]/g, "");
-        conditions.push(sql`${blogPosts.tags} LIKE ${'%"' + safeTag + '"%'}`);
+        // Same family as the two app-side tag filters — see OPE-1030. The MCP
+        // Worker is a separate artifact, so a fix in `src/` does not reach it
+        // (that is precisely what OPE-630 found); containsCI lives in the
+        // shared package for this reason.
+        const safeTag = params.tag.replace(/["\\]/g, "");
+        conditions.push(containsCI(blogPosts.tags, `"${safeTag}"`));
       }
 
       const where = conditions.length > 0 ? and(...conditions) : undefined;

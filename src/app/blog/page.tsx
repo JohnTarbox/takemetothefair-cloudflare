@@ -3,6 +3,7 @@ import Link from "next/link";
 import { FileText } from "lucide-react";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { blogPosts, users } from "@/lib/db/schema";
+import { containsCI } from "@/lib/db/contains-ci";
 import { eq, and, desc, sql } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { BlogPostCard } from "@/components/blog/blog-post-card";
@@ -73,8 +74,15 @@ export default async function BlogPage({ searchParams }: { searchParams: Promise
   }
 
   if (params.tag) {
-    const safeTag = params.tag.replace(/["%_\\]/g, "");
-    conditions.push(sql`${blogPosts.tags} LIKE ${'%"' + safeTag + '"%'}`);
+    // OPE-1030 → this call site: the LIKE form threw
+    // `D1_ERROR: LIKE or GLOB pattern too complex` on any ?tag= over ~48
+    // chars — 225 rows across 78 URLs on 2026-09-12, every one of them a
+    // 500. Stripping quotes and wildcards (the old `safeTag`) does not help:
+    // the cap is on pattern LENGTH, not on metacharacters. `containsCI` uses
+    // instr(), which has no pattern ceiling. 4th call site of the
+    // OPE-548/565/630 family; see the guard note there.
+    const safeTag = params.tag.replace(/["\\]/g, "");
+    conditions.push(containsCI(blogPosts.tags, `"${safeTag}"`));
   }
 
   const where = conditions.length > 0 ? and(...conditions) : undefined;
