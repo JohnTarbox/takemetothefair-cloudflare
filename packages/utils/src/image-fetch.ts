@@ -135,3 +135,77 @@ export async function fetchImageWithFallback(
   }
   return { ok: false, verdict: last!, attempts };
 }
+
+/**
+ * OPE-409 — `cdn.meetmeatthefair.com` is a bare R2 custom domain on the bucket
+ * both Workers bind as `VENDOR_ASSETS`. The `inbound-attachments/` prefix holds
+ * raw, unstripped email attachments, and is to be closed at the edge with a WAF
+ * rule. A WAF rule cannot tell our own server-side fetch of that hostname from
+ * anyone else's, so the image-from-URL tools must not reach those objects over
+ * the public edge at all: this names the URLs that are really our own bucket.
+ *
+ * Returns the R2 key for an `inbound-attachments/` object on our CDN, or null
+ * for any other URL — including our own published derivatives under `events/`
+ * and `vendors/`, which stay public and keep being fetched normally.
+ */
+export const OWNED_CDN_HOST = "cdn.meetmeatthefair.com";
+export const INBOUND_ATTACHMENT_PREFIX = "inbound-attachments/";
+
+export function ownedInboundAttachmentKey(imageUrl: string): string | null {
+  let u: URL;
+  try {
+    u = new URL(imageUrl);
+  } catch {
+    return null;
+  }
+  if (u.protocol !== "https:" && u.protocol !== "http:") return null;
+  if (u.hostname.toLowerCase() !== OWNED_CDN_HOST) return null;
+  let key: string;
+  try {
+    key = decodeURIComponent(u.pathname.replace(/^\/+/, ""));
+  } catch {
+    return null;
+  }
+  if (
+    !key.startsWith(INBOUND_ATTACHMENT_PREFIX) ||
+    key.length === INBOUND_ATTACHMENT_PREFIX.length
+  ) {
+    return null;
+  }
+  return key;
+}
+
+/** The slice of an R2 bucket binding this reader needs. */
+export interface InboundAttachmentBucket {
+  get(key: string): Promise<{
+    body: ReadableStream;
+    size: number;
+    httpMetadata?: { contentType?: string };
+  } | null>;
+}
+
+/**
+ * Read an `inbound-attachments/` object through the R2 binding and present it
+ * as the `Response` the image fetchers already consume. A missing object is a
+ * 404, so it is reported by `classifyImageResponse` like any other miss rather
+ * than as a special case.
+ */
+export async function readInboundAttachmentAsResponse(
+  bucket: InboundAttachmentBucket,
+  key: string
+): Promise<Response> {
+  const obj = await bucket.get(key);
+  if (!obj) {
+    return new Response(`R2 object not found: ${key}`, {
+      status: 404,
+      headers: { "Content-Type": "text/plain" },
+    });
+  }
+  return new Response(obj.body, {
+    status: 200,
+    headers: {
+      "Content-Type": obj.httpMetadata?.contentType ?? "application/octet-stream",
+      "Content-Length": String(obj.size),
+    },
+  });
+}

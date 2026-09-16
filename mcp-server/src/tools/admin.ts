@@ -37,6 +37,8 @@ import {
   fetchImageWithFallback,
   findPromoterDuplicates,
   imageFetchHeaders,
+  ownedInboundAttachmentKey,
+  readInboundAttachmentAsResponse,
 } from "@takemetothefair/utils";
 import {
   EXTRACTION_REJECT_FAMILIES,
@@ -187,6 +189,10 @@ interface Env {
   /** OPE-163 — customer-facing reply send gate. reply_to_inbound_email refuses
    *  to send unless this equals "true". Shipped OFF (OPE-6). */
   EMAIL_REPLY_ENABLED?: string;
+  /** OPE-409 — upload_event_image reads our own `inbound-attachments/` objects
+   *  through this binding instead of over the public CDN edge (wrangler.toml
+   *  binds it; optional here so an unbound environment refuses loudly). */
+  VENDOR_ASSETS?: R2Bucket;
 }
 
 export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext, env?: Env) {
@@ -2180,9 +2186,29 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       // to the main app + the main app's R2 put fits comfortably.
       // OPE-968 — honest UA first, legacy UA only after a block; and a failure
       // says what came back (see packages/utils/src/image-fetch.ts).
+      // OPE-409 — an `inbound-attachments/` URL on our own CDN is read through
+      // the R2 binding, never over the public edge: that prefix is being closed
+      // with a WAF rule, which cannot exempt this Worker's own fetch. Held
+      // posters are attached exactly this way, so a public fetch here would
+      // break poster attachment for every size, and fail as "no image".
+      const ownedKey = ownedInboundAttachmentKey(params.image_url);
+      if (ownedKey && !env.VENDOR_ASSETS) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `${params.image_url} is an inbound attachment in our own bucket, and upload_event_image reads those through the VENDOR_ASSETS binding, which is not bound on this Worker.`,
+            },
+          ],
+          isError: true,
+        };
+      }
       let imageResponse: Response;
       try {
         const fetched = await fetchImageWithFallback(async (userAgent) => {
+          if (ownedKey && env.VENDOR_ASSETS) {
+            return readInboundAttachmentAsResponse(env.VENDOR_ASSETS, ownedKey);
+          }
           const controller = new AbortController();
           const timeout = setTimeout(() => controller.abort(), 15_000);
           try {
