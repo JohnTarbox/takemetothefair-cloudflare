@@ -217,3 +217,60 @@ describe("list_photo_proposals", () => {
     ]);
   });
 });
+
+/**
+ * OPE-1053 — the event-name lookup must not bind more than D1's 100 parameters
+ * in one statement. Asserted on statement SHAPE (placeholders per prepared
+ * `events` SELECT), because better-sqlite3 accepts 32,766 and a "150 rows, no
+ * throw" test passes with the bug in.
+ */
+describe("list_photo_proposals event lookup stays under D1's 100-param cap (OPE-1053)", () => {
+  it("resolves names for 150 distinct events without any statement binding more than 100 params", async () => {
+    const { db: db2, raw } = createTestDb();
+    const s2 = new CapturingMcpServer();
+    registerAdminTools(s2 as never, db2, ADMIN_AUTH, ENV as never);
+    db2.insert(promoters).values({ id: "p1", companyName: "P", slug: "p1" }).run();
+    for (let i = 0; i < 150; i++) {
+      const id = `ev-${String(i).padStart(3, "0")}`;
+      db2
+        .insert(events)
+        .values({ id, name: `Fair ${i}`, slug: id, promoterId: "p1", status: "APPROVED" })
+        .run();
+      db2
+        .insert(adminActions)
+        .values({
+          id: `a-${i}`,
+          action: BOOTH_PROPOSED_ACTION,
+          targetType: "inbound_email",
+          targetId: "m1",
+          createdAt: new Date(1_800_000_000_000 + i),
+          payloadJson: JSON.stringify({ event_id: id, photo_key: `k${i}` }),
+        })
+        .run();
+    }
+
+    const prepared: string[] = [];
+    const realPrepare = raw.prepare.bind(raw);
+    raw.prepare = ((source: string) => {
+      prepared.push(source);
+      return realPrepare(source);
+    }) as typeof raw.prepare;
+
+    const r = (await s2.invoke("list_photo_proposals", { limit: 200 })) as {
+      content: Array<{ text: string }>;
+    };
+    const out = JSON.parse(r.content[0].text);
+
+    // Positive landmarks: every row came back, and every name resolved.
+    expect(out.count).toBe(150);
+    expect(out.proposals.every((p: { event_name: string | null }) => p.event_name !== null)).toBe(
+      true
+    );
+    const lookups = prepared.filter(
+      (q) => /from\s+"events"/i.test(q) && /"events"\."id"\s+in\s*\(/i.test(q)
+    );
+    expect(lookups.length).toBeGreaterThan(0);
+    // The guard.
+    for (const q of lookups) expect((q.match(/\?/g) ?? []).length).toBeLessThanOrEqual(100);
+  });
+});
