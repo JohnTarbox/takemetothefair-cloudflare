@@ -177,7 +177,31 @@ const SOURCE = "mcp:email-handler";
 // and a total-count ceiling (only the first N image/PDF attachments) so a
 // pathological many-attachment message can't blow the receive-time budget.
 const ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024; // 10 MB per attachment
-const ATTACHMENT_MAX_COUNT = 5; // payload image/PDF attachments per email
+/**
+ * Payload image/PDF attachments stored per email.
+ *
+ * OPE-760 (2026-09-16) — raised 5 → 8. The UMF Chester Greenwood packet
+ * (inbound f8ef71e5) carried six real enclosures and lost the two a vendor has
+ * to fill in: the application form and the mobile-vendor licence. Of 111 emails
+ * with stored attachments, 4 ever hit this cap and that one lost real content;
+ * the others lost only signature icons.
+ *
+ * The count does not bound BYTES: Email Routing rejects any inbound message over
+ * 25 MiB (Cloudflare Email Routing limits page, read 2026-09-16), so this caps
+ * R2 puts, not storage. And the OCR step that reads these is byte-budgeted
+ * (OPE-954, `ocr-bounds.ts`), so more slots cannot reintroduce the 1 MiB
+ * step-output kill.
+ */
+export const ATTACHMENT_MAX_COUNT = 8;
+/**
+ * OPE-760 — a forwarded message (`message/rfc822`) is a CONTAINER, not content:
+ * its only consumer is the DKIM verifier, and OPE-944 hoists the documents
+ * inside it as attachments of their own. On f8ef71e5 the 5 MB `.eml` took a
+ * payload slot — the largest object, so size-ranking placed it FIRST — and
+ * pushed the two smallest real documents out. Containers get their own quota
+ * and never consume a payload slot.
+ */
+export const ATTACHMENT_MAX_CONTAINERS = 1;
 /**
  * OPE-760 — separate, smaller quota for signature furniture.
  *
@@ -1299,7 +1323,15 @@ export async function captureAttachments(
     .map((a, index) => {
       const bytes = attachmentBytes(a.content);
       const size = bytes?.byteLength ?? 0;
-      return { a, index, bytes, size, furniture: isSignatureFurniture(a, size) };
+      const container = isRfc822Attachment({ filename: a.filename ?? null, mimeType: a.mimeType });
+      return {
+        a,
+        index,
+        bytes,
+        size,
+        container,
+        furniture: !container && isSignatureFurniture(a, size),
+      };
     })
     .sort((x, y) => {
       // Payload before furniture; then largest first, because between two
@@ -1312,6 +1344,7 @@ export async function captureAttachments(
 
   let stored = 0;
   let storedFurniture = 0;
+  let storedContainers = 0;
   for (const item of ordered) {
     const { a, index: i, bytes } = item;
     const mimeType = a.mimeType || "application/octet-stream";
@@ -1373,9 +1406,14 @@ export async function captureAttachments(
     // whole fix: the acceptance case is "six icons plus one real poster stores
     // the poster", and it holds because the poster is not furniture and the
     // icons are not competing for its quota.
-    if (
-      item.furniture ? storedFurniture >= ATTACHMENT_MAX_FURNITURE : stored >= ATTACHMENT_MAX_COUNT
-    ) {
+    // OPE-760 — three quotas: a forwarded-message container never takes a
+    // payload slot either.
+    const overQuota = item.container
+      ? storedContainers >= ATTACHMENT_MAX_CONTAINERS
+      : item.furniture
+        ? storedFurniture >= ATTACHMENT_MAX_FURNITURE
+        : stored >= ATTACHMENT_MAX_COUNT;
+    if (overQuota) {
       note("over-count-cap");
       continue;
     }
@@ -1383,7 +1421,8 @@ export async function captureAttachments(
     try {
       await bucket.put(key, bytes, { httpMetadata: { contentType: mimeType } });
       refs.push({ key, name, mimeType, size: bytes.byteLength });
-      if (item.furniture) storedFurniture++;
+      if (item.container) storedContainers++;
+      else if (item.furniture) storedFurniture++;
       else stored++;
     } catch {
       // A failed put for one attachment must not block the others or the

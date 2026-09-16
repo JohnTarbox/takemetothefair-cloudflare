@@ -23,7 +23,11 @@
  * from outside the function.
  */
 import { describe, expect, it, vi } from "vitest";
-import { captureAttachments, type AttachmentRef } from "../src/email-handler.js";
+import {
+  ATTACHMENT_MAX_COUNT,
+  captureAttachments,
+  type AttachmentRef,
+} from "../src/email-handler.js";
 
 interface PutCall {
   key: string;
@@ -106,23 +110,28 @@ describe("captureAttachments — media selection + refs", () => {
     expect(refs.length + skipped.length).toBe(3);
   });
 
-  it("caps at the first 5 image/PDF attachments", async () => {
+  it("caps at ATTACHMENT_MAX_COUNT image/PDF attachments", async () => {
     const { bucket } = mockBucket();
-    const many = Array.from({ length: 8 }, (_, i) => ({
+    const over = ATTACHMENT_MAX_COUNT + 3;
+    const many = Array.from({ length: over }, (_, i) => ({
       filename: `p${i}.png`,
       mimeType: "image/png",
       content: bytes(50),
     }));
     const { refs, skipped } = await captureAttachments(bucket, "grp3", many);
-    expect(refs).toHaveLength(5);
+    expect(refs).toHaveLength(ATTACHMENT_MAX_COUNT);
     // The live specimens: inbound_emails 2a09ef41 (8 claimed → 5 stored) and
-    // 4c536723 (6 → 5), both exactly at the cap, both with the overflow
+    // 4c536723 (6 → 5) — both at the old cap of 5, both with the overflow
     // unrecorded. Three real attachments from a craft-show promoter went
     // missing with nothing to show for them.
     expect(skipped).toHaveLength(3);
     expect(skipped.every((s) => s.reason === "over-count-cap")).toBe(true);
-    expect(skipped.map((s) => s.index)).toEqual([5, 6, 7]);
-    expect(refs.length + skipped.length).toBe(8);
+    expect(skipped.map((s) => s.index)).toEqual([
+      ATTACHMENT_MAX_COUNT,
+      ATTACHMENT_MAX_COUNT + 1,
+      ATTACHMENT_MAX_COUNT + 2,
+    ]);
+    expect(refs.length + skipped.length).toBe(over);
   });
 
   it("skips attachments over the 10 MB per-file cap", async () => {
@@ -211,8 +220,8 @@ describe("captureAttachments — best-effort isolation", () => {
 describe("everything handed in is accounted for", () => {
   const cases: Array<{ label: string; input: Parameters<typeof captureAttachments>[2] }> = [
     {
-      label: "the 4c536723 shape — 6 media parts, cap at 5",
-      input: Array.from({ length: 6 }, (_, i) => ({
+      label: "one more media part than the cap",
+      input: Array.from({ length: ATTACHMENT_MAX_COUNT + 1 }, (_, i) => ({
         filename: `p${i}.pdf`,
         mimeType: "application/pdf",
         content: bytes(100),
@@ -264,13 +273,13 @@ describe("everything handed in is accounted for", () => {
     const { bucket } = mockBucket();
     const { refs, skipped } = await captureAttachments(bucket, "order", [
       { filename: "sig.ics", mimeType: "text/calendar", content: bytes(10) },
-      ...Array.from({ length: 6 }, (_, i) => ({
+      ...Array.from({ length: ATTACHMENT_MAX_COUNT + 1 }, (_, i) => ({
         filename: `p${i}.png`,
         mimeType: "image/png",
         content: bytes(50),
       })),
     ]);
-    expect(refs).toHaveLength(5);
+    expect(refs).toHaveLength(ATTACHMENT_MAX_COUNT);
     expect(skipped.map((s) => s.reason).sort()).toEqual(["over-count-cap", "unsupported-type"]);
   });
 });
