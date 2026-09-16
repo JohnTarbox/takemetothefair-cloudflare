@@ -1,17 +1,12 @@
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import * as schema from "../src/lib/db/schema";
-import { unsafeSlug } from "@takemetothefair/utils";
+import { hashPasswordPbkdf2, unsafeSlug } from "@takemetothefair/utils";
 
-// Inline hashPassword to avoid importing from src/lib/auth.ts which pulls in
-// Cloudflare-specific modules that aren't available in the seed script context.
+// OPE-902 — seed accounts use the same PBKDF2 format the app writes. This was
+// the last writer of legacy SHA-256 hashes, which both Workers now refuse.
 async function hashPassword(password: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(password + (process.env.AUTH_SECRET || "fallback-secret"));
-  const hash = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(hash))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+  return hashPasswordPbkdf2(password);
 }
 
 // Find the correct D1 database file

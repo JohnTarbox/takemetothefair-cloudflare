@@ -72,8 +72,6 @@ function makeDeps() {
       throttle: signInThrottle,
       findUserByEmail: async (email: string) => USERS[email],
       verifyPassword,
-      hashPassword: async () => "salt:rehash",
-      updatePasswordHash: async () => {},
       onRefusedByThrottle,
       logAuthError: async () => {},
     },

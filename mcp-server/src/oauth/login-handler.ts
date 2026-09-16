@@ -3,13 +3,7 @@ import { timingSafeEqualString } from "@takemetothefair/utils";
 import type { AuthRequest, ClientInfo, OAuthHelpers } from "@cloudflare/workers-oauth-provider";
 import { getDb } from "../db.js";
 import { logError } from "../logger.js";
-import {
-  lookupUser,
-  verifyPassword,
-  resolveUserProps,
-  isLegacyPasswordHash,
-  upgradePasswordHash,
-} from "./utils.js";
+import { lookupUser, verifyPassword, resolveUserProps } from "./utils.js";
 import { clientIp, throttleAuthorize, type BurstCounterNamespace } from "./authorize-throttle.js";
 
 interface Env {
@@ -254,25 +248,6 @@ app.post("/authorize", async (c) => {
       context: { email, userId: user.id },
     });
     return loginError(c, stateData, oauthReqInfo, "Invalid email or password.");
-  }
-
-  // OPE-902 — upgrade a legacy unsalted SHA-256 hash now that it has verified.
-  // Nothing else ever rewrote these, so they would have stayed unsalted for as
-  // long as the account existed. Deliberately not awaited into the failure
-  // path: if the write throws, the user is still signed in and the next login
-  // simply tries again — a hardening step must not be able to lock anyone out.
-  if (isLegacyPasswordHash(user.passwordHash)) {
-    try {
-      await upgradePasswordHash(db, user.id, password);
-    } catch (err) {
-      await logError(c.env.DB, {
-        level: "warn",
-        source: "mcp:oauth",
-        message: "legacy password hash upgrade failed; login allowed to proceed",
-        error: err,
-        context: { userId: user.id },
-      });
-    }
   }
 
   // Build user props for the OAuth token

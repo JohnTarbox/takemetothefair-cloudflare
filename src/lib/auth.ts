@@ -6,6 +6,7 @@ import Google from "next-auth/providers/google";
 import Facebook from "next-auth/providers/facebook";
 import { isPlaceholderEmail, PLACEHOLDER_REFUSAL } from "@/lib/auth/placeholder-account";
 import { normalizeEmail } from "@/lib/auth/normalize-email";
+import { hashPasswordPbkdf2, verifyPasswordHash } from "@takemetothefair/utils";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { getCloudflareDb, type CloudflareStringEnvKey } from "./cloudflare";
 import * as schema from "./db/schema";
@@ -68,77 +69,16 @@ export function hasRole(
   return !!session?.user?.roles?.includes(role);
 }
 
-function toHex(buffer: ArrayBuffer): string {
-  return Array.from(new Uint8Array(buffer))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-function fromHex(hex: string): Uint8Array {
-  const bytes = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < hex.length; i += 2) {
-    bytes[i / 2] = parseInt(hex.substring(i, i + 2), 16);
-  }
-  return bytes;
-}
-
-// PBKDF2 password hashing for edge runtime (Web Crypto API)
-const PBKDF2_ITERATIONS = 100_000;
-const SALT_LENGTH = 16; // 16 bytes = 32 hex chars
-
+// OPE-902 — one PBKDF2 format and one constant-time verifier, shared with the
+// MCP Worker (`@takemetothefair/utils/password-hash`). The legacy SHA-256
+// branch is gone: 0 of 177 password rows used it on prod (2026-09-16), and the
+// two Workers' copies of it had drifted apart.
 export async function hashPassword(password: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const salt = crypto.getRandomValues(new Uint8Array(SALT_LENGTH));
-  const keyMaterial = await crypto.subtle.importKey(
-    "raw",
-    encoder.encode(password),
-    "PBKDF2",
-    false,
-    ["deriveBits"]
-  );
-  const derivedBits = await crypto.subtle.deriveBits(
-    { name: "PBKDF2", salt: salt as BufferSource, iterations: PBKDF2_ITERATIONS, hash: "SHA-256" },
-    keyMaterial,
-    256
-  );
-  return `${toHex(salt.buffer)}:${toHex(derivedBits)}`;
-}
-
-async function verifyPbkdf2(password: string, saltHex: string, hashHex: string): Promise<boolean> {
-  const encoder = new TextEncoder();
-  const salt = fromHex(saltHex);
-  const keyMaterial = await crypto.subtle.importKey(
-    "raw",
-    encoder.encode(password),
-    "PBKDF2",
-    false,
-    ["deriveBits"]
-  );
-  const derivedBits = await crypto.subtle.deriveBits(
-    { name: "PBKDF2", salt: salt as BufferSource, iterations: PBKDF2_ITERATIONS, hash: "SHA-256" },
-    keyMaterial,
-    256
-  );
-  return toHex(derivedBits) === hashHex;
-}
-
-// Legacy SHA-256 verification for backward compatibility
-async function verifyLegacySha256(password: string, storedHash: string): Promise<boolean> {
-  const secret = getRuntimeEnv("AUTH_SECRET");
-  if (!secret) return false;
-  const encoder = new TextEncoder();
-  const data = encoder.encode(password + secret);
-  const hash = await crypto.subtle.digest("SHA-256", data);
-  return toHex(hash) === storedHash;
+  return hashPasswordPbkdf2(password);
 }
 
 export async function verifyPassword(password: string, storedHash: string): Promise<boolean> {
-  if (storedHash.includes(":")) {
-    const [salt, hash] = storedHash.split(":");
-    return verifyPbkdf2(password, salt, hash);
-  }
-  // Legacy format: plain SHA-256 hex
-  return verifyLegacySha256(password, storedHash);
+  return verifyPasswordHash(password, storedHash);
 }
 
 /**
@@ -198,13 +138,6 @@ function createAuthConfig(): NextAuthConfig {
           findUserByEmail: (email) =>
             db.query.users.findFirst({ where: eq(schema.users.email, email) }),
           verifyPassword,
-          hashPassword,
-          updatePasswordHash: async (userId, hash) => {
-            await db
-              .update(schema.users)
-              .set({ passwordHash: hash })
-              .where(eq(schema.users.id, userId));
-          },
           onRefusedByThrottle: scheduleSignInRefusalRecord,
           logAuthError: (error, email) =>
             logError(db, {
