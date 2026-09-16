@@ -9,9 +9,11 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
+  runScheduledHeroProposals,
   runScheduledImageUrlHealthSweep,
   runScheduledPhotoCoverageScan,
 } from "../src/photo-coverage-canary.js";
+import { logError } from "../src/logger.js";
 
 vi.mock("../src/logger.js", () => ({ logError: vi.fn(async () => {}) }));
 
@@ -78,5 +80,37 @@ describe("runScheduledImageUrlHealthSweep", () => {
 
     const bad = vi.fn(async () => new Response("nope", { status: 502 }));
     await expect(runScheduledImageUrlHealthSweep(envWith(bad))).resolves.toBeUndefined();
+  });
+});
+
+describe("runScheduledHeroProposals (OPE-227)", () => {
+  it("POSTs the hero-proposal route, capped at 10, with the internal key", async () => {
+    const f = ok({ selected: 10, proposed: 3, by_outcome: { proposed: 3, skipped_no_meta: 7 } });
+    await runScheduledHeroProposals(envWith(f));
+    expect(f).toHaveBeenCalledTimes(1);
+    const req = f.mock.calls[0][0] as Request;
+    expect(req.url).toBe(
+      "https://meetmeatthefair.com/api/admin/photo-flywheel/hero-proposals?limit=10"
+    );
+    expect(req.method).toBe("POST");
+    expect(req.headers.get("X-Internal-Key")).toBe("k-123");
+    expect(logError).not.toHaveBeenCalled();
+  });
+
+  it("logs a non-2xx under its own source and never throws into the cron", async () => {
+    const f = vi.fn(async () => new Response("nope", { status: 401 }));
+    await expect(runScheduledHeroProposals(envWith(f))).resolves.toBeUndefined();
+    expect(logError).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ source: "mcp:schedule:hero-proposals", statusCode: 401 })
+    );
+  });
+
+  it("swallows a thrown fetch", async () => {
+    const f = vi.fn(async () => {
+      throw new Error("network down");
+    });
+    await expect(runScheduledHeroProposals(envWith(f))).resolves.toBeUndefined();
+    expect(logError).toHaveBeenCalledTimes(1);
   });
 });

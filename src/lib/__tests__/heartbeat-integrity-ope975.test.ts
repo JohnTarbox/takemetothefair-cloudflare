@@ -164,6 +164,7 @@ describe("OPE-975 — every probe's window is pinned", () => {
       "vendor-enrichment": 7 * 24,
       "image-coverage-scan": 48,
       "image-url-health-sweep": 72,
+      "photo-flywheel-hero-proposals": 48,
       "photo-coverage-snapshot": 48,
       "vendor-claim-evidence": 30 * 24,
       "claim-corroboration-sweep": 48,

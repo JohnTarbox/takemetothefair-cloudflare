@@ -68,6 +68,7 @@ import { runScheduledOperatorQueueNotice } from "./operator-queue-notice.js";
 import { runAgentSilenceWatchdog } from "./agent-silence-watchdog.js";
 import { runScheduledCpiScanWatchdog } from "./cpi-scan-watchdog.js";
 import {
+  runScheduledHeroProposals,
   runScheduledImageUrlHealthSweep,
   runScheduledPhotoCoverageScan,
 } from "./photo-coverage-canary.js";
@@ -1862,7 +1863,12 @@ export default {
         // table on day one and checked nothing (url_checked stayed 0). The
         // sweep reads rows the scan writes, so it must follow it. Chained
         // rather than merged so a sweep failure still cannot fail the scan.
-        runScheduledPhotoCoverageScan(env).then(() => runScheduledImageUrlHealthSweep(env)),
+        runScheduledPhotoCoverageScan(env)
+          .then(() => runScheduledImageUrlHealthSweep(env))
+          // OPE-227 — hero proposals read the scan's fresh demand ranking, so
+          // they follow it too. Each runner swallows its own failure, so one
+          // stage cannot stop the next.
+          .then(() => runScheduledHeroProposals(env)),
         // GW1b (analyst, 2026-06-02) — Goodwill Engine Phase 1 capture
         // hooks. Both consume the foundations from GW1a (drizzle/0101)
         // and emit event_discrepancies rows for GW1c/d/e to score and

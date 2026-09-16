@@ -872,6 +872,27 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     lastEvidenceAt: (db) => maxTs(db, imageCoverageState, imageCoverageState.urlCheckedAt),
   },
   {
+    // OPE-227 — the photo flywheel's daily proposal run (MCP 06:00Z cron,
+    // chained after the coverage scan). Probes the RUN, not the yield: every
+    // candidate leaves exactly one row, a proposal OR an attempt, so a day of
+    // pages with no usable og:image is still evidence. The pool (664 imageless
+    // events with a source on 2026-09-16) outlasts the 30-day hold-out
+    // (10/day × 30 = 300), so a healthy run always selects something.
+    // 48h on a daily cron: one missed fire is a blip, two is a fault.
+    name: "photo-flywheel-hero-proposals",
+    ownerOpe: "OPE-227",
+    label: "Photo flywheel hero proposals (daily, after the coverage scan)",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        adminActions,
+        adminActions.createdAt,
+        inArray(adminActions.action, ["event.hero_proposed", "event.hero_propose_attempt"])
+      ),
+  },
+  {
     // OPE-226 — the scorecard's snapshot writer, which runs inside the daily
     // coverage scan. It gets its OWN probe rather than riding on the scan's
     // because the two can fail independently: the snapshot write is fail-soft

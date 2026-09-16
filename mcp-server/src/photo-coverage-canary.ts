@@ -139,3 +139,62 @@ export async function runScheduledImageUrlHealthSweep(env: Env): Promise<void> {
     });
   }
 }
+
+/**
+ * OPE-227 increment C — daily driver for the photo flywheel's hero PROPOSALS.
+ *
+ * Runs after the coverage scan (it reads the scan's demand ranking). Stages up
+ * to 10 organizer og:image proposals for the most-seen imageless event pages;
+ * writes NO `image_url` — a human approves each one via resolve_hero_proposal
+ * (John's ruling 2026-09-01/02: hold everything, auto-apply nothing).
+ *
+ * Same failsoft contract as its siblings. The `photo-flywheel-hero-proposals`
+ * heartbeat probe is the backstop: every run leaves one `admin_actions` row per
+ * candidate (a proposal or an attempt), and the candidate pool (664 on
+ * 2026-09-16) is larger than the 30-day hold-out can ever remove (10/day ×
+ * 30 = 300), so a healthy run always leaves evidence.
+ */
+export async function runScheduledHeroProposals(env: Env): Promise<void> {
+  const SOURCE = "mcp:schedule:hero-proposals";
+  const sessionId = crypto.randomUUID();
+  const url = `${env.MAIN_APP_URL ?? "https://meetmeatthefair.com"}/api/admin/photo-flywheel/hero-proposals?limit=10`;
+  const init: RequestInit = {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Internal-Key": env.INTERNAL_API_KEY ?? "",
+    },
+  };
+
+  try {
+    const response = await withMainAppSlot(() =>
+      env.MAIN_APP ? env.MAIN_APP.fetch(mainAppBindingRequest(url, init)) : fetch(url, init)
+    );
+    if (!response.ok) {
+      const body = (await response.text()).slice(0, 300);
+      await logError(env.DB, {
+        source: SOURCE,
+        message: "hero proposals run returned non-2xx",
+        statusCode: response.status,
+        sessionId,
+        context: { url, status: response.status, bodyExcerpt: body },
+      });
+      return;
+    }
+    const result = (await response.json().catch(() => ({}))) as {
+      selected?: number;
+      proposed?: number;
+      by_outcome?: Record<string, number>;
+    };
+    console.log(
+      `[cron] hero-proposals selected=${result.selected ?? "?"} proposed=${result.proposed ?? "?"} outcomes=${JSON.stringify(result.by_outcome ?? {})}`
+    );
+  } catch (error) {
+    await logError(env.DB, {
+      source: SOURCE,
+      message: "hero proposals run threw",
+      error,
+      sessionId,
+    });
+  }
+}
