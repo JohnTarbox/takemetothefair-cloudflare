@@ -131,6 +131,7 @@ export const HEARTBEAT_INVENTORY: Record<string, InventoryEntry> = {
   "cron:runScheduledGoodwillHealthCanary": U,
   "cron:runScheduledGscMetricsSync": { probes: ["gsc-search-metrics-ingest"] },
   "cron:runScheduledGscSweep": { probes: ["gsc-sweep-filler-tiers"] },
+  "cron:runScheduledHeroProposals": { probes: ["photo-flywheel-hero-proposals"] },
   "cron:runScheduledHoldoutSampling": U,
   "cron:runScheduledImageUrlHealthSweep": { probes: ["image-url-health-sweep"] },
   "cron:runScheduledInboundEmailStaleSweep": U,
