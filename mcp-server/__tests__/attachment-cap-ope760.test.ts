@@ -20,7 +20,11 @@
  * not have been content-aware even in principle.
  */
 import { describe, it, expect } from "vitest";
-import { captureAttachments, isSignatureFurniture } from "../src/email-handler.js";
+import {
+  ATTACHMENT_MAX_COUNT,
+  captureAttachments,
+  isSignatureFurniture,
+} from "../src/email-handler.js";
 
 /** An R2 stub that records what was actually stored. */
 function bucketStub() {
@@ -145,9 +149,11 @@ describe("captureAttachments — OPE-760 acceptance", () => {
     // LANDMARK against the over-correction: "make the poster fit" must not
     // become "store everything", or a pathological sender is unbounded.
     const { bucket } = bucketStub();
-    const many = Array.from({ length: 9 }, (_, i) => poster(`file-${i}.jpg`, 100_000 + i));
+    const many = Array.from({ length: ATTACHMENT_MAX_COUNT + 4 }, (_, i) =>
+      poster(`file-${i}.jpg`, 100_000 + i)
+    );
     const { refs, skipped } = await captureAttachments(bucket, "g4", many);
-    expect(refs).toHaveLength(5);
+    expect(refs).toHaveLength(ATTACHMENT_MAX_COUNT);
     expect(skipped).toHaveLength(4);
     expect(skipped.every((s) => s.reason === "over-count-cap")).toBe(true);
   });
@@ -161,7 +167,10 @@ describe("captureAttachments — OPE-760 acceptance", () => {
     // keeps it. Reverting the sort fails here and nowhere else.
     const { bucket } = bucketStub();
     const attachments = [
-      ...Array.from({ length: 6 }, (_, i) => poster(`small-${i}.jpg`, 1_000 + i)),
+      // Scaled to the cap, so the biggest file is always one past it.
+      ...Array.from({ length: ATTACHMENT_MAX_COUNT + 1 }, (_, i) =>
+        poster(`small-${i}.jpg`, 1_000 + i)
+      ),
       poster("the-actual-poster.jpg", 900_000),
     ];
 
@@ -179,14 +188,16 @@ describe("captureAttachments — OPE-760 acceptance", () => {
     // it fails, specifically, when furniture is made to share the payload cap.
     const { bucket } = bucketStub();
     const attachments = [
-      ...Array.from({ length: 5 }, (_, i) => poster(`real-${i}.jpg`, 500_000 - i)),
+      ...Array.from({ length: ATTACHMENT_MAX_COUNT }, (_, i) =>
+        poster(`real-${i}.jpg`, 500_000 - i)
+      ),
       icon(1),
       icon(2),
     ];
 
     const { refs, skipped } = await captureAttachments(bucket, "g7", attachments);
 
-    expect(refs.filter((r) => r.name.startsWith("real-"))).toHaveLength(5);
+    expect(refs.filter((r) => r.name.startsWith("real-"))).toHaveLength(ATTACHMENT_MAX_COUNT);
     expect(refs.filter((r) => r.name.startsWith("image00"))).toHaveLength(2);
     expect(skipped).toHaveLength(0);
   });
@@ -221,16 +232,92 @@ describe("OPE-760 — the skip records whether it was furniture", () => {
   });
 
   it("DISCRIMINATOR: marks a skipped real file as NOT furniture", async () => {
-    // The case the alert exists for. Six real payloads, five slots — the sixth
-    // is a genuine loss and must be distinguishable from an icon.
+    // The case the alert exists for. One more real payload than there are
+    // slots — the extra one is a genuine loss and must be distinguishable from
+    // an icon.
     const { bucket } = bucketStub();
     const { skipped } = await captureAttachments(
       bucket,
       "g9",
-      Array.from({ length: 6 }, (_, i) => poster(`real-${i}.jpg`, 500_000 - i))
+      Array.from({ length: ATTACHMENT_MAX_COUNT + 1 }, (_, i) =>
+        poster(`real-${i}.jpg`, 500_000 - i)
+      )
     );
     expect(skipped).toHaveLength(1);
     expect(skipped[0].furniture).toBe(false);
     expect(skipped[0].reason).toBe("over-count-cap");
+  });
+});
+
+/**
+ * OPE-760 (2026-09-16) — the f8ef71e5 shape: a Gmail "Forward as attachment" of
+ * the UMF Chester Greenwood vendor packet. The 5 MB `.eml` container took a
+ * payload slot and the two smallest real documents — the vendor APPLICATION
+ * form and the mobile-vendor LICENCE — were dropped `over-count-cap`.
+ */
+describe("forwarded-message containers do not consume payload slots (f8ef71e5)", () => {
+  const eml = (name = "UMF-December-5th-Chester-Greenwood-Craft-Fair.eml", size = 5_077_161) => ({
+    filename: name,
+    mimeType: "message/rfc822",
+    content: bytes(size),
+    disposition: "attachment" as const,
+  });
+  const png = (name: string, size: number) => ({
+    filename: name,
+    mimeType: "image/png",
+    content: bytes(size),
+    disposition: "attachment" as const,
+  });
+  // The specimen's seven attachments with their real sizes, in a plausible order.
+  const specimen = () => [
+    eml(),
+    png("2026-Chester-Greenwood-Day-Ad.png", 958_290),
+    png("Craft-Fair-Rules-and-Regulations.png", 933_602),
+    png("Chester-Greenwood-Invitation-to-Vendors-2026.png", 543_242),
+    png("Dec-Raffle-Basket-1-.png", 535_730),
+    png("Chester-Greenwood-Application-2026.png", 366_501),
+    {
+      filename: "Mobile-Vendor-License-Application-2-.pdf",
+      mimeType: "application/pdf",
+      content: bytes(404_786),
+      disposition: "attachment" as const,
+    },
+  ];
+
+  it("stores the application form and the licence — the two the packet exists to deliver", async () => {
+    const { bucket } = bucketStub();
+    const { refs, skipped } = await captureAttachments(bucket, "f8ef71e5", specimen());
+    const names = refs.map((r) => r.name);
+    expect(names).toContain("Chester-Greenwood-Application-2026.png");
+    expect(names).toContain("Mobile-Vendor-License-Application-2-.pdf");
+    // Landmark: the container is still kept (DKIM needs its octets verbatim).
+    expect(names.some((n) => n.endsWith(".eml"))).toBe(true);
+    expect(skipped).toHaveLength(0);
+  });
+
+  it("DISCRIMINATOR (container quota): a full payload set PLUS a container stores both", async () => {
+    // Exactly ATTACHMENT_MAX_COUNT real documents fill the payload quota; the
+    // container arrives too. If the container shares the payload quota, one
+    // real document is dropped — this fails exactly when that regresses,
+    // independently of the cap's value.
+    const { bucket } = bucketStub();
+    const attachments = [
+      eml(),
+      ...Array.from({ length: ATTACHMENT_MAX_COUNT }, (_, i) => png(`doc-${i}.png`, 300_000 + i)),
+    ];
+    const { refs, skipped } = await captureAttachments(bucket, "gc1", attachments);
+    expect(refs.filter((r) => r.name.startsWith("doc-"))).toHaveLength(ATTACHMENT_MAX_COUNT);
+    expect(refs.filter((r) => r.name.endsWith(".eml"))).toHaveLength(1);
+    expect(skipped).toHaveLength(0);
+  });
+
+  it("containers are still bounded — a second forwarded message is capped, not stored", async () => {
+    const { bucket } = bucketStub();
+    const { refs, skipped } = await captureAttachments(bucket, "gc2", [
+      eml("first.eml", 1_000),
+      eml("second.eml", 900),
+    ]);
+    expect(refs).toHaveLength(1);
+    expect(skipped.map((s) => s.reason)).toEqual(["over-count-cap"]);
   });
 });
