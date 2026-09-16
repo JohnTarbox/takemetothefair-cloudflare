@@ -2155,7 +2155,9 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
               rowSnapshot.attachmentCount > 0,
               null, // no fetch happened on free-text path
               messageRowId,
-              true // OPE-185 — drafted from body prose → ok-low-body-extract reply
+              true, // OPE-185 — drafted from body prose → ok-low-body-extract reply
+              // OPE-465 — the body IS the source on this path.
+              [rowSnapshot.bodyText ?? rowSnapshot.bodyTextExcerpt ?? ""]
             );
           }
         } catch {
@@ -2299,7 +2301,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
                 rowSnapshot.attachmentCount > 0,
                 null, // no successful fetch — this is a body-prose draft
                 messageRowId,
-                true // OPE-185 — drafted from body prose → ok-low-body-extract reply
+                true, // OPE-185 — drafted from body prose → ok-low-body-extract reply
+                [rawBody] // OPE-465 — the body IS the source on this path
               );
             }
             // Prose present but not enough to draft — record the reason, then bounce.
@@ -2427,7 +2430,11 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       rowSnapshot.fromAddress,
       rowSnapshot.attachmentCount > 0,
       fetched.fetchMethod,
-      messageRowId
+      messageRowId,
+      false,
+      // OPE-465 — the page we fetched AND the email body. Both are sources the
+      // extractor was given, so a value stated in either is grounded.
+      [fetched.content, rowSnapshot.bodyText ?? rowSnapshot.bodyTextExcerpt ?? ""]
     );
   }
 
@@ -2460,7 +2467,11 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     // create to the distinct `ok-low-body-extract` reply. FALSE for URL /
     // attachment / multi-source callers (they keep the HIGH/MEDIUM/LOW tiers and,
     // for posters, the OPE-68 poster-hero flow).
-    bodyExtractDraft = false
+    bodyExtractDraft = false,
+    // OPE-465 — the exact text the fields were read from. Empty means "no
+    // source captured", which grounds everything as supported and drops
+    // nothing, so an unwired caller behaves exactly as it does today.
+    sourceTexts: string[] = []
   ): Promise<HandlerResult> {
     // C1 Phase 2 (analyst, 2026-05-30): multi-event landing pages
     // (e.g. https://downtownfarmington.com/farmers-markets/ listing 3
@@ -2476,7 +2487,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         fromAddress,
         hasAttachments,
         fetchMethod,
-        messageRowId
+        messageRowId,
+        sourceTexts
       );
     }
     // Duplicate-check before insert. Two-stage (exact source_url, then
@@ -2705,6 +2717,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             inboundEmailId: messageRowId,
             dedupWasBlind: dedup.dedupWasBlind === true,
             possibleDuplicateOf: dedup.existingEventId ?? null,
+            sourceTexts,
           })
       );
 
@@ -2737,6 +2750,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         submitEvent(this.env, extracted, fromAddress, {
           inboundEmailId: messageRowId,
           dedupWasBlind: dedup.dedupWasBlind === true,
+          sourceTexts,
         })
     );
 
@@ -2819,7 +2833,9 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     // inbound row it came from. Two of the four creation pipelines could not
     // name their own source row before this, which is why "flag the email for
     // review" was never available to them.
-    messageRowId: string
+    messageRowId: string,
+    /** OPE-465 — the source text each child's fields were read from. */
+    sourceTexts: string[] = []
   ): Promise<HandlerResult> {
     interface EventOutcome {
       eventName: string;
@@ -2870,6 +2886,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             submitEvent(this.env, perEvent, fromAddress, {
               inboundEmailId: messageRowId,
               dedupWasBlind: dedup.dedupWasBlind === true,
+              sourceTexts,
             })
         );
         outcomes.push({
@@ -4137,7 +4154,12 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         fromAddress,
         hasAttachments,
         only.fetchMethod,
-        messageRowId
+        messageRowId,
+        false,
+        // OPE-465 — this candidate's own captured page text, plus the email
+        // body. The snapshot is page-level, which is all the grounding check
+        // needs: it asks whether the text SAYS the value, not where in it.
+        [only.snapshot?.text ?? "", emailBody ?? ""]
       );
       // OPE-68 — when this lone candidate came from a poster/PDF and a NEW
       // event was created (ok / ok-medium / ok-low), set the poster as its
@@ -4358,6 +4380,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             submitEvent(this.env, extracted, fromAddress, {
               inboundEmailId: messageRowId,
               dedupWasBlind: dedup.dedupWasBlind === true,
+              // OPE-465 — this candidate's own page text, plus the email body.
+              sourceTexts: [cand.snapshot?.text ?? "", emailBody ?? ""],
             })
         );
         outcomes.push({
@@ -4626,6 +4650,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             submitEvent(this.env, extracted, fromAddress, {
               inboundEmailId: messageRowId,
               dedupWasBlind: dedup.dedupWasBlind === true,
+              // OPE-465 — the page fetched for THIS url in the multi-URL loop.
+              sourceTexts: [fetched.content],
             })
         );
         outcomes.push({

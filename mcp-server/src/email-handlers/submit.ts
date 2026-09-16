@@ -31,6 +31,8 @@ import type { HandlerEnv } from "./types.js";
 import { adminActions, inboundEmails } from "../schema.js";
 import { getDb } from "../db.js";
 import { logError } from "../logger.js";
+import { decideEventGrounding, type EventGroundingDecision } from "@takemetothefair/utils";
+import { emitExtractionFault } from "../faults/extraction-emitter.js";
 
 const SOURCE_FETCH = "mcp:email-handler:extract:fetch";
 const SOURCE_EXTRACT = "mcp:email-handler:extract:ai";
@@ -720,6 +722,16 @@ export interface SubmitEventContext {
    * is only ever set on the MEDIUM path.
    */
   possibleDuplicateOf?: string | null;
+  /**
+   * OPE-465 — the exact source text(s) the extracted fields came from: the
+   * fetched page, the email body, the OCR'd attachment.
+   *
+   * Optional, and absent means "no source captured", which grounds every
+   * field as `supported` and drops nothing. That direction is deliberate: a
+   * caller that has not been wired yet behaves exactly as it does today, and
+   * a fetch failure never becomes a data-loss event.
+   */
+  sourceTexts?: string[];
 }
 
 export async function submitEvent(
@@ -729,10 +741,29 @@ export async function submitEvent(
   context: SubmitEventContext
 ): Promise<SubmitEventResult> {
   const possibleDuplicateOf = context.possibleDuplicateOf;
+
+  // OPE-465 — verify before write. This is the ONE chokepoint every creating
+  // branch funnels through (single-URL, free-text, fan-out, multi-source), so
+  // a check here cannot be wired into one of several parallel paths, which is
+  // this codebase's most-repeated defect shape.
+  const grounding = decideEventGrounding({
+    startDate: extracted.event.startDate,
+    endDate: extracted.event.endDate,
+    sources: context.sourceTexts ?? [],
+  });
+  const groundedEvent: SubmitExtractResult["event"] = { ...extracted.event };
+  for (const field of grounding.dropFields) {
+    // Abstention: the value is NOT written. A required-field constraint must
+    // never be satisfiable by inference — if the source gave month precision,
+    // the row carries no date rather than an invented one.
+    if (field === "start_date") groundedEvent.startDate = null;
+    if (field === "end_date") groundedEvent.endDate = null;
+  }
+
   let res: Response;
   try {
     const submitBody: Record<string, unknown> = {
-      ...extracted.event,
+      ...groundedEvent,
       source: "email",
       suggesterEmail: fromAddress,
     };
@@ -766,6 +797,13 @@ export async function submitEvent(
   }
   const created = { id: body.event.id, slug: body.event.slug, eventName: extracted.event.name };
 
+  // OPE-465 scope 4 — emit, don't just suppress. A verifier that silently
+  // drops bad fields fixes the data and hides the defect, and this lane would
+  // lose the only automatic signal it has for extractor fabrication.
+  if (grounding.dropFields.length > 0) {
+    await recordUngroundedFields(env, grounding, created, context.inboundEmailId);
+  }
+
   // OPE-804 — the event exists now. If the dedup that permitted it compared
   // nothing, say so where a person will see it, because the row itself looks
   // identical to one that passed a real check.
@@ -774,6 +812,76 @@ export async function submitEvent(
   }
 
   return created;
+}
+
+/**
+ * OPE-465 scope 4 — record the fields the source did not support.
+ *
+ * Three writes, each the channel an existing neighbour already uses rather
+ * than a fourth invented one:
+ *
+ *  1. `extraction_faults` via the OPE-463 emitter — `extract.unsupported_field:<field>`
+ *     is emitter 1 from that ticket, which was written and left uncalled
+ *     pending this one. One signature per field, so a recurrence bumps the
+ *     count instead of splitting one fault's history.
+ *  2. `admin_actions(action='extract.ungrounded')` — the durable trail,
+ *     alongside `dedup.blind`.
+ *  3. `inbound_emails.flagged_for_review = 1` — the queue an operator opens.
+ *     SET only; it never clears an operator's own flag.
+ *
+ * ⚠️ Never throws, for the same reason as its neighbour: the event exists by
+ * the time this runs, and throwing would make the workflow retry a create
+ * that already happened.
+ */
+async function recordUngroundedFields(
+  env: HandlerEnv,
+  grounding: EventGroundingDecision,
+  created: SubmitEventResult,
+  inboundEmailId: string
+): Promise<void> {
+  try {
+    const db = getDb(env.DB);
+    for (const field of grounding.dropFields) {
+      const result = grounding.results.find((r) => r.field === field);
+      await emitExtractionFault(db, {
+        signature: `extract.unsupported_field:${field}`,
+        source: SOURCE_SUBMIT,
+        familyId: "extract.unsupported_field",
+        detail: result?.reason ?? null,
+      });
+    }
+    await db.insert(adminActions).values({
+      action: "extract.ungrounded",
+      actorUserId: null,
+      targetType: "event",
+      targetId: created.id,
+      payloadJson: JSON.stringify({
+        inboundEmailId,
+        eventName: created.eventName,
+        eventSlug: created.slug,
+        droppedFields: grounding.dropFields,
+        // The verdicts, so a review does not have to re-derive them — and so
+        // a wrong drop is arguable against the text that caused it.
+        verdicts: grounding.results.map((r) => ({
+          field: r.field,
+          verdict: r.verdict,
+          reason: r.reason,
+          span: r.span,
+        })),
+      }),
+      createdAt: new Date(),
+    });
+    await db
+      .update(inboundEmails)
+      .set({ flaggedForReview: 1 })
+      .where(eq(inboundEmails.id, inboundEmailId));
+  } catch (err) {
+    await logError(getDb(env.DB), {
+      source: SOURCE_SUBMIT,
+      message: "ungrounded-field annotation failed",
+      error: err,
+    }).catch(() => {});
+  }
 }
 
 /**
