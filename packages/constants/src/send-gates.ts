@@ -39,6 +39,16 @@ export const SEND_GATE_NAMES = [
   "OPERATOR_OUTBOUND_ENABLED",
   "NEWSLETTER_SEND_ENABLED",
   "VENDOR_DIGEST_SEND_ENABLED",
+  // OPE-772 rework (2026-09-16) — four gates that decide whether mail goes out
+  // and that this reader could not see. PROMOTER_OUTREACH_ENABLED holds the
+  // whole promoter-outreach rail shut and shipped (OPE-384, 08-18) two weeks
+  // before the original four-gate list was drawn; the other three were missed
+  // the same way. A gate missing from this list looks like nothing at all from
+  // outside, which is exactly how an allowlist goes stale.
+  "PROMOTER_OUTREACH_ENABLED",
+  "AUTO_REPLY_ENABLED",
+  "UNROUTED_ASK_ENABLED",
+  "SUBMISSION_ACK_ENABLED",
 ] as const;
 
 export type SendGateName = (typeof SEND_GATE_NAMES)[number];
@@ -57,7 +67,24 @@ const SEND_GATE_WORKERS: Record<SendGateName, ReadonlyArray<"main-app" | "mcp">>
   OPERATOR_OUTBOUND_ENABLED: ["mcp"],
   NEWSLETTER_SEND_ENABLED: ["main-app"],
   VENDOR_DIGEST_SEND_ENABLED: ["main-app"],
+  PROMOTER_OUTREACH_ENABLED: ["mcp"],
+  AUTO_REPLY_ENABLED: ["mcp"],
+  UNROUTED_ASK_ENABLED: ["mcp"],
+  SUBMISSION_ACK_ENABLED: ["main-app"],
 };
+
+/**
+ * OPE-772 rework — gates that are OPEN when unset.
+ *
+ * Every other gate is `=== "true"` at its send site, so unset means off. But
+ * `AUTO_REPLY_ENABLED` is read as `!== "false"` (`mcp-server/src/email-gates.ts`):
+ * it was shipped default-open so that adding the flag could not silently stop
+ * 106 acknowledgements a month. A resolver that applied `=== "true"` to it would
+ * report the acks as OFF while they were going out — a reader lying in the one
+ * direction that hides mail being sent. The resolver therefore mirrors each
+ * gate's real comparison, and a test pins that against the consumer's source.
+ */
+const SEND_GATE_OPEN_WHEN_UNSET: ReadonlySet<SendGateName> = new Set(["AUTO_REPLY_ENABLED"]);
 
 export interface SendGateState {
   name: SendGateName;
@@ -68,6 +95,8 @@ export interface SendGateState {
   /** False when the gate lives only on another Worker — then `enabled` is null. */
   readable_here: boolean;
   enforced_on: ReadonlyArray<"main-app" | "mcp">;
+  /** What the send site does when the binding is absent — mirrors its own comparison. */
+  unset_means: "enabled" | "disabled";
 }
 
 /**
@@ -85,12 +114,16 @@ export function resolveSendGates(
     const enforcedOn = SEND_GATE_WORKERS[name];
     const readableHere = enforcedOn.includes(worker);
     const value = readableHere ? (env[name] ?? null) : null;
+    const openWhenUnset = SEND_GATE_OPEN_WHEN_UNSET.has(name);
     return {
       name,
       value,
-      enabled: readableHere ? value === "true" : null,
+      // Each gate's OWN comparison: `!== "false"` for a default-open gate,
+      // `=== "true"` for every other. The string "false" is off either way.
+      enabled: readableHere ? (openWhenUnset ? value !== "false" : value === "true") : null,
       readable_here: readableHere,
       enforced_on: enforcedOn,
+      unset_means: openWhenUnset ? "enabled" : "disabled",
     };
   });
 }

@@ -81,7 +81,7 @@ describe("get_send_gates — the gate only this Worker can answer for (OPE-772)"
     expect(byName(out.gates, "EMAIL_REPLY_ENABLED").enabled).toBe(false);
   });
 
-  it("covers exactly the four allowlisted gates and takes no key parameter", async () => {
+  it("covers exactly the allowlisted gates and takes no key parameter", async () => {
     const out = await gates({});
     expect(out.gates.map((g) => g.name)).toEqual([...SEND_GATE_NAMES]);
     // The security property: nothing to pass, so nothing to abuse. If a `key`
@@ -114,5 +114,101 @@ describe("OPE-772 — the flag is declared in the committed config", () => {
     // the flip becomes a reviewed edit rather than a drive-by, and this is also
     // the only thing that would notice a silent flip.
     expect(toml).toMatch(/^OPERATOR_OUTBOUND_ENABLED\s*=\s*"false"/m);
+  });
+});
+
+/**
+ * OPE-772 rework (2026-09-16) — four send gates this reader could not see, and
+ * one of them is OPEN when unset. The resolver must mirror each gate's real
+ * comparison, so the last block reads the consumers' own source rather than
+ * restating their semantics from memory.
+ */
+describe("OPE-772 rework — the gates the reader was missing", () => {
+  it("reads PROMOTER_OUTREACH_ENABLED here — the gate holding the outreach rail shut", async () => {
+    const g = byName(
+      (await gates({ PROMOTER_OUTREACH_ENABLED: "false" })).gates,
+      "PROMOTER_OUTREACH_ENABLED"
+    );
+    expect(g).toMatchObject({
+      readable_here: true,
+      value: "false",
+      enabled: false,
+      enforced_on: ["mcp"],
+    });
+  });
+
+  it("reports AUTO_REPLY_ENABLED as ENABLED when unset — it is default-open, and the acks ARE going out", async () => {
+    const out = await gates({});
+    const g = byName(out.gates, "AUTO_REPLY_ENABLED") as Gate & { unset_means: string };
+    expect(g.value).toBeNull();
+    expect(g.enabled).toBe(true);
+    expect(g.unset_means).toBe("enabled");
+    // Still named as unset — a missing binding is worth seeing even when harmless.
+    expect(out.unset_but_enforced_here).toContain("AUTO_REPLY_ENABLED");
+  });
+
+  it('holds AUTO_REPLY_ENABLED only on the exact string "false"', async () => {
+    expect(
+      byName((await gates({ AUTO_REPLY_ENABLED: "false" })).gates, "AUTO_REPLY_ENABLED").enabled
+    ).toBe(false);
+    expect(
+      byName((await gates({ AUTO_REPLY_ENABLED: "true" })).gates, "AUTO_REPLY_ENABLED").enabled
+    ).toBe(true);
+  });
+
+  it("does not answer for SUBMISSION_ACK_ENABLED, a main-app gate", async () => {
+    const g = byName(
+      (await gates({ SUBMISSION_ACK_ENABLED: "true" })).gates,
+      "SUBMISSION_ACK_ENABLED"
+    );
+    expect(g.readable_here).toBe(false);
+    expect(g.enabled).toBeNull();
+  });
+
+  it("every allowlisted gate is declared in the committed wrangler.toml of each Worker that enforces it", async () => {
+    const mcpToml = readFileSync(join(process.cwd(), "wrangler.toml"), "utf8");
+    const appToml = readFileSync(join(process.cwd(), "..", "wrangler.toml"), "utf8");
+    const out = await gates({});
+    // Positive landmark: the loop really covered every gate.
+    expect(out.gates).toHaveLength(SEND_GATE_NAMES.length);
+    for (const g of out.gates) {
+      if (g.enforced_on.includes("mcp"))
+        expect(mcpToml, `${g.name} in mcp-server/wrangler.toml`).toMatch(
+          new RegExp(`^${g.name}\\s*=`, "m")
+        );
+      if (g.enforced_on.includes("main-app"))
+        expect(appToml, `${g.name} in wrangler.toml`).toMatch(new RegExp(`^${g.name}\\s*=`, "m"));
+    }
+  });
+
+  it("each gate's unset_means matches the comparison its SEND SITE actually uses", async () => {
+    const src = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8");
+    const consumers: Array<[string, string, RegExp]> = [
+      ["AUTO_REPLY_ENABLED", "src/email-gates.ts", /AUTO_REPLY_ENABLED\s*!==\s*"false"/],
+      [
+        "PROMOTER_OUTREACH_ENABLED",
+        "src/tools/admin-send-promoter-email.ts",
+        /PROMOTER_OUTREACH_ENABLED\s*===\s*"true"/,
+      ],
+      [
+        "UNROUTED_ASK_ENABLED",
+        "src/workflows/inbound-email.ts",
+        /UNROUTED_ASK_ENABLED\s*===\s*"true"/,
+      ],
+      [
+        "SUBMISSION_ACK_ENABLED",
+        "../src/lib/email/submission-received.ts",
+        /SUBMISSION_ACK_ENABLED\s*!==\s*"true"/,
+      ],
+    ];
+    const out = await gates({});
+    for (const [name, file, pattern] of consumers) {
+      expect(src(file), `${name}'s comparison in ${file}`).toMatch(pattern);
+      const unsetMeans = (byName(out.gates, name) as Gate & { unset_means: string }).unset_means;
+      // `!== "false"` is open-when-unset; `=== "true"` / `!== "true"` → skip are closed.
+      expect(unsetMeans, name).toBe(
+        pattern.source.includes('!==\\s*"false"') ? "enabled" : "disabled"
+      );
+    }
   });
 });

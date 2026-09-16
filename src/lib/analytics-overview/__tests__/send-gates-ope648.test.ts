@@ -23,14 +23,24 @@ const get = (
 ) => resolveSendGates(env, worker).find((g) => g.name === name)!;
 
 describe("reports the resolved value of every allowlisted gate", () => {
-  it("covers exactly the four send gates, no more", () => {
+  it("covers exactly the allowlisted send gates, no more (OPE-772 rework added four)", () => {
     expect([...SEND_GATE_NAMES]).toEqual([
       "EMAIL_REPLY_ENABLED",
       "OPERATOR_OUTBOUND_ENABLED",
       "NEWSLETTER_SEND_ENABLED",
       "VENDOR_DIGEST_SEND_ENABLED",
+      "PROMOTER_OUTREACH_ENABLED",
+      "AUTO_REPLY_ENABLED",
+      "UNROUTED_ASK_ENABLED",
+      "SUBMISSION_ACK_ENABLED",
     ]);
-    expect(resolveSendGates({}, "main-app")).toHaveLength(4);
+    expect(resolveSendGates({}, "main-app")).toHaveLength(8);
+  });
+
+  it("reads SUBMISSION_ACK_ENABLED on the main app, closed when unset", () => {
+    const on = get({ SUBMISSION_ACK_ENABLED: "true" }, "main-app", "SUBMISSION_ACK_ENABLED");
+    expect(on).toMatchObject({ readable_here: true, enabled: true, unset_means: "disabled" });
+    expect(get({}, "main-app", "SUBMISSION_ACK_ENABLED").enabled).toBe(false);
   });
 
   it("reads EMAIL_REPLY_ENABLED on the main app — it is enforced on BOTH workers", () => {
