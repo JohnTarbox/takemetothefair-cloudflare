@@ -150,6 +150,7 @@ import { registerGa4LivenessTool } from "./admin-ga4-liveness.js";
 import { registerLogVendorOutreachTool } from "./admin-log-vendor-outreach.js";
 import { registerClaimCorroborateTool } from "./admin-claim-corroborate.js";
 import { registerPhotoProposalTools } from "./admin-photo-proposals.js";
+import { registerHeroProposalTools } from "./admin-hero-proposals.js";
 import {
   registerCitationTools,
   DENORM_FIELD_MAP as CITATION_DENORM_FIELD_MAP,
@@ -355,6 +356,8 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   // OPE-240 — read the staged booth-photo proposals. The PHOTO_AUTOWRITE_ENABLED
   // gate is meant to be judged on these, and they were unreadable outside /admin.
   registerPhotoProposalTools(server, db, auth);
+  // OPE-227 — the photo flywheel's hero proposals: list + approve/reject.
+  registerHeroProposalTools(server, db, auth, env);
 
   // ── list_all_events ────────────────────────────────────────────
   // Whitelist of event fields that can be filtered for NULL values
