@@ -24,8 +24,6 @@ export interface CredentialsAuthorizeDeps {
   throttle: (request: Request | undefined, email: string) => Promise<SignInThrottleResult>;
   findUserByEmail: (normalizedEmail: string) => Promise<CredentialsUser | undefined>;
   verifyPassword: (password: string, storedHash: string) => Promise<boolean>;
-  hashPassword: (password: string) => Promise<string>;
-  updatePasswordHash: (userId: string, hash: string) => Promise<void>;
   onRefusedByThrottle: (result: SignInThrottleResult, request: Request | undefined) => void;
   logAuthError: (error: unknown, email: string) => Promise<void>;
 }
@@ -84,15 +82,6 @@ export async function authorizeCredentials(
     const isValid = await deps.verifyPassword(password, user.passwordHash);
     if (!isValid) {
       return null;
-    }
-
-    // Re-hash legacy SHA-256 passwords to PBKDF2 on successful login
-    if (!user.passwordHash.includes(":")) {
-      try {
-        await deps.updatePasswordHash(user.id, await deps.hashPassword(password));
-      } catch {
-        // Non-fatal: login still succeeds even if re-hash fails
-      }
     }
 
     return {
