@@ -25,6 +25,8 @@ import {
   IMAGE_FETCH_USER_AGENT,
   fetchImageWithFallback,
   imageFetchHeaders,
+  ownedInboundAttachmentKey,
+  readInboundAttachmentAsResponse,
 } from "@takemetothefair/utils";
 import { auth } from "@/lib/auth";
 import { internalKeyMatches } from "@/lib/api-auth";
@@ -209,11 +211,25 @@ export async function POST(request: NextRequest) {
   // OPE-968 — honest UA first, legacy UA only after a block; each attempt
   // re-walks redirects under the SSRF guard. A guard refusal is not a block:
   // it stops the loop and is reported as itself.
+  // OPE-409 — our own `inbound-attachments/` objects are read through the R2
+  // binding, not over the public CDN edge that prefix is being closed on. The
+  // SSRF guard does not apply: the key names an object in our bucket, not a
+  // host to connect to.
+  const ownedKey = ownedInboundAttachmentKey(imageUrl);
+  if (ownedKey && !env.VENDOR_ASSETS) {
+    return NextResponse.json(
+      { error: "R2 bucket not bound (VENDOR_ASSETS missing); cannot read an inbound attachment" },
+      { status: 500 }
+    );
+  }
   let fetchResult: GuardedFetch;
   let attempts: string[] = [];
   try {
     const guard: { failure: GuardedFetch | null } = { failure: null };
     const fetched = await fetchImageWithFallback(async (userAgent) => {
+      if (ownedKey && env.VENDOR_ASSETS) {
+        return readInboundAttachmentAsResponse(env.VENDOR_ASSETS, ownedKey);
+      }
       const r = await fetchWithSsrfGuardedRedirects(parsedUrl, userAgent);
       if (!r.ok) {
         guard.failure = r;
