@@ -341,6 +341,28 @@ async function ensureRulesRegistered(db: Db, defs: RuleDefinition[]): Promise<Ma
  */
 export const SCAN_TIME_BUDGET_MS = 120_000;
 
+/**
+ * OPE-575 — statements per `db.batch()` round trip for a rule's item writes.
+ *
+ * D1's 100-bound-parameter cap is PER STATEMENT, and the widest statement here
+ * (the item INSERT) binds 7, so the size is bounded by round-trip cost, not the
+ * cap — the same reasoning as `photo-coverage/scan.ts`. A D1 batch is one
+ * transaction, so a failed chunk rolls back whole; the rule's catch then records
+ * `lastScanError` exactly as a failed single write did before.
+ */
+export const WRITE_BATCH_SIZE = 100;
+
+type WriteStatement = Parameters<Db["batch"]>[0][number];
+
+async function runWriteBatches(db: Db, writes: WriteStatement[]): Promise<void> {
+  for (let i = 0; i < writes.length; i += WRITE_BATCH_SIZE) {
+    const chunk = writes.slice(i, i + WRITE_BATCH_SIZE);
+    // drizzle-d1 types batch() as a non-empty tuple; slice of a non-empty
+    // remainder is never empty, so the cast is safe.
+    await db.batch(chunk as unknown as Parameters<Db["batch"]>[0]);
+  }
+}
+
 export async function scanAll(
   db: Db,
   defs: RuleDefinition[],
@@ -448,6 +470,13 @@ export async function scanAll(
         existingByTarget.set(e.targetId ?? "", { id: e.id, actedAt: e.actedAt });
       }
 
+      // OPE-575 — every write below is COLLECTED, then sent in `db.batch()`
+      // chunks. This loop used to await one UPDATE/INSERT per match: the
+      // `standards_eligible_for_claim_outreach` query runs in 11ms on prod, but
+      // its 1,159 matches cost 1,159 sequential round trips and the rule took
+      // 291s against a 300s step timeout. A rule's cost must scale with its
+      // query, not with its match count.
+      const writes: WriteStatement[] = [];
       const matchedTargets = new Set<string>();
       for (const m of matches) {
         const key = m.targetId ?? "";
@@ -462,21 +491,25 @@ export async function scanAll(
           // If admin wants the rule to re-surface, they delete or undo the row
           // (or wait for the entity to leave + re-enter the match set, which
           // creates a brand-new item).
-          await db
-            .update(recommendationItems)
-            .set({ lastSeenAt: now, payloadJson })
-            .where(eq(recommendationItems.id, existingRow.id));
+          writes.push(
+            db
+              .update(recommendationItems)
+              .set({ lastSeenAt: now, payloadJson })
+              .where(eq(recommendationItems.id, existingRow.id))
+          );
           refreshed++;
         } else {
-          await db.insert(recommendationItems).values({
-            id: crypto.randomUUID(),
-            ruleId,
-            targetType: m.targetType,
-            targetId: m.targetId,
-            payloadJson,
-            firstSeenAt: now,
-            lastSeenAt: now,
-          });
+          writes.push(
+            db.insert(recommendationItems).values({
+              id: crypto.randomUUID(),
+              ruleId,
+              targetType: m.targetType,
+              targetId: m.targetId,
+              payloadJson,
+              firstSeenAt: now,
+              lastSeenAt: now,
+            })
+          );
           inserted++;
         }
       }
@@ -489,13 +522,17 @@ export async function scanAll(
         for (const [targetId, existingRow] of existingByTarget.entries()) {
           if (matchedTargets.has(targetId)) continue;
           if (existingRow.actedAt) continue; // already resolved/acted; skip
-          await db
-            .update(recommendationItems)
-            .set({ actedAt: now })
-            .where(eq(recommendationItems.id, existingRow.id));
+          writes.push(
+            db
+              .update(recommendationItems)
+              .set({ actedAt: now })
+              .where(eq(recommendationItems.id, existingRow.id))
+          );
           resolved++;
         }
       }
+
+      await runWriteBatches(db, writes);
 
       // Record total + last-scan for the "Showing N of M" UI label. Clear
       // lastScanError so a previously-failing rule that's now succeeding

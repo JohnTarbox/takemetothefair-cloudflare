@@ -16,7 +16,7 @@
  * and the IndexNow ping are both skipped — keeping the test focused on the
  * category branch.
  */
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { CapturingMcpServer, createTestDb, type TestDb } from "./setup-db.js";
 import { registerVendorTools } from "../src/tools/vendor.js";
@@ -27,7 +27,24 @@ const AUTH = { userId: "u-submitter", role: "USER" as const };
 let db: TestDb;
 let server: CapturingMcpServer;
 
+/**
+ * The clock is PINNED. These fixtures carry literal 2026 start dates, and
+ * suggest_event routes a start date that is in the past (or more than ~18
+ * months out) to review with a `gate_flags` warning — so on 2026-09-16 the
+ * "no warnings" assertions began failing on every PR with no code change,
+ * because 2026-09-15 had become yesterday. Pinning `Date` (only `Date`, so the
+ * harness's async work is untouched) keeps every fixture date inside the window
+ * forever instead of until the next one passes.
+ */
+const PINNED_NOW = new Date("2026-08-01T12:00:00Z");
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(PINNED_NOW);
   ({ db } = createTestDb());
   server = new CapturingMcpServer();
   db.insert(users).values({ id: "u-submitter", email: "submitter@test", role: "USER" }).run();
