@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { and, desc, eq, gt, gte, inArray, isNull, lt, sql } from "drizzle-orm";
-import { adminActions, events, eventDataCitations } from "../schema.js";
+import { adminActions, citationSupersedeScope, events, eventDataCitations } from "../schema.js";
 import { decodeHtmlEntities, dollarsToCents, jsonContent } from "../helpers.js";
 import { normalizeEventDate } from "@takemetothefair/utils";
 import type { Db } from "../db.js";
@@ -262,53 +262,11 @@ function parseDollarsToCents(raw: string): number | undefined {
 }
 
 /**
- * OPE-516 — which prior citations a new one retires.
- *
- * The bug was not an unexamined `WHERE year = ?`. `sameKeyFilter` handles NULL
- * deliberately and says why. The defect is semantic: `year` was doing two jobs
- * at once — "which EDITION does this fact describe" and, accidentally, "which
- * supersede bucket does this row live in" — and the second job breaks the first.
- *
- * Every citation the inbound pipeline writes carries `year: null`. Every
- * citation a human writes carries a real year. Under one shared key the two
- * groups can never retire each other, so a correction lands beside the machine's
- * error instead of replacing it. A live event carried two `active` name
- * citations with different values, and the tool reported `superseded_count: 0`
- * — indistinguishable from "first citation for this field".
- *
- * It fails in the CORRECTING direction only, which is the worst possible bias:
- * the unattended writer is fine, and the rare deliberate fix is the one that
- * does not take.
- *
- * ── The rule, and why it is asymmetric ──────────────────────────────────
- *
- * A YEAR-STAMPED citation supersedes the same year AND year-null. A year-null
- * row is an unscoped claim about the field; a scoped one refines it, so
- * retiring it is right.
- *
- * A YEAR-NULL citation supersedes year-null only.
- *
- * The ticket asked for "and vice versa". I have not done that, and the reason
- * is the asymmetry in who writes what: the pipeline writes year-null at scale,
- * unattended. If a null citation retired every stamped row for its field, one
- * re-ingest would wipe out every per-edition citation a human had recorded —
- * strictly worse than the bug being fixed, and in the same direction (machine
- * beats human).
- *
- * The conflicting stamped rows are REPORTED instead, via `conflicts_remaining`.
- * That is what closes the acceptance's real concern — no conflict is left
- * silent — without handing the unattended writer a destructive default.
+ * OPE-516 — which prior citations a new one retires. The rule and its
+ * asymmetry are documented on `citationSupersedeScope` in
+ * `@takemetothefair/db-schema`, which every citation writer shares.
  */
-function supersedeScopeFilter(eventId: string, fieldName: string, year: number | null | undefined) {
-  const hasYear = year !== null && year !== undefined;
-  return and(
-    eq(eventDataCitations.eventId, eventId),
-    eq(eventDataCitations.fieldName, fieldName),
-    hasYear
-      ? sql`(${eventDataCitations.year} IS NULL OR ${eventDataCitations.year} = ${year})`
-      : sql`${eventDataCitations.year} IS NULL`
-  );
-}
+const supersedeScopeFilter = citationSupersedeScope;
 
 /**
  * Register the 5 event_data_citations MCP tools.

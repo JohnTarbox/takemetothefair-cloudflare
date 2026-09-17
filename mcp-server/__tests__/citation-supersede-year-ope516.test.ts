@@ -179,3 +179,49 @@ describe("the ordinary case is unchanged", () => {
     expect(activeOnly()).toHaveLength(1);
   });
 });
+
+describe("update_event's inline citation obeys the SAME rule (the 2026-08-24 reproduction)", () => {
+  async function updateWithCitation(value: number, year: number | null) {
+    return parseJson(
+      await server.invoke("update_event", {
+        event_id: EVENT_ID,
+        estimated_attendance: value,
+        citation: {
+          source_url: "https://example.com/organizer",
+          source_type: "official_website",
+          ...(year === null ? {} : { year }),
+        },
+      })
+    );
+  }
+
+  it("a year-stamped correction retires the pipeline's year-null citation", async () => {
+    await cite({ field_name: "estimated_attendance", value: "40000" }); // year-null
+    const out = await updateWithCitation(30000, 2026);
+
+    expect(out.citationsInserted[0].superseded_count).toBe(1);
+    const active = db
+      .select({ value: eventDataCitations.value })
+      .from(eventDataCitations)
+      .where(eq(eventDataCitations.state, "active"))
+      .all();
+    expect(active.map((a) => a.value)).toEqual(["30000"]);
+  });
+
+  it("the Newport shape: another edition's row survives AND is reported, not silently left", async () => {
+    await cite({ field_name: "estimated_attendance", value: "40000", year: 2025 });
+    const out = await updateWithCitation(30000, 2026);
+
+    expect(out.citationsInserted[0].superseded_count).toBe(0);
+    expect(out.citationsInserted[0].conflicts_remaining).toEqual([
+      expect.objectContaining({ year: 2025, value: "40000" }),
+    ]);
+  });
+
+  it("a year-null update never destroys a stamped citation", async () => {
+    await cite({ field_name: "estimated_attendance", value: "40000", year: 2026 });
+    const out = await updateWithCitation(30000, null);
+    expect(out.citationsInserted[0].superseded_count).toBe(0);
+    expect(out.citationsInserted[0].conflicts_remaining).toHaveLength(1);
+  });
+});

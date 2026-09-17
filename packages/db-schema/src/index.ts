@@ -6343,3 +6343,6 @@ export * from "./hours-review-flag";
 
 // OPE-236 §4 — the canonical claim row, shared by the app AND the MCP Worker.
 export * from "./entity-claim-record";
+
+// OPE-516 — the citation supersede rule; every writer must use it.
+export * from "./citation-supersede-scope";
