@@ -129,7 +129,9 @@ export const HEARTBEAT_INVENTORY: Record<string, InventoryEntry> = {
   "cron:runScheduledFaultCandidatesEmit": { probes: ["fault-emitter-run"] },
   "cron:runScheduledGa4LivenessCheck": U,
   "cron:runScheduledGoodwillHealthCanary": U,
-  "cron:runScheduledGscMetricsSync": { probes: ["gsc-search-metrics-ingest"] },
+  "cron:runScheduledGscMetricsSync": {
+    probes: ["gsc-search-metrics-ingest", "gsc-milestone-derivation"],
+  },
   "cron:runScheduledGscSweep": { probes: ["gsc-sweep-filler-tiers"] },
   "cron:runScheduledHeroProposals": { probes: ["photo-flywheel-hero-proposals"] },
   "cron:runScheduledHoldoutSampling": U,

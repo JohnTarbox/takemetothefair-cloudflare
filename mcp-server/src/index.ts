@@ -872,6 +872,18 @@ async function runScheduledGscMetricsSync(env: Env): Promise<void> {
     return `gsc=${gsc.upserted ?? "?"} ga4=${ga4.upserted ?? "?"} bing=${bing.upserted ?? "?"} ok=${r.ok}`;
   });
 
+  // OPE-456 — record click-milestone crossings from the dailies just synced.
+  // Sequenced AFTER the sync (it reads `gsc_daily_totals`), and it only counts
+  // days older than the sync's revision window, so a same-run revision cannot
+  // move a crossing it writes.
+  await runMainAppSweep(
+    env,
+    "gsc milestone derive",
+    "/api/admin/analytics/gsc-milestones/derive",
+    (r) =>
+      `inserted=${Array.isArray(r.inserted) ? r.inserted.length : "?"} settledThrough=${r.settled_through ?? "?"} ok=${r.ok}`
+  );
+
   // OPE-637 constraint 3 — self-tune the verification staleness window.
   //
   // Moves `verification_alert_threshold_hours` to the p90 of observed confirm

@@ -457,6 +457,33 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     lastEvidenceAt: (db) => maxTs(db, gscDailyTotals, gscDailyTotals.updatedAt),
   },
   {
+    // OPE-456 — proof the derived-milestone generator is EXECUTING.
+    //
+    // Evidence is the info row the route logs on every successful run, not a
+    // `gsc_milestone_emails` row: a crossing lands every few days at best and
+    // never while traffic is flat, so probing the yield would fire on a quiet
+    // month and stay green on a cron that had stopped. Level `info` only — the
+    // failure path logs under the same source at level `error`, and a run that
+    // throws every day is not a healthy one.
+    //
+    // 48h for a daily cron: one missed run is a blip, two is a fault.
+    name: "gsc-milestone-derivation",
+    ownerOpe: "OPE-456",
+    label: "GSC click-milestone derivation (daily, after the GSC sync)",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        errorLogs,
+        errorLogs.timestamp,
+        and(
+          eq(errorLogs.source, "app/api/admin/analytics/gsc-milestones/derive"),
+          eq(errorLogs.level, "info")
+        )
+      ),
+  },
+  {
     // OPE-363 — proof the synthetic funnel canary is still RUNNING.
     //
     // The CI job going red says "the canary ran and failed". Nothing says "the
