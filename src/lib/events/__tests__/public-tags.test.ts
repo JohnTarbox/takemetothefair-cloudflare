@@ -154,3 +154,10 @@ describe("normalization", () => {
     expect(filterPublicTags(["Italian", "src:daily-discovery"])).toEqual(["Italian"]);
   });
 });
+
+describe("OPE-1058 — the email lane's bare provenance tag is internal", () => {
+  it("hides email-submission, which rendered publicly on 19 live events", () => {
+    expect(isInternalTag("email-submission")).toBe(true);
+    expect(filterPublicTags(["italian", "email-submission"])).toEqual(["italian"]);
+  });
+});

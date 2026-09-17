@@ -61,6 +61,32 @@ export const INGESTION_METHODS: readonly IngestionMethod[] = [
  */
 export const UNLABELED_SOURCE = "unlabeled";
 
+/**
+ * OPE-1058 — the provenance tags a created event carries, derived from the
+ * label its creator actually passed.
+ *
+ * `suggest_event` stamped `["community-suggestion", "vendor-submission"]` on
+ * every create, whatever `source_label` said. The Alexander Hamfest was created
+ * with `source_label: "email-submission"` and still told the tag column it was a
+ * vendor submission, contradicting its own `source_name` and `ingestion_method`.
+ *
+ * - The three human submission lanes keep their legacy bare tags, which the main
+ *   app's submit route already writes and every existing reader knows.
+ * - Any other label becomes `src:<label>`, a namespaced tag, so the public
+ *   renderer hides it by shape (OPE-884) and a new label can never leak as a
+ *   hashtag.
+ * - No label means no provenance claim at all.
+ */
+export function provenanceTags(sourceLabel: string | null | undefined): string[] {
+  const label = (sourceLabel ?? "").trim().toLowerCase();
+  if (label === "" || label === UNLABELED_SOURCE) return [];
+  if (label === "vendor-submission") return ["community-suggestion", "vendor-submission"];
+  if (label === "email-submission") return ["community-suggestion", "email-submission"];
+  if (label === "community-suggestion" || label === "facebook") return ["community-suggestion"];
+  const safe = label.replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "");
+  return safe ? [`src:${safe}`] : [];
+}
+
 /** Type guard for values arriving from outside the type system (D1 reads,
  *  JSON bodies, tool params). */
 export function isIngestionMethod(value: unknown): value is IngestionMethod {

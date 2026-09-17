@@ -48,6 +48,12 @@ export const LEGACY_INTERNAL_TAGS: ReadonlySet<string> = new Set([
   "url-import",
   "community-suggestion",
   "vendor-submission",
+  // OPE-1058 — the email lane's sibling of the two above, written bare by the
+  // submit route since before OPE-884 and missed by this list: on 2026-09-17 it
+  // rendered as a public hashtag on 19 APPROVED/TENTATIVE events. It is an
+  // existing unstructured legacy value, which is the one case this set exists
+  // for; new provenance tags are namespaced (`src:`) instead.
+  "email-submission",
   // Scheduling-shape (UX-A1, 2026-06-04)
   "weekends-only",
   "weekdays-only",
