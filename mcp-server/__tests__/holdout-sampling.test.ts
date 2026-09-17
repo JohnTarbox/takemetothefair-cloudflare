@@ -17,16 +17,25 @@
  *     inherits the 24h idempotence guard.
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { createTestDb, type TestDb } from "./setup-db.js";
 import {
   simpleNormalize,
   composeVenue,
   isComparableExtraction,
+  runScheduledHoldoutSampling,
+  type HoldoutDeps,
 } from "../src/goodwill/holdout-sampling.js";
 import { captureHoldoutSampleDiscrepancy } from "../src/goodwill/capture.js";
-import { events, promoters, eventDiscrepancies, sourceReliability } from "../src/schema.js";
+import {
+  errorLogs,
+  events,
+  promoters,
+  eventDiscrepancies,
+  sourceReliability,
+} from "../src/schema.js";
+import { NonRetryableError } from "cloudflare:workflows";
 
 let db: TestDb;
 
@@ -334,5 +343,198 @@ describe("isComparableExtraction — OPE-576", () => {
     // an ordinary extraction, not an unknown one. Failing closed on undefined
     // would silently stop the sampler comparing anything at all.
     expect(isComparableExtraction(undefined)).toBe(true);
+  });
+});
+
+describe("runScheduledHoldoutSampling — OPE-576 one fetch per page, and not every day for a page it cannot read", () => {
+  const NOW = new Date("2026-09-16T06:10:00Z");
+  const ENV = { DB: {} as D1Database, MAIN_APP_URL: "https://app.test", INTERNAL_API_KEY: "k" };
+  const LIST_PAGE = "https://trusted.org/fairs-by-date.html";
+  const FAIR_PAGE = "https://trusted.org/county-fair";
+
+  async function seedCorpus(rows: Array<{ id: string; url: string; name?: string }>) {
+    await seedPromoter(db, "prom-1");
+    await db.insert(sourceReliability).values({
+      sourceKey: "trusted.org",
+      fieldClass: "date",
+      axis: "accuracy",
+      priorType: "official_website",
+      alpha: 50,
+      beta: 5,
+      nChecks: 55,
+      nAgreed: 50,
+      nStale: 0,
+      score: 0.91,
+      confidence: "established",
+      modelVersion: "gw1-2026-06",
+      lastUpdated: new Date(),
+    });
+    for (const r of rows) {
+      await db.insert(events).values({
+        id: r.id,
+        name: r.name ?? `Fair ${r.id}`,
+        slug: `fair-${r.id}`,
+        promoterId: "prom-1",
+        sourceUrl: r.url,
+        sourceDomain: "trusted.org",
+      });
+    }
+  }
+
+  function fetched(url: string) {
+    return {
+      url,
+      content: "page",
+      title: null,
+      description: null,
+      ogImage: null,
+      jsonLdSerialized: null,
+      links: [],
+      fetchMethod: "standard" as const,
+    };
+  }
+
+  function extracted(url: string, name: string, totalEventsDetected = 1) {
+    return {
+      url,
+      event: { name } as never,
+      extractionMethod: "ai" as const,
+      totalEventsDetected,
+      additionalEventNames: [],
+    } as unknown as Awaited<ReturnType<HoldoutDeps["submitExtract"]>>;
+  }
+
+  function deps(extract: HoldoutDeps["submitExtract"]): HoldoutDeps {
+    return {
+      submitFetch: vi.fn(async (_env, url: string) => fetched(url)) as never,
+      submitExtract: vi.fn(extract) as never,
+      now: () => NOW,
+    };
+  }
+
+  it("fetches a page shared by several events ONCE per run", async () => {
+    await seedCorpus([
+      { id: "a", url: LIST_PAGE },
+      { id: "b", url: LIST_PAGE },
+      { id: "c", url: LIST_PAGE },
+      { id: "d", url: FAIR_PAGE },
+    ]);
+    const d = deps(async (_e, f) => extracted(f.url, "whatever"));
+
+    const r = await runScheduledHoldoutSampling(db as never, ENV, d);
+
+    const urls = vi.mocked(d.submitFetch).mock.calls.map((c) => c[1]);
+    expect(urls.sort()).toEqual([FAIR_PAGE, LIST_PAGE].sort()); // landmark: both pages read
+    expect(r.skippedDuplicateUrl).toBe(2);
+  });
+
+  it("does not re-fetch a page that timed out within the cooldown, and does once it has passed", async () => {
+    await seedCorpus([
+      { id: "a", url: LIST_PAGE },
+      { id: "d", url: FAIR_PAGE, name: "County Fair" },
+    ]);
+    const timeout = async (_e: unknown, f: { url: string }) => {
+      if (f.url === LIST_PAGE) throw new NonRetryableError("extract-upstream: extractor timed out");
+      return extracted(f.url, "County Fair");
+    };
+
+    // Day 1: the list page times out, and the failure row carries the outcome.
+    const d1 = deps(timeout as never);
+    const first = await runScheduledHoldoutSampling(db as never, ENV, d1);
+    expect(first.errors).toBe(1);
+    expect(first.extracted).toBe(1);
+
+    // Day 2: it is skipped without a fetch; the readable page still runs.
+    const d2 = deps(timeout as never);
+    d2.now = () => new Date(NOW.getTime() + 86_400_000);
+    const second = await runScheduledHoldoutSampling(db as never, ENV, d2);
+    expect(vi.mocked(d2.submitFetch).mock.calls.map((c) => c[1])).toEqual([FAIR_PAGE]);
+    expect(second.skippedCooldown).toBe(1);
+
+    // Day 9: the cooldown has passed, so the page is tried again.
+    const d9 = deps(timeout as never);
+    d9.now = () => new Date(NOW.getTime() + 8 * 86_400_000);
+    await runScheduledHoldoutSampling(db as never, ENV, d9);
+    expect(
+      vi
+        .mocked(d9.submitFetch)
+        .mock.calls.map((c) => c[1])
+        .sort()
+    ).toEqual([FAIR_PAGE, LIST_PAGE].sort());
+  });
+
+  it("a THIN salvage and a failed fetch cool a page down too — neither is a comparison", async () => {
+    await seedCorpus([
+      { id: "a", url: LIST_PAGE },
+      { id: "d", url: FAIR_PAGE },
+    ]);
+    const d1: HoldoutDeps = {
+      submitFetch: vi.fn(async (_env, url: string) => {
+        if (url === FAIR_PAGE) throw new Error("fetch-503");
+        return fetched(url);
+      }) as never,
+      submitExtract: vi.fn(async (_e, f) => ({
+        ...extracted(f.url, "x"),
+        extractionMethod: "thin" as const,
+      })) as never,
+      now: () => NOW,
+    };
+    const first = await runScheduledHoldoutSampling(db as never, ENV, d1);
+    expect(first.skippedThin).toBe(1);
+    expect(first.errors).toBe(1);
+
+    const d2 = deps(async (_e, f) => extracted(f.url, "x"));
+    d2.now = () => new Date(NOW.getTime() + 86_400_000);
+    const second = await runScheduledHoldoutSampling(db as never, ENV, d2);
+    expect(vi.mocked(d2.submitFetch)).not.toHaveBeenCalled();
+    expect(second.skippedCooldown).toBe(2);
+  });
+
+  it("a cooldown row written by another job, or without an outcome, does not suppress a page", async () => {
+    await seedCorpus([{ id: "a", url: LIST_PAGE }]);
+    await db.insert(errorLogs).values([
+      {
+        id: "other-source",
+        timestamp: NOW,
+        level: "warn",
+        message: "x",
+        source: "mcp:schedule:something-else",
+        context: JSON.stringify({ sourceUrl: LIST_PAGE, holdoutOutcome: "thin" }),
+      },
+      {
+        id: "no-outcome",
+        timestamp: NOW,
+        level: "warn",
+        message: "holdout-sampling threw",
+        source: "mcp:schedule:holdout-sampling",
+        context: JSON.stringify({ sourceUrl: LIST_PAGE }),
+      },
+    ]);
+    const d = deps(async (_e, f) => extracted(f.url, "Fair a"));
+    const r = await runScheduledHoldoutSampling(db as never, ENV, d);
+    expect(r.skippedCooldown).toBe(0);
+    expect(vi.mocked(d.submitFetch)).toHaveBeenCalledTimes(1);
+  });
+
+  it("never compares a stored event against events[0] of a multi-event page", async () => {
+    await seedCorpus([
+      { id: "a", url: LIST_PAGE, name: "Blue Hill Fair" },
+      { id: "d", url: FAIR_PAGE, name: "County Fair" },
+    ]);
+    const d = deps(
+      async (_e, f) =>
+        f.url === LIST_PAGE
+          ? extracted(f.url, "Acton Fair", 11) // the first fair on the list, not ours
+          : extracted(f.url, "County Fair Renamed") // a real single-page rename
+    );
+
+    const r = await runScheduledHoldoutSampling(db as never, ENV, d);
+
+    expect(r.skippedMultiEvent).toBe(1);
+    const rows = await db.select().from(eventDiscrepancies);
+    // Landmark: the single-event page's rename IS captured…
+    expect(rows.map((x) => x.eventId)).toEqual(["d"]);
+    // …and nothing was raised against the list page's event.
+    expect(rows.some((x) => x.eventId === "a")).toBe(false);
   });
 });
