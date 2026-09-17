@@ -183,6 +183,8 @@ const SCHEMA_SQL = `
     lifecycle_status text NOT NULL DEFAULT '',
     lifecycle_status_changed_at integer,
     lifecycle_reason text,
+    lifecycle_last_checked_at integer,
+    lifecycle_check_note text,
     previous_start_date integer,
     previous_end_date integer,
     gate_flags text,

@@ -15,8 +15,9 @@
  * see and exactly the one it must refuse. A hand-made fixture would not have
  * produced that case.
  */
-import { describe, it, expect, beforeEach } from "vitest";
-import { createTestDb, type TestDb } from "./setup-db.js";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import { CapturingMcpServer, createTestDb, type TestDb } from "./setup-db.js";
+import { registerAdminTools } from "../src/tools/admin.js";
 import {
   readTentativePromotionQueue,
   selectImminentTentative,
@@ -58,11 +59,16 @@ function seedEvent(o: {
 }
 
 let citeSeq = 0;
-function seedCitation(eventSlug: string, sourceType: string, state = "active") {
+function seedCitation(
+  eventSlug: string,
+  sourceType: string,
+  state = "active",
+  opts: { field?: string; url?: string } = {}
+) {
   raw.exec(`
     INSERT INTO event_data_citations (id, event_id, field_name, value, source_url, source_type, state, created_at, updated_at)
-    VALUES ('c${++citeSeq}', '${eventSlug}', 'start_date', 'x',
-            'https://example.org/', '${sourceType}', '${state}', ${nowSecs}, ${nowSecs})
+    VALUES ('c${++citeSeq}', '${eventSlug}', '${opts.field ?? "start_date"}', 'x',
+            '${opts.url ?? "https://example.org/"}', '${sourceType}', '${state}', ${nowSecs}, ${nowSecs})
   `);
 }
 
@@ -219,5 +225,126 @@ describe("the notice fires on the tentative queue ALONE", () => {
     seedCitation("next-season", "official_website");
     const counts = await readOperatorQueues(db, NOW);
     expect(decideOperatorQueueNotice(counts, false)).toBe(false);
+  });
+});
+
+describe("OPE-611 rework — readiness reads the DATE's provenance, from someone other than us", () => {
+  it("an official citation on a field that is not start_date does not make a row ready", async () => {
+    // OPE-612 pass 4: six promotions whose only official citation sat on
+    // indoor_outdoor / vendor_fee_max / application_instructions.
+    seedEvent({ slug: "fee-only", daysOut: 5, datesConfirmed: 1 });
+    seedCitation("fee-only", "official_website", "active", { field: "vendor_fee_max" });
+    const [row] = await readTentativePromotionQueue(db, NOW);
+    expect(row.tier).toBe("unverified");
+    expect(row.officialCitationsOtherFields).toBe(1);
+  });
+
+  it("a start_date citation hosted on meetmeatthefair.com is not corroboration", async () => {
+    // OPE-612 pass 5: the top search result for the club's own schedule was our
+    // blog post, generated from events.start_date.
+    seedEvent({ slug: "self-cited", daysOut: 5, datesConfirmed: 1 });
+    seedCitation("self-cited", "official_website", "active", {
+      url: "https://meetmeatthefair.com/blog/gun-shows-in-maine-2026",
+    });
+    const [row] = await readTentativePromotionQueue(db, NOW);
+    expect(row.tier).toBe("unverified");
+  });
+
+  it("control: the same shape cited on start_date by the organizer IS ready", async () => {
+    seedEvent({ slug: "organizer-cited", daysOut: 5, datesConfirmed: 1 });
+    seedCitation("organizer-cited", "official_website");
+    const [row] = await readTentativePromotionQueue(db, NOW);
+    expect(row.tier).toBe("ready");
+  });
+
+  it("covers status TENTATIVE too — the public reader serves it", async () => {
+    seedEvent({ slug: "status-tentative", daysOut: 5, status: "TENTATIVE" });
+    seedEvent({ slug: "status-pending", daysOut: 5, status: "PENDING" });
+    const rows = await readTentativePromotionQueue(db, NOW);
+    expect(rows.map((r) => r.slug)).toEqual(["status-tentative"]);
+  });
+});
+
+describe("OPE-611 rework — a checked-and-held row is no longer indistinguishable from an unopened one", () => {
+  const ADMIN = { userId: "u-admin", role: "ADMIN" as const };
+  function tools() {
+    const server = new CapturingMcpServer();
+    registerAdminTools(server as never, db, ADMIN, {} as never);
+    return server;
+  }
+  const parse = (r: unknown) =>
+    JSON.parse((r as { content: Array<{ text: string }> }).content[0].text);
+
+  it("record_tentative_check stamps the row, sorts it last, and keeps it out of the notice", async () => {
+    seedEvent({ slug: "held", daysOut: 2, datesConfirmed: 1 });
+    seedCitation("held", "official_website");
+    seedEvent({ slug: "unopened", daysOut: 9, datesConfirmed: 1 });
+    seedCitation("unopened", "official_website");
+
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW);
+    try {
+      const out = parse(
+        await tools().invoke("record_tentative_check", {
+          event_id: "held",
+          note: "organizer page shows May 15-16 2027 (Tentative)",
+        })
+      );
+      expect(out.success).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    const rows = await readTentativePromotionQueue(db, NOW);
+    // Sooner and equally ready, but held: it goes behind the unopened row.
+    expect(rows.map((r) => r.slug)).toEqual(["unopened", "held"]);
+    expect(rows[1].recentlyChecked).toBe(true);
+    expect(rows[1].checkNote).toContain("(Tentative)");
+    expect(selectImminentTentative(rows).map((r) => r.slug)).toEqual(["unopened"]);
+
+    // After the recheck window it is ordinary work again.
+    const later = new Date(NOW.getTime() + 15 * DAY * 1000);
+    raw.exec(
+      `UPDATE events SET start_date = ${nowSecs + 20 * DAY} WHERE id IN ('held','unopened')`
+    );
+    const again = await readTentativePromotionQueue(db, later);
+    expect(again.every((r) => !r.recentlyChecked)).toBe(true);
+  });
+
+  it("refuses to record a held verdict on a row that is not TENTATIVE", async () => {
+    seedEvent({ slug: "already-scheduled", daysOut: 5, lifecycle: "SCHEDULED" });
+    const out = await tools().invoke("record_tentative_check", {
+      event_id: "already-scheduled",
+      note: "x",
+    });
+    expect((out as { isError?: boolean }).isError).toBe(true);
+    expect(parse(out).error).toBe("not_tentative");
+  });
+
+  it("a real transition stamps the check too", async () => {
+    seedEvent({ slug: "promoted", daysOut: 30, datesConfirmed: 1 });
+    await tools().invoke("update_event_lifecycle", {
+      event_id: "promoted",
+      new_lifecycle: "SCHEDULED",
+      reason: "organizer homepage banner",
+    });
+    const row = raw as unknown as {
+      prepare: (s: string) => { get: () => { checked: number | null; note: string | null } };
+    };
+    const got = row
+      .prepare(
+        "SELECT lifecycle_last_checked_at AS checked, lifecycle_check_note AS note FROM events WHERE id='promoted'"
+      )
+      .get();
+    expect(got.checked).not.toBeNull();
+    expect(got.note).toBe("organizer homepage banner");
+  });
+
+  it("the queue reports promotions BY ACTOR and the instant it measured at", async () => {
+    seedEvent({ slug: "p1", daysOut: 30 });
+    await tools().invoke("update_event_lifecycle", { event_id: "p1", new_lifecycle: "SCHEDULED" });
+    const out = parse(await tools().invoke("get_tentative_promotion_queue", {}));
+    expect(out.as_of).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(out.promotions_by_actor_last_30d).toEqual([{ actor_user_id: "u-admin", promotions: 1 }]);
   });
 });

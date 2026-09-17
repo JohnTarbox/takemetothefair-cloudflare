@@ -165,6 +165,8 @@ const SCHEMA_SQL = `
     lifecycle_status TEXT NOT NULL DEFAULT 'SCHEDULED',
     lifecycle_status_changed_at INTEGER,
     lifecycle_reason TEXT,
+    lifecycle_last_checked_at INTEGER,
+    lifecycle_check_note TEXT,
     previous_start_date INTEGER,
     previous_end_date INTEGER,
     gate_flags TEXT,

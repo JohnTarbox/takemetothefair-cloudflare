@@ -47,6 +47,21 @@ export const IMMINENT_DAYS = 14;
 export const IMMINENT_SECONDS = IMMINENT_DAYS * 86400;
 
 /**
+ * OPE-611 rework — a row a human checked and held is not work again until this
+ * long has passed. It sorts after unchecked rows and is left out of the operator
+ * notice, so the queue stops handing the last pass's verdicts back as new work.
+ */
+export const RECHECK_AFTER_DAYS = 14;
+
+/**
+ * OPE-611 rework — a citation on OUR OWN domain is not corroboration. The OPE-612
+ * drain found the top search result for a club's 2027 schedule was our own blog
+ * post, generated from `events.start_date`; citing it would confirm the date
+ * from itself.
+ */
+export const SELF_HOST = "meetmeatthefair.com";
+
+/**
  * Promotion readiness, as three auditable tiers rather than one opaque score.
  *
  * OPE-611 §3 asks for the rule to be WRITTEN DOWN rather than left to
@@ -58,7 +73,10 @@ export const IMMINENT_SECONDS = IMMINENT_DAYS * 86400;
  * module acts on it. On 2026-08-28 it selects 37 of the 164 upcoming rows.
  */
 export type ReadinessTier =
-  /** dates_confirmed=1 AND an active official_website citation AND no gate flags. */
+  /**
+   * dates_confirmed=1 AND an active official_website citation ON start_date,
+   * not hosted on our own domain, AND no gate flags.
+   */
   | "ready"
   /** Organizer-grade provenance, but one of the other two conditions is unmet. */
   | "probable"
@@ -74,9 +92,23 @@ export interface TentativeQueueRow {
   viewCount: number;
   datesConfirmed: boolean;
   gateFlags: string | null;
+  /** Active official_website citations on `start_date`, excluding our own host. */
   officialCitations: number;
+  /**
+   * Active official_website citations on OTHER fields. Reported, never counted
+   * toward readiness: pass 4 of the OPE-612 drain promoted six rows whose only
+   * official citation was on `indoor_outdoor`, `vendor_fee_max` or
+   * `application_instructions` — provenance for a field that is not the date.
+   */
+  officialCitationsOtherFields: number;
   anyCitations: number;
   tier: ReadinessTier;
+  /** Editorial status — APPROVED or TENTATIVE, the two the public reader serves. */
+  status: string;
+  lastCheckedAt: Date | null;
+  checkNote: string | null;
+  /** Checked within RECHECK_AFTER_DAYS — a held verdict, not new work. */
+  recentlyChecked: boolean;
 }
 
 /** Row shape as it comes back from D1, before tiering. */
@@ -88,8 +120,12 @@ interface RawRow {
   view_count: number | null;
   dates_confirmed: number | null;
   gate_flags: string | null;
+  status: string;
   official_citations: number | null;
+  official_other_fields: number | null;
   any_citations: number | null;
+  lifecycle_last_checked_at: number | null;
+  lifecycle_check_note: string | null;
 }
 
 /**
@@ -133,14 +169,23 @@ export async function readTentativePromotionQueue(
   // over a few hundred rows.
   const rows = await db.all<RawRow>(sql`
     SELECT e.id, e.slug, e.name, e.start_date, e.view_count,
-           e.dates_confirmed, e.gate_flags,
+           e.dates_confirmed, e.gate_flags, e.status,
+           e.lifecycle_last_checked_at, e.lifecycle_check_note,
            (SELECT COUNT(*) FROM event_data_citations c
              WHERE c.event_id = e.id AND c.state = 'active'
-               AND c.source_type = 'official_website')  AS official_citations,
+               AND c.source_type = 'official_website'
+               AND c.field_name = 'start_date'
+               AND instr(lower(c.source_url), ${SELF_HOST}) = 0) AS official_citations,
+           (SELECT COUNT(*) FROM event_data_citations c
+             WHERE c.event_id = e.id AND c.state = 'active'
+               AND c.source_type = 'official_website'
+               AND c.field_name != 'start_date')        AS official_other_fields,
            (SELECT COUNT(*) FROM event_data_citations c
              WHERE c.event_id = e.id AND c.state = 'active') AS any_citations
       FROM events e
-     WHERE e.status = 'APPROVED'
+     -- OPE-611 rework: the public reader serves APPROVED and TENTATIVE
+     -- (PUBLIC_EVENT_STATUSES); scoping to APPROVED hid rows on identical footing.
+     WHERE e.status IN ('APPROVED', 'TENTATIVE')
        AND e.lifecycle_status = 'TENTATIVE'
        AND e.start_date IS NOT NULL
        AND e.start_date >= ${nowSecs}
@@ -158,6 +203,8 @@ export async function readTentativePromotionQueue(
       // falsy in JS but present in SQL, so normalise once at the boundary.
       const gateFlags = r.gate_flags && r.gate_flags.length > 0 ? r.gate_flags : null;
       const startSecs = r.start_date == null ? null : Number(r.start_date);
+      const checkedSecs =
+        r.lifecycle_last_checked_at == null ? null : Number(r.lifecycle_last_checked_at);
       return {
         id: r.id,
         slug: r.slug,
@@ -168,11 +215,19 @@ export async function readTentativePromotionQueue(
         datesConfirmed,
         gateFlags,
         officialCitations,
+        officialCitationsOtherFields: Number(r.official_other_fields ?? 0),
         anyCitations: Number(r.any_citations ?? 0),
         tier: readinessTier({ datesConfirmed, officialCitations, gateFlags }),
+        status: r.status,
+        lastCheckedAt: checkedSecs == null ? null : new Date(checkedSecs * 1000),
+        checkNote: r.lifecycle_check_note ?? null,
+        recentlyChecked: checkedSecs != null && nowSecs - checkedSecs < RECHECK_AFTER_DAYS * 86400,
       };
     })
     .sort((a, b) => {
+      // Unchecked work first: a held verdict is the LAST thing a drain should
+      // re-open, and the reason every earlier pass started with re-work.
+      if (a.recentlyChecked !== b.recentlyChecked) return a.recentlyChecked ? 1 : -1;
       const rank = { ready: 0, probable: 1, unverified: 2 } as const;
       if (rank[a.tier] !== rank[b.tier]) return rank[a.tier] - rank[b.tier];
       if (a.daysOut !== b.daysOut) return a.daysOut - b.daysOut;
@@ -206,7 +261,13 @@ export async function readTentativePromotionQueue(
  */
 export function selectImminentTentative(rows: TentativeQueueRow[]): TentativeQueueRow[] {
   return rows.filter(
-    (r) => r.tier !== "unverified" && r.daysOut <= IMMINENT_DAYS && r.daysOut >= 0
+    (r) =>
+      r.tier !== "unverified" &&
+      // OPE-611 rework — a human already looked and held it. Re-mailing it
+      // daily is the wallpaper this notice was designed not to be.
+      !r.recentlyChecked &&
+      r.daysOut <= IMMINENT_DAYS &&
+      r.daysOut >= 0
   );
 }
 
