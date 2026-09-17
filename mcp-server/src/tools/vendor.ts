@@ -31,6 +31,7 @@ import {
   isUnusableEventName,
   isPlaceholderUrl,
   UNLABELED_SOURCE,
+  provenanceTags,
   assertIngestionMethod,
   dollarsToCents,
   slugCandidates,
@@ -1272,7 +1273,8 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
         // nothing confirmed any of them. User submissions start at false.
         datesConfirmed: false,
         categories: JSON.stringify(categoriesToStore),
-        tags: JSON.stringify(["community-suggestion", "vendor-submission"]),
+        // OPE-1058 — from the label actually passed, not a fixed vendor claim.
+        tags: JSON.stringify(provenanceTags(sourceLabel)),
         // OPE-411 — the domain classifier answers "is this an aggregator?"; it
         // does not catch `https://example.com/buy-tickets`, which is live in
         // prod today on a real listing.

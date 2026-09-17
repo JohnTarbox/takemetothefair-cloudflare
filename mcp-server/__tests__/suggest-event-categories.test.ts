@@ -151,6 +151,7 @@ describe("suggest_event source_label (K26)", () => {
         sourceName: events.sourceName,
         ingestionMethod: events.ingestionMethod,
         sourceDomain: events.sourceDomain,
+        tags: events.tags,
       })
       .from(events)
       .where(eq(events.id, eventId))
@@ -212,6 +213,26 @@ describe("suggest_event source_label (K26)", () => {
     const p = await storedProvenance(payload!.event.id);
     expect(p.sourceName).toBe("vendor-submission");
     expect(p.ingestionMethod).toBe("vendor_submission");
+  });
+
+  it("OPE-1058 — tags follow the label actually passed, not a fixed vendor claim", async () => {
+    const cases: Array<[string | undefined, string[]]> = [
+      ["email-submission", ["community-suggestion", "email-submission"]],
+      ["vendor-submission", ["community-suggestion", "vendor-submission"]],
+      ["daily-discovery", ["src:daily-discovery"]],
+      [undefined, []],
+    ];
+    let day = 1;
+    for (const [label, expected] of cases) {
+      const { payload } = await suggest({
+        name: `Provenance Tag Fair ${day}`,
+        start_date: `2026-10-${String(day).padStart(2, "0")}`,
+        ...(label ? { source_label: label } : {}),
+      });
+      const p = await storedProvenance(payload!.event.id);
+      expect(JSON.parse(p.tags ?? "[]"), String(label)).toEqual(expected);
+      day++;
+    }
   });
 
   it("tags discovery-harvested events as ingestion_method='discovery'", async () => {
