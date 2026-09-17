@@ -6351,5 +6351,22 @@ export * from "./hours-review-flag";
 // OPE-236 §4 — the canonical claim row, shared by the app AND the MCP Worker.
 export * from "./entity-claim-record";
 
+// OPE-1058 — the reversal record for the one-time category rewrite. Written in
+// the same statement as each UPDATE, so a partial run records exactly what it
+// changed; read back to verify the end state, and the only route back.
+export const eventCategoryMigrationLog = sqliteTable(
+  "event_category_migration_log",
+  {
+    id: text("id").primaryKey(),
+    eventId: text("event_id").notNull(),
+    categoriesBefore: text("categories_before").notNull(),
+    categoriesAfter: text("categories_after").notNull(),
+    tagsBefore: text("tags_before"),
+    tagsAfter: text("tags_after"),
+    migratedAt: integer("migrated_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [index("idx_event_category_migration_log_event").on(t.eventId)]
+);
+
 // OPE-516 — the citation supersede rule; every writer must use it.
 export * from "./citation-supersede-scope";
