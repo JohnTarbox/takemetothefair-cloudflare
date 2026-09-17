@@ -520,12 +520,20 @@ export type EventScale = (typeof EVENT_SCALE)[keyof typeof EVENT_SCALE];
 // ── Event categories (advisory taxonomy for dropdowns/filters) ────
 
 export const EVENT_CATEGORIES = [
+  // OPE-1058 (2026-09-17, ratified by John) — the ten values below carry the
+  // `// OPE-1058` marker. Each had live rows or a clearly distinct audience and
+  // was deferred by the TAX1 dedupe pass. Until now `suggest_event` dropped them
+  // while `update_event` stored them unchecked, so a value could be invalid and
+  // present at once: ~100 distinct values lived on events against 34 here.
+  // "Market" is the sharpest case — it has had a PUBLIC PAGE at /events/markets
+  // the whole time, so the taxonomy refused a value the site was already serving.
   "Agricultural Fair",
   // OPE-186 (2026-07-13) — large non-fair public spectacles had no taxonomy
   // lane, so air shows / balloon festivals landed as free-text or ["Event"] in
   // the uncategorized queue (the Great State of Maine Air Show + Great Falls
   // Balloon Festival were both un-modelable). "Balloon Festival" is added below.
   "Air Show",
+  "Amateur Radio Convention", // OPE-1058 — absorbs Hamfest
   "Antique Show",
   // K21 (2026-06-12). Reconciled the allow-list against live prod
   // data: 90 distinct category values were in use on APPROVED events
@@ -552,6 +560,7 @@ export const EVENT_CATEGORIES = [
   "Charity",
   "Comic Con",
   "Community Event",
+  "Concert", // OPE-1058 — ruled first-class by John, NOT folded into Music Festival
   "Convention",
   "Craft Fair",
   "Craft Show",
@@ -563,17 +572,78 @@ export const EVENT_CATEGORIES = [
   "Flea Market",
   "Food Festival",
   "Garden Show",
+  "Gem & Mineral Show", // OPE-1058
   "Gun Show",
   "Harvest Festival",
+  "Hobby Show", // OPE-1058 — absorbs Hobby, Model Train Show, Book Show
   "Holiday Market",
   "Home Show",
+  "Living History", // OPE-1058 — absorbs Historical
   "Makers Market",
+  "Market", // OPE-1058 — absorbs Outdoor Market, Sidewalk Sale; serves /events/markets
   "Music Festival",
+  "Outdoor Show", // OPE-1058 — absorbs Sportsmen's Show, RV Show, RV & Camping Show
   "Parade",
+  "Pop Culture Convention", // OPE-1058 — absorbs Pop Culture
+  "Renaissance Fair", // OPE-1058 — absorbs Renaissance Faire
+  "Senior Expo", // OPE-1058
   "Trade Show",
   "Other",
 ] as const;
 export type EventCategory = (typeof EVENT_CATEGORIES)[number];
+
+/**
+ * The placeholder a create writes when it was given nothing usable. Deliberately
+ * NOT a member of EVENT_CATEGORIES: it means "nobody categorised this", which is
+ * exactly what the admin uncategorized queue reads it as.
+ */
+export const UNCATEGORIZED_EVENT_CATEGORY = "Event";
+
+/** Exact, case-sensitive membership — the stored value IS the display value. */
+export function isEventCategory(value: unknown): value is EventCategory {
+  return typeof value === "string" && (EVENT_CATEGORIES as readonly string[]).includes(value);
+}
+
+/**
+ * OPE-1058 — the one place any writer decides what may be stored in
+ * `events.categories`.
+ *
+ * Two policies, one rule. An UNTRUSTED ingest (a public submission, an
+ * extractor) keeps K21's drop-and-warn: the event is worth having even with a
+ * bad label, and the dropped values are echoed back to the caller. An EXPLICIT
+ * EDIT (an admin or an agent naming a value) is REJECTED, because silently
+ * discarding what someone deliberately typed is how "Craft Fsir" lived in prod
+ * while the tool reported success.
+ *
+ * Both read this function, so a third policy cannot appear at a fourth call
+ * site — which is the failure this ticket IS: one writer checked the list, the
+ * other did not, and the two drifted for months.
+ */
+export function partitionEventCategories(values: readonly string[] | null | undefined): {
+  kept: EventCategory[];
+  dropped: string[];
+} {
+  const kept: EventCategory[] = [];
+  const dropped: string[] = [];
+  for (const raw of values ?? []) {
+    const value = typeof raw === "string" ? raw.trim() : "";
+    if (value === "") continue;
+    // The placeholder passes through unchanged — it is what an uncategorised
+    // create already stores, and rejecting it would break re-saving such a row.
+    if (value === UNCATEGORIZED_EVENT_CATEGORY) continue;
+    if (isEventCategory(value)) {
+      if (!kept.includes(value)) kept.push(value);
+    } else if (!dropped.includes(value)) {
+      dropped.push(value);
+    }
+  }
+  return { kept, dropped };
+}
+
+/** Off-list values in `values`; empty when every one may be stored. */
+export function invalidEventCategories(values: readonly string[] | null | undefined): string[] {
+  return partitionEventCategories(values).dropped;
+}
 
 // ── OPE-13 vendor-roster rails ────────────────────────────────────
 //

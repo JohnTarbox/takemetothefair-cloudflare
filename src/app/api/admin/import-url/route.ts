@@ -12,6 +12,7 @@ import { createSlug, dollarsToCents, appendSlugSegment, unsafeSlug } from "@/lib
 import { resolveUniqueEventSlug, insertEventDaysBatched } from "@/lib/events/insert-helpers";
 import type { VenueOption, ExtractedEventData } from "@/lib/url-import/types";
 import { inferCategoriesFromName } from "@/lib/url-import/infer-categories";
+import { UNCATEGORIZED_EVENT_CATEGORY, partitionEventCategories } from "@takemetothefair/constants";
 import { logError } from "@/lib/logger";
 import { recomputeEventCompleteness } from "@/lib/completeness";
 import { logEnrichment } from "@/lib/enrichment-log";
@@ -259,10 +260,15 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
       // to enumerate day-by-day → false, so it keeps its "Daily:" label. Same
       // `!areDatesContiguous` rule the display uses, so flag and label agree.
       discontinuousDates: hasSpecificDates ? !areDatesContiguous(event.specificDates!) : false,
+      // OPE-1058 — same drop-and-warn rule as the public submit path: the AI
+      // extractor is told the allow-list but is not bound by it, so what it
+      // returns is filtered here rather than stored verbatim.
       categories: JSON.stringify(
-        Array.isArray(event.categories) && event.categories.length > 0
-          ? event.categories
-          : (inferCategoriesFromName(event.name) ?? ["Event"])
+        (() => {
+          const extracted = partitionEventCategories(event.categories).kept;
+          if (extracted.length > 0) return extracted;
+          return inferCategoriesFromName(event.name) ?? [UNCATEGORIZED_EVENT_CATEGORY];
+        })()
       ),
       tags: JSON.stringify(["imported", "url-import"]),
       ticketUrl: gatedTicketUrl,
