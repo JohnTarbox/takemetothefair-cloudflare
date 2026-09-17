@@ -20,8 +20,13 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { isPubliclyVisible } from "../lifecycle.js";
 import { z } from "zod";
-import { and, eq, isNull, inArray } from "drizzle-orm";
-import { unsafeSlug, centsToDollars, classifyVendorCapacity } from "@takemetothefair/utils";
+import { and, eq, isNull, inArray, ne, sql } from "drizzle-orm";
+import {
+  unsafeSlug,
+  centsToDollars,
+  classifyVendorCapacity,
+  normalizeName,
+} from "@takemetothefair/utils";
 import { isOpenToVendorApplications } from "@takemetothefair/constants";
 import {
   events,
@@ -216,6 +221,60 @@ export function registerAdminEventReadTools(server: McpServer, db: Db, auth: Aut
         .from(eventApplications)
         .where(eq(eventApplications.eventId, event.id));
 
+      // OPE-450 rework — earlier REJECTED rows for the same event name, shown to
+      // whoever is adjudicating this one.
+      //
+      // The 08-31 ruling forbids SUPPRESSING a submission on a bare rejection
+      // (a row rejected as spam or past-dated is not a duplicate ruling), and
+      // that stays true. It says nothing against SHOWING it. On 2026-09-06
+      // `waterville-farmers-market-3` arrived PENDING with two earlier bare
+      // rejections of the same market, and the reviewer could only learn that by
+      // being told. Names are compared with the dedup matcher's normalizeName,
+      // across ALL dates: "rejected twice before" is the question a human asks
+      // whether or not the dates line up.
+      const priorRejections = await (async () => {
+        const norm = normalizeName(event.name ?? "");
+        const anchor = norm.split(" ").sort((a, b) => b.length - a.length)[0] ?? "";
+        if (anchor.length < 3) return [];
+        const candidates = await db
+          .select({
+            id: events.id,
+            name: events.name,
+            slug: events.slug,
+            startDate: events.startDate,
+            createdAt: events.createdAt,
+            rejectedAsDuplicateOf: events.rejectedAsDuplicateOf,
+            mergedInto: events.mergedInto,
+          })
+          .from(events)
+          .where(
+            and(
+              eq(events.status, "REJECTED"),
+              ne(events.id, event.id),
+              // instr, not LIKE: a pattern built from a name trips D1's 50-char cap.
+              sql`instr(lower(${events.name}), ${anchor}) > 0`
+            )
+          )
+          .limit(200);
+        return candidates
+          .filter((c) => normalizeName(c.name ?? "") === norm)
+          .slice(0, 10)
+          .map((c) => ({
+            slug: c.slug,
+            start_date: c.startDate ? new Date(c.startDate).toISOString() : null,
+            created_at: c.createdAt ? new Date(c.createdAt).toISOString() : null,
+            // Which kind of ruling it was. Only these two ever suppress a
+            // future submission; a row with neither is a bare rejection.
+            rejected_as_duplicate_of: c.rejectedAsDuplicateOf,
+            merged_into: c.mergedInto,
+            ruling: c.mergedInto
+              ? "merged"
+              : c.rejectedAsDuplicateOf
+                ? "rejected_as_duplicate"
+                : "rejected_reason_unrecorded",
+          }));
+      })();
+
       return {
         content: [
           jsonContent({
@@ -251,6 +310,7 @@ export function registerAdminEventReadTools(server: McpServer, db: Db, auth: Aut
             is_publicly_visible:
               isPubliclyVisible(event.status, event.lifecycleStatus) && event.mergedInto === null,
             merged_into: event.mergedInto,
+            prior_rejections: priorRejections,
             description: event.description,
             // OPE-482 — raw values, not just the rendered string. MCP shares the
             // site's formatter, so a formatted date read back is not an
