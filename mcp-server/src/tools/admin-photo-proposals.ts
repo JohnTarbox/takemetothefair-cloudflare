@@ -22,7 +22,8 @@
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { and, desc, gte, inArray, sql } from "drizzle-orm";
+import { and, desc, gte, inArray } from "drizzle-orm";
+import { chunkIds } from "@takemetothefair/utils";
 import { adminActions, events } from "../schema.js";
 import { jsonContent } from "../helpers.js";
 import { BOOTH_PROPOSED_ACTION, PERFORMER_PROPOSED_ACTION } from "../photo/booth-pipeline.js";
@@ -139,12 +140,16 @@ export function registerPhotoProposalTools(server: McpServer, db: Db, auth: Auth
         return { row: r, p };
       });
 
+      // OPE-1053 — in chunks. `limit` allows 200 rows, so this set can hold up
+      // to 200 distinct ids, and one `IN (…)` binds one parameter per id against
+      // D1's 100-parameter cap. Local better-sqlite3 allows 32,766, which is why
+      // the single-statement form passed every test.
       const eventNames = new Map<string, string>();
-      if (eventIds.size > 0) {
+      for (const batch of chunkIds([...eventIds])) {
         const evs = await db
-          .select({ id: events.id, name: events.name, slug: events.slug })
+          .select({ id: events.id, name: events.name })
           .from(events)
-          .where(sql`${events.id} IN ${[...eventIds]}`);
+          .where(inArray(events.id, batch));
         for (const e of evs) eventNames.set(e.id, e.name);
       }
 
