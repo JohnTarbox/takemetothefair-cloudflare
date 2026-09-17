@@ -285,3 +285,111 @@ describe("the notice, end to end, on real backdated rows", () => {
     expect(q.oldestDays).toBe(36);
   });
 });
+
+describe("OPE-599 rework — auth email that did not let someone sign up reaches the operator", () => {
+  const H = 3600_000;
+  const secs = (d: Date) => Math.floor(d.getTime() / 1000);
+  let seq = 0;
+
+  function seedAuthSend(recipient: string, sentAt: Date, deliveryStatus: string | null) {
+    raw["prepare"](
+      `INSERT INTO email_send_ledger (message_id, sent_at, recipient, source, status, delivery_status)
+       VALUES (?, ?, ?, 'auth.verify', 'sent', ?)`
+    ).run(`m${++seq}`, secs(sentAt), recipient, deliveryStatus);
+  }
+  function seedUser(
+    email: string,
+    createdAt: Date,
+    opts: { verified?: boolean; origin?: string } = {}
+  ) {
+    raw["prepare"](
+      `INSERT INTO users (id, email, role, origin, email_verified, created_at) VALUES (?, ?, 'VENDOR', ?, ?, ?)`
+    ).run(
+      `u${++seq}`,
+      email,
+      opts.origin ?? "registration",
+      opts.verified ? secs(createdAt) : null,
+      secs(createdAt)
+    );
+  }
+
+  it("names a verification email that BOUNCED in the last day", async () => {
+    seedAuthSend("stuck@example.com", new Date(NOW.getTime() - 3 * H), "bounced");
+    const q = await readOperatorQueues(db, NOW);
+    expect(q.authEmailProblems).toBe(1);
+    expect(q.lines.some((l) => l.includes("stuck@example.com") && l.includes("bounced"))).toBe(
+      true
+    );
+  });
+
+  it("names it on ONE day only — standing depth is not re-mailed", async () => {
+    seedAuthSend("stuck@example.com", new Date(NOW.getTime() - 30 * H), "bounced");
+    expect((await readOperatorQueues(db, NOW)).authEmailProblems).toBe(0);
+  });
+
+  it("ignores delivered and not-yet-known sends", async () => {
+    seedAuthSend("fine@example.com", new Date(NOW.getTime() - 3 * H), "delivered");
+    seedAuthSend("pending@example.com", new Date(NOW.getTime() - 3 * H), null);
+    expect((await readOperatorQueues(db, NOW)).authEmailProblems).toBe(0);
+  });
+
+  it("names a registration that crossed the grace window unconfirmed after a DELIVERED email", async () => {
+    // Default grace 48h: created 60h ago crossed it 12h ago → inside today's slice.
+    const created = new Date(NOW.getTime() - 60 * H);
+    seedUser("slow@example.com", created);
+    seedAuthSend("slow@example.com", created, "delivered");
+    const q = await readOperatorQueues(db, NOW);
+    expect(q.authEmailProblems).toBe(1);
+    expect(q.lines.some((l) => l.includes("slow@example.com") && l.includes("48h"))).toBe(true);
+  });
+
+  it("does not name them again the next day, nor before they cross, nor once verified, nor placeholders", async () => {
+    const yesterdaysCross = new Date(NOW.getTime() - 80 * H); // crossed 32h ago
+    seedUser("old@example.com", yesterdaysCross);
+    seedAuthSend("old@example.com", yesterdaysCross, "delivered");
+    const fresh = new Date(NOW.getTime() - 10 * H); // not yet at 48h
+    seedUser("fresh@example.com", fresh);
+    seedAuthSend("fresh@example.com", fresh, "delivered");
+    const done = new Date(NOW.getTime() - 60 * H);
+    seedUser("done@example.com", done, { verified: true });
+    seedAuthSend("done@example.com", done, "delivered");
+    seedUser("pending+booth@example.com", done, { origin: "ingestion" });
+    seedAuthSend("pending+booth@example.com", done, "delivered");
+    expect((await readOperatorQueues(db, NOW)).authEmailProblems).toBe(0);
+  });
+
+  it("reads the tuned grace window, not a constant", async () => {
+    raw["prepare"](
+      `INSERT INTO tunable_thresholds (key, value, unit, updated_at) VALUES ('verification_alert_threshold_hours', 24, 'hours', ?)`
+    ).run(secs(NOW));
+    const created = new Date(NOW.getTime() - 30 * H); // crossed 24h at 6h ago
+    seedUser("tuned@example.com", created);
+    seedAuthSend("tuned@example.com", created, "delivered");
+    expect((await readOperatorQueues(db, NOW)).authEmailProblems).toBe(1);
+  });
+
+  it("sends the notice on this line alone", async () => {
+    seedAuthSend("stuck@example.com", new Date(NOW.getTime() - 3 * H), "rejected");
+    await checkOperatorQueues(db, env, NOW);
+    expect(sent).toHaveLength(1);
+    expect(sent[0].text).toContain("stuck@example.com");
+  });
+
+  it("mirrors the main app's grace constants exactly", async () => {
+    const src = await readFile(
+      new URL("../../src/lib/verification-threshold.ts", import.meta.url),
+      "utf8"
+    );
+    const mod = await import("../src/operator-queue-notice.js");
+    expect(src).toContain(`VERIFICATION_GRACE_KEY = "${mod.VERIFICATION_GRACE_KEY}"`);
+    expect(src).toContain(
+      `DEFAULT_VERIFICATION_GRACE_HOURS = ${mod.DEFAULT_VERIFICATION_GRACE_HOURS};`
+    );
+    expect(src).toContain(
+      `VERIFICATION_GRACE_FLOOR_HOURS = ${mod.VERIFICATION_GRACE_FLOOR_HOURS};`
+    );
+    expect(src).toContain(
+      `VERIFICATION_GRACE_CEILING_HOURS = ${mod.VERIFICATION_GRACE_CEILING_HOURS};`
+    );
+  });
+});
