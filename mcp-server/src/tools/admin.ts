@@ -32,7 +32,7 @@ import {
   VALID_TRANSITIONS,
   reportedNewValue,
 } from "../helpers.js";
-import { rosterResearchTargetWhere } from "@takemetothefair/db-schema";
+import { citationSupersedeScope, rosterResearchTargetWhere } from "@takemetothefair/db-schema";
 import {
   fetchImageWithFallback,
   findPromoterDuplicates,
@@ -1874,6 +1874,15 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         citation_id: string;
         field_name: string;
         superseded_count: number;
+        /** OPE-516 — active citations for this field that this write did not
+         *  retire (another edition's, or a stamped row a year-null write must
+         *  not destroy). Empty when the field has exactly one active citation. */
+        conflicts_remaining: Array<{
+          id: string;
+          year: number | null;
+          value: string;
+          source_name: string | null;
+        }>;
       }> = [];
       if (params.citation && requestedFields.length > 0) {
         const citationYear = params.citation.year ?? null;
@@ -1884,22 +1893,18 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           if (rawValue === undefined || rawValue === null) continue;
           const valueText = String(rawValue);
 
-          // Supersede prior active for (event, field, year). Match NULL year
-          // explicitly because SQL `=` treats NULL as unequal.
+          // OPE-516 — the SAME supersede rule create_event_citation uses. This
+          // block carried its own exact-year bucket after #999 fixed the other
+          // path, and a 2026-08-24 correction here left a contradicting
+          // citation active with no warning.
           let supersededId: string | null = null;
           let supersededCount = 0;
-          const yearFilter =
-            citationYear === null
-              ? sql`${eventDataCitations.year} IS NULL`
-              : eq(eventDataCitations.year, citationYear);
           const prior = await db
             .select({ id: eventDataCitations.id })
             .from(eventDataCitations)
             .where(
               and(
-                eq(eventDataCitations.eventId, event.id),
-                eq(eventDataCitations.fieldName, field),
-                yearFilter,
+                citationSupersedeScope(event.id, field, citationYear),
                 eq(eventDataCitations.state, "active")
               )
             );
@@ -1912,6 +1917,22 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
               .where(inArray(eventDataCitations.id, ids));
             supersededCount = ids.length;
           }
+
+          const stillActive = await db
+            .select({
+              id: eventDataCitations.id,
+              year: eventDataCitations.year,
+              value: eventDataCitations.value,
+              sourceName: eventDataCitations.sourceName,
+            })
+            .from(eventDataCitations)
+            .where(
+              and(
+                eq(eventDataCitations.eventId, event.id),
+                eq(eventDataCitations.fieldName, field),
+                eq(eventDataCitations.state, "active")
+              )
+            );
 
           const citationId = crypto.randomUUID();
           await db.insert(eventDataCitations).values({
@@ -1935,6 +1956,12 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
             citation_id: citationId,
             field_name: field,
             superseded_count: supersededCount,
+            conflicts_remaining: stillActive.map((r) => ({
+              id: r.id,
+              year: r.year ?? null,
+              value: r.value,
+              source_name: r.sourceName ?? null,
+            })),
           });
         }
       }
