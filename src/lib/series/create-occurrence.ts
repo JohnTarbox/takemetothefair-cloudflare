@@ -10,6 +10,18 @@ import { and, eq } from "drizzle-orm";
 import type { Database } from "@/lib/db";
 import { events, eventSeries, eventDays, adminActions } from "@/lib/db/schema";
 import { createSlug, appendSlugSegment, unsafeSlug } from "@takemetothefair/utils";
+import { partitionEventCategories } from "@takemetothefair/constants";
+
+/** Tolerant read of the stored JSON array; a malformed value is no categories. */
+function parseCategoriesJson(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === "string") : [];
+  } catch {
+    return [];
+  }
+}
 import { getVenueZoneYear } from "@/lib/datetime";
 import {
   inheritSeriesDefaults,
@@ -243,7 +255,14 @@ export async function createOccurrenceForSeries(
     endDate: values.endDate,
     datesConfirmed: values.datesConfirmed,
     recurrenceRule: values.recurrenceRule,
-    categories: values.categories ?? "[]",
+    // OPE-1058 — a copy path, filtered rather than trusted. The series row was
+    // validated when it was written, but this is a WRITE to events.categories
+    // and the guard is keyed on the act, not on where the value came from: a
+    // series predating the allow-list must not seed new rows with off-list
+    // values.
+    categories: JSON.stringify(
+      partitionEventCategories(parseCategoriesJson(values.categories)).kept
+    ),
     tags: values.tags ?? "[]",
     imageUrl: values.imageUrl,
     primaryAudience: values.primaryAudience,

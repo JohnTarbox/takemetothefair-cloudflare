@@ -37,7 +37,13 @@ import {
   slugCandidates,
   type Slug,
 } from "@takemetothefair/utils";
-import { EVENT_CATEGORIES, PRIMARY_AUDIENCE, PUBLIC_ACCESS } from "@takemetothefair/constants";
+import {
+  EVENT_CATEGORIES,
+  PRIMARY_AUDIENCE,
+  PUBLIC_ACCESS,
+  UNCATEGORIZED_EVENT_CATEGORY,
+  partitionEventCategories,
+} from "@takemetothefair/constants";
 import { logError } from "../logger.js";
 
 const COMMUNITY_PROMOTER_ID = "system-community-suggestions";
@@ -1020,11 +1026,15 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
       // Same reason: the plain path filters categories against EVENT_CATEGORIES
       // with an ["Event"] fallback, and the series branch needs the identical
       // set or the two paths disagree on the same payload.
-      const validCategorySet = new Set<string>(EVENT_CATEGORIES);
+      // OPE-1058 — the same allow-list, read from the one shared rule. This
+      // path keeps K21's drop-and-warn: an untrusted submission is worth having
+      // with a bad label, and the dropped values are echoed back in
+      // `warnings.dropped_categories`.
       const providedCategories = params.categories ?? [];
-      const filteredCategories = providedCategories.filter((c) => validCategorySet.has(c));
-      const droppedCategories = providedCategories.filter((c) => !validCategorySet.has(c));
-      const categoriesToStore = filteredCategories.length > 0 ? filteredCategories : ["Event"];
+      const { kept: filteredCategories, dropped: droppedCategories } =
+        partitionEventCategories(providedCategories);
+      const categoriesToStore: string[] =
+        filteredCategories.length > 0 ? [...filteredCategories] : [UNCATEGORIZED_EVENT_CATEGORY];
 
       // Now: delegates to /api/suggest-event/check-duplicate which runs
       // the shared `findDuplicate` 4-stage match (exact_url > venue_date

@@ -15,8 +15,33 @@ import {
   BLOG_POST_STATUS,
   INDOOR_OUTDOOR,
   EVENT_SCALE,
+  EVENT_CATEGORIES,
+  invalidEventCategories,
 } from "@takemetothefair/constants";
 import { sanitizeProse, decodeHtmlEntities, coerceVenueNameAtIngest } from "@takemetothefair/utils";
+
+/**
+ * OPE-1058 — `events.categories`, validated at the schema boundary.
+ *
+ * An admin or promoter naming a category is an EXPLICIT EDIT, so an off-list
+ * value is REJECTED and named, rather than dropped. These routes used to accept
+ * `z.array(z.string())`: every value a human typed was stored verbatim, which is
+ * how "Craft Fsir" and ~65 other off-list values reached prod while
+ * `suggest_event` was refusing the same strings.
+ *
+ * Untrusted ingest keeps drop-and-warn — that lives in
+ * `partitionEventCategories`, which this shares its allow-list with.
+ */
+const eventCategoriesSchema = z.array(z.string()).superRefine((values, ctx) => {
+  const invalid = invalidEventCategories(values);
+  if (invalid.length === 0) return;
+  ctx.addIssue({
+    code: z.ZodIssueCode.custom,
+    message:
+      `Unknown categor${invalid.length === 1 ? "y" : "ies"}: ${invalid.join(", ")}. ` +
+      `Allowed: ${EVENT_CATEGORIES.join(", ")}.`,
+  });
+});
 import { parseDateOnly } from "@takemetothefair/datetime";
 
 /** Length and format limits used across input validators. App-only
@@ -345,7 +370,7 @@ const eventBaseSchema = z.object({
   datesConfirmed: z.boolean().optional().default(true),
   discontinuousDates: z.boolean().optional().default(false),
   recurrenceRule: z.string().optional().nullable(),
-  categories: z.array(z.string()).optional().default([]),
+  categories: eventCategoriesSchema.optional().default([]),
   tags: z.array(z.string()).optional().default([]),
   ticketUrl: urlSchema,
   ticketPriceMin: z.number().min(0).optional().nullable(),
@@ -658,7 +683,7 @@ export const promoterEventCreateSchema = z
     startDate: z.string().datetime().optional().nullable(),
     endDate: z.string().datetime().optional().nullable(),
     discontinuousDates: z.boolean().optional().default(false),
-    categories: z.array(z.string()).optional().default([]),
+    categories: eventCategoriesSchema.optional().default([]),
     tags: z.array(z.string()).optional().default([]),
     ticketUrl: urlSchema,
     ticketPriceMin: z.number().min(0).optional().nullable(),

@@ -23,6 +23,7 @@ import { evaluateGates } from "@/lib/event-date-gates";
 import { verifyTurnstileToken, getTurnstileErrorMessage } from "@/lib/turnstile";
 import { auth } from "@/lib/auth";
 import { inferCategoriesFromName } from "@/lib/url-import/infer-categories";
+import { UNCATEGORIZED_EVENT_CATEGORY, partitionEventCategories } from "@takemetothefair/constants";
 import { loadClassifications, gateUrlForField } from "@/lib/url-classification";
 import { PUBLIC_EVENT_STATUSES } from "@/lib/constants";
 import { classifySource, assertIngestionMethod } from "@/lib/source-classification";
@@ -686,10 +687,15 @@ export async function POST(request: NextRequest) {
       // verified source. A vendor submission is already TENTATIVE-lifecycle for
       // exactly this reason.
       datesConfirmed: false,
+      // OPE-1058 — an untrusted submission keeps drop-and-warn (the K21 rule),
+      // but through the shared allow-list rather than storing whatever arrived.
+      // A public form could previously write any string into this column.
       categories: JSON.stringify(
-        Array.isArray(data.categories) && data.categories.length > 0
-          ? data.categories
-          : (inferCategoriesFromName(effectiveName) ?? ["Event"])
+        (() => {
+          const supplied = partitionEventCategories(data.categories).kept;
+          if (supplied.length > 0) return supplied;
+          return inferCategoriesFromName(effectiveName) ?? [UNCATEGORIZED_EVENT_CATEGORY];
+        })()
       ),
       tags: JSON.stringify(tagList),
       ticketUrl: finalTicketUrl,

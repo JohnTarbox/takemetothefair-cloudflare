@@ -41,8 +41,10 @@ import {
   readInboundAttachmentAsResponse,
 } from "@takemetothefair/utils";
 import {
+  EVENT_CATEGORIES,
   EXTRACTION_REJECT_FAMILIES,
   humanRejectSignature,
+  invalidEventCategories,
   rejectReasonRequired,
 } from "@takemetothefair/constants";
 import { emitExtractionFault } from "../faults/extraction-emitter.js";
@@ -1083,6 +1085,30 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         ),
     },
     async (params) => {
+      // OPE-1058 — an explicit edit REJECTS an off-list category, it does not
+      // drop one.
+      //
+      // `suggest_event` drops and warns because a public submission is worth
+      // having with a bad label. This tool is the opposite case: a caller named
+      // these values on purpose, and silently discarding them is how the same
+      // value ended up invalid at one writer and stored at the other. The
+      // Alexander Hamfest was created here with "Amateur Radio Convention"
+      // two minutes after suggest_event refused it.
+      const badCategories = invalidEventCategories(params.categories);
+      if (badCategories.length > 0) {
+        return {
+          content: [
+            jsonContent({
+              error: "invalid_categories",
+              invalid: badCategories,
+              allowed: EVENT_CATEGORIES,
+              hint: "Pick from `allowed`. suggest_event drops unknown values with a warning; this tool refuses them so a deliberate edit is never silently discarded.",
+            }),
+          ],
+          isError: true,
+        };
+      }
+
       // Load URL domain classifications once so the ticket_url / application_url
       // transforms below can gate against known-aggregator domains.
       // See mcp-server/src/url-classification.ts.
