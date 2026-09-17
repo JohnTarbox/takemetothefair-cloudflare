@@ -129,6 +129,7 @@ describe("OPE-1058 — every events.categories writer reads the shared allow-lis
         "mcp-server/src/tools/vendor.ts",
         "src/app/api/admin/events/[id]/route.ts",
         "src/app/api/admin/events/route.ts",
+        "src/app/api/admin/events/category-cleanup/route.ts",
         "src/app/api/admin/import-url/route.ts",
         "src/app/api/admin/import/route.ts",
         "src/app/api/promoter/events/draft/route.ts",

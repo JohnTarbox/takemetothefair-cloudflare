@@ -113,6 +113,8 @@ export function cleanupEventCategories(stored: readonly string[]): CategoryClean
   const out: string[] = [];
   const addTags: string[] = [];
   let sawPlaceholder = false;
+  /** "Other" that arrived from the map rather than from the stored row. */
+  let otherIsMapped = false;
 
   for (const raw of stored) {
     const value = typeof raw === "string" ? raw.trim() : "";
@@ -123,9 +125,21 @@ export function cleanupEventCategories(stored: readonly string[]): CategoryClean
     }
     const mapped = CATEGORY_CLEANUP_MAP[value];
     const replacements = mapped ?? [value];
-    for (const r of replacements) if (!out.includes(r)) out.push(r);
+    for (const r of replacements) {
+      if (r === "Other" && mapped) otherIsMapped = true;
+      if (!out.includes(r)) out.push(r);
+    }
     const tag = TAG_WORTHY[value];
     if (tag && !addTags.includes(tag)) addTags.push(tag);
+  }
+
+  // "Other" is a LAST RESORT, not a label to hang beside real ones. The dragon
+  // boat festival carries Festival + Cultural Festival + Sports; mapping Sports
+  // to Other and keeping it would tell a reader the event is partly
+  // uncategorisable, which is worse than what the row already said.
+  if (otherIsMapped && out.length > 1) {
+    const idx = out.indexOf("Other");
+    if (idx >= 0 && !stored.includes("Other")) out.splice(idx, 1);
   }
 
   // Anything still off-list after mapping is a value nobody anticipated. Left
