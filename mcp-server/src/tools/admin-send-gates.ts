@@ -56,8 +56,11 @@ export function registerSendGatesTool(
       "A gate this Worker does not enforce reports enabled:null with",
       "readable_here:false — 'not mine to answer for' is NOT the same claim as",
       "'off'. For the main app's own copy, read /api/admin/capability-flags.",
-      "OPERATOR_OUTBOUND_ENABLED is enforced HERE and nowhere else, so this tool is",
-      "the only place it can be read.",
+      "OPERATOR_OUTBOUND_ENABLED, PROMOTER_OUTREACH_ENABLED, AUTO_REPLY_ENABLED and",
+      "UNROUTED_ASK_ENABLED are enforced HERE and nowhere else, so this tool is the",
+      "only place they can be read. Each gate carries unset_means: AUTO_REPLY_ENABLED",
+      'is OPEN when unset (only the string "false" holds the acks); every other gate',
+      "is closed when unset.",
     ].join(" "),
     {},
     async () => {
