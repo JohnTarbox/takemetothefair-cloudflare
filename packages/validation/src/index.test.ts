@@ -397,6 +397,22 @@ describe("eventCreateSchema", () => {
     expect(result.success).toBe(true);
   });
 
+  it("OPE-1058 — rejects a category that is not in the taxonomy, and names it", () => {
+    const result = eventCreateSchema.safeParse({ ...validEvent, categories: ["Craft Fsir"] });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.map((i) => i.message).join(" ")).toContain("Craft Fsir");
+    }
+  });
+
+  it("OPE-1058 — accepts a value added on 2026-09-17", () => {
+    const result = eventCreateSchema.safeParse({
+      ...validEvent,
+      categories: ["Amateur Radio Convention", "Market"],
+    });
+    expect(result.success).toBe(true);
+  });
+
   it("validates a complete event", () => {
     const completeEvent = {
       ...validEvent,
@@ -406,7 +422,9 @@ describe("eventCreateSchema", () => {
       endDate: "2025-06-17T18:00:00Z",
       datesConfirmed: true,
       recurrenceRule: "RRULE:FREQ=YEARLY",
-      categories: ["fair", "outdoor"],
+      // OPE-1058 — real taxonomy values. This fixture used ["fair","outdoor"],
+      // which are not categories in any casing; the schema now rejects them.
+      categories: ["Fair", "Festival"],
       tags: ["family", "food", "music"],
       ticketUrl: "https://tickets.example.com",
       ticketPriceMin: 10,
