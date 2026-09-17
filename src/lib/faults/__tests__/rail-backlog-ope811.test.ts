@@ -30,11 +30,19 @@ const NOW = new Date("2026-09-05T12:00:00.000Z");
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
 
+/** The class half of a `route#class` signature, or the whole id. */
+function classOf(signature: string): string {
+  const i = signature.indexOf("#");
+  return i >= 0 ? signature.slice(i + 1) : signature;
+}
+
 function group(signature: string, over: Partial<GroupedFault> = {}): GroupedFault {
   return {
     signature,
     route: "/events/[slug]",
-    errorClass: "boom",
+    // OPE-613 — each fixture signature is its own fault shape unless a test
+    // says otherwise; a shared class on two routes is now ONE shape.
+    errorClass: classOf(signature),
     count: 5,
     distinctSessions: 3,
     firstSeen: NOW.getTime() - 10 * HOUR,
@@ -51,7 +59,9 @@ function ledgerRow(
   return {
     signature,
     route: "/events/[slug]",
-    errorClass: "boom",
+    // OPE-613 — each fixture signature is its own fault shape unless a test
+    // says otherwise; a shared class on two routes is now ONE shape.
+    errorClass: classOf(signature),
     firstSeen: NOW.getTime() - 15 * DAY,
     lastSeen: NOW.getTime() - 2 * DAY,
     count: 12,

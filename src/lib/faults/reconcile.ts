@@ -35,7 +35,46 @@ export const DEFAULT_MIN_SESSIONS = 2;
 /** NEW/regression candidates emitted per run — the flap guard (batch cap). */
 export const DEFAULT_BATCH_CAP = 5;
 
-import { isFileableStatus, isUnknownStatus } from "./status";
+import { isFileableStatus, isTerminalStatus, isUnknownStatus } from "./status";
+
+/**
+ * OPE-613 — one render-fault SHAPE is one fault, whichever page it fired on.
+ *
+ * The signature is `route#errorClass`, which is right for identity (a ruling on
+ * a Salem page must not silence a different page) and wrong for everything
+ * downstream of it. Measured 2026-09-07: `(evaluating *.id)` fired 29 times on
+ * 17 pathnames and produced 9 ledger rows carrying 13 of the 29 — the other 16
+ * never crossed a per-route gate — and a ninth route minted an unfiled
+ * `proposed` row four minutes after its sibling on another route had already
+ * been filed to OPE-613.
+ *
+ * So the key stays route-scoped and three things now read the shape instead:
+ * eligibility counts across routes, a new route inherits a live ticket already
+ * filed for the same shape, and at most one candidate per shape is handed to the
+ * rail per run.
+ *
+ * Render lane only. Server-lane rows key on their `source` (OPE-615), where two
+ * sources sharing an error class — two jobs both hitting `D1_ERROR` — are
+ * genuinely different faults. Render routes are pathnames; server keys are not.
+ */
+export function isRenderRoute(route: string | null | undefined): boolean {
+  return typeof route === "string" && route.startsWith("/");
+}
+
+/**
+ * Classes that carry no evidence of WHICH fault they are. `script error.` is a
+ * CORS-masked message with the whole error stripped; linking every page's
+ * `script error.` to one ticket would be linking on nothing (OPE-173's
+ * registration throw and an unrelated embed would share it).
+ */
+const OPAQUE_CLASSES = new Set(["", "script error.", "script error"]);
+
+/** The cross-route shape key, or null when this row must stay route-scoped. */
+export function shapeKey(route: string | null | undefined, errorClass: string): string | null {
+  if (!isRenderRoute(route)) return null;
+  const c = (errorClass ?? "").trim();
+  return OPAQUE_CLASSES.has(c) ? null : c;
+}
 
 export type FaultStatus = "proposed" | "filed" | "done" | "regressed";
 
@@ -105,6 +144,22 @@ export type LedgerUpsert =
       count: number;
       createdAt: number;
     }
+  | {
+      /**
+       * OPE-613 — attach this signature to the live ticket already filed for
+       * the same shape on another route. Inserts the row if it is new; on an
+       * existing unfiled row, sets status/ope_id/filed_at.
+       */
+      op: "link";
+      signature: string;
+      route: string | null;
+      errorClass: string;
+      firstSeen: number;
+      lastSeen: number;
+      count: number;
+      createdAt: number;
+      opeId: string;
+    }
   | { op: "touch"; signature: string; lastSeen: number; count: number }
   | { op: "regress"; signature: string; lastSeen: number; count: number };
 
@@ -151,6 +206,14 @@ export interface ReconcileFaultsResult {
   /** Groups discarded for clearing neither gate and having no ledger row
    *  (OPE-488). Reported, never silently dropped. */
   subThreshold: SubThresholdDrop[];
+  /** OPE-613 — signatures attached to a sibling route's live ticket. */
+  linked: Array<{ signature: string; errorClass: string; opeId: string }>;
+  /**
+   * OPE-613 — fileable signatures NOT handed to the rail because another route
+   * with the same shape is being handed over (or is deferred) this run. Once
+   * that one is filed, these link to its ticket on the next run.
+   */
+  heldForSibling: Array<{ signature: string; errorClass: string; representative: string }>;
 }
 
 /** faultSigToken inlined (avoids a cross-module dep in the pure core). */
@@ -214,6 +277,32 @@ export function reconcileFaults(
   const upserts: LedgerUpsert[] = [];
   const candidates: FaultCandidate[] = [];
   const subThreshold: SubThresholdDrop[] = [];
+  const linked: ReconcileFaultsResult["linked"] = [];
+  const heldForSibling: ReconcileFaultsResult["heldForSibling"] = [];
+
+  // OPE-613 — the live ticket per shape: a ledger row with an ope_id whose
+  // disposition is not settled. The most recently filed wins.
+  const liveTicketByShape = new Map<string, { opeId: string; filedAt: number }>();
+  for (const row of bySignature.values()) {
+    if (row.opeId == null || isTerminalStatus(row.status)) continue;
+    const key = shapeKey(row.route, row.errorClass);
+    if (!key) continue;
+    const filedAt = safeNum(row.filedAt, 0);
+    const prev = liveTicketByShape.get(key);
+    if (!prev || filedAt > prev.filedAt) liveTicketByShape.set(key, { opeId: row.opeId, filedAt });
+  }
+
+  // OPE-613 — this window's occurrences per shape, across every route.
+  const shapeTotals = new Map<string, { count: number; routes: Set<string> }>();
+  for (const g of Array.isArray(grouped) ? grouped : []) {
+    if (!g || typeof g.signature !== "string") continue;
+    const key = shapeKey(g.route, typeof g.errorClass === "string" ? g.errorClass : "");
+    if (!key) continue;
+    const t = shapeTotals.get(key) ?? { count: 0, routes: new Set<string>() };
+    t.count += safeNum(g.count, 0);
+    if (typeof g.route === "string") t.routes.add(g.route);
+    shapeTotals.set(key, t);
+  }
 
   for (const g of Array.isArray(grouped) ? grouped : []) {
     // Guard unparseable input — a bad group must not abort the scan.
@@ -226,8 +315,36 @@ export function reconcileFaults(
     const route = typeof g.route === "string" ? g.route : null;
     const errorClass = typeof g.errorClass === "string" ? g.errorClass : "";
 
-    const eligible = groupCount >= minCount || groupSessions >= minSessions;
+    const shape = shapeKey(route, errorClass);
+    const shapeTotal = shape ? shapeTotals.get(shape) : undefined;
+    // OPE-613 — a shape spread thin across routes is eligible as a whole. Each
+    // distinct route counts as a distinct session: it is a different visitor
+    // on a different page, which is what the sessions gate exists to detect.
+    const eligible =
+      groupCount >= minCount ||
+      groupSessions >= minSessions ||
+      (shapeTotal != null &&
+        (shapeTotal.count >= minCount || shapeTotal.routes.size >= minSessions));
     const row = bySignature.get(g.signature);
+    const liveTicket = shape ? liveTicketByShape.get(shape) : undefined;
+
+    if (!row && liveTicket) {
+      // A known shape on a new page. Attached, whatever its count: this is one
+      // more occurrence of a filed fault, not a new one below a threshold.
+      upserts.push({
+        op: "link",
+        signature: g.signature,
+        route,
+        errorClass,
+        firstSeen: groupFirst,
+        lastSeen: groupLast,
+        count: groupCount,
+        createdAt: nowMs,
+        opeId: liveTicket.opeId,
+      });
+      linked.push({ signature: g.signature, errorClass, opeId: liveTicket.opeId });
+      continue;
+    }
 
     if (!row) {
       // Never seen before. Emit only if it cleared the threshold — a true
@@ -336,6 +453,30 @@ export function reconcileFaults(
     return a.signature.localeCompare(b.signature);
   });
 
+  // OPE-613 — at most ONE new candidate per shape. The first in the ordering
+  // (highest count) represents it; the rest are still proposed into the ledger
+  // but held, and link to the representative's ticket once it is filed.
+  const representativeByShape = new Map<string, string>();
+  const onePerShape: FaultCandidate[] = [];
+  for (const c of candidates) {
+    const key = c.kind === "new" ? shapeKey(c.route, c.errorClass) : null;
+    if (key) {
+      const rep = representativeByShape.get(key);
+      if (rep) {
+        heldForSibling.push({
+          signature: c.signature,
+          errorClass: c.errorClass,
+          representative: rep,
+        });
+        continue;
+      }
+      representativeByShape.set(key, c.signature);
+    }
+    onePerShape.push(c);
+  }
+  candidates.length = 0;
+  candidates.push(...onePerShape);
+
   const toEmit: FaultCandidate[] = [];
   const regressions: FaultCandidate[] = [];
   const deferred: FaultCandidate[] = [];
@@ -357,7 +498,10 @@ export function reconcileFaults(
   // 19 had sat 15 days).
   //
   // Oldest first: a backlog drained newest-first never reaches its tail.
-  const emittingNow = new Set<string>(candidates.map((c) => c.signature));
+  const emittingNow = new Set<string>([
+    ...candidates.map((c) => c.signature),
+    ...heldForSibling.map((h) => h.signature),
+  ]);
   const backlogAll: FaultCandidate[] = [];
   for (const row of bySignature.values()) {
     if (!row || emittingNow.has(row.signature)) continue;
@@ -365,6 +509,29 @@ export function reconcileFaults(
     // An UNKNOWN status counts as fileable, never as handled. Reading an
     // unrecognised value as "already dealt with" is the defect this ticket is.
     if (!isFileableStatus(row.status) && !isUnknownStatus(row.status)) continue;
+    const shape = shapeKey(row.route, row.errorClass);
+    // OPE-613 — an unfiled row whose shape already has a live ticket is not
+    // backlog; it is that ticket. The 2026-09-06 sterling-fair row is this case.
+    const liveTicket = shape ? liveTicketByShape.get(shape) : undefined;
+    if (liveTicket) {
+      upserts.push({
+        op: "link",
+        signature: row.signature,
+        route: row.route,
+        errorClass: row.errorClass,
+        firstSeen: safeNum(row.firstSeen, nowMs),
+        lastSeen: safeNum(row.lastSeen, nowMs),
+        count: safeNum(row.count, 0),
+        createdAt: safeNum(row.createdAt, nowMs),
+        opeId: liveTicket.opeId,
+      });
+      linked.push({
+        signature: row.signature,
+        errorClass: row.errorClass,
+        opeId: liveTicket.opeId,
+      });
+      continue;
+    }
     backlogAll.push({
       signature: row.signature,
       route: row.route,
@@ -377,6 +544,28 @@ export function reconcileFaults(
     });
   }
   backlogAll.sort((a, b) => a.firstSeen - b.firstSeen || a.signature.localeCompare(b.signature));
+
+  // OPE-613 — one backlog row per shape too, and none for a shape already
+  // represented by a new candidate this run. Oldest represents.
+  const backlogOnePerShape: FaultCandidate[] = [];
+  for (const c of backlogAll) {
+    const key = shapeKey(c.route, c.errorClass);
+    if (key) {
+      const rep = representativeByShape.get(key);
+      if (rep) {
+        heldForSibling.push({
+          signature: c.signature,
+          errorClass: c.errorClass,
+          representative: rep,
+        });
+        continue;
+      }
+      representativeByShape.set(key, c.signature);
+    }
+    backlogOnePerShape.push(c);
+  }
+  backlogAll.length = 0;
+  backlogAll.push(...backlogOnePerShape);
 
   // Shares the batch cap with new + regression candidates, so a 19-row backlog
   // drains over four runs instead of filing 19 OPEs at once. The flap guard is
@@ -393,5 +582,7 @@ export function reconcileFaults(
     deferred,
     upserts,
     subThreshold,
+    linked,
+    heldForSibling,
   };
 }
