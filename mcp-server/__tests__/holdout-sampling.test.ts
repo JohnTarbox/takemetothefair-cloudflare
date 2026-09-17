@@ -17,7 +17,7 @@
  *     inherits the 24h idempotence guard.
  */
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { createTestDb, type TestDb } from "./setup-db.js";
 import {
@@ -404,6 +404,23 @@ describe("runScheduledHoldoutSampling — OPE-576 one fetch per page, and not ev
     } as unknown as Awaited<ReturnType<HoldoutDeps["submitExtract"]>>;
   }
 
+  // The job's log rows are stamped by logError with the REAL clock, while the
+  // cooldown is measured from deps.now(). Pinning Date to each run's `now`
+  // keeps both on one clock; without it this suite passed only while the real
+  // clock sat within a day of NOW, and began failing at 2026-09-17 06:10Z.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function runAt(d: HoldoutDeps) {
+    vi.setSystemTime(d.now());
+    return runScheduledHoldoutSampling(db as never, ENV, d);
+  }
+
   function deps(extract: HoldoutDeps["submitExtract"]): HoldoutDeps {
     return {
       submitFetch: vi.fn(async (_env, url: string) => fetched(url)) as never,
@@ -421,7 +438,7 @@ describe("runScheduledHoldoutSampling — OPE-576 one fetch per page, and not ev
     ]);
     const d = deps(async (_e, f) => extracted(f.url, "whatever"));
 
-    const r = await runScheduledHoldoutSampling(db as never, ENV, d);
+    const r = await runAt(d);
 
     const urls = vi.mocked(d.submitFetch).mock.calls.map((c) => c[1]);
     expect(urls.sort()).toEqual([FAIR_PAGE, LIST_PAGE].sort()); // landmark: both pages read
@@ -440,21 +457,21 @@ describe("runScheduledHoldoutSampling — OPE-576 one fetch per page, and not ev
 
     // Day 1: the list page times out, and the failure row carries the outcome.
     const d1 = deps(timeout as never);
-    const first = await runScheduledHoldoutSampling(db as never, ENV, d1);
+    const first = await runAt(d1);
     expect(first.errors).toBe(1);
     expect(first.extracted).toBe(1);
 
     // Day 2: it is skipped without a fetch; the readable page still runs.
     const d2 = deps(timeout as never);
     d2.now = () => new Date(NOW.getTime() + 86_400_000);
-    const second = await runScheduledHoldoutSampling(db as never, ENV, d2);
+    const second = await runAt(d2);
     expect(vi.mocked(d2.submitFetch).mock.calls.map((c) => c[1])).toEqual([FAIR_PAGE]);
     expect(second.skippedCooldown).toBe(1);
 
     // Day 9: the cooldown has passed, so the page is tried again.
     const d9 = deps(timeout as never);
     d9.now = () => new Date(NOW.getTime() + 8 * 86_400_000);
-    await runScheduledHoldoutSampling(db as never, ENV, d9);
+    await runAt(d9);
     expect(
       vi
         .mocked(d9.submitFetch)
@@ -479,13 +496,13 @@ describe("runScheduledHoldoutSampling — OPE-576 one fetch per page, and not ev
       })) as never,
       now: () => NOW,
     };
-    const first = await runScheduledHoldoutSampling(db as never, ENV, d1);
+    const first = await runAt(d1);
     expect(first.skippedThin).toBe(1);
     expect(first.errors).toBe(1);
 
     const d2 = deps(async (_e, f) => extracted(f.url, "x"));
     d2.now = () => new Date(NOW.getTime() + 86_400_000);
-    const second = await runScheduledHoldoutSampling(db as never, ENV, d2);
+    const second = await runAt(d2);
     expect(vi.mocked(d2.submitFetch)).not.toHaveBeenCalled();
     expect(second.skippedCooldown).toBe(2);
   });
@@ -511,7 +528,7 @@ describe("runScheduledHoldoutSampling — OPE-576 one fetch per page, and not ev
       },
     ]);
     const d = deps(async (_e, f) => extracted(f.url, "Fair a"));
-    const r = await runScheduledHoldoutSampling(db as never, ENV, d);
+    const r = await runAt(d);
     expect(r.skippedCooldown).toBe(0);
     expect(vi.mocked(d.submitFetch)).toHaveBeenCalledTimes(1);
   });
@@ -528,7 +545,7 @@ describe("runScheduledHoldoutSampling — OPE-576 one fetch per page, and not ev
           : extracted(f.url, "County Fair Renamed") // a real single-page rename
     );
 
-    const r = await runScheduledHoldoutSampling(db as never, ENV, d);
+    const r = await runAt(d);
 
     expect(r.skippedMultiEvent).toBe(1);
     const rows = await db.select().from(eventDiscrepancies);
