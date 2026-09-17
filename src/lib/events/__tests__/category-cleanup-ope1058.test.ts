@@ -99,3 +99,20 @@ describe("OPE-1058 — the cleanup mapping", () => {
     }
   });
 });
+
+describe("OPE-1058 — 'Other' is a last resort, not a co-label", () => {
+  it("drops a mapped Other when real categories survive (the dragon boat row)", () => {
+    expect(cleanupEventCategories(["Festival", "Cultural Festival", "Sports"]).categories).toEqual([
+      "Festival",
+      "Cultural Festival",
+    ]);
+  });
+
+  it("keeps Other when it is all that is left", () => {
+    expect(cleanupEventCategories(["Sports", "Road Race"]).categories).toEqual(["Other"]);
+  });
+
+  it("keeps an Other the row already carried", () => {
+    expect(cleanupEventCategories(["Other", "Sports"]).categories).toEqual(["Other"]);
+  });
+});
