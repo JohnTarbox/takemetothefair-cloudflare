@@ -225,3 +225,59 @@ export function classifySource(
 
   return { sourceDomain, ingestionMethod };
 }
+
+/**
+ * OPE-491 rework — `ingestion_method` records HOW A ROW WAS COLLECTED, and
+ * adding or correcting a citation URL does not change that.
+ *
+ * `update_event` re-ran `classifySource` whenever `source_url`/`source_name`
+ * changed. `inferIngestionMethod` falls through to the domain branch for any
+ * label that is not a map key, so a repair that only pointed `source_url` at an
+ * organizer's Facebook page flipped a correct `email_submission` row to
+ * `direct_scrape` (event 13f7f7a4, 2026-08-21) — silently, since
+ * `fieldsUpdated` never mentioned it. `email_submission` is the one clean bucket
+ * in the table (57/57 carry `suggester_email`), and recompute-on-write would
+ * erode exactly it.
+ *
+ * The rule, in precedence order:
+ *  1. A new `source_name` that is a recognised collection LABEL is an explicit
+ *     statement about how the row was collected — it wins.
+ *  2. Otherwise, a current value that records a COLLECTION method (anything the
+ *     domain branch cannot produce), or a row carrying `suggester_email`, is
+ *     kept: a hostname does not outrank evidence about where the row came from.
+ *  3. Otherwise the value was domain-derived to begin with, so re-deriving it
+ *     from the new URL is correct.
+ * `source_domain` is always refreshed — it IS a property of the URL.
+ */
+const DOMAIN_DERIVED_METHODS: ReadonlySet<IngestionMethod> = new Set([
+  "direct_scrape",
+  "aggregator_import",
+  "admin_manual",
+]);
+
+export function reclassifySourceOnEdit(args: {
+  currentMethod: string | null | undefined;
+  suggesterEmail: string | null | undefined;
+  sourceName: string | null | undefined;
+  sourceUrl: string | null | undefined;
+}): SourceClassification & { preservedMethod: boolean } {
+  const recomputed = classifySource(args.sourceName, args.sourceUrl);
+  const label = args.sourceName ? METHOD_BY_NAME[args.sourceName.trim().toLowerCase()] : undefined;
+  if (label) {
+    return {
+      sourceDomain: recomputed.sourceDomain,
+      ingestionMethod: label,
+      preservedMethod: false,
+    };
+  }
+  const current = isIngestionMethod(args.currentMethod) ? args.currentMethod : null;
+  const hasSubmitter = typeof args.suggesterEmail === "string" && args.suggesterEmail.trim() !== "";
+  if (current && (!DOMAIN_DERIVED_METHODS.has(current) || hasSubmitter)) {
+    return {
+      sourceDomain: recomputed.sourceDomain,
+      ingestionMethod: current,
+      preservedMethod: true,
+    };
+  }
+  return { ...recomputed, preservedMethod: false };
+}

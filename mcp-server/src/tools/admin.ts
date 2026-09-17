@@ -72,7 +72,7 @@ import {
   eventApprovalBlockReason,
   mergedTombstoneBlockReason,
   normalizeEventDate,
-  classifySource,
+  reclassifySourceOnEdit,
   assertIngestionMethod,
   nextGateFlags,
   buildPlaceholderEmail,
@@ -1587,7 +1587,15 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         // (`nehomeshow.com` -> `newenglandhomeshows.com`) where the old value
         // is the correct answer to "where did we first find this?".
         if (params.source_url !== undefined || params.source_name !== undefined) {
-          const reclassified = classifySource(mergedSourceName, mergedSourceUrl);
+          // OPE-491 rework — the domain refreshes; HOW the row was collected is
+          // kept unless the edit states a new collection label, or the old
+          // value was itself domain-derived (see reclassifySourceOnEdit).
+          const reclassified = reclassifySourceOnEdit({
+            currentMethod: evRow.ingestionMethod as string | null | undefined,
+            suggesterEmail: evRow.suggesterEmail as string | null | undefined,
+            sourceName: mergedSourceName,
+            sourceUrl: mergedSourceUrl,
+          });
           updates.sourceDomain = reclassified.sourceDomain;
           updates.ingestionMethod = assertIngestionMethod(
             reclassified.ingestionMethod,
