@@ -2118,13 +2118,35 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       stripSignature(stripForwardedPreamble(rowSnapshot.bodyTextExcerpt ?? ""))
     );
     const noUrlOrFreeText = !rowSnapshot.parsedUrl || isFreeText;
+    // OPE-1057 — a NULL sub-intent means the classifier never ran, not that it
+    // ruled the body out. The trusted fast path skips the classifier, so on
+    // that path `isFreeText` was false for every message and a trusted sender's
+    // body-only event ("This Saturday, Sep 19 is the Alexander Hamfest at …")
+    // was dropped with a "please send a link" reply that an unknown sender with
+    // the same body would not have received.
+    //
+    // Only NULL is widened. A classifier that RAN and chose another sub-intent
+    // is still honoured, and the prose-substance gate below is unchanged, so a
+    // signature-only or bare-URL body still gets `no-url` (OPE-457/OPE-537).
+    const classifierSkipped = rowSnapshot.classifiedSubIntent == null;
     if (noUrlOrFreeText) {
       // Track whether we actually attempted prose extraction so the
       // fallback reply distinguishes "tried, didn't extract enough" from
       // "nothing to try." Drives `no-url-prose-failed` vs `no-url` below.
       let attemptedProse = false;
-      if (isFreeText && hasBodyText) {
+      if ((isFreeText || classifierSkipped) && hasBodyText) {
         attemptedProse = true;
+        if (!isFreeText) {
+          // Countable: this attempt exists only because no classifier ran.
+          await recordWorkflowStep(getDb(this.env.DB), {
+            instanceId,
+            workflowName: "inbound-email",
+            inboundEmailId: messageRowId,
+            stepName: "submit/free-text-gate",
+            status: "ok",
+            detail: { reason: "classifier_skipped", classified_sub_intent: null },
+          }).catch(() => {});
+        }
         // Best-effort: if extraction fails to produce a viable event, we
         // fall back to the prose-failed reply rather than send a confusing
         // partial result. The minimum-fields gate inside the workflow
