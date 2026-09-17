@@ -144,6 +144,7 @@ describe("OPE-975 — every probe's window is pinned", () => {
       "agent-silence-watchdog": 48,
       "inbound-held-submissions-snapshot": 48,
       "gsc-daily-totals": 48,
+      "gsc-milestone-derivation": 48,
       "funnel-canary": 48,
       "verification-threshold-tuner": 48,
       "photo-intake": 30 * 24,
