@@ -127,6 +127,13 @@
       "when": 1783280002826,
       "tag": "0292_ope456_milestone_derivation_probe",
       "breakpoints": true
+    },
+    {
+      "idx": 157,
+      "version": "6",
+      "when": 1783366402826,
+      "tag": "0293_ope611_lifecycle_check",
+      "breakpoints": true
     }
   ]
 }

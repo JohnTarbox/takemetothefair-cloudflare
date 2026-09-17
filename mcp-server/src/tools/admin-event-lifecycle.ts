@@ -192,6 +192,10 @@ export function registerEventLifecycleTools(
           lifecycleStatus: to,
           lifecycleStatusChangedAt: now,
           lifecycleReason: decodedReason,
+          // OPE-611 — a transition is also a check; stamp it so the TENTATIVE
+          // queue does not hand this row back as unopened work.
+          lifecycleLastCheckedAt: now,
+          lifecycleCheckNote: decodedReason,
           updatedAt: now,
           ...dateUpdate,
         })

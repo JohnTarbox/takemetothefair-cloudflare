@@ -617,6 +617,13 @@ export const events = sqliteTable(
       .default("SCHEDULED"),
     lifecycleStatusChangedAt: integer("lifecycle_status_changed_at", { mode: "timestamp" }),
     lifecycleReason: text("lifecycle_reason"),
+    // OPE-611 — when a human last CHECKED this row's lifecycle, and what they
+    // found, whether or not the check changed it. `lifecycle_reason` is written
+    // only on a transition, so a TENTATIVE row verified-and-held was
+    // byte-identical to one nobody had opened, and every drain pass re-worked
+    // its predecessor's holds (60% → 100% of a pass by the fifth).
+    lifecycleLastCheckedAt: integer("lifecycle_last_checked_at", { mode: "timestamp" }),
+    lifecycleCheckNote: text("lifecycle_check_note"),
     // For RESCHEDULED events — the dates the event was previously scheduled
     // for. Schema.org's EventRescheduled rich snippet needs the immediately-
     // previous pair to render in Google. Single pair only; multi-reschedule
