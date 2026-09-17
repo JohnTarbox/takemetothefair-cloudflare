@@ -25,7 +25,12 @@
 /** A plotted milestone. `derived` = we inferred the crossing, Google did not award it. */
 export interface MilestonePoint {
   threshold: number;
-  emailDate: string;
+  /**
+   * OPE-456 — the date the milestone was REACHED (Google's badge date or our
+   * derived crossing), not the date an email about it arrived. The two differ
+   * by days: 13K was reached 2026-08-19 and forwarded 2026-08-24.
+   */
+  date: string;
   derived?: boolean;
 }
 
@@ -69,7 +74,7 @@ export interface MilestoneCoord {
   x: number;
   y: number;
   threshold: number;
-  emailDate: string;
+  date: string;
   derived: boolean;
   /** Whether to draw this point's value label (see `labelStride`). */
   showLabel: boolean;
@@ -199,7 +204,7 @@ export function computeMilestoneLayout(
       x,
       y: yFor(p.threshold),
       threshold: p.threshold,
-      emailDate: p.emailDate,
+      date: p.date,
       derived: Boolean(p.derived),
       showLabel,
       labelAnchor,
