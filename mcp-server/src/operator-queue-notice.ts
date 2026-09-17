@@ -39,6 +39,7 @@ import {
   operatorOutboundDrafts,
   inboundEmails,
   users,
+  tunableThresholds,
 } from "@takemetothefair/db-schema";
 import type { Env } from "./index.js";
 import { getDb, type Db } from "./db.js";
@@ -89,6 +90,18 @@ export const QUEUE_SLA_HOURS = 48;
  */
 export const ADMIN_DECISION_TIMEOUT_HOURS = 168;
 
+/**
+ * OPE-599 rework — the verification grace window, read from the SAME
+ * `tunable_thresholds` row the queue-drain page uses (OPE-637), with the same
+ * fail-open default and clamp. The MCP Worker cannot import `src/lib`, so these
+ * three numbers are mirrored and a test pins them to
+ * `src/lib/verification-threshold.ts`.
+ */
+export const VERIFICATION_GRACE_KEY = "verification_alert_threshold_hours";
+export const DEFAULT_VERIFICATION_GRACE_HOURS = 48;
+export const VERIFICATION_GRACE_FLOOR_HOURS = 12;
+export const VERIFICATION_GRACE_CEILING_HOURS = 168;
+
 export interface OperatorQueueCounts {
   /** entity_claims rows PENDING or DISPUTED past the SLA. */
   agedClaims: number;
@@ -137,6 +150,19 @@ export interface OperatorQueueCounts {
    * a wrong date on a live page, not a queue somebody has not got to.
    */
   venueDateShifts: number;
+  /**
+   * OPE-599 rework (OPE-177's routing instruction, 2026-08-14: "Route it to the
+   * operator alert channel, not a robot inbox") — people who could not finish
+   * signing up, counted on ARRIVAL rather than as standing depth:
+   *   - auth mail whose delivery event says bounced / rejected / failed, sent in
+   *     the last 24h;
+   *   - a real registration whose delivered verification mail crossed the grace
+   *     window unconfirmed in the last 24h.
+   * Standing depth would be wallpaper — `unconfirmed_auth_email` sat at 13 and
+   * is a ceiling on drop-off, not a fault count. Each person appears on exactly
+   * one day's notice.
+   */
+  authEmailProblems: number;
   /** Oldest waiting row in either queue, in days. */
   oldestDays: number;
   /** Human-readable lines for the alert body. */
@@ -160,6 +186,7 @@ export function decideOperatorQueueNotice(
     | "agedAwaitingDecision"
     | "droppedRealAttachments"
     | "venueDateShifts"
+    | "authEmailProblems"
   >,
   alreadySentToday: boolean
 ): boolean {
@@ -187,6 +214,7 @@ export function totalWaiting(
     | "agedAwaitingDecision"
     | "droppedRealAttachments"
     | "venueDateShifts"
+    | "authEmailProblems"
   >
 ): number {
   // `?? 0` per term is not defensive clutter — it is load-bearing, and adding
@@ -211,7 +239,8 @@ export function totalWaiting(
     // on a completely empty queue.
     (counts.agedAwaitingDecision ?? 0) +
     (counts.droppedRealAttachments ?? 0) +
-    (counts.venueDateShifts ?? 0)
+    (counts.venueDateShifts ?? 0) +
+    (counts.authEmailProblems ?? 0)
   );
 }
 
@@ -234,6 +263,24 @@ export function shouldReportUngatedReplies(
 ): boolean {
   if (replyEnabled === "true") return false;
   return sentLast24h > 0;
+}
+
+/** Mirrors `loadVerificationGraceHours` in src/lib/verification-threshold.ts. */
+async function loadGraceHours(db: Db): Promise<number> {
+  try {
+    const [row] = await db
+      .select({ value: tunableThresholds.value })
+      .from(tunableThresholds)
+      .where(eq(tunableThresholds.key, VERIFICATION_GRACE_KEY))
+      .limit(1);
+    const v = row?.value;
+    if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) {
+      return DEFAULT_VERIFICATION_GRACE_HOURS;
+    }
+    return Math.min(VERIFICATION_GRACE_CEILING_HOURS, Math.max(VERIFICATION_GRACE_FLOOR_HOURS, v));
+  } catch {
+    return DEFAULT_VERIFICATION_GRACE_HOURS;
+  }
 }
 
 /** Start of the current UTC day — the debounce window boundary. */
@@ -526,6 +573,63 @@ export async function readOperatorQueues(
     // Observability must not take the notice down with it.
   }
 
+  // OPE-599 rework — auth email that failed to land, and registrations that
+  // just crossed the verification window unconfirmed. Arrival-based, so each
+  // person is named once rather than every morning.
+  let authEmailProblems = 0;
+  try {
+    const dayAgo = new Date(now.getTime() - 24 * 3600_000);
+    const undelivered = await db
+      .select({
+        recipient: emailSendLedger.recipient,
+        source: emailSendLedger.source,
+        deliveryStatus: emailSendLedger.deliveryStatus,
+      })
+      .from(emailSendLedger)
+      .where(
+        and(
+          sql`${emailSendLedger.source} LIKE 'auth.%'`,
+          inArray(emailSendLedger.deliveryStatus, ["bounced", "rejected", "failed"]),
+          gte(emailSendLedger.sentAt, dayAgo)
+        )
+      );
+    for (const u of undelivered) {
+      authEmailProblems++;
+      lines.push(
+        `⚠️ ${u.source} to ${u.recipient ?? "(no address)"} was ${u.deliveryStatus} — ` +
+          `this person cannot finish signing up (OPE-177)`
+      );
+    }
+
+    const grace = await loadGraceHours(db);
+    const crossedEnd = new Date(now.getTime() - grace * 3600_000);
+    const crossedStart = new Date(crossedEnd.getTime() - 24 * 3600_000);
+    const crossed = await db
+      .selectDistinct({ email: users.email, createdAt: users.createdAt })
+      .from(users)
+      .innerJoin(emailSendLedger, sql`lower(${emailSendLedger.recipient}) = lower(${users.email})`)
+      .where(
+        and(
+          // Placeholder owner accounts (OPE-292) are not registrations and never verify.
+          eq(users.origin, "registration"),
+          isNull(users.emailVerified),
+          gte(users.createdAt, crossedStart),
+          sql`${users.createdAt} < ${Math.floor(crossedEnd.getTime() / 1000)}`,
+          sql`${emailSendLedger.source} LIKE 'auth.%'`,
+          eq(emailSendLedger.deliveryStatus, "delivered")
+        )
+      );
+    for (const c of crossed) {
+      authEmailProblems++;
+      lines.push(
+        `registration ${c.email} still unverified ${grace}h after a DELIVERED verification email ` +
+          `— delivered is not read; a ceiling on drop-off, not a fault (OPE-177)`
+      );
+    }
+  } catch {
+    // Observability must not take the notice down with it.
+  }
+
   return {
     agedClaims: claims.length,
     agedReplies: replies.length,
@@ -535,6 +639,7 @@ export async function readOperatorQueues(
     agedAwaitingDecision,
     droppedRealAttachments,
     venueDateShifts,
+    authEmailProblems,
     oldestDays: Math.floor(oldestMs / 86400_000),
     lines,
   };
