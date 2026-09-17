@@ -395,6 +395,21 @@ const GENERIC_EVENT_WORDS = new Set([
  * ready to hand over. One character.
  */
 export function distinctiveToken(query: string): string | null {
+  return distinctiveTokens(query)[0] ?? null;
+}
+
+/** Upper bound on Tier 3 lookups: one bounded query per token. */
+export const MAX_SUBJECT_TOKENS = 6;
+
+/**
+ * OPE-1056 — EVERY distinctive token in a subject, longest first, de-duplicated.
+ *
+ * Length is a poor proxy for distinctiveness. "Derry Big Summer blow out Sat
+ * 19th Craft market" yields derry, summer, blow, 19th; the longest, "summer",
+ * names half the calendar, while "blow" names exactly one event. Tier 3 used to
+ * try only the longest and give up.
+ */
+export function distinctiveTokens(query: string): string[] {
   // `match` rather than `split(/[^a-z0-9]+/)`: the split form is banned by the
   // #120 slug-defence lint rule. That rule is blunt on purpose and this is a
   // search tokenizer rather than slug generation — but matching the tokens
@@ -402,8 +417,7 @@ export function distinctiveToken(query: string): string | null {
   const tokens = (query.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter(
     (t) => t.length >= 4 && !GENERIC_EVENT_WORDS.has(t) && !/^\d+$/.test(t)
   );
-  if (tokens.length === 0) return null;
-  return tokens.sort((a, b) => b.length - a.length)[0];
+  return [...new Set(tokens)].sort((a, b) => b.length - a.length).slice(0, MAX_SUBJECT_TOKENS);
 }
 
 /** Words that carry no event-name signal when matching a subject line. */
@@ -528,8 +542,13 @@ export async function buildVendorInquiryBriefing(
     // excluded by the generic-word list. Requiring uniqueness is what keeps
     // this from becoming a guess: two hits means the token did not identify
     // anything, and a wrong event here puts another fair's dates in a reply.
-    const token = distinctiveToken(subjectToEventQuery(inbound.subject));
-    if (token) {
+    //
+    // OPE-1056 — every distinctive token is tried, longest first, and the FIRST
+    // one that identifies exactly one event wins. The uniqueness rule is
+    // unchanged; only the number of tokens it is applied to is.
+    const tokens = distinctiveTokens(subjectToEventQuery(inbound.subject));
+    const tried: string[] = [];
+    for (const token of tokens) {
       const hits = await db
         .select({ id: events.id, slug: events.slug, name: events.name })
         .from(events)
@@ -542,13 +561,18 @@ export async function buildVendorInquiryBriefing(
           matchedOn: "subject",
         };
         warnings.push(
-          `Event matched on a SINGLE TOKEN ("${token}") — the subject did not match any event name directly. Confirm it is the right event before quoting anything from it.`
+          `Event matched on a SINGLE TOKEN ("${token}"${tried.length ? `, after ${tried.join(", ")}` : ""}) — the subject did not match any event name directly. Confirm it is the right event before quoting anything from it.`
         );
-      } else if (hits.length > 1) {
-        warnings.push(
-          `No event matched; the token "${token}" is ambiguous across several events, so none was chosen.`
-        );
+        break;
       }
+      tried.push(`"${token}" (${hits.length > 1 ? "ambiguous" : "no match"})`);
+    }
+    if (!matched && tried.some((t) => t.endsWith("(ambiguous)"))) {
+      // Names every attempt, so the operator can see what was tried (OPE-977:
+      // never assert an attempt that was not made, and never hide one that was).
+      warnings.push(
+        `No event matched; tried ${tried.join(", ")} — none identified a single event, so none was chosen.`
+      );
     }
   }
   if (!matched) {

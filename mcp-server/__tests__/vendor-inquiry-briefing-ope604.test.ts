@@ -18,6 +18,8 @@ import {
   matchVendorByVariants,
   readEventConfidence,
   distinctiveToken,
+  distinctiveTokens,
+  MAX_SUBJECT_TOKENS,
 } from "../src/inbound/vendor-inquiry-briefing.js";
 
 let db: TestDb;
@@ -329,5 +331,55 @@ describe("distinctive-token fallback — the SoNo case", () => {
     expect(distinctiveToken("Fair")).toBeNull();
     expect(distinctiveToken("Craft Show")).toBeNull();
     expect(distinctiveToken("SoNo Art Festival")).toBe("sono");
+  });
+});
+
+describe("OPE-1056 — every distinctive token is tried, not only the longest", () => {
+  const DERRY = "Derry Big Summer blow out Sat 19th Craft market";
+
+  it("the Derry case: 'summer' is ambiguous, 'blow' identifies the event", async () => {
+    seedEvent({ id: "s1", name: "Summer Arts Festival", slug: "summer-arts" });
+    seedEvent({ id: "s2", name: "Summer Solstice Market", slug: "summer-solstice" });
+    seedEvent({ id: "s3", name: "Late Summer Fair", slug: "late-summer" });
+    seedEvent({
+      id: "2965cda9",
+      name: "Big Summer Blow Out! Craft Market",
+      slug: "big-summer-blow-out-craft-market",
+    });
+    const b = await buildVendorInquiryBriefing(db, {
+      id: "bc9e1ddb",
+      fromAddress: "vendor@example.com",
+      subject: DERRY,
+      parsedUrl: null,
+    });
+    expect(b.matchedEvent?.id).toBe("2965cda9");
+    expect(b.matchedEvent?.matchedOn).toBe("subject");
+    const w = b.warnings.join(" ");
+    expect(w).toContain('SINGLE TOKEN ("blow"');
+    expect(w).toContain('"summer" (ambiguous)');
+  });
+
+  it("still refuses when EVERY token is ambiguous — and names what it tried", async () => {
+    seedEvent({ id: "a1", name: "Derry Summer Blow Out 2025", slug: "a1" });
+    seedEvent({ id: "a2", name: "Derry Summer Blow Out 2026", slug: "a2" });
+    const b = await buildVendorInquiryBriefing(db, {
+      id: "i1",
+      fromAddress: "vendor@example.com",
+      subject: DERRY,
+      parsedUrl: null,
+    });
+    expect(b.matchedEvent).toBeNull();
+    const w = b.warnings.join(" ");
+    expect(w).toContain('"summer" (ambiguous)');
+    expect(w).toContain('"derry" (ambiguous)');
+    expect(w).toContain('"blow" (ambiguous)');
+  });
+
+  it("tokens are ordered longest first, de-duplicated and capped", () => {
+    expect(distinctiveTokens(DERRY)).toEqual(["summer", "derry", "blow", "19th"]);
+    expect(distinctiveTokens("alpha alpha bravo")).toEqual(["alpha", "bravo"]);
+    expect(distinctiveTokens("aaaa1 bbbb2 cccc3 dddd4 eeee5 ffff6 gggg7 hhhh8").length).toBe(
+      MAX_SUBJECT_TOKENS
+    );
   });
 });
