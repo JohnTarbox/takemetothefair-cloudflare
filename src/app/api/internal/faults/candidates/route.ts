@@ -319,6 +319,30 @@ export const POST = withInternalKey({ source: "faults:candidates" }, async ({ db
                 count: up.count,
               },
             });
+        } else if (up.op === "link") {
+          // OPE-613 — attach to the sibling route's live ticket. `filed` is the
+          // code's own status for "carries an ope_id"; the agent-written `open`
+          // on the sibling is not copied, because the agent did not rule on
+          // this row.
+          await db
+            .insert(faultSignatures)
+            .values({
+              signature: up.signature,
+              route: up.route,
+              errorClass: up.errorClass,
+              firstSeen: new Date(up.firstSeen),
+              lastSeen: new Date(up.lastSeen),
+              count: up.count,
+              status: "filed",
+              opeId: up.opeId,
+              filedAt: now,
+              resolvedAt: null,
+              createdAt: new Date(up.createdAt),
+            })
+            .onConflictDoUpdate({
+              target: faultSignatures.signature,
+              set: { status: "filed", opeId: up.opeId, filedAt: now },
+            });
         } else if (up.op === "touch") {
           await db
             .update(faultSignatures)
@@ -358,7 +382,8 @@ export const POST = withInternalKey({ source: "faults:candidates" }, async ({ db
         `fault emit: scanned ${rows.length} render rows → ${grouped.length} signatures ` +
         `(noise-suppressed ${suppressedTotal}); toEmit=${result.toEmit.length} ` +
         `regressions=${result.regressions.length} existing=${result.existing.length} ` +
-        `deferred=${result.deferred.length} subThreshold=${result.subThreshold.length}`,
+        `deferred=${result.deferred.length} subThreshold=${result.subThreshold.length} ` +
+        `linked=${result.linked.length} heldForSibling=${result.heldForSibling.length}`,
       context: {
         scanned: rows.length,
         signatures: grouped.length,
@@ -368,6 +393,8 @@ export const POST = withInternalKey({ source: "faults:candidates" }, async ({ db
         existing: result.existing.length,
         deferred: result.deferred.length,
         subThreshold: result.subThreshold.length,
+        linked: result.linked.length,
+        heldForSibling: result.heldForSibling.length,
       },
     });
 
@@ -413,6 +440,10 @@ export const POST = withInternalKey({ source: "faults:candidates" }, async ({ db
       // reported SUCCEEDED with 19 unrouted candidates in the ledger.
       health: buildRailHealth(ledger, result),
       deferred: result.deferred,
+      // OPE-613 — attached to a sibling route's ticket, and held behind a
+      // sibling being filed this run. Neither is work for the rail.
+      linked: result.linked,
+      heldForSibling: result.heldForSibling,
       // OPE-488 — the discarded-but-real groups, so a consumer can tell "quiet
       // traffic" from "everything fell just under the gate". Capped: this is a
       // diagnostic tally, not a work queue.
