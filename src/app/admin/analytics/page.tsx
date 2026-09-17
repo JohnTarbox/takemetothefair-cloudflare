@@ -54,6 +54,7 @@ import {
   type SitemapStatus,
 } from "@/lib/search-console";
 import { computeMilestoneLayout, MILESTONE_CHART_DIMS } from "@/lib/charts/milestone-layout";
+import { toMilestonePoints, type GscMilestonePoint } from "@/lib/charts/milestone-points";
 import { formatDateOnly, formatTimestampForServer } from "@/lib/datetime";
 import {
   isWindowKey,
@@ -1626,14 +1627,14 @@ function GscMilestoneChartCard({ points }: { points: GscMilestonePoint[] }) {
     );
   }
 
-  const sorted = [...points]; // already sorted by emailDate in loader
+  const sorted = [...points]; // already sorted by reached date in loader
   const latest = sorted[sorted.length - 1];
   const earliest = sorted[0];
   // "May ramp" = total threshold growth across May 2026 — the cited story
   // from the email. Defined as (last May threshold) - (last April threshold,
   // or earliest if no April rows). Falls back to 0 if either side is missing.
-  const maySorted = sorted.filter((p) => p.emailDate.startsWith("2026-05"));
-  const aprilOrEarlier = sorted.filter((p) => p.emailDate < "2026-05-01");
+  const maySorted = sorted.filter((p) => p.date.startsWith("2026-05"));
+  const aprilOrEarlier = sorted.filter((p) => p.date < "2026-05-01");
   const mayRamp =
     maySorted.length > 0 && aprilOrEarlier.length > 0
       ? maySorted[maySorted.length - 1].threshold -
@@ -1643,7 +1644,7 @@ function GscMilestoneChartCard({ points }: { points: GscMilestonePoint[] }) {
   // Default the plotted series to the post-launch arc (May 1 onward). Fall
   // back to the full series if that leaves nothing to draw (e.g. a property
   // with only pre-May milestones) so the chart never renders blank.
-  const inRange = sorted.filter((p) => p.emailDate >= MILESTONE_CHART_DEFAULT_START);
+  const inRange = sorted.filter((p) => p.date >= MILESTONE_CHART_DEFAULT_START);
   const chartPoints = inRange.length > 0 ? inRange : sorted;
 
   return (
@@ -1679,18 +1680,14 @@ function GscMilestoneChartCard({ points }: { points: GscMilestonePoint[] }) {
             <p className="text-2xl font-bold text-foreground tabular-nums">
               {fmt(latest.threshold)}
             </p>
-            <p className="text-xs text-muted-foreground">
-              {formatDateOnly(latest.emailDate) || "—"}
-            </p>
+            <p className="text-xs text-muted-foreground">{formatDateOnly(latest.date) || "—"}</p>
           </div>
           <div>
             <p className="text-xs text-muted-foreground">Earliest</p>
             <p className="text-2xl font-bold text-foreground tabular-nums">
               {fmt(earliest.threshold)}
             </p>
-            <p className="text-xs text-muted-foreground">
-              {formatDateOnly(earliest.emailDate) || "—"}
-            </p>
+            <p className="text-xs text-muted-foreground">{formatDateOnly(earliest.date) || "—"}</p>
           </div>
           <div>
             <p className="text-xs text-muted-foreground">Milestones</p>
@@ -1785,7 +1782,7 @@ function MilestoneChart({ points }: { points: GscMilestonePoint[] }) {
       <path d={areaPath} className="fill-blue-100" opacity={0.5} />
       <path d={linePath} className="stroke-blue-600 fill-none" strokeWidth={2} />
       {coords.map((c, i) => (
-        <g key={`${c.emailDate}-${i}`}>
+        <g key={`${c.date}-${i}`}>
           {/* dot — OPE-456: a HOLLOW dot is a crossing we derived from our own
               daily totals; a solid dot is a badge Google actually awarded.
               Shape rather than colour so the distinction survives a greyscale
@@ -1801,7 +1798,7 @@ function MilestoneChart({ points }: { points: GscMilestonePoint[] }) {
               elements and one aria-label on the whole svg, so hovering a dot
               gave nothing and a screen reader got "growth chart" and no data. */}
           <title>
-            {`${fmt(c.threshold)} clicks — ${formatDateOnly(c.emailDate) || c.emailDate}${
+            {`${fmt(c.threshold)} clicks — ${formatDateOnly(c.date) || c.date}${
               c.derived ? " (derived from our own daily totals)" : ""
             }`}
           </title>
@@ -1833,7 +1830,7 @@ function MilestoneChart({ points }: { points: GscMilestonePoint[] }) {
             className="fill-gray-600"
             style={{ fontSize: "11px" }}
           >
-            {formatDateOnly(c.emailDate) || c.emailDate}
+            {formatDateOnly(c.date) || c.date}
           </text>
         );
       })}
@@ -3031,27 +3028,8 @@ async function loadGscMilestones(): Promise<GscMilestonePoint[]> {
       )
     )
     .orderBy(asc(gscMilestoneEmails.emailDate));
-  // The Mar 1 → Mar 5 dip (30 → 20) is a Google send-order artifact, NOT a
-  // real decline. Render faithfully in email_date order — do not smooth or
-  // sort by threshold.
-  return rows.map((r) => ({
-    threshold: r.threshold,
-    emailDate: r.emailDate,
-    reachedDate: r.reachedDate,
-    derived: r.source === DERIVED_MILESTONE_SOURCE,
-  }));
-}
-
-/** OPE-456 — `source` value for a crossing computed from `gsc_daily_totals`
- *  rather than awarded by Google. Matches drizzle/0222. */
-const DERIVED_MILESTONE_SOURCE = "derived_from_gsc_daily_totals";
-
-interface GscMilestonePoint {
-  threshold: number;
-  emailDate: string;
-  reachedDate: string | null;
-  /** True when we computed this crossing ourselves; false = Google badge. */
-  derived: boolean;
+  // OPE-456 — points plot the REACHED date; see toMilestonePoints.
+  return toMilestonePoints(rows);
 }
 
 async function GoogleTab() {
