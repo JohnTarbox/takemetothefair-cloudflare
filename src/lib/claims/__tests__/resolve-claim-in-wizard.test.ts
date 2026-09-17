@@ -477,3 +477,63 @@ describe("resolveClaimInWizard — PROMOTER domain match", () => {
     expect(roleRows(USER).map((r) => r.role)).toContain("PROMOTER");
   });
 });
+
+describe("OPE-1060 — running the wizard again reuses the open claim instead of adding an empty twin", () => {
+  const args = {
+    entityType: "VENDOR" as const,
+    slug: "acme-foods",
+    userId: USER,
+    userEmail: "jane@gmail.com", // freemail → needs_evidence (PENDING EVIDENCE)
+    emailVerified: false,
+  };
+
+  it("two passes → ONE pending row, and the same claim id both times", async () => {
+    seedVendor({ id: "v1", slug: "acme-foods", website: "https://acme.com" });
+    const first = await resolveClaimInWizard(db as never, args);
+    const second = await resolveClaimInWizard(db as never, args);
+    expect(claimsFor("v1").filter((c) => c.status === "PENDING")).toHaveLength(1);
+    expect((second as { claimId?: string }).claimId).toBe((first as { claimId?: string }).claimId);
+  });
+
+  it("evidence submitted, then the wizard again (the prod sequence) → one row, evidence kept", async () => {
+    seedVendor({ id: "v1", slug: "acme-foods" });
+    raw
+      .prepare(
+        `INSERT INTO entity_claims (id, entity_type, entity_id, user_id, method, status, evidence, created_at)
+         VALUES ('c-ev', 'VENDOR', 'v1', ?, 'EVIDENCE', 'PENDING', 'I am the owner', ?)`
+      )
+      .run(USER, Math.floor(Date.now() / 1000));
+    const res = await resolveClaimInWizard(db as never, args);
+    const rows = raw
+      .prepare(`SELECT id, evidence FROM entity_claims WHERE entity_id='v1'`)
+      .all() as Array<{
+      id: string;
+      evidence: string | null;
+    }>;
+    expect(rows).toEqual([{ id: "c-ev", evidence: "I am the owner" }]);
+    expect((res as { claimId?: string }).claimId).toBe("c-ev");
+  });
+
+  it("a DECIDED claim is not reused — a new attempt after a rejection is a new row", async () => {
+    seedVendor({ id: "v1", slug: "acme-foods" });
+    raw
+      .prepare(
+        `INSERT INTO entity_claims (id, entity_type, entity_id, user_id, method, status, created_at, decided_at)
+         VALUES ('c-old', 'VENDOR', 'v1', ?, 'EVIDENCE', 'REJECTED', ?, ?)`
+      )
+      .run(USER, 1, 2);
+    await resolveClaimInWizard(db as never, args);
+    expect(
+      claimsFor("v1")
+        .map((c) => c.status)
+        .sort()
+    ).toEqual(["PENDING", "REJECTED"]);
+  });
+
+  it("a repeated dispute on another user's listing stays ONE disputed row", async () => {
+    seedVendor({ id: "v2", slug: "acme-foods", claimed: true, ownerUserId: "someone-else" });
+    await resolveClaimInWizard(db as never, args);
+    await resolveClaimInWizard(db as never, args);
+    expect(claimsFor("v2").filter((c) => c.status === "DISPUTED")).toHaveLength(1);
+  });
+});
