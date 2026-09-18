@@ -79,6 +79,12 @@ export const POST = withAuthorized(async ({ request, db }) => {
 
   for (const row of rows) {
     const before = parseArray(row.categories);
+    // An event with NO categories is not an off-list category, and this rewrite
+    // was approved as an off-list mapping. `cleanupEventCategories([])` returns
+    // ["Other"] so that a row the map empties is never left blank — but reaching
+    // rows that were already empty would label 92 live events "Other", which is
+    // a content decision nobody has made. Leave them to their own ticket.
+    if (before.length === 0) continue;
     const result = cleanupEventCategories(before);
     const tagsBefore = parseArray(row.tags);
     const tagsAfter = [...tagsBefore];

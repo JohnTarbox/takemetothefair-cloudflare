@@ -175,6 +175,27 @@ describe("POST /api/admin/events/category-cleanup", () => {
     expect(db.select().from(eventCategoryMigrationLog).all()).toHaveLength(0);
   });
 
+  it("leaves an event with NO categories alone — empty is not off-list", async () => {
+    // 92 live rows were in this shape on 2026-09-17. `cleanupEventCategories([])`
+    // returns ["Other"], so without the row-selection guard this rewrite would
+    // have labelled all 92 — a content decision, not the off-list mapping John
+    // ratified.
+    seed("empty", [], ["imported"]);
+    const out = await call({ apply: true });
+    expect(out.planned).toBe(0);
+    expect(JSON.parse(row("empty")!.categories!)).toEqual([]);
+    expect(db.select().from(eventCategoryMigrationLog).all()).toHaveLength(0);
+  });
+
+  it("still rescues a row the MAP empties — that is what ['Other'] is for", async () => {
+    // The other side of the same guard: these values are off-list, all of them
+    // drop to tags, and the row must not be left blank.
+    seed("emptied", ["gifts", "handmade"], []);
+    const out = await call({ apply: true });
+    expect(out.written).toBe(1);
+    expect(JSON.parse(row("emptied")!.categories!)).toEqual(["Other"]);
+  });
+
   it("reports a value nobody anticipated instead of dropping it", async () => {
     seed("odd", ["Craft Fair", "Something Nobody Predicted"], []);
     const out = await call({ apply: true });
