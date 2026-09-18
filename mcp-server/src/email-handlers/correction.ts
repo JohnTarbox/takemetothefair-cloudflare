@@ -53,6 +53,9 @@ import { eq, isNotNull } from "drizzle-orm";
 import { combinedSimilarity } from "@takemetothefair/utils";
 import type { HandlerFn, HandlerResult } from "./types.js";
 import { resolveHeldPhotosFromReply } from "../photo/resolve-held-photos.js";
+import { openObligationIfOwed } from "./open-obligation.js";
+
+const SOURCE = "mcp:email-handler:correction";
 
 const SLUG_URL_RE = /https?:\/\/(?:www\.)?meetmeatthefair\.com\/events\/([a-z0-9][a-z0-9-]*)/i;
 
@@ -185,10 +188,20 @@ export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> =
     createdAt: new Date(),
   });
 
+  // OPE-1066 — the ack is a promise, so record it. Deliberately placed AFTER the
+  // photo-intake branch above: that path resolves the sender's request outright
+  // and tells them the outcome, so nothing is still owed. Everything reaching
+  // here has been acknowledged and deferred to an admin decision that may take
+  // up to seven days, which is exactly the shape OPE-365 made durable.
+  //
+  // This covers `claim_request` too — it rides this handler by design.
+  const obligationRef = await openObligationIfOwed(env, db, row, SOURCE);
+
   return {
     replyKind: "correction-ack",
     replyParams: { subject: row.subject ?? "" },
     status: "replied",
+    crossingDestinationRef: obligationRef,
   };
 };
 

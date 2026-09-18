@@ -11,8 +11,38 @@
  * rows without running the Workflow. This one can.
  */
 
-/** The intents whose handler terminates in an acknowledgement rather than an action. */
-export const ACK_TERMINATING_INTENTS = ["support", "vendor_inquiry", "unclear"] as const;
+/**
+ * The intents whose handler terminates in an acknowledgement rather than an
+ * action — i.e. the sender has been told "we got it" and a human still owes
+ * them the actual answer.
+ *
+ * OPE-1066 added `correction`, `claim_request` and `press`. They belong by the
+ * same test the original three met: `correction.ts` returns `correction-ack`,
+ * `press.ts` returns `press-ack`, and `claim_request` rides the correction
+ * handler. Each one acknowledges and defers — which is exactly the promise
+ * OPE-365 exists to make durable.
+ *
+ * Their absence was not a judgement that they matter less. It was that the
+ * original ticket was scoped to the `support@`/`hello@` handler, and these
+ * three dispatch elsewhere, so nobody had to decide. Twelve human emails in
+ * twenty-one days opened no obligation at all — including the only report that
+ * caught Eagle Shows going out of business, the only report that caught a venue
+ * address four miles wrong six days before the fair, and a `.gov` sender.
+ *
+ * Cold outreach lands here too, and that is intended, not tolerated: nothing in
+ * a classified row distinguishes a pitch from a customer, and closing one as
+ * `not_an_obligation` takes seconds. Filtering at classification time to keep
+ * the queue tidy would rebuild the OPE-365 defect in a new place — a rule that
+ * decides in advance whose message deserves to be counted.
+ */
+export const ACK_TERMINATING_INTENTS = [
+  "support",
+  "vendor_inquiry",
+  "unclear",
+  "correction",
+  "claim_request",
+  "press",
+] as const;
 
 export interface ObligationCandidate {
   fromAddress: string;
