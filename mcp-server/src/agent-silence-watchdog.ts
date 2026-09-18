@@ -57,6 +57,61 @@ export const WATCHDOG_CODE = "watchdog:agent-silence";
  */
 export const SILENCE_THRESHOLD_MS = 26 * 60 * 60 * 1000;
 
+/** One lane we expect to keep checking in, and why it is on the list. */
+export interface LaneExpectation {
+  agentCode: string;
+  why: string;
+}
+
+/**
+ * The lanes expected to heartbeat — DECLARED, not discovered (OPE-1064).
+ *
+ * `decideSilence` asks whether the newest row in the whole table is stale, which
+ * is a question about the agent layer as a whole. It cannot see one lane stop,
+ * because any other lane's fresh row answers it. On 2026-09-18 the table held
+ * `developer-cardworks` at 49.8h and `developer-claude-code` at 28.3h — both
+ * past the threshold, both invisible, the check green for days.
+ *
+ * The roster has to be a list rather than "whatever is in the table", because
+ * the strongest silence signal is a lane that is not there at all: a lane whose
+ * row was never written, or dropped, produces no row to be stale. A check built
+ * from the table's own contents can never notice an absence.
+ *
+ * Adding a lane here is the act that puts it under watch. Taking one off is a
+ * deliberate statement that nobody should expect to hear from it again.
+ *
+ * Seeded from the five `kind='agent'` rows live in production on 2026-09-18.
+ */
+export const EXPECTED_AGENT_LANES: readonly LaneExpectation[] = [
+  { agentCode: "developer-claude-code", why: "MMATF developer lane (takemetothefair-cloudflare)" },
+  { agentCode: "developer-cardworks", why: "Cardworks developer lane (mainecardworks-mono)" },
+  { agentCode: "developer-w1fca", why: "w1fca developer lane" },
+  { agentCode: "analyst-claude-desktop", why: "scheduled queue runner, lane A" },
+  { agentCode: "analyst-cardworks", why: "scheduled queue runner, lane B" },
+];
+
+/**
+ * Per-lane staleness threshold.
+ *
+ * Deliberately the same 26h as the global check, and here is the reasoning
+ * rather than the inheritance (OPE-1064 acceptance 3):
+ *
+ * The watchdog runs once a day, at 08:00 UTC. A lane that runs once a day but
+ * drifts in time-of-day can legitimately be almost 24h stale at the moment we
+ * look — a lane that ran at 09:00 yesterday is 23h old when checked at 08:00
+ * today, and has done nothing wrong. Any threshold below 24h therefore alarms
+ * on a healthy daily lane, and an alarm that cries wolf is how this class of
+ * check gets ignored. 26h is 24h plus the same 2h of jitter slack the global
+ * threshold uses, and it costs at most two hours of detection delay.
+ *
+ * What would justify changing it: a lane with a *declared* cadence other than
+ * daily. None of the five has one recorded anywhere machine-readable today —
+ * `agent_heartbeats` is an upsert with no history, so cadence cannot be
+ * derived from it either. When a cadence is written down, give that lane its
+ * own threshold here rather than moving everyone's.
+ */
+export const LANE_SILENCE_THRESHOLD_MS = SILENCE_THRESHOLD_MS;
+
 /** Friday. `getUTCDay()` is 0=Sunday. */
 const FRIDAY = 5;
 
@@ -118,6 +173,16 @@ export interface WatchdogRunOptions {
   drill?: boolean;
   /** Compute and report the verdict without enqueuing anything. */
   dryRun?: boolean;
+  /**
+   * Which lanes to expect (OPE-1064). Defaults to `EXPECTED_AGENT_LANES`.
+   *
+   * Injectable for the same reason the clock is: the per-lane check's most
+   * important case is a lane that is ABSENT, and a test cannot construct an
+   * absence against a roster it cannot name. A fixture that seeds one lane is
+   * declaring a one-lane expectation, and saying so is clearer than letting it
+   * silently inherit production's five.
+   */
+  roster?: readonly LaneExpectation[];
 }
 
 /** What a run decided and did — returned so a drill can be reported honestly. */
@@ -133,6 +198,19 @@ export interface WatchdogRunResult {
   newestSeenAt: string | null;
   staleHours: number | null;
   agentCode: string | null;
+  /**
+   * OPE-1064. How many roster lanes were examined — reported so that an empty
+   * or gutted roster shows up as "0 lanes" rather than as a clean bill of
+   * health. A check whose success mode is silence must say what it looked at.
+   */
+  lanesChecked: number;
+  /** Roster lanes stale or absent, worst first. Empty on a healthy run. */
+  laneFailures: Array<{ agentCode: string; staleHours: number | null; missing: boolean }>;
+  /**
+   * Lanes heartbeating that nobody declared. Not an alert — a new lane is
+   * normal — but reported so the roster cannot silently rot behind the table.
+   */
+  unrosteredLanes: string[];
   drill: boolean;
   dryRun: boolean;
 }
@@ -160,6 +238,63 @@ export function decideSilence(
     staleHours: Math.floor(ageMs / (60 * 60 * 1000)),
     agentCode: newest.agentCode,
   };
+}
+
+/** One roster lane's freshness. `missing` and `stale` are different failures. */
+export interface LaneVerdict {
+  agentCode: string;
+  /** null when the lane has no row at all — it has never checked in. */
+  lastSeenAt: Date | null;
+  staleHours: number | null;
+  stale: boolean;
+  missing: boolean;
+}
+
+/**
+ * Per-lane decision (OPE-1064). Pure, like `decideSilence`, so the roster and
+ * the threshold can be exercised without a clock or a DB.
+ *
+ * Returns a verdict for EVERY roster lane, failing or not, so the caller can
+ * report how many lanes were actually examined. That count is the guard against
+ * the quiet way this check dies: an empty roster would make it pass forever,
+ * and "0 of 0 lanes healthy" is only visibly wrong if the number is reported.
+ *
+ * Unlike `decideSilence`, a missing lane FIRES. There is no adoption grace
+ * period here — a lane earns its place on the roster by being expected, and the
+ * moment it is expected, never having heard from it is the loudest signal
+ * available, not the quietest.
+ */
+export function decidePerLaneSilence(
+  rows: ReadonlyArray<{ agentCode: string; lastSeenAt: Date }>,
+  now: Date,
+  thresholdMs: number = LANE_SILENCE_THRESHOLD_MS,
+  roster: readonly LaneExpectation[] = EXPECTED_AGENT_LANES
+): LaneVerdict[] {
+  const seen = new Map(rows.map((r) => [r.agentCode, r.lastSeenAt]));
+  return roster.map(({ agentCode }) => {
+    const lastSeenAt = seen.get(agentCode) ?? null;
+    if (!lastSeenAt) {
+      return { agentCode, lastSeenAt: null, staleHours: null, stale: false, missing: true };
+    }
+    const ageMs = now.getTime() - lastSeenAt.getTime();
+    return {
+      agentCode,
+      lastSeenAt,
+      staleHours: Math.floor(ageMs / (60 * 60 * 1000)),
+      stale: ageMs > thresholdMs,
+      missing: false,
+    };
+  });
+}
+
+/** Roster lanes that are stale or absent, worst (oldest) first. */
+export function failingLanes(verdicts: readonly LaneVerdict[]): LaneVerdict[] {
+  return verdicts
+    .filter((v) => v.stale || v.missing)
+    .sort(
+      (a, b) =>
+        (b.staleHours ?? Number.MAX_SAFE_INTEGER) - (a.staleHours ?? Number.MAX_SAFE_INTEGER)
+    );
 }
 
 /** Should the newsletter tripwire run and, if so, did compose happen? */
@@ -218,17 +353,25 @@ export async function runAgentSilenceWatchdog(
   const dryRun = options.dryRun === true;
 
   let newest: { agentCode: string; lastSeenAt: Date } | null = null;
+  let agentRows: Array<{ agentCode: string; lastSeenAt: Date }> = [];
   try {
-    const [row] = await db
+    // Every agent row, not just the newest (OPE-1064). One read answers both
+    // questions: `decideSilence` still asks "is the whole layer dark?" from the
+    // newest of these, and the per-lane check asks it of each lane separately.
+    // The set is five rows, so reading it whole costs nothing.
+    const rows = await db
       .select({ agentCode: agentHeartbeats.agentCode, lastSeenAt: agentHeartbeats.lastSeenAt })
       .from(agentHeartbeats)
       // kind='agent' ONLY. Including the watchdog's own stamps would make the
       // table look alive every time this function runs — the failure mode this
       // whole file exists to avoid.
       .where(eq(agentHeartbeats.kind, "agent"))
-      .orderBy(desc(agentHeartbeats.lastSeenAt))
-      .limit(1);
-    if (row?.lastSeenAt) newest = { agentCode: row.agentCode, lastSeenAt: row.lastSeenAt };
+      .orderBy(desc(agentHeartbeats.lastSeenAt));
+    agentRows = rows.filter(
+      (r): r is { agentCode: string; lastSeenAt: Date } => r.lastSeenAt instanceof Date
+    );
+    const [row] = agentRows;
+    if (row) newest = { agentCode: row.agentCode, lastSeenAt: row.lastSeenAt };
   } catch (error) {
     await logError(env.DB, {
       source: SOURCE,
@@ -245,12 +388,27 @@ export async function runAgentSilenceWatchdog(
       newestSeenAt: null,
       staleHours: null,
       agentCode: null,
+      lanesChecked: 0,
+      laneFailures: [],
+      unrosteredLanes: [],
       drill,
       dryRun,
     };
   }
 
   const verdict = decideSilence(newest, now, options.thresholdMs);
+
+  // Per-lane check (OPE-1064) — the one the global verdict above cannot make.
+  const roster = options.roster ?? EXPECTED_AGENT_LANES;
+  const laneVerdicts = decidePerLaneSilence(agentRows, now, options.thresholdMs, roster);
+  const failing = failingLanes(laneVerdicts);
+  const rosterCodes = new Set(roster.map((l) => l.agentCode));
+  const unrosteredLanes = agentRows.map((r) => r.agentCode).filter((c) => !rosterCodes.has(c));
+  const laneFailures = failing.map((v) => ({
+    agentCode: v.agentCode,
+    staleHours: v.staleHours,
+    missing: v.missing,
+  }));
 
   // Newsletter tripwire — a separate question from agent liveness, because the
   // compose can fail on its own while everything else runs.
@@ -280,7 +438,7 @@ export async function runAgentSilenceWatchdog(
   let subject: string | null = null;
   const recipients = env.ALERT_EMAIL_TECHNICAL ?? null;
 
-  if (verdict.silent || newsletterMissing || newsletterUnsent) {
+  if (verdict.silent || failing.length > 0 || newsletterMissing || newsletterUnsent) {
     const lines: string[] = [];
     if (verdict.silent) {
       lines.push(
@@ -288,6 +446,24 @@ export async function runAgentSilenceWatchdog(
           `(newest: ${verdict.agentCode} at ${verdict.newestSeenAt?.toISOString()}).`,
         "Likely Anthropic quota exhaustion or a trigger outage. Scheduled sessions are probably not running at all."
       );
+    }
+    // Named lanes, separately from the layer-wide verdict. A layer-wide outage
+    // and one lane stopping have different causes and different fixes, so the
+    // mail says which lanes rather than leaving John to open the table.
+    if (failing.length > 0) {
+      lines.push(
+        `${failing.length} of ${laneVerdicts.length} expected lanes are not checking in:`,
+        ...failing.map((v) =>
+          v.missing
+            ? `  • ${v.agentCode} — NEVER checked in (no row at all).`
+            : `  • ${v.agentCode} — silent ${v.staleHours}h (last seen ${v.lastSeenAt?.toISOString()}).`
+        )
+      );
+      if (!verdict.silent) {
+        lines.push(
+          "The agent layer as a whole is alive — other lanes are heartbeating normally — so this is these lanes specifically, not a quota outage."
+        );
+      }
     }
     if (newsletterMissing) {
       lines.push(
@@ -309,9 +485,13 @@ export async function runAgentSilenceWatchdog(
       (drill ? "[DRILL] " : "") +
       (verdict.silent
         ? `🚨 Agent layer silent for ${verdict.staleHours}h`
-        : newsletterMissing
-          ? "🚨 Newsletter not composed this week"
-          : "🚨 Newsletter composed but NOT SENT");
+        : failing.length > 0
+          ? `🚨 ${failing.length} agent lane${failing.length === 1 ? "" : "s"} silent: ${failing
+              .map((v) => `${v.agentCode} ${v.missing ? "never" : `${v.staleHours}h`}`)
+              .join(", ")}`
+          : newsletterMissing
+            ? "🚨 Newsletter not composed this week"
+            : "🚨 Newsletter composed but NOT SENT");
 
     const to = env.ALERT_EMAIL_TECHNICAL;
     if (dryRun) {
@@ -326,6 +506,9 @@ export async function runAgentSilenceWatchdog(
         newestSeenAt: verdict.newestSeenAt?.toISOString() ?? null,
         staleHours: verdict.staleHours,
         agentCode: verdict.agentCode,
+        lanesChecked: laneVerdicts.length,
+        laneFailures,
+        unrosteredLanes,
         drill,
         dryRun,
       };
@@ -357,7 +540,8 @@ export async function runAgentSilenceWatchdog(
     }
   } else {
     console.log(
-      `[cron] agent-silence ok — newest=${verdict.newestSeenAt?.toISOString() ?? "none"}`
+      `[cron] agent-silence ok — newest=${verdict.newestSeenAt?.toISOString() ?? "none"}, ` +
+        `${laneVerdicts.length} lanes checked, 0 failing`
     );
   }
 
@@ -381,11 +565,21 @@ export async function runAgentSilenceWatchdog(
       newestSeenAt: verdict.newestSeenAt?.toISOString() ?? null,
       staleHours: verdict.staleHours,
       agentCode: verdict.agentCode,
+      lanesChecked: laneVerdicts.length,
+      laneFailures,
+      unrosteredLanes,
       drill,
       dryRun,
     };
   }
 
+  // The note carries WHAT WAS CHECKED, not just the verdict (OPE-1064). A
+  // roster that got emptied would otherwise leave this row reading "ok"
+  // forever; "ok 0/0 lanes" is visibly wrong at a glance.
+  const stampNote =
+    verdict.silent || laneFailures.length > 0
+      ? `alerted ${laneFailures.length}/${laneVerdicts.length} lanes failing`
+      : `ok ${laneVerdicts.length}/${laneVerdicts.length} lanes fresh`;
   try {
     await db
       .insert(agentHeartbeats)
@@ -394,11 +588,11 @@ export async function runAgentSilenceWatchdog(
         agentCode: WATCHDOG_CODE,
         kind: "watchdog",
         lastSeenAt: now,
-        note: verdict.silent ? "alerted" : "ok",
+        note: stampNote,
       })
       .onConflictDoUpdate({
         target: agentHeartbeats.agentCode,
-        set: { lastSeenAt: now, kind: "watchdog", note: verdict.silent ? "alerted" : "ok" },
+        set: { lastSeenAt: now, kind: "watchdog", note: stampNote },
       });
   } catch (error) {
     await logError(env.DB, {
@@ -418,6 +612,9 @@ export async function runAgentSilenceWatchdog(
     newestSeenAt: verdict.newestSeenAt?.toISOString() ?? null,
     staleHours: verdict.staleHours,
     agentCode: verdict.agentCode,
+    lanesChecked: laneVerdicts.length,
+    laneFailures,
+    unrosteredLanes,
     drill,
     dryRun,
   };

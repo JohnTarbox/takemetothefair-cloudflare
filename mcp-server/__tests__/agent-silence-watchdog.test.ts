@@ -2,9 +2,13 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import {
   decideSilence,
+  decidePerLaneSilence,
+  failingLanes,
   decideNewsletterMissing,
   decideNewsletterUnsent,
+  EXPECTED_AGENT_LANES,
   SILENCE_THRESHOLD_MS,
+  LANE_SILENCE_THRESHOLD_MS,
   NEWSLETTER_LOOKBACK_MS,
   runAgentSilenceWatchdog,
 } from "../src/agent-silence-watchdog.js";
@@ -18,6 +22,17 @@ vi.mock("../src/db.js", () => ({ getDb: () => harness.db }));
 
 const at = (iso: string) => new Date(iso);
 const hoursAgo = (now: Date, h: number) => new Date(now.getTime() - h * 60 * 60 * 1000);
+
+/**
+ * OPE-1064 — the roster these end-to-end fixtures actually seed.
+ *
+ * Passed explicitly rather than inherited from `EXPECTED_AGENT_LANES`, because
+ * these tests seed ONE lane and production expects five: without it they would
+ * be asserting "no alert" while four lanes read as never-seen, which is the
+ * alert working correctly. Naming the roster keeps each test about the thing it
+ * claims to be about.
+ */
+const SOLO_ROSTER = [{ agentCode: "developer-claude-code", why: "test fixture" }] as const;
 
 describe("decideSilence (OPE-348)", () => {
   const now = at("2026-08-09T08:00:00Z");
@@ -288,14 +303,16 @@ describe("runAgentSilenceWatchdog drill mode (OPE-348)", () => {
       audience: "weekend",
       createdAt: new Date(),
     });
-    await runAgentSilenceWatchdog(env);
+    await runAgentSilenceWatchdog(env, { roster: SOLO_ROSTER });
 
     const [row] = await db
       .select()
       .from(agentHeartbeats)
       .where(eq(agentHeartbeats.agentCode, "watchdog:agent-silence"));
     expect(row).toBeDefined();
-    expect(row.note).toBe("ok");
+    // OPE-1064: the stamp records WHAT WAS CHECKED, not just the verdict, so a
+    // roster that got emptied reads "0/0" here instead of a clean "ok".
+    expect(row.note).toBe("ok 1/1 lanes fresh");
     expect(sent).toHaveLength(0);
   });
 
@@ -318,6 +335,7 @@ describe("runAgentSilenceWatchdog drill mode (OPE-348)", () => {
       thresholdMs: Number.MAX_SAFE_INTEGER,
       drill: true,
       dryRun: false,
+      roster: SOLO_ROSTER,
     });
 
     expect(result.silent).toBe(false);
@@ -332,9 +350,235 @@ describe("runAgentSilenceWatchdog drill mode (OPE-348)", () => {
       now: at("2026-08-11T16:00:00Z"),
       drill: true,
       dryRun: false,
+      roster: SOLO_ROSTER,
     });
     expect(result.silent).toBe(false);
     expect(result.alerted).toBe(false);
     expect(sent).toHaveLength(0);
+  });
+});
+
+/**
+ * OPE-1064 — the per-lane check.
+ *
+ * `decideSilence` asks "is the newest row in the table stale?", which is a
+ * question about the agent layer as a whole. Every test below describes a table
+ * that answers YES to that question — some lane is fresh — while a lane that
+ * matters has stopped. That combination is the defect: on 2026-09-18 production
+ * held `developer-cardworks` at 49.8h and `developer-claude-code` at 28.3h with
+ * the check green, because three other lanes were heartbeating normally.
+ */
+describe("decidePerLaneSilence (OPE-1064)", () => {
+  const now = at("2026-09-18T08:00:00Z");
+  const roster = [
+    { agentCode: "lane-a", why: "test" },
+    { agentCode: "lane-b", why: "test" },
+  ];
+
+  it("catches ONE stale lane while the layer as a whole looks alive", () => {
+    const rows = [
+      { agentCode: "lane-a", lastSeenAt: hoursAgo(now, 1) },
+      { agentCode: "lane-b", lastSeenAt: hoursAgo(now, 49) },
+    ];
+    // The landmark: the global check is satisfied by lane-a and says nothing.
+    expect(decideSilence(rows[0], now).silent).toBe(false);
+    // The per-lane check is not.
+    const failing = failingLanes(decidePerLaneSilence(rows, now, undefined, roster));
+    expect(failing.map((f) => f.agentCode)).toEqual(["lane-b"]);
+    expect(failing[0].staleHours).toBe(49);
+    expect(failing[0].missing).toBe(false);
+  });
+
+  it("fires for a lane with NO row at all — the signal a MAX can never see", () => {
+    // An absent lane produces no row to be stale, so a check built from the
+    // table's own contents is blind to it however the threshold is tuned.
+    const rows = [{ agentCode: "lane-a", lastSeenAt: hoursAgo(now, 1) }];
+    const failing = failingLanes(decidePerLaneSilence(rows, now, undefined, roster));
+    expect(failing).toHaveLength(1);
+    expect(failing[0]).toMatchObject({
+      agentCode: "lane-b",
+      missing: true,
+      stale: false,
+      lastSeenAt: null,
+      staleHours: null,
+    });
+  });
+
+  it("is quiet when every rostered lane is fresh", () => {
+    const rows = [
+      { agentCode: "lane-a", lastSeenAt: hoursAgo(now, 1) },
+      { agentCode: "lane-b", lastSeenAt: hoursAgo(now, 25) },
+    ];
+    expect(failingLanes(decidePerLaneSilence(rows, now, undefined, roster))).toEqual([]);
+  });
+
+  it("holds the 26h line per lane, from both sides", () => {
+    const justUnder = new Date(now.getTime() - LANE_SILENCE_THRESHOLD_MS + 60_000);
+    const justOver = new Date(now.getTime() - LANE_SILENCE_THRESHOLD_MS - 60_000);
+    const one = [{ agentCode: "lane-a", why: "test" }];
+    expect(
+      decidePerLaneSilence([{ agentCode: "lane-a", lastSeenAt: justUnder }], now, undefined, one)[0]
+        .stale
+    ).toBe(false);
+    expect(
+      decidePerLaneSilence([{ agentCode: "lane-a", lastSeenAt: justOver }], now, undefined, one)[0]
+        .stale
+    ).toBe(true);
+  });
+
+  it("ignores lanes nobody put on the roster", () => {
+    // A lane heartbeating that we never declared is not a failure. It is
+    // surfaced separately by the run so the roster cannot rot unnoticed, but it
+    // must not generate an alert on its own.
+    const rows = [
+      { agentCode: "lane-a", lastSeenAt: hoursAgo(now, 1) },
+      { agentCode: "lane-b", lastSeenAt: hoursAgo(now, 1) },
+      { agentCode: "some-new-lane", lastSeenAt: hoursAgo(now, 99) },
+    ];
+    expect(failingLanes(decidePerLaneSilence(rows, now, undefined, roster))).toEqual([]);
+  });
+
+  it("reports worst first, so the subject line leads with the longest outage", () => {
+    const three = [...roster, { agentCode: "lane-c", why: "test" }];
+    const rows = [
+      { agentCode: "lane-a", lastSeenAt: hoursAgo(now, 30) },
+      { agentCode: "lane-b", lastSeenAt: hoursAgo(now, 60) },
+    ];
+    const failing = failingLanes(decidePerLaneSilence(rows, now, undefined, three));
+    // lane-c is MISSING, which outranks any finite staleness.
+    expect(failing.map((f) => f.agentCode)).toEqual(["lane-c", "lane-b", "lane-a"]);
+  });
+
+  it("the production roster is non-empty and unique", () => {
+    // The quiet way this check dies: an empty roster passes every run forever.
+    expect(EXPECTED_AGENT_LANES.length).toBeGreaterThan(0);
+    const codes = EXPECTED_AGENT_LANES.map((l) => l.agentCode);
+    expect(new Set(codes).size).toBe(codes.length);
+    for (const lane of EXPECTED_AGENT_LANES) expect(lane.why.length).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * OPE-1064 end-to-end — the alarm the old code could not raise, through the
+ * real function: read, decide, compose, enqueue.
+ *
+ * Every fixture here reproduces the production shape of 2026-09-18: some lanes
+ * fresh, one lane dark. The old check reported healthy on exactly this table.
+ */
+describe("runAgentSilenceWatchdog per-lane alerting (OPE-1064)", () => {
+  let db: any;
+  let sent: any[];
+  let env: any;
+
+  const seedHeartbeat = async (agentCode: string, kind: string, lastSeenAt: Date) =>
+    db.insert(agentHeartbeats).values({ id: crypto.randomUUID(), agentCode, kind, lastSeenAt });
+
+  const roster = [
+    { agentCode: "analyst-cardworks", why: "test" },
+    { agentCode: "developer-cardworks", why: "test" },
+  ];
+  const now = at("2026-09-18T08:00:00Z");
+
+  beforeEach(() => {
+    ({ db: harness.db } = createTestDb());
+    db = harness.db;
+    sent = [];
+    env = {
+      DB: {} as any,
+      EMAIL_JOBS: {
+        send: async (m: any) => {
+          sent.push(m);
+        },
+      },
+      ALERT_EMAIL_TECHNICAL: "alert@meetmeatthefair.com, jtarboxme@gmail.com",
+    };
+    // This week's issue, so the Friday newsletter tripwire cannot be the thing
+    // producing the mail these tests assert on.
+    return db.insert(newsletterIssues).values({
+      id: crypto.randomUUID(),
+      slug: "issue-current-week",
+      subject: "Weekend picks",
+      html: "<p>hi</p>",
+      audience: "weekend",
+      createdAt: new Date(now.getTime() - 60 * 60 * 1000),
+      sentAt: new Date(now.getTime() - 30 * 60 * 1000),
+    });
+  });
+
+  it("alerts on one dark lane while the layer-wide check stays quiet", async () => {
+    await seedHeartbeat("analyst-cardworks", "agent", hoursAgo(now, 1)); // fresh
+    await seedHeartbeat("developer-cardworks", "agent", hoursAgo(now, 49)); // dark
+
+    const result = await runAgentSilenceWatchdog(env, { now, roster, drill: true, dryRun: false });
+
+    // The whole point: the OLD verdict is false and the run still alerts.
+    expect(result.silent).toBe(false);
+    expect(result.alerted).toBe(true);
+    expect(result.lanesChecked).toBe(2);
+    expect(result.laneFailures).toEqual([
+      { agentCode: "developer-cardworks", staleHours: 49, missing: false },
+    ]);
+    expect(sent).toHaveLength(1);
+    expect(sent[0].subject).toBe("[DRILL] 🚨 1 agent lane silent: developer-cardworks 49h");
+    expect(sent[0].text).toContain("developer-cardworks");
+    // It must say this is NOT a quota outage, or John chases the wrong cause.
+    expect(sent[0].text).toContain("not a quota outage");
+  });
+
+  it("alerts on a lane that has never checked in at all", async () => {
+    await seedHeartbeat("analyst-cardworks", "agent", hoursAgo(now, 1));
+
+    const result = await runAgentSilenceWatchdog(env, { now, roster, drill: true, dryRun: false });
+
+    expect(result.silent).toBe(false);
+    expect(result.alerted).toBe(true);
+    expect(result.laneFailures).toEqual([
+      { agentCode: "developer-cardworks", staleHours: null, missing: true },
+    ]);
+    expect(sent[0].subject).toBe("[DRILL] 🚨 1 agent lane silent: developer-cardworks never");
+    expect(sent[0].text).toContain("NEVER checked in");
+  });
+
+  it("stays quiet when every rostered lane is fresh, and says how many it checked", async () => {
+    await seedHeartbeat("analyst-cardworks", "agent", hoursAgo(now, 1));
+    await seedHeartbeat("developer-cardworks", "agent", hoursAgo(now, 25));
+
+    const result = await runAgentSilenceWatchdog(env, { now, roster, dryRun: false });
+
+    expect(result.alerted).toBe(false);
+    expect(sent).toHaveLength(0);
+    expect(result.lanesChecked).toBe(2);
+    expect(result.laneFailures).toEqual([]);
+
+    const [row] = await db
+      .select()
+      .from(agentHeartbeats)
+      .where(eq(agentHeartbeats.agentCode, "watchdog:agent-silence"));
+    // The evidence row says WHAT WAS CHECKED. A gutted roster would read "0/0".
+    expect(row.note).toBe("ok 2/2 lanes fresh");
+  });
+
+  it("records the lane count in the stamp when it DOES alert", async () => {
+    await seedHeartbeat("analyst-cardworks", "agent", hoursAgo(now, 1));
+    await seedHeartbeat("developer-cardworks", "agent", hoursAgo(now, 49));
+
+    await runAgentSilenceWatchdog(env, { now, roster, dryRun: false });
+
+    const [row] = await db
+      .select()
+      .from(agentHeartbeats)
+      .where(eq(agentHeartbeats.agentCode, "watchdog:agent-silence"));
+    expect(row.note).toBe("alerted 1/2 lanes failing");
+  });
+
+  it("surfaces an undeclared lane without alerting on it", async () => {
+    await seedHeartbeat("analyst-cardworks", "agent", hoursAgo(now, 1));
+    await seedHeartbeat("developer-cardworks", "agent", hoursAgo(now, 1));
+    await seedHeartbeat("brand-new-lane", "agent", hoursAgo(now, 99));
+
+    const result = await runAgentSilenceWatchdog(env, { now, roster, dryRun: false });
+
+    expect(result.alerted).toBe(false);
+    expect(result.unrosteredLanes).toEqual(["brand-new-lane"]);
   });
 });
