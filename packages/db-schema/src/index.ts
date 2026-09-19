@@ -2017,6 +2017,11 @@ export const eventDays = sqliteTable("event_days", {
   // docs/runbooks/dq4-9-5-daily-sweep.md.
   openTime: text("open_time"), // "HH:MM" 24-hour format, or NULL
   closeTime: text("close_time"), // "HH:MM" 24-hour format, or NULL
+  // OPE-1069 (drizzle/0297) — 1 when a writer LOOKED and the organizer
+  // publishes no closing time. Distinguishes a settled finding from a research
+  // gap: a NULL close_time with this set is NOT "hours unknown" for the review
+  // flag (hours-review-flag.ts), and renders as "no published closing time".
+  closeTimeUnpublished: integer("close_time_unpublished").notNull().default(0),
   notes: text("notes"),
   /**
    * OPE-572 — operator/provenance notes for this day. NEVER rendered publicly.

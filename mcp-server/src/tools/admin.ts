@@ -32,7 +32,11 @@ import {
   VALID_TRANSITIONS,
   reportedNewValue,
 } from "../helpers.js";
-import { citationSupersedeScope, rosterResearchTargetWhere } from "@takemetothefair/db-schema";
+import {
+  citationSupersedeScope,
+  dayHoursUnknown,
+  rosterResearchTargetWhere,
+} from "@takemetothefair/db-schema";
 import {
   fetchImageWithFallback,
   findPromoterDuplicates,
@@ -220,6 +224,26 @@ function petFriendlyParamError(
       : null;
   }
   return petFriendlyWriteError(value, evidence ?? null);
+}
+
+/**
+ * OPE-1069 — "the organizer publishes no closing time" is a claim about a
+ * source, so it needs one: refuse it alongside a close time (a contradiction)
+ * or without notes saying where the writer looked.
+ */
+function closeTimeUnpublishedError(args: {
+  closeTimeUnpublished: boolean;
+  closeTime: string | null;
+  internalNotes: string | null;
+}): string | null {
+  if (!args.closeTimeUnpublished) return null;
+  if (args.closeTime) {
+    return "close_time_unpublished=true contradicts a close_time — omit close_time (or pass null) when the organizer publishes none.";
+  }
+  if (!args.internalNotes?.trim()) {
+    return "close_time_unpublished=true needs internal_notes saying where you looked (the organizer page and what it says), so the finding can be checked later.";
+  }
+  return null;
 }
 
 export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext, env?: Env) {
@@ -5217,6 +5241,14 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       // OPE-572 — the missing home for day-level provenance. 44 rows leaked
       // `Source: …` audit prose onto live pages because `notes` was the only
       // writable text field on the row.
+      // OPE-1069 — the organizer publishes no closing time (a settled
+      // finding), as distinct from "we have not found it" (a research gap).
+      close_time_unpublished: z
+        .boolean()
+        .optional()
+        .describe(
+          "OPE-1069: true when you LOOKED at the organizer's own site and it publishes no closing time. Leave close_time empty; the day then does NOT raise flagged_for_review and renders 'no published closing time'. Requires internal_notes saying where you looked. Omit (not false) when you simply have not found it — that is the research gap the flag exists for."
+        ),
       internal_notes: z
         .string()
         .transform(decodeHtmlEntities)
@@ -5282,7 +5314,17 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
 
       const openTime = params.open_time ?? null;
       const closeTime = params.close_time ?? null;
-      const hoursUnknown = openTime == null || closeTime == null;
+      const closeTimeUnpublished = params.close_time_unpublished === true;
+      const unpublishedRefusal = closeTimeUnpublishedError({
+        closeTimeUnpublished,
+        closeTime,
+        internalNotes: params.internal_notes ?? null,
+      });
+      if (unpublishedRefusal) {
+        return { content: [{ type: "text", text: unpublishedRefusal }], isError: true };
+      }
+      // OPE-1069 — the SHARED per-row rule, not an inline copy of it.
+      const hoursUnknown = dayHoursUnknown({ openTime, closeTime, closeTimeUnpublished });
 
       if (existingDay.length > 0) {
         // Idempotent no-op: the day already exists. Editing it is
@@ -5327,6 +5369,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           closeTime,
           notes: params.notes ?? null,
           internalNotes: params.internal_notes ?? null,
+          closeTimeUnpublished: closeTimeUnpublished ? 1 : 0,
           vendorOnly: params.vendor_only ?? false,
           // F2: per-day image; DB defaults take over when omitted.
           ...(params.image_url !== undefined && { imageUrl: params.image_url }),
@@ -5412,6 +5455,14 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       // OPE-572 — the missing home for day-level provenance. 44 rows leaked
       // `Source: …` audit prose onto live pages because `notes` was the only
       // writable text field on the row.
+      // OPE-1069 — the organizer publishes no closing time (a settled
+      // finding), as distinct from "we have not found it" (a research gap).
+      close_time_unpublished: z
+        .boolean()
+        .optional()
+        .describe(
+          "OPE-1069: true when you LOOKED at the organizer's own site and it publishes no closing time. Leave close_time empty; the day then does NOT raise flagged_for_review and renders 'no published closing time'. Requires internal_notes saying where you looked. Omit (not false) when you simply have not found it — that is the research gap the flag exists for."
+        ),
       internal_notes: z
         .string()
         .transform(decodeHtmlEntities)
@@ -5464,6 +5515,23 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       if (params.notes !== undefined) updates.notes = params.notes;
       if (params.internal_notes !== undefined) updates.internalNotes = params.internal_notes;
       if (params.closed !== undefined) updates.closed = params.closed;
+      // OPE-1069 — a published close time supersedes an "unpublished" finding;
+      // setting the finding needs provenance (this call's or the row's notes).
+      if (typeof params.close_time === "string") updates.closeTimeUnpublished = 0;
+      if (params.close_time_unpublished !== undefined) {
+        const [cur] = await db
+          .select({ closeTime: eventDays.closeTime, internalNotes: eventDays.internalNotes })
+          .from(eventDays)
+          .where(eq(eventDays.id, params.day_id))
+          .limit(1);
+        const refusal = closeTimeUnpublishedError({
+          closeTimeUnpublished: params.close_time_unpublished,
+          closeTime: params.close_time !== undefined ? params.close_time : (cur?.closeTime ?? null),
+          internalNotes: params.internal_notes ?? cur?.internalNotes ?? null,
+        });
+        if (refusal) return { content: [{ type: "text", text: refusal }], isError: true };
+        updates.closeTimeUnpublished = params.close_time_unpublished ? 1 : 0;
+      }
       if (params.vendor_only !== undefined) updates.vendorOnly = params.vendor_only;
       // F2 — per-occurrence image. Same null-vs-undefined distinction
       // as the DQ4 time args.

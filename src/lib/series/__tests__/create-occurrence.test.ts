@@ -44,6 +44,7 @@ const SCHEMA_SQL = `
     date TEXT NOT NULL,
     open_time TEXT,
     close_time TEXT,
+    close_time_unpublished INTEGER NOT NULL DEFAULT 0,
     notes TEXT,
     internal_notes TEXT,
     closed INTEGER DEFAULT 0,
