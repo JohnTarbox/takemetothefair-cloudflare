@@ -9,6 +9,7 @@
  * with `asOccurrence`, instead of falling back to the series-landing metadata.
  * The page body (`EventDetailPage`) imports `getEvent` from here unchanged.
  */
+import { stripPrivateDayFields } from "@/lib/events/public-day-fields";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { eq, and, ne, sql, isNull, inArray } from "drizzle-orm";
@@ -127,11 +128,20 @@ async function getEventOnce(slug: string) {
     const parentById = new Map(parentRows.map((p) => [p.id, p]));
 
     // Get event days (per-day schedule)
-    const eventDayResults = await db
-      .select()
-      .from(eventDays)
-      .where(eq(eventDays.eventId, eventData.events.id))
-      .orderBy(eventDays.date);
+    //
+    // OPE-1084 — `internal_notes` is a PRIVATE operator column (OPE-572:
+    // hours provenance, fetch dates, submitter details). These rows are handed
+    // to client components (DailyScheduleDisplay is "use client"), and every
+    // prop a client component receives is serialized into the page's RSC
+    // payload — so a full-row select shipped 309 private notes in page source.
+    // Nulled HERE, at the one loader, so no consumer can pass it on.
+    const eventDayResults = (
+      await db
+        .select()
+        .from(eventDays)
+        .where(eq(eventDays.eventId, eventData.events.id))
+        .orderBy(eventDays.date)
+    ).map(stripPrivateDayFields);
 
     // OPE-709 — application routes other than the commercial-vendor one.
     //
