@@ -33,6 +33,19 @@ const FIELD_CLASS_VALUES = [
   "price",
   "existence",
   "name",
+  // OPE-1065 — citation_flag rows for a live field none of the seven names
+  // (e.g. a claim in `description`).
+  "other",
+] as const;
+
+const DETECTED_BY_VALUES = [
+  "ingest_addverify",
+  "stale_page_radar",
+  "self_consistency",
+  "holdout_sample",
+  "source_agreement",
+  "citation_flag",
+  "manual",
 ] as const;
 
 const RESOLUTION_STATUS_VALUES = [
@@ -62,13 +75,19 @@ export function registerDiscrepancyTools(server: McpServer, db: Db, auth: AuthCo
   // ── list_event_discrepancies ────────────────────────────────────
   server.tool(
     "list_event_discrepancies",
-    "Paginated read of the outreach queue. Filter by resolution_status (default 'open'), field_class, or divergent_source_key; sort by outreach_priority_score DESC. Returns the highest-leverage discrepancies first. Admin only.",
+    "Paginated read of the outreach queue. Filter by resolution_status (default 'open'), field_class, detected_by, or divergent_source_key; sort by outreach_priority_score DESC. Returns the highest-leverage discrepancies first. Admin only.",
     {
       resolution_status: z
         .enum(RESOLUTION_STATUS_VALUES)
         .optional()
         .describe("Filter by resolution status. Defaults to 'open' (the queue)."),
       field_class: z.enum(FIELD_CLASS_VALUES).optional().describe("Filter by field class."),
+      detected_by: z
+        .enum(DETECTED_BY_VALUES)
+        .optional()
+        .describe(
+          "Filter by detector. OPE-1065: detected_by='citation_flag' answers \"which live fields do we currently believe are wrong?\" — findings a verification pass filed against its own citation. Those rows are never outreach candidates."
+        ),
       divergent_source_key: z
         .string()
         .optional()
@@ -95,6 +114,8 @@ export function registerDiscrepancyTools(server: McpServer, db: Db, auth: AuthCo
       ];
       if (params.field_class)
         conditions.push(eq(eventDiscrepancies.fieldClass, params.field_class));
+      if (params.detected_by)
+        conditions.push(eq(eventDiscrepancies.detectedBy, params.detected_by));
       if (params.divergent_source_key)
         conditions.push(eq(eventDiscrepancies.divergentSourceKey, params.divergent_source_key));
       if (params.outreach_candidates_only)
@@ -123,6 +144,7 @@ export function registerDiscrepancyTools(server: McpServer, db: Db, auth: AuthCo
             filter: {
               resolution_status: params.resolution_status ?? "open",
               field_class: params.field_class ?? null,
+              detected_by: params.detected_by ?? null,
               divergent_source_key: params.divergent_source_key ?? null,
               outreach_candidates_only: params.outreach_candidates_only ?? false,
             },

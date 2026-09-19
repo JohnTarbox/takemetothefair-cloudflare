@@ -5409,9 +5409,15 @@ export const eventDiscrepancies = sqliteTable("event_discrepancies", {
   eventId: text("event_id")
     .notNull()
     .references(() => events.id, { onDelete: "cascade" }),
-  /** date | hours | venue | status | price | existence | name */
+  /** date | hours | venue | status | price | existence | name | other
+   *
+   *  `other` added OPE-1065 (2026-09-19) for `citation_flag` rows only: a
+   *  verification pass can find a live field wrong that none of the seven
+   *  classes names — the Harwich specimen was a parking claim in
+   *  `description`. TS-only (no CHECK in the DDL). `source_reliability` keeps
+   *  the seven: citation-flag rows carry no source keys, so they never score. */
   fieldClass: text("field_class", {
-    enum: ["date", "hours", "venue", "status", "price", "existence", "name"],
+    enum: ["date", "hours", "venue", "status", "price", "existence", "name", "other"],
   }).notNull(),
   /** The value MMATF currently treats as correct (events column value
    *  at capture time). NULL when the field is absent. */
@@ -5444,6 +5450,10 @@ export const eventDiscrepancies = sqliteTable("event_discrepancies", {
       "self_consistency",
       "holdout_sample",
       "source_agreement",
+      // OPE-1065 — a verification pass declared (or its own citation proved)
+      // that a LIVE field disagrees with the source it just cited. Our error,
+      // not a promoter's: never an outreach candidate (see queue-ranking.ts).
+      "citation_flag",
       "manual",
     ],
   }).notNull(),

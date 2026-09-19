@@ -172,6 +172,22 @@ export interface RerankResult {
 
 const OUTREACH_CANDIDATE_THRESHOLD = 0.6;
 
+/**
+ * OPE-1065 — detectors whose rows are never promoter-outreach candidates,
+ * whatever their score.
+ *
+ * A `citation_flag` row says OUR live field disagrees with a source we cited:
+ * the fix is an edit on our side, and emailing the organizer about it would
+ * be asking them to correct our mistake. The score is still computed (it
+ * orders the queue), only the candidate bit is held false.
+ *
+ * Keyed on the detector because it is the one fact the row stores. A
+ * capture-time `forceOutreachCandidate: false` is NOT stored anywhere, so this
+ * batch — which recomputes the bit from score alone — would otherwise
+ * re-promote a suppressed row on its next refresh.
+ */
+export const NEVER_OUTREACH_DETECTORS: ReadonlySet<string> = new Set(["citation_flag"]);
+
 export async function rerankOpenQueueBatch(
   db: Db,
   opts: { limit?: number; onlyMissing?: boolean } = {}
@@ -198,6 +214,7 @@ export async function rerankOpenQueueBatch(
       detectedAt: eventDiscrepancies.detectedAt,
       confidence: eventDiscrepancies.confidence,
       divergentSourceKey: eventDiscrepancies.divergentSourceKey,
+      detectedBy: eventDiscrepancies.detectedBy,
       eventId: eventDiscrepancies.eventId,
       viewCount: events.viewCount,
     })
@@ -243,7 +260,8 @@ export async function rerankOpenQueueBatch(
       detectedAt: row.detectedAt,
       fieldClass: row.fieldClass,
     });
-    const isCandidate = score >= OUTREACH_CANDIDATE_THRESHOLD;
+    const isCandidate =
+      score >= OUTREACH_CANDIDATE_THRESHOLD && !NEVER_OUTREACH_DETECTORS.has(row.detectedBy);
 
     await db
       .update(eventDiscrepancies)

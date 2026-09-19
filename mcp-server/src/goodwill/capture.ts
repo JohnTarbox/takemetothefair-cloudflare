@@ -29,7 +29,16 @@ import { initialCaptureScore } from "./queue-ranking.js";
 const OUTREACH_CANDIDATE_THRESHOLD = 0.6;
 
 /** field_class enum (mirrors the SQL column). */
-export type FieldClass = "date" | "hours" | "venue" | "status" | "price" | "existence" | "name";
+export type FieldClass =
+  | "date"
+  | "hours"
+  | "venue"
+  | "status"
+  | "price"
+  | "existence"
+  | "name"
+  // OPE-1065 — citation_flag rows only; see the schema comment.
+  | "other";
 
 /** detected_by enum.
  *
@@ -46,6 +55,9 @@ export type DetectedBy =
   // OPE-988 — the cited source page places itself in another state and never
   // names the event's town or venue (source-agreement-capture.ts).
   | "source_agreement"
+  // OPE-1065 — a live field contradicted by the source its own citation names
+  // (citation-flag-capture.ts). Never an outreach candidate.
+  | "citation_flag"
   | "manual";
 
 export interface CaptureDiscrepancyArgs {

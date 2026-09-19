@@ -1017,6 +1017,34 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     lastEvidenceAt: (db) => maxTs(db, eventDiscrepancies, eventDiscrepancies.detectedAt),
   },
   {
+    // OPE-1065 — proof verification passes are filing live-field findings as
+    // work items instead of burying them in citation notes.
+    //
+    // Evidence is the newest `citation_flag` discrepancy — filed either by a
+    // pass declaring `live_defect` on a citation tool, or automatically when a
+    // citation is written with `update_event_column=false` over a differing
+    // live value. The silence this watches for is the specimen's: passes keep
+    // finding defects and writing them as prose, and the queue goes quiet.
+    //
+    // ⚠️ SHIPS DORMANT (`enabled_at` NULL, drizzle/0295). The path is new and
+    // has produced two rows (the backfill), so there is no inter-arrival to
+    // size a window from, and 720h below is a placeholder, not a measurement —
+    // the same stance as roster-vendor-link (OPE-847). Arming is its own
+    // ticket: measure the gaps once passes use the argument, then set both.
+    name: "citation-live-defect",
+    ownerOpe: "OPE-1065",
+    label: "Citation live-defect findings → event_discrepancies",
+    priority: "P1",
+    expectedWindowHours: 720,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        eventDiscrepancies,
+        eventDiscrepancies.detectedAt,
+        eq(eventDiscrepancies.detectedBy, "citation_flag")
+      ),
+  },
+  {
     name: "gw1d-scorer",
     ownerOpe: "OPE-245",
     label: "GW1d outreach scorer",
