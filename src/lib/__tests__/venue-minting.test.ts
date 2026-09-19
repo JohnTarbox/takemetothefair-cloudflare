@@ -48,6 +48,7 @@ const SCHEMA_SQL = `
     contact_phone TEXT,
     website TEXT,
     description TEXT,
+    pet_friendly TEXT NOT NULL DEFAULT 'UNSET',
     image_url TEXT,
     google_place_id TEXT,
     google_maps_url TEXT,

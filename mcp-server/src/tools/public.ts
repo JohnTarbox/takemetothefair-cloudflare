@@ -1185,6 +1185,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
             contactPhone: venues.contactPhone,
             website: venues.website,
             description: venues.description,
+            petFriendly: venues.petFriendly,
             imageUrl: venues.imageUrl,
             googleMapsUrl: venues.googleMapsUrl,
             googleRating: venues.googleRating,
@@ -1247,6 +1248,9 @@ export function registerPublicTools(server: McpServer, db: Db) {
             contactPhone: venue.contactPhone,
             website: venue.website,
             description: venue.description,
+            // OPE-1061 — the venue's OWN pet policy (UNSET | YES | NO |
+            // NOT_PUBLISHED). Not an answer for any event held here.
+            pet_friendly: venue.petFriendly,
             imageUrl: venue.imageUrl || null,
             googleMapsUrl: venue.googleMapsUrl,
             googleRating: venue.googleRating,

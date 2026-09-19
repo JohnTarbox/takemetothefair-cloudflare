@@ -12,7 +12,9 @@ import {
   Pencil,
   Accessibility,
   ParkingSquare,
+  PawPrint,
 } from "lucide-react";
+import { venuePetPolicyDisplay } from "@takemetothefair/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -324,6 +326,30 @@ export default async function VenueDetailPage({ params }: Props) {
                 <p className="text-muted-foreground whitespace-pre-wrap">{venue.description}</p>
               </div>
             )}
+
+            {/* OPE-1061 — the VENUE's own policy, labelled as the venue's. An
+                event held here may differ and answers for itself. */}
+            {(() => {
+              const pet = venuePetPolicyDisplay(venue.petFriendly);
+              if (!pet) return null;
+              return (
+                <p
+                  className="flex items-center gap-2 text-foreground"
+                  data-testid="venue-pet-policy"
+                >
+                  <PawPrint
+                    className={`w-5 h-5 ${pet.tone === "allowed" ? "text-green-600" : "text-amber-600"}`}
+                  />
+                  <span>
+                    {pet.label}
+                    <span className="text-muted-foreground text-sm">
+                      {" "}
+                      — individual events may set their own rules.
+                    </span>
+                  </span>
+                </p>
+              );
+            })()}
 
             {(() => {
               return (

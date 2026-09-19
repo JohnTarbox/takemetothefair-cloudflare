@@ -21,6 +21,7 @@ import {
   Users,
   FileText,
   CheckCircle,
+  PawPrint,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -66,7 +67,7 @@ import { SameDayEventsButton } from "@/components/events/SameDayEventsButton";
 import { buildEventFaqItems } from "@/lib/event-faq";
 import { isFaqPilotEvent } from "@/lib/faq-pilot";
 import { SITE_URL } from "@takemetothefair/constants";
-import { buildAskAboutEventMailto } from "@takemetothefair/utils";
+import { buildAskAboutEventMailto, petPolicyDisplay } from "@takemetothefair/utils";
 import { getSeriesLanding } from "@/lib/series/get-series-landing";
 import { SeriesLandingPage } from "@/components/series/series-landing-page";
 import { buildSuperEventRef } from "@/lib/series/series-schema-org";
@@ -1331,6 +1332,24 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
                     </div>
                   </div>
                 )}
+
+                {/* OPE-1061 — the EVENT's own answer only (never the venue's).
+                    UNSET / NOT_PUBLISHED render nothing; NO renders the
+                    service-animal exception, never a bare "No". */}
+                {(() => {
+                  const pet = petPolicyDisplay(event.petFriendly);
+                  if (!pet) return null;
+                  return (
+                    <div className="flex items-start gap-3" data-testid="event-pet-policy">
+                      <PawPrint
+                        className={`w-5 h-5 mt-0.5 ${pet.tone === "allowed" ? "text-green-600" : "text-amber-600"}`}
+                      />
+                      <div>
+                        <p className="font-medium text-foreground">{pet.label}</p>
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {(event.estimatedAttendance || event.eventScale) && (
                   <div className="flex items-start gap-3">

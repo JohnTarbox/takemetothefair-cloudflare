@@ -108,6 +108,13 @@ import { dollarsToCents } from "../helpers.js";
 import { recordMutation } from "../audit/record-mutation.js";
 import { notifyApprovalIfNeeded } from "../approval-notification.js";
 import { registerCreateOrLinkVendorTool } from "./admin-create-or-link-vendor.js";
+import { petFriendlyWriteError, type PetFriendly } from "@takemetothefair/utils";
+import {
+  PET_FRIENDLY_EVIDENCE_PARAM,
+  PET_FRIENDLY_PARAM,
+  writeEventPetCitation,
+  writeVenuePetCitation,
+} from "./pet-friendly.js";
 import { registerEnrichmentReviewTools } from "./admin-enrichment-review.js";
 import { registerPromoterEnrichmentReviewTools } from "./admin-promoter-enrichment-review.js";
 import { registerPerformerEnrichmentReviewTools } from "./admin-performer-enrichment-review.js";
@@ -197,6 +204,22 @@ interface Env {
    *  through this binding instead of over the public CDN edge (wrangler.toml
    *  binds it; optional here so an unbound environment refuses loudly). */
   VENDOR_ASSETS?: R2Bucket;
+}
+
+/**
+ * OPE-1061 — the pet_friendly write gate for both MCP writers. Evidence with no
+ * value is refused too: silently dropping it would read as "recorded".
+ */
+function petFriendlyParamError(
+  value: PetFriendly | undefined,
+  evidence: z.infer<typeof PET_FRIENDLY_EVIDENCE_PARAM>
+): string | null {
+  if (value === undefined) {
+    return evidence
+      ? "pet_friendly_evidence was given without pet_friendly — say which value it supports."
+      : null;
+  }
+  return petFriendlyWriteError(value, evidence ?? null);
 }
 
 export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext, env?: Env) {
@@ -976,6 +999,8 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .enum(["INDOOR", "OUTDOOR", "MIXED"])
         .optional()
         .describe("Indoor/outdoor designation"),
+      pet_friendly: PET_FRIENDLY_PARAM,
+      pet_friendly_evidence: PET_FRIENDLY_EVIDENCE_PARAM,
       estimated_attendance: z.number().int().optional().describe("Expected attendance count"),
       event_scale: z
         .enum(["SMALL", "MEDIUM", "LARGE", "MAJOR"])
@@ -1112,6 +1137,16 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         };
       }
 
+      // OPE-1061 — refuse a pet_friendly value without its evidence BEFORE any
+      // row is written, so a refusal leaves nothing half-applied.
+      const petRefusal = petFriendlyParamError(params.pet_friendly, params.pet_friendly_evidence);
+      if (petRefusal) {
+        return {
+          content: [jsonContent({ error: "pet_friendly_evidence_required", message: petRefusal })],
+          isError: true,
+        };
+      }
+
       // Load URL domain classifications once so the ticket_url / application_url
       // transforms below can gate against known-aggregator domains.
       // See mcp-server/src/url-classification.ts.
@@ -1153,6 +1188,8 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         { param: "vendor_fee_max", column: "vendorFeeMaxCents", transform: dollarsToCents },
         { param: "vendor_fee_notes", column: "vendorFeeNotes" },
         { param: "indoor_outdoor", column: "indoorOutdoor" },
+        // OPE-1061 — evidence is checked above and cited below.
+        { param: "pet_friendly", column: "petFriendly" },
         { param: "estimated_attendance", column: "estimatedAttendance" },
         { param: "event_scale", column: "eventScale" },
         {
@@ -2166,6 +2203,17 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }
       if (venueUpdateResult) {
         result.venueUpdated = venueUpdateResult;
+      }
+      if (params.pet_friendly !== undefined) {
+        // OPE-1061 — the evidence citation, after the column write (same order
+        // as the tracked-field citations above: never a citation without the
+        // value it supports).
+        result.petFriendlyCitationId = await writeEventPetCitation(db, {
+          eventId: event.id,
+          value: params.pet_friendly,
+          evidence: params.pet_friendly_evidence,
+          userId: auth.userId ?? null,
+        });
       }
       if (citationsInserted.length > 0) {
         result.citationsInserted = citationsInserted;
@@ -3314,6 +3362,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .optional()
         .describe("Vertical focal point for card crops, 0–1. Default 0.5."),
       status: z.enum(["ACTIVE", "INACTIVE"]).optional().describe("Venue status"),
+      // OPE-1061 — the VENUE's own policy. Shown on the venue page only; never
+      // an event's answer (an ag fair and a lawn craft fair share fairgrounds).
+      pet_friendly: PET_FRIENDLY_PARAM,
+      pet_friendly_evidence: PET_FRIENDLY_EVIDENCE_PARAM,
       defer_search_ping: z
         .boolean()
         .optional()
@@ -3323,6 +3375,13 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         ),
     },
     async (params) => {
+      const petRefusal = petFriendlyParamError(params.pet_friendly, params.pet_friendly_evidence);
+      if (petRefusal) {
+        return {
+          content: [jsonContent({ error: "pet_friendly_evidence_required", message: petRefusal })],
+          isError: true,
+        };
+      }
       const fieldMap: Array<{
         param: string;
         column: string;
@@ -3352,6 +3411,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           transform: (v: number) => Math.max(0, Math.min(1, v)),
         },
         { param: "status", column: "status" },
+        { param: "pet_friendly", column: "petFriendly" },
       ];
 
       const updates: Record<string, unknown> = {};
@@ -3535,6 +3595,17 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         newValues.slug = updates.slug;
       }
 
+      // OPE-1061 — evidence citation after the column write.
+      const petFriendlyCitationId =
+        params.pet_friendly !== undefined
+          ? await writeVenuePetCitation(db, {
+              venueId: venue.id,
+              value: params.pet_friendly,
+              evidence: params.pet_friendly_evidence,
+              userId: auth.userId ?? null,
+            })
+          : undefined;
+
       return {
         content: [
           jsonContent({
@@ -3543,6 +3614,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
             fieldsUpdated: requestedFields,
             previousValues,
             newValues,
+            ...(petFriendlyCitationId !== undefined
+              ? { pet_friendly_citation_id: petFriendlyCitationId }
+              : {}),
           }),
         ],
       };
