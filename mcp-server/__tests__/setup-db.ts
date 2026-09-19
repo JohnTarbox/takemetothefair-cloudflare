@@ -424,6 +424,7 @@ const SCHEMA_SQL = `
     resolution_source TEXT,
     resolved_at INTEGER,
     outreach_candidate INTEGER NOT NULL DEFAULT 0,
+    outreach_suppressed INTEGER NOT NULL DEFAULT 0,
     outreach_priority_score REAL,
     outreach_id TEXT,
     notes TEXT,

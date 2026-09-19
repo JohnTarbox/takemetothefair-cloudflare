@@ -5534,6 +5534,14 @@ export const eventDiscrepancies = sqliteTable("event_discrepancies", {
   resolvedAt: integer("resolved_at", { mode: "timestamp" }),
   /** Computed by GW1d queue ranker. Boolean-as-integer. */
   outreachCandidate: integer("outreach_candidate", { mode: "boolean" }).notNull().default(false),
+  /** OPE-1082 (drizzle/0298) — the capture path decided this row must never
+   *  be a promoter-outreach candidate (an aggregator's stale listing, a
+   *  cancellation the organizer itself published, a source that describes
+   *  another event, a citation flag on our own row). Stored because
+   *  `outreach_candidate` alone cannot say WHY it is 0, and the re-ranker
+   *  recomputes that bit from score — so an unstored suppression was undone
+   *  by the first manual `rerank_outreach_queue` past 24h. */
+  outreachSuppressed: integer("outreach_suppressed", { mode: "boolean" }).notNull().default(false),
   outreachPriorityScore: real("outreach_priority_score"),
   /** Phase 2 placeholder — always NULL in Phase 1 per B13. Reserving
    *  the column now means the Phase 2 wiring is a no-migration change. */

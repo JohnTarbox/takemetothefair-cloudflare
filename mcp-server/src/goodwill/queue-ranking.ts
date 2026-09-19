@@ -181,10 +181,9 @@ const OUTREACH_CANDIDATE_THRESHOLD = 0.6;
  * be asking them to correct our mistake. The score is still computed (it
  * orders the queue), only the candidate bit is held false.
  *
- * Keyed on the detector because it is the one fact the row stores. A
- * capture-time `forceOutreachCandidate: false` is NOT stored anywhere, so this
- * batch — which recomputes the bit from score alone — would otherwise
- * re-promote a suppressed row on its next refresh.
+ * Keyed on the detector, so it holds even for a row written before
+ * `outreach_suppressed` existed. Per-row suppressions (OPE-1082) are stored in
+ * that column and honoured beside this set.
  */
 export const NEVER_OUTREACH_DETECTORS: ReadonlySet<string> = new Set(["citation_flag"]);
 
@@ -215,6 +214,7 @@ export async function rerankOpenQueueBatch(
       confidence: eventDiscrepancies.confidence,
       divergentSourceKey: eventDiscrepancies.divergentSourceKey,
       detectedBy: eventDiscrepancies.detectedBy,
+      outreachSuppressed: eventDiscrepancies.outreachSuppressed,
       eventId: eventDiscrepancies.eventId,
       viewCount: events.viewCount,
     })
@@ -260,8 +260,12 @@ export async function rerankOpenQueueBatch(
       detectedAt: row.detectedAt,
       fieldClass: row.fieldClass,
     });
+    // OPE-1082 — a suppression the capture path stored is honoured here too;
+    // before it was stored, this line re-promoted it from score alone.
     const isCandidate =
-      score >= OUTREACH_CANDIDATE_THRESHOLD && !NEVER_OUTREACH_DETECTORS.has(row.detectedBy);
+      score >= OUTREACH_CANDIDATE_THRESHOLD &&
+      !NEVER_OUTREACH_DETECTORS.has(row.detectedBy) &&
+      !row.outreachSuppressed;
 
     await db
       .update(eventDiscrepancies)

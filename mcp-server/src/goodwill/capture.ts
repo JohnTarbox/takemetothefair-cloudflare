@@ -180,6 +180,8 @@ export async function captureDiscrepancy(
         args.forceOutreachCandidate === false
           ? false
           : initialScore >= OUTREACH_CANDIDATE_THRESHOLD,
+      // OPE-1082 — store the decision, or the re-ranker cannot honour it.
+      outreachSuppressed: args.forceOutreachCandidate === false,
     });
     return id;
   } catch (err) {
