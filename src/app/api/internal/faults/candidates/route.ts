@@ -4,7 +4,12 @@ import { and, desc, eq, gte, notInArray } from "drizzle-orm";
 import { withInternalKey } from "@/lib/api/with-auth";
 import { errorLogs, faultSignatures } from "@/lib/db/schema";
 import { logError } from "@/lib/logger";
-import { classifyNoise, computeSignature, normalizeErrorClass } from "@/lib/faults/signature";
+import {
+  classifyNoise,
+  computeSignature,
+  normalizeErrorClass,
+  normalizeFaultRoute,
+} from "@/lib/faults/signature";
 import {
   reconcileFaults,
   type FaultLedgerRow,
@@ -219,7 +224,11 @@ export const POST = withInternalKey({ source: "faults:candidates" }, async ({ db
       // signature per error class. `source` is a stable, high-quality grouping
       // key and is strictly better than the route key the render lane uses.
       const isRenderLane = RENDER_FAULT_SOURCES.includes(r.source ?? "");
-      const groupKey = isRenderLane ? r.route : (r.source ?? r.route);
+      // OPE-1081 — normalized HERE as well as inside computeSignature, because
+      // this value is also what the ledger stores as `route`: a key built from
+      // the path beside a `route` column still holding the attacker's payload
+      // would keep echoing it into tickets and dashboards.
+      const groupKey = normalizeFaultRoute(isRenderLane ? r.route : (r.source ?? r.route));
       const signature = computeSignature({
         route: groupKey,
         message: r.message,
@@ -290,78 +299,96 @@ export const POST = withInternalKey({ source: "faults:candidates" }, async ({ db
 
     // Apply the ledger mutations. Sequential + defensive: a single row failure
     // must not abort the scan or drop the response.
+    //
+    // OPE-1081 scope 2 — but it must not be SILENT either. A dropped `touch`
+    // understates `count` and freezes `last_seen`, the two fields every
+    // threshold reads, and this used to log it at `warn` and report a clean
+    // scan (specimen 2026-09-18 21:01Z, `D1_ERROR: Network connection lost.`).
+    // Now: one retry (the observed cause is transient), then `error`, and the
+    // run answers non-2xx so the cron caller records a failure.
+    let ledgerWriteFailures = 0;
+    const applyUpsert = async (up: (typeof result.upserts)[number]) => {
+      if (up.op === "propose") {
+        await db
+          .insert(faultSignatures)
+          .values({
+            signature: up.signature,
+            route: up.route,
+            errorClass: up.errorClass,
+            firstSeen: new Date(up.firstSeen),
+            lastSeen: new Date(up.lastSeen),
+            count: up.count,
+            status: "proposed",
+            opeId: null,
+            filedAt: null,
+            resolvedAt: null,
+            createdAt: new Date(up.createdAt),
+          })
+          // Racing insert of the same NEW signature → just bump the live values;
+          // never clobber status/createdAt of an already-persisted row.
+          .onConflictDoUpdate({
+            target: faultSignatures.signature,
+            set: {
+              route: up.route,
+              errorClass: up.errorClass,
+              lastSeen: new Date(up.lastSeen),
+              count: up.count,
+            },
+          });
+      } else if (up.op === "link") {
+        // OPE-613 — attach to the sibling route's live ticket. `filed` is the
+        // code's own status for "carries an ope_id"; the agent-written `open`
+        // on the sibling is not copied, because the agent did not rule on
+        // this row.
+        await db
+          .insert(faultSignatures)
+          .values({
+            signature: up.signature,
+            route: up.route,
+            errorClass: up.errorClass,
+            firstSeen: new Date(up.firstSeen),
+            lastSeen: new Date(up.lastSeen),
+            count: up.count,
+            status: "filed",
+            opeId: up.opeId,
+            filedAt: now,
+            resolvedAt: null,
+            createdAt: new Date(up.createdAt),
+          })
+          .onConflictDoUpdate({
+            target: faultSignatures.signature,
+            set: { status: "filed", opeId: up.opeId, filedAt: now },
+          });
+      } else if (up.op === "touch") {
+        await db
+          .update(faultSignatures)
+          .set({ lastSeen: new Date(up.lastSeen), count: up.count })
+          .where(eq(faultSignatures.signature, up.signature));
+      } else {
+        await db
+          .update(faultSignatures)
+          .set({ status: "regressed", lastSeen: new Date(up.lastSeen), count: up.count })
+          .where(eq(faultSignatures.signature, up.signature));
+      }
+    };
     for (const up of result.upserts) {
       try {
-        if (up.op === "propose") {
-          await db
-            .insert(faultSignatures)
-            .values({
-              signature: up.signature,
-              route: up.route,
-              errorClass: up.errorClass,
-              firstSeen: new Date(up.firstSeen),
-              lastSeen: new Date(up.lastSeen),
-              count: up.count,
-              status: "proposed",
-              opeId: null,
-              filedAt: null,
-              resolvedAt: null,
-              createdAt: new Date(up.createdAt),
-            })
-            // Racing insert of the same NEW signature → just bump the live values;
-            // never clobber status/createdAt of an already-persisted row.
-            .onConflictDoUpdate({
-              target: faultSignatures.signature,
-              set: {
-                route: up.route,
-                errorClass: up.errorClass,
-                lastSeen: new Date(up.lastSeen),
-                count: up.count,
-              },
-            });
-        } else if (up.op === "link") {
-          // OPE-613 — attach to the sibling route's live ticket. `filed` is the
-          // code's own status for "carries an ope_id"; the agent-written `open`
-          // on the sibling is not copied, because the agent did not rule on
-          // this row.
-          await db
-            .insert(faultSignatures)
-            .values({
-              signature: up.signature,
-              route: up.route,
-              errorClass: up.errorClass,
-              firstSeen: new Date(up.firstSeen),
-              lastSeen: new Date(up.lastSeen),
-              count: up.count,
-              status: "filed",
-              opeId: up.opeId,
-              filedAt: now,
-              resolvedAt: null,
-              createdAt: new Date(up.createdAt),
-            })
-            .onConflictDoUpdate({
-              target: faultSignatures.signature,
-              set: { status: "filed", opeId: up.opeId, filedAt: now },
-            });
-        } else if (up.op === "touch") {
-          await db
-            .update(faultSignatures)
-            .set({ lastSeen: new Date(up.lastSeen), count: up.count })
-            .where(eq(faultSignatures.signature, up.signature));
-        } else {
-          await db
-            .update(faultSignatures)
-            .set({ status: "regressed", lastSeen: new Date(up.lastSeen), count: up.count })
-            .where(eq(faultSignatures.signature, up.signature));
+        await applyUpsert(up);
+      } catch {
+        try {
+          await applyUpsert(up);
+        } catch (err) {
+          ledgerWriteFailures += 1;
+          // `faults:candidates` is in NEVER_INGEST_SOURCES, so logging this at
+          // `error` cannot make the emitter file a fault about itself.
+          await logError(db, {
+            level: "error",
+            source: "faults:candidates",
+            message: "ledger upsert failed after one retry; this scan is NOT a success",
+            error: err,
+            context: { op: up.op, signature: up.signature },
+          });
         }
-      } catch (err) {
-        await logError(db, {
-          level: "warn",
-          source: "faults:candidates",
-          message: "ledger upsert failed; scan continues",
-          error: err,
-          context: { op: up.op, signature: up.signature },
-        });
       }
     }
 
@@ -383,8 +410,10 @@ export const POST = withInternalKey({ source: "faults:candidates" }, async ({ db
         `(noise-suppressed ${suppressedTotal}); toEmit=${result.toEmit.length} ` +
         `regressions=${result.regressions.length} existing=${result.existing.length} ` +
         `deferred=${result.deferred.length} subThreshold=${result.subThreshold.length} ` +
-        `linked=${result.linked.length} heldForSibling=${result.heldForSibling.length}`,
+        `linked=${result.linked.length} heldForSibling=${result.heldForSibling.length} ` +
+        `ledgerWriteFailures=${ledgerWriteFailures}`,
       context: {
+        ledgerWriteFailures,
         scanned: rows.length,
         signatures: grouped.length,
         suppressed: suppressedTotal,
@@ -413,58 +442,65 @@ export const POST = withInternalKey({ source: "faults:candidates" }, async ({ db
       });
     }
 
-    return NextResponse.json({
-      ok: true,
-      // Visible in the response so a volume anomaly in SUPPRESSED traffic is
-      // still observable — suppression must not mean invisibility.
-      suppressed: { total: suppressedTotal, byPattern: suppressed },
-      toEmit: result.toEmit.map((c) => ({
-        ...c,
-        classification: classifyFault({ errorClass: c.errorClass, route: c.route }),
-      })),
-      regressions: result.regressions.map((c) => ({
-        ...c,
-        classification: classifyFault({ errorClass: c.errorClass, route: c.route }),
-      })),
-      // OPE-811 — ledger rows that are fileable and were never filed. The rail
-      // files these exactly as it files `toEmit`; they are the same work,
-      // arriving late. Before this they were folded into `existing`, which the
-      // rail ignores by design, so 19 of them sat unrouted for up to 15 days.
-      backlog: result.backlog.map((c) => ({
-        ...c,
-        classification: classifyFault({ errorClass: c.errorClass, route: c.route }),
-      })),
-      // OPE-811 scope 2 — assert on the POPULATION, not on this query's return.
-      // A run that files nothing is only healthy if there was nothing to file,
-      // and the pipeline could not tell those apart: the 2026-09-01 weekly run
-      // reported SUCCEEDED with 19 unrouted candidates in the ledger.
-      health: buildRailHealth(ledger, result),
-      deferred: result.deferred,
-      // OPE-613 — attached to a sibling route's ticket, and held behind a
-      // sibling being filed this run. Neither is work for the rail.
-      linked: result.linked,
-      heldForSibling: result.heldForSibling,
-      // OPE-488 — the discarded-but-real groups, so a consumer can tell "quiet
-      // traffic" from "everything fell just under the gate". Capped: this is a
-      // diagnostic tally, not a work queue.
-      subThreshold: {
-        total: result.subThreshold.length,
-        top: [...result.subThreshold]
-          .sort((a, b) => b.count - a.count || b.lastSeen - a.lastSeen)
-          .slice(0, 10),
+    return NextResponse.json(
+      {
+        // OPE-1081 scope 2 — a scan that could not write its own ledger is not a
+        // success. Non-2xx (below) is what the MCP cron caller actually reads;
+        // the buckets are still returned whole, because the scan itself ran.
+        ok: ledgerWriteFailures === 0,
+        ledgerWriteFailures,
+        // Visible in the response so a volume anomaly in SUPPRESSED traffic is
+        // still observable — suppression must not mean invisibility.
+        suppressed: { total: suppressedTotal, byPattern: suppressed },
+        toEmit: result.toEmit.map((c) => ({
+          ...c,
+          classification: classifyFault({ errorClass: c.errorClass, route: c.route }),
+        })),
+        regressions: result.regressions.map((c) => ({
+          ...c,
+          classification: classifyFault({ errorClass: c.errorClass, route: c.route }),
+        })),
+        // OPE-811 — ledger rows that are fileable and were never filed. The rail
+        // files these exactly as it files `toEmit`; they are the same work,
+        // arriving late. Before this they were folded into `existing`, which the
+        // rail ignores by design, so 19 of them sat unrouted for up to 15 days.
+        backlog: result.backlog.map((c) => ({
+          ...c,
+          classification: classifyFault({ errorClass: c.errorClass, route: c.route }),
+        })),
+        // OPE-811 scope 2 — assert on the POPULATION, not on this query's return.
+        // A run that files nothing is only healthy if there was nothing to file,
+        // and the pipeline could not tell those apart: the 2026-09-01 weekly run
+        // reported SUCCEEDED with 19 unrouted candidates in the ledger.
+        health: buildRailHealth(ledger, result),
+        deferred: result.deferred,
+        // OPE-613 — attached to a sibling route's ticket, and held behind a
+        // sibling being filed this run. Neither is work for the rail.
+        linked: result.linked,
+        heldForSibling: result.heldForSibling,
+        // OPE-488 — the discarded-but-real groups, so a consumer can tell "quiet
+        // traffic" from "everything fell just under the gate". Capped: this is a
+        // diagnostic tally, not a work queue.
+        subThreshold: {
+          total: result.subThreshold.length,
+          top: [...result.subThreshold]
+            .sort((a, b) => b.count - a.count || b.lastSeen - a.lastSeen)
+            .slice(0, 10),
+        },
+        // The agent only needs enough to recognise an already-known fault.
+        existing: result.existing.map((r) => ({
+          signature: r.signature,
+          route: r.route,
+          errorClass: r.errorClass,
+          status: r.status,
+          opeId: r.opeId,
+          count: r.count,
+          firstSeen: r.firstSeen,
+          lastSeen: r.lastSeen,
+        })),
       },
-      // The agent only needs enough to recognise an already-known fault.
-      existing: result.existing.map((r) => ({
-        signature: r.signature,
-        route: r.route,
-        errorClass: r.errorClass,
-        status: r.status,
-        opeId: r.opeId,
-        count: r.count,
-        firstSeen: r.firstSeen,
-        lastSeen: r.lastSeen,
-      })),
-    });
+      { status: ledgerWriteFailures > 0 ? 500 : 200 }
+    );
   } catch (error) {
     // Never throw / never 500 — a broken scan should be quiet, not an outage.
     await logError(db, {

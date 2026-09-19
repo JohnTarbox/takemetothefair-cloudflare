@@ -359,11 +359,67 @@ export function isNoise(message: string | null | undefined, route?: string | nul
 }
 
 /**
+ * OPE-1081 — caps on the signature key. A signature is a fingerprint, and both
+ * of its halves can carry text an unauthenticated visitor chose.
+ *
+ * Measured on prod 2026-09-19 before choosing them: legitimate path-keyed
+ * routes top out at 85 characters and whole signatures at 491 (a long
+ * query-shaped error class — that axis is OPE-613's). Both caps sit above
+ * every existing legitimate key, so no filed/done row is re-keyed and loses
+ * its regression match; they bound only what nothing legitimate reaches.
+ */
+export const FAULT_ROUTE_MAX = 128;
+export const FAULT_SIGNATURE_MAX = 512;
+
+/** FNV-1a 32-bit, hex. Synchronous (crypto.subtle is not), and a fingerprint
+ *  tail only needs to be stable and well-spread, not secret. */
+function fnv1a(s: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(16).padStart(8, "0");
+}
+
+/** Truncate to `max` characters with a hash of the WHOLE input as the tail, so
+ *  two long inputs that share a prefix still key apart. */
+function boundWithHash(s: string, max: number): string {
+  if (s.length <= max) return s;
+  return `${s.slice(0, max - 9)}~${fnv1a(s)}`;
+}
+
+/**
+ * OPE-1081 — the route half of the key is the PATH, nothing else.
+ *
+ * `capture-render-error.ts` records `request.path`, which includes the query
+ * string. Keying on it let one SQL-injection scanner against `/blog?tag=`
+ * mint 137 signatures (80 distinct routes, avg key 234 chars) for what is one
+ * defect (OPE-1045), bury the real faults in the triage queue, and defeat
+ * every occurrence threshold because each payload was unique.
+ *
+ * Search and fragment are dropped (the fragment also collided with the `#`
+ * separator), then the path is bounded. Non-path keys — the `source` names and
+ * `file:function` locators server rows key on — contain neither and pass
+ * through unchanged. `null` stays `null`.
+ */
+export function normalizeFaultRoute(route: string | null | undefined): string | null {
+  if (route == null) return null;
+  const cut = route.search(/[?#]/);
+  const path = cut === -1 ? route : route.slice(0, cut);
+  return boundWithHash(path, FAULT_ROUTE_MAX);
+}
+
+/**
  * Compute the stable signature for a fault occurrence. The error class is
  * `normalizeErrorClass(message)`; when that's empty (a client-only row with no
  * real message) it falls back to the `digest` (OPE-80's cross-row join key). The
  * signature is `${route}#${errorClass || "digest:<digest>"}` with `route`
  * defaulting to `"unknown"`. Deterministic + stable across occurrences.
+ *
+ * OPE-1081: the route is normalized to its path and the whole key bounded at
+ * FAULT_SIGNATURE_MAX, so no input can mint an unbounded family of keys or a
+ * key of unbounded length.
  */
 export function computeSignature(input: {
   route: string | null | undefined;
@@ -371,9 +427,9 @@ export function computeSignature(input: {
   digest: string | null | undefined;
 }): string {
   const errorClass = normalizeErrorClass(input.message);
-  const routePart = input.route ?? "unknown";
+  const routePart = normalizeFaultRoute(input.route) ?? "unknown";
   const classPart = errorClass || `digest:${input.digest ?? "none"}`;
-  return `${routePart}#${classPart}`;
+  return boundWithHash(`${routePart}#${classPart}`, FAULT_SIGNATURE_MAX);
 }
 
 /**
