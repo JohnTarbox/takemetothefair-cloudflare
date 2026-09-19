@@ -12,7 +12,7 @@
  * person at a gate (OPE-433).
  */
 import { z } from "zod";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import {
   PET_FRIENDLY_VALUES,
   petFriendlyCitationNotes,
@@ -94,25 +94,23 @@ export async function writeEventPetCitation(
 ): Promise<string | null> {
   if (args.value === "UNSET" || !args.evidence) return null;
   const ev = asEvidence(args.evidence);
-  const prior = await db
+  // Retire by SCOPE in one UPDATE — no id list, so no D1 bound-parameter cap
+  // to trip (OPE-241). The newest retired row is read first only to link it.
+  const scope = and(
+    citationSupersedeScope(args.eventId, "pet_friendly", null),
+    eq(eventDataCitations.state, "active")
+  );
+  const [prior] = await db
     .select({ id: eventDataCitations.id })
     .from(eventDataCitations)
-    .where(
-      and(
-        citationSupersedeScope(args.eventId, "pet_friendly", null),
-        eq(eventDataCitations.state, "active")
-      )
-    );
-  if (prior.length > 0) {
+    .where(scope)
+    .orderBy(desc(eventDataCitations.createdAt))
+    .limit(1);
+  if (prior) {
     await db
       .update(eventDataCitations)
       .set({ state: "superseded", updatedAt: new Date() })
-      .where(
-        inArray(
-          eventDataCitations.id,
-          prior.map((r) => r.id)
-        )
-      );
+      .where(scope);
   }
   const id = crypto.randomUUID();
   const now = new Date();
@@ -133,7 +131,7 @@ export async function writeEventPetCitation(
     // a timestamp with no excerpt would assert a read nothing evidences.
     sourceExcerpt: args.value === "NOT_PUBLISHED" ? null : (ev.excerpt ?? null),
     sourceFetchedAt: args.value !== "NOT_PUBLISHED" && ev.excerpt ? now : null,
-    supersedesCitationId: prior[0]?.id ?? null,
+    supersedesCitationId: prior?.id ?? null,
     createdBy: args.userId,
     createdAt: now,
     updatedAt: now,
