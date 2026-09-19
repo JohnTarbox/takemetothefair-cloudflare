@@ -154,6 +154,7 @@ import { registerClaimCorroborateTool } from "./admin-claim-corroborate.js";
 import { registerPhotoProposalTools } from "./admin-photo-proposals.js";
 import { registerHeroProposalTools } from "./admin-hero-proposals.js";
 import { registerCategoryCleanupTool } from "./admin-category-cleanup.js";
+import { registerPropagateHoursTool } from "./admin-propagate-hours.js";
 import {
   registerCitationTools,
   DENORM_FIELD_MAP as CITATION_DENORM_FIELD_MAP,
@@ -363,6 +364,8 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   registerHeroProposalTools(server, db, auth, env);
   // OPE-1058 — the operator handle on the one-time category rewrite.
   registerCategoryCleanupTool(server, auth, env);
+  // OPE-1078 — carry a sourced day's hours to a recurring market's siblings.
+  registerPropagateHoursTool(server, db, auth);
 
   // ── list_all_events ────────────────────────────────────────────
   // Whitelist of event fields that can be filtered for NULL values
