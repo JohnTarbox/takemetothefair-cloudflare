@@ -104,7 +104,7 @@ describe("OPE-961 — last_verified_* is readable", () => {
   });
 });
 
-describe("OPE-961 — the event window rides along, and the zero-tolerance check is one call", () => {
+describe("OPE-961/OPE-1062 — the event window rides along, and the calendar-day check is one call", () => {
   it("returns the event's name, slug and raw window once at the top level", async () => {
     seedEvent("orono-arts-fest", "2026-06-27T12:00:00Z", "2026-06-28T23:59:59Z");
     const r = await call("list_event_performers", { event_id: "orono-arts-fest" });
@@ -118,7 +118,7 @@ describe("OPE-961 — the event window rides along, and the zero-tolerance check
     });
   });
 
-  it("ACCEPTANCE: orono-arts-fest as fixed (end 23:59:59Z) is clean", async () => {
+  it("orono-arts-fest with end 23:59:59Z is clean", async () => {
     seedEvent("orono-arts-fest", "2026-06-27T12:00:00Z", "2026-06-28T23:59:59Z");
     seedAppearance("finale", "orono-arts-fest", "2026-06-28T20:00:00Z", "2026-06-28T21:00:00Z");
     const r = await call("list_event_performers", { event_id: "orono-arts-fest" });
@@ -126,22 +126,52 @@ describe("OPE-961 — the event window rides along, and the zero-tolerance check
     expect(r.outside_event_window_count).toBe(0);
   });
 
-  it("ACCEPTANCE: the same finale against a noon-anchored end_date is a hit — 8h, which a ±2d grace hides", async () => {
+  // OPE-1062 — REVERSED. OPE-961 asserted this case was a hit, reading the
+  // noon anchor as a truncated end_date. Noon UTC is the house anchor for a
+  // date-only column (normalizeEventDate), so a 4pm finale on the last day is
+  // ON the last day — and the old reading flagged 89 of 375 prod appearances,
+  // every one of them on its event's final day.
+  it("OPE-1062: a finale on the last afternoon against the noon-anchored end_date is NOT outside", async () => {
     seedEvent("orono-noon", "2026-06-27T12:00:00Z", "2026-06-28T12:00:00Z");
     seedAppearance("finale", "orono-noon", "2026-06-28T20:00:00Z");
     const r = await call("list_event_performers", { event_id: "orono-noon" });
-    expect(r.appearances[0].outside_event_window).toBe(true);
-    expect(r.outside_event_window_count).toBe(1);
+    expect(r.appearances[0].outside_event_window).toBe(false);
+    expect(r.outside_event_window_count).toBe(0);
   });
 
-  it("zero tolerance at both edges: one second before start, and an end one second past end_date", async () => {
-    seedEvent("edge", "2026-06-27T12:00:00Z", "2026-06-28T23:59:59Z");
-    seedAppearance("early", "edge", "2026-06-27T11:59:59Z");
-    seedAppearance("on-start", "edge", "2026-06-27T12:00:00Z");
-    seedAppearance("overrun", "edge", "2026-06-28T23:00:00Z", "2026-06-29T00:00:00Z");
+  it("OPE-1062 ACCEPTANCE: the Harwich Sunday sets (11:15, 12:15, 1:30 EDT) are inside a Sat–Sun event", async () => {
+    seedEvent("harwich", "2026-09-19T12:00:00Z", "2026-09-20T12:00:00Z");
+    seedAppearance("fowl", "harwich", "2026-09-20T15:15:00Z");
+    seedAppearance("summertown", "harwich", "2026-09-20T16:15:00Z");
+    seedAppearance("placeholders", "harwich", "2026-09-20T17:30:00Z");
+    seedAppearance("saturday", "harwich", "2026-09-19T18:00:00Z");
+    const r = await call("list_event_performers", { event_id: "harwich" });
+    expect(r.appearances).toHaveLength(4);
+    expect(r.outside_event_window_count).toBe(0);
+  });
+
+  it("OPE-1062: still fires on a set genuinely on another date — both edges (v3.8)", async () => {
+    seedEvent("edge", "2026-06-27T12:00:00Z", "2026-06-28T12:00:00Z");
+    // Fri Jun 26, 8pm EDT — the evening BEFORE the first day.
+    seedAppearance("day-before", "edge", "2026-06-27T00:00:00Z");
+    // Sat Jun 27, 7:59am EDT — the first day, however early.
+    seedAppearance("first-morning", "edge", "2026-06-27T11:59:00Z");
+    // Mon Jun 29, 1pm EDT — the day AFTER the last day.
+    seedAppearance("day-after", "edge", "2026-06-29T17:00:00Z");
+    // Sun 11pm → Mon 12:30am EDT: runs past midnight, still the last night.
+    seedAppearance("past-midnight", "edge", "2026-06-29T03:00:00Z", "2026-06-29T04:30:00Z");
+    // Starts Sunday, "ends" Tuesday — an end that is a data error.
+    seedAppearance("runaway-end", "edge", "2026-06-28T18:00:00Z", "2026-06-30T18:00:00Z");
     const r = await call("list_event_performers", { event_id: "edge" });
     const byId = Object.fromEntries(r.appearances.map((a: any) => [a.id, a.outside_event_window]));
-    expect(byId).toEqual({ early: true, "on-start": false, overrun: true });
+    expect(byId).toEqual({
+      "day-before": true,
+      "first-morning": false,
+      "day-after": true,
+      "past-midnight": false,
+      "runaway-end": true,
+    });
+    expect(r.outside_event_window_count).toBe(3);
   });
 
   it("an appearance with no time is null, not a false clean", async () => {
