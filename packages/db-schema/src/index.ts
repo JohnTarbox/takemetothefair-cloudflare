@@ -158,6 +158,12 @@ export const venues = sqliteTable(
     contactPhone: text("contact_phone"),
     website: text("website"),
     description: text("description"),
+    // OPE-1061 (drizzle/0296) — the VENUE's own pet policy. Rendered on the
+    // venue page only, labelled as the venue's; never displayed as, merged
+    // into, or defaulted onto an event's answer.
+    petFriendly: text("pet_friendly", { enum: ["UNSET", "YES", "NO", "NOT_PUBLISHED"] })
+      .notNull()
+      .default("UNSET"),
     imageUrl: text("image_url"),
     googlePlaceId: text("google_place_id"),
     googleMapsUrl: text("google_maps_url"),
@@ -511,6 +517,14 @@ export const events = sqliteTable(
     vendorFeeMaxCents: integer("vendor_fee_max_cents"),
     vendorFeeNotes: text("vendor_fee_notes"),
     indoorOutdoor: text("indoor_outdoor"), // INDOOR, OUTDOOR, MIXED
+    // OPE-1061 (drizzle/0296) — UNSET | YES | NO | NOT_PUBLISHED. The event's
+    // OWN answer: never inherited from the venue, never inferred from type or
+    // category. YES/NO carry an event_data_citations row (field_name
+    // 'pet_friendly') with a verbatim excerpt. Rules: @takemetothefair/utils
+    // pet-policy.ts. CHECK-constrained in the DDL.
+    petFriendly: text("pet_friendly", { enum: ["UNSET", "YES", "NO", "NOT_PUBLISHED"] })
+      .notNull()
+      .default("UNSET"),
     estimatedAttendance: integer("estimated_attendance"),
     eventScale: text("event_scale"), // SMALL, MEDIUM, LARGE, MAJOR
     applicationDeadline: integer("application_deadline", { mode: "timestamp" }),

@@ -102,6 +102,7 @@ export function registerAdminEventReadTools(server: McpServer, db: Db, auth: Aut
           venueState: venues.state,
           venueAddress: venues.address,
           venueZip: venues.zip,
+          venuePetFriendly: venues.petFriendly,
           // OPE-534 — everything below here is writable by `update_event` and
           // was NOT readable through this tool. An agent that sets a field it
           // has never seen destroys whatever was there, silently: no error, no
@@ -127,6 +128,7 @@ export function registerAdminEventReadTools(server: McpServer, db: Db, auth: Aut
           estimatedAttendance: events.estimatedAttendance,
           eventScale: events.eventScale,
           indoorOutdoor: events.indoorOutdoor,
+          petFriendly: events.petFriendly,
           imageUrl: events.imageUrl,
           imageFocalX: events.imageFocalX,
           imageFocalY: events.imageFocalY,
@@ -346,6 +348,9 @@ export function registerAdminEventReadTools(server: McpServer, db: Db, auth: Aut
                   state: event.venueState,
                   address: event.venueAddress,
                   zip: event.venueZip,
+                  // OPE-1061 — the VENUE's own policy, labelled as such. It is
+                  // never the event's answer; see `pet_friendly` below.
+                  pet_friendly: event.venuePetFriendly,
                 }
               : null,
             // OPE-534 — the writable field set, in full. Flat and always
@@ -398,6 +403,10 @@ export function registerAdminEventReadTools(server: McpServer, db: Db, auth: Aut
             estimated_attendance: event.estimatedAttendance,
             event_scale: event.eventScale,
             indoor_outdoor: event.indoorOutdoor,
+            // OPE-1061 — returned so a read-modify-write caller cannot erase it
+            // (the OPE-497 shape). The event's OWN value; the venue's is under
+            // `venue.pet_friendly` and must not be substituted for it.
+            pet_friendly: event.petFriendly,
             image_url: event.imageUrl,
             image_focal_x: event.imageFocalX,
             image_focal_y: event.imageFocalY,

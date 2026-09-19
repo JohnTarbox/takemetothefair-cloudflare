@@ -28,6 +28,7 @@ import {
   emailSendLedger,
   promoters,
   vendors,
+  venues,
 } from "@takemetothefair/db-schema";
 import { isGenericEmailProvider, isBareGenericProviderAddress } from "@takemetothefair/utils";
 import type { Db } from "../db.js";
@@ -340,6 +341,17 @@ export interface VendorInquiryBriefing {
     applicationInstructions: string | null;
     promoterWebsite: string | null;
   } | null;
+  /**
+   * OPE-1061 — "can I bring my dog?" answered from the briefing alone. `event`
+   * is the ONLY answer for the fair; `venue` is the venue's own policy and is
+   * carried separately, labelled, because an ag fair and a lawn craft fair can
+   * share one fairgrounds. UNSET = nobody looked; NOT_PUBLISHED = looked, silent.
+   */
+  petPolicy: {
+    event: string;
+    eventEvidence: { sourceUrl: string; excerpt: string | null } | null;
+    venueOwnPolicy: string | null;
+  } | null;
   vendor: VendorMatch | null;
   vendorVariantsTried: string[];
   priorSends: {
@@ -590,6 +602,7 @@ export async function buildVendorInquiryBriefing(
   // ── Confidence + hand-off ───────────────────────────────────────────────
   let confidence: EventConfidence | null = null;
   let handoff: VendorInquiryBriefing["handoff"] = null;
+  let petPolicy: VendorInquiryBriefing["petPolicy"] = null;
   if (matched) {
     confidence = await readEventConfidence(db, matched.id);
     if (confidence.warning) warnings.push(confidence.warning);
@@ -606,6 +619,41 @@ export async function buildVendorInquiryBriefing(
       .where(eq(events.id, matched.id))
       .limit(1);
     handoff = h ?? null;
+
+    // OPE-1061 — the event's own value, its evidence, and the venue's value.
+    const [p] = await db
+      .select({ event: events.petFriendly, venue: venues.petFriendly })
+      .from(events)
+      .leftJoin(venues, eq(events.venueId, venues.id))
+      .where(eq(events.id, matched.id))
+      .limit(1);
+    if (p) {
+      const [cite] = await db
+        .select({
+          sourceUrl: eventDataCitations.sourceUrl,
+          excerpt: eventDataCitations.sourceExcerpt,
+        })
+        .from(eventDataCitations)
+        .where(
+          and(
+            eq(eventDataCitations.eventId, matched.id),
+            eq(eventDataCitations.fieldName, "pet_friendly"),
+            eq(eventDataCitations.state, "active")
+          )
+        )
+        .orderBy(desc(eventDataCitations.createdAt))
+        .limit(1);
+      petPolicy = {
+        event: p.event,
+        eventEvidence: cite ?? null,
+        venueOwnPolicy: p.venue ?? null,
+      };
+      if ((p.event === "UNSET" || p.event === "NOT_PUBLISHED") && p.venue && p.venue !== "UNSET") {
+        warnings.push(
+          `Pet policy: the VENUE's own value is ${p.venue}, but this fair has no answer of its own (${p.event}). Do not answer for the fair from the venue — the fair can differ (livestock barns, biosecurity).`
+        );
+      }
+    }
     if (h && !h.applicationUrl && !h.applicationInstructions) {
       // OPE-526: application_url capture still is not landing on the scrape
       // path, so its absence means "never captured", not "none exists".
@@ -644,6 +692,7 @@ export async function buildVendorInquiryBriefing(
     urlResolution,
     confidence,
     handoff,
+    petPolicy,
     vendor,
     vendorVariantsTried: variantsTried,
     priorSends: sends.map((s) => ({
