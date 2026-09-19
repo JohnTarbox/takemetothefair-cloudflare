@@ -171,6 +171,8 @@ describe("OPE-975 — every probe's window is pinned", () => {
       "claim-corroboration-sweep": 48,
       "promoter-enrichment": 7 * 24,
       "discrepancy-detection": 72,
+      // OPE-1065 — dormant placeholder, not a measurement (see the registry).
+      "citation-live-defect": 720,
       "gw1d-scorer": 7 * 24,
       "booth-autowrite": 30 * 24,
       "series-write-path": 336,

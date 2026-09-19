@@ -6,6 +6,11 @@ import { decodeHtmlEntities, dollarsToCents, jsonContent } from "../helpers.js";
 import { normalizeEventDate } from "@takemetothefair/utils";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
+import {
+  LIVE_DEFECT_KINDS,
+  captureCitationLiveDefect,
+  type CitationLiveDefectResult,
+} from "../goodwill/citation-flag-capture.js";
 
 interface Env {
   MAIN_APP_URL?: string;
@@ -262,6 +267,188 @@ function parseDollarsToCents(raw: string): number | undefined {
 }
 
 /**
+ * OPE-1065 — the `live_defect` argument, shared by every citation writer.
+ *
+ * A pass that finds a live field wrong records it HERE, in the call that writes
+ * the evidence, instead of in `notes` where nothing reads it. See
+ * goodwill/citation-flag-capture.ts for why this is structured rather than a
+ * text match on notes (measured: it is wrong in both directions).
+ */
+const LIVE_DEFECT_SCHEMA = z
+  .object({
+    field: z
+      .string()
+      .min(1)
+      .max(64)
+      .optional()
+      .describe(
+        "The LIVE field you believe is wrong. Defaults to this citation's field_name, but may differ — e.g. cite ticket_price_max and flag `description` because the description repeats a claim the source no longer makes."
+      ),
+    kind: z
+      .enum(LIVE_DEFECT_KINDS)
+      .describe(
+        "contradicted = the source says something else; unsupported = our live value is asserted by no current source; stale = true for a prior edition only."
+      ),
+    reason: z
+      .string()
+      .min(1)
+      .max(500)
+      .transform(decodeHtmlEntities)
+      .describe("One sentence a triager can act on without re-reading the source."),
+    live_value: z
+      .string()
+      .max(500)
+      .transform(decodeHtmlEntities)
+      .optional()
+      .describe(
+        "What the public page shows now, if you have it. Read from the column when omitted and the field is a known one."
+      ),
+    source_says: z
+      .string()
+      .max(500)
+      .transform(decodeHtmlEntities)
+      .optional()
+      .describe("What the source says instead. Omit for `unsupported`."),
+  })
+  .optional()
+  .describe(
+    "OPE-1065: pass this when your verification finds a LIVE field wrong (contradicted, unsupported or stale). It files a countable work item (event_discrepancies, detected_by='citation_flag') in the same call. Do NOT only write it in `notes` — nothing reads notes. Source-trap warnings about a CORRECT row ('this aggregator is stale, do not use it') are not live defects; keep those in notes."
+  );
+
+type LiveDefectInput = z.infer<typeof LIVE_DEFECT_SCHEMA>;
+
+/**
+ * OPE-1065 — compare a cited value with the live column WITHOUT writing it.
+ *
+ * Returns null when the field has no column, the value does not parse, or the
+ * event is gone — none of which is evidence of a defect. Date columns compare
+ * by UTC calendar day: the house noon-UTC convention holds for only ~75% of
+ * rows (OPE-1011), so a same-day value stored at 04:00Z must not read as a
+ * contradiction of one parsed to 12:00Z.
+ */
+export async function compareCitedToLive(
+  db: Db,
+  eventId: string,
+  fieldName: string,
+  rawValue: string
+): Promise<{
+  column: string;
+  liveValue: string | null;
+  citedValue: string;
+  differs: boolean;
+} | null> {
+  const denorm = DENORM_FIELD_MAP[fieldName];
+  if (!denorm) return null;
+  const parsed = denorm.parse(rawValue);
+  if (parsed === undefined) return null;
+  const col = events[denorm.column as keyof typeof events] as never;
+  const rows = await db.select({ v: col }).from(events).where(eq(events.id, eventId)).limit(1);
+  if (rows.length === 0) return null;
+  const live = rows[0].v as unknown;
+  const liveValue = serializeColumnValue(live);
+  const citedValue = serializeColumnValue(parsed);
+  if (citedValue === null) return null;
+  const asDay = (v: unknown) => (v instanceof Date ? v.toISOString().slice(0, 10) : null);
+  const differs =
+    parsed instanceof Date && live instanceof Date
+      ? asDay(parsed) !== asDay(live)
+      : String(liveValue ?? "").trim() !== String(citedValue).trim();
+  return {
+    column: String(denorm.column),
+    liveValue: liveValue === null ? null : String(liveValue),
+    citedValue: String(citedValue),
+    differs,
+  };
+}
+
+/**
+ * OPE-1065 — the live value of a flagged field, for the work item. Only the
+ * denormalized fields plus the two free-text columns a pass most often flags;
+ * anything else returns null and the caller's `live_value` is the record.
+ */
+const EXTRA_LIVE_COLUMNS: Record<string, keyof typeof events.$inferSelect> = {
+  description: "description",
+  status: "status",
+};
+async function readLiveValue(db: Db, eventId: string, field: string): Promise<string | null> {
+  const column = DENORM_FIELD_MAP[field]?.column ?? EXTRA_LIVE_COLUMNS[field];
+  if (!column) return null;
+  const col = events[column as keyof typeof events] as never;
+  const rows = await db.select({ v: col }).from(events).where(eq(events.id, eventId)).limit(1);
+  const v = serializeColumnValue(rows[0]?.v);
+  return v === null ? null : String(v).slice(0, 500);
+}
+
+/**
+ * OPE-1065 — run both live-defect triggers for one freshly written citation.
+ * Shared by create_event_citation and bulk_create_event_citations so the two
+ * paths cannot disagree about what counts as a found defect.
+ *
+ *   1. `declared` — the caller passed `live_defect`.
+ *   2. `cited_value_differs` — automatic: a known field cited with
+ *      `update_event_column=false` whose value differs from the live column.
+ *      The caller read a source and chose not to apply it, so by construction
+ *      our page disagrees with it. Skipped when (1) already names that field.
+ */
+async function emitLiveDefects(
+  db: Db,
+  args: {
+    eventId: string;
+    citationId: string;
+    fieldName: string;
+    value: string;
+    sourceUrl: string;
+    updateColumn: boolean;
+    confidence: number | null;
+    liveDefect: LiveDefectInput;
+  }
+): Promise<CitationLiveDefectResult[]> {
+  const out: CitationLiveDefectResult[] = [];
+  const declaredField = args.liveDefect ? (args.liveDefect.field ?? args.fieldName) : null;
+
+  if (args.liveDefect && declaredField) {
+    const liveValue =
+      args.liveDefect.live_value ?? (await readLiveValue(db, args.eventId, declaredField));
+    out.push(
+      await captureCitationLiveDefect(db, {
+        eventId: args.eventId,
+        citationId: args.citationId,
+        field: declaredField,
+        kind: args.liveDefect.kind,
+        trigger: "declared",
+        liveValue,
+        sourceSays:
+          args.liveDefect.source_says ?? (declaredField === args.fieldName ? args.value : null),
+        sourceUrl: args.sourceUrl,
+        reason: args.liveDefect.reason,
+        confidence: args.confidence,
+      })
+    );
+  }
+
+  if (!args.updateColumn && declaredField !== args.fieldName) {
+    const cmp = await compareCitedToLive(db, args.eventId, args.fieldName, args.value);
+    if (cmp?.differs) {
+      out.push(
+        await captureCitationLiveDefect(db, {
+          eventId: args.eventId,
+          citationId: args.citationId,
+          field: args.fieldName,
+          kind: "contradicted",
+          trigger: "cited_value_differs",
+          liveValue: cmp.liveValue,
+          sourceSays: cmp.citedValue,
+          sourceUrl: args.sourceUrl,
+          reason: `cited ${args.fieldName}=${cmp.citedValue} with update_event_column=false; live ${cmp.column} holds ${cmp.liveValue ?? "NULL"}`,
+          confidence: args.confidence,
+        })
+      );
+    }
+  }
+  return out;
+}
+
+/**
  * OPE-516 — which prior citations a new one retires. The rule and its
  * asymmetry are documented on `citationSupersedeScope` in
  * `@takemetothefair/db-schema`, which every citation writer shares.
@@ -370,8 +557,9 @@ export function registerCitationTools(server: McpServer, db: Db, auth: AuthConte
         .boolean()
         .default(true)
         .describe(
-          "Default true. When true AND field_name maps to a known events column AND value parses cleanly, the denormalized column is updated to match."
+          "Default true. When true AND field_name maps to a known events column AND value parses cleanly, the denormalized column is updated to match. OPE-1065: when FALSE and the cited value differs from the live column, a live-defect work item is filed automatically (you cited a source and did not apply it, so the page disagrees with it)."
         ),
+      live_defect: LIVE_DEFECT_SCHEMA,
     },
     async (params) => {
       // Verify event exists (FK constraint will fail otherwise, but caller
@@ -496,6 +684,17 @@ export function registerCitationTools(server: McpServer, db: Db, auth: AuthConte
       const eventColumnUpdated = applied.skipReason === null ? applied.column : null;
       const columnSkipReason = applied.skipReason;
 
+      const liveDefects = await emitLiveDefects(db, {
+        eventId: params.event_id,
+        citationId,
+        fieldName: params.field_name,
+        value: params.value,
+        sourceUrl: params.source_url,
+        updateColumn,
+        confidence: params.confidence ?? null,
+        liveDefect: params.live_defect,
+      });
+
       return {
         content: [
           jsonContent({
@@ -520,6 +719,10 @@ export function registerCitationTools(server: McpServer, db: Db, auth: AuthConte
             // "already correct" apart from "not attempted".
             column_previous_value: applied.previousValue,
             column_new_value: applied.newValue,
+            // OPE-1065 — the work items this call filed. `outcome: "failed"` is
+            // reported, never swallowed: the citation is written but the
+            // finding is NOT queued, and the caller must say so.
+            live_defects: liveDefects,
           }),
         ],
       };
@@ -900,6 +1103,10 @@ export function registerCitationTools(server: McpServer, db: Db, auth: AuthConte
         .transform(decodeHtmlEntities)
         .optional()
         .describe("Correction: updated source label"),
+      // OPE-1065 — a later pass that re-reads an EXISTING citation and finds
+      // the live field wrong files the finding here, against the evidence
+      // already on record, rather than in a rewritten `notes`.
+      live_defect: LIVE_DEFECT_SCHEMA,
     },
     async (params) => {
       const rows = await db
@@ -964,6 +1171,21 @@ export function registerCitationTools(server: McpServer, db: Db, auth: AuthConte
 
       const stateChanged = params.state !== undefined && params.state !== prior.state;
 
+      // Declared trigger only: this call does not write a column, so there is
+      // no "cited and not applied" moment to detect mechanically.
+      const liveDefects = params.live_defect
+        ? await emitLiveDefects(db, {
+            eventId: prior.eventId,
+            citationId: prior.id,
+            fieldName: prior.fieldName,
+            value: params.value ?? prior.value,
+            sourceUrl: params.source_url ?? prior.sourceUrl,
+            updateColumn: true,
+            confidence: params.confidence ?? prior.confidence ?? null,
+            liveDefect: params.live_defect,
+          })
+        : [];
+
       return {
         content: [
           jsonContent({
@@ -973,6 +1195,7 @@ export function registerCitationTools(server: McpServer, db: Db, auth: AuthConte
             previous_state: prior.state,
             new_state: updates.state ?? prior.state,
             superseded_count: supersededCount,
+            live_defects: liveDefects,
           }),
         ],
       };
@@ -1060,6 +1283,7 @@ export function registerCitationTools(server: McpServer, db: Db, auth: AuthConte
             notes: z.string().max(1000).transform(decodeHtmlEntities).optional(),
             auto_supersede_prior: z.boolean().default(true),
             update_event_column: z.boolean().default(true),
+            live_defect: LIVE_DEFECT_SCHEMA,
           })
         )
         .min(1)
@@ -1075,6 +1299,7 @@ export function registerCitationTools(server: McpServer, db: Db, auth: AuthConte
         column_skip_reason: string | null;
         column_previous_value: string | number | null;
         column_new_value: string | number | null;
+        live_defects: CitationLiveDefectResult[];
       }> = [];
       const errors: Array<{ index: number; message: string }> = [];
 
@@ -1145,6 +1370,17 @@ export function registerCitationTools(server: McpServer, db: Db, auth: AuthConte
             ? await applyDenormColumn(db, c.event_id, c.field_name, c.value)
             : { column: null, previousValue: null, newValue: null, skipReason: null };
 
+          const liveDefects = await emitLiveDefects(db, {
+            eventId: c.event_id,
+            citationId,
+            fieldName: c.field_name,
+            value: c.value,
+            sourceUrl: c.source_url,
+            updateColumn,
+            confidence: c.confidence ?? null,
+            liveDefect: c.live_defect,
+          });
+
           created.push({
             index: i,
             citation_id: citationId,
@@ -1153,6 +1389,7 @@ export function registerCitationTools(server: McpServer, db: Db, auth: AuthConte
             column_skip_reason: applied.skipReason,
             column_previous_value: applied.previousValue,
             column_new_value: applied.newValue,
+            live_defects: liveDefects,
           });
         } catch (err) {
           errors.push({
@@ -1168,6 +1405,16 @@ export function registerCitationTools(server: McpServer, db: Db, auth: AuthConte
             ok: errors.length === 0,
             created_count: created.length,
             error_count: errors.length,
+            // OPE-1065 — rolled up so a 100-row call cannot bury a failed
+            // emission inside one row's `live_defects`.
+            live_defects_filed: created.reduce(
+              (n, r) => n + r.live_defects.filter((d) => d.outcome !== "failed").length,
+              0
+            ),
+            live_defects_failed: created.reduce(
+              (n, r) => n + r.live_defects.filter((d) => d.outcome === "failed").length,
+              0
+            ),
             created,
             errors,
           }),
