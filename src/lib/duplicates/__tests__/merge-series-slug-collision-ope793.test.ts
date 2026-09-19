@@ -80,6 +80,7 @@ const SCHEMA_SQL = `
     date text NOT NULL DEFAULT '',
     open_time text,
     close_time text,
+    close_time_unpublished INTEGER NOT NULL DEFAULT 0,
     notes text,
     internal_notes text,
     closed integer,
