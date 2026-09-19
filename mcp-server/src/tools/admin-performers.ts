@@ -31,6 +31,7 @@ import {
   unsafeSlug,
 } from "../helpers.js";
 import { combinedSimilarity } from "@takemetothefair/utils";
+import { toIsoDateOnlyInVenueZone } from "@takemetothefair/datetime";
 import { PERFORMER_ROSTER_STATUS_VALUES } from "@takemetothefair/constants";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
@@ -179,10 +180,25 @@ function appearanceOut(row: typeof eventPerformers.$inferSelect) {
 }
 
 /**
- * OPE-961 — zero-tolerance check of one appearance against its event's window.
- * null when either side has no time to compare. The ±2d grace in
- * get_performer_data_health is deliberately absent: a noon-truncated end_date
- * puts an evening finale 8 hours outside the window, which 2 days swallows.
+ * OPE-1062 — is this appearance on one of the event's own calendar days?
+ *
+ * OPE-961 compared the set's INSTANT against the stored `end_date` INSTANT with
+ * zero tolerance. But `end_date` is a date-only column held at the house
+ * anchor, noon UTC (`normalizeEventDate`), so every act after 8am Eastern on
+ * the final day read as "outside the event": measured 2026-09-17, 89 of 375
+ * timed appearances flagged, all 89 on the event's own last day, and 0 of 375
+ * on the early side — a symmetric check behaving asymmetrically, because it
+ * compared a clock time with a date-shaped sentinel. (OPE-961's acceptance
+ * test asserted exactly that noon-anchored case was a hit; it read the anchor
+ * as truncation. It is the convention, so that test is rewritten here.)
+ *
+ * Now a calendar comparison in the venue zone — the zone date-only fields
+ * render in (OPE-482), via the shared `toIsoDateOnlyInVenueZone`:
+ *   - the set STARTS outside [first day, last day] → outside;
+ *   - a set that starts inside may run past midnight, so its END is outside
+ *     only if it lands after the morning following the last day.
+ * null when either side has no time. Deliberately still strict at the DAY
+ * edge — the ±2d grace in get_performer_data_health stays absent here.
  */
 export function outsideEventWindow(
   appearance: { performance_start: number | null; performance_end: number | null },
@@ -190,9 +206,12 @@ export function outsideEventWindow(
 ): boolean | null {
   const { performance_start: start, performance_end: end } = appearance;
   if (start === null || window.start_sec === null || window.end_sec === null) return null;
-  return (
-    start < window.start_sec || start > window.end_sec || (end !== null && end > window.end_sec)
-  );
+  const day = (sec: number) => toIsoDateOnlyInVenueZone(sec * 1000);
+  const firstDay = day(window.start_sec);
+  const lastDay = day(window.end_sec);
+  const startDay = day(start);
+  if (startDay < firstDay || startDay > lastDay) return true;
+  return end !== null && day(end) > day(window.end_sec + 86_400);
 }
 
 /** Shared writable performer fields (create + update). */
@@ -644,7 +663,7 @@ export function registerPerformerTools(server: McpServer, db: Db, auth: AuthCont
   // ── list_event_performers ─────────────────────────────────────────
   server.tool(
     "list_event_performers",
-    "List all appearances at an event, joined with performer name/slug, ordered by billing then start time. Call this FIRST before bulk-linking (roster-check). OPE-961: each appearance carries last_verified_at (epoch seconds) and last_verified_source, so a re-verification pass can read back its own stamps; the top-level `event` carries the event's name, slug and raw window (ISO + epoch seconds), and each appearance carries outside_event_window — a ZERO-tolerance comparison of its times to that window (null when either side has no time). Admin only.",
+    "List all appearances at an event, joined with performer name/slug, ordered by billing then start time. Call this FIRST before bulk-linking (roster-check). OPE-961: each appearance carries last_verified_at (epoch seconds) and last_verified_source, so a re-verification pass can read back its own stamps; the top-level `event` carries the event's name, slug and raw window (ISO + epoch seconds), and each appearance carries outside_event_window — true when the set falls on a calendar day (America/New_York, the zone dates render in) outside the event's first..last day; a set may run past midnight after the last day (null when either side has no time). Admin only.",
     { event_id: z.string().min(1) },
     async (params) => {
       try {
