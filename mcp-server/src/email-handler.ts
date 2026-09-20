@@ -1029,8 +1029,49 @@ export async function handleInboundEmail(
 // URL extraction (pure)
 // ---------------------------------------------------------------------------
 
+/**
+ * OPE-1086 — trailing characters that cannot belong to a URL in this position.
+ *
+ * Gmail renders a Mailchimp-bolded line as `*…*` in the `text/plain`
+ * alternative, and the tokenizer (`[^\s<>"']+`) takes everything up to
+ * whitespace — so a forwarded newsletter stored
+ * `…/stephen-kings-79th-birthday-carnival/*` and replied `unfetchable-url`.
+ * The same URL without the asterisk returns HTTP 200. One character dropped a
+ * 60-vendor craft fair on the day it ran.
+ *
+ * `)`, `]` and `}` are stripped only when UNBALANCED: a path may legitimately
+ * end in a closing bracket (Wikipedia-style `…/Foo_(bar)`), and stripping that
+ * unconditionally — as this did before — breaks a working URL. Openers are
+ * counted across the whole token, so `…/Foo_(bar)` keeps its parenthesis while
+ * `(see …/foo)` loses the one it never opened.
+ */
+const TRAILING_NOISE = new Set([..."*_.,;:!?>\"'`", "”", "’", "»"]);
+const CLOSERS: Record<string, string> = { ")": "(", "]": "[", "}": "{" };
+
+export function stripUrlTrailingNoise(token: string): string {
+  let out = token;
+  // Repeated: a bolded sentence end leaves two ("…/path/*." → "…/path/").
+  for (let guard = 0; guard < 8 && out.length > 0; guard++) {
+    const last = out[out.length - 1];
+    if (CLOSERS[last]) {
+      const opens = out.split(CLOSERS[last]).length - 1;
+      const closes = out.split(last).length - 1;
+      if (closes <= opens) break; // balanced — part of the path
+      out = out.slice(0, -1);
+      continue;
+    }
+    if (!TRAILING_NOISE.has(last)) break;
+    out = out.slice(0, -1);
+  }
+  return out;
+}
+
 function cleanUrl(raw: string): string | null {
-  const u = raw.trim().replace(/^[<("']+|[>)"',.;]+$/g, "");
+  // Leading `<("'` only. A leading `*` or `_` is never IN the token — the
+  // tokenizer starts matching at `https`, so the opening bold marker is already
+  // outside it (OPE-1086 scope 2, confirmed by test, not by reading). Adding
+  // them here was dead code: the mutation that removed them changed nothing.
+  const u = stripUrlTrailingNoise(raw.trim().replace(/^[<("']+/, ""));
   try {
     const p = new URL(u);
     if (p.protocol !== "http:" && p.protocol !== "https:") return null;
