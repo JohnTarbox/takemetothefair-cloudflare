@@ -66,6 +66,7 @@ import {
   OWED_HUMAN_NOTICE_SOURCE,
   type OwedHumanVerdict,
 } from "../email-handlers/owed-human.js";
+import { openObligationIfOwed } from "../email-handlers/open-obligation.js";
 import { inboundEmails, adminActions, events } from "../schema.js";
 import { logError } from "../logger.js";
 import {
@@ -651,11 +652,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       async () => {
         const db = getDb(this.env.DB);
         const [row] = await db
-          .select({
-            bodyText: inboundEmails.bodyText,
-            bodyTextExcerpt: inboundEmails.bodyTextExcerpt,
-            attachmentCount: inboundEmails.attachmentCount,
-          })
+          .select()
           .from(inboundEmails)
           .where(eq(inboundEmails.id, messageRowId))
           .limit(1);
@@ -664,31 +661,51 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           (row.attachmentCount ?? 0) > 0 ||
           !isBlankAskAboutEventBody(row.bodyText ?? row.bodyTextExcerpt)
         ) {
-          return false;
+          return null;
         }
         await db
           .update(inboundEmails)
           .set({ flaggedForReview: 1, extractFailReason: "blank-question" })
           .where(eq(inboundEmails.id, messageRowId));
+        // OPE-985 B condition 2 (John, 2026-09-20) — the prompt is an
+        // invitation to resend, not an answer, so something must still chase
+        // this reader. `forceOwed`: the classifier's guess (0.9 `correction` on
+        // one specimen) must not decide whether anyone is owed, because the
+        // message it read was our own template.
+        const obligationRef = await openObligationIfOwed(
+          this.env,
+          db,
+          row,
+          "mcp:inbound-blank-question",
+          { forceOwed: true }
+        );
         await logError(this.env.DB, {
           level: "warn",
           source: "mcp:inbound-blank-question",
-          message: "ask-about-event mailto arrived with no question — no acknowledgement sent",
+          message: obligationRef
+            ? "ask-about-event mailto arrived with no question — sending the resend prompt"
+            : "ask-about-event mailto arrived with no question — prompt sent, NO obligation opened",
           sessionId,
-          context: { messageRowId, intent },
+          context: { messageRowId, intent, obligationRef },
         });
-        return true;
+        return { obligationRef };
       }
     );
 
     if (blankQuestion) {
       routedToWorkflow = "short-circuit:blank-question";
+      // OPE-985 Ask B (ruled 2026-09-20). Two conditions ride here:
+      //  1. NOT `replied`. The row owes the reader a person until they resend
+      //     or someone writes; `awaiting_human` says that and stays filterable.
+      //     `flagged_for_review` is never cleared — mark-done only ever sets it.
+      //  2. an obligation was opened above, so something chases the row; the
+      //     flag alone did not, which is what changed John's mind on B.
       result = {
         replyKind: "blank-question",
-        status: "replied",
-        suppressReply: true,
+        status: OWED_HUMAN_STATUS,
         skipAdminDecision: true,
         extractFailReason: "blank-question",
+        crossingDestinationRef: blankQuestion.obligationRef ?? undefined,
       };
     } else if (unrouted?.ask) {
       // The row carrying this reply_kind IS the open hold — it is what the

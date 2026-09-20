@@ -26,6 +26,8 @@
  */
 
 /** The inbound facts a predicate may consult. Deliberately small. */
+import { isBlankAskAboutEventBody } from "@takemetothefair/utils";
+
 export interface InboundFacts {
   /** `inbound_emails.parsed_url` — a URL we actually stored off the message. */
   parsedUrl?: string | null;
@@ -127,7 +129,18 @@ export const TEMPLATE_ASSERTIONS: Record<string, TemplateAssertion[]> = {
   ],
   // OPE-985 — never rendered or sent (the workflow always suppresses it), so it
   // makes no claim about the inbound. Reviewed, not forgotten.
-  "blank-question": [],
+  // OPE-985 B — the copy asserts the message arrived carrying only the event
+  // link. That is exactly what the detector decides, so the claim is checked
+  // against the stored body with the same rule that routed the row here.
+  "blank-question": [
+    {
+      claim: "your message came through with only the link to the event page in it",
+      falsifiedBy: (f) =>
+        f.bodyText && !isBlankAskAboutEventBody(f.bodyText)
+          ? "body_text carries prose — the reader DID type a question; do not tell them it didn't arrive"
+          : null,
+    },
+  ],
   "empty-message": [
     {
       claim: "your message arrived carrying nothing usable",

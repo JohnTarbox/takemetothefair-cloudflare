@@ -81,6 +81,28 @@ describe("OPE-985 — the builder and the detector agree (one source)", () => {
     expect(extractAllUrls(body, "", 10)).toContain(url); // OPE-977 still resolves it
   });
 
+  // OPE-985 A1, ruled by John 2026-09-20: say where to type. Of the readers who
+  // typed anything, two typed BELOW the URL and one above the fence; nobody used
+  // the blank lines. The label and the detector ship together — a template with
+  // a line the detector does not know would silently stop detecting blanks.
+  it("A1: the rendered body carries the label, and the URL still follows the fence", () => {
+    const body = bodyOf(
+      buildAskAboutEventMailto({ eventName: "X", year: 2026, canonicalUrl: url })!
+    );
+    expect(body.startsWith("Your question:")).toBe(true);
+    expect(body.endsWith(`---\n${url}`)).toBe(true);
+    expect(extractAllUrls(body, "", 10)).toContain(url); // OPE-977 roundtrip
+  });
+
+  it("A1: typing ON the label line is a real question, not a blank", () => {
+    const typed = `Your question: can I bring a leashed dog?\n\n---\n${url}`;
+    expect(isBlankAskAboutEventBody(typed)).toBe(false);
+    // Landmark: the bare label with nothing after it IS still blank.
+    expect(isBlankAskAboutEventBody(`Your question:\n\n\n---\n${url}`)).toBe(true);
+    // And the pre-A1 body (no label) stays blank — old mail still detects.
+    expect(isBlankAskAboutEventBody(`\n\n---\n${url}`)).toBe(true);
+  });
+
   it("scope 5: a name already ending in its year is not doubled in the subject", () => {
     expect(
       subjectOf(
@@ -123,23 +145,66 @@ describe("OPE-985 — the workflow suppresses the acknowledgement (source-level,
     expect(at('"send-reply"')).toBeGreaterThan(detect);
   });
 
-  it("the blank branch is FIRST in the result chain, and sends nothing, skips the 7-day pause, flags for review", () => {
+  // OPE-985 Ask B, ruled by John 2026-09-20 — REVERSES the original "send
+  // nothing" decision. Silence plus a flag only works if something chases the
+  // flag, and on the second specimen (Rosemarie, 09-19) nothing did: she wrote
+  // at 12:29 EDT about a festival running 9–5 that day and got her first human
+  // contact after it closed. The prompt now goes out, and an obligation chases.
+  it("the blank branch is FIRST, SENDS the prompt, skips the 7-day pause, flags for review", () => {
     const branch = at("if (blankQuestion) {");
     expect(at("} else if (unrouted?.ask) {")).toBeGreaterThan(branch);
     const block = SRC.slice(branch, SRC.indexOf("} else if (unrouted?.ask) {"));
     expect(block).toContain('replyKind: "blank-question"');
-    expect(block).toContain("suppressReply: true");
     expect(block).toContain("skipAdminDecision: true");
+    // Condition 1: not `replied`, and the flag is never cleared.
+    expect(block).toContain("status: OWED_HUMAN_STATUS");
+    expect(block).not.toContain('status: "replied"');
+    expect(block).not.toContain("suppressReply");
     const detectBlock = SRC.slice(at('"blank-question/detect"'), branch);
     expect(detectBlock).toContain('flaggedForReview: 1, extractFailReason: "blank-question"');
     expect(detectBlock).toContain("isBlankAskAboutEventBody(");
+    // Condition 2: the path opens an obligation, and forces it — the
+    // classifier read our own template, so its intent cannot decide this.
+    expect(detectBlock).toContain("openObligationIfOwed(");
+    expect(detectBlock).toContain("forceOwed: true");
   });
 
   it("the send step is skipped for a suppressed reply (the guard this relies on)", () => {
     expect(SRC).toContain("if (result.replyKind !== null && !result.suppressReply) {");
   });
 
-  it("blank-question has no copy: rendering it throws instead of inventing a reply", () => {
-    expect(() => buildReply("blank-question", "a@b.c", {})).toThrow(/never sent/);
+  it("renders John's approved copy VERBATIM, and nothing else", () => {
+    const job = buildReply("blank-question", "a@b.c", {
+      subject: "Question about Johnny Appleseed Arts and Cultural Festival 2026",
+    });
+    expect(job.subject).toBe("Re: Question about Johnny Appleseed Arts and Cultural Festival 2026");
+    expect(job.text).toContain(
+      "Thanks for writing to Meet Me at the Fair. Your message came through with only the link to the event page in it — the question itself didn't make it. Could you reply with what you'd like to know?"
+    );
+    // It asks for one thing and claims nothing about having read a question.
+    expect(job.text).not.toMatch(/we've recorded|correction request|our team will review/i);
+  });
+
+  it("records an OPE-771 violation if the body it claims is empty actually carries prose", () => {
+    // The detector and this assertion share ONE rule, so a violation can only
+    // mean the row changed between detect and send. There is deliberately no
+    // NEUTRAL_FALLBACK for this kind: OPE-771 substitutes only into an
+    // already-approved sibling, and no approved template says the right thing
+    // to someone whose question DID arrive. So the violation is recorded and
+    // visible rather than silently swapped — noted for John on the ticket.
+    const realQuestion =
+      "Can you rent wheelchairs at the festival?\n\n---\nhttps://meetmeatthefair.com/events/x";
+    const clean = buildReply("blank-question", "a@b.c", {
+      subject: "Question about X",
+      assertionFacts: { bodyText: "\n\n---\nhttps://meetmeatthefair.com/events/x" },
+    });
+    const violating = buildReply("blank-question", "a@b.c", {
+      subject: "Question about X",
+      assertionFacts: { bodyText: realQuestion },
+    });
+    // Landmark: the same call with a genuinely blank body records nothing.
+    expect(clean.assertionViolations?.length ?? 0).toBe(0);
+    expect(violating.assertionViolations?.length ?? 0).toBeGreaterThan(0);
+    expect(JSON.stringify(violating.assertionViolations)).toMatch(/body_text carries prose/);
   });
 });

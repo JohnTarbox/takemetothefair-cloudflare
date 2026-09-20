@@ -1004,9 +1004,13 @@ Our team has reviewed your inquiry and a member should have followed up directly
 ${SIGN_OFF}`;
     }
     case "blank-question":
-      // OPE-985 — recorded, never sent. Reaching here means the suppression in
-      // the inbound workflow was bypassed; refuse rather than invent copy.
-      throw new Error("blank-question is never sent — the inbound workflow suppresses it");
+      // OPE-985 Ask B — APPROVED VERBATIM by John, 2026-09-20. Any deviation
+      // from this string goes back to him; do not edit it for tone or length.
+      // It observes what arrived rather than blaming the sender, and it asks
+      // for exactly one thing.
+      return `Thanks for writing to Meet Me at the Fair. Your message came through with only the link to the event page in it — the question itself didn't make it. Could you reply with what you'd like to know?
+
+${SIGN_OFF}`;
     case "press-needs-info": {
       const note = (params.note as string | undefined) ?? "";
       const noteBlock = note

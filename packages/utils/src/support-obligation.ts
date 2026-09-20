@@ -47,6 +47,9 @@ export const ACK_TERMINATING_INTENTS = [
 export interface ObligationCandidate {
   fromAddress: string;
   toAddress?: string | null;
+  /** OPE-985 B — this path knows a human is owed; skip the intent allow-list.
+   *  Never skips the system-sender or suppressed refusals. */
+  forceOwed?: boolean;
   classifiedIntent: string | null;
   /** Accepted so it can be RECORDED. It must not affect the decision. */
   classifiedConfidence?: number | null;
@@ -105,9 +108,17 @@ export function extractEmailAddress(raw: string): string {
  * customer's blocker in silence.
  */
 export function decideObligation(candidate: ObligationCandidate): ObligationDecision {
+  // OPE-985 B (ruled by John 2026-09-20) — a path may KNOW a human is owed,
+  // whatever the classifier said. A blank ask-about-event body classifies as
+  // whatever its subject suggests (`correction` at 0.9 on one specimen), and
+  // that guess must not decide whether anyone chases the reader: the prompt we
+  // send is an invitation to resend, not an answer. System senders and
+  // unsubscribed addresses are still refused below — those are about whether we
+  // may write at all, which `force` does not override.
   if (
-    !candidate.classifiedIntent ||
-    !(ACK_TERMINATING_INTENTS as readonly string[]).includes(candidate.classifiedIntent)
+    !candidate.forceOwed &&
+    (!candidate.classifiedIntent ||
+      !(ACK_TERMINATING_INTENTS as readonly string[]).includes(candidate.classifiedIntent))
   ) {
     return { obligated: false, reason: "not_ack_terminating" };
   }

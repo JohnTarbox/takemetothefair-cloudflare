@@ -47,7 +47,9 @@ export async function openObligationIfOwed(
   env: { DB: D1Database },
   db: ReturnType<typeof import("../db.js").getDb>,
   row: InboundEmail,
-  source: string
+  source: string,
+  /** OPE-985 B — the caller knows a human is owed regardless of the classifier. */
+  opts: { forceOwed?: boolean } = {}
 ): Promise<string | null> {
   try {
     const fromAddress = row.fromAddress ?? "";
@@ -57,6 +59,7 @@ export async function openObligationIfOwed(
 
     const decision = decideObligation({
       fromAddress,
+      forceOwed: opts.forceOwed,
       toAddress: row.toAddress ?? null,
       // The CLASSIFIER's intent, not the intent that dispatched here. They differ
       // on exactly the rows this ticket is about, and the classifier's is the one
