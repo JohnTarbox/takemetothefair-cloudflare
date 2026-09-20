@@ -9,10 +9,15 @@
  * the Workers AI binding is already provisioned on this worker for the
  * (existing) admin-side AI tools.
  *
- * Latency budget: ~500ms–2s typical. We race the AI call against a 2500ms
- * timeout; on timeout the entrypoint falls back to address-based routing
- * with routing_source='address_only' rather than bouncing the message.
- * See spec §"Risks + known fragility" for the cap rationale.
+ * Latency budget: measured 2026-09-20 (OPE-1089) at p50 2079ms / p95 3317ms
+ * in-Worker. We race each AI call against AI_TIMEOUT_MS and retry ONCE on a
+ * timeout; if both attempts time out the entrypoint falls back to
+ * address-based routing with routing_source='address_only' rather than
+ * bouncing the message. See AI_TIMEOUT_MS / CLASSIFIER_MAX_ATTEMPTS below for
+ * the numbers, and spec §"Risks + known fragility" for the cap rationale.
+ *
+ * (This header previously said "2500ms", which stopped being true at v2 on
+ * 2026-05-22 and was still being read as current four months later.)
  */
 
 import { WORKERS_AI_MODEL } from "@takemetothefair/constants";
@@ -76,6 +81,10 @@ export type ClassifierResult = {
   /** When the model run started + ended. Used for telemetry. */
   startedAt: number;
   finishedAt: number;
+  /** OPE-1089 — how many model calls this result cost (1 or 2). Logged so the
+   *  retry's effect is measurable in the same place its absence was measured:
+   *  `error_logs` rows with message='classifier result'. */
+  attempts: number;
 };
 
 export type ClassifierInput = {
@@ -95,7 +104,52 @@ export type ClassifierInput = {
 //   4000ms (v3, 2026-05-21) — reverted to 8B; kept the 4000ms budget
 //     because higher headroom is a clean cost. 8B median latency at our
 //     usage is well under 2000ms but tail can spike.
+//   4000ms (OPE-1089, 2026-09-20) — KEPT, now on measurement rather than
+//     on the 8B-era guess above. See RETRY below for why the fix was a
+//     second attempt instead of a bigger number.
 const AI_TIMEOUT_MS = 4000;
+
+/**
+ * OPE-1089 — one retry, and ONLY on a timeout.
+ *
+ * ## Why a retry rather than a larger timeout
+ *
+ * The classifier was failing on **23 of 233** classified rows (9.9%), in every
+ * month since it shipped, always `intent-classifier-timeout`. Measured before
+ * changing anything:
+ *
+ *  - **In-Worker latency** (`error_logs` where message='classifier result',
+ *    n=70): successes p50 **2079ms**, p90 3170, p95 3317, **max 3951** — the
+ *    slowest success beat the deadline by 49ms. All 6 failures sat at exactly
+ *    4000ms, i.e. every failure is this timeout firing, not a model error.
+ *  - **Latency is flat in prompt size**: medians 1443/1376/1391/1311/1458ms for
+ *    prompts from 5,856 to 8,836 chars. Trimming the taxonomy or the 3000-char
+ *    body cap would buy nothing, so neither was touched.
+ *  - **The tail is heavy and irregular.** 40 further samples: p50 1351, p90
+ *    2513, p95 3744 — and a single **10,775ms** outlier. Earlier samples spiked
+ *    at 4162 and 4592.
+ *
+ * A bigger number cannot win that. 6000ms misses the 10.8s spike; so does
+ * 8000ms; catching it needs ~12s of blocking on the email entrypoint. But the
+ * spikes are ISOLATED — in both samples one outlier sat among ~1.4s calls — so
+ * a second attempt is drawn fresh rather than inheriting a bad minute. Two
+ * 4000ms attempts take an 8.6% per-attempt failure to ~0.7% with a worst case
+ * of 8s, where a single 12s timeout would block four times as long to catch the
+ * same spike.
+ *
+ * ⚠️ Independence is inferred from two small samples, not proven. If the error
+ * rate does not fall, the next reader should suspect correlated slowness (a
+ * degraded colo or model rollout) and NOT simply add a third attempt.
+ *
+ * ## Only on timeout
+ *
+ * A deterministic failure must not be retried. The 2026-06-15 outage was error
+ * `5028: This model was deprecated` on every call — a second attempt would have
+ * doubled the cost of an outage that no number of retries could fix. The
+ * non-string `.response` shape from the 3B model (v2) is the same class.
+ */
+const CLASSIFIER_MAX_ATTEMPTS = 2;
+const TIMEOUT_MESSAGE = "intent-classifier-timeout";
 // Model history:
 //   v1 (2026-05-20): @cf/meta/llama-3.1-8b-instruct — initial choice.
 //     Worked correctly: returned { response: <plain JSON string> } that
@@ -151,20 +205,36 @@ export async function classifyIntent(
   const userPrompt = buildUserPrompt(input);
 
   let aiResponseText: string;
+  let attempts = 0;
   try {
-    const raceResult = await Promise.race([
-      ai.run(MODEL, {
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: userPrompt },
-        ],
-        max_tokens: 1024,
-        temperature: 0.1,
-      }),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("intent-classifier-timeout")), AI_TIMEOUT_MS)
-      ),
-    ]);
+    // OPE-1089 — attempt, and on a TIMEOUT only, attempt once more. See
+    // CLASSIFIER_MAX_ATTEMPTS for the measurements behind this.
+    let raceResult: unknown;
+    for (;;) {
+      attempts++;
+      try {
+        raceResult = await Promise.race([
+          ai.run(MODEL, {
+            messages: [
+              { role: "system", content: SYSTEM_PROMPT },
+              { role: "user", content: userPrompt },
+            ],
+            max_tokens: 1024,
+            temperature: 0.1,
+          }),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error(TIMEOUT_MESSAGE)), AI_TIMEOUT_MS)
+          ),
+        ]);
+        break;
+      } catch (attemptErr) {
+        const isTimeout = (attemptErr as Error)?.message === TIMEOUT_MESSAGE;
+        if (!isTimeout || attempts >= CLASSIFIER_MAX_ATTEMPTS) throw attemptErr;
+        // Fall through and try once more. No backoff: the spikes this recovers
+        // from are isolated rather than clustered, so waiting only spends the
+        // entrypoint's budget without improving the odds.
+      }
+    }
     // Cloudflare Workers AI's response shape varies by model. llama-3.1-8b
     // returns `{ response: string }` reliably. llama-3.2-3b sometimes
     // returns `response` as a NON-string (object with tool-call shapes,
@@ -197,6 +267,7 @@ export async function classifyIntent(
       fromAi: false,
       startedAt,
       finishedAt: Date.now(),
+      attempts,
     };
   }
 
@@ -225,6 +296,7 @@ export async function classifyIntent(
       fromAi: true,
       startedAt,
       finishedAt: Date.now(),
+      attempts,
     };
   }
 
@@ -234,6 +306,7 @@ export async function classifyIntent(
     fromAi: true,
     startedAt,
     finishedAt: Date.now(),
+    attempts,
   };
 }
 

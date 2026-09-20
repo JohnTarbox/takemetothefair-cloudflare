@@ -97,6 +97,54 @@ async function maxTs(
  */
 export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
   {
+    // OPE-1089 — proof the intent classifier is still ANSWERING, not just running.
+    //
+    // This path has gone fully dark twice and nobody noticed from the inside:
+    // the 2026-05-22 3B model swap returned a non-string `.response` so every
+    // email routed `classifier-no-json` for days, and on 2026-06-15 the 8B model
+    // was deprecated and returned error 5028 on every call. In both cases mail
+    // kept flowing, every reply still went out, and the only symptom was that
+    // routing quietly stopped being intent-aware. That is the OPE-246 class.
+    //
+    // ⚠️ Evidence is a routing_source that ONLY a live classifier can produce.
+    // `classifier`, `classifier_override` and `fallback_low_confidence` are all
+    // written from `result.fromAi === true`; `address_only` is what a failure
+    // (or a missing AI binding) leaves behind, and `trusted_fastpath` means the
+    // classifier was deliberately skipped. So this probes the ANSWER, not the
+    // attempt — a classifier that runs and fails on every call sets
+    // `classified_at` exactly like a healthy one, which is precisely how both
+    // outages hid.
+    //
+    // ⚠️ This is a LIVENESS probe and cannot see the failure RATE. The 9.9%
+    // timeout rate that OPE-1089 was filed for would not fire it, and must not
+    // be read as covered here — the retry addresses the rate, this covers going
+    // dark. Do not widen it into a rate alarm; `HeartbeatProbe` has no shape for
+    // one, and a probe that pretends to cover both is worse than two honest ones.
+    //
+    // 240h, MEASURED against the emitting population (n=209 successful
+    // classifications): the largest gap between consecutive successes is
+    // **167.6h** all-time and 142.3h within the last 90 days, mean 14.1h.
+    // Inbound volume is low and lumpy — a quiet week is normal here — so the
+    // window clears the all-time max with ~43% margin rather than tracking the
+    // mean, which would cry wolf over an ordinary holiday lull and get muted.
+    name: "classifier-execution",
+    ownerOpe: "OPE-1089",
+    label: "inbound intent classifier returning answers",
+    priority: "P1",
+    expectedWindowHours: 240,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        inboundEmails,
+        inboundEmails.classifiedAt,
+        inArray(inboundEmails.routingSource, [
+          "classifier",
+          "classifier_override",
+          "fallback_low_confidence",
+        ])
+      ),
+  },
+  {
     // OPE-847 — proof the roster vendor-linker is still writing.
     //
     // This is the only path in the inbound pipeline that creates PUBLIC vendor
