@@ -133,6 +133,11 @@ describe("OPE-975 — every probe's window is pinned", () => {
     expect(
       Object.fromEntries(HEARTBEAT_PROBES.map((p) => [p.name, p.expectedWindowHours]))
     ).toEqual({
+      // OPE-1089 — 240h, measured against n=209 successful classifications:
+      // largest gap between consecutive successes 167.6h all-time, 142.3h in
+      // the last 90 days, mean 14.1h. Sized off the MAX rather than the mean
+      // because inbound volume is lumpy and a quiet week is normal.
+      "classifier-execution": 240,
       "roster-vendor-link": 720,
       "submit-secondary-page-crawl": 576,
       "spam-event-triple-detector": 504,

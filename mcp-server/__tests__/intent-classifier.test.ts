@@ -168,13 +168,21 @@ describe("classifyIntent — fail-safe integration", () => {
     expect(result.intents[0].rationale).toContain("classifier-error");
   });
 
-  it("returns unclear fallback on AI timeout", async () => {
+  // OPE-1089 — a timeout now costs TWO attempts (4000ms each), so this needs a
+  // budget above 8000ms where 5000ms used to do. The assertion is unchanged and
+  // deliberately so: giving up must still produce the unclear fallback rather
+  // than throwing. The added `attempts` check is what stops this test passing
+  // if the retry were quietly removed — `fromAi: false` alone cannot tell one
+  // failed attempt from two.
+  it("returns unclear fallback after BOTH attempts time out", async () => {
     const ai = mockAiTimeout();
     const result = await classifyIntent(ai, SAMPLE_INPUT);
     expect(result.fromAi).toBe(false);
     expect(result.intents[0].intent).toBe("unclear");
     expect(result.intents[0].rationale).toContain("timeout");
-  }, 5000);
+    expect(result.attempts).toBe(2);
+    expect(ai.run).toHaveBeenCalledTimes(2);
+  }, 15000);
 
   it("returns unclear fallback when AI returns non-JSON garbage", async () => {
     const ai = mockAi("Yeah, I think it's probably spam.");

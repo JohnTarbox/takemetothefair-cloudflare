@@ -1788,6 +1788,10 @@ async function computeRouting(args: {
       version: result.version,
       fromAi: result.fromAi,
       durationMs: result.finishedAt - result.startedAt,
+      // OPE-1089 — 2 means the first call timed out and the retry ran. This is
+      // the only place the retry's effect is observable: it lands in the same
+      // `error_logs` rows whose durationMs measured the problem.
+      attempts: result.attempts,
     },
   });
 
