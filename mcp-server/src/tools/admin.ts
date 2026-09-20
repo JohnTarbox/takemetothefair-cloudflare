@@ -2791,12 +2791,20 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .max(200)
         .transform(sanitizeProse)
         .describe("Business/organization name"),
-      type: z
+      // OPE-1090 — canonical name, matching `update_vendor`. `type` below is
+      // the legacy alias, kept so existing callers do not break.
+      vendor_type: z
         .string()
         .max(100)
         .transform(sanitizeProse)
         .optional()
         .describe("Vendor category (e.g. 'Home Improvement', 'Food', 'Crafts')"),
+      type: z
+        .string()
+        .max(100)
+        .transform(sanitizeProse)
+        .optional()
+        .describe("DEPRECATED alias for vendor_type. Prefer vendor_type."),
       description: z
         .string()
         .max(500)
@@ -2807,7 +2815,22 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .array(z.string().transform(sanitizeProse))
         .optional()
         .describe("List of products/services offered"),
-      location: z.string().optional().describe("City and state, e.g. 'Portland, ME'"),
+      // OPE-1090 — city/state are what the by-state browse pages filter on, and
+      // they are separate columns. `location` remains as the legacy alias.
+      city: z.string().optional().describe("City"),
+      state: z
+        .string()
+        .max(2)
+        .optional()
+        .describe("2-letter state code, e.g. 'ME'. Matches update_vendor."),
+      location: z
+        .string()
+        .optional()
+        .describe(
+          "DEPRECATED alias: 'City, ST' split on the LAST comma. Prefer city + state — a value with no comma sets city and leaves state NULL, which drops the vendor from every by-state browse page."
+        ),
+      contact_name: z.string().optional().describe("Contact person name"),
+      social_links: z.string().optional().describe("Social media links (JSON string)"),
       website: z.string().optional().describe("Vendor website URL"),
       contact_email: z.string().optional().describe("Primary contact email address"),
       contact_phone: z.string().optional().describe("Contact phone number"),
@@ -2951,8 +2974,34 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         role: "VENDOR",
       });
 
-      // Parse location into city/state
-      const loc = params.location ? parseLocation(params.location) : { city: null, state: null };
+      // OPE-1090 — resolve the two vocabularies onto the columns.
+      //
+      // `create_vendor` and `update_vendor` write the SAME columns under
+      // different parameter names, and nothing said so: `update_vendor` takes
+      // city/state/vendor_type, `create_vendor` took location/type and had no
+      // contact_name or social_links at all. A caller who used the sibling
+      // tool's names — which is the obvious thing to do — got `created: true`
+      // and a row with five NULLs, because Zod's default object behaviour
+      // STRIPS unknown keys before the handler ever runs (verified against the
+      // SDK's own normalizeObjectSchema → objectFromShape → z.object).
+      //
+      // city/state is what the by-state browse pages filter on, so the row was
+      // invisible to every one of them and the call reported success.
+      //
+      // Canonical wins over the alias when both are sent; the alias is reported
+      // back so the caller can stop using it.
+      const aliasLoc = params.location
+        ? parseLocation(params.location)
+        : { city: null, state: null };
+      const loc = {
+        city: params.city ?? aliasLoc.city,
+        state: params.state ?? aliasLoc.state,
+      };
+      const vendorType = params.vendor_type ?? params.type ?? null;
+
+      const deprecatedAliases: string[] = [];
+      if (params.location !== undefined) deprecatedAliases.push("location → city + state");
+      if (params.type !== undefined) deprecatedAliases.push("type → vendor_type");
 
       // Create vendor record
       const vendorId = crypto.randomUUID();
@@ -2962,12 +3011,15 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         userId,
         businessName: params.business_name,
         slug: finalSlug,
-        vendorType: params.type ?? null,
+        vendorType,
         description: params.description ?? null,
         products: params.products ? JSON.stringify(params.products) : "[]",
         website: params.website ?? null,
         contactEmail: params.contact_email ?? null,
         contactPhone: params.contact_phone ?? null,
+        // OPE-1090 — previously unsettable at create; required a second call.
+        contactName: params.contact_name ?? null,
+        socialLinks: params.social_links ?? null,
         logoUrl: params.logo_url ?? null,
         // IMG1 §1b Phase 1 — focal point (clamped); omit when undefined
         // so the column DEFAULT (0.5) applies.
@@ -3021,6 +3073,34 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         });
       }
 
+      // OPE-1090 — report what LANDED, read back from the row, not what was
+      // passed. The original response said only `created: true` + id + slug, so
+      // a call that dropped five fields and a call that wrote them looked
+      // identical to the caller. These are the fields that were silently
+      // droppable, plus city/state because those drive the by-state browse.
+      const [stored] = await db
+        .select({
+          city: vendors.city,
+          state: vendors.state,
+          vendorType: vendors.vendorType,
+          contactName: vendors.contactName,
+          socialLinks: vendors.socialLinks,
+        })
+        .from(vendors)
+        .where(eq(vendors.id, vendorId))
+        .limit(1);
+
+      const warnings: Record<string, unknown> = {};
+      if (deprecatedAliases.length > 0) {
+        warnings.deprecated_params = deprecatedAliases;
+      }
+      // The specific trap that produced this ticket: a `location` with no comma
+      // sets city and leaves state NULL, and state is the browse filter.
+      if (!stored?.state) {
+        warnings.no_state =
+          "state is NULL — this vendor will not appear on any by-state browse page. Pass `state` (2-letter code).";
+      }
+
       return {
         content: [
           jsonContent({
@@ -3028,6 +3108,14 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
             vendor_id: vendorId,
             slug: finalSlug,
             business_name: params.business_name,
+            stored: {
+              city: stored?.city ?? null,
+              state: stored?.state ?? null,
+              vendor_type: stored?.vendorType ?? null,
+              contact_name: stored?.contactName ?? null,
+              social_links: stored?.socialLinks ?? null,
+            },
+            ...(Object.keys(warnings).length > 0 && { warnings }),
           }),
         ],
       };
