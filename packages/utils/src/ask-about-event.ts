@@ -114,7 +114,23 @@ const CLIENT_SIGNATURE_LINE = /^\s*(sent from my .{1,40}|get outlook for .{1,20}
  */
 export function isBlankAskAboutEventBody(body: string | null | undefined): boolean {
   if (!body) return false;
-  const lines = body
+  const lines = readerLines(body);
+  if (lines.length !== 2) return false;
+  const [fence, url] = lines;
+  return fence === "---" && /^https?:\/\/(?:www\.)?meetmeatthefair\.com\/events\/\S+$/i.test(url);
+}
+
+/**
+ * The lines a human actually typed, with the machinery removed: quote markers,
+ * blank lines, client signatures, and the `Your question:` label.
+ *
+ * Quote markers are STRIPPED, not dropped, and the fence and URL are kept —
+ * `isBlankAskAboutEventBody` needs both to recognise a template whose tail a
+ * client re-indented as `> ---`. Callers that want only the reader's own words
+ * use `readerProse`, which drops quoted lines outright.
+ */
+function readerLines(body: string): string[] {
+  return body
     .replace(/\r\n?/g, "\n")
     .split("\n")
     .map((l) => l.replace(/^\s*>\s?/, "").trim())
@@ -124,7 +140,111 @@ export function isBlankAskAboutEventBody(body: string | null | undefined): boole
         !CLIENT_SIGNATURE_LINE.test(l) &&
         l.toLowerCase() !== ASK_ABOUT_EVENT_LABEL.toLowerCase()
     );
-  if (lines.length !== 2) return false;
-  const [fence, url] = lines;
-  return fence === "---" && /^https?:\/\/(?:www\.)?meetmeatthefair\.com\/events\/\S+$/i.test(url);
+}
+
+/** Our own event URL, anywhere in a line. */
+const OUR_EVENT_URL = /https?:\/\/(?:www\.)?meetmeatthefair\.com\/events\/\S+/i;
+
+/**
+ * What the reader wrote in their own voice: template machinery gone, and
+ * QUOTED lines gone too.
+ *
+ * Dropping quoted lines matters more than it looks. Our own notification mail
+ * asks questions ("Why: no venue we have geocoded…"), so a reply that quotes it
+ * carries our question marks, not the sender's. Unquoting instead of dropping
+ * would let our own prose vote on what the sender meant.
+ *
+ * Empty string when they typed nothing — the blank case OPE-985 owns.
+ */
+export function readerProse(body: string | null | undefined): string {
+  if (!body) return "";
+  const unquoted = body
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .filter((l) => !/^\s*>/.test(l))
+    .join("\n");
+  return readerLines(unquoted)
+    .filter((l) => l !== "---" && !OUR_EVENT_URL.test(l))
+    .join(" ")
+    .trim();
+}
+
+/**
+ * Language that claims something on the listing is WRONG.
+ *
+ * Deliberately the loose set from `intent-fastpath.hasMultiIntentOrSpecialSignal`,
+ * and deliberately loose in THIS direction: a false positive here means a
+ * message keeps today's correction handling, which is the behaviour that already
+ * ships. A false negative would route a genuine correction to the question
+ * branch, which is the one outcome that would make this change a regression.
+ * When in doubt, it is a correction.
+ */
+const CORRECTION_LANGUAGE =
+  /\b(wrong|incorrect|should be|isn'?t it|not right|out of date|outdated|cancell?ed|has changed|no longer|appears to be|needs? updating|fix(?: this)?|change the)\b/i;
+
+/** An opening word that makes a line a question even with no question mark. */
+const INTERROGATIVE_OPENER =
+  /^(can|could|do|does|did|is|are|was|were|will|would|should|may|might|have|has|any|what|when|where|who|why|how|which)\b/i;
+
+/**
+ * OPE-1085 — true when a body reaching the `correction` lane is a reader
+ * ASKING something, not reporting an error.
+ *
+ * ## Why this exists
+ *
+ * The classifier returns `correction` on every arrival of this template where it
+ * has run (6 of 6, 2026-09-13 → 09-19). An ablation against the real model
+ * showed why: neither cue does it alone — our `Question about …` subject alone
+ * reads `support` at 0.90, and our own event URL in the body alone reads
+ * `support` at 0.90 — but TOGETHER they read `correction` at 0.85, scraping over
+ * a `>= 0.85` gate with zero margin. A foreign URL with the same subject stays
+ * `support`, so it is specifically our host. Both halves of the conjunction are
+ * ours: we built the template that supplies them.
+ *
+ * The model is not confused about the words. `fbd5b1fc`'s stored rationale reads
+ * *"asking about wheelchair rentals at a specific event, implying a need for
+ * updated or corrected information"* — it read the question correctly and then
+ * had nowhere to put it, because the taxonomy has no "reader is asking about a
+ * listing" class and defines `support` as *general* how-to.
+ *
+ * ## What this does NOT do
+ *
+ * It does not reclassify. The row still travels the correction lane and still
+ * records a `correction` intent, because that is what the classifier said and
+ * rewriting its verdict would hide the defect from the accuracy dashboard. This
+ * only decides what the READER is told — see the branch in
+ * `email-handlers/correction.ts`.
+ *
+ * ## Why it requires BOTH halves of the template
+ *
+ * It fires only on our subject AND our event URL — the same conjunction the
+ * ablation identified — rather than on any question reaching this lane. That is
+ * not caution for its own sake: checked against all 37 `correction` rows in
+ * prod, the looser "any interrogative with no correction language" rule also
+ * caught `46af4630`, a reader from Canada who wrote *"Your website states the
+ * parade is Friday October 2 … other websites state Thursday October 1 … could
+ * you please clarify"*. That is a genuine date correction, phrased politely as
+ * a question, and it belongs in the correction lane. Requiring the template
+ * excludes it, because he wrote to us directly rather than through the mailto.
+ *
+ * Measured blast radius on the same 37 rows: 4 of the 7 template arrivals fire,
+ * one of which (`6a9a7373`) already receives this treatment today by accident,
+ * having landed at 0.82 and fallen below the gate. So 3 rows change behaviour,
+ * and no non-template row changes at all.
+ */
+export function isListingQuestion(input: {
+  subject: string | null | undefined;
+  body: string | null | undefined;
+}): boolean {
+  // Half one: the subject this template generates, past any Re:/Fwd: prefixes.
+  const subject = (input.subject ?? "").replace(/^((re|fwd?|aw|sv)\s*:\s*)+/i, "").trim();
+  if (!/^question about .+/i.test(subject)) return false;
+  // Half two: our own event URL in the body. A foreign URL with the same
+  // subject classifies `support` and never reaches this lane.
+  if (!OUR_EVENT_URL.test(input.body ?? "")) return false;
+
+  const prose = readerProse(input.body);
+  if (!prose) return false; // blank — OPE-985 owns it, and runs earlier
+  if (CORRECTION_LANGUAGE.test(prose)) return false;
+  return prose.includes("?") || INTERROGATIVE_OPENER.test(prose);
 }

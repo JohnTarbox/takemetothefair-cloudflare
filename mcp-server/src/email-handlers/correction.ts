@@ -50,7 +50,7 @@ import { adminActions, events } from "../schema.js";
 import { getDb } from "../db.js";
 import { unsafeSlug } from "../helpers.js";
 import { eq, isNotNull } from "drizzle-orm";
-import { combinedSimilarity } from "@takemetothefair/utils";
+import { combinedSimilarity, isListingQuestion } from "@takemetothefair/utils";
 import type { HandlerFn, HandlerResult } from "./types.js";
 import { resolveHeldPhotosFromReply } from "../photo/resolve-held-photos.js";
 import { openObligationIfOwed } from "./open-obligation.js";
@@ -94,6 +94,61 @@ export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> =
       // lane's admin-decision pause would discard this result and make the
       // sender wait up to 7 days to hear that it worked.
       skipAdminDecision: true,
+    };
+  }
+
+  // OPE-1085 — a reader ASKING about a listing, acknowledged as if they had
+  // reported an error in it.
+  //
+  // The classifier returns `correction` on every arrival of the event-page
+  // mailto where it has run (6 of 6). An ablation against the real model showed
+  // it is a conjunction of two things we supply: our `Question about …` subject
+  // and our own event URL in the body. Either alone reads `support` at 0.90;
+  // together they read `correction` at 0.85 and clear a `>= 0.85` gate with zero
+  // margin. So Corey, who asked whether he could rent a wheelchair, was told
+  // seven seconds later that we had recorded his correction request.
+  //
+  // What changes here is only what the READER is told. The row keeps
+  // `classified_intent='correction'`, still writes `email.correction_request`
+  // below via the normal path when it is not a question, and the classifier's
+  // verdict is left intact so the D.1 accuracy dashboard can still see it being
+  // wrong. Overwriting the verdict would fix the symptom and hide the defect.
+  //
+  // `support-ack` is NOT new copy: it is the text John approved 2026-08-13 for
+  // OPE-367, every clause of which is true of a question, and it is already what
+  // this exact shape receives when the model happens to land below the gate
+  // (`6a9a7373`, 0.82). This makes an accident consistent rather than inventing
+  // a lane. Bespoke question copy is a separate ask on OPE-1085; it lands here
+  // when John rules.
+  if (isListingQuestion({ subject: row.subject, body: row.bodyTextExcerpt })) {
+    await db.insert(adminActions).values({
+      action: "email.listing_question",
+      actorUserId: null,
+      targetType: "inbound_email",
+      targetId: row.id,
+      payloadJson: JSON.stringify({
+        from: row.fromAddress,
+        subject: row.subject ?? null,
+        bodyExcerpt: row.bodyTextExcerpt ?? null,
+        receivedAt: row.receivedAt,
+        classifiedIntent: "correction",
+        note: "reader question routed to the correction lane; acked as support, not as a correction",
+      }),
+      createdAt: new Date(),
+    });
+
+    // Scope 3 — a question does not belong on the correction lane's 7-day
+    // admin `waitForEvent`. `fbd5b1fc` sat in `status: waiting` while the
+    // festival he asked about ran and closed. The obligation row is what
+    // surfaces it to an operator; the 7-day pause only delays the reply.
+    const questionObligation = await openObligationIfOwed(env, db, row, SOURCE);
+
+    return {
+      replyKind: "support-ack",
+      replyParams: { subject: row.subject ?? "" },
+      status: "replied",
+      skipAdminDecision: true,
+      crossingDestinationRef: questionObligation,
     };
   }
 
