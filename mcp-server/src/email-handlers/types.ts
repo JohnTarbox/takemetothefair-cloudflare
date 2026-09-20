@@ -166,7 +166,13 @@ export type ReplyKind =
 /** Status to write back to inbound_emails.status when the workflow ends.
  *  Failed paths no longer return this — they throw, and the workflow's
  *  outer catch records status='failed' from the caught error. */
-export type FinalStatus = "replied" | "forwarded";
+/**
+ * OPE-985 B — `awaiting_human` (OPE-1018's value, reused) is for a row we DID
+ * write to but that still owes the reader a person: the blank-question prompt
+ * asks them to resend, so marking it `replied` would make a row nobody has
+ * answered read as handled. Same column, same filter on /admin/inbound-emails.
+ */
+export type FinalStatus = "replied" | "forwarded" | "awaiting_human";
 
 /**
  * Values that can appear in `HandlerResult.replyParams`. Restricted to

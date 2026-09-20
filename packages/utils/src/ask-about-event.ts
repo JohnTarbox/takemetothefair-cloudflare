@@ -35,6 +35,19 @@
 /** Where visitor questions go. Matches the address on /contact. */
 export const ASK_ABOUT_EVENT_ADDRESS = "hello@meetmeatthefair.com";
 
+/**
+ * OPE-985 A1 (ruled by John 2026-09-20) — the prompt that says where to type.
+ *
+ * The body opened with two blank lines, and of the readers who typed anything,
+ * two typed BELOW the URL and one above the fence. Nobody used the blank lines:
+ * the template never said where to type, so now it does.
+ *
+ * Exported because `isBlankAskAboutEventBody` must know this line, or a template
+ * that adds a line the detector does not recognise would silently stop detecting
+ * blanks — which is worse than the defect. The two must ship together.
+ */
+export const ASK_ABOUT_EVENT_LABEL = "Your question:";
+
 export interface AskAboutEventInput {
   /** The event's display name, e.g. "Litchfield Fair". */
   eventName: string;
@@ -64,10 +77,10 @@ export function buildAskAboutEventMailto(input: AskAboutEventInput): string | nu
       ? `Question about ${name} ${year}`
       : `Question about ${name}`;
 
-  // Two blank lines so the sender's cursor lands above the fence and their
-  // text does not run into it; the fence makes the trailing line read as
-  // machine context rather than something to edit out.
-  const body = `\n\n---\n${url}`;
+  // OPE-985 A1 — a visible label, then room to type, then the fence. The URL
+  // stays on its own line after the fence so `parsed_url` still populates
+  // (OPE-977's roundtrip); the fence keeps it reading as machine context.
+  const body = `${ASK_ABOUT_EVENT_LABEL}\n\n\n---\n${url}`;
 
   return `mailto:${ASK_ABOUT_EVENT_ADDRESS}?subject=${encodeURIComponent(
     subject
@@ -93,6 +106,11 @@ const CLIENT_SIGNATURE_LINE = /^\s*(sent from my .{1,40}|get outlook for .{1,20}
  * Deliberately narrow. Prose ANYWHERE — above the fence, or below the URL, where
  * two of the four real senders typed — makes this false. A quoted `> ---` from
  * a client that re-indents the tail still counts as the template.
+ *
+ * OPE-985 A1: the `Your question:` label is part of the template, so a body that
+ * is only the label plus the fence and URL is still blank. A reader who types
+ * ON the label line ("Your question: can I bring a dog?") has typed prose, and
+ * that line no longer equals the label — so it is correctly NOT blank.
  */
 export function isBlankAskAboutEventBody(body: string | null | undefined): boolean {
   if (!body) return false;
@@ -100,7 +118,12 @@ export function isBlankAskAboutEventBody(body: string | null | undefined): boole
     .replace(/\r\n?/g, "\n")
     .split("\n")
     .map((l) => l.replace(/^\s*>\s?/, "").trim())
-    .filter((l) => l.length > 0 && !CLIENT_SIGNATURE_LINE.test(l));
+    .filter(
+      (l) =>
+        l.length > 0 &&
+        !CLIENT_SIGNATURE_LINE.test(l) &&
+        l.toLowerCase() !== ASK_ABOUT_EVENT_LABEL.toLowerCase()
+    );
   if (lines.length !== 2) return false;
   const [fence, url] = lines;
   return fence === "---" && /^https?:\/\/(?:www\.)?meetmeatthefair\.com\/events\/\S+$/i.test(url);
