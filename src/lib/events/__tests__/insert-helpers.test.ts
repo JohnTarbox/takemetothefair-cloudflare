@@ -26,7 +26,11 @@ function mockInsertDb(opts: { daysChecked?: number; unknownDays?: number } = {})
     insert: () => ({
       values: (rows: Row[]) => {
         batches.push(rows);
-        return Promise.resolve();
+        // OPE-1088 — the writer now UPSERTs; the chain has one more link.
+        // Thenable so both `await insert().values()` and
+        // `await insert().values().onConflictDoUpdate()` resolve.
+        const done = Promise.resolve();
+        return Object.assign(done, { onConflictDoUpdate: () => done });
       },
     }),
     select: () => ({

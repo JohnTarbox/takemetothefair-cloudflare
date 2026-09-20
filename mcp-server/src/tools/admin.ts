@@ -5309,10 +5309,21 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       // collapse to one row at the DB layer rather than racing past the
       // check. (Pre-existing duplicate rows from before this guard are a
       // separate one-time cleanup; idempotency is a forward guarantee.)
+      // OPE-1088 — keyed on (event, date, vendor_only), matching the unique
+      // index. Keyed on (event, date) alone, a legitimate vendor-setup window
+      // on a date that already has its public row read as "already exists" and
+      // was skipped — and those two rows are distinct visitor-facing facts.
+      const vendorOnlyFlag = params.vendor_only ?? false;
       const existingDay = await db
         .select({ id: eventDays.id })
         .from(eventDays)
-        .where(and(eq(eventDays.eventId, params.event_id), eq(eventDays.date, params.date)))
+        .where(
+          and(
+            eq(eventDays.eventId, params.event_id),
+            eq(eventDays.date, params.date),
+            eq(eventDays.vendorOnly, vendorOnlyFlag)
+          )
+        )
         .limit(1);
 
       const openTime = params.open_time ?? null;
@@ -5347,7 +5358,13 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
 
       // Deterministic id keyed on the natural (event_id, date) pair so a
       // racing duplicate insert hits the PK and ON CONFLICT DO NOTHING.
-      const dayId = `evd_${params.event_id}_${params.date}`;
+      // OPE-1088 — the vendor row gets its own id for the same reason: the old
+      // scheme made it collide with the public row's PRIMARY KEY, so
+      // `onConflictDoNothing` dropped it before the unique index could speak.
+      // Public rows keep the historic id exactly, so existing idempotency holds.
+      const dayId = vendorOnlyFlag
+        ? `evd_${params.event_id}_${params.date}_vendor`
+        : `evd_${params.event_id}_${params.date}`;
       // DQ4: pass null through when args were omitted; drizzle/0118 made
       // the columns nullable. Flag the parent event for triage when
       // either time landed unknown.
@@ -5373,7 +5390,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           notes: params.notes ?? null,
           internalNotes: params.internal_notes ?? null,
           closeTimeUnpublished: closeTimeUnpublished ? 1 : 0,
-          vendorOnly: params.vendor_only ?? false,
+          vendorOnly: vendorOnlyFlag,
           // F2: per-day image; DB defaults take over when omitted.
           ...(params.image_url !== undefined && { imageUrl: params.image_url }),
           ...(params.image_focal_x !== undefined && { imageFocalX: params.image_focal_x }),
