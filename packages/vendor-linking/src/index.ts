@@ -80,6 +80,17 @@ export interface CreateOrLinkVendorInput {
   status?: EventVendorStatus;
   description?: string | null;
   products?: string[] | null;
+  /**
+   * OPE-1094 — canonical, and preferred over `location`.
+   *
+   * `location` is a single "City, ST" string split on its LAST comma, so a
+   * value with no comma sets `city` and leaves `state` NULL without a word.
+   * `state` is what every by-state browse page filters on, and this writer
+   * created 4,637 of the 5,626 stateless vendors in prod (82%) — each one
+   * absent from those pages, each call reporting success.
+   */
+  city?: string | null;
+  state?: string | null;
   location?: string | null;
   website?: string | null;
   contactEmail?: string | null;
@@ -128,6 +139,16 @@ export interface CreateOrLinkVendorSuccess {
   /** True when the link is in a public status — the adapter decides whether to
    *  ping IndexNow for the event. */
   linkIsPublic: boolean;
+  /**
+   * OPE-1094 — the created vendor's stored `state`, read back from the row.
+   *
+   * null on a create means the vendor will not appear on ANY by-state browse
+   * page, which is the defect this exists to surface: 4,637 rows reached that
+   * condition and every call said success. Undefined when nothing was created
+   * (the match branch did not write these columns).
+   */
+  createdState?: string | null;
+  createdCity?: string | null;
 }
 
 export interface CreateOrLinkVendorFailure {
@@ -582,6 +603,8 @@ export async function createOrLinkVendor(
   let vendorId: string;
   let vendorSlug: Slug;
   let wasCreated = false;
+  /** OPE-1094 — what the create branch actually stored, for the result. */
+  let createdLoc: { city: string | null; state: string | null } = { city: null, state: null };
   const matchedExisting = matched
     ? { name: matched.row.businessName, similarity_score: matched.score }
     : null;
@@ -644,7 +667,15 @@ export async function createOrLinkVendor(
       role: "VENDOR",
     });
 
-    const loc = input.location ? parseLocation(input.location) : { city: null, state: null };
+    // OPE-1094 — canonical city/state win; `location` remains as the alias so
+    // existing callers keep working. Resolved here rather than at the adapter
+    // so every runtime calling the core gets the same precedence.
+    const aliasLoc = input.location ? parseLocation(input.location) : { city: null, state: null };
+    const loc = {
+      city: input.city ?? aliasLoc.city,
+      state: input.state ?? aliasLoc.state,
+    };
+    createdLoc = loc;
 
     vendorId = crypto.randomUUID();
     await db.insert(vendors).values({
@@ -804,5 +835,8 @@ export async function createOrLinkVendor(
     statusChanged,
     matchedExisting,
     linkIsPublic: (wasLinked || statusChanged) && PUBLIC_VENDOR_SET.has(status),
+    // OPE-1094 — only meaningful on a create; the match branch leaves the
+    // existing row's location alone (see the scope-3 note on the ticket).
+    ...(wasCreated && { createdCity: createdLoc.city, createdState: createdLoc.state }),
   };
 }
