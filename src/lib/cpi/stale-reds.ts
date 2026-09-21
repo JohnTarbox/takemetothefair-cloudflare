@@ -29,6 +29,22 @@ export interface StaleRed {
    * churns without anything on our side moving. See `staleRedFingerprint`.
    */
   volatileSignature?: boolean;
+  /**
+   * OPE-1096 — collapse key for the DIGEST only.
+   *
+   * A fault signature is per (route, error) by design (OPE-1081), so one
+   * incident across N routes yields N signals. That is right for diagnosis and
+   * wrong as N lines of an email: on 2026-09-12 two D1 failures across 135
+   * routes produced 135 bullets. Signals sharing a `groupKey` render as one
+   * line naming the route count.
+   *
+   * Deliberately NOT applied at selection: the action queue and the push
+   * fingerprint keep seeing one entry per route, so this changes presentation
+   * and nothing about what is tracked.
+   */
+  groupKey?: string;
+  /** OPE-1096 — how many signals this digest line represents. Set by grouping. */
+  groupCount?: number;
 }
 
 /**
@@ -93,7 +109,44 @@ export interface FaultRedInput {
   route: string | null;
   status: string;
   firstSeen: number; // ms-epoch
+  /** OPE-1096 — ms-epoch of the most recent occurrence. */
+  lastSeen: number;
+  /** OPE-1096 — the digest groups by this; the signature stays per-route. */
+  errorClass: string;
 }
+
+/**
+ * OPE-1096 — a fault that has not recurred in this long is no longer an
+ * ongoing outage, whatever its age-in-red says.
+ *
+ * `hoursInRed` is measured from `firstSeen` and grows forever, so before this
+ * a signature stayed red from its first occurrence until a human resolved it.
+ * On 2026-09-12 two D1 query failures fanned across **135 distinct routes**,
+ * each minting its own per-route signature. They stopped the same day. Nine
+ * days later all 135 were still counted, and the daily digest read
+ * **"239 dashboard signals stuck red"** at 43,601 characters — 224 of them
+ * render faults, burying roughly ten real signals that had been flat at 8–15
+ * for six weeks.
+ *
+ * 7 days = **7× the 24h P0 escalation leash**, so this is a generous reading of
+ * "still happening", not a tight one. Measured against prod at the moment of
+ * choosing: no filter 235 · 14d 210 · **7d 51** · 48h 19 · 24h 2.
+ *
+ * ⚠️ 14d was rejected on the numbers, and the reason is worth keeping: the
+ * dominant incident was only 9 days old, so a fortnight's window still admitted
+ * all of it and changed 235 → 210. A round-number window can look reasonable
+ * and do nothing.
+ */
+const FAULT_RECURRENCE_WINDOW_DAYS = 7;
+
+/**
+ * OPE-1096 — a fault still firing within two escalation windows is outage-class;
+ * one last seen five days ago is real but is not an outage.
+ *
+ * Every render fault used to be hardcoded P0, which is why 227 of 239 signals
+ * carried it. A priority 95% of rows share cannot rank anything.
+ */
+const FAULT_P0_RECENCY_HOURS = 48;
 
 /**
  * Which faults can go stale-red.
@@ -128,10 +181,19 @@ export function selectStaleFaultReds(
     if (!isStaleEligible(row.status)) continue; // settled or parked → not stale
     if (Number.isNaN(row.firstSeen)) continue; // guard bad stamp, never throw
 
+    // OPE-1096 — has it actually recurred lately? A NaN `lastSeen` is treated
+    // as stale rather than fresh: an unreadable stamp must not be a free pass
+    // into a P0 digest.
+    const daysSinceSeen = Number.isNaN(row.lastSeen)
+      ? Number.POSITIVE_INFINITY
+      : (nowMs - row.lastSeen) / MS_PER_HOUR / 24;
+    if (daysSinceSeen > FAULT_RECURRENCE_WINDOW_DAYS) continue;
+
     const hoursInRed = (nowMs - row.firstSeen) / MS_PER_HOUR;
     if (hoursInRed > thresholdHours) {
+      const hoursSinceSeen = daysSinceSeen * 24;
       stale.push({
-        priority: "P0",
+        priority: hoursSinceSeen <= FAULT_P0_RECENCY_HOURS ? "P0" : "P1",
         title: `Render fault: ${row.route ?? row.signature}`,
         refKey: row.signature,
         // Deep-link to the OPE-83 tile anchor on the analytics overview.
@@ -140,6 +202,7 @@ export function selectStaleFaultReds(
         volatileSignature: true,
         firstDetectedAt: new Date(row.firstSeen).toISOString(),
         hoursInRed,
+        groupKey: row.errorClass,
       });
     }
   }
@@ -159,6 +222,49 @@ function formatAge(hoursInRed: number): string {
 }
 
 /**
+ * OPE-1096 — one line per error class, for the digest only.
+ *
+ * Signals carrying a `groupKey` are collapsed: the line names the class and how
+ * many routes it covers, and takes the highest priority and longest age in the
+ * group. Signals without a `groupKey` (every non-fault red) pass through
+ * untouched — which is what keeps the ~10 KPI, queue-freeze and heartbeat
+ * signals visible instead of being suppressed alongside the noise.
+ *
+ * `n === 1` is left as its own title on purpose: "Render fault: /events/x" is
+ * more useful than "<error class> — 1 route".
+ */
+export function groupForDigest(reds: StaleRed[]): StaleRed[] {
+  const out: StaleRed[] = [];
+  const seen = new Map<string, number>(); // groupKey → index in `out`
+
+  for (const r of reds) {
+    if (!r.groupKey) {
+      out.push(r);
+      continue;
+    }
+    const at = seen.get(r.groupKey);
+    if (at === undefined) {
+      seen.set(r.groupKey, out.length);
+      out.push({ ...r });
+      continue;
+    }
+    const head = out[at];
+    const count = (head.groupCount ?? 1) + 1;
+    out[at] = {
+      ...head,
+      groupCount: count,
+      // Highest priority in the group wins: one actively-firing route makes the
+      // class outage-class, and hiding that behind a calmer sibling is the
+      // failure this ticket is about.
+      priority: head.priority === "P0" || r.priority === "P0" ? "P0" : "P1",
+      hoursInRed: Math.max(head.hoursInRed, r.hoursInRed),
+      title: `${r.groupKey} — ${count} routes`,
+    };
+  }
+  return out;
+}
+
+/**
  * Build the operator digest for the currently-stale signals. Factual, no PII:
  * per signal we surface its priority, title, days/hours-in-red, and a deep link
  * (`${baseUrl}${href}`). `ActionQueueEntry` doesn't carry the current-value or
@@ -168,7 +274,17 @@ export function formatStaleRedDigest(
   reds: StaleRed[],
   baseUrl: string
 ): { subject: string; text: string; html: string } {
-  const n = reds.length;
+  // OPE-1096 — collapse signals sharing a `groupKey` into one line. Order is
+  // preserved from `reds` (already sorted longest-red first), so a group takes
+  // the position of its oldest member.
+  const grouped = groupForDigest(reds);
+
+  // OPE-1096 — the subject counts LINES, not signals, because the subject is a
+  // promise about the body. It read "239 dashboard signals stuck red" over a
+  // body of 239 bullets, 135 of which were one incident; counting signals
+  // while printing groups would be a subject that disagrees with its own email.
+  const n = grouped.length;
+  const signalCount = reds.length;
   // OPE-261 §4 — hrefs are resolved, not concatenated. Signals whose href is
   // already absolute (the IndexNow red links out to Bing Webmaster Tools)
   // previously rendered as `https://meetmeatthefair.comhttps://…` and did not
@@ -178,7 +294,10 @@ export function formatStaleRedDigest(
 
   const intro =
     `${n} action-queue signal${n === 1 ? " has" : "s have"} been red past the escalation ` +
-    `threshold (P0 > ${STALE_THRESHOLD_HOURS.P0}h, P1 > ${STALE_THRESHOLD_HOURS.P1}h).`;
+    `threshold (P0 > ${STALE_THRESHOLD_HOURS.P0}h, P1 > ${STALE_THRESHOLD_HOURS.P1}h).` +
+    // Say so when lines < signals, so a collapsed incident is visible as one
+    // rather than silently hidden.
+    (signalCount > n ? ` ${signalCount} underlying signals, grouped by error.` : "");
   // OPE-308 — this used to say "daily … keeps nagging", which stopped being
   // true once the scan moved to pushing on change. Describe what actually
   // happens, so an operator can read the arrival of this mail as a signal in
@@ -189,13 +308,13 @@ export function formatStaleRedDigest(
     "is still standing. Render faults are listed here but do not trigger a send on " +
     "their own, because their signatures rotate.";
 
-  const textLines = reds.map(
+  const textLines = grouped.map(
     (r) =>
       `• [${r.priority}] ${r.title} — red ${formatAge(r.hoursInRed)}\n  ${resolveDigestHref(base, r.href)}`
   );
   const text = [intro, "", ...textLines, "", outro].join("\n");
 
-  const htmlItems = reds
+  const htmlItems = grouped
     .map(
       (r) =>
         `<li><strong>[${r.priority}]</strong> ${r.title} — red ${formatAge(r.hoursInRed)} ` +
