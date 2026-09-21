@@ -69,7 +69,24 @@ export function registerCreateOrLinkVendorTool(
         .describe("Event-vendor link status (default CONFIRMED)"),
       description: z.string().max(500).transform(sanitizeProse).optional(),
       products: z.array(z.string().transform(sanitizeProse)).optional(),
-      location: z.string().optional().describe("City and state, e.g. 'Portland, ME'"),
+      // OPE-1094 — canonical names, matching `update_vendor` and (since
+      // OPE-1090) `create_vendor`. This tool created 4,637 of the 5,626
+      // stateless vendors in prod (82%), because `location` was the only way to
+      // express a state and it is split on its LAST comma — a value with no
+      // comma sets city and leaves state NULL silently. `state` is what every
+      // by-state browse page filters on.
+      city: z.string().optional().describe("City"),
+      state: z
+        .string()
+        .max(2)
+        .optional()
+        .describe("2-letter state code, e.g. 'ME'. Prefer this over `location`."),
+      location: z
+        .string()
+        .optional()
+        .describe(
+          "DEPRECATED alias: 'City, ST' split on the LAST comma. Prefer city + state — a value with no comma sets city and leaves state NULL, dropping the vendor from every by-state browse page."
+        ),
       website: z.string().optional(),
       contact_email: z.string().optional(),
       contact_phone: z.string().optional(),
@@ -126,6 +143,8 @@ export function registerCreateOrLinkVendorTool(
         status: params.status,
         description: params.description ?? null,
         products: params.products ?? null,
+        city: params.city ?? null,
+        state: params.state ?? null,
         location: params.location ?? null,
         website: params.website ?? null,
         contactEmail: params.contact_email ?? null,
@@ -205,6 +224,19 @@ export function registerCreateOrLinkVendorTool(
         }
       }
 
+      // OPE-1094 — a create that produced no `state` is invisible to every
+      // by-state browse page, and the old response could not say so: it
+      // reported `was_created: true` and nothing else about the row. The
+      // values below are read back from what the core actually stored.
+      const warnings: Record<string, unknown> = {};
+      if (result.wasCreated && !result.createdState) {
+        warnings.no_state =
+          "state is NULL — this vendor will not appear on any by-state browse page. Pass `state` (2-letter code).";
+      }
+      if (params.location !== undefined) {
+        warnings.deprecated_params = ["location → city + state"];
+      }
+
       return {
         content: [
           jsonContent({
@@ -214,6 +246,10 @@ export function registerCreateOrLinkVendorTool(
             was_already_linked: result.wasAlreadyLinked,
             status_changed: result.statusChanged,
             matched_existing: result.matchedExisting,
+            ...(result.wasCreated && {
+              stored: { city: result.createdCity ?? null, state: result.createdState ?? null },
+            }),
+            ...(Object.keys(warnings).length > 0 && { warnings }),
           }),
         ],
       };
