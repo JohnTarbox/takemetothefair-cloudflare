@@ -1522,13 +1522,43 @@ export class CapturingMcpServer {
     }
   }
 
+  /**
+   * OPE-1093 — the `registerTool` path.
+   *
+   * `tool()` above takes a raw SHAPE and this harness wraps it in `z.object()`
+   * at validation time, exactly as the SDK does — which is why unknown keys are
+   * STRIPPED and a caller's typo vanishes without a word. `registerTool` takes a
+   * fully-built schema instead, so a `.strict()` object survives to validation
+   * and the unknown key is rejected.
+   *
+   * Stored separately from `schemas` rather than reusing it: that map holds raw
+   * shapes and is read as such by existing tests, and a ZodObject smuggled into
+   * it would be wrapped a second time by `z.object()` — losing the strictness
+   * that is the entire point.
+   */
+  registerTool(
+    name: string,
+    config: { title?: string; description?: string; inputSchema?: unknown },
+    handler: (params: Record<string, unknown>) => Promise<unknown>
+  ) {
+    this.handlers.set(name, handler);
+    if (typeof config?.description === "string") this.descriptions.set(name, config.description);
+    if (config?.inputSchema) {
+      this.objectSchemas.set(name, config.inputSchema as z.ZodTypeAny);
+    }
+  }
+
+  /** Fully-built schemas from `registerTool`, kept apart from raw shapes. */
+  objectSchemas = new Map<string, z.ZodTypeAny>();
+
   invoke(name: string, params: Record<string, unknown> = {}) {
     const handler = this.handlers.get(name);
     if (!handler) throw new Error(`Tool not registered: ${name}`);
+    const built = this.objectSchemas.get(name);
     const shape = this.schemas.get(name);
-    if (!this.validate || !shape) return handler(params);
+    if (!this.validate || (!shape && !built)) return handler(params);
 
-    const parsed = z.object(shape).safeParse(params);
+    const parsed = (built ?? z.object(shape!)).safeParse(params);
     if (!parsed.success) {
       // Returned, not thrown — the real MCP surface answers a bad argument with
       // an error RESULT, and a test asserting rejection should be able to read
