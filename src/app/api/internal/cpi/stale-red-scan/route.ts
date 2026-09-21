@@ -146,6 +146,12 @@ export const POST = withInternalKey({ source: "cpi:stale-red-scan" }, async ({ d
           route: faultSignatures.route,
           status: faultSignatures.status,
           firstSeen: faultSignatures.firstSeen,
+          // OPE-1096 — `lastSeen` decides whether the fault is still happening
+          // and `errorClass` is what the digest groups by. Neither was selected
+          // before, so the digest could only age a signature from its FIRST
+          // occurrence and could only print it per-route.
+          lastSeen: faultSignatures.lastSeen,
+          errorClass: faultSignatures.errorClass,
         })
         .from(faultSignatures);
       faultReds = selectStaleFaultReds(
@@ -154,6 +160,8 @@ export const POST = withInternalKey({ source: "cpi:stale-red-scan" }, async ({ d
           route: r.route,
           status: r.status,
           firstSeen: r.firstSeen.getTime(),
+          lastSeen: r.lastSeen.getTime(),
+          errorClass: r.errorClass,
         })),
         now
       );
