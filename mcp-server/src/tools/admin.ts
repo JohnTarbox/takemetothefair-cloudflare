@@ -2781,126 +2781,148 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   );
 
   // ── create_vendor ──────────────────────────────────────────────
-  server.tool(
+  //
+  // OPE-1093 — the FIRST tool on `registerTool`, deliberately.
+  //
+  // Every other tool here uses `server.tool(name, description, rawShape, cb)`.
+  // The SDK turns a raw shape into `z.object(shape)`, and Zod's default is to
+  // STRIP unknown keys before the handler runs — so a caller's typo, or the
+  // sibling tool's vocabulary, vanishes without a word and the write reports
+  // success. That is how OPE-1090 produced `created: true` with five NULLs.
+  //
+  // `registerTool` accepts a fully-built schema, so `.strict()` survives to
+  // validation and an unknown key is REJECTED. `server.tool` is typed to
+  // `ZodRawShapeCompat` and cannot express this.
+  //
+  // Why this tool first: it is the one that demonstrated the defect, it has no
+  // internal callers (agent-facing only), and a create is where silence costs
+  // most — a half-empty vendor row is PUBLIC on insert. See OPE-1093 for the
+  // rollout decision on the other 241.
+  server.registerTool(
     "create_vendor",
-    "Create a new vendor profile on the platform. Returns the vendor ID for use with update_vendor_status to link to events. Admin only.",
     {
-      business_name: z
-        .string()
-        .min(1)
-        .max(200)
-        .transform(sanitizeProse)
-        .describe("Business/organization name"),
-      // OPE-1090 — canonical name, matching `update_vendor`. `type` below is
-      // the legacy alias, kept so existing callers do not break.
-      vendor_type: z
-        .string()
-        .max(100)
-        .transform(sanitizeProse)
-        .optional()
-        .describe("Vendor category (e.g. 'Home Improvement', 'Food', 'Crafts')"),
-      type: z
-        .string()
-        .max(100)
-        .transform(sanitizeProse)
-        .optional()
-        .describe("DEPRECATED alias for vendor_type. Prefer vendor_type."),
-      description: z
-        .string()
-        .max(500)
-        .transform(sanitizeProse)
-        .optional()
-        .describe("Business description"),
-      products: z
-        .array(z.string().transform(sanitizeProse))
-        .optional()
-        .describe("List of products/services offered"),
-      // OPE-1090 — city/state are what the by-state browse pages filter on, and
-      // they are separate columns. `location` remains as the legacy alias.
-      city: z.string().optional().describe("City"),
-      state: z
-        .string()
-        .max(2)
-        .optional()
-        .describe("2-letter state code, e.g. 'ME'. Matches update_vendor."),
-      location: z
-        .string()
-        .optional()
-        .describe(
-          "DEPRECATED alias: 'City, ST' split on the LAST comma. Prefer city + state — a value with no comma sets city and leaves state NULL, which drops the vendor from every by-state browse page."
-        ),
-      contact_name: z.string().optional().describe("Contact person name"),
-      social_links: z.string().optional().describe("Social media links (JSON string)"),
-      website: z.string().optional().describe("Vendor website URL"),
-      contact_email: z.string().optional().describe("Primary contact email address"),
-      contact_phone: z.string().optional().describe("Contact phone number"),
-      logo_url: z.string().optional().describe("URL to vendor logo image"),
-      // IMG1 §1b Phase 1 — per-image focal point. Applies to logo_url.
-      // Most logos are square so default (0.5, 0.5) center works; this
-      // exists for non-square logo rescues. Same Zod validation as the
-      // admin-UI FocalPointPicker.
-      image_focal_x: z
-        .number()
-        .min(0)
-        .max(1)
-        .optional()
-        .describe("Horizontal focal point for logo crops, 0–1. Default 0.5."),
-      image_focal_y: z
-        .number()
-        .min(0)
-        .max(1)
-        .optional()
-        .describe("Vertical focal point for logo crops, 0–1. Default 0.5."),
-      // EH1 Phase 1 — optional hierarchy + relationship fields at create
-      // time. Most callers leave these unset (the row defaults to
-      // role='INDEPENDENT', relationship_type='independent'). Useful when
-      // an ingestion path knows up-front that a row is an office of an
-      // existing brand. The three audited admin tools remain the
-      // preferred path for relationship edits after creation.
-      role: z
-        .enum(["NATIONAL", "LOCAL_OFFICE", "INDEPENDENT"])
-        .optional()
-        .describe("Hierarchy role at create time. Defaults to INDEPENDENT."),
-      brand_parent_vendor_id: z
-        .string()
-        .optional()
-        .describe("Brand-parent vendor id (the consumer-facing brand)."),
-      operator_parent_vendor_id: z
-        .string()
-        .optional()
-        .describe("Operator-parent vendor id (contracts/billing entity)."),
-      relationship_type: z
-        .enum([
-          "branch",
-          "franchise",
-          "dealer",
-          "member",
-          "agent",
-          "employee_branch",
-          "government",
-          "independent",
-        ])
-        .optional()
-        .describe("8-shape relationship typology. Defaults to 'independent'."),
-      default_child_display: z
-        .enum(["self", "brand_parent", "both"])
-        .optional()
-        .describe("For NATIONAL rows: the default display target for child offices."),
-      display_override_permitted: z
-        .boolean()
-        .optional()
-        .describe("For LOCAL_OFFICE rows: the per-office gate. Defaults to false."),
-      display_mode: z
-        .enum(["inherit", "self", "brand_parent", "operator_parent", "both"])
-        .optional()
-        .describe("For LOCAL_OFFICE rows: the office's own display preference."),
-      defer_search_ping: z
-        .boolean()
-        .optional()
-        .default(true)
-        .describe(
-          "REL4: defaults TRUE — queue the IndexNow ping to pending_search_pings (drained in one batched call by the hourly cron / flush_pending_search_pings) instead of firing inline. Pass false only when this single write needs immediate indexing."
-        ),
+      description:
+        "Create a new vendor profile on the platform. Returns the vendor ID for use with update_vendor_status to link to events. Admin only. Unknown parameters are REJECTED rather than ignored.",
+      inputSchema: z
+        .object({
+          business_name: z
+            .string()
+            .min(1)
+            .max(200)
+            .transform(sanitizeProse)
+            .describe("Business/organization name"),
+          // OPE-1090 — canonical name, matching `update_vendor`. `type` below is
+          // the legacy alias, kept so existing callers do not break.
+          vendor_type: z
+            .string()
+            .max(100)
+            .transform(sanitizeProse)
+            .optional()
+            .describe("Vendor category (e.g. 'Home Improvement', 'Food', 'Crafts')"),
+          type: z
+            .string()
+            .max(100)
+            .transform(sanitizeProse)
+            .optional()
+            .describe("DEPRECATED alias for vendor_type. Prefer vendor_type."),
+          description: z
+            .string()
+            .max(500)
+            .transform(sanitizeProse)
+            .optional()
+            .describe("Business description"),
+          products: z
+            .array(z.string().transform(sanitizeProse))
+            .optional()
+            .describe("List of products/services offered"),
+          // OPE-1090 — city/state are what the by-state browse pages filter on, and
+          // they are separate columns. `location` remains as the legacy alias.
+          city: z.string().optional().describe("City"),
+          state: z
+            .string()
+            .max(2)
+            .optional()
+            .describe("2-letter state code, e.g. 'ME'. Matches update_vendor."),
+          location: z
+            .string()
+            .optional()
+            .describe(
+              "DEPRECATED alias: 'City, ST' split on the LAST comma. Prefer city + state — a value with no comma sets city and leaves state NULL, which drops the vendor from every by-state browse page."
+            ),
+          contact_name: z.string().optional().describe("Contact person name"),
+          social_links: z.string().optional().describe("Social media links (JSON string)"),
+          website: z.string().optional().describe("Vendor website URL"),
+          contact_email: z.string().optional().describe("Primary contact email address"),
+          contact_phone: z.string().optional().describe("Contact phone number"),
+          logo_url: z.string().optional().describe("URL to vendor logo image"),
+          // IMG1 §1b Phase 1 — per-image focal point. Applies to logo_url.
+          // Most logos are square so default (0.5, 0.5) center works; this
+          // exists for non-square logo rescues. Same Zod validation as the
+          // admin-UI FocalPointPicker.
+          image_focal_x: z
+            .number()
+            .min(0)
+            .max(1)
+            .optional()
+            .describe("Horizontal focal point for logo crops, 0–1. Default 0.5."),
+          image_focal_y: z
+            .number()
+            .min(0)
+            .max(1)
+            .optional()
+            .describe("Vertical focal point for logo crops, 0–1. Default 0.5."),
+          // EH1 Phase 1 — optional hierarchy + relationship fields at create
+          // time. Most callers leave these unset (the row defaults to
+          // role='INDEPENDENT', relationship_type='independent'). Useful when
+          // an ingestion path knows up-front that a row is an office of an
+          // existing brand. The three audited admin tools remain the
+          // preferred path for relationship edits after creation.
+          role: z
+            .enum(["NATIONAL", "LOCAL_OFFICE", "INDEPENDENT"])
+            .optional()
+            .describe("Hierarchy role at create time. Defaults to INDEPENDENT."),
+          brand_parent_vendor_id: z
+            .string()
+            .optional()
+            .describe("Brand-parent vendor id (the consumer-facing brand)."),
+          operator_parent_vendor_id: z
+            .string()
+            .optional()
+            .describe("Operator-parent vendor id (contracts/billing entity)."),
+          relationship_type: z
+            .enum([
+              "branch",
+              "franchise",
+              "dealer",
+              "member",
+              "agent",
+              "employee_branch",
+              "government",
+              "independent",
+            ])
+            .optional()
+            .describe("8-shape relationship typology. Defaults to 'independent'."),
+          default_child_display: z
+            .enum(["self", "brand_parent", "both"])
+            .optional()
+            .describe("For NATIONAL rows: the default display target for child offices."),
+          display_override_permitted: z
+            .boolean()
+            .optional()
+            .describe("For LOCAL_OFFICE rows: the per-office gate. Defaults to false."),
+          display_mode: z
+            .enum(["inherit", "self", "brand_parent", "operator_parent", "both"])
+            .optional()
+            .describe("For LOCAL_OFFICE rows: the office's own display preference."),
+          defer_search_ping: z
+            .boolean()
+            .optional()
+            .default(true)
+            .describe(
+              "REL4: defaults TRUE — queue the IndexNow ping to pending_search_pings (drained in one batched call by the hourly cron / flush_pending_search_pings) instead of firing inline. Pass false only when this single write needs immediate indexing."
+            ),
+        })
+        .strict(),
     },
     async (params) => {
       // Check for duplicate business name (exact match, case-insensitive via LIKE)
