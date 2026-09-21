@@ -59,7 +59,25 @@ interface Env {
 /** Staged-field → live vendor column. Mirrors applyFills() in
  *  enrichment/dispatch.ts — keep the two in sync. `description` is
  *  deliberately absent: §5 never auto-publishes prose, so it's not
- *  manually-applicable through this surface either. */
+ *  manually-applicable through this surface either.
+ *
+ *  ⚠️ OPE-714 — `vendor_type` is the ONE deliberate divergence from
+ *  `AUTO_MERGE_COLUMNS`, and it must stay one-sided.
+ *
+ *  OPE-714 stages a `vendor_type` candidate whenever a link call's category
+ *  disagrees with the stored one. It chose to record the disagreement rather
+ *  than overwrite, precisely so a link call cannot clobber a curated field by
+ *  mentioning a vendor. But the field was never added to this map, so all 95
+ *  such rows in prod failed `field_not_applicable` — the reviewer could not
+ *  apply them even by hand, and approve/reject were identical for every one.
+ *  A cannabis dispensary stored as "Home Improvement" was unreachable by the
+ *  tool built to reach it.
+ *
+ *  Mapping it HERE makes it applicable by a human who has read the evidence.
+ *  It is deliberately NOT added to `AUTO_MERGE_COLUMNS`: that map is the
+ *  automatic path, and auto-applying a category on a dedup match is exactly
+ *  the behaviour OPE-714 rejected. The two maps differ on purpose — a human
+ *  decision and an automatic one are not the same permission. */
 const FIELD_TO_COLUMN: Record<string, keyof typeof vendors.$inferInsert> = {
   contact_phone: "contactPhone",
   contact_email: "contactEmail",
@@ -67,6 +85,7 @@ const FIELD_TO_COLUMN: Record<string, keyof typeof vendors.$inferInsert> = {
   address: "address",
   city: "city",
   state: "state",
+  vendor_type: "vendorType",
 };
 
 const PROPOSED_FIELDS = [
@@ -434,6 +453,13 @@ export function registerEnrichmentReviewTools(
     {
       candidate_id: z.number().int().positive().describe("Candidate row id (from list)."),
       action: z.enum(["approve", "reject"]).describe("approve = apply fill; reject = discard."),
+      force: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe(
+          "OPE-714: apply the proposed value EVEN IF the field is already populated, overwriting it. Defaults false. Needed because a `vendor_type` disagreement receipt is only ever staged when the stored value differs — so without this, approve and reject are identical for every one of them. The replaced value is recorded in the audit row."
+        ),
       note: z
         .string()
         .max(500)
@@ -479,6 +505,11 @@ export function registerEnrichmentReviewTools(
           address: vendors.address,
           city: vendors.city,
           state: vendors.state,
+          // OPE-714 — MUST be selected. `liveValue` is read off this object, so
+          // an unselected column reads `undefined` → "empty" → fill-empty-only
+          // silently applies, which is the exact clobber this guard prevents.
+          // Every key of FIELD_TO_COLUMN has to appear here.
+          vendorType: vendors.vendorType,
         })
         .from(vendors)
         .where(eq(vendors.id, cand.vendorId))
@@ -547,9 +578,15 @@ export function registerEnrichmentReviewTools(
         .set({ decision: "approved", reviewedAt: now, reviewedBy: auth.userId })
         .where(eq(vendorEnrichmentCandidates.id, cand.id));
 
-      if (!fillable) {
+      if (!fillable && !params.force) {
         // The live field moved on since staging — honor fill-empty-only and
         // don't clobber. The approval is still recorded (it leaves the queue).
+        //
+        // OPE-714 — `force: true` is the deliberate override. It exists because
+        // a `vendor_type` disagreement receipt is ONLY staged when the stored
+        // value differs from the proposal, so every one of the 95 in prod lands
+        // here: without the override, approve and reject were behaviourally
+        // identical for them and the queue could only ever drain to no effect.
         await writeAudit(db, auth, cand, {
           action: "approve",
           applied: false,
@@ -575,7 +612,13 @@ export function registerEnrichmentReviewTools(
         };
       }
 
-      // Apply the fill.
+      // Apply the fill — or, when forced, the overwrite.
+      //
+      // OPE-714 — `overwrote` is captured BEFORE the write and is the only
+      // record of what a forced approve replaced. `candidate.current_value`
+      // holds what the field contained when the candidate was staged, which can
+      // be weeks stale; this is what it held at the moment of the overwrite.
+      const overwrote = fillable ? undefined : liveValue;
       const update: Record<string, string> = { [col]: cand.proposedValue };
       await db.update(vendors).set(update).where(eq(vendors.id, vendor.id));
 
@@ -586,7 +629,9 @@ export function registerEnrichmentReviewTools(
         status: "success",
         fieldsChanged: [cand.proposedField],
         actorUserId: auth.userId,
-        notes: `enrichment review: applied ${cand.proposedField} (candidate ${cand.id})`,
+        notes: fillable
+          ? `enrichment review: applied ${cand.proposedField} (candidate ${cand.id})`
+          : `enrichment review: FORCED ${cand.proposedField} over ${JSON.stringify(overwrote)} (candidate ${cand.id})`,
       });
       await recomputeVendorCompleteness(db, vendor.id);
       if (env) {
@@ -608,6 +653,7 @@ export function registerEnrichmentReviewTools(
         applied: true,
         decision: "approved",
         note: params.note,
+        ...(fillable ? {} : { forced: true, overwrote }),
       });
 
       return {
@@ -622,6 +668,9 @@ export function registerEnrichmentReviewTools(
             applied: true,
             decision: "approved",
             applied_value: cand.proposedValue,
+            // OPE-714 — the caller must be able to see that a curated value was
+            // replaced, and with what, without reading the audit table.
+            ...(fillable ? {} : { forced: true, overwrote }),
           }),
         ],
       };
@@ -639,6 +688,17 @@ async function writeAudit(
     decision: string;
     reason?: string;
     note?: string;
+    /** OPE-714 — true when fill-empty-only was deliberately overridden. */
+    forced?: boolean;
+    /**
+     * OPE-714 — the value a forced approve REPLACED.
+     *
+     * The only record of it. `vendor_enrichment_candidates.current_value` is
+     * what the field held when the candidate was STAGED, which may be weeks
+     * old; this is what it held at the moment of the overwrite. Without it a
+     * force is irreversible.
+     */
+    overwrote?: string | null;
   }
 ): Promise<void> {
   try {
