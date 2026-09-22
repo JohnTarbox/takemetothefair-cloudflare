@@ -547,6 +547,10 @@ export * from "./vendor-hierarchy";
 // string. Mirrors the displayVenueName sweep from PR #296/#298.
 export * from "./vendor-display";
 
+// OPE-1111 (2026-09-22): the vendor gallery's pure half, shared so the web
+// page and get_vendor_details cannot disagree about what is in a gallery.
+export * from "./vendor-gallery";
+
 // Hardening (2026-06-10): constant-time secret comparison, shared by the
 // main app and the MCP Worker so both verify INTERNAL_API_KEY /
 // CLAUDE_READONLY_TOKEN against the same audited implementation.

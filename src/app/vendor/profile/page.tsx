@@ -608,8 +608,13 @@ export default function VendorProfilePage() {
               <p className="text-sm text-muted-foreground mb-4">
                 Booth and product photos for your listing. Captions and alt text are optional, but
                 alt text is what a screen reader announces — worth writing.{" "}
-                <strong>The gallery displays on your public page with an Enhanced Profile.</strong>{" "}
-                Photos you add now are kept either way.
+                {/* OPE-1111 — this used to read "displays on your public page with an
+                    Enhanced Profile". That was true, and it was the whole defect: the
+                    upload was open to every claimed vendor while the render was not, so
+                    72 photos from 26 makers were stored and never shown. The gate is
+                    gone; this sentence has to stop hedging or it teaches the vendor to
+                    expect nothing. */}
+                <strong>These photos show on your public listing.</strong>
               </p>
               <VendorGalleryLoader vendorId={profile.id} />
             </div>

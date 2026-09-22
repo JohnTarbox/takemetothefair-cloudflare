@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { eq, and, or, gte, lte, inArray, isNull, sql, desc } from "drizzle-orm";
+import { eq, and, or, gte, lte, inArray, isNull, sql, desc, asc } from "drizzle-orm";
 import {
   events,
   eventNameVariants,
@@ -11,6 +11,7 @@ import {
   promoters,
   eventSeries,
   eventSlugHistory,
+  vendorPhotos,
   vendorSlugHistory,
   venueSlugHistory,
   promoterSlugHistory,
@@ -18,7 +19,7 @@ import {
   containsCI,
   nameOrSlugContains,
 } from "../schema.js";
-import { vendorLinkIsPublicallyVisible } from "@takemetothefair/db-schema";
+import { vendorLinkIsPublicallyVisible, rotationCdnOption } from "@takemetothefair/db-schema";
 import { PRIMARY_AUDIENCE, PUBLIC_ACCESS, EVENT_STATUS_VALUES } from "@takemetothefair/constants";
 import {
   parseJsonArray,
@@ -37,6 +38,7 @@ import {
 import {
   displayVendorName,
   chunkIds,
+  resolveVendorGallery,
   type ParentDisplayInput,
   type VendorDisplayInput,
 } from "@takemetothefair/utils";
@@ -1295,6 +1297,9 @@ export function registerPublicTools(server: McpServer, db: Db) {
             products: vendors.products,
             website: vendors.website,
             logoUrl: vendors.logoUrl,
+            // OPE-1111 — the legacy gallery column, needed for the same
+            // table-first/legacy-fallback choice the web page makes.
+            galleryImages: vendors.galleryImages,
             verified: vendors.verified,
             commercial: vendors.commercial,
             contactName: vendors.contactName,
@@ -1420,6 +1425,43 @@ export function registerPublicTools(server: McpServer, db: Db) {
           )
         );
 
+      // OPE-1111 — the gallery, which this reader did not return.
+      //
+      // That silence is the reason a broken gallery survived 23 days: the
+      // photos were in D1, the admin tool listed them, and the ONLY surface
+      // that claimed to show "the public shape" of a vendor had no opinion
+      // about them at all. So every automated check agreed with every human
+      // check, and both were looking away from the defect. A reader that
+      // omits a public field cannot be used to verify that field renders.
+      //
+      // Ordering and the legacy-column fallback come from the same shared
+      // helper the web page uses — see packages/utils/src/vendor-gallery.ts.
+      const galleryRows = await db
+        .select({
+          id: vendorPhotos.id,
+          url: vendorPhotos.photoUrl,
+          alt: vendorPhotos.altText,
+          caption: vendorPhotos.caption,
+          isFeatured: vendorPhotos.isFeatured,
+          rotation: vendorPhotos.rotation,
+        })
+        .from(vendorPhotos)
+        .where(and(eq(vendorPhotos.vendorId, vendor.id), isNull(vendorPhotos.deletedAt)))
+        .orderBy(asc(vendorPhotos.sortOrder));
+
+      const gallery = resolveVendorGallery(
+        galleryRows.map((r) => ({
+          id: r.id,
+          url: r.url,
+          alt: r.alt ?? "",
+          caption: r.caption ?? undefined,
+          isFeatured: !!r.isFeatured,
+          isLegacy: false,
+          rotation: rotationCdnOption(r.rotation),
+        })),
+        vendor.galleryImages
+      );
+
       return {
         content: [
           jsonContent({
@@ -1450,6 +1492,12 @@ export function registerPublicTools(server: McpServer, db: Db) {
             city: vendor.city,
             state: vendor.state,
             upcomingEventCount: confirmedEvents.length,
+            // OPE-1111 — always present, `[]` when empty rather than omitted.
+            // An absent key and an empty gallery are the same thing to a
+            // reader skimming JSON, and telling them apart is exactly what
+            // this field exists to make possible.
+            gallery,
+            galleryCount: gallery.length,
             // EH1 hierarchy (raw column values + resolved parent objects)
             role: vendor.role,
             brandParentVendorId: vendor.brandParentVendorId,
