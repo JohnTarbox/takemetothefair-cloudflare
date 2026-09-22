@@ -498,6 +498,28 @@ const SCHEMA_SQL = `
     image_focal_y REAL NOT NULL DEFAULT 0.5
   );
 
+  -- OPE-211 increment 1 / OPE-1111. Added when get_vendor_details began
+  -- returning the gallery; before that no MCP tool read the table, which is
+  -- itself why the broken gallery went unnoticed for 23 days.
+  -- created_at/updated_at are NOT NULL on the real table with no DB default,
+  -- so fixtures must supply them -- matching prod is the point of this block.
+  CREATE TABLE vendor_photos (
+    id TEXT PRIMARY KEY,
+    vendor_id TEXT NOT NULL,
+    photo_url TEXT NOT NULL,
+    caption TEXT,
+    alt_text TEXT,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    photo_type TEXT NOT NULL DEFAULT 'other',
+    is_featured INTEGER NOT NULL DEFAULT 0,
+    uploaded_by TEXT,
+    deleted_at INTEGER,
+    content_sha256 TEXT,
+    rotation INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+
   CREATE TABLE vendor_slug_history (
     id TEXT PRIMARY KEY,
     vendor_id TEXT NOT NULL,

@@ -10,93 +10,56 @@
  * executing" shape this project keeps hitting, in its quietest form: the code
  * is correct, deployed, and unreachable.
  *
+ * ── …and increment 2 was then hidden behind a tier (OPE-1111) ─────────────
+ *
+ * This reader has been correct since 2026-08-30. The page called it, got the
+ * photos, and then rendered them inside `{isEnhanced && …}` — so for another
+ * 23 days every photo was fetched and thrown away. Prod on 2026-09-22: 72
+ * photos, 26 vendors, **zero** of them enhanced, against 2 enhanced vendors
+ * site-wide. A reader that works is not a feature that ships; the call site
+ * decides that, and nothing was watching the call site.
+ *
  * ── The legacy column must keep rendering ─────────────────────────────────
  *
  * `vendors.gallery_images` is a JSON array of `{url, alt, caption?}` and is
- * still the only place a vendor gallery exists in prod (1 vendor has one).
- * Migrating those rows into `vendor_photos` is increment 4, which John
- * explicitly did NOT approve — "bulk backfill … needs its own STOP-gate".
+ * still the only place a vendor gallery exists for some rows. Migrating those
+ * into `vendor_photos` is increment 4, which John explicitly did NOT approve —
+ * "bulk backfill … needs its own STOP-gate".
  *
  * So this reader prefers the table and falls back to the JSON column, per
  * vendor. That is not a transitional hack to be cleaned up later; it is what
  * lets the new surface ship without a data mutation nobody authorised. When
  * the backfill is approved, the fallback stops being reached on its own — no
  * second change needed, and no flag day.
+ *
+ * ── Where the logic lives ─────────────────────────────────────────────────
+ *
+ * Everything downstream of the rows (legacy parse, featured-first ordering,
+ * table-vs-legacy choice) moved to `@takemetothefair/utils` in OPE-1111 so
+ * `get_vendor_details` shares it rather than growing a second copy. The names
+ * are re-exported here unchanged, so existing imports and their tests are
+ * untouched.
  */
 import { and, asc, eq, isNull } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "@/lib/db/schema";
 import { vendorPhotos } from "@/lib/db/schema";
 import { rotationCdnOption } from "@takemetothefair/db-schema";
+import { resolveVendorGallery, type VendorGalleryPhoto } from "@takemetothefair/utils";
+
+export {
+  parseLegacyGallery,
+  orderGalleryPhotos,
+  resolveVendorGallery,
+  type VendorGalleryPhoto,
+} from "@takemetothefair/utils";
 
 type Db = DrizzleD1Database<typeof schema>;
-
-export interface VendorGalleryPhoto {
-  /** `vendor_photos.id`, or null for a legacy JSON entry (which has no id). */
-  id: string | null;
-  url: string;
-  alt: string;
-  caption?: string;
-  isFeatured: boolean;
-  /** True when this came from the legacy column — the UI cannot edit it. */
-  isLegacy: boolean;
-  /** OPE-686 — render-time rotation; undefined when upright. See event-photos.ts. */
-  rotation?: 90 | 180 | 270;
-}
-
-/**
- * Parse the legacy `vendors.gallery_images` JSON.
- *
- * Exported for tests, and separate from the query because malformed JSON is a
- * real state in this column — the previous reader swallowed it with a bare
- * catch and rendered nothing, which is right, but untested.
- */
-export function parseLegacyGallery(raw: string | null | undefined): VendorGalleryPhoto[] {
-  if (!raw) return [];
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return [];
-  }
-  if (!Array.isArray(parsed)) return [];
-  return parsed
-    .filter(
-      (e): e is { url: string; alt?: string; caption?: string } =>
-        typeof e === "object" && e !== null && typeof (e as { url?: unknown }).url === "string"
-    )
-    .map((e) => ({
-      id: null,
-      url: e.url,
-      alt: typeof e.alt === "string" ? e.alt : "",
-      caption: typeof e.caption === "string" ? e.caption : undefined,
-      isFeatured: false,
-      isLegacy: true,
-    }));
-}
-
-/**
- * Order photos for display: featured first, then by `sort_order`, then by a
- * stable tiebreak.
- *
- * Pure and exported so the ordering is testable without a database — the
- * property that matters (a featured photo leads) is easy to lose in an
- * ORDER BY and impossible to notice by eye with two photos.
- */
-export function orderGalleryPhotos(photos: VendorGalleryPhoto[]): VendorGalleryPhoto[] {
-  return [...photos].sort((a, b) => {
-    if (a.isFeatured !== b.isFeatured) return a.isFeatured ? -1 : 1;
-    return 0;
-  });
-}
 
 /**
  * Every gallery photo for a vendor, table-first with a legacy fallback.
  *
- * The fallback is per-vendor and all-or-nothing: a vendor with even one
- * `vendor_photos` row is considered migrated, and its legacy JSON is ignored.
- * Merging the two would double-render any photo the backfill later copies
- * across, and a duplicate photo is worse than an un-migrated one.
+ * Not tier-aware, and must not become so — see the OPE-1111 note above.
  */
 export async function getVendorGallery(
   db: Db,
@@ -117,9 +80,7 @@ export async function getVendorGallery(
     .where(and(eq(vendorPhotos.vendorId, vendorId), isNull(vendorPhotos.deletedAt)))
     .orderBy(asc(vendorPhotos.sortOrder));
 
-  if (rows.length === 0) return orderGalleryPhotos(parseLegacyGallery(legacyGalleryJson));
-
-  return orderGalleryPhotos(
+  return resolveVendorGallery(
     rows.map((r) => ({
       id: r.id,
       url: r.url,
@@ -128,6 +89,7 @@ export async function getVendorGallery(
       isFeatured: !!r.isFeatured,
       isLegacy: false,
       rotation: rotationCdnOption(r.rotation),
-    }))
+    })),
+    legacyGalleryJson
   );
 }
