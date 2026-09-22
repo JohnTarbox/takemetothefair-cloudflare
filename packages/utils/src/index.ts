@@ -551,6 +551,11 @@ export * from "./vendor-display";
 // page and get_vendor_details cannot disagree about what is in a gallery.
 export * from "./vendor-gallery";
 
+// OPE-1112 (2026-09-22): "is this a link to an image?" — shared by the
+// self-service form, the profile API and update_vendor, so a page URL cannot
+// enter logo_url through whichever writer nobody remembered to guard.
+export * from "./image-url";
+
 // Hardening (2026-06-10): constant-time secret comparison, shared by the
 // main app and the MCP Worker so both verify INTERNAL_API_KEY /
 // CLAUDE_READONLY_TOKEN against the same audited implementation.

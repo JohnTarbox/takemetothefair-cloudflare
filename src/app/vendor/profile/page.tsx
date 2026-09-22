@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState, useRef } from "react";
 import { VendorGalleryLoader } from "@/components/vendors/gallery/VendorGalleryLoader";
+import { VendorLogoManager } from "@/components/vendors/VendorLogoManager";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -588,14 +589,38 @@ export default function VendorProfilePage() {
               placeholder="https://..."
             />
 
-            <Input
-              label="Logo URL"
-              type="url"
-              name="logoUrl"
-              value={formData.logoUrl}
-              onChange={handleChange}
-              placeholder="https://..."
-            />
+            {/* OPE-1112 — the logo half of OPE-211 §5, three weeks and one
+                customer complaint after the gallery half.
+
+                The URL box below used to be the ONLY way a vendor could set a
+                logo. A maker with photos on her phone and a Facebook page has
+                no hosted image URL, so she pastes her page link and the public
+                page renders a blank square — 8 prod rows looked exactly like
+                that, every one typed in by a claimed vendor. Upload comes
+                first because it is the answer for most people; the URL field
+                stays for anyone who genuinely has a hosted image, and is now
+                validated so a page link is refused with a reason. */}
+            <div className="border-t pt-6 mt-6">
+              <h3 className="text-lg font-medium text-foreground mb-1">Logo</h3>
+              <p className="text-sm text-muted-foreground mb-4">
+                Your brand image, shown at the top of your public listing.
+              </p>
+              <VendorLogoManager
+                vendorId={profile.id}
+                logoUrl={formData.logoUrl || null}
+                onChanged={(url) => setFormData((prev) => ({ ...prev, logoUrl: url ?? "" }))}
+              />
+              <div className="mt-4">
+                <Input
+                  label="…or paste an image link"
+                  type="url"
+                  name="logoUrl"
+                  value={formData.logoUrl}
+                  onChange={handleChange}
+                  placeholder="https://example.com/logo.png"
+                />
+              </div>
+            </div>
 
             {/* OPE-211 increment 3 — vendor self-service gallery.
                 Greenlit by John on the issue 2026-07-15: "A logged-in vendor

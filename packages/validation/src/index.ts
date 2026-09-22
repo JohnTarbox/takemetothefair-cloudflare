@@ -18,7 +18,12 @@ import {
   EVENT_CATEGORIES,
   invalidEventCategories,
 } from "@takemetothefair/constants";
-import { sanitizeProse, decodeHtmlEntities, coerceVenueNameAtIngest } from "@takemetothefair/utils";
+import {
+  sanitizeProse,
+  decodeHtmlEntities,
+  coerceVenueNameAtIngest,
+  checkImageUrl,
+} from "@takemetothefair/utils";
 
 /**
  * OPE-1058 — `events.categories`, validated at the schema boundary.
@@ -106,6 +111,30 @@ const urlSchema = z
   .optional()
   .nullable()
   .or(z.literal(""));
+/**
+ * OPE-1112 — a URL that must point at an IMAGE, not merely be well-formed.
+ *
+ * `urlSchema` accepts `https://www.facebook.com/profile.php?id=…` because that
+ * is a perfectly valid URL. It was also, on 2026-09-22, the contents of a
+ * claimed vendor's `logo_url`, rendering as a blank square on her public page.
+ * Eight prod rows held a page link in an image column, every one typed in by a
+ * real person through a field that asked for a "Logo URL" and offered no way
+ * to upload a file.
+ *
+ * The predicate is shared with the client form and `update_vendor` — see
+ * `checkImageUrl` in @takemetothefair/utils — so the rule cannot be enforced
+ * on one writer and not the others. Empty stays valid: clearing a logo is a
+ * legitimate edit, and the repair for those eight rows is to null them.
+ */
+const imageUrlSchema = urlSchema.superRefine((v, ctx) => {
+  const verdict = checkImageUrl(v);
+  // superRefine rather than refine so the vendor sees WHICH problem she has.
+  // "That link points to a Facebook page, not an image file" tells her what to
+  // do differently; a generic "invalid logo URL" is the message she already
+  // effectively received by seeing a blank square.
+  if (!verdict.ok) ctx.addIssue({ code: "custom", message: verdict.reason });
+});
+
 const emailSchema = z
   .string()
   .email()
@@ -198,7 +227,9 @@ export const vendorCreateSchema = z.object({
   products: z.array(z.string()).optional().default([]),
   website: urlSchema,
   socialLinks: z.string().optional().nullable(), // JSON string
-  logoUrl: urlSchema,
+  // OPE-1112 — see imageUrlSchema. Admin create/update only (vendorUpdateSchema
+  // derives from this), so a human sees the rejection and can fix it.
+  logoUrl: imageUrlSchema,
   verified: z.boolean().optional().default(false),
   commercial: z.boolean().optional().default(false),
   // IMG1 §1b Phase 1 — per-image focal point (0–1). Applies to logo_url.
@@ -607,7 +638,9 @@ export const vendorProfileUpdateSchema = z.object({
   vendorType: z.string().max(100).optional().nullable(),
   products: z.array(z.string()).optional(),
   website: urlSchema,
-  logoUrl: urlSchema,
+  // OPE-1112 — an image column takes an image URL. `website` above stays a
+  // plain urlSchema on purpose: a vendor's website SHOULD be a page.
+  logoUrl: imageUrlSchema,
   contactName: z.string().max(VALIDATION.NAME_MAX_LENGTH).optional().nullable(),
   contactEmail: emailSchema,
   contactPhone: phoneSchema,
