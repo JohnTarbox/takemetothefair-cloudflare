@@ -1,4 +1,5 @@
 export const dynamic = "force-dynamic";
+import { attachEventToSeries } from "@/lib/series/resolve-or-create-series";
 import { NextResponse } from "next/server";
 import { detectPossibleDuplicate } from "@/lib/duplicates/venue-date-collision";
 import { withAuth } from "@/lib/api/with-auth";
@@ -599,6 +600,15 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
           syncEnabled: true,
           lastSyncedAt: new Date(),
           commercialVendorsAllowed: eventData.commercialVendorsAllowed ?? true,
+        });
+
+        // OPE-472 (bounce) — the bulk import path (aggregator_import /
+        // direct_scrape) never attached a series: 65 of 65 rows imported on
+        // 09-23 were unparented. Same fill-only helper every other writer uses.
+        await attachEventToSeries(db, newEventId, {
+          name: decodedNewEventName,
+          venueId: eventVenueId,
+          promoterId,
         });
 
         // Persist per-day open/close hours when the scraper extracted them
