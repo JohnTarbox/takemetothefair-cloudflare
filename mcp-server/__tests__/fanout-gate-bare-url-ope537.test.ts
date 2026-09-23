@@ -77,8 +77,9 @@ describe("source wiring", () => {
     // Dropping THIS guard would hand the extractor a copy of the bare URL as
     // if it were page content — which is how the fabricated description got
     // written in the first place. The fix must not reintroduce its own cause.
+    // OPE-1123 changed the TEXT (quoted reply history cut) — not the gate.
     expect(SRC).toContain(
-      'if (bodyHasSubstance) sources.push({ kind: "body", text: bodyTextRaw });'
+      'if (bodyHasSubstance) sources.push({ kind: "body", text: bodyProseText });'
     );
   });
 });

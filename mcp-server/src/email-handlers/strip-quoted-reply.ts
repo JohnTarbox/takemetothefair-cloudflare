@@ -52,6 +52,11 @@ const REPLY_MARKERS: RegExp[] = [
   /(^|\n)[ \t]*_{5,}[ \t]*(\n|$)/,
   // Outlook header block that follows a reply with no attribution line.
   /(^|\n)[ \t]*From:[ \t].{0,200}\n[ \t]*Sent:[ \t]/i,
+  // OPE-1123 — the same header block as Yahoo / webmail clients write it:
+  // `From:` then `To:` / `Date:` / `Cc:` on the next line (inbound 09eccd4f).
+  // A Gmail forward has the same shape, but under a FORWARD_MARKER, which the
+  // guard below checks first.
+  /(^|\n)[ \t]*From:[ \t].{0,200}\n[ \t]*(To|Date|Cc):[ \t]/i,
 ];
 
 /** A forwarded delimiter — never cut here; the forward IS the content. */
@@ -93,4 +98,43 @@ export function stripQuotedReply(bodyText: string): string {
  */
 export function hasQuotedReply(bodyText: string): boolean {
   return stripQuotedReply(bodyText) !== bodyText;
+}
+
+/** A forward subject — `Fwd:` / `FW:` — whose quoted block is the payload. */
+const FORWARD_SUBJECT = /^\s*(fwd?|fw)\s*:/i;
+
+/**
+ * A date the LIVE text names: "October 11th", "Oct. 3", "9/26". Enough to say
+ * the sender's own words describe an event, not to parse one.
+ */
+const DATE_SIGNAL =
+  /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2}(st|nd|rd|th)?\b|\b\d{1,2}\/\d{1,2}\b/i;
+
+/**
+ * OPE-1123 — the prose the submit pipeline should extract events FROM.
+ *
+ * A reply's quoted transcript is prior correspondence, not a second source.
+ * Inbound 09eccd4f's live text asked about Hackmatack's Oct 11 fall festival;
+ * the four-month-old message quoted beneath it described the June 21 fair, and
+ * the extractor minted a row for that already-past event.
+ *
+ * This is the ONE place quoting is cut on the submission path, and it is
+ * stricter than `stripQuotedReply`, because here a wrong cut loses the
+ * submission itself — forwarding an organizer's email is the most common intake
+ * shape. So the transcript is dropped only when ALL hold:
+ *
+ *   - `stripQuotedReply` found a reply marker (never under a forward delimiter);
+ *   - the subject is not a forward (`Fwd:` / `FW:`) — an Outlook forward has
+ *     no delimiter, only the header block, and its quoted body is the payload;
+ *   - the live text itself names a date, so it describes an event on its own.
+ *
+ * Otherwise the full body is returned, exactly as before.
+ */
+export function submissionProseText(bodyText: string, subject: string | null | undefined): string {
+  if (!bodyText) return bodyText;
+  if (FORWARD_SUBJECT.test(subject ?? "")) return bodyText;
+  const live = stripQuotedReply(bodyText);
+  if (live === bodyText) return bodyText;
+  if (!DATE_SIGNAL.test(live)) return bodyText;
+  return live;
 }

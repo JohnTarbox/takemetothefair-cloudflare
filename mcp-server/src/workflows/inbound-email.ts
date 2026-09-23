@@ -151,6 +151,8 @@ import { recordSourceCitations } from "../email-handlers/pipeline-citations.js";
 // files its own) and spam.
 import { recordDefectCandidate } from "../email-handlers/defect-candidate.js";
 import { bodyHasProseSubstance } from "../email-handlers/body-prose-substance.js";
+import { submissionProseText } from "../email-handlers/strip-quoted-reply.js";
+import { listingCandidatesToDrop } from "../email-handlers/listing-page-title.js";
 import { countOutcomes } from "../email-handlers/outcome-counts.js";
 import { clusterSubmissionCandidates } from "../email-handlers/cluster-candidates.js";
 import { classifySourceStaleness, sourceDomainOf } from "../email-handlers/stale-source.js";
@@ -1762,7 +1764,12 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     // The URL is already its own `kind: "url"` source in the same list, so
     // body-extracting it can contribute nothing that source does not. Cutting
     // it removes hallucination surface without trading away any recall.
-    const bodyHasSubstance = bodyHasProseSubstance(stripSignature(bodyTextRaw));
+    // OPE-1123 — the prose we EXTRACT from: a reply's quoted transcript is
+    // prior correspondence, not a source (see `submissionProseText` for the
+    // guards that keep a forward's payload). URL discovery below still reads the
+    // whole body — a link is a link wherever it sits.
+    const bodyProseText = submissionProseText(bodyTextRaw, subject);
+    const bodyHasSubstance = bodyHasProseSubstance(stripSignature(bodyProseText));
     const bodyUrls = extractAllUrls(bodyTextRaw, "", 10);
 
     // ───── OPE-68: OCR poster/PDF attachments into extra submit sources ─────
@@ -1989,7 +1996,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         sources.push(...bodyUrls.map((url): SubmitSource => ({ kind: "url", url })));
       }
       // Then the body prose pseudo-source when it carries substance.
-      if (bodyHasSubstance) sources.push({ kind: "body", text: bodyTextRaw });
+      if (bodyHasSubstance) sources.push({ kind: "body", text: bodyProseText });
       // Then the OCR'd attachments (ordered last, same as the body pseudo-source
       // rationale — provenance-carrying URL/body events created first).
       sources.push(...attachmentSources);
@@ -2001,7 +2008,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         rowSnapshot.fromAddress,
         true, // hasAttachments — attachments were present + OCR'd
         overflowed,
-        bodyTextRaw,
+        bodyProseText,
         messageRowId,
         instanceId
       );
@@ -2069,7 +2076,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       // adding it as a "body" source would hand the extractor a copy of the
       // URL string as if it were page content — which is how the fabricated
       // description got written in the first place.
-      if (bodyHasSubstance) sources.push({ kind: "body", text: bodyTextRaw });
+      if (bodyHasSubstance) sources.push({ kind: "body", text: bodyProseText });
       const overflowed = bodyUrls.length >= 10;
       return await this.runMultiSourcePipeline(
         step,
@@ -2078,7 +2085,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         rowSnapshot.fromAddress,
         rowSnapshot.attachmentCount > 0,
         overflowed,
-        bodyTextRaw,
+        bodyProseText,
         messageRowId,
         instanceId
       );
@@ -2180,7 +2187,10 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             () =>
               submitFreeTextExtract(
                 this.env,
-                rowSnapshot.bodyText ?? rowSnapshot.bodyTextExcerpt ?? ""
+                submissionProseText(
+                  rowSnapshot.bodyText ?? rowSnapshot.bodyTextExcerpt ?? "",
+                  subject
+                )
               )
           );
           const hasMinFields =
@@ -2290,7 +2300,10 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         // prose, DRAFT the event from it (PENDING, ok-low-body-extract reply) instead
         // of bouncing. Falls through to the original bounce when there's no usable
         // prose. Failsoft: any hiccup in the fallback re-throws the original error.
-        const rawBody = rowSnapshot.bodyText ?? rowSnapshot.bodyTextExcerpt ?? "";
+        const rawBody = submissionProseText(
+          rowSnapshot.bodyText ?? rowSnapshot.bodyTextExcerpt ?? "",
+          subject
+        );
         // OPE-537 — measure PROSE, not raw characters.
         //
         // This was `stripSignature(stripForwardedPreamble(rawBody)).trim().length > 40`,
@@ -4044,6 +4057,21 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     // down to one candidate now takes the N=1 path and gets the rich
     // single-event reply, instead of a "we created 2 events" list that was
     // never true.
+    // OPE-1123 — drop "events" named after a LISTING page before they can
+    // cluster or be created (see listing-page-title.ts for the narrow rule).
+    const listingDrops = listingCandidatesToDrop(
+      candidates.map((c) => ({ name: c.extracted.event.name, kind: c.source.kind }))
+    );
+    if (listingDrops.length > 0) {
+      console.warn(
+        `[submit/listing-page] dropped ${listingDrops.length} listing-page candidate(s): ` +
+          listingDrops.map((i) => `"${candidates[i].extracted.event.name}"`).join("; ")
+      );
+      const keep = candidates.filter((_, i) => !listingDrops.includes(i));
+      candidates.length = 0;
+      candidates.push(...keep);
+    }
+
     const clusterInput = candidates.map((c, idx) => ({
       idx,
       name: c.extracted.event.name,
