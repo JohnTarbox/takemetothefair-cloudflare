@@ -11,6 +11,7 @@ import { getDb } from "./db.js";
 import { runRequestSampleRetention } from "./request-sample-retention.js";
 import { runErrorLogRetention, runIndexNowSubmissionRetention } from "./log-table-retention.js";
 import { authenticateToken } from "./auth.js";
+import { applyToolParamPolicy } from "./tool-param-policy.js";
 import { registerPublicTools } from "./tools/public.js";
 import { registerUserTools } from "./tools/user.js";
 import { registerVendorTools } from "./tools/vendor.js";
@@ -241,10 +242,14 @@ export type { Env };
 export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, UserProps> {
   // Type assertion needed: @modelcontextprotocol/sdk and agents bundle separate
   // copies of McpServer with incompatible private fields but identical public API.
-  server = new McpServer({
-    name: "MeetMeAtTheFair",
-    version: "1.0.0",
-  }) as any;
+  // OPE-1132 — the param policy wraps `tool()` on THIS instance, so it must be
+  // applied before init() registers anything. Same call on the legacy path.
+  server = applyToolParamPolicy(
+    new McpServer({
+      name: "MeetMeAtTheFair",
+      version: "1.0.0",
+    })
+  ) as any;
 
   async init() {
     const db = getDb(this.env.DB);
@@ -517,7 +522,7 @@ async function handleLegacyMcpRequest(
   }
 
   const db = getDb(env.DB);
-  const server = new McpServer({ name: "MeetMeAtTheFair", version: "1.0.0" });
+  const server = applyToolParamPolicy(new McpServer({ name: "MeetMeAtTheFair", version: "1.0.0" }));
 
   registerPublicTools(server, db);
 
