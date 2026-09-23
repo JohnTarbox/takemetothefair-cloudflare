@@ -181,14 +181,28 @@ export async function applyCanSpamFooter(
   //
   // Detected on the unsubscribe ROUTE rather than on any prose, because the
   // prose is what varies. Both live unsubscribe surfaces are checked.
+  //
+  // OPE-867 (bounce) — a caller-supplied body can carry a DEAD Unsubscribe
+  // anchor (`href="#"`: the vendor-digest HTML passed through send_test_email
+  // on 09-14 and 09-21). It matched neither route, so the body was judged
+  // non-compliant and a SECOND consent claim was appended beside the dead link.
+  // Wire the dead anchor to the real URL first; the body is then compliant.
+  const html = wireDeadUnsubscribeAnchors(rendered.html, unsubscribeUrl);
   const alreadyCompliant =
-    rendered.html.includes("/api/newsletter/unsubscribe") ||
-    rendered.html.includes("/unsubscribe/");
+    html.includes("/api/newsletter/unsubscribe") || html.includes("/unsubscribe/");
+
+  // The text part must say what the HTML says: its consent line, if the HTML
+  // has one the text lacks, and a working link, if the text has none.
+  const bodyReason = consentLineOf(html);
+  const textLacksReason = bodyReason !== null && !/receiving this because/i.test(rendered.text);
+  const textLacksLink = !/\/unsubscribe/.test(rendered.text);
 
   // When the body is already compliant we add CONTEXT, not a second consent
   // claim and not a second link. A test send still discloses that it is a test.
   const reasonText = alreadyCompliant
-    ? `\n\n--\nNote: ${opts.reasonLine}`
+    ? `\n\n--\n${textLacksReason ? `You're receiving this because ${bodyReason}\n` : ""}${
+        textLacksLink ? `Unsubscribe: ${unsubscribeUrl}\n` : ""
+      }Note: ${opts.reasonLine}`
     : `\n\n--\nYou're receiving this because ${opts.reasonLine}\nUnsubscribe: ${unsubscribeUrl}\nMeet Me at the Fair · ${mailingAddress}`;
 
   const footerHtml = alreadyCompliant
@@ -198,8 +212,36 @@ export async function applyCanSpamFooter(
   return {
     subject: rendered.subject,
     text: rendered.text + reasonText,
-    html: insertBeforeBodyEnd(rendered.html, footerHtml),
+    html: insertBeforeBodyEnd(html, footerHtml),
   };
+}
+
+/** An `<a>` whose visible text is "Unsubscribe" but whose href goes nowhere. */
+const DEAD_UNSUB_ANCHOR =
+  /<a\b([^>]*?)\bhref\s*=\s*(["'])(?:#|\s*|\{\{[^}]*\}\}|\[[^\]]*\]|%[A-Z_]+%)\2([^>]*)>(\s*unsubscribe\s*)<\/a>/gi;
+
+/**
+ * OPE-867 — point every dead "Unsubscribe" anchor (`#`, empty, or an unfilled
+ * `{{…}}` / `[…]` / `%…%` placeholder) at the real one-click URL. Exported for
+ * tests. Live anchors are untouched.
+ */
+export function wireDeadUnsubscribeAnchors(html: string, unsubscribeUrl: string): string {
+  return html.replace(
+    DEAD_UNSUB_ANCHOR,
+    (_m, before: string, q: string, after: string, label: string) =>
+      `<a${before}href=${q}${escapeHtml(unsubscribeUrl)}${q}${after}>${label}</a>`
+  );
+}
+
+/** The body's own "You're receiving this because …" reason, as plain text, or null. */
+export function consentLineOf(html: string): string | null {
+  const m = html.match(/You(?:'|&#39;|&#x27;|’|&rsquo;)re receiving this because\s+([^<]+)/i);
+  if (!m) return null;
+  return m[1]
+    .replace(/&amp;/g, "&")
+    .replace(/&#39;|&#x27;|&rsquo;/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /**
