@@ -4,6 +4,7 @@ import { getCloudflareEnv, getCloudflareDb } from "@/lib/cloudflare";
 import { requireAdminAuth } from "@/lib/api-auth";
 import { logError } from "@/lib/logger";
 import { checkAdminGeoRestriction } from "@/lib/geo-security";
+import { quoteKnownTable, UnknownTableError } from "@/lib/db/known-table-identifier";
 
 // GET - Generate and download a database backup
 export async function GET(request: NextRequest) {
@@ -36,6 +37,8 @@ export async function GET(request: NextRequest) {
       .all();
 
     const tables = tablesResult.results.map((row) => row.name as string);
+    // OPE-1105 — the only names allowed into the interpolated queries below.
+    const knownTables = new Set(tables);
 
     let sqlDump = `-- Database Backup\n`;
     sqlDump += `-- Generated: ${new Date().toISOString()}\n`;
@@ -43,6 +46,12 @@ export async function GET(request: NextRequest) {
 
     // For each table, get schema and data
     for (const tableName of tables) {
+      // OPE-1105 — ONE validated value for every use of the name in this loop.
+      // The schema lookup can bind it (it is a VALUE there); the SELECT and the
+      // dump's DROP/INSERT cannot (it is an IDENTIFIER there), so those use the
+      // allow-listed, quote-escaped form. Refused (400) below if unknown.
+      const quoted = quoteKnownTable(tableName, knownTables);
+
       // Get CREATE TABLE statement
       const schemaResult = await db
         .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name=?`)
@@ -51,12 +60,12 @@ export async function GET(request: NextRequest) {
 
       if (schemaResult?.sql) {
         sqlDump += `-- Table: ${tableName}\n`;
-        sqlDump += `DROP TABLE IF EXISTS "${tableName}";\n`;
+        sqlDump += `DROP TABLE IF EXISTS ${quoted};\n`;
         sqlDump += `${schemaResult.sql};\n\n`;
       }
 
       // Get all data from table
-      const dataResult = await db.prepare(`SELECT * FROM "${tableName}"`).all();
+      const dataResult = await db.prepare(`SELECT * FROM ${quoted}`).all();
 
       if (dataResult.results.length > 0) {
         const columns = Object.keys(dataResult.results[0]);
@@ -71,7 +80,7 @@ export async function GET(request: NextRequest) {
             return `'${String(val).replace(/'/g, "''")}'`;
           });
 
-          sqlDump += `INSERT INTO "${tableName}" (${columns.map((c) => `"${c}"`).join(", ")}) VALUES (${values.join(", ")});\n`;
+          sqlDump += `INSERT INTO ${quoted} (${columns.map((c) => `"${c}"`).join(", ")}) VALUES (${values.join(", ")});\n`;
         }
         sqlDump += "\n";
       }
@@ -110,6 +119,11 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (error) {
+    // OPE-1105 — a table name outside the sqlite_master allow-list is refused
+    // before it reaches SQL.
+    if (error instanceof UnknownTableError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
     await logError(errorDb, {
       message: "Backup error",
       error,

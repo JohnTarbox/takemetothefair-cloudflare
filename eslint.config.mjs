@@ -51,9 +51,18 @@ export default [
     // OPE-1019 — packages/*/src added to BOTH the lint script and this block:
     // `timingSafeEqualString` (the helper OPE-902 exists to await) lives in
     // packages/utils, which was never linted at all.
+    // OPE-1105 — src/middleware.ts added: it runs on EVERY request and does
+    // fire-and-forget D1 work (correctly inside ctx.waitUntil today), and it
+    // matched none of the globs above, so the rule meant for exactly this
+    // could not see it. scripts/ and e2e/ are deliberately NOT linted (a
+    // recorded decision, OPE-1105): neither runs in a Worker, so the
+    // floating-promise class this block exists for cannot reach production
+    // from them; scripts are one-shot operator tools and e2e runs under
+    // Playwright's own TS pipeline. Revisit if a script becomes a cron.
     files: [
       "src/lib/**/*.ts",
       "src/app/api/**/*.ts",
+      "src/middleware.ts",
       "mcp-server/src/**/*.ts",
       "packages/*/src/**/*.ts",
     ],
