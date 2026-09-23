@@ -28,7 +28,7 @@
 import { NonRetryableError } from "cloudflare:workflows";
 import { eq } from "drizzle-orm";
 import type { HandlerEnv } from "./types.js";
-import { adminActions, inboundEmails } from "../schema.js";
+import { adminActions, inboundEmailEvents, inboundEmails } from "../schema.js";
 import { getDb } from "../db.js";
 import { logError } from "../logger.js";
 import { decideEventGrounding, type EventGroundingDecision } from "@takemetothefair/utils";
@@ -812,6 +812,37 @@ export async function submitEvent(
     eventName: extracted.event.name,
     routed: body.routed ?? ("created" as const),
   };
+
+  // OPE-463 (review bounce 2026-09-23) — the one-to-many link, written HERE.
+  // `inbound_email_events` shipped in #1187 and stayed EMPTY: 0 rows against 36
+  // emails that created events, because nothing inserted into it. This is the
+  // chokepoint every creating branch funnels through (single-URL, free-text,
+  // fan-out, multi-source, the poster lane), so one write covers them all —
+  // and a fan-out that creates six events writes six links, which is the whole
+  // point: `resulting_event_id` can only ever hold one.
+  // `occurrence_exists` created nothing, so it links nothing. Idempotent on the
+  // (inbound_email_id, event_id) unique index; fail-soft, because a missing
+  // link must never fail an event that now exists.
+  if (context.inboundEmailId && created.routed !== "occurrence_exists") {
+    try {
+      await getDb(env.DB)
+        .insert(inboundEmailEvents)
+        .values({
+          inboundEmailId: context.inboundEmailId,
+          eventId: created.id,
+          createdAt: new Date(),
+        })
+        .onConflictDoNothing();
+    } catch (err) {
+      await logError(env.DB, {
+        level: "warn",
+        source: "submit:inbound-email-events",
+        message: "could not record the inbound_email → event link",
+        error: err,
+        context: { inboundEmailId: context.inboundEmailId, eventId: created.id },
+      });
+    }
+  }
 
   // OPE-465 scope 4 — emit, don't just suppress. A verifier that silently
   // drops bad fields fixes the data and hides the defect, and this lane would

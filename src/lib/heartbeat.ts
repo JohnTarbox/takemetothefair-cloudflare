@@ -31,6 +31,7 @@ import {
   agentHeartbeats,
   errorLogs,
   eventSeries,
+  inboundEmailEvents,
   inboundEmails,
   imageCoverageState,
   newsletterIssues,
@@ -771,6 +772,25 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
         inboundEmails.receivedAt,
         isNotNull(inboundEmails.originalSenderAuth)
       ),
+  },
+  {
+    // OPE-463 — proof the inbound → event link is still being written.
+    //
+    // `inbound_email_events` shipped in #1187 and sat EMPTY for 17 days (0 rows
+    // against 36 event-creating emails) because no writer existed: the table
+    // was "shipped" and nothing noticed it never filled. submitEvent now writes
+    // one row per created event. This probe is the thing that would have
+    // caught the original gap.
+    //
+    // 21 days = the `inbound-submit` probe's window, the same lane and inflow
+    // (~4 event-creating emails a week), so the two go quiet together only if
+    // submissions genuinely stopped.
+    name: "inbound-email-event-links",
+    ownerOpe: "OPE-463",
+    label: "Inbound email → created-event link (inbound_email_events writer)",
+    priority: "P1",
+    expectedWindowHours: 21 * 24,
+    lastEvidenceAt: (db) => maxTs(db, inboundEmailEvents, inboundEmailEvents.createdAt),
   },
   {
     // OPE-325 — proof that a poster which resolved to an event left EVIDENCE:

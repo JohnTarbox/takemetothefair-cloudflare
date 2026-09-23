@@ -166,6 +166,7 @@ describe("OPE-975 — every probe's window is pinned", () => {
       "email-delivery-events": 72,
       "inbound-submit": 21 * 24,
       "inbound-forward-analysis": 72,
+      "inbound-email-event-links": 21 * 24,
       "newsletter-broadcast-weekend": 21 * 24,
       "newsletter-broadcast-vendor": 21 * 24,
       "promoter-url-health-sweep": 72,
