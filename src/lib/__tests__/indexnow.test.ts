@@ -54,7 +54,18 @@ describe("pingIndexNow", () => {
   let warnSpy: ReturnType<typeof vi.spyOn>;
   let errorSpy: ReturnType<typeof vi.spyOn>;
 
+  // OPE-1126 — pingIndexNow's retry backoff is REAL sleep (RETRY_DELAYS_MS
+  // 500/1000/2000 + Retry-After), so this file spent ~10.7 s in setTimeout and
+  // one test tipped past the 5 s budget under CI coverage load. Fake only
+  // setTimeout (all `sleep` uses) and drive it from a REAL setInterval pump:
+  // every backoff resolves on the next tick, the retry COUNTS the tests assert
+  // are unchanged, and vitest's own timeout timers are untouched (it captures
+  // its timers at startup).
+  let pump: ReturnType<typeof setInterval>;
+
   beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setTimeout"] });
+    pump = setInterval(() => vi.advanceTimersByTime(60_000), 0);
     fetchSpy.mockReset();
     logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -62,6 +73,8 @@ describe("pingIndexNow", () => {
   });
 
   afterEach(() => {
+    clearInterval(pump);
+    vi.useRealTimers();
     logSpy.mockRestore();
     warnSpy.mockRestore();
     errorSpy.mockRestore();
@@ -443,13 +456,26 @@ describe("pingIndexNow — REL7 suppression", () => {
   let warnSpy: ReturnType<typeof vi.spyOn>;
   let errorSpy: ReturnType<typeof vi.spyOn>;
 
+  // OPE-1126 — pingIndexNow's retry backoff is REAL sleep (RETRY_DELAYS_MS
+  // 500/1000/2000 + Retry-After), so this file spent ~10.7 s in setTimeout and
+  // one test tipped past the 5 s budget under CI coverage load. Fake only
+  // setTimeout (all `sleep` uses) and drive it from a REAL setInterval pump:
+  // every backoff resolves on the next tick, the retry COUNTS the tests assert
+  // are unchanged, and vitest's own timeout timers are untouched (it captures
+  // its timers at startup).
+  let pump: ReturnType<typeof setInterval>;
+
   beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setTimeout"] });
+    pump = setInterval(() => vi.advanceTimersByTime(60_000), 0);
     fetchSpy.mockReset();
     logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   });
   afterEach(() => {
+    clearInterval(pump);
+    vi.useRealTimers();
     logSpy.mockRestore();
     warnSpy.mockRestore();
     errorSpy.mockRestore();
