@@ -24,6 +24,7 @@ vi.mock("@/lib/queues/producers", () => ({
 import { enqueueNewsletterDigest } from "../email/newsletter-broadcast";
 
 const BASE = {
+  audience: "weekend" as const,
   subject: "This Weekend at the Fair",
   contentHtml: "<p>hi</p>",
   contentText: "hi",
@@ -77,6 +78,7 @@ describe("OPE-385 — one-click headers on the shared rail", () => {
     // implemented per-composer instead of once, here.
     await enqueueNewsletterDigest({
       ...BASE,
+      audience: "vendor",
       subject: "New This Week — shows just added (4)",
       source: "newsletter:vendor-digest",
       recipients: ["vendor@x.com"],

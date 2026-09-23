@@ -4,6 +4,7 @@
  * we decide on a template library (React Email, MJML, etc.).
  */
 import { SOCIAL_LINKS } from "@/lib/social-links";
+import { htmlToPlainText } from "@/lib/email/html-to-text";
 import {
   BAND_GREEN,
   EYEBROW_GOLD,
@@ -445,12 +446,8 @@ export function newsletterDigestTemplate(args: {
     approveDisabled: args.approveDisabled,
   });
 
-  const bodyText =
-    args.contentText ??
-    args.contentHtml
-      .replace(/<[^>]+>/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
+  // OPE-1107 — entities decoded, links kept, paragraphs kept. See html-to-text.ts.
+  const bodyText = args.contentText ?? htmlToPlainText(args.contentHtml);
   const text = `${args.subject}\n\nView this issue in your browser: ${args.viewInBrowserUrl}\n\n${bodyText}\n\n—\nYou're receiving this because you subscribed to ${wordmark}, the Meet Me at the Fair weekly newsletter.\nUnsubscribe: ${args.unsubscribeUrl}\n${mailing}`;
 
   return { subject: args.subject, html, text };

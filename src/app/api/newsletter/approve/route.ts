@@ -134,6 +134,7 @@ export async function POST(request: NextRequest) {
     const siteUrl = getSiteUrl();
     const queued = await enqueueNewsletterDigest({
       recipients,
+      audience,
       subject: issue.subject,
       contentHtml: issue.html,
       viewInBrowserUrl: `${siteUrl}/newsletter/${slug}`,
