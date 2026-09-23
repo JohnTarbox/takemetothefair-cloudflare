@@ -12,6 +12,7 @@
 // site is itself a signal; we mark BLOCKED (+ reason) and ack. Only an
 // unexpected DB error retries → DLQ after max_retries.
 import { and, eq, inArray } from "drizzle-orm";
+import { applyHumanVeto, HUMAN_VETO_DECISIONS } from "./human-veto.js";
 import {
   computePromoterEnrichment,
   isPlaceholderDescription,
@@ -428,24 +429,27 @@ export async function processPromoterEnrichmentJob(
   // render would re-propose the identical value and auto-merge it straight
   // back — the undo would last one cycle. It still stages (a human may change
   // their mind); the flag keeps it out of applyFills, which skips flagged rows.
-  const reverted = await db
+  //
+  // OPE-249 (bounce 2026-09-23) — and a value a human REJECTED, for the same
+  // reason. This guard read only 'reverted', so a rejection bought one cycle:
+  // #1955 (maine-grain-alliance, a twitter search URL) was rejected 08-26 and
+  // the identical value auto-merged as #2875 on 09-15; #1901 → #2843 (The
+  // Weston Craft Show, Squarespace's own accounts) the same way. A rejection
+  // is the stronger of the two human verdicts; it cannot be the weaker veto.
+  const vetoed = await db
     .select({
       field: promoterEnrichmentCandidates.proposedField,
       value: promoterEnrichmentCandidates.proposedValue,
+      decision: promoterEnrichmentCandidates.decision,
     })
     .from(promoterEnrichmentCandidates)
     .where(
       and(
         eq(promoterEnrichmentCandidates.promoterId, msg.promoterId),
-        eq(promoterEnrichmentCandidates.decision, "reverted")
+        inArray(promoterEnrichmentCandidates.decision, [...HUMAN_VETO_DECISIONS])
       )
     );
-  const revertedKeys = new Set(reverted.map((r) => `${r.field}\n${r.value.trim()}`));
-  for (const p of proposals) {
-    if (revertedKeys.has(`${p.field}\n${p.proposedValue.trim()}`)) {
-      p.flags = [...p.flags, "previously_reverted"];
-    }
-  }
+  applyHumanVeto(proposals, vetoed);
 
   // Idempotent re-run: clear this promoter's still-open proposals, then restage
   // (honors the one-pending-per-field partial unique index).
