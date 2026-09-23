@@ -35,7 +35,7 @@
  */
 
 /** How a thread id was arrived at. Stored, because the weak tier must be audit-able. */
-export type ThreadBasis = "header_chain" | "subject_participants" | "new";
+export type ThreadBasis = "header_chain" | "operator_forward" | "subject_participants" | "new";
 
 export interface ThreadResolution {
   threadId: string;
@@ -85,6 +85,37 @@ export function normalizeThreadSubject(subject: string | null | undefined): stri
       .trim();
   } while (s !== previous);
   return s.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+/** Bare lower-cased address from `"Jane <jane@x.com>"` or `jane@x.com`. */
+function extractAddress(a: string | null | undefined): string {
+  const v = (a ?? "").trim().toLowerCase();
+  const m = /<([^>]+)>/.exec(v);
+  return m ? m[1].trim() : v;
+}
+
+/**
+ * OPE-768 scope 2 — the PERSON an inbound row is waiting on behalf of.
+ *
+ * A thread is a conversation; a person may have several. Heather Santiago
+ * wrote "account" to support@ and "booth set up" to hello@ ten minutes apart —
+ * two subjects, two addresses, no reply headers. Fusing those into one THREAD
+ * would take exactly the weak match scope 5 forbids, but they are one PERSON by
+ * an exact key: the sender address. So the queue counts people by this, and
+ * threads stay strict.
+ *
+ * An operator forward counts as the person it forwards, not as the operator —
+ * otherwise John is a waiting customer (symptom 2).
+ */
+export function correspondentKey(row: {
+  fromAddress: string | null | undefined;
+  originalSenderAddress?: string | null;
+  threadBasis?: string | null;
+}): string {
+  if (row.threadBasis === "operator_forward" && row.originalSenderAddress) {
+    return extractAddress(row.originalSenderAddress);
+  }
+  return extractAddress(row.fromAddress);
 }
 
 /** Lower-cased, order-independent participant key for the weak tier. */
@@ -141,6 +172,8 @@ export interface ThreadCandidateRow {
   messageId: string | null;
   normalizedSubject: string;
   participants: string;
+  /** Sender of the candidate row. Only the operator-forward tier reads it. */
+  fromAddress?: string | null;
 }
 
 /**
@@ -158,6 +191,11 @@ export function resolveThread(
     emailReferences?: string | null;
     subject?: string | null;
     participants: string;
+    /**
+     * The ORIGINAL sender of a forward, set by the caller ONLY when the
+     * forwarder is a trusted operator (OPE-768 scope 3). Null otherwise.
+     */
+    forwardOf?: string | null;
   },
   candidates: ThreadCandidateRow[],
   newThreadId: string
@@ -178,9 +216,28 @@ export function resolveThread(
     }
   }
 
+  const subject = normalizeThreadSubject(incoming.subject);
+
+  // Tier 1b — an operator forwarding a customer's message (OPE-768 scope 3).
+  // `2c194709` ("Fwd: Account creation" from John) minted a second obligation
+  // beside Celina's own row. The forward joins HER thread when her own row has
+  // the same subject. Same strength as tier 2 — sender AND subject — with the
+  // sender being the one the forward names, not the forwarder.
+  const forwardOf = incoming.forwardOf ? extractAddress(incoming.forwardOf) : "";
+  if (forwardOf && isThreadableSubject(subject)) {
+    for (const row of candidates) {
+      if (
+        row.threadId &&
+        row.normalizedSubject === subject &&
+        extractAddress(row.fromAddress) === forwardOf
+      ) {
+        return { threadId: row.threadId, basis: "operator_forward" };
+      }
+    }
+  }
+
   // Tier 2 — subject AND participants, both, and only for a subject specific
   // enough to mean something. Either half alone merges strangers.
-  const subject = normalizeThreadSubject(incoming.subject);
   if (isThreadableSubject(subject)) {
     for (const row of candidates) {
       if (

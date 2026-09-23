@@ -15,14 +15,19 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { and, asc, eq, gte, inArray, isNull, like } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNull, like, sql } from "drizzle-orm";
 import {
   supportObligations,
   SUPPORT_OBLIGATION_STATUS,
   emailSendLedger,
   inboundEmails,
 } from "../schema.js";
-import { chunkIds, decideObligation, extractEmailAddress } from "@takemetothefair/utils";
+import {
+  chunkIds,
+  correspondentKey,
+  decideObligation,
+  extractEmailAddress,
+} from "@takemetothefair/utils";
 import { jsonContent } from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
@@ -128,6 +133,53 @@ export function registerSupportObligationTools(server: McpServer, db: Db, auth: 
         // state.
       }
 
+      // ── OPE-768 scope 2: the queue counts PEOPLE, not envelopes ─────────
+      //
+      // One query, over every OPEN obligation (not just this page). Three
+      // numbers, because they answer different questions and the gap between
+      // them is the finding: open_rows − people_waiting is how many envelopes
+      // the old count double-counted. A person is the sender address — exact,
+      // so Heather's "account" and "booth set up" (two subjects, two
+      // addresses, no reply headers) are ONE person without fusing two
+      // conversations into one thread on a guess, which scope 5 forbids.
+      const [waiting] = await db
+        .select({
+          openRows: sql<number>`count(*)`,
+          conversationsWaiting: sql<number>`count(DISTINCT coalesce(${inboundEmails.threadId}, ${supportObligations.inboundEmailId}))`,
+          peopleWaiting: sql<number>`count(DISTINCT lower(${supportObligations.fromAddress}))`,
+        })
+        .from(supportObligations)
+        .leftJoin(inboundEmails, eq(inboundEmails.id, supportObligations.inboundEmailId))
+        .where(eq(supportObligations.status, SUPPORT_OBLIGATION_STATUS.OPEN));
+
+      // Per-row thread + person, so a page can be read grouped. Chunked: the
+      // page may hold 200 rows against D1's 100-parameter cap.
+      const threadByInbound = new Map<
+        string,
+        {
+          threadId: string | null;
+          threadBasis: string | null;
+          originalSenderAddress: string | null;
+        }
+      >();
+      try {
+        for (const chunk of chunkIds(inboundIds)) {
+          for (const t of await db
+            .select({
+              id: inboundEmails.id,
+              threadId: inboundEmails.threadId,
+              threadBasis: inboundEmails.threadBasis,
+              originalSenderAddress: inboundEmails.originalSenderAddress,
+            })
+            .from(inboundEmails)
+            .where(inArray(inboundEmails.id, chunk))) {
+            threadByInbound.set(t.id, t);
+          }
+        }
+      } catch {
+        // Grouping is a convenience; the list itself must still return.
+      }
+
       const [oldest] = await db
         .select({ openedAt: supportObligations.openedAt })
         .from(supportObligations)
@@ -139,6 +191,12 @@ export function registerSupportObligationTools(server: McpServer, db: Db, auth: 
         content: [
           jsonContent({
             count: rows.length,
+            waiting: {
+              people_waiting: Number(waiting?.peopleWaiting ?? 0),
+              conversations_waiting: Number(waiting?.conversationsWaiting ?? 0),
+              open_rows: Number(waiting?.openRows ?? 0),
+              note: "people_waiting = distinct sender address across OPEN obligations; conversations_waiting = distinct thread (a pre-threading row counts as its own). open_rows - people_waiting = envelopes the per-row count double-counts.",
+            },
             oldestOpenAt: oldest?.openedAt ?? null,
             oldestOpenAgeHours: oldest?.openedAt
               ? Math.floor((Date.now() - oldest.openedAt.getTime()) / 3_600_000)
@@ -162,8 +220,15 @@ export function registerSupportObligationTools(server: McpServer, db: Db, auth: 
                 )
                 .filter((l) => l.sentAt.getTime() >= r.openedAt.getTime())
                 .sort((a, b) => b.sentAt.getTime() - a.sentAt.getTime())[0];
+              const t = threadByInbound.get(r.inboundEmailId);
               return {
                 ...r,
+                threadId: t?.threadId ?? null,
+                correspondent: correspondentKey({
+                  fromAddress: r.fromAddress,
+                  originalSenderAddress: t?.originalSenderAddress ?? null,
+                  threadBasis: t?.threadBasis ?? null,
+                }),
                 lastManualReplySource: hit?.source ?? null,
                 lastManualReplyAt: hit?.sentAt ?? null,
                 // Three-valued on purpose. `answered_not_closed` is the state
