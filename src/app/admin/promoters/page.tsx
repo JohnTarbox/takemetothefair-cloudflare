@@ -56,6 +56,12 @@ export default function AdminPromotersPage() {
       const res = await fetch(`/api/admin/promoters/${id}`, { method: "DELETE" });
       if (res.ok) {
         setPromoters(promoters.filter((p) => p.id !== id));
+      } else {
+        // OPE-1125 — the route refuses to delete a promoter that still owns
+        // events (the delete would cascade to them). Say why, instead of the
+        // row silently staying put.
+        const data = (await res.json().catch(() => ({}))) as { message?: string; error?: string };
+        alert(data.message ?? data.error ?? `Delete failed (${res.status}).`);
       }
     } catch (error) {
       console.error("Failed to delete promoter:", error);

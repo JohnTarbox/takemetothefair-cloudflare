@@ -159,3 +159,43 @@ export async function repointPromoterChildren(
 
   return out;
 }
+
+/**
+ * OPE-1125 — a plain DELETE has no keeper to repoint to, so the loser's
+ * FK-less rows are removed instead of orphaned. Only ever called for a promoter
+ * that owns ZERO events (the route refuses otherwise), so what is removed is
+ * proposals and bookkeeping for an entity that is going away — never content.
+ * `enrichment_log` is left alone, as on merge.
+ */
+export async function deletePromoterChildren(
+  db: Db,
+  promoterId: string
+): Promise<{ candidatesDeleted: number; pingsDeleted: number; coverageRowsDeleted: number }> {
+  const candidates = await db
+    .delete(schema.promoterEnrichmentCandidates)
+    .where(eq(schema.promoterEnrichmentCandidates.promoterId, promoterId))
+    .returning({ id: schema.promoterEnrichmentCandidates.id });
+  const pings = await db
+    .delete(schema.pendingSearchPings)
+    .where(
+      and(
+        sql`lower(${schema.pendingSearchPings.entityType}) = 'promoter'`,
+        eq(schema.pendingSearchPings.entityId, promoterId)
+      )
+    )
+    .returning({ id: schema.pendingSearchPings.id });
+  const coverage = await db
+    .delete(schema.imageCoverageState)
+    .where(
+      and(
+        sql`lower(${schema.imageCoverageState.entityType}) = 'promoter'`,
+        eq(schema.imageCoverageState.entityId, promoterId)
+      )
+    )
+    .returning({ id: schema.imageCoverageState.entityId });
+  return {
+    candidatesDeleted: candidates.length,
+    pingsDeleted: pings.length,
+    coverageRowsDeleted: coverage.length,
+  };
+}
