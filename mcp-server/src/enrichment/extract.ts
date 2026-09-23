@@ -9,6 +9,7 @@
  *
  * No network, no DB. The safety rules (safety-rules.ts) decide what survives.
  */
+import { decodeHtmlEntities } from "@takemetothefair/utils";
 import type { ExtractionMethod, VendorExtraction } from "./types.js";
 
 /** host (registrable-ish) → social platform key. */
@@ -560,18 +561,39 @@ function parseJsonLdNodes(html: string): Record<string, unknown>[] {
   return nodes;
 }
 
+/**
+ * OPE-249 (bounce 2026-09-23) — pages ON a social platform that are not an
+ * account: a search (`twitter.com/search?q=%40kneading_conf…`, auto-merged
+ * into maine-grain-alliance on 09-15 after a human rejected the identical
+ * value on 08-26), a hashtag feed, Twitter's internal `/i/` routes.
+ */
+const SOCIAL_NON_PROFILE_PATH = /^\/(search|hashtag|i|explore)(\/|$)/i;
+
+/**
+ * A URL carrying a signature or expiry is a time-limited asset link, never a
+ * profile: it stops resolving, and it identifies a download, not an account.
+ */
+const SIGNED_URL_PARAM = /^(oh|oe|x-amz-[a-z-]+|signature|sig|expires|token|_nc_[a-z]+)$/i;
+
 function socialFromUrl(rawUrl: string): { platform: string; url: string } | null {
   let u: URL;
   try {
-    u = new URL(rawUrl);
+    // OPE-249 — hrefs are lifted out of raw HTML by regex, so attribute
+    // entities arrive undecoded: `&#038;` in the maine-grain-alliance search
+    // URL, `&#039;` inside childrens-museum-of-new-hampshire's LinkedIn slug.
+    u = new URL(decodeHtmlEntities(rawUrl.trim()));
   } catch {
     return null;
+  }
+  for (const key of u.searchParams.keys()) {
+    if (SIGNED_URL_PARAM.test(key)) return null;
   }
   if (u.protocol !== "http:" && u.protocol !== "https:") return null;
   if (SOCIAL_JUNK_PATH.test(u.pathname)) return null;
   const host = u.hostname.toLowerCase();
   const platform = SOCIAL_HOSTS[host];
   if (!platform) return null;
+  if (SOCIAL_NON_PROFILE_PATH.test(u.pathname)) return null;
   // A bare profile root (no handle) is useless.
   if (u.pathname === "/" || u.pathname === "") return null;
 
@@ -589,6 +611,12 @@ function socialFromUrl(rawUrl: string): { platform: string; url: string } | null
     if (/^\/(explore|tags|p|reel|reels|tv|stories)(\/|$)/i.test(u.pathname)) return null;
   }
 
+  // A profile needs no query or fragment; what arrives is tracking (`?hl=en`,
+  // `?igsh=…`, `?si=…`), and it makes the same account compare unequal to
+  // itself. Facebook's numeric profile is the exception: its id IS the query.
+  const keepQuery = platform === "facebook" && /^\/profile\.php$/i.test(u.pathname);
+  if (!keepQuery) u.search = "";
+  u.hash = "";
   return { platform, url: u.toString() };
 }
 

@@ -20,6 +20,7 @@ import {
 } from "../helpers.js";
 import { fetchVendorSite } from "./fetch-site.js";
 import { extractVendorContact } from "./extract.js";
+import { applyHumanVeto } from "./human-veto.js";
 import { buildEnrichmentResult, domainLabel, sourceDomainRelatesToVendor } from "./safety-rules.js";
 import type { VendorRowForEnrichment } from "./types.js";
 
@@ -335,6 +336,27 @@ export async function processEnrichmentJob(
   // construction, and a human draining the queue can SEE why it is there. A
   // check bolted onto the merge step alone would be invisible in the queue.
   await flagDuplicateContactValues(db, msg.vendorId, result.candidates);
+
+  // OPE-249 — a value a human already REJECTED or REVERTED stages flagged, so
+  // applyFills (which skips flagged rows) cannot put it straight back. Shared
+  // with the promoter lane; see human-veto.ts for the measured specimens.
+  applyHumanVeto(
+    result.candidates,
+    await db
+      .select({
+        field: vendorEnrichmentCandidates.proposedField,
+        value: vendorEnrichmentCandidates.proposedValue,
+        decision: vendorEnrichmentCandidates.decision,
+      })
+      .from(vendorEnrichmentCandidates)
+      .where(
+        and(
+          eq(vendorEnrichmentCandidates.vendorId, msg.vendorId),
+          // The vendor lane has no 'reverted' state — a rejection is its only veto.
+          eq(vendorEnrichmentCandidates.decision, "rejected")
+        )
+      )
+  );
 
   // Always refresh the staged proposals for this vendor (idempotent re-run).
   await db
