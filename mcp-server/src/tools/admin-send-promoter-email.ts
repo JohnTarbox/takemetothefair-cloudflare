@@ -165,9 +165,21 @@ export function registerSendPromoterEmailTool(
       "",
       "Gated by PROMOTER_OUTREACH_ENABLED, which ships false — a refused send is",
       "still RECORDED as a queued attempt so the prose survives and can be drained",
-      "when the flag flips. Refuses a second open ask for the same event. Admin only.",
+      "when the flag flips. Refuses a second open ask for the same event.",
+      "",
+      "attempt_id: send an existing QUEUED attempt verbatim — its stored subject,",
+      "body and recipient, nothing recomposed — and move it to 'sent'. This is how a",
+      "gated ask is delivered once the flag is on; one attempt per call, never a",
+      "bulk drain. Admin only.",
     ].join(" "),
     {
+      attempt_id: z
+        .string()
+        .min(8)
+        .optional()
+        .describe(
+          "Deliver this queued attempt exactly as stored. Other params are ignored when set."
+        ),
       event_id: z
         .string()
         .optional()
@@ -192,6 +204,7 @@ export function registerSendPromoterEmailTool(
         .describe("Why this event needs confirmation — carried onto the attempt row."),
     },
     async (params) => {
+      if (params.attempt_id) return sendQueuedAttempt(db, auth, env, params.attempt_id);
       if (!params.event_id && !params.promoter_id) {
         return {
           content: [{ type: "text", text: "Provide event_id or promoter_id." }],
@@ -460,4 +473,135 @@ export function registerSendPromoterEmailTool(
       return { content: [jsonContent({ count: rows.length, attempts: rows })] };
     }
   );
+}
+
+/**
+ * OPE-384 — deliver ONE queued attempt, verbatim.
+ *
+ * A refused send is saved as `queued` so the approved prose survives the gate
+ * (the OPE-368 lesson). But the only send path composed a NEW attempt, and a
+ * queued row counts as OPEN, so once the gate flipped the saved ask could never
+ * go out: the event read "already_open" forever. This sends the stored subject,
+ * body and address — no template, no recomposition — so what goes out is
+ * exactly what was approved. One id per call; there is deliberately no batch.
+ */
+async function sendQueuedAttempt(
+  db: Db,
+  auth: AuthContext,
+  env: SendPromoterEmailEnv | undefined,
+  attemptId: string
+) {
+  const [a] = await db
+    .select()
+    .from(promoterOutreachAttempts)
+    .where(eq(promoterOutreachAttempts.id, attemptId))
+    .limit(1);
+  if (!a) {
+    return {
+      content: [{ type: "text" as const, text: `Attempt not found: ${attemptId}` }],
+      isError: true,
+    };
+  }
+  if (a.status !== "queued") {
+    return {
+      content: [
+        jsonContent({
+          success: false,
+          blocked: "not_queued",
+          attempt_id: a.id,
+          status: a.status,
+          note: "Only a queued attempt can be delivered; this one already left that state.",
+        }),
+      ],
+    };
+  }
+  if (!a.toAddress) {
+    return {
+      content: [jsonContent({ success: false, blocked: "no_recipient", attempt_id: a.id })],
+      isError: true,
+    };
+  }
+  if (await isEmailSuppressed(db, a.toAddress)) {
+    return {
+      content: [
+        jsonContent({
+          success: false,
+          blocked: "suppressed",
+          attempt_id: a.id,
+          note: "Recipient is on the suppression list. Nothing sent; the attempt stays queued.",
+        }),
+      ],
+    };
+  }
+  if (env?.PROMOTER_OUTREACH_ENABLED !== "true" || !env?.EMAIL_JOBS) {
+    return {
+      content: [
+        jsonContent({
+          success: false,
+          queued: true,
+          attempt_id: a.id,
+          note:
+            env?.PROMOTER_OUTREACH_ENABLED !== "true"
+              ? "PROMOTER_OUTREACH_ENABLED is not 'true' — nothing was sent; the attempt stays queued."
+              : "EMAIL_JOBS binding not configured — the attempt stays queued.",
+        }),
+      ],
+    };
+  }
+
+  const now = new Date();
+  // Claim the row before sending: a concurrent second call finds it no longer
+  // queued and sends nothing, so one approved ask cannot go out twice.
+  const claimed = await db
+    .update(promoterOutreachAttempts)
+    .set({ status: "sent", sentAt: now })
+    .where(
+      and(eq(promoterOutreachAttempts.id, a.id), eq(promoterOutreachAttempts.status, "queued"))
+    )
+    .returning({ id: promoterOutreachAttempts.id });
+  if (claimed.length === 0) {
+    return {
+      content: [jsonContent({ success: false, blocked: "not_queued", attempt_id: a.id })],
+    };
+  }
+
+  const body = a.bodyText ?? "";
+  await env.EMAIL_JOBS.send({
+    to: a.toAddress,
+    subject: a.subject,
+    text: body,
+    html: paragraphsToHtml(body),
+    from: FROM,
+    source: "email:promoter-outreach",
+  });
+
+  await db.insert(adminActions).values({
+    action: "promoter.email_sent",
+    actorUserId: auth.userId,
+    targetType: "promoter",
+    targetId: a.promoterId,
+    payloadJson: JSON.stringify({
+      attemptId: a.id,
+      eventId: a.eventId,
+      to: a.toAddress,
+      subject: a.subject,
+      via: "mcp:queued-attempt",
+    }),
+    createdAt: now,
+  });
+
+  return {
+    content: [
+      jsonContent({
+        success: true,
+        attempt_id: a.id,
+        delivered_from_queue: true,
+        promoter_id: a.promoterId,
+        event_id: a.eventId,
+        sent_to: a.toAddress,
+        subject: a.subject,
+        from: FROM,
+      }),
+    ],
+  };
 }
