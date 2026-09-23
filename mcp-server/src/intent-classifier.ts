@@ -252,6 +252,13 @@ export async function classifyIntent(
       typeof raceResult === "string" ? raceResult : (raceResult as { response?: unknown }).response;
     aiResponseText = typeof rawResponse === "string" ? rawResponse : "";
   } catch (err) {
+    // OPE-1129 — the solicitation screen is deterministic and needs no model,
+    // so a model failure must not skip it. Before this, a timeout (~10% of
+    // inbound, OPE-1089) returned `unclear` straight from here, fell back to
+    // address routing, and `hello@` sent the support ack — to a list broker,
+    // confirming the inbox is live (inbound 2f35a893, 2026-09-18).
+    const screened = solicitationVerdict(input, `classifier errored: ${(err as Error).message}`);
+    if (screened) return { ...screened, startedAt, finishedAt: Date.now(), attempts };
     return {
       intents: [
         {
@@ -279,26 +286,8 @@ export async function classifyIntent(
   // the entrypoint silently quarantines it BEFORE any workflow / event creation.
   // Applied after the AI run so `fromAi` stays honest and the entrypoint's
   // fromAi-gated spam quarantine fires. Confidence 0.98 > SPAM_QUARANTINE_THRESHOLD.
-  if (isListBrokerSolicitation(input.subject, input.bodyText)) {
-    const wasIntent = parsed[0]?.intent ?? "unknown";
-    return {
-      intents: [
-        {
-          intent: "spam",
-          subIntent: null,
-          confidence: 0.98,
-          rationale: `solicitation-screen: list-broker/attendee-list (classifier said ${wasIntent})`,
-          refUrl: null,
-          refEventClue: null,
-        },
-      ],
-      version: CLASSIFIER_VERSION,
-      fromAi: true,
-      startedAt,
-      finishedAt: Date.now(),
-      attempts,
-    };
-  }
+  const screened = solicitationVerdict(input, `classifier said ${parsed[0]?.intent ?? "unknown"}`);
+  if (screened) return { ...screened, startedAt, finishedAt: Date.now(), attempts };
 
   return {
     intents: parsed,
@@ -463,6 +452,49 @@ function findBalancedEnd(s: string): number {
     }
   }
   return 0;
+}
+
+/**
+ * The OPE-278 list-broker screen as a classifier verdict, or null. Shared by the
+ * success AND error paths (OPE-1129), so what the model did never decides
+ * whether the screen runs. `fromAi: true` because the entrypoint's quarantine
+ * is gated on it (`shouldQuarantineAsSpam`) — it means "a verdict, not the
+ * address fallback"; the rationale records what the model actually did.
+ */
+function solicitationVerdict(
+  input: ClassifierInput,
+  modelNote: string
+): Omit<ClassifierResult, "startedAt" | "finishedAt" | "attempts"> | null {
+  if (!isListBrokerSolicitation(input.subject, input.bodyText)) return null;
+  return {
+    intents: [
+      {
+        intent: "spam",
+        subIntent: null,
+        confidence: 0.98,
+        rationale: `solicitation-screen: list-broker/attendee-list (${modelNote})`,
+        refUrl: null,
+        refEventClue: null,
+      },
+    ],
+    version: CLASSIFIER_VERSION,
+    fromAi: true,
+  };
+}
+
+/**
+ * The entrypoint's spam-quarantine gate: a quarantined message gets NO
+ * workflow and therefore no acknowledgement. Exported so a test can assert on
+ * the gate itself rather than on a copy of its condition.
+ */
+export function shouldQuarantineAsSpam(result: ClassifierResult): boolean {
+  const top = result.intents[0];
+  return (
+    top !== undefined &&
+    top.intent === "spam" &&
+    top.confidence >= SPAM_QUARANTINE_THRESHOLD &&
+    result.fromAi
+  );
 }
 
 // Re-export constants so callers don't import two files for one feature.
