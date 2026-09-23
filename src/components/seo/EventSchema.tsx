@@ -96,6 +96,13 @@ interface EventSchemaProps {
   // on the prop so callers that haven't been updated yet keep working — the
   // mapping falls back to the legacy `datesConfirmed`-based heuristic below.
   lifecycleStatus?: EventLifecycle | string | null;
+  /**
+   * OPE-1098 — a TENTATIVE event whose date has passed. The Event node is
+   * SUPPRESSED: every eventStatus value — and omitting it, which schema.org
+   * reads as EventScheduled ("has taken place as scheduled") — would assert
+   * the event happened, which is exactly the claim we never confirmed.
+   */
+  pastUnconfirmed?: boolean;
   // For RESCHEDULED events, the dates the event was previously scheduled for.
   // Required by schema.org's EventRescheduled rich snippet to render in Google.
   previousStartDate?: Date | null;
@@ -161,6 +168,7 @@ export function EventSchema({
   categories,
   datesConfirmed,
   lifecycleStatus,
+  pastUnconfirmed,
   previousStartDate,
   previousEndDate,
   eventDays,
@@ -266,6 +274,7 @@ export function EventSchema({
     (endDate ? formatIsoInVenueZone(endDate, venueTzForJsonLd) || undefined : undefined) ??
     dayDerivedDates?.end;
   if (!resolvedStartDate) return null;
+  if (pastUnconfirmed) return null;
 
   const validFromDate = createdAt ? new Date(createdAt).toISOString() : undefined;
   // Static OG fallback — `/api/og` dynamic generator removed 2026-06-04

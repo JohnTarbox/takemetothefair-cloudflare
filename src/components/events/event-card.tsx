@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { isPastUnconfirmed, PAST_UNCONFIRMED_LABEL } from "@/lib/events/past-unconfirmed";
 import Link from "next/link";
 import Image from "next/image";
 import { cdnImage, focalPointGravity } from "@/lib/cdn-image";
@@ -295,7 +296,12 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
           )}
           <div className="absolute top-3 left-3 flex gap-1 flex-wrap max-w-[calc(100%-48px)]">
             {event.featured && <Badge variant="warning">Featured</Badge>}
-            {event.status === "TENTATIVE" && <Badge variant="info">Tentative</Badge>}
+            {/* OPE-1098 — a past TENTATIVE event is not an unconfirmed FUTURE one. */}
+            {isPastUnconfirmed(event) ? (
+              <Badge variant="default">{PAST_UNCONFIRMED_LABEL}</Badge>
+            ) : (
+              event.status === "TENTATIVE" && <Badge variant="info">Tentative</Badge>
+            )}
             {/* TAX1 Phase 3 (2026-06-02) — A6 audience badge on cards.
                 The flex-wrap + max-w guards against the long
                 MEMBERS+OPEN label colliding with the favorite button
