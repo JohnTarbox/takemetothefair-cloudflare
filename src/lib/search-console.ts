@@ -211,6 +211,39 @@ function resolveScRange(
   };
 }
 
+/**
+ * OPE-592 — per-query totals for ONE page, summed across the URL variants GSC
+ * keys separately. Rows are `[query, page]`; a `contains` filter over-matches
+ * (`/blog/x` also matches `/blog/x-2`), so only rows whose PATHNAME is exactly
+ * `path` count. Position is impression-weighted and CTR recomputed from the
+ * summed totals — the same arithmetic as collapseQueryPageRows.
+ */
+export function collapseQueryRowsForPath(
+  siteUrl: string,
+  path: string,
+  rows: GscApiRow[]
+): SearchQueryRow[] {
+  const byQuery = new Map<string, { clicks: number; impressions: number; posWeighted: number }>();
+  for (const r of rows) {
+    const query = r.keys?.[0] ?? "";
+    if (pathFromGscPageKey(siteUrl, r.keys?.[1] ?? "") !== path) continue;
+    const acc = byQuery.get(query) ?? { clicks: 0, impressions: 0, posWeighted: 0 };
+    acc.clicks += r.clicks ?? 0;
+    acc.impressions += r.impressions ?? 0;
+    acc.posWeighted += (r.position ?? 0) * (r.impressions ?? 0);
+    byQuery.set(query, acc);
+  }
+  return [...byQuery.entries()]
+    .map(([query, a]) => ({
+      query,
+      clicks: a.clicks,
+      impressions: a.impressions,
+      ctr: a.impressions > 0 ? a.clicks / a.impressions : 0,
+      position: a.impressions > 0 ? a.posWeighted / a.impressions : 0,
+    }))
+    .sort((x, y) => y.impressions - x.impressions);
+}
+
 export async function getSearchQueriesForPage(
   env: ScEnv,
   path: string,
@@ -219,22 +252,30 @@ export async function getSearchQueriesForPage(
   const siteUrl = resolveSiteUrl(env);
   const kv = env.RATE_LIMIT_KV;
   const range = resolveScRange(opts.dateRange);
+  // OPE-592 (09-23 bounce) — `equals` on ONE full URL dropped every variant of
+  // the page GSC keys separately (apex vs www, ?utm_…, #fragment), so this
+  // oracle reported 13 impressions where get_query_pages — which sums variants
+  // by pathname — reported 35 for the same page and query. Ask for query×page
+  // rows matching the PATH, then keep only exact-pathname rows and sum per
+  // query (see collapseQueryRowsForPath). Both oracles now share one rule.
+  const limit = Math.min(opts.rowLimit ?? 15, 500);
   const body = {
     startDate: range.startDate,
     endDate: range.endDate,
-    dimensions: ["query"],
+    dimensions: ["query", "page"],
     dimensionFilterGroups: [
       {
         filters: [
           {
             dimension: "page",
-            operator: "equals",
-            expression: pageUrlForFilter(siteUrl, path),
+            operator: "contains",
+            expression: path,
           },
         ],
       },
     ],
-    rowLimit: Math.min(opts.rowLimit ?? 15, 500),
+    // Variants multiply rows per query; over-fetch, then collapse and slice.
+    rowLimit: Math.min(limit * 5, 25000),
   };
   const cacheKey = `sc:queries:${await hashRequest({ siteUrl, body })}`;
 
@@ -288,13 +329,10 @@ export async function getSearchQueriesForPage(
     }>;
   };
 
-  const rows: SearchQueryRow[] = (data.rows ?? []).map((r) => ({
-    query: r.keys?.[0] ?? "",
-    clicks: r.clicks ?? 0,
-    impressions: r.impressions ?? 0,
-    ctr: r.ctr ?? 0,
-    position: r.position ?? 0,
-  }));
+  const rows: SearchQueryRow[] = collapseQueryRowsForPath(siteUrl, path, data.rows ?? []).slice(
+    0,
+    limit
+  );
 
   if (kv) {
     await kv.put(cacheKey, JSON.stringify(rows), { expirationTtl: REPORT_CACHE_TTL });
