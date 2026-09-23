@@ -2749,7 +2749,10 @@ export const supportObligations = sqliteTable(
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
     /** UNIQUE — makes the writer and the backfill idempotent by construction. */
-    inboundEmailId: text("inbound_email_id").notNull().unique(),
+    inboundEmailId: text("inbound_email_id")
+      .notNull()
+      .unique()
+      .references(() => inboundEmails.id), // OPE-1121 (0310): NO ACTION, NOT NULL forbids SET NULL
     fromAddress: text("from_address").notNull(),
     subject: text("subject"),
     /**
@@ -2801,7 +2804,9 @@ export const pendingEmailReplies = sqliteTable(
     id: text("id")
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
-    inboundEmailId: text("inbound_email_id").notNull(),
+    inboundEmailId: text("inbound_email_id")
+      .notNull()
+      .references(() => inboundEmails.id, { onDelete: "cascade" }), // OPE-1121 (0309)
     toAddress: text("to_address").notNull(),
     subject: text("subject"),
     bodyText: text("body_text").notNull(),
@@ -3358,7 +3363,9 @@ export const emailSendLedger = sqliteTable(
     subject: text("subject"),
     // Link back to the triggering inbound email (auto-replies) — powers the
     // OPE-152 admin thread view.
-    inboundEmailId: text("inbound_email_id"),
+    inboundEmailId: text("inbound_email_id").references(() => inboundEmails.id, {
+      onDelete: "set null",
+    }), // OPE-1121 (0308)
     provider: text("provider"), // 'cf-email' | 'resend' | 'stub'
     // OPE-155 — the rendered body that actually went out, so the admin Sent
     // viewer shows full content (not just metadata). Inline; admin-gated read.
@@ -3449,13 +3456,16 @@ export const emailDeliveryEvents = sqliteTable(
      *  proves the subscription is still publishing. */
     receivedAt: integer("received_at", { mode: "timestamp" }).notNull(),
     /** email_send_ledger.message_id this event was matched to; NULL = unmatched. */
-    ledgerMessageId: text("ledger_message_id"),
+    ledgerMessageId: text("ledger_message_id").references(() => emailSendLedger.messageId, {
+      onDelete: "set null",
+    }), // OPE-1121 (0315)
   },
   (table) => [
     index("idx_email_delivery_events_received_at").on(table.receivedAt),
     index("idx_email_delivery_events_provider_message_id").on(table.providerMessageId),
     index("idx_email_delivery_events_recipient").on(table.recipient),
     index("idx_email_delivery_events_status").on(table.status),
+    index("idx_email_delivery_events_ledger").on(table.ledgerMessageId), // OPE-1121 (0315)
   ]
 );
 
@@ -3764,7 +3774,9 @@ export const workflowRunSteps = sqliteTable(
     /** e.g. "inbound-email". */
     workflowName: text("workflow_name").notNull(),
     /** Resolves a run back to the email that caused it (OPE-501 item 3). */
-    inboundEmailId: text("inbound_email_id"),
+    inboundEmailId: text("inbound_email_id").references(() => inboundEmails.id, {
+      onDelete: "set null",
+    }), // OPE-1121 (0312)
     stepName: text("step_name").notNull(),
     /**
      * `ok` | `failed` | `skipped`.
@@ -4119,7 +4131,9 @@ export const vendorEnrichmentCandidates = sqliteTable(
   "vendor_enrichment_candidates",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
-    vendorId: text("vendor_id").notNull(),
+    vendorId: text("vendor_id")
+      .notNull()
+      .references(() => vendors.id, { onDelete: "cascade" }), // OPE-1121 (0316)
     // Groups one cron run's proposals for batch review. Synchronous
     // enrich_vendor calls use a 'manual-<uuid>' run id.
     jobRunId: text("job_run_id").notNull(),
@@ -4213,7 +4227,9 @@ export const performerEnrichmentCandidates = sqliteTable(
   "performer_enrichment_candidates",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
-    performerId: text("performer_id").notNull(),
+    performerId: text("performer_id")
+      .notNull()
+      .references(() => performers.id, { onDelete: "cascade" }), // OPE-1121 (0317)
     // Groups one enrich run's proposals; synchronous enrich_performer uses 'manual-<uuid>'.
     jobRunId: text("job_run_id").notNull(),
     // image | description | social_links | contact_email | contact_phone
@@ -4733,7 +4749,9 @@ export const problemReports = sqliteTable(
     source: text("source", { enum: ["web", "email"] }).notNull(),
     path: text("path"), // page the user was on, when known
     userAgent: text("user_agent"), // captured at web intake only
-    inboundEmailId: text("inbound_email_id"), // FK to inbound_emails(id); null for web
+    inboundEmailId: text("inbound_email_id").references(() => inboundEmails.id, {
+      onDelete: "set null",
+    }), // null for web; OPE-1121 (0311)
     severity: text("severity", { enum: ["LOW", "HIGH"] })
       .notNull()
       .default("LOW"),
@@ -5303,7 +5321,9 @@ export const emailSourceSuggestions = sqliteTable(
      *  inbound row for cheap admin queries. */
     suggestedByEmail: text("suggested_by_email"),
     /** FK-style link back to inbound_emails.id. NULL if entered manually. */
-    suggestedViaInboundId: text("suggested_via_inbound_id"),
+    suggestedViaInboundId: text("suggested_via_inbound_id").references(() => inboundEmails.id, {
+      onDelete: "set null",
+    }), // OPE-1121 (0314)
     reviewedAt: integer("reviewed_at", { mode: "timestamp" }),
     reviewedByUserId: text("reviewed_by_user_id"),
     adminNotes: text("admin_notes"),
@@ -5312,6 +5332,7 @@ export const emailSourceSuggestions = sqliteTable(
   (t) => [
     index("idx_email_source_suggestions_host").on(t.host),
     index("idx_email_source_suggestions_status").on(t.status),
+    index("idx_email_source_suggestions_inbound").on(t.suggestedViaInboundId), // OPE-1121 (0314)
     // One pending suggestion per host — multiple senders flagging the
     // same domain pile into one row instead of spawning a duplicate queue.
     uniqueIndex("uq_email_source_suggestions_pending_host")
@@ -5381,16 +5402,21 @@ export const submissionCorrectionTokens = sqliteTable(
   "submission_correction_tokens",
   {
     token: text("token").primaryKey(),
-    eventId: text("event_id").notNull(),
+    eventId: text("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }), // OPE-1121 (0313)
     /** Inbound email that produced this token. Useful for the admin UI
      *  to backlink "this event was corrected via inbound 2f5f0c74". */
-    inboundEmailId: text("inbound_email_id").notNull(),
+    inboundEmailId: text("inbound_email_id")
+      .notNull()
+      .references(() => inboundEmails.id, { onDelete: "cascade" }), // OPE-1121 (0313)
     expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
     usedAt: integer("used_at", { mode: "timestamp" }),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   },
   (t) => [
     index("idx_submission_correction_tokens_event").on(t.eventId),
+    index("idx_submission_correction_tokens_inbound").on(t.inboundEmailId), // OPE-1121 (0313)
     index("idx_submission_correction_tokens_expires")
       .on(t.expiresAt)
       .where(sql`used_at IS NULL`),
@@ -6187,7 +6213,9 @@ export const newsletterListSubscriptions = sqliteTable(
   "newsletter_list_subscriptions",
   {
     id: text("id").primaryKey(),
-    subscriberId: text("subscriber_id").notNull(),
+    subscriberId: text("subscriber_id")
+      .notNull()
+      .references(() => newsletterSubscribers.id, { onDelete: "cascade" }), // OPE-1121 (0318)
     /** 'weekend' (attendee digest) | 'vendor' (New This Week). */
     list: text("list").notNull(),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
@@ -6307,7 +6335,9 @@ export const marketPlayerSnapshots = sqliteTable(
     id: text("id")
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
-    playerId: text("player_id").notNull(),
+    playerId: text("player_id")
+      .notNull()
+      .references(() => marketPlayers.id, { onDelete: "cascade" }), // OPE-1121 (0319)
     /** Total events listed on the site, when countable. */
     eventCount: integer("event_count"),
     /** Of those, how many are in New England — the overlap that matters to us. */
@@ -6340,7 +6370,9 @@ export const marketPlayerSerpRanks = sqliteTable(
     id: text("id")
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
-    playerId: text("player_id").notNull(),
+    playerId: text("player_id")
+      .notNull()
+      .references(() => marketPlayers.id, { onDelete: "cascade" }), // OPE-1121 (0320)
     /** The search query exactly as issued. */
     query: text("query").notNull(),
     /** Geographic market the query was issued for, e.g. 'Bangor, ME'. NULL =
