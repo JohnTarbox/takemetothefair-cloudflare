@@ -153,3 +153,36 @@ describe("merge_promoter — the rows no FK protects", () => {
     });
   });
 });
+
+describe("the keeper already has a PENDING proposal for the field (found in the prod cleanup)", () => {
+  it("the keeper's own proposal wins; the loser's is rejected, and the merge does not throw", async () => {
+    // Prod specimen: #656 (logo) could not move to lowell-folk-festival, which
+    // already held pending logo #2551 — idx_pec_pending_field is UNIQUE on
+    // (promoter_id, proposed_field) WHERE decision='pending'.
+    candidate("keeper", "description", "pending", "keeper's own");
+    await merge();
+    const rows = raw
+      .prepare(
+        `SELECT promoter_id p, decision d, proposed_value v FROM promoter_enrichment_candidates
+         WHERE proposed_field='description' ORDER BY decision`
+      )
+      .all();
+    expect(rows).toEqual([
+      { p: "keeper", d: "pending", v: "keeper's own" },
+      { p: "keeper", d: "rejected", v: "x" },
+    ]);
+  });
+
+  it("two loser rows for one empty field: one moves, the other is rejected", async () => {
+    raw.prepare(`DROP INDEX IF EXISTS idx_pec_pending_field`).run();
+    candidate("loser", "description", "pending", "second");
+    await merge();
+    const pending = raw
+      .prepare(
+        `SELECT count(*) n FROM promoter_enrichment_candidates
+         WHERE proposed_field='description' AND decision='pending' AND promoter_id='keeper'`
+      )
+      .get() as { n: number };
+    expect(pending.n).toBe(1);
+  });
+});
