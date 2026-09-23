@@ -581,6 +581,26 @@ const SCHEMA_SQL = `
   CREATE UNIQUE INDEX uq_event_duplicate_dismissals_pair
     ON event_duplicate_dismissals (event_id, candidate_id);
 
+  -- OPE-225 (drizzle/0165 + 0166). Mirrored for OPE-1120: merge_promoter now
+  -- deletes the loser's coverage row, so any test that merges needs the table.
+  CREATE TABLE image_coverage_state (
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    slug TEXT NOT NULL,
+    has_image INTEGER NOT NULL DEFAULT 0,
+    image_url TEXT,
+    url_health TEXT NOT NULL DEFAULT 'MISSING',
+    image_set_at INTEGER,
+    baseline_had_image INTEGER NOT NULL DEFAULT 0,
+    first_seen_at INTEGER NOT NULL,
+    demand_impressions INTEGER NOT NULL DEFAULT 0,
+    demand_tier TEXT NOT NULL DEFAULT 'T4',
+    checked_at INTEGER NOT NULL,
+    url_checked_at INTEGER,
+    url_status_code INTEGER,
+    PRIMARY KEY (entity_type, entity_id)
+  );
+
   -- OPE-112/113 performer tracking. Full column set — the MCP tools use
   -- .returning() which selects every schema column, so all must exist here.
   CREATE TABLE performers (

@@ -17,6 +17,7 @@ import {
   adminActions,
 } from "@/lib/db/schema";
 import { unsafeSlug } from "@takemetothefair/utils";
+import { repointPromoterChildren } from "@takemetothefair/db-schema";
 import { repairBlogLinksForSlugChange } from "@/lib/content-links-sync";
 import { logError } from "@/lib/logger";
 import type {
@@ -87,7 +88,7 @@ export async function executeMerge(
     case "vendors":
       return mergeVendors(db, primaryId, duplicateId);
     case "promoters":
-      return mergePromoters(db, primaryId, duplicateId);
+      return mergePromoters(db, primaryId, duplicateId, actorUserId ?? null);
     default:
       throw new Error(`Unknown entity type: ${type}`);
   }
@@ -320,7 +321,8 @@ async function getPromoterMergePreview(
 async function mergePromoters(
   db: Database,
   primaryId: string,
-  duplicateId: string
+  duplicateId: string,
+  actorUserId: string | null = null
 ): Promise<MergeResponse> {
   const transferred: RelationshipCounts = { events: 0, favorites: 0 };
 
@@ -344,8 +346,36 @@ async function mergePromoters(
       )
     );
 
+  // OPE-1120 — the rows no FK protects (enrichment candidates, search pings,
+  // image coverage). Same function the MCP merge_promoter tool calls.
+  const children = await repointPromoterChildren(db, primaryId, duplicateId);
+
   // Delete duplicate promoter
   await db.delete(promoters).where(eq(promoters.id, duplicateId));
+
+  // OPE-1120 — this path wrote NO audit row, so a promoter merged from
+  // /admin/duplicates vanished without trace (2 of the 12 orphaned ids have no
+  // admin_actions record of any kind). Same action name as the MCP tool, so one
+  // query finds merges from either surface. Never fails the merge.
+  try {
+    await db.insert(adminActions).values({
+      action: "promoter.merge",
+      actorUserId,
+      targetType: "promoter",
+      targetId: primaryId,
+      payloadJson: JSON.stringify({
+        keeper_id: primaryId,
+        duplicate_id: duplicateId,
+        events_reassigned: transferred.events,
+        favorites_transferred: transferred.favorites,
+        children,
+        via: "admin-duplicates",
+      }),
+      createdAt: new Date(),
+    });
+  } catch {
+    // Audit failure shouldn't fail the merge itself (same rule as the MCP tool).
+  }
 
   const [mergedEntity] = await db.select().from(promoters).where(eq(promoters.id, primaryId));
   const [eventCount] = await db

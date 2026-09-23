@@ -6446,3 +6446,4 @@ export const eventCategoryMigrationLog = sqliteTable(
 
 // OPE-516 — the citation supersede rule; every writer must use it.
 export * from "./citation-supersede-scope";
+export * from "./promoter-merge-children";

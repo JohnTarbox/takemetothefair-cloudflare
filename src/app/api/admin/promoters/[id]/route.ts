@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/api/with-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
-import { promoters, events, users } from "@/lib/db/schema";
+import { promoters, events, users, adminActions } from "@/lib/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
 import { promoterUpdateSchema, validateRequestBody } from "@/lib/validations";
@@ -141,7 +141,7 @@ export const PATCH = withAuth<{ id: string }>(
 
 export const DELETE = withAuth<{ id: string }>(
   { role: "ADMIN" },
-  async ({ request, db, params }) => {
+  async ({ request, db, params, session }) => {
     const { id } = params;
 
     try {
@@ -154,6 +154,25 @@ export const DELETE = withAuth<{ id: string }>(
       }
 
       await db.delete(promoters).where(eq(promoters.id, id));
+
+      // OPE-1120 — this route deleted promoters with no audit row at all; it is
+      // one of the two paths that can have removed the 2 orphaned promoter ids
+      // with no admin_actions record. Written AFTER the delete succeeds.
+      try {
+        await db.insert(adminActions).values({
+          action: "promoter.delete",
+          actorUserId: session.user.id,
+          targetType: "promoter",
+          targetId: id,
+          payloadJson: JSON.stringify({
+            company_name: promoter[0]?.companyName ?? null,
+            slug: promoter[0]?.slug ?? null,
+          }),
+          createdAt: new Date(),
+        });
+      } catch {
+        // Never fail the delete over its audit row.
+      }
       return NextResponse.json({ success: true });
     } catch (error) {
       await logError(db, {
