@@ -19,6 +19,7 @@ import { SelfReportedFairsEditor } from "@/components/vendor/SelfReportedFairsEd
 // listing off every by-state browse page. Keyed on the same predicate the
 // grouper uses, so the warning cannot disagree with the behaviour.
 import { StateBrowseHint } from "@/components/vendor/state-browse-hint";
+import { parseJsonArray } from "@/types";
 
 /**
  * The one string that renders as success.
@@ -53,7 +54,9 @@ interface VendorProfile {
   slug: string;
   description: string | null;
   vendorType: string | null;
-  products: string[];
+  // Stored as a JSON-array STRING (the house SQLite convention) and returned
+  // raw by GET /api/vendor/profile — never an array on the wire. See below.
+  products: string | null;
   website: string | null;
   logoUrl: string | null;
   verified: boolean;
@@ -161,7 +164,16 @@ export default function VendorProfilePage() {
           businessName: data.businessName || "",
           description: data.description || "",
           vendorType: data.vendorType || "",
-          products: data.products?.join(", ") || "",
+          // OPE-1112 — this line was `data.products?.join(", ")`, typed as if the
+          // API returned an array. It returns the stored JSON string, and a
+          // string has no `.join`, so it threw — before `setFormData` — for
+          // every vendor (7,559 of 7,559 rows hold a JSON-array string, "[]"
+          // included). The throw was swallowed by the catch below, so the page
+          // rendered EVERY field blank: name, description, contact, logo. A
+          // vendor saw an empty form and reasonably filled the logo box with
+          // the only URL she had. Found by driving the page as a vendor, which
+          // is the one thing no test here had done.
+          products: parseJsonArray(data.products).join(", "),
           website: data.website || "",
           logoUrl: data.logoUrl || "",
           // Contact Information
