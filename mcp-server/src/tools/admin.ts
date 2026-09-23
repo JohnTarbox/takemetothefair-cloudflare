@@ -192,6 +192,25 @@ import {
   SOURCE_TYPE_VALUES as CITATION_SOURCE_TYPE_VALUES,
 } from "./admin-citations.js";
 import { registerEventNameVariantTools } from "./admin-event-name-variants.js";
+
+/**
+ * OPE-1110 — fields `update_event` records a citation for when one is passed.
+ *
+ * The denorm map's keys, plus fields that are tracked for PROVENANCE but must
+ * not join the denorm map itself. `promoter_id` is the case: who runs an event
+ * is structural data by K4's own standard ("the highest-stakes data on the site
+ * MUST carry an auditable source URL"), but adding it to DENORM_FIELD_MAP would
+ * also let `create_event_citation(update_event_column=true)` write an
+ * unvalidated promoter id into an FK column. `update_event` validates the
+ * promoter exists before writing, so tracking it HERE is safe.
+ */
+const CITATION_TRACKED_WITHOUT_DENORM: ReadonlySet<string> = new Set(["promoter_id"]);
+function isCitationTracked(field: string): boolean {
+  return field in CITATION_DENORM_FIELD_MAP || CITATION_TRACKED_WITHOUT_DENORM.has(field);
+}
+
+/** Written by update_event itself, not by the caller — never "ignored provenance". */
+const CITATION_SYNTHETIC_FIELDS: ReadonlySet<string> = new Set(["gate_flags"]);
 import {
   PROMOTER_OPERATING_STATUSES,
   validatePromoterSuccession,
@@ -1182,7 +1201,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         })
         .optional()
         .describe(
-          "Provenance for tracked-field changes (estimated_attendance, vendor_fee_min/max, ticket_price_min/max, application_deadline, start_date, end_date, venue_id, name). When set, one citation row is inserted per tracked field touched. K4 (2026-05-31) extended this to the structural fields (dates/venue/name) — the highest-stakes data on the site MUST carry an auditable source URL."
+          "Provenance for tracked-field changes (estimated_attendance, vendor_fee_min/max, ticket_price_min/max, application_deadline, start_date, end_date, venue_id, name, promoter_id). A changed field that gets NO citation row is named in warnings.citation_ignored_for (OPE-1110) — never report such a field as cited. When set, one citation row is inserted per tracked field touched. K4 (2026-05-31) extended this to the structural fields (dates/venue/name) — the highest-stakes data on the site MUST carry an auditable source URL."
         ),
     },
     async (params) => {
@@ -2026,8 +2045,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       if (params.citation && requestedFields.length > 0) {
         const citationYear = params.citation.year ?? null;
         for (const field of requestedFields) {
-          const denorm = CITATION_DENORM_FIELD_MAP[field];
-          if (!denorm) continue;
+          if (!isCitationTracked(field)) continue;
           const rawValue = (params as Record<string, unknown>)[field];
           if (rawValue === undefined || rawValue === null) continue;
           const valueText = String(rawValue);
@@ -2291,6 +2309,25 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       if (citationsInserted.length > 0) {
         result.citationsInserted = citationsInserted;
       }
+
+      // OPE-1110 — a citation the caller passed but no row recorded, SAID.
+      //
+      // `promoter_id`-only reassignments used to accept a full citation object
+      // and drop it with no error, no warning and no `citationsInserted` key,
+      // so lane receipts reported "(with citation)" for provenance that never
+      // existed. Computed from what was actually inserted rather than from the
+      // allow-list, so a tracked field skipped for another reason (a cleared
+      // value) is named too — the question is "did a row land", not "should it".
+      const citationIgnoredFor = params.citation
+        ? [
+            ...requestedFields.filter(
+              (f) =>
+                !CITATION_SYNTHETIC_FIELDS.has(f) &&
+                !citationsInserted.some((c) => c.field_name === f)
+            ),
+            ...venueRequestedFields,
+          ]
+        : [];
       // Warnings: both P7c venue+date duplicates and P2 gate-flag re-eval
       // can fire on the same call. Surface both under `warnings`; admins
       // can act on either independently. The update has already succeeded
@@ -2309,6 +2346,13 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }
       if (gateFlagsWarning) {
         warnings.gate_flags = gateFlagsWarning;
+      }
+      if (citationIgnoredFor.length > 0) {
+        warnings.citation_ignored_for = citationIgnoredFor;
+        warnings.citation_ignored_message =
+          `A citation was supplied but NO citation row was recorded for: ${citationIgnoredFor.join(", ")}. ` +
+          `These fields are not citation-tracked by update_event (or were cleared). ` +
+          `Record their provenance with create_event_citation if it matters — do not report them as cited.`;
       }
       if (Object.keys(warnings).length > 0) {
         result.warnings = warnings;
