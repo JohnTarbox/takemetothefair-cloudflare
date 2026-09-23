@@ -24,7 +24,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import * as schema from "../../db/schema";
-import { signUnsubscribeToken, verifyUnsubscribeToken } from "../newsletter-unsubscribe-token";
+import {
+  signLegacyUnsubscribeToken,
+  signUnsubscribeToken,
+  verifyUnsubscribeToken,
+} from "../newsletter-unsubscribe-token";
 
 const SECRET = "test-secret-value-for-hmac";
 
@@ -121,9 +125,17 @@ describe("OPE-864 — the token carries a signed list", () => {
     // If the list travelled as a URL parameter instead, anyone holding someone
     // else's link could change ?list=vendor to ?list=weekend and unsubscribe
     // them from a list they never asked to leave.
+    // Sealed (OPE-864): the list is inside the AES-GCM claim — any edit to the
+    // sealed body fails authentication instead of changing the list.
     const vendorTok = await signUnsubscribeToken("a@x.com", SECRET, "vendor");
-    const weekendTok = await signUnsubscribeToken("a@x.com", SECRET, "weekend");
-    const forged = `${weekendTok.split(".")[0]}.${vendorTok.split(".")[1]}`;
+    const body = vendorTok.slice(3);
+    const i = body.length - 5;
+    const edited = `v2.${body.slice(0, i)}${body[i] === "A" ? "B" : "A"}${body.slice(i + 1)}`;
+    await expect(verifyUnsubscribeToken(edited, SECRET)).resolves.toBeNull();
+    // Legacy form: swapping payload and signature still fails, as before.
+    const vLegacy = await signLegacyUnsubscribeToken("a@x.com", SECRET, "vendor");
+    const wLegacy = await signLegacyUnsubscribeToken("a@x.com", SECRET, "weekend");
+    const forged = `${wLegacy.split(".")[0]}.${vLegacy.split(".")[1]}`;
     await expect(verifyUnsubscribeToken(forged, SECRET)).resolves.toBeNull();
   });
 

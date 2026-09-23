@@ -10,7 +10,13 @@ export const dynamic = "force-dynamic";
  * kept for any link already in the wild.
  */
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
-import { base64UrlDecode, verifyUnsubscribeToken } from "@takemetothefair/utils";
+import {
+  base64UrlDecode,
+  openUnsubscribeEmail,
+  SEALED_SEGMENT,
+  verifySealedUnsubscribe,
+  verifyUnsubscribeToken,
+} from "@takemetothefair/utils";
 import { handleUnsubscribe, unsubscribePage } from "@/lib/unsubscribe-page";
 import { logError } from "@/lib/logger";
 import { applyGlobalOptOut } from "@/lib/email/unsubscribe-stores";
@@ -21,27 +27,41 @@ interface Params {
 
 export async function GET(request: Request, { params }: Params) {
   const { e, t } = await params;
-
-  let email = "";
-  try {
-    email = base64UrlDecode(e);
-  } catch {
-    return unsubscribePage(
-      "Invalid unsubscribe link",
-      "This link is malformed. Please use the link from the email exactly as it appears.",
-      400
-    );
-  }
-
   const env = getCloudflareEnv();
   const secret = env.UNSUBSCRIBE_SECRET || env.INTERNAL_API_KEY || "";
   const db = getCloudflareDb();
+
+  // OPE-864 — `/unsubscribe/v2/<sealed>` carries the address ENCRYPTED. The
+  // legacy `/unsubscribe/<b64-email>/<hmac>` form stays valid for every link
+  // already delivered.
+  const sealed = e === SEALED_SEGMENT;
+  let email = "";
+  if (sealed) {
+    email = (await openUnsubscribeEmail(secret, t)) ?? "";
+    if (!email) {
+      return unsubscribePage(
+        "Invalid unsubscribe link",
+        "We couldn't verify this unsubscribe link. Please use the link from the email exactly as it appears.",
+        400
+      );
+    }
+  } else {
+    try {
+      email = base64UrlDecode(e);
+    } catch {
+      return unsubscribePage(
+        "Invalid unsubscribe link",
+        "This link is malformed. Please use the link from the email exactly as it appears.",
+        400
+      );
+    }
+  }
 
   return handleUnsubscribe({
     email,
     token: t,
     secret,
-    verify: verifyUnsubscribeToken,
+    verify: sealed ? verifySealedUnsubscribe : verifyUnsubscribeToken,
     // OPE-869 — one writer for a GLOBAL opt-out, across BOTH stores.
     //
     // This path used to insert an `email_suppression_list` row and nothing

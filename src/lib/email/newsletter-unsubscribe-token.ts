@@ -7,6 +7,12 @@
 // Pure functions — the signing secret is injected so they're unit-testable. The
 // route/send path resolves the secret from the Worker env (see
 // resolveUnsubscribeSecret). One-click, no login (CAN-SPAM requirement).
+//
+// OPE-864 — new tokens are `v2.<AES-GCM sealed claim>`: still stateless, still
+// unforgeable, and no longer carrying the address in readable base64. The
+// legacy `base64url(email).HMAC` form above still verifies for delivered links.
+
+import { openClaim, sealClaim } from "@takemetothefair/utils";
 
 function b64urlEncode(bytes: Uint8Array): string {
   let bin = "";
@@ -94,6 +100,31 @@ export async function signUnsubscribeToken(
 ): Promise<string> {
   const normalized = email.trim().toLowerCase();
   const claim = list ? `${normalized}${LIST_SEP}${list}` : normalized;
+  // OPE-864 — SEALED, not signed-and-readable: the old payload was plain
+  // base64 (`am9obkBwaW1ib2F0LmNvbXx3ZWVrZW5k` → `john@pimboat.com|weekend`).
+  // AES-GCM authenticates as the HMAC did, and hides the address.
+  return `${SEALED_PREFIX}${await sealClaim(secret, claim)}`;
+}
+
+/** Marks a sealed token. A legacy token's payload is ≥ 8 chars before its dot, so it can't start with this. */
+const SEALED_PREFIX = "v2.";
+
+function parseClaim(claim: string): UnsubscribeTokenClaims | null {
+  const sep = claim.lastIndexOf(LIST_SEP);
+  const email = sep === -1 ? claim : claim.slice(0, sep);
+  const list = sep === -1 ? null : claim.slice(sep + 1);
+  if (!email.includes("@")) return null;
+  return { email, list: list || null };
+}
+
+/** Sign in the PRE-OPE-864 format. Kept so tests can prove every delivered link still verifies. */
+export async function signLegacyUnsubscribeToken(
+  email: string,
+  secret: string,
+  list?: string | null
+): Promise<string> {
+  const normalized = email.trim().toLowerCase();
+  const claim = list ? `${normalized}${LIST_SEP}${list}` : normalized;
   const payload = b64urlEncode(new TextEncoder().encode(claim));
   const sig = await hmacB64url(secret, payload);
   return `${payload}.${sig}`;
@@ -110,6 +141,11 @@ export async function verifyUnsubscribeToken(
   token: string,
   secret: string
 ): Promise<UnsubscribeTokenClaims | null> {
+  if (token.startsWith(SEALED_PREFIX)) {
+    const claim = await openClaim(secret, token.slice(SEALED_PREFIX.length));
+    return claim ? parseClaim(claim) : null;
+  }
+  // Legacy (pre-OPE-864) token — still in inboxes, so still honoured.
   const dot = token.indexOf(".");
   if (dot <= 0 || dot === token.length - 1) return null;
   const payload = token.slice(0, dot);
@@ -117,12 +153,7 @@ export async function verifyUnsubscribeToken(
   const expected = await hmacB64url(secret, payload);
   if (!timingSafeEqual(sig, expected)) return null;
   try {
-    const claim = b64urlDecodeToString(payload);
-    const sep = claim.lastIndexOf(LIST_SEP);
-    const email = sep === -1 ? claim : claim.slice(0, sep);
-    const list = sep === -1 ? null : claim.slice(sep + 1);
-    if (!email.includes("@")) return null;
-    return { email, list: list || null };
+    return parseClaim(b64urlDecodeToString(payload));
   } catch {
     return null;
   }

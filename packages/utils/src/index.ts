@@ -594,6 +594,8 @@ export * from "./chunk-in-array";
 // K36 (2026-06-25): stateless one-click unsubscribe tokens. Shared so the MCP
 // Worker (footer render) and the main app (/unsubscribe verify) agree.
 export * from "./email-unsubscribe";
+// OPE-864 — opaque (sealed) unsubscribe claims; see unsubscribe-seal.ts.
+export * from "./unsubscribe-seal";
 
 // OPE-47 (2026-07): single source of truth for date contiguity. Shared so the
 // "Daily:" display label (DailyScheduleDisplay) and every ingest path that sets

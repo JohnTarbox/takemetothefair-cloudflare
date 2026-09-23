@@ -5,6 +5,7 @@
  */
 import { describe, it, expect } from "vitest";
 import {
+  signLegacyUnsubscribeToken,
   signUnsubscribeToken,
   verifyUnsubscribeToken,
 } from "../email/newsletter-unsubscribe-token";
@@ -37,10 +38,39 @@ describe("newsletter unsubscribe token (OPE-169)", () => {
     expect(await verifyUnsubscribeToken(`${payload}.deadbeef`, SECRET)).toBeNull();
   });
 
-  it("rejects a swapped payload (can't forge a different address onto a signature)", async () => {
+  it("rejects a tampered sealed token (the address can't be edited in transit)", async () => {
     const good = await signUnsubscribeToken("victim@example.com", SECRET);
-    const attacker = await signUnsubscribeToken("attacker@example.com", SECRET);
-    const forged = `${good.split(".")[0]}.${attacker.split(".")[1]}`;
+    expect(good.startsWith("v2.")).toBe(true);
+    const body = good.slice(3);
+    const i = Math.floor(body.length / 2);
+    const tampered = `v2.${body.slice(0, i)}${body[i] === "A" ? "B" : "A"}${body.slice(i + 1)}`;
+    expect(await verifyUnsubscribeToken(tampered, SECRET)).toBeNull();
+  });
+
+  it("OPE-864 — the token carries no readable address", async () => {
+    const tok = await signUnsubscribeToken("john@pimboat.com", SECRET, "weekend");
+    const b64 = (s: string) => btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    expect(tok).not.toContain(b64("john@pimboat.com").slice(0, 12));
+    expect(tok).not.toContain("pimboat");
+    expect(await verifyUnsubscribeToken(tok, SECRET)).toEqual({
+      email: "john@pimboat.com",
+      list: "weekend",
+    });
+  });
+
+  it("a sealed token made with another secret does not open", async () => {
+    const tok = await signUnsubscribeToken("a@b.co", "other-secret");
+    expect(await verifyUnsubscribeToken(tok, SECRET)).toBeNull();
+  });
+
+  it("LEGACY tokens already in inboxes still verify — and still resist a swapped payload", async () => {
+    const legacy = await signLegacyUnsubscribeToken("victim@example.com", SECRET, "vendor");
+    expect(await verifyUnsubscribeToken(legacy, SECRET)).toEqual({
+      email: "victim@example.com",
+      list: "vendor",
+    });
+    const attacker = await signLegacyUnsubscribeToken("attacker@example.com", SECRET);
+    const forged = `${legacy.split(".")[0]}.${attacker.split(".")[1]}`;
     expect(await verifyUnsubscribeToken(forged, SECRET)).toBeNull();
   });
 
