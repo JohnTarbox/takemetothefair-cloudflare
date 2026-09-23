@@ -19,7 +19,6 @@ import {
 import { enqueueEmail } from "@/lib/queues/producers";
 import { newsletterDigestTemplate } from "@/lib/email/templates";
 import { signUnsubscribeToken } from "@/lib/email/newsletter-unsubscribe-token";
-import { listForSource } from "@/lib/email/newsletter-list-membership";
 
 type Db = DrizzleD1Database<Record<string, unknown>>;
 
@@ -102,6 +101,20 @@ export async function selectBroadcastRecipients(db: Db, list: NewsletterList): P
  */
 export async function enqueueNewsletterDigest(args: {
   recipients: string[];
+  /**
+   * OPE-1107 — the list this send belongs to. REQUIRED, and the ONLY input the
+   * unsubscribe token's list is derived from.
+   *
+   * It used to be derived from `source`: exactly `VENDOR_DIGEST_SOURCE` meant
+   * vendor, anything else meant weekend. Three of the four vendor send paths
+   * never matched — the approve route and the send route pass no source at
+   * all, and the vendor test send passes `…:test` — so every vendor issue
+   * carried a `<email>|weekend` token. For a vendor-only subscriber the
+   * one-click unsubscribe then removed them from a list they were not on,
+   * reported success, and the next vendor issue still arrived. A ledger label
+   * is not a list, and a required field cannot be forgotten.
+   */
+  audience: NewsletterList;
   subject: string;
   contentHtml: string;
   contentText?: string;
@@ -144,14 +157,8 @@ export async function enqueueNewsletterDigest(args: {
   for (const email of args.recipients) {
     // OPE-864 — scope the token to the list this send belongs to, so clicking
     // unsubscribe in the vendor digest does not also remove the person from the
-    // weekend digest. `listForSource` is the existing source→list map; deriving
-    // it here rather than taking a new argument means a caller cannot pass a
-    // list that disagrees with the ledger source it also passes.
-    const token = await signUnsubscribeToken(
-      email,
-      args.secret,
-      listForSource(args.source === VENDOR_DIGEST_SOURCE ? "vendor-form" : "footer")
-    );
+    // weekend digest. OPE-1107 — from `audience`, never from the ledger source.
+    const token = await signUnsubscribeToken(email, args.secret, args.audience);
     const unsubscribeUrl = `${args.siteUrl}/api/newsletter/unsubscribe?token=${token}`;
     const tpl = newsletterDigestTemplate({
       subject: args.subject,
@@ -170,7 +177,10 @@ export async function enqueueNewsletterDigest(args: {
       html: tpl.html,
       text: tpl.text,
       from: NEWSLETTER_FROM,
-      source: args.source ?? NEWSLETTER_SOURCE,
+      // OPE-1107 — defaults from the audience too, so a vendor broadcast is
+      // ledgered as a vendor send without every caller having to remember.
+      source:
+        args.source ?? (args.audience === "vendor" ? VENDOR_DIGEST_SOURCE : NEWSLETTER_SOURCE),
       // OPE-385 — RFC 8058 one-click unsubscribe.
       //
       // Deliberately set HERE, on the shared rail, not in either composer.

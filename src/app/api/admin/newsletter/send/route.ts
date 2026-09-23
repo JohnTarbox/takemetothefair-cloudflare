@@ -216,6 +216,7 @@ export const POST = withAuthorized(async ({ request, db }) => {
 
   const queued = await enqueueNewsletterDigest({
     recipients,
+    audience,
     subject,
     contentHtml,
     contentText,

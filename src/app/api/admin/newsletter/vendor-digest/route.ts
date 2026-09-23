@@ -151,6 +151,7 @@ export const POST = withAuthorized(async ({ request, db }) => {
   if (testRecipient) {
     const queuedTest = await enqueueNewsletterDigest({
       recipients: [testRecipient],
+      audience: "vendor",
       subject,
       contentHtml,
       viewInBrowserUrl,
@@ -246,6 +247,7 @@ export const POST = withAuthorized(async ({ request, db }) => {
 
   const queued = await enqueueNewsletterDigest({
     recipients,
+    audience: "vendor",
     subject,
     contentHtml,
     viewInBrowserUrl,

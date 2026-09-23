@@ -51,6 +51,10 @@ const HTML_ENTITIES: Record<string, string> = {
   "&copy;": "©",
   "&reg;": "®",
   "&trade;": "™",
+  // OPE-1107 — the newsletter's "Details &rarr;" / "Apply via organizer &rarr;"
+  // links reached the text/plain part raw; the map had no arrows.
+  "&rarr;": "→",
+  "&larr;": "←",
 };
 
 export function decodeHtmlEntities(text: string): string {
