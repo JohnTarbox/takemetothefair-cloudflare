@@ -84,3 +84,25 @@ export function classifyImageHost(url: string | null | undefined): ImageHostVerd
 export function isHotlinked(url: string | null | undefined): boolean {
   return classifyImageHost(url).kind === "third_party";
 }
+
+/**
+ * OPE-294 (review bounce 2026-09-23) — the write-boundary gate for venue images.
+ *
+ * `ALLOW_GOOGLE_PLACES_PHOTOS` gated only `google-backfill`. The admin venue
+ * new/edit forms and `venue-combo-search` copy a Google Places `photoUrl` into
+ * `imageUrl` client-side and the server wrote whatever arrived — so the
+ * hotlinked count grew 172 → 174 after the gate "shipped" (Danville Community
+ * Center 09-19, St. Matthew Catholic Church 09-11, both `venue.create` by a
+ * user through the UI). The gate has to sit where the row is WRITTEN, on every
+ * writer, not on one of them.
+ *
+ * Returns the URL unchanged unless it is a Google Places photo, in which case
+ * it returns `null` (write no image) — keeping `undefined` as `undefined` so a
+ * PATCH that never mentioned the image leaves it alone. Unconditional because
+ * the flag is never bound (see `src/env-unbound.d.ts`); allowing Places photos
+ * needs John's licensing ruling AND a binding, not an edit here.
+ */
+export function withoutGooglePlacesPhoto<T extends string | null | undefined>(url: T): T | null {
+  if (url === undefined || url === null) return url;
+  return classifyImageHost(url).isGooglePlaces ? null : url;
+}

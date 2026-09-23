@@ -8,6 +8,7 @@ import { eq } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
 import { getVenuesWithEventCounts, findVenueByGooglePlaceId } from "@/lib/queries";
 import { venueCreateSchema, validateRequestBody } from "@/lib/validations";
+import { withoutGooglePlacesPhoto } from "@takemetothefair/utils";
 import { logError } from "@/lib/logger";
 import { recordMutation } from "@/lib/audit/record-mutation";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
@@ -74,7 +75,8 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db, session })
       contactPhone: data.contactPhone,
       website: data.website,
       description: data.description,
-      imageUrl: data.imageUrl,
+      // OPE-294 — never persist a Google Places photo (see withoutGooglePlacesPhoto).
+      imageUrl: withoutGooglePlacesPhoto(data.imageUrl),
       googlePlaceId: data.googlePlaceId,
       googleMapsUrl: data.googleMapsUrl,
       openingHours: data.openingHours,

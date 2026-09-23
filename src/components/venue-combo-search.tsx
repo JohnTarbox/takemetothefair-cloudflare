@@ -159,7 +159,7 @@ export function VenueComboSearch({
           contactPhone: pendingPlace.phone,
           website: pendingPlace.website,
           description: pendingPlace.description,
-          imageUrl: pendingPlace.photoUrl,
+          // OPE-294 — no Google Places photo as the venue image.
           googlePlaceId: pendingPlace.googlePlaceId,
           googleMapsUrl: pendingPlace.googleMapsUrl,
           openingHours: pendingPlace.openingHours,

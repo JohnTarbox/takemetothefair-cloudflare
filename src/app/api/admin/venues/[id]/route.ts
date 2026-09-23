@@ -1,4 +1,5 @@
 export const dynamic = "force-dynamic";
+import { withoutGooglePlacesPhoto } from "@takemetothefair/utils";
 import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/api/with-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
@@ -141,7 +142,10 @@ export const PATCH = withAuth<{ id: string }>(
       if (data.contactPhone !== undefined) updateData.contactPhone = data.contactPhone;
       if (data.website !== undefined) updateData.website = data.website;
       if (data.description !== undefined) updateData.description = data.description;
-      if (data.imageUrl !== undefined) updateData.imageUrl = data.imageUrl;
+      // OPE-294 — a Google Places photo is IGNORED (not written, not used to
+      // clear the existing image); any other value, including "" to clear, lands.
+      if (data.imageUrl !== undefined && withoutGooglePlacesPhoto(data.imageUrl) === data.imageUrl)
+        updateData.imageUrl = data.imageUrl;
       // IMG1 §1b Phase 1 (2026-06-08) — focal point clamped (defense in depth).
       if (typeof data.imageFocalX === "number" && Number.isFinite(data.imageFocalX)) {
         updateData.imageFocalX = Math.max(0, Math.min(1, data.imageFocalX));

@@ -135,7 +135,11 @@ import { dollarsToCents } from "../helpers.js";
 import { recordMutation } from "../audit/record-mutation.js";
 import { notifyApprovalIfNeeded } from "../approval-notification.js";
 import { registerCreateOrLinkVendorTool } from "./admin-create-or-link-vendor.js";
-import { petFriendlyWriteError, type PetFriendly } from "@takemetothefair/utils";
+import {
+  petFriendlyWriteError,
+  type PetFriendly,
+  withoutGooglePlacesPhoto,
+} from "@takemetothefair/utils";
 import {
   PET_FRIENDLY_EVIDENCE_PARAM,
   PET_FRIENDLY_PARAM,
@@ -3593,7 +3597,13 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       website: z.string().optional().describe("Website URL"),
       contact_email: z.string().optional().describe("Contact email"),
       contact_phone: z.string().optional().describe("Contact phone"),
-      image_url: z.string().optional().describe("Venue image URL"),
+      image_url: z
+        .string()
+        .optional()
+        // OPE-294 — a Google Places photo is dropped (treated as not provided),
+        // so it can neither be written nor used to clear an existing image.
+        .transform((u) => (withoutGooglePlacesPhoto(u) === null ? undefined : u))
+        .describe("Venue image URL (Google Places photo URLs are ignored — OPE-294)"),
       // IMG1 §1b Phase 1 — per-image focal point for card crops.
       image_focal_x: z
         .number()
@@ -3886,7 +3896,13 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       description: z.string().transform(sanitizeProse).optional().describe("Venue description"),
       contact_email: z.string().optional().describe("Contact email"),
       contact_phone: z.string().optional().describe("Contact phone"),
-      image_url: z.string().optional().describe("Venue image URL"),
+      image_url: z
+        .string()
+        .optional()
+        // OPE-294 — a Google Places photo is dropped (treated as not provided),
+        // so it can neither be written nor used to clear an existing image.
+        .transform((u) => (withoutGooglePlacesPhoto(u) === null ? undefined : u))
+        .describe("Venue image URL (Google Places photo URLs are ignored — OPE-294)"),
       // IMG1 §1b Phase 1 — per-image focal point. Applies to image_url.
       image_focal_x: z
         .number()

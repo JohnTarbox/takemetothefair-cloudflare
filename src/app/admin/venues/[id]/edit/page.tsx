@@ -137,7 +137,8 @@ export default function EditVenuePage({ params }: { params: Promise<{ id: string
       longitude: place.lng != null ? String(place.lng) : prev.longitude,
       contactPhone: place.phone || prev.contactPhone,
       website: place.website || prev.website,
-      imageUrl: place.photoUrl || prev.imageUrl,
+      // OPE-294 — a Google Places photo is never used as the venue image
+      // (the server drops it anyway); keep whatever image the form already has.
       description: place.description || prev.description,
     }));
 
