@@ -1,4 +1,5 @@
 export const dynamic = "force-dynamic";
+import { withoutGooglePlacesPhoto } from "@takemetothefair/utils";
 import { NextResponse } from "next/server";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { getCloudflareEnv } from "@/lib/cloudflare";
@@ -119,7 +120,8 @@ export async function POST(request: Request) {
       contactPhone: body.contactPhone ?? null,
       website: body.website ?? null,
       description: body.description ?? null,
-      imageUrl: body.imageUrl ?? null,
+      // OPE-294 — the venue-combo-search path; never persist a Places photo.
+      imageUrl: withoutGooglePlacesPhoto(body.imageUrl ?? null),
       googlePlaceId: body.googlePlaceId ?? null,
       googleMapsUrl: body.googleMapsUrl ?? null,
       openingHours: body.openingHours ?? null,
