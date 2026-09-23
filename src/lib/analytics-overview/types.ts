@@ -45,7 +45,14 @@ export type SearchVisibilityCard =
     }
   | { ok: false; reason: string };
 
-export type ConversionsCard = Delta;
+export type ConversionsCard = Delta & {
+  /**
+   * OPE-1131 — the count, stale when the first-party beacon stopped admitting
+   * rows (MAX(analytics_events.timestamp)). A silent beacon otherwise reads as
+   * a quiet week.
+   */
+  currentMeasured: import("./render-state").Measurement<number>;
+};
 
 export type CatalogGrowthCard = {
   totals: { events: number; venues: number; vendors: number; total: number };
@@ -111,6 +118,8 @@ export type RecommendationsSummaryCard = {
   // Highest severity present in the active set, or null if zero items.
   // Drives the card's border/icon color.
   maxSeverity: "red" | "yellow" | "blue" | null;
+  /** OPE-1131 — the actionable count, stale when the scanner stopped. */
+  actionableMeasured: import("./render-state").Measurement<number>;
   redCount: number;
   yellowCount: number;
   blueCount: number;
@@ -128,7 +137,10 @@ export type SiteCtrCard =
       ok: true;
       clicks: number;
       impressions: number;
+      /** @deprecated OPE-1131 — read `ctrMeasured`; this is 0 over no impressions. */
       ctr: number;
+      /** OPE-1131 — undefined over no impressions, truncated over a capped query sample. */
+      ctrMeasured: import("./render-state").Measurement<number>;
       trend: Trend;
       previousCtr: number;
     }
@@ -147,7 +159,10 @@ export type SiteCtrCard =
 export type ConversionRateCard = {
   conversions: number;
   sessions: number | null;
+  /** @deprecated OPE-1131 — read `rateMeasured`; null here conflates two causes. */
   rate: number | null;
+  /** OPE-1131 — unavailable (GA4 failed) vs undefined-rate (no sessions). */
+  rateMeasured: import("./render-state").Measurement<number>;
   windowDays: number;
   /** ISO date string for the window end so the tooltip can show the lag. */
   windowEndDate: string;
@@ -162,7 +177,10 @@ export type ConversionRateCard = {
 export type AccountEngagementCard = {
   signals: number;
   sessions: number;
+  /** @deprecated OPE-1131 — read `rateMeasured`; this is 0 over no events. */
   rate: number;
+  /** OPE-1131 — undefined when no first-party events were recorded. */
+  rateMeasured: import("./render-state").Measurement<number>;
   windowDays: number;
   breakdown: { vendor_claims: number; event_favorites: number; contact_clicks: number };
 };
@@ -178,7 +196,10 @@ export type BrandVsNonBrandCard =
       brand_impressions: number;
       non_brand_clicks: number;
       non_brand_impressions: number;
+      /** @deprecated OPE-1131 — read `brandShareMeasured`; 0 over no clicks. */
       brand_share: number; // 0..1
+      /** OPE-1131 — undefined over no clicks, truncated over a capped query sample. */
+      brandShareMeasured: import("./render-state").Measurement<number>;
       windowDays: number;
     }
   | { ok: false; reason: string };
@@ -256,12 +277,19 @@ export type ThisWeeksActionsCard = {
 
 /** 90-day per-KPI mini sparkline strip. */
 export type KpiSparklineStrip = {
-  searchVisibility: SparklinePoint[];
+  searchVisibility: SparklineSeries;
   conversions: SparklinePoint[];
   publishing: SparklinePoint[];
 };
 
 export type SparklinePoint = { date: string; value: number };
+
+/**
+ * OPE-1131 — a daily series that can say it was never fetched. The GSC loaders
+ * return a zero-filled series on failure so the chart still draws; without this
+ * tag the card summed those zeros into a "0" total captioned "through <today>".
+ */
+export type SparklineSeries = SparklinePoint[] & { unavailableReason?: string };
 
 export type ActivityEntry = {
   // ms-epoch
@@ -282,6 +310,8 @@ export type QueueDrainTileRow = {
   outflow7d: number | null;
   /** trailing-7d outflow ÷ inflow; null when inflow 0 or outflow unknown. */
   drainRatio7d: number | null;
+  /** OPE-1131 — figures this queue cannot compute, and why (see QueueDrainRow). */
+  unmeasured?: { flows?: string; depth?: string };
   frozen: boolean;
 };
 export type QueueDrainCard = {
@@ -302,7 +332,7 @@ export type OverviewSnapshot = {
   blogCoverage: BlogCoverageCard;
   conversionsSparkline: SparklinePoint[];
   publishingSparkline: SparklinePoint[];
-  searchVisibilitySparkline: SparklinePoint[];
+  searchVisibilitySparkline: SparklineSeries;
   activity: ActivityEntry[];
   // §10.3 additions
   siteCtr: SiteCtrCard;

@@ -70,6 +70,12 @@ export interface QueueDrainRow extends QueueFlow {
    * Only populated for queues where the split is meaningful; undefined elsewhere.
    */
   buckets?: Array<{ label: string; count: number; severity: string }>;
+  /**
+   * OPE-1131 — figures this queue cannot compute, and why. A hard-coded
+   * `inflow7d: 0` is an assertion that nothing arrived; for these queues the
+   * flow was never measured, and the tile said "0" for it.
+   */
+  unmeasured?: { flows?: string; depth?: string };
 }
 
 function utcDate(now: Date): string {
@@ -588,6 +594,10 @@ export async function undeliveredAuthEmailFlow(db: Db, now: Date): Promise<Queue
       inflow1d: 0,
       outflow1d: null,
       drainRatio7d: null,
+      unmeasured: {
+        flows: "no delivery events received yet",
+        depth: "no delivery events received yet",
+      },
     };
   }
 
@@ -897,6 +907,8 @@ export async function promoterNeedsEnrichmentFlow(db: Db): Promise<QueueDrainRow
     inflow1d: 0,
     outflow1d: null,
     drainRatio7d: null,
+    // An entity status flag has no arrival/departure history to count.
+    unmeasured: { flows: "entity flag — no flow history" },
   };
 }
 
@@ -1021,6 +1033,7 @@ export async function loadQueueDrain(db: Db): Promise<QueueDrainCard> {
       inflow7d: f.inflow7d,
       outflow7d: f.outflow7d,
       drainRatio7d: f.drainRatio7d,
+      unmeasured: (f as QueueDrainRow).unmeasured,
       frozen: assessQueueFreeze(f, now) !== null,
     })),
   };

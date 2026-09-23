@@ -161,8 +161,21 @@ export async function loadActivity(db: Db, sinceDate: Date): Promise<ActivityEnt
     });
   }
 
-  merged.sort((a, b) => b.ts - a.ts);
-  return merged.slice(0, 10);
+  return capActivityPerSide(merged, 10);
+}
+
+/**
+ * OPE-1131 — the page shows TWO feeds (visitor conversions; operator admin +
+ * IndexNow), split from this one list. Capping the merged list at 10 before the
+ * split let a burst of admin rows crowd every conversion out, and "User
+ * activity" then said "No recent activity in this window" while conversions
+ * existed. Cap each side separately, newest first.
+ */
+export function capActivityPerSide(entries: ActivityEntry[], perSide: number): ActivityEntry[] {
+  const sorted = [...entries].sort((a, b) => b.ts - a.ts);
+  const user = sorted.filter((e) => e.kind === "conversion").slice(0, perSide);
+  const operator = sorted.filter((e) => e.kind !== "conversion").slice(0, perSide);
+  return [...user, ...operator].sort((a, b) => b.ts - a.ts);
 }
 
 export async function loadAccountEngagement(
@@ -213,6 +226,8 @@ export async function loadAccountEngagement(
     signals,
     sessions,
     rate,
+    // OPE-1131 — no first-party events is no measurement, not a 0% rate.
+    rateMeasured: rateOf(signals, sessions, "no first-party events in window"),
     windowDays: days,
     breakdown: { vendor_claims, event_favorites, contact_clicks },
   };
@@ -263,7 +278,7 @@ export async function loadThisWeeksActions(db: Db, sinceDate: Date): Promise<Thi
  * GREEN/INDETERMINATE KPI from the queue. The Recent Activity panel surfaces
  * the resolution from admin_actions.
  */
-import { isLiveMeasurement, type MeasurementState } from "./render-state";
+import { isLiveMeasurement, rate as rateOf, type MeasurementState } from "./render-state";
 
 const TIER_1_REC_AFFECTED_THRESHOLD = 50;
 

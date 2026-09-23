@@ -136,6 +136,14 @@ export const FEED_STALENESS_HOURS: Record<string, number> = {
   analytics_events: 6,
   indexnow_submissions: 24 * 2,
   fault_signatures: 24 * 7,
+  // OPE-1131 — Bing reports lag ~2–3 days; a week of silence is a stopped feed.
+  bing_traffic: 24 * 5,
+  bing_crawl: 24 * 5,
+  // OPE-1131 — the nightly recommendations scan; items age out after 7d.
+  recommendation_scan: 48,
+  // OPE-1131 — the KPI badges are recomputed every 10 min; an hour of silence
+  // means the last badge is frozen on the page.
+  kpi_state_history: 1,
 };
 
 /** Default when a feed is not in the table — deliberately generous. */
@@ -190,3 +198,73 @@ export function isLiveMeasurement(m: Pick<Measurement<unknown>, "state">): boole
 
 /** The chip the Overview legend already promises but nothing rendered. */
 export const STALE_CHIP = "🕒";
+
+/**
+ * OPE-1131 — the one way a `Measurement` becomes tile text.
+ *
+ * OPE-808 built the type and hand-rendered four tiles; every tile since was
+ * free to reinvent it, which is how a bare "—" (no cause) and a bare "0" (a
+ * failure dressed as a reading) kept appearing. Routing tiles through this
+ * makes the rule structural: only `ok` prints a naked number.
+ *
+ *   ok             → the number
+ *   truncated      → the number · "500 of 1,234 sampled"
+ *   stale          → 🕒 the number · "feed closed 2026-06-13" (or "— · …" if none)
+ *   unavailable    → "— · <reason>"
+ *   undefined-rate → "— · <reason>"
+ */
+export function measurementText<T>(m: Measurement<T>, format: (v: T) => string): string {
+  const reason = m.reason || "no data";
+  if (m.state === "ok") return m.value == null ? `— · ${reason}` : format(m.value);
+  if (m.value == null) return `— · ${reason}`;
+  if (m.state === "truncated") return `${format(m.value)} · ${reason}`;
+  if (m.state === "stale") return `${STALE_CHIP} ${format(m.value)} · ${reason}`;
+  return `— · ${reason}`;
+}
+
+/**
+ * A rate over a capped sample: undefined when the denominator is empty,
+ * truncated when the cap was actually hit, otherwise ok.
+ */
+export function rateOverSample(
+  numerator: number,
+  denominator: number,
+  emptyReason: string,
+  sampleSize: number,
+  cap: number,
+  populationTotal: number | undefined
+): Measurement<number> {
+  const r = rate(numerator, denominator, emptyReason);
+  if (r.state !== "ok") return r;
+  // An unknown population (an old cached result) is not evidence of truncation.
+  return sampled(r.value, sampleSize, cap, populationTotal ?? sampleSize);
+}
+
+/**
+ * OPE-1131 — a sparkline's headline total as a `Measurement`.
+ *
+ * `unavailableReason` (set by the loader on a failed fetch) wins. With a `feed`,
+ * the total is also judged for staleness on the last day that had a non-zero
+ * value — the Publishing card counts SUCCESSFUL IndexNow submissions and read
+ * a plain "0" for weeks while pings were paused.
+ */
+export function sparklineTotal(
+  points: Array<{ date: string; value: number }> & { unavailableReason?: string },
+  feed?: string,
+  now: Date = new Date()
+): Measurement<number> {
+  if (points.unavailableReason) return unavailable(points.unavailableReason);
+  const total = points.reduce((a, p) => a + p.value, 0);
+  if (!feed) return ok(total);
+  let last: string | null = null;
+  for (const p of points) if (p.value > 0 && (last === null || p.date > last)) last = p.date;
+  if (last === null) {
+    return {
+      state: "stale",
+      value: total,
+      reason: `no ${feed} rows in ${points.length} days`,
+      feedLastAt: null,
+    };
+  }
+  return freshness(total, feed, Date.parse(`${last}T23:59:59Z`), now);
+}

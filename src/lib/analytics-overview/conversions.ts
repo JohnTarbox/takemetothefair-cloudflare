@@ -6,6 +6,7 @@
 import { and, count, gte, inArray, lt, sql } from "drizzle-orm";
 import { analyticsEvents } from "@/lib/db/schema";
 import { getOrganicSessions, type Ga4Env } from "@/lib/ga4";
+import { freshness, rate as rateOf, unavailable } from "./render-state";
 import {
   CONVERSION_EVENT_NAMES,
   SPARKLINE_DAYS,
@@ -22,7 +23,7 @@ export async function loadConversions(
   priorEndDate: Date,
   days: number
 ): Promise<ConversionsCard> {
-  const [currentRows, priorRows] = await Promise.all([
+  const [currentRows, priorRows, beaconRows] = await Promise.all([
     db
       .select({ c: count() })
       .from(analyticsEvents)
@@ -42,14 +43,25 @@ export async function loadConversions(
           lt(analyticsEvents.timestamp, priorEndDate)
         )
       ),
+    // Freshness on the column that ADMITS rows (any event, not just
+    // conversions — a quiet conversion week is real; a quiet beacon is not).
+    db
+      .select({ last: sql<number | null>`max(${analyticsEvents.timestamp})` })
+      .from(analyticsEvents),
   ]);
   const current = currentRows[0]?.c ?? 0;
   const previous = priorRows[0]?.c ?? 0;
+  const lastSec = beaconRows[0]?.last;
   return {
     current,
     previous,
     trend: trendOf(current, previous),
     windowDays: days,
+    currentMeasured: freshness(
+      current,
+      "analytics_events",
+      typeof lastSec === "number" ? lastSec * 1000 : null
+    ),
   };
 }
 
@@ -111,6 +123,11 @@ export async function loadConversionRate(
     conversions,
     sessions,
     rate,
+    // OPE-1131 — a GA4 failure and an empty week both used to print "—".
+    rateMeasured:
+      sessions == null
+        ? unavailable("GA4 organic sessions unavailable")
+        : rateOf(conversions, sessions, "no organic sessions in window"),
     windowDays: days,
     windowEndDate: fmt(stableEndDate),
   };

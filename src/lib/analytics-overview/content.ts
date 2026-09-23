@@ -6,7 +6,8 @@
 import { count, eq, sql } from "drizzle-orm";
 import { contentLinks, events, vendors, venues } from "@/lib/db/schema";
 import { tierFor } from "@/lib/recommendations/tiers";
-import { getActiveItems } from "@/lib/recommendations/engine";
+import { getActiveItems, getScanState } from "@/lib/recommendations/engine";
+import { freshness } from "./render-state";
 import type { Db } from "./shared";
 import type { BlogCoverageCard, RecommendationsSummaryCard } from "./types";
 
@@ -62,7 +63,7 @@ export async function loadBlogCoverage(db: Db): Promise<BlogCoverageCard> {
 export async function loadRecommendationsSummary(db: Db): Promise<RecommendationsSummaryCard> {
   // Reuses the same active-items query the Recommendations tab uses, so the
   // counts here always agree with what the admin sees on the tab.
-  const items = await getActiveItems(db);
+  const [items, scan] = await Promise.all([getActiveItems(db), getScanState(db)]);
   let red = 0;
   let yellow = 0;
   let blue = 0;
@@ -92,5 +93,8 @@ export async function loadRecommendationsSummary(db: Db): Promise<Recommendation
     yellowCount: yellow,
     blueCount: blue,
     actionableCount: actionable,
+    // OPE-1131 — items live 7d after their last scan. If scans stop, they age
+    // out and this read "All clear" — a stopped scanner shown as a clean site.
+    actionableMeasured: freshness(actionable, "recommendation_scan", scan.lastSuccessfulScanAt),
   };
 }

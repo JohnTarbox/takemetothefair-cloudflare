@@ -309,7 +309,18 @@ export type SiteSearchQueryRow = SearchQueryRow & {
 export type SiteSearchQueriesResult = {
   dateRange: { startDate: string; endDate: string };
   queries: SiteSearchQueryRow[];
-  totals: { clicks: number; impressions: number; queries: number };
+  totals: {
+    clicks: number;
+    impressions: number;
+    queries: number;
+    /**
+     * OPE-1131 — how many queries existed BEFORE `rowLimit` sliced them. The
+     * totals above sum only the returned rows, so a caller deriving a site-wide
+     * figure (CTR, brand share) needs this to know whether it read a sample.
+     * Optional: a result cached before this field existed simply lacks it.
+     */
+    queriesBeforeLimit?: number;
+  };
 };
 
 type ScOrderBy = "impressions" | "clicks" | "position" | "ctr";
@@ -679,6 +690,7 @@ export async function getSiteSearchQueries(
       clicks: limited.reduce((s, q) => s + q.clicks, 0),
       impressions: limited.reduce((s, q) => s + q.impressions, 0),
       queries: limited.length,
+      queriesBeforeLimit: queries.length,
     },
   };
 
