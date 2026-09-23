@@ -16,7 +16,13 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { eq } from "drizzle-orm";
 import { createTestDb, type TestDb } from "./setup-db.js";
-import { applyToolParamPolicy, REJECT_UNKNOWN_PARAMS } from "../src/tool-param-policy.js";
+import {
+  applyToolParamPolicy,
+  paramPolicyFor,
+  REJECT_UNKNOWN_PARAMS,
+  withIgnoredParams,
+} from "../src/tool-param-policy.js";
+import { z } from "zod";
 import { promoters } from "../src/schema.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -95,7 +101,7 @@ describe("OPE-1132 — tools/list advertises the constraint", () => {
     expect(listed.get(name)?.additionalProperties).toBe(false);
   });
 
-  it("a tool outside the batch is unchanged (update_promoter still advertises no constraint)", () => {
+  it("a WARN tool does not advertise the constraint (update_promoter accepts, then names, extras)", () => {
     expect(listed.get("update_promoter")?.additionalProperties).not.toBe(false);
   });
 });
@@ -140,5 +146,112 @@ describe("OPE-1132 — index.ts applies the policy on BOTH transports", () => {
     const bare = INDEX_SRC.match(/new McpServer\(/g) ?? [];
     const wrapped = INDEX_SRC.match(/applyToolParamPolicy\(\s*new McpServer\(/g) ?? [];
     expect(bare.length).toBe(wrapped.length);
+  });
+});
+
+// ── batch 2: every tool that is neither a listed create nor a read WARNS ──────
+
+describe("OPE-1132 batch 2 — the policy split over every registered tool", () => {
+  it("creates reject, reads strip (until batch 3), everything else warns", () => {
+    const by: Record<string, string[]> = { reject: [], warn: [], strip: [] };
+    for (const name of listed.keys()) by[paramPolicyFor(name)].push(name);
+    // create_vendor is registerTool + its own .strict(), not the wrap's.
+    expect(by.reject.sort()).toEqual([...REJECT_UNKNOWN_PARAMS].sort());
+    expect(by.strip.every((n) => /^(get|list|search)_/.test(n))).toBe(true);
+    expect(by.warn.some((n) => /^(get|list|search)_/.test(n))).toBe(false);
+    expect(by.warn).toEqual(
+      expect.arrayContaining(["update_promoter", "merge_events", "set_vendor_alias"])
+    );
+  });
+});
+
+describe("OPE-1132 batch 2 — a WARN tool applies the known fields and names the unknown", () => {
+  it("ACCEPTANCE: update_promoter with a typo'd key updates the real field and reports the typo", async () => {
+    await call("create_promoter", { name: "Warn Fair Co" });
+    const [row] = promoterNamed("Warn Fair Co");
+    const res = await call("update_promoter", {
+      promoter_id: row.id,
+      city: "Bangor",
+      stat: "ME", // the typo — `state` was meant
+    });
+    expect(res.isError).toBeFalsy();
+    expect(promoterNamed("Warn Fair Co")[0].city).toBe("Bangor");
+    const body = JSON.parse(res.content[0].text ?? "{}");
+    expect(body.warnings.ignored_params).toEqual(["stat"]);
+  });
+
+  it("CONTROL: the same update without a stray key carries no ignored_params", async () => {
+    const [row] = promoterNamed("Warn Fair Co");
+    const res = await call("update_promoter", { promoter_id: row.id, city: "Augusta" });
+    expect(res.isError).toBeFalsy();
+    expect(res.content.map((c) => c.text ?? "").join("")).not.toContain("ignored_params");
+  });
+
+  it("a READ tool is untouched until batch 3 (stray key stripped, no warning)", async () => {
+    const res = await call("search_promoters", { query: "Fair", colour: "red" });
+    expect(res.isError).toBeFalsy();
+    expect(res.content.map((c) => c.text ?? "").join("")).not.toContain("ignored_params");
+  });
+});
+
+describe("OPE-1132 batch 2 — the handler never sees the extra key", () => {
+  // The default strip guaranteed this; a loose schema alone would break it and
+  // hand `...params` spreads a key nobody declared. Pinned on a probe tool whose
+  // handler records exactly what it was given.
+  it("args reaching the handler are the declared keys only", async () => {
+    const server = applyToolParamPolicy(new McpServer({ name: "p", version: "0" }));
+    const seen: Record<string, unknown>[] = [];
+    server.tool("update_probe", "probe", { a: z.string() }, async (args) => {
+      seen.push(args as Record<string, unknown>);
+      return { content: [{ type: "text" as const, text: JSON.stringify({ ok: true }) }] };
+    });
+    const [x, y] = InMemoryTransport.createLinkedPair();
+    await server.connect(x);
+    const c = new Client({ name: "c", version: "0" });
+    await c.connect(y);
+    const res = (await c.callTool({
+      name: "update_probe",
+      arguments: { a: "1", b: "2" },
+    })) as CallResult;
+    expect(seen).toEqual([{ a: "1" }]);
+    expect(JSON.parse(res.content[0].text ?? "{}")).toEqual({
+      ok: true,
+      warnings: { ignored_params: ["b"] },
+    });
+  });
+});
+
+describe("OPE-1132 batch 2 — withIgnoredParams respects a tool's own warnings shape", () => {
+  const wrap = (body: unknown) => ({ content: [{ type: "text", text: JSON.stringify(body) }] });
+  const out = (r: unknown) => (r as CallResult).content;
+
+  it("no warnings → warnings.ignored_params", () => {
+    expect(JSON.parse(out(withIgnoredParams(wrap({ ok: 1 }), ["x"]))[0].text!)).toEqual({
+      ok: 1,
+      warnings: { ignored_params: ["x"] },
+    });
+  });
+  it("an object of warnings → merged, the tool's own keys kept", () => {
+    const r = withIgnoredParams(wrap({ warnings: { possible_duplicates: [1] } }), ["x"]);
+    expect(JSON.parse(out(r)[0].text!).warnings).toEqual({
+      possible_duplicates: [1],
+      ignored_params: ["x"],
+    });
+  });
+  it("an array of warnings → one string appended, the array kept", () => {
+    const r = withIgnoredParams(wrap({ warnings: ["w1"] }), ["x", "y"]);
+    const w = JSON.parse(out(r)[0].text!).warnings as string[];
+    expect(w[0]).toBe("w1");
+    expect(w[1]).toMatch(/^ignored_params: x, y/);
+  });
+  it("plain-text output → a second item, the original text untouched", () => {
+    const r = withIgnoredParams({ content: [{ type: "text", text: "Updated." }] }, ["x"]);
+    expect(out(r)[0].text).toBe("Updated.");
+    expect(JSON.parse(out(r)[1].text!)).toEqual({ warnings: { ignored_params: ["x"] } });
+  });
+  it("an error result still carries the warning (the caller should learn both)", () => {
+    const r = withIgnoredParams({ ...wrap({ error: "nope" }), isError: true }, ["x"]) as CallResult;
+    expect(r.isError).toBe(true);
+    expect(JSON.parse(r.content[0].text!).warnings.ignored_params).toEqual(["x"]);
   });
 });
