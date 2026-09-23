@@ -94,6 +94,8 @@ export const userRoles = sqliteTable(
     grantedBy: text("granted_by").references(() => users.id, { onDelete: "set null" }),
   },
   (t) => ({
+    // OPE-1121 phase 1 — FK child columns with no index; every parent delete/merge scanned these.
+    userRolesGrantedByIdx: index("idx_user_roles_granted_by").on(t.grantedBy),
     uniqueUserRole: uniqueIndex("user_roles_user_role_unique").on(t.userId, t.role),
     userIdIdx: index("idx_user_roles_user_id").on(t.userId),
     roleIdx: index("idx_user_roles_role").on(t.role),
@@ -224,134 +226,142 @@ export const venues = sqliteTable(
 );
 
 // Promoters table
-export const promoters = sqliteTable("promoters", {
-  id: text("id")
-    .primaryKey()
-    .$defaultFn(() => crypto.randomUUID()),
-  userId: text("user_id")
-    .unique()
-    .references(() => users.id, { onDelete: "set null" }),
-  companyName: text("company_name").notNull(),
-  slug: text("slug").$type<Slug>().notNull().unique(),
-  description: text("description"),
-  website: text("website"),
-  socialLinks: text("social_links"),
-  logoUrl: text("logo_url"),
-  // OPE-34 (drizzle/0138, 2026-06-30) — full-bleed hero/banner for the promoter
-  // detail page, distinct from the small square `logo_url`. Rendered object-cover
-  // with focal-point crop (image_focal_x/y below). NULL = no hero band.
-  heroImageUrl: text("hero_image_url"),
-  city: text("city"),
-  state: text("state"),
-  contactEmail: text("contact_email"),
-  contactPhone: text("contact_phone"),
-  verified: integer("verified", { mode: "boolean" }).default(false),
-  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
-  /**
-   * OPE-332 — `$onUpdateFn` is what makes this column trustworthy as an HTTP
-   * validator. Before it, updated_at was set only where a writer remembered:
-   * an audit found 36/58 event updates, 26/31 vendor, 16/17 promoter and 10/11
-   * venue updates never touched it — including imageUrl, venueId and geocode
-   * writes, all of which change the rendered page. A 304 built on that would
-   * have told Google "unchanged" after a hero image swap.
-   *
-   * Fixing the ~100 call sites would have fixed today and started rotting
-   * immediately. This fixes the type: every Drizzle update bumps it, and a
-   * future writer cannot forget. The one deliberate exception is the view-count
-   * increment, which goes through raw SQL precisely so page views don't
-   * invalidate the validator — see event-detail-data.ts.
-   *
-   * Fails safe in the right direction: an unnecessary bump costs one extra 200,
-   * a missed bump would serve stale content as fresh.
-   */
-  updatedAt: integer("updated_at", { mode: "timestamp" })
-    .$defaultFn(() => new Date())
-    .$onUpdateFn(() => new Date()),
-  // IMG1 §1b Phase 1 — focal point for crops. Applies to both logo_url and the
-  // OPE-34 hero_image_url (operators may want focal-point on wide hero uploads).
-  imageFocalX: real("image_focal_x").notNull().default(0.5),
-  imageFocalY: real("image_focal_y").notNull().default(0.5),
-  // OPE-31 (drizzle/0139, 2026-06-30) — producer-wide roster-publishing behavior.
-  //   NULL  = unknown / not assessed (default; events research as NEEDS_RESEARCH)
-  //   true  = this producer publishes exhibitor rosters (research normally)
-  //   false = this producer NEVER publishes a public roster — the occurred-sweep
-  //           auto-sets its events to NO_PUBLIC_LIST instead of NEEDS_RESEARCH,
-  //           so research passes stop grinding the same producer-wide dead-end.
-  vendorRosterPublishesLists: integer("vendor_roster_publishes_lists", { mode: "boolean" }),
-  // OPE-35 (drizzle/0140, 2026-07-01) — promoter-enrichment rails, the promoter
-  // analog of the vendor-roster rails. NULL enrichment_status = never assessed.
-  // Set by the create/update enqueue hook (computePromoterEnrichment): website
-  // present + any target field empty → NEEDS_ENRICHMENT. IN_PROGRESS/BLOCKED are
-  // agent/operator-owned; ENRICHED/NO_SOURCE are derived-terminal.
-  enrichmentStatus: text("enrichment_status", {
-    enum: ["NEEDS_ENRICHMENT", "IN_PROGRESS", "ENRICHED", "NO_SOURCE", "BLOCKED", "EXHAUSTED"],
-  }),
-  // JSON snapshot of which target fields are filled: {hero,logo,description,socials,contact}.
-  enrichmentCoverage: text("enrichment_coverage"),
-  // OPE-962 (drizzle/0283) — consecutive successful fetches that staged ZERO
-  // candidates. Reset to 0 by any attempt that stages one, and by a website
-  // change. At PROMOTER_ENRICHMENT_EXHAUST_AFTER the promoter becomes EXHAUSTED.
-  enrichmentZeroYieldStreak: integer("enrichment_zero_yield_streak").notNull().default(0),
-  /**
-   * When a render last WROTE a field to this row. NOT "when did we last look".
-   *
-   * OPE-496 — these two columns are one word apart and mean different things,
-   * and the drain lane keyed its recency filter on this one. It is NULL for 91%
-   * of promoters (including 51 of 56 ENRICHED) precisely because most renders
-   * find nothing to write, so the filter excluded almost nothing and the same
-   * top-25 were re-rendered daily — ~2 promoters/day of real progress against a
-   * 485-deep queue, with every call still returning success.
-   *
-   * A recency filter wants `enrichmentAttemptedAt` below. Use
-   * `list_promoter_enrichment_queue`, which keys on the right one.
-   */
-  lastEnrichedAt: integer("last_enriched_at", { mode: "timestamp" }),
-  // Why a NEEDS_ENRICHMENT promoter can't be drained; set alongside BLOCKED.
-  enrichmentBlockedReason: text("enrichment_blocked_reason", {
-    enum: ["js_gated", "host_gated", "parked", "hijacked", "no_image", "stale", "rate_limited"],
-  }),
-  // OPE-36 (drizzle/0141) — last time the pre-extraction job tried this promoter
-  // (success OR fail). The nightly selector prefers never-attempted, then stale.
-  /**
-   * When a render last LOOKED at this row, whether or not it wrote anything.
-   *
-   * This is the column a recency / "don't re-research yet" filter wants — it is
-   * populated 485/485 across the NEEDS_ENRICHMENT queue and 28/28 for BLOCKED.
-   * See the OPE-496 note on `lastEnrichedAt` for what happens when the two are
-   * confused.
-   */
-  enrichmentAttemptedAt: integer("enrichment_attempted_at", { mode: "timestamp" }),
-  // OPE-63 (drizzle/0144, 2026-07-02) — promoter claim state, parity with the
-  // vendors.claimed/claimedAt/claimedBy trio (see vendors table). `claimed` =
-  // a user has confirmed ownership of this promoter (drives the claim program +
-  // the PROMOTER role grant). Distinct from `user_id`, which merely links an
-  // owning account. Set by approvePromoterClaim (OPE-63) / the claim wizard.
-  claimed: integer("claimed", { mode: "boolean" }).notNull().default(false),
-  claimedAt: integer("claimed_at", { mode: "timestamp" }),
-  claimedBy: text("claimed_by").references(() => users.id, { onDelete: "set null" }),
-  /**
-   * OPE-979 (drizzle/0285) — is this business still trading?
-   *
-   * NULL = never assessed (every row at ship). CEASED means the company closed;
-   * `succeededByPromoterId` names who took its shows over, when anyone did. That
-   * is deliberately NOT a merge: merge_promoter erases one of two real companies,
-   * and the handover is the fact worth keeping.
-   *
-   * Readers today: the enrichment selector and dispatcher (a CEASED promoter is
-   * never re-fetched) and rollover (a CEASED promoter's event is not rolled into
-   * next year). Nothing sets it automatically — the url-health closure_notice
-   * verdict surfaces a candidate; a person records the status.
-   */
-  operatingStatus: text("operating_status", {
-    enum: ["ACTIVE", "CEASED", "MERGED", "UNKNOWN"],
-  }),
-  succeededByPromoterId: text("succeeded_by_promoter_id").references(
-    (): AnySQLiteColumn => promoters.id,
-    { onDelete: "set null" }
-  ),
-  operatingStatusSourceUrl: text("operating_status_source_url"),
-  operatingStatusVerifiedAt: integer("operating_status_verified_at", { mode: "timestamp" }),
-});
+export const promoters = sqliteTable(
+  "promoters",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .unique()
+      .references(() => users.id, { onDelete: "set null" }),
+    companyName: text("company_name").notNull(),
+    slug: text("slug").$type<Slug>().notNull().unique(),
+    description: text("description"),
+    website: text("website"),
+    socialLinks: text("social_links"),
+    logoUrl: text("logo_url"),
+    // OPE-34 (drizzle/0138, 2026-06-30) — full-bleed hero/banner for the promoter
+    // detail page, distinct from the small square `logo_url`. Rendered object-cover
+    // with focal-point crop (image_focal_x/y below). NULL = no hero band.
+    heroImageUrl: text("hero_image_url"),
+    city: text("city"),
+    state: text("state"),
+    contactEmail: text("contact_email"),
+    contactPhone: text("contact_phone"),
+    verified: integer("verified", { mode: "boolean" }).default(false),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    /**
+     * OPE-332 — `$onUpdateFn` is what makes this column trustworthy as an HTTP
+     * validator. Before it, updated_at was set only where a writer remembered:
+     * an audit found 36/58 event updates, 26/31 vendor, 16/17 promoter and 10/11
+     * venue updates never touched it — including imageUrl, venueId and geocode
+     * writes, all of which change the rendered page. A 304 built on that would
+     * have told Google "unchanged" after a hero image swap.
+     *
+     * Fixing the ~100 call sites would have fixed today and started rotting
+     * immediately. This fixes the type: every Drizzle update bumps it, and a
+     * future writer cannot forget. The one deliberate exception is the view-count
+     * increment, which goes through raw SQL precisely so page views don't
+     * invalidate the validator — see event-detail-data.ts.
+     *
+     * Fails safe in the right direction: an unnecessary bump costs one extra 200,
+     * a missed bump would serve stale content as fresh.
+     */
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .$defaultFn(() => new Date())
+      .$onUpdateFn(() => new Date()),
+    // IMG1 §1b Phase 1 — focal point for crops. Applies to both logo_url and the
+    // OPE-34 hero_image_url (operators may want focal-point on wide hero uploads).
+    imageFocalX: real("image_focal_x").notNull().default(0.5),
+    imageFocalY: real("image_focal_y").notNull().default(0.5),
+    // OPE-31 (drizzle/0139, 2026-06-30) — producer-wide roster-publishing behavior.
+    //   NULL  = unknown / not assessed (default; events research as NEEDS_RESEARCH)
+    //   true  = this producer publishes exhibitor rosters (research normally)
+    //   false = this producer NEVER publishes a public roster — the occurred-sweep
+    //           auto-sets its events to NO_PUBLIC_LIST instead of NEEDS_RESEARCH,
+    //           so research passes stop grinding the same producer-wide dead-end.
+    vendorRosterPublishesLists: integer("vendor_roster_publishes_lists", { mode: "boolean" }),
+    // OPE-35 (drizzle/0140, 2026-07-01) — promoter-enrichment rails, the promoter
+    // analog of the vendor-roster rails. NULL enrichment_status = never assessed.
+    // Set by the create/update enqueue hook (computePromoterEnrichment): website
+    // present + any target field empty → NEEDS_ENRICHMENT. IN_PROGRESS/BLOCKED are
+    // agent/operator-owned; ENRICHED/NO_SOURCE are derived-terminal.
+    enrichmentStatus: text("enrichment_status", {
+      enum: ["NEEDS_ENRICHMENT", "IN_PROGRESS", "ENRICHED", "NO_SOURCE", "BLOCKED", "EXHAUSTED"],
+    }),
+    // JSON snapshot of which target fields are filled: {hero,logo,description,socials,contact}.
+    enrichmentCoverage: text("enrichment_coverage"),
+    // OPE-962 (drizzle/0283) — consecutive successful fetches that staged ZERO
+    // candidates. Reset to 0 by any attempt that stages one, and by a website
+    // change. At PROMOTER_ENRICHMENT_EXHAUST_AFTER the promoter becomes EXHAUSTED.
+    enrichmentZeroYieldStreak: integer("enrichment_zero_yield_streak").notNull().default(0),
+    /**
+     * When a render last WROTE a field to this row. NOT "when did we last look".
+     *
+     * OPE-496 — these two columns are one word apart and mean different things,
+     * and the drain lane keyed its recency filter on this one. It is NULL for 91%
+     * of promoters (including 51 of 56 ENRICHED) precisely because most renders
+     * find nothing to write, so the filter excluded almost nothing and the same
+     * top-25 were re-rendered daily — ~2 promoters/day of real progress against a
+     * 485-deep queue, with every call still returning success.
+     *
+     * A recency filter wants `enrichmentAttemptedAt` below. Use
+     * `list_promoter_enrichment_queue`, which keys on the right one.
+     */
+    lastEnrichedAt: integer("last_enriched_at", { mode: "timestamp" }),
+    // Why a NEEDS_ENRICHMENT promoter can't be drained; set alongside BLOCKED.
+    enrichmentBlockedReason: text("enrichment_blocked_reason", {
+      enum: ["js_gated", "host_gated", "parked", "hijacked", "no_image", "stale", "rate_limited"],
+    }),
+    // OPE-36 (drizzle/0141) — last time the pre-extraction job tried this promoter
+    // (success OR fail). The nightly selector prefers never-attempted, then stale.
+    /**
+     * When a render last LOOKED at this row, whether or not it wrote anything.
+     *
+     * This is the column a recency / "don't re-research yet" filter wants — it is
+     * populated 485/485 across the NEEDS_ENRICHMENT queue and 28/28 for BLOCKED.
+     * See the OPE-496 note on `lastEnrichedAt` for what happens when the two are
+     * confused.
+     */
+    enrichmentAttemptedAt: integer("enrichment_attempted_at", { mode: "timestamp" }),
+    // OPE-63 (drizzle/0144, 2026-07-02) — promoter claim state, parity with the
+    // vendors.claimed/claimedAt/claimedBy trio (see vendors table). `claimed` =
+    // a user has confirmed ownership of this promoter (drives the claim program +
+    // the PROMOTER role grant). Distinct from `user_id`, which merely links an
+    // owning account. Set by approvePromoterClaim (OPE-63) / the claim wizard.
+    claimed: integer("claimed", { mode: "boolean" }).notNull().default(false),
+    claimedAt: integer("claimed_at", { mode: "timestamp" }),
+    claimedBy: text("claimed_by").references(() => users.id, { onDelete: "set null" }),
+    /**
+     * OPE-979 (drizzle/0285) — is this business still trading?
+     *
+     * NULL = never assessed (every row at ship). CEASED means the company closed;
+     * `succeededByPromoterId` names who took its shows over, when anyone did. That
+     * is deliberately NOT a merge: merge_promoter erases one of two real companies,
+     * and the handover is the fact worth keeping.
+     *
+     * Readers today: the enrichment selector and dispatcher (a CEASED promoter is
+     * never re-fetched) and rollover (a CEASED promoter's event is not rolled into
+     * next year). Nothing sets it automatically — the url-health closure_notice
+     * verdict surfaces a candidate; a person records the status.
+     */
+    operatingStatus: text("operating_status", {
+      enum: ["ACTIVE", "CEASED", "MERGED", "UNKNOWN"],
+    }),
+    succeededByPromoterId: text("succeeded_by_promoter_id").references(
+      (): AnySQLiteColumn => promoters.id,
+      { onDelete: "set null" }
+    ),
+    operatingStatusSourceUrl: text("operating_status_source_url"),
+    operatingStatusVerifiedAt: integer("operating_status_verified_at", { mode: "timestamp" }),
+  },
+  (t) => ({
+    // OPE-1121 phase 1 — FK child columns with no index; every parent delete/merge scanned these.
+    promotersClaimedByIdx: index("idx_promoters_claimed_by").on(t.claimedBy),
+    promotersSucceededByIdx: index("idx_promoters_succeeded_by").on(t.succeededByPromoterId),
+  })
+);
 
 // Event series — EH3 P0 (drizzle/0127, 2026-06-21). Thin parent table: the
 // stable identity + canonical-metadata home for a recurring event. Each `events`
@@ -500,6 +510,13 @@ export const events = sqliteTable(
      * See `mcp-server/src/tools/vendor.ts` — "stability matters more than
      * canonical-slug semantics" — which is why this column is exempt from the
      * canonical-slug lint rule.
+     *
+     * ⚠️ OPE-1121 — NOT a foreign key, despite the `_id` name. It is an
+     * external scraper/source key (e.g. `houlton-fair`, or a URL), and it does
+     * NOT reference `sources`: measured 2026-09-22, 0 of 1,449 non-null values
+     * match `sources.source_key` (1,270 distinct values). Never wire an FK or a
+     * join to `sources` from this column. Documented rather than renamed: a
+     * rename touches every scraper, dedup key and MCP tool that reads it.
      */
     sourceId: text("source_id"),
     /**
@@ -770,6 +787,8 @@ export const events = sqliteTable(
     performerRosterSourceUrl: text("performer_roster_source_url"),
   },
   (table) => [
+    // OPE-1121 phase 1 — FK child columns with no index; every parent delete/merge scanned these.
+    index("idx_events_submitted_by_user_id").on(table.submittedByUserId),
     index("idx_events_status_startdate").on(table.status, table.startDate),
     index("idx_events_venueid").on(table.venueId),
     index("idx_events_promoterid").on(table.promoterId),
@@ -913,192 +932,204 @@ export const urlHealthChecks = sqliteTable(
 );
 
 // Vendors table
-export const vendors = sqliteTable("vendors", {
-  id: text("id")
-    .primaryKey()
-    .$defaultFn(() => crypto.randomUUID()),
-  userId: text("user_id")
-    .notNull()
-    .unique()
-    .references(() => users.id, { onDelete: "cascade" }),
-  businessName: text("business_name").notNull(),
-  // EH2.1 (drizzle/0121, 2026-06-09) — optional brand display override.
-  // Resolved at render time via displayVendorName() in @takemetothefair/utils.
-  // NULL = render business_name as today (zero behavior change for ~99% of rows).
-  displayName: text("display_name"),
-  slug: text("slug").$type<Slug>().notNull().unique(),
-  description: text("description"),
-  vendorType: text("vendor_type"),
-  products: text("products").default("[]"),
-  website: text("website"),
-  socialLinks: text("social_links"),
-  logoUrl: text("logo_url"),
-  verified: integer("verified", { mode: "boolean" }).default(false),
-  commercial: integer("commercial", { mode: "boolean" }).default(false),
-  canSelfConfirm: integer("can_self_confirm", { mode: "boolean" }).default(false),
-  // Contact Information
-  contactName: text("contact_name"),
-  contactEmail: text("contact_email"),
-  contactPhone: text("contact_phone"),
-  // Physical Address
-  address: text("address"),
-  city: text("city"),
-  state: text("state"),
-  zip: text("zip"),
-  // Geolocation (auto-populated from Google Places)
-  latitude: real("latitude"),
-  longitude: real("longitude"),
-  // Business Details
-  yearEstablished: integer("year_established"),
-  paymentMethods: text("payment_methods").default("[]"), // JSON array
-  licenseInfo: text("license_info"),
-  insuranceInfo: text("insurance_info"),
-  // Enhanced Profile (paid tier, round-3 — drizzle/0037)
-  enhancedProfile: integer("enhanced_profile", { mode: "boolean" }).notNull().default(false),
-  enhancedProfileStartedAt: integer("enhanced_profile_started_at", { mode: "timestamp" }),
-  enhancedProfileExpiresAt: integer("enhanced_profile_expires_at", { mode: "timestamp" }),
-  galleryImages: text("gallery_images").notNull().default("[]"), // JSON array of {url, alt, caption?}
-  featuredPriority: integer("featured_priority").notNull().default(0),
-  // Claimed tier (drizzle/0049) — vendor-confirmed ownership, distinct from userId
-  // which every vendor has. Drives the Claimed badge and tier-transition rules.
-  claimed: integer("claimed", { mode: "boolean" }).notNull().default(false),
-  claimedAt: integer("claimed_at", { mode: "timestamp" }),
-  claimedBy: text("claimed_by").references(() => users.id, { onDelete: "set null" }),
-  // Per-vendor view count (drizzle/0051). Server-incremented on each cached
-  // page render; ISR cache provides implicit ~5-min dedup. Used by the
-  // claimed_ready_for_enhanced_upsell rule for top-decile-by-views ranking.
-  viewCount: integer("view_count").notNull().default(0),
-  // Verified Pro tier scaffold (drizzle/0052). Credentialed identity-verification
-  // signal, orthogonal to the four-tier model. Admin-only set today; the actual
-  // identity-verification UX (LLC lookup, address validation, etc.) is a separate
-  // Q1-2027 product feature that just flips this flag when ready.
-  verifiedPro: integer("verified_pro", { mode: "boolean" }).notNull().default(false),
-  verifiedProAt: integer("verified_pro_at", { mode: "timestamp" }),
-  verifiedProBy: text("verified_pro_by").references(() => users.id, { onDelete: "set null" }),
-  // Soft delete (drizzle/0053). Non-null = vendor invisible everywhere; URL
-  // returns 410 Gone or 301 to redirectToVendorId if set. Hard purge happens
-  // after a 30-day grace window via the sweep-purge-deleted endpoint.
-  deletedAt: integer("deleted_at", { mode: "timestamp" }),
-  redirectToVendorId: text("redirect_to_vendor_id").references((): AnySQLiteColumn => vendors.id, {
-    onDelete: "set null",
-  }),
-  // §10.2 enrichment + quality tracking (drizzle/0054). enrichmentSource is one
-  // of: ai_workers | scraper | manual_admin | vendor_self | mcp_create. The
-  // enum lives in src/lib/enrichment-log.ts (TS-only, not DB-enforced because
-  // adding a new source shouldn't require a migration). completenessScore is
-  // a cached 0-100 value; recomputed via computeVendorCompleteness on every
-  // insert/update and gates inclusion in /sitemap.xml at >= 40.
-  enrichmentSource: text("enrichment_source"),
-  /**
-   * When a render last LOOKED at this row, whether or not it wrote anything.
-   *
-   * This is the column a recency / "don't re-research yet" filter wants — it is
-   * populated 485/485 across the NEEDS_ENRICHMENT queue and 28/28 for BLOCKED.
-   * See the OPE-496 note on `lastEnrichedAt` for what happens when the two are
-   * confused.
-   */
-  enrichmentAttemptedAt: integer("enrichment_attempted_at", { mode: "timestamp" }),
-  domainHijacked: integer("domain_hijacked", { mode: "boolean" }).notNull().default(false),
-  completenessScore: integer("completeness_score").notNull().default(0),
-  // EH1 Phase 1 — vendor hierarchy + relationship model.
-  // Originally added in drizzle/0106 (minimal model: role + parent_vendor_id
-  // + default_display/override_permitted/display_preference). Extended in
-  // drizzle/0107 (2026-06-05) to the full relationship model approved in
-  // Dev-Spec-Vendor-Hierarchy-Phase1-2026-06-04.md: brand vs operator
-  // parent split, 8-shape relationship_type enum, alias links, and a
-  // wider display vocabulary that can express operator_parent + both.
-  //
-  // `role` stays as a fast NATIONAL/LOCAL_OFFICE/INDEPENDENT discriminator
-  // (existing render page + sitemap SQL + admin form read it heavily).
-  role: text("role", { enum: ["NATIONAL", "LOCAL_OFFICE", "INDEPENDENT"] })
-    .notNull()
-    .default("INDEPENDENT"),
-  // Brand parent: who the consumer sees on signage (the national brand).
-  // The display resolver consumes this one. NULL for INDEPENDENT and
-  // for brand-parent rows themselves.
-  brandParentVendorId: text("brand_parent_vendor_id").references(
-    (): AnySQLiteColumn => vendors.id,
-    { onDelete: "set null" }
-  ),
-  // Operator parent: who signs contracts / pays booth fees (e.g. Esler
-  // Companies). Drives sales-motion + portfolio analytics, NOT public
-  // display. Often equal to brandParentVendorId for branch shapes;
-  // distinct for shape C (franchise with multi-market operator).
-  operatorParentVendorId: text("operator_parent_vendor_id").references(
-    (): AnySQLiteColumn => vendors.id,
-    { onDelete: "set null" }
-  ),
-  // Alias link: "this row IS that row, different spelling." Resolved
-  // transparently by resolveAlias() in src/lib/vendor-hierarchy.ts; the
-  // aliased row is also soft-deleted (deletedAt + redirectToVendorId)
-  // so middleware can 301-redirect its URL to the canonical.
-  aliasOfVendorId: text("alias_of_vendor_id").references((): AnySQLiteColumn => vendors.id, {
-    onDelete: "set null",
-  }),
-  // 8 shapes from the design doc — branch (W-2), franchise (independent
-  // operator), dealer (reseller), member (cooperative), agent (1099),
-  // employee_branch (small-corp branch), government (gov entity),
-  // independent (default — no relationship). SQL CHECK enforces.
-  relationshipType: text("relationship_type", {
-    enum: [
-      "branch",
-      "franchise",
-      "dealer",
-      "member",
-      "agent",
-      "employee_branch",
-      "government",
-      "independent",
-    ],
+export const vendors = sqliteTable(
+  "vendors",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .unique()
+      .references(() => users.id, { onDelete: "cascade" }),
+    businessName: text("business_name").notNull(),
+    // EH2.1 (drizzle/0121, 2026-06-09) — optional brand display override.
+    // Resolved at render time via displayVendorName() in @takemetothefair/utils.
+    // NULL = render business_name as today (zero behavior change for ~99% of rows).
+    displayName: text("display_name"),
+    slug: text("slug").$type<Slug>().notNull().unique(),
+    description: text("description"),
+    vendorType: text("vendor_type"),
+    products: text("products").default("[]"),
+    website: text("website"),
+    socialLinks: text("social_links"),
+    logoUrl: text("logo_url"),
+    verified: integer("verified", { mode: "boolean" }).default(false),
+    commercial: integer("commercial", { mode: "boolean" }).default(false),
+    canSelfConfirm: integer("can_self_confirm", { mode: "boolean" }).default(false),
+    // Contact Information
+    contactName: text("contact_name"),
+    contactEmail: text("contact_email"),
+    contactPhone: text("contact_phone"),
+    // Physical Address
+    address: text("address"),
+    city: text("city"),
+    state: text("state"),
+    zip: text("zip"),
+    // Geolocation (auto-populated from Google Places)
+    latitude: real("latitude"),
+    longitude: real("longitude"),
+    // Business Details
+    yearEstablished: integer("year_established"),
+    paymentMethods: text("payment_methods").default("[]"), // JSON array
+    licenseInfo: text("license_info"),
+    insuranceInfo: text("insurance_info"),
+    // Enhanced Profile (paid tier, round-3 — drizzle/0037)
+    enhancedProfile: integer("enhanced_profile", { mode: "boolean" }).notNull().default(false),
+    enhancedProfileStartedAt: integer("enhanced_profile_started_at", { mode: "timestamp" }),
+    enhancedProfileExpiresAt: integer("enhanced_profile_expires_at", { mode: "timestamp" }),
+    galleryImages: text("gallery_images").notNull().default("[]"), // JSON array of {url, alt, caption?}
+    featuredPriority: integer("featured_priority").notNull().default(0),
+    // Claimed tier (drizzle/0049) — vendor-confirmed ownership, distinct from userId
+    // which every vendor has. Drives the Claimed badge and tier-transition rules.
+    claimed: integer("claimed", { mode: "boolean" }).notNull().default(false),
+    claimedAt: integer("claimed_at", { mode: "timestamp" }),
+    claimedBy: text("claimed_by").references(() => users.id, { onDelete: "set null" }),
+    // Per-vendor view count (drizzle/0051). Server-incremented on each cached
+    // page render; ISR cache provides implicit ~5-min dedup. Used by the
+    // claimed_ready_for_enhanced_upsell rule for top-decile-by-views ranking.
+    viewCount: integer("view_count").notNull().default(0),
+    // Verified Pro tier scaffold (drizzle/0052). Credentialed identity-verification
+    // signal, orthogonal to the four-tier model. Admin-only set today; the actual
+    // identity-verification UX (LLC lookup, address validation, etc.) is a separate
+    // Q1-2027 product feature that just flips this flag when ready.
+    verifiedPro: integer("verified_pro", { mode: "boolean" }).notNull().default(false),
+    verifiedProAt: integer("verified_pro_at", { mode: "timestamp" }),
+    verifiedProBy: text("verified_pro_by").references(() => users.id, { onDelete: "set null" }),
+    // Soft delete (drizzle/0053). Non-null = vendor invisible everywhere; URL
+    // returns 410 Gone or 301 to redirectToVendorId if set. Hard purge happens
+    // after a 30-day grace window via the sweep-purge-deleted endpoint.
+    deletedAt: integer("deleted_at", { mode: "timestamp" }),
+    redirectToVendorId: text("redirect_to_vendor_id").references(
+      (): AnySQLiteColumn => vendors.id,
+      {
+        onDelete: "set null",
+      }
+    ),
+    // §10.2 enrichment + quality tracking (drizzle/0054). enrichmentSource is one
+    // of: ai_workers | scraper | manual_admin | vendor_self | mcp_create. The
+    // enum lives in src/lib/enrichment-log.ts (TS-only, not DB-enforced because
+    // adding a new source shouldn't require a migration). completenessScore is
+    // a cached 0-100 value; recomputed via computeVendorCompleteness on every
+    // insert/update and gates inclusion in /sitemap.xml at >= 40.
+    enrichmentSource: text("enrichment_source"),
+    /**
+     * When a render last LOOKED at this row, whether or not it wrote anything.
+     *
+     * This is the column a recency / "don't re-research yet" filter wants — it is
+     * populated 485/485 across the NEEDS_ENRICHMENT queue and 28/28 for BLOCKED.
+     * See the OPE-496 note on `lastEnrichedAt` for what happens when the two are
+     * confused.
+     */
+    enrichmentAttemptedAt: integer("enrichment_attempted_at", { mode: "timestamp" }),
+    domainHijacked: integer("domain_hijacked", { mode: "boolean" }).notNull().default(false),
+    completenessScore: integer("completeness_score").notNull().default(0),
+    // EH1 Phase 1 — vendor hierarchy + relationship model.
+    // Originally added in drizzle/0106 (minimal model: role + parent_vendor_id
+    // + default_display/override_permitted/display_preference). Extended in
+    // drizzle/0107 (2026-06-05) to the full relationship model approved in
+    // Dev-Spec-Vendor-Hierarchy-Phase1-2026-06-04.md: brand vs operator
+    // parent split, 8-shape relationship_type enum, alias links, and a
+    // wider display vocabulary that can express operator_parent + both.
+    //
+    // `role` stays as a fast NATIONAL/LOCAL_OFFICE/INDEPENDENT discriminator
+    // (existing render page + sitemap SQL + admin form read it heavily).
+    role: text("role", { enum: ["NATIONAL", "LOCAL_OFFICE", "INDEPENDENT"] })
+      .notNull()
+      .default("INDEPENDENT"),
+    // Brand parent: who the consumer sees on signage (the national brand).
+    // The display resolver consumes this one. NULL for INDEPENDENT and
+    // for brand-parent rows themselves.
+    brandParentVendorId: text("brand_parent_vendor_id").references(
+      (): AnySQLiteColumn => vendors.id,
+      { onDelete: "set null" }
+    ),
+    // Operator parent: who signs contracts / pays booth fees (e.g. Esler
+    // Companies). Drives sales-motion + portfolio analytics, NOT public
+    // display. Often equal to brandParentVendorId for branch shapes;
+    // distinct for shape C (franchise with multi-market operator).
+    operatorParentVendorId: text("operator_parent_vendor_id").references(
+      (): AnySQLiteColumn => vendors.id,
+      { onDelete: "set null" }
+    ),
+    // Alias link: "this row IS that row, different spelling." Resolved
+    // transparently by resolveAlias() in src/lib/vendor-hierarchy.ts; the
+    // aliased row is also soft-deleted (deletedAt + redirectToVendorId)
+    // so middleware can 301-redirect its URL to the canonical.
+    aliasOfVendorId: text("alias_of_vendor_id").references((): AnySQLiteColumn => vendors.id, {
+      onDelete: "set null",
+    }),
+    // 8 shapes from the design doc — branch (W-2), franchise (independent
+    // operator), dealer (reseller), member (cooperative), agent (1099),
+    // employee_branch (small-corp branch), government (gov entity),
+    // independent (default — no relationship). SQL CHECK enforces.
+    relationshipType: text("relationship_type", {
+      enum: [
+        "branch",
+        "franchise",
+        "dealer",
+        "member",
+        "agent",
+        "employee_branch",
+        "government",
+        "independent",
+      ],
+    })
+      .notNull()
+      .default("independent"),
+    // Parent-side: what the brand-parent picks as its offices' default
+    // display target. 'self' = each office is its own canonical surface;
+    // 'brand_parent' = offices canonical-up to the brand hub; 'both' =
+    // office is canonical but also shown under the brand. NULL on
+    // non-parent rows.
+    defaultChildDisplay: text("default_child_display", {
+      enum: ["self", "brand_parent", "both"],
+    }),
+    // Child-side: parent-controlled gate. Default 0 — the parent's
+    // defaultChildDisplay always wins until the parent explicitly grants
+    // override. A vendor claim grants edit rights but NEVER bypasses this
+    // gate (spec §4.4 — parent's gate always wins).
+    displayOverridePermitted: integer("display_override_permitted", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    // Child-side: the office's own requested preference. Honored only when
+    // displayOverridePermitted=true AND displayMode != 'inherit'. INHERIT
+    // falls through to parent.defaultChildDisplay.
+    displayMode: text("display_mode", {
+      enum: ["inherit", "self", "brand_parent", "operator_parent", "both"],
+    }),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    /**
+     * OPE-332 — `$onUpdateFn` is what makes this column trustworthy as an HTTP
+     * validator. Before it, updated_at was set only where a writer remembered:
+     * an audit found 36/58 event updates, 26/31 vendor, 16/17 promoter and 10/11
+     * venue updates never touched it — including imageUrl, venueId and geocode
+     * writes, all of which change the rendered page. A 304 built on that would
+     * have told Google "unchanged" after a hero image swap.
+     *
+     * Fixing the ~100 call sites would have fixed today and started rotting
+     * immediately. This fixes the type: every Drizzle update bumps it, and a
+     * future writer cannot forget. The one deliberate exception is the view-count
+     * increment, which goes through raw SQL precisely so page views don't
+     * invalidate the validator — see event-detail-data.ts.
+     *
+     * Fails safe in the right direction: an unnecessary bump costs one extra 200,
+     * a missed bump would serve stale content as fresh.
+     */
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .$defaultFn(() => new Date())
+      .$onUpdateFn(() => new Date()),
+    // IMG1 §1b Phase 1 — applies to logo_url. See events table comment.
+    imageFocalX: real("image_focal_x").notNull().default(0.5),
+    imageFocalY: real("image_focal_y").notNull().default(0.5),
+  },
+  (t) => ({
+    // OPE-1121 phase 1 — FK child columns with no index; every parent delete/merge scanned these.
+    vendorsClaimedByIdx: index("idx_vendors_claimed_by").on(t.claimedBy),
+    vendorsRedirectToIdx: index("idx_vendors_redirect_to").on(t.redirectToVendorId),
+    vendorsVerifiedProByIdx: index("idx_vendors_verified_pro_by").on(t.verifiedProBy),
   })
-    .notNull()
-    .default("independent"),
-  // Parent-side: what the brand-parent picks as its offices' default
-  // display target. 'self' = each office is its own canonical surface;
-  // 'brand_parent' = offices canonical-up to the brand hub; 'both' =
-  // office is canonical but also shown under the brand. NULL on
-  // non-parent rows.
-  defaultChildDisplay: text("default_child_display", {
-    enum: ["self", "brand_parent", "both"],
-  }),
-  // Child-side: parent-controlled gate. Default 0 — the parent's
-  // defaultChildDisplay always wins until the parent explicitly grants
-  // override. A vendor claim grants edit rights but NEVER bypasses this
-  // gate (spec §4.4 — parent's gate always wins).
-  displayOverridePermitted: integer("display_override_permitted", { mode: "boolean" })
-    .notNull()
-    .default(false),
-  // Child-side: the office's own requested preference. Honored only when
-  // displayOverridePermitted=true AND displayMode != 'inherit'. INHERIT
-  // falls through to parent.defaultChildDisplay.
-  displayMode: text("display_mode", {
-    enum: ["inherit", "self", "brand_parent", "operator_parent", "both"],
-  }),
-  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
-  /**
-   * OPE-332 — `$onUpdateFn` is what makes this column trustworthy as an HTTP
-   * validator. Before it, updated_at was set only where a writer remembered:
-   * an audit found 36/58 event updates, 26/31 vendor, 16/17 promoter and 10/11
-   * venue updates never touched it — including imageUrl, venueId and geocode
-   * writes, all of which change the rendered page. A 304 built on that would
-   * have told Google "unchanged" after a hero image swap.
-   *
-   * Fixing the ~100 call sites would have fixed today and started rotting
-   * immediately. This fixes the type: every Drizzle update bumps it, and a
-   * future writer cannot forget. The one deliberate exception is the view-count
-   * increment, which goes through raw SQL precisely so page views don't
-   * invalidate the validator — see event-detail-data.ts.
-   *
-   * Fails safe in the right direction: an unnecessary bump costs one extra 200,
-   * a missed bump would serve stale content as fresh.
-   */
-  updatedAt: integer("updated_at", { mode: "timestamp" })
-    .$defaultFn(() => new Date())
-    .$onUpdateFn(() => new Date()),
-  // IMG1 §1b Phase 1 — applies to logo_url. See events table comment.
-  imageFocalX: real("image_focal_x").notNull().default(0.5),
-  imageFocalY: real("image_focal_y").notNull().default(0.5),
-});
+);
 
 /**
  * Vendor gallery photos — OPE-211 (drizzle/0160, 2026-07-15).
@@ -1258,6 +1289,8 @@ export const entityClaims = sqliteTable(
     decidedBy: text("decided_by").references(() => users.id, { onDelete: "set null" }),
   },
   (t) => ({
+    // OPE-1121 phase 1 — FK child columns with no index; every parent delete/merge scanned these.
+    entityClaimsDecidedByIdx: index("idx_entity_claims_decided_by").on(t.decidedBy),
     entityIdx: index("idx_entity_claims_entity").on(t.entityType, t.entityId),
     userIdx: index("idx_entity_claims_user").on(t.userId),
     statusIdx: index("idx_entity_claims_status").on(t.status),
@@ -1297,6 +1330,8 @@ export const claimTokens = sqliteTable(
     expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
   },
   (t) => ({
+    // OPE-1121 phase 1 — FK child columns with no index; every parent delete/merge scanned these.
+    claimTokensUserIdIdx: index("idx_claim_tokens_user_id").on(t.userId),
     entityIdx: index("idx_claim_tokens_entity").on(t.entityType, t.entityId),
     expiresIdx: index("idx_claim_tokens_expires").on(t.expiresAt),
   })
@@ -1357,115 +1392,125 @@ export const eventSlugHistory = sqliteTable(
 // sibling `vendors.vendor_type` is likewise free text with a TS-level vocabulary.
 // Phase 1 will pin the allowed values in a TS enum (same pattern as
 // enrichment_source) — a value-set change must not require a migration.
-export const performers = sqliteTable("performers", {
-  id: text("id")
-    .primaryKey()
-    .$defaultFn(() => crypto.randomUUID()),
-  // Nullable (unlike vendors): a performer can exist unclaimed with no account.
-  // Unique so a claimed performer maps to one user (NULLs are distinct in SQLite).
-  userId: text("user_id")
-    .unique()
-    .references(() => users.id, { onDelete: "set null" }),
-  name: text("name").notNull(),
-  slug: text("slug").$type<Slug>().notNull().unique(),
-  // PERSON = solo act; GROUP = band/troupe. TS-typed at the app layer.
-  performerType: text("performer_type", { enum: ["PERSON", "GROUP"] }),
-  // Free text; see the block comment above re: deferred enum.
-  actCategory: text("act_category"),
-  description: text("description"),
-  website: text("website"),
-  socialLinks: text("social_links"), // JSON
-  imageUrl: text("image_url"),
-  imageFocalX: real("image_focal_x").notNull().default(0.5),
-  imageFocalY: real("image_focal_y").notNull().default(0.5),
-  homeBaseCity: text("home_base_city"),
-  homeBaseState: text("home_base_state"),
-  contactName: text("contact_name"),
-  contactEmail: text("contact_email"),
-  contactPhone: text("contact_phone"),
-  verified: integer("verified", { mode: "boolean" }).notNull().default(false),
-  verifiedPro: integer("verified_pro", { mode: "boolean" }).notNull().default(false),
-  // OPE-113 (drizzle/0153) — verify audit columns, mirroring vendors. The OPE-112
-  // ticket's inline list omitted these; the design doc §3.1 includes them.
-  verifiedProAt: integer("verified_pro_at", { mode: "timestamp" }),
-  verifiedProBy: text("verified_pro_by").references(() => users.id, { onDelete: "set null" }),
-  // Claimed tier — mirrors vendors.claimed.
-  claimed: integer("claimed", { mode: "boolean" }).notNull().default(false),
-  claimedAt: integer("claimed_at", { mode: "timestamp" }),
-  claimedBy: text("claimed_by").references(() => users.id, { onDelete: "set null" }),
-  // Enhanced Profile (paid tier) — mirrors vendors.
-  enhancedProfile: integer("enhanced_profile", { mode: "boolean" }).notNull().default(false),
-  enhancedProfileStartedAt: integer("enhanced_profile_started_at", { mode: "timestamp" }),
-  enhancedProfileExpiresAt: integer("enhanced_profile_expires_at", { mode: "timestamp" }),
-  // Enrichment + quality tracking — mirrors vendors §10.2.
-  enrichmentSource: text("enrichment_source"),
-  /**
-   * When a render last LOOKED at this row, whether or not it wrote anything.
-   *
-   * This is the column a recency / "don't re-research yet" filter wants — it is
-   * populated 485/485 across the NEEDS_ENRICHMENT queue and 28/28 for BLOCKED.
-   * See the OPE-496 note on `lastEnrichedAt` for what happens when the two are
-   * confused.
-   */
-  enrichmentAttemptedAt: integer("enrichment_attempted_at", { mode: "timestamp" }),
-  domainHijacked: integer("domain_hijacked", { mode: "boolean" }).notNull().default(false),
-  completenessScore: integer("completeness_score").notNull().default(0),
-  // OPE-116 (drizzle/0154) — enrichment rails, mirroring promoters (drizzle/0140).
-  // The enrich_performer pipeline drives these; NULL status = never assessed.
-  enrichmentStatus: text("enrichment_status", {
-    enum: ["NEEDS_ENRICHMENT", "IN_PROGRESS", "ENRICHED", "NO_SOURCE", "BLOCKED"],
-  }),
-  enrichmentCoverage: text("enrichment_coverage"), // JSON {image,description,socials,contact}
-  /**
-   * When a render last WROTE a field to this row. NOT "when did we last look".
-   *
-   * OPE-496 — these two columns are one word apart and mean different things,
-   * and the drain lane keyed its recency filter on this one. It is NULL for 91%
-   * of promoters (including 51 of 56 ENRICHED) precisely because most renders
-   * find nothing to write, so the filter excluded almost nothing and the same
-   * top-25 were re-rendered daily — ~2 promoters/day of real progress against a
-   * 485-deep queue, with every call still returning success.
-   *
-   * A recency filter wants `enrichmentAttemptedAt` below. Use
-   * `list_promoter_enrichment_queue`, which keys on the right one.
-   */
-  lastEnrichedAt: integer("last_enriched_at", { mode: "timestamp" }),
-  enrichmentBlockedReason: text("enrichment_blocked_reason", {
-    enum: ["js_gated", "host_gated", "parked", "hijacked", "no_image", "stale", "rate_limited"],
-  }),
-  // Soft-delete + redirect/alias — mirrors vendors.
-  redirectToPerformerId: text("redirect_to_performer_id").references(
-    (): AnySQLiteColumn => performers.id,
-    { onDelete: "set null" }
-  ),
-  aliasOfPerformerId: text("alias_of_performer_id").references(
-    (): AnySQLiteColumn => performers.id,
-    { onDelete: "set null" }
-  ),
-  viewCount: integer("view_count").notNull().default(0),
-  deletedAt: integer("deleted_at", { mode: "timestamp" }),
-  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
-  /**
-   * OPE-332 — `$onUpdateFn` is what makes this column trustworthy as an HTTP
-   * validator. Before it, updated_at was set only where a writer remembered:
-   * an audit found 36/58 event updates, 26/31 vendor, 16/17 promoter and 10/11
-   * venue updates never touched it — including imageUrl, venueId and geocode
-   * writes, all of which change the rendered page. A 304 built on that would
-   * have told Google "unchanged" after a hero image swap.
-   *
-   * Fixing the ~100 call sites would have fixed today and started rotting
-   * immediately. This fixes the type: every Drizzle update bumps it, and a
-   * future writer cannot forget. The one deliberate exception is the view-count
-   * increment, which goes through raw SQL precisely so page views don't
-   * invalidate the validator — see event-detail-data.ts.
-   *
-   * Fails safe in the right direction: an unnecessary bump costs one extra 200,
-   * a missed bump would serve stale content as fresh.
-   */
-  updatedAt: integer("updated_at", { mode: "timestamp" })
-    .$defaultFn(() => new Date())
-    .$onUpdateFn(() => new Date()),
-});
+export const performers = sqliteTable(
+  "performers",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    // Nullable (unlike vendors): a performer can exist unclaimed with no account.
+    // Unique so a claimed performer maps to one user (NULLs are distinct in SQLite).
+    userId: text("user_id")
+      .unique()
+      .references(() => users.id, { onDelete: "set null" }),
+    name: text("name").notNull(),
+    slug: text("slug").$type<Slug>().notNull().unique(),
+    // PERSON = solo act; GROUP = band/troupe. TS-typed at the app layer.
+    performerType: text("performer_type", { enum: ["PERSON", "GROUP"] }),
+    // Free text; see the block comment above re: deferred enum.
+    actCategory: text("act_category"),
+    description: text("description"),
+    website: text("website"),
+    socialLinks: text("social_links"), // JSON
+    imageUrl: text("image_url"),
+    imageFocalX: real("image_focal_x").notNull().default(0.5),
+    imageFocalY: real("image_focal_y").notNull().default(0.5),
+    homeBaseCity: text("home_base_city"),
+    homeBaseState: text("home_base_state"),
+    contactName: text("contact_name"),
+    contactEmail: text("contact_email"),
+    contactPhone: text("contact_phone"),
+    verified: integer("verified", { mode: "boolean" }).notNull().default(false),
+    verifiedPro: integer("verified_pro", { mode: "boolean" }).notNull().default(false),
+    // OPE-113 (drizzle/0153) — verify audit columns, mirroring vendors. The OPE-112
+    // ticket's inline list omitted these; the design doc §3.1 includes them.
+    verifiedProAt: integer("verified_pro_at", { mode: "timestamp" }),
+    verifiedProBy: text("verified_pro_by").references(() => users.id, { onDelete: "set null" }),
+    // Claimed tier — mirrors vendors.claimed.
+    claimed: integer("claimed", { mode: "boolean" }).notNull().default(false),
+    claimedAt: integer("claimed_at", { mode: "timestamp" }),
+    claimedBy: text("claimed_by").references(() => users.id, { onDelete: "set null" }),
+    // Enhanced Profile (paid tier) — mirrors vendors.
+    enhancedProfile: integer("enhanced_profile", { mode: "boolean" }).notNull().default(false),
+    enhancedProfileStartedAt: integer("enhanced_profile_started_at", { mode: "timestamp" }),
+    enhancedProfileExpiresAt: integer("enhanced_profile_expires_at", { mode: "timestamp" }),
+    // Enrichment + quality tracking — mirrors vendors §10.2.
+    enrichmentSource: text("enrichment_source"),
+    /**
+     * When a render last LOOKED at this row, whether or not it wrote anything.
+     *
+     * This is the column a recency / "don't re-research yet" filter wants — it is
+     * populated 485/485 across the NEEDS_ENRICHMENT queue and 28/28 for BLOCKED.
+     * See the OPE-496 note on `lastEnrichedAt` for what happens when the two are
+     * confused.
+     */
+    enrichmentAttemptedAt: integer("enrichment_attempted_at", { mode: "timestamp" }),
+    domainHijacked: integer("domain_hijacked", { mode: "boolean" }).notNull().default(false),
+    completenessScore: integer("completeness_score").notNull().default(0),
+    // OPE-116 (drizzle/0154) — enrichment rails, mirroring promoters (drizzle/0140).
+    // The enrich_performer pipeline drives these; NULL status = never assessed.
+    enrichmentStatus: text("enrichment_status", {
+      enum: ["NEEDS_ENRICHMENT", "IN_PROGRESS", "ENRICHED", "NO_SOURCE", "BLOCKED"],
+    }),
+    enrichmentCoverage: text("enrichment_coverage"), // JSON {image,description,socials,contact}
+    /**
+     * When a render last WROTE a field to this row. NOT "when did we last look".
+     *
+     * OPE-496 — these two columns are one word apart and mean different things,
+     * and the drain lane keyed its recency filter on this one. It is NULL for 91%
+     * of promoters (including 51 of 56 ENRICHED) precisely because most renders
+     * find nothing to write, so the filter excluded almost nothing and the same
+     * top-25 were re-rendered daily — ~2 promoters/day of real progress against a
+     * 485-deep queue, with every call still returning success.
+     *
+     * A recency filter wants `enrichmentAttemptedAt` below. Use
+     * `list_promoter_enrichment_queue`, which keys on the right one.
+     */
+    lastEnrichedAt: integer("last_enriched_at", { mode: "timestamp" }),
+    enrichmentBlockedReason: text("enrichment_blocked_reason", {
+      enum: ["js_gated", "host_gated", "parked", "hijacked", "no_image", "stale", "rate_limited"],
+    }),
+    // Soft-delete + redirect/alias — mirrors vendors.
+    redirectToPerformerId: text("redirect_to_performer_id").references(
+      (): AnySQLiteColumn => performers.id,
+      { onDelete: "set null" }
+    ),
+    aliasOfPerformerId: text("alias_of_performer_id").references(
+      (): AnySQLiteColumn => performers.id,
+      { onDelete: "set null" }
+    ),
+    viewCount: integer("view_count").notNull().default(0),
+    deletedAt: integer("deleted_at", { mode: "timestamp" }),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    /**
+     * OPE-332 — `$onUpdateFn` is what makes this column trustworthy as an HTTP
+     * validator. Before it, updated_at was set only where a writer remembered:
+     * an audit found 36/58 event updates, 26/31 vendor, 16/17 promoter and 10/11
+     * venue updates never touched it — including imageUrl, venueId and geocode
+     * writes, all of which change the rendered page. A 304 built on that would
+     * have told Google "unchanged" after a hero image swap.
+     *
+     * Fixing the ~100 call sites would have fixed today and started rotting
+     * immediately. This fixes the type: every Drizzle update bumps it, and a
+     * future writer cannot forget. The one deliberate exception is the view-count
+     * increment, which goes through raw SQL precisely so page views don't
+     * invalidate the validator — see event-detail-data.ts.
+     *
+     * Fails safe in the right direction: an unnecessary bump costs one extra 200,
+     * a missed bump would serve stale content as fresh.
+     */
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .$defaultFn(() => new Date())
+      .$onUpdateFn(() => new Date()),
+  },
+  (t) => ({
+    // OPE-1121 phase 1 — FK child columns with no index; every parent delete/merge scanned these.
+    performersAliasOfIdx: index("idx_performers_alias_of").on(t.aliasOfPerformerId),
+    performersClaimedByIdx: index("idx_performers_claimed_by").on(t.claimedBy),
+    performersRedirectToIdx: index("idx_performers_redirect_to").on(t.redirectToPerformerId),
+    performersVerifiedProByIdx: index("idx_performers_verified_pro_by").on(t.verifiedProBy),
+  })
+);
 
 // One row = one performance/set (an APPEARANCE), mirroring event_vendors. A
 // performer can appear multiple times at one event (Sat 3 PM + Sun 10 AM), so the
@@ -1781,6 +1826,8 @@ export const eventVendors = sqliteTable(
     updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   },
   (table) => [
+    // OPE-1121 phase 1 — FK child columns with no index; every parent delete/merge scanned these.
+    index("idx_event_vendors_event_day_id").on(table.eventDayId),
     index("idx_eventvendors_eventid_status").on(table.eventId, table.status),
     index("idx_eventvendors_vendorid").on(table.vendorId),
     // K18 Phase 1: new index shapes for per-occurrence queries.
@@ -1885,6 +1932,9 @@ export const eventDataCitations = sqliteTable(
       .$defaultFn(() => new Date()),
   },
   (table) => [
+    // OPE-1121 phase 1 — FK child columns with no index; every parent delete/merge scanned these.
+    index("idx_event_data_citations_created_by").on(table.createdBy),
+    index("idx_event_data_citations_supersedes").on(table.supersedesCitationId),
     index("idx_citations_event_field").on(table.eventId, table.fieldName),
     // OPE-692 — "which citations has nobody been able to re-check?"
     index("idx_citations_recheck_state").on(table.recheckState, table.recheckAt),
@@ -4299,6 +4349,8 @@ export const promoterOutreachAttempts = sqliteTable(
     followUpOf: text("follow_up_of"),
   },
   (t) => [
+    // OPE-1121 phase 1 — FK child columns with no index; every parent delete/merge scanned these.
+    index("idx_poa_follow_up_of").on(t.followUpOf),
     index("idx_promoter_outreach_promoter").on(t.promoterId),
     index("idx_promoter_outreach_status").on(t.status, t.createdAt),
     index("idx_promoter_outreach_event").on(t.eventId),
@@ -4471,7 +4523,12 @@ export const locationZips = sqliteTable(
       .references(() => locations.id, { onDelete: "cascade" }),
     zip: text("zip").notNull(),
   },
-  (t) => [primaryKey({ columns: [t.locationId, t.zip] }), index("idx_location_zips_zip").on(t.zip)]
+  (t) => [
+    primaryKey({ columns: [t.locationId, t.zip] }),
+    index("idx_location_zips_zip").on(t.zip),
+    // OPE-1121 phase 1 — the FK child column had no index.
+    index("idx_location_zips_location_id").on(t.locationId),
+  ]
 );
 
 export const timeToIndexLog = sqliteTable(
@@ -5442,6 +5499,8 @@ export const inboundEmailSenderFeedback = sqliteTable(
     submitterUserAgent: text("submitter_user_agent"),
   },
   (t) => [
+    // OPE-1121 phase 1 — FK child columns with no index; every parent delete/merge scanned these.
+    index("idx_iesf_resulting_event_id").on(t.resultingEventId),
     index("idx_sender_feedback_email").on(t.inboundEmailId),
     index("idx_sender_feedback_moment").on(t.feedbackMoment, t.feedbackValue),
   ]
