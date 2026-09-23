@@ -79,7 +79,12 @@ CLOUDFLARE_ACCOUNT_ID = "e6011e48b7014ef83c77e3c767dac6cf"
 #
 # Declared here, not in the dashboard: a dashboard [vars] value is silently
 # wiped by the next `wrangler deploy`.
-PROMOTER_OUTREACH_ENABLED = "false"
+#
+# ON since 2026-09-23 — John's GO on OPE-384 ("turn promoter outreach on").
+# The first live send is ONE approved attempt (Pratt Street, ce49dd9d…); other
+# queued attempts are NOT drained and go back to John. Turning this on arms the
+# `promoter-outreach-attempts` heartbeat probe in the same deploy (drizzle/0306).
+PROMOTER_OUTREACH_ENABLED = "true"
 ENRICHMENT_DRY_RUN = "true"
 # OPE-163 — customer-facing reply send gate. reply_to_inbound_email (and the
 # /admin/inbound-emails compose UI) refuse to send unless this is "true".
