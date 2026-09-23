@@ -1,4 +1,5 @@
 import { NewsletterSignupBlock } from "@/components/newsletter/newsletter-signup-block";
+import { isPastUnconfirmed, PAST_UNCONFIRMED_LABEL } from "@/lib/event-lifecycle";
 import { getEventGallery } from "@/lib/event-photos";
 import { EventGallery } from "@/components/events/EventGallery";
 import { notFound } from "next/navigation";
@@ -585,6 +586,7 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
           categories={parseJsonArray(event.categories)}
           datesConfirmed={event.datesConfirmed}
           lifecycleStatus={event.lifecycleStatus}
+          pastUnconfirmed={isPastUnconfirmed(event)}
           previousStartDate={event.previousStartDate}
           previousEndDate={event.previousEndDate}
           eventDays={event.eventDays}
@@ -643,7 +645,17 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
           ]}
         />
         <FAQPageSchema items={faqItems} />
-        {event.status === "TENTATIVE" && (
+        {/* OPE-1098 — a TENTATIVE event whose date has passed is not an
+            unconfirmed FUTURE event. Display-only: the data stays TENTATIVE. */}
+        {isPastUnconfirmed(event) && (
+          <div className="mb-6 rounded-lg border border-border bg-muted p-4">
+            <p className="text-sm text-muted-foreground">
+              <strong>{PAST_UNCONFIRMED_LABEL}</strong> — this event&apos;s date has passed, and we
+              never confirmed with the organizer that it took place.
+            </p>
+          </div>
+        )}
+        {event.status === "TENTATIVE" && !isPastUnconfirmed(event) && (
           <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4">
             <p className="text-sm text-amber-800">
               {shouldShowProjectedDateCopy(event) ? (
@@ -867,8 +879,12 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
                   <div>
                     <div className="flex flex-wrap gap-2 mb-3">
                       {event.featured && <Badge variant="warning">Featured</Badge>}
-                      {event.status === "TENTATIVE" && (
-                        <Badge variant="info">Tentative — Unverified</Badge>
+                      {isPastUnconfirmed(event) ? (
+                        <Badge variant="default">{PAST_UNCONFIRMED_LABEL}</Badge>
+                      ) : (
+                        event.status === "TENTATIVE" && (
+                          <Badge variant="info">Tentative — Unverified</Badge>
+                        )
                       )}
                       {/* TAX1 Phase 3 (2026-06-02) — A6 audience/access label.
                         Renders only for non-default audience/access pairs
