@@ -52,6 +52,7 @@ import { registerCreateClaimInviteTool } from "./tools/admin-claim-invite.js";
 import { registerClaimReviewTools } from "./tools/admin-claim-review.js";
 import { registerResolveHeldPhotosTool } from "./tools/admin-resolve-held-photos.js";
 import { registerReplayInboundAttachmentTool } from "./tools/admin-replay-inbound-attachment.js";
+import { registerReadEventPosterTool } from "./tools/read-event-poster.js";
 import { registerAnalyticsTools } from "./tools/analytics.js";
 import { mainAppFetch } from "./main-app-fetch.js";
 import { registerBlogTools } from "./tools/blog.js";
@@ -421,6 +422,7 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
         // photo lane can be tested against the 87 stored originals instead of
         // by attending a fair.
         registerReplayInboundAttachmentTool(this.server, db, auth, this.env);
+        registerReadEventPosterTool(this.server, db, auth, this.env);
         groups.admin = diff(before);
 
         before = snapshot();
@@ -561,6 +563,7 @@ async function handleLegacyMcpRequest(
       // is what happened on the first ship, and the `mmatf_` path is exactly the
       // one an agent uses for direct curl when the tool registry is frozen.
       registerReplayInboundAttachmentTool(server, db, auth, env);
+      registerReadEventPosterTool(server, db, auth, env);
       registerAnalyticsTools(server, auth, env);
       registerBlogTools(server, db, auth, env);
       registerContentLinksTools(server, db, auth, env);
