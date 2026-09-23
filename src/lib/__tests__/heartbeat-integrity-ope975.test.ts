@@ -158,6 +158,9 @@ describe("OPE-975 — every probe's window is pinned", () => {
       "verification-threshold-tuner": 48,
       "photo-intake": 30 * 24,
       "photo-intake-storage-record": 30 * 24,
+      // OPE-325 — demand-conditional: counts from an unanswered poster, not
+      // from the last success, so a short window cannot cry wolf in a quiet month.
+      "poster-evidence": 24,
       "ocr-attachment": 21 * 24,
       "email-send": 72,
       "email-delivery-events": 72,

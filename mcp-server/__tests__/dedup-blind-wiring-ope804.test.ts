@@ -120,6 +120,8 @@ describe("a blind verdict leaves a trace", () => {
       id: "ev-1",
       slug: "craftfest",
       eventName: "CraftFest Cotuit 2026",
+      // OPE-325 — what the submit route did; a plain create reads "created".
+      routed: "created",
     });
   });
 
