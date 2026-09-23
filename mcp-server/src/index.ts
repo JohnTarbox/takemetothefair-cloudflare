@@ -1,4 +1,5 @@
 import { opaqueErrorResponse } from "./error-response.js";
+import { lastGeocodeSweepCursor, sweepGeocodePages } from "./venues/geocode-sweep-pager.js";
 import OAuthProvider from "@cloudflare/workers-oauth-provider";
 import type { EmailGateEnv } from "./email-gates.js";
 import { McpAgent } from "agents/mcp";
@@ -615,7 +616,10 @@ async function runMainAppSweep(
   // OPE-408 — some sweeps need arguments (geocode wants `missing_only`).
   // Optional so every existing caller is byte-for-byte unchanged.
   body?: Record<string, unknown>
-): Promise<void> {
+  // OPE-408 — returns the parsed result on success, null on failure, so a
+  // caller that pages (the geocode sweep) can read `next_cursor`. Every
+  // fire-and-forget caller ignores it and is unchanged.
+): Promise<Record<string, unknown> | null> {
   const sessionId = crypto.randomUUID();
   try {
     // OPE-258 — shared caller: prefers the service binding, falls back to
@@ -670,10 +674,11 @@ async function runMainAppSweep(
           cause,
         },
       });
-      return;
+      return null;
     }
     const result = (await response.json().catch(() => ({}))) as Record<string, unknown>;
     console.log(`[cron] ${label} ok — ${format(result)}`);
+    return result;
   } catch (error) {
     await logError(env.DB, {
       source: `mcp:schedule:${label.replace(/\s+/g, "-")}`,
@@ -682,6 +687,7 @@ async function runMainAppSweep(
       sessionId,
       context: { path },
     });
+    return null;
   }
 }
 
@@ -1691,20 +1697,33 @@ export default {
       // that do not exist yet.
       //
       // 08:30 UTC: after the 08:00 promoter-enrichment sweep so the two do not
-      // contend for the main app. `missing_only` pages via the OPE-214 cursor,
-      // and non-writing outcomes (low-confidence, non-point) do not stall it.
+      // contend for the main app. OPE-408 (bounce 09-23): this comment used to
+      // say it "pages via the OPE-214 cursor" while making ONE call with no
+      // `after_id` — so it re-read the same 25 refused rows for 14 nights.
+      // It now resumes from last night's cursor and walks up to
+      // GEOCODE_SWEEP_MAX_PAGES pages (see geocode-sweep-pager.ts).
       ctx.waitUntil(
-        runMainAppSweep(
-          env,
-          "venue geocode",
-          "/api/admin/venues/geocode-venues",
-          (r) => {
-            const results = Array.isArray(r.results) ? r.results : [];
-            const ok = results.filter((x) => (x as { status?: string }).status === "ok").length;
-            return `attempted=${results.length} written=${ok} next_cursor=${r.next_cursor ?? "none"}`;
-          },
-          { missing_only: true }
-        )
+        (async () => {
+          const start = await lastGeocodeSweepCursor(env.DB).catch(() => null);
+          const outcome = await sweepGeocodePages(
+            (afterId) =>
+              runMainAppSweep(
+                env,
+                "venue geocode",
+                "/api/admin/venues/geocode-venues",
+                (r) => {
+                  const results = Array.isArray(r.results) ? r.results : [];
+                  const ok = results.filter(
+                    (x) => (x as { status?: string }).status === "ok"
+                  ).length;
+                  return `after=${afterId ?? "start"} attempted=${results.length} written=${ok} next_cursor=${r.next_cursor ?? "none"}`;
+                },
+                afterId ? { missing_only: true, after_id: afterId } : { missing_only: true }
+              ),
+            start
+          );
+          console.log(`[cron] venue geocode sweep — ${JSON.stringify(outcome)}`);
+        })()
       );
       // OPE-237 — the vendor-registration corroboration pass. It shipped
       // 2026-08-20 as admin-triggered only and nobody triggered it: on
