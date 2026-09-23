@@ -90,6 +90,9 @@ interface VendorProfile {
 export default function VendorProfilePage() {
   const [profile, setProfile] = useState<VendorProfile | null>(null);
   const [loading, setLoading] = useState(true);
+  // OPE-849 (rework) — the load threw part-way. Distinct from "no profile": the
+  // vendor HAS data, we just failed to read it, and nothing may be saved.
+  const [loadFailed, setLoadFailed] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   // OPE-830 — bring the result into view. The button sits at the bottom of a
@@ -149,7 +152,12 @@ export default function VendorProfilePage() {
       const res = await fetch("/api/vendor/profile");
       if (res.ok) {
         const data = (await res.json()) as VendorProfile;
-        setProfile(data);
+        // OPE-849 (rework) — `setProfile` moved to the END of this block. It
+        // used to run first, so when anything below threw (it did, for every
+        // vendor: `products.join` on a JSON string, fixed in #1361) the page
+        // rendered a BLANK form with autosave armed (`enabled: !!profile`) and
+        // no snapshot — and a null snapshot sent every field. That is how
+        // returning vendors' first save blanked ~11 fields after #1207.
         // Parse paymentMethods from JSON string
         let paymentMethods: string[] = [];
         try {
@@ -200,9 +208,12 @@ export default function VendorProfilePage() {
         // OPE-849 — the diff baseline, captured from the SAME object the form
         // is seeded with so the two can never drift apart.
         savedSnapshot.current = loaded;
+        // Only now is it safe to render the form and arm saving.
+        setProfile(data);
       }
     } catch (error) {
       console.error("Failed to fetch profile:", error);
+      setLoadFailed(true);
     } finally {
       setLoading(false);
     }
@@ -270,13 +281,15 @@ export default function VendorProfilePage() {
    */
   const buildPayload = (form: typeof formData) => {
     const snapshot = savedSnapshot.current;
-    // Only keys whose value differs from what the server gave us. Before the
-    // first load completes there is no baseline; autosave is disabled until
-    // then (`enabled: !loading && !!profile`) and a manual submit in that
-    // window should still behave as it always did, so fall back to sending
-    // everything rather than silently sending nothing.
+    // Only keys whose value differs from what the server gave us.
+    //
+    // OPE-849 (rework) — NO baseline means NOTHING is sent. The old fallback
+    // ("send everything") is exactly the wipe: a form that never loaded holds
+    // blanks, and sending them writes blanks over the vendor's real data. With
+    // `profile` now set only after the snapshot, this should be unreachable —
+    // it is kept as the second wall, not the first.
     const changed = (key: keyof typeof formData): boolean =>
-      snapshot === null || form[key] !== snapshot[key];
+      snapshot !== null && form[key] !== snapshot[key];
 
     const { displayMode, displayName, ...rest } = form;
     const restChanged = Object.fromEntries(
@@ -407,6 +420,19 @@ export default function VendorProfilePage() {
         <div className="h-8 bg-muted rounded w-1/4"></div>
         <div className="h-64 bg-muted rounded"></div>
       </div>
+    );
+  }
+
+  if (loadFailed) {
+    return (
+      <Card>
+        <CardContent className="py-12 text-center">
+          <p className="text-muted-foreground">
+            We couldn&apos;t load your profile, so editing is switched off to protect what&apos;s
+            already saved. Please reload the page; if it keeps happening, contact support.
+          </p>
+        </CardContent>
+      </Card>
     );
   }
 
