@@ -148,6 +148,10 @@ describe("OPE-975 — every probe's window is pinned", () => {
       "gsc-sweep-filler-tiers": 48,
       "agent-silence-watchdog": 48,
       "inbound-held-submissions-snapshot": 48,
+      // OPE-1117 — written by the same daily stale-red scan as the row above.
+      // Measured on that sibling (n=31 snapshots, 2026-08-25 → 09-23): max gap
+      // 24.0h, mean 24.0h. 48h = two consecutive missed runs.
+      "duplicate-flags-snapshot": 48,
       "gsc-daily-totals": 48,
       "gsc-milestone-derivation": 48,
       "funnel-canary": 48,

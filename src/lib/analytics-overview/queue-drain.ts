@@ -43,6 +43,7 @@ import {
 import type { AnyColumn, SQL } from "drizzle-orm";
 import type { SQLiteTable } from "drizzle-orm/sqlite-core";
 import { assessQueueFreeze, type QueueFlow } from "@/lib/queue-freeze";
+import { DUPLICATE_FLAGS_HREF, loadDuplicateFlagFlow } from "@/lib/duplicates/flag-queue";
 import type { Db } from "./shared";
 import type { QueueDrainCard } from "./types";
 
@@ -509,6 +510,35 @@ async function pendingSubmissionsFlow(db: Db, now: Date): Promise<QueueDrainRow>
 }
 
 /**
+ * OPE-1117 — rows the OPE-627 detector flagged as possible duplicates that no
+ * human has adjudicated. Same definition as the review queue and the deadline
+ * red (`unresolvedDuplicateFlag`), so the three cannot disagree.
+ *
+ * The freeze detector applied to this row is a backstop, not the alarm: the
+ * failure that produced this queue was two flags expiring unread against their
+ * own event date, which depth and drain ratio cannot see. That alarm is
+ * `assessAllDuplicateFlagDeadlines`, merged into the same digest.
+ */
+async function duplicateFlagsFlow(db: Db, now: Date): Promise<QueueDrainRow> {
+  const f = await loadDuplicateFlagFlow(db, now);
+  return {
+    queueName: "duplicate_flags",
+    label: "Possible duplicates awaiting a verdict",
+    href: DUPLICATE_FLAGS_HREF,
+    depth: f.depth,
+    inflow7d: f.inflow7d,
+    outflow7d: f.outflow7d,
+    inflow14d: f.inflow14d,
+    outflow14d: f.outflow14d,
+    oldestOpenAgeHours:
+      f.oldestOpenAt != null ? (now.getTime() - f.oldestOpenAt.getTime()) / 3_600_000 : null,
+    inflow1d: f.inflow1d,
+    outflow1d: f.outflow1d,
+    drainRatio7d: ratio(f.outflow7d, f.inflow7d),
+  };
+}
+
+/**
  * OPE-177 — auth/verification mail that did NOT reach the recipient.
  *
  * The case this exists for: a vendor registered, asked for the confirmation
@@ -949,6 +979,8 @@ export async function gatherQueueFlows(db: Db, now: Date): Promise<QueueDrainRow
     // OPE-413 — the only queue in this list with members of the public waiting
     // on the other end. Reached 138 days unwatched.
     pendingSubmissionsFlow(db, now),
+    // OPE-1117 — the detector's flags, which nothing read until this row.
+    duplicateFlagsFlow(db, now),
     // OPE-177 — verification mail that provably did not arrive. Reads 0 until
     // the CF Email Sending subscription publishes its first event (the window
     // starts there), so it cannot cry wolf on historical NULLs.

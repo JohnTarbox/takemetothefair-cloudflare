@@ -1651,6 +1651,45 @@ export const blogSlugHistory = sqliteTable(
   })
 );
 
+/**
+ * OPE-1117 (drizzle/0301) — "a human looked at this flagged pair and they are
+ * two different events."
+ *
+ * The third of three duplicate facts, and deliberately its own table rather
+ * than a column on `events`:
+ *
+ *   events.possible_duplicate_of    — a MATCHER suspected this. A guess.
+ *   events.rejected_as_duplicate_of — a HUMAN ruled it IS a duplicate.
+ *   event_duplicate_dismissals      — a HUMAN ruled it is NOT.
+ *
+ * Writing a dismissal into either `events` column would poison the second:
+ * `update_event_status` defaults `rejected_as_duplicate_of` FROM
+ * `possible_duplicate_of`, so a later, unrelated rejection of a dismissed row
+ * would silently become a duplicate adjudication against an event it does not
+ * duplicate — and OPE-450 exists precisely because those adjudications are
+ * trusted. Keyed on the PAIR, so a row that is later flagged against a
+ * different candidate re-enters the queue instead of inheriting the verdict.
+ */
+export const eventDuplicateDismissals = sqliteTable(
+  "event_duplicate_dismissals",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    eventId: text("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    /** The candidate the matcher named. No FK: the verdict outlives a deleted candidate. */
+    candidateId: text("candidate_id").notNull(),
+    dismissedBy: text("dismissed_by"),
+    dismissedAt: integer("dismissed_at", { mode: "timestamp" }).notNull(),
+    note: text("note"),
+  },
+  (t) => ({
+    pairIdx: uniqueIndex("uq_event_duplicate_dismissals_pair").on(t.eventId, t.candidateId),
+  })
+);
+
 // Admin actions audit log — drizzle/0039.
 // Generic enough for non-vendor actions later; first user is the Enhanced
 // Profile lifecycle (activate / expire_set / auto_expire).

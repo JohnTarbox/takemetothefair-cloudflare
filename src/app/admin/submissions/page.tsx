@@ -24,6 +24,15 @@ interface Event {
   // OPE-29 — drives the provenance badge that tells bot-found events apart from
   // human submissions (the admin events API returns the full event row).
   ingestionMethod: string | null;
+  // OPE-1117 — the detector's candidate, already returned by the admin events
+  // API (null once a human has dismissed the pair).
+  possibleDuplicate?: {
+    id: string;
+    name: string;
+    slug: string;
+    status: string;
+    startDate: string | null;
+  } | null;
 }
 
 export default function AdminSubmissionsPage() {
@@ -153,9 +162,35 @@ export default function AdminSubmissionsPage() {
                   <div className="flex shrink-0 flex-col items-end gap-1.5">
                     <Badge variant="warning">Pending Review</Badge>
                     <Badge variant={provenance.variant}>{provenance.label}</Badge>
+                    {event.possibleDuplicate && <Badge variant="danger">Possible duplicate</Badge>}
                   </div>
                 </CardHeader>
                 <CardContent>
+                  {event.possibleDuplicate && (
+                    // OPE-1117 — the detector's flag, shown where the row is
+                    // adjudicated. Before this, `bd1b1f4c` sat here through its
+                    // own event looking like any other submission.
+                    <div className="mb-4 rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                      Intake flagged this as a possible duplicate of{" "}
+                      <a
+                        href={`/events/${event.possibleDuplicate.slug}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="font-medium underline"
+                      >
+                        {event.possibleDuplicate.name}
+                      </a>{" "}
+                      ({event.possibleDuplicate.status}
+                      {event.possibleDuplicate.startDate
+                        ? `, ${formatDate(event.possibleDuplicate.startDate)}`
+                        : ""}
+                      ). Compare and decide in the{" "}
+                      <a href="/admin/duplicates/flags" className="font-medium underline">
+                        duplicate-flag queue
+                      </a>{" "}
+                      before approving.
+                    </div>
+                  )}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                     <div>
                       <p className="text-sm font-medium text-foreground">Venue</p>

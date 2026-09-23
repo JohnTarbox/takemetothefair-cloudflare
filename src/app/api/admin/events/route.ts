@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { detectPossibleDuplicate } from "@/lib/duplicates/venue-date-collision";
+import { dismissedFlagIds } from "@/lib/duplicates/flag-queue";
 import { withAuth } from "@/lib/api/with-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { events, contentLinks, blogPosts, venues } from "@/lib/db/schema";
@@ -95,12 +96,21 @@ export const GET = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
       }
     }
 
+    // OPE-1117 — a pair a human already ruled "not a duplicate" stops being
+    // badged. Keyed on the CURRENT pair, so a re-flag against a different
+    // candidate is badged again.
+    const dismissed = await dismissedFlagIds(
+      db,
+      eventsList.filter((e) => e.possibleDuplicateOf).map((e) => e.id)
+    );
+
     const enriched = eventsList.map((e) => ({
       ...e,
       blogPostCount: byEvent.get(e.id) ?? 0,
-      possibleDuplicate: e.possibleDuplicateOf
-        ? (candidateMap.get(e.possibleDuplicateOf) ?? null)
-        : null,
+      possibleDuplicate:
+        e.possibleDuplicateOf && !dismissed.has(e.id)
+          ? (candidateMap.get(e.possibleDuplicateOf) ?? null)
+          : null,
     }));
 
     return NextResponse.json(enriched);
