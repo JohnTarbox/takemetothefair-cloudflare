@@ -28,8 +28,8 @@
  * dedupe check) fit easily inside CF's 30s budget.
  */
 
-import { and, eq, isNull, desc, sql } from "drizzle-orm";
-import { eventDateDriftFindings, events, promoters } from "../schema.js";
+import { and, eq, isNull, desc, sql, ne } from "drizzle-orm";
+import { eventDateDriftFindings, eventDiscrepancies, events, promoters } from "../schema.js";
 import type { Db } from "../db.js";
 import { captureStalePageDiscrepancy } from "./capture.js";
 import { logError } from "../logger.js";
@@ -40,7 +40,19 @@ export interface StalePageRadarResult {
   scanned: number;
   emitted: number;
   skipped_dedup: number;
+  /** OPE-815 — findings already adjudicated (a non-open row for the same fact). */
+  skipped_adjudicated: number;
+  /** OPE-815 — open radar rows closed because their event has finished. */
+  closed_past: number;
 }
+
+/**
+ * An event is past when its end (or, lacking one, its start) is before now.
+ * ⚠️ A DATELESS event is not past: written as an explicit IS NOT NULL so the
+ * NULL comparison cannot turn `NOT (…)` into NULL and silently drop the
+ * finding (the OPE-815 rework's first draft did exactly that).
+ */
+const EVENT_IS_PAST = sql`(coalesce(${events.endDate}, ${events.startDate}) IS NOT NULL AND coalesce(${events.endDate}, ${events.startDate}) < unixepoch())`;
 
 /**
  * Per [[feedback_drizzle_d1_unit_test_inject_db]] — accept `db: Db`
@@ -50,9 +62,42 @@ export interface StalePageRadarResult {
  */
 export async function runScheduledStalePageRadar(db: Db): Promise<StalePageRadarResult> {
   const SOURCE = "mcp:schedule:stale-page-radar";
-  const result: StalePageRadarResult = { scanned: 0, emitted: 0, skipped_dedup: 0 };
+  const result: StalePageRadarResult = {
+    scanned: 0,
+    emitted: 0,
+    skipped_dedup: 0,
+    skipped_adjudicated: 0,
+    closed_past: 0,
+  };
 
   try {
+    // OPE-815 (09-23 bounce) — a finished event's date drift is history, not
+    // a live conflict. The radar re-stamped the four past Truro occurrences
+    // every morning; close their open rows with the lifecycle vocabulary
+    // OPE-306 already uses for exactly this.
+    const pastOpen = await db
+      .select({ id: eventDiscrepancies.id })
+      .from(eventDiscrepancies)
+      .innerJoin(events, eq(events.id, eventDiscrepancies.eventId))
+      .where(
+        and(
+          eq(eventDiscrepancies.detectedBy, "stale_page_radar"),
+          eq(eventDiscrepancies.resolutionStatus, "open"),
+          EVENT_IS_PAST
+        )
+      );
+    for (const r of pastOpen) {
+      await db
+        .update(eventDiscrepancies)
+        .set({
+          resolutionStatus: "superseded_by_lifecycle",
+          resolutionSource: "post_event",
+          resolvedAt: new Date(),
+        })
+        .where(eq(eventDiscrepancies.id, r.id));
+    }
+    result.closed_past = pastOpen.length;
+
     // Pull unresolved drift findings, newest first. Limit to MAX_PER_RUN
     // so a backlog of historical drifts doesn't blow the CF response
     // budget on the first cron after the radar lands.
@@ -78,7 +123,9 @@ export async function runScheduledStalePageRadar(db: Db): Promise<StalePageRadar
         and(
           isNull(eventDateDriftFindings.resolvedAt),
           // 0 drift is uninteresting; skip in SQL so we don't burn an INSERT slot.
-          sql`abs(${eventDateDriftFindings.driftDays}) > 0`
+          sql`abs(${eventDateDriftFindings.driftDays}) > 0`,
+          // OPE-815 — never lift a finding for a finished event.
+          sql`NOT (${EVENT_IS_PAST})`
         )
       )
       .orderBy(desc(eventDateDriftFindings.checkedAt))
@@ -87,6 +134,33 @@ export async function runScheduledStalePageRadar(db: Db): Promise<StalePageRadar
     result.scanned = findings.length;
 
     for (const f of findings) {
+      // OPE-815 (09-23 bounce) — the finding table is never resolved when its
+      // DISCREPANCY is, so the morning after an operator closed a row the radar
+      // lifted the same finding into a fresh one (Jenks a3f3f653 closed 22:03,
+      // re-opened as ecd88d5e at 06:02). A non-open row for the same event,
+      // source and divergent date means this fact was already adjudicated.
+      const divergent = f.canonicalStartDate?.toISOString().slice(0, 10) ?? null;
+      const [adjudicated] = await db
+        .select({ id: eventDiscrepancies.id })
+        .from(eventDiscrepancies)
+        .where(
+          and(
+            eq(eventDiscrepancies.eventId, f.eventId),
+            eq(eventDiscrepancies.detectedBy, "stale_page_radar"),
+            ne(eventDiscrepancies.resolutionStatus, "open"),
+            divergent === null
+              ? isNull(eventDiscrepancies.divergentValue)
+              : eq(eventDiscrepancies.divergentValue, divergent),
+            f.canonicalUrl === null
+              ? isNull(eventDiscrepancies.divergentSourceUrl)
+              : eq(eventDiscrepancies.divergentSourceUrl, f.canonicalUrl)
+          )
+        )
+        .limit(1);
+      if (adjudicated) {
+        result.skipped_adjudicated += 1;
+        continue;
+      }
       const id = await captureStalePageDiscrepancy(db, {
         eventId: f.eventId,
         storedStartDate: f.storedStartDate,
@@ -102,9 +176,7 @@ export async function runScheduledStalePageRadar(db: Db): Promise<StalePageRadar
       }
     }
 
-    console.log(
-      `[cron] stale-page-radar ok — scanned=${result.scanned} emitted=${result.emitted} skipped_dedup=${result.skipped_dedup}`
-    );
+    console.log(`[cron] stale-page-radar ok — ${JSON.stringify(result)}`);
     return result;
   } catch (error) {
     await logError(db, {

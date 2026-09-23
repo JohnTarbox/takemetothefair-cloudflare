@@ -5583,6 +5583,10 @@ export const eventDiscrepancies = sqliteTable("event_discrepancies", {
   lastSeenAt: integer("last_seen_at", { mode: "timestamp" }),
   /** 0..1 detector confidence. NULL when capture path doesn't compute it. */
   confidence: real("confidence"),
+  /** OPE-815 (drizzle/0304) — stale_page_radar only: |source date − our date|
+   *  in days. A separate column from `confidence`, which a prior-year organizer
+   *  finding and an aggregator's week-off listing can share. NULL elsewhere. */
+  driftDays: integer("drift_days"),
   /** open | resolved_authoritative | resolved_divergent | self_resolved |
    *  dismissed | superseded_duplicate | superseded_by_lifecycle |
    *  superseded_by_normalization

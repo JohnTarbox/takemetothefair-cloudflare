@@ -90,6 +90,8 @@ export interface CaptureDiscrepancyArgs {
   /** 0..1 — confidence this is a real divergence. NULL ⇒ detector doesn't
    *  compute one. */
   confidence?: number | null;
+  /** OPE-815 — drift magnitude in days, for detectors that measure one. */
+  driftDays?: number | null;
   /** Short human-readable explanation. Used by /admin/data-health and as
    *  the audit trail when the row is resolved. */
   notes?: string | null;
@@ -173,6 +175,7 @@ export async function captureDiscrepancy(
       divergentSourceKey: args.divergentSourceKey ?? null,
       divergentSourceUrl: args.divergentSourceUrl ?? null,
       confidence: args.confidence ?? null,
+      driftDays: args.driftDays ?? null,
       notes: args.notes ?? null,
       resolutionStatus: "open",
       outreachPriorityScore: initialScore,
@@ -427,6 +430,8 @@ export async function captureStalePageDiscrepancy(
     divergentSourceKey: safeHost(args.canonicalUrl),
     divergentSourceUrl: args.canonicalUrl,
     confidence: conf,
+    // OPE-815 — magnitude as its own column, not only as prose in `notes`.
+    driftDays: drift,
     // ⚠️ OPE-815 scope 4 — an aggregator's stale listing is not the promoter's
     // error and must never drive a promoter email. Only an organizer-domain
     // comparison is theirs to answer for.
