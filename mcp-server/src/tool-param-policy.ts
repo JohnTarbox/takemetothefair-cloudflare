@@ -15,7 +15,8 @@
  *      nor a read. The known fields are applied, the unknown ones are named in
  *      `warnings.ignored_params`. A refusal here would throw away the fields
  *      that were right.
- *   3. Read-only tools WARN — behind WARN_ON_READ_TOOLS, flipped in batch 3.
+ *   3. Read-only tools WARN (batch 3) — so every tool that is not a listed
+ *      create warns, and none is left on the SDK's silent strip.
  *
  * Mechanism: the tool is registered exactly as before, then the RegisteredTool
  * it returns is adjusted — for REJECT, `inputSchema` becomes its strict form;
@@ -63,23 +64,17 @@ export const REJECT_UNKNOWN_PARAMS: ReadonlySet<string> = new Set([
   "suggest_event",
 ]);
 
+export type ParamPolicy = "reject" | "warn";
+
 /**
- * Batch 3 switch. Read-only tools (get_/list_/search_) keep the SDK default
- * (strip) until this flips; everything else not in REJECT_UNKNOWN_PARAMS warns.
+ * Which policy a tool name gets. Exported so the test can pin the split.
+ *
+ * Batch 3 (OPE-1132 item 3): read-only tools warn too. There is no third
+ * "strip" policy any more — a tool that is not a listed create WARNS, so a
+ * tool added later can never land on the SDK's silent default.
  */
-export const WARN_ON_READ_TOOLS = false;
-
-const READ_ONLY_PREFIXES = ["get_", "list_", "search_"] as const;
-
-export type ParamPolicy = "reject" | "warn" | "strip";
-
-/** Which policy a tool name gets. Exported so the test can pin the split. */
 export function paramPolicyFor(name: string): ParamPolicy {
-  if (REJECT_UNKNOWN_PARAMS.has(name)) return "reject";
-  if (READ_ONLY_PREFIXES.some((p) => name.startsWith(p))) {
-    return WARN_ON_READ_TOOLS ? "warn" : "strip";
-  }
-  return "warn";
+  return REJECT_UNKNOWN_PARAMS.has(name) ? "reject" : "warn";
 }
 
 type ToolResult = { content?: { type: string; text?: string }[] } & Record<string, unknown>;
