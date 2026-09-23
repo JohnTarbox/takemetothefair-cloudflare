@@ -39,6 +39,12 @@ export function registerEventLifecycleTools(
       "CANCELLED → EventCancelled, MOVED_ONLINE → EventMovedOnline. OCCURRED and",
       "NO_SHOW are MMATF-specific past-event annotations with no schema.org",
       "equivalent.",
+      "",
+      "OPE-1099: OCCURRED → CANCELLED is permitted ONLY when the OCCURRED was",
+      "inferred by the end-date sweep (lifecycle_reason 'auto: end date passed'),",
+      "i.e. nobody observed the event happen. Use it when an organizer's own page",
+      "shows the event was cancelled, and put that evidence in `reason`. An",
+      "OCCURRED written by a person stays terminal.",
     ].join(" "),
     {
       event_id: z.string().min(1).describe("Event UUID."),
@@ -78,6 +84,8 @@ export function registerEventLifecycleTools(
           lifecycleStatus: events.lifecycleStatus,
           // OPE-487 — feeds the terminal-correction check below.
           lifecycleStatusChangedAt: events.lifecycleStatusChangedAt,
+          // OPE-1099 — tells a calendar-inferred OCCURRED from an observed one.
+          lifecycleReason: events.lifecycleReason,
           startDate: events.startDate,
           endDate: events.endDate,
           // OPE-450 — the keeper this row was rejected AGAINST, when a human
@@ -127,6 +135,7 @@ export function registerEventLifecycleTools(
       // state. Both conditions required.
       const check = validateLifecycleTransition(from, to, {
         lifecycleStatusChangedAt: current.lifecycleStatusChangedAt ?? null,
+        lifecycleReason: current.lifecycleReason ?? null,
         startDate: current.startDate ?? null,
       });
       if (!check.ok) {
