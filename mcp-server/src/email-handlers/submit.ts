@@ -194,6 +194,13 @@ export interface SubmitEventResult {
   id: string;
   slug: string;
   eventName: string;
+  /**
+   * OPE-325 — what the submit route actually did. `occurrence_exists` means NO
+   * event was created: the edition already exists under its series, `id` is
+   * that existing event, and the route sends no slug (the poster lane logged
+   * "staged as PENDING event undefined" for exactly this, 2026-08-24).
+   */
+  routed: "created" | "occurrence" | "occurrence_exists";
 }
 
 export interface SubmitCheckDuplicateResult {
@@ -785,7 +792,11 @@ export async function submitEvent(
     throw new Error(`submit-network: ${err instanceof Error ? err.message : String(err)}`);
   }
   const body = (await res.json().catch(() => null)) as
-    | { success: true; event: { id: string; slug: string } }
+    | {
+        success: true;
+        routed?: "occurrence" | "occurrence_exists";
+        event: { id: string; slug: string };
+      }
     | { success: false; error: string }
     | null;
   if (!res.ok || !body || !body.success) {
@@ -795,7 +806,12 @@ export async function submitEvent(
     }
     throw new Error(`submit-${res.status}: ${upstream}`);
   }
-  const created = { id: body.event.id, slug: body.event.slug, eventName: extracted.event.name };
+  const created = {
+    id: body.event.id,
+    slug: body.event.slug,
+    eventName: extracted.event.name,
+    routed: body.routed ?? ("created" as const),
+  };
 
   // OPE-465 scope 4 — emit, don't just suppress. A verifier that silently
   // drops bad fields fixes the data and hides the defect, and this lane would

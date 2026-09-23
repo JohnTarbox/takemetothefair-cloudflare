@@ -76,6 +76,21 @@ export interface HeartbeatProbe {
   lastEvidenceAt: (db: Db) => Promise<Date | null>;
 }
 
+/**
+ * OPE-325 — "last evidence" for a path that only owes evidence when there was
+ * demand for it. No outstanding demand reads as healthy NOW; outstanding
+ * demand starts the silence clock at the demand, never earlier.
+ */
+export function demandConditionalEvidence(
+  demand: Date | null,
+  evidence: Date | null,
+  now: Date
+): Date {
+  if (!demand) return now;
+  if (evidence && evidence.getTime() >= demand.getTime()) return now;
+  return demand;
+}
+
 async function maxTs(
   db: Db,
   table: SQLiteTable,
@@ -755,6 +770,46 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
         inboundEmails,
         inboundEmails.receivedAt,
         isNotNull(inboundEmails.originalSenderAuth)
+      ),
+  },
+  {
+    // OPE-325 — proof that a poster which resolved to an event left EVIDENCE:
+    // an archived copy on our CDN, citations pointing at it, a hero proposal.
+    //
+    // ⚠️ DEMAND-CONDITIONAL, because the yield is rare and bursty. Posters
+    // staged 4 events 08-24 → 08-27 and none in the 27 days since — every image
+    // after that was a booth photo. "Newest evidence row" would read a quiet
+    // month as a dead path, fire, and get muted: this file's OPE-488 rule
+    // (probe the run, not the yield) in its sharpest form.
+    //
+    // So silence is measured from DEMAND, not from the last success:
+    //   demand   = newest `poster-staged` info log (a poster resolved to an
+    //              event — created, or matched an existing one)
+    //   evidence = newest `poster-evidence` INFO log (warn = the step failed)
+    // If evidence is at or after demand, nothing is owed and the probe reads
+    // healthy. If a poster resolved and no evidence followed, the clock starts
+    // at that poster. Evidence is written seconds after demand in the same
+    // handler call, so 24h only has to outlast a slow digest cycle.
+    name: "poster-evidence",
+    ownerOpe: "OPE-325",
+    label: "Emailed poster → archived + cited + hero-proposed (photo intake)",
+    priority: "P1",
+    expectedWindowHours: 24,
+    lastEvidenceAt: async (db) =>
+      demandConditionalEvidence(
+        await maxTs(
+          db,
+          errorLogs,
+          errorLogs.timestamp,
+          and(eq(errorLogs.source, "mcp:photo-intake:poster-staged"), eq(errorLogs.level, "info"))
+        ),
+        await maxTs(
+          db,
+          errorLogs,
+          errorLogs.timestamp,
+          and(eq(errorLogs.source, "mcp:photo-intake:poster-evidence"), eq(errorLogs.level, "info"))
+        ),
+        new Date()
       ),
   },
   {

@@ -89,7 +89,14 @@ async function sha256Hex(text: string): Promise<string> {
 export type CitationSource =
   | { kind: "body" }
   | { kind: "url"; url: string }
-  | { kind: "attachment"; name: string };
+  | { kind: "attachment"; name: string }
+  /**
+   * OPE-325 — an emailed poster, ARCHIVED to our CDN. `url` is that archived
+   * copy, so the citation resolves to the actual image rather than to an
+   * `email://` identity nobody can open (the unfetchable-citation pattern the
+   * Maynard MusicFest poster was cited with by hand, 2026-08-03).
+   */
+  | { kind: "poster"; url: string; name: string };
 
 /** The slice of `SubmitExtractResult` this helper reads. */
 interface ExtractedForCitations {
@@ -306,6 +313,11 @@ function sourceIdentity(
         sourceName: `Attachment: ${source.name}${forwardSuffix(original)}`,
       };
     }
+    case "poster":
+      return {
+        sourceUrl: source.url,
+        sourceName: `Poster emailed by ${fromAddress}: ${source.name}${forwardSuffix(original)}`,
+      };
   }
 }
 
@@ -364,6 +376,7 @@ function sourceTypeFor(
       return tier === "T1" ? "official_website" : "other";
     }
     case "attachment":
+    case "poster":
     case "body":
       // The sender supplied these bytes directly — genuinely user_submitted.
       return "user_submitted";
