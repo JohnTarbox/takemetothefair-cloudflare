@@ -6,6 +6,7 @@
 import { and, count, gte, inArray, lt, sql } from "drizzle-orm";
 import { analyticsEvents } from "@/lib/db/schema";
 import { getOrganicSessions, type Ga4Env } from "@/lib/ga4";
+import { rate as rateOf, unavailable } from "./render-state";
 import {
   CONVERSION_EVENT_NAMES,
   SPARKLINE_DAYS,
@@ -111,6 +112,11 @@ export async function loadConversionRate(
     conversions,
     sessions,
     rate,
+    // OPE-1131 — a GA4 failure and an empty week both used to print "—".
+    rateMeasured:
+      sessions == null
+        ? unavailable("GA4 organic sessions unavailable")
+        : rateOf(conversions, sessions, "no organic sessions in window"),
     windowDays: days,
     windowEndDate: fmt(stableEndDate),
   };

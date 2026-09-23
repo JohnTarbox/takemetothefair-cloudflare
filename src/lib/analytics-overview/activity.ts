@@ -213,6 +213,8 @@ export async function loadAccountEngagement(
     signals,
     sessions,
     rate,
+    // OPE-1131 — no first-party events is no measurement, not a 0% rate.
+    rateMeasured: rateOf(signals, sessions, "no first-party events in window"),
     windowDays: days,
     breakdown: { vendor_claims, event_favorites, contact_clicks },
   };
@@ -263,7 +265,7 @@ export async function loadThisWeeksActions(db: Db, sinceDate: Date): Promise<Thi
  * GREEN/INDETERMINATE KPI from the queue. The Recent Activity panel surfaces
  * the resolution from admin_actions.
  */
-import { isLiveMeasurement, type MeasurementState } from "./render-state";
+import { isLiveMeasurement, rate as rateOf, type MeasurementState } from "./render-state";
 
 const TIER_1_REC_AFFECTED_THRESHOLD = 50;
 

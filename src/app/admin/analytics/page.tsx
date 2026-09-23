@@ -1,5 +1,14 @@
 import Link from "next/link";
 import {
+  bingPagesIndexed,
+  bingScanIssueCount,
+  bingWeekTotal,
+  indexNowChip,
+  indexNowCount,
+  type BingReport,
+} from "@/lib/analytics-overview/bing-tiles";
+import { measurementText, sparklineTotal } from "@/lib/analytics-overview/render-state";
+import {
   Activity,
   AlertTriangle,
   ArrowDown,
@@ -277,6 +286,7 @@ async function OverviewTab({ window }: { window: WindowKey }) {
           title="Publishing activity (last 30 days)"
           subtitle="Successful IndexNow submissions per day · source: D1 indexnow_submissions"
           points={snapshot.publishingSparkline}
+          feed="indexnow_submissions"
           colorClass="stroke-emerald-600"
           fillClass="fill-emerald-100"
         />
@@ -306,6 +316,7 @@ async function OverviewTab({ window }: { window: WindowKey }) {
           title="Publishing activity (last 90 days)"
           subtitle="Successful IndexNow submissions per day · source: D1 indexnow_submissions"
           points={snapshot.kpiStrip90d.publishing}
+          feed="indexnow_submissions"
           colorClass="stroke-emerald-600"
           fillClass="fill-emerald-100"
         />
@@ -647,6 +658,10 @@ function SiteHealthCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
 
 // §10.3 cards ─────────────────────────────────────────────────
 
+/**
+ * `x` is a FRACTION (0.75 → "75.0%"). OPE-1131 found three call sites passing
+ * `x * 100`, which rendered a 75% coverage as "7500.0%" — pinned by a test.
+ */
 function fmtPct(x: number, digits = 1): string {
   return `${(x * 100).toFixed(digits)}%`;
 }
@@ -707,7 +722,7 @@ function SiteCtrCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
   return (
     <KpiCard
       title="Site CTR (Google, last window)"
-      value={fmtPct(c.ctr, 2)}
+      value={measurementText(c.ctrMeasured, (v) => fmtPct(v, 2))}
       icon={<Search className="w-5 h-5 text-violet-600" />}
       iconColor="bg-violet-100"
       href="/admin/analytics?tab=google"
@@ -733,7 +748,7 @@ function ConversionRateCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
   return (
     <KpiCard
       title={`Conversion rate (${c.windowDays}d)`}
-      value={c.rate != null ? fmtPct(c.rate, 2) : "—"}
+      value={measurementText(c.rateMeasured, (v) => fmtPct(v, 2))}
       icon={<TrendingUp className="w-5 h-5 text-emerald-600" />}
       iconColor="bg-emerald-100"
       state={state}
@@ -758,7 +773,7 @@ function AccountEngagementCardView({ snapshot }: { snapshot: OverviewSnapshot })
   return (
     <KpiCard
       title={`Account engagement (${c.windowDays}d)`}
-      value={fmtPct(c.rate, 2)}
+      value={measurementText(c.rateMeasured, (v) => fmtPct(v, 2))}
       icon={<Activity className="w-5 h-5 text-emerald-600" />}
       iconColor="bg-emerald-100"
       footer={
@@ -871,7 +886,7 @@ function BrandVsNonBrandCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
   return (
     <KpiCard
       title={`Brand vs non-brand (last ${c.windowDays}d, Google)`}
-      value={fmtPct(c.brand_share, 0)}
+      value={measurementText(c.brandShareMeasured, (v) => fmtPct(v, 0))}
       icon={<TrendingUp className="w-5 h-5 text-royal" />}
       iconColor="bg-info-soft"
       href="/admin/analytics?tab=google"
@@ -897,7 +912,7 @@ function SitemapQualityCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
   return (
     <KpiCard
       title={`Sitemap quality (≥ ${c.threshold})`}
-      value={fmtPct(c.overall_pass_rate, 0)}
+      value={measurementText(c.overallRate, (v) => fmtPct(v, 0))}
       icon={<CheckCircle2 className="w-5 h-5 text-emerald-600" />}
       iconColor="bg-emerald-100"
       state={state}
@@ -1427,13 +1442,41 @@ function QueueDrainRatiosCardView({ snapshot }: { snapshot: OverviewSnapshot }) 
                     {q.frozen && (
                       <span className="ml-2 text-xs font-semibold text-red-600">FROZEN</span>
                     )}
+                    {q.unmeasured?.flows && (
+                      <span className="ml-2 text-xs text-muted-foreground">
+                        · flows not measured: {q.unmeasured.flows}
+                      </span>
+                    )}
                   </td>
-                  <td className="text-right py-1.5">{fmt(q.depth)}</td>
-                  <td className="text-right py-1.5">{fmt(q.inflow7d)}</td>
-                  <td className="text-right py-1.5">
-                    {q.outflow7d === null ? "—" : fmt(q.outflow7d)}
+                  {/* OPE-1131 — a flow that was never measured says so, not "0". */}
+                  <td className="text-right py-1.5" title={q.unmeasured?.depth}>
+                    {q.unmeasured?.depth ? "—" : fmt(q.depth)}
                   </td>
-                  <td className="text-right py-1.5 font-semibold">{fmtRatio(q.drainRatio7d)}</td>
+                  <td className="text-right py-1.5" title={q.unmeasured?.flows}>
+                    {q.unmeasured?.flows ? "—" : fmt(q.inflow7d)}
+                  </td>
+                  <td
+                    className="text-right py-1.5"
+                    title={
+                      q.unmeasured?.flows ??
+                      (q.outflow7d === null ? "no snapshot history yet" : undefined)
+                    }
+                  >
+                    {q.unmeasured?.flows || q.outflow7d === null ? "—" : fmt(q.outflow7d)}
+                  </td>
+                  <td
+                    className="text-right py-1.5 font-semibold"
+                    title={
+                      q.unmeasured?.flows ??
+                      (q.drainRatio7d === null
+                        ? q.outflow7d === null
+                          ? "outflow not yet computable"
+                          : "no inflow in 7d — ratio undefined"
+                        : undefined)
+                    }
+                  >
+                    {q.unmeasured?.flows ? "—" : fmtRatio(q.drainRatio7d)}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -1513,8 +1556,9 @@ function HeartbeatProbesCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
  * point, so a GSC chart states its data window and the trailing-lag trim is
  * explicit. Empty string when there are no points.
  */
-function throughCaption(points: SparklinePoint[]): string {
-  if (points.length === 0) return "";
+function throughCaption(points: SparklinePoint[] & { unavailableReason?: string }): string {
+  // A zero-filled failure series ends "today" — that date is not a data window.
+  if (points.length === 0 || points.unavailableReason) return "";
   const last = points[points.length - 1].date;
   const d = new Date(`${last}T00:00:00Z`);
   if (Number.isNaN(d.getTime())) return "";
@@ -1527,14 +1571,17 @@ function SparklineCard({
   points,
   colorClass,
   fillClass,
+  feed,
 }: {
   title: string;
   subtitle: string;
-  points: SparklinePoint[];
+  points: SparklinePoint[] & { unavailableReason?: string };
   colorClass: string;
   fillClass: string;
+  /** OPE-1131 — judge the total for staleness on this feed (render-state). */
+  feed?: string;
 }) {
-  const total = points.reduce((acc, p) => acc + p.value, 0);
+  const total = sparklineTotal(points, feed);
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -1543,7 +1590,9 @@ function SparklineCard({
       </CardHeader>
       <CardContent>
         <div className="flex items-end justify-between mb-2">
-          <p className="text-2xl font-bold text-foreground tabular-nums">{fmt(total)}</p>
+          <p className="text-2xl font-bold text-foreground tabular-nums">
+            {measurementText(total, fmt)}
+          </p>
           <p className="text-xs text-muted-foreground">{points.length}-day total</p>
         </div>
         <Sparkline points={points} colorClass={colorClass} fillClass={fillClass} />
@@ -1635,11 +1684,12 @@ function GscMilestoneChartCard({ points }: { points: GscMilestonePoint[] }) {
   // or earliest if no April rows). Falls back to 0 if either side is missing.
   const maySorted = sorted.filter((p) => p.date.startsWith("2026-05"));
   const aprilOrEarlier = sorted.filter((p) => p.date < "2026-05-01");
+  // OPE-1131 — a missing side is no measurement, not a flat ramp of 0.
   const mayRamp =
     maySorted.length > 0 && aprilOrEarlier.length > 0
       ? maySorted[maySorted.length - 1].threshold -
         aprilOrEarlier[aprilOrEarlier.length - 1].threshold
-      : 0;
+      : null;
 
   // Default the plotted series to the post-launch arc (May 1 onward). Fall
   // back to the full series if that leaves nothing to draw (e.g. a property
@@ -1707,7 +1757,11 @@ function GscMilestoneChartCard({ points }: { points: GscMilestonePoint[] }) {
           <div>
             <p className="text-xs text-muted-foreground">May ramp</p>
             <p className="text-2xl font-bold text-foreground tabular-nums">
-              {mayRamp > 0 ? `+${fmt(mayRamp)}` : fmt(mayRamp)}
+              {mayRamp === null
+                ? `— · no ${maySorted.length === 0 ? "May" : "April"} milestone`
+                : mayRamp > 0
+                  ? `+${fmt(mayRamp)}`
+                  : fmt(mayRamp)}
             </p>
             <p className="text-xs text-muted-foreground">vs. April end</p>
           </div>
@@ -3111,8 +3165,11 @@ async function GoogleTab() {
               </span>
             </p>
             <p className="text-xs text-muted-foreground mt-1">
-              indexed / submitted · {fmt(sitemapErrorCount)} errors · {fmt(sitemapWarningCount)}{" "}
-              warnings
+              {/* OPE-1131 — with the Sitemaps API down, "0 errors" was a reading it never took. */}
+              indexed / submitted ·{" "}
+              {sitemaps
+                ? `${fmt(sitemapErrorCount)} errors · ${fmt(sitemapWarningCount)} warnings`
+                : "errors / warnings — · GSC Sitemaps unavailable"}
             </p>
             <p className="text-xs text-muted-foreground mt-2">
               Indexed = URLs with PASS verdict in our URL Inspection sweep ({fmt(inspectedCount)}{" "}
@@ -3283,6 +3340,8 @@ interface IndexNowOps {
   skipped24h: number;
   sent7d: number;
   kvAvailable: boolean;
+  /** OPE-1131 — false when the D1 read failed, so the zeros above are not counts. */
+  countsAvailable: boolean;
 }
 
 const EMPTY_INDEXNOW_OPS: IndexNowOps = {
@@ -3294,6 +3353,7 @@ const EMPTY_INDEXNOW_OPS: IndexNowOps = {
   skipped24h: 0,
   sent7d: 0,
   kvAvailable: false,
+  countsAvailable: false,
 };
 
 /**
@@ -3318,6 +3378,7 @@ async function loadIndexNowOps(): Promise<IndexNowOps> {
     let failed24h = 0;
     let skipped24h = 0;
     let sent7d = 0;
+    let countsAvailable = true;
     try {
       const db = getCloudflareDb();
       const rows = await db
@@ -3343,7 +3404,9 @@ async function loadIndexNowOps(): Promise<IndexNowOps> {
         }
       }
     } catch {
-      /* DB read failed — leave counts at 0; breaker state is still useful. */
+      // DB read failed — breaker state is still useful, but the zeros are not
+      // counts (OPE-1131: they rendered as "0 sent · 0 failed").
+      countsAvailable = false;
     }
 
     return {
@@ -3355,6 +3418,7 @@ async function loadIndexNowOps(): Promise<IndexNowOps> {
       skipped24h,
       sent7d,
       kvAvailable: kv !== null,
+      countsAvailable,
     };
   } catch {
     return EMPTY_INDEXNOW_OPS;
@@ -3373,6 +3437,8 @@ interface BingTabData {
   // warning + index-coverage ratio. Both degrade to [] on failure.
   traffic: BingTrafficStatsRow[];
   sitemaps: BingSitemap[];
+  /** OPE-1131 — reports that were REJECTED, so their `[]` is not "no data". */
+  failed: BingReport[];
 }
 
 async function loadBingData(): Promise<BingLoad> {
@@ -3402,6 +3468,18 @@ async function loadBingData(): Promise<BingLoad> {
     const [queries, pages, crawl, scan, quota, traffic, sitemaps] = settled.map((r) =>
       r.status === "fulfilled" ? r.value : null
     );
+    const reportOrder: Array<BingReport | null> = [
+      "queries",
+      "pages",
+      "crawl",
+      "scan",
+      null, // quota already renders its own "—"
+      "traffic",
+      "sitemaps",
+    ];
+    const failed = settled.flatMap((r, i) =>
+      r.status === "rejected" && reportOrder[i] ? [reportOrder[i] as BingReport] : []
+    );
     // Operational IndexNow state — self-contained + non-throwing, so it never
     // affects whether the rest of the Bing tab renders.
     const indexnow = await loadIndexNowOps();
@@ -3416,6 +3494,7 @@ async function loadBingData(): Promise<BingLoad> {
         indexnow,
         traffic: (traffic as BingTrafficStatsRow[] | null) ?? [],
         sitemaps: (sitemaps as BingSitemap[] | null) ?? [],
+        failed,
       },
     };
   } catch (error) {
@@ -3493,7 +3572,28 @@ async function BingTab() {
   if (!result.ok) {
     return <BingErrorPanel kind={result.kind} message={result.message} />;
   }
-  const { queries, pages, crawl, scan, quota, indexnow, traffic, sitemaps } = result.data;
+  const { queries, pages, crawl, scan, quota, indexnow, traffic, sitemaps, failed } = result.data;
+  // OPE-1131 — headline figures that can say "not measured" (bing-tiles.ts).
+  const clicks7dM = bingWeekTotal(
+    traffic,
+    (r) => r.clicks,
+    failed.includes("traffic"),
+    "bing_traffic"
+  );
+  const impr7dM = bingWeekTotal(
+    traffic,
+    (r) => r.impressions,
+    failed.includes("traffic"),
+    "bing_traffic"
+  );
+  const pagesIndexedM = bingPagesIndexed(crawl, failed.includes("crawl"));
+  const crawlErrors7dM = bingWeekTotal(
+    crawl,
+    (r) => r.crawlErrors,
+    failed.includes("crawl"),
+    "bing_crawl"
+  );
+  const scanFailed = failed.includes("scan");
   const errorCount = scan.filter((i) => i.severity === "Error").length;
   const warningCount = scan.filter((i) => i.severity === "Warning").length;
 
@@ -3551,11 +3651,7 @@ async function BingTab() {
           className: "text-amber-600",
         }
       : { label: "Active", className: "text-emerald-600" };
-  const inChip: { label: string; className: string } = indexnow.paused
-    ? { label: "Paused", className: "text-amber-600" }
-    : indexnow.breaker.reason === "cooldown"
-      ? { label: "Cooldown", className: "text-amber-600" }
-      : { label: "Active", className: "text-emerald-600" };
+  const inChip = indexNowChip(indexnow);
 
   // ── Block 5 — actionable issues synthesized from the loaded data ──
   const actionItems: string[] = [];
@@ -3587,7 +3683,13 @@ async function BingTab() {
     actionItems.push(`IndexNow failures: ${fmt(indexnow.failed24h)} in the last 24h`);
   }
 
-  const crawlErrColor = crawlErrors7d === 0 ? "text-emerald-600" : "text-amber-600";
+  // Green only for a MEASURED zero — an unavailable report is not clean.
+  const crawlErrColor =
+    crawlErrors7dM.state !== "ok" && crawlErrors7dM.state !== "stale"
+      ? "text-muted-foreground"
+      : crawlErrors7d === 0
+        ? "text-emerald-600"
+        : "text-amber-600";
   const coverageColor =
     coveragePct === null
       ? "text-foreground"
@@ -3608,7 +3710,9 @@ async function BingTab() {
           </CardHeader>
           <CardContent>
             <div className="flex items-end justify-between mb-2">
-              <p className="text-2xl font-bold text-foreground tabular-nums">{fmt(clicks7d)}</p>
+              <p className="text-2xl font-bold text-foreground tabular-nums">
+                {measurementText(clicks7dM, fmt)}
+              </p>
               <TrendBadge
                 trend={bingTrend(clicks7d, clicksPrior7d)}
                 current={clicks7d}
@@ -3635,7 +3739,9 @@ async function BingTab() {
           </CardHeader>
           <CardContent>
             <div className="flex items-end justify-between mb-2">
-              <p className="text-2xl font-bold text-foreground tabular-nums">{fmt(impr7d)}</p>
+              <p className="text-2xl font-bold text-foreground tabular-nums">
+                {measurementText(impr7dM, fmt)}
+              </p>
               <TrendBadge
                 trend={bingTrend(impr7d, imprPrior7d)}
                 current={impr7d}
@@ -3659,7 +3765,7 @@ async function BingTab() {
           <CardContent className="p-6">
             <p className="text-sm text-muted-foreground">Pages indexed</p>
             <p className="text-2xl font-bold text-foreground mt-1 tabular-nums">
-              {pagesIndexed !== null ? fmt(pagesIndexed) : "—"}
+              {measurementText(pagesIndexedM, fmt)}
             </p>
             <p className="text-xs text-muted-foreground mt-1">
               {latestCrawl ? `Latest crawl ${latestCrawl.date}` : "No crawl data yet"}
@@ -3670,14 +3776,16 @@ async function BingTab() {
           <CardContent className="p-6">
             <p className="text-sm text-muted-foreground">Crawl errors (7d)</p>
             <p className={`text-2xl font-bold mt-1 tabular-nums ${crawlErrColor}`}>
-              {fmt(crawlErrors7d)}
+              {measurementText(crawlErrors7dM, fmt)}
             </p>
             <p className="text-xs text-muted-foreground mt-1">
-              {crawl.length === 0
-                ? "No crawl data yet"
-                : crawlErrors7d === 0
-                  ? "Clean — no errors in last 7 crawl days"
-                  : "Sum over last 7 crawl days"}
+              {failed.includes("crawl")
+                ? "Bing crawl report unavailable"
+                : crawl.length === 0
+                  ? "No crawl data yet"
+                  : crawlErrors7d === 0
+                    ? "Clean — no errors in last 7 crawl days"
+                    : "Sum over last 7 crawl days"}
             </p>
           </CardContent>
         </Card>
@@ -3686,8 +3794,11 @@ async function BingTab() {
             <p className="text-sm text-muted-foreground">IndexNow health</p>
             <p className={`text-2xl font-bold mt-1 ${inChip.className}`}>{inChip.label}</p>
             <p className="text-xs text-muted-foreground mt-1 tabular-nums">
-              {fmt(indexnow.sent24h)} sent · {fmt(indexnow.failed24h)} failed ·{" "}
-              {fmt(indexnow.skipped24h)} skipped (24h)
+              {indexnow.countsAvailable
+                ? `${fmt(indexnow.sent24h)} sent · ${fmt(indexnow.failed24h)} failed · ${fmt(
+                    indexnow.skipped24h
+                  )} skipped (24h)`
+                : "— · indexnow_submissions read failed"}
             </p>
             {indexnow.paused && indexnow.pauseNote && (
               <p className="text-xs text-amber-600 mt-1">{indexnow.pauseNote}</p>
@@ -3852,12 +3963,18 @@ async function BingTab() {
               <CardTitle className="flex items-center justify-between gap-2">
                 <span>Crawl issues</span>
                 <span className="text-xs font-normal text-muted-foreground">
-                  {fmt(errorCount)} errors · {fmt(warningCount)} warnings
+                  {scanFailed
+                    ? measurementText(bingScanIssueCount(scan, true), fmt)
+                    : `${fmt(errorCount)} errors · ${fmt(warningCount)} warnings`}
                 </span>
               </CardTitle>
             </CardHeader>
             <CardContent>
-              {scanSorted.length === 0 ? (
+              {scanFailed ? (
+                <p className="text-sm text-muted-foreground">
+                  Bing site-scan report unavailable — not measured, not healthy.
+                </p>
+              ) : scanSorted.length === 0 ? (
                 <p className="text-sm text-emerald-600 font-medium">0 issues — healthy ✓</p>
               ) : (
                 <ul className="space-y-2">
@@ -4013,16 +4130,27 @@ async function BingTab() {
               <div>
                 <p className="text-xs text-muted-foreground">Sent 24h / 7d</p>
                 <p className="font-semibold tabular-nums mt-1">
-                  {fmt(indexnow.sent24h)} / {fmt(indexnow.sent7d)}
+                  {measurementText(indexNowCount(indexnow.sent24h, indexnow.countsAvailable), fmt)}{" "}
+                  / {measurementText(indexNowCount(indexnow.sent7d, indexnow.countsAvailable), fmt)}
                 </p>
               </div>
               <div>
                 <p className="text-xs text-muted-foreground">Failed 24h</p>
-                <p className="font-semibold tabular-nums mt-1">{fmt(indexnow.failed24h)}</p>
+                <p className="font-semibold tabular-nums mt-1">
+                  {measurementText(
+                    indexNowCount(indexnow.failed24h, indexnow.countsAvailable),
+                    fmt
+                  )}
+                </p>
               </div>
               <div>
                 <p className="text-xs text-muted-foreground">Skipped 24h</p>
-                <p className="font-semibold tabular-nums mt-1">{fmt(indexnow.skipped24h)}</p>
+                <p className="font-semibold tabular-nums mt-1">
+                  {measurementText(
+                    indexNowCount(indexnow.skipped24h, indexnow.countsAvailable),
+                    fmt
+                  )}
+                </p>
               </div>
               <div>
                 <p className="text-xs text-muted-foreground">BWT submit quota</p>
@@ -4731,7 +4859,7 @@ async function SiteHealthTab() {
                 value={
                   dataHealth.resolutions.adjudicatedCoverage === null
                     ? "—"
-                    : fmtPct(dataHealth.resolutions.adjudicatedCoverage * 100)
+                    : fmtPct(dataHealth.resolutions.adjudicatedCoverage)
                 }
                 hint="judged rows only, 28d"
               />
@@ -4894,7 +5022,7 @@ async function SiteHealthTab() {
                   value={`${fmt(t.count)} · ${
                     engagement.blogClickTotal === 0
                       ? "—"
-                      : fmtPct((t.count / engagement.blogClickTotal) * 100)
+                      : fmtPct(t.count / engagement.blogClickTotal)
                   }`}
                 />
               ))}
@@ -4975,9 +5103,7 @@ async function SiteHealthTab() {
               <StatRow
                 label="Confirm rate"
                 value={
-                  email.newsletterConfirmRate === null
-                    ? "—"
-                    : fmtPct(email.newsletterConfirmRate * 100)
+                  email.newsletterConfirmRate === null ? "—" : fmtPct(email.newsletterConfirmRate)
                 }
               />
               <StatRow label="Register views" value={fmt(email.registerViews)} />
