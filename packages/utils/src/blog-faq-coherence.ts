@@ -233,16 +233,41 @@ const TYPES: { type: FaqConflictType; re: RegExp; wholeBodyToo: boolean }[] = [
 /** "free" that is about someone other than the general public is not a price claim. */
 const FREE_EXCEPTION =
   "(?:child|children|kids?|seniors?|members?|students?|veterans?|military|under|ages?|toddlers?|infants?|babies)";
+// "Admission is free", "entry is always free" — not "admission is free for kids"
+const ADMISSION_IS_FREE_RE = new RegExp(
+  `\\b(?:admission|entry|entrance)\\s+(?:is\\s+|are\\s+)?(?:always\\s+|completely\\s+|entirely\\s+|totally\\s+)?free\\b(?![^.\\n]{0,25}\\b${FREE_EXCEPTION}\\b)`,
+  "i"
+);
+// "Free admission" — not "free admission for seniors". The PRECEDING exception
+// ("children receive free admission") is checked in code by
+// `exceptionEndsBefore`, not by a `(?<!…)` lookbehind: this module is
+// re-exported by the utils barrel, which reaches the browser, and building a
+// lookbehind at module load threw "invalid group specifier name" on Safari
+// < 16.4 — blanking every page that loaded the chunk (OPE-1128).
 const FREE_ADMISSION_RE = new RegExp(
-  [
-    // "Admission is free", "entry is always free" — not "admission is free for kids"
-    `\\b(?:admission|entry|entrance)\\s+(?:is\\s+|are\\s+)?(?:always\\s+|completely\\s+|entirely\\s+|totally\\s+)?free\\b(?![^.\\n]{0,25}\\b${FREE_EXCEPTION}\\b)`,
-    // "Free admission" — not "children receive free admission" / "free admission for seniors"
-    `(?<!\\b${FREE_EXCEPTION}\\b[^.\\n]{0,25})\\bfree\\s+(?:admission|entry|entrance)\\b(?![^.\\n]{0,25}\\b${FREE_EXCEPTION}\\b)`,
-    `\\bno\\s+(?:admission|entry|entrance)\\s+(?:fee|charge|cost)\\b`,
-  ].join("|"),
+  `\\bfree\\s+(?:admission|entry|entrance)\\b(?![^.\\n]{0,25}\\b${FREE_EXCEPTION}\\b)`,
   "gi"
 );
+const NO_ADMISSION_FEE_RE = /\bno\s+(?:admission|entry|entrance)\s+(?:fee|charge|cost)\b/i;
+/** An exception word ending within 25 same-sentence chars of the end of the text. */
+const EXCEPTION_BEFORE_RE = new RegExp(`\\b${FREE_EXCEPTION}\\b[^.\\n]{0,25}$`, "i");
+
+/**
+ * Exactly the old `(?<!\b${FREE_EXCEPTION}\b[^.\n]{0,25})` at `pos`. The
+ * 64-char window covers the longest exception (9) + 25 + a boundary char, so
+ * slicing cannot fake a `\b` at the cut.
+ */
+function exceptionEndsBefore(text: string, pos: number): boolean {
+  return EXCEPTION_BEFORE_RE.test(text.slice(Math.max(0, pos - 64), pos));
+}
+
+function claimsFreeAdmission(text: string): boolean {
+  if (ADMISSION_IS_FREE_RE.test(text) || NO_ADMISSION_FEE_RE.test(text)) return true;
+  for (const m of text.matchAll(FREE_ADMISSION_RE)) {
+    if (!exceptionEndsBefore(text, m.index ?? 0)) return true;
+  }
+  return false;
+}
 
 /**
  * A paid admission price, for the free-vs-paid rule ONLY. Same anchoring as
@@ -259,9 +284,8 @@ const PAID_ADMISSION_RE = new RegExp(
 );
 
 function freeVsPaid(bodyText: string, colText: string): FaqCoherenceConflict | null {
-  FREE_ADMISSION_RE.lastIndex = 0;
-  const bodyFree = new RegExp(FREE_ADMISSION_RE.source, "i").test(bodyText);
-  const colFree = new RegExp(FREE_ADMISSION_RE.source, "i").test(colText);
+  const bodyFree = claimsFreeAdmission(bodyText);
+  const colFree = claimsFreeAdmission(colText);
   const bodyPaid = extract(bodyText, PAID_ADMISSION_RE).filter((n) => n > 0);
   const colPaid = extract(colText, PAID_ADMISSION_RE).filter((n) => n > 0);
   if (bodyFree && bodyPaid.length === 0 && !colFree && colPaid.length > 0) {
@@ -335,7 +359,8 @@ function venueAllEvents(wholeBody: string, colText: string): FaqCoherenceConflic
   if (colPlaces.length === 0) return null;
 
   const bodyPlaces: string[] = [];
-  for (const sentence of wholeBody.split(/(?<=[.!?])\s+|\n+/)) {
+  // No lookbehind — see FREE_ADMISSION_RE (OPE-1128).
+  for (const sentence of wholeBody.replace(/([.!?])\s+/g, "$1\n").split(/\n+/)) {
     for (const m of sentence.matchAll(BODY_VENUE_RE)) {
       const toks = placeTokens(m[1]);
       if (toks.length === 0) continue;

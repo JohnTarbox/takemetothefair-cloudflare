@@ -56,6 +56,32 @@ then guard nothing. The case that matters is `src/lib/utils.ts` — a shared
 module, overwhelmingly server-used, pulled into the client bundle by a single
 component.
 
+### Regex syntax is above the floor too (OPE-1128)
+
+Regex **lookbehind** — `(?<=…)` / `(?<!…)` — needs **Safari 16.4** (2023-03).
+It is syntax, not an API: there is no call to guard. JavaScriptCore throws
+`Invalid regular expression: invalid group specifier name` the moment the
+pattern is compiled, so a lookbehind built at module load blanks every page
+whose chunk contains it.
+
+That is what happened. `packages/utils/src/blog-faq-coherence.ts` — a
+server-side blog linter — built one in a module-level `new RegExp`. The
+`@takemetothefair/utils` barrel re-exports it, so any client component importing
+a single helper from the barrel shipped it. ~20 renders across 13+ routes
+(`/`, `/events`, `/blog/*` …) from Safari 15.1 through 16.3.1, and **zero**
+from Chrome/Firefox/Android — the pattern that says "browser floor", not "bug".
+
+16.4 is **above** the Safari 14 floor, so lookbehind is refused in
+client-reachable code. **Named groups** `(?<name>…)` are Safari 11.1 — below
+the floor — and are deliberately not flagged.
+
+The guard also walks into `packages/*/src` now. Before OPE-1128 it treated
+`@takemetothefair/*` as external and scanned none of it, which is why it could
+not have caught this even with a regex rule. It skips `import type` (erased at
+compile time) and treats Drizzle `$defaultFn(() => …)` as deferred (it runs only
+on INSERT), because the db-schema barrel is client-reachable via
+`src/lib/vendor-status.ts`.
+
 ## Changing the floor
 
 1. Edit `package.json#browserslist` and this table.
