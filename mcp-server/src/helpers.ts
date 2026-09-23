@@ -690,6 +690,24 @@ export function vendorSearchWhere(params: {
  * Fields with no mapping (`name`, `slug`) are handled by the caller and fall
  * back to the argument, which for them is already the stored form.
  */
+/**
+ * OPE-1124 — present a STORED value in the unit the caller writes and the
+ * reader returns. Applied to BOTH `previousValues` and `newValues`, so the
+ * OPE-645 parity (both sides read the stored representation) survives: this is
+ * one presentation step over two stored values, not a second source of truth.
+ *
+ * Money is stored in `*Cents` columns but accepted in dollars and read back in
+ * dollars (`get_event_details_admin`). Reporting the raw column made a correct
+ * `vendor_fee_max: 20` read as 2000 — a $2,000 error to anyone following the
+ * "verify your write from the response" rule (OPE-534) — while the reader said
+ * 20. Keyed on the column-name suffix so a new money column is covered without
+ * being listed.
+ */
+export function presentStoredValue(column: string | undefined, value: unknown): unknown {
+  if (column?.endsWith("Cents") && typeof value === "number") return value / 100;
+  return value;
+}
+
 export function reportedNewValue(
   field: string,
   mapping: { column: string } | undefined,

@@ -32,6 +32,7 @@ import {
   coerceVenueNameAtIngest,
   VALID_TRANSITIONS,
   reportedNewValue,
+  presentStoredValue,
 } from "../helpers.js";
 import {
   citationSupersedeScope,
@@ -1823,7 +1824,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         }
         const mapping = fieldMap.find((f) => f.param === field);
         if (mapping) {
-          previousValues[field] = (event as Record<string, unknown>)[mapping.column];
+          previousValues[field] = presentStoredValue(
+            mapping.column,
+            (event as Record<string, unknown>)[mapping.column]
+          );
         }
       }
 
@@ -2176,11 +2180,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       const newValues: Record<string, unknown> = {};
       for (const field of requestedFields) {
         const mapping = fieldMap.find((f) => f.param === field);
-        newValues[field] = reportedNewValue(
-          field,
-          mapping,
-          updates,
-          params as Record<string, unknown>
+        newValues[field] = presentStoredValue(
+          mapping?.column,
+          reportedNewValue(field, mapping, updates, params as Record<string, unknown>)
         );
       }
       if (params.name !== undefined && updates.slug) {
