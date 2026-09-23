@@ -43,3 +43,46 @@ export function eventApprovalBlockReason(e: EventApprovalGateInput): string | nu
   }
   return null;
 }
+
+/**
+ * OPE-1114 — a reviewer's note left in PUBLIC copy.
+ *
+ * `pemaquid-oyster-festival-2026` was approved and served with a description
+ * ending "VENUE TO CONFIRM … reviewer should confirm the 2026 venue before
+ * approval" — and the venue WAS wrong, by a town, five days out. The row had
+ * written down, in public, that nobody had checked, and shipped anyway.
+ *
+ * Returns the matched marker, or null. Used to WARN at approval, never to
+ * block: a false positive must not be able to stop a correct approval.
+ *
+ * The patterns are instructions to a reviewer, not hedges to a reader. Two
+ * live rows say "hours subject to confirmation", which is honest reader-facing
+ * copy, and must NOT match — hence upper-case-only for the terse markers
+ * (`TO CONFIRM`, `TO VERIFY`, `TODO`) and phrases for the rest.
+ */
+const REVIEWER_MARKERS: ReadonlyArray<RegExp> = [
+  /\breviewers? should\b/i,
+  /\bbefore approv(?:al|ing)\b/i,
+  /\bNEEDS VERIFICATION\b/i,
+  /\bTO CONFIRM\b/,
+  /\bTO VERIFY\b/,
+  /\bTODO\b/,
+];
+
+export function reviewerMarkerInCopy(text: string | null | undefined): string | null {
+  if (!text) return null;
+  for (const re of REVIEWER_MARKERS) {
+    const m = re.exec(text);
+    if (m) return m[0];
+  }
+  return null;
+}
+
+/** The warning both approve paths return. One wording, one place. */
+export function reviewerMarkerWarning(marker: string): string {
+  return (
+    `This event's public description contains a reviewer note ("${marker}"). ` +
+    `It was approved anyway (this is a warning, not a block) — check the note ` +
+    `was resolved, and move it out of the public copy.`
+  );
+}
