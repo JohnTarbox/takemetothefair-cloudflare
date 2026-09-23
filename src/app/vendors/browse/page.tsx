@@ -5,6 +5,7 @@ import {
   getVendorBrowseEntries,
   groupByInitial,
   groupByState,
+  withoutBrowseState,
   BROWSE_LETTERS,
   stateLabel,
   stateSlug,
@@ -26,6 +27,8 @@ export default async function VendorBrowseIndexPage() {
   const entries = await getVendorBrowseEntries(db);
   const byLetter = groupByInitial(entries);
   const byState = groupByState(entries);
+  // OPE-831 — the vendors no state page lists, so they stay reachable.
+  const noState = withoutBrowseState(entries).length;
   const states = Array.from(byState.keys()).sort((a, b) =>
     stateLabel(a).localeCompare(stateLabel(b))
   );
@@ -92,6 +95,14 @@ export default async function VendorBrowseIndexPage() {
             </span>
           </li>
         ))}
+        {noState > 0 && (
+          <li>
+            <Link href="/vendors/browse/location-not-set" className="text-navy hover:underline">
+              Location not set
+            </Link>
+            <span className="ml-1 text-sm text-muted-foreground">({noState})</span>
+          </li>
+        )}
       </ul>
     </div>
   );

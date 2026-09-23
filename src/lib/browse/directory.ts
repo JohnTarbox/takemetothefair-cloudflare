@@ -62,13 +62,30 @@ export function groupByInitial(entries: BrowseEntry[]): Map<string, BrowseEntry[
 export function groupByState(entries: BrowseEntry[]): Map<string, BrowseEntry[]> {
   const map = new Map<string, BrowseEntry[]>();
   for (const e of entries) {
-    const k = (e.state ?? "").trim().toUpperCase();
+    const k = browseStateKey(e);
     if (!k) continue;
-    if (!isBrowseStateCode(k)) continue;
     (map.get(k) ?? map.set(k, []).get(k)!).push(e);
   }
   for (const list of map.values()) list.sort((a, b) => a.name.localeCompare(b.name));
   return map;
+}
+
+/**
+ * OPE-831 — the ONE decision "does this entry reach a by-state page?".
+ * `groupByState` and `withoutBrowseState` both call it, so the "Location not
+ * set" bucket is by construction exactly what the grouper drops: blank codes
+ * AND invalid ones. Two copies of the rule would let a vendor fall in neither.
+ */
+export function browseStateKey(e: Pick<BrowseEntry, "state">): string | null {
+  const k = (e.state ?? "").trim().toUpperCase();
+  return k && isBrowseStateCode(k) ? k : null;
+}
+
+/** OPE-831 — every entry `groupByState` drops, name-sorted. */
+export function withoutBrowseState(entries: BrowseEntry[]): BrowseEntry[] {
+  return entries
+    .filter((e) => browseStateKey(e) === null)
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export function stateLabel(code: string): string {
