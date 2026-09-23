@@ -43,11 +43,16 @@ import {
 } from "./email-handlers/forwarded-message.js";
 import { createDohResolver } from "./email-handlers/dkim-verify.js";
 import { getDb, type Db } from "./db.js";
-import { inboundEmails, inboundEmailSenders, users, adminActions } from "./schema.js";
+import {
+  inboundEmails,
+  inboundEmailSenders,
+  users,
+  adminActions,
+  emailSendLedger,
+} from "./schema.js";
 import { desc, eq, inArray, sql } from "drizzle-orm";
 import {
   participantKey,
-  parseMessageIdList,
   normalizeThreadSubject,
   resolveThread,
   type ThreadBasis,
@@ -326,6 +331,7 @@ export async function handleInboundEmail(
       subject,
       inReplyTo: parsed.inReplyTo ?? null,
       emailReferences: parsed.references ?? null,
+      forwardOriginalSender: forward?.originalSenderAddress ?? null,
     });
 
     if (!fromAddr) {
@@ -2018,10 +2024,44 @@ interface ThreadColumns {
   threadBasis: ThreadBasis;
 }
 
+/**
+ * The referenced Message-IDs spelled as STORED, for an `IN (…)` lookup.
+ *
+ * `inbound_emails.message_id` and `email_send_ledger.provider_message_id` keep
+ * the header's own case and angle brackets (`<DM3PPF334…>`), and D1's `IN`
+ * compares case-sensitively. `parseMessageIdList` lower-cases and strips the
+ * brackets — right for the resolver's comparison, wrong as a query key: a
+ * lookup built from it matched only ids that were already lower-case and
+ * bracketless, so the cross-sender header tier was silently dead. Both
+ * bracketed and bare forms are queried, case preserved.
+ *
+ * Capped at MAX_REFERENCED_IDS (×2 forms, under D1's 100 bound parameters):
+ * the In-Reply-To id plus the NEWEST References, which is where the parent is.
+ */
+const MAX_REFERENCED_IDS = 40;
+export function storedMessageIdForms(
+  inReplyTo: string | null | undefined,
+  references: string | null | undefined
+): string[] {
+  const grab = (h: string | null | undefined) =>
+    (h ?? "").match(/<[^<>\s]+>/g) ?? (h ?? "").split(/\s+/).filter(Boolean);
+  const irt = grab(inReplyTo);
+  const refs = grab(references);
+  const ids = [...new Set([...irt.slice(0, 1), ...refs.reverse()])].slice(0, MAX_REFERENCED_IDS);
+  return [
+    ...new Set(
+      ids.flatMap((raw) => {
+        const bare = raw.replace(/^</, "").replace(/>$/, "");
+        return bare ? [`<${bare}>`, bare] : [];
+      })
+    ),
+  ];
+}
+
 /** Recent rows scanned for the weak (subject+participants) tier. */
 const THREAD_CANDIDATE_WINDOW = 60;
 
-async function resolveThreadColumns(
+export async function resolveThreadColumns(
   env: EmailHandlerEnv,
   sessionId: string,
   args: {
@@ -2030,22 +2070,18 @@ async function resolveThreadColumns(
     subject: string | null;
     inReplyTo: string | null;
     emailReferences: string | null;
+    /** OPE-768 scope 3 — the nested `From:` of a forward, when there is one. */
+    forwardOriginalSender?: string | null;
   }
 ): Promise<ThreadColumns> {
   const newThreadId = crypto.randomUUID();
   const participants = participantKey([args.fromAddr, args.toAddr]);
   try {
     const db = getDb(env.DB);
-    const referenced = [
-      ...new Set([
-        ...parseMessageIdList(args.inReplyTo),
-        ...parseMessageIdList(args.emailReferences),
-      ]),
-    ];
-
-    // Two bounded reads, not a table scan. The header tier is an exact lookup;
+    // Bounded reads, not a table scan. The header tiers are exact lookups;
     // the weak tier only ever needs rows this person is already party to.
-    const byMessageId = referenced.length
+    const storedForms = storedMessageIdForms(args.inReplyTo, args.emailReferences);
+    const byMessageId = storedForms.length
       ? await db
           .select({
             threadId: inboundEmails.threadId,
@@ -2055,8 +2091,8 @@ async function resolveThreadColumns(
             toAddress: inboundEmails.toAddress,
           })
           .from(inboundEmails)
-          .where(inArray(inboundEmails.messageId, referenced))
-          .limit(referenced.length)
+          .where(inArray(inboundEmails.messageId, storedForms))
+          .limit(storedForms.length)
       : [];
 
     const recent = await db
@@ -2072,12 +2108,59 @@ async function resolveThreadColumns(
       .orderBy(desc(inboundEmails.receivedAt))
       .limit(THREAD_CANDIDATE_WINDOW);
 
-    const candidates = [...byMessageId, ...recent].map((r) => ({
-      threadId: r.threadId,
-      messageId: r.messageId,
-      normalizedSubject: normalizeThreadSubject(r.subject),
-      participants: participantKey([r.fromAddress, r.toAddress]),
-    }));
+    // OPE-768 — the header chain through OUR OWN mail. A customer replying to
+    // an email we sent names OUR Message-ID, which is never an inbound row:
+    // Celina's 09-01 reply named `<mSVuk…@meetmeatthefair.com>`, the send the
+    // ledger ties to her inbound `8334796b`. Exact, like the tier it extends.
+    const byOurMessageId = storedForms.length
+      ? await db
+          .select({
+            threadId: inboundEmails.threadId,
+            messageId: emailSendLedger.providerMessageId,
+            subject: inboundEmails.subject,
+            fromAddress: inboundEmails.fromAddress,
+            toAddress: inboundEmails.toAddress,
+          })
+          .from(emailSendLedger)
+          .innerJoin(inboundEmails, eq(inboundEmails.id, emailSendLedger.inboundEmailId))
+          .where(inArray(emailSendLedger.providerMessageId, storedForms))
+          .limit(storedForms.length)
+      : [];
+
+    // OPE-768 scope 3 — a TRUSTED sender forwarding someone else's message
+    // joins that person's thread (subject must match too — see tier 1b). An
+    // untrusted forwarder is itself the person waiting, so it gets no hint.
+    const original = args.forwardOriginalSender?.trim().toLowerCase() || null;
+    const forwardOf =
+      original &&
+      original !== args.fromAddr.trim().toLowerCase() &&
+      (await lookupSenderTrust(env.DB, args.fromAddr)) === "trusted"
+        ? original
+        : null;
+    const originalsRows = forwardOf
+      ? await db
+          .select({
+            threadId: inboundEmails.threadId,
+            messageId: inboundEmails.messageId,
+            subject: inboundEmails.subject,
+            fromAddress: inboundEmails.fromAddress,
+            toAddress: inboundEmails.toAddress,
+          })
+          .from(inboundEmails)
+          .where(eq(inboundEmails.fromAddress, forwardOf))
+          .orderBy(desc(inboundEmails.receivedAt))
+          .limit(THREAD_CANDIDATE_WINDOW)
+      : [];
+
+    const candidates = [...byMessageId, ...byOurMessageId, ...recent, ...originalsRows].map(
+      (r) => ({
+        threadId: r.threadId,
+        messageId: r.messageId,
+        normalizedSubject: normalizeThreadSubject(r.subject),
+        participants: participantKey([r.fromAddress, r.toAddress]),
+        fromAddress: r.fromAddress,
+      })
+    );
 
     const { threadId, basis } = resolveThread(
       {
@@ -2085,6 +2168,7 @@ async function resolveThreadColumns(
         emailReferences: args.emailReferences,
         subject: args.subject,
         participants,
+        forwardOf,
       },
       candidates,
       newThreadId

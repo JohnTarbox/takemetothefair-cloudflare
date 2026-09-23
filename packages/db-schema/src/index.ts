@@ -5083,7 +5083,10 @@ export const inboundEmails = sqliteTable(
     threadPosition: integer("thread_position"),
     /**
      * How `threadId` was decided: 'header_chain' (RFC 5322 In-Reply-To /
-     * References — exact), 'subject_participants' (heuristic), or 'new'.
+     * References — exact, against our inbound rows OR our own sends in
+     * `email_send_ledger`), 'operator_forward' (a trusted sender forwarding a
+     * customer's message — joins the customer's thread, opens no obligation;
+     * OPE-768 scope 3), 'subject_participants' (heuristic), or 'new'.
      *
      * Stored because the heuristic tier must be auditable. A thread assembled
      * from a guess and one assembled from headers are different claims, and a

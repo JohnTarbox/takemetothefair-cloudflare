@@ -23,8 +23,8 @@
  * a rule is how the fourth lane gets forgotten.
  */
 
-import { eq } from "drizzle-orm";
-import { supportObligations } from "../schema.js";
+import { and, eq } from "drizzle-orm";
+import { inboundEmails, supportObligations } from "../schema.js";
 import { decideObligation, extractEmailAddress } from "@takemetothefair/utils";
 import { isEmailSuppressed } from "../tools/admin-send-vendor-email.js";
 import { logError } from "../logger.js";
@@ -70,6 +70,28 @@ export async function openObligationIfOwed(
     });
 
     if (!decision.obligated) return null;
+
+    // ── OPE-768 scopes 2 + 3: one waiting obligation per CONVERSATION ───────
+    //
+    // An operator forwarding a customer's message that already has a thread
+    // is not a second waiting person (symptom 2: `2c194709`, John's
+    // "Fwd: Account creation", beside Celina's own row). The customer's own
+    // row carries the obligation.
+    if (row.threadBasis === "operator_forward") return null;
+
+    // A later message on a thread that already has an OPEN obligation joins
+    // it rather than opening a second one — the queue counts conversations
+    // waiting, not envelopes. A thread whose obligation was closed opens a
+    // fresh one: a new question after an answer is owed a new answer.
+    if (row.threadId) {
+      const [open] = await db
+        .select({ id: supportObligations.id })
+        .from(supportObligations)
+        .innerJoin(inboundEmails, eq(inboundEmails.id, supportObligations.inboundEmailId))
+        .where(and(eq(inboundEmails.threadId, row.threadId), eq(supportObligations.status, "open")))
+        .limit(1);
+      if (open) return ref.supportObligation(open.id);
+    }
 
     await db
       .insert(supportObligations)
