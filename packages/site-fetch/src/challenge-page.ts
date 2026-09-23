@@ -57,6 +57,9 @@ const BODY_MARKERS: Array<{ re: RegExp; vendor: string }> = [
   { re: /Request unsuccessful\. Incapsula incident ID/i, vendor: "imperva" },
   { re: /<title>\s*Pardon Our Interruption\s*<\/title>/i, vendor: "distil" },
   { re: /\bak(?:am)?_?bmsc\b|\/_sec\/cp_challenge\//i, vendor: "akamai" },
+  // OPE-815 — SiteGround's bot check: HTTP 202 + a ~200-byte meta-refresh to
+  // /.well-known/sgcaptcha/ (jenksproductions.com, 2026-09-23).
+  { re: /\/\.well-known\/sgcaptcha\//i, vendor: "siteground" },
 ];
 
 export interface ChallengeVerdict {
