@@ -10,6 +10,7 @@ import {
   EYEBROW_GOLD,
   NEWSLETTER_NAME,
   ON_BAND_MUTED,
+  VENDOR_NEWSLETTER_NAME,
   SUBTITLE_GOLD,
   newsletterMastheadHtml,
 } from "@/lib/newsletter-masthead";
@@ -196,26 +197,40 @@ ${reasonBlock}
  * GDPR posture is "we don't add you to the list until you click" — until
  * confirmed, the row sits with `confirmed=false` and is excluded from sends.
  */
-export function newsletterConfirmTemplate(args: { confirmUrl: string }): {
+export function newsletterConfirmTemplate(args: {
+  confirmUrl: string;
+  /**
+   * OPE-1145 — which list confirming will join (`listForSource(source)`, the
+   * same derivation the confirm path uses). A vendor-form signup was told it
+   * had signed up for "This Weekend at the Fair" while confirming correctly
+   * put it on the vendor list. Omitted → the weekend copy, unchanged.
+   */
+  list?: "weekend" | "vendor";
+}): {
   subject: string;
   html: string;
   text: string;
 } {
+  const vendor = args.list === "vendor";
+  const name = vendor ? VENDOR_NEWSLETTER_NAME : NEWSLETTER_NAME;
+  const roundup = vendor
+    ? "start receiving a weekly list of newly announced fairs, festivals and markets across New England that are taking vendors"
+    : "start receiving our weekly roundup of events, new vendors, and hidden gems across New England";
   // OPE-285 — name the product exactly as it will appear in their inbox. The
   // confirmation email is the one place we can tell a subscriber the literal
   // string to search for later, so it must match the masthead + subject.
-  const searchHint = `Every issue arrives with ${NEWSLETTER_NAME} in the subject line — search your inbox for that if you ever lose one.`;
+  const searchHint = `Every issue arrives with ${name} in the subject line — search your inbox for that if you ever lose one.`;
   const html = baseLayout({
     heading: "Confirm your subscription",
-    body: `<p style="margin:0 0 12px;">Thanks for signing up for <strong>${NEWSLETTER_NAME}</strong>, the Meet Me at the Fair weekly newsletter.</p>
-<p style="margin:0 0 12px;">Click the button below to confirm your email and start receiving our weekly roundup of events, new vendors, and hidden gems across New England. The link is valid for 14 days.</p>
+    body: `<p style="margin:0 0 12px;">Thanks for signing up for <strong>${name}</strong>, the Meet Me at the Fair weekly newsletter.</p>
+<p style="margin:0 0 12px;">Click the button below to confirm your email and ${roundup}. The link is valid for 14 days.</p>
 <p style="margin:0 0 12px;">${searchHint}</p>
 <p style="margin:0 0 12px;">If you didn't sign up, you can ignore this email — without confirming, you won't be added to the list.</p>`,
     cta: { url: args.confirmUrl, label: "Confirm subscription" },
   });
-  const text = `Thanks for signing up for ${NEWSLETTER_NAME}, the Meet Me at the Fair weekly newsletter.\n\nClick the link below to confirm your email and start receiving our weekly roundup of events, new vendors, and hidden gems across New England. The link is valid for 14 days.\n\n${args.confirmUrl}\n\n${searchHint}\n\nIf you didn't sign up, you can ignore this email — without confirming, you won't be added to the list.`;
+  const text = `Thanks for signing up for ${name}, the Meet Me at the Fair weekly newsletter.\n\nClick the link below to confirm your email and ${roundup}. The link is valid for 14 days.\n\n${args.confirmUrl}\n\n${searchHint}\n\nIf you didn't sign up, you can ignore this email — without confirming, you won't be added to the list.`;
   return {
-    subject: `Confirm your subscription to ${NEWSLETTER_NAME}`,
+    subject: `Confirm your subscription to ${name}`,
     html,
     text,
   };
