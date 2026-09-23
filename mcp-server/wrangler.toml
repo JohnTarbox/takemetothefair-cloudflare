@@ -316,6 +316,25 @@ crons = ["0 6 * * *", "10 6 * * *", "*/10 * * * *", "0 * * * *", "0 7 * * *", "0
 #   allowed_sender_addresses = ["notify@meetmeatthefair.com"]
 [[send_email]]
 name = "EMAIL"
+# OPE-1133 — the only senders this binding may use. Without it the binding can
+# send as ANY address the account's Email Sending setup permits.
+#
+# Complete as of 2026-09-23, from BOTH the code and received mail:
+#   notify@   DEFAULT_FROM — queue-consumers.ts, workflows/inbound-email.ts,
+#             inbound-email-stale-sweep.ts (every ack, reply, alert, digest)
+#   hello@    send_vendor_email FROM, send_promoter_email FROM, NEWSLETTER_FROM
+#   support@  reply_to_inbound_email + /api/admin/inbound-emails/[id]/reply
+# Proven in a local (miniflare) harness first: all three accepted in their
+# display-name form ("Meet Me at the Fair <notify@…>"), and noreply@, a
+# plus-address and a foreign domain refused ("email from … not allowed").
+#
+# ⚠️ ADD A SENDER HERE BEFORE SHIPPING CODE THAT USES IT — an unlisted `from`
+# throws at send time, which on the queue path means retries then the DLQ.
+allowed_sender_addresses = [
+  "notify@meetmeatthefair.com",
+  "hello@meetmeatthefair.com",
+  "support@meetmeatthefair.com",
+]
 
 # Workers AI binding for the inbound-email intent classifier (Phase C.1).
 # Used by mcp-server/src/intent-classifier.ts:classifyIntent — calls
