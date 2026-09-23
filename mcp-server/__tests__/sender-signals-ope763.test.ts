@@ -184,3 +184,60 @@ describe("extractSenderSignals — the classic tells", () => {
     expect(s.fromDisplayName).toBeNull();
   });
 });
+
+/**
+ * Review bounce (2026-09-23): Cloudflare writes the HELO SPF check FIRST and
+ * the MAIL FROM check second. First-match recorded 232 of 243 prod rows as
+ * `spf=none` / `partial` for mail whose SPF passed. This is the verbatim
+ * header off one of those rows (inbound 0cb048f4, a Gmail message to ourselves).
+ */
+const GMAIL_TWO_SPF =
+  "mx.cloudflare.net; dkim=pass header.d=gmail.com header.s=20251104 header.b=ZqZ/iZfx; " +
+  "dmarc=pass header.from=gmail.com policy.dmarc=none; " +
+  "spf=none (mx.cloudflare.net: no SPF records found for postmaster@mail-yx2-x11.google.com) smtp.helo=mail-yx2-x11.google.com; " +
+  "spf=pass (mx.cloudflare.net: domain of jtarboxme@gmail.com designates 2607:f8b0:4864:41::11 as permitted sender) smtp.mailfrom=jtarboxme@gmail.com; " +
+  'arc=pass smtp.remote-ip="2607:f8b0:4864:41::11"';
+
+describe("SPF — the record reads the MAIL FROM check, not the first spf=", () => {
+  it("the bounce specimen: HELO none + MAIL FROM pass records pass, and a full pass", () => {
+    const d = parseEmailAuthDetail(GMAIL_TWO_SPF);
+    expect(d.spf).toBe("pass");
+    expect(d.verdict).toBe("pass");
+  });
+
+  it("order-independent: MAIL FROM listed first still wins", () => {
+    const h =
+      "mx.cloudflare.net; spf=softfail smtp.mailfrom=x@y.test; spf=pass smtp.helo=mail.y.test";
+    expect(parseEmailAuthDetail(h).spf).toBe("softfail");
+  });
+
+  it("a MAIL FROM fail behind a HELO pass is recorded as the fail it is", () => {
+    const h = "mx.cloudflare.net; spf=pass smtp.helo=mail.y.test; spf=fail smtp.mailfrom=x@y.test";
+    const d = parseEmailAuthDetail(h);
+    expect(d.spf).toBe("fail");
+    expect(d.verdict).toBe("fail");
+  });
+
+  it("with no smtp.mailfrom entry, falls back to the first spf= (the old answer)", () => {
+    expect(parseEmailAuthDetail("mx.cloudflare.net; spf=none smtp.helo=h.test").spf).toBe("none");
+    expect(
+      parseEmailAuthDetail("mx.cloudflare.net; spf=neutral smtp.helo=h.test; spf=pass").spf
+    ).toBe("neutral");
+  });
+
+  it("a `;` inside a comment cannot hide the smtp.mailfrom property", () => {
+    const h =
+      "mx.cloudflare.net; spf=none smtp.helo=h.test; spf=pass (note; see policy) smtp.mailfrom=x@y.test";
+    expect(parseEmailAuthDetail(h).spf).toBe("pass");
+  });
+
+  it("scope 5: the GATE is unchanged — it still reads the first spf= (known divergence)", () => {
+    // Pinned from both sides so a later "fix" to the gate is a deliberate,
+    // visible change (OPE-764's call), not a side effect of this one.
+    const h = "mx.cloudflare.net; spf=pass smtp.helo=mail.y.test; spf=fail smtp.mailfrom=x@y.test";
+    expect(parseEmailAuth(h)).toBe("pass");
+    expect(collapseSenderAuth(parseEmailAuthDetail(h).verdict)).toBe("fail");
+    // On the real specimen the two still agree, because DMARC passed.
+    expect(parseEmailAuth(GMAIL_TWO_SPF)).toBe("pass");
+  });
+});
