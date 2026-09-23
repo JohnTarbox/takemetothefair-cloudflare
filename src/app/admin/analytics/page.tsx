@@ -7,7 +7,7 @@ import {
   indexNowCount,
   type BingReport,
 } from "@/lib/analytics-overview/bing-tiles";
-import { measurementText, sparklineTotal } from "@/lib/analytics-overview/render-state";
+import { freshness, measurementText, sparklineTotal } from "@/lib/analytics-overview/render-state";
 import {
   Activity,
   AlertTriangle,
@@ -87,6 +87,7 @@ import {
   Ga4ConfigError,
   getAeoReferrals,
   getFacebookTrafficSafe,
+  TRAFFIC_SOURCE_LIMIT,
   type AeoReferralsResult,
   type FacebookTrafficSummary,
   type Ga4Env,
@@ -549,7 +550,7 @@ function ConversionsCard({ snapshot }: { snapshot: OverviewSnapshot }) {
   return (
     <KpiCard
       title={`Conversions (last ${card.windowDays}d)`}
-      value={fmt(card.current)}
+      value={measurementText(card.currentMeasured, fmt)}
       icon={<TrendingUp className="w-5 h-5 text-emerald-600" />}
       iconColor="bg-emerald-100"
       href="/admin/analytics?tab=first-party-events"
@@ -682,6 +683,17 @@ function kpiCardState(
   name: KpiName
 ): { state: KpiState; actionPrompt?: string } {
   const row = snapshot.kpiStates.get(name);
+  // OPE-1131 — a badge is itself a measurement. If the */10 recompute stops,
+  // the last state stays on the card forever; judge it on its own age.
+  if (row) {
+    const badge = freshness(row.state, "kpi_state_history", row.computedAt, snapshot.generatedAt);
+    if (badge.state === "stale") {
+      return {
+        state: "STALE",
+        actionPrompt: `KPI badge frozen — ${badge.reason} (recompute stopped)`,
+      };
+    }
+  }
   const state: KpiState = row?.state ?? "INDETERMINATE";
   if (state === "RED") {
     const cfg = KPI_THRESHOLDS[name];
@@ -854,7 +866,16 @@ function FacebookReferralsCardView({ summary }: { summary: FacebookTrafficSummar
   return (
     <KpiCard
       title="Facebook traffic (last 28d)"
-      value={fmt(summary.sessions)}
+      value={measurementText(
+        summary.sourcesCapped
+          ? {
+              state: "truncated",
+              value: summary.sessions,
+              reason: `from GA4's top ${TRAFFIC_SOURCE_LIMIT} sources — may undercount`,
+            }
+          : { state: "ok", value: summary.sessions, reason: "" },
+        fmt
+      )}
       icon={<Facebook className="w-5 h-5 text-royal" />}
       iconColor="bg-info-soft"
       href="/admin/analytics/ga4"
@@ -1206,10 +1227,14 @@ function RecommendationsSummaryCardView({ snapshot }: { snapshot: OverviewSnapsh
                 Recommendations (actionable)
               </p>
               <p className="text-3xl font-bold text-foreground mt-2 tabular-nums">
-                {fmt(c.actionableCount)}
+                {measurementText(c.actionableMeasured, fmt)}
               </p>
               <div className="mt-2 text-xs">
-                {c.totalItems === 0 ? (
+                {c.actionableMeasured.state === "stale" ? (
+                  <span className="text-orange-600">
+                    scanner stopped — items age out after 7d, so this is not a clean bill
+                  </span>
+                ) : c.totalItems === 0 ? (
                   <span className="text-muted-foreground">All clear</span>
                 ) : (
                   <>
@@ -1347,23 +1372,26 @@ function RecentErrorsCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
 // alert (selectStaleFaultReds) points at.
 function RenderFaultHealthCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
   const c = snapshot.renderFaultHealth;
-  const pct = (x: number | null) => (x === null ? "—" : `${Math.round(x * 100)}%`);
+  // OPE-1131 — each null names its empty denominator (fault-health.ts:94-102)
+  // rather than a bare "—".
+  const pct = (x: number | null, why: string) =>
+    x === null ? `— · ${why}` : `${Math.round(x * 100)}%`;
   const mttd =
     c.meanTimeToDetectHours === null
-      ? "—"
+      ? "— · none filed yet"
       : c.meanTimeToDetectHours < 48
         ? `${Math.round(c.meanTimeToDetectHours)}h`
         : `${(c.meanTimeToDetectHours / 24).toFixed(1)}d`;
   const rows: Array<{ label: string; value: string }> = [
     { label: "Open signatures", value: `${fmt(c.openSignatures)} / ${fmt(c.totalSignatures)}` },
-    { label: "Auto-detected", value: pct(c.autoDetectedPct) },
+    { label: "Auto-detected", value: pct(c.autoDetectedPct, "no signatures yet") },
     { label: "Mean time to detect", value: mttd },
-    { label: "Server-message share", value: pct(c.serverMessagePct) },
-    { label: "Dedup collapse", value: pct(c.dedupCollapseRate) },
-    { label: "Recurrence rate", value: pct(c.recurrenceRate) },
+    { label: "Server-message share", value: pct(c.serverMessagePct, "no error rows in window") },
+    { label: "Dedup collapse", value: pct(c.dedupCollapseRate, "no occurrences") },
+    { label: "Recurrence rate", value: pct(c.recurrenceRate, "none resolved yet") },
     {
       label: "Guard coverage",
-      value: c.guardCoveragePct === null ? "n/a" : pct(c.guardCoveragePct),
+      value: pct(c.guardCoveragePct, "not instrumented yet"),
     },
   ];
   const hasOpen = c.openSignatures > 0;
@@ -2882,11 +2910,22 @@ async function FirstPartyEventsTab() {
       .orderBy(sql`COUNT(*) DESC`),
   ]);
 
+  // OPE-1131 — a stopped beacon and a quiet month render the same table. Judge
+  // the feed on the newest row it admitted (`recent` is newest-first).
+  const beacon = recent[0]
+    ? freshness(null, "analytics_events", recent[0].timestamp)
+    : { state: "stale" as const, reason: `no events in ${days} days` };
+
   return (
     <>
       <Card className="mb-6">
         <CardHeader>
           <CardTitle>Event counts (last {days} days)</CardTitle>
+          {beacon.state === "stale" && (
+            <p className="text-xs text-orange-600 mt-1">
+              🕒 beacon {beacon.reason} — counts below are not a live reading
+            </p>
+          )}
         </CardHeader>
         <CardContent className="p-0">
           <table className="w-full text-sm">
@@ -3250,7 +3289,8 @@ async function GoogleTab() {
               {!sitemaps || sitemaps.sitemaps.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-6 py-6 text-muted-foreground">
-                    No sitemaps submitted to GSC.
+                    {/* OPE-1131 — a failed fetch is not "none submitted". */}
+                    {sitemaps ? "No sitemaps submitted to GSC." : "GSC Sitemaps API unavailable."}
                   </td>
                 </tr>
               ) : (
@@ -3830,8 +3870,14 @@ async function BingTab() {
               {queries.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="px-6 py-6 text-muted-foreground">
-                    No Bing query data yet. Bing typically takes 7&ndash;14 days after site
-                    verification to start reporting search-performance data.
+                    {failed.includes("queries") ? (
+                      "Bing query report unavailable — not measured."
+                    ) : (
+                      <>
+                        No Bing query data yet. Bing typically takes 7&ndash;14 days after site
+                        verification to start reporting search-performance data.
+                      </>
+                    )}
                   </td>
                 </tr>
               ) : (
@@ -3878,8 +3924,14 @@ async function BingTab() {
               {pages.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="px-6 py-6 text-muted-foreground">
-                    No page data yet. Populates after Bing accumulates impression data (typically
-                    7&ndash;14 days post-verification).
+                    {failed.includes("pages") ? (
+                      "Bing page report unavailable — not measured."
+                    ) : (
+                      <>
+                        No page data yet. Populates after Bing accumulates impression data
+                        (typically 7&ndash;14 days post-verification).
+                      </>
+                    )}
                   </td>
                 </tr>
               ) : (
@@ -4155,7 +4207,9 @@ async function BingTab() {
               <div>
                 <p className="text-xs text-muted-foreground">BWT submit quota</p>
                 <p className="font-semibold tabular-nums mt-1">
-                  {quota ? `${fmt(quota.dailyRemaining)} / ${fmt(quota.dailyQuota)}` : "—"}
+                  {quota
+                    ? `${fmt(quota.dailyRemaining)} / ${fmt(quota.dailyQuota)}`
+                    : "— · quota API unavailable"}
                 </p>
               </div>
             </div>
@@ -4858,7 +4912,7 @@ async function SiteHealthTab() {
                 label="Adjudicated coverage"
                 value={
                   dataHealth.resolutions.adjudicatedCoverage === null
-                    ? "—"
+                    ? "— · nothing judged in 28d"
                     : fmtPct(dataHealth.resolutions.adjudicatedCoverage)
                 }
                 hint="judged rows only, 28d"
@@ -4932,13 +4986,15 @@ async function SiteHealthTab() {
                 />
                 <StatRow
                   label="Previous period"
-                  value={traffic.previous === null ? "—" : fmt(traffic.previous)}
+                  value={traffic.previous === null ? "— · GA4 unavailable" : fmt(traffic.previous)}
                 />
                 <StatRow
                   label="Week over week"
                   value={
                     traffic.deltaPct === null
-                      ? "—"
+                      ? traffic.current == null || traffic.previous == null
+                        ? "— · GA4 unavailable"
+                        : "— · no sessions in previous window"
                       : `${traffic.deltaPct >= 0 ? "+" : ""}${Math.round(traffic.deltaPct * 100)}%`
                   }
                 />
@@ -5103,7 +5159,9 @@ async function SiteHealthTab() {
               <StatRow
                 label="Confirm rate"
                 value={
-                  email.newsletterConfirmRate === null ? "—" : fmtPct(email.newsletterConfirmRate)
+                  email.newsletterConfirmRate === null
+                    ? "— · no newsletter submits"
+                    : fmtPct(email.newsletterConfirmRate)
                 }
               />
               <StatRow label="Register views" value={fmt(email.registerViews)} />

@@ -45,7 +45,14 @@ export type SearchVisibilityCard =
     }
   | { ok: false; reason: string };
 
-export type ConversionsCard = Delta;
+export type ConversionsCard = Delta & {
+  /**
+   * OPE-1131 — the count, stale when the first-party beacon stopped admitting
+   * rows (MAX(analytics_events.timestamp)). A silent beacon otherwise reads as
+   * a quiet week.
+   */
+  currentMeasured: import("./render-state").Measurement<number>;
+};
 
 export type CatalogGrowthCard = {
   totals: { events: number; venues: number; vendors: number; total: number };
@@ -111,6 +118,8 @@ export type RecommendationsSummaryCard = {
   // Highest severity present in the active set, or null if zero items.
   // Drives the card's border/icon color.
   maxSeverity: "red" | "yellow" | "blue" | null;
+  /** OPE-1131 — the actionable count, stale when the scanner stopped. */
+  actionableMeasured: import("./render-state").Measurement<number>;
   redCount: number;
   yellowCount: number;
   blueCount: number;

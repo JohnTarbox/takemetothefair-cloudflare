@@ -139,6 +139,11 @@ export const FEED_STALENESS_HOURS: Record<string, number> = {
   // OPE-1131 — Bing reports lag ~2–3 days; a week of silence is a stopped feed.
   bing_traffic: 24 * 5,
   bing_crawl: 24 * 5,
+  // OPE-1131 — the nightly recommendations scan; items age out after 7d.
+  recommendation_scan: 48,
+  // OPE-1131 — the KPI badges are recomputed every 10 min; an hour of silence
+  // means the last badge is frozen on the page.
+  kpi_state_history: 1,
 };
 
 /** Default when a feed is not in the table — deliberately generous. */

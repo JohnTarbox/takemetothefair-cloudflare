@@ -406,7 +406,7 @@ export async function getDashboardMetrics(
         dimensions: [{ name: "sessionSource" }, { name: "sessionMedium" }],
         metrics: [{ name: "sessions" }, { name: "activeUsers" }],
         orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
-        limit: 10,
+        limit: TRAFFIC_SOURCE_LIMIT,
       },
       passthrough
     ),
@@ -1163,10 +1163,20 @@ export type FacebookTrafficSummary = {
   sessions: number;
   activeUsers: number;
   rows: TrafficSourceRow[];
+  /**
+   * OPE-1131 — true when the source report came back FULL, so a Facebook
+   * source ranked below the cut was never read and `sessions` may undercount.
+   */
+  sourcesCapped?: boolean;
 };
 
+/** Rows in the dashboard's source/medium report (the Facebook tile sums over these). */
+export const TRAFFIC_SOURCE_LIMIT = 10;
+
 export function summarizeFacebookTraffic(
-  trafficSources: TrafficSourceRow[]
+  trafficSources: TrafficSourceRow[],
+  /** The report's row limit, when known — lets the summary say it read a sample. */
+  sourceLimit?: number
 ): FacebookTrafficSummary {
   const rows = trafficSources.filter((r) => isFacebookSource(r.source));
   const sessions = rows.reduce((sum, r) => sum + r.sessions, 0);
@@ -1174,7 +1184,9 @@ export function summarizeFacebookTraffic(
   // Sort by sessions descending so the dominant surface (usually m.facebook.com)
   // renders first in the breakdown table.
   rows.sort((a, b) => b.sessions - a.sessions);
-  return { sessions, activeUsers, rows };
+  const sourcesCapped =
+    sourceLimit !== undefined && trafficSources.length >= sourceLimit ? true : undefined;
+  return { sessions, activeUsers, rows, sourcesCapped };
 }
 
 /**
@@ -1194,7 +1206,7 @@ export function summarizeFacebookTraffic(
 export async function getFacebookTrafficSafe(env: Ga4Env): Promise<FacebookTrafficSummary | null> {
   try {
     const data = await getDashboardMetrics(env);
-    return summarizeFacebookTraffic(data.trafficSources);
+    return summarizeFacebookTraffic(data.trafficSources, TRAFFIC_SOURCE_LIMIT);
   } catch (e) {
     if (e instanceof Ga4ConfigError || e instanceof Ga4ApiError) return null;
     return null;
