@@ -42,13 +42,19 @@
  */
 
 import { and, eq, gt, gte, inArray, isNotNull, isNull, lt, ne, notInArray } from "drizzle-orm";
-import { classifySource, sourceCredibilityTier } from "@takemetothefair/utils";
+import { chunkIds, classifySource, sourceCredibilityTier } from "@takemetothefair/utils";
 import { fetchHtmlWithSsrfGuard } from "@takemetothefair/site-fetch";
 import {
   detectCancellationNotice,
   type CancellationNoticeResult,
 } from "../../../src/lib/goodwill/cancellation-notice.js";
-import { agentHeartbeats, events, urlHealthChecks } from "../schema.js";
+import {
+  agentHeartbeats,
+  eventDataCitations,
+  events,
+  promoters,
+  urlHealthChecks,
+} from "../schema.js";
 import type { Db } from "../db.js";
 import { captureDiscrepancy, safeHost } from "./capture.js";
 import { logError } from "../logger.js";
@@ -57,6 +63,20 @@ const SOURCE = "mcp:goodwill:cancellation-recheck";
 
 /** `url_health_checks.source_field` for rows this pass writes. */
 export const CANCELLATION_SOURCE_FIELD = "events.source_url:cancellation-notice";
+/**
+ * OPE-1099 — `url_health_checks.source_field` for an in-window event that has
+ * NO organizer-owned page anywhere on its row, so this pass cannot check it.
+ * `url` is the event's third-party source_url; `detail` names the slug. One row
+ * per event per rotation window: "which live events could nobody check on day
+ * D" becomes a query instead of a count buried in a heartbeat note.
+ */
+export const NO_ORGANIZER_PAGE_SOURCE_FIELD = "events:no-organizer-page";
+/**
+ * OPE-1099 — `url_health_checks.source_field` for the staleness read: after an
+ * organizer page announces a cancellation, the event's third-party source_url
+ * is read too, and the verdict records whether the listing had caught up.
+ */
+export const THIRD_PARTY_STALENESS_SOURCE_FIELD = "events.source_url:third-party-staleness";
 /** `agent_heartbeats.agent_code` stamped on every completed call. */
 export const CANCELLATION_HEARTBEAT_CODE = "watchdog:organizer-cancellation-recheck";
 
@@ -138,13 +158,80 @@ export interface RecheckEvent {
   startDate: Date;
   sourceUrl: string;
   sourceName: string | null;
+  /** The organizer-owned page this pass reads for the event (OPE-1099). */
+  checkUrl: string;
+  /** Which row field `checkUrl` came from. `source_url` for every pre-OPE-1099 case. */
+  via: OrganizerUrlVia;
+}
+
+/**
+ * OPE-1099 — where an organizer-owned page can come from, in the order tried.
+ *
+ * `source_url` is where we FOUND the event, and for a third of the events this
+ * pass skipped it was an aggregator or a DMO calendar — pages that kept
+ * advertising `firefly-yoga-wellness-festival-2026` after its organizer
+ * cancelled it. Before this, such an event was dropped from the recheck
+ * entirely: not checked against the stale listing, not checked at all.
+ *
+ * The promoter's website is skipped for the `system-*` placeholder promoters,
+ * whose website says nothing about any particular event.
+ */
+export type OrganizerUrlVia =
+  | "source_url"
+  | "promoter_website"
+  | "citation"
+  | "ticket_url"
+  | "application_url";
+
+export interface OrganizerUrlCandidates {
+  sourceUrl: string;
+  sourceName: string | null;
+  promoterId: string | null;
+  promoterWebsite: string | null;
+  citationUrls: string[];
+  ticketUrl: string | null;
+  applicationUrl: string | null;
+}
+
+/** The first organizer-owned page on the row, or null when there is none. */
+export function pickOrganizerUrl(
+  c: OrganizerUrlCandidates
+): { url: string; via: OrganizerUrlVia } | null {
+  const ordered: Array<[string | null | undefined, OrganizerUrlVia, string | null]> = [
+    [c.sourceUrl, "source_url", c.sourceName],
+    [c.promoterId?.startsWith("system-") ? null : c.promoterWebsite, "promoter_website", null],
+    ...c.citationUrls.map((u): [string, OrganizerUrlVia, null] => [u, "citation", null]),
+    [c.ticketUrl, "ticket_url", null],
+    [c.applicationUrl, "application_url", null],
+  ];
+  for (const [raw, via, name] of ordered) {
+    const url = (raw ?? "").trim();
+    if (!/^https?:\/\//i.test(url)) continue;
+    if (thirdPartyReason(url, name)) continue;
+    return { url, via };
+  }
+  return null;
+}
+
+/** An in-window event this pass cannot check: nothing on its row is the organizer's. */
+export interface UnverifiableEvent {
+  id: string;
+  slug: string;
+  startDate: Date;
+  sourceUrl: string;
+  /** Why its source_url was not usable — aggregator / listing-tier / platform. */
+  reason: string;
 }
 
 export interface RecheckSelection {
   /** Events in the window with a source url, before any exclusion. */
   inWindow: number;
-  /** Of those, excluded as third-party listings. */
+  /** Of those, whose source_url is a third-party listing. */
   excludedThirdParty: number;
+  /** Of the third-party ones, read instead via another organizer-owned url (OPE-1099). */
+  rescuedViaAlternate: number;
+  /** Of the third-party ones, with NO organizer-owned url anywhere — named, not just counted. */
+  unverifiable: UnverifiableEvent[];
   /** Distinct organizer urls after exclusion. */
   distinctUrls: number;
   /** Distinct urls skipped because this pass read them recently. */
@@ -170,8 +257,13 @@ export async function selectCancellationRecheck(
       startDate: events.startDate,
       sourceUrl: events.sourceUrl,
       sourceName: events.sourceName,
+      ticketUrl: events.ticketUrl,
+      applicationUrl: events.applicationUrl,
+      promoterId: events.promoterId,
+      promoterWebsite: promoters.website,
     })
     .from(events)
+    .leftJoin(promoters, eq(promoters.id, events.promoterId))
     .where(
       and(
         inArray(events.status, ["APPROVED", "TENTATIVE"]),
@@ -189,15 +281,60 @@ export async function selectCancellationRecheck(
     // Safety cap only: the 30-day window held 196 such rows on 2026-09-13.
     .limit(2000);
 
+  // OPE-1099 — active citation urls, fetched only for the events whose own
+  // source_url is third-party (the only ones that need an alternative), and
+  // chunked: an inArray fed by a previous query's rows must stay under D1's
+  // 100-bound-parameter cap however busy the window is.
+  const needAlternate = rows.filter(
+    (r) => r.sourceUrl && r.startDate && thirdPartyReason(r.sourceUrl.trim(), r.sourceName)
+  );
+  const citationsByEvent = new Map<string, string[]>();
+  for (const ids of chunkIds(needAlternate.map((r) => r.id))) {
+    const cites = await db
+      .selectDistinct({ eventId: eventDataCitations.eventId, url: eventDataCitations.sourceUrl })
+      .from(eventDataCitations)
+      .where(
+        and(
+          inArray(eventDataCitations.eventId, ids),
+          eq(eventDataCitations.state, "active"),
+          isNotNull(eventDataCitations.sourceUrl)
+        )
+      );
+    for (const c of cites) {
+      if (!c.url) continue;
+      citationsByEvent.set(c.eventId, [...(citationsByEvent.get(c.eventId) ?? []), c.url]);
+    }
+  }
+
   const byUrl = new Map<string, RecheckEvent[]>();
   let excludedThirdParty = 0;
+  let rescuedViaAlternate = 0;
+  const unverifiable: UnverifiableEvent[] = [];
   for (const r of rows) {
     const url = (r.sourceUrl ?? "").trim();
     if (!url || !r.startDate) continue;
-    if (thirdPartyReason(url, r.sourceName)) {
-      excludedThirdParty++;
+    const why = thirdPartyReason(url, r.sourceName);
+    if (why) excludedThirdParty++;
+    const pick = pickOrganizerUrl({
+      sourceUrl: url,
+      sourceName: r.sourceName,
+      promoterId: r.promoterId,
+      promoterWebsite: r.promoterWebsite,
+      citationUrls: citationsByEvent.get(r.id) ?? [],
+      ticketUrl: r.ticketUrl,
+      applicationUrl: r.applicationUrl,
+    });
+    if (!pick) {
+      unverifiable.push({
+        id: r.id,
+        slug: r.slug,
+        startDate: r.startDate,
+        sourceUrl: url,
+        reason: why ?? "unknown",
+      });
       continue;
     }
+    if (why) rescuedViaAlternate++;
     const ev: RecheckEvent = {
       id: r.id,
       slug: r.slug,
@@ -206,10 +343,12 @@ export async function selectCancellationRecheck(
       startDate: r.startDate,
       sourceUrl: url,
       sourceName: r.sourceName,
+      checkUrl: pick.url,
+      via: pick.via,
     };
-    const list = byUrl.get(url);
+    const list = byUrl.get(pick.url);
     if (list) list.push(ev);
-    else byUrl.set(url, [ev]);
+    else byUrl.set(pick.url, [ev]);
   }
 
   // Rotation state: urls this pass read recently. One small indexed read
@@ -231,6 +370,8 @@ export async function selectCancellationRecheck(
   return {
     inWindow: rows.length,
     excludedThirdParty,
+    rescuedViaAlternate,
+    unverifiable,
     distinctUrls: byUrl.size,
     recentlyChecked: byUrl.size - due.length,
     batch,
@@ -266,6 +407,16 @@ export const defaultPageFetcher: PageFetcher = async (url) => {
 export interface CancellationRecheckResult {
   inWindow: number;
   excludedThirdParty: number;
+  /** OPE-1099 — third-party-sourced events read via another organizer-owned url. */
+  rescuedViaAlternate: number;
+  /** OPE-1099 — in-window events with no organizer-owned url at all, by slug. */
+  unverifiable: string[];
+  /** OPE-1099 — of those, newly recorded this call (rotation-limited like the reads). */
+  unverifiableRecorded: number;
+  /** OPE-1099 — after an organizer hit: third-party listings still advertising the event. */
+  thirdPartyStillLive: number;
+  /** OPE-1099 — after an organizer hit: third-party listings that had caught up. */
+  thirdPartyCaughtUp: number;
   distinctUrls: number;
   recentlyChecked: number;
   examined: number;
@@ -303,6 +454,11 @@ export async function runCancellationRecheck(
   const result: CancellationRecheckResult = {
     inWindow: sel.inWindow,
     excludedThirdParty: sel.excludedThirdParty,
+    rescuedViaAlternate: sel.rescuedViaAlternate,
+    unverifiable: sel.unverifiable.map((u) => u.slug),
+    unverifiableRecorded: 0,
+    thirdPartyStillLive: 0,
+    thirdPartyCaughtUp: 0,
     distinctUrls: sel.distinctUrls,
     recentlyChecked: sel.recentlyChecked,
     examined: 0,
@@ -313,6 +469,37 @@ export async function runCancellationRecheck(
     remaining: sel.remaining,
     hits: [],
   };
+
+  // OPE-1099 — name the events nobody can check. Rotation-limited the same way
+  // the reads are, so a workflow that calls this several times a day writes one
+  // row per event per window rather than one per call.
+  if (sel.unverifiable.length > 0) {
+    const since = new Date(now.getTime() - RECHECK_AFTER_HOURS * 3_600_000);
+    const already = await db
+      .selectDistinct({ url: urlHealthChecks.url })
+      .from(urlHealthChecks)
+      .where(
+        and(
+          eq(urlHealthChecks.sourceField, NO_ORGANIZER_PAGE_SOURCE_FIELD),
+          gt(urlHealthChecks.checkedAt, since)
+        )
+      );
+    const seen = new Set(already.map((r) => r.url));
+    for (const u of sel.unverifiable) {
+      if (seen.has(u.sourceUrl)) continue;
+      seen.add(u.sourceUrl);
+      await db.insert(urlHealthChecks).values({
+        url: u.sourceUrl,
+        sourceField: NO_ORGANIZER_PAGE_SOURCE_FIELD,
+        verdict: "no_organizer_page",
+        httpStatus: null,
+        signals: `reason:${u.reason}`,
+        detail: `${u.slug} (${u.startDate.toISOString().slice(0, 10)}) — only source is third-party; nothing on the row is the organizer's own page, so a cancellation cannot be detected`,
+        checkedAt: now,
+      });
+      result.unverifiableRecorded++;
+    }
+  }
 
   for (const { url, events: evs } of sel.batch) {
     result.examined++;
@@ -378,6 +565,34 @@ export async function runCancellationRecheck(
         });
         if (id) result.discrepanciesOpened++;
         else result.discrepanciesAlreadyOpen++;
+
+        // OPE-1099 — the organizer said no; did the listing we FOUND the event
+        // on ever hear? Measured, not assumed: on the specimen all three
+        // aggregators were still advertising it. Only when the source is a
+        // third party and is not the page we just read.
+        if (ev.sourceUrl !== url && thirdPartyReason(ev.sourceUrl, ev.sourceName)) {
+          const listing = await fetchPage(ev.sourceUrl);
+          const caughtUp =
+            listing.ok && listing.html
+              ? detectCancellationNotice(listing.html, { eventYear: year }).matched
+              : null;
+          if (caughtUp === true) result.thirdPartyCaughtUp++;
+          if (caughtUp === false) result.thirdPartyStillLive++;
+          await db.insert(urlHealthChecks).values({
+            url: ev.sourceUrl,
+            sourceField: THIRD_PARTY_STALENESS_SOURCE_FIELD,
+            verdict:
+              caughtUp === null
+                ? "fetch_failed"
+                : caughtUp
+                  ? "third_party_reports_cancellation"
+                  : "third_party_still_live",
+            httpStatus: listing.status,
+            signals: `organizer:${safeHost(url) ?? url}`,
+            detail: `${ev.slug}: organizer page ${url} announces a cancellation`.slice(0, 300),
+            checkedAt: now,
+          });
+        }
       }
     }
 
@@ -412,7 +627,8 @@ export async function runCancellationRecheck(
   // the OPE-541 false-fire. A pass that THROWS before here writes no stamp, so
   // a broken selector goes red rather than green.
   const note =
-    `inWindow=${result.inWindow} thirdParty=${result.excludedThirdParty} urls=${result.distinctUrls} ` +
+    `inWindow=${result.inWindow} thirdParty=${result.excludedThirdParty} ` +
+    `rescued=${result.rescuedViaAlternate} unverifiable=${result.unverifiable.length} urls=${result.distinctUrls} ` +
     `recent=${result.recentlyChecked} examined=${result.examined} fetchFailed=${result.fetchFailed} ` +
     `notices=${result.notices} opened=${result.discrepanciesOpened} remaining=${result.remaining}`;
   try {

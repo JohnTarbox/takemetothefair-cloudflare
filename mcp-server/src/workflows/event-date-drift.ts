@@ -226,6 +226,12 @@ export class EventDateDriftWorkflow extends WorkflowEntrypoint<Env, EventDateDri
       opened: 0,
       remaining: 0,
       failed: false,
+      // OPE-1099 — the named coverage gap: events no organizer page covers.
+      // Selection-level, so the same on every call; the last call's value is kept.
+      rescuedViaAlternate: 0,
+      unverifiable: [] as string[],
+      thirdPartyStillLive: 0,
+      thirdPartyCaughtUp: 0,
     };
     for (let i = 0; i < 10; i++) {
       try {
@@ -241,6 +247,10 @@ export class EventDateDriftWorkflow extends WorkflowEntrypoint<Env, EventDateDri
               notices: r.notices,
               opened: r.discrepanciesOpened,
               remaining: r.remaining,
+              rescuedViaAlternate: r.rescuedViaAlternate,
+              unverifiable: r.unverifiable,
+              thirdPartyStillLive: r.thirdPartyStillLive,
+              thirdPartyCaughtUp: r.thirdPartyCaughtUp,
             };
           }
         );
@@ -249,6 +259,10 @@ export class EventDateDriftWorkflow extends WorkflowEntrypoint<Env, EventDateDri
         cancellation.notices += res.notices;
         cancellation.opened += res.opened;
         cancellation.remaining = res.remaining;
+        cancellation.rescuedViaAlternate = res.rescuedViaAlternate;
+        cancellation.unverifiable = res.unverifiable;
+        cancellation.thirdPartyStillLive += res.thirdPartyStillLive;
+        cancellation.thirdPartyCaughtUp += res.thirdPartyCaughtUp;
         if (res.remaining === 0 || res.examined === 0) break;
       } catch (err) {
         cancellation.failed = true;

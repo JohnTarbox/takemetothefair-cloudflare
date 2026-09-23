@@ -31,7 +31,7 @@ import { logError } from "./logger.js";
 import { chunkIds } from "@takemetothefair/utils";
 // OPE-547 — shared with the get_roster_coverage metric so the writer and the
 // reader cannot disagree about what "already rostered" means.
-import { ROSTER_EVIDENCE_MIN } from "@takemetothefair/constants";
+import { AUTO_OCCURRED_REASON, ROSTER_EVIDENCE_MIN } from "@takemetothefair/constants";
 import type { Db } from "./db.js";
 
 /** Per-run bounds — keep the sweep within cron CPU/subrequest limits. */
@@ -120,7 +120,7 @@ export async function runOccurredTransitionSweep(
           .set({
             lifecycleStatus: "OCCURRED",
             lifecycleStatusChangedAt: now,
-            lifecycleReason: "auto: end date passed",
+            lifecycleReason: AUTO_OCCURRED_REASON,
             updatedAt: now,
           })
           .where(eq(events.id, ev.id)),
@@ -132,7 +132,7 @@ export async function runOccurredTransitionSweep(
           payloadJson: JSON.stringify({
             previous_lifecycle: ev.lifecycleStatus,
             new_lifecycle: "OCCURRED",
-            reason: "auto: end date passed",
+            reason: AUTO_OCCURRED_REASON,
             slug: ev.slug,
             via: "occurred-sweep",
           }),

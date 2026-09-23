@@ -59,6 +59,8 @@ export async function PATCH(request: NextRequest, { params }: Params) {
         lifecycleStatus: events.lifecycleStatus,
         // OPE-487 — needed for the terminal-correction check below.
         lifecycleStatusChangedAt: events.lifecycleStatusChangedAt,
+        // OPE-1099 — tells a calendar-inferred OCCURRED from an observed one.
+        lifecycleReason: events.lifecycleReason,
         startDate: events.startDate,
         endDate: events.endDate,
       })
@@ -80,6 +82,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     // rows to resurrection.
     const check = validateLifecycleTransition(from, to, {
       lifecycleStatusChangedAt: current.lifecycleStatusChangedAt ?? null,
+      lifecycleReason: current.lifecycleReason ?? null,
       startDate: current.startDate ?? null,
     });
     if (!check.ok) {

@@ -60,6 +60,12 @@ const TIER_3_HOSTS = new Set<string>([
   "vermont.com",
   "visitri.com",
   "visitconnecticut.com",
+  // OPE-1099 — Newport RI's tourism bureau. One of three listings that kept
+  // advertising firefly-yoga-wellness-festival-2026 after its organizer
+  // cancelled it. Without this entry it classified as first-party, so a
+  // citation pointing at it would have been read as the organizer's own page.
+  // 1 event sourced from it on prod (2026-09-23); gates run at ingest only.
+  "discovernewport.org",
 ]);
 
 // Tier 2 — DMO/aggregator hostnames the analyst has confirmed produce

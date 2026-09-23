@@ -222,6 +222,14 @@ export const LIFECYCLE_TRANSITIONS: Record<EventLifecycle, EventLifecycle[]> = {
   NO_SHOW: [EVENT_LIFECYCLE.OCCURRED],
 };
 
+/**
+ * The `lifecycle_reason` the K27 OCCURRED sweep (`event-occurred-sweep.ts`)
+ * stamps when it moves an event to OCCURRED because its end date passed. One
+ * writer, one string — shared so the sweep and the OPE-1099 correction below
+ * cannot drift apart.
+ */
+export const AUTO_OCCURRED_REASON = "auto: end date passed";
+
 /** The two states the table treats as terminal for the event itself. */
 export const TERMINAL_LIFECYCLE_STATUSES = [
   EVENT_LIFECYCLE.OCCURRED,
@@ -237,6 +245,8 @@ export const TERMINAL_LIFECYCLE_STATUSES = [
 export interface LifecycleTransitionContext {
   /** `events.lifecycle_status_changed_at`. NULL ⇒ never explicitly transitioned. */
   lifecycleStatusChangedAt?: Date | null;
+  /** `events.lifecycle_reason` — tells an INFERRED terminal value from an observed one. */
+  lifecycleReason?: string | null;
   /** `events.start_date`. */
   startDate?: Date | null;
   /** Injectable clock, for tests. */
@@ -296,6 +306,38 @@ function isSpuriousTerminalValue(
   if (!start || Number.isNaN(start.getTime())) return false;
   const now = context.now ?? new Date();
   return start.getTime() > now.getTime();
+}
+
+/**
+ * OPE-1099 — "cancelled after we published it."
+ *
+ * `firefly-yoga-wellness-festival-2026` was cancelled by its organizer, served
+ * as SCHEDULED through its date because nothing could read the organizer, and
+ * then moved to OCCURRED by the K27 sweep. The table then refused to record
+ * the truth: OCCURRED → CANCELLED is not a legal edge, and the OPE-487 escape
+ * above applies only to FUTURE-dated rows.
+ *
+ * The distinction that makes this safe is not the date but the SOURCE of the
+ * terminal value. OCCURRED stamped with `AUTO_OCCURRED_REASON` is an inference
+ * from the calendar — nobody observed the event happen — so a documented
+ * cancellation outranks it. OCCURRED written by a person ("2026 edition has
+ * concluded", "Cancelled-in-error correction step 2/2") is an observation and
+ * stays terminal. Measured 2026-09-23: 569 OCCURRED rows carry the sweep's
+ * reason, 219 carry something else or NULL; only the 569 are opened, and only
+ * toward CANCELLED.
+ *
+ * Exact equality, not a prefix: one writer produces this string.
+ */
+function isInferredOccurrence(
+  from: EventLifecycle,
+  to: EventLifecycle,
+  context: LifecycleTransitionContext | undefined
+): boolean {
+  return (
+    from === EVENT_LIFECYCLE.OCCURRED &&
+    to === EVENT_LIFECYCLE.CANCELLED &&
+    context?.lifecycleReason === AUTO_OCCURRED_REASON
+  );
 }
 
 /**
@@ -384,6 +426,10 @@ export function validateLifecycleTransition(
     isSpuriousTerminalValue(from, context) &&
     !(TERMINAL_LIFECYCLE_STATUSES as readonly string[]).includes(to)
   ) {
+    return { ok: true, terminalCorrection: true };
+  }
+
+  if (isInferredOccurrence(from, to, context)) {
     return { ok: true, terminalCorrection: true };
   }
 
