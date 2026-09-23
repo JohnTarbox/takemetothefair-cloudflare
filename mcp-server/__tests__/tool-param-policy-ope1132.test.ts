@@ -152,15 +152,19 @@ describe("OPE-1132 — index.ts applies the policy on BOTH transports", () => {
 // ── batch 2: every tool that is neither a listed create nor a read WARNS ──────
 
 describe("OPE-1132 batch 2 — the policy split over every registered tool", () => {
-  it("creates reject, reads strip (until batch 3), everything else warns", () => {
-    const by: Record<string, string[]> = { reject: [], warn: [], strip: [] };
+  it("creates reject; every other registered tool — reads included — warns", () => {
+    const by: Record<string, string[]> = { reject: [], warn: [] };
     for (const name of listed.keys()) by[paramPolicyFor(name)].push(name);
     // create_vendor is registerTool + its own .strict(), not the wrap's.
     expect(by.reject.sort()).toEqual([...REJECT_UNKNOWN_PARAMS].sort());
-    expect(by.strip.every((n) => /^(get|list|search)_/.test(n))).toBe(true);
-    expect(by.warn.some((n) => /^(get|list|search)_/.test(n))).toBe(false);
+    expect(by.warn.length + by.reject.length).toBe(listed.size);
     expect(by.warn).toEqual(
-      expect.arrayContaining(["update_promoter", "merge_events", "set_vendor_alias"])
+      expect.arrayContaining([
+        "update_promoter",
+        "merge_events",
+        "search_promoters",
+        "get_event_details",
+      ])
     );
   });
 });
@@ -187,10 +191,12 @@ describe("OPE-1132 batch 2 — a WARN tool applies the known fields and names th
     expect(res.content.map((c) => c.text ?? "").join("")).not.toContain("ignored_params");
   });
 
-  it("a READ tool is untouched until batch 3 (stray key stripped, no warning)", async () => {
+  it("batch 3: a READ tool names a stray key too, and still answers", async () => {
     const res = await call("search_promoters", { query: "Fair", colour: "red" });
     expect(res.isError).toBeFalsy();
-    expect(res.content.map((c) => c.text ?? "").join("")).not.toContain("ignored_params");
+    const text = res.content.map((c) => c.text ?? "").join("");
+    expect(text).toContain("ignored_params");
+    expect(text).toContain("colour");
   });
 });
 
