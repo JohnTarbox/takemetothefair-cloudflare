@@ -43,10 +43,13 @@ const toml = readFileSync(TOML, "utf8");
 
 // Positive landmark first. Every check below is a substring test, and all of
 // them pass vacuously against a file that was renamed, moved, or emptied.
-if (!handler.includes("SPAM_QUARANTINE_THRESHOLD")) {
+// OPE-1129 moved the quarantine condition into `shouldQuarantineAsSpam`
+// (intent-classifier.ts), so the branch is recognised by that CALL now rather
+// than by the threshold constant it used to inline.
+if (!/if\s*\(\s*shouldQuarantineAsSpam\(result\)\s*\)/.test(handler)) {
   fail(
-    `  ${HANDLER}\n  does not mention SPAM_QUARANTINE_THRESHOLD. The guard is pointed at the\n` +
-      `  wrong file, or the quarantine branch has been restructured. Fix that\n  before trusting anything below.`
+    `  ${HANDLER}\n  does not branch on shouldQuarantineAsSpam(result). The guard is pointed at\n` +
+      `  the wrong file, or the quarantine branch has been restructured. Fix that\n  before trusting anything below.`
   );
 }
 if (!detector.includes("export function detectEventTriple")) {

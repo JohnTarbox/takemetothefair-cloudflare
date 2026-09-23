@@ -70,7 +70,7 @@ import {
   type SenderTrustTier,
   CLASSIFIER_VERSION,
   DEFAULT_CONFIDENCE_THRESHOLD,
-  SPAM_QUARANTINE_THRESHOLD,
+  shouldQuarantineAsSpam,
 } from "./intent-classifier.js";
 import {
   detectEventTriple,
@@ -1799,7 +1799,7 @@ async function computeRouting(args: {
   // we'd rather not auto-reply / forward when classifier is highly
   // confident this is junk. Use the top result only for this check.
   const top = result.intents[0];
-  if (top.intent === "spam" && top.confidence >= SPAM_QUARANTINE_THRESHOLD && result.fromAi) {
+  if (shouldQuarantineAsSpam(result)) {
     // OPE-803 — does this message name a specific event?
     //
     // John's framing: sender credibility and message value are independent
