@@ -226,6 +226,9 @@ export const POST = withInternalKey(
             attempted: results.length,
             written: summary.ok ?? 0,
             summary,
+            // OPE-408 — where this page started, so the nightly rows show the
+            // sweep actually advancing (the stall was 14 identical rows).
+            after_id: body.after_id ?? null,
             next_cursor,
           }),
         });
