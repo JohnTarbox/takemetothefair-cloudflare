@@ -97,6 +97,14 @@ export default function AdminSubmissionsPage() {
       });
       if (res.ok) {
         setSubmissions(submissions.filter((s) => s.id !== id));
+        // OPE-1114 — approval succeeded, but the public copy still carries a
+        // reviewer note. Say so; the approval itself is never blocked.
+        const data = (await res.json().catch(() => ({}))) as {
+          warnings?: { reviewer_note_in_description?: string };
+        };
+        if (data.warnings?.reviewer_note_in_description) {
+          alert(data.warnings.reviewer_note_in_description);
+        }
       }
     } catch (error) {
       console.error(`Failed to ${action} submission:`, error);

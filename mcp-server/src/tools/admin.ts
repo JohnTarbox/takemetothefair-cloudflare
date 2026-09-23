@@ -96,6 +96,8 @@ import {
   areDatesContiguous,
   evaluateGates,
   eventApprovalBlockReason,
+  reviewerMarkerInCopy,
+  reviewerMarkerWarning,
   mergedTombstoneBlockReason,
   normalizeEventDate,
   reclassifySourceOnEdit,
@@ -795,6 +797,8 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           possibleDuplicateOf: events.possibleDuplicateOf,
           // OPE-463: decides whether a reject reason is required.
           ingestionMethod: events.ingestionMethod,
+          // OPE-1114 — read to warn when public copy still carries a reviewer note.
+          description: events.description,
         })
         .from(events)
         .where(eq(events.id, params.event_id))
@@ -1010,11 +1014,20 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         }
       }
 
+      const approvalMarker =
+        params.status === "APPROVED" ? reviewerMarkerInCopy(event.description) : null;
+
       return {
         content: [
           jsonContent({
             updated: true,
             event: { id: event.id, name: event.name, previousStatus, newStatus: params.status },
+            // OPE-1114 — approved with a reviewer note still in the public copy.
+            ...(approvalMarker
+              ? {
+                  warnings: { reviewer_note_in_description: reviewerMarkerWarning(approvalMarker) },
+                }
+              : {}),
           }),
         ],
       };

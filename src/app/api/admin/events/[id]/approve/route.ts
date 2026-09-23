@@ -7,7 +7,12 @@ import { eq } from "drizzle-orm";
 import { logError } from "@/lib/logger";
 import { trackEventStatusChange } from "@/lib/server-analytics";
 import { notifyApprovalIfNeeded } from "@/lib/approval-notification";
-import { eventApprovalBlockReason, mergedTombstoneBlockReason } from "@takemetothefair/utils";
+import {
+  eventApprovalBlockReason,
+  mergedTombstoneBlockReason,
+  reviewerMarkerInCopy,
+  reviewerMarkerWarning,
+} from "@takemetothefair/utils";
 
 export const POST = withAuth<{ id: string }>(
   { role: "ADMIN" },
@@ -25,6 +30,8 @@ export const POST = withAuth<{ id: string }>(
           stateCode: events.stateCode,
           // OPE-423 — needed by the tombstone gate below.
           mergedInto: events.mergedInto,
+          // OPE-1114 — read to warn when public copy still carries a reviewer note.
+          description: events.description,
         })
         .from(events)
         .where(eq(events.id, id))
@@ -74,7 +81,17 @@ export const POST = withAuth<{ id: string }>(
         });
       }
 
-      return NextResponse.json(updatedEvent[0]);
+      // OPE-1114 — WARN, never block: approved with a reviewer note still in
+      // the public description. Same predicate and wording as the MCP tool.
+      const marker = reviewerMarkerInCopy(existing.description);
+      return NextResponse.json(
+        marker
+          ? {
+              ...updatedEvent[0],
+              warnings: { reviewer_note_in_description: reviewerMarkerWarning(marker) },
+            }
+          : updatedEvent[0]
+      );
     } catch (error) {
       await logError(db, {
         message: "Failed to approve event",
