@@ -253,7 +253,8 @@ export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> =
   const obligationRef = await openObligationIfOwed(env, db, row, SOURCE);
 
   return {
-    replyKind: "correction-ack",
+    // OPE-1134 — a claim_request rides this handler but is not a correction.
+    replyKind: row.classifiedIntent === "claim_request" ? "claim-request-ack" : "correction-ack",
     replyParams: { subject: row.subject ?? "" },
     status: "replied",
     crossingDestinationRef: obligationRef,

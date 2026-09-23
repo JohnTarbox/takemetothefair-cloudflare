@@ -99,15 +99,14 @@ describe("OPE-766 — the timeout no longer sends a second, identical ack", () =
 });
 
 describe("OPE-766 — the copy was always written for a prompt send", () => {
-  it("says 'shortly', which is true in minutes and absurd after a week", () => {
-    // This is the premise of the whole change, so it is pinned rather than
-    // asserted in prose: the templates were written for a message that arrives
-    // promptly. Delivering them 7.0001 days later is what made them wrong.
-    //
-    // If someone rewrites this copy (OPE-367's scope), this test failing is the
-    // intended prompt to re-read why the timing changed.
-    expect(buildReply("correction-ack", "a@b.com", { subject: "x" }).text).toContain("shortly");
-    expect(buildReply("press-ack", "a@b.com", { subject: "x" }).text).toContain("shortly");
+  it("no longer says 'shortly' — OPE-1134 rewrote the copy, as this test anticipated", () => {
+    // This pinned "shortly" as the premise of OPE-766 (a prompt send), and said
+    // a failure here would be the prompt to re-read why. OPE-1134 did: sending
+    // on arrival made the timing right, but "reviewed shortly" / "follow up
+    // shortly" were still promises no handler keeps. Both now say only what a
+    // row can prove — recorded, not yet read by a person.
+    expect(buildReply("correction-ack", "a@b.com", { subject: "x" }).text).not.toContain("shortly");
+    expect(buildReply("press-ack", "a@b.com", { subject: "x" }).text).not.toContain("shortly");
   });
 
   it("LANDMARK: no new customer-facing copy was introduced", () => {

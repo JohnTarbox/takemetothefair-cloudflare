@@ -22,6 +22,7 @@ import { supportObligations } from "../schema.js";
 // no longer the only caller.
 import { openObligationIfOwed } from "./open-obligation.js";
 import type { HandlerFn, HandlerResult } from "./types.js";
+import { ackKindForIntent } from "./ack-kind.js";
 
 const SOURCE = "mcp:email-handler:support";
 
@@ -33,7 +34,8 @@ export const handle: HandlerFn = async (env, _ctx, row): Promise<HandlerResult> 
   const obligationRef = await openObligationIfOwed(env, getDb(env.DB), row, SOURCE);
 
   return {
-    replyKind: "support-ack",
+    // OPE-1134 — from what the sender ASKED (a vendor_inquiry lands here too).
+    replyKind: ackKindForIntent(row.classifiedIntent),
     replyParams: { subject: row.subject ?? "" },
     status: "replied",
     // OPE-366 — null here is meaningful, not missing: it says no obligation was
