@@ -3,12 +3,13 @@ import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/api/with-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { promoters, events, users, adminActions } from "@/lib/db/schema";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, sql } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
 import { promoterUpdateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 import { computePromoterEnrichment } from "@takemetothefair/constants";
+import { deletePromoterChildren } from "@takemetothefair/db-schema";
 
 export const GET = withAuth<{ id: string }>({ role: "ADMIN" }, async ({ request, db, params }) => {
   const { id } = params;
@@ -148,10 +149,38 @@ export const DELETE = withAuth<{ id: string }>(
       // Get promoter to find user
       const promoter = await db.select().from(promoters).where(eq(promoters.id, id)).limit(1);
 
+      // OPE-1125 — `events.promoter_id` is ON DELETE CASCADE, so deleting a
+      // promoter that still owns events deletes those events (and everything
+      // that cascades from them) with no warning and no record of what was
+      // lost. Refuse; the merge tools reassign events first for this reason.
+      // Checked BEFORE any write, so a refusal changes nothing — including the
+      // owner's role, which the old code reset first.
+      const [{ n: eventCount }] = await db
+        .select({ n: sql<number>`count(*)` })
+        .from(events)
+        .where(eq(events.promoterId, id));
+      if (Number(eventCount) > 0) {
+        return NextResponse.json(
+          {
+            error: "promoter_has_events",
+            eventCount: Number(eventCount),
+            message:
+              `This promoter still owns ${eventCount} event(s). Deleting it would delete ` +
+              `those events too. Merge it into the right promoter (Duplicates, or ` +
+              `merge_promoter) or reassign its events first.`,
+          },
+          { status: 409 }
+        );
+      }
+
       if (promoter.length > 0) {
         // Reset user role to USER
         await db.update(users).set({ role: "USER" }).where(eq(users.id, promoter[0].userId!));
       }
+
+      // OPE-1125 — no keeper to repoint to, so the FK-less rows go with it
+      // rather than being left pointing at a dead id (the OPE-1120 orphans).
+      const children = await deletePromoterChildren(db, id);
 
       await db.delete(promoters).where(eq(promoters.id, id));
 
@@ -167,6 +196,7 @@ export const DELETE = withAuth<{ id: string }>(
           payloadJson: JSON.stringify({
             company_name: promoter[0]?.companyName ?? null,
             slug: promoter[0]?.slug ?? null,
+            children,
           }),
           createdAt: new Date(),
         });
