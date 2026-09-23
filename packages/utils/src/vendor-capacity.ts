@@ -67,8 +67,11 @@ const OPEN_PATTERNS = [
 
 /** Split into sentence-ish chunks so the evidence names the phrase, not the page. */
 function sentences(text: string): string[] {
+  // Break AFTER the punctuation without a lookbehind (Safari 16.4 — above the
+  // floor; this module reaches the browser via the utils barrel, OPE-1128).
   return text
-    .split(/(?<=[.!?;])\s+|\n+/)
+    .replace(/([.!?;])\s+/g, "$1\n")
+    .split(/\n+/)
     .map((s) => s.trim())
     .filter(Boolean);
 }

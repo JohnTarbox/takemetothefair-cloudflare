@@ -89,3 +89,45 @@ describe("reachability is what keeps the guard precise", () => {
     expect(importSpecifiers(src)).toEqual(["@/lib/utils", "./local", "@/lib/lazy"]);
   });
 });
+
+describe("OPE-1128 — regex lookbehind is SYNTAX above the floor", () => {
+  it("flags the line that blanked every page for Safari < 16.4", () => {
+    // packages/utils/src/blog-faq-coherence.ts:241 verbatim, as it shipped.
+    const src =
+      "    `(?<!\\\\b${FREE_EXCEPTION}\\\\b[^.\\\\n]{0,25})\\\\bfree\\\\s+(?:admission|entry|entrance)\\\\b`,";
+    const v = checkSource("packages/utils/src/blog-faq-coherence.ts", src, "vendor-card.tsx");
+    expect(v).toHaveLength(1);
+    expect(v[0].since).toMatch(/Safari 16\.4/);
+  });
+
+  it("flags positive lookbehind in a regex literal", () => {
+    expect(checkSource("x.ts", "t.split(/(?<=[.!?])\\s+|\\n+/)", "e.tsx")).toHaveLength(1);
+  });
+
+  it("cannot be guarded — a typeof on the same line does not exempt syntax", () => {
+    const src = 'const re = typeof x === "string" ? /(?<!\\d)7/ : null;';
+    expect(checkSource("x.ts", src, "e.tsx")).toHaveLength(1);
+  });
+
+  it("does NOT flag a named group or a lookahead — both below the floor", () => {
+    expect(checkSource("x.ts", "const m = s.match(/(?<year>\\d{4})/);", "e.tsx")).toHaveLength(0);
+    expect(checkSource("x.ts", "const re = /7(?!\\d)/;", "e.tsx")).toHaveLength(0);
+  });
+});
+
+describe("OPE-1128 — the walk now enters packages/ without drowning in it", () => {
+  it("skips type-only imports, which the compiler erases", () => {
+    const src = `
+      import type { Event } from "@takemetothefair/db-schema";
+      export type { Row } from "./rows";
+      import { a, type B } from "@takemetothefair/utils";
+      export * from "./barrel-child";
+    `;
+    expect(importSpecifiers(src)).toEqual(["@takemetothefair/utils", "./barrel-child"]);
+  });
+
+  it("does not flag a Drizzle $defaultFn id — it runs only on INSERT", () => {
+    const src = '  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),';
+    expect(checkSource("packages/db-schema/src/index.ts", src, "e.tsx")).toHaveLength(0);
+  });
+});

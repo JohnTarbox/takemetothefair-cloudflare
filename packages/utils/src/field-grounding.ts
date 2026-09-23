@@ -101,14 +101,22 @@ export function sourceNamesDay(isoDate: string, source: string): { hit: boolean;
     new RegExp(`\\b${abbrev}[a-z]*\\.?\\s+0?${d}(?!\\d)(?:st|nd|rd|th)?`, "i"),
     // 7 November / 7th Nov
     new RegExp(`\\b0?${d}(?:st|nd|rd|th)?\\s+${abbrev}[a-z]*\\b`, "i"),
-    // 11/7, 11-7, 11/7/26, 11/07/2026
-    new RegExp(`(?<!\\d)0?${m}[/-]0?${d}(?!\\d)`),
+    // 11/7, 11-7, 11/7/26, 11/07/2026. The leading digit boundary is a
+    // consumed `(?:^|\\D)` + capture group, NOT a lookbehind: this module is
+    // in the utils barrel, which reaches the browser, and lookbehind needs
+    // Safari 16.4 — above the floor (OPE-1128, docs/browser-support-floor.md).
+    new RegExp(`(?:^|\\D)(0?${m}[/-]0?${d})(?!\\d)`),
     // ISO
-    new RegExp(`(?<!\\d)${y}-0?${m}-0?${d}(?!\\d)`),
+    new RegExp(`(?:^|\\D)(${y}-0?${m}-0?${d})(?!\\d)`),
   ];
   for (const re of patterns) {
     const match = re.exec(source);
-    if (match) return { hit: true, span: spanAround(source, match.index, match[0].length) };
+    if (match) {
+      // A pattern with a capture group consumed its boundary char; skip it.
+      const hit = match[1] ?? match[0];
+      const start = match.index + match[0].length - hit.length;
+      return { hit: true, span: spanAround(source, start, hit.length) };
+    }
   }
   return { hit: false, span: "" };
 }
