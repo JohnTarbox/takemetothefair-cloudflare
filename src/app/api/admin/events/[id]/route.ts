@@ -29,6 +29,7 @@ import { eventSyndicationStatements } from "@/lib/syndication/outbox";
 import { enqueueSyndicationChange } from "@/lib/queues/producers";
 import { repairBlogLinksForSlugChange } from "@/lib/content-links-sync";
 import { raiseHoursReviewFlag } from "@/lib/events/hours-review-flag";
+import { loadUnresolvedFlagForEvent } from "@/lib/duplicates/flag-queue";
 
 const PUBLIC_EVENT_SET = new Set<string>(PUBLIC_EVENT_STATUSES);
 
@@ -76,6 +77,11 @@ export const GET = withAuth<{ id: string }>({ role: "ADMIN" }, async ({ request,
         vendor: ev.vendors,
       })),
       eventDays: eventDayResults,
+      // OPE-1117 — the unresolved duplicate flag, if any, so the edit page can
+      // tell a reviewer before they approve. Same predicate as the queue.
+      possibleDuplicate: eventData.events.possibleDuplicateOf
+        ? await loadUnresolvedFlagForEvent(db, id)
+        : null,
     };
 
     return NextResponse.json(event);

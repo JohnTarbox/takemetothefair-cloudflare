@@ -568,6 +568,19 @@ const SCHEMA_SQL = `
     created_at INTEGER NOT NULL
   );
 
+  -- OPE-1117 (drizzle/0301) — "a human ruled this pair NOT a duplicate".
+  -- update_event_status reads it before defaulting rejected_as_duplicate_of.
+  CREATE TABLE event_duplicate_dismissals (
+    id TEXT PRIMARY KEY,
+    event_id TEXT NOT NULL,
+    candidate_id TEXT NOT NULL,
+    dismissed_by TEXT,
+    dismissed_at INTEGER NOT NULL,
+    note TEXT
+  );
+  CREATE UNIQUE INDEX uq_event_duplicate_dismissals_pair
+    ON event_duplicate_dismissals (event_id, candidate_id);
+
   -- OPE-112/113 performer tracking. Full column set — the MCP tools use
   -- .returning() which selects every schema column, so all must exist here.
   CREATE TABLE performers (

@@ -494,6 +494,29 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       ),
   },
   {
+    // OPE-1117 — the possible-duplicate review queue is still being measured.
+    //
+    // Same shape and same reasoning as the held-submission probe above: the
+    // evidence is the daily snapshot ROW for this queue, not its depth. Depth
+    // reaching zero is the queue working; a missing row is the scan that feeds
+    // both the tile and the deadline red having stopped — which, for a
+    // detector whose whole defect was going unread, is the one silence worth
+    // paging on. Written by the same daily stale-red scan as its sibling, so
+    // the same 48h window.
+    name: "duplicate-flags-snapshot",
+    ownerOpe: "OPE-1117",
+    label: "Duplicate-flag queue snapshot",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        queueDrainSnapshots,
+        queueDrainSnapshots.createdAt,
+        eq(queueDrainSnapshots.queueName, "duplicate_flags")
+      ),
+  },
+  {
     // OPE-345 (A6 freshness) — the summable GSC feed. A gap here means the
     // daily ingest stopped, which would otherwise leave every property-level
     // number quietly frozen at a still-plausible value.

@@ -15,6 +15,7 @@ import {
   venueSlugHistory,
   adminActions,
   eventDataCitations,
+  eventDuplicateDismissals,
   containsCI,
 } from "../schema.js";
 import {
@@ -858,9 +859,35 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       // operator nothing — but only ever on a REJECTED transition, because the
       // column means "a human ruled this a duplicate", and no other transition
       // carries that meaning.
+      //
+      // OPE-1117 — except when a human has already ruled THAT pair "not a
+      // duplicate". Defaulting from a dismissed flag would turn an unrelated
+      // rejection into a duplicate adjudication against an event it does not
+      // duplicate, which OPE-450's pre-create check then trusts. An explicit
+      // `rejected_as_duplicate_of` is still honoured: that is a new ruling.
+      let flagDismissed = false;
+      if (
+        params.status === "REJECTED" &&
+        !params.rejected_as_duplicate_of &&
+        event.possibleDuplicateOf
+      ) {
+        const hit = await db
+          .select({ id: eventDuplicateDismissals.id })
+          .from(eventDuplicateDismissals)
+          .where(
+            and(
+              eq(eventDuplicateDismissals.eventId, event.id),
+              eq(eventDuplicateDismissals.candidateId, event.possibleDuplicateOf)
+            )
+          )
+          .limit(1);
+        flagDismissed = hit.length > 0;
+      }
       const rejectedAsDuplicateOf =
         params.status === "REJECTED"
-          ? (params.rejected_as_duplicate_of ?? event.possibleDuplicateOf ?? null)
+          ? (params.rejected_as_duplicate_of ??
+            (flagDismissed ? null : event.possibleDuplicateOf) ??
+            null)
           : null;
 
       await db

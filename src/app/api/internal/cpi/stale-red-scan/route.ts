@@ -22,6 +22,7 @@ import { count, desc, eq, isNull } from "drizzle-orm";
 import { getIndexNowQuota } from "@/lib/bing-webmaster";
 import { assessAllIntegrationSilence, type IntegrationActivity } from "@/lib/integration-silence";
 import { assessAllQueueFreeze } from "@/lib/queue-freeze";
+import { assessAllDuplicateFlagDeadlines } from "@/lib/duplicates/flag-queue";
 import { loadQueueFreezeThresholds } from "@/lib/queue-freeze-thresholds";
 import { gatherQueueFlows, persistQueueSnapshots } from "@/lib/analytics-overview/queue-drain";
 import { assessAllHeartbeat } from "@/lib/heartbeat";
@@ -315,8 +316,25 @@ export const POST = withInternalKey({ source: "cpi:stale-red-scan" }, async ({ d
       });
     }
 
+    // OPE-1117 — a duplicate flag nobody has read, on an event about to happen
+    // or already under way. Keyed on the EVENT's own start date, not on queue
+    // depth: both misses that produced this were a flag expiring unread, one of
+    // them flagged the day before its fair. Defensive, like every block above.
+    let duplicateFlagReds: StaleRed[] = [];
+    try {
+      duplicateFlagReds = await assessAllDuplicateFlagDeadlines(db, now);
+    } catch (err) {
+      await logError(db, {
+        level: "warn",
+        source: "cpi:stale-red-scan",
+        message: "duplicate-flag deadline scan failed; degrading to the prior reds",
+        error: err,
+      });
+    }
+
     const allReds = [
       ...reds,
+      ...duplicateFlagReds,
       ...faultReds,
       ...integrationReds,
       ...queueReds,
