@@ -105,6 +105,28 @@ const FORM_FIELD_LABELS = new Set([
 ]);
 
 /**
+ * OPE-405 (09-23 bounce) — form labels a fixed list cannot enumerate.
+ *
+ * Prod `6687326d` (2026-09-03) staged "Your Name", "Commodity/Product Sold" and
+ * "Table Option (bring your own or table needed)" as its exhibitor roster — a
+ * vendor APPLICATION form again, in wording FORM_FIELD_LABELS did not list.
+ * These are the SHAPES of a question put to the reader, not names:
+ *
+ *   - addressed to the reader:      "Your Name", "Your Business"
+ *   - a field about what is sold:   "Commodity/Product Sold", "Items Sold"
+ *   - a choice with instructions:   "Table Option (bring your own or table needed)"
+ *   - a checkbox / fill-in prompt:  "(check one)", "(if applicable)"
+ */
+const FORM_LABEL_PATTERNS: RegExp[] = [
+  /^your\b/i,
+  /\bsold$/i,
+  /^table\s+(?:option|needed|size|request)s?\b/i,
+  /\((?:bring|please|check|circle|if|optional|required|select)\b[^)]*\)/i,
+  /^commodit(?:y|ies)\b/i,
+  /^(?:type|kind)\s+of\s+(?:product|item|business|goods|craft)s?\b/i,
+];
+
+/**
  * OPE-943 — `env.AI.toMarkdown` prefixes EVERY PDF with a metadata block:
  *
  *   # Vendorlist.pdf
@@ -194,6 +216,7 @@ function isPlausibleName(s: string): boolean {
   if (s.includes("**")) return false;
 
   if (FORM_FIELD_LABELS.has(s.toLowerCase())) return false;
+  if (FORM_LABEL_PATTERNS.some((re) => re.test(s))) return false;
 
   // OPE-943 — `PDFFormatVersion=1.7`, `Author=Jennifer Bragdon`. Machine
   // structure, not an exhibitor. See KEY_VALUE above.
