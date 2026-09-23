@@ -54,7 +54,11 @@ const POPULATED = {
   slug: "zen-kitty-crystal-co",
   description: "Quality Crystals from small Businesses around the world!",
   vendorType: "Crystal and crystal jewelry",
-  products: ["Crystals", "crystal jewelry"],
+  // OPE-849 (rework) — the REAL wire shape. GET /api/vendor/profile returns the
+  // row raw, so this is the stored JSON STRING, never an array. The original
+  // fixture used an array, which is the only reason these tests stayed green
+  // while the live page threw on `products.join` and loaded blank.
+  products: JSON.stringify(["Crystals", "crystal jewelry"]),
   website: null,
   logoUrl: null,
   contactName: "Melissa Dube",
@@ -79,7 +83,7 @@ const EMPTY = {
   ...POPULATED,
   description: null,
   vendorType: null,
-  products: [],
+  products: "[]",
   contactName: null,
   contactEmail: null,
   contactPhone: null,
@@ -201,5 +205,28 @@ describe("clearing a field must still work — the fix must not overcorrect", ()
     const body = patchBodies[patchBodies.length - 1];
     expect(body.city).toBe("Boston");
     expect(Object.hasOwn(body, "state")).toBe(false);
+  });
+});
+
+describe("OPE-849 (rework) — a load that FAILS must not be able to save anything", () => {
+  it("a throwing load shows the error state, renders no form, and never PATCHes", async () => {
+    // `products: 5` makes the load throw part-way (JSON.parse(5) is 5, and 5 has
+    // no .join) — standing in for ANY mid-load failure. Before the rework
+    // `setProfile` ran first, so this rendered a blank, autosave-armed form
+    // with no snapshot, and the first keystroke PATCHed every field as "".
+    mockFetch({ ...POPULATED, products: 5 });
+    render(<VendorProfilePage />);
+
+    await waitFor(() => expect(screen.getByText(/couldn.t load your profile/i)).toBeTruthy());
+    expect(screen.queryByRole("button", { name: /save changes/i })).toBeNull();
+    expect(screen.queryByDisplayValue("Zen Kitty Crystal Co.")).toBeNull();
+    // Give any armed autosave (3s debounce) the chance to fire; nothing may.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(patchBodies).toEqual([]);
+  });
+
+  it("LANDMARK: the real wire shape loads — products arrives as a JSON string and is shown", async () => {
+    await renderLoaded(POPULATED);
+    expect(screen.getByDisplayValue("Crystals, crystal jewelry")).toBeTruthy();
   });
 });
