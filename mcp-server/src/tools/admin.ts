@@ -43,7 +43,26 @@ import {
   imageFetchHeaders,
   ownedInboundAttachmentKey,
   readInboundAttachmentAsResponse,
+  checkImageUrl,
 } from "@takemetothefair/utils";
+
+/**
+ * OPE-1112 — `logo_url` must point at an image, on every writer.
+ *
+ * The self-service form and the admin API enforce this through
+ * `imageUrlSchema` in @takemetothefair/validation; these two MCP tools have
+ * their own zod shapes, so they need their own reference to the SAME
+ * predicate. Enforcing it on the form alone would just move the bad writes to
+ * whichever surface was left unguarded — and `update_vendor` is exactly the
+ * tool an agent reaches for.
+ */
+const logoUrlParam = z
+  .string()
+  .optional()
+  .superRefine((v, ctx) => {
+    const verdict = checkImageUrl(v);
+    if (!verdict.ok) ctx.addIssue({ code: "custom", message: verdict.reason });
+  });
 import {
   EVENT_CATEGORIES,
   EXTRACTION_REJECT_FAMILIES,
@@ -2854,7 +2873,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           website: z.string().optional().describe("Vendor website URL"),
           contact_email: z.string().optional().describe("Primary contact email address"),
           contact_phone: z.string().optional().describe("Contact phone number"),
-          logo_url: z.string().optional().describe("URL to vendor logo image"),
+          logo_url: logoUrlParam.describe(
+            "URL to vendor logo image. Must point at an image file, not a social/shop page."
+          ),
           // IMG1 §1b Phase 1 — per-image focal point. Applies to logo_url.
           // Most logos are square so default (0.5, 0.5) center works; this
           // exists for non-square logo rescues. Same Zod validation as the
@@ -4195,7 +4216,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .describe("State (2-letter code)"),
       address: z.string().optional().describe("Street address"),
       zip: z.string().optional().describe("ZIP code"),
-      logo_url: z.string().optional().describe("Logo image URL"),
+      logo_url: logoUrlParam.describe(
+        "Logo image URL. Must point at an image file (.jpg/.png/.webp) or a known image CDN — a Facebook/Instagram/Etsy page URL is rejected."
+      ),
       // IMG1 §1b Phase 1 — per-image focal point. Applies to logo_url.
       image_focal_x: z
         .number()
