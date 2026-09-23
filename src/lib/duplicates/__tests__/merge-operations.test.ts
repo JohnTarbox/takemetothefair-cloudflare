@@ -3,6 +3,20 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
+
+// OPE-1120 — the promoter merge now calls the shared child-repoint helper.
+// These tests drive a hand-built mock DB that cannot run its queries; the
+// helper itself is tested against real SQLite on the MCP side
+// (mcp-server/__tests__/merge-promoter-children-ope1120.test.ts). Here it is
+// stubbed, and the promoters test asserts the app path CALLS it.
+const { repointPromoterChildren } = vi.hoisted(() => ({
+  repointPromoterChildren: vi.fn(async () => ({})),
+}));
+vi.mock("@takemetothefair/db-schema", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@takemetothefair/db-schema")>()),
+  repointPromoterChildren,
+}));
+
 import { getMergePreview, executeMerge, transferFavorites } from "../merge-operations";
 
 // Mock database helper
@@ -851,6 +865,8 @@ describe("executeMerge", () => {
 
       expect(result.success).toBe(true);
       expect(result.deletedId).toBe("duplicate-id");
+      // OPE-1120 — the loser's FK-less children are repointed on this path too.
+      expect(repointPromoterChildren).toHaveBeenCalledWith(db, "p1", "duplicate-id");
     });
   });
 });

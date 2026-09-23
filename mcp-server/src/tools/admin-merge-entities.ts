@@ -52,6 +52,7 @@ import {
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 import { jsonContent, unsafeSlug } from "../helpers.js";
+import { repointPromoterChildren } from "@takemetothefair/db-schema";
 
 export function registerMergeEntitiesTools(server: McpServer, db: Db, auth: AuthContext) {
   // ── merge_venue ─────────────────────────────────────────────────
@@ -291,6 +292,14 @@ export function registerMergeEntitiesTools(server: McpServer, db: Db, auth: Auth
         // Drop silently — the merge can still proceed.
       }
 
+      // 2b. OPE-1120 — the rows no FK protects. Before the delete, so nothing
+      //     is left pointing at a dead id. Shared with the app's merge path.
+      const children = await repointPromoterChildren(
+        db,
+        params.keeper_promoter_id,
+        params.duplicate_promoter_id
+      );
+
       // 3. Hard-delete the loser. FK cascade has nothing to cascade
       // since we already reassigned every event, and the slug-history
       // row points at the keeper not the duplicate.
@@ -311,6 +320,7 @@ export function registerMergeEntitiesTools(server: McpServer, db: Db, auth: Auth
             duplicate_slug: dupRow.slug,
             events_reassigned: reassignedCount,
             slug_history_written: true,
+            children,
           }),
           createdAt: new Date(),
         });
@@ -329,6 +339,7 @@ export function registerMergeEntitiesTools(server: McpServer, db: Db, auth: Auth
             keeper_slug: keeperRow.slug,
             events_reassigned: reassignedCount,
             slug_history_written: true,
+            children,
           }),
         ],
       };
