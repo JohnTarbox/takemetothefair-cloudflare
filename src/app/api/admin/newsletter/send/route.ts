@@ -36,6 +36,7 @@ import { resolveUnsubscribeSecret } from "@/lib/email/newsletter-unsubscribe-tok
 import { resolveApproveSecret, signApproveToken } from "@/lib/email/newsletter-approve-token";
 import {
   enqueueNewsletterDigest,
+  newsletterLedgerSource,
   parseNewsletterList,
   selectBroadcastRecipients,
 } from "@/lib/email/newsletter-broadcast";
@@ -231,6 +232,9 @@ export const POST = withAuthorized(async ({ request, db }) => {
     // here would tell vendors they had signed up for the attendee newsletter,
     // which is exactly the defect OPE-711 fixed on the generator path.
     wordmark: newsletterNameForAudience(audience),
+    // OPE-866 — a test_recipient send is marked in the ledger; it used to write
+    // the broadcast's exact source.
+    source: newsletterLedgerSource(audience, isBroadcast ? "broadcast" : "test"),
   });
 
   return NextResponse.json({

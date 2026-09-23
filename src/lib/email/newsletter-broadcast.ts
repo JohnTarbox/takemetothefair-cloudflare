@@ -29,6 +29,21 @@ export const NEWSLETTER_SOURCE = "newsletter:weekly-digest";
  *  a post-send check caught: the first vendor test landed under
  *  `newsletter:weekly-digest` and was invisible as a vendor send. */
 export const VENDOR_DIGEST_SOURCE = "newsletter:vendor-digest";
+/**
+ * OPE-866 — the ledger source for a send, from its audience AND its mode, so
+ * `email_send_ledger` alone answers "did this reach the list?". A `:test`
+ * suffix marks a single-address test send; a broadcast has none. `LIKE
+ * 'newsletter:%'` still matches both. The one place this is decided — every
+ * send route calls it, so a test and a broadcast cannot share a source again
+ * (the 09-09 vendor pair did: 02:02 preview and 02:05 broadcast, identical).
+ */
+export function newsletterLedgerSource(
+  audience: NewsletterList,
+  mode: "broadcast" | "test"
+): string {
+  const base = audience === "vendor" ? VENDOR_DIGEST_SOURCE : NEWSLETTER_SOURCE;
+  return mode === "test" ? `${base}:test` : base;
+}
 export const NEWSLETTER_FROM = "Meet Me at the Fair <hello@meetmeatthefair.com>";
 
 /**

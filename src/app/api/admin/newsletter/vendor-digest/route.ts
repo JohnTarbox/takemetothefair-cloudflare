@@ -54,6 +54,7 @@ import { resolveUnsubscribeSecret } from "@/lib/email/newsletter-unsubscribe-tok
 import {
   selectBroadcastRecipients,
   enqueueNewsletterDigest,
+  newsletterLedgerSource,
   VENDOR_DIGEST_SOURCE,
 } from "@/lib/email/newsletter-broadcast";
 import { selectNewThisWeekEvents } from "@/lib/newsletter/new-this-week";
@@ -165,7 +166,7 @@ export const POST = withAuthorized(async ({ request, db }) => {
       // table (`newsletter_issues.sent_at`) — which is a direct contributing
       // cause of the 2026-09-09 misdiagnosis, per OPE-855's own provenance
       // section. `LIKE 'newsletter%'` still matches both.
-      source: `${VENDOR_DIGEST_SOURCE}:test`,
+      source: newsletterLedgerSource("vendor", "test"),
     });
     return NextResponse.json({
       success: true,
