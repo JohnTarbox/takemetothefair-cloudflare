@@ -301,3 +301,43 @@ describe("rolloverEventIfRecurring — idempotency + gates", () => {
     expect(res.skipReason).toBe("missing-dates");
   });
 });
+
+describe("OPE-1116 — rolled_from_event_id is a guarded lineage pointer", () => {
+  // The column sat NULL on every row for three months and nothing noticed:
+  // the 124 rolled rows came from an offline script that never set it, and
+  // this committed writer (which does) has had no qualifying input. So pin
+  // both what the writer stores and what the column refuses.
+
+  it("a rollover's CREATED ROW carries its parent, read back from the table", async () => {
+    const sourceId = seedAnnual();
+    const res = await rolloverEventIfRecurring(db, sourceId, {
+      via: "cron",
+      actorUserId: null,
+      now: NOW,
+    });
+    // Read the stored row, not the function's return value.
+    const [row] = db.select().from(events).where(eq(events.id, res.newEventId!)).all();
+    expect(row.rolledFromEventId).toBe(sourceId);
+    expect(row.ingestionMethod).toBe("auto_rollover");
+  });
+
+  it("a parent reference to a row that does not exist is REJECTED, not stored or NULLed", () => {
+    // Prod declares REFERENCES events(id) (drizzle/0124) and D1 enforces FKs.
+    // The test DB used to declare the column bare, so this guard was invisible
+    // to every test in the suite.
+    expect(() =>
+      db
+        .insert(events)
+        .values({
+          id: "evt-orphan-2027",
+          name: "Orphan 2027",
+          slug: unsafeSlug("orphan-2027"),
+          promoterId: "promoter-1",
+          status: "TENTATIVE",
+          rolledFromEventId: "evt-does-not-exist",
+        })
+        .run()
+    ).toThrow(/FOREIGN KEY/i);
+    expect(db.select().from(events).where(eq(events.id, "evt-orphan-2027")).all()).toEqual([]);
+  });
+});
