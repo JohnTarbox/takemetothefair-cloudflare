@@ -979,7 +979,12 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       let replyKind = result.replyKind;
       const replyParams = result.replyParams ?? {};
       try {
-        await step.do(
+        // OPE-1143 — the step RETURNS the kind it sent. The guards below swap
+        // `replyKind` (thread-reply-ack, unfetchable-url) inside the closure,
+        // but mark-done wrote the PRE-swap `result.replyKind`, so 6 rows sent
+        // as thread-reply-ack were stored as correction-ack. A reassigned local
+        // would also be lost on a workflow replay; a step's return is cached.
+        const sentKind = await step.do(
           "send-reply",
           {
             retries: { limit: 3, delay: "10 seconds", backoff: "exponential" },
@@ -1302,8 +1307,12 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
               bodyHtml: msg.html,
               bodyText: msg.text,
             });
+            return replyKind;
           }
         );
+        if (typeof sentKind === "string" && sentKind !== result.replyKind) {
+          result = { ...result, replyKind: sentKind };
+        }
       } catch (err) {
         // send-reply exhausted retries (or threw NonRetryableError).
         // Log + continue to mark-done so the row records the failure
