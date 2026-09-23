@@ -491,7 +491,11 @@ export function registerPublicTools(server: McpServer, db: Db) {
       const fuzzyOrder =
         params.query && params.fuzzy
           ? (() => {
-              const toks = tokenize(params.query!);
+              // OPE-593 (09-23 bounce) — the SAME cap as the WHERE gate. This
+              // term binds one parameter per token, and it was uncapped: a
+              // 48-token query bound 108 parameters against D1's 100 and threw.
+              // Scoring past token 24 never changed which candidates exist.
+              const toks = tokenize(params.query!).slice(0, MAX_FUZZY_TOKENS);
               if (toks.length === 0) return null;
               // Whole-query match counts double — an exact substring is the
               // strongest possible signal and must never be truncated away.
