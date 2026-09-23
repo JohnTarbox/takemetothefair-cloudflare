@@ -582,11 +582,45 @@ If you noticed something missing or out of date, please reply to this thread wit
 ${SIGN_OFF}`;
     }
     case "correction-ack": {
+      // OPE-1134 — ⚠️ PROPOSED COPY, awaiting John's approval on the ticket.
+      // Since OPE-766 this sends on ARRIVAL, so "reviewed shortly" was a promise
+      // with nothing behind it. What stays is only what a row can prove: it was
+      // recorded. "If we need more detail, we'll reply" is kept because the
+      // correction lane has a real needs-more-info reply (correction-needs-info).
       return `Thanks for letting us know!
 
-We've recorded your correction request and our team will review it shortly. If we have questions, we'll reply directly to this email.
+We've recorded your correction request. This is an automatic reply — it hasn't been read by a person yet. If we need more detail, we'll reply to this email.
 
 ${SUPPORT_LINE}
+
+${SIGN_OFF}`;
+    }
+    case "vendor-inquiry-ack": {
+      // OPE-1134 — ⚠️ PROPOSED COPY, awaiting John's approval. New: a vendor
+      // asking how to take part got the bug-report support-ack. Every pointer
+      // here is checked against the live site: event pages carry the
+      // organizer's application link where we have it, and vendor pages show
+      // "Claim this free listing". No promise of a human reply (OPE-367).
+      return `Thanks for writing to Meet Me at the Fair.
+
+We've received your message and logged it. This is an automatic reply — it hasn't been read by a person yet.
+
+In the meantime, two things that often answer vendor questions:
+- Each fair runs its own vendor applications. Where we have the organizer's application link, it's on that event's page on our site.
+- If your business is listed with us, you can claim the listing for free and keep it up to date yourself — find it at https://meetmeatthefair.com/vendors and look for "Claim this free listing".
+
+You can reply to this email; it reaches the same place.
+
+${SIGN_OFF}`;
+    }
+    case "claim-request-ack": {
+      // OPE-1134 — ⚠️ PROPOSED COPY, awaiting John's approval. New: a claim
+      // request was answered "we've recorded your correction request".
+      return `Thanks for writing to Meet Me at the Fair.
+
+We've received your request about a listing and logged it. This is an automatic reply — it hasn't been read by a person yet.
+
+You can claim a business listing for free yourself from its page on our site — look for "Claim this free listing". If you've tried that and something went wrong, reply to this email with the listing's link and what happened; it reaches the same place.
 
 ${SIGN_OFF}`;
     }
@@ -661,9 +695,12 @@ ${SUPPORT_LINE}
 ${SIGN_OFF}`;
     }
     case "press-ack": {
+      // OPE-1134 — ⚠️ PROPOSED COPY, awaiting John's approval. "A team member
+      // will follow up shortly with media materials" was false: `press` has no
+      // handler that sends materials (OPE-761).
       return `Thanks for your interest in Meet Me at the Fair!
 
-A team member will follow up shortly with media materials. If your inquiry is time-sensitive, please reply with a deadline.
+We've received your message and logged it. This is an automatic reply — it hasn't been read by a person yet. If your inquiry is time-sensitive, please reply with your deadline.
 
 ${SIGN_OFF}`;
     }

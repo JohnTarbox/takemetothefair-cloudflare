@@ -113,6 +113,10 @@ export type ReplyKind =
   // Generic per-intent acks (initial / timeout fallback)
   | "correction-ack"
   | "support-ack"
+  // OPE-1134 — intent-matched acks for the two intents the dispatch collapses
+  // (vendor_inquiry → support, claim_request → correction). See ack-kind.ts.
+  | "vendor-inquiry-ack"
+  | "claim-request-ack"
   // OPE-706 — the reply-thread variant of the generic acks. Fires INSTEAD of
   // `support-ack` / `correction-ack` when the inbound's In-Reply-To or
   // References names one of our own message-ids, i.e. the sender is answering

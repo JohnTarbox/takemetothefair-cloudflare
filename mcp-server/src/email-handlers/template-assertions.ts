@@ -170,6 +170,24 @@ export const TEMPLATE_ASSERTIONS: Record<string, TemplateAssertion[]> = {
           : null,
     },
   ],
+  "vendor-inquiry-ack": [
+    {
+      claim: "this has not been read by a person yet",
+      falsifiedBy: (f) =>
+        typeof f.inReplyTo === "string" && f.inReplyTo.toLowerCase().includes(OWN_DOMAIN)
+          ? "in_reply_to names our own message-id — this is a reply to a human, mid-correspondence"
+          : null,
+    },
+  ],
+  "claim-request-ack": [
+    {
+      claim: "this has not been read by a person yet",
+      falsifiedBy: (f) =>
+        typeof f.inReplyTo === "string" && f.inReplyTo.toLowerCase().includes(OWN_DOMAIN)
+          ? "in_reply_to names our own message-id — this is a reply to a human, mid-correspondence"
+          : null,
+    },
+  ],
   "press-ack": [
     {
       claim: "this has not been read by a person yet",
@@ -308,6 +326,9 @@ export const NEUTRAL_FALLBACK: Record<string, string> = {
   "support-ack": "thread-reply-ack",
   "correction-ack": "thread-reply-ack",
   "press-ack": "thread-reply-ack",
+  // OPE-1134 — both new acks carry the same claim, so the same fallback.
+  "vendor-inquiry-ack": "thread-reply-ack",
+  "claim-request-ack": "thread-reply-ack",
 };
 
 export interface ResolvedReplyKind {

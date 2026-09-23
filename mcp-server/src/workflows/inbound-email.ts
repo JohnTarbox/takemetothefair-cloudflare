@@ -348,6 +348,9 @@ function errorToReplyKind(intent: EmailIntent, errMsg: string): ReplyKind | null
 function decisionToReplyKind(intent: EmailIntent, decision: AdminDecision | null): ReplyKind {
   const correctionLike = intent === "correction" || intent === "claim_request";
   if (decision === null) {
+    // OPE-1134 — a claim_request's timeout ack is the claim ack, not "we've
+    // recorded your correction request".
+    if (intent === "claim_request") return "claim-request-ack";
     return correctionLike ? "correction-ack" : "press-ack";
   }
   if (correctionLike) {
