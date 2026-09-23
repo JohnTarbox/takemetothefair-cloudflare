@@ -86,6 +86,27 @@ export async function repointPromoterChildren(
     .from(schema.promoterEnrichmentCandidates)
     .where(eq(schema.promoterEnrichmentCandidates.promoterId, loserId));
 
+  // OPE-1120 — fields the KEEPER already has a pending proposal for.
+  // `idx_pec_pending_field` is UNIQUE (promoter_id, proposed_field) WHERE
+  // decision='pending', so retargeting a second pending row onto the keeper
+  // throws and takes the whole merge down with it. Found during the step-4
+  // cleanup: #656 (logo) could not move to lowell-folk-festival, which already
+  // held its own pending logo #2551. The keeper's own proposal wins; the
+  // loser's is rejected, like any proposal the keeper would clash with.
+  const keeperPending = new Set(
+    (
+      await db
+        .select({ field: schema.promoterEnrichmentCandidates.proposedField })
+        .from(schema.promoterEnrichmentCandidates)
+        .where(
+          and(
+            eq(schema.promoterEnrichmentCandidates.promoterId, keeperId),
+            eq(schema.promoterEnrichmentCandidates.decision, "pending")
+          )
+        )
+    ).map((r) => r.field)
+  );
+
   const retarget: number[] = [];
   const reject: number[] = [];
   const history: number[] = [];
@@ -100,8 +121,11 @@ export async function repointPromoterChildren(
       ];
     // An unknown field has no column to protect: move it and let review decide.
     const keeperValue = column ? (keeper as Record<string, unknown>)[column] : null;
-    if (isEmpty(keeperValue)) retarget.push(c.id);
-    else reject.push(c.id);
+    if (isEmpty(keeperValue) && !keeperPending.has(c.field)) {
+      retarget.push(c.id);
+      // Two loser rows for one field would collide with each other too.
+      keeperPending.add(c.field);
+    } else reject.push(c.id);
   }
 
   // Integer ids, chunked well under D1's 100-bound-parameter cap.
