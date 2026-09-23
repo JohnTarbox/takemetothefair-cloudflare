@@ -181,7 +181,7 @@ const SCHEMA_SQL = `
     possible_duplicate_of TEXT,
     rejected_as_duplicate_of TEXT,
     -- K27 (drizzle/0124, 2026-06-15) — auto-rollover provenance pointer.
-    rolled_from_event_id TEXT,
+    rolled_from_event_id TEXT REFERENCES events(id) ON DELETE SET NULL,
     -- UX-R1 / C1 (drizzle/0098, analyst 2026-06-01 EVE) — post-ingest operator-
     -- review marker. Set by scripts/backfill-event-days-from-description.ts
     -- when expandCadence can't determine a pattern. Drizzle inserts SQL that
