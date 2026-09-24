@@ -1212,6 +1212,7 @@ const SCHEMA_SQL = `
     reply_to TEXT,
     return_path TEXT,
     sending_host TEXT,
+    automation_headers TEXT,
     -- OPE-764 (drizzle/0260) — sender identity resolution. Report-only.
     matched_entities TEXT,
     matched_entity_type TEXT,

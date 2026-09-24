@@ -173,6 +173,8 @@ describe("extractSenderSignals — the classic tells", () => {
       originalSenderAddress: null,
       originalSenderAuth: null,
       originalSenderDomainAligned: null,
+      // OPE-1148 — no headers, so no automation headers: null, not "{}".
+      automationHeaders: null,
     });
   });
 

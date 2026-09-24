@@ -49,6 +49,7 @@ import {
   users,
   adminActions,
   emailSendLedger,
+  tunableThresholds,
 } from "./schema.js";
 import { desc, eq, inArray, sql } from "drizzle-orm";
 import {
@@ -92,6 +93,15 @@ import {
   type SenderAuthVerdict,
 } from "./email-auth.js";
 import { isNonActionableSender } from "./email-handlers/audit-sender.js";
+import {
+  automationHeadersJson,
+  BURST_THRESHOLD_KEYS,
+  burstTripped,
+  DEFAULT_BURST_THRESHOLDS,
+  detectAutomatedMail,
+  isBurstCrossing,
+  type BurstThresholds,
+} from "./email-handlers/automated-mail.js";
 
 // ---------------------------------------------------------------------------
 // Env shape required by this module
@@ -390,6 +400,106 @@ export async function handleInboundEmail(
           error: err,
           sessionId,
           context: { from: fromAddr, to: toAddr, reason: nonActionable.reason },
+        }).catch(() => {});
+      }
+      return;
+    }
+
+    // 1c. OPE-1148 — machine mail is held, never acked, never turned into an
+    //     event. Decided from HEADERS and the sender, before the classifier:
+    //     on 2026-09-23 the classifier scored Google Calendar reminders 0.90
+    //     `new_event`, so confidence cannot be the gate. Then the burst breaker,
+    //     for a flood of human-looking mail the header rules cannot see.
+    const heldTerminalArgs = {
+      fromAddr,
+      toAddr,
+      subject,
+      bodyTextExcerpt,
+      bodyTextStored,
+      bodyHtmlStored,
+      senderSignals,
+      senderIdentity,
+      threadColumns,
+      attachmentCount,
+      rawSize: message.rawSize,
+      messageId: (parsed.messageId || "").trim() || null,
+    };
+    const automated = detectAutomatedMail({
+      headers: message.headers,
+      fromAddr,
+      sendingHost: senderSignals.sendingHost,
+    });
+    if (automated) {
+      const operatorRelevant = automated.kind !== "automated";
+      try {
+        await insertAuditNoopRow(getDb(env.DB), {
+          ...heldTerminalArgs,
+          reason: automated.reason,
+          disposition: {
+            intent: "held-automated",
+            status: "held-automated",
+            routingSource: `automated:${automated.kind}`,
+            flagged: operatorRelevant ? 1 : 0,
+          },
+        });
+      } catch (err) {
+        await logError(env.DB, {
+          source: SOURCE,
+          message: "failed to insert held-automated row",
+          error: err,
+          sessionId,
+          context: { from: fromAddr, to: toAddr, reason: automated.reason },
+        }).catch(() => {});
+      }
+      if (automated.kind === "forwarding-confirmation") {
+        // Confirming this request is what piped an inbox into submit@. It goes
+        // to a human as an ALERT, and nothing here confirms or relays it.
+        await forwardToAdminBestEffort(message, env, "forwarding-confirmation", sessionId);
+      }
+      await logError(env.DB, {
+        level: automated.kind === "automated" ? "info" : "error",
+        source: SOURCE,
+        message:
+          automated.kind === "forwarding-confirmation"
+            ? `ALERT: someone asked to forward a mailbox into ${toAddr}. Confirming it pipes that inbox into auto-replies. Held; forwarded to the operator; NOT confirmed.`
+            : automated.kind === "auto-forwarded"
+              ? `auto-forwarded mailbox mail held (no reply, no event): ${automated.reason}`
+              : `automated sender held (no reply, no event): ${automated.reason}`,
+        sessionId,
+        context: { from: fromAddr, to: toAddr, subject, reason: automated.reason },
+      }).catch(() => {});
+      return;
+    }
+
+    const burst = await checkInboundBurst(getDb(env.DB), toAddr, fromAddr);
+    if (burst.tripped) {
+      try {
+        await insertAuditNoopRow(getDb(env.DB), {
+          ...heldTerminalArgs,
+          reason: `burst:${burst.counts.messages}msgs/${burst.counts.senders}senders/${burst.thresholds.windowMinutes}m`,
+          disposition: {
+            intent: "held-automated",
+            status: "held-automated",
+            routingSource: "automated:burst",
+            flagged: 1,
+          },
+        });
+      } catch (err) {
+        await logError(env.DB, {
+          source: SOURCE,
+          message: "failed to insert burst-held row",
+          error: err,
+          sessionId,
+          context: { from: fromAddr, to: toAddr },
+        }).catch(() => {});
+      }
+      if (burst.crossing) {
+        await logError(env.DB, {
+          level: "error",
+          source: SOURCE,
+          message: `ALERT: inbound burst on ${toAddr} — ${burst.counts.messages} messages from ${burst.counts.senders} senders in ${burst.thresholds.windowMinutes} min. Auto-replies and event creation paused for this address until the window drains; messages are held for review.`,
+          sessionId,
+          context: { to: toAddr, counts: burst.counts, thresholds: burst.thresholds },
         }).catch(() => {});
       }
       return;
@@ -2266,6 +2376,13 @@ export interface SenderSignals {
   originalSenderAuth: string | null;
   /** SQLite integer boolean; null when no signature actually verified. */
   originalSenderDomainAligned: number | null;
+  /**
+   * OPE-1148 — Auto-Submitted / Precedence / List-Id / List-Unsubscribe /
+   * X-Forwarded-For/-To, as JSON of the ones present (null when none). The
+   * automated-mail gate reads these; storing them on every row is what lets
+   * its false-positive rate be measured, which nothing could do before.
+   */
+  automationHeaders: string | null;
 }
 
 /** Cap on each captured header, so a pathological one cannot bloat the row. */
@@ -2327,6 +2444,7 @@ export function extractSenderSignals(
     originalSenderAddress: null,
     originalSenderAuth: null,
     originalSenderDomainAligned: null,
+    automationHeaders: automationHeadersJson(headers),
   };
 }
 
@@ -2565,10 +2683,23 @@ export async function insertAuditNoopRow(
     rawSize: number | null;
     messageId: string | null;
     reason: string;
+    /**
+     * OPE-1148 — the same terminal, no-workflow row, under a different name.
+     * Automated mail is HELD rather than audit-noop'd: it is not our own
+     * loopback, so a wrong verdict must be findable and salvageable.
+     * `flagged` puts the operator-relevant kinds in front of a human.
+     */
+    disposition?: { intent: string; status: string; routingSource: string; flagged: 0 | 1 };
     now?: Date;
   }
 ): Promise<void> {
   const now = args.now ?? new Date();
+  const d = args.disposition ?? {
+    intent: "audit-noop",
+    status: "audit-noop",
+    routingSource: "audit_noop_sender",
+    flagged: 0 as const,
+  };
   await db
     .insert(inboundEmails)
     .values({
@@ -2577,8 +2708,8 @@ export async function insertAuditNoopRow(
       fromAddress: args.fromAddr,
       toAddress: args.toAddr,
       subject: args.subject || null,
-      intent: "audit-noop",
-      status: "audit-noop",
+      intent: d.intent,
+      status: d.status,
       workflowInstanceId: null,
       bodyTextExcerpt: args.bodyTextExcerpt || null,
       bodyText: args.bodyTextStored,
@@ -2597,14 +2728,85 @@ export async function insertAuditNoopRow(
       classifiedRationale: null,
       classifiedAt: null,
       classifierVersion: null,
-      routingSource: "audit_noop_sender",
+      routingSource: d.routingSource,
       routedToWorkflow: null,
-      flaggedForReview: 0,
+      flaggedForReview: d.flagged,
       extractFailReason: args.reason,
       parentEmailId: null,
       createdAt: now,
     })
     .onConflictDoNothing();
+}
+
+/**
+ * OPE-1148 — read the burst thresholds from `tunable_thresholds` so they can be
+ * tuned without a deploy. Any missing or non-positive row falls back to the
+ * measured default for that key alone.
+ */
+export async function readBurstThresholds(db: Db): Promise<BurstThresholds> {
+  const keys = Object.values(BURST_THRESHOLD_KEYS);
+  const rows = await db
+    .select({ key: tunableThresholds.key, value: tunableThresholds.value })
+    .from(tunableThresholds)
+    .where(inArray(tunableThresholds.key, keys));
+  const byKey = new Map(rows.map((r) => [r.key, r.value]));
+  const pick = (k: keyof BurstThresholds) => {
+    const v = byKey.get(BURST_THRESHOLD_KEYS[k]);
+    return typeof v === "number" && v > 0 ? v : DEFAULT_BURST_THRESHOLDS[k];
+  };
+  return {
+    windowMinutes: pick("windowMinutes"),
+    maxMessages: pick("maxMessages"),
+    maxSenders: pick("maxSenders"),
+  };
+}
+
+/**
+ * Counts this address's inbound rows in the window — held and audit rows
+ * included, because a flood is a flood whichever gate caught its first
+ * messages — plus the message being decided. Fail-OPEN: if the read fails the
+ * message proceeds normally; a DB hiccup must not silence real submissions.
+ */
+export async function checkInboundBurst(
+  db: Db,
+  toAddr: string,
+  fromAddr: string,
+  now: Date = new Date()
+): Promise<{
+  tripped: boolean;
+  crossing: boolean;
+  counts: { messages: number; senders: number };
+  thresholds: BurstThresholds;
+}> {
+  let thresholds = DEFAULT_BURST_THRESHOLDS;
+  try {
+    thresholds = await readBurstThresholds(db);
+    const since = new Date(now.getTime() - thresholds.windowMinutes * 60_000);
+    const from = fromAddr.trim().toLowerCase();
+    const [row] = await db
+      .select({
+        messages: sql<number>`count(*)`,
+        senders: sql<number>`count(DISTINCT lower(${inboundEmails.fromAddress}))`,
+        fromSeen: sql<number>`sum(lower(${inboundEmails.fromAddress}) = ${from})`,
+      })
+      .from(inboundEmails)
+      .where(
+        sql`${inboundEmails.toAddress} = ${toAddr} AND ${inboundEmails.receivedAt} >= ${Math.floor(since.getTime() / 1000)}`
+      );
+    const isNew = !(Number(row?.fromSeen ?? 0) > 0);
+    const counts = {
+      messages: Number(row?.messages ?? 0) + 1,
+      senders: Number(row?.senders ?? 0) + (isNew ? 1 : 0),
+    };
+    return {
+      tripped: burstTripped(counts, thresholds),
+      crossing: isBurstCrossing(counts, isNew, thresholds),
+      counts,
+      thresholds,
+    };
+  } catch {
+    return { tripped: false, crossing: false, counts: { messages: 0, senders: 0 }, thresholds };
+  }
 }
 
 // Silence "imported but unused" for CLASSIFIER_VERSION — it's available
