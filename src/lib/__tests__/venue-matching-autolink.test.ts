@@ -222,3 +222,26 @@ describe("autoLinkVenue — null/empty input", () => {
     expect(result.decision).toBe("no-match");
   });
 });
+
+describe("autoLinkVenue — OPE-1146: a lone same-name row in another state is NOT linked", () => {
+  it("Veterans Memorial Park, ME does not link to the only (CT) row", async () => {
+    insertVenue({ id: "v-norwalk", name: "Veterans Memorial Park", state: "CT" });
+    const result = await autoLinkVenue(asDb(db), {
+      venueName: "Veterans Memorial Park",
+      venueCity: "Old Orchard Beach",
+      venueState: "ME",
+    });
+    expect(result.venueId).toBeNull();
+    expect(result.stateCode).toBe("ME");
+  });
+
+  it("still links when the row's state is blank (no disagreement to act on)", async () => {
+    insertVenue({ id: "v-blank", name: "Veterans Memorial Park", state: "" });
+    const result = await autoLinkVenue(asDb(db), {
+      venueName: "Veterans Memorial Park",
+      venueState: "ME",
+    });
+    expect(result.venueId).toBe("v-blank");
+    expect(result.decision).toBe("exact-name-only");
+  });
+});
