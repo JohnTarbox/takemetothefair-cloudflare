@@ -19,6 +19,7 @@
 import { SITE_URL } from "@takemetothefair/constants";
 import { buildPlaceJsonLd, type PlaceVenue } from "@/lib/seo/place-jsonld";
 import { LIFECYCLE_TO_SCHEMA_ORG, type EventLifecycle } from "@/lib/event-lifecycle";
+import { isPastUnconfirmed, PAST_UNCONFIRMED_GRACE_MS } from "@/lib/events/past-unconfirmed";
 
 /**
  * OPE-18 (2026-06-29) — parent-derivation discipline for the WARNING-set
@@ -68,6 +69,41 @@ export function derivedEventStatus(lifecycleStatus?: string | null): string | un
  */
 export function eventStatusForDatedNode(lifecycleStatus?: string | null): string {
   return derivedEventStatus(lifecycleStatus) ?? "https://schema.org/EventScheduled";
+}
+
+/**
+ * OPE-1147 — has this dated node's event already happened? Same rule as the
+ * dated occurrence page and the listings (OPE-1098 / `upcomingEndPredicate`):
+ * the END date, or the start date when there is no end, plus the 24h
+ * end-of-day grace — so the hub, the occurrence page and the list can never
+ * disagree about whether an edition is over.
+ */
+export function isPastDatedNode(
+  startIso: string | null | undefined,
+  endIso: string | null | undefined,
+  now: Date
+): boolean {
+  const last = endIso ?? startIso;
+  if (!last) return false;
+  const t = Date.parse(last);
+  return !Number.isNaN(t) && t < now.getTime() - PAST_UNCONFIRMED_GRACE_MS;
+}
+
+/**
+ * OPE-1147 — `eventStatus` for a node that may be in the past. A past event is
+ * never `EventScheduled`: OCCURRED has no schema.org equivalent (the shared map
+ * returns null) and `eventStatusForDatedNode` would default it to Scheduled,
+ * telling Google a finished fair is still to come. An EXPLICIT non-Scheduled
+ * status (Cancelled / Postponed / Rescheduled / MovedOnline) is still true of a
+ * past event and is kept. Undefined = omit the field.
+ */
+export function eventStatusForPossiblyPastNode(
+  lifecycleStatus: string | null | undefined,
+  past: boolean
+): string | undefined {
+  if (!past) return eventStatusForDatedNode(lifecycleStatus);
+  const explicit = derivedEventStatus(lifecycleStatus);
+  return explicit && explicit !== "https://schema.org/EventScheduled" ? explicit : undefined;
 }
 
 /**
@@ -219,12 +255,29 @@ export function occurrenceUrl(
 
 function occurrenceNode(
   series: SeriesForSchema,
-  occ: OccurrenceForSchema
+  occ: OccurrenceForSchema,
+  now: Date
 ): Record<string, unknown> | null {
   // OPE-32 — a subEvent Event without startDate is invalid structured data
   // (GSC "Missing field startDate"). Drop the dateless occurrence node entirely
   // rather than emit it; the caller filters these out of the subEvent[] array.
   if (!occ.startDateIso) return null;
+  // OPE-1147 — a past edition that was never confirmed is left out entirely,
+  // consistent with OPE-1098's ruling that we never claim it ran (the dated
+  // page already suppresses its Event JSON-LD).
+  if (
+    isPastUnconfirmed(
+      {
+        lifecycleStatus: occ.lifecycleStatus,
+        startDate: occ.startDateIso,
+        endDate: occ.endDateIso,
+      },
+      now
+    )
+  ) {
+    return null;
+  }
+  const past = isPastDatedNode(occ.startDateIso, occ.endDateIso, now);
   const node: Record<string, unknown> = {
     "@type": "Event",
     name: occ.name,
@@ -240,7 +293,9 @@ function occurrenceNode(
   // validates as Events). eventStatus + eventAttendanceMode always emit with the
   // single-Event builder's defaults (the node is already dated here); the rest
   // stay emit-when-known so a real top-level value is never overwritten.
-  node.eventStatus = eventStatusForDatedNode(occ.lifecycleStatus);
+  // OPE-1147 — a past edition carries no `EventScheduled`.
+  const occStatus = eventStatusForPossiblyPastNode(occ.lifecycleStatus, past);
+  if (occStatus) node.eventStatus = occStatus;
   node.eventAttendanceMode = eventAttendanceModeFor(occ.lifecycleStatus);
   if (occ.description) node.description = occ.description;
   // image fallback chain: occurrence image → venue hero → promoter logo → series image.
@@ -269,7 +324,8 @@ function occurrenceNode(
  */
 export function buildEventSeriesJsonLd(
   series: SeriesForSchema,
-  occurrences: OccurrenceForSchema[]
+  occurrences: OccurrenceForSchema[],
+  now: Date = new Date()
 ): Record<string, unknown> | null {
   // OPE-32 — suppress the EventSeries node when no startDate is derivable for it
   // (no dated occurrence anchors the series — the genuinely-dateless TENTATIVE
@@ -298,14 +354,20 @@ export function buildEventSeriesJsonLd(
   // still prefers the hero occurrence's lifecycle when set. organizer stays
   // emit-when-known. (offers/performer are per-occurrence concerns, not
   // series-level — intentionally omitted here.)
-  node.eventStatus = eventStatusForDatedNode(series.lifecycleStatus);
+  // OPE-1147 — the hero is the most recent edition when none is upcoming, and
+  // a series whose hero has passed is not "scheduled" either.
+  const seriesStatus = eventStatusForPossiblyPastNode(
+    series.lifecycleStatus,
+    isPastDatedNode(series.startDateIso, series.endDateIso, now)
+  );
+  if (seriesStatus) node.eventStatus = seriesStatus;
   node.eventAttendanceMode = eventAttendanceModeFor(series.lifecycleStatus);
   const organizer = derivedOrganizer(series.organizer);
   if (organizer) node.organizer = organizer;
   // OPE-32 — emit only the dated occurrences as subEvents; a dateless subEvent
   // Event node is invalid (occurrenceNode returns null for those).
   const subEvents = occurrences
-    .map((o) => occurrenceNode(series, o))
+    .map((o) => occurrenceNode(series, o, now))
     .filter((n): n is Record<string, unknown> => n !== null);
   if (subEvents.length > 0) {
     node.subEvent = subEvents;

@@ -65,7 +65,8 @@ export function SeriesLandingPage({ landing, now }: { landing: SeriesLanding; no
       organizer: series.organizer,
       promoterLogoUrl: series.organizer?.logoUrl ?? null,
     },
-    toSchemaOccurrences(occurrences)
+    toSchemaOccurrences(occurrences),
+    now
   );
 
   // Relative Option-A occurrence path (year page, or the event slug when undated).
