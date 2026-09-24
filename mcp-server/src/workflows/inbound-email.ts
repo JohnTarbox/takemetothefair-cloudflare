@@ -67,6 +67,7 @@ import {
   type OwedHumanVerdict,
 } from "../email-handlers/owed-human.js";
 import { openObligationIfOwed } from "../email-handlers/open-obligation.js";
+import { isZeroConfidenceUnclear } from "../email-handlers/automated-mail.js";
 import { inboundEmails, adminActions, events } from "../schema.js";
 import { logError } from "../logger.js";
 import {
@@ -974,6 +975,37 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           fanoutOtherIntents: fanoutRole.otherIntents,
         },
       };
+    }
+
+    // OPE-1148 item 6 — no ack for a zero-confidence `unclear`. Read from the
+    // row (the routed `intent` here is the ADDRESS route, not the classifier's
+    // verdict), and in a step so a replay reuses the decision.
+    if (result.replyKind !== null && !result.suppressReply) {
+      const zeroConfidenceUnclear = await step.do(
+        "reply-guard/zero-confidence-unclear",
+        { retries: { limit: 2, delay: "5 seconds", backoff: "constant" }, timeout: "10 seconds" },
+        async () => {
+          const [r] = await getDb(this.env.DB)
+            .select({
+              ci: inboundEmails.classifiedIntent,
+              cc: inboundEmails.classifiedConfidence,
+            })
+            .from(inboundEmails)
+            .where(eq(inboundEmails.id, messageRowId))
+            .limit(1);
+          return isZeroConfidenceUnclear(r?.ci, r?.cc);
+        }
+      );
+      if (zeroConfidenceUnclear) {
+        await logError(this.env.DB, {
+          level: "info",
+          source: SOURCE,
+          message: "reply suppressed: classifier said unclear at zero confidence (OPE-1148)",
+          sessionId,
+          context: { messageRowId, replyKind: result.replyKind, intent },
+        });
+        result = { ...result, suppressReply: true };
+      }
     }
 
     if (result.replyKind !== null && !result.suppressReply) {

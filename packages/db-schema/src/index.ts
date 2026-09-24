@@ -5190,6 +5190,9 @@ export const inboundEmails = sqliteTable(
     returnPath: text("return_path"),
     /** Originating host from the last `Received` hop, e.g. a `*.outlook.com` tenant. */
     sendingHost: text("sending_host"),
+    /** OPE-1148 — JSON of the automation headers present (Auto-Submitted, Precedence,
+     *  List-Id, List-Unsubscribe, X-Forwarded-For/-To); null when none. */
+    automationHeaders: text("automation_headers"),
     /**
      * OPE-764 (drizzle/0260) — who this sender resolves to in our own data.
      *
