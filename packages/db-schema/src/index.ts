@@ -4079,8 +4079,11 @@ export const vendorClaimEvidence = sqliteTable(
     id: text("id")
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
-    vendorId: text("vendor_id").notNull(),
-    /** The registrant. NOT an FK to keep the row as an audit tombstone if the account goes. */
+    vendorId: text("vendor_id")
+      .notNull()
+      .references(() => vendors.id, { onDelete: "cascade" }), // OPE-1121 (0322)
+    /** The registrant. NOT an FK to keep the row as an audit tombstone if the account goes.
+     *  OPE-1121 Phase 3 kept it that way deliberately (0322 adds the vendor FK only). */
     userId: text("user_id"),
     /** Registrant-supplied values, snapshotted at signup so later edits don't rewrite history. */
     claimantName: text("claimant_name"),
@@ -4179,7 +4182,9 @@ export const promoterEnrichmentCandidates = sqliteTable(
   "promoter_enrichment_candidates",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
-    promoterId: text("promoter_id").notNull(),
+    promoterId: text("promoter_id")
+      .notNull()
+      .references(() => promoters.id, { onDelete: "cascade" }), // OPE-1121 (0321)
     // Groups one cron run's proposals; synchronous enrich_promoter uses 'manual-<uuid>'.
     jobRunId: text("job_run_id").notNull(),
     // hero | logo | description | social_links | contact_email | contact_phone
