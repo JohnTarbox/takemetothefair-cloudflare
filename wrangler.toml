@@ -255,13 +255,18 @@ queue = "syndication-changes"
 # ── Apex route ─────────────────────────────────────────────────────────────
 # This Worker serves meetmeatthefair.com/* directly (cutover 2026-06-10). The
 # old K2 apex-worker (meetmeatthefair-edge) that used to proxy + rewrite status
-# was retired by this cutover and deleted (B5, 2026-06-12).
+# was retired by this cutover. It was recorded here as deleted on 2026-06-12
+# (B5) but was in fact still in the account until John deleted it on
+# 2026-09-13 (OPE-895).
 # NOTE: error/notFound() responses are soft-200 on ISR routes under
 # @opennextjs/cloudflare — the status-rewrite did NOT become "moot via real
 # 500s" as first assumed; it's an accepted soft-status + noindex tradeoff
 # (docs/mig4-soft-404-opennext-isr.md).
-# Rollback = re-point this hostname at the last pre-migration Pages deployment
-# (see docs/opennext-cutover-runbook.md).
+# Rollback: there is NO Pages fallback any more. The `takemetothefair` Pages
+# project — the cutover's rollback target — had its custom domains detached and
+# was deleted on 2026-09-24 (OPE-895); it had been serving the old build against
+# the production D1/KV on pages.dev. Roll back by redeploying an earlier version
+# of THIS Worker (`npx wrangler rollback` / `wrangler versions deploy`).
 [[routes]]
 pattern = "meetmeatthefair.com/*"
 zone_name = "meetmeatthefair.com"
