@@ -36,6 +36,7 @@ import {
   dollarsToCents,
   slugCandidates,
   type Slug,
+  venueLocationCompatible,
 } from "@takemetothefair/utils";
 import {
   EVENT_CATEGORIES,
@@ -914,23 +915,31 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
             )
           );
 
-        // K44 — once a slug/normalized-name candidate exists, ALWAYS reuse one
-        // rather than creating a duplicate. The previous code only reused on a
-        // city (or state) agreement and otherwise fell through to create — so a
-        // suggestion carrying a city that the stored row left blank (or vice
-        // versa) spawned an orphan duplicate. Disambiguation preference among
-        // candidates: exact city > exact state > exact canonical slug > first.
+        // K44 — once a slug/normalized-name candidate exists, reuse one rather
+        // than creating a duplicate, so a suggestion carrying a city that the
+        // stored row left blank (or vice versa) does not spawn an orphan.
+        // Disambiguation preference: exact city > exact state > exact slug > first.
+        //
+        // OPE-1146 — but only among candidates whose LOCATION agrees: state
+        // when both sides have one, city when both sides have one. K44's
+        // "always reuse" fell back to `existingVenues[0]` whatever its state,
+        // which linked Veterans Memorial Park, Old Orchard Beach ME to the
+        // Norwalk CT row. A same-name venue elsewhere is a different place:
+        // no compatible candidate → create, below.
         let matched = false;
-        if (existingVenues.length > 0) {
+        const compatible = existingVenues.filter((v) =>
+          venueLocationCompatible(v, { city: venueCity, state: venueState })
+        );
+        if (compatible.length > 0) {
           const cityMatch = venueCity
-            ? existingVenues.find((v) => v.city.toLowerCase().trim() === venueCity)
+            ? compatible.find((v) => v.city.toLowerCase().trim() === venueCity)
             : undefined;
           const stateMatch =
             !cityMatch && venueState
-              ? existingVenues.find((v) => v.state.toUpperCase().trim() === venueState)
+              ? compatible.find((v) => v.state.toUpperCase().trim() === venueState)
               : undefined;
-          const slugMatch = existingVenues.find((v) => v.slug === unsafeSlug(venueSlug));
-          const chosen = cityMatch ?? stateMatch ?? slugMatch ?? existingVenues[0];
+          const slugMatch = compatible.find((v) => v.slug === unsafeSlug(venueSlug));
+          const chosen = cityMatch ?? stateMatch ?? slugMatch ?? compatible[0];
           venueId = chosen.id;
           venueResult = { matched: true, venueId: chosen.id, name: chosen.name };
           matched = true;

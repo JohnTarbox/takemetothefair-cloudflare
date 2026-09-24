@@ -24,7 +24,12 @@ import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "@/lib/db/schema";
 import { adminActions, venues } from "@/lib/db/schema";
 import { sql } from "drizzle-orm";
-import { combinedSimilarity, normalizeString, tokenize } from "@takemetothefair/utils";
+import {
+  combinedSimilarity,
+  normalizeString,
+  tokenize,
+  venueLocationCompatible,
+} from "@takemetothefair/utils";
 
 type Db = DrizzleD1Database<typeof schema>;
 
@@ -123,21 +128,32 @@ export async function autoLinkVenue(db: Db, input: AutoLinkInput): Promise<Venue
       id: venues.id,
       name: venues.name,
       state: venues.state,
+      city: venues.city,
       address: venues.address,
     })
     .from(venues)
     .where(sql`LOWER(${venues.name}) LIKE ${"%" + firstTokens.split(" ")[0] + "%"}`)
     .limit(100);
 
-  // Tier 1+2: exact normalized-name match
-  const exactNameMatches = candidates.filter((v) => normalize(v.name) === normalizedName);
+  // Tier 1+2: exact normalized-name match.
+  //
+  // OPE-1146 — only among rows whose LOCATION agrees (state when both sides
+  // have one, city when both sides have one). A lone same-name row in another
+  // state used to be linked anyway, labelled "exact-name-only": "Town Hall"
+  // exists in every state, and that label was the wrong pin shipping as a
+  // match. A same-name row elsewhere now falls through to the later tiers,
+  // which are state-constrained, and to no-match.
+  const exactNameMatches = candidates
+    .filter((v) => normalize(v.name) === normalizedName)
+    .filter((v) => venueLocationCompatible(v, { city: input.venueCity, state }));
   if (exactNameMatches.length === 1) {
     const m = exactNameMatches[0];
-    const stateAgreement = !state || !m.state || m.state.toUpperCase() === state;
     return {
       venueId: m.id,
       stateCode: m.state ? m.state.toUpperCase() : state,
-      decision: stateAgreement ? "exact-name+state" : "exact-name-only",
+      // Compatible by construction; "-only" now means there was no state on
+      // one side to compare, never that the states disagreed.
+      decision: state && m.state ? "exact-name+state" : "exact-name-only",
     };
   }
   if (exactNameMatches.length > 1) {
