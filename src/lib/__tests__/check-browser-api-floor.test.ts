@@ -100,6 +100,13 @@ describe("OPE-1128 — regex lookbehind is SYNTAX above the floor", () => {
     expect(v[0].since).toMatch(/Safari 16\.4/);
   });
 
+  it("flags lookbehind in a STRING passed to new RegExp (OPE-1149's fixture)", () => {
+    // The shape SWC cannot transpile and an API rule cannot see: the pattern is
+    // data until the constructor runs, which is exactly when old Safari throws.
+    expect(checkSource("x.ts", 'const re = new RegExp("(?<=a)b");', "e.tsx")).toHaveLength(1);
+    expect(checkSource("x.ts", "const re = new RegExp('(?<!a)b', 'g');", "e.tsx")).toHaveLength(1);
+  });
+
   it("flags positive lookbehind in a regex literal", () => {
     expect(checkSource("x.ts", "t.split(/(?<=[.!?])\\s+|\\n+/)", "e.tsx")).toHaveLength(1);
   });
