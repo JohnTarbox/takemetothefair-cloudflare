@@ -42,7 +42,8 @@ import {
 } from "@takemetothefair/constants";
 import type { AnyColumn, SQL } from "drizzle-orm";
 import type { SQLiteTable } from "drizzle-orm/sqlite-core";
-import { assessQueueFreeze, type QueueFlow } from "@/lib/queue-freeze";
+import { classifyQueueDrain, type QueueFlow } from "@/lib/queue-freeze";
+import { loadQueueFreezeThresholds } from "@/lib/queue-freeze-thresholds";
 import { DUPLICATE_FLAGS_HREF, loadDuplicateFlagFlow } from "@/lib/duplicates/flag-queue";
 import type { Db } from "./shared";
 import type { QueueDrainCard } from "./types";
@@ -1024,7 +1025,12 @@ export async function gatherQueueFlows(db: Db, now: Date): Promise<QueueDrainRow
  *  the alert uses, so the tile's red rows match the digest). */
 export async function loadQueueDrain(db: Db): Promise<QueueDrainCard> {
   const now = new Date();
-  const flows = await gatherQueueFlows(db, now);
+  // OPE-1161 E17 — the SAME overrides the daily alert reads, so a tile row and
+  // the digest cannot disagree about one queue.
+  const [flows, thresholds] = await Promise.all([
+    gatherQueueFlows(db, now),
+    loadQueueFreezeThresholds(db),
+  ]);
   return {
     queues: flows.map((f) => ({
       queueName: f.queueName,
@@ -1034,7 +1040,8 @@ export async function loadQueueDrain(db: Db): Promise<QueueDrainCard> {
       outflow7d: f.outflow7d,
       drainRatio7d: f.drainRatio7d,
       unmeasured: (f as QueueDrainRow).unmeasured,
-      frozen: assessQueueFreeze(f, now) !== null,
+      drainState: classifyQueueDrain(f, now, thresholds),
+      frozen: classifyQueueDrain(f, now, thresholds) === "frozen",
     })),
   };
 }

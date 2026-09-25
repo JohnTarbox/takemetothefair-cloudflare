@@ -4,7 +4,7 @@
  * the time-to-index summary.
  */
 
-import { and, count, desc, gte, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, sql } from "drizzle-orm";
 import { errorLogs, events, indexnowSubmissions, timeToIndexLog, vendors } from "@/lib/db/schema";
 import { freshness, rate } from "./render-state";
 import {
@@ -43,7 +43,9 @@ export async function loadSiteHealth(db: Db): Promise<SiteHealthCard> {
 export async function loadIndexNow(
   db: Db,
   env: BingEnv,
-  todayStartDate: Date
+  todayStartDate: Date,
+  /** OPE-1161 A3 — `readIndexNowPauseForDisplay`'s result; omitted → unknown. */
+  pauseRead?: { paused: boolean; note: string | null; readOk: boolean }
 ): Promise<IndexNowCard> {
   const todayRows = await db
     .select({
@@ -106,6 +108,12 @@ export async function loadIndexNow(
 
   return {
     todaySubmissions: total,
+    todayAttempts: attempts,
+    pause: !pauseRead?.readOk
+      ? { state: "unknown", note: null }
+      : pauseRead.paused
+        ? { state: "paused", note: pauseRead.note }
+        : { state: "active", note: null },
     /** @deprecated OPE-808 — read `todayRate`, which can say "undefined". */
     todaySuccessRate: attempts > 0 ? success / attempts : deferred > 0 ? 0 : 1,
     todayRate,
@@ -117,6 +125,15 @@ export async function loadIndexNow(
   };
 }
 
+/**
+ * OPE-1161 A1 — ERROR-level rows only.
+ *
+ * The card is "Errors (last 24h)" and its red border fires above 10, but it
+ * counted every error_logs row — info and warn included. Measured on prod
+ * 2026-09-25: 123 rows in 24h, of which 19 were errors (91 info, 13 warn), so
+ * routine logging (the recommendations scan's info rows, IndexNow pause
+ * warnings) kept it red. The 2026-09-05 audit's finding.
+ */
 export async function loadRecentErrors(db: Db, sinceDate: Date): Promise<RecentErrorsCard> {
   const rows = await db
     .select({
@@ -124,7 +141,7 @@ export async function loadRecentErrors(db: Db, sinceDate: Date): Promise<RecentE
       c: count(),
     })
     .from(errorLogs)
-    .where(gte(errorLogs.timestamp, sinceDate))
+    .where(and(gte(errorLogs.timestamp, sinceDate), eq(errorLogs.level, "error")))
     .groupBy(errorLogs.source)
     .orderBy(desc(sql`COUNT(*)`));
 

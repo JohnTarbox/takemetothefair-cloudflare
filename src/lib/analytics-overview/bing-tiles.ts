@@ -88,3 +88,24 @@ export function indexNowChip(ops: {
   if (ops.breaker.reason === "cooldown") return { label: "Cooldown", className: "text-amber-600" };
   return { label: "Active", className: "text-emerald-600" };
 }
+
+/**
+ * OPE-1161 E14 — which inputs to the Bing "Action items" card were NOT measured.
+ *
+ * A report that fails to load becomes `[]`, so its rule cannot fire and the
+ * card printed "No action items — healthy ✓" for a tab it had not read. The
+ * empty list is only a clean bill of health when every input was measured;
+ * otherwise the card names what it could not see.
+ */
+export function bingActionInputsUnmeasured(
+  failed: readonly BingReport[],
+  ops: { kvAvailable: boolean; countsAvailable: boolean }
+): string[] {
+  const out: string[] = [];
+  if (failed.includes("crawl")) out.push("crawl report (crawl errors, coverage)");
+  if (failed.includes("scan")) out.push("crawl-issue report");
+  if (failed.includes("sitemaps")) out.push("sitemap feeds (duplicates, coverage)");
+  if (!ops.kvAvailable) out.push("IndexNow pause/cooldown state");
+  if (!ops.countsAvailable) out.push("IndexNow failure counts");
+  return out;
+}

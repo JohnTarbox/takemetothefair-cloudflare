@@ -45,9 +45,9 @@ export const BING_TILES = {
     source: "RATE_LIMIT_KV breaker keys (indexnow:paused, cooldown); D1 indexnow_submissions.",
     window: "State is read live. Counts cover the last 24 hours.",
     caveats:
-      "While the indexnow:paused KV flag is set, nothing is sent: 0 failed means nothing was tried, and blocked pings count as skipped. Counts are submission batches, not URLs. If reading KV throws, it shows Active.",
+      "While the indexnow:paused KV flag is set, nothing is sent: 0 failed means nothing was tried, and blocked pings count as skipped. Counts are submission batches, not URLs. If reading KV fails, it shows Unknown, not Active.",
     thresholds:
-      "Green when Active; amber when Paused or in Cooldown; grey when there is no KV binding.",
+      "Green when Active; amber when Paused or in Cooldown; grey Unknown when there is no KV binding or the read failed.",
   },
   "bing.top-queries": {
     measures:
@@ -117,7 +117,7 @@ export const BING_TILES = {
     source: "The Bing API reports and IndexNow state already loaded on this tab.",
     window: "Uses each input's own window and cache; see those cards.",
     caveats:
-      "A Bing report that failed to load adds nothing here, so 'No action items — healthy' can mean nothing was measured. Warning-level crawl issues aren't included.",
+      "'Healthy' shows only when every input was read; if a report or the IndexNow state failed to load, the card names what was not measured instead. Warning-level crawl issues aren't included.",
     thresholds:
       "An item is added for each rule that fires: crawl errors above 0, coverage below 90%, any Error-level issue type, or any IndexNow failure in 24 hours.",
   },

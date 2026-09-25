@@ -6,6 +6,7 @@ import {
   indexNowChip,
   indexNowCount,
   type BingReport,
+  bingActionInputsUnmeasured,
 } from "@/lib/analytics-overview/bing-tiles";
 import {
   freshness,
@@ -37,7 +38,7 @@ import { TileInfo } from "@/components/admin/tile-info";
 import { getCloudflareDb, getCloudflareEnv, getCloudflareRateLimitKv } from "@/lib/cloudflare";
 import {
   checkIndexNowBreaker,
-  getIndexNowPauseState,
+  readIndexNowPauseForDisplay,
   type BreakerState,
 } from "@/lib/indexnow-breaker";
 import { analyticsEvents, indexnowSubmissions } from "@/lib/db/schema";
@@ -1109,6 +1110,7 @@ function TimeToIndexCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
  */
 function ActionQueueCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
   const entries = snapshot.actionQueue;
+  const suppressed = snapshot.actionQueueSuppressed ?? [];
   return (
     <Card>
       <CardHeader>
@@ -1124,16 +1126,24 @@ function ActionQueueCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
         </CardTitle>
       </CardHeader>
       <CardContent>
-        {entries.length === 0 ? (
+        {entries.length === 0 && suppressed.length === 0 ? (
           <p className="text-sm text-emerald-700">
             All clear — no KPIs in RED/YELLOW state, no T1 rules above threshold.
           </p>
-        ) : (
+        ) : entries.length === 0 ? null : (
           <ul className="space-y-3">
             {entries.map((e) => (
               <ActionQueueRow key={`${e.source}:${e.refKey}`} entry={e} />
             ))}
           </ul>
+        )}
+        {/* OPE-1161 E16 — say what the suppression rule is holding back, rather
+            than printing "All clear" while a KPI is YELLOW. */}
+        {suppressed.length > 0 && (
+          <p className="mt-3 text-sm text-amber-700">
+            {suppressed.length} YELLOW KPI{suppressed.length === 1 ? "" : "s"} suppressed (RED in
+            the last 7 days): {suppressed.map((k) => KPI_THRESHOLDS[k].displayName).join(", ")}.
+          </p>
         )}
       </CardContent>
     </Card>
@@ -1363,8 +1373,14 @@ function IndexNowCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
                 IndexNow today
                 <TileInfo id="overview.indexnow-today" title="IndexNow today" />
               </p>
+              {/* OPE-1161 A3 — sent to Bing, not every log row: breaker-skipped
+                  deferrals used to fill this number while nothing reached Bing. */}
               <p className="text-3xl font-bold text-foreground mt-2 tabular-nums">
-                {fmt(c.todaySubmissions)}
+                {fmt(c.todayAttempts)}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                sent to Bing
+                {c.todayDeferred > 0 ? ` · ${fmt(c.todayDeferred)} deferred by the breaker` : ""}
               </p>
               <div className="mt-2 text-xs">
                 <span
@@ -1375,11 +1391,16 @@ function IndexNowCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
                     // and when, rather than picking 0% or 100% — the old
                     // expression returned BOTH on different loads of the same
                     // data, depending on whether a `skipped` row landed.
+                    // OPE-1161 A3 — "paused" comes from the kill-switch in KV;
+                    // the last send date is a separate fact, labelled as one.
                     <>
                       — ·{" "}
-                      {c.lastAttemptAt
-                        ? `paused since ${c.lastAttemptAt}`
-                        : c.todayRate.reason || "no sends"}
+                      {c.pause.state === "paused"
+                        ? "paused (kill-switch set)"
+                        : c.pause.state === "unknown"
+                          ? "pause state unknown"
+                          : c.todayRate.reason || "no sends"}
+                      {c.lastAttemptAt ? ` · last sent ${c.lastAttemptAt}` : ""}
                     </>
                   ) : (
                     `${successPct}% success`
@@ -1547,12 +1568,23 @@ function QueueDrainRatiosCardView({ snapshot }: { snapshot: OverviewSnapshot }) 
               {queues.map((q) => (
                 <tr
                   key={q.queueName}
-                  className={`border-t ${q.frozen ? "bg-red-50 text-red-900" : ""}`}
+                  className={`border-t ${
+                    q.drainState === "frozen"
+                      ? "bg-red-50 text-red-900"
+                      : q.drainState === "slow"
+                        ? "bg-amber-50 text-amber-900"
+                        : ""
+                  }`}
                 >
                   <td className="text-left py-1.5 pr-2">
                     {q.label}
-                    {q.frozen && (
+                    {/* OPE-1161 E17 — FROZEN only when nothing closed; a queue that
+                        is closing items, just too slowly, is SLOW. */}
+                    {q.drainState === "frozen" && (
                       <span className="ml-2 text-xs font-semibold text-red-600">FROZEN</span>
+                    )}
+                    {q.drainState === "slow" && (
+                      <span className="ml-2 text-xs font-semibold text-amber-700">SLOW</span>
                     )}
                     {q.unmeasured?.flows && (
                       <span className="ml-2 text-xs text-muted-foreground">
@@ -3533,9 +3565,11 @@ const EMPTY_INDEXNOW_OPS: IndexNowOps = {
 async function loadIndexNowOps(): Promise<IndexNowOps> {
   try {
     const kv = getCloudflareRateLimitKv();
+    // OPE-1161 E15 — the display reader: a KV read that throws is "unknown",
+    // not "not paused" (the send path's fail-open reader showed a green Active).
     const [breaker, pause] = await Promise.all([
       checkIndexNowBreaker(kv),
-      getIndexNowPauseState(kv),
+      readIndexNowPauseForDisplay(kv),
     ]);
 
     const now = Date.now();
@@ -3585,7 +3619,7 @@ async function loadIndexNowOps(): Promise<IndexNowOps> {
       failed24h,
       skipped24h,
       sent7d,
-      kvAvailable: kv !== null,
+      kvAvailable: kv !== null && pause.readOk,
       countsAvailable,
     };
   } catch {
@@ -3850,6 +3884,8 @@ async function BingTab() {
   if (indexnow.failed24h > 0) {
     actionItems.push(`IndexNow failures: ${fmt(indexnow.failed24h)} in the last 24h`);
   }
+
+  const actionInputsUnmeasured = bingActionInputsUnmeasured(failed, indexnow);
 
   // Green only for a MEASURED zero — an unavailable report is not clean.
   const crawlErrColor =
@@ -4389,7 +4425,13 @@ async function BingTab() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {actionItems.length === 0 ? (
+          {actionItems.length === 0 && actionInputsUnmeasured.length > 0 ? (
+            // OPE-1161 E14 — an empty list over inputs we could not read is not
+            // "healthy"; say what was not measured.
+            <p className="text-sm text-muted-foreground">
+              Nothing flagged — but not measured: {actionInputsUnmeasured.join(", ")}.
+            </p>
+          ) : actionItems.length === 0 ? (
             <p className="text-sm text-emerald-600 font-medium">No action items — healthy ✓</p>
           ) : (
             <ul className="space-y-2">
@@ -4400,6 +4442,11 @@ async function BingTab() {
                 </li>
               ))}
             </ul>
+          )}
+          {actionItems.length > 0 && actionInputsUnmeasured.length > 0 && (
+            <p className="mt-3 text-xs text-muted-foreground">
+              Also not measured: {actionInputsUnmeasured.join(", ")}.
+            </p>
           )}
         </CardContent>
       </Card>

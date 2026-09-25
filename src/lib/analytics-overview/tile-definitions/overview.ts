@@ -20,7 +20,7 @@ export const OVERVIEW_TILES = {
     window:
       "Latest recorded KPI state (recomputed every 10 minutes); the YELLOW suppression looks back 7 days. Read live.",
     caveats:
-      "A YELLOW KPI that was RED any time in the last 7 days is left out, so 'All clear' can show while a KPI is yellow. STALE rows mean a dead feed, not a breach. Rule rows use the scanner's raw match count.",
+      "A YELLOW KPI that was RED any time in the last 7 days is held out of the list and named in a 'suppressed' line instead. STALE rows mean a dead feed, not a breach. Rule rows use the scanner's raw match count.",
     thresholds:
       "SLA chip on KPI rows, from first detection: amber past half the limit, red (breached) past 24h for P0 or 72h for P1. STALE rows never age.",
   },
@@ -56,22 +56,22 @@ export const OVERVIEW_TILES = {
   },
   "overview.indexnow-today": {
     measures:
-      "IndexNow log rows written since midnight UTC, of every status, plus the success rate over rows where Bing was actually contacted.",
+      "IndexNow submissions actually sent to Bing since midnight UTC (success plus failure), the success rate over those, and how many the breaker deferred.",
     source: "indexnow_submissions; remaining daily quota from the Bing Webmaster API.",
     window: "Since 00:00 UTC today, read live. The Bing quota is cached for up to 60 minutes.",
     caveats:
-      "The big number includes 'skipped' rows the circuit breaker deferred, so it can be high while nothing reached Bing. 'Paused since' is the last date Bing was contacted, not the indexnow:paused flag, and shows on any day without sends.",
+      "Breaker-deferred ('skipped') rows are shown separately, not counted as sent. 'Paused' is read from the indexnow:paused KV flag; 'pause state unknown' means that read failed. 'Last sent' is the last day Bing was contacted.",
     thresholds:
       "Red border and text when any row today has status failure. Skipped rows never turn it red.",
   },
   "overview.recent-errors": {
     measures:
-      "Number of rows written to the error log in the last 24 hours, with the three sources that logged the most.",
-    source: "error_logs: every level (error, warn, info) and every source.",
+      "Number of ERROR-level rows written to the error log in the last 24 hours, with the three sources that logged the most.",
+    source: "error_logs, level = error, every source.",
     window: "Rolling 24 hours from page load; ignores the window selector. Read live.",
     caveats:
-      "Despite the label, info and warn rows are counted, so routine logging (for example the recommendations scan's info rows or IndexNow pause warnings) inflates it.",
-    thresholds: "Red border when more than 10 rows were logged in 24 hours, whatever their level.",
+      "Info and warn rows are not counted (routine logging such as the recommendations scan's info rows). Counts rows, so one repeating fault can dominate.",
+    thresholds: "Red border when more than 10 error rows were logged in 24 hours.",
   },
   "overview.render-fault-health": {
     measures:
@@ -90,9 +90,9 @@ export const OVERVIEW_TILES = {
       "Each queue's own D1 table (discrepancies, enrichment candidates, inbound emails, health issues and others) plus queue_drain_snapshots.",
     window: "Trailing 7 days, computed live on page load; the slow-drain test uses 14 days.",
     caveats:
-      "A dash means not measured, not zero. Some queues' outflow comes from daily snapshots and stays blank until history exists. The tile uses built-in thresholds, not any tunable_thresholds overrides the daily alert reads.",
+      "A dash means not measured, not zero. Some queues' outflow comes from daily snapshots and stays blank until history exists. Uses the same tunable_thresholds overrides as the daily alert.",
     thresholds:
-      "Row marked FROZEN (red) when it has a backlog and either 0 closed in 7 days, or fewer than 0.5 closed per item added over 14 days.",
+      "FROZEN (red) when it has a backlog and 0 closed in the window (default 7 days); SLOW (amber) when closing fewer than 0.5 per item added over 14 days (default ratio).",
   },
   "overview.heartbeat-probes": {
     measures:

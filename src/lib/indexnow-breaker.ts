@@ -223,6 +223,26 @@ export async function getIndexNowPauseState(kv: BreakerKv | null): Promise<Index
 }
 
 /**
+ * OPE-1161 — the pause state for DISPLAY, which must not fail open.
+ *
+ * `getIndexNowPauseState` returns "not paused" when the KV read throws — right
+ * for the send path's "never let the breaker itself break sending" stance, and
+ * wrong for a dashboard, where it rendered a green "Active" for a state nobody
+ * read. `readOk: false` means "unknown"; callers show that, not a guess.
+ */
+export async function readIndexNowPauseForDisplay(
+  kv: BreakerKv | null
+): Promise<{ paused: boolean; note: string | null; readOk: boolean }> {
+  if (!kv) return { paused: false, note: null, readOk: false };
+  try {
+    const v = await kv.get(PAUSE_KEY);
+    return { paused: Boolean(v), note: v ?? null, readOk: true };
+  } catch {
+    return { paused: false, note: null, readOk: false };
+  }
+}
+
+/**
  * Set or clear the operator kill-switch. `paused: true` writes PAUSE_KEY (with
  * an optional note); `false` deletes it. No TTL — a pause stays until explicitly
  * cleared. Never throws; returns true on success so the API can report failure.
