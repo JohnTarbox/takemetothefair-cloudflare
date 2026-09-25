@@ -123,3 +123,35 @@ describe("D12 — the Google tab's top 25 is by clicks, as labelled", () => {
     expect(PAGE).toContain('getSiteSearchQueries(env, { rowLimit: 25, orderBy: "clicks" })');
   });
 });
+
+describe("B9 — an N-day window is N inclusive days, for both GSC cards", () => {
+  it("30d uses the 30-day preset; other windows span exactly N days", async () => {
+    const { gscWindowRange } = await import("../shared");
+    expect(gscWindowRange(30)).toEqual({ preset: "last_30d" });
+    expect(gscWindowRange(7)).toEqual({ preset: "last_7d" });
+    const one = gscWindowRange(1) as { startDate: string; endDate: string };
+    expect(one.startDate).toBe(one.endDate); // 1 day, not 2
+    const fourteen = gscWindowRange(14) as { startDate: string; endDate: string };
+    const span = (Date.parse(fourteen.endDate) - Date.parse(fourteen.startDate)) / 86400_000 + 1;
+    expect(span).toBe(14);
+  });
+
+  it("both cards use it", () => {
+    const src = readFileSync(
+      join(process.cwd(), "src/lib/analytics-overview/search-visibility.ts"),
+      "utf8"
+    );
+    expect(src.split("gscWindowRange(days)").length - 1).toBe(2);
+    expect(src).not.toContain('30: "last_28d"');
+  });
+});
+
+describe("B10 — publishing: no 90-day chart over 30-day data; paused is not zero", () => {
+  it("the 90d publishing card is gone and the 30d one takes the pause", () => {
+    expect(PAGE).not.toContain('title="Publishing activity (last 90 days)"');
+    expect(PAGE).toContain('snapshot.indexnow.pause.state === "paused"');
+    expect(PAGE).toContain(
+      "const total = pausedReason ? unavailable(pausedReason) : sparklineTotal(points, feed);"
+    );
+  });
+});

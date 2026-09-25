@@ -12,6 +12,7 @@ import {
   freshness,
   measurementText,
   sparklineTotal,
+  unavailable,
   type Measurement,
 } from "@/lib/analytics-overview/render-state";
 import type { TileId } from "@/lib/analytics-overview/tile-definitions";
@@ -296,6 +297,11 @@ async function OverviewTab({ window }: { window: WindowKey }) {
         <SparklineCard
           title="Publishing activity (last 30 days)"
           tileId="overview.publishing-30d"
+          pausedReason={
+            snapshot.indexnow.pause.state === "paused"
+              ? "IndexNow paused (kill-switch set) — nothing is sent"
+              : undefined
+          }
           subtitle="Successful IndexNow submissions per day · source: D1 indexnow_submissions"
           points={snapshot.publishingSparkline}
           feed="indexnow_submissions"
@@ -326,15 +332,9 @@ async function OverviewTab({ window }: { window: WindowKey }) {
           colorClass="stroke-blue-600"
           fillClass="fill-blue-100"
         />
-        <SparklineCard
-          title="Publishing activity (last 90 days)"
-          tileId="overview.publishing-90d"
-          subtitle="Successful IndexNow submissions per day · source: D1 indexnow_submissions"
-          points={snapshot.kpiStrip90d.publishing}
-          feed="indexnow_submissions"
-          colorClass="stroke-emerald-600"
-          fillClass="fill-emerald-100"
-        />
+        {/* OPE-1161 B10 — no 90-day publishing chart: indexnow_submissions keeps
+            30 days (INDEXNOW_SUBMISSION_RETENTION_DAYS), so it could never show
+            more than a third of its own window. */}
       </div>
 
       {/* Analyst cross-cutting fix (2026-05-29): split activity feed into
@@ -1718,10 +1718,16 @@ function SparklineCard({
   fillClass,
   feed,
   tileId,
+  pausedReason,
 }: {
   title: string;
   /** OPE-1159 — required: the card's tooltip definition. */
   tileId: TileId;
+  /**
+   * OPE-1161 B10 — when the feed is deliberately stopped, the total is "not
+   * measured, because paused", not a flat 0 that reads as "we published nothing".
+   */
+  pausedReason?: string;
   subtitle: string;
   points: SparklinePoint[] & { unavailableReason?: string };
   colorClass: string;
@@ -1729,7 +1735,7 @@ function SparklineCard({
   /** OPE-1131 — judge the total for staleness on this feed (render-state). */
   feed?: string;
 }) {
-  const total = sparklineTotal(points, feed);
+  const total = pausedReason ? unavailable(pausedReason) : sparklineTotal(points, feed);
   return (
     <Card>
       <CardHeader className="pb-2">

@@ -12,9 +12,9 @@ export const OVERVIEW_KPI_TILES = {
       "Total Google search clicks for the whole property (an un-dimensioned GSC query), compared with the equal-length period just before it.",
     source: "Google Search Console API; the Bing footer line is Bing Webmaster GetQueryStats.",
     window:
-      "Follows the window selector (default 7d). Presets end yesterday; 30d actually reads 28 days, 1d reads 2 days ending 3 days ago. Cached 15 min.",
+      "Follows the window selector (default 7d): exactly that many days, ending yesterday for 7/28/30/90, otherwise ending 3 days ago. Cached 15 min.",
     caveats:
-      "Google only; Bing is added as a footer, never summed in. The Bing figure is rolling: it sums every row GetQueryStats returns and ignores the window. At 30d the prior period is 30 days against a 28-day current.",
+      "Google only; Bing is added as a footer, never summed in. The Bing figure is rolling: it sums every row GetQueryStats returns and ignores the window. The prior period is the same length as the current one.",
   },
   "overview.conversions": {
     measures:
@@ -99,7 +99,7 @@ export const OVERVIEW_KPI_TILES = {
     source:
       "Google Search Console API (query plus page dimensions). Badge via `kpi_state_history`.",
     window:
-      "Value follows the window selector (default 7d); 30d reads 28 days. Cached 15 min. Badge uses the 28 days ending 3 days ago.",
+      "Value follows the window selector (default 7d), same range as Google clicks. Cached 15 min. Badge uses the 28 days ending 3 days ago.",
     caveats:
       "Top 500 queries only; anonymized queries are excluded entirely. The badge is computed separately on its own fixed window, so value and colour can disagree.",
     thresholds:
@@ -148,7 +148,7 @@ export const OVERVIEW_KPI_TILES = {
     source: "D1 `indexnow_submissions`.",
     window: "Last 30 UTC days including today; ignores the window selector. Live D1 read.",
     caveats:
-      "Counts successful IndexNow pings, not content published. Submissions are paused, so it reads zero whatever is published; skipped and failed rows are excluded. Shows the 🕒 chip when no success row falls in the chart.",
+      "Counts successful IndexNow pings, not content published. While the indexnow:paused kill-switch is set the total reads 'not measured — paused', not 0. There is no 90-day version: rows older than 30 days are deleted.",
   },
   "overview.search-visibility-90d": {
     measures:
@@ -165,12 +165,5 @@ export const OVERVIEW_KPI_TILES = {
     window: "Last 90 UTC days including today; ignores the window selector. Live D1 read.",
     caveats:
       "Clicks out, not purchases or submitted applications. Contact clicks are not counted. No bot filter.",
-  },
-  "overview.publishing-90d": {
-    measures: "Daily count of IndexNow submission rows with status success, one point per UTC day.",
-    source: "D1 `indexnow_submissions`.",
-    window: "Last 90 UTC days including today; ignores the window selector. Live D1 read.",
-    caveats:
-      "Rows older than 30 days are deleted by the retention job, so at most the last 30 days can ever show. Counts successful IndexNow pings, not content published; submissions are paused.",
   },
 } satisfies Record<string, TileDefinition>;
