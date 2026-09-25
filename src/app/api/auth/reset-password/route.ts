@@ -1,4 +1,5 @@
 export const dynamic = "force-dynamic";
+import "@/lib/validations/zod-locale";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
