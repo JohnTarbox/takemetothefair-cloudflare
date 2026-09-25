@@ -7,7 +7,13 @@ import {
   indexNowCount,
   type BingReport,
 } from "@/lib/analytics-overview/bing-tiles";
-import { freshness, measurementText, sparklineTotal } from "@/lib/analytics-overview/render-state";
+import {
+  freshness,
+  measurementText,
+  sparklineTotal,
+  type Measurement,
+} from "@/lib/analytics-overview/render-state";
+import type { TileId } from "@/lib/analytics-overview/tile-definitions";
 import {
   Activity,
   AlertTriangle,
@@ -27,6 +33,7 @@ import {
 import { count, desc, eq, gte, sql } from "drizzle-orm";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { IndexNowKillSwitchToggle } from "@/components/admin/indexnow-kill-switch-toggle";
+import { TileInfo } from "@/components/admin/tile-info";
 import { getCloudflareDb, getCloudflareEnv, getCloudflareRateLimitKv } from "@/lib/cloudflare";
 import {
   checkIndexNowBreaker,
@@ -269,6 +276,7 @@ async function OverviewTab({ window }: { window: WindowKey }) {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
         <SparklineCard
           title="Search visibility (last 30 days)"
+          tileId="overview.search-visibility-30d"
           subtitle={`Daily Google search clicks · source: GSC${throughCaption(
             snapshot.searchVisibilitySparkline
           )}`}
@@ -278,6 +286,7 @@ async function OverviewTab({ window }: { window: WindowKey }) {
         />
         <SparklineCard
           title="Conversions (last 30 days)"
+          tileId="overview.conversions-30d"
           subtitle="Daily outbound ticket + application clicks · source: D1 analytics_events"
           points={snapshot.conversionsSparkline}
           colorClass="stroke-blue-600"
@@ -285,6 +294,7 @@ async function OverviewTab({ window }: { window: WindowKey }) {
         />
         <SparklineCard
           title="Publishing activity (last 30 days)"
+          tileId="overview.publishing-30d"
           subtitle="Successful IndexNow submissions per day · source: D1 indexnow_submissions"
           points={snapshot.publishingSparkline}
           feed="indexnow_submissions"
@@ -299,6 +309,7 @@ async function OverviewTab({ window }: { window: WindowKey }) {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
         <SparklineCard
           title="Search visibility (last 90 days)"
+          tileId="overview.search-visibility-90d"
           subtitle={`Daily Google search clicks · source: GSC${throughCaption(
             snapshot.kpiStrip90d.searchVisibility
           )}`}
@@ -308,6 +319,7 @@ async function OverviewTab({ window }: { window: WindowKey }) {
         />
         <SparklineCard
           title="Conversions (last 90 days)"
+          tileId="overview.conversions-90d"
           subtitle="Daily outbound ticket + application clicks · source: D1 analytics_events"
           points={snapshot.kpiStrip90d.conversions}
           colorClass="stroke-blue-600"
@@ -315,6 +327,7 @@ async function OverviewTab({ window }: { window: WindowKey }) {
         />
         <SparklineCard
           title="Publishing activity (last 90 days)"
+          tileId="overview.publishing-90d"
           subtitle="Successful IndexNow submissions per day · source: D1 indexnow_submissions"
           points={snapshot.kpiStrip90d.publishing}
           feed="indexnow_submissions"
@@ -335,11 +348,13 @@ async function OverviewTab({ window }: { window: WindowKey }) {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <ActivityFeedCard
           title="User activity"
+          tileId="overview.user-activity"
           subtitle="Visitor clicks on ticket / application URLs"
           activity={snapshot.activity.filter((a) => a.kind === "conversion")}
         />
         <ActivityFeedCard
           title="Operator activity"
+          tileId="overview.operator-activity"
           subtitle="Admin actions + high-priority IndexNow"
           activity={snapshot.activity.filter((a) => a.kind === "admin" || a.kind === "indexnow")}
         />
@@ -446,8 +461,14 @@ function KpiCard({
   footer,
   state,
   actionPrompt,
+  tileId,
+  measurement,
 }: {
   title: string;
+  /** OPE-1159 — required, so a new KPI card cannot ship without a definition. */
+  tileId: TileId;
+  /** OPE-1159 — this tile's render state, echoed in its tooltip when not `ok`. */
+  measurement?: Measurement<unknown> | null;
   value: React.ReactNode;
   icon: React.ReactNode;
   iconColor: string;
@@ -465,7 +486,7 @@ function KpiCard({
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">
-              {title}
+              {title} <TileInfo id={tileId} title={title} measurement={measurement} />
             </p>
             <p className="text-3xl font-bold text-foreground mt-2 tabular-nums">{value}</p>
             {(state === "RED" || state === "STALE") && actionPrompt && (
@@ -497,12 +518,39 @@ function KpiCard({
   );
   if (href) {
     return (
-      <Link href={href} className="block hover:opacity-90 transition-opacity">
+      <CardLink href={href} label={title} className="h-full">
         {inner}
-      </Link>
+      </CardLink>
     );
   }
   return inner;
+}
+
+/**
+ * OPE-1159 — a whole-card link that leaves room for the ⓘ.
+ *
+ * These cards used to be wrapped in a `<Link>`, and a tooltip button inside an
+ * `<a>` is invalid HTML — and a tap on it navigated away. The link is now an
+ * overlay stretched over the card; `InfoTip` sits above it (`z-10`), so the
+ * whole card still clicks through and the ⓘ still opens.
+ */
+function CardLink({
+  href,
+  label,
+  className,
+  children,
+}: {
+  href: string;
+  label: string;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className={`relative block hover:opacity-90 transition-opacity ${className ?? ""}`.trim()}>
+      {children}
+      <Link href={href} aria-label={label} className="absolute inset-0 rounded-lg" />
+    </div>
+  );
 }
 
 function SearchVisibilityCard({ snapshot }: { snapshot: OverviewSnapshot }) {
@@ -510,6 +558,7 @@ function SearchVisibilityCard({ snapshot }: { snapshot: OverviewSnapshot }) {
   if (!card.ok) {
     return (
       <KpiCard
+        tileId="overview.google-clicks"
         title="Google clicks"
         value="—"
         icon={<Search className="w-5 h-5 text-muted-foreground" />}
@@ -535,6 +584,7 @@ function SearchVisibilityCard({ snapshot }: { snapshot: OverviewSnapshot }) {
   );
   return (
     <KpiCard
+      tileId="overview.google-clicks"
       title={`Google clicks (last ${card.windowDays}d)`}
       value={fmt(card.current)}
       icon={<Search className="w-5 h-5 text-royal" />}
@@ -549,6 +599,8 @@ function ConversionsCard({ snapshot }: { snapshot: OverviewSnapshot }) {
   const card = snapshot.conversions;
   return (
     <KpiCard
+      tileId="overview.conversions"
+      measurement={card.currentMeasured}
       title={`Conversions (last ${card.windowDays}d)`}
       value={measurementText(card.currentMeasured, fmt)}
       icon={<TrendingUp className="w-5 h-5 text-emerald-600" />}
@@ -563,6 +615,7 @@ function CatalogGrowthCard({ snapshot }: { snapshot: OverviewSnapshot }) {
   const card = snapshot.catalogGrowth;
   return (
     <KpiCard
+      tileId="overview.catalog-growth"
       title={`Catalog growth (last ${card.windowDays}d)`}
       value={`+${fmt(card.newInWindow)}`}
       icon={<BarChart3 className="w-5 h-5 text-violet-600" />}
@@ -588,6 +641,7 @@ function RevenueCard({ snapshot }: { snapshot: OverviewSnapshot }) {
   const card = snapshot.enhancedProfileRevenue;
   return (
     <KpiCard
+      tileId="overview.enhanced-profile-revenue"
       title="Enhanced Profile (annualized)"
       value={fmtUsd(card.annualizedUsd)}
       icon={<DollarSign className="w-5 h-5 text-amber-600" />}
@@ -612,7 +666,7 @@ function SiteHealthCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
   const c = snapshot.siteHealth;
   const hasErrors = c.errors > 0;
   return (
-    <Link href="/admin/analytics?tab=site-health" className="block hover:opacity-90">
+    <CardLink href="/admin/analytics?tab=site-health" label="Site health">
       <Card
         className={`h-full ${hasErrors ? "border-red-300" : c.warnings > 0 ? "border-amber-300" : ""}`}
       >
@@ -621,6 +675,7 @@ function SiteHealthCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
             <div>
               <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">
                 Site health
+                <TileInfo id="overview.site-health" title="Site health" />
               </p>
               <p className="text-3xl font-bold text-foreground mt-2 tabular-nums">{fmt(c.total)}</p>
               <div className="mt-2 text-xs flex gap-2">
@@ -653,7 +708,7 @@ function SiteHealthCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
           </div>
         </CardContent>
       </Card>
-    </Link>
+    </CardLink>
   );
 }
 
@@ -714,6 +769,7 @@ function SiteCtrCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
   if (!c.ok) {
     return (
       <KpiCard
+        tileId="overview.site-ctr"
         title="Site CTR"
         value="—"
         icon={<Search className="w-5 h-5 text-muted-foreground" />}
@@ -733,6 +789,8 @@ function SiteCtrCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
         : "text-muted-foreground";
   return (
     <KpiCard
+      tileId="overview.site-ctr"
+      measurement={c.ctrMeasured}
       title="Site CTR (Google, last window)"
       value={measurementText(c.ctrMeasured, (v) => fmtPct(v, 2))}
       icon={<Search className="w-5 h-5 text-violet-600" />}
@@ -759,6 +817,8 @@ function ConversionRateCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
   const { state, actionPrompt } = kpiCardState(snapshot, "conversion_rate");
   return (
     <KpiCard
+      tileId="overview.conversion-rate"
+      measurement={c.rateMeasured}
       title={`Conversion rate (${c.windowDays}d)`}
       value={measurementText(c.rateMeasured, (v) => fmtPct(v, 2))}
       icon={<TrendingUp className="w-5 h-5 text-emerald-600" />}
@@ -784,6 +844,8 @@ function AccountEngagementCardView({ snapshot }: { snapshot: OverviewSnapshot })
   const c = snapshot.accountEngagement;
   return (
     <KpiCard
+      tileId="overview.account-engagement"
+      measurement={c.rateMeasured}
       title={`Account engagement (${c.windowDays}d)`}
       value={measurementText(c.rateMeasured, (v) => fmtPct(v, 2))}
       icon={<Activity className="w-5 h-5 text-emerald-600" />}
@@ -818,6 +880,7 @@ function AeoReferralsCardView({ aeo }: { aeo: AeoReferralsResult | null }) {
   if (!aeo) {
     return (
       <KpiCard
+        tileId="overview.aeo-referrals"
         title="AEO referrals (last 7d)"
         value="—"
         icon={<Sparkles className="w-5 h-5 text-muted-foreground" />}
@@ -829,6 +892,7 @@ function AeoReferralsCardView({ aeo }: { aeo: AeoReferralsResult | null }) {
   }
   return (
     <KpiCard
+      tileId="overview.aeo-referrals"
       title="AEO referrals (last 7d)"
       value={fmt(aeo.total)}
       icon={<Sparkles className="w-5 h-5 text-purple-600" />}
@@ -854,6 +918,7 @@ function FacebookReferralsCardView({ summary }: { summary: FacebookTrafficSummar
   if (!summary) {
     return (
       <KpiCard
+        tileId="overview.facebook-traffic"
         title="Facebook traffic (last 28d)"
         value="—"
         icon={<Facebook className="w-5 h-5 text-muted-foreground" />}
@@ -863,19 +928,19 @@ function FacebookReferralsCardView({ summary }: { summary: FacebookTrafficSummar
       />
     );
   }
+  const sessionsM: Measurement<number> = summary.sourcesCapped
+    ? {
+        state: "truncated",
+        value: summary.sessions,
+        reason: `from GA4's top ${TRAFFIC_SOURCE_LIMIT} sources — may undercount`,
+      }
+    : { state: "ok", value: summary.sessions, reason: "" };
   return (
     <KpiCard
+      tileId="overview.facebook-traffic"
+      measurement={sessionsM}
       title="Facebook traffic (last 28d)"
-      value={measurementText(
-        summary.sourcesCapped
-          ? {
-              state: "truncated",
-              value: summary.sessions,
-              reason: `from GA4's top ${TRAFFIC_SOURCE_LIMIT} sources — may undercount`,
-            }
-          : { state: "ok", value: summary.sessions, reason: "" },
-        fmt
-      )}
+      value={measurementText(sessionsM, fmt)}
       icon={<Facebook className="w-5 h-5 text-royal" />}
       iconColor="bg-info-soft"
       href="/admin/analytics/ga4"
@@ -895,6 +960,7 @@ function BrandVsNonBrandCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
   if (!c.ok) {
     return (
       <KpiCard
+        tileId="overview.brand-share"
         title="Brand share"
         value="—"
         icon={<Search className="w-5 h-5 text-muted-foreground" />}
@@ -906,6 +972,8 @@ function BrandVsNonBrandCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
   }
   return (
     <KpiCard
+      tileId="overview.brand-share"
+      measurement={c.brandShareMeasured}
       title={`Brand vs non-brand (last ${c.windowDays}d, Google)`}
       value={measurementText(c.brandShareMeasured, (v) => fmtPct(v, 0))}
       icon={<TrendingUp className="w-5 h-5 text-royal" />}
@@ -932,6 +1000,8 @@ function SitemapQualityCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
   const { state, actionPrompt } = kpiCardState(snapshot, "sitemap_quality");
   return (
     <KpiCard
+      tileId="overview.sitemap-quality"
+      measurement={c.overallRate}
       title={`Sitemap quality (≥ ${c.threshold})`}
       value={measurementText(c.overallRate, (v) => fmtPct(v, 0))}
       icon={<CheckCircle2 className="w-5 h-5 text-emerald-600" />}
@@ -962,7 +1032,10 @@ function TimeToIndexCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center justify-between">
-          <span>Time-to-index (median lag)</span>
+          <span>
+            Time-to-index (median lag){" "}
+            <TileInfo id="overview.time-to-index" title="Time-to-index" />
+          </span>
           {state !== "INDETERMINATE" && (
             <span aria-label={KPI_STATE_STYLES[state].ariaLabel} className="text-base">
               {KPI_STATE_STYLES[state].badge}
@@ -1047,6 +1120,7 @@ function ActionQueueCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
               {entries.filter((e) => e.priority === "P1").length} P1)
             </span>
           )}
+          <TileInfo id="overview.action-queue" title="Action queue" />
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -1128,6 +1202,7 @@ function RecentActivityCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
       <CardHeader>
         <CardTitle className="text-sm">
           Admin actions ({fmt(c.count)} last 7 days · source: admin_actions)
+          <TileInfo id="overview.admin-actions" title="Admin actions" />
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -1163,13 +1238,14 @@ function BlogCoverageCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
   const worstRatio = Math.max(...groups.map((g) => (g.total > 0 ? g.uncovered / g.total : 0)));
   const border = worstRatio >= 0.9 ? "border-red-300" : worstRatio >= 0.5 ? "border-amber-300" : "";
   return (
-    <Link href="/admin/coverage" className="block hover:opacity-90 mb-6">
+    <CardLink href="/admin/coverage" label="Blog coverage gaps" className="mb-6">
       <Card className={border}>
         <CardContent className="p-5">
           <div className="flex items-start justify-between gap-3 mb-4">
             <div>
               <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">
                 Blog coverage gaps
+                <TileInfo id="overview.blog-coverage" title="Blog coverage gaps" />
               </p>
               <p className="text-3xl font-bold text-foreground mt-2 tabular-nums">
                 {fmt(c.totalUncovered)}
@@ -1202,7 +1278,7 @@ function BlogCoverageCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
           </div>
         </CardContent>
       </Card>
-    </Link>
+    </CardLink>
   );
 }
 
@@ -1218,13 +1294,17 @@ function RecommendationsSummaryCardView({ snapshot }: { snapshot: OverviewSnapsh
     ? sevStyle[c.maxSeverity]
     : { border: "", bg: "bg-muted", icon: "text-muted-foreground" };
   return (
-    <Link href="/admin/analytics?tab=recommendations" className="block hover:opacity-90">
+    <CardLink href="/admin/analytics?tab=recommendations" label="Recommendations (actionable)">
       <Card className={`h-full ${style.border}`}>
         <CardContent className="p-5">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">
                 Recommendations (actionable)
+                <TileInfo
+                  id="overview.recommendations-summary"
+                  title="Recommendations (actionable)"
+                />
               </p>
               <p className="text-3xl font-bold text-foreground mt-2 tabular-nums">
                 {measurementText(c.actionableMeasured, fmt)}
@@ -1263,7 +1343,7 @@ function RecommendationsSummaryCardView({ snapshot }: { snapshot: OverviewSnapsh
           </div>
         </CardContent>
       </Card>
-    </Link>
+    </CardLink>
   );
 }
 
@@ -1274,13 +1354,14 @@ function IndexNowCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
   // `todaySuccessRate` is retained only for callers not yet migrated.
   const successPct = c.todayRate.value == null ? null : Math.round(c.todayRate.value * 100);
   return (
-    <Link href="/admin/analytics?tab=indexnow" className="block hover:opacity-90">
+    <CardLink href="/admin/analytics?tab=indexnow" label="IndexNow today">
       <Card className={`h-full ${hasFailures ? "border-red-300" : ""}`}>
         <CardContent className="p-5">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">
                 IndexNow today
+                <TileInfo id="overview.indexnow-today" title="IndexNow today" />
               </p>
               <p className="text-3xl font-bold text-foreground mt-2 tabular-nums">
                 {fmt(c.todaySubmissions)}
@@ -1326,7 +1407,7 @@ function IndexNowCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
           </div>
         </CardContent>
       </Card>
-    </Link>
+    </CardLink>
   );
 }
 
@@ -1340,6 +1421,7 @@ function RecentErrorsCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
           <div className="min-w-0">
             <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">
               Errors (last 24h)
+              <TileInfo id="overview.recent-errors" title="Errors (last 24h)" />
             </p>
             <p className="text-3xl font-bold text-foreground mt-2 tabular-nums">
               {fmt(c.last24hCount)}
@@ -1403,6 +1485,7 @@ function RenderFaultHealthCardView({ snapshot }: { snapshot: OverviewSnapshot })
             className={`w-4 h-4 ${hasOpen ? "text-amber-600" : "text-muted-foreground"}`}
           />
           Render-fault health
+          <TileInfo id="overview.render-fault-health" title="Render-fault health" />
         </CardTitle>
         <p className="text-xs text-muted-foreground">
           OPE-81 ledger · error_logs (last {c.windowDays}d)
@@ -1441,6 +1524,7 @@ function QueueDrainRatiosCardView({ snapshot }: { snapshot: OverviewSnapshot }) 
             className={`w-4 h-4 ${anyFrozen ? "text-red-600" : "text-muted-foreground"}`}
           />
           Queue drain ratios
+          <TileInfo id="overview.queue-drain" title="Queue drain ratios" />
         </CardTitle>
         <p className="text-xs text-muted-foreground">
           inflow vs outflow per work queue · trailing 7d · frozen = backlog with 0 outflow/7d
@@ -1537,6 +1621,7 @@ function HeartbeatProbesCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
             className={`w-4 h-4 ${anySilent ? "text-red-600" : "text-muted-foreground"}`}
           />
           Post-ship heartbeat
+          <TileInfo id="overview.heartbeat-probes" title="Heartbeat probes" />
         </CardTitle>
         <p className="text-xs text-muted-foreground">
           first-evidence probes · SILENT = 0 evidence past the window (escalates + auto-files) ·
@@ -1600,8 +1685,11 @@ function SparklineCard({
   colorClass,
   fillClass,
   feed,
+  tileId,
 }: {
   title: string;
+  /** OPE-1159 — required: the card's tooltip definition. */
+  tileId: TileId;
   subtitle: string;
   points: SparklinePoint[] & { unavailableReason?: string };
   colorClass: string;
@@ -1613,7 +1701,9 @@ function SparklineCard({
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="text-base">{title}</CardTitle>
+        <CardTitle className="text-base">
+          {title} <TileInfo id={tileId} title={title} measurement={total} />
+        </CardTitle>
         <p className="text-xs text-muted-foreground">{subtitle}</p>
       </CardHeader>
       <CardContent>
@@ -1692,7 +1782,10 @@ function GscMilestoneChartCard({ points }: { points: GscMilestonePoint[] }) {
     return (
       <Card className="mb-6">
         <CardHeader>
-          <CardTitle>Search clicks milestones</CardTitle>
+          <CardTitle>
+            Search clicks milestones{" "}
+            <TileInfo id="google.milestones" title="Search clicks milestones" />
+          </CardTitle>
           <p className="text-xs text-muted-foreground mt-0.5">
             Milestones as reported by Google Search Console emails
           </p>
@@ -1728,7 +1821,10 @@ function GscMilestoneChartCard({ points }: { points: GscMilestonePoint[] }) {
   return (
     <Card className="mb-6">
       <CardHeader>
-        <CardTitle>Search clicks milestones</CardTitle>
+        <CardTitle>
+          Search clicks milestones{" "}
+          <TileInfo id="google.milestones" title="Search clicks milestones" />
+        </CardTitle>
         <p className="text-xs text-muted-foreground mt-0.5">
           28-day click window · log scale · from May 2026
         </p>
@@ -1943,16 +2039,20 @@ function ActivityFeedCard({
   activity,
   title = "Activity feed",
   subtitle,
+  tileId,
 }: {
   activity: ActivityEntry[];
   title?: string;
   subtitle?: string;
+  /** OPE-1159 — required: the card's tooltip definition. */
+  tileId: TileId;
 }) {
   return (
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
-          <Activity className="w-4 h-4 text-muted-foreground" /> {title}
+          <Activity className="w-4 h-4 text-muted-foreground" /> {title}{" "}
+          <TileInfo id={tileId} title={title} />
         </CardTitle>
         {subtitle && <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>}
       </CardHeader>
@@ -2417,7 +2517,10 @@ async function RecommendationsTab() {
       {perItemOpportunities.length > 0 && (
         <Card className="mb-6">
           <CardHeader>
-            <CardTitle>Top opportunities (next 10 to work)</CardTitle>
+            <CardTitle>
+              Top opportunities (next 10 to work){" "}
+              <TileInfo id="recommendations.top-opportunities" title="Top opportunities" />
+            </CardTitle>
             <p className="text-xs text-muted-foreground mt-0.5">
               Highest-impact individual queries across all SEO rules. Sorted by impressions —
               biggest potential traffic recovery first.
@@ -2476,7 +2579,10 @@ async function RecommendationsTab() {
       {opportunities.length > 0 && (
         <Card className="mb-6">
           <CardHeader>
-            <CardTitle>Top rules by impact ({opportunities.length})</CardTitle>
+            <CardTitle>
+              Top rules by impact ({opportunities.length}){" "}
+              <TileInfo id="recommendations.top-rules" title="Top rules by impact" />
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <ul className="space-y-1.5 text-sm">
@@ -2531,7 +2637,10 @@ async function RecommendationsTab() {
                               <span className="text-muted-foreground group-open:rotate-90 transition-transform inline-block">
                                 ▶
                               </span>
-                              <p className="text-sm font-semibold text-foreground">{group.title}</p>
+                              <p className="text-sm font-semibold text-foreground">
+                                {group.title}{" "}
+                                <TileInfo id="recommendations.rule-group" title={group.title} />
+                              </p>
                               <span
                                 className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium border ${meta.chip}`}
                               >
@@ -2640,6 +2749,7 @@ async function RecommendationsTab() {
             <CardTitle className="text-sm">
               Scan freshness ({scanState.allRules.length} enabled rule
               {scanState.allRules.length === 1 ? "" : "s"})
+              <TileInfo id="recommendations.scan-freshness" title="Scan freshness" />
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -2752,6 +2862,7 @@ async function IndexNowTab({ limit: rawLimit, source }: { limit?: string; source
           <CardTitle>
             Recent IndexNow submissions
             {trimmedSource ? ` · source=${trimmedSource}` : ""} (last {limit})
+            <TileInfo id="indexnow.recent-submissions" title="Recent IndexNow submissions" />
           </CardTitle>
           <div className="flex items-center gap-2 text-sm">
             {/* Source dropdown — server-rendered <select> wrapped as a controlled
@@ -2920,7 +3031,10 @@ async function FirstPartyEventsTab() {
     <>
       <Card className="mb-6">
         <CardHeader>
-          <CardTitle>Event counts (last {days} days)</CardTitle>
+          <CardTitle>
+            Event counts (last {days} days){" "}
+            <TileInfo id="first-party-events.event-counts" title="Event counts" />
+          </CardTitle>
           {beacon.state === "stale" && (
             <p className="text-xs text-orange-600 mt-1">
               🕒 beacon {beacon.reason} — counts below are not a live reading
@@ -2957,7 +3071,9 @@ async function FirstPartyEventsTab() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Recent events</CardTitle>
+          <CardTitle>
+            Recent events <TileInfo id="first-party-events.recent-events" title="Recent events" />
+          </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
           <table className="w-full text-sm">
@@ -3168,7 +3284,9 @@ async function GoogleTab() {
         <Card>
           <CardContent className="p-6">
             {/* OPE-312 (A3) — property total, not the sum of the top 25. */}
-            <p className="text-sm text-muted-foreground">Total clicks</p>
+            <p className="text-sm text-muted-foreground">
+              Total clicks <TileInfo id="google.total-clicks" title="Total clicks" />
+            </p>
             <p className="text-2xl font-bold text-foreground mt-1 tabular-nums">
               {propertyTotals ? fmt(propertyTotals.clicks) : <UnavailableBadge />}
             </p>
@@ -3183,7 +3301,10 @@ async function GoogleTab() {
           <CardContent className="p-6">
             {/* OPE-312 (A3) — this pull is rowLimit 25, so the tile says so
                 rather than implying a site-wide figure. */}
-            <p className="text-sm text-muted-foreground">Top-25 query clicks</p>
+            <p className="text-sm text-muted-foreground">
+              Top-25 query clicks{" "}
+              <TileInfo id="google.top25-query-clicks" title="Top-25 query clicks" />
+            </p>
             <p className="text-2xl font-bold text-foreground mt-1 tabular-nums">
               {queries ? fmt(queries.totals.clicks) : <UnavailableBadge />}
             </p>
@@ -3196,7 +3317,9 @@ async function GoogleTab() {
         </Card>
         <Card>
           <CardContent className="p-6">
-            <p className="text-sm text-muted-foreground">Sitemap status</p>
+            <p className="text-sm text-muted-foreground">
+              Sitemap status <TileInfo id="google.sitemap-status" title="Sitemap status" />
+            </p>
             <p className="text-2xl font-bold text-foreground mt-1 tabular-nums">
               {fmt(indexedCount)} /{" "}
               <span className="text-base font-normal text-muted-foreground">
@@ -3222,7 +3345,9 @@ async function GoogleTab() {
 
       <Card className="mb-6">
         <CardHeader>
-          <CardTitle>Top GSC queries</CardTitle>
+          <CardTitle>
+            Top GSC queries <TileInfo id="google.top-queries" title="Top GSC queries" />
+          </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
           <table className="w-full text-sm">
@@ -3266,7 +3391,10 @@ async function GoogleTab() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Submitted sitemaps</CardTitle>
+          <CardTitle>
+            Submitted sitemaps{" "}
+            <TileInfo id="google.submitted-sitemaps" title="Submitted sitemaps" />
+          </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
           <table className="w-full text-sm">
@@ -3745,7 +3873,9 @@ async function BingTab() {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-4">
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-base">Search clicks (7d)</CardTitle>
+            <CardTitle className="text-base">
+              Search clicks (7d) <TileInfo id="bing.search-clicks" title="Search clicks (7d)" />
+            </CardTitle>
             <p className="text-xs text-muted-foreground">Bing · last 7 days vs prior 7</p>
           </CardHeader>
           <CardContent>
@@ -3774,7 +3904,9 @@ async function BingTab() {
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-base">Impressions (7d)</CardTitle>
+            <CardTitle className="text-base">
+              Impressions (7d) <TileInfo id="bing.impressions" title="Impressions (7d)" />
+            </CardTitle>
             <p className="text-xs text-muted-foreground">Bing · last 7 days vs prior 7</p>
           </CardHeader>
           <CardContent>
@@ -3803,7 +3935,10 @@ async function BingTab() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
         <Card>
           <CardContent className="p-6">
-            <p className="text-sm text-muted-foreground">Pages indexed</p>
+            <p className="text-sm text-muted-foreground">
+              Pages indexed{" "}
+              <TileInfo id="bing.pages-indexed" title="Pages indexed" measurement={pagesIndexedM} />
+            </p>
             <p className="text-2xl font-bold text-foreground mt-1 tabular-nums">
               {measurementText(pagesIndexedM, fmt)}
             </p>
@@ -3814,7 +3949,14 @@ async function BingTab() {
         </Card>
         <Card>
           <CardContent className="p-6">
-            <p className="text-sm text-muted-foreground">Crawl errors (7d)</p>
+            <p className="text-sm text-muted-foreground">
+              Crawl errors (7d){" "}
+              <TileInfo
+                id="bing.crawl-errors"
+                title="Crawl errors (7d)"
+                measurement={crawlErrors7dM}
+              />
+            </p>
             <p className={`text-2xl font-bold mt-1 tabular-nums ${crawlErrColor}`}>
               {measurementText(crawlErrors7dM, fmt)}
             </p>
@@ -3831,7 +3973,9 @@ async function BingTab() {
         </Card>
         <Card>
           <CardContent className="p-6">
-            <p className="text-sm text-muted-foreground">IndexNow health</p>
+            <p className="text-sm text-muted-foreground">
+              IndexNow health <TileInfo id="bing.indexnow-health" title="IndexNow health" />
+            </p>
             <p className={`text-2xl font-bold mt-1 ${inChip.className}`}>{inChip.label}</p>
             <p className="text-xs text-muted-foreground mt-1 tabular-nums">
               {indexnow.countsAvailable
@@ -3853,7 +3997,9 @@ async function BingTab() {
       </h3>
       <Card className="mb-6">
         <CardHeader>
-          <CardTitle>Top Bing queries</CardTitle>
+          <CardTitle>
+            Top Bing queries <TileInfo id="bing.top-queries" title="Top Bing queries" />
+          </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
           <table className="w-full text-sm">
@@ -3907,7 +4053,9 @@ async function BingTab() {
 
       <Card className="mb-8">
         <CardHeader>
-          <CardTitle>Top pages (Bing)</CardTitle>
+          <CardTitle>
+            Top pages (Bing) <TileInfo id="bing.top-pages" title="Top pages (Bing)" />
+          </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
           <table className="w-full text-sm">
@@ -3966,7 +4114,9 @@ async function BingTab() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
         <Card>
           <CardHeader>
-            <CardTitle>Crawl trend</CardTitle>
+            <CardTitle>
+              Crawl trend <TileInfo id="bing.crawl-trend" title="Crawl trend" />
+            </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
             <table className="w-full text-sm">
@@ -4013,7 +4163,9 @@ async function BingTab() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center justify-between gap-2">
-                <span>Crawl issues</span>
+                <span>
+                  Crawl issues <TileInfo id="bing.crawl-issues" title="Crawl issues" />
+                </span>
                 <span className="text-xs font-normal text-muted-foreground">
                   {scanFailed
                     ? measurementText(bingScanIssueCount(scan, true), fmt)
@@ -4071,7 +4223,9 @@ async function BingTab() {
 
           <Card>
             <CardHeader>
-              <CardTitle>Index coverage</CardTitle>
+              <CardTitle>
+                Index coverage <TileInfo id="bing.index-coverage" title="Index coverage" />
+              </CardTitle>
             </CardHeader>
             <CardContent>
               {coveragePct !== null ? (
@@ -4117,7 +4271,9 @@ async function BingTab() {
       )}
       <Card className="mb-6">
         <CardHeader>
-          <CardTitle>Submitted sitemaps</CardTitle>
+          <CardTitle>
+            Submitted sitemaps <TileInfo id="bing.submitted-sitemaps" title="Submitted sitemaps" />
+          </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
           <table className="w-full text-sm">
@@ -4163,7 +4319,10 @@ async function BingTab() {
       <Card className="mb-6">
         <CardHeader>
           <CardTitle className="flex items-center justify-between gap-2">
-            <span>IndexNow operations</span>
+            <span>
+              IndexNow operations{" "}
+              <TileInfo id="bing.indexnow-operations" title="IndexNow operations" />
+            </span>
             <IndexNowKillSwitchToggle />
           </CardTitle>
         </CardHeader>
@@ -4225,7 +4384,9 @@ async function BingTab() {
       {/* ══ Block 5 — Actionable issues ══════════════════════════════════ */}
       <Card className="mt-6">
         <CardHeader>
-          <CardTitle>Action items</CardTitle>
+          <CardTitle>
+            Action items <TileInfo id="bing.action-items" title="Action items" />
+          </CardTitle>
         </CardHeader>
         <CardContent>
           {actionItems.length === 0 ? (
@@ -4583,7 +4744,10 @@ function InstrumentTile({ reading }: { reading: InstrumentReading }) {
     <Card>
       <CardContent className="p-5">
         <div className="flex items-baseline justify-between gap-2">
-          <p className="text-sm text-muted-foreground">{reading.label}</p>
+          <p className="text-sm text-muted-foreground">
+            {reading.label}{" "}
+            <TileInfo id={`site-health.instrument.${reading.key}` as const} title={reading.label} />
+          </p>
           <span className={`text-xs font-medium uppercase tracking-wide ${tone}`}>
             {reading.severity === "ok" ? "ok" : reading.severity}
           </span>
@@ -4709,13 +4873,17 @@ async function SiteHealthTab() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-6">
         <Card>
           <CardContent className="p-6">
-            <p className="text-sm text-muted-foreground">Action errors</p>
+            <p className="text-sm text-muted-foreground">
+              Action errors <TileInfo id="site-health.action-errors" title="Action errors" />
+            </p>
             <p className="text-3xl font-bold text-red-700 mt-1 tabular-nums">{fmt(errorCount)}</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-6">
-            <p className="text-sm text-muted-foreground">Action warnings</p>
+            <p className="text-sm text-muted-foreground">
+              Action warnings <TileInfo id="site-health.action-warnings" title="Action warnings" />
+            </p>
             <p className="text-3xl font-bold text-amber-700 mt-1 tabular-nums">
               {fmt(warningCount)}
             </p>
@@ -4723,7 +4891,10 @@ async function SiteHealthTab() {
         </Card>
         <Card>
           <CardContent className="p-6">
-            <p className="text-sm text-muted-foreground">Expected (non-indexing)</p>
+            <p className="text-sm text-muted-foreground">
+              Expected (non-indexing){" "}
+              <TileInfo id="site-health.expected-count" title="Expected (non-indexing)" />
+            </p>
             <p className="text-3xl font-bold text-muted-foreground mt-1 tabular-nums">
               {fmt(expectedCount)}
             </p>
@@ -4731,7 +4902,9 @@ async function SiteHealthTab() {
         </Card>
         <Card>
           <CardContent className="p-6">
-            <p className="text-sm text-muted-foreground">Snoozed</p>
+            <p className="text-sm text-muted-foreground">
+              Snoozed <TileInfo id="site-health.snoozed" title="Snoozed" />
+            </p>
             <p className="text-3xl font-bold text-muted-foreground mt-1 tabular-nums">
               {fmt(activeSnoozeCount)}
             </p>
@@ -4741,7 +4914,9 @@ async function SiteHealthTab() {
 
       <Card id="technical">
         <CardHeader>
-          <CardTitle>Action needed</CardTitle>
+          <CardTitle>
+            Action needed <TileInfo id="site-health.action-needed" title="Action needed" />
+          </CardTitle>
           <p className="text-sm text-muted-foreground mt-1">
             Real defects — 5xx/fetch errors, broken structured data, sitemap errors, robots blocks.
             Near-identical rows are grouped; expand a group to see the affected URLs. Grey rows with
@@ -4761,7 +4936,10 @@ async function SiteHealthTab() {
 
       <Card className="mt-6">
         <CardHeader>
-          <CardTitle>Expected (non-indexing)</CardTitle>
+          <CardTitle>
+            Expected (non-indexing){" "}
+            <TileInfo id="site-health.expected-non-indexing" title="Expected (non-indexing)" />
+          </CardTitle>
           <p className="text-sm text-muted-foreground mt-1">
             Normal GSC coverage states for thin / seasonal / duplicate pages (e.g. &quot;Discovered
             – currently not indexed&quot; on an off-season market page). Not defects — collapsed by
@@ -4806,7 +4984,13 @@ async function SiteHealthTab() {
 
       <Card className="mt-8">
         <CardHeader>
-          <CardTitle>Unclassified outbound destinations</CardTitle>
+          <CardTitle>
+            Unclassified outbound destinations{" "}
+            <TileInfo
+              id="site-health.unclassified-outbound"
+              title="Unclassified outbound destinations"
+            />
+          </CardTitle>
           <p className="text-sm text-muted-foreground mt-1">
             Domains that received outbound ticket clicks in the last 7 days but aren&apos;t in{" "}
             <code>url_domain_classifications</code> yet. Classify each one so the ingestion gate
@@ -4873,7 +5057,10 @@ async function SiteHealthTab() {
           canary cannot freeze them at their last good value. */}
       <Card className="mt-8" id="data-health">
         <CardHeader>
-          <CardTitle>Data health — Goodwill discrepancy pipeline</CardTitle>
+          <CardTitle>
+            Data health — Goodwill discrepancy pipeline{" "}
+            <TileInfo id="site-health.data-health" title="Data health" />
+          </CardTitle>
           <p className="text-sm text-muted-foreground mt-1">
             Where our event data disagrees with a source we trust. Counts are queried live; the
             trend comes from the nightly snapshot.
@@ -4963,7 +5150,9 @@ async function SiteHealthTab() {
       {/* ── OPE-391 Block D1 — traffic ────────────────────────────────── */}
       <Card className="mt-6">
         <CardHeader>
-          <CardTitle>Traffic</CardTitle>
+          <CardTitle>
+            Traffic <TileInfo id="site-health.traffic" title="Traffic" />
+          </CardTitle>
           <p className="text-sm text-muted-foreground mt-1">
             Organic search sessions, not raw active users — the raw figure is inflated by (direct)
             and bot traffic. Window ends {traffic.windowEndDate}, two days back, because GA4
@@ -5010,7 +5199,10 @@ async function SiteHealthTab() {
           2026-08-25 GA4 saw 3,151 blog outbound clicks against our 4,113. */}
       <Card className="mt-6">
         <CardHeader>
-          <CardTitle>On-site engagement — first-party</CardTitle>
+          <CardTitle>
+            On-site engagement — first-party{" "}
+            <TileInfo id="site-health.engagement" title="On-site engagement" />
+          </CardTitle>
           <p className="text-sm text-muted-foreground mt-1">
             Last {engagement.windowDays} days, from our own beacons. Anonymous behaviour; the email
             facet below is the identity-bearing half and is deliberately kept separate.
@@ -5121,7 +5313,10 @@ async function SiteHealthTab() {
       {/* ── OPE-391 Block E — email & relationship ─────────────────────── */}
       <Card className="mt-6">
         <CardHeader>
-          <CardTitle>Email &amp; relationships</CardTitle>
+          <CardTitle>
+            Email &amp; relationships{" "}
+            <TileInfo id="site-health.email-relationships" title="Email & relationships" />
+          </CardTitle>
           <p className="text-sm text-muted-foreground mt-1">
             Higher-intent, identity-bearing engagement — read by intent, not volume. Queue counts
             are all-time (an obligation stays open until closed); click-back rates cover the last{" "}

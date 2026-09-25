@@ -268,3 +268,25 @@ export function sparklineTotal(
   }
   return freshness(total, feed, Date.parse(`${last}T23:59:59Z`), now);
 }
+
+/**
+ * OPE-1159 — the line a card's ⓘ tooltip adds when the tile is not a clean
+ * reading, so the definition says what the number means AND whether this one
+ * is a real measurement. Null for `ok`: a clean tile's tooltip stays short.
+ */
+export function measurementStateNote<T>(m: Measurement<T> | null | undefined): string | null {
+  if (!m || m.state === "ok") return null;
+  const reason = m.reason || "no data";
+  switch (m.state) {
+    case "unavailable":
+      return `not measured — ${reason}`;
+    case "undefined-rate":
+      return `no rate — the denominator is empty (${reason})`;
+    case "truncated":
+      return `a capped sample, not the whole population — ${reason}`;
+    case "stale":
+      return m.feedLastAt
+        ? `the feed stopped advancing on ${m.feedLastAt} — ${reason}`
+        : `the feed has stopped advancing — ${reason}`;
+  }
+}
