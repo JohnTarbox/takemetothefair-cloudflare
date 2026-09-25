@@ -38,7 +38,7 @@ export const OVERVIEW_TILES = {
     source: "content_links (blog post links) compared with events, vendors and venues.",
     window: "Current state, not windowed. Read live on each page load.",
     caveats:
-      "Denominators differ: APPROVED events only, but ALL vendors (soft-deleted included) and all venues. Links from draft posts count as coverage, and links to non-approved events are subtracted from the approved total, so the event gap can read too small.",
+      "Coverage means a link from a PUBLISHED post to an entity in the total: APPROVED events, non-deleted vendors, all venues. Draft-post links don't count. A link to a renamed slug may not resolve to an id.",
     thresholds:
       "A group's figure turns amber at 50% or more uncovered and red at 90% or more; the card border follows the worst group.",
   },
@@ -80,7 +80,7 @@ export const OVERVIEW_TILES = {
     window:
       "Ledger figures are all-time. Only server-message share uses the window selector (1, 7, 30 or 90 days). Read live.",
     caveats:
-      "Server-message share divides server-render rows by ALL error_logs rows of every level and source, not by render errors alone. Guard coverage is not instrumented and always shows n/a. Open means any non-terminal status.",
+      "Server-message share is server-render rows over render-fault rows (server-render plus client) in the window. Guard coverage is not instrumented and always shows n/a. Open means any non-terminal status.",
     thresholds: "Amber border when any signature is open.",
   },
   "overview.queue-drain": {

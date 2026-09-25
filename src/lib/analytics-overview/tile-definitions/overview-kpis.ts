@@ -80,7 +80,7 @@ export const OVERVIEW_KPI_TILES = {
     window:
       "GA4 range 7daysAgo to today: 8 calendar days including today's partial day. Ignores the window selector. Cached 10 min.",
     caveats:
-      "The Other bucket includes duckduckgo.com, so ordinary DuckDuckGo search visits count as AI referrals. Bing Copilot chat arrives as www.bing.com and is not counted. Only hostnames on the list count.",
+      "DuckDuckGo hosts are not counted (duckduckgo.com is search; noai.duckduckgo.com has AI off). Bing Copilot chat arrives as www.bing.com and is not counted. Only hostnames on the list count.",
     thresholds:
       "Display-only colour, not in the KPI state machine or action queue: green at 10 or more, amber 5 to 9, red below 5.",
   },

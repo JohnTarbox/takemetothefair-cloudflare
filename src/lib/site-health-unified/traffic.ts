@@ -41,10 +41,14 @@ export async function getTrafficReport(
   const nowMs = (opts.now ?? new Date()).getTime();
   const dayMs = 86_400_000;
 
+  // OPE-1161 B8 — GA4 date ranges include BOTH end dates. The old arithmetic
+  // (start = end − 7d, prevEnd = start) made each "7d" window 8 calendar days
+  // and gave the two windows a shared day. `windowDays` inclusive days, then
+  // the previous window ends the day before this one starts.
   const endMs = nowMs - STABLE_LAG_DAYS * dayMs;
-  const startMs = endMs - windowDays * dayMs;
-  const prevEndMs = startMs;
-  const prevStartMs = prevEndMs - windowDays * dayMs;
+  const startMs = endMs - (windowDays - 1) * dayMs;
+  const prevEndMs = startMs - dayMs;
+  const prevStartMs = prevEndMs - (windowDays - 1) * dayMs;
   const fmt = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 
   const [current, previous] = await Promise.all([

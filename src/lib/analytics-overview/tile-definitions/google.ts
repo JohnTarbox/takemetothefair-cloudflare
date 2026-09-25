@@ -27,12 +27,12 @@ export const GOOGLE_TILES = {
   },
   "google.top25-query-clicks": {
     measures:
-      "Clicks summed over just 25 queries: the 25 with the most impressions, not the most clicks. Sub-line shows their query count and impressions.",
+      "Clicks summed over the 25 queries with the most clicks. Sub-line shows their query count and impressions.",
     source:
       "Search Console Search Analytics API, query x page rows, rowLimit 25 (over-fetches 250 rows).",
     window: "28 days, from 30 days ago to 3 days ago. Cached 15 minutes in KV.",
     caveats:
-      "Not the site total; use Total clicks for that. Queries are ranked by impressions, so high-click queries can be left out. A query's clicks count only the query-page rows inside the 250-row fetch. About 2 to 3 days of data lag.",
+      "Not the site total; use Total clicks for that. A query's clicks count only the query-page rows inside the 250-row fetch. About 2 to 3 days of data lag.",
   },
   "google.sitemap-status": {
     measures:
@@ -46,11 +46,11 @@ export const GOOGLE_TILES = {
   },
   "google.top-queries": {
     measures:
-      "The 25 queries with the most Google impressions, showing each one's clicks, impressions, CTR and impression-weighted average position.",
+      "The 25 queries with the most Google clicks, showing each one's clicks, impressions, CTR and impression-weighted average position.",
     source: "Search Console Search Analytics API, query x page rows merged per query.",
     window: "28 days, from 30 days ago to 3 days ago. Cached 15 minutes in KV.",
     caveats:
-      "Ranked by impressions, not clicks. Only the query-page rows inside the 250-row fetch are summed, so long-tail pages of a query can be missing. About 2 to 3 days of data lag.",
+      "Ranked by clicks. Only the query-page rows inside the 250-row fetch are summed, so long-tail pages of a query can be missing. About 2 to 3 days of data lag.",
   },
   "google.submitted-sitemaps": {
     measures:

@@ -237,7 +237,7 @@ export type RenderFaultHealthCard = {
   openSignatures: number; // status proposed|filed|regressed
   autoDetectedPct: number | null; // signatures with ope_id set / total (pipeline-filed share); null if 0 sigs
   meanTimeToDetectHours: number | null; // avg(filedAt - firstSeen) over filed rows; null if none filed
-  serverMessagePct: number | null; // error_logs source='server-render' / all error rows in window; null if 0 rows
+  serverMessagePct: number | null; // OPE-1161 A2 — server-render rows / render-fault rows (server-render + client) in window; null if 0
   // Dedup collapse: 1 - (distinct signatures / total occurrences summed). The
   // share of raw occurrences the ledger folded away — HIGH is healthy (a hot
   // page's thousands of crashes collapse to one signature). Informative inverse

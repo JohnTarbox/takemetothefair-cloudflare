@@ -3199,7 +3199,10 @@ async function loadGscData(): Promise<GscLoad> {
   try {
     const env = getCloudflareEnv();
     const settled = await Promise.allSettled([
-      getSiteSearchQueries(env, { rowLimit: 25 }),
+      // OPE-1161 D12 — top 25 BY CLICKS, as both cards below are labelled. The
+      // helper defaults to impressions, which made "Top-25 query clicks" the
+      // clicks of the 25 most-SEEN queries.
+      getSiteSearchQueries(env, { rowLimit: 25, orderBy: "clicks" }),
       getSitemapStatus(env),
       // OPE-312 (A3) — real property totals. The rowLimit-25 pull above can
       // only ever sum its own 25 rows, so it must not feed a tile that says
@@ -3378,7 +3381,8 @@ async function GoogleTab() {
       <Card className="mb-6">
         <CardHeader>
           <CardTitle>
-            Top GSC queries <TileInfo id="google.top-queries" title="Top GSC queries" />
+            Top GSC queries (by clicks){" "}
+            <TileInfo id="google.top-queries" title="Top GSC queries (by clicks)" />
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
@@ -4801,7 +4805,11 @@ function InstrumentTile({ reading }: { reading: InstrumentReading }) {
         </div>
         <p className={`mt-1 text-3xl font-bold tabular-nums ${tone}`}>
           {/* An em dash, never 0 — see verdict.ts. */}
-          {reading.actionItems === null ? "—" : fmt(reading.actionItems)}
+          {(() => {
+            const shown =
+              reading.displayValue !== undefined ? reading.displayValue : reading.actionItems;
+            return shown === null ? "—" : fmt(shown);
+          })()}
         </p>
         <p className="mt-1 text-xs text-muted-foreground">{reading.detail}</p>
         {reading.href && (
@@ -5131,10 +5139,13 @@ async function SiteHealthTab() {
                 label="Weighted priority"
                 value={dataHealth.liveWeightedPriority.toFixed(1)}
               />
+              {/* OPE-1161 A5 — relabelled: no override action exists to count.
+                  The query counts every discrepancy.* audit row (create +
+                  resolve), and nothing in a resolve marks it as an override. */}
               <StatRow
-                label="Operator overrides"
+                label="Operator discrepancy actions"
                 value={fmt(dataHealth.operatorOverrides28d)}
-                hint="28d"
+                hint="28d · created + resolved"
               />
             </div>
             <div>

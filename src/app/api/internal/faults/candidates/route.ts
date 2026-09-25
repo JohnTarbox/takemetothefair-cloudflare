@@ -18,6 +18,7 @@ import {
 } from "@/lib/faults/reconcile";
 import { buildRailHealth } from "@/lib/faults/status";
 import { classifyFault } from "@/lib/faults/family-registry";
+import { RENDER_FAULT_SOURCES } from "@/lib/faults/render-sources";
 
 /**
  * POST /api/internal/faults/candidates  (OPE-81 — render-fault rail)
@@ -56,7 +57,7 @@ const MAX_ROWS = 5000;
  * heartbeat below), so it would have filed "render-fault" OPEs for arbitrary
  * backend errors — and re-ingested its own heartbeat. Scope it to render sources.
  */
-const RENDER_FAULT_SOURCES = ["server-render", "client"];
+// OPE-1161 A2 — defined once in @/lib/faults/render-sources, shared with the dashboard.
 
 /**
  * OPE-615 — sources that must NEVER be ingested, now that the scan is no longer
