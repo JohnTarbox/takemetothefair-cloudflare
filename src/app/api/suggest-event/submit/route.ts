@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { detectPossibleDuplicate } from "@/lib/duplicates/venue-date-collision";
+import { findUndatedDuplicate } from "@/lib/duplicates/find-undated-duplicate";
 import { internalKeyMatches } from "@/lib/api-auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { events, promoters, eventSchemaOrg } from "@/lib/db/schema";
@@ -545,6 +546,18 @@ export async function POST(request: NextRequest) {
       if (!gateReasons.includes("past_date")) gateReasons.push("past_date");
     }
 
+    // OPE-1156 — a submission with no start date is held for a person, labelled.
+    //
+    // Every dated dedup stage needs a date window, so an undated row got a URL
+    // check and nothing else, then looked identical to a well-extracted one. A
+    // gate reason is the existing, queryable way to say why a row is waiting
+    // (the events-pending-review rule surfaces PENDING rows that carry one), and
+    // PENDING is a state nothing public reads.
+    if (!effectiveStartDate) {
+      gateRoute = "PENDING_REVIEW";
+      if (!gateReasons.includes("no_start_date")) gateReasons.push("no_start_date");
+    }
+
     // OPE-378 — a name token that appears in no source is a fabrication.
     //
     // One submission produced "28th Annual Holiday Craft Fair" from a body that
@@ -648,6 +661,12 @@ export async function POST(request: NextRequest) {
     // venue/day collision, so it is preserved; the detector only fills the gap
     // when nothing upstream had an opinion — which is the case on every other
     // intake path.
+    //
+    // OPE-1156 — and when there is no date, neither of those can see anything:
+    // the collision detector needs a day and `findDuplicate` stops after its URL
+    // stage. The date-independent check (same venue, or same town, plus a
+    // normalised-name match) fills that gap — for undated rows ONLY, because on a
+    // dated row the same name at the same venue is usually another edition.
     const possibleDuplicateOf =
       data.possibleDuplicateOf ??
       (await detectPossibleDuplicate(db, {
@@ -656,7 +675,17 @@ export async function POST(request: NextRequest) {
         endDate: effectiveEndDate,
         name: effectiveName,
         promoterId: resolvedPromoterId,
-      }));
+      })) ??
+      (effectiveStartDate
+        ? null
+        : ((
+            await findUndatedDuplicate(db, {
+              name: effectiveName,
+              venueId: resolvedVenueId,
+              city: data.venueCity ?? null,
+              stateCode: resolvedStateCode ?? null,
+            })
+          )?.eventId ?? null));
 
     // Create the event
     const newEventId = crypto.randomUUID();
@@ -810,12 +839,19 @@ export async function POST(request: NextRequest) {
     //
     // After the insert, not inside it: the event is already durable, and the
     // parent is an enhancement. A series failure must never cost a submission.
-    await attachEventToSeries(db, newEventId, {
-      name: effectiveName,
-      venueId: resolvedVenueId,
-      promoterId: resolvedPromoterId,
-      description,
-    });
+    //
+    // OPE-1156 — but not for a row that has no date. A series is a public hub
+    // with its own slug; minting one from a row that could not even be dated is
+    // how "50th Common Ground Country Fair" got a second hub beside the real
+    // fair's. The event attaches later, when update_event gives it a date.
+    if (effectiveStartDate) {
+      await attachEventToSeries(db, newEventId, {
+        name: effectiveName,
+        venueId: resolvedVenueId,
+        promoterId: resolvedPromoterId,
+        description,
+      });
+    }
 
     // Store schema.org data if JSON-LD was provided
     if (data.jsonLd) {
