@@ -1946,11 +1946,21 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           updates.venueId !== null &&
           !event.venueId &&
           !event.seriesId;
-        if (gainedVenue) {
+        // OPE-1156 — the other missing input. The submit route no longer mints a
+        // series for a row with no start date (a public hub from an undatable
+        // row), so the moment it gains one is when it can be parented.
+        const effectiveVenueId = (updates.venueId as string | null | undefined) ?? event.venueId;
+        const gainedDate =
+          updates.startDate !== undefined &&
+          updates.startDate !== null &&
+          !event.startDate &&
+          !event.seriesId &&
+          !!effectiveVenueId;
+        if (gainedVenue || gainedDate) {
           try {
             const attached = await attachEventToSeries(db, event.id, {
               name: (updates.name as string) ?? event.name,
-              venueId: updates.venueId as string,
+              venueId: effectiveVenueId as string,
               promoterId: event.promoterId ?? null,
             });
             if (attached.outcome === "skipped") {
