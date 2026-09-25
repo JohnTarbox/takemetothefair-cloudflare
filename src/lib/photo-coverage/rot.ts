@@ -26,6 +26,7 @@
 import { and, asc, eq } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import { imageCoverageState } from "@/lib/db/schema";
+import { FETCH_UA } from "@takemetothefair/site-fetch";
 import { classifyImageUrlHealth, type ImageUrlHealth } from "./model";
 
 type Db = DrizzleD1Database<Record<string, unknown>>;
@@ -43,7 +44,32 @@ export const ROT_CONCURRENCY = 6;
  * Statuses that mean "this server dislikes HEAD", not "this image is gone".
  * Each gets one ranged-GET retry before we call the URL dead.
  */
-const HEAD_UNSUPPORTED = new Set([400, 403, 405, 501]);
+//
+// OPE-746 — 406 added. It is content negotiation refusing the request's
+// headers, not the image being gone: 3 of the 13 URLs marked UNREACHABLE on
+// 2026-09-25 answered 406 to the sweep and 200 to a browser.
+const HEAD_UNSUPPORTED = new Set([400, 403, 405, 406, 501]);
+
+/**
+ * OPE-746 — ask the way a browser's <img> does. The probe used to send no
+ * User-Agent and no Accept header at all, and 8 of the 13 URLs the sweep had
+ * marked UNREACHABLE (403/406, some a bare fetch) loaded with a 200 for a real
+ * browser on 2026-09-25. A dead-image flag that fires on live images gets
+ * "fixed" by clearing a working picture.
+ */
+const PROBE_HEADERS: Record<string, string> = {
+  "User-Agent": FETCH_UA,
+  Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+};
+
+/**
+ * OPE-746 — a protocol-relative URL (`//host/a.jpg`) is valid in an `<img>` on
+ * our https pages, which resolve it to https. `fetch` has no page to resolve
+ * against and throws, which recorded a working ARRL logo as unreachable.
+ */
+function resolveForProbe(url: string): string {
+  return url.startsWith("//") ? `https:${url}` : url;
+}
 
 export interface UrlProbeResult {
   ok: boolean;
@@ -63,13 +89,13 @@ export async function probeImageUrl(
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const res = await fetchImpl(url, {
+      const res = await fetchImpl(resolveForProbe(url), {
         method,
         redirect: "follow",
         signal: controller.signal,
         // Ask for a single byte on the fallback so a large JPEG isn't pulled
         // just to learn the URL resolves.
-        headers: method === "GET" ? { Range: "bytes=0-0" } : undefined,
+        headers: method === "GET" ? { ...PROBE_HEADERS, Range: "bytes=0-0" } : { ...PROBE_HEADERS },
       });
       return { ok: res.ok || res.status === 206, status: res.status };
     } catch {

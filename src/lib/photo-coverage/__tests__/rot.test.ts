@@ -44,6 +44,34 @@ describe("probeImageUrl", () => {
     expect((f.mock.calls[1][1] as RequestInit).method).toBe("GET");
   });
 
+  // OPE-746 — 8 of 13 URLs the sweep marked UNREACHABLE loaded for a browser.
+  it("asks like a browser <img>: a User-Agent and an image Accept header on every request", async () => {
+    const f = vi.fn(async (_u: string, _init?: RequestInit) => res(403));
+    await probeImageUrl("https://wp.test/a.jpg", f as unknown as typeof fetch);
+    expect(f).toHaveBeenCalledTimes(2);
+    for (const call of f.mock.calls) {
+      const h = call[1]?.headers as Record<string, string>;
+      expect(h["User-Agent"]).toMatch(/Mozilla\/5\.0/);
+      expect(h.Accept).toMatch(/image\//);
+    }
+  });
+
+  it("retries a 406 as GET — content negotiation, not a missing image", async () => {
+    const f = vi.fn(async (_u: string, init?: RequestInit) =>
+      init?.method === "HEAD" ? res(406) : res(206)
+    );
+    const out = await probeImageUrl("https://square.test/a.png", f as unknown as typeof fetch);
+    expect(out.ok).toBe(true);
+    expect(f).toHaveBeenCalledTimes(2);
+  });
+
+  it("resolves a protocol-relative URL to https instead of throwing", async () => {
+    const f = vi.fn(async (_u: string) => res(200));
+    const out = await probeImageUrl("//www.arrl.test/logo.jpg", f as unknown as typeof fetch);
+    expect(out.ok).toBe(true);
+    expect(f.mock.calls[0][0]).toBe("https://www.arrl.test/logo.jpg");
+  });
+
   it("does not retry a 500 — that is a real answer, not a method problem", async () => {
     const f = vi.fn(async () => res(500));
     await probeImageUrl("https://x.test/a.jpg", f as unknown as typeof fetch);
