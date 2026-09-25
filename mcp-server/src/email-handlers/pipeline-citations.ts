@@ -25,6 +25,7 @@
  */
 import { and, eq } from "drizzle-orm";
 import { chunkIds, classifyDomainTier } from "@takemetothefair/utils";
+import { detectBlockedSnapshot } from "@takemetothefair/site-fetch";
 import { eventDataCitations } from "../schema.js";
 import type { Db } from "../db.js";
 
@@ -437,6 +438,7 @@ export interface CitationWriteResult {
   /** Why zero rows were written; null when `inserted > 0`. */
   reason:
     | "no-source-url"
+    | "blocked-page"
     | "no-citeable-fields"
     | "all-fields-already-cited"
     | "all-fields-contradicted"
@@ -492,6 +494,22 @@ export async function recordSourceCitations(
   // A url-source with no URL has no provenance to attach — bail rather than
   // insert a NOT-NULL-violating empty source_url.
   if (!sourceUrl) return { inserted: 0, reason: "no-source-url" };
+
+  // OPE-1154 — a page we could not actually read is not a source. When the
+  // snapshot is a deny/challenge page, whatever the extractor produced did not
+  // come from it (on 2026-09-22 six "verifiable" citations pointed at a
+  // CloudFront 403 while their values came from the email body). Write nothing
+  // against this URL. The fetch route classifies these pages first; this is
+  // the guard for one it misses.
+  if (source.kind === "url" && args.snapshot) {
+    const blocked = detectBlockedSnapshot(args.snapshot.title, args.snapshot.text);
+    if (blocked.isChallenge) {
+      console.warn(
+        `[pipeline-citations] OPE-1154 skipped citations for ${eventId}: ${sourceUrl} is a ${blocked.vendor} block page`
+      );
+      return { inserted: 0, reason: "blocked-page" };
+    }
+  }
 
   // Idempotency guard: which fields already have an active citation from THIS
   // exact source? Skip those so retries / redelivery don't duplicate. Scoped
