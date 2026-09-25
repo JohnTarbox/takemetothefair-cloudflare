@@ -7,6 +7,7 @@ import {
   indexNowCount,
   type BingReport,
   bingActionInputsUnmeasured,
+  bingSubmittedUrlCount,
 } from "@/lib/analytics-overview/bing-tiles";
 import {
   freshness,
@@ -87,7 +88,13 @@ import {
 } from "@/lib/analytics-overview";
 import type { SiteHealthVerdict, InstrumentReading } from "@/lib/site-health-unified/verdict";
 import { ENGAGEMENT_WINDOW_DAYS } from "@/lib/site-health-unified/engagement";
-import { KPI_THRESHOLDS, formatStaleAge, type KpiName, type KpiState } from "@/lib/kpi-thresholds";
+import {
+  KPI_THRESHOLDS,
+  formatKpiValue,
+  formatStaleAge,
+  type KpiName,
+  type KpiState,
+} from "@/lib/kpi-thresholds";
 import { isExpectedNonIndexing } from "@/lib/site-health-classify";
 import {
   AEO_BUCKET_LABELS,
@@ -734,6 +741,22 @@ function fmtSeconds(s: number | null): string {
 // §6.3 helper: read the latest state + action prompt for a KPI.
 // RED → "fix the value" prompt. STALE → "fix the data feed" prompt.
 // Returns INDETERMINATE when the recompute hasn't fired yet (cold-start).
+/**
+ * OPE-1161 C11 — the value the KPI BADGE was computed from, formatted the way
+ * the action queue formats it.
+ *
+ * Four cards showed one number and coloured it from another: the value came
+ * from the card's own loader (a windowed, sampled or all-status basis) while
+ * the badge came from the KPI state machine on a different population or
+ * window. The big number is now the badge's own value, so the number and its
+ * colour always describe the same thing; the card's former figure stays as a
+ * labelled secondary line.
+ */
+function badgeValue(snapshot: OverviewSnapshot, name: KpiName): string | null {
+  const row = snapshot.kpiStates.get(name);
+  return row && row.value != null ? formatKpiValue(name, row.value) : null;
+}
+
 function kpiCardState(
   snapshot: OverviewSnapshot,
   name: KpiName
@@ -788,12 +811,13 @@ function SiteCtrCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
       : trend === "down"
         ? "text-red-600"
         : "text-muted-foreground";
+  const badge = badgeValue(snapshot, "site_ctr");
   return (
     <KpiCard
       tileId="overview.site-ctr"
-      measurement={c.ctrMeasured}
-      title="Site CTR (Google, last window)"
-      value={measurementText(c.ctrMeasured, (v) => fmtPct(v, 2))}
+      measurement={badge ? null : c.ctrMeasured}
+      title={badge ? "Site CTR (Google, 7d)" : "Site CTR (Google, last window)"}
+      value={badge ?? measurementText(c.ctrMeasured, (v) => fmtPct(v, 2))}
       icon={<Search className="w-5 h-5 text-violet-600" />}
       iconColor="bg-violet-100"
       href="/admin/analytics?tab=google"
@@ -801,6 +825,11 @@ function SiteCtrCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
       actionPrompt={actionPrompt}
       footer={
         <div className="flex flex-col gap-0.5">
+          {badge && (
+            <span className="text-xs text-muted-foreground">
+              window view (top 500 queries): {measurementText(c.ctrMeasured, (v) => fmtPct(v, 2))}
+            </span>
+          )}
           <span className={`inline-flex items-center gap-1 text-xs font-medium ${trendColor}`}>
             <TrendIcon className="w-3 h-3" /> prev {fmtPct(c.previousCtr, 2)}
           </span>
@@ -828,9 +857,13 @@ function ConversionRateCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
       actionPrompt={actionPrompt}
       footer={
         <div className="flex flex-col gap-0.5 text-xs text-muted-foreground">
+          {/* OPE-1161 D13 — the numerator is ticket AND application clicks, from
+              every traffic source; the footer said "ticket clicks". The basis
+              mismatch (all-source clicks ÷ organic sessions) is a KPI-definition
+              choice raised with John, not changed here. */}
           <span>
-            {fmt(c.conversions)} ticket clicks / {c.sessions != null ? fmt(c.sessions) : "—"}{" "}
-            organic sessions
+            {fmt(c.conversions)} ticket + application clicks (all sources) /{" "}
+            {c.sessions != null ? fmt(c.sessions) : "—"} organic sessions
           </span>
           <span title={`Window ends ${c.windowEndDate} (48h GA4 finalization lag)`}>
             window ends {c.windowEndDate}
@@ -971,12 +1004,15 @@ function BrandVsNonBrandCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
       />
     );
   }
+  const badge = badgeValue(snapshot, "brand_share");
   return (
     <KpiCard
       tileId="overview.brand-share"
-      measurement={c.brandShareMeasured}
-      title={`Brand vs non-brand (last ${c.windowDays}d, Google)`}
-      value={measurementText(c.brandShareMeasured, (v) => fmtPct(v, 0))}
+      measurement={badge ? null : c.brandShareMeasured}
+      title={
+        badge ? "Brand share (Google, 28d)" : `Brand vs non-brand (last ${c.windowDays}d, Google)`
+      }
+      value={badge ?? measurementText(c.brandShareMeasured, (v) => fmtPct(v, 0))}
       icon={<TrendingUp className="w-5 h-5 text-royal" />}
       iconColor="bg-info-soft"
       href="/admin/analytics?tab=google"
@@ -984,6 +1020,12 @@ function BrandVsNonBrandCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
       actionPrompt={actionPrompt}
       footer={
         <div className="flex flex-col gap-0.5 text-xs text-muted-foreground">
+          {badge && (
+            <span>
+              last {c.windowDays}d view:{" "}
+              {measurementText(c.brandShareMeasured, (v) => fmtPct(v, 0))}
+            </span>
+          )}
           <span>
             brand {fmt(c.brand_clicks)} clicks · non-brand {fmt(c.non_brand_clicks)} clicks
           </span>
@@ -999,18 +1041,22 @@ function BrandVsNonBrandCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
 function SitemapQualityCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
   const c = snapshot.sitemapQuality;
   const { state, actionPrompt } = kpiCardState(snapshot, "sitemap_quality");
+  const badge = badgeValue(snapshot, "sitemap_quality");
   return (
     <KpiCard
       tileId="overview.sitemap-quality"
-      measurement={c.overallRate}
+      measurement={badge ? null : c.overallRate}
       title={`Sitemap quality (≥ ${c.threshold})`}
-      value={measurementText(c.overallRate, (v) => fmtPct(v, 0))}
+      value={badge ?? measurementText(c.overallRate, (v) => fmtPct(v, 0))}
       icon={<CheckCircle2 className="w-5 h-5 text-emerald-600" />}
       iconColor="bg-emerald-100"
       state={state}
       actionPrompt={actionPrompt}
       footer={
         <div className="flex flex-col gap-0.5 text-xs text-muted-foreground">
+          {badge && (
+            <span>all-status view: {measurementText(c.overallRate, (v) => fmtPct(v, 0))}</span>
+          )}
           <span>
             vendors {fmt(c.vendors.pass)}/{fmt(c.vendors.total)}
           </span>
@@ -1072,6 +1118,14 @@ function TimeToIndexCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
             className={`text-xs mt-3 font-medium ${state === "STALE" ? "text-orange-600" : "text-red-600"}`}
           >
             {actionPrompt}
+          </p>
+        )}
+        {/* OPE-1161 C11 — the badge is the 30-day median; the grid above is the
+            latest 1,000 resolved rows of any age. Say which is which. */}
+        {badgeValue(snapshot, "time_to_index_h") && (
+          <p className="text-xs text-muted-foreground mt-3">
+            Badge basis — 30-day median: {badgeValue(snapshot, "time_to_index_h")}. Grid: latest
+            resolved rows, any age.
           </p>
         )}
         <p className="text-xs text-muted-foreground mt-4">
@@ -3831,8 +3885,10 @@ async function BingTab() {
   const pagesIndexed = latestCrawl ? latestCrawl.totalPages : null;
   const crawlErrors7d = crawlDesc.slice(0, 7).reduce((a, r) => a + r.crawlErrors, 0);
 
-  // Index coverage — indexed (latest totalPages) ÷ submitted (Σ sitemap urlCount).
-  const submittedUrlCount = sitemaps.reduce((a, s) => a + s.urlCount, 0);
+  // Index coverage — Bing's site-wide in-index count ÷ our sitemap URLs.
+  // OPE-1161 F18 — deduplicated: www/non-www copies once, and the sitemap index
+  // not counted alongside the children it lists.
+  const submittedUrlCount = bingSubmittedUrlCount(sitemaps);
   const coveragePct =
     pagesIndexed !== null && submittedUrlCount > 0
       ? (pagesIndexed / submittedUrlCount) * 100
@@ -3885,7 +3941,7 @@ async function BingTab() {
   }
   if (coveragePct !== null && coveragePct < 90) {
     actionItems.push(
-      `Index coverage ${coveragePct.toFixed(0)}% (<90%) — indexed pages below submitted URLs`
+      `Indexed ${coveragePct.toFixed(0)}% of sitemap URLs (<90%) — site-wide indexed pages below deduplicated sitemap URLs`
     );
   }
   if (errorCount > 0) {
@@ -4270,7 +4326,11 @@ async function BingTab() {
           <Card>
             <CardHeader>
               <CardTitle>
-                Index coverage <TileInfo id="bing.index-coverage" title="Index coverage" />
+                {/* OPE-1161 F18 — relabelled: the numerator is Bing's SITE-WIDE
+                    in-index count (the API gives no per-sitemap figure), so this
+                    compares two populations and can exceed 100%. */}
+                Indexed (site-wide) vs sitemap URLs{" "}
+                <TileInfo id="bing.index-coverage" title="Indexed (site-wide) vs sitemap URLs" />
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -4937,7 +4997,12 @@ async function SiteHealthTab() {
             <p className="text-sm text-muted-foreground">
               Action errors <TileInfo id="site-health.action-errors" title="Action errors" />
             </p>
-            <p className="text-3xl font-bold text-red-700 mt-1 tabular-nums">{fmt(errorCount)}</p>
+            {/* OPE-1161 optional — red only when there IS an error (was fixed red, even at 0). */}
+            <p
+              className={`text-3xl font-bold mt-1 tabular-nums ${errorCount > 0 ? "text-red-700" : "text-foreground"}`}
+            >
+              {fmt(errorCount)}
+            </p>
           </CardContent>
         </Card>
         <Card>
@@ -4945,7 +5010,9 @@ async function SiteHealthTab() {
             <p className="text-sm text-muted-foreground">
               Action warnings <TileInfo id="site-health.action-warnings" title="Action warnings" />
             </p>
-            <p className="text-3xl font-bold text-amber-700 mt-1 tabular-nums">
+            <p
+              className={`text-3xl font-bold mt-1 tabular-nums ${warningCount > 0 ? "text-amber-700" : "text-foreground"}`}
+            >
               {fmt(warningCount)}
             </p>
           </CardContent>
@@ -5212,7 +5279,7 @@ async function SiteHealthTab() {
       </Card>
 
       {/* ── OPE-391 Block D1 — traffic ────────────────────────────────── */}
-      <Card className="mt-6">
+      <Card id="traffic" className="mt-6">
         <CardHeader>
           <CardTitle>
             Traffic <TileInfo id="site-health.traffic" title="Traffic" />

@@ -43,13 +43,13 @@ export const OVERVIEW_KPI_TILES = {
   },
   "overview.site-ctr": {
     measures:
-      "Google clicks divided by impressions, summed over the top 500 queries (by impressions) GSC returns for the window. Previous line is the prior equal period.",
+      "Site-wide Google CTR over 7 days: the same figure the badge is coloured from. A secondary line shows the window view over the top 500 queries.",
     source:
       "Google Search Console API (query plus page dimensions). Badge: D1 `gsc_daily_totals`, via `kpi_state_history`.",
     window:
-      "Value follows the window selector (default 7d), N days ago through today. Cached 15 min. Badge: fixed 7 days ending 2 days ago.",
+      "Big number and badge: 7 days ending 2 days ago (GSC lag), recomputed every 10 min. The window-view line follows the selector.",
     caveats:
-      "The value uses the top-500-query basis, which omits anonymized queries and the long tail. The badge is computed separately from unfiltered daily totals, so value and colour can disagree. The prior period shares one boundary day.",
+      "The big number is the badge's own value, so number and colour always agree. The window-view line uses the top 500 queries only (anonymized queries and the long tail excluded). Falls back to the window view if no badge value exists.",
     thresholds:
       "Badge: green at 2.0% or more, red below 1.0%, amber between. STALE if GSC data is over 120h old, or if the badge recompute stopped over 1h ago. Red or stale enters the action queue as P0.",
   },
@@ -60,7 +60,7 @@ export const OVERVIEW_KPI_TILES = {
     window:
       "Fixed 7 days ending 48h ago (GA4 finalization lag); ignores the window selector. GA4 cached 10 min.",
     caveats:
-      "The footer says ticket clicks but application clicks are counted too. The numerator counts clicks from every traffic source; the denominator is organic search sessions only, so the rate can exceed 100%. No bot filter on clicks.",
+      "Ticket and application clicks from EVERY traffic source over organic search sessions only — a basis mismatch the click beacon cannot resolve (it records no source); raised with John. The rate can exceed 100%. No bot filter on clicks.",
     thresholds:
       "Badge: green at 8% or more, red below 5%, amber between. STALE if GA4 data is over 96h old, or if the badge recompute stopped over 1h ago. Red or stale enters the action queue as P0.",
   },
@@ -95,23 +95,23 @@ export const OVERVIEW_KPI_TILES = {
   },
   "overview.brand-share": {
     measures:
-      "Share of Google clicks, among the top 500 queries, whose query text contains meet me at the fair, meetmeatthefair, mmatf or take me to the fair.",
+      "Share of Google clicks from branded queries (meet me at the fair, meetmeatthefair, mmatf, take me to the fair): the same figure the badge is coloured from.",
     source:
       "Google Search Console API (query plus page dimensions). Badge via `kpi_state_history`.",
     window:
-      "Value follows the window selector (default 7d), same range as Google clicks. Cached 15 min. Badge uses the 28 days ending 3 days ago.",
+      "Big number and badge: 28 days ending 3 days ago. The 'last N d view' line follows the window selector.",
     caveats:
-      "Top 500 queries only; anonymized queries are excluded entirely. The badge is computed separately on its own fixed window, so value and colour can disagree.",
+      "Top 500 queries only; anonymized queries are excluded. The big number is the badge's own value, so number and colour agree; falls back to the window view if no badge value exists.",
     thresholds:
       "Badge, lower is better: green at 40% or less, red above 60%, amber between. STALE if GSC data is over 120h old or the recompute stopped over 1h ago. Red or stale is a P0 action.",
   },
   "overview.sitemap-quality": {
     measures:
-      "Share of vendors and events whose completeness score is 40 or more, the sitemap inclusion gate. Footer gives the vendor and event pass counts.",
+      "Share of vendors and publicly visible events whose completeness score is 40 or more, the sitemap inclusion gate: the badge's own figure. Footer gives pass counts.",
     source: "D1 `vendors` and `events` (completeness_score). Badge via `kpi_state_history`.",
     window: "Current state, all-time; live D1 read. Badge recomputed every 10 minutes.",
     caveats:
-      "The value counts every event of any status (drafts, rejected, cancelled) and non-deleted vendors. The badge counts only publicly visible events, so value and colour can disagree. Not the same population as Catalog growth.",
+      "The big number counts publicly visible events (the badge's basis); the 'all-status view' line counts every event of any status. Not the same population as Catalog growth.",
     thresholds:
       "Badge: green at 75% or more, red below 60%, amber between. STALE if no vendor or event edited in 72h, or the recompute stopped over 1h ago. Red or stale is a P0 action.",
   },
@@ -123,7 +123,7 @@ export const OVERVIEW_KPI_TILES = {
     window:
       "Latest 1,000 resolved rows by first crawl time, any age; live D1 read. Badge uses rows first crawled in the last 30 days.",
     caveats:
-      "Rows are only admitted on an IndexNow submission, and admission froze on 2026-06-13 (IndexNow paused), so this describes a closed cohort; stragglers still resolving push the median up. Median is the upper-middle value.",
+      "Rows are only admitted on an IndexNow submission, and admission froze on 2026-06-13 (IndexNow paused), so this describes a closed cohort. The badge line (30-day median) appears only when the badge has a value; the grid is the latest resolved rows of any age.",
     thresholds:
       "Badge on the 30-day median, lower is better: green at 24h or less, red above 72h. STALE when no row admitted in 7 days, which is where it sits. Stale or red is a P0 action.",
   },

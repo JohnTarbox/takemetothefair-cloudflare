@@ -155,3 +155,66 @@ describe("B10 — publishing: no 90-day chart over 30-day data; paused is not ze
     );
   });
 });
+
+describe("F18 — Bing coverage denominator counts each sitemap once", () => {
+  it("www/non-www copies once; the index not beside its children", async () => {
+    const { bingSubmittedUrlCount } = await import("../bing-tiles");
+    const feeds = [
+      { url: "https://meetmeatthefair.com/sitemap.xml", urlCount: 3000 }, // index
+      { url: "https://meetmeatthefair.com/sitemap-events.xml", urlCount: 2000 },
+      { url: "https://www.meetmeatthefair.com/sitemap-events.xml", urlCount: 2000 }, // dup host
+      { url: "https://meetmeatthefair.com/sitemap-vendors.xml", urlCount: 1000 },
+    ];
+    expect(bingSubmittedUrlCount(feeds)).toBe(3000); // events 2000 + vendors 1000
+    // An index listed ALONE is the only thing we submitted, so it counts.
+    expect(
+      bingSubmittedUrlCount([{ url: "https://meetmeatthefair.com/sitemap.xml", urlCount: 3000 }])
+    ).toBe(3000);
+  });
+
+  it("the card uses it and says what it compares", () => {
+    expect(PAGE).toContain("const submittedUrlCount = bingSubmittedUrlCount(sitemaps);");
+    expect(PAGE).toContain("Indexed (site-wide) vs sitemap URLs");
+  });
+});
+
+describe("C11 — the big number is the value the badge is coloured from", () => {
+  it("each of the four KPI cards reads badgeValue for its own KPI", () => {
+    for (const kpi of ["site_ctr", "brand_share", "sitemap_quality", "time_to_index_h"]) {
+      expect(PAGE, kpi).toContain(`badgeValue(snapshot, "${kpi}")`);
+    }
+    expect(PAGE.match(/value=\{badge \?\? measurementText\(/g)?.length).toBe(3);
+  });
+
+  it("badgeValue formats the stored KPI value like the action queue", async () => {
+    const { formatKpiValue } = await import("@/lib/kpi-thresholds");
+    expect(formatKpiValue("site_ctr", 0.017001324052816347)).toBe("1.70%");
+    expect(formatKpiValue("time_to_index_h", 30.25)).toBe("30.3h");
+  });
+});
+
+describe("D13 — the conversion-rate footer says what the numerator is", () => {
+  it("ticket AND application clicks, all sources", () => {
+    expect(PAGE).toContain("ticket + application clicks (all sources)");
+    expect(PAGE).not.toMatch(/\{fmt\(c\.conversions\)\} ticket clicks \//);
+  });
+});
+
+describe("Optional — zero is not coloured as a problem; Detail goes to the traffic card", () => {
+  it("action errors/warnings colour only when non-zero", () => {
+    expect(PAGE).toContain('errorCount > 0 ? "text-red-700" : "text-foreground"');
+    expect(PAGE).toContain('warningCount > 0 ? "text-amber-700" : "text-foreground"');
+  });
+
+  it("the traffic instrument links to the Site Health traffic card", () => {
+    const r = trafficReading({
+      windowDays: 7,
+      current: 10,
+      previous: 10,
+      deltaPct: 0,
+      windowEndDate: "2026-09-23",
+    });
+    expect(r.href).toBe("/admin/analytics?tab=site-health#traffic");
+    expect(PAGE).toContain('<Card id="traffic"');
+  });
+});

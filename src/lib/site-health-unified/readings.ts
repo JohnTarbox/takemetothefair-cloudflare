@@ -100,7 +100,7 @@ export function trafficReading(report: TrafficReport): InstrumentReading {
       severity: "unknown",
       actionItems: null,
       detail: "GA4 did not return organic sessions",
-      href: "/admin/analytics?tab=overview",
+      href: "/admin/analytics?tab=site-health#traffic", // OPE-1161 optional — the traffic card, not Overview
     };
   }
 
@@ -127,6 +127,6 @@ export function trafficReading(report: TrafficReport): InstrumentReading {
       : pct === null
         ? `${report.current} organic sessions`
         : `${report.current} organic sessions, ${pct >= 0 ? "+" : ""}${pct}% week over week`,
-    href: "/admin/analytics?tab=overview",
+    href: "/admin/analytics?tab=site-health#traffic", // OPE-1161 optional — the traffic card, not Overview
   };
 }

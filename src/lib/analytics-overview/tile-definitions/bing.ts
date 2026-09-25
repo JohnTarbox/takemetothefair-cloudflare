@@ -85,12 +85,12 @@ export const BING_TILES = {
   },
   "bing.index-coverage": {
     measures:
-      "Bing's in-index page count divided by the total URL count of every sitemap feed Bing lists for us.",
+      "Bing's site-wide in-index page count divided by our sitemap URLs, with www/non-www duplicates counted once and the sitemap index not counted alongside its children.",
     source: "Bing Webmaster API GetCrawlStats (latest InIndex) over GetFeeds (sum of UrlCount).",
     window:
       "Latest crawl day over the current feed list. Crawl data cached 15 minutes, feeds 60 minutes.",
     caveats:
-      "The top number is site-wide, not limited to sitemap URLs, so it can exceed 100%. The bottom adds every feed, so duplicate www and non-www sitemaps, or an index plus its children, are double-counted and lower the percentage.",
+      "The top number is site-wide (Bing's API has no per-sitemap count), not limited to sitemap URLs, so it can exceed 100%.",
     thresholds:
       "Green above 95%; amber from 90 to 95%; red below 90%. Below 90% also adds an Action item.",
   },
