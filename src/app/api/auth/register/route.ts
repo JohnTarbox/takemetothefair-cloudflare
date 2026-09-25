@@ -5,7 +5,10 @@ import { REGISTRATION_ATTEMPT_OUTCOME } from "@/lib/db/schema";
 import { normalizeEmail } from "@/lib/auth/normalize-email";
 import { checkEmailDomain } from "@/lib/auth/email-domain-check";
 import { flagNearDuplicateVendorRegistration } from "@/lib/auth/near-duplicate-registration";
+import "@/lib/validations/zod-locale";
 import { z } from "zod";
+import { normalizeDeclaredWebsite } from "@/lib/validations/declared-website";
+import { zodIssuesToFieldErrors } from "@/lib/validations/field-errors";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { users, userRoles, promoters, vendors, verificationTokens } from "@/lib/db/schema";
 import { hashPassword } from "@/lib/auth";
@@ -57,30 +60,13 @@ const registerSchema = z.object({
   // OPE-237 — the vendor's self-declared website. Optional; see the register
   // form for why it is never required.
   //
-  // Rejected at the BOUNDARY if it points at an internal host. The
-  // corroboration pass fetches this URL later, so accepting
-  // `http://169.254.169.254/…` here would store a stored-SSRF payload that an
-  // admin action detonates. Defence in depth — the pass guards every redirect
-  // hop too — but not storing a hostile URL at all is strictly better than
-  // refusing to fetch it afterwards.
-  website: z
-    .string()
-    .trim()
-    .url()
-    .refine(
-      (v) => {
-        try {
-          const u = new URL(v);
-          return (
-            (u.protocol === "http:" || u.protocol === "https:") && !isBlockedSsrfHost(u.hostname)
-          );
-        } catch {
-          return false;
-        }
-      },
-      { message: "Enter a public website address" }
-    )
-    .optional(),
+  // OPE-1155 — accepted as ANY string and normalised after the parse, never
+  // refused here. It used to be `.url()` plus a host refine, which was stricter
+  // than the form's own check: a value in the gap blocked the whole account
+  // over an optional field, and the default message reached the person as a
+  // bare "Invalid input". An unusable or internal address is now DROPPED (see
+  // below) and the vendor can add it later from their profile.
+  website: z.string().optional(),
   // Set when the signup originates from a public "Claim this listing" CTA
   // (/vendors/[slug] or /promoters/[slug]). The slug of the entity being
   // claimed. `claimSlug` is the canonical field; `claimVendorSlug` is kept as
@@ -122,6 +108,17 @@ async function rollbackHalfCreatedAccount(db: ReturnType<typeof getCloudflareDb>
   }
 }
 
+/**
+ * OPE-1155 — `field: message; field: message`, for `registration_attempts.detail`.
+ * Capped well inside a TEXT column; a validation failure has a handful of issues.
+ */
+function describeIssues(issues: ReadonlyArray<{ path: PropertyKey[]; message: string }>): string {
+  return issues
+    .map((i) => `${i.path.map(String).join(".") || "(body)"}: ${i.message}`)
+    .join("; ")
+    .slice(0, 500);
+}
+
 function nameCollisionResponse(collision: NameCollision) {
   return NextResponse.json(
     {
@@ -153,13 +150,22 @@ export async function POST(request: NextRequest) {
       const issues = validation.error.issues;
       // OPE-634 — capture the attempt before the refusal, while the address the
       // person typed still exists. Fail-soft; see the helper.
+      //
+      // OPE-1155 — `detail` names EVERY failing field and why, so the next
+      // report is diagnosable from the table alone. Messages only: a zod
+      // message never echoes the submitted value, so no password can land here.
       await recordRegistrationAttempt(db, {
         email: (body as { email?: unknown })?.email,
         outcome: REGISTRATION_ATTEMPT_OUTCOME.VALIDATION,
-        detail: issues[0]?.message ?? null,
+        detail: describeIssues(issues),
       });
+      // `fieldErrors` lets the form put each message beside its field, the way
+      // its own client-side errors already render.
       return NextResponse.json(
-        { error: issues[0]?.message || "Validation failed" },
+        {
+          error: issues[0]?.message || "Validation failed",
+          fieldErrors: zodIssuesToFieldErrors(validation.error),
+        },
         { status: 400 }
       );
     }
@@ -171,7 +177,7 @@ export async function POST(request: NextRequest) {
       role,
       companyName,
       businessName,
-      website,
+      website: rawWebsite,
       claimSlug: claimSlugField,
       claimVendorSlug,
       turnstileToken,
@@ -179,6 +185,17 @@ export async function POST(request: NextRequest) {
     // Canonical claim slug — accept the new `claimSlug` field, fall back to the
     // legacy `claimVendorSlug` alias.
     const claimSlug = claimSlugField ?? claimVendorSlug;
+
+    // OPE-1155 — normalise the declared website; drop it rather than refuse the
+    // account. Internal hosts are dropped too: the corroboration pass fetches
+    // this URL later, so storing `http://169.254.169.254/…` would plant a
+    // stored-SSRF payload for an admin action to detonate. Defence in depth —
+    // the pass guards every redirect hop as well.
+    const normalizedWebsite = normalizeDeclaredWebsite(rawWebsite);
+    const website =
+      normalizedWebsite && !isBlockedSsrfHost(new URL(normalizedWebsite).hostname)
+        ? normalizedWebsite
+        : undefined;
 
     // Verify Turnstile token (required for all registration attempts)
     const turnstileResult = await verifyTurnstileToken(turnstileToken || "", request);
