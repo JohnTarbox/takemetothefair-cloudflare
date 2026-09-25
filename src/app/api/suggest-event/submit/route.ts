@@ -884,15 +884,33 @@ export async function POST(request: NextRequest) {
     // (gate off, suppressed, rate-limited) and "we tried and failed" are
     // different facts, and a fail-soft path that records neither is how a
     // silent no-op survives for months.
-    const ackOutcome = await sendSubmissionReceivedAck(db, getCloudflareEnv(), {
-      toEmail: data.suggesterEmail,
-      eventName: effectiveName,
-      eventId: newEventId,
-      whenText: effectiveStartDate ? formatDateRange(effectiveStartDate, effectiveEndDate) : null,
-      whereText:
-        [data.venueName, data.venueCity, resolvedStateCode].filter(Boolean).join(", ") || null,
-    });
-    if (ackOutcome !== "sent" && ackOutcome !== "skipped:no-email") {
+    //
+    // OPE-1153 — NOT on the internal (email-lane) path. The only internal
+    // caller is the MCP inbound-email workflow (mcp-server/src/email-handlers/
+    // submit.ts), which already answers the sender with its own `reply:ok-*`
+    // ack — ledgered against the inbound email and, for a multi-event email,
+    // listing every event. Sending this one too gave 5 submitters 18 duplicate
+    // pairs in 30 days (measured 2026-09-25), 3s apart, unthreaded, unlinked
+    // (inbound_email_id NULL), naming only the first event, and once
+    // contradicting the workflow reply. The web form (OPE-412's scope) is
+    // unchanged.
+    const ackOutcome = isInternal
+      ? ("skipped:internal-caller" as const)
+      : await sendSubmissionReceivedAck(db, getCloudflareEnv(), {
+          toEmail: data.suggesterEmail,
+          eventName: effectiveName,
+          eventId: newEventId,
+          whenText: effectiveStartDate
+            ? formatDateRange(effectiveStartDate, effectiveEndDate)
+            : null,
+          whereText:
+            [data.venueName, data.venueCity, resolvedStateCode].filter(Boolean).join(", ") || null,
+        });
+    if (
+      ackOutcome !== "sent" &&
+      ackOutcome !== "skipped:no-email" &&
+      ackOutcome !== "skipped:internal-caller"
+    ) {
       await logError(db, {
         level: "info",
         message: `submission-received ack not sent: ${ackOutcome}`,
