@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { eq, and, or, sql } from "drizzle-orm";
-import { resolveVendorTypeForWrite } from "@takemetothefair/vendor-linking";
+import { mergeProductsJson, routeVendorTypeForWrite } from "@takemetothefair/vendor-linking";
 import { vendors, events, eventVendors, promoters, venues } from "../schema.js";
 import { attachEventToSeries } from "../series/resolve-or-create-series.js";
 import { recordMutation } from "../audit/record-mutation.js";
@@ -151,10 +151,24 @@ export function registerVendorTools(
     async (params) => {
       const updates: Record<string, unknown> = {};
       if (params.description !== undefined) updates.description = params.description;
-      // OPE-1113 — stored as the existing spelling of the same category.
-      if (params.vendor_type !== undefined)
-        updates.vendorType = await resolveVendorTypeForWrite(db, params.vendor_type);
       if (params.products !== undefined) updates.products = JSON.stringify(params.products);
+      // OPE-1113 — stored as the existing spelling of the same category.
+      // OPE-1164 — a description sent as the type is added to products instead.
+      if (params.vendor_type !== undefined) {
+        const routed = await routeVendorTypeForWrite(db, params.vendor_type);
+        if (routed.vendorType !== undefined) updates.vendorType = routed.vendorType;
+        if (routed.productsToAdd.length > 0) {
+          const [cur] = await db
+            .select({ products: vendors.products })
+            .from(vendors)
+            .where(eq(vendors.id, vendorId))
+            .limit(1);
+          updates.products = mergeProductsJson(
+            (updates.products as string | undefined) ?? cur?.products,
+            routed.productsToAdd
+          );
+        }
+      }
       if (params.website !== undefined) updates.website = params.website;
       if (params.contact_name !== undefined) updates.contactName = params.contact_name;
       if (params.contact_email !== undefined) updates.contactEmail = params.contact_email;

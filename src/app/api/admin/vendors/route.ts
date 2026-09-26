@@ -1,6 +1,6 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
-import { resolveVendorTypeForWrite } from "@takemetothefair/vendor-linking";
+import { mergeProductsJson, routeVendorCategoriesForWrite } from "@takemetothefair/vendor-linking";
 import { withAuth } from "@/lib/api/with-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { vendors, users } from "@/lib/db/schema";
@@ -39,6 +39,14 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db, session })
 
   try {
     const vendorId = crypto.randomUUID();
+    // OPE-1113/OPE-1164 — one spelling per category; a description in any
+    // category field goes to products instead.
+    const routed = await routeVendorCategoriesForWrite(db, {
+      vendorType: data.vendorType,
+      sellsCategory: data.sellsCategory,
+      businessSector: data.businessSector,
+      vendorIdentity: data.vendorIdentity,
+    });
 
     await db.insert(vendors).values({
       id: vendorId,
@@ -46,9 +54,11 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db, session })
       businessName: data.businessName,
       slug: createSlug(data.businessName),
       description: data.description,
-      // OPE-1113 — stored as the existing spelling of the same category.
-      vendorType: await resolveVendorTypeForWrite(db, data.vendorType),
-      products: JSON.stringify(data.products),
+      vendorType: routed.values.vendorType ?? null,
+      sellsCategory: routed.values.sellsCategory ?? null,
+      businessSector: routed.values.businessSector ?? null,
+      vendorIdentity: routed.values.vendorIdentity ?? null,
+      products: mergeProductsJson(JSON.stringify(data.products), routed.productsToAdd),
       website: data.website,
       socialLinks: data.socialLinks,
       logoUrl: data.logoUrl,

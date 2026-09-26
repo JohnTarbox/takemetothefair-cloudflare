@@ -22,7 +22,7 @@ import { and, eq, isNull, sql, type SQL } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "@takemetothefair/db-schema";
 import { containsCI } from "@takemetothefair/db-schema";
-import { resolveVendorTypeForWrite, sameVendorType } from "./vendor-type";
+import { mergeProductsJson, routeVendorCategoriesForWrite, sameVendorType } from "./vendor-type";
 import {
   appendSlugSegment,
   createSlug,
@@ -78,6 +78,10 @@ export interface CreateOrLinkVendorInput {
   eventId: string;
   businessName: string;
   type?: string | null;
+  /** OPE-1164 — the three category axes; applied on create, like `type`. */
+  sellsCategory?: string | null;
+  businessSector?: string | null;
+  vendorIdentity?: string | null;
   status?: EventVendorStatus;
   description?: string | null;
   products?: string[] | null;
@@ -503,8 +507,18 @@ export async function createOrLinkVendor(
   const businessName = sanitizeProse(input.businessName ?? "");
   // OPE-1113 — resolve to the existing spelling of the same category, so a
   // roster that writes "crafts " stores "Crafts" rather than a new variant.
-  const vendorType =
-    input.type != null ? await resolveVendorTypeForWrite(db, sanitizeProse(input.type)) : null;
+  //
+  // OPE-1164 — a DESCRIPTIVE type ("hand-turned wooden bowls, cutting boards")
+  // that matches no existing category goes to `products`, not vendor_type, so
+  // it never becomes a new category value. Same for the three axis fields.
+  const clean = (v: string | null | undefined) => (v != null ? sanitizeProse(v) : undefined);
+  const routed = await routeVendorCategoriesForWrite(db, {
+    vendorType: clean(input.type),
+    sellsCategory: clean(input.sellsCategory),
+    businessSector: clean(input.businessSector),
+    vendorIdentity: clean(input.vendorIdentity),
+  });
+  const vendorType = routed.values.vendorType ?? null;
   const description = input.description != null ? sanitizeProse(input.description) : null;
   const productsClean = Array.isArray(input.products)
     ? input.products.map((p) => sanitizeProse(p))
@@ -690,8 +704,14 @@ export async function createOrLinkVendor(
       businessName,
       slug: finalSlug,
       vendorType,
+      sellsCategory: routed.values.sellsCategory ?? null,
+      businessSector: routed.values.businessSector ?? null,
+      vendorIdentity: routed.values.vendorIdentity ?? null,
       description,
-      products: productsClean ? JSON.stringify(productsClean) : "[]",
+      products: mergeProductsJson(
+        productsClean ? JSON.stringify(productsClean) : "[]",
+        routed.productsToAdd
+      ),
       website: input.website ?? null,
       contactEmail: input.contactEmail ?? null,
       contactPhone: input.contactPhone ?? null,
@@ -848,6 +868,16 @@ export async function createOrLinkVendor(
 }
 
 export {
+  CATEGORY_MAX_CHARS,
+  CATEGORY_MAX_WORDS,
+  isDescriptiveVendorType,
+  mergeProductsJson,
+  routeVendorTypeForWrite,
+  routeCategoryForWrite,
+  routeVendorCategoriesForWrite,
+  resolveCategoryForWrite,
+  type RoutedVendorType,
+  type VendorCategoryColumn,
   VENDOR_TYPE_ALIASES,
   pickVendorTypeSpelling,
   resolveVendorTypeForWrite,

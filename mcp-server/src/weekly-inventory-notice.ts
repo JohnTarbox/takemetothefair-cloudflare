@@ -26,7 +26,8 @@ import { events, promoters, eventDiscrepancies, tunableThresholds } from "./sche
 import type { Env } from "./index.js";
 import { getDb, type Db } from "./db.js";
 import { logError } from "./logger.js";
-import { weeklyInventoryState } from "./schema.js";
+import { vendorCategoryWatchRuns, weeklyInventoryState } from "./schema.js";
+import { formatWatchSection, readLatestWatch } from "./vendor-category-watch.js";
 import { countUnterminatedCrossings } from "./inbound/unterminated-crossings.js";
 
 const SOURCE = "mcp:schedule:weekly-inventory";
@@ -323,10 +324,22 @@ export async function runWeeklyInventoryNotice(env: Env): Promise<void> {
           : "")
       : "";
 
+  // OPE-1164 — the vendor-category watch ran just before this (same cron,
+  // chained); report today's run only, never a stale week.
+  const watch = await readLatestWatch(db).catch(() => []);
+  const watchRanToday = await db
+    .select({ n: sql<number>`count(*)` })
+    .from(vendorCategoryWatchRuns)
+    .where(sql`${vendorCategoryWatchRuns.runAt} >= ${Math.floor(Date.parse(todayIso) / 1000)}`)
+    .then((r) => (r[0]?.n ?? 0) > 0)
+    .catch(() => false);
+  const watchText = watchRanToday ? formatWatchSection(watch) : "";
+
   const textBody =
     `Backlog as of ${todayIso} (Δ vs last Monday):\n\n` +
     rows.map((r) => ` • ${r.label}: ${r.current} (${formatDelta(r.current, r.prior)})`).join("\n") +
     waitingText +
+    watchText +
     `\n\nThis replaces the daily queue notices — alarms still push on condition.\n`;
   const htmlBody =
     `<p><strong>📋 MMATF Monday inventory</strong> — backlog as of ${todayIso}.</p>` +
@@ -341,6 +354,14 @@ export async function runWeeklyInventoryNotice(env: Env): Promise<void> {
       )
       .join("") +
     `</table>` +
+    (watchText
+      ? `<pre style="white-space:pre-wrap;font-family:inherit">${watchText
+          .trim()
+          .replace(
+            /[&<>]/g,
+            (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c] as string
+          )}</pre>`
+      : "") +
     `<p style="color:#666;font-size:12px">Replaces the daily queue notices. Alarms still push on condition.</p>`;
 
   const alertEmail = env.ALERT_EMAIL_TECHNICAL;

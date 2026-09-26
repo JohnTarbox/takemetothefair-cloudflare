@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { eq, and, inArray, isNull, sql, desc, asc } from "drizzle-orm";
-import { resolveVendorTypeForWrite } from "@takemetothefair/vendor-linking";
+import { mergeProductsJson, routeVendorCategoriesForWrite } from "@takemetothefair/vendor-linking";
 import {
   events,
   eventVendors,
@@ -2949,6 +2949,26 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
             .transform(sanitizeProse)
             .optional()
             .describe("DEPRECATED alias for vendor_type. Prefer vendor_type."),
+          // OPE-1164 — the three category axes vendor_type conflates. A long
+          // description in any of them goes to products, never a new category.
+          sells_category: z
+            .string()
+            .max(100)
+            .transform(sanitizeProse)
+            .optional()
+            .describe("What they sell (one short primary category, e.g. 'Jewelry')"),
+          business_sector: z
+            .string()
+            .max(100)
+            .transform(sanitizeProse)
+            .optional()
+            .describe("What kind of business (one short value, e.g. 'Brewery', 'Marine')"),
+          vendor_identity: z
+            .string()
+            .max(100)
+            .transform(sanitizeProse)
+            .optional()
+            .describe("Who they are (one short value, e.g. 'Artist', 'Nonprofit')"),
           description: z
             .string()
             .max(500)
@@ -3146,10 +3166,14 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         state: params.state ?? aliasLoc.state,
       };
       // OPE-1113 — stored as the existing spelling of the same category.
-      const vendorType = await resolveVendorTypeForWrite(
-        db,
-        params.vendor_type ?? params.type ?? null
-      );
+      // OPE-1164 — plus the three axes; a description goes to products.
+      const routed = await routeVendorCategoriesForWrite(db, {
+        vendorType: params.vendor_type ?? params.type ?? null,
+        sellsCategory: params.sells_category,
+        businessSector: params.business_sector,
+        vendorIdentity: params.vendor_identity,
+      });
+      const vendorType = routed.values.vendorType ?? null;
 
       const deprecatedAliases: string[] = [];
       if (params.location !== undefined) deprecatedAliases.push("location → city + state");
@@ -3164,8 +3188,14 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         businessName: params.business_name,
         slug: finalSlug,
         vendorType,
+        sellsCategory: routed.values.sellsCategory ?? null,
+        businessSector: routed.values.businessSector ?? null,
+        vendorIdentity: routed.values.vendorIdentity ?? null,
         description: params.description ?? null,
-        products: params.products ? JSON.stringify(params.products) : "[]",
+        products: mergeProductsJson(
+          params.products ? JSON.stringify(params.products) : "[]",
+          routed.productsToAdd
+        ),
         website: params.website ?? null,
         contactEmail: params.contact_email ?? null,
         contactPhone: params.contact_phone ?? null,
@@ -4311,6 +4341,26 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .optional()
         .describe("Business name (also regenerates slug)"),
       vendor_type: z.string().transform(sanitizeProse).optional().describe("Vendor category"),
+      // OPE-1164 — the three category axes vendor_type conflates. A long
+      // description in any of them goes to products, never a new category.
+      sells_category: z
+        .string()
+        .max(100)
+        .transform(sanitizeProse)
+        .optional()
+        .describe("What they sell (one short primary category, e.g. 'Jewelry')"),
+      business_sector: z
+        .string()
+        .max(100)
+        .transform(sanitizeProse)
+        .optional()
+        .describe("What kind of business (one short value, e.g. 'Brewery', 'Marine')"),
+      vendor_identity: z
+        .string()
+        .max(100)
+        .transform(sanitizeProse)
+        .optional()
+        .describe("Who they are (one short value, e.g. 'Artist', 'Nonprofit')"),
       description: z.string().transform(sanitizeProse).optional().describe("Business description"),
       products: z
         .array(z.string().transform(sanitizeProse))
@@ -4526,8 +4576,18 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }
 
       // OPE-1113 — one spelling per category (async, so not a fieldMap transform).
-      if (typeof updates.vendorType === "string") {
-        updates.vendorType = await resolveVendorTypeForWrite(db, updates.vendorType);
+      // OPE-1164 — the same for the three axes; a description in any of them is
+      // appended to products (after the vendor row is read) instead of stored.
+      const routedCategories = await routeVendorCategoriesForWrite(db, {
+        ...(params.vendor_type !== undefined ? { vendorType: params.vendor_type } : {}),
+        ...(params.sells_category !== undefined ? { sellsCategory: params.sells_category } : {}),
+        ...(params.business_sector !== undefined ? { businessSector: params.business_sector } : {}),
+        ...(params.vendor_identity !== undefined ? { vendorIdentity: params.vendor_identity } : {}),
+      });
+      delete updates.vendorType;
+      Object.assign(updates, routedCategories.values);
+      for (const p of ["sells_category", "business_sector", "vendor_identity"] as const) {
+        if (params[p] !== undefined) requestedFields.push(p);
       }
 
       if (params.business_name !== undefined) {
@@ -4563,6 +4623,14 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }
 
       const vendor = vendorRows[0];
+
+      // OPE-1164 — a description sent as a category lands in products.
+      if (routedCategories.productsToAdd.length > 0) {
+        updates.products = mergeProductsJson(
+          (updates.products as string | undefined) ?? vendor.products,
+          routedCategories.productsToAdd
+        );
+      }
 
       // If a custom slug was explicitly provided, it takes priority over the
       // auto-generated slug from business_name. Both paths run through the

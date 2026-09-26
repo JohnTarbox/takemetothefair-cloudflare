@@ -441,6 +441,9 @@ const SCHEMA_SQL = `
     slug TEXT NOT NULL UNIQUE,
     description TEXT,
     vendor_type TEXT,
+    sells_category TEXT,
+    business_sector TEXT,
+    vendor_identity TEXT,
     products TEXT DEFAULT '[]',
     website TEXT,
     social_links TEXT,
@@ -1029,6 +1032,23 @@ const SCHEMA_SQL = `
   );
 
   -- OPE-413 — operator-tunable thresholds (drizzle/0196).
+  -- OPE-1164 — weekly vendor-category watch.
+  CREATE TABLE vendor_category_values (
+    field TEXT NOT NULL,
+    value TEXT NOT NULL,
+    first_seen_at INTEGER NOT NULL,
+    baseline INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (field, value)
+  );
+  CREATE TABLE vendor_category_watch_runs (
+    id TEXT PRIMARY KEY,
+    run_at INTEGER NOT NULL,
+    field TEXT NOT NULL,
+    new_count INTEGER NOT NULL,
+    new_values TEXT NOT NULL DEFAULT '[]',
+    threshold INTEGER NOT NULL,
+    fired INTEGER NOT NULL DEFAULT 0
+  );
   CREATE TABLE tunable_thresholds (
     key TEXT PRIMARY KEY,
     value REAL NOT NULL,

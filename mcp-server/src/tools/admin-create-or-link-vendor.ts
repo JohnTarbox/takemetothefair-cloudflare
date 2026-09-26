@@ -62,6 +62,28 @@ export function registerCreateOrLinkVendorTool(
         .describe(
           "Vendor category, used when CREATING a new vendor. It is not part of dedup matching (OPE-451): a category disagreement used to veto a byte-identical name, which duplicated vendors on every roster backfill, since a backfill assigns the show's category while the existing row carries whatever a previous pass assigned."
         ),
+      // OPE-1164 — the three category axes vendor_type conflates. Applied on
+      // create only, like `type`. A long description goes to products instead.
+      sells_category: z
+        .string()
+        .max(100)
+        .transform(sanitizeProse)
+        .optional()
+        .describe('What they sell (one short primary category, e.g. "Jewelry"). On create only.'),
+      business_sector: z
+        .string()
+        .max(100)
+        .transform(sanitizeProse)
+        .optional()
+        .describe(
+          'What kind of business (one short value, e.g. "Brewery", "Marine"). On create only.'
+        ),
+      vendor_identity: z
+        .string()
+        .max(100)
+        .transform(sanitizeProse)
+        .optional()
+        .describe('Who they are (one short value, e.g. "Artist", "Nonprofit"). On create only.'),
       status: z
         .enum(VENDOR_STATUS_ENUM)
         .optional()
@@ -140,6 +162,9 @@ export function registerCreateOrLinkVendorTool(
         eventId: params.event_id,
         businessName: params.business_name,
         type: params.type ?? null,
+        sellsCategory: params.sells_category ?? null,
+        businessSector: params.business_sector ?? null,
+        vendorIdentity: params.vendor_identity ?? null,
         status: params.status,
         description: params.description ?? null,
         products: params.products ?? null,

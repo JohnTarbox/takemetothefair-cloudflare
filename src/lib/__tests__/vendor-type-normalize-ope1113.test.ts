@@ -236,16 +236,24 @@ function walk(dir: string, out: string[] = []): string[] {
 
 describe("every vendor_type writer goes through the resolver", () => {
   it("no server write path assigns a raw request value to vendorType", () => {
-    const RAW_WRITE = /vendorType\s*[:=]\s*(params|data|input|body)\.(vendor_?[tT]ype|type)\b/;
+    // OPE-1164 — the three axis columns are category writes too.
+    const RAW_WRITE =
+      /(vendorType|sellsCategory|businessSector|vendorIdentity)\s*[:=]\s*(params|data|input|body)\.(vendor_?[tT]ype|type|sells_?[cC]ategory|business_?[sS]ector|vendor_?[iI]dentity)\b/;
     const roots = ["src/app/api", "mcp-server/src", "packages"].map((r) => join(process.cwd(), r));
     const offenders = roots
       .flatMap((r) => walk(r))
-      .flatMap((f) =>
-        readFileSync(f, "utf8")
-          .split("\n")
+      .flatMap((f) => {
+        const lines = readFileSync(f, "utf8").split("\n");
+        return lines
           .map((line, i) => ({ f, i: i + 1, line }))
           .filter(({ line }) => RAW_WRITE.test(line))
-      )
+          .filter(({ i }) => {
+            // An ARGUMENT to the router (or to the core's input object, which
+            // the core routes) is not a write — excuse it only there.
+            const ctx = lines.slice(Math.max(0, i - 9), i).join("\n");
+            return !/routeVendorCategoriesForWrite\(|: CreateOrLinkVendorInput = \{/.test(ctx);
+          });
+      })
       .map(({ f, i, line }) => `${f.replace(process.cwd() + "/", "")}:${i}: ${line.trim()}`);
     expect(offenders).toEqual([]);
   });

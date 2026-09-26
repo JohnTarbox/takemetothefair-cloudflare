@@ -83,6 +83,7 @@ import { runOccurredTransitionSweep } from "./event-occurred-sweep.js";
 
 import { runInboundExceptionNotice } from "./inbound-exception-notice.js";
 import { runWeeklyInventoryNotice } from "./weekly-inventory-notice.js";
+import { runScheduledVendorCategoryWatch } from "./vendor-category-watch.js";
 import { runScheduledSelfConsistencyCron } from "./goodwill/self-consistency-cron.js";
 import { runScheduledQueueRerank } from "./goodwill/queue-ranking.js";
 import { runScheduledGoodwillHealthCanary } from "./goodwill/health-canary.js";
@@ -1995,7 +1996,11 @@ export default {
         // (roster research + promoter enrichment + goodwill open count), with a
         // week-over-week delta. Self-gates to Monday, so it is safe to call on
         // the daily cron. Alarms are untouched and still push on condition.
-        runWeeklyInventoryNotice(env),
+        // OPE-1164 — the weekly vendor-category watch runs FIRST (Monday-gated,
+        // once per Monday) so the inventory email can report its new values.
+        runScheduledVendorCategoryWatch(getDb(env.DB), (message, error) =>
+          logError(env.DB, { source: "mcp:schedule:vendor-category-watch", message, error })
+        ).then(() => runWeeklyInventoryNotice(env)),
         // A3.2 / K43 (2026-06-25) — nightly blog-link integrity audit. Sweeps
         // every PUBLISHED post and reports internal /events,/vendors,/venues,
         // /blog links that no longer resolve (drift a slug rename/merge left

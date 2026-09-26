@@ -1,6 +1,6 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
-import { resolveVendorTypeForWrite } from "@takemetothefair/vendor-linking";
+import { mergeProductsJson, routeVendorCategoriesForWrite } from "@takemetothefair/vendor-linking";
 import { auth } from "@/lib/auth";
 import { requireVerifiedSession } from "@/lib/api-auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
@@ -130,6 +130,9 @@ export async function PATCH(request: NextRequest) {
       businessName,
       description,
       vendorType,
+      sellsCategory,
+      businessSector,
+      vendorIdentity,
       products,
       website,
       logoUrl,
@@ -150,8 +153,15 @@ export async function PATCH(request: NextRequest) {
       displayName,
     } = validation.data;
     // OPE-1113 — stored as the existing spelling of the same category.
-    const resolvedVendorType =
-      vendorType === undefined ? undefined : await resolveVendorTypeForWrite(db, vendorType);
+    // OPE-1164 — the three axes too; a description typed into any category
+    // field is appended to products instead of becoming a new category.
+    const routed = await routeVendorCategoriesForWrite(db, {
+      ...(vendorType !== undefined ? { vendorType } : {}),
+      ...(sellsCategory !== undefined ? { sellsCategory } : {}),
+      ...(businessSector !== undefined ? { businessSector } : {}),
+      ...(vendorIdentity !== undefined ? { vendorIdentity } : {}),
+    });
+    const resolvedVendorType = "vendorType" in routed.values ? routed.values.vendorType : undefined;
 
     // Snapshot current vendor for slug-change detection, slug history,
     // and IndexNow material-change comparison. Mirrors the admin PATCH at
@@ -225,8 +235,17 @@ export async function PATCH(request: NextRequest) {
       }
     }
     if (description !== undefined) updateData.description = description;
-    if (vendorType !== undefined) updateData.vendorType = resolvedVendorType;
+    if (resolvedVendorType !== undefined) updateData.vendorType = resolvedVendorType;
+    for (const col of ["sellsCategory", "businessSector", "vendorIdentity"] as const) {
+      if (col in routed.values) updateData[col] = routed.values[col] ?? null;
+    }
     if (products) updateData.products = JSON.stringify(products);
+    if (routed.productsToAdd.length > 0) {
+      updateData.products = mergeProductsJson(
+        (updateData.products as string | undefined) ?? currentVendor.products,
+        routed.productsToAdd
+      );
+    }
     if (website !== undefined) updateData.website = website;
     if (logoUrl !== undefined) updateData.logoUrl = logoUrl;
     // Contact Information
@@ -363,7 +382,8 @@ export async function PATCH(request: NextRequest) {
     // Claimed, Verified Pro) that this self-edit surface can't touch.
     const materialChanged =
       (businessName !== undefined && businessName !== currentVendor.businessName) ||
-      (vendorType !== undefined && (resolvedVendorType ?? null) !== currentVendor.vendorType) ||
+      (resolvedVendorType !== undefined &&
+        (resolvedVendorType ?? null) !== currentVendor.vendorType) ||
       (description !== undefined && (description ?? null) !== currentVendor.description) ||
       (city !== undefined && (city ?? null) !== currentVendor.city) ||
       (state !== undefined && (state ?? null) !== currentVendor.state) ||

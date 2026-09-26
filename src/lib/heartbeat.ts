@@ -52,6 +52,7 @@ import {
   gscMonthlyOracle,
   vendorSelfReportedEvents,
   performerEnrichmentCandidates,
+  vendorCategoryWatchRuns,
 } from "@/lib/db/schema";
 import { SITE_URL } from "@takemetothefair/constants";
 import type { StaleRed } from "@/lib/cpi/stale-reds";
@@ -1788,6 +1789,18 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
         new Date()
       );
     },
+  },
+  {
+    // OPE-1164 — the Monday vendor-category watch (MCP daily cron, gated to
+    // Monday). A run writes one vendor_category_watch_runs row per field even
+    // when nothing is new, so the RUN is the evidence, not the yield. Weekly:
+    // 8 days tolerates a late fire, a missed Monday fires.
+    name: "vendor-category-watch",
+    ownerOpe: "OPE-1164",
+    label: "Weekly vendor-category new-value watch",
+    priority: "P1",
+    expectedWindowHours: 8 * 24,
+    lastEvidenceAt: (db) => maxTs(db, vendorCategoryWatchRuns, vendorCategoryWatchRuns.runAt),
   },
 ];
 

@@ -950,6 +950,15 @@ export const vendors = sqliteTable(
     slug: text("slug").$type<Slug>().notNull().unique(),
     description: text("description"),
     vendorType: text("vendor_type"),
+    // OPE-1164 — `vendor_type` answers three questions at once; these split
+    // them. Nullable, single value each, no controlled list yet (a separate
+    // decision). `vendor_type` is unchanged and still what the site renders.
+    /** What they sell (primary), e.g. "Jewelry", "Pottery". */
+    sellsCategory: text("sells_category"),
+    /** What kind of business they are, e.g. "Marine", "Brewery". */
+    businessSector: text("business_sector"),
+    /** Who they are, e.g. "Artist", "Nonprofit". NOT `role` (brand structure). */
+    vendorIdentity: text("vendor_identity"),
     products: text("products").default("[]"),
     website: text("website"),
     socialLinks: text("social_links"),
@@ -3811,6 +3820,42 @@ export const staleRedSignals = sqliteTable("stale_red_signals", {
   /** Set by the first scan that no longer sees it. NULL = currently red. */
   resolvedAt: integer("resolved_at", { mode: "timestamp" }),
 });
+
+/**
+ * OPE-1164 — every distinct category value ever seen, per field, with the day
+ * the weekly watch first saw it. "New this week" is a first_seen_at in the last
+ * 7 days; the first run marks everything `baseline` so it never reports the
+ * whole vocabulary as new.
+ */
+export const vendorCategoryValues = sqliteTable(
+  "vendor_category_values",
+  {
+    /** vendor_type | sells_category | business_sector | vendor_identity */
+    field: text("field").notNull(),
+    value: text("value").notNull(),
+    firstSeenAt: integer("first_seen_at", { mode: "timestamp" }).notNull(),
+    baseline: integer("baseline", { mode: "boolean" }).notNull().default(false),
+  },
+  (t) => [primaryKey({ columns: [t.field, t.value] })]
+);
+
+/** OPE-1164 — one row per (weekly run, field): the new values and whether it alerted. */
+export const vendorCategoryWatchRuns = sqliteTable(
+  "vendor_category_watch_runs",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    runAt: integer("run_at", { mode: "timestamp" }).notNull(),
+    field: text("field").notNull(),
+    newCount: integer("new_count").notNull(),
+    /** JSON array of the new values themselves, not just the count. */
+    newValues: text("new_values").notNull().default("[]"),
+    threshold: integer("threshold").notNull(),
+    fired: integer("fired", { mode: "boolean" }).notNull().default(false),
+  },
+  (t) => [index("idx_vendor_category_watch_runs_run_at").on(t.runAt)]
+);
 
 export const weeklyInventoryState = sqliteTable("weekly_inventory_state", {
   id: text("id").primaryKey(),

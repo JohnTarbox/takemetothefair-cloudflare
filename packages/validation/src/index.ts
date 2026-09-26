@@ -224,6 +224,11 @@ export const vendorCreateSchema = z.object({
   businessName: nameSchema,
   description: descriptionSchema,
   vendorType: z.string().max(100).optional().nullable(),
+  // OPE-1164 — the three category axes. A long description in any of them is
+  // moved to products by the route, never stored as a category.
+  sellsCategory: z.string().max(100).optional().nullable(),
+  businessSector: z.string().max(100).optional().nullable(),
+  vendorIdentity: z.string().max(100).optional().nullable(),
   products: z.array(z.string()).optional().default([]),
   website: urlSchema,
   socialLinks: z.string().optional().nullable(), // JSON string
@@ -636,6 +641,11 @@ export const vendorProfileUpdateSchema = z.object({
   businessName: nameSchema.optional(),
   description: descriptionSchema,
   vendorType: z.string().max(100).optional().nullable(),
+  // OPE-1164 — the three category axes. A long description in any of them is
+  // moved to products by the route, never stored as a category.
+  sellsCategory: z.string().max(100).optional().nullable(),
+  businessSector: z.string().max(100).optional().nullable(),
+  vendorIdentity: z.string().max(100).optional().nullable(),
   products: z.array(z.string()).optional(),
   website: urlSchema,
   // OPE-1112 — an image column takes an image URL. `website` above stays a
