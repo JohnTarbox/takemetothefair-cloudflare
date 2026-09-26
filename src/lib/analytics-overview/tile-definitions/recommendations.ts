@@ -20,14 +20,14 @@ export const RECOMMENDATIONS_TILES = {
   },
   "recommendations.rule-group": {
     measures:
-      "One recommendation rule: how many of its items are active now, a week-over-week change chip, and how long since the rule last scanned.",
+      "One recommendation rule: how many of its items are active now, a week-over-week slot (currently not measured), and how long since the rule last scanned.",
     source: "recommendation_items and recommendation_rules (total_match_count, last_scanned_at).",
     window:
       "Active items: seen by a scan in the last 7 days, not done, not snoozed. The chip compares with 7 days ago.",
     caveats:
-      "The chip compares different populations: now counts only active, unsnoozed items; 7 days ago counts every item first seen by then and not yet done, including snoozed and aged-out ones, so it leans towards a drop. In 'N of M', M is the scanner's raw match count.",
+      "The week-over-week chip shows 'wk/wk —' (not measured): last week's active count can't be rebuilt, and the old chip compared two different populations. In 'N of M', M is the scanner's raw match count.",
     thresholds:
-      "Chip amber when the count rose, green when it fell. Scan badge red when the rule never scanned or last scanned more than 24 hours ago.",
+      "Scan badge red when the rule never scanned or last scanned more than 24 hours ago.",
   },
   "recommendations.scan-freshness": {
     measures:

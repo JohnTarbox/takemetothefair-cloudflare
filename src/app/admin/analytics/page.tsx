@@ -2235,8 +2235,17 @@ function ScanFreshnessBadge({ lastScannedAt }: { lastScannedAt: Date | null }) {
   );
 }
 
+/**
+ * OPE-1160 — why the Recommendations week-over-week chip is not measured
+ * (OPE-808 "unavailable" state): a delta between two differently-defined
+ * counts is not a trend, and last week's count cannot be rebuilt on the same
+ * basis as this week's.
+ */
+const RECS_WOW_UNAVAILABLE_REASON =
+  "Week-over-week not measured: last week's active count can't be rebuilt (last-seen times and snoozes aren't kept as history), and comparing it with a different count showed changes that never happened.";
+
 async function RecommendationsTab() {
-  const { getActiveItems, getScanState, getCycleState, getOpenMatchCountsAsOf } =
+  const { getActiveItems, getScanState, getCycleState } =
     await import("@/lib/recommendations/engine");
   const { RecommendationActions } = await import("@/components/admin/recommendation-actions");
   const { RecommendationBulkActions } =
@@ -2248,16 +2257,11 @@ async function RecommendationsTab() {
   type Tier = import("@/lib/recommendations/tiers").Tier;
 
   const db = getCloudflareDb();
-  // Analyst Item 10 (split, 2026-05-30): per-rule WoW trend column. The
-  // 7d-ago snapshot is computed at query time from recommendation_items —
-  // no schema change needed. Single COUNT(*) GROUP BY plus filter on
-  // firstSeenAt + actedAt; cheap enough to run on every render.
-  const sevenDaysAgo = new Date(Date.now() - 7 * 86400_000);
-  const [rawItems, scanState, cycleState, weekAgoCounts] = await Promise.all([
+  // OPE-1160 — no week-over-week query here any more; see the chip below.
+  const [rawItems, scanState, cycleState] = await Promise.all([
     getActiveItems(db),
     getScanState(db),
     getCycleState(db),
-    getOpenMatchCountsAsOf(db, sevenDaysAgo),
   ]);
 
   // Resolve gsc_query items' topPagePath through slug-history at render
@@ -2740,35 +2744,23 @@ async function RecommendationsTab() {
                                   ? `${count} of ${group.totalMatchCount} affected`
                                   : `${count} affected`}
                               </span>
-                              {(() => {
-                                // Analyst Item 10 (split, 2026-05-30) WoW chip:
-                                // delta vs. open-count 7 days ago. Direction
-                                // colored from the operator's perspective —
-                                // ↓ (shrinking queue) = green, ↑ (growing) =
-                                // amber, no change = gray dash. Hidden when
-                                // both counts are 0 (avoids 0-vs-0 noise on
-                                // freshly-shipped rules).
-                                const prev = weekAgoCounts.get(group.ruleId) ?? 0;
-                                const delta = count - prev;
-                                if (prev === 0 && count === 0) return null;
-                                const arrow = delta > 0 ? "↑" : delta < 0 ? "↓" : "—";
-                                const sign = delta > 0 ? "+" : "";
-                                const trendClass =
-                                  delta > 0
-                                    ? "text-amber-700 bg-amber-50 border-amber-200"
-                                    : delta < 0
-                                      ? "text-emerald-700 bg-emerald-50 border-emerald-200"
-                                      : "text-muted-foreground bg-muted border-border";
-                                return (
-                                  <span
-                                    className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-medium border tabular-nums ${trendClass}`}
-                                    title={`Week-over-week: ${prev} open 7d ago → ${count} now`}
-                                  >
-                                    {arrow}
-                                    {delta === 0 ? "" : `${sign}${delta}`}
-                                  </span>
-                                );
-                              })()}
+                              {/* OPE-1160 — the week-over-week chip is NOT
+                                  measured. It compared the ACTIVE count now
+                                  (seen by a scan in the last 7d, not acted on,
+                                  not snoozed, rule enabled) with every item
+                                  first seen by a week ago and not acted on —
+                                  snoozed and aged-out items included. Prod
+                                  2026-09-26: page_1_zero_click_queries showed
+                                  "↓ −436" (108 now vs 544) for an improvement
+                                  that never happened. Last week's ACTIVE count
+                                  cannot be rebuilt: last_seen_at and snoozes are
+                                  overwritten, not kept as history. */}
+                              <span
+                                className="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium border tabular-nums text-muted-foreground bg-muted border-border"
+                                title={RECS_WOW_UNAVAILABLE_REASON}
+                              >
+                                wk/wk —
+                              </span>
                             </div>
                             <p className="text-sm text-foreground mt-1.5 ml-6">
                               {rationaleFor(group)}
