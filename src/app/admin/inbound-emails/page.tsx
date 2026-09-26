@@ -781,21 +781,28 @@ export default function AdminInboundEmailsPage() {
 
       <div className="flex flex-wrap gap-2 mb-4">
         <div className="flex gap-1">
-          {["", "awaiting_human", "failed", "received", "processing", "replied", "forwarded"].map(
-            (s) => (
-              <button
-                key={s || "all"}
-                onClick={() => setStatusFilter(s)}
-                className={`px-3 py-1 text-sm rounded ${
-                  statusFilter === s
-                    ? "bg-secondary text-secondary-foreground"
-                    : "bg-card border border-border text-foreground hover:bg-muted"
-                }`}
-              >
-                {s || "all statuses"}
-              </button>
-            )
-          )}
+          {[
+            "",
+            "awaiting_human",
+            "failed",
+            "received",
+            "processing",
+            "replied",
+            "forwarded",
+            "closed_by_sender",
+          ].map((s) => (
+            <button
+              key={s || "all"}
+              onClick={() => setStatusFilter(s)}
+              className={`px-3 py-1 text-sm rounded ${
+                statusFilter === s
+                  ? "bg-secondary text-secondary-foreground"
+                  : "bg-card border border-border text-foreground hover:bg-muted"
+              }`}
+            >
+              {s || "all statuses"}
+            </button>
+          ))}
         </div>
         <div className="flex gap-1">
           {INTENTS.map((i) => (

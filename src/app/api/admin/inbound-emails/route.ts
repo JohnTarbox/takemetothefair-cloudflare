@@ -32,6 +32,8 @@ const ALLOWED_STATUSES = [
   "forwarded",
   "failed",
   "awaiting_human",
+  // OPE-1163 — a reply that only said thanks; nobody is waiting.
+  "closed_by_sender",
 ] as const;
 
 export async function GET(request: NextRequest) {
