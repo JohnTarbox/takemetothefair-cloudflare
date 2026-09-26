@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { eq, and, inArray, isNull, sql, desc, asc } from "drizzle-orm";
+import { resolveVendorTypeForWrite } from "@takemetothefair/vendor-linking";
 import {
   events,
   eventVendors,
@@ -3144,7 +3145,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         city: params.city ?? aliasLoc.city,
         state: params.state ?? aliasLoc.state,
       };
-      const vendorType = params.vendor_type ?? params.type ?? null;
+      // OPE-1113 — stored as the existing spelling of the same category.
+      const vendorType = await resolveVendorTypeForWrite(
+        db,
+        params.vendor_type ?? params.type ?? null
+      );
 
       const deprecatedAliases: string[] = [];
       if (params.location !== undefined) deprecatedAliases.push("location → city + state");
@@ -4518,6 +4523,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           updates[column] = transform ? transform(value) : value;
           requestedFields.push(param);
         }
+      }
+
+      // OPE-1113 — one spelling per category (async, so not a fieldMap transform).
+      if (typeof updates.vendorType === "string") {
+        updates.vendorType = await resolveVendorTypeForWrite(db, updates.vendorType);
       }
 
       if (params.business_name !== undefined) {

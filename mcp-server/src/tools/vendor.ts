@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { eq, and, or, sql } from "drizzle-orm";
+import { resolveVendorTypeForWrite } from "@takemetothefair/vendor-linking";
 import { vendors, events, eventVendors, promoters, venues } from "../schema.js";
 import { attachEventToSeries } from "../series/resolve-or-create-series.js";
 import { recordMutation } from "../audit/record-mutation.js";
@@ -150,7 +151,9 @@ export function registerVendorTools(
     async (params) => {
       const updates: Record<string, unknown> = {};
       if (params.description !== undefined) updates.description = params.description;
-      if (params.vendor_type !== undefined) updates.vendorType = params.vendor_type;
+      // OPE-1113 — stored as the existing spelling of the same category.
+      if (params.vendor_type !== undefined)
+        updates.vendorType = await resolveVendorTypeForWrite(db, params.vendor_type);
       if (params.products !== undefined) updates.products = JSON.stringify(params.products);
       if (params.website !== undefined) updates.website = params.website;
       if (params.contact_name !== undefined) updates.contactName = params.contact_name;

@@ -23,6 +23,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
+import { resolveVendorTypeForWrite, sameVendorType } from "@takemetothefair/vendor-linking";
 import { adminActions, vendorEnrichmentCandidates, vendors } from "../schema.js";
 import {
   jsonContent,
@@ -301,7 +302,13 @@ export function registerEnrichmentReviewTools(
 
       for (const c of pending) {
         // no-op: proposes exactly what is already stored
-        if (c.currentValue !== null && c.proposedValue === c.currentValue) {
+        // OPE-1113 — for vendor_type, a case- or plural-only difference is the
+        // same value ("crafts" vs "Crafts"), so it is a no-op too.
+        if (
+          c.currentValue !== null &&
+          (c.proposedValue === c.currentValue ||
+            (c.proposedField === "vendor_type" && sameVendorType(c.proposedValue, c.currentValue)))
+        ) {
           rejected.push({
             id: c.id,
             field: c.proposedField,
@@ -619,7 +626,13 @@ export function registerEnrichmentReviewTools(
       // holds what the field contained when the candidate was staged, which can
       // be weeks stale; this is what it held at the moment of the overwrite.
       const overwrote = fillable ? undefined : liveValue;
-      const update: Record<string, string> = { [col]: cand.proposedValue };
+      // OPE-1113 — a vendor_type is stored as the existing spelling of its
+      // category (null only for blank input, which a staged proposal never is).
+      const applied =
+        cand.proposedField === "vendor_type"
+          ? ((await resolveVendorTypeForWrite(db, cand.proposedValue)) ?? cand.proposedValue)
+          : cand.proposedValue;
+      const update: Record<string, string> = { [col]: applied };
       await db.update(vendors).set(update).where(eq(vendors.id, vendor.id));
 
       await logEnrichment(db, {

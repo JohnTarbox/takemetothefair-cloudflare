@@ -22,6 +22,7 @@ import { and, eq, isNull, sql, type SQL } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "@takemetothefair/db-schema";
 import { containsCI } from "@takemetothefair/db-schema";
+import { resolveVendorTypeForWrite, sameVendorType } from "./vendor-type";
 import {
   appendSlugSegment,
   createSlug,
@@ -500,7 +501,10 @@ export async function createOrLinkVendor(
   deps: CreateOrLinkVendorDeps
 ): Promise<CreateOrLinkVendorResult> {
   const businessName = sanitizeProse(input.businessName ?? "");
-  const vendorType = input.type != null ? sanitizeProse(input.type) : null;
+  // OPE-1113 — resolve to the existing spelling of the same category, so a
+  // roster that writes "crafts " stores "Crafts" rather than a new variant.
+  const vendorType =
+    input.type != null ? await resolveVendorTypeForWrite(db, sanitizeProse(input.type)) : null;
   const description = input.description != null ? sanitizeProse(input.description) : null;
   const productsClean = Array.isArray(input.products)
     ? input.products.map((p) => sanitizeProse(p))
@@ -571,7 +575,9 @@ export async function createOrLinkVendor(
   // drain or ignore the queue. `vendor_enrichment_candidates` already carries a
   // partial unique on (vendor, field) WHERE decision='pending', so the fiftieth
   // drain to meet Cutco does not create a fiftieth row.
-  if (matched && vendorType && matched.row.vendorType !== vendorType) {
+  // OPE-1113 — a case- or plural-only difference is the same category, not a
+  // disagreement. "Fine Craft" vs "Craft" still differs and is still staged.
+  if (matched && vendorType && !sameVendorType(matched.row.vendorType, vendorType)) {
     try {
       await db
         .insert(vendorEnrichmentCandidates)
@@ -840,3 +846,12 @@ export async function createOrLinkVendor(
     ...(wasCreated && { createdCity: createdLoc.city, createdState: createdLoc.state }),
   };
 }
+
+export {
+  VENDOR_TYPE_ALIASES,
+  pickVendorTypeSpelling,
+  resolveVendorTypeForWrite,
+  sameVendorType,
+  vendorTypeFoldKey,
+  vendorTypeKey,
+} from "./vendor-type";
