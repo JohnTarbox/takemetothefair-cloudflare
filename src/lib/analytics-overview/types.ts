@@ -175,6 +175,8 @@ export type ConversionRateCard = {
   rate: number | null;
   /** OPE-1131 — unavailable (GA4 failed) vs undefined-rate (no sessions). */
   rateMeasured: import("./render-state").Measurement<number>;
+  /** OPE-1165 — true once `conversions` counts ORGANIC clicks only. */
+  organicBasis: boolean;
   windowDays: number;
   /** ISO date string for the window end so the tooltip can show the lag. */
   windowEndDate: string;

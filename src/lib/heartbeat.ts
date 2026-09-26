@@ -19,6 +19,7 @@
  */
 import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import {
+  analyticsEvents,
   entityWriteLog,
   adminActions,
   bingLivenessLog,
@@ -1751,6 +1752,42 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
         agentHeartbeats.lastSeenAt,
         eq(agentHeartbeats.agentCode, "watchdog:indexnow-submission-retention")
       ),
+  },
+  {
+    // OPE-1165 — every outbound ticket/application click carries the tab
+    // session's traffic source (trafficMedium), which the conversion rate's
+    // organic numerator depends on. The capture is client-side and fail-soft
+    // (a blocked sessionStorage or a render that never mounts the capture
+    // component just yields clicks without it), so the only symptom of it
+    // dying is clicks that keep arriving unattributed.
+    //
+    // Demand-conditional: demand = newest conversion click of any kind;
+    // evidence = newest one carrying trafficMedium. A quiet week with no clicks
+    // reads healthy; 24h of clicks with none attributed fires.
+    name: "click-traffic-attribution",
+    ownerOpe: "OPE-1165",
+    label: "Outbound clicks carry a traffic source (conversion-rate numerator)",
+    priority: "P1",
+    expectedWindowHours: 24,
+    lastEvidenceAt: async (db) => {
+      const clicks = inArray(analyticsEvents.eventName, [
+        "outbound_ticket_click",
+        "outbound_application_click",
+      ]);
+      return demandConditionalEvidence(
+        await maxTs(db, analyticsEvents, analyticsEvents.timestamp, clicks),
+        await maxTs(
+          db,
+          analyticsEvents,
+          analyticsEvents.timestamp,
+          and(
+            clicks,
+            sql`json_extract(${analyticsEvents.properties}, '$.trafficMedium') IS NOT NULL`
+          )
+        ),
+        new Date()
+      );
+    },
   },
 ];
 
