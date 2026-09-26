@@ -6,7 +6,8 @@ export const dynamic = "force-dynamic";
  * Auth: admin session OR X-Internal-Key (the `resolve_hero_proposal` MCP tool).
  *
  * The only path by which the photo flywheel writes `events.image_url`, and only
- * into an empty slot. See `src/lib/photo-flywheel/hero-resolve.ts`.
+ * into an empty slot — or (OPE-746) over the exact URL the rot sweep found
+ * dead, after re-probing it. See `src/lib/photo-flywheel/hero-resolve.ts`.
  */
 import { NextResponse } from "next/server";
 import { z } from "zod";
@@ -14,6 +15,7 @@ import { withAuthorized } from "@/lib/api/with-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { runUploadPipeline } from "@/lib/upload-image-pipeline";
 import { resolveHeroProposal } from "@/lib/photo-flywheel/hero-resolve";
+import { probeImageUrl } from "@/lib/photo-coverage/rot";
 
 const Body = z.object({
   proposal_id: z.string().min(1).max(64),
@@ -43,6 +45,7 @@ export const POST = withAuthorized(async ({ request, db, userId }) => {
       },
       runPipeline: (args) =>
         runUploadPipeline({ ...args, db, env: { VENDOR_ASSETS: env.VENDOR_ASSETS } }),
+      probeUrl: async (url) => (await probeImageUrl(url)).ok,
       now: () => new Date(),
     },
     {

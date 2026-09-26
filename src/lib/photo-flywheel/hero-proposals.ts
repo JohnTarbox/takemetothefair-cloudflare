@@ -35,7 +35,7 @@
  * proposal or an attempt, and both hold it out of selection for
  * `RETRY_AFTER_DAYS`.
  */
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, or, sql } from "drizzle-orm";
 import { adminActions, events, imageCoverageState } from "@/lib/db/schema";
 import { extensionForContentType, extractOgImage, urlLooksLikeJunk } from "@/lib/og-image";
 import type { AcceptResult, RejectResult } from "@/lib/og-image";
@@ -64,6 +64,14 @@ export interface HeroCandidate {
   sourceUrl: string;
   imageUrl: string | null;
   demandImpressions: number;
+  /**
+   * OPE-746 self-heal — set when the event's current `image_url` is the URL the
+   * rot sweep recorded as UNREACHABLE. The proposal then REPLACES that dead URL
+   * (on approval only, and only while it is still the live value and still
+   * dead); every other non-empty value stays untouchable.
+   */
+  deadImageUrl?: string | null;
+  deadStatusCode?: number | null;
 }
 
 export type HeroOutcomeKind =
@@ -126,16 +134,30 @@ export async function selectHeroCandidates(
       sourceUrl: events.sourceUrl,
       imageUrl: events.imageUrl,
       demandImpressions: imageCoverageState.demandImpressions,
+      urlHealth: imageCoverageState.urlHealth,
+      coverageImageUrl: imageCoverageState.imageUrl,
+      deadStatusCode: imageCoverageState.urlStatusCode,
     })
     .from(imageCoverageState)
     .innerJoin(events, eq(events.id, imageCoverageState.entityId))
     .where(
       and(
         eq(imageCoverageState.entityType, "EVENT"),
-        eq(imageCoverageState.hasImage, false),
         eq(events.status, "APPROVED"),
         sql`${events.mergedInto} IS NULL`,
-        sql`TRIM(IFNULL(${events.imageUrl}, '')) = ''`,
+        // Either an empty slot, or (OPE-746 self-heal) a slot whose live value
+        // is exactly the URL the rot sweep found dead. Keyed on equality with
+        // the swept URL, so an image changed since the sweep is not a candidate.
+        or(
+          and(
+            eq(imageCoverageState.hasImage, false),
+            sql`TRIM(IFNULL(${events.imageUrl}, '')) = ''`
+          ),
+          and(
+            eq(imageCoverageState.urlHealth, "UNREACHABLE"),
+            sql`${events.imageUrl} = ${imageCoverageState.imageUrl}`
+          )
+        ),
         sql`TRIM(IFNULL(${events.sourceUrl}, '')) != ''`,
         // Recently looked at, whatever the result.
         sql`NOT EXISTS (
@@ -161,7 +183,16 @@ export async function selectHeroCandidates(
     .orderBy(desc(imageCoverageState.demandImpressions), events.id)
     .limit(Math.max(0, Math.min(limit, MAX_PER_CALL)));
 
-  return rows.map((r) => ({ ...r, sourceUrl: r.sourceUrl ?? "" }));
+  return rows.map(({ urlHealth, coverageImageUrl, deadStatusCode, ...r }) => {
+    const dead =
+      urlHealth === "UNREACHABLE" && coverageImageUrl != null && coverageImageUrl === r.imageUrl;
+    return {
+      ...r,
+      sourceUrl: r.sourceUrl ?? "",
+      deadImageUrl: dead ? coverageImageUrl : null,
+      deadStatusCode: dead ? deadStatusCode : null,
+    };
+  });
 }
 
 /**
@@ -216,7 +247,12 @@ export async function proposeEventHeroes(
     // Keyed on EMPTY, not on `classifyImageHost(...) === "invalid"`: that verdict
     // also covers a malformed non-empty value, and a malformed value is still
     // somebody's value — this rail only ever fills an empty slot.
-    if ((c.imageUrl ?? "").trim() !== "") {
+    //
+    // OPE-746 — the one exception is the exact URL the rot sweep found dead:
+    // that value is broken on the page already, and the proposal records it so
+    // approval can compare-and-swap against it (see hero-resolve.ts).
+    const current = (c.imageUrl ?? "").trim();
+    if (current !== "" && current !== (c.deadImageUrl ?? "").trim()) {
       attempt(c, "skipped_has_image", c.imageUrl ?? "");
       continue;
     }
@@ -301,6 +337,8 @@ export async function proposeEventHeroes(
         width: gate.dimensions?.width ?? null,
         height: gate.dimensions?.height ?? null,
         demand_impressions: c.demandImpressions,
+        replaces_dead_url: current !== "" ? current : null,
+        dead_status_code: current !== "" ? (c.deadStatusCode ?? null) : null,
         would_auto_write: false,
         actor: actorId,
       }),
