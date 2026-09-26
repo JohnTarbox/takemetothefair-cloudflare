@@ -300,6 +300,22 @@ export async function loadActionQueue(
   db: Db,
   kpiStates: Map<KpiName, KpiStateRow>
 ): Promise<ActionQueueEntry[]> {
+  return (await loadActionQueueWithSuppressed(db, kpiStates)).entries;
+}
+
+/**
+ * OPE-1161 E16 — the queue AND the KPIs it deliberately left out.
+ *
+ * A YELLOW KPI that was RED in the last 7 days is suppressed (it just
+ * stabilised). That rule is fine; printing "All clear" over it was not — the
+ * card claimed no KPI was YELLOW while one was. `suppressed` lets the card say
+ * how many it is holding back and why. `loadActionQueue` keeps its old return
+ * for the CPI routes that read it.
+ */
+export async function loadActionQueueWithSuppressed(
+  db: Db,
+  kpiStates: Map<KpiName, KpiStateRow>
+): Promise<{ entries: ActionQueueEntry[]; suppressed: KpiName[] }> {
   const sevenDaysAgo = new Date(Date.now() - 7 * 86400 * 1000);
   const [redInLast7d, hotRecs] = await Promise.all([
     // One query that lists which KPIs were RED at any point in the last 7d.
@@ -329,6 +345,7 @@ export async function loadActionQueue(
   // OPE-78 — build entries WITHOUT the derived SLA fields, then decorate + sort
   // once below (age all items against a single `now`).
   const base: Omit<ActionQueueEntry, "hoursInRed" | "slaStatus">[] = [];
+  const suppressed: KpiName[] = [];
 
   // Stable KPI ordering — matches KPI_NAMES so the queue doesn't reshuffle
   // visually as states flip between fires.
@@ -372,7 +389,9 @@ export async function loadActionQueue(
         firstDetectedAt: detectedAt,
         refKey: kpi,
       });
-    } else if (row.state === "YELLOW" && !redRecently.has(kpi)) {
+    } else if (row.state === "YELLOW" && redRecently.has(kpi)) {
+      suppressed.push(kpi);
+    } else if (row.state === "YELLOW") {
       base.push({
         priority: "P1",
         source: "kpi",
@@ -407,5 +426,5 @@ export async function loadActionQueue(
     ...actionQueueSla(e.priority, e.firstDetectedAt, now),
   }));
   entries.sort(compareActionQueueEntries);
-  return entries;
+  return { entries, suppressed };
 }

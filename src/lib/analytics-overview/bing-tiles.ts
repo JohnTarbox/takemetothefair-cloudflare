@@ -88,3 +88,65 @@ export function indexNowChip(ops: {
   if (ops.breaker.reason === "cooldown") return { label: "Cooldown", className: "text-amber-600" };
   return { label: "Active", className: "text-emerald-600" };
 }
+
+/**
+ * OPE-1161 E14 — which inputs to the Bing "Action items" card were NOT measured.
+ *
+ * A report that fails to load becomes `[]`, so its rule cannot fire and the
+ * card printed "No action items — healthy ✓" for a tab it had not read. The
+ * empty list is only a clean bill of health when every input was measured;
+ * otherwise the card names what it could not see.
+ */
+export function bingActionInputsUnmeasured(
+  failed: readonly BingReport[],
+  ops: { kvAvailable: boolean; countsAvailable: boolean }
+): string[] {
+  const out: string[] = [];
+  if (failed.includes("crawl")) out.push("crawl report (crawl errors, coverage)");
+  if (failed.includes("scan")) out.push("crawl-issue report");
+  if (failed.includes("sitemaps")) out.push("sitemap feeds (duplicates, coverage)");
+  if (!ops.kvAvailable) out.push("IndexNow pause/cooldown state");
+  if (!ops.countsAvailable) out.push("IndexNow failure counts");
+  return out;
+}
+
+/**
+ * OPE-1161 F18 — the "submitted URLs" denominator for Bing index coverage,
+ * without double counting.
+ *
+ * It was a plain sum of every feed Bing lists, so (a) the same sitemap on the
+ * www and the bare host counted twice, and (b) `/sitemap.xml` — our
+ * `<sitemapindex>` over the per-type sitemaps (src/lib/sitemap-xml.ts) — was
+ * counted alongside the children it indexes. Both pushed the percentage down,
+ * and the percentage drives the red colour and a Bing action item.
+ *
+ *   - one entry per bare-host + path (the larger count wins);
+ *   - `/sitemap.xml` is dropped when any other sitemap on the same bare host is
+ *     also listed, because its count is theirs.
+ */
+export function bingSubmittedUrlCount(
+  sitemaps: ReadonlyArray<{ url: string; urlCount: number }>
+): number {
+  const byKey = new Map<string, { host: string; path: string; count: number }>();
+  for (const sm of sitemaps) {
+    let u: URL;
+    try {
+      u = new URL(sm.url);
+    } catch {
+      continue;
+    }
+    const host = u.host.replace(/^www\./i, "").toLowerCase();
+    const key = `${host}${u.pathname}`;
+    const prev = byKey.get(key);
+    if (!prev || sm.urlCount > prev.count) {
+      byKey.set(key, { host, path: u.pathname, count: sm.urlCount });
+    }
+  }
+  const entries = [...byKey.values()];
+  const hostsWithChildren = new Set(
+    entries.filter((e) => e.path !== "/sitemap.xml").map((e) => e.host)
+  );
+  return entries
+    .filter((e) => !(e.path === "/sitemap.xml" && hostsWithChildren.has(e.host)))
+    .reduce((sum, e) => sum + e.count, 0);
+}

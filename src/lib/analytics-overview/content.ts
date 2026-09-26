@@ -3,8 +3,8 @@
  * summary card (severity counts + actionable subset).
  */
 
-import { count, eq, sql } from "drizzle-orm";
-import { contentLinks, events, vendors, venues } from "@/lib/db/schema";
+import { and, count, eq, isNull, sql } from "drizzle-orm";
+import { blogPosts, contentLinks, events, vendors, venues } from "@/lib/db/schema";
 import { tierFor } from "@/lib/recommendations/tiers";
 import { getActiveItems, getScanState } from "@/lib/recommendations/engine";
 import { freshness } from "./render-state";
@@ -24,20 +24,43 @@ export async function loadBlogCoverage(db: Db): Promise<BlogCoverageCard> {
     venueCoveredRows,
   ] = await Promise.all([
     db.select({ c: count() }).from(events).where(eq(events.status, "APPROVED")),
-    db.select({ c: count() }).from(vendors),
+    // OPE-1161 A7 — soft-deleted vendors are not listings anyone can cover.
+    db.select({ c: count() }).from(vendors).where(isNull(vendors.deletedAt)),
     db.select({ c: count() }).from(venues),
+    // OPE-1161 A7 — "covered" is counted INSIDE its own denominator: a link
+    // from a PUBLISHED post to an entity that is in the total. It used to count
+    // every link target — draft posts, and links to non-approved events — and
+    // subtract that from the approved total, so the event gap read too small.
     db
       .select({ c: sql<number>`COUNT(DISTINCT ${contentLinks.targetId})` })
       .from(contentLinks)
-      .where(eq(contentLinks.targetType, "EVENT")),
+      .innerJoin(blogPosts, eq(blogPosts.id, contentLinks.sourceId))
+      .innerJoin(events, eq(events.id, contentLinks.targetId))
+      .where(
+        and(
+          eq(contentLinks.targetType, "EVENT"),
+          eq(blogPosts.status, "PUBLISHED"),
+          eq(events.status, "APPROVED")
+        )
+      ),
     db
       .select({ c: sql<number>`COUNT(DISTINCT ${contentLinks.targetId})` })
       .from(contentLinks)
-      .where(eq(contentLinks.targetType, "VENDOR")),
+      .innerJoin(blogPosts, eq(blogPosts.id, contentLinks.sourceId))
+      .innerJoin(vendors, eq(vendors.id, contentLinks.targetId))
+      .where(
+        and(
+          eq(contentLinks.targetType, "VENDOR"),
+          eq(blogPosts.status, "PUBLISHED"),
+          isNull(vendors.deletedAt)
+        )
+      ),
     db
       .select({ c: sql<number>`COUNT(DISTINCT ${contentLinks.targetId})` })
       .from(contentLinks)
-      .where(eq(contentLinks.targetType, "VENUE")),
+      .innerJoin(blogPosts, eq(blogPosts.id, contentLinks.sourceId))
+      .innerJoin(venues, eq(venues.id, contentLinks.targetId))
+      .where(and(eq(contentLinks.targetType, "VENUE"), eq(blogPosts.status, "PUBLISHED"))),
   ]);
 
   const eventTotal = eventTotalRows[0]?.c ?? 0;

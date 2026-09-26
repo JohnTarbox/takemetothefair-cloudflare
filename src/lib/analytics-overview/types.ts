@@ -91,7 +91,19 @@ export type IndexNowCard = {
    * row is the breaker declining to send. Renders as "paused since ...".
    */
   lastAttemptAt: string | null;
+  /**
+   * OPE-1161 A3 — every row logged today, including breaker `skipped` deferrals.
+   * Kept for callers; the tile's big number is `todayAttempts`.
+   */
   todaySubmissions: number;
+  /** OPE-1161 A3 — rows where Bing was actually contacted today (success + failure). */
+  todayAttempts: number;
+  /**
+   * OPE-1161 A3 — the kill-switch as READ from KV (`indexnow:paused`), not
+   * inferred from the last send date. `unknown` when the read failed or there
+   * is no KV binding.
+   */
+  pause: { state: "paused" | "active" | "unknown"; note: string | null };
   todaySuccessRate: number; // 0..1 — over attempts (success+failure); 0 when only deferrals (OPE-243)
   todayFailures: number;
   todayDeferred: number; // OPE-243 — breaker-skipped (paused/latched) rows; deferral != success
@@ -225,7 +237,7 @@ export type RenderFaultHealthCard = {
   openSignatures: number; // status proposed|filed|regressed
   autoDetectedPct: number | null; // signatures with ope_id set / total (pipeline-filed share); null if 0 sigs
   meanTimeToDetectHours: number | null; // avg(filedAt - firstSeen) over filed rows; null if none filed
-  serverMessagePct: number | null; // error_logs source='server-render' / all error rows in window; null if 0 rows
+  serverMessagePct: number | null; // OPE-1161 A2 — server-render rows / render-fault rows (server-render + client) in window; null if 0
   // Dedup collapse: 1 - (distinct signatures / total occurrences summed). The
   // share of raw occurrences the ledger folded away — HIGH is healthy (a hot
   // page's thousands of crashes collapse to one signature). Informative inverse
@@ -312,7 +324,13 @@ export type QueueDrainTileRow = {
   drainRatio7d: number | null;
   /** OPE-1131 — figures this queue cannot compute, and why (see QueueDrainRow). */
   unmeasured?: { flows?: string; depth?: string };
+  /** True only for zero outflow — see `drainState`. */
   frozen: boolean;
+  /**
+   * OPE-1161 E17 — `frozen` (nothing closed) vs `slow` (closing, but under the
+   * 14-day drain ratio), from the same detector and thresholds as the alert.
+   */
+  drainState: "frozen" | "slow" | null;
 };
 export type QueueDrainCard = {
   queues: QueueDrainTileRow[];
@@ -351,6 +369,8 @@ export type OverviewSnapshot = {
   accountEngagement: AccountEngagementCard;
   kpiStates: Map<KpiName, KpiStateRow>;
   actionQueue: ActionQueueEntry[];
+  /** OPE-1161 E16 — YELLOW KPIs held out of the queue because they were RED in the last 7 days. */
+  actionQueueSuppressed: KpiName[];
 };
 
 /** OPE-78 — SLA state of an action-queue item vs. its age-in-red threshold.

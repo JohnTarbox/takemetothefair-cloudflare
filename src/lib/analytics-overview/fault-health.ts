@@ -9,6 +9,7 @@
  * cold ledger renders "—" instead of NaN/divide-by-zero.
  */
 
+import { RENDER_FAULT_SOURCES } from "@/lib/faults/render-sources";
 import { count, gte } from "drizzle-orm";
 import { errorLogs, faultSignatures } from "@/lib/db/schema";
 import type { Db } from "./shared";
@@ -79,9 +80,15 @@ export async function loadRenderFaultHealth(
     }
   }
 
+  // OPE-1161 A2 — the share is of RENDER errors (the render-fault rail's own
+  // sources), not of every error_logs row. The old denominator mixed in API
+  // errors, cron logs and info rows, so the share mostly measured how chatty
+  // the rest of the system was. Prod 7d on 2026-09-25: 1 server-render vs 487
+  // client render errors.
   let totalErrorRows = 0;
   let serverRenderRows = 0;
   for (const e of errorRows) {
+    if (!RENDER_FAULT_SOURCES.includes(e.source ?? "")) continue;
     totalErrorRows += e.c;
     if (e.source === "server-render") serverRenderRows += e.c;
   }

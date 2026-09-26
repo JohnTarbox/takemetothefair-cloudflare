@@ -22,7 +22,7 @@ import {
   emptyDailySeries,
   fillDailySeries,
   fillDailySeriesTrimTrailing,
-  isoDaysAgo,
+  gscWindowRange,
   isoFromDate,
   trendOf,
   type Db,
@@ -76,21 +76,8 @@ export async function loadSearchVisibility(
   // number would mislead. Surfacing both honestly fixes the analyst's complaint
   // that "-100%" reads as catastrophic when Bing is delivering ~28 clicks fine.
   try {
-    const presetByDays: Record<number, "last_7d" | "last_28d" | "last_90d"> = {
-      7: "last_7d",
-      28: "last_28d",
-      30: "last_28d",
-      90: "last_90d",
-    };
-    const preset = presetByDays[days];
-    const dateRange = preset
-      ? { preset }
-      : (() => {
-          // Custom range: ending 3 days ago (GSC has reporting lag).
-          const end = isoDaysAgo(3);
-          const start = isoDaysAgo(3 + days);
-          return { startDate: start, endDate: end };
-        })();
+    // OPE-1161 B9 — N inclusive days, shared with Brand share.
+    const dateRange = gscWindowRange(days);
     // OPE-312 (audit A3) — read the headline from a TRUE property total.
     //
     // getSiteSearchQueries sums the rows it fetched, so its `totals` are really
@@ -202,21 +189,8 @@ export async function loadBrandVsNonBrand(env: ScEnv, days: number): Promise<Bra
   // discrepancy where SearchVisibility shows 25 clicks @ 7d but
   // brand+non-brand summed to 53 clicks @ 28d on the same page.
   try {
-    const presetByDays: Record<number, "last_7d" | "last_28d" | "last_90d"> = {
-      7: "last_7d",
-      28: "last_28d",
-      30: "last_28d",
-      90: "last_90d",
-    };
-    const preset = presetByDays[days];
-    const dateRange = preset
-      ? { preset }
-      : (() => {
-          const today = new Date();
-          const start = new Date(today.getTime() - days * 86400 * 1000);
-          const fmt = (d: Date) => d.toISOString().slice(0, 10);
-          return { startDate: fmt(start), endDate: fmt(today) };
-        })();
+    // OPE-1161 B9 — the same N-inclusive-day range as the Google clicks card.
+    const dateRange = gscWindowRange(days);
     const result = await getSiteSearchQueries(env, { rowLimit: QUERY_SAMPLE_CAP, dateRange });
     let brand_clicks = 0;
     let brand_impressions = 0;

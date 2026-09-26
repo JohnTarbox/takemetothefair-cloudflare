@@ -974,9 +974,12 @@ const AEO_DOMAIN_BUCKETS: Array<{ bucket: AeoBucket; domains: string[] }> = [
   // NOTE: `www.bing.com/chat` is path-scoped and GA4 sessionSource is
   // hostname-only, so Bing Copilot Chat traffic surfaces as `www.bing.com`
   // and isn't separable from organic Bing search here.
+  // OPE-1161 A6 — no DuckDuckGo hosts. `duckduckgo.com` is ordinary search,
+  // and `noai.duckduckgo.com` is DuckDuckGo with its AI features switched OFF;
+  // both were being counted as AI referrals.
   {
     bucket: "other",
-    domains: ["noai.duckduckgo.com", "duckduckgo.com", "you.com", "phind.com", "kagi.com"],
+    domains: ["you.com", "phind.com", "kagi.com"],
   },
 ];
 

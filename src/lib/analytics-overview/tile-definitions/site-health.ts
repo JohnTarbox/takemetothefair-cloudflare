@@ -31,12 +31,12 @@ export const SITE_HEALTH_TILES = {
   },
   "site-health.instrument.traffic": {
     measures:
-      "A flag, not a session count: 1 when organic search sessions fell 25% or more week over week, otherwise 0. Sessions are in the line below.",
+      "Organic search sessions in GA4 over the latest 7-day window; the colour flags a week-over-week drop.",
     source: "GA4 Data API: sessions filtered to sessionMedium = organic.",
     window:
       "7-day window ending two days ago (GA4 back-fill lag) versus the 7 days before it; queried on page load.",
     caveats:
-      "Organic search from all engines, not raw users. GA4 dates are inclusive, so each window spans 8 calendar days and the two share a boundary day. A dash means GA4 failed, not zero traffic.",
+      "Organic search from all engines, not raw users. Two back-to-back 7-day windows that do not overlap. A dash means GA4 failed, not zero traffic.",
     thresholds:
       "Amber at a week-over-week drop of 25% or more; never red. Grey 'unknown' when GA4 errors, which stops the verdict reading Healthy.",
   },
@@ -104,7 +104,7 @@ export const SITE_HEALTH_TILES = {
     window:
       "Open counts live. Resolutions and overrides: last 28 days. Trend: newest 28 snapshots, flagged stale when over 2 days old.",
     caveats:
-      "Operator overrides counts every discrepancy.create and discrepancy.resolve admin action, not only overrides. Adjudicated coverage excludes superseded bookkeeping and is blank when nothing was judged. Resolutions bucket by resolved_at.",
+      "'Operator discrepancy actions' counts every discrepancy.create and discrepancy.resolve admin action; no separate override action exists. Adjudicated coverage excludes superseded bookkeeping and is blank when nothing was judged. Resolutions bucket by resolved_at.",
   },
   "site-health.traffic": {
     measures:
@@ -113,7 +113,7 @@ export const SITE_HEALTH_TILES = {
     window:
       "7 days ending two days ago (GA4 back-fill lag) versus the prior 7 days; fetched on page load.",
     caveats:
-      "Organic search from all engines, not raw users or all sessions. GA4 dates are inclusive, so each '7d' window covers 8 days and the two share a boundary day. A dash means GA4 failed, not zero.",
+      "Organic search from all engines, not raw users or all sessions. Two back-to-back 7-day windows that do not overlap. A dash means GA4 failed, not zero.",
   },
   "site-health.engagement": {
     measures:
