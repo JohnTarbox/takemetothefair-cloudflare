@@ -7,6 +7,7 @@ import { Footer } from "@/components/layout/footer";
 import { UnverifiedBanner } from "@/components/layout/unverified-banner";
 import { WebVitals } from "@/components/WebVitals";
 import { ErrorAnalyticsBridge } from "@/components/ErrorAnalyticsBridge";
+import { TrafficAttributionCapture } from "@/components/analytics/TrafficAttributionCapture";
 import { OrganizationSchema } from "@/components/seo/OrganizationSchema";
 
 /**
@@ -147,6 +148,7 @@ export default function RootLayout({
         <Providers>
           <WebVitals />
           <ErrorAnalyticsBridge />
+          <TrafficAttributionCapture />
           <Header />
           <UnverifiedBanner />
           <main id="main-content" className="flex-1">

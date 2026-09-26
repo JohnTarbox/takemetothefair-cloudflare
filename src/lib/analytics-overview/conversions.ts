@@ -4,6 +4,10 @@
  */
 
 import { and, count, gte, inArray, lt, sql } from "drizzle-orm";
+import {
+  insufficientAttributionReason,
+  readOrganicConversionClicks,
+} from "@/lib/analytics/organic-conversion-clicks";
 import { analyticsEvents } from "@/lib/db/schema";
 import { getOrganicSessions, type Ga4Env } from "@/lib/ga4";
 import { freshness, rate as rateOf, unavailable } from "./render-state";
@@ -104,30 +108,28 @@ export async function loadConversionRate(
   const stableEndDate = new Date(stableEndMs);
   const fmt = (d: Date) => d.toISOString().slice(0, 10);
 
-  const [numRow, sessions] = await Promise.all([
-    db
-      .select({ n: count() })
-      .from(analyticsEvents)
-      .where(
-        and(
-          inArray(analyticsEvents.eventName, [...CONVERSION_EVENT_NAMES]),
-          gte(analyticsEvents.timestamp, stableStartDate),
-          lt(analyticsEvents.timestamp, stableEndDate)
-        )
-      ),
+  // OPE-1165 — organic clicks ÷ organic sessions, and "insufficient data"
+  // (not a number) until 21 days of clicks carry a traffic source.
+  const [clicks, sessions] = await Promise.all([
+    readOrganicConversionClicks(db, { since: stableStartDate, until: stableEndDate }),
     getOrganicSessions(env, fmt(stableStartDate), fmt(stableEndDate)),
   ]);
-  const conversions = numRow[0]?.n ?? 0;
-  const rate = sessions != null && sessions > 0 ? conversions / sessions : null;
+  const conversions = clicks.status === "ready" ? clicks.organicClicks : clicks.allClicks;
+  const rate =
+    clicks.status === "ready" && sessions != null && sessions > 0 ? conversions / sessions : null;
   return {
     conversions,
     sessions,
     rate,
     // OPE-1131 — a GA4 failure and an empty week both used to print "—".
+    // A GA4 outage is still named first — it is the louder, fixable cause.
     rateMeasured:
       sessions == null
         ? unavailable("GA4 organic sessions unavailable")
-        : rateOf(conversions, sessions, "no organic sessions in window"),
+        : clicks.status === "insufficient"
+          ? unavailable(insufficientAttributionReason(clicks))
+          : rateOf(conversions, sessions, "no organic sessions in window"),
+    organicBasis: clicks.status === "ready",
     windowDays: days,
     windowEndDate: fmt(stableEndDate),
   };

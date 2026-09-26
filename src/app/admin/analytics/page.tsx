@@ -857,12 +857,14 @@ function ConversionRateCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
       actionPrompt={actionPrompt}
       footer={
         <div className="flex flex-col gap-0.5 text-xs text-muted-foreground">
-          {/* OPE-1161 D13 — the numerator is ticket AND application clicks, from
-              every traffic source; the footer said "ticket clicks". The basis
-              mismatch (all-source clicks ÷ organic sessions) is a KPI-definition
-              choice raised with John, not changed here. */}
+          {/* OPE-1165 — organic clicks ÷ organic sessions once 21 days of clicks
+              carry a traffic source (John, OPE-1161 D13 option C). Until then
+              the rate is "insufficient data" and the footer keeps the #1418
+              all-source wording, so the number shown is never the old
+              mismatched fraction. */}
           <span>
-            {fmt(c.conversions)} ticket + application clicks (all sources) /{" "}
+            {fmt(c.conversions)} ticket + application clicks (
+            {c.organicBasis ? "organic search" : "all sources"}) /{" "}
             {c.sessions != null ? fmt(c.sessions) : "—"} organic sessions
           </span>
           <span title={`Window ends ${c.windowEndDate} (48h GA4 finalization lag)`}>

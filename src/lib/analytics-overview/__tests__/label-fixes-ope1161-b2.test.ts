@@ -194,8 +194,9 @@ describe("C11 — the big number is the value the badge is coloured from", () =>
 });
 
 describe("D13 — the conversion-rate footer says what the numerator is", () => {
-  it("ticket AND application clicks, all sources", () => {
-    expect(PAGE).toContain("ticket + application clicks (all sources)");
+  it("ticket AND application clicks, naming the basis (OPE-1165: organic search once live)", () => {
+    expect(PAGE).toContain("ticket + application clicks (");
+    expect(PAGE).toContain('c.organicBasis ? "organic search" : "all sources"');
     expect(PAGE).not.toMatch(/\{fmt\(c\.conversions\)\} ticket clicks \//);
   });
 });

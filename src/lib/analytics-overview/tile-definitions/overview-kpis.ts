@@ -55,12 +55,13 @@ export const OVERVIEW_KPI_TILES = {
   },
   "overview.conversion-rate": {
     measures:
-      "outbound_ticket_click plus outbound_application_click events divided by GA4 sessions whose medium is organic, over 7 days.",
-    source: "D1 `analytics_events` (numerator) and the GA4 Data API (organic sessions).",
+      "outbound_ticket_click plus outbound_application_click events from organic search visitors, divided by GA4 sessions whose medium is organic, over 7 days.",
+    source:
+      "D1 `analytics_events` (numerator; the click's trafficMedium, recorded GA4-style at landing) and the GA4 Data API (organic sessions).",
     window:
       "Fixed 7 days ending 48h ago (GA4 finalization lag); ignores the window selector. GA4 cached 10 min.",
     caveats:
-      "Ticket and application clicks from EVERY traffic source over organic search sessions only — a basis mismatch the click beacon cannot resolve (it records no source); raised with John. The rate can exceed 100%. No bot filter on clicks.",
+      "OPE-1165: clicks record their traffic source from the day it shipped. Until 21 days of attributed clicks exist the rate shows 'not measured' and the badge is INDETERMINATE (out of the action queue); the footer then counts clicks from all sources. Attribution is per browser tab (utm → referrer → direct), close to but not identical with GA4's 30-minute session. No bot filter on clicks. The 8%/5% thresholds were set on the old all-source basis and will be restated from the first 4 weeks of data.",
     thresholds:
       "Badge: green at 8% or more, red below 5%, amber between. STALE if GA4 data is over 96h old, or if the badge recompute stopped over 1h ago. Red or stale enters the action queue as P0.",
   },

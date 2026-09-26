@@ -10,22 +10,16 @@
  * Triggered every 10 min by the MCP-Worker cron at `*\/10 * * * *`. Pruning
  * to 90d runs on the same fire (cheap; ~5 rows per fire).
  */
-import { and, count, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, lt, sql } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "@/lib/db/schema";
-import {
-  adminActions,
-  analyticsEvents,
-  events,
-  kpiStateHistory,
-  timeToIndexLog,
-  vendors,
-} from "@/lib/db/schema";
+import { adminActions, events, kpiStateHistory, timeToIndexLog, vendors } from "@/lib/db/schema";
 import { SITEMAP_MIN_COMPLETENESS } from "@takemetothefair/utils";
 import { getMaxGa4DateWithUsers, getOrganicSessions, type Ga4Env } from "@/lib/ga4";
 import { getMaxGscDataDate, getSiteSearchQueries, type ScEnv } from "@/lib/search-console";
 import { classifyKpi, KPI_NAMES, type KpiName, type KpiState } from "@/lib/kpi-thresholds";
 import { dispatchKpiAlert } from "@/lib/kpi-alerts";
+import { readOrganicConversionClicks } from "@/lib/analytics/organic-conversion-clicks";
 import { publicEventWhere } from "@/lib/event-lifecycle";
 
 type Db = DrizzleD1Database<typeof schema>;
@@ -39,8 +33,6 @@ const MIN_TTI_SAMPLES_30D = 10;
 
 /** Brand-keyword list for brand_share. Mirrors analytics-overview.ts:277. */
 const BRAND_KEYWORDS = ["meet me at the fair", "meetmeatthefair", "mmatf", "take me to the fair"];
-
-const CONVERSION_EVENT_NAMES = ["outbound_ticket_click", "outbound_application_click"] as const;
 
 export type KpiValueResult = {
   /** The classifier value, or null when data isn't flowing yet. */
@@ -236,21 +228,30 @@ async function readConversionRate(
   // keeps flowing during a GA4 outage (it's our own beacon), so the meaningful
   // "is this metric trustworthy" axis is GA4. ga4MaxDate is the most recent
   // date GA4 reported users > 0; null means GA4 returned no data in 7d.
-  const [numRow, sessions] = await Promise.all([
-    db
-      .select({ n: count() })
-      .from(analyticsEvents)
-      .where(
-        and(
-          inArray(analyticsEvents.eventName, [...CONVERSION_EVENT_NAMES]),
-          gte(analyticsEvents.timestamp, sinceDate),
-          lt(analyticsEvents.timestamp, untilDate)
-        )
-      ),
+  //
+  // OPE-1165 — the numerator is ORGANIC clicks, matching the organic-session
+  // denominator. Until 21 days of clicks carry a traffic source the rate is
+  // not computed (null → INDETERMINATE, which stays out of the action queue).
+  const [clicks, sessions] = await Promise.all([
+    readOrganicConversionClicks(db, { since: sinceDate, until: untilDate }),
     getOrganicSessions(env, startDate, endDate),
   ]);
-  const numerator = numRow[0]?.n ?? 0;
   const dataAgeSeconds = ageSecondsFromIsoDate(ga4MaxDate);
+  if (clicks.status === "insufficient") {
+    return {
+      value: null,
+      dataAgeSeconds,
+      meta: {
+        allClicks: clicks.allClicks,
+        sessions,
+        window: { startDate, endDate },
+        ga4MaxDate,
+        firstAttributedAt: clicks.firstAttributedAt?.toISOString() ?? null,
+        reason: "insufficient_attributed_clicks",
+      },
+    };
+  }
+  const numerator = clicks.organicClicks;
   if (sessions == null || sessions === 0) {
     return {
       value: null,

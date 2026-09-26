@@ -123,17 +123,32 @@ describe("Overview — CTR / brand share over a capped GSC sample", () => {
 
 describe("Overview — rates with two different ways to be empty", () => {
   it("conversion rate: GA4 failure is unavailable; zero sessions is undefined", async () => {
+    // OPE-1165 — the loader now reads [all clicks], [first attributed click],
+    // then [organic clicks] once 21 days of attribution exist.
+    const attributedSince = [{ at: new Date(Date.now() - 40 * 86_400_000) }];
     ga4.getOrganicSessions.mockResolvedValueOnce(null);
-    const down = await loadConversionRate(stubDb([[{ n: 3 }]]), {} as never, 7);
+    const down = await loadConversionRate(
+      stubDb([[{ n: 3 }], attributedSince, [{ n: 3 }]] as never),
+      {} as never,
+      7
+    );
     expect(down.rateMeasured.state).toBe("unavailable");
     expect(measurementText(down.rateMeasured, pct)).toMatch(/GA4/);
 
     ga4.getOrganicSessions.mockResolvedValueOnce(0);
-    const empty = await loadConversionRate(stubDb([[{ n: 0 }]]), {} as never, 7);
+    const empty = await loadConversionRate(
+      stubDb([[{ n: 0 }], attributedSince, [{ n: 0 }]] as never),
+      {} as never,
+      7
+    );
     expect(empty.rateMeasured.state).toBe("undefined-rate");
 
     ga4.getOrganicSessions.mockResolvedValueOnce(200);
-    const live = await loadConversionRate(stubDb([[{ n: 4 }]]), {} as never, 7);
+    const live = await loadConversionRate(
+      stubDb([[{ n: 9 }], attributedSince, [{ n: 4 }]] as never),
+      {} as never,
+      7
+    );
     expect(live.rateMeasured).toEqual(ok(0.02));
   });
 
