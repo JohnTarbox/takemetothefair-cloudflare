@@ -722,6 +722,10 @@ export async function getActiveItems(db: Db): Promise<ActiveItem[]> {
  * Cheap: one SQL with COUNT(*) GROUP BY rule_id and an indexed range on
  * firstSeenAt. No new schema.
  */
+// ⚠️ OPE-1160 — do NOT compare this with `getActiveItems` counts. It counts a
+// different population (no last-seen window, snoozed items included), which is
+// how the dashboard's week-over-week chip showed "↓ −436" for a rule whose
+// active count had not fallen. A like-for-like trend needs stored history.
 export async function getOpenMatchCountsAsOf(db: Db, asOf: Date): Promise<Map<string, number>> {
   const rows = await db
     .select({
