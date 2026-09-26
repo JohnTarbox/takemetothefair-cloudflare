@@ -7,6 +7,8 @@
  *  1. **Fill-empty only.** If the event gained an image since the proposal was
  *     staged, approve refuses (409) and writes nothing — "never clobber an
  *     existing hero" is John's rule, and a stale proposal must not break it.
+ *     OPE-746 exception: a self-heal proposal (`replaces_dead_url`) may replace
+ *     that exact URL, and only if a fresh probe says it still does not load.
  *  2. **Through the upload pipeline.** The staged bytes are re-run through
  *     `runUploadPipeline` (magic-byte check, EXIF strip, WebP), exactly as a
  *     booth photo is on approve — the staged original is never published as-is.
@@ -26,6 +28,13 @@ export interface HeroResolveDeps {
   /** Read the staged object's bytes and stored content type; null when missing. */
   readObject(key: string): Promise<{ bytes: Uint8Array; contentType: string } | null>;
   runPipeline(args: Omit<RunPipelineArgs, "db" | "env">): Promise<PipelineResult>;
+  /**
+   * OPE-746 — re-probe a URL the rot sweep called dead. true = it loads now.
+   * Required to approve a replacement: the sweep has flagged live images before
+   * (8 of 13 on 2026-09-25), and a replacement over a working image is exactly
+   * the clobber rule 1 forbids.
+   */
+  probeUrl?(url: string): Promise<boolean>;
   now(): Date;
 }
 
@@ -45,6 +54,7 @@ interface StagedPayload {
   event_id?: string;
   photo_key?: string;
   content_type?: string;
+  replaces_dead_url?: string | null;
 }
 
 export async function resolveHeroProposal(
@@ -128,7 +138,27 @@ export async function resolveHeroProposal(
   if (!event) {
     return { status: 404, body: { ok: false, error: `Event not found: ${eventId}` } };
   }
-  if ((event.imageUrl ?? "").trim() !== "") {
+  const current = (event.imageUrl ?? "").trim();
+  const deadUrl = (payload.replaces_dead_url ?? "").trim();
+  // OPE-746 — a self-heal proposal may replace exactly the URL it was staged
+  // against, and only while that URL is still dead. Anything else is rule 1.
+  const replacingDead = current !== "" && deadUrl !== "" && current === deadUrl;
+  if (replacingDead) {
+    const loadsNow = deps.probeUrl ? await deps.probeUrl(current) : true;
+    if (loadsNow) {
+      return {
+        status: 409,
+        body: {
+          ok: false,
+          error: deps.probeUrl
+            ? "The image this proposal would replace loads now, so it is not dead. Reject this proposal instead."
+            : "Cannot confirm the current image is still dead (no probe available); refusing to overwrite it.",
+          current_image_url: event.imageUrl,
+        },
+      };
+    }
+  }
+  if (current !== "" && !replacingDead) {
     // Left UNRESOLVED on purpose: the operator should see why and reject it,
     // rather than have a decision recorded that nobody made.
     return {

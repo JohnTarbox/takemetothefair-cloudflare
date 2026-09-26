@@ -43,6 +43,9 @@ interface HeroPayload {
   width?: number | null;
   height?: number | null;
   demand_impressions?: number;
+  /** OPE-746 — set when this proposal would replace a hero the rot sweep found dead. */
+  replaces_dead_url?: string | null;
+  dead_status_code?: number | null;
 }
 
 function parse<T>(json: string | null): T | null {
@@ -63,7 +66,7 @@ export function registerHeroProposalTools(
 
   server.tool(
     "list_hero_proposals",
-    "OPE-227 — hero images the photo flywheel STAGED for imageless event pages: the organizer's own og:image, re-hosted on our R2, awaiting a human decision. Each row shows the event, its search demand, the staged image (photo_url — open it to judge), where it came from, and its dimensions. Nothing here is live on the site until resolve_hero_proposal approves it. Admin only. Read-only.",
+    "OPE-227 — hero images the photo flywheel STAGED for imageless event pages (or, OPE-746, pages whose hero the rot sweep found dead — replaces_dead_url is then set): the organizer's own og:image, re-hosted on our R2, awaiting a human decision. Each row shows the event, its search demand, the staged image (photo_url — open it to judge), where it came from, and its dimensions. Nothing here is live on the site until resolve_hero_proposal approves it. Admin only. Read-only.",
     {
       status: z
         .enum(["pending", "resolved", "all"])
@@ -139,6 +142,10 @@ export function registerHeroProposalTools(
             candidate_url: p.candidate_url ?? null,
             source_url: p.source_url ?? null,
             og_source: p.og_source ?? null,
+            // OPE-746 — non-null means approving REPLACES this dead image
+            // (after a fresh probe) rather than filling an empty slot.
+            replaces_dead_url: p.replaces_dead_url ?? null,
+            dead_status_code: p.dead_status_code ?? null,
           };
         })
         .filter((x) =>
