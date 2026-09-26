@@ -60,6 +60,13 @@ import { ledgerEmailSend } from "../mailer.js";
 import { isAutoReplyEnabled, AUTO_REPLY_HELD_REASON, type EmailGateEnv } from "../email-gates.js";
 import { shouldUseThreadReplyAck } from "../email-handlers/thread-reply-ack.js";
 import {
+  CLOSED_BY_SENDER_STATUS,
+  decideThreadAckGuard,
+  isConversationClosing,
+  type ThreadAckSuppressReason,
+} from "../email-handlers/thread-ack-suppression.js";
+import { isReplyToOurThread } from "../intent-fastpath.js";
+import {
   resolveOwedHuman,
   buildOwedHumanNotice,
   OWED_HUMAN_STATUS,
@@ -898,12 +905,45 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         context: { messageRowId, intent },
       });
     }
-    const isOwedHuman = owedHuman?.owed === true;
+    // OPE-1163 — a reply to our thread that only says thanks ends the
+    // conversation: no ack, no "waiting on you" status, no operator notice, no
+    // decision pause. The test abstains hard (see thread-ack-suppression.ts);
+    // a failed read resolves to NOT closing, which is today's behaviour.
+    let closedBySender = false;
+    try {
+      closedBySender = await step.do(
+        "thread/closed-by-sender",
+        { retries: { limit: 2, delay: "5 seconds", backoff: "constant" }, timeout: "10 seconds" },
+        async () => {
+          const [r] = await getDb(this.env.DB)
+            .select({
+              bodyText: inboundEmails.bodyText,
+              inReplyTo: inboundEmails.inReplyTo,
+              emailReferences: inboundEmails.emailReferences,
+            })
+            .from(inboundEmails)
+            .where(eq(inboundEmails.id, messageRowId))
+            .limit(1);
+          if (!r || !isReplyToOurThread(r.inReplyTo, r.emailReferences)) return false;
+          return isConversationClosing(r.bodyText);
+        }
+      );
+    } catch (err) {
+      await logError(this.env.DB, {
+        source: SOURCE,
+        message: "closed-by-sender check failed; treating as not closing",
+        sessionId,
+        error: err,
+        context: { messageRowId },
+      });
+    }
+    const isOwedHuman = owedHuman?.owed === true && !closedBySender;
 
     const needsAdminDecision =
       (intent === "correction" || intent === "press" || intent === "claim_request") &&
       !result.skipAdminDecision &&
-      !isOwedHuman;
+      !isOwedHuman &&
+      !closedBySender;
 
     // ⚠️ OPE-766 — THE PAUSE NO LONGER RUNS HERE. It moved to AFTER send-reply.
     //
@@ -1005,6 +1045,41 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           context: { messageRowId, replyKind: result.replyKind, intent },
         });
         result = { ...result, suppressReply: true };
+      }
+    }
+
+    // OPE-1163 — no `thread-reply-ack` into a live human conversation. Decided
+    // in its own step (a replay reuses it) BEFORE send-reply, and ledgered as
+    // 'stubbed' with the reason so every suppression is auditable next to the
+    // sends it replaced. The operator notice (OPE-1018) is unaffected: the
+    // person is still owed — and still gets — a human.
+    let threadAckSuppressed: ThreadAckSuppressReason | null = null;
+    if (result.replyKind !== null && !result.suppressReply) {
+      const replyKindBefore = result.replyKind;
+      const guard = await step.do(
+        "reply-guard/thread-ack",
+        { retries: { limit: 2, delay: "5 seconds", backoff: "constant" }, timeout: "10 seconds" },
+        async () =>
+          decideThreadAckGuard(getDb(this.env.DB), {
+            messageRowId,
+            replyKind: replyKindBefore,
+            closedBySender,
+          })
+      );
+      if (guard.reason) {
+        threadAckSuppressed = guard.reason;
+        await logError(this.env.DB, {
+          level: "info",
+          source: SOURCE,
+          message: `thread ack suppressed: ${guard.reason} (OPE-1163)`,
+          sessionId,
+          context: { messageRowId, replyKind: guard.kind, detail: guard.detail },
+        });
+        result = {
+          ...result,
+          replyKind: guard.kind as typeof result.replyKind,
+          suppressReply: true,
+        };
       }
     }
 
@@ -1606,7 +1681,13 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           .set({
             // OPE-1018 — the thread-reply-ack must not be what marks a waiting
             // customer as handled.
-            status: caughtError ? "failed" : isOwedHuman ? OWED_HUMAN_STATUS : result.status,
+            status: caughtError
+              ? "failed"
+              : closedBySender
+                ? CLOSED_BY_SENDER_STATUS
+                : isOwedHuman
+                  ? OWED_HUMAN_STATUS
+                  : result.status,
             error: caughtError ?? null,
             replyKind: result.replyKind ?? null,
             resultingEventId: result.resultingEventId ?? null,
@@ -1664,7 +1745,9 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
               });
               return;
             }
-            const notice = buildOwedHumanNotice(messageRowId, intent, verdict);
+            const notice = buildOwedHumanNotice(messageRowId, intent, verdict, {
+              ackSuppressed: threadAckSuppressed,
+            });
             await this.env.EMAIL_JOBS.send({
               to,
               subject: notice.subject,

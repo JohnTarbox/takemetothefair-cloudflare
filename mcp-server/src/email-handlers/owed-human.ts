@@ -148,14 +148,19 @@ function esc(s: string): string {
 export function buildOwedHumanNotice(
   messageRowId: string,
   intent: string | null,
-  v: OwedHumanVerdict
+  v: OwedHumanVerdict,
+  opts: { ackSuppressed?: string | null } = {}
 ): { subject: string; text: string; html: string } {
   const who = v.fromAddress ?? "(no sender)";
   const subject = `[MMATF] ${who} answered your email — waiting on you`;
   const lines = [
     `${who} replied on a thread where the last thing we sent was written by a person` +
       ` (${v.previousSendSource ?? "?"} at ${v.previousSendAt ?? "?"}).`,
-    `They got the automatic "it has gone to the person you've been corresponding with" ack. Nobody else has seen it.`,
+    // OPE-1163 — the ack is now withheld when a person here replied recently,
+    // so this line must not claim it went.
+    opts.ackSuppressed
+      ? `No automatic ack was sent (suppressed: ${opts.ackSuppressed}). This notice is the only thing that has happened.`
+      : `They got the automatic "it has gone to the person you've been corresponding with" ack. Nobody else has seen it.`,
     ``,
     `Subject: ${v.subject ?? "(no subject)"}`,
     `Received: ${v.receivedAt ?? "?"}`,
