@@ -1,5 +1,6 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
+import { resolveVendorTypeForWrite } from "@takemetothefair/vendor-linking";
 import { auth } from "@/lib/auth";
 import { requireVerifiedSession } from "@/lib/api-auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
@@ -148,6 +149,9 @@ export async function PATCH(request: NextRequest) {
       displayMode,
       displayName,
     } = validation.data;
+    // OPE-1113 — stored as the existing spelling of the same category.
+    const resolvedVendorType =
+      vendorType === undefined ? undefined : await resolveVendorTypeForWrite(db, vendorType);
 
     // Snapshot current vendor for slug-change detection, slug history,
     // and IndexNow material-change comparison. Mirrors the admin PATCH at
@@ -221,7 +225,7 @@ export async function PATCH(request: NextRequest) {
       }
     }
     if (description !== undefined) updateData.description = description;
-    if (vendorType !== undefined) updateData.vendorType = vendorType;
+    if (vendorType !== undefined) updateData.vendorType = resolvedVendorType;
     if (products) updateData.products = JSON.stringify(products);
     if (website !== undefined) updateData.website = website;
     if (logoUrl !== undefined) updateData.logoUrl = logoUrl;
@@ -359,7 +363,7 @@ export async function PATCH(request: NextRequest) {
     // Claimed, Verified Pro) that this self-edit surface can't touch.
     const materialChanged =
       (businessName !== undefined && businessName !== currentVendor.businessName) ||
-      (vendorType !== undefined && (vendorType ?? null) !== currentVendor.vendorType) ||
+      (vendorType !== undefined && (resolvedVendorType ?? null) !== currentVendor.vendorType) ||
       (description !== undefined && (description ?? null) !== currentVendor.description) ||
       (city !== undefined && (city ?? null) !== currentVendor.city) ||
       (state !== undefined && (state ?? null) !== currentVendor.state) ||

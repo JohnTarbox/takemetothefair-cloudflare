@@ -1,5 +1,6 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
+import { resolveVendorTypeForWrite } from "@takemetothefair/vendor-linking";
 import { withAuth } from "@/lib/api/with-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { vendors, users } from "@/lib/db/schema";
@@ -45,7 +46,8 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db, session })
       businessName: data.businessName,
       slug: createSlug(data.businessName),
       description: data.description,
-      vendorType: data.vendorType,
+      // OPE-1113 — stored as the existing spelling of the same category.
+      vendorType: await resolveVendorTypeForWrite(db, data.vendorType),
       products: JSON.stringify(data.products),
       website: data.website,
       socialLinks: data.socialLinks,

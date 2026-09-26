@@ -1,5 +1,6 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
+import { resolveVendorTypeForWrite } from "@takemetothefair/vendor-linking";
 import { withAuth, withAuthorized } from "@/lib/api/with-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import {
@@ -97,6 +98,12 @@ export const PATCH = withAuth<{ id: string }>(
     }
 
     const data = validation.data;
+    // OPE-1113 — resolve once, so the write and the change-detection below
+    // both see the stored spelling.
+    const vendorType =
+      data.vendorType === undefined
+        ? undefined
+        : await resolveVendorTypeForWrite(db, data.vendorType);
 
     try {
       // Get current vendor to check if slug needs updating + capture prior values
@@ -168,7 +175,7 @@ export const PATCH = withAuth<{ id: string }>(
         }
       }
       if (data.description !== undefined) updateData.description = data.description;
-      if (data.vendorType !== undefined) updateData.vendorType = data.vendorType;
+      if (vendorType !== undefined) updateData.vendorType = vendorType;
       if (data.website !== undefined) updateData.website = data.website;
       if (data.logoUrl !== undefined) updateData.logoUrl = data.logoUrl;
       // IMG1 §1b Phase 1 (2026-06-08) — focal point clamped.
@@ -483,7 +490,7 @@ export const PATCH = withAuth<{ id: string }>(
       // since they affect what's shown publicly (gallery, badge, contact form).
       const vendorMaterialChanged =
         (data.businessName !== undefined && data.businessName !== currentVendor.businessName) ||
-        (data.vendorType !== undefined && (data.vendorType ?? null) !== currentVendor.vendorType) ||
+        (vendorType !== undefined && (vendorType ?? null) !== currentVendor.vendorType) ||
         (data.description !== undefined &&
           (data.description ?? null) !== currentVendor.description) ||
         (data.city !== undefined && (data.city ?? null) !== currentVendor.city) ||
