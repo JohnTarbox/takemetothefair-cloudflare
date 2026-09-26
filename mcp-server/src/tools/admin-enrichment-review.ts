@@ -23,7 +23,11 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
-import { resolveVendorTypeForWrite, sameVendorType } from "@takemetothefair/vendor-linking";
+import {
+  mergeProductsJson,
+  routeVendorTypeForWrite,
+  sameVendorType,
+} from "@takemetothefair/vendor-linking";
 import { adminActions, vendorEnrichmentCandidates, vendors } from "../schema.js";
 import {
   jsonContent,
@@ -517,6 +521,8 @@ export function registerEnrichmentReviewTools(
           // silently applies, which is the exact clobber this guard prevents.
           // Every key of FIELD_TO_COLUMN has to appear here.
           vendorType: vendors.vendorType,
+          // OPE-1164 — a descriptive vendor_type proposal is merged into these.
+          products: vendors.products,
         })
         .from(vendors)
         .where(eq(vendors.id, cand.vendorId))
@@ -628,11 +634,18 @@ export function registerEnrichmentReviewTools(
       const overwrote = fillable ? undefined : liveValue;
       // OPE-1113 — a vendor_type is stored as the existing spelling of its
       // category (null only for blank input, which a staged proposal never is).
-      const applied =
-        cand.proposedField === "vendor_type"
-          ? ((await resolveVendorTypeForWrite(db, cand.proposedValue)) ?? cand.proposedValue)
-          : cand.proposedValue;
-      const update: Record<string, string> = { [col]: applied };
+      // OPE-1164 — a DESCRIPTIVE vendor_type proposal is product detail: it is
+      // appended to products and the stored category is left alone.
+      const update: Record<string, string> = {};
+      if (cand.proposedField === "vendor_type") {
+        const routed = await routeVendorTypeForWrite(db, cand.proposedValue);
+        if (routed.vendorType) update[col] = routed.vendorType;
+        if (routed.productsToAdd.length > 0) {
+          update.products = mergeProductsJson(vendor.products, routed.productsToAdd);
+        }
+      } else {
+        update[col] = cand.proposedValue;
+      }
       await db.update(vendors).set(update).where(eq(vendors.id, vendor.id));
 
       await logEnrichment(db, {

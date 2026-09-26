@@ -1,6 +1,6 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
-import { resolveVendorTypeForWrite } from "@takemetothefair/vendor-linking";
+import { mergeProductsJson, routeVendorCategoriesForWrite } from "@takemetothefair/vendor-linking";
 import { withAuth, withAuthorized } from "@/lib/api/with-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import {
@@ -99,11 +99,15 @@ export const PATCH = withAuth<{ id: string }>(
 
     const data = validation.data;
     // OPE-1113 — resolve once, so the write and the change-detection below
-    // both see the stored spelling.
-    const vendorType =
-      data.vendorType === undefined
-        ? undefined
-        : await resolveVendorTypeForWrite(db, data.vendorType);
+    // both see the stored spelling. OPE-1164 — the three axes too; a
+    // description in any category field is appended to products instead.
+    const routed = await routeVendorCategoriesForWrite(db, {
+      ...(data.vendorType !== undefined ? { vendorType: data.vendorType } : {}),
+      ...(data.sellsCategory !== undefined ? { sellsCategory: data.sellsCategory } : {}),
+      ...(data.businessSector !== undefined ? { businessSector: data.businessSector } : {}),
+      ...(data.vendorIdentity !== undefined ? { vendorIdentity: data.vendorIdentity } : {}),
+    });
+    const vendorType = "vendorType" in routed.values ? routed.values.vendorType : undefined;
 
     try {
       // Get current vendor to check if slug needs updating + capture prior values
@@ -113,6 +117,8 @@ export const PATCH = withAuth<{ id: string }>(
           slug: vendors.slug,
           businessName: vendors.businessName,
           vendorType: vendors.vendorType,
+          // OPE-1164 — a routed description is merged into these.
+          products: vendors.products,
           description: vendors.description,
           city: vendors.city,
           state: vendors.state,
@@ -176,6 +182,12 @@ export const PATCH = withAuth<{ id: string }>(
       }
       if (data.description !== undefined) updateData.description = data.description;
       if (vendorType !== undefined) updateData.vendorType = vendorType;
+      for (const col of ["sellsCategory", "businessSector", "vendorIdentity"] as const) {
+        if (col in routed.values) updateData[col] = routed.values[col] ?? null;
+      }
+      if (routed.productsToAdd.length > 0) {
+        updateData.products = mergeProductsJson(currentVendor.products, routed.productsToAdd);
+      }
       if (data.website !== undefined) updateData.website = data.website;
       if (data.logoUrl !== undefined) updateData.logoUrl = data.logoUrl;
       // IMG1 §1b Phase 1 (2026-06-08) — focal point clamped.

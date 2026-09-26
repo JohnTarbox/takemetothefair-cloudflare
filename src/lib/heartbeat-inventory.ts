@@ -146,6 +146,8 @@ export const HEARTBEAT_INVENTORY: Record<string, InventoryEntry> = {
     probes: ["image-coverage-scan", "photo-coverage-snapshot"],
   },
   "cron:runScheduledPromoterEnrichment": { probes: ["promoter-enrichment"] },
+  // OPE-1164 — weekly (Monday-gated) vendor-category new-value watch.
+  "cron:runScheduledVendorCategoryWatch": { probes: ["vendor-category-watch"] },
   "cron:runScheduledQueueRerank": U,
   "cron:runScheduledSelfConsistencyCron": U,
   "cron:runScheduledSiteHealthRefresh": { probes: ["site-health-refresh"] },

@@ -122,22 +122,151 @@ export async function resolveVendorTypeForWrite(
   db: VendorTypeDb,
   input: string | null | undefined
 ): Promise<string | null> {
+  return resolveCategoryForWrite(db, "vendorType", input);
+}
+
+/** The category columns on `vendors` (OPE-1164 adds the three axes). */
+export type VendorCategoryColumn =
+  | "vendorType"
+  | "sellsCategory"
+  | "businessSector"
+  | "vendorIdentity";
+
+/**
+ * The same one-spelling rule for any category column: resolve to the most-used
+ * existing spelling of the same category IN THAT COLUMN.
+ */
+export async function resolveCategoryForWrite(
+  db: VendorTypeDb,
+  columnName: VendorCategoryColumn,
+  input: string | null | undefined
+): Promise<string | null> {
   if (input == null) return null;
   const squashed = squash(input);
   if (squashed === "") return null;
+  const column = vendors[columnName];
   const forms = candidateLowerForms(squashed);
   const rows = await db
-    .select({ value: sql<string>`trim(${vendors.vendorType})`, count: sql<number>`count(*)` })
+    .select({ value: sql<string>`trim(${column})`, count: sql<number>`count(*)` })
     .from(vendors)
     .where(
-      sql`lower(trim(${vendors.vendorType})) IN (${sql.join(
+      sql`lower(trim(${column})) IN (${sql.join(
         forms.map((f) => sql`${f}`),
         sql`, `
       )})`
     )
-    .groupBy(sql`trim(${vendors.vendorType})`);
+    .groupBy(sql`trim(${column})`);
   return pickVendorTypeSpelling(
     squashed,
     rows.map((r) => ({ value: r.value, count: Number(r.count) }))
   );
+}
+
+// ── OPE-1164 — a description is not a category ─────────────────────────────
+//
+// 769 of ~1,200 vendor_type values describe exactly one vendor ("hand-turned
+// wooden bowls and cutting boards"). A value like that is product detail, and
+// storing it as a category is how the vocabulary grew by hundreds a month. So
+// a DESCRIPTIVE type that does not match an existing category is written to
+// `products` (the free-text list meant for specifics) and never becomes a new
+// category value. Short novel values still pass through — the weekly watch
+// reports them; rejecting them would need the controlled list John has not
+// decided yet.
+
+/** Longest category, in words / characters. Beyond this it is a description. */
+export const CATEGORY_MAX_WORDS = 4;
+export const CATEGORY_MAX_CHARS = 40;
+
+/** True when a type value reads as a description rather than a category. Pure. */
+export function isDescriptiveVendorType(value: string): boolean {
+  const v = squash(value);
+  if (v === "") return false;
+  if (v.length > CATEGORY_MAX_CHARS) return true;
+  // Words, not tokens: "Bath & Body / Soap" is three words.
+  if (v.split(" ").filter((w) => /[a-z0-9]/i.test(w)).length > CATEGORY_MAX_WORDS) return true;
+  // Sentence or list punctuation: "pottery, mugs; bowls", "We make soap."
+  return /[,;:.!?()]/.test(v);
+}
+
+export interface RoutedVendorType {
+  /** The value to store in vendor_type (undefined = leave the column alone). */
+  vendorType: string | null | undefined;
+  /** Items to append to `products` (the description, when routed). */
+  productsToAdd: string[];
+}
+
+/**
+ * Resolve a vendor_type about to be written (OPE-1113) and, when it is a
+ * description that matches no existing category, route it to `products`
+ * instead (OPE-1164). A description that IS an existing category (someone
+ * already uses it) is left alone — this changes new writes, not old rows.
+ */
+export async function routeVendorTypeForWrite(
+  db: VendorTypeDb,
+  input: string | null | undefined
+): Promise<RoutedVendorType> {
+  const r = await routeCategoryForWrite(db, "vendorType", input);
+  return { vendorType: r.value, productsToAdd: r.productsToAdd };
+}
+
+/** {@link routeVendorTypeForWrite} for any category column. */
+export async function routeCategoryForWrite(
+  db: VendorTypeDb,
+  columnName: VendorCategoryColumn,
+  input: string | null | undefined
+): Promise<{ value: string | null | undefined; productsToAdd: string[] }> {
+  if (input === undefined) return { value: undefined, productsToAdd: [] };
+  const resolved = await resolveCategoryForWrite(db, columnName, input);
+  if (resolved == null) return { value: null, productsToAdd: [] };
+  if (!isDescriptiveVendorType(resolved)) return { value: resolved, productsToAdd: [] };
+  const column = vendors[columnName];
+  const [existing] = await db
+    .select({ n: sql<number>`count(*)` })
+    .from(vendors)
+    .where(sql`trim(${column}) = ${resolved}`);
+  if (Number(existing?.n ?? 0) > 0) return { value: resolved, productsToAdd: [] };
+  return { value: undefined, productsToAdd: [resolved] };
+}
+
+/**
+ * Route vendor_type and the three axis fields together, collecting every
+ * description into one `productsToAdd` list. Only keys present in `input`
+ * appear in `values` (undefined = leave the column alone).
+ */
+export async function routeVendorCategoriesForWrite(
+  db: VendorTypeDb,
+  input: Partial<Record<VendorCategoryColumn, string | null | undefined>>
+): Promise<{
+  values: Partial<Record<VendorCategoryColumn, string | null>>;
+  productsToAdd: string[];
+}> {
+  const values: Partial<Record<VendorCategoryColumn, string | null>> = {};
+  const productsToAdd: string[] = [];
+  for (const col of ["vendorType", "sellsCategory", "businessSector", "vendorIdentity"] as const) {
+    if (!(col in input) || input[col] === undefined) continue;
+    const r = await routeCategoryForWrite(db, col, input[col]);
+    if (r.value !== undefined) values[col] = r.value;
+    productsToAdd.push(...r.productsToAdd);
+  }
+  return { values, productsToAdd };
+}
+
+/** Append items to a products JSON array, case-insensitively de-duplicated. Pure. */
+export function mergeProductsJson(current: string | null | undefined, add: string[]): string {
+  let list: string[] = [];
+  try {
+    const parsed = JSON.parse(current ?? "[]");
+    if (Array.isArray(parsed)) list = parsed.filter((x): x is string => typeof x === "string");
+  } catch {
+    /* a malformed products value is replaced by a well-formed one */
+  }
+  const seen = new Set(list.map((x) => x.trim().toLowerCase()));
+  for (const a of add) {
+    const t = a.trim();
+    if (t && !seen.has(t.toLowerCase())) {
+      list.push(t);
+      seen.add(t.toLowerCase());
+    }
+  }
+  return JSON.stringify(list);
 }

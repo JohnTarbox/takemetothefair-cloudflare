@@ -161,6 +161,8 @@ describe("OPE-975 — every probe's window is pinned", () => {
       // OPE-325 — demand-conditional: counts from an unanswered poster, not
       // from the last success, so a short window cannot cry wolf in a quiet month.
       "poster-evidence": 24,
+      // OPE-1164 — weekly run; one late fire tolerated.
+      "vendor-category-watch": 8 * 24,
       // OPE-1165 — demand-conditional on the newest outbound click.
       "click-traffic-attribution": 24,
       "ocr-attachment": 21 * 24,
