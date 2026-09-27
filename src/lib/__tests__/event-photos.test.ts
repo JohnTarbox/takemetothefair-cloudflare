@@ -109,3 +109,19 @@ describe("orderEventPhotos", () => {
     expect(input.map((x) => x.id)).toEqual(["a", "b"]);
   });
 });
+
+describe("OPE-1171 — entities are decoded before render", () => {
+  it("decodes a stored &amp; in the caption fallback", () => {
+    expect(
+      resolvePhotoAlt(
+        null,
+        "Sexual Assault Crisis &amp; Support Center booth",
+        "Winthrop Arts Fest"
+      )
+    ).toBe("Sexual Assault Crisis & Support Center booth");
+  });
+
+  it("decodes a stored &amp; in the alt itself", () => {
+    expect(resolvePhotoAlt("Petal &amp; Pearl", null, "Winthrop Arts Fest")).toBe("Petal & Pearl");
+  });
+});

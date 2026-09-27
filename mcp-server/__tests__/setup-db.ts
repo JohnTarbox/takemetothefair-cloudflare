@@ -513,6 +513,7 @@ const SCHEMA_SQL = `
     photo_url TEXT NOT NULL,
     caption TEXT,
     alt_text TEXT,
+    source_note TEXT,
     sort_order INTEGER NOT NULL DEFAULT 0,
     photo_type TEXT NOT NULL DEFAULT 'other',
     is_featured INTEGER NOT NULL DEFAULT 0,
@@ -1055,6 +1056,22 @@ const SCHEMA_SQL = `
     unit TEXT NOT NULL,
     note TEXT,
     updated_at INTEGER NOT NULL
+  );
+
+  -- OPE-1173 — mirrors drizzle/0150 exactly (no CHECK on status: prod holds
+  -- both the code's and the agents' vocabularies, see src/lib/faults/status.ts).
+  CREATE TABLE fault_signatures (
+    signature TEXT PRIMARY KEY NOT NULL,
+    route TEXT,
+    error_class TEXT NOT NULL,
+    first_seen INTEGER NOT NULL,
+    last_seen INTEGER NOT NULL,
+    count INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    ope_id TEXT,
+    filed_at INTEGER,
+    resolved_at INTEGER,
+    created_at INTEGER NOT NULL
   );
 
   CREATE TABLE email_suppression_list (
