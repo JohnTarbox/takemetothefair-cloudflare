@@ -1071,7 +1071,9 @@ const SCHEMA_SQL = `
     ope_id TEXT,
     filed_at INTEGER,
     resolved_at INTEGER,
-    created_at INTEGER NOT NULL
+    created_at INTEGER NOT NULL,
+    -- OPE-1174 — drizzle/0330.
+    inherited_from TEXT
   );
 
   CREATE TABLE email_suppression_list (

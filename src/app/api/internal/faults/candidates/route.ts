@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { and, desc, eq, gte, notInArray } from "drizzle-orm";
 import { withInternalKey } from "@/lib/api/with-auth";
-import { errorLogs, faultSignatures } from "@/lib/db/schema";
+import { errorLogs, faultSignatures, type FaultSignatureRow } from "@/lib/db/schema";
 import { logError } from "@/lib/logger";
 import {
   classifyNoise,
@@ -174,6 +174,8 @@ export const POST = withInternalKey({ source: "faults:candidates" }, async ({ db
         context: errorLogs.context,
         // OPE-577 — needed for extension-injection stack-shape detection.
         stackTrace: errorLogs.stackTrace,
+        // OPE-1174 — the DuckDuckGo condition on a stackless shape.
+        userAgent: errorLogs.userAgent,
         timestamp: errorLogs.timestamp,
       })
       .from(errorLogs)
@@ -210,6 +212,7 @@ export const POST = withInternalKey({ source: "faults:candidates" }, async ({ db
         route: r.route,
         context: r.context,
         stackTrace: r.stackTrace,
+        userAgent: r.userAgent,
       });
       if (verdict.noise) {
         const key = `${verdict.reason}:${verdict.matched}`;
@@ -360,6 +363,31 @@ export const POST = withInternalKey({ source: "faults:candidates" }, async ({ db
             target: faultSignatures.signature,
             set: { status: "filed", opeId: up.opeId, filedAt: now },
           });
+      } else if (up.op === "noise") {
+        // OPE-1174 — inherited ruling. On a racing insert, keep whatever the
+        // row already says: a person's ruling outranks an inherited one.
+        await db
+          .insert(faultSignatures)
+          .values({
+            signature: up.signature,
+            route: up.route,
+            errorClass: up.errorClass,
+            firstSeen: new Date(up.firstSeen),
+            lastSeen: new Date(up.lastSeen),
+            count: up.count,
+            // The Drizzle enum names only the code's four statuses; `noise` is
+            // one of the agent statuses OPE-811 kept (src/lib/faults/status.ts).
+            status: "noise" as FaultSignatureRow["status"],
+            opeId: null,
+            filedAt: null,
+            resolvedAt: null,
+            createdAt: new Date(up.createdAt),
+            inheritedFrom: "class",
+          })
+          .onConflictDoUpdate({
+            target: faultSignatures.signature,
+            set: { lastSeen: new Date(up.lastSeen), count: up.count },
+          });
       } else if (up.op === "touch") {
         await db
           .update(faultSignatures)
@@ -412,6 +440,7 @@ export const POST = withInternalKey({ source: "faults:candidates" }, async ({ db
         `regressions=${result.regressions.length} existing=${result.existing.length} ` +
         `deferred=${result.deferred.length} subThreshold=${result.subThreshold.length} ` +
         `linked=${result.linked.length} heldForSibling=${result.heldForSibling.length} ` +
+        `inheritedNoise=${result.inheritedNoise.length} ` +
         `ledgerWriteFailures=${ledgerWriteFailures}`,
       context: {
         ledgerWriteFailures,
@@ -425,6 +454,7 @@ export const POST = withInternalKey({ source: "faults:candidates" }, async ({ db
         subThreshold: result.subThreshold.length,
         linked: result.linked.length,
         heldForSibling: result.heldForSibling.length,
+        inheritedNoise: result.inheritedNoise.length,
       },
     });
 
@@ -479,6 +509,8 @@ export const POST = withInternalKey({ source: "faults:candidates" }, async ({ db
         // sibling being filed this run. Neither is work for the rail.
         linked: result.linked,
         heldForSibling: result.heldForSibling,
+        // OPE-1174 — minted as `noise` by class inheritance, never proposed.
+        inheritedNoise: result.inheritedNoise,
         // OPE-488 — the discarded-but-real groups, so a consumer can tell "quiet
         // traffic" from "everything fell just under the gate". Capped: this is a
         // diagnostic tally, not a work queue.

@@ -107,6 +107,37 @@ export const THIRD_PARTY_NOISE_DENYLIST: readonly string[] = [
 ];
 
 /**
+ * OPE-1174 — in-app-browser / extension shapes that are noise only when the
+ * error carries NO STACK (or, for one, a DuckDuckGo user agent).
+ *
+ * Each was ruled noise by hand on route after route, and because signatures
+ * are route-scoped every new page re-proposed it (specimen: `runtime.sendMessage
+ * … tab not found` — 5 rows ruled noise, a 6th minted on /events/maine ~11h
+ * later). Measured shape, all three: iOS host or extension, `stack_trace` NULL.
+ *
+ *   - DuckDuckGo iOS extension: `invalid call to runtime.sendmessage(). tab not
+ *     found.` — UA carries `Ddg/`.
+ *   - iOS in-app browser host: `wkwebview api client did not respond to this
+ *     postmessage`.
+ *   - iOS in-app browser: `invalid origin`.
+ *
+ * The stack condition is the point. A stackless throw has no frame of ours in
+ * it; the same words WITH a stack could be our own code, and stay candidates.
+ * Third-party class, so the OPE-173 auth carve-out applies: on /login or
+ * /register an origin error could be real and is never suppressed.
+ */
+export const STACKLESS_THIRD_PARTY_SHAPES: ReadonlyArray<{
+  /** Every substring must be present (raw or normalized message). */
+  all: readonly string[];
+  /** A user-agent substring that also qualifies when a stack is present. */
+  uaAlso?: string;
+}> = [
+  { all: ["runtime.sendmessage", "tab not found"], uaAlso: "ddg/" },
+  { all: ["wkwebview api client did not respond to this postmessage"] },
+  { all: ["invalid origin"] },
+];
+
+/**
  * Route prefixes where NOTHING is auto-suppressed (OPE-173).
  *
  * Conversion and auth paths: a suppressed fault here costs a signup or a claim,
@@ -227,8 +258,10 @@ export function classifyNoise(input: {
   context?: string | null;
   /** OPE-577 — for extension-injection stack-shape detection. */
   stackTrace?: string | null;
+  /** OPE-1174 — for the DuckDuckGo condition on a stackless shape. */
+  userAgent?: string | null;
 }): NoiseVerdict {
-  const { message, route, context, stackTrace } = input;
+  const { message, route, context, stackTrace, userAgent } = input;
   if (!message) return { noise: false, reason: null, matched: null };
   const raw = message.toLowerCase();
   const normalized = normalizeErrorClass(message);
@@ -253,6 +286,18 @@ export function classifyNoise(input: {
   if (provenance) {
     if (isNoiseExemptRoute(route)) return { noise: false, reason: null, matched: provenance };
     return { noise: true, reason: "third-party", matched: provenance };
+  }
+
+  // OPE-1174 — stack-conditioned shapes. Same carve-out as the list below.
+  const stackless = !stackTrace || !stackTrace.trim();
+  const ua = (userAgent ?? "").toLowerCase();
+  const shape = STACKLESS_THIRD_PARTY_SHAPES.find(
+    (sh) => sh.all.every(hits) && (stackless || (sh.uaAlso != null && ua.includes(sh.uaAlso)))
+  );
+  if (shape) {
+    const matched = `stackless:${shape.all.join(" … ")}`;
+    if (isNoiseExemptRoute(route)) return { noise: false, reason: null, matched };
+    return { noise: true, reason: "third-party", matched };
   }
 
   const thirdParty = THIRD_PARTY_NOISE_DENYLIST.find(hits);

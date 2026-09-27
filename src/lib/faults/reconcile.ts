@@ -76,6 +76,42 @@ export function shapeKey(route: string | null | undefined, errorClass: string): 
   return OPAQUE_CLASSES.has(c) ? null : c;
 }
 
+/**
+ * OPE-1174 — class-level noise inheritance.
+ *
+ * `shapeKey` lets a new route inherit a LIVE TICKET (OPE-613). This is its
+ * sibling for the other ruling: when a class has been judged `noise` on at
+ * least NOISE_INHERIT_MIN_ROWS routes, and nobody has ruled it a real fault on
+ * any route, a new route mints `noise` instead of a fresh `proposed` row that
+ * the OPE-84 scan must re-adjudicate. Specimen: 5 routes ruled noise, a sixth
+ * minted `proposed` ~11 hours later.
+ *
+ * Only for HIGH-INFORMATION classes. A bundle-everything message says nothing
+ * about which fault it is, so a noise ruling on one route is no evidence about
+ * another — the OPE-613 lesson, and the reason OPAQUE_CLASSES exists.
+ */
+export const NOISE_INHERIT_MIN_ROWS = 3;
+export const NOISE_INHERIT_MIN_CLASS_LENGTH = 20;
+const LOW_INFORMATION_CLASSES = new Set([
+  "undefined",
+  "script error.",
+  "script error",
+  "failed to fetch",
+  "load failed",
+  "[object event]",
+]);
+/** Statuses that are a counter-ruling: someone judged this class a real fault. */
+const REAL_FAULT_STATUSES = new Set(["open", "filed", "regressed"]);
+
+export function isHighInformationClass(errorClass: string): boolean {
+  const c = (errorClass ?? "").trim();
+  return (
+    c.length >= NOISE_INHERIT_MIN_CLASS_LENGTH &&
+    !LOW_INFORMATION_CLASSES.has(c) &&
+    !OPAQUE_CLASSES.has(c)
+  );
+}
+
 export type FaultStatus = "proposed" | "filed" | "done" | "regressed";
 
 /** One grouped fault for a scan window. Times are ms-epoch numbers. */
@@ -160,6 +196,20 @@ export type LedgerUpsert =
       createdAt: number;
       opeId: string;
     }
+  | {
+      /**
+       * OPE-1174 — mint a NEW row already ruled `noise`, inherited from its
+       * class's rulings on other routes (`inherited_from = 'class'`).
+       */
+      op: "noise";
+      signature: string;
+      route: string | null;
+      errorClass: string;
+      firstSeen: number;
+      lastSeen: number;
+      count: number;
+      createdAt: number;
+    }
   | { op: "touch"; signature: string; lastSeen: number; count: number }
   | { op: "regress"; signature: string; lastSeen: number; count: number };
 
@@ -214,6 +264,8 @@ export interface ReconcileFaultsResult {
    * that one is filed, these link to its ticket on the next run.
    */
   heldForSibling: Array<{ signature: string; errorClass: string; representative: string }>;
+  /** OPE-1174 — new signatures minted as `noise` by class inheritance. */
+  inheritedNoise: Array<{ signature: string; errorClass: string; noiseRows: number }>;
 }
 
 /** faultSigToken inlined (avoids a cross-module dep in the pure core). */
@@ -292,6 +344,19 @@ export function reconcileFaults(
     if (!prev || filedAt > prev.filedAt) liveTicketByShape.set(key, { opeId: row.opeId, filedAt });
   }
 
+  // OPE-1174 — per class: how many routes ruled it noise, and whether any
+  // route ruled it a real fault. Render lane only, like the shape key.
+  const noiseRowsByClass = new Map<string, number>();
+  const realFaultClasses = new Set<string>();
+  for (const row of bySignature.values()) {
+    if (!isRenderRoute(row.route)) continue;
+    const c = (row.errorClass ?? "").trim();
+    const status = String(row.status);
+    if (status === "noise") noiseRowsByClass.set(c, (noiseRowsByClass.get(c) ?? 0) + 1);
+    if (REAL_FAULT_STATUSES.has(status)) realFaultClasses.add(c);
+  }
+  const inheritedNoise: ReconcileFaultsResult["inheritedNoise"] = [];
+
   // OPE-613 — this window's occurrences per shape, across every route.
   const shapeTotals = new Map<string, { count: number; routes: Set<string> }>();
   for (const g of Array.isArray(grouped) ? grouped : []) {
@@ -343,6 +408,31 @@ export function reconcileFaults(
         opeId: liveTicket.opeId,
       });
       linked.push({ signature: g.signature, errorClass, opeId: liveTicket.opeId });
+      continue;
+    }
+
+    // OPE-1174 — a new route for a class ruled noise elsewhere, and never ruled
+    // a real fault anywhere. Minted as `noise`, whatever its count.
+    const classKey = errorClass.trim();
+    const noiseRows = noiseRowsByClass.get(classKey) ?? 0;
+    if (
+      !row &&
+      isRenderRoute(route) &&
+      noiseRows >= NOISE_INHERIT_MIN_ROWS &&
+      !realFaultClasses.has(classKey) &&
+      isHighInformationClass(classKey)
+    ) {
+      upserts.push({
+        op: "noise",
+        signature: g.signature,
+        route,
+        errorClass,
+        firstSeen: groupFirst,
+        lastSeen: groupLast,
+        count: groupCount,
+        createdAt: nowMs,
+      });
+      inheritedNoise.push({ signature: g.signature, errorClass, noiseRows });
       continue;
     }
 
@@ -584,5 +674,6 @@ export function reconcileFaults(
     subThreshold,
     linked,
     heldForSibling,
+    inheritedNoise,
   };
 }
