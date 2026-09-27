@@ -104,7 +104,16 @@ describe("runOccurredTransitionSweep — Pass 1 transition + roll", () => {
     seed({ id: "future", slug: "future-2027", endDate: new Date(Date.UTC(2027, 0, 1, 12, 0, 0)) });
     seed({ id: "cancelled", slug: "cancelled-2026", lifecycleStatus: "CANCELLED" });
     seed({ id: "pending", slug: "pending-2026", status: "PENDING" });
-    seed({ id: "noend", slug: "noend-2026", endDate: null });
+    // OPE-1176 — a NULL end date is a single-day event on its START date. It
+    // was ineligible here unconditionally (inherited from 0067's backfill
+    // guard, never argued for); it is ineligible only while that start date is
+    // still ahead. The past case now transitions — see the OPE-1176 block.
+    seed({
+      id: "noend",
+      slug: "noend-2026",
+      endDate: null,
+      startDate: new Date(Date.UTC(2026, 11, 5, 12, 0, 0)),
+    });
     seed({ id: "already", slug: "already-2026", lifecycleStatus: "OCCURRED" });
 
     const res = await runOccurredTransitionSweep(db, { now: NOW });
@@ -619,5 +628,58 @@ describe("Pass 4 — OPE-547: per-run heartbeat stamp", () => {
       .all()[0];
     expect(row.note).toContain("transitioned=1");
     expect(row.note).toContain("errors=0");
+  });
+});
+
+describe("OPE-1176 — a single-day event with no stored end date", () => {
+  const PAST_DAY = new Date(Date.UTC(2026, 6, 12, 12, 0, 0)); // 2026-07-12, before NOW
+  const FUTURE_DAY = new Date(Date.UTC(2026, 11, 5, 12, 0, 0)); // 2026-12-05, after NOW
+
+  it("transitions to OCCURRED on its start date when end_date is NULL", async () => {
+    seed({
+      id: "null-end-past",
+      slug: "strawberry-festival-2026",
+      startDate: PAST_DAY,
+      endDate: null,
+    });
+    // Landmark: an ordinary past event in the same run, so a transition count of
+    // zero could not be read as "the sweep did not run".
+    seed({ id: "ordinary-past", slug: "ordinary-2026" });
+
+    const res = await runOccurredTransitionSweep(db, { now: NOW });
+
+    expect(lifecycleOf("null-end-past")).toBe("OCCURRED");
+    expect(lifecycleOf("ordinary-past")).toBe("OCCURRED");
+    expect(res.transitioned).toBe(2);
+  });
+
+  it("leaves a FUTURE single-day event with NULL end_date alone", async () => {
+    seed({ id: "null-end-future", slug: "future-fest-2026", startDate: FUTURE_DAY, endDate: null });
+    await runOccurredTransitionSweep(db, { now: NOW });
+    expect(lifecycleOf("null-end-future")).toBe("SCHEDULED");
+  });
+
+  it("still never transitions TENTATIVE — that is a claim nobody made", async () => {
+    seed({
+      id: "null-end-tentative",
+      slug: "tentative-fest-2026",
+      startDate: PAST_DAY,
+      endDate: null,
+      lifecycleStatus: "TENTATIVE",
+    });
+    await runOccurredTransitionSweep(db, { now: NOW });
+    expect(lifecycleOf("null-end-tentative")).toBe("TENTATIVE");
+  });
+
+  it("a past TENTATIVE event with NULL end_date counts as over for roster research", async () => {
+    seed({
+      id: "null-end-tentative-roster",
+      slug: "tentative-roster-2026",
+      startDate: PAST_DAY,
+      endDate: null,
+      lifecycleStatus: "TENTATIVE",
+    });
+    await runOccurredTransitionSweep(db, { now: NOW });
+    expect(rosterStatusOf("null-end-tentative-roster")).not.toBeNull();
   });
 });
