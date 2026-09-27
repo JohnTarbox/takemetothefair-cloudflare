@@ -3298,6 +3298,8 @@ export const faultSignatures = sqliteTable(
     filedAt: integer("filed_at", { mode: "timestamp" }),
     resolvedAt: integer("resolved_at", { mode: "timestamp" }),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    /** OPE-1174 — 'class' when the status was inherited, not ruled. See drizzle/0330. */
+    inheritedFrom: text("inherited_from"),
   },
   (t) => [index("idx_fault_signatures_status").on(t.status)]
 );

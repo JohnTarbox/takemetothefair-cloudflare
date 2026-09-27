@@ -46,7 +46,7 @@ const SCHEMA_SQL = `
     signature TEXT PRIMARY KEY, route TEXT, error_class TEXT NOT NULL,
     first_seen INTEGER NOT NULL, last_seen INTEGER NOT NULL, count INTEGER NOT NULL,
     status TEXT NOT NULL, ope_id TEXT, filed_at INTEGER, resolved_at INTEGER,
-    created_at INTEGER NOT NULL
+    created_at INTEGER NOT NULL, inherited_from TEXT
   );
 `;
 
