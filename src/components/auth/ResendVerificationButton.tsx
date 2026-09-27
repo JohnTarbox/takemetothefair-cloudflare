@@ -1,7 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { Mail, Check, AlertCircle } from "lucide-react";
+import { readResendOutcome } from "@/lib/email/resend-result";
 
 interface Props {
   /**
@@ -23,11 +25,12 @@ interface Props {
   label?: string;
 }
 
-type Status = "idle" | "sending" | "sent" | "error";
+type Status = "idle" | "sending" | "sent" | "error" | "undeliverable";
 
 export function ResendVerificationButton({ email: prefilledEmail, label }: Props) {
   const [status, setStatus] = useState<Status>("idle");
   const [email, setEmail] = useState(prefilledEmail ?? "");
+  const [undeliverableTo, setUndeliverableTo] = useState("");
   const buttonLabel = label ?? "Resend verification email";
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -45,7 +48,12 @@ export function ResendVerificationButton({ email: prefilledEmail, label }: Props
       // here either. As long as the request succeeded, show a
       // success state — the user either has a fresh email on the way
       // or already knew the address was unknown.
-      setStatus(res.ok ? "sent" : "error");
+      //
+      // OPE-1172 — the one distinct answer is "this address cannot receive
+      // mail" (a 422 that depends only on the address, not on an account).
+      const outcome = await readResendOutcome(res, prefilledEmail ?? email);
+      if (outcome.kind === "undeliverable") setUndeliverableTo(outcome.email);
+      setStatus(outcome.kind);
     } catch {
       setStatus("error");
     }
@@ -59,6 +67,33 @@ export function ResendVerificationButton({ email: prefilledEmail, label }: Props
       >
         <Check className="w-4 h-4" aria-hidden="true" />
         Check your inbox — a fresh verification link is on its way.
+      </div>
+    );
+  }
+
+  if (status === "undeliverable") {
+    // OPE-1172 — copy approved by John 2026-09-27, verbatim. The address is
+    // always shown back: the traced case was a typo before the @. There is no
+    // change-email flow for unverified users, so the approved "[Update email
+    // address]" button is replaced with a sign-up link, as the approval says.
+    return (
+      <div
+        className="rounded-md border border-amber-dark/30 bg-amber-light px-4 py-3 text-sm"
+        role="alert"
+      >
+        <p className="font-semibold text-stone-900">
+          We couldn&apos;t deliver email to {undeliverableTo}.
+        </p>
+        <p className="mt-1 text-stone-800">
+          Messages to this address are being returned as undeliverable. Please check the spelling,
+          or use a different email address.
+        </p>
+        <p className="mt-2 text-stone-800">
+          or{" "}
+          <Link href="/register" className="font-medium underline">
+            sign up again with the correct address
+          </Link>
+        </p>
       </div>
     );
   }

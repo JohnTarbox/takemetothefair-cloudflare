@@ -11,6 +11,7 @@ import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { getSiteUrl } from "@/lib/email/send";
 import { enqueueEmail } from "@/lib/queues/producers";
 import { emailVerificationTemplate } from "@/lib/email/templates";
+import { isAddressUndeliverable } from "@/lib/email/undeliverable";
 
 const schema = z.object({ email: z.string().email().optional() });
 
@@ -36,6 +37,21 @@ export async function POST(request: NextRequest) {
 
     if (!targetEmail) {
       return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+    }
+
+    // OPE-1172 — an address that hard-bounced (or is suppressed for a
+    // complaint) cannot receive this email; sending only earns a provider
+    // rejection. Say so, and show the address back so a typo can be caught.
+    //
+    // Checked BEFORE the user lookup on purpose: the answer then depends only
+    // on whether the address bounces — which anyone can learn by emailing it —
+    // and never on whether an account exists. 422, not 200, so a client that
+    // only reads `res.ok` shows an error rather than "check your inbox".
+    if (await isAddressUndeliverable(db, targetEmail)) {
+      return NextResponse.json(
+        { ok: false, undeliverable: true, email: targetEmail },
+        { status: 422 }
+      );
     }
 
     const user = await db.query.users.findFirst({
