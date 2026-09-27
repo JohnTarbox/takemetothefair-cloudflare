@@ -20,7 +20,7 @@
  * successful match is an ingest that reports "all clear" when it is broken.
  */
 
-import { eq, inArray } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
 import type { Db } from "./db.js";
 import { emailDeliveryEvents, emailSendLedger, emailSuppressionList } from "./schema.js";
 import { logError } from "./logger.js";
@@ -210,7 +210,7 @@ export async function processDeliveryEvent(
   // then insert once. ON CONFLICT DO NOTHING is the idempotency guard: a
   // redelivered event neither re-suppresses nor re-applies.
   const candidates = messageIdCandidates(payload.messageId);
-  const ledgerRow =
+  const byProviderId =
     candidates.length > 0
       ? (
           await db
@@ -223,6 +223,11 @@ export async function processDeliveryEvent(
             .limit(1)
         )[0]
       : undefined;
+  const ledgerRow =
+    byProviderId ??
+    (status === "rejected"
+      ? await findRejectedSendRow(db, payload.recipient, eventTimestamp ?? now)
+      : undefined);
 
   const inserted = await db
     .insert(emailDeliveryEvents)
@@ -287,6 +292,50 @@ export async function processDeliveryEvent(
   if (shouldSuppress(status, bounceType)) {
     await suppressRecipient(db, payload.recipient, status);
   }
+}
+
+/**
+ * OPE-1172 — the ledger row a `rejected` event belongs to, when the provider id
+ * cannot join it.
+ *
+ * A rejected send THROWS from `env.EMAIL.send`, so the consumer never learns
+ * the provider's message id and its `failed` ledger row stores NULL there
+ * (queue-consumers.ts, `sendViaCfEmail`'s catch keeps only the message). Every
+ * rejection event therefore landed unmatched: 4 of them on 2026-09-26, against
+ * ledger row a7e640ff…, each logging "did not match any send ledger row".
+ *
+ * Fallback key: same recipient, a `failed` row with no provider id, sent within
+ * REJECTION_JOIN_WINDOW_MS of the event. Only for `rejected` — a delivered or
+ * bounced event always carries an id we stored, and joining those by address
+ * could attribute an outcome to the wrong send.
+ */
+export const REJECTION_JOIN_WINDOW_MS = 10 * 60 * 1000;
+
+async function findRejectedSendRow(
+  db: Db,
+  recipient: string | null | undefined,
+  at: Date
+): Promise<{ messageId: string; deliveryStatus: string | null } | undefined> {
+  const email = (recipient ?? "").trim().toLowerCase();
+  if (!email) return undefined;
+  const rows = await db
+    .select({
+      messageId: emailSendLedger.messageId,
+      deliveryStatus: emailSendLedger.deliveryStatus,
+    })
+    .from(emailSendLedger)
+    .where(
+      and(
+        eq(emailSendLedger.status, "failed"),
+        isNull(emailSendLedger.providerMessageId),
+        sql`lower(${emailSendLedger.recipient}) = ${email}`,
+        gte(emailSendLedger.sentAt, new Date(at.getTime() - REJECTION_JOIN_WINDOW_MS)),
+        lte(emailSendLedger.sentAt, new Date(at.getTime() + REJECTION_JOIN_WINDOW_MS))
+      )
+    )
+    .orderBy(desc(emailSendLedger.sentAt))
+    .limit(1);
+  return rows[0];
 }
 
 /** A later event may only raise the recorded outcome, never lower it. */

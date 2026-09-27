@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { Mail } from "lucide-react";
+import { readResendOutcome } from "@/lib/email/resend-result";
 
 interface Props {
   email: string;
@@ -24,7 +25,9 @@ interface Props {
  */
 export function UnverifiedBannerClient({ email }: Props) {
   const [resending, setResending] = useState(false);
-  const [resendStatus, setResendStatus] = useState<"idle" | "sent" | "error">("idle");
+  const [resendStatus, setResendStatus] = useState<"idle" | "sent" | "error" | "undeliverable">(
+    "idle"
+  );
 
   const handleResend = async () => {
     setResending(true);
@@ -35,7 +38,7 @@ export function UnverifiedBannerClient({ email }: Props) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email }),
       });
-      setResendStatus(res.ok ? "sent" : "error");
+      setResendStatus((await readResendOutcome(res, email)).kind);
     } catch {
       setResendStatus("error");
     } finally {
@@ -58,6 +61,18 @@ export function UnverifiedBannerClient({ email }: Props) {
               Verification email sent. Check your inbox.
             </span>
           )}
+          {resendStatus === "undeliverable" && (
+            // OPE-1172 — the approved compact copy. "update your email" is
+            // replaced by the sign-up path, the same substitution the approval
+            // prescribes for the button, because no change-email flow exists.
+            <span className="ml-2 text-danger font-medium" role="alert">
+              Email to {email} can&apos;t be delivered. Check the spelling or{" "}
+              <Link href="/register" className="underline">
+                sign up again with the correct address
+              </Link>
+              .
+            </span>
+          )}
           {resendStatus === "error" && (
             <span className="ml-2 text-danger font-medium">
               Couldn&apos;t resend.{" "}
@@ -71,7 +86,7 @@ export function UnverifiedBannerClient({ email }: Props) {
         <button
           type="button"
           onClick={handleResend}
-          disabled={resending || resendStatus === "sent"}
+          disabled={resending || resendStatus === "sent" || resendStatus === "undeliverable"}
           className="text-sm font-semibold text-navy hover:underline disabled:opacity-50 disabled:no-underline"
         >
           {resending ? "Sending…" : resendStatus === "sent" ? "Sent" : "Resend email"}
