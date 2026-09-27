@@ -180,6 +180,7 @@ import { registerPendingReplyTools } from "./admin-pending-replies.js";
 import { registerSupportObligationTools } from "./admin-support-obligations.js";
 import { registerExtractionFaultTools } from "./admin-extraction-faults.js";
 import { registerFaultFamilyTools } from "./admin-fault-family.js";
+import { registerIdeaTools } from "./admin-ideas.js";
 import { registerEmailThreadTools } from "./admin-email-threads.js";
 import { registerGscBackfillTools } from "./admin-gsc-backfill.js";
 import { registerVendorDigestTools } from "./admin-vendor-digest.js";
@@ -421,6 +422,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   registerSupportObligationTools(server, db, auth);
   registerExtractionFaultTools(server, db, auth);
   registerFaultFamilyTools(server, db, auth);
+  registerIdeaTools(server, db, auth);
   registerEmailThreadTools(server, db, auth);
   registerGscBackfillTools(server, auth, env);
   registerVendorDigestTools(server, auth, env);
