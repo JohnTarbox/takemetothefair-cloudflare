@@ -68,6 +68,7 @@ export function VendorGalleryManager({
   const [photos, setPhotos] = useState<ManagedPhoto[]>(initial);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [newAlt, setNewAlt] = useState("");
 
   async function send(url: string, init: RequestInit, key: string) {
     setBusy(key);
@@ -138,16 +139,26 @@ export function VendorGalleryManager({
     );
   }
 
-  async function saveCaption(id: string, caption: string, altText: string) {
-    await send(
+  /**
+   * OPE-1171 — send ONLY the field that changed, and mirror it locally.
+   *
+   * This used to PATCH both fields from the `photo` captured at render, which
+   * is never updated: edit the caption, then the alt, and the second blur
+   * re-sent the ORIGINAL caption — silently reverting the first edit.
+   */
+  async function saveText(id: string, field: "caption" | "alt", value: string) {
+    const current = photos.find((p) => p.id === id);
+    if (current && (current[field] ?? "") === value) return;
+    const ok = await send(
       `${apiBase}/${id}`,
       {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ caption, altText }),
+        body: JSON.stringify(field === "alt" ? { altText: value } : { caption: value }),
       },
       id
     );
+    if (ok) setPhotos((p) => p.map((x) => (x.id === id ? { ...x, [field]: value } : x)));
   }
 
   async function upload(file: File) {
@@ -157,6 +168,7 @@ export function VendorGalleryManager({
       const body = new FormData();
       body.set("vendorId", vendorId);
       body.set("file", file);
+      if (newAlt.trim()) body.set("altText", newAlt.trim());
       const res = await fetch(`${apiBase}/upload`, { method: "POST", body });
       if (!res.ok) {
         // The server's message is written for the vendor ("Your gallery is
@@ -166,6 +178,7 @@ export function VendorGalleryManager({
         setError(b.error ?? `Upload failed (${res.status})`);
         return;
       }
+      setNewAlt("");
       onChanged?.();
     } catch {
       setError("Upload failed — check your connection.");
@@ -174,29 +187,51 @@ export function VendorGalleryManager({
     }
   }
 
+  // OPE-1171 — ask for alt text at the moment of upload, when the person
+  // knows what the photo shows. Blank is still accepted (a missing
+  // description should not cost a maker their photo), but the row it creates
+  // keeps asking until one is written.
   const uploader = !uploadEnabled ? null : (
-    <label className="mt-3 inline-flex cursor-pointer items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-foreground hover:bg-muted">
-      {busy === "upload" ? (
-        <Loader2 className="h-4 w-4 animate-spin" />
-      ) : (
-        <Upload className="h-4 w-4" />
-      )}
-      {busy === "upload" ? "Uploading…" : "Add a photo"}
+    <div className="mt-3">
+      <label className="block text-sm font-medium text-foreground" htmlFor="gallery-new-alt">
+        Describe the photo you&apos;re adding
+      </label>
       <input
-        type="file"
-        accept="image/jpeg,image/png,image/webp"
-        className="sr-only"
+        id="gallery-new-alt"
+        type="text"
+        value={newAlt}
+        onChange={(e) => setNewAlt(e.target.value)}
+        placeholder="e.g. Blue hexagon crossbody bag with a honeybee print"
+        maxLength={300}
         disabled={busy !== null}
-        onChange={(e) => {
-          const f = e.target.files?.[0];
-          // Reset the input so re-picking the SAME file fires change again —
-          // otherwise a failed upload cannot be retried without picking a
-          // different file, which reads as the button being dead.
-          e.target.value = "";
-          if (f) void upload(f);
-        }}
+        className="mt-1 w-full rounded border border-border px-2 py-1 text-sm"
       />
-    </label>
+      <p className="mt-1 text-xs text-muted-foreground">
+        Screen readers read this aloud to visitors who can&apos;t see the photo.
+      </p>
+      <label className="mt-2 inline-flex cursor-pointer items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-foreground hover:bg-muted">
+        {busy === "upload" ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : (
+          <Upload className="h-4 w-4" />
+        )}
+        {busy === "upload" ? "Uploading…" : "Add a photo"}
+        <input
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          className="sr-only"
+          disabled={busy !== null}
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            // Reset the input so re-picking the SAME file fires change again —
+            // otherwise a failed upload cannot be retried without picking a
+            // different file, which reads as the button being dead.
+            e.target.value = "";
+            if (f) void upload(f);
+          }}
+        />
+      </label>
+    </div>
   );
 
   if (photos.length === 0) {
@@ -251,17 +286,27 @@ export function VendorGalleryManager({
                     defaultValue={photo.caption ?? ""}
                     placeholder="Caption (optional)"
                     maxLength={300}
-                    onBlur={(e) => saveCaption(photo.id!, e.target.value, photo.alt)}
+                    onBlur={(e) => saveText(photo.id!, "caption", e.target.value)}
                     className="w-full rounded border border-border px-2 py-1 text-sm"
                   />
                   <input
                     type="text"
                     defaultValue={photo.alt}
                     placeholder="Alt text — describe the photo for screen readers"
+                    aria-label="Alt text"
+                    aria-invalid={!photo.alt.trim()}
                     maxLength={300}
-                    onBlur={(e) => saveCaption(photo.id!, photo.caption ?? "", e.target.value)}
-                    className="mt-2 w-full rounded border border-border px-2 py-1 text-sm"
+                    onBlur={(e) => saveText(photo.id!, "alt", e.target.value)}
+                    className={`mt-2 w-full rounded border px-2 py-1 text-sm ${
+                      photo.alt.trim() ? "border-border" : "border-amber-500"
+                    }`}
                   />
+                  {!photo.alt.trim() && (
+                    <p className="mt-1 text-xs text-amber-700">
+                      Add a description — without one, screen readers can only say
+                      &ldquo;photo&rdquo;.
+                    </p>
+                  )}
                 </>
               )}
             </div>

@@ -22,6 +22,7 @@ import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "@/lib/db/schema";
 import { eventPhotos } from "@/lib/db/schema";
 import { rotationCdnOption } from "@takemetothefair/db-schema";
+import { decodeHtmlEntities } from "@takemetothefair/utils";
 
 type Db = DrizzleD1Database<typeof schema>;
 
@@ -57,9 +58,11 @@ export function resolvePhotoAlt(
   caption: string | null | undefined,
   eventName: string
 ): string {
-  const trimmedAlt = alt?.trim();
+  // OPE-1171 — decoded, because React escapes on render: a stored `&amp;`
+  // would otherwise be announced and displayed as the text "&amp;".
+  const trimmedAlt = decodeHtmlEntities(alt ?? "").trim();
   if (trimmedAlt) return trimmedAlt;
-  const trimmedCaption = caption?.trim();
+  const trimmedCaption = decodeHtmlEntities(caption ?? "").trim();
   if (trimmedCaption) return trimmedCaption;
   return `Photo from ${eventName}`;
 }
@@ -97,7 +100,7 @@ export async function getEventGallery(
       id: r.id,
       url: r.url,
       alt: resolvePhotoAlt(r.alt, r.caption, eventName),
-      caption: r.caption ?? undefined,
+      caption: decodeHtmlEntities(r.caption ?? "").trim() || undefined,
       isFeatured: !!r.isFeatured,
       rotation: rotationCdnOption(r.rotation),
     }))

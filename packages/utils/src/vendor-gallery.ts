@@ -15,6 +15,7 @@
  * The query itself stays per-surface — each has its own Drizzle client and
  * table binding — but everything downstream of the rows is here.
  */
+import { decodeHtmlEntities } from "./index";
 
 export interface VendorGalleryPhoto {
   /** `vendor_photos.id`, or null for a legacy JSON entry (which has no id). */
@@ -94,4 +95,35 @@ export function resolveVendorGallery(
 ): VendorGalleryPhoto[] {
   if (tableRows.length === 0) return orderGalleryPhotos(parseLegacyGallery(legacyGalleryJson));
   return orderGalleryPhotos(tableRows);
+}
+
+/**
+ * OPE-1171 — the text a PUBLIC surface shows for each photo: a decoded caption
+ * (or none) and an alt that is never blank.
+ *
+ * Display-only, and deliberately not folded into `resolveVendorGallery`: the
+ * vendor's own editor reads through that function too, and a derived alt there
+ * would look like one the vendor had already written — so the upload prompt
+ * would stop asking.
+ *
+ * Why `alt` must never be blank: `alt=""` tells a screen reader the image is
+ * decorative and to skip it, which is false for a maker's product photo. On
+ * 2026-09-27, 104 of 105 live vendor photos rendered exactly that. The chain
+ * is the stored alt, then the caption, then "<vendor> photo N" (N counts the
+ * displayed order, so it matches what a sighted visitor sees).
+ *
+ * Decoding: captions and alts were written by several paths, some of which
+ * stored `&amp;` literally. React escapes on render, so an undecoded entity
+ * ships to the page as the visible text "&amp;".
+ */
+export function galleryDisplayText<T extends { alt: string; caption?: string }>(
+  photos: T[],
+  subjectName: string
+): (T & { alt: string; caption?: string })[] {
+  return photos.map((p, i) => {
+    const caption = decodeHtmlEntities(p.caption ?? "").trim() || undefined;
+    const alt =
+      decodeHtmlEntities(p.alt ?? "").trim() || caption || `${subjectName} photo ${i + 1}`;
+    return { ...p, alt, caption };
+  });
 }

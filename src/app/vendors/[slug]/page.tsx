@@ -60,6 +60,7 @@ import {
   canonicalParentSlugFor,
   chunkedInArray,
   displayVendorName,
+  galleryDisplayText,
   type DisplayableParent,
   type ParentDisplayInput,
   type VendorDisplayInput,
@@ -873,7 +874,11 @@ export default async function VendorDetailPage({ params }: Props) {
   // Until PR #740's table is read by something, it is write-only: prod held
   // 0 rows and no code selected from it.
   const galleryPhotos = await getVendorGallery(getCloudflareDb(), vendor.id, vendor.galleryImages);
-  const galleryImages: GalleryImage[] = galleryPhotos.map((p) => ({
+  // OPE-1171 — decoded captions and a never-blank alt, for display only.
+  const galleryImages: GalleryImage[] = galleryDisplayText(
+    galleryPhotos,
+    resolveDisplayName(vendor)
+  ).map((p) => ({
     url: p.url,
     alt: p.alt,
     caption: p.caption,

@@ -43,25 +43,37 @@ export function VendorGallery({ images, vendorName }: Props) {
 
   if (images.length === 0) return null;
 
+  // OPE-1171 — a heading and a visible caption per photo. Captions were
+  // stored and returned by every reader but shown only inside the lightbox,
+  // so a visitor who never clicked never saw one.
   return (
-    <>
+    <section aria-labelledby="vendor-gallery-heading">
+      <h2 id="vendor-gallery-heading" className="text-xl font-semibold text-foreground mb-3">
+        Photos
+      </h2>
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
         {images.map((img, i) => (
-          <button
-            key={img.url}
-            type="button"
-            onClick={() => setOpen(i)}
-            className="aspect-square relative overflow-hidden rounded-lg border border-border hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-royal"
-            aria-label={`Open ${img.alt || "image"} from ${vendorName} gallery`}
-          >
-            <Image
-              src={withRotation(img.url, img.rotation)}
-              alt={img.alt}
-              fill
-              sizes="(max-width: 768px) 50vw, 300px"
-              className="object-cover"
-            />
-          </button>
+          <figure key={img.url} className="m-0">
+            <button
+              type="button"
+              onClick={() => setOpen(i)}
+              className="aspect-square relative w-full overflow-hidden rounded-lg border border-border hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-royal"
+              aria-label={`Open ${img.alt || "image"} from ${vendorName} gallery`}
+            >
+              <Image
+                src={withRotation(img.url, img.rotation)}
+                alt={img.alt}
+                fill
+                sizes="(max-width: 768px) 50vw, 300px"
+                className="object-cover"
+              />
+            </button>
+            {img.caption && (
+              <figcaption className="mt-1 text-sm text-muted-foreground line-clamp-2">
+                {img.caption}
+              </figcaption>
+            )}
+          </figure>
         ))}
       </div>
 
@@ -97,6 +109,6 @@ export function VendorGallery({ images, vendorName }: Props) {
           </div>
         </div>
       )}
-    </>
+    </section>
   );
 }
