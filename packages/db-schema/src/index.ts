@@ -4795,6 +4795,75 @@ export const pageErrorCanaryState = sqliteTable(
   ]
 );
 
+// OPE-1178 (drizzle/0331, 2026-09-27) — product IDEAS: features and
+// improvements worth remembering, not yet decided. Deliberately its OWN table:
+// every existing tracker (event_discrepancies, problem_reports,
+// site_health_issues, extraction_faults, fault_signatures) is a DEFECT ledger
+// with counts, KPIs and silence alarms built on it, and an idea filed into one
+// would inflate a defect total and be "resolved" by a fault workflow.
+//
+// Reading across is allowed (John, 2026-09-27): `related_refs` points at
+// fault-side rows, and fault-side code may read this table. What must never
+// happen is COUNTING — no defect total, KPI, stuck-red signal or alarm reads
+// this table as work.
+export const IDEA_PRODUCTS = ["mmatf", "cardworks", "other"] as const;
+export const IDEA_SOURCE_TYPES = [
+  "customer_email",
+  "organizer",
+  "vendor",
+  "john",
+  "agent",
+  "other",
+] as const;
+export const IDEA_STATUSES = ["new", "considering", "planned", "declined", "shipped"] as const;
+/** `related_refs` entries are `<kind>:<id>`; these are the kinds. */
+export const IDEA_REF_KINDS = [
+  "event_discrepancies",
+  "problem_reports",
+  "site_health_issues",
+  "extraction_faults",
+  "fault_signatures",
+  "cpi",
+  "idea",
+] as const;
+
+export const productIdeas = sqliteTable(
+  "product_ideas",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    title: text("title").notNull(),
+    description: text("description"),
+    product: text("product", { enum: IDEA_PRODUCTS }).notNull().default("mmatf"),
+    area: text("area"),
+    sourceType: text("source_type", { enum: IDEA_SOURCE_TYPES }).notNull().default("other"),
+    /** e.g. an inbound_email id or a URL. */
+    sourceRef: text("source_ref"),
+    /** JSON string[] — further source refs recorded when the idea recurs. */
+    extraSourceRefs: text("extra_source_refs").notNull().default("[]"),
+    /** A NAME only. Never an email address (enforced at the write tools). */
+    sourcePerson: text("source_person"),
+    status: text("status", { enum: IDEA_STATUSES }).notNull().default("new"),
+    /** The OPE id once the idea becomes work. */
+    linkedIssue: text("linked_issue"),
+    /** Bumped each time the same idea comes up again. */
+    votes: integer("votes").notNull().default(1),
+    /** JSON string[] of `<kind>:<id>` — see IDEA_REF_KINDS. */
+    relatedRefs: text("related_refs").notNull().default("[]"),
+    notes: text("notes"),
+    createdBy: text("created_by"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    index("idx_product_ideas_status").on(t.status),
+    index("idx_product_ideas_created_at").on(t.createdAt),
+  ]
+);
+
+export type ProductIdeaRow = typeof productIdeas.$inferSelect;
+
 // UR1 Phase 1 (drizzle/0104, 2026-06-04) — user-reported problem tracking.
 // Direct response to the 6/3-6/4 outage being caught by a user not by
 // monitoring (17h MTTD). Web form + email intake both write here; the
