@@ -513,6 +513,7 @@ const SCHEMA_SQL = `
     photo_url TEXT NOT NULL,
     caption TEXT,
     alt_text TEXT,
+    source_note TEXT,
     sort_order INTEGER NOT NULL DEFAULT 0,
     photo_type TEXT NOT NULL DEFAULT 'other',
     is_featured INTEGER NOT NULL DEFAULT 0,

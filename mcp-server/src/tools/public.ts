@@ -39,6 +39,7 @@ import {
   displayVendorName,
   chunkIds,
   resolveVendorGallery,
+  galleryDisplayText,
   type ParentDisplayInput,
   type VendorDisplayInput,
 } from "@takemetothefair/utils";
@@ -1453,17 +1454,22 @@ export function registerPublicTools(server: McpServer, db: Db) {
         .where(and(eq(vendorPhotos.vendorId, vendor.id), isNull(vendorPhotos.deletedAt)))
         .orderBy(asc(vendorPhotos.sortOrder));
 
-      const gallery = resolveVendorGallery(
-        galleryRows.map((r) => ({
-          id: r.id,
-          url: r.url,
-          alt: r.alt ?? "",
-          caption: r.caption ?? undefined,
-          isFeatured: !!r.isFeatured,
-          isLegacy: false,
-          rotation: rotationCdnOption(r.rotation),
-        })),
-        vendor.galleryImages
+      // OPE-1171 — the same display text the page renders (decoded caption,
+      // never-blank alt), so this reader can verify what the page shows.
+      const gallery = galleryDisplayText(
+        resolveVendorGallery(
+          galleryRows.map((r) => ({
+            id: r.id,
+            url: r.url,
+            alt: r.alt ?? "",
+            caption: r.caption ?? undefined,
+            isFeatured: !!r.isFeatured,
+            isLegacy: false,
+            rotation: rotationCdnOption(r.rotation),
+          })),
+          vendor.galleryImages
+        ),
+        resolvedDisplayName
       );
 
       return {

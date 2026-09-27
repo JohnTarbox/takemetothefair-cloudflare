@@ -1176,9 +1176,15 @@ export const vendorPhotos = sqliteTable(
       .references(() => vendors.id, { onDelete: "cascade" }),
     /** R2-backed master on cdn.meetmeatthefair.com. Never a hot-linked origin. */
     photoUrl: text("photo_url").notNull(),
+    /** PUBLIC — rendered under the photo. Provenance goes in `sourceNote`. */
     caption: text("caption"),
     /** Accessibility text. Falls back to the vendor name at render time. */
     altText: text("alt_text"),
+    /**
+     * OPE-1171 — INTERNAL provenance ("From vendor's Facebook page, …").
+     * Never selected by a public reader; see drizzle/0328.
+     */
+    sourceNote: text("source_note"),
     sortOrder: integer("sort_order").notNull().default(0),
     /**
      * booth | product | owner | other. TS-only enum (VENDOR_PHOTO_TYPES below)
@@ -1233,8 +1239,11 @@ export const eventPhotos = sqliteTable(
       .notNull()
       .references(() => events.id, { onDelete: "cascade" }),
     photoUrl: text("photo_url").notNull(),
+    /** PUBLIC — rendered under the photo. Provenance goes in `sourceNote`. */
     caption: text("caption"),
     altText: text("alt_text"),
+    /** OPE-1171 — INTERNAL provenance. Never selected by a public reader. */
+    sourceNote: text("source_note"),
     sortOrder: integer("sort_order").notNull().default(0),
     /** midway | vendors | food | stage | other — TS-only (EVENT_PHOTO_TYPES). */
     photoType: text("photo_type").notNull().default("other"),
