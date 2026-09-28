@@ -38,6 +38,8 @@ import {
   slugCandidates,
   type Slug,
   venueLocationCompatible,
+  venueStateConflict,
+  sourceOutsideNewEngland,
   checkFormerVenue,
 } from "@takemetothefair/utils";
 import { loadGuardVenue } from "../venues/lifecycle.js";
@@ -860,11 +862,15 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
       let venueId: string | null = null;
       let venueResult: { matched: boolean; venueId: string; name: string } | null = null;
 
+      // OPE-1206 — the source's own state (the caller's venue_state) vs the
+      // venue it would be linked to. Set when they disagree.
+      let venueStateMismatch: { sourceState: string; venueState: string; venueId: string } | null =
+        null;
       if (params.venue_id) {
         // K44 — explicit link. Validate the id exists, then use it verbatim and
         // skip all name-matching/creation. The orphan-proof path.
         const [v] = await db
-          .select({ id: venues.id, name: venues.name })
+          .select({ id: venues.id, name: venues.name, state: venues.state })
           .from(venues)
           .where(eq(venues.id, params.venue_id))
           .limit(1);
@@ -874,8 +880,17 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
             isError: true,
           };
         }
-        venueId = v.id;
-        venueResult = { matched: true, venueId: v.id, name: v.name };
+        // OPE-1206 — an explicit venue_id used to be linked unconditionally:
+        // how the Portland OREGON holiday market sat on the Portland MAINE Expo.
+        // A venue in a different state than the one the caller gives is NOT
+        // linked; the event lands venue-less, PENDING and flagged.
+        const conflict = venueStateConflict(params.venue_state, v.state);
+        if (conflict) {
+          venueStateMismatch = { ...conflict, venueId: v.id };
+        } else {
+          venueId = v.id;
+          venueResult = { matched: true, venueId: v.id, name: v.name };
+        }
       } else if (params.venue_name) {
         // DQ2 (2026-06-04): coerce address-as-name BEFORE slug + dedup. AI
         // extraction occasionally pulls a street address as the venue
@@ -1264,7 +1279,13 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
           : null,
         description,
       });
-      const eventStatus = gateResult.route === "PENDING_REVIEW" ? "PENDING" : "TENTATIVE";
+      // OPE-1206 — a source outside New England, or a venue-state mismatch, is
+      // never auto-published: a human looks first.
+      const outsideNewEngland = sourceOutsideNewEngland(params.venue_state);
+      const eventStatus =
+        gateResult.route === "PENDING_REVIEW" || outsideNewEngland || venueStateMismatch
+          ? "PENDING"
+          : "TENTATIVE";
       const gateFlagsJson =
         gateResult.reasons.length > 0 ? JSON.stringify(gateResult.reasons) : null;
 
@@ -1308,7 +1329,7 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
 
       const eventId = crypto.randomUUID();
       await db.insert(events).values({
-        ...(formerFlag ? { flaggedForReview: 1 } : {}),
+        ...(venueStateMismatch || outsideNewEngland || formerFlag ? { flaggedForReview: 1 } : {}),
         id: eventId,
         name: effectiveName,
         slug: finalSlug,
@@ -1462,6 +1483,15 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
       }
       if (gateResult.reasons.length > 0) {
         suggestWarnings.gate_flags = gateResult.reasons;
+      }
+      if (venueStateMismatch) {
+        suggestWarnings.venue_state_conflict = {
+          ...venueStateMismatch,
+          message: `venue_id ${venueStateMismatch.venueId} is in ${venueStateMismatch.venueState} but venue_state says ${venueStateMismatch.sourceState}; the venue was NOT linked and the event is PENDING for review.`,
+        };
+      }
+      if (outsideNewEngland) {
+        suggestWarnings.outside_new_england = `venue_state ${params.venue_state} is outside New England; the event is PENDING for review.`;
       }
       if (eventStatus !== "TENTATIVE") {
         suggestWarnings.status_note = `Created as ${eventStatus}, not TENTATIVE, because the ingest gates routed it to review (${gateResult.reasons.join(", ") || "no reason recorded"}). A PENDING row is NOT on the publication path until an admin reviews it.`;
