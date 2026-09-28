@@ -108,6 +108,7 @@ import {
   buildPlaceholderEmail,
   validateVenueLifecycle,
   checkFormerVenue,
+  gateDatesConfirmed,
 } from "@takemetothefair/utils";
 import {
   eventOutboxStatements,
@@ -1551,6 +1552,41 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         }
       }
 
+      // OPE-1200 — `dates_confirmed = true` needs a qualifying start_date
+      // citation (active, not a community submission, not an aggregator), or a
+      // `citation` in this same call that will actually land on start_date —
+      // which only happens when start_date is itself being written. Otherwise
+      // write false and say so: a confirmed flag with no source is how four
+      // public listings sent visitors to the wrong day or state on 2026-09-28.
+      let datesConfirmedWarning: string | undefined;
+      if (updates.datesConfirmed === true) {
+        const existingCitations = await db
+          .select({
+            fieldName: eventDataCitations.fieldName,
+            state: eventDataCitations.state,
+            sourceType: eventDataCitations.sourceType,
+            sourceUrl: eventDataCitations.sourceUrl,
+          })
+          .from(eventDataCitations)
+          .where(
+            and(
+              eq(eventDataCitations.eventId, params.event_id),
+              eq(eventDataCitations.fieldName, "start_date"),
+              eq(eventDataCitations.state, "active")
+            )
+          );
+        const gate = gateDatesConfirmed({
+          requested: true,
+          citations: existingCitations,
+          callSource:
+            params.citation && updates.startDate !== undefined
+              ? { sourceType: params.citation.source_type, sourceUrl: params.citation.source_url }
+              : null,
+        });
+        updates.datesConfirmed = gate.value;
+        datesConfirmedWarning = gate.warning;
+      }
+
       // OPE-423 — a merged tombstone keeps its parked `…-merged-<id8>` slug so
       // the original URL stays free for the keeper's 301. Renaming it takes
       // that URL back and silently un-does the merge; that is the second half
@@ -2430,6 +2466,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }
       if (formerVenueWarning) {
         warnings.former_venue_flagged = formerVenueWarning;
+      }
+      if (datesConfirmedWarning) {
+        warnings.dates_confirmed_downgraded = datesConfirmedWarning;
       }
       if (citationIgnoredFor.length > 0) {
         warnings.citation_ignored_for = citationIgnoredFor;

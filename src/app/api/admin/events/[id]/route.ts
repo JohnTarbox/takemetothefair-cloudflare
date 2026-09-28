@@ -2,6 +2,7 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/api/with-auth";
 import { checkEventVenue } from "@/lib/venues/former-venue-guard";
+import { gateDatesConfirmedWrite } from "@/lib/events/dates-confirmed-write";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import {
   events,
@@ -199,7 +200,18 @@ export const PATCH = withAuth<{ id: string }>(
       if (data.endDate !== undefined) {
         updateData.endDate = normalizeEventDate(data.endDate);
       }
-      if (data.datesConfirmed !== undefined) updateData.datesConfirmed = data.datesConfirmed;
+      // OPE-1200 — TRUE only with a qualifying start_date citation. Note the
+      // zod schema defaults an omitted datesConfirmed to true, so this gate is
+      // also what stops a PATCH that never mentioned the flag from re-asserting it.
+      let datesConfirmedWarning: string | undefined;
+      if (data.datesConfirmed !== undefined) {
+        const gate = await gateDatesConfirmedWrite(db, {
+          eventId: id,
+          requested: data.datesConfirmed,
+        });
+        updateData.datesConfirmed = gate.value;
+        datesConfirmedWarning = gate.warning;
+      }
       if (data.discontinuousDates !== undefined)
         updateData.discontinuousDates = data.discontinuousDates;
 
@@ -724,11 +736,11 @@ export const PATCH = withAuth<{ id: string }>(
       // MCP callers) can render a warning. Absence of the field means "no
       // gates fired on this PATCH" — does NOT mean the row is currently free
       // of flags (an older flag may persist in events.gate_flags from ingest).
-      if (gateFlagsWarning) {
-        return NextResponse.json({
-          ...updatedEvent,
-          warnings: { gate_flags: gateFlagsWarning },
-        });
+      const warnings: Record<string, unknown> = {};
+      if (gateFlagsWarning) warnings.gate_flags = gateFlagsWarning;
+      if (datesConfirmedWarning) warnings.dates_confirmed_downgraded = datesConfirmedWarning;
+      if (Object.keys(warnings).length > 0) {
+        return NextResponse.json({ ...updatedEvent, warnings });
       }
       return NextResponse.json(updatedEvent);
     } catch (error) {

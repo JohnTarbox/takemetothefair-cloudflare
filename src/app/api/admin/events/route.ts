@@ -2,6 +2,7 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { detectPossibleDuplicate } from "@/lib/duplicates/venue-date-collision";
 import { checkEventVenue } from "@/lib/venues/former-venue-guard";
+import { gateDatesConfirmed } from "@takemetothefair/utils";
 import { dismissedFlagIds } from "@/lib/duplicates/flag-queue";
 import { withAuth } from "@/lib/api/with-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
@@ -234,6 +235,10 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
       name: data.name,
       promoterId: data.promoterId,
     });
+    const datesConfirmedGate = gateDatesConfirmed({
+      requested: data.datesConfirmed ?? false,
+      citations: [],
+    });
     await db.insert(events).values({
       possibleDuplicateOf,
       ...(formerVenue.kind === "flag" ? { flaggedForReview: 1 } : {}),
@@ -249,7 +254,9 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
       endDate,
       publicStartDate,
       publicEndDate,
-      datesConfirmed: data.datesConfirmed,
+      // OPE-1200 — a new row has no citations, so TRUE (the zod default when the
+      // field is omitted) is written as FALSE; confirm after citing start_date.
+      datesConfirmed: datesConfirmedGate.value,
       // OPE-433 — stated, not inherited. An admin creating an event by hand is
       // authoring first-party data; a later importer must not overwrite it.
       syncEnabled: data.syncEnabled ?? false,
@@ -308,7 +315,12 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
       await pingIndexNow(db, indexNowUrlFor("events", newEvent.slug), env, "event-create");
     }
 
-    return NextResponse.json(newEvent, { status: 201 });
+    return NextResponse.json(
+      datesConfirmedGate.warning
+        ? { ...newEvent, warnings: { dates_confirmed_downgraded: datesConfirmedGate.warning } }
+        : newEvent,
+      { status: 201 }
+    );
   } catch (error) {
     await logError(db, {
       message: "Failed to create event",

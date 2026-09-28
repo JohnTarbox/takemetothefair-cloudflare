@@ -521,6 +521,7 @@ export * from "./blog-faq-coherence";
 // labels at query time. Analyst backlog Item 1 (2026-05-26).
 export * from "./source-classification";
 export * from "./former-venue";
+export * from "./dates-confirmed-gate";
 // OPE-411 — ingest-time sanity checks for user-supplied submissions. Shared
 // because BOTH the app route and the MCP suggest_event tool create events from
 // them, and a validator wired into one of two parallel paths gets bypassed.

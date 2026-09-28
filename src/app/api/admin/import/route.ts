@@ -1,6 +1,8 @@
 export const dynamic = "force-dynamic";
 import { attachEventToSeries } from "@/lib/series/resolve-or-create-series";
 import { resolveIngestVenue } from "@/lib/venues/former-venue-guard";
+import { gateDatesConfirmedWrite } from "@/lib/events/dates-confirmed-write";
+import { gateDatesConfirmed } from "@takemetothefair/utils";
 import { NextResponse } from "next/server";
 import { detectPossibleDuplicate } from "@/lib/duplicates/venue-date-collision";
 import { withAuth } from "@/lib/api/with-auth";
@@ -475,7 +477,14 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
             if (updateStart) updateData.startDate = updateStart;
             if (updateEnd) updateData.endDate = updateEnd;
             if (eventData.datesConfirmed !== undefined) {
-              updateData.datesConfirmed = eventData.datesConfirmed;
+              // OPE-1200 — a scraper's "a date parsed" is not a citation; TRUE
+              // survives only if the row already carries a qualifying one.
+              updateData.datesConfirmed = (
+                await gateDatesConfirmedWrite(db, {
+                  eventId: existing[0].id,
+                  requested: eventData.datesConfirmed,
+                })
+              ).value;
             }
             // Update commercial vendors allowed if provided
             if (eventData.commercialVendorsAllowed !== undefined) {
@@ -592,7 +601,12 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
           // organizer stood behind the date. `annual_rollover` and the vendor
           // tool already hardcode `false` and are the reference behaviour
           // (rollover: 121 events, exactly 1 claiming confirmation).
-          datesConfirmed: eventData.datesConfirmed ?? false,
+          // OPE-1200 — a new row has no citation, so this is always false; the
+          // scrapers report true whenever a date parses, which is not a source.
+          datesConfirmed: gateDatesConfirmed({
+            requested: eventData.datesConfirmed ?? false,
+            citations: [],
+          }).value,
           categories: JSON.stringify(["Fair", "Festival"]),
           tags: JSON.stringify(["imported", eventData.sourceName]),
           ticketUrl: gateUrlForField(
