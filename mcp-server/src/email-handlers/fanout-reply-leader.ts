@@ -37,7 +37,7 @@
  */
 
 import { and, eq, isNotNull } from "drizzle-orm";
-import { inboundEmails } from "../schema.js";
+import { inboundEmails, tunableThresholds } from "../schema.js";
 import type { EmailIntent } from "../email-intents.js";
 import type { Db } from "../db.js";
 
@@ -133,9 +133,29 @@ export function pickFanoutReplyLeader(siblings: FanoutSibling[]): string | null 
  * The caller treats `null` as "behave exactly as before", so the single-intent
  * path is untouched.
  */
+/**
+ * OPE-1214 — a sibling is NAMED in the leader's ack ("we also read it as …")
+ * only at or above this classifier confidence. Below it the sibling row is
+ * still created and still routed; the ack just stays silent about it. The
+ * specimen's wrong "request to claim a listing" was a 0.90 sibling.
+ */
+export const FANOUT_ACK_MENTION_KEY = "fanout_ack_mention_min_confidence";
+export const DEFAULT_FANOUT_ACK_MENTION_MIN_CONFIDENCE = 0.95;
+
+export async function readFanoutAckMentionMinConfidence(db: Db): Promise<number> {
+  const [row] = await db
+    .select({ value: tunableThresholds.value })
+    .from(tunableThresholds)
+    .where(eq(tunableThresholds.key, FANOUT_ACK_MENTION_KEY))
+    .limit(1);
+  const v = row?.value;
+  return typeof v === "number" && v >= 0 && v <= 1 ? v : DEFAULT_FANOUT_ACK_MENTION_MIN_CONFIDENCE;
+}
+
 export async function resolveFanoutReplyRole(
   db: Db,
-  rowId: string
+  rowId: string,
+  mentionMinConfidence = 0
 ): Promise<FanoutReplyRole | null> {
   const self = await db
     .select({ parentEmailId: inboundEmails.parentEmailId })
@@ -146,7 +166,11 @@ export async function resolveFanoutReplyRole(
   if (!parentId) return null;
 
   const siblings = await db
-    .select({ id: inboundEmails.id, intent: inboundEmails.intent })
+    .select({
+      id: inboundEmails.id,
+      intent: inboundEmails.intent,
+      confidence: inboundEmails.classifiedConfidence,
+    })
     .from(inboundEmails)
     .where(and(eq(inboundEmails.parentEmailId, parentId), isNotNull(inboundEmails.parentEmailId)));
 
@@ -157,6 +181,8 @@ export async function resolveFanoutReplyRole(
   const leaderId = pickFanoutReplyLeader(siblings as FanoutSibling[]);
   return {
     isLeader: leaderId === rowId,
-    otherIntents: siblings.filter((s) => s.id !== leaderId).map((s) => s.intent as EmailIntent),
+    otherIntents: siblings
+      .filter((s) => s.id !== leaderId && (s.confidence ?? 0) >= mentionMinConfidence)
+      .map((s) => s.intent as EmailIntent),
   };
 }

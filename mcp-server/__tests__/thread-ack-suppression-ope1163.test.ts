@@ -178,6 +178,17 @@ function replyRow(id: string, threadId: string, receivedAt: number, from: string
     )
     .run(id, receivedAt, receivedAt, from, threadId, OUR_MSG, body);
 }
+/**
+ * OPE-1214 — the manual send each specimen answers carries OUR_MSG as its
+ * provider_message_id, as every `reply:manual*` row in prod does (57 of 57,
+ * measured 2026-09-28). The thread-reply guard now reads the parent's source
+ * from the ledger, so a fixture without it would be a reply to nobody.
+ */
+function repliedTo(key: string) {
+  raw
+    .prepare(`UPDATE email_send_ledger SET provider_message_id = ? WHERE message_id = ?`)
+    .run(OUR_MSG, key);
+}
 const ledgerFor = (id: string) =>
   raw
     .prepare(
@@ -190,6 +201,7 @@ describe("decideThreadAckGuard — specimen replays: zero thread acks, each with
     const body = `Hi John,\n\nThank you for the information and for getting back to me so quickly. I\nappreciate the help.\n\nBest,\nA Person\n\n\nA Person\nMobile: 555.010.0000\n\n${GMAIL_QUOTE}`;
     inbound("a0", "t-ash", 1790348000, "ashleigh@example.com");
     sent("a-m", "a0", 1790348660, "reply:manual", "ashleigh@example.com");
+    repliedTo("a-m");
     replyRow("a1", "t-ash", 1790351838, "ashleigh@example.com", body);
     const closed = isConversationClosing(body);
     expect(closed).toBe(true);
@@ -210,6 +222,7 @@ describe("decideThreadAckGuard — specimen replays: zero thread acks, each with
     const body = `John,\n       Thank you for your informative response  .  I have loved your website , so glad I found it.\n\n Bruce\n\n\n\n${APPLE_QUOTE}`;
     inbound("b0", "t-bal", 1790296000, "bruce@example.com");
     sent("b-m", "b0", 1790296466, "reply:manual", "bruce@example.com");
+    repliedTo("b-m");
     replyRow("b1", "t-bal", 1790303322, "bruce@example.com", body);
     const g = await decideThreadAckGuard(db as unknown as Db, {
       messageRowId: "b1",
@@ -225,6 +238,7 @@ describe("decideThreadAckGuard — specimen replays: zero thread acks, each with
       "I realized I left one of your questions unanswered in my previous email.\n\nThe product is listed here:\nhttps://shop.example.com/listing/1\n\nBest,\nJ";
     inbound("j0", "t-juv", 1790310000, "juva@example.com");
     sent("j-m", "j0", 1790316195, "reply:manual", "juva@example.com");
+    repliedTo("j-m");
     replyRow("j1", "t-juv", 1790323395, "juva@example.com", body);
     expect(isConversationClosing(body)).toBe(false);
     const g = await decideThreadAckGuard(db as unknown as Db, {
@@ -245,6 +259,7 @@ describe("decideThreadAckGuard — regression: the ack still goes where it is us
     const body = "Thanks for the earlier note. When does the application window open?";
     inbound("q0", "t-q", T0 - 200 * H, "q@example.com");
     sent("q-m", "q0", T0 - 100 * H, "reply:manual", "q@example.com");
+    repliedTo("q-m");
     replyRow("q1", "t-q", T0, "q@example.com", body);
     const g = await decideThreadAckGuard(db as unknown as Db, {
       messageRowId: "q1",
@@ -263,6 +278,7 @@ describe("decideThreadAckGuard — regression: the ack still goes where it is us
       .run(THREAD_ACK_QUIET_HOURS_KEY);
     inbound("n0", "t-n", T0 - 10 * H, "n@example.com");
     sent("n-m", "n0", T0 - 2 * H, "reply:manual", "n@example.com");
+    repliedTo("n-m");
     replyRow("n1", "t-n", T0, "n@example.com", "Here are the dates you asked for.");
     const g = await decideThreadAckGuard(db as unknown as Db, {
       messageRowId: "n1",

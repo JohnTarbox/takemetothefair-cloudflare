@@ -35,6 +35,8 @@
 import PostalMime, { type Email } from "postal-mime";
 import { logError } from "./logger.js";
 import { stripQuotedReply } from "./email-handlers/strip-quoted-reply.js";
+import { storedMessageIdForms } from "./email-handlers/message-id-forms.js";
+import { dropInferredClaimSibling, senderTextOfReply } from "./email-handlers/claim-ask.js";
 import {
   analyzeForward,
   isRfc822Attachment,
@@ -1876,7 +1878,12 @@ async function computeRouting(args: {
   // Run the classifier. classifyIntent is fail-safe — never throws —
   // returns an `unclear` result on any error so this path can't bounce
   // the email.
-  const result = await classifyIntent(env.AI, {
+  //
+  // OPE-1214 — on a reply to OUR thread the quoted part is our own text, so
+  // the classifier reads only what the sender wrote. Forwards are untouched:
+  // `senderTextOfReply` never cuts at a forwarded delimiter.
+  const classifierBody = replyChainHeader ? senderTextOfReply(bodyText) : bodyText;
+  const rawResult = await classifyIntent(env.AI, {
     toAddress: toAddr,
     fromAddress: fromAddr,
     senderTrustTier: senderTrust,
@@ -1884,8 +1891,25 @@ async function computeRouting(args: {
     attachmentCount,
     attachmentTypes,
     subject,
-    bodyText,
+    bodyText: classifierBody,
   });
+  // OPE-1214 — a `claim_request` riding alongside another intent needs an
+  // explicit ask in the sender's own words. Without one it was inferred from
+  // context (a matched organizer, "your event" in our quoted notice), and
+  // naming it in the ack tells the sender something they never said. Only a
+  // SIBLING is dropped: a message that is solely a claim is left to the model.
+  const claimCheck = dropInferredClaimSibling(rawResult.intents, classifierBody);
+  const droppedInferredClaim = claimCheck.dropped;
+  const result = droppedInferredClaim ? { ...rawResult, intents: claimCheck.intents } : rawResult;
+  if (droppedInferredClaim) {
+    await logError(env.DB, {
+      level: "info",
+      source: SOURCE,
+      message: "claim_request sibling dropped: no explicit claim ask in the sender's own text",
+      sessionId,
+      context: { from: fromAddr, intents: rawResult.intents.map((c) => c.intent) },
+    });
+  }
 
   await logError(env.DB, {
     level: "info",
@@ -2134,39 +2158,7 @@ interface ThreadColumns {
   threadBasis: ThreadBasis;
 }
 
-/**
- * The referenced Message-IDs spelled as STORED, for an `IN (…)` lookup.
- *
- * `inbound_emails.message_id` and `email_send_ledger.provider_message_id` keep
- * the header's own case and angle brackets (`<DM3PPF334…>`), and D1's `IN`
- * compares case-sensitively. `parseMessageIdList` lower-cases and strips the
- * brackets — right for the resolver's comparison, wrong as a query key: a
- * lookup built from it matched only ids that were already lower-case and
- * bracketless, so the cross-sender header tier was silently dead. Both
- * bracketed and bare forms are queried, case preserved.
- *
- * Capped at MAX_REFERENCED_IDS (×2 forms, under D1's 100 bound parameters):
- * the In-Reply-To id plus the NEWEST References, which is where the parent is.
- */
-const MAX_REFERENCED_IDS = 40;
-export function storedMessageIdForms(
-  inReplyTo: string | null | undefined,
-  references: string | null | undefined
-): string[] {
-  const grab = (h: string | null | undefined) =>
-    (h ?? "").match(/<[^<>\s]+>/g) ?? (h ?? "").split(/\s+/).filter(Boolean);
-  const irt = grab(inReplyTo);
-  const refs = grab(references);
-  const ids = [...new Set([...irt.slice(0, 1), ...refs.reverse()])].slice(0, MAX_REFERENCED_IDS);
-  return [
-    ...new Set(
-      ids.flatMap((raw) => {
-        const bare = raw.replace(/^</, "").replace(/>$/, "");
-        return bare ? [`<${bare}>`, bare] : [];
-      })
-    ),
-  ];
-}
+export { storedMessageIdForms } from "./email-handlers/message-id-forms.js";
 
 /** Recent rows scanned for the weak (subject+participants) tier. */
 const THREAD_CANDIDATE_WINDOW = 60;
