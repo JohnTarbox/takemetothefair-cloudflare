@@ -2,11 +2,9 @@ export const dynamic = "force-dynamic";
 import Link from "next/link";
 import type { Metadata } from "next";
 import { CheckCircle2, AlertCircle, Send } from "lucide-react";
-import { eq } from "drizzle-orm";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
-import { newsletterIssues } from "@/lib/db/schema";
 import { resolveApproveSecret, verifyApproveToken } from "@/lib/email/newsletter-approve-token";
-import { selectBroadcastRecipients } from "@/lib/email/newsletter-broadcast";
+import { resolveApprovePreview } from "@/lib/email/newsletter-approve-preview";
 import { NEWSLETTER_NAME } from "@/lib/newsletter-masthead";
 
 /**
@@ -57,6 +55,13 @@ function resultCopy(status: string, count?: string): ResultCopy {
         iconClass: "text-amber-600",
         heading: "Sending is turned off",
         body: "Broadcast sending is disabled (NEWSLETTER_SEND_ENABLED is not 'true'), so nothing was sent. Enable it first, then use the approve link again.",
+      };
+    case "unknown_audience":
+      return {
+        icon: AlertCircle,
+        iconClass: "text-red-600",
+        heading: "This issue has no mailing list",
+        body: "The previewed issue isn't tagged with a list we recognise (weekend or vendor), so we can't tell who it is for. Nothing was sent. This is a bug in how the issue was created, not something to retry.",
       };
     case "not_found":
       return {
@@ -125,22 +130,15 @@ export default async function NewsletterApprovePage({ searchParams }: Props) {
   if (!claims) return <ResultView copy={resultCopy("invalid")} />;
 
   const db = getCloudflareDb();
-  const [issue] = await db
-    .select({
-      subject: newsletterIssues.subject,
-      sentAt: newsletterIssues.sentAt,
-    })
-    .from(newsletterIssues)
-    .where(eq(newsletterIssues.slug, claims.slug))
-    .limit(1);
-
-  if (!issue) return <ResultView copy={resultCopy("not_found")} />;
-  if (issue.sentAt) return <ResultView copy={resultCopy("already_sent")} />;
+  // OPE-1204 — the count on the button comes from the ISSUE's own audience, the
+  // same list the POST sends to. This used to read the "weekend" list for every
+  // issue, so a vendor issue showed "send to 75" while the send went to 4.
+  const preview = await resolveApprovePreview(db, claims.slug);
+  if (preview.kind !== "ready") return <ResultView copy={resultCopy(preview.kind)} />;
   if (env.NEWSLETTER_SEND_ENABLED !== "true") return <ResultView copy={resultCopy("disabled")} />;
 
-  // "weekend" — this confirm screen belongs to the attendee digest. The vendor
-  // digest has its own Monday sender and never routes through here.
-  const recipientCount = (await selectBroadcastRecipients(db, "weekend")).length;
+  const { subject, audience, audienceName, recipientCount } = preview;
+  const subscribers = `${recipientCount} subscriber${recipientCount === 1 ? "" : "s"}`;
 
   // Valid + pending + enabled → the confirm form. The POST (not this GET) sends.
   return (
@@ -148,16 +146,18 @@ export default async function NewsletterApprovePage({ searchParams }: Props) {
       <div className="flex justify-center mb-4">
         <Send className="w-12 h-12 text-primary" aria-hidden="true" />
       </div>
-      <h1 className="text-2xl font-bold text-foreground mb-3">Send this digest to everyone?</h1>
+      <h1 className="text-2xl font-bold text-foreground mb-3">
+        Send this issue to the {audience} list?
+      </h1>
       <p className="text-muted-foreground mb-2">
-        <span className="font-semibold text-foreground">{issue.subject}</span>
+        <span className="font-semibold text-foreground">{subject}</span>
       </p>
       <p className="text-muted-foreground mb-8">
         This will send the previewed issue to{" "}
         <span className="font-semibold text-foreground">
-          {recipientCount} subscriber{recipientCount === 1 ? "" : "s"}
-        </span>
-        . This can&apos;t be undone.
+          {subscribers} on the {audience} list
+        </span>{" "}
+        ({audienceName}). This can&apos;t be undone.
       </p>
       <form method="POST" action="/api/newsletter/approve">
         <input type="hidden" name="token" value={token} />
@@ -166,7 +166,7 @@ export default async function NewsletterApprovePage({ searchParams }: Props) {
           className="inline-flex items-center gap-2 px-6 py-3 bg-primary text-primary-foreground font-semibold rounded-lg hover:bg-primary/90 transition-colors"
         >
           <Send className="w-4 h-4" aria-hidden="true" />
-          Approve &amp; send to {recipientCount} subscriber{recipientCount === 1 ? "" : "s"}
+          Approve &amp; send to {subscribers} ({audience})
         </button>
       </form>
       <p className="mt-6">
