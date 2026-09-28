@@ -36,15 +36,21 @@ function makeDb(selectResults: unknown[][]) {
 
   const db = {
     select: () => selectChain(),
-    insert: (table: unknown) => {
-      insertTables.push(table);
-      return {
-        values: (v: unknown) => {
-          inserted.push(v);
-          return { onConflictDoNothing: () => Promise.resolve(null) };
-        },
-      };
-    },
+    // Records an insert when it EXECUTES (awaited), not when it is built —
+    // as Drizzle does. runChunkedInsert builds one statement just to measure
+    // its parameters (OPE-1185); that must not read as a write.
+    insert: (table: unknown) => ({
+      values: (v: unknown) => ({
+        onConflictDoNothing: () => ({
+          toSQL: () => ({ params: new Array((v as unknown[]).length * 6).fill(0) }),
+          then: (ok: (x: unknown) => unknown, bad?: (e: unknown) => unknown) => {
+            insertTables.push(table);
+            inserted.push(v);
+            return Promise.resolve(null).then(ok, bad);
+          },
+        }),
+      }),
+    }),
     delete: () => ({
       where: (w: unknown) => {
         deleted.push(w);

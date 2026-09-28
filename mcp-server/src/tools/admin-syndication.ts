@@ -1,6 +1,7 @@
 // SYN1 (Dev-Email-2026-06-12 §A3) — subscriber registry admin tools. Adding a
 // consumer is a registry INSERT, not a deploy: the emitter holds zero
 // subscriber-specific code. Admin only.
+import { runChunkedInsert } from "@takemetothefair/utils";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { and, eq, inArray, sql } from "drizzle-orm";
@@ -115,13 +116,16 @@ export function registerSyndicationTools(server: McpServer, db: Db, auth: AuthCo
       const toAdd = uniqueIds.filter((id) => validEventIds.has(id) && !alreadySet.has(id));
       const now = new Date();
       if (toAdd.length > 0) {
-        await db.insert(syndicationSubscriptions).values(
-          toAdd.map((eventId) => ({
-            id: crypto.randomUUID(),
-            subscriberId: params.subscriber_id,
-            eventId,
-            createdAt: now,
-          }))
+        // OPE-1185 — chunked to D1's 100-param cap (4 params/row: >25 events 500'd).
+        await runChunkedInsert(toAdd, (chunk) =>
+          db.insert(syndicationSubscriptions).values(
+            chunk.map((eventId) => ({
+              id: crypto.randomUUID(),
+              subscriberId: params.subscriber_id,
+              eventId,
+              createdAt: now,
+            }))
+          )
         );
       }
       return {

@@ -8,6 +8,7 @@
 // Resilience: per-message try/ack/retry like the SYN1 dispatcher. A fetch miss
 // is NOT a failure — a dead site is itself a signal; we stamp the attempt and
 // ack. Only an unexpected DB error retries → DLQ after max_retries.
+import { runChunkedInsert } from "@takemetothefair/utils";
 import { and, eq, inArray, isNotNull, ne } from "drizzle-orm";
 import { vendors, vendorEnrichmentCandidates } from "../schema.js";
 import { getDb, type Db } from "../db.js";
@@ -370,21 +371,24 @@ export async function processEnrichmentJob(
 
   const now = new Date();
   if (result.candidates.length > 0) {
-    await db.insert(vendorEnrichmentCandidates).values(
-      result.candidates.map((c) => ({
-        vendorId: msg.vendorId,
-        jobRunId: msg.jobRunId,
-        proposedField: c.field,
-        currentValue: c.currentValue,
-        proposedValue: c.proposedValue,
-        sourceUrl,
-        extractionMethod: c.method,
-        fetchMethod: fetched.fetchMethod,
-        confidence: c.confidence,
-        flags: JSON.stringify(c.flags),
-        createdAt: now,
-        decision: "pending" as const,
-      }))
+    // OPE-1185 — chunked to D1's 100-param cap (~14 params/row: >7 candidates 500'd).
+    await runChunkedInsert(result.candidates, (chunk) =>
+      db.insert(vendorEnrichmentCandidates).values(
+        chunk.map((c) => ({
+          vendorId: msg.vendorId,
+          jobRunId: msg.jobRunId,
+          proposedField: c.field,
+          currentValue: c.currentValue,
+          proposedValue: c.proposedValue,
+          sourceUrl,
+          extractionMethod: c.method,
+          fetchMethod: fetched.fetchMethod,
+          confidence: c.confidence,
+          flags: JSON.stringify(c.flags),
+          createdAt: now,
+          decision: "pending" as const,
+        }))
+      )
     );
   }
 
