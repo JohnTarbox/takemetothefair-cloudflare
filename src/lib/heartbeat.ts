@@ -1827,6 +1827,24 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
         eq(adminActions.action, NEAR_DUPLICATE_SWEEP_ACTION)
       ),
   },
+  {
+    // OPE-1205 — proof the daily sync-staleness sweep still RUNS. It writes one
+    // admin_actions row per run (event.sync_stale_sweep) whether or not it
+    // downgrades anything, so silence means the cron stopped, not that nothing
+    // was stale. 48h = two daily cycles.
+    name: "sync-stale-sweep",
+    ownerOpe: "OPE-1205",
+    label: "daily sync-staleness sweep running",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        adminActions,
+        adminActions.createdAt,
+        eq(adminActions.action, "event.sync_stale_sweep")
+      ),
+  },
 ];
 
 /** A probe joined to its enablement anchor + newest evidence — the input to the
