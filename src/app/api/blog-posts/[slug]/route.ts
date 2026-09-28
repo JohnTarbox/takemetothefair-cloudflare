@@ -149,33 +149,44 @@ export async function PUT(request: NextRequest, { params }: Params) {
 
     const updateData: Record<string, unknown> = { updatedAt: new Date() };
 
-    if (data.title !== undefined) {
-      updateData.title = data.title;
+    if (data.title !== undefined) updateData.title = data.title;
 
-      // Regenerate slug if title changed
-      const baseSlug = createSlug(data.title);
-      if (baseSlug && baseSlug !== existing.slug) {
-        const [lowerBound, upperBound] = getSlugPrefixBounds(baseSlug);
-        const existingSlugs = await db
-          .select({ slug: blogPosts.slug })
-          .from(blogPosts)
-          .where(
-            and(
-              ne(blogPosts.id, existing.id),
-              or(
-                eq(blogPosts.slug, baseSlug),
-                and(
-                  gt(blogPosts.slug, unsafeSlug(lowerBound)),
-                  lt(blogPosts.slug, unsafeSlug(upperBound))
-                )
+    // OPE-1202 — a PUBLISHED post's URL moves only when the caller asks
+    // (`newSlug`). It used to be regenerated from every title change, silently:
+    // the old URL 301'd, but seven published posts kept linking the old slug
+    // and the response never said the URL had moved. A DRAFT has no public URL
+    // yet, so its slug still follows the title.
+    const requestedSlug =
+      data.newSlug !== undefined
+        ? createSlug(data.newSlug)
+        : data.title !== undefined && existing.status !== "PUBLISHED"
+          ? createSlug(data.title)
+          : null;
+    if (data.newSlug !== undefined && !requestedSlug) {
+      return NextResponse.json({ error: "newSlug produced an empty slug" }, { status: 400 });
+    }
+    if (requestedSlug && requestedSlug !== existing.slug) {
+      const baseSlug = requestedSlug;
+      const [lowerBound, upperBound] = getSlugPrefixBounds(baseSlug);
+      const existingSlugs = await db
+        .select({ slug: blogPosts.slug })
+        .from(blogPosts)
+        .where(
+          and(
+            ne(blogPosts.id, existing.id),
+            or(
+              eq(blogPosts.slug, baseSlug),
+              and(
+                gt(blogPosts.slug, unsafeSlug(lowerBound)),
+                lt(blogPosts.slug, unsafeSlug(upperBound))
               )
             )
-          );
-        updateData.slug = findUniqueSlug(
-          baseSlug,
-          existingSlugs.map((r) => r.slug)
+          )
         );
-      }
+      updateData.slug = findUniqueSlug(
+        baseSlug,
+        existingSlugs.map((r) => r.slug)
+      );
     }
 
     if (data.body !== undefined) updateData.body = data.body;
@@ -319,11 +330,43 @@ export async function PUT(request: NextRequest, { params }: Params) {
       await pingIndexNow(db, indexNowUrlFor("blog", finalSlug), env, "blog-patch");
     }
 
+    // OPE-1202 — when the URL moved, say so, and name the published posts
+    // that still link the OLD slug. They keep working (blog_slug_history 301s
+    // them) but each is a redirect hop until someone repoints it; they are
+    // listed, not rewritten, because editing other published posts is a
+    // separate decision. Read from content_links (blog→blog links are indexed
+    // there, resolved to this post's id) BEFORE the sync below re-derives this
+    // post's own outbound links, which does not touch inbound rows.
+    let slugChange:
+      | { old: string; new: string; linkingPublishedPosts: Array<{ slug: string; title: string }> }
+      | undefined;
+    if (slugChanged) {
+      const linkers = await db
+        .selectDistinct({ slug: blogPosts.slug, title: blogPosts.title })
+        .from(contentLinks)
+        .innerJoin(blogPosts, eq(blogPosts.id, contentLinks.sourceId))
+        .where(
+          and(
+            eq(contentLinks.sourceType, "BLOG_POST"),
+            eq(contentLinks.targetType, "BLOG_POST"),
+            or(eq(contentLinks.targetId, existing.id), eq(contentLinks.targetSlug, existing.slug)),
+            ne(blogPosts.id, existing.id),
+            eq(blogPosts.status, "PUBLISHED")
+          )
+        );
+      slugChange = {
+        old: existing.slug,
+        new: updateData.slug as string,
+        linkingPublishedPosts: linkers.map((l) => ({ slug: l.slug, title: l.title })),
+      };
+    }
+
     return NextResponse.json({
       ...updated,
       tags: JSON.parse(updated.tags || "[]"),
       categories: JSON.parse(updated.categories || "[]"),
       ...(warnings ? { warnings } : {}),
+      ...(slugChange ? { slugChange } : {}),
     });
   } catch (error) {
     await logError(db, {

@@ -40,7 +40,9 @@ import {
   venueLocationCompatible,
   venueStateConflict,
   sourceOutsideNewEngland,
+  checkFormerVenue,
 } from "@takemetothefair/utils";
+import { loadGuardVenue } from "../venues/lifecycle.js";
 import {
   EVENT_CATEGORIES,
   PRIMARY_AUDIENCE,
@@ -1315,9 +1317,19 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
         });
       }
 
+      // OPE-1180 — a matched FORMER venue is kept only for pre-closure dates.
+      // After the closure the suggestion lands WITHOUT a venue and flagged for
+      // review — an ingest never fails on a bad venue match.
+      const formerVerdict = checkFormerVenue(
+        await loadGuardVenue(db, venueId),
+        endDate ?? startDate
+      );
+      const formerFlag = formerVerdict.kind !== "allow";
+      if (formerVerdict.kind === "refuse") venueId = null;
+
       const eventId = crypto.randomUUID();
       await db.insert(events).values({
-        ...(venueStateMismatch || outsideNewEngland ? { flaggedForReview: 1 } : {}),
+        ...(venueStateMismatch || outsideNewEngland || formerFlag ? { flaggedForReview: 1 } : {}),
         id: eventId,
         name: effectiveName,
         slug: finalSlug,

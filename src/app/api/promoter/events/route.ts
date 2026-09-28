@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { detectPossibleDuplicate } from "@/lib/duplicates/venue-date-collision";
+import { checkEventVenue } from "@/lib/venues/former-venue-guard";
 import { auth } from "@/lib/auth";
 import { requireVerifiedSession } from "@/lib/api-auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
@@ -175,6 +176,17 @@ export async function POST(request: NextRequest) {
       resolvedStateCode = venueRow[0]?.state ?? null;
     }
 
+    // OPE-1180 — a FORMER venue after its closure is refused; inside the
+    // closure's uncertainty window it is allowed and flagged for review.
+    const formerVenue = await checkEventVenue(
+      db,
+      venueId || null,
+      normalizeEventDate(endDate) ?? normalizeEventDate(startDate)
+    );
+    if (formerVenue.kind === "refuse") {
+      return NextResponse.json({ error: formerVenue.message }, { status: 409 });
+    }
+
     // OPE-627 — report-only duplicate check. Writes the flag; merges nothing.
     const possibleDuplicateOf = await detectPossibleDuplicate(db, {
       venueId: venueId || null,
@@ -185,6 +197,7 @@ export async function POST(request: NextRequest) {
     });
     await db.insert(events).values({
       possibleDuplicateOf,
+      ...(formerVenue.kind === "flag" ? { flaggedForReview: 1 } : {}),
       id: eventId,
       name,
       slug,

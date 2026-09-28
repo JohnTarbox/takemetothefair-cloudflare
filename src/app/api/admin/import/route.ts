@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 import { attachEventToSeries } from "@/lib/series/resolve-or-create-series";
 import { venueStateConflict } from "@takemetothefair/utils";
+import { resolveIngestVenue } from "@/lib/venues/former-venue-guard";
 import { gateDatesConfirmedWrite } from "@/lib/events/dates-confirmed-write";
 import { gateDatesConfirmed } from "@takemetothefair/utils";
 import { NextResponse } from "next/server";
@@ -446,6 +447,19 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
         }
         // eventVenueId can be null - event will be created without a venue
 
+        // OPE-1180 — a matched FORMER venue is kept only for pre-closure dates.
+        // After the closure the event is imported WITHOUT a venue and flagged
+        // for review — an import never fails on a bad venue match.
+        const formerCheck = await resolveIngestVenue(
+          db,
+          eventVenueId,
+          normalizeEventDate(eventData.endDate) ??
+            normalizeEventDate(eventData.startDate) ??
+            (existing[0]?.endDate as Date | null | undefined) ??
+            null
+        );
+        eventVenueId = formerCheck.venueId;
+
         if (existing.length > 0) {
           // Event already exists
           // Respect syncEnabled=false — admins set this after hand-editing so re-imports don't clobber enrichments
@@ -467,6 +481,7 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
               ),
               imageUrl: eventData.imageUrl || existing[0].imageUrl,
               venueId: eventVenueId,
+              ...(formerCheck.flagForReview ? { flaggedForReview: 1 } : {}),
               lastSyncedAt: new Date(),
               updatedAt: new Date(),
             };
@@ -575,6 +590,7 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
         await db.insert(events).values({
           id: newEventId,
           possibleDuplicateOf,
+          ...(formerCheck.flagForReview ? { flaggedForReview: 1 } : {}),
           name: decodedNewEventName,
           slug,
           description: decodedNewDescription,

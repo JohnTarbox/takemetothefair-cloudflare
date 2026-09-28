@@ -22,10 +22,11 @@
 
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "@/lib/db/schema";
-import { adminActions, venues } from "@/lib/db/schema";
-import { sql } from "drizzle-orm";
+import { adminActions, venueNameVariants, venues } from "@/lib/db/schema";
+import { eq, sql } from "drizzle-orm";
 import {
   combinedSimilarity,
+  normalizeName,
   normalizeString,
   tokenize,
   venueLocationCompatible,
@@ -77,6 +78,7 @@ export interface VenueAutoLinkResult {
     | "no-name"
     | "exact-name+state"
     | "exact-name-only"
+    | "name-variant"
     | "fuzzy-name+state"
     | "fuzzy-name+address"
     | "address-corroborated"
@@ -179,6 +181,33 @@ export async function autoLinkVenue(db: Db, input: AutoLinkInput): Promise<Venue
       stateCode: state,
       decision: "ambiguous",
       candidates: candidatePairs,
+    };
+  }
+
+  // Tier 2b (OPE-1180): a recorded OTHER name for a venue — "Montpelier
+  // Driving Park" for the old trotting-park grounds. Same location rule as the
+  // exact tier. A FORMER venue matched here is still subject to the date guard
+  // downstream (resolveIngestVenue): kept only for pre-closure dates.
+  const variantRows = await db
+    .select({
+      id: venues.id,
+      name: venues.name,
+      state: venues.state,
+      city: venues.city,
+    })
+    .from(venueNameVariants)
+    .innerJoin(venues, eq(venues.id, venueNameVariants.venueId))
+    .where(eq(venueNameVariants.normalizedName, normalizeName(rawName)))
+    .limit(10);
+  const variantMatches = variantRows.filter((v) =>
+    venueLocationCompatible(v, { city: input.venueCity, state })
+  );
+  if (variantMatches.length === 1) {
+    const m = variantMatches[0];
+    return {
+      venueId: m.id,
+      stateCode: m.state ? m.state.toUpperCase() : state,
+      decision: "name-variant",
     };
   }
 
