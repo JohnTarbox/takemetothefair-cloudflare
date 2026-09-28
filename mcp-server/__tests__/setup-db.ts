@@ -8,7 +8,7 @@
 import { z } from "zod";
 import Database from "better-sqlite3";
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import * as schema from "../src/schema.js";
 
@@ -1607,10 +1607,9 @@ const SCHEMA_SQL = `
 `;
 
 const FORMER_VENUE_TRIGGERS_SQL = (() => {
-  const sql = readFileSync(
-    fileURLToPath(new URL("../../drizzle/0333_ope1180_former_venues.sql", import.meta.url)),
-    "utf8"
-  );
+  // __dirname, not import.meta.url: this harness is also imported by app-side
+  // tests whose environment does not give import.meta.url a file: scheme.
+  const sql = readFileSync(join(__dirname, "../../drizzle/0333_ope1180_former_venues.sql"), "utf8");
   const start = sql.indexOf("CREATE TRIGGER");
   if (start < 0)
     throw new Error("0333 has no CREATE TRIGGER — the loader is reading the wrong file");
