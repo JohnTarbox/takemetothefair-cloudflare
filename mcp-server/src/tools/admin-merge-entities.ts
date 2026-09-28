@@ -162,6 +162,21 @@ export function registerMergeEntitiesTools(server: McpServer, db: Db, auth: Auth
         .set({ status: "INACTIVE", slug: tombstoneSlug, updatedAt: new Date() })
         .where(eq(venues.id, params.duplicate_venue_id));
 
+      // OPE-1183 — the tombstone's OWN slug redirects too. Only the original
+      // slug used to get a history row, so the parked `*-merged-<id8>` URL
+      // (which is where the tombstone now lives) 404'd.
+      try {
+        await db.insert(venueSlugHistory).values({
+          venueId: params.keeper_venue_id,
+          oldSlug: tombstoneSlug,
+          newSlug: keeperRow.slug,
+          changedAt: new Date(),
+          changedBy: auth.userId ?? null,
+        });
+      } catch {
+        // Same idempotency posture as the row above.
+      }
+
       // 4. Audit trail.
       try {
         await db.insert(adminActions).values({

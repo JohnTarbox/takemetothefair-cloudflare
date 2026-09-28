@@ -12,12 +12,12 @@ import {
   blogPosts,
   blogSlugHistory,
   venues,
-  venueSlugHistory,
   promoters,
   promoterSlugHistory,
   performers,
   performerSlugHistory,
 } from "@/lib/db/schema";
+import { resolveVenueRedirect } from "@/lib/venues/slug-redirect";
 import { isPubliclyVisible, publicEventWhere, type EventLifecycle } from "@/lib/event-lifecycle";
 import {
   buildEntityEtag,
@@ -709,38 +709,13 @@ async function handleRouting(request: NextRequest) {
     const db = drizzle(d1);
 
     try {
-      const [row] = await db
-        .select({ id: venues.id })
-        .from(venues)
-        .where(eq(venues.slug, unsafeSlug(slug)))
-        .limit(1);
-      if (row) return NextResponse.next();
-
-      // Walk slug history.
-      let cursor = slug;
-      const seen = new Set<string>([cursor]);
-      for (let hop = 0; hop < 5; hop++) {
-        const [historyRow] = await db
-          .select({ newSlug: venueSlugHistory.newSlug })
-          .from(venueSlugHistory)
-          .where(eq(venueSlugHistory.oldSlug, unsafeSlug(cursor)))
-          .orderBy(desc(venueSlugHistory.changedAt))
-          .limit(1);
-        if (!historyRow || seen.has(historyRow.newSlug)) break;
-        cursor = historyRow.newSlug;
-        seen.add(cursor);
-      }
-      if (cursor !== slug) {
-        const [target] = await db
-          .select({ id: venues.id })
-          .from(venues)
-          .where(eq(venues.slug, unsafeSlug(cursor)))
-          .limit(1);
-        if (target) {
-          const url = request.nextUrl.clone();
-          url.pathname = `/venues/${cursor}`;
-          return NextResponse.redirect(url, 301);
-        }
+      // OPE-1183 — shared, tested resolver; a merge tombstone (INACTIVE row at
+      // its parked slug) no longer short-circuits the walk.
+      const target = await resolveVenueRedirect(db, slug);
+      if (target) {
+        const url = request.nextUrl.clone();
+        url.pathname = `/venues/${target}`;
+        return NextResponse.redirect(url, 301);
       }
       return NextResponse.next();
     } catch {
