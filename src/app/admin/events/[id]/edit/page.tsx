@@ -129,7 +129,10 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
       if (!res.ok) throw new Error("Event not found");
       const data = (await res.json()) as Event;
       setEvent(data);
-      setDatesTBD(!data.startDate || !data.datesConfirmed);
+      // OPE-1200 — TBD means "no dates", not "dates unconfirmed". Deriving it
+      // from !datesConfirmed ticked TBD on every dated-but-unconfirmed event,
+      // and saving then sent startDate/endDate = null, wiping real dates.
+      setDatesTBD(!data.startDate);
       setDiscontinuousDates(data.discontinuousDates ?? false);
       setIsStatewide(!!data.isStatewide);
       setStateCode((data.stateCode as StateCode) || "");
@@ -235,7 +238,9 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
       stateCode: stateCode || null,
       startDate: startDateISO,
       endDate: endDateISO,
-      datesConfirmed: !datesTBD,
+      // OPE-1200 — the form has no "confirmed" control of its own, so keep the
+      // stored value (the server only allows TRUE with a qualifying citation).
+      datesConfirmed: datesTBD ? false : (event?.datesConfirmed ?? false),
       discontinuousDates,
       ticketUrl: formData.get("ticketUrl") || null,
       ticketPriceMin: formData.get("ticketPriceMin")
