@@ -136,7 +136,7 @@ describe("POST /api/newsletter/approve — broadcasts to the issue's own audienc
     seedIssue("mystery-2026-09-04", "subscribers-of-some-kind");
     const res = await approve("mystery-2026-09-04");
     expect(res.status).toBe(303);
-    expect(res.headers.get("location")).toContain("status=server_error");
+    expect(res.headers.get("location")).toContain("status=unknown_audience");
     expect(enqueueEmailMock).not.toHaveBeenCalled();
     const row = raw
       .prepare(`SELECT sent_at FROM newsletter_issues WHERE slug = ?`)
