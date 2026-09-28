@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { detectPossibleDuplicate } from "@/lib/duplicates/venue-date-collision";
+import { checkEventVenue } from "@/lib/venues/former-venue-guard";
 import { and, eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { requireVerifiedSession } from "@/lib/api-auth";
@@ -132,9 +133,21 @@ export async function POST(request: NextRequest) {
         );
       }
 
+      // OPE-1180 — a FORMER venue after its closure is refused; inside the
+      // closure's uncertainty window it is allowed and flagged for review.
+      const formerVenue = await checkEventVenue(
+        db,
+        data.venueId || null,
+        normalizeEventDate(endDate) ?? normalizeEventDate(startDate)
+      );
+      if (formerVenue.kind === "refuse") {
+        return NextResponse.json({ error: formerVenue.message }, { status: 409 });
+      }
+
       await db
         .update(events)
         .set({
+          ...(formerVenue.kind === "flag" ? { flaggedForReview: 1 } : {}),
           name: data.name,
           description: data.description,
           venueId: data.venueId || null,
@@ -222,7 +235,18 @@ export async function POST(request: NextRequest) {
       name: data.name,
       promoterId: promoter.id,
     });
+    // OPE-1180 — a FORMER venue after its closure is refused; inside the
+    // closure's uncertainty window it is allowed and flagged for review.
+    const formerVenueNew = await checkEventVenue(
+      db,
+      data.venueId || null,
+      normalizeEventDate(endDate) ?? normalizeEventDate(startDate)
+    );
+    if (formerVenueNew.kind === "refuse") {
+      return NextResponse.json({ error: formerVenueNew.message }, { status: 409 });
+    }
     await db.insert(events).values({
+      ...(formerVenueNew.kind === "flag" ? { flaggedForReview: 1 } : {}),
       possibleDuplicateOf,
       // OPE-433 — named explicitly rather than inherited from the DDL default.
       //

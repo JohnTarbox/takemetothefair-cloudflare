@@ -175,9 +175,30 @@ export const venues = sqliteTable(
     googleTypes: text("google_types"),
     accessibility: text("accessibility"),
     parking: text("parking"),
-    status: text("status", { enum: ["ACTIVE", "INACTIVE"] })
+    /**
+     * OPE-1180 — FORMER = was a venue, no longer is (a closed fairground).
+     * INACTIVE stays the hidden merge tombstone. Every public reader filters
+     * `status = 'ACTIVE'`, so FORMER is not served until OPE-1181 ships its page.
+     * (Not "HISTORIC": that collides with NRHP-listed venues still in use.)
+     */
+    status: text("status", { enum: ["ACTIVE", "INACTIVE", "FORMER"] })
       .default("ACTIVE")
       .notNull(),
+    // OPE-1180 (drizzle/0333) — when the site was used as a venue, as EDTF
+    // strings ("1866", "1881~", "195X"). `use_ended_*` are the derived UTC
+    // bounds of `use_ended_edtf`, epoch seconds, read by the event date guard.
+    // A FORMER venue requires use_ended_edtf (validateVenueLifecycle).
+    useStartedEdtf: text("use_started_edtf"),
+    useEndedEdtf: text("use_ended_edtf"),
+    useEndedEarliest: integer("use_ended_earliest", { mode: "timestamp" }),
+    useEndedLatest: integer("use_ended_latest", { mode: "timestamp" }),
+    currentState: text("current_state", {
+      enum: ["REPURPOSED", "VACANT", "DEMOLISHED", "UNKNOWN"],
+    }),
+    currentUse: text("current_use"),
+    /** Optional authority ids — allowed on ANY venue, not only FORMER. */
+    wikidataQid: text("wikidata_qid"),
+    nrhpRef: text("nrhp_ref"),
     // Cross-zone columns (drizzle/0112, P3a — 2026-06-06). Every existing
     // venue row defaults to US-Eastern via the migration's NOT NULL DEFAULT
     // clauses, so this is zero-behavior-change at deploy. Phase 3b will
@@ -6307,6 +6328,107 @@ export const gscMonthlyOracle = sqliteTable("gsc_monthly_oracle", {
  * entry, and that is the companion to the `name` citation in
  * `event_data_citations`.
  */
+/**
+ * OPE-1180 — "series S was held at venue V from A to B". A cited fact, entered
+ * directly; deliberately independent of `events.series_id` (OPE-472: occurrence
+ * history would be near-empty). `to_edtf` NULL = still held there.
+ *
+ * `series_id` OR `series_name`: a historical series with no MMATF events (the
+ * 1869 Washington County fair) is recorded by NAME rather than by creating an
+ * `event_series` row, because a zero-occurrence series row would render an
+ * empty, indexable /events/<series> hub.
+ */
+export const seriesVenuePeriods = sqliteTable(
+  "series_venue_periods",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    seriesId: text("series_id").references(() => eventSeries.id, { onDelete: "set null" }),
+    seriesName: text("series_name"),
+    venueId: text("venue_id")
+      .notNull()
+      .references(() => venues.id, { onDelete: "cascade" }),
+    fromEdtf: text("from_edtf"),
+    toEdtf: text("to_edtf"),
+    fromEarliest: integer("from_earliest", { mode: "timestamp" }),
+    toLatest: integer("to_latest", { mode: "timestamp" }),
+    certainty: text("certainty", { enum: ["certain", "less-certain", "uncertain"] })
+      .notNull()
+      .default("certain"),
+    notes: text("notes"),
+    createdBy: text("created_by"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    index("idx_series_venue_periods_venue").on(t.venueId),
+    index("idx_series_venue_periods_series").on(t.seriesId),
+  ]
+);
+
+/** OPE-1180 — a venue's other names, time-scoped. Mirrors event_name_variants. */
+export const venueNameVariants = sqliteTable(
+  "venue_name_variants",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    venueId: text("venue_id")
+      .notNull()
+      .references(() => venues.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    /** normalizeName(name) — the lookup key for dedup / auto-match / search. */
+    normalizedName: text("normalized_name").notNull(),
+    fromEdtf: text("from_edtf"),
+    toEdtf: text("to_edtf"),
+    certainty: text("certainty", { enum: ["certain", "less-certain", "uncertain"] })
+      .notNull()
+      .default("certain"),
+    createdBy: text("created_by"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    uniqueIndex("idx_venue_name_variants_unique").on(t.venueId, t.normalizedName),
+    index("idx_venue_name_variants_normalized").on(t.normalizedName),
+  ]
+);
+
+/**
+ * OPE-1180 — one source per claim. Exactly one target: the venue itself (a
+ * lifecycle field), a series↔venue period, or a name variant. Conflicting
+ * citations may coexist; certainty says how far each one goes.
+ */
+export const venueClaimCitations = sqliteTable(
+  "venue_claim_citations",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    venueId: text("venue_id").references(() => venues.id, { onDelete: "cascade" }),
+    seriesVenuePeriodId: text("series_venue_period_id").references(() => seriesVenuePeriods.id, {
+      onDelete: "cascade",
+    }),
+    venueNameVariantId: text("venue_name_variant_id").references(() => venueNameVariants.id, {
+      onDelete: "cascade",
+    }),
+    /** For a venue target: use_started / use_ended / current_state / … */
+    field: text("field"),
+    sourceUrl: text("source_url").notNull(),
+    sourceType: text("source_type").notNull(),
+    certainty: text("certainty", { enum: ["certain", "less-certain", "uncertain"] })
+      .notNull()
+      .default("certain"),
+    notes: text("notes"),
+    createdBy: text("created_by"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    index("idx_venue_claim_citations_venue").on(t.venueId),
+    index("idx_venue_claim_citations_period").on(t.seriesVenuePeriodId),
+    index("idx_venue_claim_citations_variant").on(t.venueNameVariantId),
+  ]
+);
+
 export const eventNameVariants = sqliteTable(
   "event_name_variants",
   {

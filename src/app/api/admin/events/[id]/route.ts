@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/api/with-auth";
+import { checkEventVenue } from "@/lib/venues/former-venue-guard";
 import { gateDatesConfirmedWrite } from "@/lib/events/dates-confirmed-write";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import {
@@ -222,6 +223,24 @@ export const PATCH = withAuth<{ id: string }>(
         const sorted = data.eventDays.map((d) => d.date).sort();
         updateData.startDate = normalizeEventDate(sorted[0]);
         updateData.endDate = normalizeEventDate(sorted[sorted.length - 1]);
+      }
+
+      // OPE-1180 — the row AFTER this PATCH may not sit at a FORMER venue past
+      // its closure. Checked on any venue or date change.
+      if ("venueId" in updateData || "startDate" in updateData || "endDate" in updateData) {
+        const nextVenueId =
+          "venueId" in updateData ? (updateData.venueId as string | null) : currentEvent.venueId;
+        const nextStart =
+          "startDate" in updateData
+            ? (updateData.startDate as Date | null)
+            : currentEvent.startDate;
+        const nextEnd =
+          "endDate" in updateData ? (updateData.endDate as Date | null) : currentEvent.endDate;
+        const formerVenue = await checkEventVenue(db, nextVenueId, nextEnd ?? nextStart);
+        if (formerVenue.kind === "refuse") {
+          return NextResponse.json({ error: formerVenue.message }, { status: 409 });
+        }
+        if (formerVenue.kind === "flag") updateData.flaggedForReview = 1;
       }
 
       // Auto-compute public date range (excluding vendor-only days).

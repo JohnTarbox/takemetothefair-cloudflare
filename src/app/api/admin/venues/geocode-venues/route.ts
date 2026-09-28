@@ -46,7 +46,7 @@ import { NextResponse } from "next/server";
 import { withInternalKey } from "@/lib/api/with-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { venues, adminActions } from "@/lib/db/schema";
-import { inArray, isNull, and, gt } from "drizzle-orm";
+import { inArray, isNull, and, gt, ne } from "drizzle-orm";
 import { logError } from "@/lib/logger";
 import { geocodeVenueRow } from "@/lib/venues/geocode-one";
 import {
@@ -112,6 +112,7 @@ export const POST = withInternalKey(
       zip: venues.zip,
       latitude: venues.latitude,
       longitude: venues.longitude,
+      status: venues.status,
     };
 
     let rows: VenueForGeocode[];
@@ -133,6 +134,7 @@ export const POST = withInternalKey(
         .where(
           and(
             isNull(venues.latitude),
+            ne(venues.status, "FORMER"),
             isNull(venues.longitude),
             body.after_id ? gt(venues.id, body.after_id) : undefined
           )
@@ -161,6 +163,21 @@ export const POST = withInternalKey(
     }
 
     for (const v of rows) {
+      // OPE-1180 — a FORMER venue is never geocoded: with no live address the
+      // only answer is a city centroid, the fabricated-Montpelier pin. It is
+      // placed by hand (update_venue latitude/longitude) or not at all. Named
+      // explicitly rather than filtered, so it never reads as "no such venue".
+      if ((v as { status?: string }).status === "FORMER") {
+        results.push({
+          venue_id: v.id,
+          name: v.name,
+          before: { lat: v.latitude, lng: v.longitude },
+          after: { lat: v.latitude, lng: v.longitude, place_id: null },
+          status: "error",
+          error: "FORMER venue — never geocoded (OPE-1180); place it by hand if the site is known",
+        });
+        continue;
+      }
       // OPE-408 — the per-venue decision + write now lives in
       // src/lib/venues/geocode-one.ts, because venue CREATION needs the exact
       // same confidence gate. It had been inline here only, which is why five

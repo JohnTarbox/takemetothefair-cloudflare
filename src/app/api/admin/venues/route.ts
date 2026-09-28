@@ -37,6 +37,18 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db, session })
 
   const data = validation.data;
 
+  // OPE-1180 — a FORMER venue needs a closure date and its source; this form
+  // carries neither. Created via MCP create_venue only.
+  if (data.status === "FORMER") {
+    return NextResponse.json(
+      {
+        error:
+          "A FORMER venue needs use_ended_edtf and a lifecycle_citation — create it with the MCP create_venue tool.",
+      },
+      { status: 409 }
+    );
+  }
+
   try {
     // Check for duplicate Google Place ID
     if (data.googlePlaceId) {

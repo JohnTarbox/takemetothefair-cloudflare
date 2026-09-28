@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { detectPossibleDuplicate } from "@/lib/duplicates/venue-date-collision";
+import { checkEventVenue } from "@/lib/venues/former-venue-guard";
 import { gateDatesConfirmed } from "@takemetothefair/utils";
 import { dismissedFlagIds } from "@/lib/duplicates/flag-queue";
 import { withAuth } from "@/lib/api/with-auth";
@@ -219,6 +220,13 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
     const gateFlagsJson = gateResult.reasons.length > 0 ? JSON.stringify(gateResult.reasons) : null;
     const sourceClassification = classifySource(data.sourceName, data.sourceUrl);
 
+    // OPE-1180 — an admin-chosen FORMER venue after its closure is refused;
+    // inside the closure's uncertainty window it is allowed and flagged.
+    const formerVenue = await checkEventVenue(db, data.venueId, endDate ?? startDate);
+    if (formerVenue.kind === "refuse") {
+      return NextResponse.json({ error: formerVenue.message }, { status: 409 });
+    }
+
     // OPE-627 — report-only duplicate check. Writes the flag; merges nothing.
     const possibleDuplicateOf = await detectPossibleDuplicate(db, {
       venueId: data.venueId,
@@ -233,6 +241,7 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
     });
     await db.insert(events).values({
       possibleDuplicateOf,
+      ...(formerVenue.kind === "flag" ? { flaggedForReview: 1 } : {}),
       id: eventId,
       name: data.name,
       slug: unsafeSlug(slug),

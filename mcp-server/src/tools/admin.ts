@@ -106,6 +106,8 @@ import {
   assertIngestionMethod,
   nextGateFlags,
   buildPlaceholderEmail,
+  validateVenueLifecycle,
+  checkFormerVenue,
   gateDatesConfirmed,
 } from "@takemetothefair/utils";
 import {
@@ -181,6 +183,13 @@ import { registerPendingReplyTools } from "./admin-pending-replies.js";
 import { registerSupportObligationTools } from "./admin-support-obligations.js";
 import { registerExtractionFaultTools } from "./admin-extraction-faults.js";
 import { registerFaultFamilyTools } from "./admin-fault-family.js";
+import {
+  VENUE_LIFECYCLE_PARAMS,
+  applyVenueLifecycleUpdate,
+  loadGuardVenue,
+  writeVenueLifecycleCitations,
+} from "../venues/lifecycle.js";
+import { registerVenueHistoryTools } from "./admin-venue-history.js";
 import { registerFindDuplicateVenuesTool } from "./admin-find-duplicate-venues.js";
 import { registerIdeaTools } from "./admin-ideas.js";
 import { registerEmailThreadTools } from "./admin-email-threads.js";
@@ -426,6 +435,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   registerExtractionFaultTools(server, db, auth);
   registerFaultFamilyTools(server, db, auth);
   registerIdeaTools(server, db, auth);
+  registerVenueHistoryTools(server, db, auth);
   registerEmailThreadTools(server, db, auth);
   registerGscBackfillTools(server, auth, env);
   registerVendorDigestTools(server, auth, env);
@@ -1511,6 +1521,39 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
 
       const event = eventRows[0];
 
+      // OPE-1180 — the row after this update may not sit at a FORMER venue past
+      // its closure (the drizzle/0333 trigger enforces it too; this makes the
+      // refusal readable). Inside the closure's uncertainty window: flag.
+      let formerVenueWarning: string | undefined;
+      if (
+        updates.venueId !== undefined ||
+        updates.startDate !== undefined ||
+        updates.endDate !== undefined
+      ) {
+        const nextVenueId =
+          updates.venueId !== undefined ? (updates.venueId as string | null) : event.venueId;
+        const nextStart =
+          updates.startDate !== undefined ? (updates.startDate as Date | null) : event.startDate;
+        const nextEnd =
+          updates.endDate !== undefined ? (updates.endDate as Date | null) : event.endDate;
+        const verdict = checkFormerVenue(
+          await loadGuardVenue(db, nextVenueId),
+          nextEnd ?? nextStart
+        );
+        if (verdict.kind === "refuse") {
+          return {
+            content: [
+              jsonContent({ error: "former_venue_after_closure", message: verdict.message }),
+            ],
+            isError: true,
+          };
+        }
+        if (verdict.kind === "flag") {
+          updates.flaggedForReview = 1;
+          formerVenueWarning = verdict.reason;
+        }
+      }
+
       // OPE-1200 — `dates_confirmed = true` needs a qualifying start_date
       // citation (active, not a community submission, not an aggregator), or a
       // `citation` in this same call that will actually land on start_date —
@@ -2422,6 +2465,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }
       if (gateFlagsWarning) {
         warnings.gate_flags = gateFlagsWarning;
+      }
+      if (formerVenueWarning) {
+        warnings.former_venue_flagged = formerVenueWarning;
       }
       if (datesConfirmedWarning) {
         warnings.dates_confirmed_downgraded = datesConfirmedWarning;
@@ -3709,7 +3755,13 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .max(1)
         .optional()
         .describe("Vertical focal point for card crops, 0–1. Default 0.5."),
-      status: z.enum(["ACTIVE", "INACTIVE"]).optional().describe("Venue status"),
+      status: z
+        .enum(["ACTIVE", "INACTIVE", "FORMER"])
+        .optional()
+        .describe(
+          "Venue status. FORMER = was a venue, no longer is (OPE-1180): needs use_ended_edtf, and is refused while any non-REJECTED event after the closure still references the venue."
+        ),
+      ...VENUE_LIFECYCLE_PARAMS,
       // OPE-1061 — the VENUE's own policy. Shown on the venue page only; never
       // an event's answer (an ag fair and a lawn craft fair share fairgrounds).
       pet_friendly: PET_FRIENDLY_PARAM,
@@ -3760,6 +3812,13 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         },
         { param: "status", column: "status" },
         { param: "pet_friendly", column: "petFriendly" },
+        // OPE-1180 — lifecycle. The derived use_ended_* bounds are set below.
+        { param: "use_started_edtf", column: "useStartedEdtf" },
+        { param: "use_ended_edtf", column: "useEndedEdtf" },
+        { param: "current_state", column: "currentState" },
+        { param: "current_use", column: "currentUse" },
+        { param: "wikidata_qid", column: "wikidataQid" },
+        { param: "nrhp_ref", column: "nrhpRef" },
       ];
 
       const updates: Record<string, unknown> = {};
@@ -3802,6 +3861,12 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }
 
       const venue = venueRows[0];
+
+      // OPE-1180 — lifecycle validation against the row as it WILL be.
+      const lifecycle = await applyVenueLifecycleUpdate(db, venue, params, updates);
+      if (!lifecycle.ok) {
+        return { content: [jsonContent(lifecycle.error)], isError: true };
+      }
 
       // If name changed, regenerate slug with collision check
       if (params.name !== undefined) {
@@ -3943,6 +4008,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         newValues.slug = updates.slug;
       }
 
+      // OPE-1180 — one citation per lifecycle claim written.
+      await writeVenueLifecycleCitations(db, venue.id, params, auth.userId);
+
       // OPE-1061 — evidence citation after the column write.
       const petFriendlyCitationId =
         params.pet_friendly !== undefined
@@ -3962,6 +4030,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
             fieldsUpdated: requestedFields,
             previousValues,
             newValues,
+            ...(lifecycle.notes.length > 0 ? { lifecycle_notes: lifecycle.notes } : {}),
             ...(petFriendlyCitationId !== undefined
               ? { pet_friendly_citation_id: petFriendlyCitationId }
               : {}),
@@ -3977,10 +4046,19 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
     "Create a new venue record. Returns the venue ID for use with update_event. Admin only.",
     {
       name: z.string().min(1).max(200).transform(sanitizeProse).describe("Venue name"),
-      address: z.string().min(1).describe("Street address"),
+      // OPE-1180 — blank allowed for a FORMER venue only (checked below).
+      address: z.string().describe("Street address (may be blank only for status FORMER)"),
       city: z.string().min(1).describe("City"),
       state: z.string().min(1).max(2).describe("State (2-letter code)"),
-      zip: z.string().min(1).describe("ZIP code"),
+      zip: z.string().describe("ZIP code (may be blank only for status FORMER)"),
+      status: z
+        .enum(["ACTIVE", "FORMER"])
+        .optional()
+        .default("ACTIVE")
+        .describe(
+          "ACTIVE (default) or FORMER — a venue that no longer exists as one (OPE-1180). FORMER needs use_ended_edtf + lifecycle_citation, is never auto-geocoded, and is not publicly served until the FORMER venue page ships."
+        ),
+      ...VENUE_LIFECYCLE_PARAMS,
       latitude: z.number().optional().describe("Latitude coordinate"),
       longitude: z.number().optional().describe("Longitude coordinate"),
       capacity: z.number().int().optional().describe("Venue capacity"),
@@ -4017,6 +4095,46 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         ),
     },
     async (params) => {
+      // OPE-1180 — lifecycle checks before anything is written.
+      const isFormer = params.status === "FORMER";
+      if (!isFormer && (!params.address.trim() || !params.zip.trim())) {
+        return {
+          content: [
+            jsonContent({
+              error: "address_required",
+              message: "address and zip are required; only a FORMER venue may leave them blank.",
+            }),
+          ],
+          isError: true,
+        };
+      }
+      if (
+        (params.use_started_edtf?.trim() || params.use_ended_edtf?.trim()) &&
+        !params.lifecycle_citation
+      ) {
+        return {
+          content: [
+            jsonContent({
+              error: "lifecycle_citation_required",
+              message:
+                "use_started_edtf / use_ended_edtf are claims about the past; pass lifecycle_citation with the source that says so.",
+            }),
+          ],
+          isError: true,
+        };
+      }
+      const lifecycle = validateVenueLifecycle({
+        status: params.status,
+        useStartedEdtf: params.use_started_edtf?.trim() || null,
+        useEndedEdtf: params.use_ended_edtf?.trim() || null,
+      });
+      if (!lifecycle.ok) {
+        return {
+          content: [jsonContent({ error: "invalid_lifecycle", message: lifecycle.error })],
+          isError: true,
+        };
+      }
+
       // DQ2 (2026-06-04): coerce address-as-name BEFORE dedup. When
       // `params.name` is a bare street address or equals `params.address`,
       // derive a real name from city/state and shift the offending
@@ -4118,6 +4236,16 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         contactEmail: params.contact_email ?? null,
         contactPhone: params.contact_phone ?? null,
         imageUrl: params.image_url ?? null,
+        // OPE-1180 — lifecycle.
+        status: params.status,
+        useStartedEdtf: params.use_started_edtf?.trim() || null,
+        useEndedEdtf: params.use_ended_edtf?.trim() || null,
+        useEndedEarliest: lifecycle.derived.useEndedEarliest,
+        useEndedLatest: lifecycle.derived.useEndedLatest,
+        currentState: params.current_state ?? null,
+        currentUse: params.current_use ?? null,
+        wikidataQid: params.wikidata_qid ?? null,
+        nrhpRef: params.nrhp_ref ?? null,
         // IMG1 §1b Phase 1 — focal point (clamped); omit when undefined
         // so the column DEFAULT (0.5) applies.
         ...(params.image_focal_x !== undefined && {
@@ -4128,9 +4256,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         }),
       });
 
+      await writeVenueLifecycleCitations(db, venueId, params, auth.userId);
+
       // IndexNow: venues created via this tool default to ACTIVE (public)
-      // immediately, so ping right away.
-      if (env) {
+      // immediately, so ping right away. A FORMER venue is not served yet.
+      if (env && !isFormer) {
         await triggerIndexNow(publicUrlFor("venues", finalSlug), env, "venue-create", {
           defer: params.defer_search_ping ?? true,
           db,
@@ -4144,7 +4274,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       // nothing, and every real caller (email submission, scrape, JSON-LD
       // harvest) has a street address and no coordinates — so every venue born
       // here started NULL. Skip the round-trip when the caller supplied a pin.
-      if (params.latitude == null || params.longitude == null) {
+      //
+      // OPE-1180 — never for a FORMER venue: with no real address the geocoder
+      // can only offer a city centroid, which is exactly the fabricated
+      // "Montpelier Fairgrounds" pin. A FORMER site is placed by hand or not at all.
+      if (!isFormer && (params.latitude == null || params.longitude == null)) {
         await geocodeNewVenueViaMainApp(env, venueId);
       }
 
@@ -4156,6 +4290,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
             slug: finalSlug,
             name: params.name,
             location: `${params.city}, ${params.state.toUpperCase()}`,
+            status: params.status,
           }),
         ],
       };

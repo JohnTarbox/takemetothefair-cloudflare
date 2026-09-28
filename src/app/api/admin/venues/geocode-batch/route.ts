@@ -4,7 +4,7 @@ import { withAuth } from "@/lib/api/with-auth";
 import { recordMutation } from "@/lib/audit/record-mutation";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { venues } from "@/lib/db/schema";
-import { eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, ne } from "drizzle-orm";
 import { geocodeAddress } from "@/lib/google-maps";
 import { logError } from "@/lib/logger";
 
@@ -13,7 +13,11 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db, session })
   const apiKey = env.GOOGLE_MAPS_API_KEY;
 
   try {
-    const missingCoords = await db.select().from(venues).where(isNull(venues.latitude));
+    // OPE-1180 — never geocode a FORMER venue (no live address → centroid pin).
+    const missingCoords = await db
+      .select()
+      .from(venues)
+      .where(and(isNull(venues.latitude), ne(venues.status, "FORMER")));
 
     let success = 0;
     let failed = 0;
