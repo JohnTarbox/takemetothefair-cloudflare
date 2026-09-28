@@ -190,6 +190,7 @@ import {
   writeVenueLifecycleCitations,
 } from "../venues/lifecycle.js";
 import { registerVenueHistoryTools } from "./admin-venue-history.js";
+import { registerFindDuplicateVenuesTool } from "./admin-find-duplicate-venues.js";
 import { registerIdeaTools } from "./admin-ideas.js";
 import { registerEmailThreadTools } from "./admin-email-threads.js";
 import { registerGscBackfillTools } from "./admin-gsc-backfill.js";
@@ -428,6 +429,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   registerCrossingRecordTools(server, auth, env);
   registerAgentHeartbeatTools(server, auth, env);
   registerSiteHealthSweepTool(server, auth, env);
+  registerFindDuplicateVenuesTool(server, auth, env);
   registerPendingReplyTools(server, db, auth);
   registerSupportObligationTools(server, db, auth);
   registerExtractionFaultTools(server, db, auth);

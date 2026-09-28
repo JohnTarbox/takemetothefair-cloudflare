@@ -55,6 +55,7 @@ import {
   vendorCategoryWatchRuns,
 } from "@/lib/db/schema";
 import { SITE_URL } from "@takemetothefair/constants";
+import { NEAR_DUPLICATE_SWEEP_ACTION } from "@/lib/duplicates/near-duplicate-sweep";
 import type { StaleRed } from "@/lib/cpi/stale-reds";
 import type { AnyColumn, SQL } from "drizzle-orm";
 import type { SQLiteTable } from "drizzle-orm/sqlite-core";
@@ -1801,6 +1802,30 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     priority: "P1",
     expectedWindowHours: 8 * 24,
     lastEvidenceAt: (db) => maxTs(db, vendorCategoryWatchRuns, vendorCategoryWatchRuns.runAt),
+  },
+  {
+    // OPE-1201 — proof the daily near-duplicate candidate sweep still RUNS.
+    //
+    // OPE-627's duplicate check only fires at insert, so rows that predate it
+    // were never evaluated — its own PTTF / Scarborough fixtures sat unflagged
+    // for a month. The MCP Worker's daily cron now POSTs the main app's
+    // /api/admin/duplicates/near-sweep, which records ONE admin_actions row per
+    // run whether or not it flags anything. That row is the evidence: a sweep
+    // that finds nothing is healthy, a sweep that stops running is not.
+    //
+    // 48h = two daily cron cycles, so one skipped or failed run does not page.
+    name: "near-duplicate-sweep",
+    ownerOpe: "OPE-1201",
+    label: "daily near-duplicate candidate sweep running",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        adminActions,
+        adminActions.createdAt,
+        eq(adminActions.action, NEAR_DUPLICATE_SWEEP_ACTION)
+      ),
   },
 ];
 
