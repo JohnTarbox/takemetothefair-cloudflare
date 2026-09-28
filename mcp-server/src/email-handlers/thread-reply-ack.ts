@@ -42,7 +42,12 @@
  * legitimate acks is the failure mode to avoid. Add a kind when a specimen
  * demands it, not in anticipation.
  */
+import { inArray } from "drizzle-orm";
 import { isReplyToOurThread } from "../intent-fastpath.js";
+import { emailSendLedger } from "../schema.js";
+import type { Db } from "../db.js";
+import { storedMessageIdForms } from "./message-id-forms.js";
+import { isHumanSendSource } from "./owed-human.js";
 import type { ReplyKind } from "./types.js";
 
 /**
@@ -83,9 +88,50 @@ export const THREAD_REPLY_OVERRIDABLE_KINDS: readonly ReplyKind[] = [
 export function shouldUseThreadReplyAck(
   replyKind: ReplyKind | null | undefined,
   inReplyTo: string | null | undefined,
-  emailReferences: string | null | undefined
+  emailReferences: string | null | undefined,
+  repliedTo?: RepliedToSend
 ): boolean {
   if (!replyKind) return false;
   if (!THREAD_REPLY_OVERRIDABLE_KINDS.includes(replyKind)) return false;
-  return isReplyToOurThread(inReplyTo ?? null, emailReferences ?? null);
+  if (!isReplyToOurThread(inReplyTo ?? null, emailReferences ?? null)) return false;
+  // OPE-1214 — when the caller knows what the reply answers, only a HUMAN send
+  // makes the copy true. Undefined keeps the header-only behaviour for callers
+  // that have not looked (pure tests of the header rule).
+  return repliedTo === undefined || repliedTo === "human";
+}
+
+/**
+ * OPE-1214 — what the message being replied to WAS.
+ *
+ * `thread-reply-ack` says the reply is "attached to your existing thread" and
+ * has "gone to the person you've been corresponding with". The header test
+ * alone (`isReplyToOurThread`) only proves the parent is one of OUR messages —
+ * and most of our messages are automated. An organizer answering the
+ * content-links-sync "your event was featured" notice (2026-09-28, Christmas
+ * Prelude) got both claims although no person had ever written to him.
+ *
+ *  - `human`     — a matched send whose source is `reply:manual*`.
+ *  - `automated` — matched sends exist, none written by a person.
+ *  - `unknown`   — our domain in the header but no ledger row to say.
+ *
+ * Only `human` earns the thread-reply wording. The ledger is read directly by
+ * provider_message_id — NOT joined to inbound_emails, as the thread resolver
+ * does, because a broadcast or notice has no inbound row and would vanish.
+ */
+export type RepliedToSend = "human" | "automated" | "unknown";
+
+export async function classifyRepliedToSend(
+  db: Db,
+  inReplyTo: string | null | undefined,
+  emailReferences: string | null | undefined
+): Promise<RepliedToSend> {
+  const forms = storedMessageIdForms(inReplyTo, emailReferences);
+  if (forms.length === 0) return "unknown";
+  const sends = await db
+    .select({ source: emailSendLedger.source })
+    .from(emailSendLedger)
+    .where(inArray(emailSendLedger.providerMessageId, forms))
+    .limit(forms.length);
+  if (sends.length === 0) return "unknown";
+  return sends.some((s) => isHumanSendSource(s.source)) ? "human" : "automated";
 }
