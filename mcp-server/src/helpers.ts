@@ -27,6 +27,7 @@ export type { Slug } from "@takemetothefair/utils";
 import { eq } from "drizzle-orm";
 import {
   vendors,
+  eventDays,
   events,
   enrichmentLog,
   containsCI,
@@ -461,6 +462,41 @@ export async function triggerIndexNow(
  * 39 of 668 rows carried it; 17 were live and upcoming.
  */
 export { computePublicDates } from "@takemetothefair/utils";
+
+/**
+ * OPE-1203 — the parent event's public date range, recomputed IN SQL from the
+ * `event_days` rows that exist when the statement runs.
+ *
+ * The tools used to read the surviving days, compute in JS, then write — three
+ * round trips. Three parallel `delete_event_day` calls on one event interleaved
+ * there: one computed from a row another call had just deleted, and its UPDATE
+ * surfaced to the caller as a raw D1 error AFTER its own delete had committed,
+ * so the caller could not tell whether the day was gone.
+ *
+ * As one statement batched with the day write, the range is always derived
+ * from committed rows. It must stay equal to `computePublicDates` — public
+ * (non-vendor-only) days, min/max by string order, noon-UTC anchor — and a test
+ * pins the two against each other.
+ */
+function publicDateFromDaysSql(eventId: string, agg: "MIN" | "MAX") {
+  return sql`(SELECT CAST(strftime('%s', ${sql.raw(agg)}(${eventDays.date}) || ' 12:00:00') AS INTEGER) FROM ${eventDays} WHERE ${eventDays.eventId} = ${eventId} AND COALESCE(${eventDays.vendorOnly}, 0) = 0)`;
+}
+
+/** The `set` values for the recompute — spread into an `events` update. */
+export function publicDatesFromDaysSet(eventId: string) {
+  return {
+    publicStartDate: publicDateFromDaysSql(eventId, "MIN"),
+    publicEndDate: publicDateFromDaysSql(eventId, "MAX"),
+  };
+}
+
+/** The recompute as a standalone statement, for `db.batch([dayWrite, this])`. */
+export function recomputePublicDatesStmt(db: Db, eventId: string) {
+  return db
+    .update(events)
+    .set({ ...publicDatesFromDaysSet(eventId), updatedAt: new Date() })
+    .where(eq(events.id, eventId));
+}
 
 // Status enums + transition state machine — sourced from the canonical
 // @takemetothefair/constants package. Aliases kept for backwards compat
