@@ -873,6 +873,9 @@ export const blogPostUpdateSchema = blogPostCreateSchema
     categories: z.array(z.string()).optional(),
     faqs: z.array(blogFaqItemSchema).optional(),
     status: z.enum([BLOG_POST_STATUS.DRAFT, BLOG_POST_STATUS.PUBLISHED]).optional(),
+    // OPE-1202 — the only way to change a PUBLISHED post's URL. A title change
+    // alone keeps a published slug (drafts still regenerate from the title).
+    newSlug: z.string().min(1).max(200).optional(),
     // K43 / A3.1 — escape hatch for the publish-time broken-link gate. When a
     // PUBLISHED save introduces an internal /events,/vendors,/venues,/blog link
     // that doesn't resolve, the PUT is rejected 422 unless this is true. Lets a
