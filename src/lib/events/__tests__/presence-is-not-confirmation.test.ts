@@ -33,14 +33,18 @@ const SCHEMA = readFileSync(resolve(root, "packages/db-schema/src/index.ts"), "u
 describe("the importers no longer equate presence with confirmation", () => {
   it("/api/admin/import does not derive confirmation from startDate", () => {
     expect(IMPORT_ROUTE).not.toContain("eventData.startDate ? true : false");
-    expect(IMPORT_ROUTE).toContain("datesConfirmed: eventData.datesConfirmed ?? false");
+    // OPE-1200 — the request now passes through the citation gate as well.
+    expect(IMPORT_ROUTE).toContain("requested: eventData.datesConfirmed ?? false");
+    expect(IMPORT_ROUTE).toContain("datesConfirmed: gateDatesConfirmed({");
   });
 
   it("/api/admin/import-url does not derive confirmation from startDate", () => {
     expect(IMPORT_URL_ROUTE).not.toContain(
       "datesConfirmed: event.datesConfirmed ?? startDate !== null"
     );
-    expect(IMPORT_URL_ROUTE).toContain("datesConfirmed: event.datesConfirmed ?? false");
+    // OPE-1200 — the request now passes through the citation gate as well.
+    expect(IMPORT_URL_ROUTE).toContain("requested: event.datesConfirmed ?? false");
+    expect(IMPORT_URL_ROUTE).toContain("datesConfirmed: gateDatesConfirmed({");
   });
 
   it("still lets an explicit caller claim confirmation", () => {

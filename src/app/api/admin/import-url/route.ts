@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { detectPossibleDuplicate } from "@/lib/duplicates/venue-date-collision";
+import { gateDatesConfirmed } from "@takemetothefair/utils";
 import { withAuth } from "@/lib/api/with-auth";
 import { recordMutation } from "@/lib/audit/record-mutation";
 import { events, venues, promoters, eventSchemaOrg } from "@/lib/db/schema";
@@ -253,7 +254,12 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
       // read `startDate !== null`, so any URL import that managed to parse a
       // date claimed the date was confirmed. See the sibling note in
       // /api/admin/import.
-      datesConfirmed: event.datesConfirmed ?? false,
+      // OPE-1200 — the wizard's checkbox starts ticked; with no citation on a
+      // new row, a confirmed claim is written as false until start_date is cited.
+      datesConfirmed: gateDatesConfirmed({
+        requested: event.datesConfirmed ?? false,
+        citations: [],
+      }).value,
       // OPE-47 (2026-07): a specificDates list is discontinuous ONLY when the
       // dates aren't a gap-free daily run — a cadence-expanded weekly market
       // (every Saturday) → true; a contiguous multi-day fair the AI happened
