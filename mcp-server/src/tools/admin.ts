@@ -83,6 +83,8 @@ import {
   PAYMENT_STATUS_ENUM,
   PARTICIPATION_TYPE_ENUM,
   computePublicDates,
+  publicDatesFromDaysSet,
+  recomputePublicDatesStmt,
   publicUrlFor,
   triggerIndexNow,
   PUBLIC_EVENT_STATUSES,
@@ -5910,7 +5912,6 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .select({ date: eventDays.date, vendorOnly: eventDays.vendorOnly })
         .from(eventDays)
         .where(eq(eventDays.eventId, params.event_id));
-      const { publicStartDate, publicEndDate } = computePublicDates(allDays);
 
       // OPE-47 (2026-07): keep events.discontinuous_dates in sync as days are
       // added one at a time. This tool was the true under-flagging source —
@@ -5928,8 +5929,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       await db
         .update(events)
         .set({
-          publicStartDate,
-          publicEndDate,
+          // OPE-1203 — computed in SQL from the rows present at write time, so a
+          // concurrent day write on the same event cannot leave a stale range.
+          ...publicDatesFromDaysSet(params.event_id),
           updatedAt: new Date(),
           ...discontinuousUpdate,
           ...(hoursUnknown ? { flaggedForReview: 1 } : {}),
@@ -6098,14 +6100,15 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
             venueId: parentEvent.venueId,
           })
         : [];
+      // OPE-1203 — the day write and the public-range recompute go in one
+      // atomic batch, the range computed in SQL from the committed rows.
+      await db.batch([
+        db.update(eventDays).set(updates).where(eq(eventDays.id, params.day_id)),
+        recomputePublicDatesStmt(db, eventId),
+        ...daySyndicationStmts,
+      ] as unknown as Parameters<typeof db.batch>[0]);
       if (daySyndicationStmts.length > 0) {
-        await db.batch([
-          db.update(eventDays).set(updates).where(eq(eventDays.id, params.day_id)),
-          ...daySyndicationStmts,
-        ] as unknown as Parameters<typeof db.batch>[0]);
         await enqueueSyndicationChange(env, { entityType: "event_day", entityId: params.day_id });
-      } else {
-        await db.update(eventDays).set(updates).where(eq(eventDays.id, params.day_id));
       }
 
       // OPE-433 scope 5 — one record for both branches: the syndication
@@ -6119,17 +6122,6 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         after: updates,
         note: "mcp update_event_day",
       });
-
-      // Recompute public date range on parent event
-      const allDays = await db
-        .select({ date: eventDays.date, vendorOnly: eventDays.vendorOnly })
-        .from(eventDays)
-        .where(eq(eventDays.eventId, eventId));
-      const { publicStartDate, publicEndDate } = computePublicDates(allDays);
-      await db
-        .update(events)
-        .set({ publicStartDate, publicEndDate, updatedAt: new Date() })
-        .where(eq(events.id, eventId));
 
       return {
         content: [
@@ -6170,18 +6162,41 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         actor: auth.userId ?? "mcp:delete_event_day",
         note: `mcp delete_event_day on event ${eventId}`,
       });
-      await db.delete(eventDays).where(eq(eventDays.id, params.day_id));
-
-      // Recompute public date range on parent event
-      const remainingDays = await db
-        .select({ date: eventDays.date, vendorOnly: eventDays.vendorOnly })
-        .from(eventDays)
-        .where(eq(eventDays.eventId, eventId));
-      const { publicStartDate, publicEndDate } = computePublicDates(remainingDays);
-      await db
-        .update(events)
-        .set({ publicStartDate, publicEndDate, updatedAt: new Date() })
-        .where(eq(events.id, eventId));
+      // OPE-1203 — the delete and the public-range recompute are ONE atomic
+      // batch, and the range is computed in SQL from the rows that survive it,
+      // so parallel deletes on one event cannot leave it stale or half-done.
+      try {
+        await db.batch([
+          db.delete(eventDays).where(eq(eventDays.id, params.day_id)),
+          recomputePublicDatesStmt(db, eventId),
+        ] as unknown as Parameters<typeof db.batch>[0]);
+      } catch (err) {
+        // Say whether the day is gone from what the table holds NOW, not from
+        // what the batch is assumed to have done.
+        const still = await db
+          .select({ id: eventDays.id })
+          .from(eventDays)
+          .where(eq(eventDays.id, params.day_id))
+          .limit(1)
+          .catch(() => null);
+        const dayDeleted = still === null ? "unknown" : still.length === 0;
+        return {
+          content: [
+            jsonContent({
+              deleted: dayDeleted,
+              id: params.day_id,
+              error: `delete_event_day failed: ${err instanceof Error ? err.message : String(err)}`,
+              hint:
+                dayDeleted === false
+                  ? "Nothing changed — the day and the event's public dates are as they were. Safe to retry."
+                  : dayDeleted === true
+                    ? "The day is gone (possibly removed by a concurrent call); check the event's public dates with get_event_details_admin."
+                    : "Could not confirm the day's state; re-read with list_event_days before retrying.",
+            }),
+          ],
+          isError: true,
+        };
+      }
 
       return {
         content: [jsonContent({ deleted: true, id: params.day_id, date: dayRows[0].date })],
