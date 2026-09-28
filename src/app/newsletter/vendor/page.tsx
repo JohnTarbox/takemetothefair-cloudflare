@@ -4,6 +4,7 @@ import type { Metadata } from "next";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { newsletterIssues } from "@/lib/db/schema";
 import { and, desc, eq, isNotNull } from "drizzle-orm";
+import { NewsletterSignupBlock } from "@/components/newsletter/newsletter-signup-block";
 
 /**
  * OPE-359 — the vendor-facing newsletter archive ("New This Week").
@@ -68,6 +69,13 @@ export default async function VendorNewsletterArchivePage() {
         Our weekly newsletter for exhibitors: shows newly added to Meet Me at the Fair, with time
         left to apply for a booth. Past issues below.
       </p>
+
+      {/* OPE-1209 — this page's signup is the VENDOR list. It used to show only
+          the site footer's attendee form, so a vendor who read these issues and
+          clicked Subscribe here joined the weekend list. The footer form is
+          swapped for a link on this route (FooterNewsletterSlot), so the page
+          offers exactly one form. */}
+      <NewsletterSignupBlock source="vendor-archive" audience="vendor" />
 
       {issues.length === 0 ? (
         <p className="text-muted-foreground">No issues have been sent yet.</p>
