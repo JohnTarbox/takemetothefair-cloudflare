@@ -58,7 +58,10 @@ import { and, eq, gte, sql } from "drizzle-orm";
 import { getDb } from "../db.js";
 import { ledgerEmailSend } from "../mailer.js";
 import { isAutoReplyEnabled, AUTO_REPLY_HELD_REASON, type EmailGateEnv } from "../email-gates.js";
-import { shouldUseThreadReplyAck } from "../email-handlers/thread-reply-ack.js";
+import {
+  classifyRepliedToSend,
+  shouldUseThreadReplyAck,
+} from "../email-handlers/thread-reply-ack.js";
 import {
   CLOSED_BY_SENDER_STATUS,
   decideThreadAckGuard,
@@ -120,7 +123,10 @@ import {
   countContentFreeBurst,
   BURST_DEBOUNCE_SECONDS,
 } from "../email-handlers/empty-message.js";
-import { resolveFanoutReplyRole } from "../email-handlers/fanout-reply-leader.js";
+import {
+  readFanoutAckMentionMinConfidence,
+  resolveFanoutReplyRole,
+} from "../email-handlers/fanout-reply-leader.js";
 import { extractAllUrls, type AttachmentRef } from "../email-handler.js";
 // OPE-837 — same-site nav crawl. The fan-out above enumerates URLs in the
 // EMAIL; this enumerates pages on the fetched SITE, which is where price,
@@ -996,7 +1002,14 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     const fanoutRole = await step.do(
       "fanout-reply/role",
       { retries: { limit: 2, delay: "5 seconds", backoff: "constant" }, timeout: "10 seconds" },
-      async () => resolveFanoutReplyRole(getDb(this.env.DB), messageRowId)
+      async () => {
+        const db = getDb(this.env.DB);
+        return resolveFanoutReplyRole(
+          db,
+          messageRowId,
+          await readFanoutAckMentionMinConfidence(db)
+        );
+      }
     );
     if (fanoutRole && !fanoutRole.isLeader) {
       await logError(this.env.DB, {
@@ -1155,7 +1168,22 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             // Reword, not suppress (ruled 2026-08-31): the specimen sat 30 days
             // with an obligation open and the ack was the only thing that ever
             // reached her, so silence is the worse failure.
-            if (shouldUseThreadReplyAck(replyKind, rows[0].inReplyTo, rows[0].emailReferences)) {
+            // OPE-1214 — and only when the parent is something a PERSON sent.
+            // A reply to an automated notice (content-links-sync, digests,
+            // featured notices) keeps its own ack: nobody has been
+            // "corresponding" with them. Read inside this step, so a replay
+            // reuses the same answer.
+            const repliedTo = isReplyToOurThread(rows[0].inReplyTo, rows[0].emailReferences)
+              ? await classifyRepliedToSend(db, rows[0].inReplyTo, rows[0].emailReferences)
+              : undefined;
+            if (
+              shouldUseThreadReplyAck(
+                replyKind,
+                rows[0].inReplyTo,
+                rows[0].emailReferences,
+                repliedTo ?? "unknown"
+              )
+            ) {
               await logError(this.env.DB, {
                 level: "info",
                 source: SOURCE,

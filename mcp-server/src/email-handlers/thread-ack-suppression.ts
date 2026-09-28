@@ -42,7 +42,7 @@ import { and, desc, eq, gte, like, lte, or, sql } from "drizzle-orm";
 import { emailSendLedger, inboundEmails, tunableThresholds } from "../schema.js";
 import type { Db } from "../db.js";
 import { senderAuthoredText } from "./sender-authored-text.js";
-import { shouldUseThreadReplyAck } from "./thread-reply-ack.js";
+import { classifyRepliedToSend, shouldUseThreadReplyAck } from "./thread-reply-ack.js";
 import { ledgerEmailSend } from "../mailer.js";
 import type { ReplyKind } from "./types.js";
 
@@ -231,9 +231,17 @@ export async function decideThreadAckGuard(
     .limit(1);
   if (!r) return { reason: null, kind: input.replyKind, detail: null };
 
+  // OPE-1214 — same verdict the workflow's swap reaches: the parent must be a
+  // human send, or the reply keeps its own ack (and this quiet rule, which
+  // only exists for thread-reply-ack, does not apply).
   const becomesThreadAck =
     input.replyKind === "thread-reply-ack" ||
-    shouldUseThreadReplyAck(input.replyKind, r.inReplyTo, r.emailReferences);
+    shouldUseThreadReplyAck(
+      input.replyKind,
+      r.inReplyTo,
+      r.emailReferences,
+      await classifyRepliedToSend(db, r.inReplyTo, r.emailReferences)
+    );
   const kind: ReplyKind = becomesThreadAck ? "thread-reply-ack" : input.replyKind;
 
   let reason: ThreadAckSuppressReason | null = null;
