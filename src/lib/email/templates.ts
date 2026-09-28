@@ -5,6 +5,7 @@
  */
 import { SOCIAL_LINKS } from "@/lib/social-links";
 import { htmlToPlainText } from "@/lib/email/html-to-text";
+import type { NewsletterList } from "@/lib/db/schema";
 import {
   BAND_GREEN,
   EYEBROW_GOLD,
@@ -295,17 +296,38 @@ function renderNewsletterSocialLinks(): string {
  * because the eye lands on the branded chrome, not on a 12px line floating
  * above it (OPE-232 reopen, 2026-07-20 — John and the analyst both missed it).
  */
+/**
+ * OPE-1209 — the vendor digest's "forwarded this?" line. A digest forwarded
+ * between exhibitors had no way back to a signup: the vendor list had no public
+ * signup surface at all. It goes ONLY in the vendor digest, worded for someone
+ * who is NOT yet a subscriber, so an existing subscriber reads it as the
+ * forwarding note it is rather than as a prompt to sign up twice.
+ */
+function vendorForwardCtaHtml(siteOrigin: string): string {
+  return `<div style="margin-top:12px;color:#ffffff;">Did a fellow exhibitor forward this? <a href="${siteOrigin}/newsletter/vendor" style="color:${EYEBROW_GOLD};text-decoration:underline;">Get ${escapeHtmlText(VENDOR_NEWSLETTER_NAME)} in your own inbox</a> — free, one email a week.</div>`;
+}
+
 function newsletterFooterHtml(args: {
   unsubscribeUrl: string;
   viewInBrowserUrl: string;
   mailing: string;
+  /** OPE-1209 — "vendor" swaps the tagline and adds the forward CTA. */
+  audience?: NewsletterList;
 }): string {
-  const { unsubscribeUrl, viewInBrowserUrl, mailing } = args;
+  const { unsubscribeUrl, viewInBrowserUrl, mailing, audience } = args;
+  const vendor = audience === "vendor";
+  const tagline = vendor
+    ? "One email a week — new New England shows with booth space still open."
+    : "One email a week — New England's fairs, festivals &amp; makers markets.";
+  // The view-in-browser link is always absolute on our own site, so its origin
+  // is the site origin — no second URL has to be threaded through every caller.
+  const forwardCta = vendor ? vendorForwardCtaHtml(new URL(viewInBrowserUrl).origin) : "";
   return `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border-collapse:collapse;">
   <tr>
     <td style="background:${BAND_GREEN};padding:24px 32px;text-align:center;font-family:Georgia,'Times New Roman',serif;font-size:12px;line-height:1.6;color:${ON_BAND_MUTED};">
       <div style="font-size:16px;font-weight:700;color:#ffffff;">Meet Me at the Fair</div>
-      <div style="margin-top:4px;color:${SUBTITLE_GOLD};">One email a week — New England's fairs, festivals &amp; makers markets.</div>
+      <div style="margin-top:4px;color:${SUBTITLE_GOLD};">${tagline}</div>
+      ${forwardCta}
       ${renderNewsletterSocialLinks()}
       <div style="margin-top:12px;">
         <a href="${viewInBrowserUrl}" style="color:${EYEBROW_GOLD};text-decoration:underline;">View this email in your browser</a>
@@ -375,8 +397,11 @@ function newsletterLayout(args: {
    *  disabled explanation instead of an unkeepable button. Ignored when
    *  `approveUrl` is set (a live link always wins) and on broadcasts. */
   approveDisabled?: boolean;
+  /** OPE-1209 — the list this issue goes to; drives the footer variant. */
+  audience?: NewsletterList;
 }): string {
   const {
+    audience,
     wordmark,
     subtitle,
     body,
@@ -413,7 +438,7 @@ function newsletterLayout(args: {
             </tr>
             <tr>
               <td style="padding:0;">
-                ${newsletterFooterHtml({ unsubscribeUrl, viewInBrowserUrl, mailing })}
+                ${newsletterFooterHtml({ unsubscribeUrl, viewInBrowserUrl, mailing, audience })}
               </td>
             </tr>
           </table>
@@ -441,6 +466,8 @@ export function newsletterDigestTemplate(args: {
   /** OPE-284 — preview composed while the broadcast gate is off; renders the
    *  disabled explanation in place of the approve button. */
   approveDisabled?: boolean;
+  /** OPE-1209 — the list this issue goes to. "vendor" adds the forward CTA. */
+  audience?: NewsletterList;
 }): { subject: string; html: string; text: string } {
   const mailing = args.mailingAddress?.trim() || "Meet Me at the Fair, New England";
   // OPE-285 — import the name, never re-type it. A literal here is exactly how
@@ -459,11 +486,16 @@ export function newsletterDigestTemplate(args: {
     mailing,
     approveUrl: args.approveUrl,
     approveDisabled: args.approveDisabled,
+    audience: args.audience,
   });
 
   // OPE-1107 — entities decoded, links kept, paragraphs kept. See html-to-text.ts.
   const bodyText = args.contentText ?? htmlToPlainText(args.contentHtml);
-  const text = `${args.subject}\n\nView this issue in your browser: ${args.viewInBrowserUrl}\n\n${bodyText}\n\n—\nYou're receiving this because you subscribed to ${wordmark}, the Meet Me at the Fair weekly newsletter.\nUnsubscribe: ${args.unsubscribeUrl}\n${mailing}`;
+  const text = `${args.subject}\n\nView this issue in your browser: ${args.viewInBrowserUrl}\n\n${bodyText}\n\n—\nYou're receiving this because you subscribed to ${wordmark}, the Meet Me at the Fair weekly newsletter.\nUnsubscribe: ${args.unsubscribeUrl}\n${mailing}${
+    args.audience === "vendor"
+      ? `\n\nDid a fellow exhibitor forward this? Get ${VENDOR_NEWSLETTER_NAME} in your own inbox: ${new URL(args.viewInBrowserUrl).origin}/newsletter/vendor`
+      : ""
+  }`;
 
   return { subject: args.subject, html, text };
 }

@@ -65,6 +65,7 @@ import {
 } from "./inbound-email-stale-sweep.js";
 import { runScheduledDedupSweepCanary } from "./dedup-sweep-canary.js";
 import { runScheduledNearDuplicateSweep } from "./near-duplicate-sweep-cron.js";
+import { runScheduledSyncStaleSweep } from "./sync-stale-sweep.js";
 import { runScheduledCpiStaleRedCanary } from "./cpi-stale-red-canary.js";
 import { runScheduledNewsletterListBalanceCanary } from "./newsletter-list-balance-canary.js";
 import { runScheduledBurstCapSelfTest } from "./burst-cap-selftest-canary.js";
@@ -1859,6 +1860,9 @@ export default {
         // PTTF / Scarborough fixtures) were never evaluated. Report-only: writes
         // possible_duplicate_of where NULL; the OPE-1117 queue is the reader.
         runScheduledNearDuplicateSweep(env),
+        // OPE-1205 — a synced row whose source went quiet (> N days, tunable)
+        // stops claiming confirmed dates unless a qualifying citation backs it.
+        runScheduledSyncStaleSweep(env),
         // OPE-75 (2026-07-03) — CPI Move 1: daily stale-red canary. POSTs the
         // main-app scan endpoint, which rebuilds the §6.3 action queue, picks
         // the P0/P1 signals red past threshold (P0 > 24h, P1 > 72h), and

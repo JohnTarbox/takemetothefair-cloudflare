@@ -185,6 +185,7 @@ export async function enqueueNewsletterDigest(args: {
       approveUrl: args.approveUrl,
       approveDisabled: args.approveDisabled,
       wordmark: args.wordmark,
+      audience: args.audience,
     });
     await enqueueEmail({
       to: email,

@@ -49,7 +49,8 @@ export function dateSourceDisqualifier(src: {
   return null;
 }
 
-function isQualifyingDateCitation(c: DateCitationLike): boolean {
+/** OPE-1205 — exported for its second caller, the sync-staleness sweep. */
+export function isQualifyingDateCitation(c: DateCitationLike): boolean {
   return (
     c.fieldName === "start_date" &&
     c.state === "active" &&

@@ -5,7 +5,7 @@ import { resolveIngestVenue } from "@/lib/venues/former-venue-guard";
 import { findUndatedDuplicate } from "@/lib/duplicates/find-undated-duplicate";
 import { internalKeyMatches } from "@/lib/api-auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
-import { events, promoters, eventSchemaOrg } from "@/lib/db/schema";
+import { events, promoters, eventSchemaOrg, venues } from "@/lib/db/schema";
 import { parseJsonLd } from "@/lib/schema-org";
 import { eq } from "drizzle-orm";
 import {
@@ -40,6 +40,8 @@ import {
   isUnusableEventName,
   isLikelyImageUrl,
   isPlaceholderUrl,
+  venueStateConflict,
+  sourceOutsideNewEngland,
 } from "@takemetothefair/utils";
 import { maybeRouteToOccurrence } from "@/lib/discovery/route-to-occurrence";
 import { submitEventSchema } from "./schema";
@@ -360,6 +362,19 @@ export async function POST(request: NextRequest) {
       resolvedStateCode = result.stateCode ?? resolvedStateCode;
     } else if (resolvedVenueId) {
       venueDecision = "pre-resolved";
+      // OPE-1206 — an explicitly supplied venue in a different state than the
+      // submission's own venueState is NOT linked (the Portland OR show on the
+      // Portland ME Expo). The row lands venue-less, PENDING and flagged, and
+      // no venue is minted in its place.
+      const [picked] = await db
+        .select({ state: venues.state })
+        .from(venues)
+        .where(eq(venues.id, resolvedVenueId))
+        .limit(1);
+      if (venueStateConflict(data.venueState, picked?.state)) {
+        resolvedVenueId = null;
+        venueDecision = "state-conflict";
+      }
     }
 
     // OPE-541 / OPE-531 — mint a venue from ingest prose when nothing matched.
@@ -373,7 +388,7 @@ export async function POST(request: NextRequest) {
     // the admin importers already create venues on operator action, so
     // neither needs this and widening it would be my decision, not his.
     let venueMintReason: string | null = null;
-    if (!resolvedVenueId && data.source === "email") {
+    if (!resolvedVenueId && data.source === "email" && venueDecision !== "state-conflict") {
       const mint = await mintVenueFromIngest(db, {
         decision: venueDecision,
         venueName: data.venueName,
@@ -587,7 +602,12 @@ export async function POST(request: NextRequest) {
     // `gate_flags LIKE '%host_qualified_name%'` is how anyone would find out.
     if (hostQualified.applied) gateReasons.push("host_qualified_name");
 
-    const eventStatus = gateRoute === "PENDING_REVIEW" ? "PENDING" : baseEventStatus;
+    // OPE-1206 — a source outside New England, or a venue-state conflict, is
+    // never auto-published: a human looks first.
+    const stateNeedsReview =
+      venueDecision === "state-conflict" || sourceOutsideNewEngland(data.venueState);
+    const eventStatus =
+      gateRoute === "PENDING_REVIEW" || stateNeedsReview ? "PENDING" : baseEventStatus;
     const gateFlagsJson = gateReasons.length > 0 ? JSON.stringify(gateReasons) : null;
 
     // OPE-1180 — a resolved FORMER venue is kept only for pre-closure dates.
@@ -790,6 +810,7 @@ export async function POST(request: NextRequest) {
       // lane (the headless worker can't web-confirm), not an upcoming event.
       // Operator triage queue at /admin/events?flagged=1.
       flaggedForReview:
+        stateNeedsReview ||
         formerCheck.flagForReview ||
         anyHoursUnknown ||
         gateReasons.includes("past_date") ||

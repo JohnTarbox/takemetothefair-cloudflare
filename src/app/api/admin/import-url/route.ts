@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { detectPossibleDuplicate } from "@/lib/duplicates/venue-date-collision";
+import { venueStateConflict, sourceOutsideNewEngland } from "@takemetothefair/utils";
 import { resolveIngestVenue } from "@/lib/venues/former-venue-guard";
 import { gateDatesConfirmed } from "@takemetothefair/utils";
 import { withAuth } from "@/lib/api/with-auth";
@@ -63,6 +64,7 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
 
     // Handle venue
     let venueId: string | null = null;
+    let venueStateMismatch: { sourceState: string; venueState: string } | null = null;
     let newVenueSlug: string | null = null;
 
     if (venueOption.type === "existing") {
@@ -76,7 +78,16 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
       if (existingVenue.length === 0) {
         return NextResponse.json({ success: false, error: "Venue not found" }, { status: 400 });
       }
-      venueId = venueOption.id;
+      // OPE-1206 — the page's own state (JSON-LD addressRegion, surfaced by the
+      // extractor as event.venueState) vs the venue picked for it. A mismatch
+      // is NOT linked: the event saves venue-less, PENDING and flagged, and the
+      // response says why — never an Oregon show on a Maine building.
+      const conflict = venueStateConflict(event.venueState, existingVenue[0].state);
+      if (conflict) {
+        venueStateMismatch = conflict;
+      } else {
+        venueId = venueOption.id;
+      }
     } else if (venueOption.type === "new") {
       // Create new venue
       const venueSlug = createSlug(venueOption.name);
@@ -219,7 +230,11 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
         : null,
       description: event.description,
     });
-    const finalStatus = gateResult.route === "PENDING_REVIEW" ? "PENDING" : "APPROVED";
+    // OPE-1206 — a source outside New England, or a venue-state mismatch, is
+    // never auto-published.
+    const stateNeedsReview = !!venueStateMismatch || sourceOutsideNewEngland(event.venueState);
+    const finalStatus =
+      gateResult.route === "PENDING_REVIEW" || stateNeedsReview ? "PENDING" : "APPROVED";
     const gateFlagsJson = gateResult.reasons.length > 0 ? JSON.stringify(gateResult.reasons) : null;
 
     // OPE-1180 — a FORMER venue is kept only for pre-closure dates; after the
@@ -239,7 +254,7 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
     });
     await db.insert(events).values({
       possibleDuplicateOf,
-      ...(formerCheck.flagForReview ? { flaggedForReview: 1 } : {}),
+      ...(stateNeedsReview || formerCheck.flagForReview ? { flaggedForReview: 1 } : {}),
       id: newEventId,
       name: event.name,
       slug: finalEventSlug,
@@ -506,6 +521,11 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
         slug: finalEventSlug,
       },
       venueId, // Return venueId for reuse in batch imports
+      ...(venueStateMismatch
+        ? {
+            warning: `The selected venue is in ${venueStateMismatch.venueState} but this page says ${venueStateMismatch.sourceState}. The event was saved WITHOUT a venue, as PENDING, for review.`,
+          }
+        : {}),
     });
   } catch (error) {
     await logError(db, {

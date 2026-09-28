@@ -1,5 +1,6 @@
 export const dynamic = "force-dynamic";
 import { attachEventToSeries } from "@/lib/series/resolve-or-create-series";
+import { venueStateConflict } from "@takemetothefair/utils";
 import { resolveIngestVenue } from "@/lib/venues/former-venue-guard";
 import { gateDatesConfirmedWrite } from "@/lib/events/dates-confirmed-write";
 import { gateDatesConfirmed } from "@takemetothefair/utils";
@@ -61,7 +62,10 @@ async function findOrCreateVenue(
 
   // Look for a venue with matching city (if we have city info)
   if (existingVenues.length > 0 && venueCity) {
-    const matchingVenue = existingVenues.find((v) => v.city.toLowerCase().trim() === venueCity);
+    // OPE-1206 — a same-name, same-city row in ANOTHER state is not this venue.
+    const matchingVenue = existingVenues.find(
+      (v) => v.city.toLowerCase().trim() === venueCity && !venueStateConflict(venueState, v.state)
+    );
     if (matchingVenue) {
       return { id: matchingVenue.id, newSlug: null };
     }
@@ -79,10 +83,15 @@ async function findOrCreateVenue(
     }
     // No state match either - just use the first existing venue with this slug
     // This is safer than creating duplicates with no distinguishing info
-    console.warn(
-      `[findOrCreateVenue] Using existing venue "${existingVenues[0].name}" for "${decodedName}" (no city/state match available)`
-    );
-    return { id: existingVenues[0].id, newSlug: null };
+    // OPE-1206 — the blind first-row fallback is kept only when it cannot put
+    // the event in the wrong state; a known conflicting state falls through
+    // to creating the venue in the scraped state.
+    if (!venueStateConflict(venueState, existingVenues[0].state)) {
+      console.warn(
+        `[findOrCreateVenue] Using existing venue "${existingVenues[0].name}" for "${decodedName}" (no city/state match available)`
+      );
+      return { id: existingVenues[0].id, newSlug: null };
+    }
   }
 
   // No existing venue found, or existing venue has different city - create new one
@@ -399,7 +408,14 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
           let matchedVenue = null;
           if (existingVenues.length > 0 && venueCity) {
             // Look for venue with matching city
-            matchedVenue = existingVenues.find((v) => v.city.toLowerCase().trim() === venueCity);
+            // OPE-1206 — name + city is not enough: "Portland Expo" in Portland,
+            // OREGON is not the Portland, MAINE building. A known scraped state
+            // that disagrees with the row's state rules the row out.
+            matchedVenue = existingVenues.find(
+              (v) =>
+                v.city.toLowerCase().trim() === venueCity &&
+                !venueStateConflict(eventData.venue?.state, v.state)
+            );
             if (matchedVenue) {
               console.warn(`[Venue Match] Matched existing venue by name+city: ${matchedVenue.id}`);
             } else {

@@ -18,6 +18,7 @@ import { VendorsView } from "@/components/vendors/vendors-view";
 import { logError } from "@/lib/logger";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
 import { ItemListTracker } from "@/components/analytics/ItemListTracker";
+import { NewsletterSignupBlock } from "@/components/newsletter/newsletter-signup-block";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { Pagination } from "@/components/ui/pagination";
 import { MobileFilterDrawer } from "@/components/ui/mobile-filter-drawer";
@@ -621,6 +622,12 @@ export default async function VendorsPage({
           </Link>
         </p>
       </div>
+
+      {/* OPE-1209 — the vendor newsletter, primary on the vendor directory.
+          Before this the only signup here was the footer's attendee form, so
+          an exhibitor who subscribed from this page joined the weekend list.
+          The footer's form stays, labelled with its own name. */}
+      <NewsletterSignupBlock source="vendors-directory" audience="vendor" />
 
       <FeaturedVendorsSection vendors={featuredVendors} />
 

@@ -44,6 +44,7 @@ async function getIssue(slug: string) {
         subject: newsletterIssues.subject,
         html: newsletterIssues.html,
         sentAt: newsletterIssues.sentAt,
+        audience: newsletterIssues.audience,
       })
       .from(newsletterIssues)
       .where(eq(newsletterIssues.slug, slug))
@@ -89,7 +90,10 @@ export default async function NewsletterIssuePage({ params }: Props) {
   return (
     <div className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8 py-12">
       <div className="mb-6">
-        <Link href="/newsletter" className="text-sm text-royal hover:underline">
+        <Link
+          href={issue.audience === "vendor" ? "/newsletter/vendor" : "/newsletter"}
+          className="text-sm text-royal hover:underline"
+        >
           ← All issues
         </Link>
       </div>
@@ -128,7 +132,12 @@ export default async function NewsletterIssuePage({ params }: Props) {
           Live on 2026-08-31: footer 51 of 73 subscribers, a bucket that
           silently absorbed this page's share. Nothing is lost retroactively —
           past rows stay as they are — but from here the archive is countable. */}
-      <NewsletterSignupBlock source="newsletter-archive" />
+      {/* OPE-1209 — a vendor issue (this is its view-in-browser target) offers
+          the vendor list; it used to offer the attendee one. */}
+      <NewsletterSignupBlock
+        source="newsletter-archive"
+        audience={issue.audience === "vendor" ? "vendor" : "weekend"}
+      />
     </div>
   );
 }
