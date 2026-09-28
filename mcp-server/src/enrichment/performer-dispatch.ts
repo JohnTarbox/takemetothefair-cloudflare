@@ -15,7 +15,7 @@
 // be added later with zero changes here.
 import { and, eq, inArray } from "drizzle-orm";
 import { computePerformerEnrichment } from "@takemetothefair/constants";
-import { sanitizeScrapedDescription } from "@takemetothefair/utils";
+import { sanitizeScrapedDescription, runChunkedInsert } from "@takemetothefair/utils";
 import { performers, performerEnrichmentCandidates } from "../schema.js";
 import { type Db } from "../db.js";
 import { logEnrichment } from "../helpers.js";
@@ -255,21 +255,24 @@ export async function processPerformerEnrichmentJob(
 
   const now = new Date();
   if (proposals.length > 0) {
-    await db.insert(performerEnrichmentCandidates).values(
-      proposals.map((p) => ({
-        performerId: msg.performerId,
-        jobRunId: msg.jobRunId,
-        proposedField: p.field,
-        currentValue: null,
-        proposedValue: p.proposedValue,
-        sourceUrl,
-        extractionMethod: p.method,
-        fetchMethod: fetched.fetchMethod,
-        confidence: p.confidence,
-        flags: JSON.stringify(p.flags),
-        createdAt: now,
-        decision: "pending" as const,
-      }))
+    // OPE-1185 — chunked to D1's 100-param cap (~14 params/row: >7 candidates 500'd).
+    await runChunkedInsert(proposals, (chunk) =>
+      db.insert(performerEnrichmentCandidates).values(
+        chunk.map((p) => ({
+          performerId: msg.performerId,
+          jobRunId: msg.jobRunId,
+          proposedField: p.field,
+          currentValue: null,
+          proposedValue: p.proposedValue,
+          sourceUrl,
+          extractionMethod: p.method,
+          fetchMethod: fetched.fetchMethod,
+          confidence: p.confidence,
+          flags: JSON.stringify(p.flags),
+          createdAt: now,
+          decision: "pending" as const,
+        }))
+      )
     );
   }
 

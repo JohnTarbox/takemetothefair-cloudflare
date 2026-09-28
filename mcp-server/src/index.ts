@@ -64,6 +64,7 @@ import {
   runScheduledInboundEmailStaleSweep,
 } from "./inbound-email-stale-sweep.js";
 import { runScheduledDedupSweepCanary } from "./dedup-sweep-canary.js";
+import { runScheduledNearDuplicateSweep } from "./near-duplicate-sweep-cron.js";
 import { runScheduledSyncStaleSweep } from "./sync-stale-sweep.js";
 import { runScheduledCpiStaleRedCanary } from "./cpi-stale-red-canary.js";
 import { runScheduledNewsletterListBalanceCanary } from "./newsletter-list-balance-canary.js";
@@ -1854,6 +1855,11 @@ export default {
         runScheduledDedupSweepCanary(env, "events"),
         runScheduledDedupSweepCanary(env, "venues"),
         runScheduledDedupSweepCanary(env, "promoters"),
+        // OPE-1201 — daily near-duplicate CANDIDATE pass over existing events.
+        // OPE-627's check only runs at insert, so rows that predate it (its own
+        // PTTF / Scarborough fixtures) were never evaluated. Report-only: writes
+        // possible_duplicate_of where NULL; the OPE-1117 queue is the reader.
+        runScheduledNearDuplicateSweep(env),
         // OPE-1205 — a synced row whose source went quiet (> N days, tunable)
         // stops claiming confirmed dates unless a qualifying citation backs it.
         runScheduledSyncStaleSweep(env),

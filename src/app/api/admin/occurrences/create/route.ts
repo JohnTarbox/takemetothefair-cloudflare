@@ -132,6 +132,12 @@ export async function POST(request: NextRequest) {
           { status: 200 }
         );
       }
+      if (result.reason === "former_venue_after_closure") {
+        return NextResponse.json(
+          { error: "former_venue_after_closure", message: result.message },
+          { status: 409 }
+        );
+      }
       // promoter_required
       return NextResponse.json(
         { error: "promoter_required: series has no default promoter; pass promoter_id." },

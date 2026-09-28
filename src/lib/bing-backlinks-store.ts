@@ -12,6 +12,7 @@
 import type { Database } from "@/lib/db";
 import { bingBacklinks } from "@/lib/db/schema";
 import { desc, asc, eq, sql } from "drizzle-orm";
+import { runChunkedInsert } from "@takemetothefair/utils";
 
 export interface ParsedReferringDomain {
   domain: string;
@@ -96,10 +97,10 @@ function parseCsvLine(line: string): string[] {
   return cells;
 }
 
-// D1 bound-parameter cap is 100. Each row binds 3 columns (referring_domain,
-// backlink_count, snapshot_date; id/created_at use column $defaultFns), so
-// 30 rows × 3 = 90 params stays safely under the cap.
-const IMPORT_CHUNK_ROWS = 30;
+// OPE-1185 — the chunk size is MEASURED, not declared. The constant that used
+// to sit here (30 rows, "each row binds 3 columns") was wrong: Drizzle also
+// binds the `$defaultFn` values for id and created_at, so a row is 5 params and
+// 30 rows were 150 — over D1's 100 — and every import past 20 domains 500'd.
 
 /**
  * Upsert referring-domain rows for a snapshot date. Idempotent on the
@@ -122,9 +123,8 @@ export async function importReferringDomains(
   const deduped = Array.from(byDomain, ([domain, count]) => ({ domain, count }));
   if (deduped.length === 0) return { imported: 0 };
 
-  for (let i = 0; i < deduped.length; i += IMPORT_CHUNK_ROWS) {
-    const chunk = deduped.slice(i, i + IMPORT_CHUNK_ROWS);
-    await db
+  const upsert = (chunk: typeof deduped) =>
+    db
       .insert(bingBacklinks)
       .values(
         chunk.map((r) => ({
@@ -137,7 +137,9 @@ export async function importReferringDomains(
         target: [bingBacklinks.referringDomain, bingBacklinks.snapshotDate],
         set: { backlinkCount: sql`excluded.backlink_count` },
       });
-  }
+
+  // Chunk size measured from the statement Drizzle builds (OPE-1185).
+  await runChunkedInsert(deduped, upsert);
   return { imported: deduped.length };
 }
 

@@ -165,6 +165,8 @@ describe("OPE-975 — every probe's window is pinned", () => {
       "vendor-category-watch": 8 * 24,
       // OPE-1165 — demand-conditional on the newest outbound click.
       "click-traffic-attribution": 24,
+      // OPE-1201 — daily cron, one run row each; two cycles before it pages.
+      "near-duplicate-sweep": 48,
       // OPE-1205 — daily cron, one run row each; two cycles before it pages.
       "sync-stale-sweep": 48,
       "ocr-attachment": 21 * 24,

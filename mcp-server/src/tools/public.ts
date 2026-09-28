@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { loadVenueHistory } from "../venues/history.js";
 import { eq, and, or, gte, lte, inArray, isNull, sql, desc, asc } from "drizzle-orm";
 import {
   events,
@@ -14,6 +15,7 @@ import {
   vendorPhotos,
   vendorSlugHistory,
   venueSlugHistory,
+  venueNameVariants,
   promoterSlugHistory,
   // OPE-630 — LIKE-cap-safe substring predicate, shared with the Next.js app.
   containsCI,
@@ -1101,7 +1103,19 @@ export function registerPublicTools(server: McpServer, db: Db) {
       if (params.query) {
         // OPE-653 — 18 of 1,002 prod venue names hold a character a keyboard
         // does not produce; all 18 are reachable through the slug.
-        conditions.push(nameOrSlugContains(params.query, venues.name, venues.slug));
+        conditions.push(
+          or(
+            nameOrSlugContains(params.query, venues.name, venues.slug),
+            // OPE-1180 — a venue's recorded other names.
+            inArray(
+              venues.id,
+              db
+                .select({ id: venueNameVariants.venueId })
+                .from(venueNameVariants)
+                .where(containsCI(venueNameVariants.name, params.query))
+            )
+          )!
+        );
       }
       if (params.city) {
         conditions.push(containsCI(venues.city, params.city));
@@ -1197,6 +1211,13 @@ export function registerPublicTools(server: McpServer, db: Db) {
             googleMapsUrl: venues.googleMapsUrl,
             googleRating: venues.googleRating,
             status: venues.status,
+            // OPE-1180 — lifecycle.
+            useStartedEdtf: venues.useStartedEdtf,
+            useEndedEdtf: venues.useEndedEdtf,
+            currentState: venues.currentState,
+            currentUse: venues.currentUse,
+            wikidataQid: venues.wikidataQid,
+            nrhpRef: venues.nrhpRef,
             createdAt: venues.createdAt,
           })
           .from(venues)
@@ -1258,10 +1279,21 @@ export function registerPublicTools(server: McpServer, db: Db) {
             // OPE-1061 — the venue's OWN pet policy (UNSET | YES | NO |
             // NOT_PUBLISHED). Not an answer for any event held here.
             pet_friendly: venue.petFriendly,
+            // OPE-1180 — lifecycle + cited history (periods, name variants,
+            // citations, and the "where these events went" fan-out).
+            status: venue.status,
+            lifecycle: {
+              use_started_edtf: venue.useStartedEdtf,
+              use_ended_edtf: venue.useEndedEdtf,
+              current_state: venue.currentState,
+              current_use: venue.currentUse,
+              wikidata_qid: venue.wikidataQid,
+              nrhp_ref: venue.nrhpRef,
+            },
+            history: await loadVenueHistory(db, venue.id),
             imageUrl: venue.imageUrl || null,
             googleMapsUrl: venue.googleMapsUrl,
             googleRating: venue.googleRating,
-            status: venue.status,
             upcomingEventCount: upcomingEvents.length,
           }),
         ],

@@ -491,6 +491,10 @@ export default function EditVenuePage({ params }: { params: Promise<{ id: string
                 >
                   <option value="ACTIVE">Active</option>
                   <option value="INACTIVE">Inactive</option>
+                  {/* OPE-1180 — FORMER is set and cleared via MCP update_venue only. */}
+                  <option value="FORMER" disabled>
+                    Former (managed via MCP)
+                  </option>
                 </select>
               </div>
             </div>

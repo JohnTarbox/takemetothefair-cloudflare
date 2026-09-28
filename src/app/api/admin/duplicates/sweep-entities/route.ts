@@ -52,6 +52,7 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { venues, promoters } from "@/lib/db/schema";
 import { sql, and, eq, isNotNull, ne } from "drizzle-orm";
 import { logError } from "@/lib/logger";
+import { planVenueNearPairs } from "@/lib/duplicates/venue-near-duplicates";
 
 async function authorize(request: NextRequest): Promise<boolean> {
   // WS3b — constant-time X-Internal-Key check via the shared helper (was a
@@ -124,6 +125,23 @@ export async function GET(request: NextRequest) {
       names: r.names.split(" | "),
     }));
 
+    // ── OPE-1201: near-duplicate venue PAIRS (different names, one place) ─
+    // The cluster query above only groups spelling variants of ONE name;
+    // Snowport's two venue rows have two different names. Reported in its own
+    // field so the dedup canary's cluster counts do not shift under it.
+    const activeVenues = await db
+      .select({
+        id: venues.id,
+        name: venues.name,
+        city: venues.city,
+        state: venues.state,
+        latitude: venues.latitude,
+        longitude: venues.longitude,
+      })
+      .from(venues)
+      .where(and(eq(venues.status, "ACTIVE"), isNotNull(venues.city), isNotNull(venues.state)));
+    const venueNearPairs = planVenueNearPairs(activeVenues).slice(0, limit);
+
     // ── Promoter clusters: (normalized name with org-suffix strip) ─
     const promoterNorm = sql<string>`TRIM(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(LOWER(${promoters.companyName}), ',', ''), '.', ''), '''', ''), '&', 'and'), '-', ' '), '  ', ' '), ' inc', ''), ' llc', ''), ' corp', ''), ' association', ''))`;
     const promoterRows = await db
@@ -161,7 +179,10 @@ export async function GET(request: NextRequest) {
         total_clusters: venueClusters.length + promoterClusters.length,
         venues_in_clusters: new Set(venueClusters.flatMap((c) => c.venue_ids)).size,
         promoters_in_clusters: new Set(promoterClusters.flatMap((c) => c.promoter_ids)).size,
+        // OPE-1201 — not part of total_clusters (the canary's series).
+        venue_near_pairs: venueNearPairs.length,
       },
+      venue_near_pairs: venueNearPairs,
       clusters: [...venueClusters, ...promoterClusters] as Cluster[],
       limit_applied: limit,
       next_action_hint:

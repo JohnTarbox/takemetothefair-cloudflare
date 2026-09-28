@@ -3,7 +3,15 @@ import Link from "next/link";
 import Image from "next/image";
 import { Calendar, MapPin, Store, FileText, HelpCircle, Search } from "lucide-react";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { events, venues, vendors, blogPosts, users, eventInStateWhere } from "@/lib/db/schema";
+import {
+  events,
+  venues,
+  vendors,
+  blogPosts,
+  users,
+  eventInStateWhere,
+  venueNameVariants,
+} from "@/lib/db/schema";
 import { and, eq, or, sql, desc, inArray, isNull } from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
 import {
@@ -111,7 +119,18 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
       .where(
         and(
           eq(venues.status, "ACTIVE"),
-          or(containsCI(venues.name, term), containsCI(venues.city, term))!
+          or(
+            containsCI(venues.name, term),
+            containsCI(venues.city, term),
+            // OPE-1180 — a venue's recorded other names.
+            inArray(
+              venues.id,
+              db
+                .select({ id: venueNameVariants.venueId })
+                .from(venueNameVariants)
+                .where(containsCI(venueNameVariants.name, term))
+            )
+          )!
         )
       )
       .orderBy(venues.name)

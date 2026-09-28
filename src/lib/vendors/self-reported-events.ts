@@ -22,7 +22,7 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { events, vendorSelfReportedEvents, venues } from "@/lib/db/schema";
 import type { Db } from "@/lib/analytics-overview/shared";
-import { chunkIds } from "@takemetothefair/utils";
+import { chunkIds, runChunkedInsert } from "@takemetothefair/utils";
 
 /** How many fairs one vendor may assert. A generous ceiling, not a quota. */
 export const MAX_SELF_REPORTED_PER_VENDOR = 100;
@@ -135,19 +135,22 @@ export async function setSelfReportedEvents(
   const removed = [...existingSet].filter((id) => !validSet.has(id));
 
   if (added.length > 0) {
-    await db
-      .insert(vendorSelfReportedEvents)
-      .values(
-        added.map((eventId) => ({
-          id: crypto.randomUUID(),
-          vendorId: args.vendorId,
-          eventId,
-          sourceContext: args.sourceContext ?? "profile",
-          status: "SELF_REPORTED" as const,
-          createdAt: now,
-        }))
-      )
-      .onConflictDoNothing();
+    // OPE-1185 — chunked to D1's 100-param cap (6 params/row: >16 events 500'd).
+    await runChunkedInsert(added, (chunk) =>
+      db
+        .insert(vendorSelfReportedEvents)
+        .values(
+          chunk.map((eventId) => ({
+            id: crypto.randomUUID(),
+            vendorId: args.vendorId,
+            eventId,
+            sourceContext: args.sourceContext ?? "profile",
+            status: "SELF_REPORTED" as const,
+            createdAt: now,
+          }))
+        )
+        .onConflictDoNothing()
+    );
   }
 
   // OPE-1029 — chunked: `removed` is as long as the list the vendor just cleared.

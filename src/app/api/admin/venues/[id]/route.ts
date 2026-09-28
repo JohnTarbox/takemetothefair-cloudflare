@@ -162,7 +162,20 @@ export const PATCH = withAuth<{ id: string }>(
       if (data.googleTypes !== undefined) updateData.googleTypes = data.googleTypes;
       if (data.accessibility !== undefined) updateData.accessibility = data.accessibility;
       if (data.parking !== undefined) updateData.parking = data.parking;
-      if (data.status) updateData.status = data.status;
+      // OPE-1180 — FORMER is owned by MCP update_venue, which carries the
+      // lifecycle fields, their citation, and the events-after-closure check.
+      // This form has none of those, so it may neither set FORMER nor move a
+      // venue out of it (the zod default would otherwise write ACTIVE).
+      if (data.status === "FORMER" && currentVenue.status !== "FORMER") {
+        return NextResponse.json(
+          {
+            error:
+              "Marking a venue FORMER needs a closure date, a source and a check for later events — use the MCP update_venue tool (status, use_ended_edtf, lifecycle_citation).",
+          },
+          { status: 409 }
+        );
+      }
+      if (data.status && currentVenue.status !== "FORMER") updateData.status = data.status;
 
       // SYN1 — venue correction fans out to every event at this venue. The
       // outbox row + the events-version bump commit in the SAME batch as the

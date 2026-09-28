@@ -520,6 +520,7 @@ export * from "./blog-faq-coherence";
 // reliability scoring can read clean columns rather than parse free-form
 // labels at query time. Analyst backlog Item 1 (2026-05-26).
 export * from "./source-classification";
+export * from "./former-venue";
 export * from "./dates-confirmed-gate";
 // OPE-411 — ingest-time sanity checks for user-supplied submissions. Shared
 // because BOTH the app route and the MCP suggest_event tool create events from
