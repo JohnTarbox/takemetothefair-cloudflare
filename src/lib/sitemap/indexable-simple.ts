@@ -22,7 +22,7 @@
  * Not tidiness — their gates are genuinely one-liners, and each is read
  * straight off the sitemap route it mirrors:
  *
- *   venues     `status = 'ACTIVE'`          (sitemap-venues.xml/route.ts:20)
+ *   venues     `indexableVenueWhere()`      (sitemap-venues.xml/route.ts — OPE-1181)
  *   promoters  no filter — all are public   (sitemap-promoters.xml/route.ts:20)
  *   blog       `status = 'PUBLISHED'`       (sitemap-blog.xml/route.ts:36)
  *
@@ -48,6 +48,7 @@
  */
 import { eq } from "drizzle-orm";
 import { blogPosts, promoters, venues } from "@/lib/db/schema";
+import { indexableVenueWhere } from "@/lib/venues/venue-history-public";
 import type { Db } from "@/lib/analytics-overview/shared";
 
 /** Path prefixes this module owns. Exported so callers cannot mistype one. */
@@ -56,13 +57,11 @@ export type SimpleEntityPrefix = (typeof SIMPLE_ENTITY_PREFIXES)[number];
 
 /**
  * Venue slugs whose detail page is index-eligible.
- * Mirrors `sitemap-venues.xml/route.ts` — `status = 'ACTIVE'`.
+ * Mirrors `sitemap-venues.xml/route.ts` — `indexableVenueWhere()` (ACTIVE,
+ * plus FORMER venues with cited history; OPE-1181).
  */
 export async function getIndexableVenueSlugs(db: Db): Promise<string[]> {
-  const rows = await db
-    .select({ slug: venues.slug })
-    .from(venues)
-    .where(eq(venues.status, "ACTIVE"));
+  const rows = await db.select({ slug: venues.slug }).from(venues).where(indexableVenueWhere());
   return rows.map((r) => String(r.slug ?? "")).filter((s) => s.length > 0);
 }
 

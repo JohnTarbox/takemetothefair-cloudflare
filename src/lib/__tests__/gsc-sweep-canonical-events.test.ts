@@ -38,7 +38,14 @@ const SCHEMA_SQL = `
     updated_at INTEGER, series_id TEXT
   );
   CREATE TABLE event_series (id TEXT PRIMARY KEY, canonical_slug TEXT);
-  CREATE TABLE venues (id TEXT PRIMARY KEY, slug TEXT, status TEXT);
+  -- OPE-1181 — the venue indexability predicate reads these.
+  CREATE TABLE series_venue_periods (id TEXT PRIMARY KEY, venue_id TEXT NOT NULL);
+  CREATE TABLE venue_claim_citations (
+    id TEXT PRIMARY KEY, venue_id TEXT, series_venue_period_id TEXT, field TEXT
+  );
+  CREATE TABLE venues (
+    id TEXT PRIMARY KEY, slug TEXT, status TEXT, use_started_edtf TEXT, use_ended_edtf TEXT
+  );
   CREATE TABLE promoters (id TEXT PRIMARY KEY, slug TEXT);
   CREATE TABLE blog_posts (id TEXT PRIMARY KEY, slug TEXT, status TEXT, updated_at INTEGER);
   CREATE TABLE gsc_inspection_state (

@@ -196,3 +196,68 @@ export function checkFormerVenue(
       "An event after a venue closed cannot be held there: attach the venue it actually used, or leave the venue empty.",
   };
 }
+
+// ── Display ────────────────────────────────────────────────────────────────
+
+const MONTHS = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+];
+
+/**
+ * OPE-1181 — an EDTF date as a reader would say it.
+ *   "1956" → "1956" · "1956~" → "about 1956" · "1956?" → "1956?"
+ *   "1956%" → "about 1956?" · "195X" → "the 1950s" · "19XX" → "the 1900s"
+ *   "1956-06" → "June 1956" · "1956-06-14" → "June 14, 1956"
+ * Returns the input unchanged if it is not a supported EDTF value, so a
+ * malformed row still shows *something* rather than disappearing.
+ */
+export function edtfLabel(edtf: string | null | undefined): string {
+  if (!edtf) return "";
+  const m = /^(\d{2}[\dX]{2})(?:-(\d{2}|XX))?(?:-(\d{2}|XX))?([~?%])?$/.exec(edtf.trim());
+  if (!m) return edtf;
+  const [, year, month, day, q] = m;
+  let core: string;
+  if (/X/.test(year)) {
+    const decadeOrCentury = year.replace(/X/g, "0");
+    core = `the ${decadeOrCentury}s`;
+  } else if (month && month !== "XX" && day && day !== "XX") {
+    core = `${MONTHS[Number(month) - 1]} ${Number(day)}, ${year}`;
+  } else if (month && month !== "XX") {
+    core = `${MONTHS[Number(month) - 1]} ${year}`;
+  } else {
+    core = year;
+  }
+  if (q === "~") return `about ${core}`;
+  if (q === "?") return `${core}?`;
+  if (q === "%") return `about ${core}?`;
+  return core;
+}
+
+/** "1866–1881", "since 1981", "until 1881", "" — for a period's two ends. */
+export function edtfRangeLabel(
+  from: string | null | undefined,
+  to: string | null | undefined
+): string {
+  const a = edtfLabel(from);
+  const b = edtfLabel(to);
+  if (a && b) {
+    if (a === b) return a;
+    // Same year, one side qualified ("1869" – "1869?") reads as the qualified one.
+    if (b.startsWith(a) || b.endsWith(`${a}?`) || b === `about ${a}`) return b;
+    return `${a}–${b}`;
+  }
+  if (a) return `since ${a}`;
+  if (b) return `until ${b}`;
+  return "";
+}

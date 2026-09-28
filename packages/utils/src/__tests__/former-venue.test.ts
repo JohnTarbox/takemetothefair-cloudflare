@@ -2,7 +2,13 @@
  * OPE-1180 — EDTF bounds, lifecycle validation, and the FORMER-venue date guard.
  */
 import { describe, expect, it } from "vitest";
-import { checkFormerVenue, parseEdtfBounds, validateVenueLifecycle } from "../former-venue";
+import {
+  checkFormerVenue,
+  edtfLabel,
+  edtfRangeLabel,
+  parseEdtfBounds,
+  validateVenueLifecycle,
+} from "../former-venue";
 
 const iso = (d: Date | undefined) => d?.toISOString();
 
@@ -110,5 +116,29 @@ describe("checkFormerVenue — the three outcomes", () => {
   it("a FORMER row with no bounds fails closed for a dated event", () => {
     const broken = { ...montpelier, useEndedEarliest: null, useEndedLatest: null };
     expect(checkFormerVenue(broken, at("1850-01-01")).kind).toBe("refuse");
+  });
+});
+
+describe("edtfLabel / edtfRangeLabel (OPE-1181)", () => {
+  it.each([
+    ["1956", "1956"],
+    ["1956~", "about 1956"],
+    ["1956?", "1956?"],
+    ["1956%", "about 1956?"],
+    ["195X", "the 1950s"],
+    ["19XX", "the 1900s"],
+    ["1956-06", "June 1956"],
+    ["1956-06-14", "June 14, 1956"],
+    ["circa 1956", "circa 1956"],
+    ["", ""],
+  ])("%j → %j", (input, out) => expect(edtfLabel(input)).toBe(out));
+
+  it("ranges", () => {
+    expect(edtfRangeLabel("1866", "1881")).toBe("1866–1881");
+    expect(edtfRangeLabel("1869", "1869")).toBe("1869");
+    expect(edtfRangeLabel("1869", "1869?")).toBe("1869?");
+    expect(edtfRangeLabel("1981", null)).toBe("since 1981");
+    expect(edtfRangeLabel(null, "1997~")).toBe("until about 1997");
+    expect(edtfRangeLabel(null, null)).toBe("");
   });
 });
