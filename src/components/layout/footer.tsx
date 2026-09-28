@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { NewsletterSignup } from "./newsletter-signup";
+import { FooterNewsletterSlot } from "./footer-newsletter-slot";
 import { SOCIAL_LINKS } from "@/lib/social-links";
 import { isEntryDeadlinesIndexEnabled } from "@/lib/flags";
 
@@ -58,7 +58,7 @@ export function Footer() {
               promoters in your area.
             </p>
             <div className="mt-6">
-              <NewsletterSignup />
+              <FooterNewsletterSlot />
             </div>
           </div>
 

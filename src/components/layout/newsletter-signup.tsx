@@ -1,9 +1,35 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Mail, Check } from "lucide-react";
 import { trackFormSubmit } from "@/lib/analytics";
-import { NEWSLETTER_NAME } from "@/lib/newsletter-masthead";
+import { NEWSLETTER_NAME, VENDOR_NEWSLETTER_NAME } from "@/lib/newsletter-masthead";
+
+/**
+ * OPE-1209 — which newsletter a form signs up for.
+ *
+ * The list is decided server-side from `source` alone
+ * (`listForSource`: exactly "vendor-form" → vendor, anything else → weekend), so
+ * a vendor form MUST post that exact source. `audience` is how a surface asks
+ * for the vendor form; it fixes the source rather than trusting each caller to
+ * spell it, and it fixes the name and copy with it, so a form can never read
+ * "New This Week" while posting to the weekend list, or the reverse.
+ */
+export type SignupAudience = "weekend" | "vendor";
+export const VENDOR_SIGNUP_SOURCE = "vendor-form";
+
+const COPY: Record<SignupAudience, { name: string; blurb: string }> = {
+  weekend: {
+    name: NEWSLETTER_NAME,
+    blurb:
+      "One email a week — the best fairs and festivals across New England, plus new vendors and hidden gems.",
+  },
+  vendor: {
+    name: VENDOR_NEWSLETTER_NAME,
+    blurb:
+      "For exhibitors: New England shows newly added to the site, with booth space still open — one email a week, free.",
+  },
+};
 
 /**
  * OPE-317 — `source` is a prop, not a constant.
@@ -13,7 +39,15 @@ import { NEWSLETTER_NAME } from "@/lib/newsletter-masthead";
  * fixed value would make every signup look like a footer signup and hide which
  * surface actually converts — the one thing the growth target needs to know.
  */
-export function NewsletterSignup({ source = "footer" }: { source?: string } = {}) {
+export function NewsletterSignup({
+  source: sourceProp = "footer",
+  audience = "weekend",
+}: { source?: string; audience?: SignupAudience } = {}) {
+  const source = audience === "vendor" ? VENDOR_SIGNUP_SOURCE : sourceProp;
+  const copy = COPY[audience];
+  // Two forms can share a page (an in-page block plus the footer), so the
+  // label/input pairing needs a per-instance id, not a fixed one.
+  const inputId = useId();
   const [email, setEmail] = useState("");
   const [status, setStatus] = useState<"idle" | "submitting" | "done" | "error">("idle");
 
@@ -41,17 +75,11 @@ export function NewsletterSignup({ source = "footer" }: { source?: string } = {}
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-2">
-      <label
-        htmlFor="newsletter-email"
-        className="block text-sm font-medium text-footer-foreground"
-      >
-        {NEWSLETTER_NAME}
+    <form onSubmit={handleSubmit} className="space-y-2" data-newsletter-audience={audience}>
+      <label htmlFor={inputId} className="block text-sm font-medium text-footer-foreground">
+        {copy.name}
       </label>
-      <p className="text-xs text-footer-foreground/70">
-        One email a week — the best fairs and festivals across New England, plus new vendors and
-        hidden gems.
-      </p>
+      <p className="text-xs text-footer-foreground/70">{copy.blurb}</p>
       {status === "done" ? (
         <div className="inline-flex items-center gap-2 px-3 py-2 rounded-md bg-sage-50 text-sage-700 text-sm font-medium">
           <Check className="w-4 h-4" aria-hidden />
@@ -65,7 +93,7 @@ export function NewsletterSignup({ source = "footer" }: { source?: string } = {}
               aria-hidden
             />
             <input
-              id="newsletter-email"
+              id={inputId}
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
