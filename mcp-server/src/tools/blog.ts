@@ -305,10 +305,24 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
   // ── update_blog_post ─────────────────────────────────────────────
   server.tool(
     "update_blog_post",
-    "Update an existing blog post by slug. Only provided fields are changed. Body should be Markdown.",
+    "Update an existing blog post by slug. Only provided fields are changed. Body should be Markdown. A PUBLISHED post keeps its slug when the title changes (OPE-1202) — pass new_slug to move its URL deliberately; a DRAFT's slug still follows its title. When the slug does change, the response carries slugChange { old, new, linkingPublishedPosts } — the old URL 301s, but those posts still link it until repointed.",
     {
       slug: z.string().min(1).describe("Current slug of the post to update"),
-      title: z.string().min(1).max(200).transform(sanitizeProse).optional().describe("New title"),
+      title: z
+        .string()
+        .min(1)
+        .max(200)
+        .transform(sanitizeProse)
+        .optional()
+        .describe("New title. Does NOT change a published post's URL — use new_slug for that."),
+      new_slug: z
+        .string()
+        .min(1)
+        .max(200)
+        .optional()
+        .describe(
+          "Move the post to this URL slug (normalized). The old slug 301s via blog_slug_history; the response lists published posts still linking the old one."
+        ),
       body: z
         .string()
         .min(1)
@@ -398,6 +412,7 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
           payload.metaDescription = params.meta_description;
         if (params.allow_broken_links !== undefined)
           payload.allowBrokenLinks = params.allow_broken_links;
+        if (params.new_slug !== undefined) payload.newSlug = params.new_slug;
 
         const response = await fetch(
           `${env.MAIN_APP_URL}/api/blog-posts/${encodeURIComponent(params.slug)}`,
