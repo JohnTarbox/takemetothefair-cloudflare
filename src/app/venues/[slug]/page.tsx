@@ -21,7 +21,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { EventList } from "@/components/events/event-list";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { venues, events, promoters } from "@/lib/db/schema";
-import { eq, and, gte } from "drizzle-orm";
+import { eq, and, gte, inArray } from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { attachEventDayDates } from "@/lib/event-days-attach";
 import { eventJoinProjection } from "@/lib/db/event-join-projection";
@@ -39,6 +39,13 @@ import { ItemListSchema } from "@/components/seo/ItemListSchema";
 import { DetailPageTracker } from "@/components/DetailPageTracker";
 import { ScrollDepthTracker } from "@/components/ScrollDepthTracker";
 import { cdnImage, OG_EVENT } from "@/lib/cdn-image";
+import { indexableVenueWhere, loadVenueHistoryPublic } from "@/lib/venues/venue-history-public";
+import {
+  createFootnotes,
+  EventsHeldHere,
+  FormerVenueFacts,
+  Sources,
+} from "@/components/venues/venue-history";
 
 export const revalidate = 300; // Cache for 5 minutes
 
@@ -54,12 +61,26 @@ async function getVenue(slug: string) {
     const venueResults = await db
       .select()
       .from(venues)
-      .where(and(eq(venues.slug, unsafeSlug(slug)), eq(venues.status, "ACTIVE")))
+      // OPE-1181 — a FORMER venue keeps its URL (200, never 404). INACTIVE
+      // (merge tombstones) still 404 here; the middleware 301s those.
+      .where(and(eq(venues.slug, unsafeSlug(slug)), inArray(venues.status, ["ACTIVE", "FORMER"])))
       .limit(1);
 
     if (venueResults.length === 0) return null;
 
     const venue = venueResults[0];
+    const isFormer = venue.status === "FORMER";
+    const history = await loadVenueHistoryPublic(db, venue.id);
+    // The SAME predicate the sitemap uses, so page and sitemap never disagree.
+    const indexable =
+      !isFormer ||
+      (
+        await db
+          .select({ id: venues.id })
+          .from(venues)
+          .where(and(eq(venues.id, venue.id), indexableVenueWhere()))
+          .limit(1)
+      ).length > 0;
 
     // Get upcoming events for this venue. Narrow projection — D1 caps
     // result rows at 100 columns and the full three-way join trips it
@@ -92,7 +113,12 @@ async function getVenue(slug: string) {
 
     return {
       ...venue,
-      events: venueEventsWithDays,
+      // A FORMER venue has no upcoming events by construction (the OPE-1180
+      // guard refuses them); the list stays empty rather than being queried.
+      events: isFormer ? [] : venueEventsWithDays,
+      isFormer,
+      history,
+      indexable,
     };
   } catch (e) {
     await logError(db, {
@@ -135,13 +161,17 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   // Stored venue.name still flows to slug lookups / DetailPageTracker
   // analytics for continuity.
   const name = decodeHtmlEntities(displayVenueName(venue));
-  const title = `${name} | Meet Me at the Fair`;
+  const title = venue.isFormer
+    ? `${name} (former event venue) | Meet Me at the Fair`
+    : `${name} | Meet Me at the Fair`;
   const description = buildVenueMetaDescription(venue);
   const url = `https://meetmeatthefair.com/venues/${venue.slug}`;
 
   return {
     title,
     description,
+    // OPE-1181 — an uncited FORMER page is served (200) but not indexed.
+    ...(venue.indexable ? {} : { robots: { index: false, follow: true } }),
     alternates: {
       canonical: url,
     },
@@ -193,6 +223,19 @@ export default async function VenueDetailPage({ params }: Props) {
   // page so search engines see the same name as users do in the H1.
   const venueDisplayName = displayVenueName(venue);
 
+  // OPE-1181 — footnotes are numbered in render order, so the claim blocks are
+  // built BEFORE the Sources list that numbers them (called as plain
+  // functions: they use no hooks, and this pins the order).
+  const fn = createFootnotes();
+  const formerFacts = venue.isFormer
+    ? FormerVenueFacts({ venue, history: venue.history, fn })
+    : null;
+  const eventsHeldHere = EventsHeldHere({ rows: venue.history.rows, fn });
+  const sources = Sources({ fn });
+  // A pin only for real coordinates — a FORMER venue never gets a centroid or
+  // an address-search link built from a blank address.
+  const showMapLink = !venue.isFormer || (venue.latitude != null && venue.longitude != null);
+
   return (
     <>
       {/* DetailPageTracker keeps the stored venue.name for analytics
@@ -202,6 +245,9 @@ export default async function VenueDetailPage({ params }: Props) {
       <DetailPageTracker type="venue" slug={venue.slug} name={venue.name} />
       <ScrollDepthTracker pageType="venue-detail" />
       <VenueSchema
+        former={
+          venue.isFormer ? { wikidataQid: venue.wikidataQid, nrhpRef: venue.nrhpRef } : undefined
+        }
         name={venueDisplayName}
         description={venue.description}
         imageUrl={venue.imageUrl}
@@ -320,6 +366,8 @@ export default async function VenueDetailPage({ params }: Props) {
                 {venue.city}, {venue.state}
               </p>
             </div>
+
+            {formerFacts}
 
             {venue.description && (
               <div className="prose prose-gray max-w-none">
@@ -453,6 +501,8 @@ export default async function VenueDetailPage({ params }: Props) {
                 <EventList events={venue.events} />
               </div>
             )}
+            {eventsHeldHere}
+            {sources}
           </main>
 
           <aside className="space-y-6">
@@ -468,21 +518,23 @@ export default async function VenueDetailPage({ params }: Props) {
                     <p className="text-muted-foreground">
                       {venue.city}, {venue.state} {venue.zip}
                     </p>
-                    <TrackedActionLink
-                      event="directions_click"
-                      entityType="VENUE"
-                      entitySlug={venue.slug}
-                      href={
-                        venue.googleMapsUrl ||
-                        `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${venue.address}, ${venue.city}, ${venue.state} ${venue.zip}`)}`
-                      }
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 text-sm text-royal hover:text-navy mt-2"
-                    >
-                      <ExternalLink className="w-4 h-4" />
-                      View on Google Maps
-                    </TrackedActionLink>
+                    {showMapLink && (
+                      <TrackedActionLink
+                        event="directions_click"
+                        entityType="VENUE"
+                        entitySlug={venue.slug}
+                        href={
+                          venue.googleMapsUrl ||
+                          `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${venue.address}, ${venue.city}, ${venue.state} ${venue.zip}`)}`
+                        }
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-sm text-royal hover:text-navy mt-2"
+                      >
+                        <ExternalLink className="w-4 h-4" />
+                        View on Google Maps
+                      </TrackedActionLink>
+                    )}
                   </div>
                 </div>
                 {venue.capacity && (
@@ -502,65 +554,69 @@ export default async function VenueDetailPage({ params }: Props) {
               </CardContent>
             </Card>
 
-            <Card>
-              <CardHeader>
-                <h3 className="font-semibold text-foreground">Contact</h3>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {venue.contactPhone && (
-                  <TrackedActionLink
-                    event="contact_click"
-                    entityType="VENUE"
-                    entitySlug={venue.slug}
-                    method="phone"
-                    href={`tel:${venue.contactPhone}`}
-                    className="flex items-center gap-3 text-foreground hover:text-navy"
-                  >
-                    <Phone className="w-5 h-5 text-royal" />
-                    {venue.contactPhone}
-                  </TrackedActionLink>
-                )}
-                {venue.contactEmail && (
-                  <TrackedActionLink
-                    event="contact_click"
-                    entityType="VENUE"
-                    entitySlug={venue.slug}
-                    method="email"
-                    href={`mailto:${venue.contactEmail}`}
-                    className="flex items-center gap-3 text-foreground hover:text-navy"
-                  >
-                    <Mail className="w-5 h-5 text-royal" />
-                    {venue.contactEmail}
-                  </TrackedActionLink>
-                )}
-                {venue.website && (
-                  <TrackedActionLink
-                    event="outbound_website_click"
-                    entityType="VENUE"
-                    entitySlug={venue.slug}
-                    href={venue.website}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-3 text-foreground hover:text-navy"
-                  >
-                    <Globe className="w-5 h-5 text-royal" />
-                    Visit Website
-                  </TrackedActionLink>
-                )}
-              </CardContent>
-            </Card>
+            {!venue.isFormer && (
+              <Card>
+                <CardHeader>
+                  <h3 className="font-semibold text-foreground">Contact</h3>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {venue.contactPhone && (
+                    <TrackedActionLink
+                      event="contact_click"
+                      entityType="VENUE"
+                      entitySlug={venue.slug}
+                      method="phone"
+                      href={`tel:${venue.contactPhone}`}
+                      className="flex items-center gap-3 text-foreground hover:text-navy"
+                    >
+                      <Phone className="w-5 h-5 text-royal" />
+                      {venue.contactPhone}
+                    </TrackedActionLink>
+                  )}
+                  {venue.contactEmail && (
+                    <TrackedActionLink
+                      event="contact_click"
+                      entityType="VENUE"
+                      entitySlug={venue.slug}
+                      method="email"
+                      href={`mailto:${venue.contactEmail}`}
+                      className="flex items-center gap-3 text-foreground hover:text-navy"
+                    >
+                      <Mail className="w-5 h-5 text-royal" />
+                      {venue.contactEmail}
+                    </TrackedActionLink>
+                  )}
+                  {venue.website && (
+                    <TrackedActionLink
+                      event="outbound_website_click"
+                      entityType="VENUE"
+                      entitySlug={venue.slug}
+                      href={venue.website}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-3 text-foreground hover:text-navy"
+                    >
+                      <Globe className="w-5 h-5 text-royal" />
+                      Visit Website
+                    </TrackedActionLink>
+                  )}
+                </CardContent>
+              </Card>
+            )}
 
-            <Card>
-              <CardContent className="p-6">
-                <div className="flex items-center gap-3">
-                  <Calendar className="w-8 h-8 text-royal" />
-                  <div>
-                    <p className="text-2xl font-bold text-foreground">{venue.events.length}</p>
-                    <p className="text-sm text-muted-foreground">Upcoming Events</p>
+            {!venue.isFormer && (
+              <Card>
+                <CardContent className="p-6">
+                  <div className="flex items-center gap-3">
+                    <Calendar className="w-8 h-8 text-royal" />
+                    <div>
+                      <p className="text-2xl font-bold text-foreground">{venue.events.length}</p>
+                      <p className="text-sm text-muted-foreground">Upcoming Events</p>
+                    </div>
                   </div>
-                </div>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+            )}
 
             {linkedBlogPosts.length > 0 && (
               <Card>

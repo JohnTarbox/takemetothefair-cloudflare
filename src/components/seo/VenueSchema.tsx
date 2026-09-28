@@ -17,6 +17,13 @@ interface VenueSchemaProps {
   openingHours?: string | null;
   accessibility?: string[];
   website?: string | null;
+  /**
+   * OPE-1181 — present for a FORMER venue: emit a plain historical Place, with
+   * sameAs to Wikidata / NRHP. Never openingHours, telephone, rating or event
+   * markup — Google's event rich results require bookable public events, and a
+   * closed venue's past use earns nothing there but a policy flag.
+   */
+  former?: { wikidataQid?: string | null; nrhpRef?: string | null };
 }
 
 interface OpeningHoursSpec {
@@ -64,7 +71,41 @@ export function VenueSchema({
   openingHours,
   accessibility,
   website,
+  former,
 }: VenueSchemaProps) {
+  if (former) {
+    const sameAs = [
+      former.wikidataQid ? `https://www.wikidata.org/wiki/${former.wikidataQid}` : null,
+      former.nrhpRef ? `https://npgallery.nps.gov/AssetDetail/NRIS/${former.nrhpRef}` : null,
+    ].filter((x): x is string => !!x);
+    const formerSchema = {
+      "@context": "https://schema.org",
+      "@type": ["Place", "LandmarksOrHistoricalBuildings"],
+      name,
+      description: description || undefined,
+      image: imageUrl || undefined,
+      url,
+      address: {
+        "@type": "PostalAddress",
+        streetAddress: address || undefined,
+        addressLocality: city || undefined,
+        addressRegion: state || undefined,
+        postalCode: zip || undefined,
+        addressCountry: "US",
+      },
+      geo: latitude && longitude ? { "@type": "GeoCoordinates", latitude, longitude } : undefined,
+      sameAs: sameAs.length > 0 ? sameAs : undefined,
+    };
+    return (
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify(JSON.parse(JSON.stringify(formerSchema))),
+        }}
+      />
+    );
+  }
+
   const hasRating = !!(googleRating && googleRatingCount);
 
   const schema = {
