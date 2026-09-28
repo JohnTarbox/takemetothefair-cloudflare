@@ -147,6 +147,8 @@ export const HEARTBEAT_INVENTORY: Record<string, InventoryEntry> = {
   },
   "cron:runScheduledPromoterEnrichment": { probes: ["promoter-enrichment"] },
   // OPE-1164 — weekly (Monday-gated) vendor-category new-value watch.
+  // OPE-1205 — daily sync-staleness sweep; one admin_actions row per run.
+  "cron:runScheduledSyncStaleSweep": { probes: ["sync-stale-sweep"] },
   "cron:runScheduledVendorCategoryWatch": { probes: ["vendor-category-watch"] },
   "cron:runScheduledQueueRerank": U,
   "cron:runScheduledSelfConsistencyCron": U,
