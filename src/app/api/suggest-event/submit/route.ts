@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { detectPossibleDuplicate } from "@/lib/duplicates/venue-date-collision";
+import { resolveIngestVenue } from "@/lib/venues/former-venue-guard";
 import { findUndatedDuplicate } from "@/lib/duplicates/find-undated-duplicate";
 import { internalKeyMatches } from "@/lib/api-auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
@@ -589,6 +590,16 @@ export async function POST(request: NextRequest) {
     const eventStatus = gateRoute === "PENDING_REVIEW" ? "PENDING" : baseEventStatus;
     const gateFlagsJson = gateReasons.length > 0 ? JSON.stringify(gateReasons) : null;
 
+    // OPE-1180 — a resolved FORMER venue is kept only for pre-closure dates.
+    // After the closure the submission lands WITHOUT a venue and flagged for
+    // review (never a failure: this is the public / email intake path).
+    const formerCheck = await resolveIngestVenue(
+      db,
+      resolvedVenueId,
+      effectiveEndDate ?? effectiveStartDate
+    );
+    resolvedVenueId = formerCheck.venueId;
+
     // K34 / EH3 P3.3b — if this submission is really a new EDITION of an
     // existing event that belongs to a SERIES (different year), attach it as an
     // occurrence under that series instead of minting a year-suffixed standalone
@@ -779,6 +790,7 @@ export async function POST(request: NextRequest) {
       // lane (the headless worker can't web-confirm), not an upcoming event.
       // Operator triage queue at /admin/events?flagged=1.
       flaggedForReview:
+        formerCheck.flagForReview ||
         anyHoursUnknown ||
         gateReasons.includes("past_date") ||
         // OPE-378 — an invented name reads perfectly, so it needs a human.

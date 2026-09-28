@@ -182,8 +182,10 @@ const _venueCreateBaseSchema = z.object({
   googleTypes: z.string().optional().nullable(),
   accessibility: z.string().optional().nullable(),
   parking: z.string().optional().nullable(),
+  // OPE-1180 — FORMER round-trips through the admin form (read-only there);
+  // the PATCH route refuses to SET it and never changes a FORMER venue's status.
   status: z
-    .enum([VENUE_STATUS.ACTIVE, VENUE_STATUS.INACTIVE])
+    .enum([VENUE_STATUS.ACTIVE, VENUE_STATUS.INACTIVE, VENUE_STATUS.FORMER])
     .optional()
     .default(VENUE_STATUS.ACTIVE),
 });

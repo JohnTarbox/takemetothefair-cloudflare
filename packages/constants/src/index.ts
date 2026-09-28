@@ -448,6 +448,8 @@ export function validateLifecycleTransition(
 export const VENUE_STATUS = {
   ACTIVE: "ACTIVE",
   INACTIVE: "INACTIVE",
+  // OPE-1180 — was a venue, no longer is. Not publicly served until OPE-1181.
+  FORMER: "FORMER",
 } as const;
 export type VenueStatus = (typeof VENUE_STATUS)[keyof typeof VENUE_STATUS];
 

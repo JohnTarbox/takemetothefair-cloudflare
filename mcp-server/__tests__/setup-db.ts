@@ -7,6 +7,8 @@
  */
 import { z } from "zod";
 import Database from "better-sqlite3";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import * as schema from "../src/schema.js";
 
@@ -66,7 +68,59 @@ const SCHEMA_SQL = `
     created_at INTEGER,
     updated_at INTEGER,
     image_focal_x REAL NOT NULL DEFAULT 0.5,
-    image_focal_y REAL NOT NULL DEFAULT 0.5
+    image_focal_y REAL NOT NULL DEFAULT 0.5,
+    -- OPE-1180 (drizzle/0333) — FORMER-venue lifecycle.
+    use_started_edtf TEXT,
+    use_ended_edtf TEXT,
+    use_ended_earliest INTEGER,
+    use_ended_latest INTEGER,
+    current_state TEXT,
+    current_use TEXT,
+    wikidata_qid TEXT,
+    nrhp_ref TEXT
+  );
+
+  -- OPE-1180 (drizzle/0333) — venue history tables, CHECKs included.
+  CREATE TABLE series_venue_periods (
+    id TEXT PRIMARY KEY NOT NULL,
+    series_id TEXT,
+    series_name TEXT,
+    venue_id TEXT NOT NULL,
+    from_edtf TEXT,
+    to_edtf TEXT,
+    from_earliest INTEGER,
+    to_latest INTEGER,
+    certainty TEXT NOT NULL DEFAULT 'certain',
+    notes TEXT,
+    created_by TEXT,
+    created_at INTEGER NOT NULL,
+    CHECK (series_id IS NOT NULL OR (series_name IS NOT NULL AND length(trim(series_name)) > 0))
+  );
+  CREATE TABLE venue_name_variants (
+    id TEXT PRIMARY KEY NOT NULL,
+    venue_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    normalized_name TEXT NOT NULL,
+    from_edtf TEXT,
+    to_edtf TEXT,
+    certainty TEXT NOT NULL DEFAULT 'certain',
+    created_by TEXT,
+    created_at INTEGER NOT NULL,
+    UNIQUE (venue_id, normalized_name)
+  );
+  CREATE TABLE venue_claim_citations (
+    id TEXT PRIMARY KEY NOT NULL,
+    venue_id TEXT,
+    series_venue_period_id TEXT REFERENCES series_venue_periods(id) ON DELETE CASCADE,
+    venue_name_variant_id TEXT REFERENCES venue_name_variants(id) ON DELETE CASCADE,
+    field TEXT,
+    source_url TEXT NOT NULL,
+    source_type TEXT NOT NULL,
+    certainty TEXT NOT NULL DEFAULT 'certain',
+    notes TEXT,
+    created_by TEXT,
+    created_at INTEGER NOT NULL,
+    CHECK ((venue_id IS NOT NULL) + (series_venue_period_id IS NOT NULL) + (venue_name_variant_id IS NOT NULL) = 1)
   );
 
   CREATE TABLE promoters (
@@ -1552,6 +1606,17 @@ const SCHEMA_SQL = `
   CREATE INDEX idx_claim_tokens_expires ON claim_tokens (expires_at);
 `;
 
+const FORMER_VENUE_TRIGGERS_SQL = (() => {
+  const sql = readFileSync(
+    fileURLToPath(new URL("../../drizzle/0333_ope1180_former_venues.sql", import.meta.url)),
+    "utf8"
+  );
+  const start = sql.indexOf("CREATE TRIGGER");
+  if (start < 0)
+    throw new Error("0333 has no CREATE TRIGGER — the loader is reading the wrong file");
+  return sql.slice(start);
+})();
+
 export function createTestDb(): { db: TestDb; raw: Database.Database } {
   const raw = new Database(":memory:");
   raw.pragma("foreign_keys = ON");
@@ -1559,6 +1624,9 @@ export function createTestDb(): { db: TestDb; raw: Database.Database } {
   // misreads better-sqlite3's API as Node's child_process. The semantics
   // are identical.
   raw["exec"](SCHEMA_SQL);
+  // OPE-1180 — the FORMER-venue triggers, loaded from the migration itself so
+  // the tests run against the exact SQL prod runs (one source, no copy to drift).
+  raw["exec"](FORMER_VENUE_TRIGGERS_SQL);
   const db = drizzle(raw, { schema });
   // D1 exposes `db.batch([...])` (atomic, sequential); better-sqlite3 doesn't.
   // Shim it so code paths that batch — e.g. SYN1's outbox-row + version-bump
