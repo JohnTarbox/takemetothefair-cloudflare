@@ -18,7 +18,7 @@ import {
   isPlaceholderDescription,
   PROMOTER_ENRICHMENT_EXHAUST_AFTER,
 } from "@takemetothefair/constants";
-import { sanitizeScrapedDescription } from "@takemetothefair/utils";
+import { sanitizeScrapedDescription, runChunkedInsert } from "@takemetothefair/utils";
 import { promoters, promoterEnrichmentCandidates } from "../schema.js";
 import { getDb, type Db } from "../db.js";
 import { logError } from "../logger.js";
@@ -464,25 +464,28 @@ export async function processPromoterEnrichmentJob(
 
   const now = new Date();
   if (proposals.length > 0) {
-    await db.insert(promoterEnrichmentCandidates).values(
-      proposals.map((p) => ({
-        promoterId: msg.promoterId,
-        jobRunId: msg.jobRunId,
-        proposedField: p.field,
-        // OPE-964 — what the field holds NOW, so a later revert restores it
-        // exactly (a placeholder description, an empty "{}") instead of NULL.
-        currentValue: (FIELD_TO_COLUMN[p.field]
-          ? ((row as Record<string, unknown>)[FIELD_TO_COLUMN[p.field]] ?? null)
-          : null) as string | null,
-        proposedValue: p.proposedValue,
-        sourceUrl,
-        extractionMethod: p.method,
-        fetchMethod: fetched.fetchMethod,
-        confidence: p.confidence,
-        flags: JSON.stringify(p.flags),
-        createdAt: now,
-        decision: "pending" as const,
-      }))
+    // OPE-1185 — chunked to D1's 100-param cap (~14 params/row: >7 candidates 500'd).
+    await runChunkedInsert(proposals, (chunk) =>
+      db.insert(promoterEnrichmentCandidates).values(
+        chunk.map((p) => ({
+          promoterId: msg.promoterId,
+          jobRunId: msg.jobRunId,
+          proposedField: p.field,
+          // OPE-964 — what the field holds NOW, so a later revert restores it
+          // exactly (a placeholder description, an empty "{}") instead of NULL.
+          currentValue: (FIELD_TO_COLUMN[p.field]
+            ? ((row as Record<string, unknown>)[FIELD_TO_COLUMN[p.field]] ?? null)
+            : null) as string | null,
+          proposedValue: p.proposedValue,
+          sourceUrl,
+          extractionMethod: p.method,
+          fetchMethod: fetched.fetchMethod,
+          confidence: p.confidence,
+          flags: JSON.stringify(p.flags),
+          createdAt: now,
+          decision: "pending" as const,
+        }))
+      )
     );
   }
 

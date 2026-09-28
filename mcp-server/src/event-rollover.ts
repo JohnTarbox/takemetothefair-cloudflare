@@ -42,6 +42,7 @@ import { events, eventDays, adminActions, promoters } from "./schema.js";
 import { isCeasedPromoter } from "./promoters/succession.js";
 import { recomputeEventCompleteness } from "./helpers.js";
 import type { Db } from "./db.js";
+import { loadGuardVenue } from "./venues/lifecycle.js";
 
 const PENDING_DATES_TAG = "dates-pending-official";
 
@@ -180,6 +181,12 @@ export async function rolloverEventIfRecurring(
     suffix++;
   }
 
+  // OPE-1180 — never copy a FORMER venue forward. The series outlived its old
+  // grounds; next year's edition is created with NO venue and flagged, so a
+  // human attaches wherever it actually moved (the fan-out has the candidates).
+  const sourceVenue = await loadGuardVenue(db, source.venueId);
+  const dropFormerVenue = sourceVenue?.status === "FORMER";
+
   // --- Insert the rolled edition + audit row, atomically --------------------
   const newEventId = crypto.randomUUID();
   const insertEvent = db.insert(events).values({
@@ -198,7 +205,8 @@ export async function rolloverEventIfRecurring(
     slug: finalSlug,
     description: source.description,
     promoterId: source.promoterId,
-    venueId: source.venueId,
+    venueId: dropFormerVenue ? null : source.venueId,
+    ...(dropFormerVenue ? { flaggedForReview: 1 } : {}),
     stateCode: source.stateCode,
     isStatewide: source.isStatewide,
     startDate: next.start,

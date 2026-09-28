@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { detectPossibleDuplicate } from "@/lib/duplicates/venue-date-collision";
+import { resolveIngestVenue } from "@/lib/venues/former-venue-guard";
 import { gateDatesConfirmed } from "@takemetothefair/utils";
 import { withAuth } from "@/lib/api/with-auth";
 import { recordMutation } from "@/lib/audit/record-mutation";
@@ -221,6 +222,11 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
     const finalStatus = gateResult.route === "PENDING_REVIEW" ? "PENDING" : "APPROVED";
     const gateFlagsJson = gateResult.reasons.length > 0 ? JSON.stringify(gateResult.reasons) : null;
 
+    // OPE-1180 — a FORMER venue is kept only for pre-closure dates; after the
+    // closure the event is saved WITHOUT a venue and flagged for review.
+    const formerCheck = await resolveIngestVenue(db, venueId, endDate ?? startDate);
+    venueId = formerCheck.venueId;
+
     // Create the event
     const newEventId = crypto.randomUUID();
     // OPE-627 — report-only duplicate check. Writes the flag; merges nothing.
@@ -233,6 +239,7 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
     });
     await db.insert(events).values({
       possibleDuplicateOf,
+      ...(formerCheck.flagForReview ? { flaggedForReview: 1 } : {}),
       id: newEventId,
       name: event.name,
       slug: finalEventSlug,

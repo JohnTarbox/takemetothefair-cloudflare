@@ -148,3 +148,34 @@ describe("importReferringDomains + getLatestReferringDomains", () => {
     expect(total.n).toBe(95);
   });
 });
+
+describe("OPE-1185 — a large import never exceeds D1's 100 bound parameters", () => {
+  // Local SQLite allows ~32k parameters, so a 150-param statement PASSES here
+  // and 500s on D1. Asserting the rows landed would be green on the broken
+  // code; the statement SHAPE is the thing to assert. The logger sees every
+  // statement exactly as Drizzle sends it.
+  it("ACCEPTANCE: a 60-row CSV imports in one call, reads back 60, every statement ≤ 100 params", async () => {
+    const seen: number[] = [];
+    const logged = drizzle(raw, {
+      schema,
+      logger: { logQuery: (q, params) => q.startsWith("insert") && seen.push(params.length) },
+    });
+    const csv = [
+      '"Domain","Backlinks Count"',
+      ...Array.from({ length: 60 }, (_, i) => `"https://site${i}.example","${i + 1}"`),
+    ].join("\n");
+    const { imported } = await importReferringDomains(
+      logged as never,
+      parseReferringDomainsCsv(csv),
+      "2026-09-28"
+    );
+    expect(imported).toBe(60);
+    const n = raw
+      .prepare(`SELECT COUNT(*) AS n FROM bing_backlinks WHERE snapshot_date = ?`)
+      .get("2026-09-28") as { n: number };
+    expect(n.n).toBe(60);
+    // Landmark: the logger really saw the inserts (more than one chunk).
+    expect(seen.length).toBeGreaterThan(1);
+    expect(Math.max(...seen)).toBeLessThanOrEqual(100);
+  });
+});

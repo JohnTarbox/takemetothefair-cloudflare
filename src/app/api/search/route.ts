@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { searchSlugForm } from "@takemetothefair/utils";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { events, venues, vendors, blogPosts } from "@/lib/db/schema";
+import { events, venues, vendors, blogPosts, venueNameVariants } from "@/lib/db/schema";
 import {
   and,
   or,
@@ -141,7 +141,21 @@ export const GET = withErrorHandler(async (request: Request) => {
       })
       .from(venues)
       .where(
-        and(eq(venues.status, "ACTIVE"), or(containsCI(venues.name, q), containsCI(venues.city, q)))
+        and(
+          eq(venues.status, "ACTIVE"),
+          or(
+            containsCI(venues.name, q),
+            containsCI(venues.city, q),
+            // OPE-1180 — a venue's recorded other names.
+            inArray(
+              venues.id,
+              db
+                .select({ id: venueNameVariants.venueId })
+                .from(venueNameVariants)
+                .where(containsCI(venueNameVariants.name, q))
+            )
+          )
+        )
       )
       .orderBy(venues.name)
       .limit(5),
