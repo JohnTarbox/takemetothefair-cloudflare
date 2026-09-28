@@ -138,6 +138,8 @@ export const HEARTBEAT_INVENTORY: Record<string, InventoryEntry> = {
   "cron:runScheduledImageUrlHealthSweep": { probes: ["image-url-health-sweep"] },
   "cron:runScheduledInboundEmailStaleSweep": U,
   "cron:runScheduledKpiRecompute": U,
+  // OPE-1201 — daily near-duplicate candidate sweep; one admin_actions row per run.
+  "cron:runScheduledNearDuplicateSweep": { probes: ["near-duplicate-sweep"] },
   "cron:runScheduledNewsletterListBalanceCanary": { probes: ["newsletter-list-balance-canary"] },
   "cron:runScheduledOperatorQueueNotice": U,
   "cron:runScheduledPageErrorCanary": U,
