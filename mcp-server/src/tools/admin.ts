@@ -111,6 +111,7 @@ import {
   validateVenueLifecycle,
   checkFormerVenue,
   gateDatesConfirmed,
+  organizerHostsFrom,
 } from "@takemetothefair/utils";
 import {
   eventOutboxStatements,
@@ -1579,8 +1580,16 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
               eq(eventDataCitations.state, "active")
             )
           );
+        // OPE-1231 — the event's own promoter's site counts as the organizer.
+        const promoterSite = await db
+          .select({ website: promoters.website })
+          .from(events)
+          .innerJoin(promoters, eq(promoters.id, events.promoterId))
+          .where(eq(events.id, params.event_id))
+          .limit(1);
         const gate = gateDatesConfirmed({
           requested: true,
+          organizerHosts: organizerHostsFrom(promoterSite.map((p) => p.website)),
           citations: existingCitations,
           callSource:
             params.citation && updates.startDate !== undefined
