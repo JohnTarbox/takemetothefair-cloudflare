@@ -176,6 +176,86 @@ function appearanceOut(row: typeof eventPerformers.$inferSelect) {
     // nothing, so a re-verification pass could not confirm its own stamps.
     last_verified_at: toSec(row.lastVerifiedAt),
     last_verified_source: row.lastVerifiedSource,
+    // OPE-958 — the snapshot of last_verified_source, and the last re-check.
+    source_title: row.sourceTitle,
+    source_excerpt: row.sourceExcerpt,
+    source_content_hash: row.sourceContentHash,
+    source_fetched_at: toSec(row.sourceFetchedAt),
+    recheck_state: row.recheckState,
+    recheck_at: toSec(row.recheckAt),
+    recheck_note: row.recheckNote,
+  };
+}
+
+/**
+ * OPE-958 — cite the dated asset, not a rolling page. Shared by every tool that
+ * takes an appearance source, so the guidance cannot drift between them.
+ *
+ * Specimen: The World Famous Grassholes @ Orono Arts Fest cited the band's own
+ * homepage, whose "Upcoming Gigs" list rolled the June date off within weeks —
+ * the stored source returned 200 and could neither confirm nor deny the claim.
+ */
+const APPEARANCE_SOURCE_GUIDANCE =
+  "Cite the DATED asset — the organizer's schedule PDF, program page or press release: " +
+  "something that still says the same thing a year later. Never a rolling 'upcoming gigs' / " +
+  "'what's on' page, and never the act's own homepage.";
+
+/** OPE-958 — the OPE-692 snapshot fields, same names and conventions. */
+const sourceSnapshotFields = {
+  source_title: z
+    .string()
+    .max(300)
+    .transform(decodeHtmlEntities)
+    .optional()
+    .describe("The page <title> / main heading AS SERVED when you read it."),
+  source_excerpt: z
+    .string()
+    .max(1000)
+    .optional()
+    .describe(
+      "A short VERBATIM extract that supports this appearance (act, date, time). A later pass " +
+        "compares against it when it cannot re-fetch the URL."
+    ),
+  source_content_hash: z
+    .string()
+    .max(64)
+    .optional()
+    .describe("sha256 of the extracted page text, first 16 hex chars."),
+};
+
+type SourceSnapshot = {
+  title?: string | null;
+  excerpt?: string | null;
+  hash?: string | null;
+};
+
+function snapshotFrom(p: {
+  source_title?: string;
+  source_excerpt?: string;
+  source_content_hash?: string;
+}): SourceSnapshot | undefined {
+  if (
+    p.source_title === undefined &&
+    p.source_excerpt === undefined &&
+    p.source_content_hash === undefined
+  )
+    return undefined;
+  return {
+    title: p.source_title ?? null,
+    excerpt: p.source_excerpt ?? null,
+    hash: p.source_content_hash ?? null,
+  };
+}
+
+/** The response note when a call moves an appearance's re-verification target. */
+function supersededOut(row: typeof eventPerformers.$inferSelect, from: string) {
+  return {
+    acquisition_source_url: row.sourceUrl,
+    previous_verification_source: from,
+    verification_source: row.lastVerifiedSource,
+    note:
+      "source_url is the ACQUISITION record and is never rewritten (OPE-958, supersede-not-overwrite). " +
+      "The new source became last_verified_source; the previous one is kept in the admin_actions audit row.",
   };
 }
 
@@ -426,7 +506,12 @@ export function registerPerformerTools(server: McpServer, db: Db, auth: AuthCont
       stage: z.string().optional(),
       billing: z.enum(BILLING).optional(),
       status: z.enum(APPEARANCE_STATUS).optional().describe("Default PENDING."),
-      source_url: z.string().describe("Provenance — where this appearance was learned (required)."),
+      source_url: z
+        .string()
+        .describe(
+          "Provenance — where this appearance was learned (required). " + APPEARANCE_SOURCE_GUIDANCE
+        ),
+      ...sourceSnapshotFields,
       ...performerFields,
     },
     async (params) => {
@@ -494,17 +579,32 @@ export function registerPerformerTools(server: McpServer, db: Db, auth: AuthCont
           billing: params.billing ?? null,
           status: params.status ?? "PENDING",
           sourceUrl: params.source_url,
+          snapshot: snapshotFrom(params),
         });
         await logAction(db, auth, "performer.link", performerId, {
           event_id: params.event_id,
           appearance_id: appearance.row.id,
           created: appearance.created,
+          ...(appearance.supersededFrom
+            ? { superseded_verification_source: appearance.supersededFrom }
+            : {}),
         });
         return {
           content: [
             jsonContent({
               success: true,
               created_appearance: appearance.created,
+              // OPE-958 — a re-call with a different source used to return the
+              // stale-looking row silently; the caller read "unchanged" and had
+              // no way to learn the source HAD been recorded. Say so.
+              ...(appearance.supersededFrom
+                ? {
+                    verification_source_superseded: supersededOut(
+                      appearance.row,
+                      appearance.supersededFrom
+                    ),
+                  }
+                : {}),
               appearance: appearanceOut(appearance.row),
             }),
           ],
@@ -518,7 +618,7 @@ export function registerPerformerTools(server: McpServer, db: Db, auth: AuthCont
   // ── link_performer_to_event ───────────────────────────────────────
   server.tool(
     "link_performer_to_event",
-    "Record one appearance/set of a known performer at an event. Idempotent on (event, performer, day, start) — a repeat call for the same slot returns the existing appearance; a different slot creates a new one. Stores source_url (provenance). Admin only.",
+    "Record one appearance/set of a known performer at an event. Idempotent on (event, performer, day, start) — a repeat call for the same slot RE-VERIFIES the existing appearance (last_verified_at/_source + snapshot) and, when the source differs, reports `verification_source_superseded`; a different slot creates a new one. Stores source_url (acquisition provenance, never rewritten). Pass source_title/source_excerpt/source_content_hash whenever you read the page. Admin only.",
     {
       event_id: z.string().min(1),
       performer_id: z.string().min(1),
@@ -528,7 +628,15 @@ export function registerPerformerTools(server: McpServer, db: Db, auth: AuthCont
       stage: z.string().optional(),
       billing: z.enum(BILLING).optional(),
       status: z.enum(APPEARANCE_STATUS).optional().describe("Default PENDING."),
-      source_url: z.string().describe("Provenance (required)."),
+      source_url: z
+        .string()
+        .describe(
+          "Provenance (required). On a NEW appearance it is stored as source_url (acquisition). " +
+            "On an EXISTING one it supersedes last_verified_source and the response says so — " +
+            "source_url itself is never rewritten. " +
+            APPEARANCE_SOURCE_GUIDANCE
+        ),
+      ...sourceSnapshotFields,
     },
     async (params) => {
       try {
@@ -542,23 +650,127 @@ export function registerPerformerTools(server: McpServer, db: Db, auth: AuthCont
           billing: params.billing ?? null,
           status: params.status ?? "PENDING",
           sourceUrl: params.source_url,
+          snapshot: snapshotFrom(params),
         });
         await logAction(db, auth, "performer.link", params.performer_id, {
           event_id: params.event_id,
           appearance_id: appearance.row.id,
           created: appearance.created,
+          ...(appearance.supersededFrom
+            ? { superseded_verification_source: appearance.supersededFrom }
+            : {}),
         });
         return {
           content: [
             jsonContent({
               success: true,
               created_appearance: appearance.created,
+              // OPE-958 — a re-call with a different source used to return the
+              // stale-looking row silently; the caller read "unchanged" and had
+              // no way to learn the source HAD been recorded. Say so.
+              ...(appearance.supersededFrom
+                ? {
+                    verification_source_superseded: supersededOut(
+                      appearance.row,
+                      appearance.supersededFrom
+                    ),
+                  }
+                : {}),
               appearance: appearanceOut(appearance.row),
             }),
           ],
         };
       } catch (e) {
         return err("link_failed", e instanceof Error ? e.message : String(e));
+      }
+    }
+  );
+
+  // ── record_appearance_recheck ─────────────────────────────────────
+  // OPE-958 — the audited route to record what a re-check of an appearance's
+  // source found, and to correct its source. Supersede, never overwrite (John,
+  // 2026-09-30): `source_url` is the acquisition record; a corrected source
+  // becomes `last_verified_source`, and the previous one is kept in the audit
+  // row. Same vocabulary as update_event_citation's recheck (OPE-692).
+  server.tool(
+    "record_appearance_recheck",
+    "Record the outcome of re-checking one performer appearance's source, and optionally correct that source. " +
+      "recheck_state: 'confirmed' (a source supports the appearance — stamps last_verified_at), 'changed' " +
+      "(the source now says something else), 'unreachable' (could not be read — a fact about the URL, not the act). " +
+      "Pass source_url to SUPERSEDE the re-verification source (last_verified_source); source_url on the appearance " +
+      "is the acquisition record and is never rewritten. Pass the snapshot fields whenever you read the page. " +
+      APPEARANCE_SOURCE_GUIDANCE +
+      " Admin only.",
+    {
+      event_performer_id: z.string().min(1),
+      recheck_state: z.enum(["confirmed", "changed", "unreachable"]),
+      recheck_note: z
+        .string()
+        .max(500)
+        .transform(decodeHtmlEntities)
+        .optional()
+        .describe("Why, in words — what changed, or why it could not be read."),
+      source_url: z
+        .string()
+        .url()
+        .optional()
+        .describe("The source that NOW supports the appearance. Supersedes last_verified_source."),
+      ...sourceSnapshotFields,
+    },
+    async (params) => {
+      try {
+        const [cur] = await db
+          .select()
+          .from(eventPerformers)
+          .where(eq(eventPerformers.id, params.event_performer_id))
+          .limit(1);
+        if (!cur) return err("not_found", `No appearance ${params.event_performer_id}.`);
+
+        const now = new Date();
+        const prev = cur.lastVerifiedSource ?? cur.sourceUrl;
+        const moved = params.source_url !== undefined && params.source_url !== prev;
+        const values: Record<string, unknown> = {
+          recheckState: params.recheck_state,
+          recheckAt: now,
+          recheckNote: params.recheck_note ?? null,
+          updatedAt: now,
+          ...(params.source_url !== undefined ? { lastVerifiedSource: params.source_url } : {}),
+          ...snapshotValues(snapshotFrom(params), now, moved),
+          // Only a CONFIRMED re-check is a verification. A changed or
+          // unreachable source says nothing is currently supporting the row.
+          ...(params.recheck_state === "confirmed" ? { lastVerifiedAt: now } : {}),
+        };
+        const [row] = await db
+          .update(eventPerformers)
+          .set(values)
+          .where(eq(eventPerformers.id, cur.id))
+          .returning();
+        await db.insert(adminActions).values({
+          action: "performer.appearance.recheck",
+          actorUserId: auth.userId,
+          targetType: "event_performer",
+          targetId: cur.id,
+          payloadJson: JSON.stringify({
+            recheck_state: params.recheck_state,
+            recheck_note: params.recheck_note ?? null,
+            acquisition_source_url: cur.sourceUrl,
+            previous_verification_source: prev,
+            previous_recheck_state: cur.recheckState ?? null,
+            ...(moved ? { superseded_to: params.source_url } : {}),
+          }),
+          createdAt: now,
+        });
+        return {
+          content: [
+            jsonContent({
+              success: true,
+              ...(moved ? { verification_source_superseded: supersededOut(row, prev ?? "") } : {}),
+              appearance: appearanceOut(row),
+            }),
+          ],
+        };
+      } catch (e) {
+        return err("recheck_failed", e instanceof Error ? e.message : String(e));
       }
     }
   );
@@ -1026,8 +1238,15 @@ export async function linkAppearance(
     billing: (typeof BILLING)[number] | null;
     status: (typeof APPEARANCE_STATUS)[number];
     sourceUrl: string;
+    /** OPE-958 — the snapshot of `sourceUrl` as read now. */
+    snapshot?: SourceSnapshot;
   }
-): Promise<{ row: typeof eventPerformers.$inferSelect; created: boolean }> {
+): Promise<{
+  row: typeof eventPerformers.$inferSelect;
+  created: boolean;
+  /** OPE-958 — set when a re-call moved the re-verification target; the value it had. */
+  supersededFrom?: string | null;
+}> {
   const now = new Date();
   const existing = await db
     .select()
@@ -1047,12 +1266,28 @@ export async function linkAppearance(
     // the ORIGINAL write — where the appearance came from and where it was last
     // confirmed are different questions, and overwriting the first with the
     // second loses the answer to it.
+    //
+    // OPE-958 — and when the new source DIFFERS, that is a supersede: the old
+    // re-verification target is reported back (and audited by the caller), and
+    // a snapshot that described the old URL is cleared rather than left
+    // pretending to describe the new one.
+    const prev = existing[0].lastVerifiedSource ?? existing[0].sourceUrl;
+    const moved = prev !== a.sourceUrl;
     const refreshed = await db
       .update(eventPerformers)
-      .set({ lastVerifiedAt: now, lastVerifiedSource: a.sourceUrl, updatedAt: now })
+      .set({
+        lastVerifiedAt: now,
+        lastVerifiedSource: a.sourceUrl,
+        ...snapshotValues(a.snapshot, now, moved),
+        updatedAt: now,
+      })
       .where(eq(eventPerformers.id, existing[0].id))
       .returning();
-    return { row: refreshed[0] ?? existing[0], created: false };
+    return {
+      row: refreshed[0] ?? existing[0],
+      created: false,
+      ...(moved ? { supersededFrom: prev } : {}),
+    };
   }
 
   const rows = await db
@@ -1077,11 +1312,42 @@ export async function linkAppearance(
       // status call; that habit was the only thing holding the invariant.
       lastVerifiedAt: now,
       lastVerifiedSource: a.sourceUrl,
+      ...snapshotValues(a.snapshot, now, false),
       createdAt: now,
       updatedAt: now,
     })
     .returning();
   return { row: rows[0], created: true };
+}
+
+/**
+ * OPE-958 — the column values for a snapshot. A provided snapshot is written
+ * with its fetch time. With none provided, an unchanged source keeps its old
+ * snapshot, and a MOVED source clears it — a snapshot of URL A must never be
+ * read as evidence about URL B.
+ */
+function snapshotValues(
+  snap: SourceSnapshot | undefined,
+  now: Date,
+  sourceMoved: boolean
+): Record<string, unknown> {
+  if (snap) {
+    return {
+      sourceTitle: snap.title ?? null,
+      sourceExcerpt: snap.excerpt ?? null,
+      sourceContentHash: snap.hash ?? null,
+      sourceFetchedAt: now,
+    };
+  }
+  if (sourceMoved) {
+    return {
+      sourceTitle: null,
+      sourceExcerpt: null,
+      sourceContentHash: null,
+      sourceFetchedAt: null,
+    };
+  }
+  return {};
 }
 
 /** Shared setter for the appearance field tools. `opts.stampVerified` marks the

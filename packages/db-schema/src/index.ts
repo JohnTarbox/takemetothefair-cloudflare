@@ -1587,6 +1587,21 @@ export const eventPerformers = sqliteTable(
     // set_event_performer_status / _slot); lastVerifiedSource = the URL used.
     lastVerifiedAt: integer("last_verified_at", { mode: "timestamp" }),
     lastVerifiedSource: text("last_verified_source"),
+    // OPE-958 — the OPE-692 snapshot + recheck model on appearances (drizzle/
+    // 0340). `source_url` stays the ACQUISITION record and is never rewritten;
+    // `last_verified_source` is the re-verification target and is where a
+    // corrected source SUPERSEDES (John, 2026-09-30). These describe
+    // `last_verified_source` as read at the last verification, so a pass that
+    // cannot re-fetch can still compare. NULL on every pre-0340 row.
+    sourceTitle: text("source_title"),
+    sourceExcerpt: text("source_excerpt"),
+    sourceContentHash: text("source_content_hash"),
+    sourceFetchedAt: integer("source_fetched_at", { mode: "timestamp" }),
+    recheckState: text("recheck_state", {
+      enum: ["unchecked", "confirmed", "changed", "unreachable"],
+    }),
+    recheckAt: integer("recheck_at", { mode: "timestamp" }),
+    recheckNote: text("recheck_note"),
     createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
     updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   },
