@@ -246,6 +246,27 @@ async function main() {
     .run();
   console.log("Created event: Holiday Craft Show");
 
+  // OPE-574 — a REJECTED event, so e2e/soft-404.spec.ts can pin the
+  // middleware's REJECTED → 410 Gone branch (src/middleware.ts). Without a
+  // REJECTED row in the seed that branch can never execute under test.
+  db.insert(schema.events)
+    .values({
+      id: crypto.randomUUID(),
+      name: "Rejected Test Fair",
+      slug: unsafeSlug("e2e-rejected-test-fair"),
+      description: "Seeded as REJECTED for the OPE-574 status-code regression test.",
+      promoterId: promoterId,
+      venueId: venue1Id,
+      startDate: nextMonth,
+      endDate: nextMonth,
+      categories: JSON.stringify(["Fair"]),
+      tags: JSON.stringify([]),
+      featured: false,
+      status: "REJECTED",
+    })
+    .run();
+  console.log("Created event: Rejected Test Fair (REJECTED)");
+
   // Add vendor to events
   db.insert(schema.eventVendors)
     .values({
