@@ -135,3 +135,34 @@ export async function classifyRepliedToSend(
   if (sends.length === 0) return "unknown";
   return sends.some((s) => isHumanSendSource(s.source)) ? "human" : "automated";
 }
+
+/**
+ * OPE-1240 — our OWN automatic acknowledgment: a `reply:*` send no person
+ * wrote (`reply:support-ack`, `reply:correction-ack`, …). Notices such as
+ * `content-links-sync.*` are NOT acks — their recipient has no receipt yet.
+ */
+export function isOwnAutomaticAck(source: string | null | undefined): boolean {
+  return typeof source === "string" && source.startsWith("reply:") && !isHumanSendSource(source);
+}
+
+/**
+ * True when the message replies to one of our automatic acknowledgments and
+ * to nothing a person sent. John's ruling (2026-09-30): such a reply gets no
+ * automatic reply — the sender already holds a receipt for this conversation,
+ * and a second one is the OPE-720 "two acks for one conversation" shape.
+ */
+export async function repliesToOwnAutomaticAck(
+  db: Db,
+  inReplyTo: string | null | undefined,
+  emailReferences: string | null | undefined
+): Promise<boolean> {
+  const forms = storedMessageIdForms(inReplyTo, emailReferences);
+  if (forms.length === 0) return false;
+  const sends = await db
+    .select({ source: emailSendLedger.source })
+    .from(emailSendLedger)
+    .where(inArray(emailSendLedger.providerMessageId, forms))
+    .limit(forms.length);
+  if (sends.some((x) => isHumanSendSource(x.source))) return false;
+  return sends.some((x) => isOwnAutomaticAck(x.source));
+}
