@@ -33,6 +33,7 @@ import type { AuthContext } from "../auth.js";
 
 /** Shape written by the booth pipeline's staging step. */
 interface ProposalPayload {
+  sign_mounted_on?: string | null;
   event_id?: string;
   photo_key?: string;
   photo_name?: string;
@@ -166,6 +167,8 @@ export function registerPhotoProposalTools(server: McpServer, db: Db, auth: Auth
         photo_class:
           p.photo_class ?? (row.action === PERFORMER_PROPOSED_ACTION ? "performer" : "booth"),
         stage_kind: p.stage_kind ?? null,
+        // OPE-240 — the booth/not-booth answer, on rows that reached the gate.
+        sign_mounted_on: p.sign_mounted_on ?? null,
         business_name: p.business_name ?? null,
         performer_name: p.performer_name ?? null,
         performer_id: p.performer_id ?? null,

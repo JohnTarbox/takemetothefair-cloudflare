@@ -459,7 +459,11 @@ describe("OPE-969 — the Axe Women truck, as the model actually read it", () =>
   });
 
   it("a roster-check FAULT never lets a booth auto-write on the strength of not being checked", async () => {
-    const e = env(reply({ kind: "booth", name: "Maple Hollow Farm", confidence: 1 }));
+    const e = env(
+      reply({ kind: "booth", name: "Maple Hollow Farm", confidence: 1 }),
+      // OPE-240 — the presence check passes, so the roster fault is what stages it.
+      { mounted_on: "vendor_table_or_tent" }
+    );
     e.PHOTO_AUTOWRITE_ENABLED = "true";
     const spy = vi
       .spyOn(await import("../src/photo/performer-photos.js"), "matchRosterPerformer")

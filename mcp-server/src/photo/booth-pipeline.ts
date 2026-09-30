@@ -33,6 +33,8 @@ import { and, eq, sql } from "drizzle-orm";
 import type { Db } from "../db.js";
 import {
   identifyBooth,
+  checkBoothPresence,
+  applyPresenceGate,
   disposition,
   unidentified,
   type BoothIdentification,
@@ -215,7 +217,13 @@ export async function runBoothPipeline(
       }
       const bytes = new Uint8Array(await obj.arrayBuffer());
       const id = await identifyBooth(ai, bytes);
-      results.push({ photo, d: disposition(id) });
+      let d = disposition(id);
+      // OPE-240 — booth / not-booth. Asked only of a photo that would publish,
+      // so it costs one call per would-write and nothing on the rest.
+      if (d.action === "write" && id.businessName) {
+        d = applyPresenceGate(d, await checkBoothPresence(ai, bytes, id.businessName));
+      }
+      results.push({ photo, d });
     } catch (e) {
       // One unreadable photo must not sink the batch — and must not vanish.
       results.push({
@@ -476,6 +484,8 @@ export async function runBoothPipeline(
       confidence: id.confidence,
       rationale: id.rationale,
       identifiable_minor: id.identifiableMinor,
+      // OPE-240 — what the sign is on, when the presence check ran.
+      sign_mounted_on: id.mountedOn ?? null,
       // OPE-403 follow-up — which of the five UNIDENTIFIED paths produced
       // this, when it was a failure. Absent on a successful identification.
       failure_reason: id.failureReason ?? null,
