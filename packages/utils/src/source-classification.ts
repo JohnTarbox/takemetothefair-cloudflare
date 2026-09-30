@@ -168,8 +168,10 @@ const AGGREGATOR_HOSTS = new Set<string>([
 ]);
 
 /** Strip a leading "www.", lowercase, drop port/path. Returns null if the
- *  input can't be parsed as a hostname. */
-function normalizeHostname(input: string): string | null {
+ *  input can't be parsed as a hostname. Exported (OPE-1231) so the
+ *  dates_confirmed gate compares a citation's host with the promoter's site
+ *  under the same normalization `classifySource` uses. */
+export function normalizeHostname(input: string): string | null {
   let v = input.trim();
   if (!v) return null;
 
