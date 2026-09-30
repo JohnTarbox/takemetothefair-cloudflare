@@ -14,8 +14,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
 
-const approveClaimMock = vi.fn(async () => ({ ok: true as const, entityType: "VENDOR" }));
-const rejectClaimMock = vi.fn(async () => ({ ok: true as const, entityType: "VENDOR" }));
+const approveClaimMock = vi.fn(async (_db: unknown, _a: unknown) => ({
+  ok: true as const,
+  entityType: "VENDOR",
+}));
+const rejectClaimMock = vi.fn(async (_db: unknown, _a: unknown) => ({
+  ok: true as const,
+  entityType: "VENDOR",
+}));
 let authorized: { authorized: boolean; userId: string | null } = {
   authorized: true,
   userId: null,
