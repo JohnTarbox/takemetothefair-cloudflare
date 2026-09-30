@@ -2630,6 +2630,13 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       );
     }
 
+    await this.flagIfInsecureTransport(
+      step,
+      fetched,
+      messageRowId,
+      "submit/flag-insecure-transport"
+    );
+
     return await this.submitExtractedEvent(
       step,
       extracted,
@@ -2642,6 +2649,36 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       // OPE-465 — the page we fetched AND the email body. Both are sources the
       // extractor was given, so a value stated in either is grounded.
       [fetched.content, rowSnapshot.bodyText ?? rowSnapshot.bodyTextExcerpt ?? ""]
+    );
+  }
+
+  /**
+   * OPE-424 — a page read over plain HTTP is LOWER-CONFIDENCE (John's ruling
+   * 2026-09-30). The fetcher now tries HTTPS first and falls back to HTTP only
+   * when the origin has no working TLS — which is common on volunteer-run
+   * organizer sites. The transport is unauthenticated, so whatever was
+   * extracted from it goes to the operator review queue rather than being
+   * trusted like a TLS fetch. Only ever SETS the flag, same rule as the
+   * `thin` extraction path in mark-done.
+   */
+  private async flagIfInsecureTransport(
+    step: WorkflowStep,
+    fetched: SubmitFetchResult | null | undefined,
+    messageRowId: string,
+    label: string
+  ): Promise<void> {
+    if (fetched?.transport !== "http") return;
+    await step.do(
+      label,
+      { retries: { limit: 2, delay: "5 seconds", backoff: "constant" } },
+      async () => {
+        const db = getDb(this.env.DB);
+        await db
+          .update(inboundEmails)
+          .set({ flaggedForReview: 1 })
+          .where(eq(inboundEmails.id, messageRowId));
+        return { flagged: true, url: fetched.url };
+      }
     );
   }
 
@@ -3997,6 +4034,12 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         // `new Date()` rather than a step-recorded timestamp: the fetch just
         // completed in this same Phase-A iteration, and Workflow step retries
         // re-run the fetch, so the wall clock here IS when the bytes arrived.
+        await this.flagIfInsecureTransport(
+          step,
+          fetched,
+          messageRowId,
+          `${labelPrefix}/flag-insecure-transport`
+        );
         const fetchedAt = new Date();
         if (!primaryPage && extracted.events.length > 0) {
           primaryPage = {
@@ -4834,6 +4877,12 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             timeout: "30 seconds",
           },
           () => submitFetch(this.env, url)
+        );
+        await this.flagIfInsecureTransport(
+          step,
+          fetched,
+          messageRowId,
+          `${labelPrefix}/flag-insecure-transport`
         );
         const extracted = await step.do(
           `${labelPrefix}/ai-extract`,

@@ -99,6 +99,9 @@ export const GET = withAuthorized(
 
       let html: string;
       let fetchMethod: "standard" | "browser-rendering";
+      // OPE-424 — "http" when the origin had no working TLS and the page was
+      // read over plain HTTP. Callers treat that as lower-confidence.
+      const transport = standard.ok ? standard.transport : undefined;
 
       if (standard.ok) {
         html = standard.html;
@@ -312,6 +315,7 @@ export const GET = withAuthorized(
         // landing page.
         jsonLdEvents: metadata.jsonLdEvents || null,
         fetchMethod,
+        ...(fetchMethod === "standard" && transport ? { transport } : {}),
       });
     } catch (error) {
       await logError(db, {
