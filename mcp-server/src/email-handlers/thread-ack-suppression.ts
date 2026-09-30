@@ -42,7 +42,12 @@ import { and, desc, eq, gte, like, lte, or, sql } from "drizzle-orm";
 import { emailSendLedger, inboundEmails, tunableThresholds } from "../schema.js";
 import type { Db } from "../db.js";
 import { senderAuthoredText } from "./sender-authored-text.js";
-import { classifyRepliedToSend, shouldUseThreadReplyAck } from "./thread-reply-ack.js";
+import {
+  classifyRepliedToSend,
+  repliesToOwnAutomaticAck,
+  shouldUseThreadReplyAck,
+  THREAD_REPLY_OVERRIDABLE_KINDS,
+} from "./thread-reply-ack.js";
 import { ledgerEmailSend } from "../mailer.js";
 import type { ReplyKind } from "./types.js";
 
@@ -53,7 +58,12 @@ export const DEFAULT_THREAD_ACK_QUIET_HOURS = 72;
 /** `inbound_emails.status` for a thank-you that ends the thread. */
 export const CLOSED_BY_SENDER_STATUS = "closed_by_sender";
 
-export type ThreadAckSuppressReason = "recent-human-reply" | "closed-by-sender";
+export type ThreadAckSuppressReason =
+  | "recent-human-reply"
+  | "closed-by-sender"
+  // OPE-1240 — the message answers our own automatic ack; the sender already
+  // holds a receipt for this conversation (John's ruling 2026-09-30).
+  | "reply-to-own-ack";
 
 /** Longest sender text (chars, before the sign-off) still read as closing. */
 const CLOSING_MAX_CHARS = 400;
@@ -248,6 +258,14 @@ export async function decideThreadAckGuard(
   let detail: string | null = null;
   if (input.closedBySender) {
     reason = "closed-by-sender";
+  } else if (
+    !becomesThreadAck &&
+    THREAD_REPLY_OVERRIDABLE_KINDS.includes(input.replyKind) &&
+    (await repliesToOwnAutomaticAck(db, r.inReplyTo, r.emailReferences))
+  ) {
+    // OPE-1240 — only the generic acks: a reply that carries a real request
+    // (a submission, a decision) still gets its real response.
+    reason = "reply-to-own-ack";
   } else if (becomesThreadAck && r.receivedAt) {
     const hours = await readThreadAckQuietHours(db);
     const recent = await findRecentHumanReply(db, {
