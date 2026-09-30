@@ -24,6 +24,7 @@ import { inboundEmails, adminActions, pendingEmailReplies } from "../schema.js";
 // OPE-368 — shared with the admin route so both refusal sites behave identically.
 import { buildRefusedReply, refusedReplyMessage } from "@takemetothefair/utils";
 import { logError } from "../logger.js";
+import { closeObligationsAnsweredBy } from "../support-obligations-close.js";
 import { jsonContent } from "../helpers.js";
 import { isEmailSuppressed } from "./admin-send-vendor-email.js";
 import type { Db } from "../db.js";
@@ -65,7 +66,7 @@ export interface ReplyArgs {
 
 export type ReplyResult =
   | { ok: false; reason: "disabled" | "no_queue" | "not_found" | "suppressed"; message: string }
-  | { ok: true; to: string; subject: string; inboundEmailId: string };
+  | { ok: true; to: string; subject: string; inboundEmailId: string; obligationsClosed: number };
 
 function escapeHtml(s: string): string {
   return s
@@ -243,7 +244,26 @@ export async function handleReplyToInbound(
     createdAt: new Date(),
   });
 
-  return { ok: true, to: row.fromAddress, subject, inboundEmailId: row.id };
+  // OPE-1226 — the reply answers this message's obligation (and any on the
+  // same thread). Same optimism as `status: "replied"` above. Best-effort: a
+  // failure here must never turn a sent reply into an error.
+  let obligationsClosed = 0;
+  try {
+    obligationsClosed = await closeObligationsAnsweredBy(
+      db,
+      row.id,
+      `Answered by a manual reply via reply_to_inbound_email (${REPLY_SOURCE}).`
+    );
+  } catch (err) {
+    await logError(db, {
+      source: "mcp:reply_to_inbound_email",
+      message: `support obligation auto-close failed for inbound ${row.id}`,
+      error: err,
+      context: { inboundEmailId: row.id },
+    }).catch(() => {});
+  }
+
+  return { ok: true, to: row.fromAddress, subject, inboundEmailId: row.id, obligationsClosed };
 }
 
 interface ReplyToolEnv {
