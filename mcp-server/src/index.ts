@@ -65,6 +65,7 @@ import {
 } from "./inbound-email-stale-sweep.js";
 import { runScheduledDedupSweepCanary } from "./dedup-sweep-canary.js";
 import { runScheduledNearDuplicateSweep } from "./near-duplicate-sweep-cron.js";
+import { runScheduledCiTriggerWatchdog } from "./ci-trigger-watchdog.js";
 import { runScheduledSyncStaleSweep } from "./sync-stale-sweep.js";
 import { runScheduledCpiStaleRedCanary } from "./cpi-stale-red-canary.js";
 import { runScheduledNewsletterListBalanceCanary } from "./newsletter-list-balance-canary.js";
@@ -228,6 +229,10 @@ type Env = WorkerEnv &
     // outbound MCP email. Independent of the Slack webhook — set either,
     // both, or neither.
     ALERT_EMAIL_TECHNICAL?: string;
+    // OPE-1239 — optional read-only GitHub token for the CI-trigger watchdog.
+    // The repo is public, so the watchdog works without it; set it only to lift
+    // the shared unauthenticated rate limit (`wrangler secret put GITHUB_TOKEN`).
+    GITHUB_TOKEN?: string;
     // OPE-68 (2026-07-03) — shared vendor-assets R2 bucket (same bucket the main
     // app binds as VENDOR_ASSETS). The email() entrypoint persists inbound
     // poster/PDF attachment bytes here at receive-time; the inbound-email
@@ -1682,6 +1687,8 @@ export default {
           runScheduledKpiRecompute(env),
           runScheduledInboundEmailStaleSweep(env),
           runScheduledPageErrorCanary(env),
+          // OPE-1239 — main's HEAD must have a push CI run (else it never deployed).
+          runScheduledCiTriggerWatchdog(env),
         ]).then(() => undefined)
       );
       return;

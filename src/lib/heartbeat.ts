@@ -1845,6 +1845,24 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
         eq(adminActions.action, "event.sync_stale_sweep")
       ),
   },
+  {
+    // OPE-1239 — proof the CI-trigger watchdog still RUNS. Its normal output is
+    // silence (no alert), which is indistinguishable from a dead watchdog, so it
+    // stamps admin_actions `ci.trigger_watchdog.run` at most once an hour from
+    // the */10 cron. 3h = three stamps missed before it pages.
+    name: "ci-trigger-watchdog",
+    ownerOpe: "OPE-1239",
+    label: "CI-trigger watchdog (Cloudflare cron) running",
+    priority: "P1",
+    expectedWindowHours: 3,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        adminActions,
+        adminActions.createdAt,
+        eq(adminActions.action, "ci.trigger_watchdog.run")
+      ),
+  },
 ];
 
 /** A probe joined to its enablement anchor + newest evidence — the input to the
