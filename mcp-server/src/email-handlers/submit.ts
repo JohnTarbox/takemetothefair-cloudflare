@@ -74,6 +74,10 @@ export interface SubmitFetchResult {
    *  on 401/403/429/timeout. Forwarded to workflow's mark-done step which
    *  persists it to inbound_emails.fetch_method (drizzle/0078). */
   fetchMethod: "standard" | "browser-rendering";
+  /** OPE-424 — `"http"` when the page could only be read over plain HTTP
+   *  (the origin has no working TLS). Lower-confidence: the workflow flags
+   *  the email for review. Absent on an older main-app deploy. */
+  transport?: "https" | "http";
 }
 
 export interface SubmitExtractResult {
@@ -332,6 +336,7 @@ export async function submitFetch(env: HandlerEnv, url: string): Promise<SubmitF
         ogImage?: string | null;
         jsonLd?: unknown;
         fetchMethod?: "standard" | "browser-rendering";
+        transport?: "https" | "http";
       }
     | { success: false; error: string; fetchMethod?: "failed" | "pdf_unsupported" }
     | null;
@@ -363,6 +368,7 @@ export async function submitFetch(env: HandlerEnv, url: string): Promise<SubmitF
     // older deploy that doesn't return the field. Better to under-count
     // browser-rendering than fail the workflow.
     fetchMethod: body.fetchMethod ?? "standard",
+    ...(body.transport ? { transport: body.transport } : {}),
   };
 }
 

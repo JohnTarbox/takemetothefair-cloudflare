@@ -91,7 +91,19 @@ export type FetchOutcome =
   // `finalUrl` is the post-redirect response URL on the standard path (used by
   // the vendor-enrichment Worker to detect malware/off-site redirects). It is
   // undefined on the Browser-Rendering path, which doesn't expose redirects.
-  | { ok: true; html: string; finalUrl?: string }
+  | {
+      ok: true;
+      html: string;
+      finalUrl?: string;
+      /**
+       * OPE-424 — how the page was actually fetched. `"http"` means it came
+       * over plain, unauthenticated HTTP (the origin has no working HTTPS), so
+       * anything extracted from it is LOWER-CONFIDENCE: callers flag it for
+       * review rather than trusting it as they would a TLS fetch. Undefined on
+       * the Browser-Rendering path.
+       */
+      transport?: "https" | "http";
+    }
   | { ok: false; status: number | null; error: string; userMessage: string };
 
 export interface BrowserRenderingEnv {
@@ -99,8 +111,100 @@ export interface BrowserRenderingEnv {
   CLOUDFLARE_BROWSER_RENDERING_TOKEN?: string;
 }
 
-/** Standard `fetch`. Caller supplies the abort signal (timeout is theirs). */
-export async function fetchStandard(url: string, signal: AbortSignal): Promise<FetchOutcome> {
+/**
+ * OPE-424 — how long the HTTPS attempt on an `http://` URL may take before we
+ * fall back to plain HTTP. Measured 2026-09-30 on the organizer hosts that
+ * serve nothing usable on :443: four failed in ≤0.3s (self-signed cert,
+ * handshake failure, connection refused) but `winchestergrange.org` HANGS
+ * until the client gives up (15s in the probe). Without a cap of its own the
+ * HTTPS attempt would spend the caller's whole budget and the fallback would
+ * never run.
+ */
+export const HTTPS_ATTEMPT_TIMEOUT_MS = 6000;
+
+/** A transport-level failure (DNS, TCP, TLS) — as opposed to an HTTP answer. */
+function isTransportFailure(o: FetchOutcome): boolean {
+  return !o.ok && o.status === null && o.error !== "timeout-caller";
+}
+
+function withCap(signal: AbortSignal, ms: number): AbortSignal {
+  const cap = AbortSignal.timeout(ms);
+  const any = (AbortSignal as unknown as { any?: (s: AbortSignal[]) => AbortSignal }).any;
+  if (any) return any([signal, cap]);
+  const c = new AbortController();
+  for (const s of [signal, cap]) {
+    if (s.aborted) c.abort();
+    else s.addEventListener("abort", () => c.abort(), { once: true });
+  }
+  return c.signal;
+}
+
+/**
+ * Standard `fetch`. Caller supplies the abort signal (timeout is theirs).
+ *
+ * OPE-424 — HTTPS first, HTTP as a marked fallback (John's ruling 2026-09-30).
+ * Volunteer-run organizer sites are the ones most likely to have no working
+ * TLS, and they are our MOST authoritative sources; an HTTPS-only fetcher is
+ * biased against exactly them and toward the aggregators we trust least.
+ *
+ *  - `https://…` → fetched as given. Never downgraded: a site that advertises
+ *    HTTPS and fails it is not silently read over a tamperable transport.
+ *  - `http://…`  → tried as `https://` first (capped at
+ *    HTTPS_ATTEMPT_TIMEOUT_MS). If that fails at the TRANSPORT level (no HTTP
+ *    answer at all), the original `http://` URL is fetched and the outcome is
+ *    stamped `transport: "http"` so callers treat it as lower-confidence. An
+ *    HTTP-level answer over HTTPS (403, 404, a challenge page) is the site's
+ *    real answer and is returned as-is.
+ */
+export async function fetchStandard(
+  url: string,
+  signal: AbortSignal,
+  opts: { httpsAttemptMs?: number } = {}
+): Promise<FetchOutcome> {
+  let parsed: URL | null = null;
+  try {
+    parsed = new URL(url);
+  } catch {
+    /* let fetchOnce report it */
+  }
+  if (parsed?.protocol !== "http:") {
+    const o = await fetchOnce(url, signal);
+    return o.ok ? { ...o, transport: "https" } : o;
+  }
+
+  const httpsUrl = new URL(url);
+  httpsUrl.protocol = "https:";
+  const secure = await fetchOnce(
+    httpsUrl.href,
+    withCap(signal, opts.httpsAttemptMs ?? HTTPS_ATTEMPT_TIMEOUT_MS),
+    signal
+  );
+  if (secure.ok) return { ...secure, transport: "https" };
+  if (!isTransportFailure(secure)) {
+    // The caller's deadline, not ours: report it exactly as a plain timeout.
+    return !secure.ok && secure.error === "timeout-caller"
+      ? { ...secure, error: "timeout" }
+      : secure;
+  }
+
+  const plain = await fetchOnce(url, signal);
+  if (!plain.ok) return plain;
+  // A redirect from http:// that ENDS on https:// was a TLS fetch after all.
+  const endedSecure = (plain.finalUrl ?? "").startsWith("https:");
+  return { ...plain, transport: endedSecure ? "https" : "http" };
+}
+
+/**
+ * One fetch attempt. `callerSignal` (when given) is the caller's own deadline:
+ * an abort caused by IT is `timeout-caller`, which is never retried — the
+ * caller has no budget left — whereas an abort from a per-attempt cap is a
+ * transport failure the fallback may recover from.
+ */
+async function fetchOnce(
+  url: string,
+  signal: AbortSignal,
+  callerSignal?: AbortSignal
+): Promise<FetchOutcome> {
   let response: Response;
   try {
     response = await fetch(url, {
@@ -112,11 +216,20 @@ export async function fetchStandard(url: string, signal: AbortSignal): Promise<F
       },
     });
   } catch (err) {
-    if (err instanceof Error && err.name === "AbortError") {
+    if (err instanceof Error && (err.name === "AbortError" || err.name === "TimeoutError")) {
+      if (callerSignal && !callerSignal.aborted) {
+        // Our own per-attempt cap fired, not the caller's deadline.
+        return {
+          ok: false,
+          status: null,
+          error: "network: https attempt timed out",
+          userMessage: "Could not fetch page. Try pasting the content manually.",
+        };
+      }
       return {
         ok: false,
         status: null,
-        error: "timeout",
+        error: callerSignal ? "timeout-caller" : "timeout",
         userMessage: "Page took too long to load. Try pasting the content manually.",
       };
     }
