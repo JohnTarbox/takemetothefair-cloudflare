@@ -41,6 +41,13 @@ export interface VendorDigestEvent {
   applicationUrl: string | null;
   sourceUrl: string | null;
   promoterWebsite: string | null;
+  /**
+   * OPE-794 — the event's capacity across its lanes (`summarizeLaneCapacity`).
+   * `WAITLIST` renders an honest badge and NO apply button (John, 2026-09-30).
+   * `UNAVAILABLE` never reaches the renderer — the selection drops it.
+   * Optional so older callers and fixtures read as UNKNOWN.
+   */
+  capacity?: "OPEN" | "UNKNOWN" | "WAITLIST";
 }
 
 function esc(s: string): string {
@@ -155,7 +162,14 @@ function card(e: VendorDigestEvent, now: Date): string {
           : ""
       }
       <div style="margin-top:12px;">
-        <a href="${esc(apply)}" style="display:inline-block;padding:8px 16px;background:#1f3a2d;color:#e8c86a;font-weight:600;text-decoration:none;border-radius:6px;font-size:14px;">Apply for a booth →</a>
+        ${
+          // OPE-794 — a waitlisted show gets no "Apply" CTA. Telling a vendor to
+          // apply to a full show is the fastest way to lose their trust in this
+          // digest; the badge says what is actually on offer.
+          e.capacity === "WAITLIST"
+            ? `<span style="display:inline-block;padding:6px 12px;border:1px solid #b08a2e;color:#7a5d17;font-weight:600;border-radius:6px;font-size:13px;">Waitlist only — booths are currently full</span>`
+            : `<a href="${esc(apply)}" style="display:inline-block;padding:8px 16px;background:#1f3a2d;color:#e8c86a;font-weight:600;text-decoration:none;border-radius:6px;font-size:14px;">Apply for a booth →</a>`
+        }
       </div>
     </td></tr>
   </table>`;
