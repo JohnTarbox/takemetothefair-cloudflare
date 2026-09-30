@@ -127,7 +127,7 @@
   },
   "overrides": {
     "fast-uri": "^3.1.7",
-    "ip-address": "^10.7.0",
+    "ip-address": "^10.7.2",
     "browserslist": "^4.28.9",
     "rollup": "4.62.3",
     "next": {
