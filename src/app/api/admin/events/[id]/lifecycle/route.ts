@@ -84,6 +84,9 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       lifecycleStatusChangedAt: current.lifecycleStatusChangedAt ?? null,
       lifecycleReason: current.lifecycleReason ?? null,
       startDate: current.startDate ?? null,
+      // OPE-1218 — an inferred OCCURRED opens to RESCHEDULED only onto a future date.
+      newStartDate:
+        to === "RESCHEDULED" && new_start_date ? normalizeEventDate(new_start_date) : null,
     });
     if (!check.ok) {
       return NextResponse.json(

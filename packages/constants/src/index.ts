@@ -249,6 +249,11 @@ export interface LifecycleTransitionContext {
   lifecycleReason?: string | null;
   /** `events.start_date`. */
   startDate?: Date | null;
+  /**
+   * OPE-1218 — the start date a RESCHEDULED transition would write. The
+   * inferred-OCCURRED escape opens RESCHEDULED only when this is in the future.
+   */
+  newStartDate?: Date | null;
   /** Injectable clock, for tests. */
   now?: Date;
 }
@@ -327,17 +332,40 @@ function isSpuriousTerminalValue(
  * toward CANCELLED.
  *
  * Exact equality, not a prefix: one writer produces this string.
+ *
+ * OPE-1218 — POSTPONED and RESCHEDULED open too. A storm weekend (2026-09-26/27)
+ * postponed Trumbull Arts Festival, Brookline Porchfest and Franklin Farm
+ * Harvest Festival by one to two weeks; the sweep marked all three OCCURRED on
+ * the abandoned date, and the table then had no way to say "it moved". A
+ * postponement outranks a calendar inference for the same reason a
+ * cancellation does.
+ *
+ * What stays shut is resurrecting an event that really is over. RESCHEDULED
+ * opens only when the NEW start date is in the future, since a reschedule to a
+ * past date is a rewrite of history rather than a postponement. SCHEDULED and
+ * TENTATIVE stay shut: neither says why the event did not happen on its date.
  */
+const INFERRED_OCCURRENCE_TARGETS: readonly EventLifecycle[] = [
+  EVENT_LIFECYCLE.CANCELLED,
+  EVENT_LIFECYCLE.POSTPONED,
+  EVENT_LIFECYCLE.RESCHEDULED,
+];
+
 function isInferredOccurrence(
   from: EventLifecycle,
   to: EventLifecycle,
   context: LifecycleTransitionContext | undefined
 ): boolean {
-  return (
-    from === EVENT_LIFECYCLE.OCCURRED &&
-    to === EVENT_LIFECYCLE.CANCELLED &&
-    context?.lifecycleReason === AUTO_OCCURRED_REASON
-  );
+  if (from !== EVENT_LIFECYCLE.OCCURRED) return false;
+  if (context?.lifecycleReason !== AUTO_OCCURRED_REASON) return false;
+  if (!INFERRED_OCCURRENCE_TARGETS.includes(to)) return false;
+  if (to === EVENT_LIFECYCLE.RESCHEDULED) {
+    const next = context.newStartDate;
+    if (!next || Number.isNaN(next.getTime())) return false;
+    const now = context.now ?? new Date();
+    return next.getTime() > now.getTime();
+  }
+  return true;
 }
 
 /**
