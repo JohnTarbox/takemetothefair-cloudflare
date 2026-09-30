@@ -38,6 +38,8 @@ import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
 import { ScrollDepthTracker } from "@/components/ScrollDepthTracker";
 import { PromoterClaimCTA } from "@/components/promoters/PromoterClaimCTA";
+import { PromoterClosedNotice } from "@/components/promoters/PromoterClosedNotice";
+import { isClosedPromoter } from "@/lib/promoters/operating-status";
 import { auth } from "@/lib/auth";
 import { unsafeSlug } from "@/lib/utils";
 import { buildPromoterMetaDescription } from "@/lib/seo-utils";
@@ -113,10 +115,22 @@ async function getPromoter(slug: string) {
       attachEventDayDates(db, pastFlat),
     ]);
 
+    // OPE-979 — who took a closed promoter's shows over, for the notice's link.
+    let successor: { companyName: string; slug: string } | null = null;
+    if (isClosedPromoter(promoter.operatingStatus) && promoter.succeededByPromoterId) {
+      const [s] = await db
+        .select({ companyName: promoters.companyName, slug: promoters.slug })
+        .from(promoters)
+        .where(eq(promoters.id, promoter.succeededByPromoterId))
+        .limit(1);
+      successor = s ?? null;
+    }
+
     return {
       ...promoter,
       upcomingEvents,
       pastEvents,
+      successor,
     };
   } catch (e) {
     await logError(db, {
@@ -220,9 +234,13 @@ export default async function PromoterDetailPage({ params }: Props) {
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <main className="lg:col-span-2 space-y-6">
-            {!promoter.claimed && !isOwner && !isAdmin && (
-              <PromoterClaimCTA companyName={promoter.companyName} promoterSlug={promoter.slug} />
-            )}
+            {/* OPE-979 — never invite someone to claim a closed business. */}
+            {!promoter.claimed &&
+              !isOwner &&
+              !isAdmin &&
+              !isClosedPromoter(promoter.operatingStatus) && (
+                <PromoterClaimCTA companyName={promoter.companyName} promoterSlug={promoter.slug} />
+              )}
             {promoter.heroImageUrl &&
               (() => {
                 // OPE-34 — full-bleed promoter hero band (separate from the small
@@ -289,6 +307,12 @@ export default async function PromoterDetailPage({ params }: Props) {
                     <MapPin className="w-5 h-5" />
                     {locationStr}
                   </p>
+                )}
+                {isClosedPromoter(promoter.operatingStatus) && (
+                  <PromoterClosedNotice
+                    companyName={promoter.companyName}
+                    successor={promoter.successor}
+                  />
                 )}
               </div>
             </div>
