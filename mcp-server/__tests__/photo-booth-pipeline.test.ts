@@ -19,6 +19,9 @@ const reply = (over: Record<string, unknown> = {}) => ({
     confidence: 1,
     rationale: "banner on the stall",
     identifiable_minor: false,
+    // OPE-240 — the same mock answers the separate presence question too, as a
+    // real stall photo does. The refusal side is pinned in photo-presence-ope240.
+    mounted_on: "vendor_table_or_tent",
     ...over,
   }),
 });

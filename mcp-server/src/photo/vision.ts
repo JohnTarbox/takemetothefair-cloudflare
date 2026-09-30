@@ -92,6 +92,12 @@ export interface BoothIdentification {
    */
   identifiableMinor: boolean | null;
   /**
+   * OPE-240 — what the booth's sign is physically on, from the separate
+   * presence check (`checkBoothPresence`). Only set on a photo that reached the
+   * auto-write gate; undefined everywhere else.
+   */
+  mountedOn?: SignMount | null;
+  /**
    * OPE-403 follow-up — WHICH failure produced an UNIDENTIFIED result.
    *
    * `UNIDENTIFIED` was returned from five different places (the `ai.run` catch,
@@ -500,6 +506,7 @@ export type StageKind =
   | "booth_below_threshold"
   | "booth_identifiable_minor"
   | "booth_roster_check_failed"
+  | "booth_not_at_a_stall"
   | "performer_unnamed"
   | "performer_unmatched"
   | "performer_not_on_roster"
@@ -580,4 +587,102 @@ export function disposition(id: BoothIdentification): Disposition {
     };
   }
   return { action: "write", identification: id };
+}
+
+/**
+ * OPE-240 — booth / not-booth, as a SEPARATE question.
+ *
+ * John's ruling 2026-09-30: no auto-write until this check lands. On the
+ * Farmington Fair batch (2026-09-26) two of the eight confidence-1.0 "booths"
+ * were not vendors at all — a wall banner advertising Chester Greenwood Day and
+ * the fair's own Agricultural Museum barn. A legible sign is not a booth, and
+ * the main prompt cannot tell them apart.
+ *
+ * Measured 2026-09-30 on those 8 photos (raw bytes, as the pipeline sends them),
+ * two runs each:
+ *   - an `exhibitor_present` boolean ADDED TO THE MAIN PROMPT answered true for
+ *     the banner and the museum (0 of 2 caught), and the longer prompt broke
+ *     JSON on 2 of 8. It echoes the model's first judgement; it is not a check.
+ *   - THIS prompt, asked on its own: 16 of 16 correct — both fakes
+ *     `building_or_wall`, all six real booths `vendor_table_or_tent`, JSON 16/16.
+ * n = 8 from one fair. Revisit against `sign_mounted_on` on staged rows.
+ *
+ * It never asks the model whether this is a booth. It asks what the sign is
+ * physically on, which is a thing the model can see.
+ */
+export const SIGN_MOUNTS = [
+  "vendor_table_or_tent",
+  "building_or_wall",
+  "fence_or_post",
+  "vehicle_or_trailer",
+  "other",
+] as const;
+export type SignMount = (typeof SIGN_MOUNTS)[number];
+
+export function presencePrompt(name: string): string {
+  return (
+    `What is the sign that reads "${name}" physically attached to or standing on? ` +
+    `Choose exactly one: "vendor_table_or_tent" (a table, tent, canopy or stall with goods or literature), ` +
+    `"building_or_wall", "fence_or_post", "vehicle_or_trailer", "other". ` +
+    `Reply ONLY with JSON: {"mounted_on":string}`
+  );
+}
+
+/** Parse the presence reply. Anything that is not exactly one of SIGN_MOUNTS is null. */
+export function parsePresenceReply(raw: unknown): SignMount | null {
+  const resp = (raw as { response?: unknown })?.response ?? raw;
+  let obj: unknown = resp;
+  if (typeof resp === "string") {
+    const start = resp.indexOf("{");
+    const end = resp.lastIndexOf("}");
+    if (start === -1 || end <= start) return null;
+    try {
+      obj = JSON.parse(resp.slice(start, end + 1));
+    } catch {
+      return null;
+    }
+  }
+  const v = (obj as { mounted_on?: unknown } | null)?.mounted_on;
+  return typeof v === "string" && (SIGN_MOUNTS as readonly string[]).includes(v)
+    ? (v as SignMount)
+    : null;
+}
+
+/** Ask the presence question once. Never throws — a failure is `null`, which stages. */
+export async function checkBoothPresence(
+  ai: VisionAi,
+  bytes: Uint8Array,
+  name: string
+): Promise<SignMount | null> {
+  try {
+    const raw = await ai.run(VISION_MODEL, {
+      image: Array.from(bytes),
+      prompt: presencePrompt(name),
+      max_tokens: 60,
+    });
+    return parsePresenceReply(raw);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * OPE-240 — the presence gate. Pure. Applies only to a photo `disposition()`
+ * would WRITE; everything else passes through untouched. Only an answer of
+ * exactly `vendor_table_or_tent` keeps it a write — any other mount, or no
+ * answer at all, stages. An unanswered question does not publish.
+ */
+export function applyPresenceGate(d: Disposition, mountedOn: SignMount | null): Disposition {
+  if (d.action !== "write") return d;
+  const identification = { ...d.identification, mountedOn };
+  if (mountedOn === "vendor_table_or_tent") return { action: "write", identification };
+  return {
+    action: "stage",
+    identification,
+    reason:
+      mountedOn === null
+        ? "booth check not answered — never auto-published without it"
+        : `the sign is on a ${mountedOn.replace(/_/g, " ")}, not a vendor's table or tent`,
+    stageKind: "booth_not_at_a_stall",
+  };
 }
