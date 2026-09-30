@@ -8,6 +8,7 @@ import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { logError } from "@/lib/logger";
 import { issueNewsletterConfirmationToken } from "@/lib/email/newsletter-confirm-token";
 import { newsletterConfirmTemplate } from "@/lib/email/templates";
+import { listForSource } from "@/lib/email/newsletter-list-membership";
 import { getSiteUrl } from "@/lib/email/send";
 import { enqueueEmail } from "@/lib/queues/producers";
 
@@ -89,7 +90,13 @@ export async function POST(request: NextRequest) {
       try {
         const { rawToken } = await issueNewsletterConfirmationToken(db, email);
         const confirmUrl = `${getSiteUrl()}/api/newsletter/confirm?token=${rawToken}`;
-        const tpl = newsletterConfirmTemplate({ confirmUrl });
+        // OPE-1145 — name the list confirming will actually join. The confirm
+        // path derives it from the STORED source, so an existing row's source
+        // wins over the one just submitted.
+        const tpl = newsletterConfirmTemplate({
+          confirmUrl,
+          list: listForSource(existing?.source ?? source),
+        });
         await enqueueEmail({
           to: email,
           subject: tpl.subject,

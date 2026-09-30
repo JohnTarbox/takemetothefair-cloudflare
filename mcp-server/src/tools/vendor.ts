@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { eq, and, or, sql } from "drizzle-orm";
+import { mergeProductsJson, routeVendorTypeForWrite } from "@takemetothefair/vendor-linking";
 import { vendors, events, eventVendors, promoters, venues } from "../schema.js";
 import { attachEventToSeries } from "../series/resolve-or-create-series.js";
 import { recordMutation } from "../audit/record-mutation.js";
@@ -31,12 +32,24 @@ import {
   isUnusableEventName,
   isPlaceholderUrl,
   UNLABELED_SOURCE,
+  provenanceTags,
   assertIngestionMethod,
   dollarsToCents,
   slugCandidates,
   type Slug,
+  venueLocationCompatible,
+  venueStateConflict,
+  sourceOutsideNewEngland,
+  checkFormerVenue,
 } from "@takemetothefair/utils";
-import { EVENT_CATEGORIES, PRIMARY_AUDIENCE, PUBLIC_ACCESS } from "@takemetothefair/constants";
+import { loadGuardVenue } from "../venues/lifecycle.js";
+import {
+  EVENT_CATEGORIES,
+  PRIMARY_AUDIENCE,
+  PUBLIC_ACCESS,
+  UNCATEGORIZED_EVENT_CATEGORY,
+  partitionEventCategories,
+} from "@takemetothefair/constants";
 import { logError } from "../logger.js";
 
 const COMMUNITY_PROMOTER_ID = "system-community-suggestions";
@@ -142,8 +155,24 @@ export function registerVendorTools(
     async (params) => {
       const updates: Record<string, unknown> = {};
       if (params.description !== undefined) updates.description = params.description;
-      if (params.vendor_type !== undefined) updates.vendorType = params.vendor_type;
       if (params.products !== undefined) updates.products = JSON.stringify(params.products);
+      // OPE-1113 — stored as the existing spelling of the same category.
+      // OPE-1164 — a description sent as the type is added to products instead.
+      if (params.vendor_type !== undefined) {
+        const routed = await routeVendorTypeForWrite(db, params.vendor_type);
+        if (routed.vendorType !== undefined) updates.vendorType = routed.vendorType;
+        if (routed.productsToAdd.length > 0) {
+          const [cur] = await db
+            .select({ products: vendors.products })
+            .from(vendors)
+            .where(eq(vendors.id, vendorId))
+            .limit(1);
+          updates.products = mergeProductsJson(
+            (updates.products as string | undefined) ?? cur?.products,
+            routed.productsToAdd
+          );
+        }
+      }
       if (params.website !== undefined) updates.website = params.website;
       if (params.contact_name !== undefined) updates.contactName = params.contact_name;
       if (params.contact_email !== undefined) updates.contactEmail = params.contact_email;
@@ -833,11 +862,15 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
       let venueId: string | null = null;
       let venueResult: { matched: boolean; venueId: string; name: string } | null = null;
 
+      // OPE-1206 — the source's own state (the caller's venue_state) vs the
+      // venue it would be linked to. Set when they disagree.
+      let venueStateMismatch: { sourceState: string; venueState: string; venueId: string } | null =
+        null;
       if (params.venue_id) {
         // K44 — explicit link. Validate the id exists, then use it verbatim and
         // skip all name-matching/creation. The orphan-proof path.
         const [v] = await db
-          .select({ id: venues.id, name: venues.name })
+          .select({ id: venues.id, name: venues.name, state: venues.state })
           .from(venues)
           .where(eq(venues.id, params.venue_id))
           .limit(1);
@@ -847,8 +880,17 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
             isError: true,
           };
         }
-        venueId = v.id;
-        venueResult = { matched: true, venueId: v.id, name: v.name };
+        // OPE-1206 — an explicit venue_id used to be linked unconditionally:
+        // how the Portland OREGON holiday market sat on the Portland MAINE Expo.
+        // A venue in a different state than the one the caller gives is NOT
+        // linked; the event lands venue-less, PENDING and flagged.
+        const conflict = venueStateConflict(params.venue_state, v.state);
+        if (conflict) {
+          venueStateMismatch = { ...conflict, venueId: v.id };
+        } else {
+          venueId = v.id;
+          venueResult = { matched: true, venueId: v.id, name: v.name };
+        }
       } else if (params.venue_name) {
         // DQ2 (2026-06-04): coerce address-as-name BEFORE slug + dedup. AI
         // extraction occasionally pulls a street address as the venue
@@ -907,23 +949,31 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
             )
           );
 
-        // K44 — once a slug/normalized-name candidate exists, ALWAYS reuse one
-        // rather than creating a duplicate. The previous code only reused on a
-        // city (or state) agreement and otherwise fell through to create — so a
-        // suggestion carrying a city that the stored row left blank (or vice
-        // versa) spawned an orphan duplicate. Disambiguation preference among
-        // candidates: exact city > exact state > exact canonical slug > first.
+        // K44 — once a slug/normalized-name candidate exists, reuse one rather
+        // than creating a duplicate, so a suggestion carrying a city that the
+        // stored row left blank (or vice versa) does not spawn an orphan.
+        // Disambiguation preference: exact city > exact state > exact slug > first.
+        //
+        // OPE-1146 — but only among candidates whose LOCATION agrees: state
+        // when both sides have one, city when both sides have one. K44's
+        // "always reuse" fell back to `existingVenues[0]` whatever its state,
+        // which linked Veterans Memorial Park, Old Orchard Beach ME to the
+        // Norwalk CT row. A same-name venue elsewhere is a different place:
+        // no compatible candidate → create, below.
         let matched = false;
-        if (existingVenues.length > 0) {
+        const compatible = existingVenues.filter((v) =>
+          venueLocationCompatible(v, { city: venueCity, state: venueState })
+        );
+        if (compatible.length > 0) {
           const cityMatch = venueCity
-            ? existingVenues.find((v) => v.city.toLowerCase().trim() === venueCity)
+            ? compatible.find((v) => v.city.toLowerCase().trim() === venueCity)
             : undefined;
           const stateMatch =
             !cityMatch && venueState
-              ? existingVenues.find((v) => v.state.toUpperCase().trim() === venueState)
+              ? compatible.find((v) => v.state.toUpperCase().trim() === venueState)
               : undefined;
-          const slugMatch = existingVenues.find((v) => v.slug === unsafeSlug(venueSlug));
-          const chosen = cityMatch ?? stateMatch ?? slugMatch ?? existingVenues[0];
+          const slugMatch = compatible.find((v) => v.slug === unsafeSlug(venueSlug));
+          const chosen = cityMatch ?? stateMatch ?? slugMatch ?? compatible[0];
           venueId = chosen.id;
           venueResult = { matched: true, venueId: chosen.id, name: chosen.name };
           matched = true;
@@ -1019,11 +1069,15 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
       // Same reason: the plain path filters categories against EVENT_CATEGORIES
       // with an ["Event"] fallback, and the series branch needs the identical
       // set or the two paths disagree on the same payload.
-      const validCategorySet = new Set<string>(EVENT_CATEGORIES);
+      // OPE-1058 — the same allow-list, read from the one shared rule. This
+      // path keeps K21's drop-and-warn: an untrusted submission is worth having
+      // with a bad label, and the dropped values are echoed back in
+      // `warnings.dropped_categories`.
       const providedCategories = params.categories ?? [];
-      const filteredCategories = providedCategories.filter((c) => validCategorySet.has(c));
-      const droppedCategories = providedCategories.filter((c) => !validCategorySet.has(c));
-      const categoriesToStore = filteredCategories.length > 0 ? filteredCategories : ["Event"];
+      const { kept: filteredCategories, dropped: droppedCategories } =
+        partitionEventCategories(providedCategories);
+      const categoriesToStore: string[] =
+        filteredCategories.length > 0 ? [...filteredCategories] : [UNCATEGORIZED_EVENT_CATEGORY];
 
       // Now: delegates to /api/suggest-event/check-duplicate which runs
       // the shared `findDuplicate` 4-stage match (exact_url > venue_date
@@ -1225,7 +1279,13 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
           : null,
         description,
       });
-      const eventStatus = gateResult.route === "PENDING_REVIEW" ? "PENDING" : "TENTATIVE";
+      // OPE-1206 — a source outside New England, or a venue-state mismatch, is
+      // never auto-published: a human looks first.
+      const outsideNewEngland = sourceOutsideNewEngland(params.venue_state);
+      const eventStatus =
+        gateResult.route === "PENDING_REVIEW" || outsideNewEngland || venueStateMismatch
+          ? "PENDING"
+          : "TENTATIVE";
       const gateFlagsJson =
         gateResult.reasons.length > 0 ? JSON.stringify(gateResult.reasons) : null;
 
@@ -1257,8 +1317,19 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
         });
       }
 
+      // OPE-1180 — a matched FORMER venue is kept only for pre-closure dates.
+      // After the closure the suggestion lands WITHOUT a venue and flagged for
+      // review — an ingest never fails on a bad venue match.
+      const formerVerdict = checkFormerVenue(
+        await loadGuardVenue(db, venueId),
+        endDate ?? startDate
+      );
+      const formerFlag = formerVerdict.kind !== "allow";
+      if (formerVerdict.kind === "refuse") venueId = null;
+
       const eventId = crypto.randomUUID();
       await db.insert(events).values({
+        ...(venueStateMismatch || outsideNewEngland || formerFlag ? { flaggedForReview: 1 } : {}),
         id: eventId,
         name: effectiveName,
         slug: finalSlug,
@@ -1272,7 +1343,8 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
         // nothing confirmed any of them. User submissions start at false.
         datesConfirmed: false,
         categories: JSON.stringify(categoriesToStore),
-        tags: JSON.stringify(["community-suggestion", "vendor-submission"]),
+        // OPE-1058 — from the label actually passed, not a fixed vendor claim.
+        tags: JSON.stringify(provenanceTags(sourceLabel)),
         // OPE-411 — the domain classifier answers "is this an aggregator?"; it
         // does not catch `https://example.com/buy-tickets`, which is live in
         // prod today on a real listing.
@@ -1411,6 +1483,15 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
       }
       if (gateResult.reasons.length > 0) {
         suggestWarnings.gate_flags = gateResult.reasons;
+      }
+      if (venueStateMismatch) {
+        suggestWarnings.venue_state_conflict = {
+          ...venueStateMismatch,
+          message: `venue_id ${venueStateMismatch.venueId} is in ${venueStateMismatch.venueState} but venue_state says ${venueStateMismatch.sourceState}; the venue was NOT linked and the event is PENDING for review.`,
+        };
+      }
+      if (outsideNewEngland) {
+        suggestWarnings.outside_new_england = `venue_state ${params.venue_state} is outside New England; the event is PENDING for review.`;
       }
       if (eventStatus !== "TENTATIVE") {
         suggestWarnings.status_note = `Created as ${eventStatus}, not TENTATIVE, because the ingest gates routed it to review (${gateResult.reasons.join(", ") || "no reason recorded"}). A PENDING row is NOT on the publication path until an admin reviews it.`;

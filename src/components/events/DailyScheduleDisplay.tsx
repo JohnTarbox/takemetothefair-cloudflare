@@ -39,12 +39,22 @@ function formatTime(time24: string | null | undefined): string | null {
  *  Lives at module scope so PR 3's print sheet can re-import. */
 const HOURS_UNKNOWN_COPY = "Hours not yet confirmed";
 
+/** OPE-1069 — the organizer publishes no closing time: say so, rather than
+ *  rendering a bare opening time the visitor cannot tell from missing data. */
+const NO_PUBLISHED_CLOSE_COPY = "no published closing time";
+
 /** DQ4 — format a single day's open–close range for inline rendering.
- *  Either or both can be null. */
-function formatRange(open: string | null | undefined, close: string | null | undefined): string {
+ *  Either or both can be null. `closeUnpublished` (OPE-1069) turns an
+ *  open-only day into an honest statement instead of a silent gap. */
+function formatRange(
+  open: string | null | undefined,
+  close: string | null | undefined,
+  closeUnpublished?: boolean | number | null
+): string {
   const o = formatTime(open);
   const c = formatTime(close);
   if (o && c) return `${o} - ${c}`;
+  if (o && closeUnpublished) return `Opens ${o} (${NO_PUBLISHED_CLOSE_COPY})`;
   if (o) return o; // half-known, surface what we have
   if (c) return c;
   return HOURS_UNKNOWN_COPY;
@@ -66,7 +76,12 @@ function allSameHours(days: EventDay[]): boolean {
   // Two NULLs are "the same" (both unknown — render uniform fallback);
   // a NULL paired with a real time is NOT the same — those events should
   // surface per-day so the operator sees the gap.
-  return openDays.every((d) => d.openTime === first.openTime && d.closeTime === first.closeTime);
+  return openDays.every(
+    (d) =>
+      d.openTime === first.openTime &&
+      d.closeTime === first.closeTime &&
+      Boolean(d.closeTimeUnpublished) === Boolean(first.closeTimeUnpublished)
+  );
 }
 
 /** DQ4 — true when every open day has both NULL openTime AND closeTime.
@@ -141,7 +156,7 @@ export function DailyScheduleDisplay({
         <div className={className}>
           <p className="text-sm text-muted-foreground flex items-center gap-1">
             <Clock className="w-4 h-4" />
-            Daily: {formatRange(first.openTime, first.closeTime)}
+            Daily: {formatRange(first.openTime, first.closeTime, first.closeTimeUnpublished)}
           </p>
         </div>
       );
@@ -196,7 +211,7 @@ function RecurringScheduleView({
     uniformHours && openDays.length > 0
       ? allHoursUnknown(openDays)
         ? HOURS_UNKNOWN_COPY
-        : `Open ${formatRange(openDays[0].openTime, openDays[0].closeTime)}`
+        : `Open ${formatRange(openDays[0].openTime, openDays[0].closeTime, openDays[0].closeTimeUnpublished)}`
       : null;
 
   return (
@@ -277,7 +292,7 @@ function RecurringScheduleView({
                           (both known / either-known / neither). The "hours
                           not yet confirmed" fallback lands on the same
                           baseline so the column alignment is stable. */}
-                      {formatRange(day.openTime, day.closeTime)}
+                      {formatRange(day.openTime, day.closeTime, day.closeTimeUnpublished)}
                       {/* UX-R3 (2026-06-07) — semantic-token migration. Shape kept
                           (text-xs, rounded not rounded-full) to match the inline
                           time-row layout; color pair moves to amber-light +

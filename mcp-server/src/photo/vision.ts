@@ -38,13 +38,38 @@ export const VISION_MODEL = "@cf/meta/llama-3.2-11b-vision-instruct";
 /** Cap the model's output — we want a small JSON object, not an essay. */
 const MAX_TOKENS = 384;
 
-export type BoothKind = "booth" | "general" | "unclear";
+/**
+ * OPE-969 — what a photo IS. Was booth | general | unclear, and real fair photos
+ * do not divide that way: on the first real batch (New Gloucester, 2026-09-12)
+ * a youth cheer squad mid-routine was staged as a nameless BOOTH selling
+ * "cheerleading uniforms", and a livestock pen and a bounce house were staged
+ * as nameless booths too — the model had nowhere else to put them.
+ *
+ *  - booth      an exhibitor's stall/table is the subject (incl. non-profits
+ *               whose sign is an information board)
+ *  - performer  an act is the subject — no class existed, so no path could
+ *               ever put the photo's act on the event's lineup
+ *  - scenery    the fair itself; the gallery. `general` in replies from the
+ *               old prompt is read as this.
+ *  - signage    a sign whose owner is NOT the subject (a neighbour's banner, a
+ *               sponsor sign) — recorded, never a proposal
+ *  - unclear    the model declined
+ */
+export type PhotoKind = "booth" | "performer" | "scenery" | "signage" | "unclear";
+/** @deprecated the pre-OPE-969 name; kept so imports do not churn. */
+export type BoothKind = PhotoKind;
 
 export interface BoothIdentification {
-  /** booth = a vendor's stall is the subject; general = fair scenery. */
-  kind: BoothKind;
-  /** Business name EXACTLY as it appears on signage, or null. */
+  /** What the photo is — see PhotoKind. */
+  kind: PhotoKind;
+  /** Business name EXACTLY as it appears on signage, or null. Booths only. */
   businessName: string | null;
+  /** OPE-969 — the act's name EXACTLY as printed on its own banner, backdrop,
+   *  truck or costume. Performers only; never inferred from what they do. */
+  performerName: string | null;
+  /** OPE-969 — for `signage`, the sign's text: the record of whose banner it
+   *  was, so the false positive is visible rather than silently dropped. */
+  signText: string | null;
   /** Only when legibly printed on the sign. Never inferred from the name. */
   website: string | null;
   /** What they sell, if evident. Free-form short tokens. */
@@ -53,6 +78,25 @@ export interface BoothIdentification {
   confidence: number;
   /** Short reason — surfaced to the operator when staging for review. */
   rationale: string;
+  /**
+   * OPE-240 — does an identifiable CHILD appear in the photo?
+   *
+   * John's standing rule (2026-07-21): vendor and staff faces are fine, but a
+   * photo where a child is identifiable is never published. With auto-write on,
+   * the booth photo becomes the vendor's public hero with no human in the path,
+   * so that rule has to live in the gate rather than in an analyst's eye.
+   *
+   * `true` / `false` only when the model answered with a boolean. Anything else
+   * — omitted, a string, a malformed reply — is `null`, and `disposition()`
+   * treats null exactly like `true`: an unanswered question does not publish.
+   */
+  identifiableMinor: boolean | null;
+  /**
+   * OPE-240 — what the booth's sign is physically on, from the separate
+   * presence check (`checkBoothPresence`). Only set on a photo that reached the
+   * auto-write gate; undefined everywhere else.
+   */
+  mountedOn?: SignMount | null;
   /**
    * OPE-403 follow-up — WHICH failure produced an UNIDENTIFIED result.
    *
@@ -73,10 +117,13 @@ export interface BoothIdentification {
 export const UNIDENTIFIED: BoothIdentification = {
   kind: "unclear",
   businessName: null,
+  performerName: null,
+  signText: null,
   website: null,
   products: [],
   confidence: 0,
   rationale: "vision model returned nothing usable",
+  identifiableMinor: null,
 };
 
 /**
@@ -104,35 +151,90 @@ export function describeRawShape(raw: unknown): string {
   return `object{${keys}} response=${resp === undefined ? "absent" : typeof resp}`;
 }
 
+/**
+ * OPE-969 — measured on the 18 real New Gloucester photos (2026-09-13), not
+ * tuned by eye. Three findings shaped it:
+ *
+ *  - LENGTH COSTS JSON. A fuller prompt spelling out each class answered in
+ *    prose on 2 of 3 runs; this compact one (the same size as the old one) with
+ *    JSON mode returned an object on 16 of 18.
+ *  - ONE `name` FIELD. Separate business/performer/sign fields were more for an
+ *    11B model to track; the kind says whose name it is (see fromParsedObject).
+ *  - THE CHILD RULE IS SHORTER TOO. The old wording returned
+ *    identifiable_minor:false for a squad of ~25 girls and for a bounce house
+ *    full of children; this returned true for both.
+ *
+ * Before → after on the corpus: cheer squad booth→performer, livestock pen
+ * booth→scenery, trail-map board unnamed→"Casco Bay Trail" + its website; every
+ * booth whose reply parsed (13 of 15) still a booth. Unchanged: the bounce house is still read as a
+ * nameless booth (it stages, as it did), and "Joelsa" still misreads as
+ * "Toolsa" — with the OLD prompt too, once at confidence 1.0.
+ */
 export const VISION_PROMPT = `You are looking at ONE photograph taken at a public agricultural fair or craft show.
 
 Decide what the photo IS, then report only what you can actually READ or SEE.
 
 Rules — follow exactly:
-1. If a vendor's booth/stall/tent is the MAIN SUBJECT, kind = "booth".
-2. If it is general fair scenery (rides, crowds, animals, buildings, food court
-   with no single subject booth), kind = "general".
-3. If you cannot tell, kind = "unclear".
-4. business_name: copy the business name EXACTLY as printed on the booth's own
-   banner, table sign, or awning. If the only legible sign belongs to a
-   DIFFERENT booth in the background, do NOT use it — that is not this booth.
-   If no name is legible, use null.
-5. website: ONLY if a web address is legibly printed. Never guess one from the
-   business name. Otherwise null.
-6. products: short lowercase words for what they sell, ONLY if visible.
-7. confidence: 0.0-1.0. Use a LOW value (<0.5) if the sign is partly obscured,
-   blurry, at an angle, or if more than one booth competes to be the subject.
-8. NEVER invent a name, URL, phone number, or town. Missing is correct;
-   inventing is a factual error we would publish.
+1. kind = "booth" if an exhibitor's booth/stall/tent/table is the MAIN SUBJECT
+   (clubs and non-profits count; their display board or map is their sign).
+2. kind = "performer" if people PERFORMING are the main subject (stage, ring,
+   routine, band, show) or an act's own truck. Performers sell nothing.
+3. kind = "scenery" for rides, bounce houses, crowds, animals, pens, grounds.
+4. kind = "signage" if the only legible sign belongs to someone who is NOT the
+   subject (a banner behind a different booth, a sponsor sign).
+5. If you cannot tell, kind = "unclear".
+6. name: EXACTLY as printed on the subject's OWN sign, banner, board or truck.
+   Never a description. If none is legible, null.
+7. website: ONLY if a web address is legibly printed. Otherwise null.
+8. products: short lowercase words, booths only, ONLY if visible.
+9. confidence: 0.0-1.0. LOW (<0.5) if the sign is obscured, blurry or angled.
+10. NEVER invent a name, URL, phone number, or town.
+11. identifiable_minor: true if ANY child or teenager appears anywhere in the
+    photo. false only if you are sure none does. When unsure, answer true.
 
 Reply with ONLY a JSON object, no prose, no markdown fence:
-{"kind":"booth|general|unclear","business_name":string|null,"website":string|null,"products":[string],"confidence":number,"rationale":string}`;
+{"kind":"booth|performer|scenery|signage|unclear","name":string|null,"website":string|null,"products":[string],"confidence":number,"rationale":string,"identifiable_minor":boolean}`;
+
+/**
+ * OPE-969 — Workers AI JSON mode. Constrains `kind` to the enum and removes
+ * most prose replies (the retry in identifyBooth covers the rest: 2 of 18 still
+ * came back as strings on the measured run).
+ */
+export const VISION_RESPONSE_FORMAT = {
+  type: "json_schema",
+  json_schema: {
+    type: "object",
+    properties: {
+      kind: { type: "string", enum: ["booth", "performer", "scenery", "signage", "unclear"] },
+      name: { type: ["string", "null"] },
+      website: { type: ["string", "null"] },
+      products: { type: "array", items: { type: "string" } },
+      confidence: { type: "number" },
+      rationale: { type: "string" },
+      identifiable_minor: { type: "boolean" },
+    },
+    required: [
+      "kind",
+      "name",
+      "website",
+      "products",
+      "confidence",
+      "rationale",
+      "identifiable_minor",
+    ],
+  },
+} as const;
 
 /** Minimal shape of the Workers AI binding we need. */
 export interface VisionAi {
   run(
     model: string,
-    input: { image: number[]; prompt: string; max_tokens?: number }
+    input: {
+      image: number[];
+      prompt: string;
+      max_tokens?: number;
+      response_format?: typeof VISION_RESPONSE_FORMAT;
+    }
   ): Promise<unknown>;
 }
 
@@ -149,6 +251,20 @@ function cleanString(v: unknown, max = 200): string | null {
 }
 
 /**
+ * OPE-969 — a website must at least LOOK like one. Measured at confidence 1.0
+ * on real booths: `"noshop/bybinkcrafts"` (By-B) and `"Watercolors by Carolyn
+ * Smith"` (a tagline read into the website field). Both would have cleared the
+ * auto-write bar and been published as a vendor's link. A dotted host with no
+ * whitespace is the floor; anything else is null — missing, not invented.
+ */
+const WEBSITE_SHAPE = /^(https?:\/\/)?([a-z0-9-]+\.)+[a-z]{2,}(\/\S*)?$/i;
+
+export function cleanWebsite(v: unknown): string | null {
+  const s = cleanString(v, 300);
+  return s && WEBSITE_SHAPE.test(s) ? s : null;
+}
+
+/**
  * Map an already-parsed reply object onto a BoothIdentification.
  *
  * Shared by BOTH entry shapes — the object Workers AI hands back directly, and
@@ -158,8 +274,18 @@ function cleanString(v: unknown, max = 200): string | null {
  */
 function fromParsedObject(obj: Record<string, unknown>): BoothIdentification {
   const rawKind = typeof obj.kind === "string" ? obj.kind.toLowerCase().trim() : "";
-  const kind: BoothKind =
-    rawKind === "booth" ? "booth" : rawKind === "general" ? "general" : "unclear";
+  const kind: PhotoKind =
+    (
+      {
+        booth: "booth",
+        performer: "performer",
+        scenery: "scenery",
+        // The pre-OPE-969 prompt's word for scenery. A replay of a stored reply,
+        // or a model that echoes the old vocabulary, still lands in the gallery.
+        general: "scenery",
+        signage: "signage",
+      } as Record<string, PhotoKind>
+    )[rawKind] ?? "unclear";
 
   const products = Array.isArray(obj.products)
     ? obj.products
@@ -168,17 +294,26 @@ function fromParsedObject(obj: Record<string, unknown>): BoothIdentification {
         .slice(0, 12)
     : [];
 
-  const website = cleanString(obj.website, 300);
+  const website = cleanWebsite(obj.website);
+  // The prompt asks for one `name`; a reply in the pre-OPE-969 shape carries
+  // `business_name`. Either is read, and the KIND decides whose name it is.
+  const name = cleanString(obj.name) ?? cleanString(obj.business_name);
 
   return {
     kind,
-    // A "general" photo has no business — drop any name the model volunteered
-    // so a scenery shot can never carry a vendor into the write path.
-    businessName: kind === "booth" ? cleanString(obj.business_name) : null,
+    // Each name is kept ONLY for its own kind. A scenery shot can never carry a
+    // vendor into the write path, and a performer photo never carries a
+    // business name (the cheer squad's "products" were its uniforms).
+    businessName: kind === "booth" ? name : null,
+    performerName: kind === "performer" ? name : null,
+    signText: kind === "signage" ? name : null,
     website: kind === "booth" ? website : null,
     products: kind === "booth" ? products : [],
     confidence: clamp01(obj.confidence),
     rationale: cleanString(obj.rationale, 300) ?? "",
+    // Strict: only a real boolean counts. "false" as a STRING is not an answer
+    // we trust to publish a photo on.
+    identifiableMinor: typeof obj.identifiable_minor === "boolean" ? obj.identifiable_minor : null,
   };
 }
 
@@ -223,7 +358,15 @@ export function parseVisionReply(raw: unknown): BoothIdentification {
     // `kind:"unclear"`, which is the model correctly declining. Marking that as
     // a failure would make every honest "I can't tell" look like a bug and
     // re-create exactly the noise this ticket removed.
-    const known = ["kind", "business_name", "website", "products", "confidence", "rationale"];
+    const known = [
+      "kind",
+      "name",
+      "business_name",
+      "website",
+      "products",
+      "confidence",
+      "rationale",
+    ];
     if (!known.some((k) => k in o)) {
       return unidentified(`unrecognized-object-shape keys=${Object.keys(o).slice(0, 6).join(",")}`);
     }
@@ -279,6 +422,7 @@ async function runOnce(ai: VisionAi, bytes: number[]): Promise<BoothIdentificati
       image: bytes,
       prompt: VISION_PROMPT,
       max_tokens: MAX_TOKENS,
+      response_format: VISION_RESPONSE_FORMAT,
     });
     return parseVisionReply(raw);
   } catch (e) {
@@ -333,41 +477,212 @@ export async function identifyBooth(ai: VisionAi, bytes: Uint8Array): Promise<Bo
 }
 
 /**
- * Auto-write threshold.
+ * Auto-write threshold — 1.0, John's ruling 2026-09-12 (OPE-240).
  *
- * 0.75 is deliberately strict. The downstream write publishes a real business
- * as a CONFIRMED exhibitor at a real fair; a false positive is a public factual
- * claim about someone else's company. Staging costs John one review click,
- * so the asymmetry says: when in doubt, stage.
+ * The downstream write publishes a real business as a CONFIRMED exhibitor at a
+ * real fair; a false positive is a public factual claim about someone else's
+ * company. Staging costs John one review click, so: when in doubt, stage.
+ *
+ * Why 1.0 and not the original 0.75: on the first real batch (New Gloucester
+ * Community Fair, 2026-09-12, 12 would-write proposals checked against the
+ * photos by hand) 11 were right and ONE was a fabricated business — a script
+ * "Denim River Crafts" banner read as "Bayim River Crafts" at confidence 0.90.
+ * The failure is confident misreading, not uncertainty, so no bar short of 1.0
+ * catches it. All four 1.0 proposals were correct. n=12 is small: revisit
+ * against accumulated `list_photo_proposals` evidence, not a hunch.
  */
-export const AUTO_WRITE_CONFIDENCE = 0.75;
+export const AUTO_WRITE_CONFIDENCE = 1.0;
+
+/**
+ * OPE-969 — WHY a photo staged, as a closed vocabulary. The free-text
+ * `stage_reason` "no legible business name on the booth" used to cover a real
+ * booth whose sign was unreadable AND a livestock pen the model had no other
+ * word for — two situations needing opposite follow-up, indistinguishable in
+ * `list_photo_proposals`. Every staged row now carries one of these.
+ */
+export type StageKind =
+  | "unclear"
+  | "booth_name_unreadable"
+  | "booth_below_threshold"
+  | "booth_identifiable_minor"
+  | "booth_roster_check_failed"
+  | "booth_not_at_a_stall"
+  | "performer_unnamed"
+  | "performer_unmatched"
+  | "performer_not_on_roster"
+  | "performer_identifiable_minor";
 
 export type Disposition =
   | { action: "write"; identification: BoothIdentification }
-  | { action: "stage"; identification: BoothIdentification; reason: string }
-  | { action: "skip"; identification: BoothIdentification; reason: string };
+  | { action: "stage"; identification: BoothIdentification; reason: string; stageKind: StageKind }
+  /** Scenery — the gallery (OPE-205 §3). */
+  | { action: "skip"; identification: BoothIdentification; reason: string }
+  /** A named act — resolved against the performer table and the event roster by the pipeline. */
+  | { action: "performer"; identification: BoothIdentification }
+  /** Signage ≠ presence — recorded, nothing written. */
+  | { action: "record"; identification: BoothIdentification; reason: string };
 
 /**
  * Decide what to do with one identified photo. Pure — the whole auto-write-vs-
  * stage judgment lives here so it can be exhaustively tested.
  */
 export function disposition(id: BoothIdentification): Disposition {
-  if (id.kind === "general") {
-    // Gallery/hero handling for scenery is OPE-205, not this ticket.
-    return { action: "skip", identification: id, reason: "general fair scene, not a booth" };
+  if (id.kind === "scenery") {
+    return { action: "skip", identification: id, reason: "fair scenery — gallery" };
+  }
+  if (id.kind === "signage") {
+    return {
+      action: "record",
+      identification: id,
+      reason: "signage for a party whose own booth is not the subject — not presence",
+    };
+  }
+  if (id.kind === "performer") {
+    if (!id.performerName) {
+      return {
+        action: "stage",
+        identification: id,
+        reason: "a performance, but no act name is printed",
+        stageKind: "performer_unnamed",
+      };
+    }
+    return { action: "performer", identification: id };
   }
   if (id.kind === "unclear") {
-    return { action: "stage", identification: id, reason: "could not tell what the photo shows" };
+    return {
+      action: "stage",
+      identification: id,
+      reason: "could not tell what the photo shows",
+      stageKind: "unclear",
+    };
   }
   if (!id.businessName) {
-    return { action: "stage", identification: id, reason: "no legible business name on the booth" };
+    return {
+      action: "stage",
+      identification: id,
+      reason: "a booth, but its name is not legible",
+      stageKind: "booth_name_unreadable",
+    };
   }
   if (id.confidence < AUTO_WRITE_CONFIDENCE) {
     return {
       action: "stage",
       identification: id,
       reason: `confidence ${id.confidence.toFixed(2)} below ${AUTO_WRITE_CONFIDENCE} threshold`,
+      stageKind: "booth_below_threshold",
+    };
+  }
+  // OPE-240 — John's faces rule, as a gate. Checked LAST so a photo that would
+  // otherwise publish is the one that reports it; `null` (the model did not
+  // answer) stages exactly like `true`.
+  if (id.identifiableMinor !== false) {
+    return {
+      action: "stage",
+      identification: id,
+      reason:
+        id.identifiableMinor === true
+          ? "an identifiable child appears in the photo — never auto-published"
+          : "child check not answered — never auto-published without it",
+      stageKind: "booth_identifiable_minor",
     };
   }
   return { action: "write", identification: id };
+}
+
+/**
+ * OPE-240 — booth / not-booth, as a SEPARATE question.
+ *
+ * John's ruling 2026-09-30: no auto-write until this check lands. On the
+ * Farmington Fair batch (2026-09-26) two of the eight confidence-1.0 "booths"
+ * were not vendors at all — a wall banner advertising Chester Greenwood Day and
+ * the fair's own Agricultural Museum barn. A legible sign is not a booth, and
+ * the main prompt cannot tell them apart.
+ *
+ * Measured 2026-09-30 on those 8 photos (raw bytes, as the pipeline sends them),
+ * two runs each:
+ *   - an `exhibitor_present` boolean ADDED TO THE MAIN PROMPT answered true for
+ *     the banner and the museum (0 of 2 caught), and the longer prompt broke
+ *     JSON on 2 of 8. It echoes the model's first judgement; it is not a check.
+ *   - THIS prompt, asked on its own: 16 of 16 correct — both fakes
+ *     `building_or_wall`, all six real booths `vendor_table_or_tent`, JSON 16/16.
+ * n = 8 from one fair. Revisit against `sign_mounted_on` on staged rows.
+ *
+ * It never asks the model whether this is a booth. It asks what the sign is
+ * physically on, which is a thing the model can see.
+ */
+export const SIGN_MOUNTS = [
+  "vendor_table_or_tent",
+  "building_or_wall",
+  "fence_or_post",
+  "vehicle_or_trailer",
+  "other",
+] as const;
+export type SignMount = (typeof SIGN_MOUNTS)[number];
+
+export function presencePrompt(name: string): string {
+  return (
+    `What is the sign that reads "${name}" physically attached to or standing on? ` +
+    `Choose exactly one: "vendor_table_or_tent" (a table, tent, canopy or stall with goods or literature), ` +
+    `"building_or_wall", "fence_or_post", "vehicle_or_trailer", "other". ` +
+    `Reply ONLY with JSON: {"mounted_on":string}`
+  );
+}
+
+/** Parse the presence reply. Anything that is not exactly one of SIGN_MOUNTS is null. */
+export function parsePresenceReply(raw: unknown): SignMount | null {
+  const resp = (raw as { response?: unknown })?.response ?? raw;
+  let obj: unknown = resp;
+  if (typeof resp === "string") {
+    const start = resp.indexOf("{");
+    const end = resp.lastIndexOf("}");
+    if (start === -1 || end <= start) return null;
+    try {
+      obj = JSON.parse(resp.slice(start, end + 1));
+    } catch {
+      return null;
+    }
+  }
+  const v = (obj as { mounted_on?: unknown } | null)?.mounted_on;
+  return typeof v === "string" && (SIGN_MOUNTS as readonly string[]).includes(v)
+    ? (v as SignMount)
+    : null;
+}
+
+/** Ask the presence question once. Never throws — a failure is `null`, which stages. */
+export async function checkBoothPresence(
+  ai: VisionAi,
+  bytes: Uint8Array,
+  name: string
+): Promise<SignMount | null> {
+  try {
+    const raw = await ai.run(VISION_MODEL, {
+      image: Array.from(bytes),
+      prompt: presencePrompt(name),
+      max_tokens: 60,
+    });
+    return parsePresenceReply(raw);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * OPE-240 — the presence gate. Pure. Applies only to a photo `disposition()`
+ * would WRITE; everything else passes through untouched. Only an answer of
+ * exactly `vendor_table_or_tent` keeps it a write — any other mount, or no
+ * answer at all, stages. An unanswered question does not publish.
+ */
+export function applyPresenceGate(d: Disposition, mountedOn: SignMount | null): Disposition {
+  if (d.action !== "write") return d;
+  const identification = { ...d.identification, mountedOn };
+  if (mountedOn === "vendor_table_or_tent") return { action: "write", identification };
+  return {
+    action: "stage",
+    identification,
+    reason:
+      mountedOn === null
+        ? "booth check not answered — never auto-published without it"
+        : `the sign is on a ${mountedOn.replace(/_/g, " ")}, not a vendor's table or tent`,
+    stageKind: "booth_not_at_a_stall",
+  };
 }

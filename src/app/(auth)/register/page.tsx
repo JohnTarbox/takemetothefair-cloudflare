@@ -18,6 +18,8 @@ import {
   trackFunnelSubmitted,
 } from "@/lib/analytics";
 import { type FieldErrors, validateAll, validateField } from "@/lib/validations/field-errors";
+import { checkEmailDomain } from "@/lib/auth/email-domain-check";
+import { normalizeDeclaredWebsite } from "@/lib/validations/declared-website";
 
 // Client-side schema mirrors the server registerSchema but adds the
 // confirmPassword match check and role-specific conditionals the server
@@ -25,7 +27,15 @@ import { type FieldErrors, validateAll, validateField } from "@/lib/validations/
 const registerClientSchema = z
   .object({
     name: z.string().min(2, "Please enter your full name"),
-    email: z.string().email("Please enter a valid email address"),
+    // OPE-986 — same domain check the API runs, so a `gmail.vom` slip is caught
+    // on blur instead of after a round-trip.
+    email: z
+      .string()
+      .email("Please enter a valid email address")
+      .superRefine((value, ctx) => {
+        const verdict = checkEmailDomain(value);
+        if (!verdict.ok) ctx.addIssue({ code: "custom", message: verdict.message });
+      }),
     password: z.string().min(8, "Password must be at least 8 characters"),
     confirmPassword: z.string(),
     role: z.enum(["USER", "PROMOTER", "VENDOR"]),
@@ -46,7 +56,9 @@ const registerClientSchema = z
       .string()
       .trim()
       .optional()
-      .refine((v) => !v || /^https?:\/\/.+\..+/.test(v), {
+      // OPE-1155 — the SAME rule the server applies (one shared function), so
+      // a value this accepts can never be refused by /api/auth/register.
+      .refine((v) => !v || normalizeDeclaredWebsite(v) !== null, {
         message: "Enter a full URL, e.g. https://example.com",
       }),
   })
@@ -324,6 +336,8 @@ function RegisterForm() {
 
       const data = (await response.json()) as {
         error?: string;
+        // OPE-1155 — per-field messages on a server-side validation refusal.
+        fieldErrors?: FieldErrors;
         retryAfter?: number;
         // OPE-573 — the business name matched a listing already in the
         // directory. The server sends the listing so we can offer the claim
@@ -353,6 +367,9 @@ function RegisterForm() {
           );
         } else {
           setError(data.error || "Registration failed");
+          // OPE-1155 — name the field. Without this a server-side refusal
+          // arrived as one banner line with nothing to fix beside any input.
+          if (data.fieldErrors) setFieldErrors(data.fieldErrors);
           // A name collision is the one failure with somewhere better to go
           // than "try again": the listing exists, so offer to claim it.
           setClaimAvailable(data.claimAvailable ?? null);

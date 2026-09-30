@@ -266,6 +266,14 @@ export async function updateReliability(
       return { decision: "skipped_not_resolved", cellsTouched: 0 };
     }
 
+    // OPE-1065 — `other` exists on event_discrepancies only (citation flags
+    // about e.g. `description`); source_reliability and its priors are keyed
+    // on the seven real classes, so there is no cell to score. The cast below
+    // would otherwise write one under a class nothing reads.
+    if (disc.fieldClass === "other") {
+      return { decision: "skipped_no_source", cellsTouched: 0 };
+    }
+
     // Decide whether the authoritative side or the divergent side
     // matched the resolved value.
     const resolvedMatchesAuthoritative =

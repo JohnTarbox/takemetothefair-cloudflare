@@ -1,6 +1,8 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/api/with-auth";
+import { checkEventVenue } from "@/lib/venues/former-venue-guard";
+import { gateDatesConfirmedWrite } from "@/lib/events/dates-confirmed-write";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import {
   events,
@@ -29,6 +31,7 @@ import { eventSyndicationStatements } from "@/lib/syndication/outbox";
 import { enqueueSyndicationChange } from "@/lib/queues/producers";
 import { repairBlogLinksForSlugChange } from "@/lib/content-links-sync";
 import { raiseHoursReviewFlag } from "@/lib/events/hours-review-flag";
+import { loadUnresolvedFlagForEvent } from "@/lib/duplicates/flag-queue";
 
 const PUBLIC_EVENT_SET = new Set<string>(PUBLIC_EVENT_STATUSES);
 
@@ -76,6 +79,11 @@ export const GET = withAuth<{ id: string }>({ role: "ADMIN" }, async ({ request,
         vendor: ev.vendors,
       })),
       eventDays: eventDayResults,
+      // OPE-1117 — the unresolved duplicate flag, if any, so the edit page can
+      // tell a reviewer before they approve. Same predicate as the queue.
+      possibleDuplicate: eventData.events.possibleDuplicateOf
+        ? await loadUnresolvedFlagForEvent(db, id)
+        : null,
     };
 
     return NextResponse.json(event);
@@ -192,7 +200,18 @@ export const PATCH = withAuth<{ id: string }>(
       if (data.endDate !== undefined) {
         updateData.endDate = normalizeEventDate(data.endDate);
       }
-      if (data.datesConfirmed !== undefined) updateData.datesConfirmed = data.datesConfirmed;
+      // OPE-1200 — TRUE only with a qualifying start_date citation. Note the
+      // zod schema defaults an omitted datesConfirmed to true, so this gate is
+      // also what stops a PATCH that never mentioned the flag from re-asserting it.
+      let datesConfirmedWarning: string | undefined;
+      if (data.datesConfirmed !== undefined) {
+        const gate = await gateDatesConfirmedWrite(db, {
+          eventId: id,
+          requested: data.datesConfirmed,
+        });
+        updateData.datesConfirmed = gate.value;
+        datesConfirmedWarning = gate.warning;
+      }
       if (data.discontinuousDates !== undefined)
         updateData.discontinuousDates = data.discontinuousDates;
 
@@ -204,6 +223,24 @@ export const PATCH = withAuth<{ id: string }>(
         const sorted = data.eventDays.map((d) => d.date).sort();
         updateData.startDate = normalizeEventDate(sorted[0]);
         updateData.endDate = normalizeEventDate(sorted[sorted.length - 1]);
+      }
+
+      // OPE-1180 — the row AFTER this PATCH may not sit at a FORMER venue past
+      // its closure. Checked on any venue or date change.
+      if ("venueId" in updateData || "startDate" in updateData || "endDate" in updateData) {
+        const nextVenueId =
+          "venueId" in updateData ? (updateData.venueId as string | null) : currentEvent.venueId;
+        const nextStart =
+          "startDate" in updateData
+            ? (updateData.startDate as Date | null)
+            : currentEvent.startDate;
+        const nextEnd =
+          "endDate" in updateData ? (updateData.endDate as Date | null) : currentEvent.endDate;
+        const formerVenue = await checkEventVenue(db, nextVenueId, nextEnd ?? nextStart);
+        if (formerVenue.kind === "refuse") {
+          return NextResponse.json({ error: formerVenue.message }, { status: 409 });
+        }
+        if (formerVenue.kind === "flag") updateData.flaggedForReview = 1;
       }
 
       // Auto-compute public date range (excluding vendor-only days).
@@ -671,7 +708,7 @@ export const PATCH = withAuth<{ id: string }>(
 
       if (indexNowSource) {
         const slug = (updateData.slug as string | undefined) ?? currentEvent.slug;
-        const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+        const env = getCloudflareEnv();
         await pingIndexNow(db, indexNowUrlFor("events", slug), env, indexNowSource);
       }
 
@@ -682,7 +719,7 @@ export const PATCH = withAuth<{ id: string }>(
       // so a queue-bound issue doesn't fail the admin's PATCH.
       if (currentEvent.status !== "APPROVED" && newStatus === "APPROVED") {
         try {
-          const cfEnv = getCloudflareEnv() as unknown as { EMAIL_JOBS?: Queue<unknown> };
+          const cfEnv = getCloudflareEnv();
           await notifyApprovalIfNeeded(db, { EMAIL_JOBS: cfEnv.EMAIL_JOBS }, id);
         } catch (notifyError) {
           await logError(db, {
@@ -699,11 +736,11 @@ export const PATCH = withAuth<{ id: string }>(
       // MCP callers) can render a warning. Absence of the field means "no
       // gates fired on this PATCH" — does NOT mean the row is currently free
       // of flags (an older flag may persist in events.gate_flags from ingest).
-      if (gateFlagsWarning) {
-        return NextResponse.json({
-          ...updatedEvent,
-          warnings: { gate_flags: gateFlagsWarning },
-        });
+      const warnings: Record<string, unknown> = {};
+      if (gateFlagsWarning) warnings.gate_flags = gateFlagsWarning;
+      if (datesConfirmedWarning) warnings.dates_confirmed_downgraded = datesConfirmedWarning;
+      if (Object.keys(warnings).length > 0) {
+        return NextResponse.json({ ...updatedEvent, warnings });
       }
       return NextResponse.json(updatedEvent);
     } catch (error) {

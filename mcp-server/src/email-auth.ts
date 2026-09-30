@@ -27,6 +27,34 @@ function methodResult(header: string, method: string): string | null {
   return m ? m[1] : null;
 }
 
+/**
+ * OPE-763 (review bounce) — the SPF result for the MAIL FROM identity.
+ *
+ * Cloudflare writes TWO `spf=` entries on ordinary Gmail mail: the HELO check
+ * first (`spf=none … smtp.helo=mail-yx2-x11.google.com`), then the MAIL FROM
+ * check (`spf=pass … smtp.mailfrom=jtarboxme@gmail.com`). `methodResult` keeps
+ * the first match, so 232 of 243 captured rows recorded `spf_result=none` and
+ * `sender_auth=partial` for mail whose SPF actually passed. SPF's identity is
+ * MAIL FROM (RFC 7208 §2.4); HELO is only the identity when MAIL FROM is null.
+ *
+ * Prefers the entry whose properties name `smtp.mailfrom`; with none, falls
+ * back to the first `spf=` — identical to the old answer for every header
+ * carrying a single SPF entry. Parenthesised comments are stripped before
+ * splitting on `;`, so a `;` inside one cannot move `smtp.mailfrom` into the
+ * wrong clause.
+ */
+function spfResult(header: string): string | null {
+  const clauses = header.replace(/\([^()]*\)/g, "").split(";");
+  let first: string | null = null;
+  for (const clause of clauses) {
+    const m = clause.match(/\bspf=([a-z]+)/);
+    if (!m) continue;
+    if (/\bsmtp\.mailfrom=/.test(clause)) return m[1];
+    first ??= m[1];
+  }
+  return first;
+}
+
 export function parseEmailAuth(headerRaw: string | null | undefined): EmailAuthVerdict {
   if (!headerRaw) return "unknown";
   const header = headerRaw.toLowerCase();
@@ -90,13 +118,17 @@ export function parseEmailAuthDetail(headerRaw: string | null | undefined): Emai
   if (!raw) return { raw: null, spf: null, dkim: null, dmarc: null, verdict: "unknown" };
 
   const header = raw.toLowerCase();
-  const spf = methodResult(header, "spf");
+  const spf = spfResult(header);
   const dkim = methodResult(header, "dkim");
   const dmarc = methodResult(header, "dmarc");
 
-  // Failure first, and in the same order as `parseEmailAuth`, so the two can
-  // never disagree about a spoof. DMARC is authoritative; an SPF hard-fail
-  // with no compensating DKIM pass catches domains with no DMARC record.
+  // Failure first, and in the same order as `parseEmailAuth`. DMARC is
+  // authoritative; an SPF hard-fail with no compensating DKIM pass catches
+  // domains with no DMARC record. The two agree on every header with ONE SPF
+  // entry. With two that DISAGREE, the record reads MAIL FROM and the gate
+  // still reads the first (HELO) — a known, tested divergence left in place
+  // because scope 5 forbids a routing change here. Zero of 243 captured rows
+  // (2026-09-23) carried any `spf=fail`, so no live verdict differs today.
   let verdict: SenderAuthVerdict;
   if (dmarc === "fail" || (spf === "fail" && dkim !== "pass")) {
     verdict = "fail";

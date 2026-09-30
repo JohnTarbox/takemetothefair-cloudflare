@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { isAuthorized } from "@/lib/api-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
-import { getQueryPages, ScApiError, ScConfigError, type ScEnv } from "@/lib/search-console";
+import { getQueryPages, ScApiError, ScConfigError } from "@/lib/search-console";
 import { DateRangeError, parseAnalyticsParams } from "@/lib/analytics-params";
 
 /**
@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
   const params = parseAnalyticsParams(url.searchParams);
 
   try {
-    const env = getCloudflareEnv() as unknown as ScEnv;
+    const env = getCloudflareEnv();
     const result = await getQueryPages(env, query, {
       skipCache: params.refresh,
       dateRange: params.dateRange,

@@ -47,3 +47,15 @@
 mcp-server/src/tools/admin-citations.ts@ids
 mcp-server/src/tools/admin.ts@ids
 src/lib/goodwill/flip-event-field.ts:142
+
+# ── OPE-1029: write-statement sites the scanner cannot bound, each read and
+#    bounded by something outside a .limit() literal. Chunked instead where the
+#    list could genuinely pass 100 (series/backfill memberIds, self-reported
+#    `removed`); the stale-red resolve pass was rewritten to bind no list.
+# `limit` = Math.min(…, MAX_LIMIT=10) from the query string, so ids.length ≤ 10.
+src/app/api/admin/og-image/sweep/route.ts@ids
+# `applied` ⊆ the keys of the fixed AUTO_MERGE_COLUMNS / FIELD_TO_COLUMN map for
+# ONE entity's proposals (≤ ~15 columns) — bounded by the schema, not row count.
+mcp-server/src/enrichment/dispatch.ts@applied
+mcp-server/src/enrichment/performer-dispatch.ts@applied
+mcp-server/src/enrichment/promoter-dispatch.ts@applied

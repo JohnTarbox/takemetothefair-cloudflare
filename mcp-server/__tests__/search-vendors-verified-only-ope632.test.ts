@@ -33,6 +33,9 @@ const SCHEMA_SQL = `
     display_name TEXT,
     slug TEXT NOT NULL UNIQUE,
     vendor_type TEXT,
+    sells_category TEXT,
+    business_sector TEXT,
+    vendor_identity TEXT,
     verified INTEGER DEFAULT 0,
     deleted_at INTEGER
   );

@@ -193,6 +193,8 @@ export interface RunPipelineArgs {
    *  Ignored for other targets. Defaults to "logo". */
   imageRole?: PipelineImageRole;
   caption: string | null;
+  /** OPE-1171 — gallery alt text supplied at upload. Omitted = NULL, as before. */
+  altText?: string | null;
   actorId: string;
   /** Free-text source label written to R2 customMetadata.source so the
    *  bucket inventory can distinguish base64-path uploads from slot-path
@@ -587,7 +589,7 @@ export async function runUploadPipeline(args: RunPipelineArgs): Promise<Pipeline
         id: photoId,
         photoUrl: url,
         caption,
-        altText: null,
+        altText: args.altText ?? null,
         photoType: "other",
         isFeatured: false,
         uploadedBy: actorId,

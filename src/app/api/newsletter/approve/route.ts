@@ -63,7 +63,7 @@ async function readToken(request: NextRequest): Promise<string> {
 export async function POST(request: NextRequest) {
   const db = getCloudflareDb();
   try {
-    const env = getCloudflareEnv() as unknown as Record<string, string | undefined>;
+    const env = getCloudflareEnv();
 
     const token = await readToken(request);
     if (!token) return redirect("invalid");
@@ -106,7 +106,9 @@ export async function POST(request: NextRequest) {
     // null: 'weekend' is the larger list, so guessing sends a vendor issue to 39
     // attendees. That is the OPE-795 defect, one path over.
     const audience = parseNewsletterList(issue.audience);
-    if (!audience) return redirect("server_error");
+    // OPE-1204 — a named refusal, not "server_error": this is a bad issue row,
+    // and the interstitial explains it rather than inviting a retry.
+    if (!audience) return redirect("unknown_audience");
 
     // OPE-6 gate, re-checked server-side. The page shows a "disabled" state, but
     // the API must independently refuse so it can never broadcast while off.
@@ -134,6 +136,7 @@ export async function POST(request: NextRequest) {
     const siteUrl = getSiteUrl();
     const queued = await enqueueNewsletterDigest({
       recipients,
+      audience,
       subject: issue.subject,
       contentHtml: issue.html,
       viewInBrowserUrl: `${siteUrl}/newsletter/${slug}`,

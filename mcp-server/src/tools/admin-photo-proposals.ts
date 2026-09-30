@@ -22,15 +22,18 @@
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { and, desc, eq, gte, sql } from "drizzle-orm";
+import { and, desc, gte, inArray } from "drizzle-orm";
+import { chunkIds } from "@takemetothefair/utils";
 import { adminActions, events } from "../schema.js";
 import { jsonContent } from "../helpers.js";
-import { BOOTH_PROPOSED_ACTION } from "../photo/booth-pipeline.js";
+import { BOOTH_PROPOSED_ACTION, PERFORMER_PROPOSED_ACTION } from "../photo/booth-pipeline.js";
 import type { Db } from "../db.js";
+import { computeIntakeAccounting } from "../photo/intake-accounting.js";
 import type { AuthContext } from "../auth.js";
 
 /** Shape written by the booth pipeline's staging step. */
 interface ProposalPayload {
+  sign_mounted_on?: string | null;
   event_id?: string;
   photo_key?: string;
   photo_name?: string;
@@ -42,13 +45,26 @@ interface ProposalPayload {
   failure_reason?: string | null;
   would_auto_write?: boolean;
   stage_reason?: string | null;
+  /** OPE-969 — absent on rows staged before the class split. */
+  photo_class?: string;
+  stage_kind?: string | null;
+  performer_name?: string | null;
+  performer_id?: string | null;
+  matched_performer_name?: string | null;
+  appearances_on_event?: number;
 }
 
 export function registerPhotoProposalTools(server: McpServer, db: Db, auth: AuthContext): void {
   server.tool(
     "list_photo_proposals",
-    "OPE-240 — the booth-photo proposals the vision pipeline has STAGED, with what it identified, its confidence, whether it would have auto-written, and why it staged instead. This is the evidence the PHOTO_AUTOWRITE_ENABLED gate is meant to be judged on; it was previously unreadable outside /admin. Read-only: it cannot enable, write or approve anything.",
+    "OPE-240 — the photo proposals the vision pipeline has STAGED (booths, and since OPE-969 performers), with what it identified, its confidence, whether it would have auto-written, and why it staged instead. `photo_class` says what the photo is and `stage_kind` why it staged, so 'a booth whose name is unreadable' and 'not a booth' are distinguishable. This is the evidence the PHOTO_AUTOWRITE_ENABLED gate is meant to be judged on. Read-only: it cannot enable, write or approve anything.",
     {
+      photo_class: z
+        .enum(["booth", "performer"])
+        .optional()
+        .describe(
+          "OPE-969: only booth proposals or only performer proposals. Omit for both. Rows staged before 2026-09-13 have no class and are booth proposals."
+        ),
       would_auto_write: z
         .boolean()
         .optional()
@@ -67,7 +83,9 @@ export function registerPhotoProposalTools(server: McpServer, db: Db, auth: Auth
         .min(1)
         .max(365)
         .optional()
-        .describe("Only proposals from the last N days. Omit for all time."),
+        .describe(
+          "Only proposals from the last N days. Omit for all time. With a window, the response also carries `intake_accounting` (OPE-978): photo-intake emails and photos in, the outcome each photo got (proposed, auto-written, performer, signage, gallery), and any photo with no recorded outcome, by name."
+        ),
       limit: z.number().int().min(1).max(200).optional().describe("Max rows (default 50)."),
     },
     async (params) => {
@@ -79,7 +97,13 @@ export function registerPhotoProposalTools(server: McpServer, db: Db, auth: Auth
       }
 
       const limit = params.limit ?? 50;
-      const filters = [eq(adminActions.action, BOOTH_PROPOSED_ACTION)];
+      const wanted =
+        params.photo_class === "booth"
+          ? [BOOTH_PROPOSED_ACTION]
+          : params.photo_class === "performer"
+            ? [PERFORMER_PROPOSED_ACTION]
+            : [BOOTH_PROPOSED_ACTION, PERFORMER_PROPOSED_ACTION];
+      const filters = [inArray(adminActions.action, wanted)];
       if (params.days !== undefined) {
         filters.push(
           gte(adminActions.createdAt, new Date(Date.now() - params.days * 24 * 60 * 60 * 1000))
@@ -89,6 +113,7 @@ export function registerPhotoProposalTools(server: McpServer, db: Db, auth: Auth
       const rows = await db
         .select({
           id: adminActions.id,
+          action: adminActions.action,
           inboundEmailId: adminActions.targetId,
           payload: adminActions.payloadJson,
           createdAt: adminActions.createdAt,
@@ -116,12 +141,16 @@ export function registerPhotoProposalTools(server: McpServer, db: Db, auth: Auth
         return { row: r, p };
       });
 
+      // OPE-1053 — in chunks. `limit` allows 200 rows, so this set can hold up
+      // to 200 distinct ids, and one `IN (…)` binds one parameter per id against
+      // D1's 100-parameter cap. Local better-sqlite3 allows 32,766, which is why
+      // the single-statement form passed every test.
       const eventNames = new Map<string, string>();
-      if (eventIds.size > 0) {
+      for (const batch of chunkIds([...eventIds])) {
         const evs = await db
-          .select({ id: events.id, name: events.name, slug: events.slug })
+          .select({ id: events.id, name: events.name })
           .from(events)
-          .where(sql`${events.id} IN ${[...eventIds]}`);
+          .where(inArray(events.id, batch));
         for (const e of evs) eventNames.set(e.id, e.name);
       }
 
@@ -133,7 +162,18 @@ export function registerPhotoProposalTools(server: McpServer, db: Db, auth: Auth
         event_name: p.event_id ? (eventNames.get(p.event_id) ?? null) : null,
         photo_name: p.photo_name ?? null,
         photo_key: p.photo_key ?? null,
+        // OPE-969 — a pre-split row carries no class; every such row was
+        // written by the booth path, so that is what it is.
+        photo_class:
+          p.photo_class ?? (row.action === PERFORMER_PROPOSED_ACTION ? "performer" : "booth"),
+        stage_kind: p.stage_kind ?? null,
+        // OPE-240 — the booth/not-booth answer, on rows that reached the gate.
+        sign_mounted_on: p.sign_mounted_on ?? null,
         business_name: p.business_name ?? null,
+        performer_name: p.performer_name ?? null,
+        performer_id: p.performer_id ?? null,
+        matched_performer_name: p.matched_performer_name ?? null,
+        appearances_on_event: p.appearances_on_event ?? null,
         website: p.website ?? null,
         products: p.products ?? [],
         confidence: p.confidence ?? null,
@@ -153,6 +193,14 @@ export function registerPhotoProposalTools(server: McpServer, db: Db, auth: Auth
         return true;
       });
 
+      // OPE-978 — with a window, also account for every photo that came IN:
+      // proposals are one outcome among six, and a photo in none of them is
+      // named rather than silently missing from the count.
+      const intakeAccounting =
+        params.days !== undefined
+          ? await computeIntakeAccounting(db, new Date(Date.now() - params.days * 86_400_000))
+          : undefined;
+
       return {
         content: [
           jsonContent({
@@ -163,12 +211,14 @@ export function registerPhotoProposalTools(server: McpServer, db: Db, auth: Auth
             // classifier.
             summary: {
               total_staged: proposals.length,
+              performer_proposals: proposals.filter((x) => x.photo_class === "performer").length,
               would_have_written: proposals.filter((x) => x.would_auto_write).length,
               vision_failures: proposals.filter((x) => x.failure_reason).length,
               identified_but_below_threshold: proposals.filter(
                 (x) => x.business_name && !x.would_auto_write
               ).length,
             },
+            ...(intakeAccounting ? { intake_accounting: intakeAccounting } : {}),
             note:
               proposals.length === 0
                 ? "No staged proposals. PHOTO_VISION_ENABLED must be on for the pipeline to produce any."

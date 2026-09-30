@@ -9,15 +9,24 @@
  * cold ledger renders "—" instead of NaN/divide-by-zero.
  */
 
+import { RENDER_FAULT_SOURCES } from "@/lib/faults/render-sources";
 import { count, gte } from "drizzle-orm";
 import { errorLogs, faultSignatures } from "@/lib/db/schema";
 import type { Db } from "./shared";
 import type { RenderFaultHealthCard } from "./types";
+import { isTerminalStatus } from "@/lib/faults/status";
 
 const MS_PER_HOUR = 3_600_000;
-// A signature is still "open" until it's resolved (done). Mirrors the
-// unresolved set the alerting path (selectStaleFaultReds) escalates on.
-const OPEN_STATUSES = new Set(["proposed", "filed", "regressed"]);
+// A signature is still "open" until its disposition is settled.
+//
+// ⚠️ OPE-811 — this was a hand-rolled `new Set(["proposed","filed","regressed"])`
+// that omitted the `open` status, which 8 production rows actually use, and
+// `watch`, which 2 more use. `filed` and `regressed` have ZERO rows in prod, so
+// the set matched `proposed` and nothing else — which is why the tile read
+// "OPEN SIGNATURES 19 / 68" while 29 signatures were genuinely unresolved.
+//
+// Now derived from the canonical vocabulary. The count rises 19 → 29; that is
+// a correction, not a regression.
 
 export async function loadRenderFaultHealth(
   db: Db,
@@ -55,7 +64,7 @@ export async function loadRenderFaultHealth(
   let mttdFiledRows = 0;
 
   for (const r of sigRows) {
-    if (OPEN_STATUSES.has(r.status)) openSignatures++;
+    if (!isTerminalStatus(r.status)) openSignatures++;
     if (r.opeId) autoDetected++;
     if (r.status === "done") doneCount++;
     if (r.status === "regressed") regressedCount++;
@@ -71,9 +80,15 @@ export async function loadRenderFaultHealth(
     }
   }
 
+  // OPE-1161 A2 — the share is of RENDER errors (the render-fault rail's own
+  // sources), not of every error_logs row. The old denominator mixed in API
+  // errors, cron logs and info rows, so the share mostly measured how chatty
+  // the rest of the system was. Prod 7d on 2026-09-25: 1 server-render vs 487
+  // client render errors.
   let totalErrorRows = 0;
   let serverRenderRows = 0;
   for (const e of errorRows) {
+    if (!RENDER_FAULT_SOURCES.includes(e.source ?? "")) continue;
     totalErrorRows += e.c;
     if (e.source === "server-render") serverRenderRows += e.c;
   }

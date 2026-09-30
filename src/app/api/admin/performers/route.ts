@@ -6,7 +6,8 @@ export const dynamic = "force-dynamic";
  * Admin-only.
  */
 import { NextResponse } from "next/server";
-import { and, desc, isNull, like } from "drizzle-orm";
+import { containsCI } from "@/lib/db/contains-ci";
+import { and, desc, isNull } from "drizzle-orm";
 import { withAuth } from "@/lib/api/with-auth";
 import { performers } from "@/lib/db/schema";
 import { createSlug, appendSlugSegment, unsafeSlug } from "@takemetothefair/utils";
@@ -26,16 +27,13 @@ const ACT_CATEGORY = new Set([
   "OTHER",
 ]);
 
-function esc(s: string): string {
-  return s.replace(/[%_\\]/g, (c) => `\\${c}`);
-}
-
 export const GET = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
   const url = new URL(request.url);
   const q = (url.searchParams.get("q") ?? "").trim();
   const limit = Math.min(Number(url.searchParams.get("limit") ?? 25) || 25, 100);
   const conds = [isNull(performers.deletedAt)];
-  if (q) conds.push(like(performers.name, `%${esc(q)}%`));
+  // instr(), not LIKE — a >48-char admin search was a 500 (OPE-1030 sweep).
+  if (q) conds.push(containsCI(performers.name, q));
   const rows = await db
     .select({
       id: performers.id,

@@ -1,9 +1,16 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
-import { and, eq, gte, isNotNull, lte, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import { classifyUrlHealth, isActionable, type UrlHealthResult } from "@/lib/goodwill/url-health";
 import { isAuthorized } from "@/lib/api-auth";
+import { classifySweepOutcome } from "@/lib/goodwill/sweep-outcome";
+import {
+  closestEvent,
+  driftAgainstAll,
+  groupCandidatesByUrl,
+} from "@/lib/goodwill/drift-candidates";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { events, eventDateDriftFindings } from "@/lib/db/schema";
+import { eventDateDriftFindings, events, promoters, urlHealthChecks } from "@/lib/db/schema";
 import { parseJsonLd } from "@/lib/schema-org";
 import { SCRAPER_USER_AGENT } from "@takemetothefair/constants";
 import { logError } from "@/lib/logger";
@@ -20,6 +27,23 @@ import { logError } from "@/lib/logger";
 
 const CHUNK_SIZE = 200;
 const THROTTLE_MS = 500;
+/** Host equality after stripping scheme, `www.` and port — OPE-814. */
+function sameHost(a: string | null, b: string | null): boolean {
+  const norm = (raw: string | null) => {
+    if (!raw) return null;
+    try {
+      return new URL(raw.includes("://") ? raw : `https://${raw}`).hostname
+        .toLowerCase()
+        .replace(/^www\./, "");
+    } catch {
+      return null;
+    }
+  };
+  const ha = norm(a);
+  const hb = norm(b);
+  return ha != null && hb != null && ha === hb;
+}
+
 const FETCH_WINDOW_DAYS_MIN = 30;
 const FETCH_WINDOW_DAYS_MAX = 90;
 const DRIFT_THRESHOLD_DAYS = 1;
@@ -28,13 +52,34 @@ const FETCH_TIMEOUT_MS = 15_000;
 interface SweepResult {
   scanned: number;
   drift_recorded: number;
+  /**
+   * OPE-815 — findings closed because the source now AGREES with us.
+   *
+   * Reported as its own number rather than folded into `drift_recorded`,
+   * because "the organizer fixed their page" and "we found a new conflict" are
+   * different events and a run that only does the former is not a quiet run.
+   */
+  drift_cleared: number;
   fetch_failed: number;
+  /** OPE-860 — URLs whose verdict an operator should look at. */
+  url_health_actionable: number;
   next_cursor: number | null;
 }
 
-async function fetchCanonicalDate(
-  url: string
-): Promise<{ canonicalStartDate: Date | null; htmlExcerpt: string | null }> {
+/**
+ * OPE-860 — this used to return `{null, null}` for FOUR different things: a
+ * non-2xx, a 200 with no readable date, a DNS failure and a timeout. All four
+ * then classified as `fetch-failed` and incremented one counter, which is why a
+ * domain sold to a casino affiliate was, in our data, the same event as a
+ * network blip. It now reports the health verdict alongside the date, so the
+ * caller can tell those apart and persist the distinction.
+ */
+async function fetchCanonicalDate(url: string): Promise<{
+  canonicalStartDate: Date | null;
+  htmlExcerpt: string | null;
+  health: UrlHealthResult;
+  httpStatus: number | null;
+}> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
@@ -43,8 +88,19 @@ async function fetchCanonicalDate(
       signal: controller.signal,
       redirect: "follow",
     });
-    if (!res.ok) return { canonicalStartDate: null, htmlExcerpt: null };
+    if (!res.ok) {
+      return {
+        canonicalStartDate: null,
+        htmlExcerpt: null,
+        health: classifyUrlHealth({ reachedOrigin: true, status: res.status, html: null }),
+        httpStatus: res.status,
+      };
+    }
     const html = await res.text();
+    // Classified from the FULL body, once, before any date parsing — the health
+    // question ("is this still an event page?") is independent of whether we
+    // could read a date off it, and conflating them is the bug being fixed.
+    const health = classifyUrlHealth({ reachedOrigin: true, status: res.status, html });
     // Strip to JSON-LD blocks first — schema.org parser is reliable.
     const ldMatches = html.match(/<script[^>]*application\/ld\+json[^>]*>([\s\S]*?)<\/script>/gi);
     if (ldMatches) {
@@ -57,7 +113,12 @@ async function fetchCanonicalDate(
             // only and full timestamp variants.
             const d = new Date(parsed.data.startDate);
             if (!isNaN(d.getTime())) {
-              return { canonicalStartDate: d, htmlExcerpt: block.slice(0, 500) };
+              return {
+                canonicalStartDate: d,
+                htmlExcerpt: block.slice(0, 500),
+                health,
+                httpStatus: res.status,
+              };
             }
           }
         } catch {
@@ -68,16 +129,18 @@ async function fetchCanonicalDate(
     // Fallback: look for a visible date in OG metadata or microdata. Skip
     // for v1; if drift detection misses these the admin can still manually
     // verify the source. Future enhancement: og:event:start_time, microdata.
-    return { canonicalStartDate: null, htmlExcerpt: null };
+    return { canonicalStartDate: null, htmlExcerpt: null, health, httpStatus: res.status };
   } catch {
-    return { canonicalStartDate: null, htmlExcerpt: null };
+    // Never reached the origin: DNS, TLS, timeout, abort.
+    return {
+      canonicalStartDate: null,
+      htmlExcerpt: null,
+      health: classifyUrlHealth({ reachedOrigin: false, status: null, html: null }),
+      httpStatus: null,
+    };
   } finally {
     clearTimeout(timer);
   }
-}
-
-function daysBetween(a: Date, b: Date): number {
-  return Math.round(Math.abs(a.getTime() - b.getTime()) / (24 * 60 * 60 * 1000));
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
@@ -99,45 +162,127 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   let result: SweepResult;
   try {
-    const candidates = await db
+    // ⚠️ OPE-814 — the candidate set, widened and de-duplicated.
+    //
+    // This was `status='APPROVED' AND start_date BETWEEN now+30d AND now+90d`,
+    // which is why the radar has touched six domains ever: it fetched whatever
+    // `source_url` happened to hang off events in a 60-day slice, and three
+    // aggregators are the `source_url` on many events at once.
+    //
+    // Two changes, both from the query rather than from a list:
+    //
+    //   TENTATIVE is included. A tentative date is exactly the kind most worth
+    //     checking against the organizer's own page.
+    //   Promoter-own-domain events are included regardless of the forward
+    //     window. That window is the `[[seasonal-markets-break-forward-gates]]`
+    //     shape — a weekly market has most occurrences outside any 60-day slice
+    //     at any moment, so the pages we most want to check were the ones it
+    //     structurally could not reach.
+    const rawCandidates = await db
       .select({
-        id: events.id,
+        eventId: events.id,
         startDate: events.startDate,
         sourceUrl: events.sourceUrl,
+        promoterWebsite: promoters.website,
       })
       .from(events)
+      .leftJoin(promoters, eq(promoters.id, events.promoterId))
       .where(
         and(
-          eq(events.status, "APPROVED"),
+          inArray(events.status, ["APPROVED", "TENTATIVE"]),
           isNotNull(events.sourceUrl),
-          gte(events.startDate, windowMin),
-          lte(events.startDate, windowMax)
+          gte(events.startDate, now),
+          // Either inside the original forward window, OR on the promoter's own
+          // domain at any future date.
+          sql`(
+            (${events.startDate} >= ${Math.floor(windowMin.getTime() / 1000)}
+             AND ${events.startDate} <= ${Math.floor(windowMax.getTime() / 1000)})
+            OR ${promoters.website} IS NOT NULL
+          )`
         )
       )
-      .orderBy(events.startDate)
-      .limit(chunk)
-      .offset(cursor);
+      .orderBy(events.startDate);
 
-    result = { scanned: candidates.length, drift_recorded: 0, fetch_failed: 0, next_cursor: null };
+    // One entry per distinct URL. The old loop fetched per EVENT, so a page
+    // backing 36 events was fetched 36 times and filed 36 rows for one fact.
+    const candidates = groupCandidatesByUrl(
+      rawCandidates.map((r) => ({
+        eventId: r.eventId,
+        sourceUrl: r.sourceUrl,
+        startDate: r.startDate,
+        promoterOwned: sameHost(r.sourceUrl, r.promoterWebsite),
+      }))
+    ).slice(cursor, cursor + chunk);
 
-    for (const ev of candidates) {
-      if (!ev.startDate || !ev.sourceUrl) continue;
-      const { canonicalStartDate, htmlExcerpt } = await fetchCanonicalDate(ev.sourceUrl);
-      if (!canonicalStartDate) {
+    result = {
+      scanned: candidates.length,
+      drift_recorded: 0,
+      drift_cleared: 0,
+      fetch_failed: 0,
+      url_health_actionable: 0,
+      next_cursor: null,
+    };
+
+    for (const cand of candidates) {
+      // ONE fetch per URL, however many events sit behind it.
+      const { canonicalStartDate, htmlExcerpt, health, httpStatus } = await fetchCanonicalDate(
+        cand.sourceUrl
+      );
+
+      // OPE-860 — record that we LOOKED, whatever we found. This is the whole
+      // fix: the drift branch below writes a row only when it records drift, so
+      // before this a URL checked and found healthy left no trace and was
+      // indistinguishable from one never checked since 2024.
+      //
+      // Written for EVERY verdict including `ok`, deliberately. A table that
+      // only holds failures cannot answer "when was this last confirmed good?",
+      // which is the question that makes staleness measurable at all.
+      await db.insert(urlHealthChecks).values({
+        url: cand.sourceUrl,
+        sourceField: "events.source_url",
+        verdict: health.verdict,
+        httpStatus,
+        signals: health.signals.join(",") || null,
+        detail: health.detail,
+        checkedAt: now,
+      });
+      if (isActionable(health.verdict)) result.url_health_actionable += 1;
+
+      // ⚠️ OPE-814 — compare the page's date against the SET of dates we hold
+      // for this URL, not against one representative event.
+      //
+      // Once the fetch is per-URL, "which of these 36 dates does the page
+      // disagree with?" has no honest answer, and picking one manufactures the
+      // exact defect OPE-815 scope 6 describes: four capecodchamber rows that
+      // are one recurring series matched to different occurrences. A page
+      // listing one occurrence of a weekly market AGREES with our data; scored
+      // against an arbitrary sibling it would show a one-week drift forever.
+      //
+      // `driftAgainstAll` returns null when the page matches any date we hold.
+      const smallestDrift = driftAgainstAll(canonicalStartDate, cand, DRIFT_THRESHOLD_DAYS);
+      // The event the finding is filed against is the one the page is closest
+      // to — the occurrence it most plausibly describes.
+      const closest = closestEvent(canonicalStartDate, cand);
+      const drift = smallestDrift ?? 0;
+      const outcome = classifySweepOutcome(
+        canonicalStartDate,
+        smallestDrift === null ? 0 : smallestDrift,
+        DRIFT_THRESHOLD_DAYS
+      );
+      if (outcome === "fetch-failed") {
         result.fetch_failed += 1;
       } else {
-        const drift = daysBetween(ev.startDate, canonicalStartDate);
-        if (drift > DRIFT_THRESHOLD_DAYS) {
+        if (outcome === "drift-recorded") {
           // UPSERT — UNIQUE (event_id, stored_start_date) makes re-runs
           // against the same (event, stored-date) pair idempotent.
           await db
             .insert(eventDateDriftFindings)
             .values({
-              eventId: ev.id,
-              storedStartDate: ev.startDate,
+              eventId: closest.id,
+              storedStartDate: new Date(closest.startDate),
               canonicalStartDate,
               driftDays: drift,
-              canonicalUrl: ev.sourceUrl,
+              canonicalUrl: cand.sourceUrl,
               canonicalHtmlExcerpt: htmlExcerpt,
               checkedAt: now,
             })
@@ -154,6 +299,35 @@ export async function POST(request: Request): Promise<NextResponse> {
               },
             });
           result.drift_recorded += 1;
+        } else {
+          // ⚠️ OPE-815 — the missing branch, and the whole of Defect 1.
+          //
+          // When the fetch SUCCEEDS and the source now agrees with us, this
+          // block previously did nothing at all. The old unresolved finding
+          // stayed unresolved, `stale-page-radar` lifted it again on the next
+          // run, and `captureDiscrepancy` refreshed `last_seen_at` on the open
+          // discrepancy — so a corrected page produced a row that read
+          // "verified this morning".
+          //
+          // The ticket describes this as re-stamping "without re-reading the
+          // page". The page WAS re-read. The agreement was discarded. That
+          // distinction matters: a fix that only gated the timestamp on a real
+          // fetch would not have closed the specimen row, because its fetch
+          // succeeded.
+          //
+          // Specimen: `jenksproductions.com` recorded divergent 2025-11-15;
+          // the page now reads "November 15, 2026", matching us exactly.
+          const closed = await db
+            .update(eventDateDriftFindings)
+            .set({ resolvedAt: now, checkedAt: now })
+            .where(
+              and(
+                eq(eventDateDriftFindings.eventId, closest.id),
+                eq(eventDateDriftFindings.storedStartDate, new Date(closest.startDate)),
+                isNull(eventDateDriftFindings.resolvedAt)
+              )
+            );
+          result.drift_cleared += (closed as { meta?: { changes?: number } })?.meta?.changes ?? 0;
         }
       }
       // Throttle fetches to stay polite + fit Cloudflare's 30s per-request

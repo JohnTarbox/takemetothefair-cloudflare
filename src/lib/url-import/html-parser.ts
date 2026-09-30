@@ -222,3 +222,48 @@ export function extractLinks(html: string, baseUrl: string): string[] {
 
   return [...new Set(links)];
 }
+
+/**
+ * OPE-837 — anchors with their VISIBLE TEXT, for same-site page discovery.
+ *
+ * `extractLinks` above returns hrefs only. That is not enough to decide what a
+ * page is before fetching it: on a WordPress site every nav link is
+ * `?page_id=<N>`, so the href carries no signal at all and the anchor text
+ * ("Tickets", "Artisan Vendors") is the only thing that says what is behind
+ * the link. Discovery has to choose what to fetch BEFORE fetching, so the text
+ * has to come back with the href.
+ *
+ * Kept separate from `extractLinks` rather than changing its return type —
+ * that function has its own callers' expectations and its own tests.
+ */
+export function extractAnchors(
+  html: string,
+  baseUrl: string
+): Array<{ url: string; text: string }> {
+  const out: Array<{ url: string; text: string }> = [];
+  const seen = new Set<string>();
+
+  for (const match of html.matchAll(/<a[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)) {
+    let href: string;
+    try {
+      href = new URL(match[1], baseUrl).href;
+    } catch {
+      continue;
+    }
+    if (seen.has(href)) continue;
+    seen.add(href);
+
+    // Inner markup (an <img> or a <span> wrapper) is stripped; entities are
+    // decoded so "Film, Cheese &amp; Wine" classifies on real characters.
+    const text = decodeHtmlEntities(match[2].replace(/<[^>]+>/g, " "))
+      .replace(/\s+/g, " ")
+      .trim();
+
+    out.push({ url: href, text: text.slice(0, 160) });
+    // A hard ceiling: a link-farm footer must not turn one fetch into a
+    // megabyte of step output.
+    if (out.length >= 400) break;
+  }
+
+  return out;
+}

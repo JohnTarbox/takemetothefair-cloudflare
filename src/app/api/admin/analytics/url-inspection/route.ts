@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { isAuthorized } from "@/lib/api-auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
-import { inspectUrl, ScApiError, ScConfigError, type ScEnv } from "@/lib/search-console";
+import { inspectUrl, ScApiError, ScConfigError } from "@/lib/search-console";
 import { parseAnalyticsParams } from "@/lib/analytics-params";
 import { logError } from "@/lib/logger";
 import { persistGscInspectionState } from "@/lib/inspection-state-persist";
@@ -39,7 +39,7 @@ export async function GET(request: NextRequest) {
   const persist = url.searchParams.get("persist") === "1";
 
   try {
-    const env = getCloudflareEnv() as unknown as ScEnv;
+    const env = getCloudflareEnv();
     const result = await inspectUrl(env, path, { skipCache: params.refresh });
 
     if (persist) {

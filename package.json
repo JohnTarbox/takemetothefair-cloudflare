@@ -11,14 +11,14 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
-    "typecheck": "tsc --noEmit",
-    "typecheck:mcp": "tsc --noEmit -p mcp-server/tsconfig.json",
+    "lint": "NODE_OPTIONS=--max-old-space-size=6144 eslint src mcp-server/src packages/*/src",
+    "typecheck": "NODE_OPTIONS=--max-old-space-size=4096 tsc --noEmit",
+    "typecheck:mcp": "NODE_OPTIONS=--max-old-space-size=4096 tsc --noEmit -p mcp-server/tsconfig.json",
     "typecheck:all": "npm run typecheck && npm run typecheck:mcp",
     "cf:build": "opennextjs-cloudflare build",
     "cf:preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "cf:deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
-    "cf:typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts",
+    "cf:typegen": "wrangler types --env-interface CloudflareEnv --strict-vars false cloudflare-env.d.ts && cd mcp-server && wrangler types --env-interface WorkerEnv --strict-vars false worker-env.d.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "wrangler d1 migrations apply takemetothefair-db --local",
     "db:migrate:prod": "wrangler d1 migrations apply takemetothefair-db --remote",
@@ -47,7 +47,8 @@
     "gvalidate:urls": "npx tsx gvalidate/index.ts --urls-only",
     "prepare": "husky",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "cf:typecheck": "wrangler types --env-interface CloudflareEnv --strict-vars false cloudflare-env.d.ts --check && cd mcp-server && wrangler types --env-interface WorkerEnv --strict-vars false worker-env.d.ts --check"
   },
   "lint-staged": {
     "*.{ts,tsx,js,jsx}": [
@@ -59,7 +60,7 @@
     ]
   },
   "dependencies": {
-    "@auth/drizzle-adapter": "^1.7.4",
+    "@auth/drizzle-adapter": "1.11.3",
     "@hookform/resolvers": "^5.2.2",
     "@johntarbox/calendar-grid": "^0.1.0",
     "@jonnyboats/calendar-contract": "^1.2.0",
@@ -69,6 +70,7 @@
     "@tailwindcss/typography": "^0.5.19",
     "@takemetothefair/constants": "*",
     "@takemetothefair/datetime": "*",
+    "@takemetothefair/event-series": "*",
     "@takemetothefair/site-fetch": "*",
     "@takemetothefair/utils": "*",
     "@takemetothefair/validation": "*",
@@ -76,10 +78,10 @@
     "@types/qrcode": "^1.5.6",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
-    "drizzle-orm": "^0.38.3",
+    "drizzle-orm": "^0.45.2",
     "jose": "^6.2.2",
     "lucide-react": "^0.563.0",
-    "next-auth": "^5.0.0-beta.30",
+    "next-auth": "5.0.0-beta.32",
     "next-themes": "^0.4.6",
     "qrcode": "^1.5.4",
     "react": "^18",
@@ -93,13 +95,11 @@
     "tailwind-merge": "^3.4.0",
     "tldts": "^7.4.6",
     "web-vitals": "^5.2.0",
-    "zod": "^4.3.6",
-    "@takemetothefair/event-series": "*"
+    "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20241230.0",
     "@eslint/eslintrc": "^3.3.5",
-    "@opennextjs/cloudflare": "^1.19.11",
+    "@opennextjs/cloudflare": "^1.20.6",
     "@playwright/test": "^1.40.0",
     "@testing-library/react": "^14.0.0",
     "@types/better-sqlite3": "^7.6.13",
@@ -107,22 +107,32 @@
     "@types/react": "^18",
     "@types/react-dom": "^18",
     "@vitejs/plugin-react": "^4.0.0",
-    "@vitest/coverage-v8": "^2.1.9",
+    "@vitest/coverage-v8": "^4.1.11",
     "better-sqlite3": "^12.6.2",
-    "drizzle-kit": "^0.30.1",
+    "drizzle-kit": "^0.31.10",
     "eslint": "^9.39.4",
     "eslint-config-next": "^15.1.0",
     "husky": "^9.1.7",
     "jsdom": "^24.0.0",
     "lint-staged": "^16.4.0",
-    "next": "^15.5.19",
+    "next": "15.5.25",
     "postcss": "^8",
     "prettier": "^3.8.1",
     "tailwindcss": "^3.4.1",
     "tsx": "^4.19.2",
     "typescript": "^5",
-    "vitest": "^2.1.9",
+    "vite": "^7.3.6",
+    "vitest": "^4.1.11",
     "wrangler": "^4.60.0"
+  },
+  "overrides": {
+    "fast-uri": "^3.1.7",
+    "ip-address": "^10.7.0",
+    "browserslist": "^4.28.9",
+    "rollup": "4.62.3",
+    "next": {
+      "postcss": "^8.5.28"
+    }
   },
   "browserslist": [
     "defaults",

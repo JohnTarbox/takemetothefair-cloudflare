@@ -6,11 +6,15 @@ import Google from "next-auth/providers/google";
 import Facebook from "next-auth/providers/facebook";
 import { isPlaceholderEmail, PLACEHOLDER_REFUSAL } from "@/lib/auth/placeholder-account";
 import { normalizeEmail } from "@/lib/auth/normalize-email";
+import { hashPasswordPbkdf2, verifyPasswordHash } from "@takemetothefair/utils";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
-import { getCloudflareDb } from "./cloudflare";
+import { getCloudflareDb, type CloudflareStringEnvKey } from "./cloudflare";
 import * as schema from "./db/schema";
 import { eq, and } from "drizzle-orm";
 import { logError } from "./logger";
+import { authorizeCredentials } from "@/lib/auth/credentials-authorize";
+import { signInThrottle, type SignInThrottleResult } from "@/lib/auth/signin-throttle";
+import { getBurstLimiter } from "@/lib/burst-limiter";
 
 type UserRole = "ADMIN" | "PROMOTER" | "VENDOR" | "USER";
 
@@ -65,85 +69,49 @@ export function hasRole(
   return !!session?.user?.roles?.includes(role);
 }
 
-function toHex(buffer: ArrayBuffer): string {
-  return Array.from(new Uint8Array(buffer))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-function fromHex(hex: string): Uint8Array {
-  const bytes = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < hex.length; i += 2) {
-    bytes[i / 2] = parseInt(hex.substring(i, i + 2), 16);
-  }
-  return bytes;
-}
-
-// PBKDF2 password hashing for edge runtime (Web Crypto API)
-const PBKDF2_ITERATIONS = 100_000;
-const SALT_LENGTH = 16; // 16 bytes = 32 hex chars
-
+// OPE-902 — one PBKDF2 format and one constant-time verifier, shared with the
+// MCP Worker (`@takemetothefair/utils/password-hash`). The legacy SHA-256
+// branch is gone: 0 of 177 password rows used it on prod (2026-09-16), and the
+// two Workers' copies of it had drifted apart.
 export async function hashPassword(password: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const salt = crypto.getRandomValues(new Uint8Array(SALT_LENGTH));
-  const keyMaterial = await crypto.subtle.importKey(
-    "raw",
-    encoder.encode(password),
-    "PBKDF2",
-    false,
-    ["deriveBits"]
-  );
-  const derivedBits = await crypto.subtle.deriveBits(
-    { name: "PBKDF2", salt: salt as BufferSource, iterations: PBKDF2_ITERATIONS, hash: "SHA-256" },
-    keyMaterial,
-    256
-  );
-  return `${toHex(salt.buffer)}:${toHex(derivedBits)}`;
-}
-
-async function verifyPbkdf2(password: string, saltHex: string, hashHex: string): Promise<boolean> {
-  const encoder = new TextEncoder();
-  const salt = fromHex(saltHex);
-  const keyMaterial = await crypto.subtle.importKey(
-    "raw",
-    encoder.encode(password),
-    "PBKDF2",
-    false,
-    ["deriveBits"]
-  );
-  const derivedBits = await crypto.subtle.deriveBits(
-    { name: "PBKDF2", salt: salt as BufferSource, iterations: PBKDF2_ITERATIONS, hash: "SHA-256" },
-    keyMaterial,
-    256
-  );
-  return toHex(derivedBits) === hashHex;
-}
-
-// Legacy SHA-256 verification for backward compatibility
-async function verifyLegacySha256(password: string, storedHash: string): Promise<boolean> {
-  const secret = getRuntimeEnv("AUTH_SECRET");
-  if (!secret) return false;
-  const encoder = new TextEncoder();
-  const data = encoder.encode(password + secret);
-  const hash = await crypto.subtle.digest("SHA-256", data);
-  return toHex(hash) === storedHash;
+  return hashPasswordPbkdf2(password);
 }
 
 export async function verifyPassword(password: string, storedHash: string): Promise<boolean> {
-  if (storedHash.includes(":")) {
-    const [salt, hash] = storedHash.split(":");
-    return verifyPbkdf2(password, salt, hash);
+  return verifyPasswordHash(password, storedHash);
+}
+
+/**
+ * OPE-935 — a refused sign-in is a security event, so it is recorded; but the
+ * refusal path is exactly what an attacker drives in volume, so the record is
+ * itself budgeted (5 per 60 s, one shared key) and handed to `waitUntil` so it
+ * never delays or fails the response. The same shape OPE-902 uses for refused
+ * internal keys. The IP is not stored — only which budget refused.
+ */
+function scheduleSignInRefusalRecord(result: SignInThrottleResult, request: Request | undefined) {
+  const work = (async () => {
+    const limiter = getBurstLimiter();
+    if (!limiter || !(await limiter.limit({ key: "auth-signin-refusal-log" })).success) return;
+    await logError(getCloudflareDb(), {
+      level: "warn",
+      source: "auth:signin-throttled",
+      message: `sign-in refused by the burst cap (${result.reason})`,
+      context: { reason: result.reason, path: request ? new URL(request.url).pathname : null },
+    });
+  })().catch(() => {});
+  try {
+    getCloudflareContext().ctx.waitUntil(work);
+  } catch {
+    // No request context (tests, local dev): the promise still runs.
   }
-  // Legacy format: plain SHA-256 hex
-  return verifyLegacySha256(password, storedHash);
 }
 
 // Read env vars at runtime from Cloudflare Pages env
 // (process.env values are inlined at build time and won't have production secrets)
-function getRuntimeEnv(key: string): string | undefined {
+function getRuntimeEnv(key: CloudflareStringEnvKey): string | undefined {
   try {
     const { env } = getCloudflareContext();
-    return (env as unknown as Record<string, string>)[key];
+    return env[key];
   } catch {
     return process.env[key];
   }
@@ -161,74 +129,24 @@ function createAuthConfig(): NextAuthConfig {
         email: { label: "Email", type: "email" },
         password: { label: "Password", type: "password" },
       },
-      async authorize(credentials) {
-        if (!credentials?.email || !credentials?.password) {
-          return null;
-        }
-
-        // OPE-293 — an ingestion placeholder never logs in. Redundant today
-        // (0 of 6,824 hold a password_hash, so the `!user.passwordHash` check
-        // below already refuses them) and deliberately kept anyway: the
-        // password-reset path is what would mint that hash, and a guard that
-        // only works while a second guard holds is not a guard.
-        if (isPlaceholderEmail(credentials.email as string)) {
-          console.warn(`[auth] credentials refused — ${PLACEHOLDER_REFUSAL}`);
-          return null;
-        }
-
+      // OPE-935 — body extracted to `authorizeCredentials` so the throttle-before-
+      // password ordering is testable. `request` is Auth.js's second argument.
+      async authorize(credentials, request) {
         const db = getCloudflareDb();
-
-        try {
-          // OPE-601 — the identity key is case-insensitive.
-          //
-          // This lookup was the worse half of that bug: it locks people out of
-          // accounts they already own. Jan Merrill reset her password
-          // successfully on 2026-08-07 (that route folds case), then could not
-          // sign in as `Admin@kewlkandylz.com`, and registered again 48 minutes
-          // later — which 500'd on her own vendor slug.
-          const user = await db.query.users.findFirst({
-            where: eq(schema.users.email, normalizeEmail(credentials.email as string)),
-          });
-
-          if (!user || !user.passwordHash) {
-            return null;
-          }
-
-          const isValid = await verifyPassword(credentials.password as string, user.passwordHash);
-
-          if (!isValid) {
-            return null;
-          }
-
-          // Re-hash legacy SHA-256 passwords to PBKDF2 on successful login
-          if (!user.passwordHash.includes(":")) {
-            try {
-              const newHash = await hashPassword(credentials.password as string);
-              await db
-                .update(schema.users)
-                .set({ passwordHash: newHash })
-                .where(eq(schema.users.id, user.id));
-            } catch {
-              // Non-fatal: login still succeeds even if re-hash fails
-            }
-          }
-
-          return {
-            id: user.id,
-            email: user.email,
-            name: user.name,
-            image: user.image,
-            role: user.role as UserRole,
-          };
-        } catch (error) {
-          await logError(db, {
-            message: "Auth error",
-            error,
-            source: "lib/auth.ts:authorize",
-            context: { email: credentials.email },
-          });
-          return null;
-        }
+        return authorizeCredentials(credentials, request, {
+          throttle: signInThrottle,
+          findUserByEmail: (email) =>
+            db.query.users.findFirst({ where: eq(schema.users.email, email) }),
+          verifyPassword,
+          onRefusedByThrottle: scheduleSignInRefusalRecord,
+          logAuthError: (error, email) =>
+            logError(db, {
+              message: "Auth error",
+              error,
+              source: "lib/auth.ts:authorize",
+              context: { email },
+            }),
+        });
       },
     }),
   ];

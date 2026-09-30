@@ -33,3 +33,34 @@ describe("eventApprovalBlockReason (OPE-244)", () => {
     expect(eventApprovalBlockReason({ venueId: "", isStatewide: false })).not.toBeNull();
   });
 });
+
+// OPE-1114 — reviewer notes left in public copy.
+import { reviewerMarkerInCopy } from "./event-approval-gate";
+
+describe("reviewerMarkerInCopy", () => {
+  it("catches the Pemaquid specimen, verbatim", () => {
+    expect(
+      reviewerMarkerInCopy(
+        "VENUE TO CONFIRM: traditionally held at Schooner Landing Restaurant & Marina in downtown Damariscotta; some recent editions have reportedly relocated — reviewer should confirm the 2026 venue before approval."
+      )
+    ).not.toBeNull();
+  });
+
+  it.each([
+    ["reviewer should confirm hours", "reviewer should"],
+    ["Confirm the fee before approving.", "before approving"],
+    ["Dates NEEDS VERIFICATION", "NEEDS VERIFICATION"],
+    ["Parking TO VERIFY", "TO VERIFY"],
+    ["TODO: add vendors", "TODO"],
+  ])("matches %j", (text, marker) => {
+    expect(reviewerMarkerInCopy(text)).toBe(marker);
+  });
+
+  it("does NOT match honest reader-facing hedges (the two live rows that say so)", () => {
+    // rockland-farmers-market-winter-2026 / augusta-farmers-market-winter-2026-2027
+    expect(reviewerMarkerInCopy("Hours subject to confirmation.")).toBeNull();
+    expect(reviewerMarkerInCopy("Please confirm with the organizer before you go.")).toBeNull();
+    expect(reviewerMarkerInCopy("A family day with things to do.")).toBeNull(); // lower-case "to do"
+    expect(reviewerMarkerInCopy(null)).toBeNull();
+  });
+});

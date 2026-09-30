@@ -48,6 +48,7 @@ const SCHEMA_SQL = `
     contact_phone TEXT,
     website TEXT,
     description TEXT,
+    pet_friendly TEXT NOT NULL DEFAULT 'UNSET',
     image_url TEXT,
     google_place_id TEXT,
     google_maps_url TEXT,
@@ -64,7 +65,16 @@ const SCHEMA_SQL = `
     created_at INTEGER,
     updated_at INTEGER,
     image_focal_x REAL NOT NULL DEFAULT 0.5,
-    image_focal_y REAL NOT NULL DEFAULT 0.5
+    image_focal_y REAL NOT NULL DEFAULT 0.5,
+    -- OPE-1180 (drizzle/0333)
+    use_started_edtf TEXT,
+    use_ended_edtf TEXT,
+    use_ended_earliest INTEGER,
+    use_ended_latest INTEGER,
+    current_state TEXT,
+    current_use TEXT,
+    wikidata_qid TEXT,
+    nrhp_ref TEXT
   );
   CREATE TABLE admin_actions (
     id TEXT PRIMARY KEY,

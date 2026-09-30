@@ -10,7 +10,20 @@ import { and, eq } from "drizzle-orm";
 import type { Database } from "@/lib/db";
 import { events, eventSeries, eventDays, adminActions } from "@/lib/db/schema";
 import { createSlug, appendSlugSegment, unsafeSlug } from "@takemetothefair/utils";
+import { partitionEventCategories } from "@takemetothefair/constants";
+
+/** Tolerant read of the stored JSON array; a malformed value is no categories. */
+function parseCategoriesJson(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === "string") : [];
+  } catch {
+    return [];
+  }
+}
 import { getVenueZoneYear } from "@/lib/datetime";
+import { checkEventVenue } from "@/lib/venues/former-venue-guard";
 import {
   inheritSeriesDefaults,
   type SeriesRow,
@@ -54,6 +67,8 @@ export type CreateOccurrenceResult =
       attachedEventDay?: boolean;
     }
   | { created: false; reason: "promoter_required"; year: number }
+  /** OPE-1180 — an EXPLICIT venue override is a FORMER venue closed before this date. */
+  | { created: false; reason: "former_venue_after_closure"; message: string; year: number }
   | { created: true; occurrenceId: string; slug: string; year: number };
 
 /** Year of an existing series sibling — from its start date, else a -YYYY slug suffix. */
@@ -204,6 +219,23 @@ export async function createOccurrenceForSeries(
   // events.promoter_id is NOT NULL — a series with no default promoter needs one.
   if (!values.promoterId) return { created: false, reason: "promoter_required", year };
 
+  // OPE-1180 — never place an occurrence at a venue that had closed by then.
+  // An explicit override is the caller's choice, so it is refused with the
+  // reason; a venue INHERITED from the series is dropped (the occurrence is
+  // already flagged for review), because the series outlived its old grounds.
+  const formerVenue = await checkEventVenue(db, values.venueId, values.endDate ?? values.startDate);
+  if (formerVenue.kind === "refuse") {
+    if (input.overrides?.venueId) {
+      return {
+        created: false,
+        reason: "former_venue_after_closure",
+        message: formerVenue.message,
+        year,
+      };
+    }
+    values.venueId = null;
+  }
+
   // Year-suffixed slug, uniqueness-resolved (mirrors suggest_event).
   //
   // OPE-581 — do not stamp a year the name already ends with. Discovery names
@@ -243,7 +275,14 @@ export async function createOccurrenceForSeries(
     endDate: values.endDate,
     datesConfirmed: values.datesConfirmed,
     recurrenceRule: values.recurrenceRule,
-    categories: values.categories ?? "[]",
+    // OPE-1058 — a copy path, filtered rather than trusted. The series row was
+    // validated when it was written, but this is a WRITE to events.categories
+    // and the guard is keyed on the act, not on where the value came from: a
+    // series predating the allow-list must not seed new rows with off-list
+    // values.
+    categories: JSON.stringify(
+      partitionEventCategories(parseCategoriesJson(values.categories)).kept
+    ),
     tags: values.tags ?? "[]",
     imageUrl: values.imageUrl,
     primaryAudience: values.primaryAudience,

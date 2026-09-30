@@ -16,7 +16,7 @@
  * full extra calendar day of visibility, which covers the
  * stored-anchor-precedes-actual-end-time gap without a per-row join.
  */
-import { sql, gte, type SQL } from "drizzle-orm";
+import { sql, type SQL } from "drizzle-orm";
 import { events, eventDays } from "@/lib/db/schema";
 
 export { normalizeEventDate } from "@takemetothefair/utils";
@@ -34,13 +34,20 @@ export const UPCOMING_END_GRACE_MS = 24 * 60 * 60 * 1000;
  * conservative fix that matches operator intuition ("an event happening
  * today should be searchable today").
  *
- * For surfaces that need to include events with no end_date (e.g.
- * promoters/[slug] which falls back to the home-page rule), wrap in
- * `or(upcomingEndPredicate(now), isNull(events.endDate))`.
+ * OPE-1035 — an event with NO end_date is treated as ending on its start
+ * date: `COALESCE(end_date, start_date)`. This used to be `end_date >= cutoff`,
+ * and `NULL >= x` is NULL, so every NULL-end event was dropped from every
+ * upcoming list while `search_events` and the detail page served it. Measured
+ * 2026-09-15: 9 upcoming public events, including an APPROVED fair missing from
+ * its own state's this-weekend page. The old docblock told callers to wrap in
+ * `or(…, isNull(events.endDate))` to include them; the two surfaces that
+ * handled NULL did so to INCLUDE the rows (admin/coverage; api/search's
+ * `isNull(end) AND start >= now`), and no caller relied on the exclusion.
+ * A row with neither date still matches nothing.
  */
 export function upcomingEndPredicate(now: Date): SQL {
-  const cutoff = new Date(now.getTime() - UPCOMING_END_GRACE_MS);
-  return gte(events.endDate, cutoff);
+  const cutoffSec = Math.floor((now.getTime() - UPCOMING_END_GRACE_MS) / 1000);
+  return sql`COALESCE(${events.endDate}, ${events.startDate}) >= ${cutoffSec}`;
 }
 
 /**
@@ -84,7 +91,8 @@ export function whenWindowEnd(when: string | undefined, from: Date = new Date())
  */
 export function upcomingEndPredicateRaw(now: Date): SQL {
   const cutoffSec = Math.floor((now.getTime() - UPCOMING_END_GRACE_MS) / 1000);
-  return sql`${events.endDate} >= ${cutoffSec}`;
+  // OPE-1035 — same NULL-end semantics as upcomingEndPredicate.
+  return sql`COALESCE(${events.endDate}, ${events.startDate}) >= ${cutoffSec}`;
 }
 
 /** Format a Date as a UTC "YYYY-MM-DD" day string (matches `event_days.date`). */

@@ -51,6 +51,10 @@ const HTML_ENTITIES: Record<string, string> = {
   "&copy;": "©",
   "&reg;": "®",
   "&trade;": "™",
+  // OPE-1107 — the newsletter's "Details &rarr;" / "Apply via organizer &rarr;"
+  // links reached the text/plain part raw; the map had no arrows.
+  "&rarr;": "→",
+  "&larr;": "←",
 };
 
 export function decodeHtmlEntities(text: string): string {
@@ -503,6 +507,7 @@ export * from "./event-date-gates";
 // Source-tier classifier for B5 dedup enrichment. Pure-function helper
 // consumed by the main app and the MCP inbound-email workflow.
 export * from "./source-tier";
+export * from "./venue-location";
 
 // Blog FAQ source classifier — shared between main app and MCP server so
 // both surfaces agree on which source (column / markdown / none) is driving
@@ -515,6 +520,9 @@ export * from "./blog-faq-coherence";
 // reliability scoring can read clean columns rather than parse free-form
 // labels at query time. Analyst backlog Item 1 (2026-05-26).
 export * from "./source-classification";
+export * from "./source-state";
+export * from "./former-venue";
+export * from "./dates-confirmed-gate";
 // OPE-411 — ingest-time sanity checks for user-supplied submissions. Shared
 // because BOTH the app route and the MCP suggest_event tool create events from
 // them, and a validator wired into one of two parallel paths gets bypassed.
@@ -547,10 +555,20 @@ export * from "./vendor-hierarchy";
 // string. Mirrors the displayVenueName sweep from PR #296/#298.
 export * from "./vendor-display";
 
+// OPE-1111 (2026-09-22): the vendor gallery's pure half, shared so the web
+// page and get_vendor_details cannot disagree about what is in a gallery.
+export * from "./vendor-gallery";
+
+// OPE-1112 (2026-09-22): "is this a link to an image?" — shared by the
+// self-service form, the profile API and update_vendor, so a page URL cannot
+// enter logo_url through whichever writer nobody remembered to guard.
+export * from "./image-url";
+
 // Hardening (2026-06-10): constant-time secret comparison, shared by the
 // main app and the MCP Worker so both verify INTERNAL_API_KEY /
 // CLAUDE_READONLY_TOKEN against the same audited implementation.
 export * from "./timing-safe-equal";
+export * from "./password-hash";
 
 // SYN1 (2026-06-12): push-on-change syndication policy — mirrored-field gate +
 // snapshot shape, shared by the five mutation write-paths and SYN2 batch-read.
@@ -580,6 +598,8 @@ export * from "./chunk-in-array";
 // K36 (2026-06-25): stateless one-click unsubscribe tokens. Shared so the MCP
 // Worker (footer render) and the main app (/unsubscribe verify) agree.
 export * from "./email-unsubscribe";
+// OPE-864 — opaque (sealed) unsubscribe claims; see unsubscribe-seal.ts.
+export * from "./unsubscribe-seal";
 
 // OPE-47 (2026-07): single source of truth for date contiguity. Shared so the
 // "Daily:" display label (DailyScheduleDisplay) and every ingest path that sets
@@ -612,6 +632,7 @@ export * from "./mutation-audit";
 // classification only: it never rewrites or re-hosts, because re-hosting may be
 // MORE restricted than hotlinking and that read is John's.
 export * from "./image-host";
+export * from "./image-fetch";
 export * from "./gsc-milestones";
 
 /**
@@ -623,3 +644,26 @@ export * from "./next-gate-flags";
 
 // OPE-649 — shared with the MCP Worker; see the file header.
 export * from "./placeholder-account";
+
+// OPE-794 — vendor-capacity phrase classifier; shared with the MCP Worker.
+export * from "./vendor-capacity";
+
+// OPE-768 — inbound email thread resolution; shared with the MCP Worker.
+export * from "./email-thread";
+
+// OPE-837 — same-domain page discovery for the submit@ crawl, plus the two
+// type-specific extractors it routes to (inline rosters, admission prices).
+export * from "./page-crawl";
+export * from "./inline-roster";
+export * from "./admission-price";
+
+// OPE-851 — the "Ask about this fair" mailto, shared so the inbound parser
+// test can prove the URL it embeds actually reaches `parsed_url`.
+export * from "./ask-about-event";
+export * from "./promoter-dedup";
+export * from "./email-providers";
+// OPE-1030 — error text with its cause chain, for every error_logs writer.
+export * from "./describe-error";
+export * from "./field-grounding";
+// OPE-1061 — the four-state pet_friendly field: write gate + display rules.
+export * from "./pet-policy";

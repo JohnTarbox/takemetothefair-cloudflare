@@ -18,6 +18,7 @@ import { VendorsView } from "@/components/vendors/vendors-view";
 import { logError } from "@/lib/logger";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
 import { ItemListTracker } from "@/components/analytics/ItemListTracker";
+import { NewsletterSignupBlock } from "@/components/newsletter/newsletter-signup-block";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { Pagination } from "@/components/ui/pagination";
 import { MobileFilterDrawer } from "@/components/ui/mobile-filter-drawer";
@@ -25,6 +26,7 @@ import {
   FeaturedVendorsSection,
   type FeaturedVendor,
 } from "@/components/vendors/FeaturedVendorsSection";
+import { withD1ReadLogged } from "@/lib/db/d1-resilience";
 
 const PAGE_SIZE = 50;
 
@@ -78,7 +80,19 @@ interface SearchParams {
   page?: string;
 }
 
-async function getVendors(searchParams: SearchParams, favoriteUserId?: string) {
+/**
+ * OPE-790 — one jittered retry on a Cloudflare-side D1 blip before the failure
+ * reaches the user. Wraps the fetcher rather than its body so every call site
+ * inherits it, and so the diagnostic catch inside stays exactly as OPE-548 left
+ * it. Only a PLATFORM fault is retried; a query defect fails the same way twice.
+ */
+function getVendors(searchParams: SearchParams, favoriteUserId?: string) {
+  return withD1ReadLogged("app/vendors/page.tsx:getVendors", () =>
+    getVendorsOnce(searchParams, favoriteUserId)
+  );
+}
+
+async function getVendorsOnce(searchParams: SearchParams, favoriteUserId?: string) {
   const db = getCloudflareDb();
 
   try {
@@ -437,7 +451,17 @@ async function getVendors(searchParams: SearchParams, favoriteUserId?: string) {
   }
 }
 
-async function getVendorTypes() {
+/**
+ * OPE-790 — one jittered retry on a Cloudflare-side D1 blip before the failure
+ * reaches the user. Wraps the fetcher rather than its body so every call site
+ * inherits it, and so the diagnostic catch inside stays exactly as OPE-548 left
+ * it. Only a PLATFORM fault is retried; a query defect fails the same way twice.
+ */
+function getVendorTypes() {
+  return withD1ReadLogged("app/vendors/page.tsx:getVendorTypes", () => getVendorTypesOnce());
+}
+
+async function getVendorTypesOnce() {
   const db = getCloudflareDb();
 
   try {
@@ -467,7 +491,19 @@ async function getVendorTypes() {
  * and caps to 6; we hand over the full eligible set so the rotation can
  * shuffle across the full pool, not just whatever fits in 6 slots.
  */
-async function getFeaturedVendors(typeFilter?: string): Promise<FeaturedVendor[]> {
+/**
+ * OPE-790 — one jittered retry on a Cloudflare-side D1 blip before the failure
+ * reaches the user. Wraps the fetcher rather than its body so every call site
+ * inherits it, and so the diagnostic catch inside stays exactly as OPE-548 left
+ * it. Only a PLATFORM fault is retried; a query defect fails the same way twice.
+ */
+function getFeaturedVendors(typeFilter?: string) {
+  return withD1ReadLogged("app/vendors/page.tsx:getFeaturedVendors", () =>
+    getFeaturedVendorsOnce(typeFilter)
+  );
+}
+
+async function getFeaturedVendorsOnce(typeFilter?: string): Promise<FeaturedVendor[]> {
   const db = getCloudflareDb();
   const conditions: (ReturnType<typeof eq> | ReturnType<typeof isNull>)[] = [
     eq(vendors.enhancedProfile, true),
@@ -586,6 +622,12 @@ export default async function VendorsPage({
           </Link>
         </p>
       </div>
+
+      {/* OPE-1209 — the vendor newsletter, primary on the vendor directory.
+          Before this the only signup here was the footer's attendee form, so
+          an exhibitor who subscribed from this page joined the weekend list.
+          The footer's form stays, labelled with its own name. */}
+      <NewsletterSignupBlock source="vendors-directory" audience="vendor" />
 
       <FeaturedVendorsSection vendors={featuredVendors} />
 

@@ -234,8 +234,10 @@ export const PATCH = withAuth<{ id: string }>(
 
         updateData.status = data.status;
 
-        // Track the status change for analytics
-        trackVendorStatusChange(
+        // Track the status change for analytics. Awaited (OPE-994): unawaited in a
+        // request context it can be cancelled when the response returns;
+        // trackServerEvent swallows its own errors, so this cannot fail the save.
+        await trackVendorStatusChange(
           db,
           data.eventVendorId,
           id,
@@ -271,7 +273,7 @@ export const PATCH = withAuth<{ id: string }>(
           .where(eq(events.id, id))
           .limit(1);
         if (eventRow) {
-          const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+          const env = getCloudflareEnv();
           await pingIndexNow(
             db,
             indexNowUrlFor("events", eventRow.slug),

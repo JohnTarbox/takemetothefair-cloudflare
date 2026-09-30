@@ -161,8 +161,21 @@ export async function loadActivity(db: Db, sinceDate: Date): Promise<ActivityEnt
     });
   }
 
-  merged.sort((a, b) => b.ts - a.ts);
-  return merged.slice(0, 10);
+  return capActivityPerSide(merged, 10);
+}
+
+/**
+ * OPE-1131 — the page shows TWO feeds (visitor conversions; operator admin +
+ * IndexNow), split from this one list. Capping the merged list at 10 before the
+ * split let a burst of admin rows crowd every conversion out, and "User
+ * activity" then said "No recent activity in this window" while conversions
+ * existed. Cap each side separately, newest first.
+ */
+export function capActivityPerSide(entries: ActivityEntry[], perSide: number): ActivityEntry[] {
+  const sorted = [...entries].sort((a, b) => b.ts - a.ts);
+  const user = sorted.filter((e) => e.kind === "conversion").slice(0, perSide);
+  const operator = sorted.filter((e) => e.kind !== "conversion").slice(0, perSide);
+  return [...user, ...operator].sort((a, b) => b.ts - a.ts);
 }
 
 export async function loadAccountEngagement(
@@ -213,6 +226,8 @@ export async function loadAccountEngagement(
     signals,
     sessions,
     rate,
+    // OPE-1131 — no first-party events is no measurement, not a 0% rate.
+    rateMeasured: rateOf(signals, sessions, "no first-party events in window"),
     windowDays: days,
     breakdown: { vendor_claims, event_favorites, contact_clicks },
   };
@@ -263,12 +278,44 @@ export async function loadThisWeeksActions(db: Db, sinceDate: Date): Promise<Thi
  * GREEN/INDETERMINATE KPI from the queue. The Recent Activity panel surfaces
  * the resolution from admin_actions.
  */
+import { isLiveMeasurement, rate as rateOf, type MeasurementState } from "./render-state";
+
 const TIER_1_REC_AFFECTED_THRESHOLD = 50;
+
+/**
+ * OPE-808 scope 3 — does this KPI state describe a live measurement?
+ *
+ * `STALE` means the backing feed stopped; the reading describes a closed
+ * cohort. Everything else is a real current observation, breach or not.
+ *
+ * This mapping is what decides whether a queue row AGES. Without it the
+ * time-to-index P0 read "breached · 70d" and got worse every day precisely
+ * because its feed had closed — urgency manufactured out of a rendering fact.
+ */
+function measurementStateForKpi(state: string): MeasurementState {
+  return state === "STALE" ? "stale" : "ok";
+}
 
 export async function loadActionQueue(
   db: Db,
   kpiStates: Map<KpiName, KpiStateRow>
 ): Promise<ActionQueueEntry[]> {
+  return (await loadActionQueueWithSuppressed(db, kpiStates)).entries;
+}
+
+/**
+ * OPE-1161 E16 — the queue AND the KPIs it deliberately left out.
+ *
+ * A YELLOW KPI that was RED in the last 7 days is suppressed (it just
+ * stabilised). That rule is fine; printing "All clear" over it was not — the
+ * card claimed no KPI was YELLOW while one was. `suppressed` lets the card say
+ * how many it is holding back and why. `loadActionQueue` keeps its old return
+ * for the CPI routes that read it.
+ */
+export async function loadActionQueueWithSuppressed(
+  db: Db,
+  kpiStates: Map<KpiName, KpiStateRow>
+): Promise<{ entries: ActionQueueEntry[]; suppressed: KpiName[] }> {
   const sevenDaysAgo = new Date(Date.now() - 7 * 86400 * 1000);
   const [redInLast7d, hotRecs] = await Promise.all([
     // One query that lists which KPIs were RED at any point in the last 7d.
@@ -298,11 +345,17 @@ export async function loadActionQueue(
   // OPE-78 — build entries WITHOUT the derived SLA fields, then decorate + sort
   // once below (age all items against a single `now`).
   const base: Omit<ActionQueueEntry, "hoursInRed" | "slaStatus">[] = [];
+  const suppressed: KpiName[] = [];
 
   // Stable KPI ordering — matches KPI_NAMES so the queue doesn't reshuffle
   // visually as states flip between fires.
   for (const [kpi, row] of kpiStates) {
     const t = KPI_THRESHOLDS[kpi];
+    // A row only ages while it describes something measured now. Computed per
+    // row rather than per branch so a future state cannot be added to one
+    // branch and forgotten in the others.
+    const ages = isLiveMeasurement({ state: measurementStateForKpi(row.state) });
+    const detectedAt = ages ? (row.firstDetectedAt?.toISOString() ?? null) : null;
     if (row.state === "STALE") {
       // STALE = data feed is broken. Surface as P0 with a "fix the source"
       // prompt — broken data invalidates GREEN/YELLOW/RED entirely.
@@ -312,10 +365,18 @@ export async function loadActionQueue(
       base.push({
         priority: "P0",
         source: "kpi",
-        title: `${t.displayName} data feed stale (${ageLabel})`,
+        // OPE-808 scope 3 — badge it, and stop it ageing.
+        //
+        // A stale feed IS actionable (fix the source), so the row stays. What
+        // it is NOT is a live breach, and ageing it manufactures urgency out of
+        // a rendering fact: the time-to-index KPI read "breached · 70d" and got
+        // worse every day precisely BECAUSE its feed closed. `firstDetectedAt`
+        // is dropped so the SLA decorator cannot age it — see
+        // `isLiveMeasurement`.
+        title: `${t.displayName} — stale feed, not a live breach (${ageLabel})`,
         effort: "Investigate data source",
         href: t.href,
-        firstDetectedAt: row.firstDetectedAt?.toISOString() ?? null,
+        firstDetectedAt: detectedAt,
         refKey: kpi,
       });
     } else if (row.state === "RED") {
@@ -325,17 +386,19 @@ export async function loadActionQueue(
         title: actionTitleForKpi(kpi, row.value),
         effort: t.effort,
         href: t.href,
-        firstDetectedAt: row.firstDetectedAt?.toISOString() ?? null,
+        firstDetectedAt: detectedAt,
         refKey: kpi,
       });
-    } else if (row.state === "YELLOW" && !redRecently.has(kpi)) {
+    } else if (row.state === "YELLOW" && redRecently.has(kpi)) {
+      suppressed.push(kpi);
+    } else if (row.state === "YELLOW") {
       base.push({
         priority: "P1",
         source: "kpi",
         title: actionTitleForKpi(kpi, row.value),
         effort: t.effort,
         href: t.href,
-        firstDetectedAt: row.firstDetectedAt?.toISOString() ?? null,
+        firstDetectedAt: detectedAt,
         refKey: kpi,
       });
     }
@@ -363,5 +426,5 @@ export async function loadActionQueue(
     ...actionQueueSla(e.priority, e.firstDetectedAt, now),
   }));
   entries.sort(compareActionQueueEntries);
-  return entries;
+  return { entries, suppressed };
 }

@@ -31,7 +31,7 @@ import { logError } from "./logger.js";
 import { chunkIds } from "@takemetothefair/utils";
 // OPE-547 — shared with the get_roster_coverage metric so the writer and the
 // reader cannot disagree about what "already rostered" means.
-import { ROSTER_EVIDENCE_MIN } from "@takemetothefair/constants";
+import { AUTO_OCCURRED_REASON, ROSTER_EVIDENCE_MIN } from "@takemetothefair/constants";
 import type { Db } from "./db.js";
 
 /** Per-run bounds — keep the sweep within cron CPU/subrequest limits. */
@@ -63,6 +63,24 @@ export interface OccurredSweepResult {
   rosterEnqueueLimitHit: boolean;
 }
 
+/**
+ * OPE-1176 — when an event is over: its end date, or its START date when no end
+ * date was stored.
+ *
+ * Single-day events arrive with `end_date` NULL from at least two writers
+ * (`suggest_event` → vendor_submission, and the inbound-email workflow →
+ * email_submission). Keyed on `end_date` alone, Pass 1 never transitioned them
+ * and Pass 3 never counted them as over: measured 2026-09-27, 13 APPROVED
+ * events still carried a NULL end date, 8 of them already past. Fixing the
+ * reader covers every writer, including ones not yet written.
+ *
+ * Raw seconds, not a Date: D1 stores these columns as unix SECONDS and a bound
+ * Date in raw SQL is not converted by the column mapper.
+ */
+function effectiveEndBefore(now: Date) {
+  return sql`COALESCE(${events.endDate}, ${events.startDate}) < ${Math.floor(now.getTime() / 1000)}`;
+}
+
 export async function runOccurredTransitionSweep(
   db: Db,
   opts?: { now?: Date }
@@ -91,12 +109,12 @@ export async function runOccurredTransitionSweep(
         and(
           eq(events.status, "APPROVED"),
           inArray(events.lifecycleStatus, ["SCHEDULED", "RESCHEDULED", "MOVED_ONLINE"]),
-          isNotNull(events.endDate),
-          lt(events.endDate, now),
+          // OPE-1176 — was `end_date IS NOT NULL AND end_date < now`.
+          effectiveEndBefore(now),
           isNull(events.mergedInto)
         )
       )
-      .orderBy(events.endDate)
+      .orderBy(sql`COALESCE(${events.endDate}, ${events.startDate})`)
       .limit(TRANSITION_LIMIT);
   } catch (error) {
     result.errors++;
@@ -120,7 +138,7 @@ export async function runOccurredTransitionSweep(
           .set({
             lifecycleStatus: "OCCURRED",
             lifecycleStatusChangedAt: now,
-            lifecycleReason: "auto: end date passed",
+            lifecycleReason: AUTO_OCCURRED_REASON,
             updatedAt: now,
           })
           .where(eq(events.id, ev.id)),
@@ -132,7 +150,7 @@ export async function runOccurredTransitionSweep(
           payloadJson: JSON.stringify({
             previous_lifecycle: ev.lifecycleStatus,
             new_lifecycle: "OCCURRED",
-            reason: "auto: end date passed",
+            reason: AUTO_OCCURRED_REASON,
             slug: ev.slug,
             via: "occurred-sweep",
           }),
@@ -268,7 +286,8 @@ export async function runOccurredTransitionSweep(
   // the end_date arm covers the 123 past TENTATIVE rows Pass 1 can never reach.
   const isEventOver = or(
     eq(events.lifecycleStatus, "OCCURRED"),
-    and(isNotNull(events.endDate), lt(events.endDate, now))
+    // OPE-1176 — a past single-day event with no stored end date is over too.
+    effectiveEndBefore(now)
   );
 
   // Roster-grade links the row already holds. Deliberately the SAME predicate

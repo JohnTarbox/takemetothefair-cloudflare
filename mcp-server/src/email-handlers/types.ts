@@ -65,6 +65,11 @@ export type ReplyKind =
   // attachment never left the phone, and each got a `no-url` reply that gave
   // the sender no reason to suspect anything had gone wrong on their end.
   | "empty-message"
+  // OPE-985 — the "ask about this event" mailto sent untouched: the fence and
+  // our event URL, no question. NEVER SENT. Recorded so the row is countable
+  // and flagged for a human; the standard acknowledgement would have thanked
+  // the sender for a question nobody can read.
+  | "blank-question"
   // OPE-357 (Demux D-1b) — the project router could not place this email and the
   // OPE-327 guard allowed a question. We asked the sender WHICH project/fair they
   // meant rather than telling them we could not understand them. The row carrying
@@ -108,6 +113,10 @@ export type ReplyKind =
   // Generic per-intent acks (initial / timeout fallback)
   | "correction-ack"
   | "support-ack"
+  // OPE-1134 — intent-matched acks for the two intents the dispatch collapses
+  // (vendor_inquiry → support, claim_request → correction). See ack-kind.ts.
+  | "vendor-inquiry-ack"
+  | "claim-request-ack"
   // OPE-706 — the reply-thread variant of the generic acks. Fires INSTEAD of
   // `support-ack` / `correction-ack` when the inbound's In-Reply-To or
   // References names one of our own message-ids, i.e. the sender is answering
@@ -161,7 +170,13 @@ export type ReplyKind =
 /** Status to write back to inbound_emails.status when the workflow ends.
  *  Failed paths no longer return this — they throw, and the workflow's
  *  outer catch records status='failed' from the caught error. */
-export type FinalStatus = "replied" | "forwarded";
+/**
+ * OPE-985 B — `awaiting_human` (OPE-1018's value, reused) is for a row we DID
+ * write to but that still owes the reader a person: the blank-question prompt
+ * asks them to resend, so marking it `replied` would make a row nobody has
+ * answered read as handled. Same column, same filter on /admin/inbound-emails.
+ */
+export type FinalStatus = "replied" | "forwarded" | "awaiting_human";
 
 /**
  * Values that can appear in `HandlerResult.replyParams`. Restricted to

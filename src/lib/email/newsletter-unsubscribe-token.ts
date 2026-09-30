@@ -7,6 +7,12 @@
 // Pure functions — the signing secret is injected so they're unit-testable. The
 // route/send path resolves the secret from the Worker env (see
 // resolveUnsubscribeSecret). One-click, no login (CAN-SPAM requirement).
+//
+// OPE-864 — new tokens are `v2.<AES-GCM sealed claim>`: still stateless, still
+// unforgeable, and no longer carrying the address in readable base64. The
+// legacy `base64url(email).HMAC` form above still verifies for delivered links.
+
+import { openClaim, sealClaim } from "@takemetothefair/utils";
 
 function b64urlEncode(bytes: Uint8Array): string {
   let bin = "";
@@ -45,24 +51,101 @@ function timingSafeEqual(a: string, b: string): boolean {
 /** The signing secret for unsubscribe tokens. Reuses AUTH_SECRET (a stable
  *  server secret) unless a dedicated NEWSLETTER_UNSUBSCRIBE_SECRET is set. Kept
  *  here (not in the route file) so route modules only export handlers. */
-export function resolveUnsubscribeSecret(
-  env: Record<string, string | undefined>
-): string | undefined {
+export function resolveUnsubscribeSecret(env: {
+  NEWSLETTER_UNSUBSCRIBE_SECRET?: string;
+  AUTH_SECRET?: string;
+  NEXTAUTH_SECRET?: string;
+}): string | undefined {
   return env.NEWSLETTER_UNSUBSCRIBE_SECRET || env.AUTH_SECRET || env.NEXTAUTH_SECRET;
 }
 
-/** Sign a one-click unsubscribe token for `email`. */
-export async function signUnsubscribeToken(email: string, secret: string): Promise<string> {
-  const payload = b64urlEncode(new TextEncoder().encode(email.trim().toLowerCase()));
+/**
+ * OPE-864 — the separator between the email and the list inside the payload.
+ *
+ * `|` is not legal in an unquoted email local part, and every address we sign is
+ * `.trim().toLowerCase()`d and came through a Zod `.email()` validator, so it
+ * cannot appear in the address half. If that ever stops being true, the split
+ * below takes everything BEFORE the last separator as the email, which
+ * degrades to "unrecognised list" rather than to a wrong address.
+ */
+const LIST_SEP = "|";
+
+export interface UnsubscribeTokenClaims {
+  /** Normalized (trimmed, lowercased) address. */
+  email: string;
+  /**
+   * Which list this token unsubscribes from, or `null` for a LEGACY token.
+   *
+   * ⚠️ `null` means "every list", and that is deliberate. Tokens signed before
+   * OPE-864 are sitting in people's inboxes with no list component, and they
+   * were sent under a promise that clicking them stops all our mail. Narrowing
+   * a legacy token to one list would leave someone subscribed who believes they
+   * unsubscribed — a strictly worse failure than the one being fixed.
+   */
+  list: string | null;
+}
+
+/**
+ * Sign a one-click unsubscribe token for `email`, optionally scoped to `list`.
+ *
+ * The list travels INSIDE the signed payload rather than as a separate URL
+ * parameter, so it cannot be edited in transit. An attacker who could change
+ * `?list=vendor` to `?list=weekend` on someone else's link could unsubscribe
+ * them from a list they never asked to leave.
+ */
+export async function signUnsubscribeToken(
+  email: string,
+  secret: string,
+  list?: string | null
+): Promise<string> {
+  const normalized = email.trim().toLowerCase();
+  const claim = list ? `${normalized}${LIST_SEP}${list}` : normalized;
+  // OPE-864 — SEALED, not signed-and-readable: the old payload was plain
+  // base64 (`am9obkBwaW1ib2F0LmNvbXx3ZWVrZW5k` → `john@pimboat.com|weekend`).
+  // AES-GCM authenticates as the HMAC did, and hides the address.
+  return `${SEALED_PREFIX}${await sealClaim(secret, claim)}`;
+}
+
+/** Marks a sealed token. A legacy token's payload is ≥ 8 chars before its dot, so it can't start with this. */
+const SEALED_PREFIX = "v2.";
+
+function parseClaim(claim: string): UnsubscribeTokenClaims | null {
+  const sep = claim.lastIndexOf(LIST_SEP);
+  const email = sep === -1 ? claim : claim.slice(0, sep);
+  const list = sep === -1 ? null : claim.slice(sep + 1);
+  if (!email.includes("@")) return null;
+  return { email, list: list || null };
+}
+
+/** Sign in the PRE-OPE-864 format. Kept so tests can prove every delivered link still verifies. */
+export async function signLegacyUnsubscribeToken(
+  email: string,
+  secret: string,
+  list?: string | null
+): Promise<string> {
+  const normalized = email.trim().toLowerCase();
+  const claim = list ? `${normalized}${LIST_SEP}${list}` : normalized;
+  const payload = b64urlEncode(new TextEncoder().encode(claim));
   const sig = await hmacB64url(secret, payload);
   return `${payload}.${sig}`;
 }
 
-/** Verify a token; returns the (normalized) email if valid, else null. */
+/**
+ * Verify a token; returns the claims if valid, else null.
+ *
+ * Legacy tokens (no separator in the payload) verify exactly as before and
+ * report `list: null`. That path is not incidental — it is tested, because it
+ * is what every link already delivered depends on.
+ */
 export async function verifyUnsubscribeToken(
   token: string,
   secret: string
-): Promise<string | null> {
+): Promise<UnsubscribeTokenClaims | null> {
+  if (token.startsWith(SEALED_PREFIX)) {
+    const claim = await openClaim(secret, token.slice(SEALED_PREFIX.length));
+    return claim ? parseClaim(claim) : null;
+  }
+  // Legacy (pre-OPE-864) token — still in inboxes, so still honoured.
   const dot = token.indexOf(".");
   if (dot <= 0 || dot === token.length - 1) return null;
   const payload = token.slice(0, dot);
@@ -70,8 +153,7 @@ export async function verifyUnsubscribeToken(
   const expected = await hmacB64url(secret, payload);
   if (!timingSafeEqual(sig, expected)) return null;
   try {
-    const email = b64urlDecodeToString(payload);
-    return email.includes("@") ? email : null;
+    return parseClaim(b64urlDecodeToString(payload));
   } catch {
     return null;
   }

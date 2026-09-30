@@ -11,6 +11,10 @@
  * Nothing had changed. `update_event`'s own response says field-level edits
  * leave no audit trail (OPE-505), so a confirmation whose before/after are in
  * different units is the only record of the edit.
+ *
+ * OPE-1124 then presents BOTH sides in dollars (`presentStoredValue`, applied
+ * in admin.ts after `reportedNewValue`). The parity asserted here — both sides
+ * derived from the stored column — is what makes that one conversion safe.
  */
 import { describe, it, expect } from "vitest";
 import { reportedNewValue } from "../src/helpers.js";

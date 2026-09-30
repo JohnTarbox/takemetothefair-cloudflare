@@ -45,8 +45,16 @@ const venue = {
 // OPE-32 — the structural tests build DATED series, so the suppression guard
 // never fires; this wrapper asserts non-null and narrows the type for them.
 // (Dateless suppression has its own describe block using the raw builder.)
-const buildSeries = (s: SeriesForSchema, o: OccurrenceForSchema[]): Record<string, unknown> => {
-  const ld = buildEventSeriesJsonLd(s, o);
+// OPE-1147 — the builder is past-aware now, so these structural fixtures (2025
+// and 2026 dates) pin `now` BEFORE them: they describe UPCOMING editions, which
+// is what they always meant. Past editions have their own describe block below.
+const FIXTURE_NOW = new Date("2025-01-01T00:00:00Z");
+const buildSeries = (
+  s: SeriesForSchema,
+  o: OccurrenceForSchema[],
+  now: Date = FIXTURE_NOW
+): Record<string, unknown> => {
+  const ld = buildEventSeriesJsonLd(s, o, now);
   if (!ld) throw new Error("expected a non-null EventSeries (dated fixture)");
   return ld;
 };
@@ -415,5 +423,94 @@ describe("OPE-32 — dateless suppression", () => {
   it("omits subEvent entirely when every occurrence is dateless", () => {
     const ld = buildSeries(series, [occ({ slug: "tbd", year: null, startDateIso: null })]);
     expect(ld).not.toHaveProperty("subEvent");
+  });
+});
+
+describe("OPE-1147 — a past edition is never EventScheduled", () => {
+  const NOW = new Date("2026-09-24T12:00:00Z");
+  const upcoming = occ({
+    slug: "next",
+    year: 2026,
+    startDateIso: "2026-10-03",
+    endDateIso: "2026-10-04",
+  });
+  const pastOccurred = occ({
+    slug: "last",
+    year: 2025,
+    startDateIso: "2025-10-04",
+    endDateIso: "2025-10-05",
+    lifecycleStatus: "OCCURRED",
+  });
+  const pastNoLifecycle = occ({ slug: "older", year: 2024, startDateIso: "2024-10-05" });
+  const pastTentative = occ({
+    slug: "unconfirmed",
+    year: 2023,
+    startDateIso: "2023-10-07",
+    lifecycleStatus: "TENTATIVE",
+  });
+  const pastCancelled = occ({
+    slug: "cancelled",
+    year: 2022,
+    startDateIso: "2022-10-08",
+    lifecycleStatus: "CANCELLED",
+  });
+  const subs = () =>
+    buildSeries(
+      { ...series, startDateIso: "2026-10-03", endDateIso: "2026-10-04" },
+      [upcoming, pastOccurred, pastNoLifecycle, pastTentative, pastCancelled],
+      NOW
+    ).subEvent as Array<Record<string, unknown>>;
+  const byUrl = (frag: string) => subs().find((n) => String(n.url).includes(frag));
+
+  it("ACCEPTANCE: no past-dated subEvent carries EventScheduled", () => {
+    const past = subs().filter((n) => Date.parse(String(n.startDate)) < NOW.getTime());
+    expect(past.length).toBeGreaterThan(0);
+    for (const n of past) expect(n.eventStatus).not.toBe("https://schema.org/EventScheduled");
+  });
+
+  it("a past OCCURRED edition omits eventStatus (schema.org has no 'occurred')", () => {
+    expect(byUrl("/2025")).toBeDefined();
+    expect(byUrl("/2025")!.eventStatus).toBeUndefined();
+  });
+
+  it("a past edition with no lifecycle omits eventStatus instead of defaulting to Scheduled", () => {
+    expect(byUrl("/2024")!.eventStatus).toBeUndefined();
+  });
+
+  it("a past never-confirmed TENTATIVE edition is left out entirely (OPE-1098)", () => {
+    expect(byUrl("/2023")).toBeUndefined();
+  });
+
+  it("an explicit non-Scheduled status stays true of a past event (Cancelled kept)", () => {
+    expect(byUrl("/2022")!.eventStatus).toBe("https://schema.org/EventCancelled");
+  });
+
+  it("the upcoming edition is unchanged", () => {
+    expect(byUrl("/2026")!.eventStatus).toBe("https://schema.org/EventScheduled");
+  });
+
+  it("a series whose hero has passed is not 'scheduled' either", () => {
+    const ld = buildSeries(
+      {
+        ...series,
+        startDateIso: "2025-10-04",
+        endDateIso: "2025-10-05",
+        lifecycleStatus: "OCCURRED",
+      },
+      [pastOccurred],
+      NOW
+    );
+    expect(ld.eventStatus).toBeUndefined();
+  });
+
+  it("the 24h end-of-day grace matches the listings: yesterday's single-day edition is not yet past", () => {
+    const ld = buildSeries(
+      { ...series, startDateIso: "2026-09-24", endDateIso: "2026-09-24" },
+      [occ({ slug: "today", year: 2026, startDateIso: "2026-09-24" })],
+      NOW
+    );
+    expect((ld.subEvent as Array<Record<string, unknown>>)[0].eventStatus).toBe(
+      "https://schema.org/EventScheduled"
+    );
   });
 });

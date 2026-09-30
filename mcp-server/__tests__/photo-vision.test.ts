@@ -6,6 +6,7 @@ import {
   UNIDENTIFIED,
   VISION_MODEL,
   AUTO_WRITE_CONFIDENCE,
+  VISION_PROMPT,
   type BoothIdentification,
   type VisionAi,
 } from "../src/photo/vision.js";
@@ -53,10 +54,11 @@ describe("parseVisionReply", () => {
   it("applies the same rules to an object response as to a string one", () => {
     // The general → drop-the-name rule is what stops scenery carrying a vendor
     // into a write. It must not depend on which shape the model replied in.
+    // OPE-969: the old prompt's "general" is read as "scenery".
     const id = parseVisionReply({
       response: { kind: "general", business_name: "Petal & Pearl", confidence: 0.9 },
     });
-    expect(id.kind).toBe("general");
+    expect(id.kind).toBe("scenery");
     expect(id.businessName).toBeNull();
   });
 
@@ -96,7 +98,7 @@ describe("parseVisionReply", () => {
     const id = parseVisionReply({
       response: JSON.stringify({ ...boothJson, kind: "general" }),
     });
-    expect(id.kind).toBe("general");
+    expect(id.kind).toBe("scenery");
     expect(id.businessName).toBeNull();
     expect(id.website).toBeNull();
     expect(id.products).toEqual([]);
@@ -186,7 +188,9 @@ describe("identifyBooth", () => {
     // The binding wants a plain array, not a Uint8Array.
     expect(Array.isArray(input.image)).toBe(true);
     expect(input.image).toEqual([1, 2, 3]);
-    expect(input.prompt).toContain("business_name");
+    // OPE-969 — one `name` field, and JSON mode on every call.
+    expect(input.prompt).toContain('"name"');
+    expect(input.response_format?.type).toBe("json_schema");
   });
 
   // ── Retry on an unusable reply (OPE-403, 2026-08-16) ──────────────────────
@@ -264,17 +268,18 @@ describe("disposition", () => {
     businessName: "Maple Hollow Farm",
     website: null,
     products: [],
-    confidence: 0.9,
+    confidence: 1,
     rationale: "",
+    identifiableMinor: false,
     ...over,
   });
 
-  it("writes a confident, named booth", () => {
+  it("writes a confident, named booth with no identifiable child", () => {
     expect(disposition(id()).action).toBe("write");
   });
 
   it("skips general scenery (OPE-205's job, not a vendor write)", () => {
-    const d = disposition(id({ kind: "general", businessName: null }));
+    const d = disposition(id({ kind: "scenery", businessName: null }));
     expect(d.action).toBe("skip");
   });
 
@@ -286,7 +291,9 @@ describe("disposition", () => {
     const d = disposition(id({ businessName: null }));
     expect(d.action).toBe("stage");
     if (d.action !== "stage") return;
-    expect(d.reason).toContain("no legible business name");
+    // OPE-969 — a closed kind, distinct from every "not a booth" outcome.
+    expect(d.stageKind).toBe("booth_name_unreadable");
+    expect(d.reason).toContain("name is not legible");
   });
 
   it("stages rather than writes when confidence is below threshold", () => {
@@ -298,5 +305,49 @@ describe("disposition", () => {
 
   it("writes exactly at the threshold", () => {
     expect(disposition(id({ confidence: AUTO_WRITE_CONFIDENCE })).action).toBe("write");
+  });
+
+  // ── OPE-240 — John's 2026-09-12 ruling ──────────────────────────────────
+  it("the threshold is 1.0 — the Bayim/Denim misread sat at 0.90 and must STAGE", () => {
+    expect(AUTO_WRITE_CONFIDENCE).toBe(1);
+    const d = disposition(id({ businessName: "Bayim River Crafts", confidence: 0.9 }));
+    expect(d.action).toBe("stage");
+  });
+
+  it("STAGES a confident booth when an identifiable child appears", () => {
+    const d = disposition(id({ identifiableMinor: true }));
+    expect(d.action).toBe("stage");
+    if (d.action !== "stage") return;
+    expect(d.reason).toContain("child");
+  });
+
+  it("STAGES a confident booth when the child check was not answered (null)", () => {
+    const d = disposition(id({ identifiableMinor: null }));
+    expect(d.action).toBe("stage");
+    if (d.action !== "stage") return;
+    expect(d.reason).toContain("not answered");
+  });
+});
+
+describe("OPE-240 — parsing identifiable_minor", () => {
+  const base = { kind: "booth", business_name: "X", confidence: 1 };
+  it("reads a real boolean", () => {
+    expect(
+      parseVisionReply({ response: { ...base, identifiable_minor: false } }).identifiableMinor
+    ).toBe(false);
+    expect(
+      parseVisionReply({ response: { ...base, identifiable_minor: true } }).identifiableMinor
+    ).toBe(true);
+  });
+  it("treats an omitted or non-boolean answer as NOT answered", () => {
+    expect(parseVisionReply({ response: base }).identifiableMinor).toBeNull();
+    expect(
+      parseVisionReply({ response: { ...base, identifiable_minor: "false" } }).identifiableMinor
+    ).toBeNull();
+    expect(parseVisionReply({ response: JSON.stringify(base) }).identifiableMinor).toBeNull();
+  });
+  it("the prompt asks for it, with 'unsure → true'", () => {
+    expect(VISION_PROMPT).toContain('"identifiable_minor":boolean');
+    expect(VISION_PROMPT).toMatch(/When unsure, answer true/);
   });
 });

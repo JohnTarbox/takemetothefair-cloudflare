@@ -1,6 +1,7 @@
 /** Shared helpers for MCP tool implementations */
 
 import { formatDateOnly as canonicalFormatDateOnly } from "@takemetothefair/datetime";
+import { mainAppBindingRequest } from "./main-app-fetch.js";
 
 // Canonical decodeHtmlEntities, createSlug, dollarsToCents, formatPrice all
 // live in packages/utils. Re-exported here so all existing
@@ -24,7 +25,15 @@ export {
 export type { Slug } from "@takemetothefair/utils";
 
 import { eq } from "drizzle-orm";
-import { vendors, events, enrichmentLog, containsCI, nameOrSlugContains } from "./schema.js";
+import {
+  vendors,
+  eventDays,
+  events,
+  enrichmentLog,
+  containsCI,
+  nameOrSlugContains,
+  eventInStateWhere,
+} from "./schema.js";
 import {
   computeVendorCompletenessScore as _scoreVendor,
   computeEventCompletenessScore as _scoreEvent,
@@ -186,7 +195,6 @@ export {
 } from "@takemetothefair/constants";
 
 import { and, inArray as inArrayMcp, isNull as isNullMcp, or as orMcp, sql } from "drizzle-orm";
-import { venues } from "./schema.js";
 import {
   PUBLIC_EVENT_STATUSES as PE,
   PUBLIC_LIFECYCLE_STATUSES as PL,
@@ -261,12 +269,12 @@ export function searchEventStatusWhere(includeStatuses?: readonly string[]) {
  * therefore only ADDS rows that currently match nothing, and changes no
  * existing match.
  *
- * NOTE the caller must still LEFT-join `venues` for this to mean anything; an
- * inner join would drop the rows before the predicate is reached.
+ * OPE-1028 — now delegates to the shared `eventInStateWhere`, so the public list
+ * pages run this exact SQL. Same semantics as the join form it replaces, but a
+ * correlated EXISTS, so it no longer depends on the caller joining `venues`.
  */
 export function searchEventStateWhere(state: string) {
-  return sql`(upper(${venues.state}) = upper(${state})
-              OR (${events.venueId} IS NULL AND upper(${events.stateCode}) = upper(${state})))`;
+  return eventInStateWhere(state);
 }
 
 /** Build a concise text content response for MCP */
@@ -368,7 +376,7 @@ export async function triggerIndexNow(
         // Hostname is irrelevant for service bindings, but `fetch()` requires
         // a valid URL — use the public host so the route resolves identically
         // to a public call.
-        new Request("https://meetmeatthefair.com/api/internal/indexnow", {
+        mainAppBindingRequest("https://meetmeatthefair.com/api/internal/indexnow", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -454,6 +462,41 @@ export async function triggerIndexNow(
  * 39 of 668 rows carried it; 17 were live and upcoming.
  */
 export { computePublicDates } from "@takemetothefair/utils";
+
+/**
+ * OPE-1203 — the parent event's public date range, recomputed IN SQL from the
+ * `event_days` rows that exist when the statement runs.
+ *
+ * The tools used to read the surviving days, compute in JS, then write — three
+ * round trips. Three parallel `delete_event_day` calls on one event interleaved
+ * there: one computed from a row another call had just deleted, and its UPDATE
+ * surfaced to the caller as a raw D1 error AFTER its own delete had committed,
+ * so the caller could not tell whether the day was gone.
+ *
+ * As one statement batched with the day write, the range is always derived
+ * from committed rows. It must stay equal to `computePublicDates` — public
+ * (non-vendor-only) days, min/max by string order, noon-UTC anchor — and a test
+ * pins the two against each other.
+ */
+function publicDateFromDaysSql(eventId: string, agg: "MIN" | "MAX") {
+  return sql`(SELECT CAST(strftime('%s', ${sql.raw(agg)}(${eventDays.date}) || ' 12:00:00') AS INTEGER) FROM ${eventDays} WHERE ${eventDays.eventId} = ${eventId} AND COALESCE(${eventDays.vendorOnly}, 0) = 0)`;
+}
+
+/** The `set` values for the recompute — spread into an `events` update. */
+export function publicDatesFromDaysSet(eventId: string) {
+  return {
+    publicStartDate: publicDateFromDaysSql(eventId, "MIN"),
+    publicEndDate: publicDateFromDaysSql(eventId, "MAX"),
+  };
+}
+
+/** The recompute as a standalone statement, for `db.batch([dayWrite, this])`. */
+export function recomputePublicDatesStmt(db: Db, eventId: string) {
+  return db
+    .update(events)
+    .set({ ...publicDatesFromDaysSet(eventId), updatedAt: new Date() })
+    .where(eq(events.id, eventId));
+}
 
 // Status enums + transition state machine — sourced from the canonical
 // @takemetothefair/constants package. Aliases kept for backwards compat
@@ -683,6 +726,24 @@ export function vendorSearchWhere(params: {
  * Fields with no mapping (`name`, `slug`) are handled by the caller and fall
  * back to the argument, which for them is already the stored form.
  */
+/**
+ * OPE-1124 — present a STORED value in the unit the caller writes and the
+ * reader returns. Applied to BOTH `previousValues` and `newValues`, so the
+ * OPE-645 parity (both sides read the stored representation) survives: this is
+ * one presentation step over two stored values, not a second source of truth.
+ *
+ * Money is stored in `*Cents` columns but accepted in dollars and read back in
+ * dollars (`get_event_details_admin`). Reporting the raw column made a correct
+ * `vendor_fee_max: 20` read as 2000 — a $2,000 error to anyone following the
+ * "verify your write from the response" rule (OPE-534) — while the reader said
+ * 20. Keyed on the column-name suffix so a new money column is covered without
+ * being listed.
+ */
+export function presentStoredValue(column: string | undefined, value: unknown): unknown {
+  if (column?.endsWith("Cents") && typeof value === "number") return value / 100;
+  return value;
+}
+
 export function reportedNewValue(
   field: string,
   mapping: { column: string } | undefined,

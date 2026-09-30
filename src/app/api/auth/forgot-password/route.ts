@@ -11,6 +11,7 @@ import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { getSiteUrl } from "@/lib/email/send";
 import { enqueueEmail } from "@/lib/queues/producers";
 import { passwordResetTemplate } from "@/lib/email/templates";
+import { isAddressUndeliverable } from "@/lib/email/undeliverable";
 
 const schema = z.object({ email: z.string().email() });
 
@@ -51,6 +52,15 @@ export async function POST(request: NextRequest) {
     // behaviour that keeps it from being an account-existence oracle.
     if (isPlaceholderEmail(email)) {
       console.warn(`[forgot-password] refused — ${PLACEHOLDER_REFUSAL}`);
+      return GENERIC_OK;
+    }
+
+    // OPE-1172 — a hard-bounced / complaint-suppressed address cannot receive
+    // the reset link, so do not mint a token or enqueue a send the provider
+    // will reject (and the queue used to retry 4× into the DLQ). The response
+    // stays GENERIC_OK: this endpoint is not an oracle, and the approved
+    // "couldn't deliver" copy covers the verification screen only.
+    if (await isAddressUndeliverable(db, email)) {
       return GENERIC_OK;
     }
 

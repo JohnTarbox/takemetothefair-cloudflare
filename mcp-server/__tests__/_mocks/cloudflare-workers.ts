@@ -15,6 +15,16 @@ export class WorkflowEntrypoint<Env = unknown, _Params = unknown> {
   }
 }
 
+/** OPE-951 — minimal DurableObject base; tests pass a fake `ctx.storage`. */
+export class DurableObject<Env = unknown> {
+  protected ctx: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+  protected env: Env;
+  constructor(ctx: unknown, env: Env) {
+    this.ctx = ctx;
+    this.env = env;
+  }
+}
+
 export type WorkflowEvent<Params = unknown> = {
   payload: Params;
   timestamp: Date;

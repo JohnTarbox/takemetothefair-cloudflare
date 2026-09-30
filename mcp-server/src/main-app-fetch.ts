@@ -45,6 +45,48 @@
  * entrypoint that produced it instead of leaving us to guess again.
  */
 
+/**
+ * OPE-1031 — the one way to build a Request for the MAIN_APP service binding.
+ *
+ * A `new Request(url)` carries NO `Host` header: a public `fetch()` adds one on
+ * the wire, but a service binding hands the Request object across as-is. On the
+ * main app, OpenNext's edge converter re-issues the request with
+ * `{ ...headers, "x-forwarded-host": headers.host }`, `new Headers()` coerces
+ * that `undefined` to the STRING "undefined", and the request handler copies
+ * `x-forwarded-host` into `host`. Every route therefore saw
+ * `request.url === "https://undefined/..."` — which OPE-314's upload slot
+ * minted into its URLs 21 times after #798 papered over it with a fallback.
+ *
+ * So the host is set here, from the URL the caller already names, and a base
+ * URL without a real host throws instead of minting one. Bypassing this helper
+ * is blocked by `__tests__/main-app-binding-host-ope1031.test.ts`.
+ */
+export function mainAppBindingRequest(url: string, init?: RequestInit): Request {
+  const host = realHostOf(url);
+  if (!host) {
+    throw new Error(
+      `mainAppBindingRequest: "${url}" has no usable host — MAIN_APP_URL is unset or malformed on the MCP Worker.`
+    );
+  }
+  const headers = new Headers(init?.headers);
+  if (!headers.has("host")) headers.set("host", host);
+  return new Request(url, { ...init, headers });
+}
+
+/** The URL's host, or null when it is missing or a stringified nullish. */
+export function realHostOf(url: string | undefined | null): string | null {
+  if (!url) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  const hostname = parsed.hostname;
+  if (!hostname || hostname === "undefined" || hostname === "null") return null;
+  return parsed.host;
+}
+
 /** Which Worker entrypoint issued the call. The dimension OPE-258 lacked. */
 export type McpEntrypoint = "fetch" | "scheduled" | "queue" | "workflow" | "durable-object";
 
@@ -91,8 +133,11 @@ export async function mainAppFetch(
   };
 
   if (env.MAIN_APP) {
+    // Built outside the try: a hostless base URL is a config error to surface,
+    // not a binding blip to fall through.
+    const bindingRequest = mainAppBindingRequest(url, init);
     try {
-      return await env.MAIN_APP.fetch(new Request(url, init));
+      return await env.MAIN_APP.fetch(bindingRequest);
     } catch {
       // Fall through to the public path — a binding blip must not take out a
       // working call. The previous code had no such fallback.

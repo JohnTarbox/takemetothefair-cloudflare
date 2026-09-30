@@ -58,10 +58,34 @@ import { and, eq, gte, sql } from "drizzle-orm";
 import { getDb } from "../db.js";
 import { ledgerEmailSend } from "../mailer.js";
 import { isAutoReplyEnabled, AUTO_REPLY_HELD_REASON, type EmailGateEnv } from "../email-gates.js";
-import { shouldUseThreadReplyAck } from "../email-handlers/thread-reply-ack.js";
+import {
+  classifyRepliedToSend,
+  shouldUseThreadReplyAck,
+} from "../email-handlers/thread-reply-ack.js";
+import {
+  CLOSED_BY_SENDER_STATUS,
+  decideThreadAckGuard,
+  isConversationClosing,
+  type ThreadAckSuppressReason,
+} from "../email-handlers/thread-ack-suppression.js";
+import { isReplyToOurThread } from "../intent-fastpath.js";
+import {
+  resolveOwedHuman,
+  buildOwedHumanNotice,
+  OWED_HUMAN_STATUS,
+  OWED_HUMAN_NOTICE_SOURCE,
+  type OwedHumanVerdict,
+} from "../email-handlers/owed-human.js";
+import { openObligationIfOwed } from "../email-handlers/open-obligation.js";
+import { isZeroConfidenceUnclear } from "../email-handlers/automated-mail.js";
 import { inboundEmails, adminActions, events } from "../schema.js";
 import { logError } from "../logger.js";
-import { classifyDomainTier, isHigherTier, classifyDedupTier } from "@takemetothefair/utils";
+import {
+  classifyDomainTier,
+  isHigherTier,
+  classifyDedupTier,
+  isBlankAskAboutEventBody,
+} from "@takemetothefair/utils";
 import type { EmailIntent } from "../email-intents.js";
 import type { SenderTrustTier } from "../intent-classifier.js";
 import type { EmailAuthVerdict } from "../email-auth.js";
@@ -99,8 +123,30 @@ import {
   countContentFreeBurst,
   BURST_DEBOUNCE_SECONDS,
 } from "../email-handlers/empty-message.js";
-import { resolveFanoutReplyRole } from "../email-handlers/fanout-reply-leader.js";
+import {
+  readFanoutAckMentionMinConfidence,
+  resolveFanoutReplyRole,
+} from "../email-handlers/fanout-reply-leader.js";
 import { extractAllUrls, type AttachmentRef } from "../email-handler.js";
+// OPE-837 — same-site nav crawl. The fan-out above enumerates URLs in the
+// EMAIL; this enumerates pages on the fetched SITE, which is where price,
+// roster and vendor-application fields actually live.
+// OPE-847 — the two DB-integrity side-effects `createOrLinkVendor` requires
+// each runtime to supply. Same functions the MCP tool adapter passes.
+import { recomputeVendorCompleteness, logEnrichment } from "../helpers.js";
+import {
+  linkRosterBatch,
+  planRosterBatches,
+  emptyRosterLinkOutcome,
+  mergeRosterLinkOutcomes,
+  ROSTER_LINK_MAX,
+} from "../email-handlers/roster-link.js";
+import {
+  crawlSecondaryPages,
+  applyCrawlEnrichment,
+  CRAWL_USER_AGENT,
+  type CrawlFetchResult,
+} from "../email-handlers/secondary-crawl.js";
 import {
   submitFetch,
   submitExtract,
@@ -109,10 +155,18 @@ import {
   submitEvent,
   stripSignature,
   stripForwardedPreamble,
+  MAX_FETCH_CONTENT_LEN,
   type SubmitFetchResult,
 } from "../email-handlers/submit.js";
+import { boundOcrSources, OCR_STEP_BUDGET_BYTES } from "../email-handlers/ocr-bounds.js";
 import { recordSourceCitations } from "../email-handlers/pipeline-citations.js";
+// OPE-832 — a bug described in an email becomes a reviewable candidate in the
+// defect queue. Runs for every intent except problem_report (which already
+// files its own) and spam.
+import { recordDefectCandidate } from "../email-handlers/defect-candidate.js";
 import { bodyHasProseSubstance } from "../email-handlers/body-prose-substance.js";
+import { submissionProseText } from "../email-handlers/strip-quoted-reply.js";
+import { listingCandidatesToDrop } from "../email-handlers/listing-page-title.js";
 import { countOutcomes } from "../email-handlers/outcome-counts.js";
 import { clusterSubmissionCandidates } from "../email-handlers/cluster-candidates.js";
 import { classifySourceStaleness, sourceDomainOf } from "../email-handlers/stale-source.js";
@@ -188,6 +242,11 @@ type Env = EmailGateEnv & {
    * and forwarded to admin — only the outbound question is withheld.
    */
   UNROUTED_ASK_ENABLED?: string;
+  /** OPE-1018 — the operator notice for a reply owed a human. Same Worker, same
+   *  bindings as the canaries; optional so tests / unconfigured envs can omit it
+   *  (the step then logs instead of sending). */
+  EMAIL_JOBS?: Queue;
+  ALERT_EMAIL_TECHNICAL?: string;
 };
 
 const SOURCE = "mcp:workflow:inbound-email";
@@ -196,6 +255,12 @@ const DEFAULT_FROM = "Meet Me at the Fair <notify@meetmeatthefair.com>";
 // worth treating as an extraction source. Below this it's almost certainly
 // noise (a logo, a blank scan) rather than a flyer with event details.
 const MIN_OCR_CHARS = 20;
+
+// OPE-840 — cap on the roster name list stored in a citation `value`. The full
+// list also lives in the `secondary-page-crawl` step record, so truncating here
+// loses nothing; it keeps one TEXT column from growing without bound on a site
+// that lists several hundred exhibitors.
+const ROSTER_CITATION_MAX_CHARS = 2000;
 
 // OPE-189 — how many times to attempt `toMarkdown` per attachment before giving
 // up. The image→markdown vision model times out on the FIRST (cold-start) call
@@ -297,6 +362,9 @@ function errorToReplyKind(intent: EmailIntent, errMsg: string): ReplyKind | null
 function decisionToReplyKind(intent: EmailIntent, decision: AdminDecision | null): ReplyKind {
   const correctionLike = intent === "correction" || intent === "claim_request";
   if (decision === null) {
+    // OPE-1134 — a claim_request's timeout ack is the claim ack, not "we've
+    // recorded your correction request".
+    if (intent === "claim_request") return "claim-request-ack";
     return correctionLike ? "correction-ack" : "press-ack";
   }
   if (correctionLike) {
@@ -589,7 +657,76 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       }
     );
 
-    if (unrouted?.ask) {
+    // ───── OPE-985: the ask-about-event mailto sent with no question ─────
+    //
+    // Before dispatch, beside the content-free check and for the same reason:
+    // the fact is about the MESSAGE, not the intent. The subject alone classifies
+    // (Nancy Lasson's classified `correction` at 0.9), so every lane would
+    // otherwise send its standard acknowledgement for a question we do not have.
+    // Nothing is sent. The row is flagged for review so a person writes back,
+    // and `extract_fail_reason` says why it carried nothing to act on.
+    const blankQuestion = await step.do(
+      "blank-question/detect",
+      { retries: { limit: 2, delay: "5 seconds", backoff: "constant" }, timeout: "10 seconds" },
+      async () => {
+        const db = getDb(this.env.DB);
+        const [row] = await db
+          .select()
+          .from(inboundEmails)
+          .where(eq(inboundEmails.id, messageRowId))
+          .limit(1);
+        if (
+          !row ||
+          (row.attachmentCount ?? 0) > 0 ||
+          !isBlankAskAboutEventBody(row.bodyText ?? row.bodyTextExcerpt)
+        ) {
+          return null;
+        }
+        await db
+          .update(inboundEmails)
+          .set({ flaggedForReview: 1, extractFailReason: "blank-question" })
+          .where(eq(inboundEmails.id, messageRowId));
+        // OPE-985 B condition 2 (John, 2026-09-20) — the prompt is an
+        // invitation to resend, not an answer, so something must still chase
+        // this reader. `forceOwed`: the classifier's guess (0.9 `correction` on
+        // one specimen) must not decide whether anyone is owed, because the
+        // message it read was our own template.
+        const obligationRef = await openObligationIfOwed(
+          this.env,
+          db,
+          row,
+          "mcp:inbound-blank-question",
+          { forceOwed: true }
+        );
+        await logError(this.env.DB, {
+          level: "warn",
+          source: "mcp:inbound-blank-question",
+          message: obligationRef
+            ? "ask-about-event mailto arrived with no question — sending the resend prompt"
+            : "ask-about-event mailto arrived with no question — prompt sent, NO obligation opened",
+          sessionId,
+          context: { messageRowId, intent, obligationRef },
+        });
+        return { obligationRef };
+      }
+    );
+
+    if (blankQuestion) {
+      routedToWorkflow = "short-circuit:blank-question";
+      // OPE-985 Ask B (ruled 2026-09-20). Two conditions ride here:
+      //  1. NOT `replied`. The row owes the reader a person until they resend
+      //     or someone writes; `awaiting_human` says that and stays filterable.
+      //     `flagged_for_review` is never cleared — mark-done only ever sets it.
+      //  2. an obligation was opened above, so something chases the row; the
+      //     flag alone did not, which is what changed John's mind on B.
+      result = {
+        replyKind: "blank-question",
+        status: OWED_HUMAN_STATUS,
+        skipAdminDecision: true,
+        extractFailReason: "blank-question",
+        crossingDestinationRef: blankQuestion.obligationRef ?? undefined,
+      };
+    } else if (unrouted?.ask) {
       // The row carrying this reply_kind IS the open hold — it is what the
       // ceiling counts next time this sender writes.
       routedToWorkflow = "short-circuit:unrouted-hold-ask";
@@ -663,6 +800,77 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           context: { messageRowId, intent, error: caughtError },
         });
       }
+
+      // OPE-832 — defect-candidate detection.
+      //
+      // Placed at the DISPATCH SITE rather than inside `support.ts`, and
+      // outside the dispatch try/catch. Two reasons, both load-bearing:
+      //
+      //  * Coverage. `support` and `vendor_inquiry` share handleSupport, while
+      //    `unclear`/`unknown`/`multi` share handleUnknown. Wiring this into
+      //    the support handler would have covered two of five intents and
+      //    looked complete — the one-of-two-parallel-paths defect. Here it is
+      //    keyed on the ACT (an email was dispatched), so a NEW intent added
+      //    later is covered by construction rather than by remembering.
+      //
+      //  * Failsoft. It runs even when dispatch threw: a customer whose email
+      //    broke the handler is exactly the one most likely to be describing a
+      //    defect. Its own failure can never affect the reply — the sender has
+      //    already been handled by this point.
+      //
+      // The step record is written on EVERY outcome, not just creation. A
+      // detector that only logs its hits is silent when it stops running, and
+      // "no candidates" then reads identically to "not executing" — the OPE-540
+      // lesson, and the signal the heartbeat probe depends on.
+      await step
+        .do(
+          "defect-candidate",
+          { retries: { limit: 1, delay: "5 seconds", backoff: "constant" }, timeout: "10 seconds" },
+          async () => {
+            const db = getDb(this.env.DB);
+            const [row] = await db
+              .select()
+              .from(inboundEmails)
+              .where(eq(inboundEmails.id, messageRowId))
+              .limit(1);
+            if (!row) return { status: "row-missing" as const };
+            const outcome = await recordDefectCandidate(db, {
+              inboundEmailId: messageRowId,
+              intent,
+              subject: row.subject ?? null,
+              // body_text is the full text; the excerpt is the fallback for
+              // rows where only the preview survived.
+              bodyText: row.bodyText ?? row.bodyTextExcerpt ?? null,
+              fromAddress: row.fromAddress ?? null,
+            });
+            await recordWorkflowStep(db, {
+              instanceId: sessionId,
+              workflowName: "inbound-email",
+              inboundEmailId: messageRowId,
+              stepName: "defect-candidate",
+              status: outcome.status === "created" ? "ok" : "skipped",
+              detail: {
+                intent,
+                outcome: outcome.status,
+                matched: outcome.status === "created" ? outcome.matched : [],
+                report_id: outcome.status === "created" ? outcome.reportId : null,
+              },
+            }).catch(() => {
+              // Observability write is cosmetic-failsoft, like every other one
+              // here: losing the record must not cost the candidate.
+            });
+            return outcome;
+          }
+        )
+        .catch(async (err) => {
+          await logError(this.env.DB, {
+            level: "warn",
+            source: SOURCE,
+            message: "defect-candidate detection failed; reply unaffected",
+            sessionId,
+            error: err,
+          }).catch(() => {});
+        });
     }
 
     // ───── Optional: human-in-the-loop pause (correction/press) ─────
@@ -680,9 +888,68 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     // when the reply named a fair and its held photos are already attached:
     // there is no judgement left to make, and the block below would overwrite
     // the handler's replyKind and resultingEventId with a generic ack.
+    // OPE-1018 — is this someone answering a question a PERSON asked them?
+    //
+    // Resolved before the admin-decision gate because it changes that gate: a
+    // reply to our own offer ("yes, please add us") has no decision to make, it
+    // needs someone to act. Failure resolves to NOT owed — today's behaviour —
+    // and is logged, so a broken lookup degrades to the status quo rather than
+    // to a wrong status or a silent skip of the pause.
+    let owedHuman: OwedHumanVerdict | null = null;
+    try {
+      owedHuman = await step.do(
+        "thread/owed-human",
+        { retries: { limit: 2, delay: "5 seconds", backoff: "constant" }, timeout: "10 seconds" },
+        async () => resolveOwedHuman(getDb(this.env.DB), messageRowId)
+      );
+    } catch (err) {
+      await logError(this.env.DB, {
+        source: SOURCE,
+        message: "owed-human lookup failed; treating as not owed",
+        sessionId,
+        error: err,
+        context: { messageRowId, intent },
+      });
+    }
+    // OPE-1163 — a reply to our thread that only says thanks ends the
+    // conversation: no ack, no "waiting on you" status, no operator notice, no
+    // decision pause. The test abstains hard (see thread-ack-suppression.ts);
+    // a failed read resolves to NOT closing, which is today's behaviour.
+    let closedBySender = false;
+    try {
+      closedBySender = await step.do(
+        "thread/closed-by-sender",
+        { retries: { limit: 2, delay: "5 seconds", backoff: "constant" }, timeout: "10 seconds" },
+        async () => {
+          const [r] = await getDb(this.env.DB)
+            .select({
+              bodyText: inboundEmails.bodyText,
+              inReplyTo: inboundEmails.inReplyTo,
+              emailReferences: inboundEmails.emailReferences,
+            })
+            .from(inboundEmails)
+            .where(eq(inboundEmails.id, messageRowId))
+            .limit(1);
+          if (!r || !isReplyToOurThread(r.inReplyTo, r.emailReferences)) return false;
+          return isConversationClosing(r.bodyText);
+        }
+      );
+    } catch (err) {
+      await logError(this.env.DB, {
+        source: SOURCE,
+        message: "closed-by-sender check failed; treating as not closing",
+        sessionId,
+        error: err,
+        context: { messageRowId },
+      });
+    }
+    const isOwedHuman = owedHuman?.owed === true && !closedBySender;
+
     const needsAdminDecision =
       (intent === "correction" || intent === "press" || intent === "claim_request") &&
-      !result.skipAdminDecision;
+      !result.skipAdminDecision &&
+      !isOwedHuman &&
+      !closedBySender;
 
     // ⚠️ OPE-766 — THE PAUSE NO LONGER RUNS HERE. It moved to AFTER send-reply.
     //
@@ -735,7 +1002,14 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     const fanoutRole = await step.do(
       "fanout-reply/role",
       { retries: { limit: 2, delay: "5 seconds", backoff: "constant" }, timeout: "10 seconds" },
-      async () => resolveFanoutReplyRole(getDb(this.env.DB), messageRowId)
+      async () => {
+        const db = getDb(this.env.DB);
+        return resolveFanoutReplyRole(
+          db,
+          messageRowId,
+          await readFanoutAckMentionMinConfidence(db)
+        );
+      }
     );
     if (fanoutRole && !fanoutRole.isLeader) {
       await logError(this.env.DB, {
@@ -756,13 +1030,84 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       };
     }
 
+    // OPE-1148 item 6 — no ack for a zero-confidence `unclear`. Read from the
+    // row (the routed `intent` here is the ADDRESS route, not the classifier's
+    // verdict), and in a step so a replay reuses the decision.
+    if (result.replyKind !== null && !result.suppressReply) {
+      const zeroConfidenceUnclear = await step.do(
+        "reply-guard/zero-confidence-unclear",
+        { retries: { limit: 2, delay: "5 seconds", backoff: "constant" }, timeout: "10 seconds" },
+        async () => {
+          const [r] = await getDb(this.env.DB)
+            .select({
+              ci: inboundEmails.classifiedIntent,
+              cc: inboundEmails.classifiedConfidence,
+            })
+            .from(inboundEmails)
+            .where(eq(inboundEmails.id, messageRowId))
+            .limit(1);
+          return isZeroConfidenceUnclear(r?.ci, r?.cc);
+        }
+      );
+      if (zeroConfidenceUnclear) {
+        await logError(this.env.DB, {
+          level: "info",
+          source: SOURCE,
+          message: "reply suppressed: classifier said unclear at zero confidence (OPE-1148)",
+          sessionId,
+          context: { messageRowId, replyKind: result.replyKind, intent },
+        });
+        result = { ...result, suppressReply: true };
+      }
+    }
+
+    // OPE-1163 — no `thread-reply-ack` into a live human conversation. Decided
+    // in its own step (a replay reuses it) BEFORE send-reply, and ledgered as
+    // 'stubbed' with the reason so every suppression is auditable next to the
+    // sends it replaced. The operator notice (OPE-1018) is unaffected: the
+    // person is still owed — and still gets — a human.
+    let threadAckSuppressed: ThreadAckSuppressReason | null = null;
+    if (result.replyKind !== null && !result.suppressReply) {
+      const replyKindBefore = result.replyKind;
+      const guard = await step.do(
+        "reply-guard/thread-ack",
+        { retries: { limit: 2, delay: "5 seconds", backoff: "constant" }, timeout: "10 seconds" },
+        async () =>
+          decideThreadAckGuard(getDb(this.env.DB), {
+            messageRowId,
+            replyKind: replyKindBefore,
+            closedBySender,
+          })
+      );
+      if (guard.reason) {
+        threadAckSuppressed = guard.reason;
+        await logError(this.env.DB, {
+          level: "info",
+          source: SOURCE,
+          message: `thread ack suppressed: ${guard.reason} (OPE-1163)`,
+          sessionId,
+          context: { messageRowId, replyKind: guard.kind, detail: guard.detail },
+        });
+        result = {
+          ...result,
+          replyKind: guard.kind as typeof result.replyKind,
+          suppressReply: true,
+        };
+      }
+    }
+
     if (result.replyKind !== null && !result.suppressReply) {
       // OPE-453 — `let`, not `const`: the invariant guard immediately before the
       // send may downgrade `no-url` to `unfetchable-url` when parsed_url is set.
       let replyKind = result.replyKind;
       const replyParams = result.replyParams ?? {};
       try {
-        await step.do(
+        // OPE-1143 — the step RETURNS the kind it sent. The guards below swap
+        // `replyKind` (thread-reply-ack, unfetchable-url) inside the closure,
+        // but mark-done wrote the PRE-swap `result.replyKind`, so 6 rows sent
+        // as thread-reply-ack were stored as correction-ack. A reassigned local
+        // would also be lost on a workflow replay; a step's return is cached.
+        const sentKind = await step.do(
           "send-reply",
           {
             retries: { limit: 3, delay: "10 seconds", backoff: "exponential" },
@@ -823,7 +1168,22 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             // Reword, not suppress (ruled 2026-08-31): the specimen sat 30 days
             // with an obligation open and the ack was the only thing that ever
             // reached her, so silence is the worse failure.
-            if (shouldUseThreadReplyAck(replyKind, rows[0].inReplyTo, rows[0].emailReferences)) {
+            // OPE-1214 — and only when the parent is something a PERSON sent.
+            // A reply to an automated notice (content-links-sync, digests,
+            // featured notices) keeps its own ack: nobody has been
+            // "corresponding" with them. Read inside this step, so a replay
+            // reuses the same answer.
+            const repliedTo = isReplyToOurThread(rows[0].inReplyTo, rows[0].emailReferences)
+              ? await classifyRepliedToSend(db, rows[0].inReplyTo, rows[0].emailReferences)
+              : undefined;
+            if (
+              shouldUseThreadReplyAck(
+                replyKind,
+                rows[0].inReplyTo,
+                rows[0].emailReferences,
+                repliedTo ?? "unknown"
+              )
+            ) {
               await logError(this.env.DB, {
                 level: "info",
                 source: SOURCE,
@@ -1085,8 +1445,12 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
               bodyHtml: msg.html,
               bodyText: msg.text,
             });
+            return replyKind;
           }
         );
+        if (typeof sentKind === "string" && sentKind !== result.replyKind) {
+          result = { ...result, replyKind: sentKind };
+        }
       } catch (err) {
         // send-reply exhausted retries (or threw NonRetryableError).
         // Log + continue to mark-done so the row records the failure
@@ -1343,7 +1707,15 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         await db
           .update(inboundEmails)
           .set({
-            status: caughtError ? "failed" : result.status,
+            // OPE-1018 — the thread-reply-ack must not be what marks a waiting
+            // customer as handled.
+            status: caughtError
+              ? "failed"
+              : closedBySender
+                ? CLOSED_BY_SENDER_STATUS
+                : isOwedHuman
+                  ? OWED_HUMAN_STATUS
+                  : result.status,
             error: caughtError ?? null,
             replyKind: result.replyKind ?? null,
             resultingEventId: result.resultingEventId ?? null,
@@ -1372,6 +1744,57 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           .where(eq(inboundEmails.id, messageRowId));
       }
     );
+
+    // ───── OPE-1018: tell the operator, promptly ─────
+    //
+    // Regardless of caughtError: a failed ack does not make the person any less
+    // owed an answer. This notice is what makes the approved `thread-reply-ack`
+    // copy ("it has gone to the person you've been corresponding with") true.
+    // Internal mail to ALERT_EMAIL_TECHNICAL on a non-`reply:` source, so the
+    // EMAIL_REPLY_ENABLED gate (which holds only customer `reply:*` mail) does
+    // not apply.
+    if (isOwedHuman && owedHuman) {
+      const verdict = owedHuman;
+      try {
+        await step.do(
+          "notify/owed-human",
+          {
+            retries: { limit: 2, delay: "10 seconds", backoff: "exponential" },
+            timeout: "10 seconds",
+          },
+          async () => {
+            const to = this.env.ALERT_EMAIL_TECHNICAL;
+            if (!to || !this.env.EMAIL_JOBS) {
+              await logError(this.env.DB, {
+                source: SOURCE,
+                message: `owed-human reply from ${verdict.fromAddress} and no ALERT_EMAIL_TECHNICAL/EMAIL_JOBS to notify`,
+                sessionId,
+                context: { messageRowId, threadId: verdict.threadId },
+              });
+              return;
+            }
+            const notice = buildOwedHumanNotice(messageRowId, intent, verdict, {
+              ackSuppressed: threadAckSuppressed,
+            });
+            await this.env.EMAIL_JOBS.send({
+              to,
+              subject: notice.subject,
+              text: notice.text,
+              html: notice.html,
+              source: OWED_HUMAN_NOTICE_SOURCE,
+            });
+          }
+        );
+      } catch (err) {
+        await logError(this.env.DB, {
+          source: SOURCE,
+          message: "owed-human operator notice failed after retries",
+          sessionId,
+          error: err,
+          context: { messageRowId },
+        });
+      }
+    }
 
     return {
       messageRowId,
@@ -1421,6 +1844,11 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             // details often fall outside it, so free-text extract must see the
             // whole body (forwarded-header-stripped inside submitFreeTextExtract).
             bodyText: inboundEmails.bodyText,
+            // OPE-944 — who really wrote this content, when it was forwarded.
+            // Read here so citations can record the ORIGINAL sender rather than
+            // attributing an organizer's packet to whoever passed it along.
+            originalSenderAddress: inboundEmails.originalSenderAddress,
+            originalSenderAuth: inboundEmails.originalSenderAuth,
           })
           .from(inboundEmails)
           .where(eq(inboundEmails.id, messageRowId))
@@ -1491,7 +1919,12 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     // The URL is already its own `kind: "url"` source in the same list, so
     // body-extracting it can contribute nothing that source does not. Cutting
     // it removes hallucination surface without trading away any recall.
-    const bodyHasSubstance = bodyHasProseSubstance(stripSignature(bodyTextRaw));
+    // OPE-1123 — the prose we EXTRACT from: a reply's quoted transcript is
+    // prior correspondence, not a source (see `submissionProseText` for the
+    // guards that keep a forward's payload). URL discovery below still reads the
+    // whole body — a link is a link wherever it sits.
+    const bodyProseText = submissionProseText(bodyTextRaw, subject);
+    const bodyHasSubstance = bodyHasProseSubstance(stripSignature(bodyProseText));
     const bodyUrls = extractAllUrls(bodyTextRaw, "", 10);
 
     // ───── OPE-68: OCR poster/PDF attachments into extra submit sources ─────
@@ -1508,29 +1941,56 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     if (rowSnapshot.attachmentCount > 0 && rowSnapshot.attachmentRefs) {
       const refsJson = rowSnapshot.attachmentRefs;
       const ocrStartedAt = Date.now();
-      attachmentSources = await step.do(
-        "ocr-attachments",
-        // OPE-189 — the old 60s step timeout EQUALLED the AI binding's own 60s
-        // timeout, so a single cold-start toMarkdown timeout consumed the whole
-        // step budget and the (successful) warm retry was stranded. ocrAttachments
-        // now retries transient failures in-place (MAX_OCR_ATTEMPTS), so the step
-        // budget must cover several ~60s attempts; step-level retry stays as an
-        // outer backstop.
-        { retries: { limit: 1, delay: "10 seconds", backoff: "constant" }, timeout: "200 seconds" },
-        () => this.ocrAttachments(refsJson, messageRowId)
-      );
+      // OPE-954 — attachments are ENRICHMENT. If this step fails for any reason
+      // (the 1 MiB step-result cap was the first; `ocrAttachments` now bounds its
+      // result so it should not recur), the run continues with the body and URL
+      // sources rather than dying with extract-failed. Losing a whole submission
+      // to an image-OCR problem was the wrong failure mode.
+      let ocrError: string | null = null;
+      try {
+        attachmentSources = await step.do(
+          "ocr-attachments",
+          // OPE-189 — the old 60s step timeout EQUALLED the AI binding's own 60s
+          // timeout, so a single cold-start toMarkdown timeout consumed the whole
+          // step budget and the (successful) warm retry was stranded. ocrAttachments
+          // now retries transient failures in-place (MAX_OCR_ATTEMPTS), so the step
+          // budget must cover several ~60s attempts; step-level retry stays as an
+          // outer backstop.
+          {
+            retries: { limit: 1, delay: "10 seconds", backoff: "constant" },
+            timeout: "200 seconds",
+          },
+          () => this.ocrAttachments(refsJson, messageRowId)
+        );
+      } catch (err) {
+        ocrError = err instanceof Error ? err.message : String(err);
+        attachmentSources = [];
+        await logError(getDb(this.env.DB), {
+          level: "error",
+          source: "mcp:workflow:ocr-attachments",
+          message: `ocr-attachments step failed; continuing without attachment sources: ${ocrError}`,
+          error: err,
+        }).catch(() => {});
+      }
       // OPE-501 — the step that could not be answered for. "Ran and produced
       // nothing" and "never ran" are different defects with different fixes, and
       // the output row cannot tell them apart.
+      //
+      // OPE-954 — plus the bytes it carried, so a run approaching the step-result
+      // cap is visible BEFORE it is fatal.
+      const textBytesOut = new TextEncoder().encode(JSON.stringify(attachmentSources)).length;
       await recordWorkflowStep(getDb(this.env.DB), {
         instanceId,
         workflowName: "inbound-email",
         inboundEmailId: messageRowId,
         stepName: "ocr-attachments",
-        status: "ok",
+        status: ocrError ? "failed" : "ok",
         detail: {
           attachments_claimed: rowSnapshot.attachmentCount,
           sources_produced: attachmentSources.length,
+          text_bytes_out: textBytesOut,
+          budget_bytes: OCR_STEP_BUDGET_BYTES,
+          ...(ocrError ? { error: ocrError.slice(0, 300) } : {}),
         },
         durationMs: Date.now() - ocrStartedAt,
       });
@@ -1691,7 +2151,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         sources.push(...bodyUrls.map((url): SubmitSource => ({ kind: "url", url })));
       }
       // Then the body prose pseudo-source when it carries substance.
-      if (bodyHasSubstance) sources.push({ kind: "body", text: bodyTextRaw });
+      if (bodyHasSubstance) sources.push({ kind: "body", text: bodyProseText });
       // Then the OCR'd attachments (ordered last, same as the body pseudo-source
       // rationale — provenance-carrying URL/body events created first).
       sources.push(...attachmentSources);
@@ -1703,7 +2163,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         rowSnapshot.fromAddress,
         true, // hasAttachments — attachments were present + OCR'd
         overflowed,
-        bodyTextRaw,
+        bodyProseText,
         messageRowId,
         instanceId
       );
@@ -1771,7 +2231,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       // adding it as a "body" source would hand the extractor a copy of the
       // URL string as if it were page content — which is how the fabricated
       // description got written in the first place.
-      if (bodyHasSubstance) sources.push({ kind: "body", text: bodyTextRaw });
+      if (bodyHasSubstance) sources.push({ kind: "body", text: bodyProseText });
       const overflowed = bodyUrls.length >= 10;
       return await this.runMultiSourcePipeline(
         step,
@@ -1780,7 +2240,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         rowSnapshot.fromAddress,
         rowSnapshot.attachmentCount > 0,
         overflowed,
-        bodyTextRaw,
+        bodyProseText,
         messageRowId,
         instanceId
       );
@@ -1803,6 +2263,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           rowSnapshot.fromAddress,
           rowSnapshot.attachmentCount > 0,
           overflowed,
+          messageRowId,
           rowSnapshot.bodyTextExcerpt ?? ""
         );
       }
@@ -1836,13 +2297,35 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       stripSignature(stripForwardedPreamble(rowSnapshot.bodyTextExcerpt ?? ""))
     );
     const noUrlOrFreeText = !rowSnapshot.parsedUrl || isFreeText;
+    // OPE-1057 — a NULL sub-intent means the classifier never ran, not that it
+    // ruled the body out. The trusted fast path skips the classifier, so on
+    // that path `isFreeText` was false for every message and a trusted sender's
+    // body-only event ("This Saturday, Sep 19 is the Alexander Hamfest at …")
+    // was dropped with a "please send a link" reply that an unknown sender with
+    // the same body would not have received.
+    //
+    // Only NULL is widened. A classifier that RAN and chose another sub-intent
+    // is still honoured, and the prose-substance gate below is unchanged, so a
+    // signature-only or bare-URL body still gets `no-url` (OPE-457/OPE-537).
+    const classifierSkipped = rowSnapshot.classifiedSubIntent == null;
     if (noUrlOrFreeText) {
       // Track whether we actually attempted prose extraction so the
       // fallback reply distinguishes "tried, didn't extract enough" from
       // "nothing to try." Drives `no-url-prose-failed` vs `no-url` below.
       let attemptedProse = false;
-      if (isFreeText && hasBodyText) {
+      if ((isFreeText || classifierSkipped) && hasBodyText) {
         attemptedProse = true;
+        if (!isFreeText) {
+          // Countable: this attempt exists only because no classifier ran.
+          await recordWorkflowStep(getDb(this.env.DB), {
+            instanceId,
+            workflowName: "inbound-email",
+            inboundEmailId: messageRowId,
+            stepName: "submit/free-text-gate",
+            status: "ok",
+            detail: { reason: "classifier_skipped", classified_sub_intent: null },
+          }).catch(() => {});
+        }
         // Best-effort: if extraction fails to produce a viable event, we
         // fall back to the prose-failed reply rather than send a confusing
         // partial result. The minimum-fields gate inside the workflow
@@ -1859,7 +2342,10 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             () =>
               submitFreeTextExtract(
                 this.env,
-                rowSnapshot.bodyText ?? rowSnapshot.bodyTextExcerpt ?? ""
+                submissionProseText(
+                  rowSnapshot.bodyText ?? rowSnapshot.bodyTextExcerpt ?? "",
+                  subject
+                )
               )
           );
           const hasMinFields =
@@ -1873,7 +2359,9 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
               rowSnapshot.attachmentCount > 0,
               null, // no fetch happened on free-text path
               messageRowId,
-              true // OPE-185 — drafted from body prose → ok-low-body-extract reply
+              true, // OPE-185 — drafted from body prose → ok-low-body-extract reply
+              // OPE-465 — the body IS the source on this path.
+              [rowSnapshot.bodyText ?? rowSnapshot.bodyTextExcerpt ?? ""]
             );
           }
         } catch {
@@ -1967,7 +2455,10 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         // prose, DRAFT the event from it (PENDING, ok-low-body-extract reply) instead
         // of bouncing. Falls through to the original bounce when there's no usable
         // prose. Failsoft: any hiccup in the fallback re-throws the original error.
-        const rawBody = rowSnapshot.bodyText ?? rowSnapshot.bodyTextExcerpt ?? "";
+        const rawBody = submissionProseText(
+          rowSnapshot.bodyText ?? rowSnapshot.bodyTextExcerpt ?? "",
+          subject
+        );
         // OPE-537 — measure PROSE, not raw characters.
         //
         // This was `stripSignature(stripForwardedPreamble(rawBody)).trim().length > 40`,
@@ -2017,7 +2508,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
                 rowSnapshot.attachmentCount > 0,
                 null, // no successful fetch — this is a body-prose draft
                 messageRowId,
-                true // OPE-185 — drafted from body prose → ok-low-body-extract reply
+                true, // OPE-185 — drafted from body prose → ok-low-body-extract reply
+                [rawBody] // OPE-465 — the body IS the source on this path
               );
             }
             // Prose present but not enough to draft — record the reason, then bounce.
@@ -2138,6 +2630,13 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       );
     }
 
+    await this.flagIfInsecureTransport(
+      step,
+      fetched,
+      messageRowId,
+      "submit/flag-insecure-transport"
+    );
+
     return await this.submitExtractedEvent(
       step,
       extracted,
@@ -2145,7 +2644,41 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       rowSnapshot.fromAddress,
       rowSnapshot.attachmentCount > 0,
       fetched.fetchMethod,
-      messageRowId
+      messageRowId,
+      false,
+      // OPE-465 — the page we fetched AND the email body. Both are sources the
+      // extractor was given, so a value stated in either is grounded.
+      [fetched.content, rowSnapshot.bodyText ?? rowSnapshot.bodyTextExcerpt ?? ""]
+    );
+  }
+
+  /**
+   * OPE-424 — a page read over plain HTTP is LOWER-CONFIDENCE (John's ruling
+   * 2026-09-30). The fetcher now tries HTTPS first and falls back to HTTP only
+   * when the origin has no working TLS — which is common on volunteer-run
+   * organizer sites. The transport is unauthenticated, so whatever was
+   * extracted from it goes to the operator review queue rather than being
+   * trusted like a TLS fetch. Only ever SETS the flag, same rule as the
+   * `thin` extraction path in mark-done.
+   */
+  private async flagIfInsecureTransport(
+    step: WorkflowStep,
+    fetched: SubmitFetchResult | null | undefined,
+    messageRowId: string,
+    label: string
+  ): Promise<void> {
+    if (fetched?.transport !== "http") return;
+    await step.do(
+      label,
+      { retries: { limit: 2, delay: "5 seconds", backoff: "constant" } },
+      async () => {
+        const db = getDb(this.env.DB);
+        await db
+          .update(inboundEmails)
+          .set({ flaggedForReview: 1 })
+          .where(eq(inboundEmails.id, messageRowId));
+        return { flagged: true, url: fetched.url };
+      }
     );
   }
 
@@ -2178,7 +2711,11 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     // create to the distinct `ok-low-body-extract` reply. FALSE for URL /
     // attachment / multi-source callers (they keep the HIGH/MEDIUM/LOW tiers and,
     // for posters, the OPE-68 poster-hero flow).
-    bodyExtractDraft = false
+    bodyExtractDraft = false,
+    // OPE-465 — the exact text the fields were read from. Empty means "no
+    // source captured", which grounds everything as supported and drops
+    // nothing, so an unwired caller behaves exactly as it does today.
+    sourceTexts: string[] = []
   ): Promise<HandlerResult> {
     // C1 Phase 2 (analyst, 2026-05-30): multi-event landing pages
     // (e.g. https://downtownfarmington.com/farmers-markets/ listing 3
@@ -2193,7 +2730,9 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         subject,
         fromAddress,
         hasAttachments,
-        fetchMethod
+        fetchMethod,
+        messageRowId,
+        sourceTexts
       );
     }
     // Duplicate-check before insert. Two-stage (exact source_url, then
@@ -2417,7 +2956,13 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           retries: { limit: 3, delay: "5 seconds", backoff: "exponential" },
           timeout: "15 seconds",
         },
-        () => submitEvent(this.env, extracted, fromAddress, dedup.existingEventId ?? null)
+        () =>
+          submitEvent(this.env, extracted, fromAddress, {
+            inboundEmailId: messageRowId,
+            dedupWasBlind: dedup.dedupWasBlind === true,
+            possibleDuplicateOf: dedup.existingEventId ?? null,
+            sourceTexts,
+          })
       );
 
       return {
@@ -2445,7 +2990,12 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     const submitted = await step.do(
       "submit/submit-event",
       { retries: { limit: 3, delay: "5 seconds", backoff: "exponential" }, timeout: "15 seconds" },
-      () => submitEvent(this.env, extracted, fromAddress)
+      () =>
+        submitEvent(this.env, extracted, fromAddress, {
+          inboundEmailId: messageRowId,
+          dedupWasBlind: dedup.dedupWasBlind === true,
+          sourceTexts,
+        })
     );
 
     // B3 confidence-aware reply. Pick HIGH/MEDIUM/LOW based on min
@@ -2522,7 +3072,14 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     subject: string,
     fromAddress: string,
     hasAttachments: boolean,
-    fetchMethod: "standard" | "browser-rendering" | null
+    fetchMethod: "standard" | "browser-rendering" | null,
+    // OPE-804 — threaded so a blind dedup on any fanned-out child can flag the
+    // inbound row it came from. Two of the four creation pipelines could not
+    // name their own source row before this, which is why "flag the email for
+    // review" was never available to them.
+    messageRowId: string,
+    /** OPE-465 — the source text each child's fields were read from. */
+    sourceTexts: string[] = []
   ): Promise<HandlerResult> {
     interface EventOutcome {
       eventName: string;
@@ -2569,7 +3126,12 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             retries: { limit: 3, delay: "5 seconds", backoff: "exponential" },
             timeout: "15 seconds",
           },
-          () => submitEvent(this.env, perEvent, fromAddress)
+          () =>
+            submitEvent(this.env, perEvent, fromAddress, {
+              inboundEmailId: messageRowId,
+              dedupWasBlind: dedup.dedupWasBlind === true,
+              sourceTexts,
+            })
         );
         outcomes.push({
           eventName: submitted.eventName,
@@ -2713,7 +3275,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     } catch {
       return [];
     }
-    const sources: SubmitSource[] = [];
+    const sources: Array<Extract<SubmitSource, { kind: "attachment" }>> = [];
     // OPE-499 — keep what we read, not just what we used. One entry per
     // attachment INCLUDING the ones that yielded nothing, so "the flyer said
     // nothing useful" is distinguishable from "we never read the flyer".
@@ -2738,6 +3300,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           outcome = "object-not-found";
         } else {
           const blob = await obj.blob();
+          const ocrAttemptLogs: Promise<void>[] = [];
           // OPE-189 — retry a transient (cold-start timeout / capacity) failure in
           // place so a first-call miss doesn't strand a poster a warm retry reads
           // fine. Every attempt is logged (incl. the attempt-1 timeout) so a
@@ -2747,13 +3310,18 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             { name: ref.name || ref.key, blob },
             MAX_OCR_ATTEMPTS,
             (attempt, attemptOutcome) => {
-              void logError(getDb(this.env.DB), {
-                level: attemptOutcome.startsWith("ok:") ? "info" : "warn",
-                source: "mcp:workflow:ocr-attachments",
-                message: `attachment "${ref.name || ref.key}" attempt ${attempt}/${MAX_OCR_ATTEMPTS}: ${attemptOutcome}`,
-              }).catch(() => {});
+              // OPE-994 — collected and awaited once the retries finish, so the
+              // step does not complete (and memoize) ahead of its own attempt log.
+              ocrAttemptLogs.push(
+                logError(getDb(this.env.DB), {
+                  level: attemptOutcome.startsWith("ok:") ? "info" : "warn",
+                  source: "mcp:workflow:ocr-attachments",
+                  message: `attachment "${ref.name || ref.key}" attempt ${attempt}/${MAX_OCR_ATTEMPTS}: ${attemptOutcome}`,
+                }).catch(() => {})
+              );
             }
           );
+          await Promise.all(ocrAttemptLogs.splice(0));
           markdownForRecord = result.text;
           if (result.text !== null) {
             const len = result.text.trim().length;
@@ -2797,9 +3365,39 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       });
     }
 
+    // OPE-954 — this array IS the step's result, and a step result over 1 MiB
+    // kills the run. Bound it: each source to what the extractor can read at
+    // all, the total to a byte budget under the cap. Every cut is logged and
+    // stamped on the attachment's OCR record below.
+    const bounded = boundOcrSources(sources, {
+      perSourceMaxChars: MAX_FETCH_CONTENT_LEN,
+      budgetBytes: OCR_STEP_BUDGET_BYTES,
+      minChars: MIN_OCR_CHARS,
+    });
+    for (const t of bounded.truncations) {
+      const src = sources[t.index];
+      const rec = ocrRecords.find((r) => r.name === src.name);
+      if (rec) rec.outcome += `,${t.reason}:${t.originalChars}->${t.keptChars}chars`;
+      await logError(getDb(this.env.DB), {
+        level: "warn",
+        source: "mcp:workflow:ocr-attachments",
+        message: `attachment source ${t.index} ${t.reason}: ${t.originalChars} -> ${t.keptChars} chars (step result ${bounded.bytes}B, budget ${OCR_STEP_BUDGET_BYTES}B)`,
+      }).catch(() => {});
+    }
+
     // OPE-499 — persist what we read. Best-effort by the same contract as the
     // rest of this method: a failure here must never cost us the extraction that
     // already succeeded, so it logs and moves on rather than throwing.
+    //
+    // OPE-954 — the stored markdown is capped per attachment too. A D1 value
+    // has its own size ceiling, and the untruncated markdown of four large
+    // images is exactly what broke the step result.
+    for (const r of ocrRecords) {
+      if (r.markdown && r.markdown.length > MAX_FETCH_CONTENT_LEN) {
+        r.markdown = r.markdown.slice(0, MAX_FETCH_CONTENT_LEN);
+        if (!r.outcome.includes("per-source-cap")) r.outcome += ",record-truncated";
+      }
+    }
     if (ocrRecords.length > 0) {
       try {
         await getDb(this.env.DB)
@@ -2815,7 +3413,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         }).catch(() => {});
       }
     }
-    return sources;
+    return bounded.sources;
   }
 
   /**
@@ -2908,6 +3506,93 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     }
   }
 
+  /**
+   * OPE-847 — link the crawled roster to the event.
+   *
+   * Approved by John in session 2026-09-07 ("yes, do option (a)"). This is the
+   * only place in this pipeline that creates PUBLIC vendor profiles, so it is
+   * deliberately the most heavily guarded: `strict` dedup, a per-submission
+   * cap, a write-boundary name gate, per-name isolation, and an outcome record
+   * whether or not anything was written.
+   *
+   * Best-effort throughout. The event already exists by the time this runs;
+   * roster enrichment failing must never undo a successful submission.
+   */
+  private async linkRosterBestEffort(
+    step: WorkflowStep,
+    labelPrefix: string,
+    instanceId: string,
+    messageRowId: string,
+    eventId: string,
+    rosterNames: readonly string[],
+    rosterSourceUrl: string
+  ): Promise<void> {
+    const batches = planRosterBatches(rosterNames);
+    // No roster → no steps at all, rather than one step that does nothing.
+    if (batches.length === 0) return;
+
+    let outcome = emptyRosterLinkOutcome();
+    try {
+      for (let i = 0; i < batches.length; i++) {
+        const batch = batches[i];
+        const batchOutcome = await step.do(
+          `${labelPrefix}/roster-link[${i}]`,
+          {
+            retries: { limit: 1, delay: "5 seconds", backoff: "constant" },
+            timeout: "60 seconds",
+          },
+          () =>
+            linkRosterBatch(
+              getDb(this.env.DB),
+              { eventId, names: batch, sourceUrl: rosterSourceUrl },
+              {
+                // A system write — there is no acting admin behind a crawl.
+                actorUserId: null,
+                recomputeVendorCompleteness,
+                logEnrichment,
+              }
+            )
+        );
+        outcome = mergeRosterLinkOutcomes(outcome, batchOutcome);
+      }
+    } catch (err) {
+      await logError(getDb(this.env.DB), {
+        message: "roster vendor linking failed; event unaffected",
+        error: err,
+        source: SOURCE,
+        context: { eventId, rosterSourceUrl },
+      });
+    }
+
+    // Recorded whether or not anything was written. A roster that linked zero
+    // vendors and a linking step that never ran must not look the same — the
+    // OPE-501 problem, and the reason every other stage here writes its own
+    // decline.
+    await recordWorkflowStep(getDb(this.env.DB), {
+      instanceId,
+      workflowName: "inbound-email",
+      inboundEmailId: messageRowId,
+      stepName: "roster-vendor-link",
+      status: outcome.created + outcome.linked + outcome.alreadyLinked > 0 ? "ok" : "skipped",
+      detail: {
+        event_id: eventId,
+        source_url: rosterSourceUrl,
+        roster_names: rosterNames.length,
+        capped: rosterNames.length > ROSTER_LINK_MAX,
+        batches: batches.length,
+        created: outcome.created,
+        linked: outcome.linked,
+        already_linked: outcome.alreadyLinked,
+        rejected: outcome.rejected,
+        failed: outcome.failed,
+        failure_sample: outcome.failures,
+        dedup_strategy: "strict",
+      },
+    }).catch(() => {
+      // Cosmetic-failsoft, like every other observability write here.
+    });
+  }
+
   private async recordCitationsBestEffort(
     step: WorkflowStep,
     label: string,
@@ -2922,20 +3607,133 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     fromAddress: string,
     // OPE-457 — the text a body/attachment citation rests on, for the
     // contradiction guard. Only meaningful for non-url sources.
-    supportingText?: string
+    supportingText?: string,
+    // OPE-838 — the fetched page, for the snapshot columns. Only meaningful
+    // for url sources; the writer ignores it for the others.
+    snapshot?: import("../email-handlers/pipeline-citations.js").SourceSnapshot,
+    // OPE-837 — fields the same-site crawl filled from a DIFFERENT page than
+    // the one that produced the event. They are withheld from the primary
+    // write and cited against their own page instead, because a citation that
+    // names the wrong page is worse than no citation: it is checkable, and it
+    // is false.
+    crawl?: {
+      filledFields: readonly string[];
+      priceSource: import("../email-handlers/secondary-crawl.js").CrawlFieldSource | null;
+      // OPE-840 — the roster and the page it was read from. A separate source
+      // from the price: on the specimen the roster is on the organizer's own
+      // `?page_id=` pages while the price is on a third-party ticketing host.
+      rosterNames?: readonly string[];
+      rosterSource?: import("../email-handlers/secondary-crawl.js").CrawlFieldSource | null;
+    }
   ): Promise<void> {
     try {
       await step.do(
         label,
         { retries: { limit: 2, delay: "5 seconds", backoff: "constant" }, timeout: "10 seconds" },
         async () => {
+          // OPE-944 — read the forward verdict here rather than threading it
+          // through four positional call sites across three methods, none of
+          // which holds the row. One indexed PK lookup inside a step that is
+          // already best-effort, and it cannot be wired into some paths and not
+          // others — which is the `[[feedback_fix_wired_into_one_of_two_parallel_paths]]`
+          // failure this codebase keeps re-learning.
+          let originalSender:
+            | import("../email-handlers/pipeline-citations.js").OriginalSenderContext
+            | undefined;
+          try {
+            const [fwd] = await getDb(this.env.DB)
+              .select({
+                address: inboundEmails.originalSenderAddress,
+                auth: inboundEmails.originalSenderAuth,
+              })
+              .from(inboundEmails)
+              .where(eq(inboundEmails.id, messageRowId))
+              .limit(1);
+            if (fwd?.auth) originalSender = { address: fwd.address, auth: fwd.auth };
+          } catch {
+            // Provenance detail is an enrichment of the citation, never a
+            // precondition for writing one. Losing it must not lose the row.
+          }
+
           const result = await recordSourceCitations(getDb(this.env.DB), {
             eventId,
             extracted,
             source,
             fromAddress,
             supportingText,
+            snapshot,
+            excludeConfKeys: crawl?.filledFields,
+            originalSender,
           });
+
+          // OPE-837 — the crawl-derived fields, attributed to the page they
+          // were actually read from. On the specimen that page is on a
+          // different registrable domain than the submitted URL, so this is
+          // the only write that can honestly carry the price.
+          let crawlInserted = 0;
+          if (crawl?.priceSource && crawl.filledFields.length > 0) {
+            const priceFields = crawl.filledFields.filter((f) =>
+              ["ticketPriceMin", "ticketPriceMax"].includes(f)
+            );
+            if (priceFields.length > 0) {
+              const crawlResult = await recordSourceCitations(getDb(this.env.DB), {
+                eventId,
+                extracted: {
+                  url: crawl.priceSource.url,
+                  event: {
+                    ticketPriceMin: priceFields.includes("ticketPriceMin")
+                      ? (extracted.event as unknown as { ticketPriceMin?: number | null })
+                          .ticketPriceMin
+                      : null,
+                    ticketPriceMax: priceFields.includes("ticketPriceMax")
+                      ? (extracted.event as unknown as { ticketPriceMax?: number | null })
+                          .ticketPriceMax
+                      : null,
+                  },
+                },
+                source: { kind: "url", url: crawl.priceSource.url },
+                fromAddress,
+                snapshot: {
+                  title: crawl.priceSource.title,
+                  text: crawl.priceSource.text,
+                  fetchedAt: new Date(crawl.priceSource.fetchedAt),
+                },
+              });
+              crawlInserted = crawlResult.inserted;
+            }
+          }
+
+          // OPE-840 — the roster, cited against the page that listed it.
+          //
+          // This is the artifact an operator produced BY HAND on this exact
+          // event: a `vendor_roster` citation whose source_url is the roster
+          // page (`?page_id=21`), not the submitted homepage. It records what
+          // a page said and creates NO public data — no vendor rows, no
+          // `event_vendors` links, no `vendor_roster_status`. Turning these
+          // names into actual vendor links is a separate, customer-facing
+          // decision and stays behind John's approval.
+          if (crawl?.rosterSource && (crawl.rosterNames?.length ?? 0) > 0) {
+            const names = crawl.rosterNames as readonly string[];
+            const joined = names.join(", ");
+            const value =
+              `${names.length} exhibitors listed: ` +
+              (joined.length > ROSTER_CITATION_MAX_CHARS
+                ? `${joined.slice(0, ROSTER_CITATION_MAX_CHARS)}… (${names.length} total; full list in the secondary-page-crawl step)`
+                : joined);
+            const rosterResult = await recordSourceCitations(getDb(this.env.DB), {
+              eventId,
+              extracted: { url: crawl.rosterSource.url, event: {} },
+              source: { kind: "url", url: crawl.rosterSource.url },
+              fromAddress,
+              snapshot: {
+                title: crawl.rosterSource.title,
+                text: crawl.rosterSource.text,
+                fetchedAt: new Date(crawl.rosterSource.fetchedAt),
+              },
+              extraFields: [{ fieldName: "vendor_roster", value }],
+            });
+            crawlInserted += rosterResult.inserted;
+          }
           // OPE-540 — record the OUTCOME, not just the throw.
           //
           // Until now this step wrote to `workflow_run_steps` only when it
@@ -2959,6 +3757,17 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
               inserted: result.inserted,
               // Null on success; otherwise names WHICH zero-branch fired.
               reason: result.reason,
+              // OPE-838 — did this write carry the page snapshot? A citation
+              // row with a null source_excerpt is indistinguishable from one
+              // written before this shipped, so the step record is where the
+              // difference stays visible.
+              snapshot: snapshot ? "captured" : "absent",
+              // OPE-837 — separated from `inserted` deliberately: a crawl
+              // citation and a primary citation are evidence about different
+              // pages, and collapsing them into one count would hide which
+              // page carried the price.
+              crawl_inserted: crawlInserted,
+              crawl_source_url: crawl?.priceSource?.url ?? null,
               source_kind: source.kind,
               source_ref:
                 source.kind === "url"
@@ -2971,7 +3780,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             // Cosmetic-failsoft, like every other observability write here:
             // losing the record must not cost the citations we just wrote.
           });
-          return { inserted: result.inserted, reason: result.reason };
+          return { inserted: result.inserted, reason: result.reason, crawlInserted };
         }
       );
     } catch (err) {
@@ -3005,6 +3814,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     siblings: ReadonlyArray<{
       source: SubmitSource;
       extracted: import("../email-handlers/submit.js").SubmitExtractResult;
+      snapshot?: import("../email-handlers/pipeline-citations.js").SourceSnapshot;
     }>,
     fromAddress: string,
     emailBody: string
@@ -3019,7 +3829,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         siblings[i].extracted,
         siblings[i].source,
         fromAddress,
-        emailBody
+        emailBody,
+        siblings[i].snapshot
       );
     }
   }
@@ -3077,15 +3888,35 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       // OPE-69 — the originating source, threaded into Phase C so per-source
       // event_data_citations rows can be attributed (url / body / attachment).
       source: SubmitSource;
+      // OPE-838 scope 3/4 — what the fetched page SAID, captured here because
+      // this is the only place that still holds it. `fetched` goes out of scope
+      // at the end of Phase A; by Phase C there is an event id and no page. The
+      // citation writer stores it as source_title / source_excerpt /
+      // source_content_hash / source_fetched_at, which is what makes the
+      // DERIVED `source_verifiable` true. Absent for body/attachment/subject
+      // candidates, which were never fetched.
+      snapshot?: import("../email-handlers/pipeline-citations.js").SourceSnapshot;
       // OPE-378 / OPE-458 — candidates Phase A.9 folded into THIS one. They no
       // longer produce their own event (that was the over-split defect), but
       // they were still independent sources that cited these fields, so their
       // provenance is recorded against the survivor's event. Dropping it would
       // trade the over-split defect for a silent loss of the "N sources agreed"
       // signal OPE-69 exists to capture.
+      // OPE-837 — what the same-site nav crawl contributed to THIS candidate.
+      // Carried so the reply and the citation writer can attribute a field to
+      // the secondary page it actually came from, rather than to the primary
+      // page that never mentioned it.
+      crawlFilledFields?: string[];
+      crawlRosterNames?: string[];
+      crawlPriceSource?: import("../email-handlers/secondary-crawl.js").CrawlFieldSource | null;
+      crawlRosterSource?: import("../email-handlers/secondary-crawl.js").CrawlFieldSource | null;
       mergedSiblings?: Array<{
         source: SubmitSource;
         extracted: import("../email-handlers/submit.js").SubmitExtractResult;
+        // OPE-838 — the folded sibling's OWN page, not the survivor's. A
+        // sibling is a genuinely independent source; citing it against the
+        // survivor's snapshot would attribute the wrong page's text.
+        snapshot?: import("../email-handlers/pipeline-citations.js").SourceSnapshot;
       }>;
     }
     interface SourceFailure {
@@ -3094,6 +3925,11 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     }
     const candidates: SourceCandidate[] = [];
     const sourceFailures: SourceFailure[] = [];
+    // OPE-837 — the first URL source that actually produced an event. Its nav
+    // is what Phase A.7 crawls. Only one page per submission is crawled: the
+    // page the submitter pointed at is the authority, and crawling every URL
+    // in a multi-link email would multiply the fetch budget by the link count.
+    let primaryPage: CrawlFetchResult | null = null;
 
     // ── Phase A: extract candidate events from every source. ──────────
     for (let i = 0; i < sources.length; i++) {
@@ -3195,16 +4031,179 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           },
           () => submitExtract(this.env, fetched, emailBody)
         );
+        // `new Date()` rather than a step-recorded timestamp: the fetch just
+        // completed in this same Phase-A iteration, and Workflow step retries
+        // re-run the fetch, so the wall clock here IS when the bytes arrived.
+        await this.flagIfInsecureTransport(
+          step,
+          fetched,
+          messageRowId,
+          `${labelPrefix}/flag-insecure-transport`
+        );
+        const fetchedAt = new Date();
+        if (!primaryPage && extracted.events.length > 0) {
+          primaryPage = {
+            url: fetched.url,
+            content: fetched.content,
+            title: fetched.title,
+            // `links` is absent when the main app predates OPE-837; the crawl
+            // then finds no targets and costs nothing, rather than throwing.
+            links: fetched.links ?? [],
+          };
+        }
         for (const ev of extracted.events) {
           candidates.push({
             extracted: { ...extracted, event: ev, events: [ev] },
             fetchMethod: fetched.fetchMethod,
             fromAttachment: false,
             source,
+            snapshot: { title: fetched.title, text: fetched.content, fetchedAt },
           });
         }
       } catch {
         sourceFailures.push({ url: source.url, kind: "extract-failed" });
+      }
+    }
+
+    // ── Phase A.7 (OPE-837): crawl the SITE's own nav. ────────────────
+    //
+    // Phase A fanned out over the URLs in the EMAIL. That axis was never the
+    // problem: a bare-URL submission has exactly one, the extractor read it
+    // correctly, and the price, the 63-name exhibitor roster and the organizer
+    // identity all sat one hop away on nav pages nothing ever opened. OPE-744,
+    // OPE-526 and OPE-175 each ask for a field that lives on such a page, and
+    // none of them can succeed while the extractor never opens it.
+    //
+    // Bounded on purpose: one primary page per submission, same registrable
+    // domain, only links whose text or slug classifies to something carrying
+    // event fields, robots.txt honoured, and fill-empty-only on the way back
+    // in. A site with no such nav performs zero fetches.
+    if (primaryPage) {
+      let crawlStepSeq = 0;
+      const crawlPage = primaryPage;
+      try {
+        const enrichment = await crawlSecondaryPages(crawlPage, {
+          fetchPage: async (url: string) => {
+            const seq = crawlStepSeq++;
+            try {
+              const page = await step.do(
+                `submit/crawl[${seq}]/fetch`,
+                {
+                  retries: { limit: 1, delay: "5 seconds", backoff: "constant" },
+                  timeout: "30 seconds",
+                },
+                () => submitFetch(this.env, url)
+              );
+              return {
+                url: page.url,
+                content: page.content,
+                title: page.title,
+                links: page.links ?? [],
+              };
+            } catch {
+              // One secondary page failing is not a failed submission — the
+              // primary event already exists. Recorded as `fetch-failed` in
+              // the page record so a silent miss stays visible.
+              return null;
+            }
+          },
+          fetchRobots: async (robotsUrl: string) => {
+            try {
+              const res = await fetch(robotsUrl, {
+                headers: { "user-agent": CRAWL_USER_AGENT },
+              });
+              return { status: res.status, body: await res.text() };
+            } catch {
+              return null;
+            }
+          },
+          wait: (ms: number) => new Promise((resolve) => setTimeout(resolve, ms)),
+          userAgent: CRAWL_USER_AGENT,
+        });
+
+        // Scope 5 — every page considered gets a record, INCLUDING the ones
+        // that produced nothing. "Did the crawl run?" has to be answerable
+        // from the workflow record alone, which is the OPE-501 problem this
+        // would otherwise reproduce in a new place. A crawl that finds nothing
+        // and a crawl that never ran must not look the same.
+        await recordWorkflowStep(getDb(this.env.DB), {
+          instanceId,
+          workflowName: "inbound-email",
+          inboundEmailId: messageRowId,
+          stepName: "secondary-page-crawl",
+          status: "ok",
+          detail: {
+            primary_url: crawlPage.url,
+            links_seen: crawlPage.links.length,
+            pages_considered: enrichment.pages.length,
+            pages_fetched: enrichment.fetchCount,
+            robots: enrichment.robots,
+            elapsed_ms: enrichment.elapsedMs,
+            text_chars_fetched: enrichment.textCharsFetched,
+            roster_names: enrichment.rosterNames.length,
+            // The NAMES, not only the count. Scope 3's write half (feeding
+            // these to `create_or_link_vendor`) is deliberately NOT in this
+            // change — see the ticket receipt — so this record is where the
+            // roster durably lives meanwhile. Storing only a count would throw
+            // away the one expensive thing the crawl produced and make the
+            // follow-up re-fetch every page to get it back.
+            roster: enrichment.rosterNames.slice(0, 200),
+            ticket_price_min: enrichment.ticketPriceMin,
+            ticket_price_max: enrichment.ticketPriceMax,
+            ticket_url: enrichment.ticketUrl,
+            pages: enrichment.pages.map((pg) => ({
+              url: pg.url,
+              anchor_text: pg.anchorText,
+              hint_class: pg.hintClass,
+              final_class: pg.finalClass,
+              outcome: pg.outcome,
+              produced_fields: pg.producedFields,
+              roster_count: pg.rosterCount,
+              text_chars: pg.textChars,
+              off_site_ticket_hop: pg.offSiteTicketHop,
+            })),
+          },
+        });
+
+        // Fill-empty-only, and only onto candidates from the page we crawled.
+        for (const candidate of candidates) {
+          if (candidate.source.kind !== "url") continue;
+          if (candidate.source.url !== crawlPage.url && candidate.extracted.url !== crawlPage.url) {
+            continue;
+          }
+          const filled = applyCrawlEnrichment(
+            candidate.extracted.event as unknown as {
+              ticketUrl: string | null;
+              ticketPriceMin: number | null;
+              ticketPriceMax: number | null;
+            },
+            enrichment,
+            crawlPage.url
+          );
+          if (filled.length > 0) {
+            candidate.crawlFilledFields = filled;
+            candidate.crawlPriceSource = enrichment.priceSource;
+          }
+          if (enrichment.rosterNames.length > 0) {
+            candidate.crawlRosterNames = enrichment.rosterNames;
+            candidate.crawlRosterSource = enrichment.rosterSources[0] ?? null;
+          }
+        }
+      } catch (err) {
+        // The crawl is enrichment. It must never cost the submission the event
+        // the primary page already produced, so any unexpected failure is
+        // recorded and swallowed rather than thrown.
+        await recordWorkflowStep(getDb(this.env.DB), {
+          instanceId,
+          workflowName: "inbound-email",
+          inboundEmailId: messageRowId,
+          stepName: "secondary-page-crawl",
+          status: "failed",
+          detail: {
+            primary_url: crawlPage.url,
+            error: err instanceof Error ? err.message : String(err),
+          },
+        });
       }
     }
 
@@ -3256,6 +4255,21 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     // down to one candidate now takes the N=1 path and gets the rich
     // single-event reply, instead of a "we created 2 events" list that was
     // never true.
+    // OPE-1123 — drop "events" named after a LISTING page before they can
+    // cluster or be created (see listing-page-title.ts for the narrow rule).
+    const listingDrops = listingCandidatesToDrop(
+      candidates.map((c) => ({ name: c.extracted.event.name, kind: c.source.kind }))
+    );
+    if (listingDrops.length > 0) {
+      console.warn(
+        `[submit/listing-page] dropped ${listingDrops.length} listing-page candidate(s): ` +
+          listingDrops.map((i) => `"${candidates[i].extracted.event.name}"`).join("; ")
+      );
+      const keep = candidates.filter((_, i) => !listingDrops.includes(i));
+      candidates.length = 0;
+      candidates.push(...keep);
+    }
+
     const clusterInput = candidates.map((c, idx) => ({
       idx,
       name: c.extracted.event.name,
@@ -3303,6 +4317,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         (winner.mergedSiblings ??= []).push({
           source: loser.source,
           extracted: loser.extracted,
+          snapshot: loser.snapshot,
         });
       }
       // warn, not log: a collapse means the extractor emitted the same event
@@ -3404,7 +4419,12 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         fromAddress,
         hasAttachments,
         only.fetchMethod,
-        messageRowId
+        messageRowId,
+        false,
+        // OPE-465 — this candidate's own captured page text, plus the email
+        // body. The snapshot is page-level, which is all the grounding check
+        // needs: it asks whether the text SAYS the value, not where in it.
+        [only.snapshot?.text ?? "", emailBody ?? ""]
       );
       // OPE-68 — when this lone candidate came from a poster/PDF and a NEW
       // event was created (ok / ok-medium / ok-low), set the poster as its
@@ -3447,8 +4467,38 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           only.extracted,
           only.source,
           fromAddress,
-          emailBody
+          emailBody,
+          only.snapshot,
+          // OPE-837 — this N=1 collapse is the DOMINANT path, not an edge
+          // case: `source_count` is 1 on every fanout run in
+          // `workflow_run_steps`, and a bare-URL submission — the exact shape
+          // this ticket is about — always lands here. Omitting the crawl
+          // context on this branch alone would have wired the provenance fix
+          // into two of three parallel paths and left the specimen itself
+          // mis-attributing its price to the homepage.
+          only.crawlFilledFields || only.crawlRosterNames
+            ? {
+                filledFields: only.crawlFilledFields ?? [],
+                priceSource: only.crawlPriceSource ?? null,
+                rosterNames: only.crawlRosterNames,
+                rosterSource: only.crawlRosterSource ?? null,
+              }
+            : undefined
         );
+        // OPE-847 — link the roster. Same three call sites as the citation
+        // above, deliberately: the previous ticket's provenance fix reached
+        // two of them and missed this one, which is the dominant path.
+        if (only.crawlRosterNames?.length && only.crawlRosterSource) {
+          await this.linkRosterBestEffort(
+            step,
+            "submit/single",
+            instanceId,
+            messageRowId,
+            res.resultingEventId,
+            only.crawlRosterNames,
+            only.crawlRosterSource.url
+          );
+        }
       }
       if (only.mergedSiblings?.length && res.resultingEventId) {
         await this.recordMergedSiblingCitations(
@@ -3544,8 +4594,32 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
               extracted,
               cand.source,
               fromAddress,
-              emailBody
+              emailBody,
+              cand.snapshot,
+              cand.crawlFilledFields || cand.crawlRosterNames
+                ? {
+                    filledFields: cand.crawlFilledFields ?? [],
+                    priceSource: cand.crawlPriceSource ?? null,
+                    rosterNames: cand.crawlRosterNames,
+                    rosterSource: cand.crawlRosterSource ?? null,
+                  }
+                : undefined
             );
+            // OPE-847 — the keeper branch is deliberately included: OPE-175
+            // ("inbound dedup should enrich with roster") is one of the three
+            // tickets this work exists to unblock, and excluding it would
+            // leave that ask unaddressed. Higher blast radius, same guards.
+            if (cand.crawlRosterNames?.length && cand.crawlRosterSource) {
+              await this.linkRosterBestEffort(
+                step,
+                `${labelPrefix}/keeper`,
+                instanceId,
+                messageRowId,
+                dedup.existingEventId,
+                cand.crawlRosterNames,
+                cand.crawlRosterSource.url
+              );
+            }
             if (cand.mergedSiblings?.length) {
               await this.recordMergedSiblingCitations(
                 step,
@@ -3567,7 +4641,13 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             retries: { limit: 3, delay: "5 seconds", backoff: "exponential" },
             timeout: "15 seconds",
           },
-          () => submitEvent(this.env, extracted, fromAddress)
+          () =>
+            submitEvent(this.env, extracted, fromAddress, {
+              inboundEmailId: messageRowId,
+              dedupWasBlind: dedup.dedupWasBlind === true,
+              // OPE-465 — this candidate's own page text, plus the email body.
+              sourceTexts: [cand.snapshot?.text ?? "", emailBody ?? ""],
+            })
         );
         outcomes.push({
           kind: "created",
@@ -3587,8 +4667,31 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           extracted,
           cand.source,
           fromAddress,
-          emailBody
+          emailBody,
+          cand.snapshot,
+          // OPE-840 — gated on EITHER signal. Gating on `crawlFilledFields`
+          // alone would drop the roster citation on any site that publishes an
+          // exhibitor list but no price, which is the majority shape.
+          cand.crawlFilledFields || cand.crawlRosterNames
+            ? {
+                filledFields: cand.crawlFilledFields ?? [],
+                priceSource: cand.crawlPriceSource ?? null,
+                rosterNames: cand.crawlRosterNames,
+                rosterSource: cand.crawlRosterSource ?? null,
+              }
+            : undefined
         );
+        if (cand.crawlRosterNames?.length && cand.crawlRosterSource) {
+          await this.linkRosterBestEffort(
+            step,
+            labelPrefix,
+            instanceId,
+            messageRowId,
+            submitted.id,
+            cand.crawlRosterNames,
+            cand.crawlRosterSource.url
+          );
+        }
         if (cand.mergedSiblings?.length) {
           await this.recordMergedSiblingCitations(
             step,
@@ -3740,6 +4843,9 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     fromAddress: string,
     hasAttachments: boolean,
     overflowed: boolean,
+    // OPE-804 — see runMultiEventFanOut. Required, and placed BEFORE the
+    // defaulted `emailBody` so it cannot be silently omitted.
+    messageRowId: string,
     // D1 (analyst, 2026-05-29 PM): pass the email body in so the
     // per-URL submitExtract calls can prefer body dates over the
     // per-page form's dates. Empty string when no body.
@@ -3771,6 +4877,12 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             timeout: "30 seconds",
           },
           () => submitFetch(this.env, url)
+        );
+        await this.flagIfInsecureTransport(
+          step,
+          fetched,
+          messageRowId,
+          `${labelPrefix}/flag-insecure-transport`
         );
         const extracted = await step.do(
           `${labelPrefix}/ai-extract`,
@@ -3805,7 +4917,13 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             retries: { limit: 3, delay: "5 seconds", backoff: "exponential" },
             timeout: "15 seconds",
           },
-          () => submitEvent(this.env, extracted, fromAddress)
+          () =>
+            submitEvent(this.env, extracted, fromAddress, {
+              inboundEmailId: messageRowId,
+              dedupWasBlind: dedup.dedupWasBlind === true,
+              // OPE-465 — the page fetched for THIS url in the multi-URL loop.
+              sourceTexts: [fetched.content],
+            })
         );
         outcomes.push({
           url,

@@ -15,7 +15,7 @@
 //   abstract. This rule + the Opportunities feed converts the abstract
 //   objective into specific URLs the operator can rewrite Monday.
 
-import { ScApiError, ScConfigError, getSiteSearchQueries, type ScEnv } from "@/lib/search-console";
+import { ScApiError, ScConfigError, getSiteSearchQueries } from "@/lib/search-console";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { resolveGscPath } from "../resolve-gsc-path";
 import type { ItemMatch, RuleDefinition } from "../engine";
@@ -35,7 +35,7 @@ export const page1ZeroClickQueriesRule: RuleDefinition = {
   // on empty would clobber valid items during a transient outage.
   // Mirrors low-ctr-pages handling.
   async run(db): Promise<ItemMatch[]> {
-    const env = getCloudflareEnv() as unknown as ScEnv;
+    const env = getCloudflareEnv();
     let queries;
     try {
       const result = await getSiteSearchQueries(env, {

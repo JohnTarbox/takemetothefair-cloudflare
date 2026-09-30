@@ -115,8 +115,18 @@ export async function recordClaimEvidence(
  *  - fetch succeeds AND the page references the business  -> STRONG
  *  - fetch succeeds but the page never names the business -> WEAK
  *      (a parked domain / unrelated squatter reads as "live" to a naive check)
- *  - fetch fails (404, unreachable, blocked)              -> WEAK
+ *  - the site is GONE (404 / 410 / DNS or connect failure) -> WEAK
+ *  - we could not LOOK (bot wall, 403, 429, 5xx, timeout,
+ *      challenge page, our own fetch throwing)             -> UNAVAILABLE
+ *  - a social platform that walls server-side fetches     -> UNAVAILABLE, unfetched
  *  - nothing declared                                     -> NONE
+ *
+ * OPE-237, 2026-09-14 — "blocked" used to be WEAK. The first live run put a
+ * maker's Instagram (http_429) and Facebook page (http_400) in the CAUTION
+ * bucket as "indexed-but-dead", which scores negative and can reach SUSPECT. A
+ * refusal to serve a robot says nothing about whether the vendor exists, and
+ * the ticket's own notes say Instagram blocks server-side fetch. WEAK is kept
+ * for evidence that the presence is not there, not for our failure to see it.
  *
  * `fetchHtml` is injected so the classifier stays pure-ish and testable; the
  * caller supplies the A5 `fetchVendorSite` escalation path in production.
@@ -129,20 +139,35 @@ export async function classifyDeclaredPresence(
   const url = (website ?? "").trim();
   if (!url) return { corroboration: "NONE", detail: "No website declared at signup" };
 
+  const walled = walledPlatform(url);
+  if (walled) {
+    return {
+      corroboration: "UNAVAILABLE",
+      detail: `${walled} blocks server-side fetches — check this profile by hand`,
+    };
+  }
+
   let res: { ok: boolean; html: string | null; failReason?: string };
   try {
     res = await fetchHtml(url);
   } catch (err) {
     return {
-      corroboration: "WEAK",
-      detail: `Declared site threw on fetch: ${err instanceof Error ? err.message : String(err)}`,
+      corroboration: "UNAVAILABLE",
+      detail: `Could not check the declared site — fetch threw: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
 
   if (!res.ok || !res.html) {
+    const reason = res.failReason ?? "unreachable";
+    if (isGoneFailure(reason)) {
+      return {
+        corroboration: "WEAK",
+        detail: `Declared site did not resolve (${reason}) — indexed-but-dead is caution, not corroboration`,
+      };
+    }
     return {
-      corroboration: "WEAK",
-      detail: `Declared site did not resolve (${res.failReason ?? "unreachable"}) — indexed-but-dead is caution, not corroboration`,
+      corroboration: "UNAVAILABLE",
+      detail: `Could not check the declared site (${reason}) — a refusal or outage is not evidence either way`,
     };
   }
 
@@ -155,6 +180,44 @@ export async function classifyDeclaredPresence(
     detail:
       "Declared site is live but never names the business — possible parked domain or unrelated site",
   };
+}
+
+/**
+ * Platforms that refuse or login-wall server-side fetches. A fetch there
+ * returns a 4xx or a generic login page, neither of which is about the vendor —
+ * and the login page would otherwise score WEAK as "never names the business".
+ * Not fetched at all: the answer is known in advance.
+ */
+const WALLED_PLATFORMS: ReadonlyArray<readonly [host: string, name: string]> = [
+  ["instagram.com", "Instagram"],
+  ["facebook.com", "Facebook"],
+  ["fb.com", "Facebook"],
+  ["tiktok.com", "TikTok"],
+  ["linkedin.com", "LinkedIn"],
+  ["x.com", "X"],
+  ["twitter.com", "X"],
+];
+
+export function walledPlatform(url: string): string | null {
+  let host: string;
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+  for (const [domain, name] of WALLED_PLATFORMS) {
+    if (host === domain || host.endsWith(`.${domain}`)) return name;
+  }
+  return null;
+}
+
+/**
+ * Failures that are evidence the presence is GONE, as opposed to failures that
+ * only mean we could not look. Vocabulary is `fetchHtmlWithSsrfGuard`'s
+ * `error` field (packages/site-fetch/src/browser-rendering.ts).
+ */
+export function isGoneFailure(reason: string): boolean {
+  return reason === "http_404" || reason === "http_410" || reason.startsWith("network:");
 }
 
 /**

@@ -10,10 +10,16 @@ export const dynamic = "force-dynamic";
  * kept for any link already in the wild.
  */
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
-import { emailSuppressionList } from "@/lib/db/schema";
-import { base64UrlDecode, verifyUnsubscribeToken } from "@takemetothefair/utils";
+import {
+  base64UrlDecode,
+  openUnsubscribeEmail,
+  SEALED_SEGMENT,
+  verifySealedUnsubscribe,
+  verifyUnsubscribeToken,
+} from "@takemetothefair/utils";
 import { handleUnsubscribe, unsubscribePage } from "@/lib/unsubscribe-page";
 import { logError } from "@/lib/logger";
+import { applyGlobalOptOut } from "@/lib/email/unsubscribe-stores";
 
 interface Params {
   params: Promise<{ e: string; t: string }>;
@@ -21,48 +27,61 @@ interface Params {
 
 export async function GET(request: Request, { params }: Params) {
   const { e, t } = await params;
-
-  let email = "";
-  try {
-    email = base64UrlDecode(e);
-  } catch {
-    return unsubscribePage(
-      "Invalid unsubscribe link",
-      "This link is malformed. Please use the link from the email exactly as it appears.",
-      400
-    );
-  }
-
-  const env = getCloudflareEnv() as unknown as {
-    UNSUBSCRIBE_SECRET?: string;
-    INTERNAL_API_KEY?: string;
-  };
+  const env = getCloudflareEnv();
   const secret = env.UNSUBSCRIBE_SECRET || env.INTERNAL_API_KEY || "";
   const db = getCloudflareDb();
+
+  // OPE-864 — `/unsubscribe/v2/<sealed>` carries the address ENCRYPTED. The
+  // legacy `/unsubscribe/<b64-email>/<hmac>` form stays valid for every link
+  // already delivered.
+  const sealed = e === SEALED_SEGMENT;
+  let email = "";
+  if (sealed) {
+    email = (await openUnsubscribeEmail(secret, t)) ?? "";
+    if (!email) {
+      return unsubscribePage(
+        "Invalid unsubscribe link",
+        "We couldn't verify this unsubscribe link. Please use the link from the email exactly as it appears.",
+        400
+      );
+    }
+  } else {
+    try {
+      email = base64UrlDecode(e);
+    } catch {
+      return unsubscribePage(
+        "Invalid unsubscribe link",
+        "This link is malformed. Please use the link from the email exactly as it appears.",
+        400
+      );
+    }
+  }
 
   return handleUnsubscribe({
     email,
     token: t,
     secret,
-    verify: verifyUnsubscribeToken,
+    verify: sealed ? verifySealedUnsubscribe : verifyUnsubscribeToken,
+    // OPE-869 — one writer for a GLOBAL opt-out, across BOTH stores.
+    //
+    // This path used to insert an `email_suppression_list` row and nothing
+    // else, while Path A set `newsletter_subscribers.unsubscribed` and closed
+    // the list rows and never touched suppression. Two disjoint answers to
+    // "did this person unsubscribe?", and which one honoured a click depended
+    // only on which mail the person happened to receive.
+    //
+    // This link's scope is EVERYTHING and stays everything — that is what it
+    // promised when it was sent, and OPE-864's migration rule applies here too.
     suppress: async (addr) => {
       try {
-        await db
-          .insert(emailSuppressionList)
-          .values({
-            email: addr,
-            reason: "unsubscribe",
-            source: "unsubscribe-link",
-            createdAt: new Date(),
-          })
-          .onConflictDoNothing({ target: emailSuppressionList.email });
+        await applyGlobalOptOut(db, addr, { source: "unsubscribe-link-path" });
       } catch (err) {
-        // Click was valid; a transient write failure shouldn't tell the user
-        // they're still subscribed. Send-side check is the durable gate; clicks
-        // are idempotent.
+        // The click was valid; a transient write failure must not tell the
+        // user they are still subscribed. Send-side checks are the durable
+        // gate and clicks are idempotent.
         await logError(db, {
-          source: "app/unsubscribe/[e]/[t]",
-          message: "Failed to record unsubscribe suppression",
+          source: "src/app/unsubscribe/[e]/[t]/route.ts",
+          message: "Failed to record unsubscribe opt-out",
           error: err,
           context: { email: addr },
         });

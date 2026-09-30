@@ -65,7 +65,7 @@ export async function POST(request: Request) {
     ...blogRows.map((r) => indexNowUrlFor("blog", r.slug)),
   ];
 
-  const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+  const env = getCloudflareEnv();
   await pingIndexNow(db, urls, env, "backfill");
 
   return NextResponse.json({

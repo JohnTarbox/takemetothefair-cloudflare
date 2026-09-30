@@ -1,4 +1,5 @@
 import { eq } from "drizzle-orm";
+import { hashPasswordPbkdf2, verifyPasswordHash } from "@takemetothefair/utils";
 import { users, vendors, promoters } from "../schema.js";
 import type { Db } from "../db.js";
 
@@ -11,67 +12,25 @@ export type UserProps = {
   promoterId?: string;
 };
 
-function toHex(buffer: ArrayBuffer): string {
-  return Array.from(new Uint8Array(buffer))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+/**
+ * OPE-902 — both Workers verify against the same `users.password_hash`, so they
+ * share one implementation (`@takemetothefair/utils/password-hash`). This file's
+ * own copy had drifted from the main app's: its legacy branch hashed `password`
+ * where the app hashed `password + AUTH_SECRET`, so a legacy row could verify at
+ * one door and not the other. 0 of 177 password rows were legacy on prod
+ * (2026-09-16), so the legacy branch — and the upgrade-on-login that only ever
+ * reached rows this door could already verify — are removed.
+ */
+export async function verifyPassword(password: string, storedHash: string): Promise<boolean> {
+  return verifyPasswordHash(password, storedHash);
 }
 
-function fromHex(hex: string): Uint8Array {
-  const bytes = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < hex.length; i += 2) {
-    bytes[i / 2] = parseInt(hex.substr(i, 2), 16);
-  }
-  return bytes;
-}
-
-async function verifyPbkdf2(
-  password: string,
-  saltHex: string,
-  hashHex: string,
-): Promise<boolean> {
-  const encoder = new TextEncoder();
-  const salt = fromHex(saltHex);
-  const keyMaterial = await crypto.subtle.importKey(
-    "raw",
-    encoder.encode(password),
-    "PBKDF2",
-    false,
-    ["deriveBits"],
-  );
-  const derivedBits = await crypto.subtle.deriveBits(
-    { name: "PBKDF2", salt: salt as BufferSource, iterations: 100_000, hash: "SHA-256" },
-    keyMaterial,
-    256,
-  );
-  return toHex(derivedBits) === hashHex;
-}
-
-async function verifySha256(
-  password: string,
-  storedHash: string,
-): Promise<boolean> {
-  const data = new TextEncoder().encode(password);
-  const hash = await crypto.subtle.digest("SHA-256", data);
-  return toHex(hash) === storedHash;
-}
-
-/** Verify a password against a stored hash (PBKDF2 or legacy SHA-256). */
-export async function verifyPassword(
-  password: string,
-  storedHash: string,
-): Promise<boolean> {
-  if (storedHash.includes(":")) {
-    const [saltHex, hashHex] = storedHash.split(":");
-    return verifyPbkdf2(password, saltHex, hashHex);
-  }
-  return verifySha256(password, storedHash);
-}
+export { hashPasswordPbkdf2 };
 
 /** Look up a user by email, returning the fields needed for login. */
 export async function lookupUser(
   db: Db,
-  email: string,
+  email: string
 ): Promise<{
   id: string;
   email: string;
@@ -97,7 +56,7 @@ export async function lookupUser(
 /** Resolve vendor/promoter IDs for a user to build the full OAuth props. */
 export async function resolveUserProps(
   db: Db,
-  user: { id: string; email: string; name: string | null; role: string },
+  user: { id: string; email: string; name: string | null; role: string }
 ): Promise<UserProps> {
   const props: UserProps = {
     userId: user.id,

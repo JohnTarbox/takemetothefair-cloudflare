@@ -53,8 +53,8 @@
  * it safe even if RANDOM() happens to land on the same id twice.
  */
 
-import { and, isNotNull, sql } from "drizzle-orm";
-import { events, venues } from "../schema.js";
+import { and, eq, gte, isNotNull, sql } from "drizzle-orm";
+import { errorLogs, events, venues } from "../schema.js";
 import type { Db } from "../db.js";
 import { captureHoldoutSampleDiscrepancy, type FieldClass } from "./capture.js";
 import { logError } from "../logger.js";
@@ -62,6 +62,35 @@ import { submitFetch, submitExtract } from "../email-handlers/submit.js";
 import { NonRetryableError } from "cloudflare:workflows";
 
 const MAX_PER_RUN = 10;
+
+/**
+ * OPE-576 — how many random candidates to draw before de-duplicating by URL.
+ * The high-trust corpus was 17 events on 7 URLs on 2026-09-16, so this reads
+ * all of it today; the cap only matters if the corpus grows.
+ */
+const CANDIDATE_POOL = 200;
+
+/**
+ * OPE-576 — a page that could not be compared is not re-fetched for this long.
+ *
+ * Measured 2026-09-16: 11 of the 17 sampled events share ONE list page
+ * (mafa.org/2026fairsbydate.html), so each run re-extracted it ~7 times and each
+ * attempt burned the full 20 s Workers AI ceiling — the 06:10–06:14 "burst" the
+ * ticket was filed about, every day since 08-26. Three more pages (hardwick,
+ * westfield, hamden) timed out daily into a thin salvage that is never compared.
+ * None of those outcomes changes overnight, and a drift check that cannot read
+ * a page learns nothing by paying for it again tomorrow.
+ */
+export const NOT_COMPARABLE_COOLDOWN_DAYS = 7;
+
+/** Why a sampled page yielded no comparison. Stamped into the log row's context. */
+export type HoldoutOutcome = "fetch_failed" | "extract_failed" | "thin" | "multi_event";
+
+export interface HoldoutDeps {
+  submitFetch: typeof submitFetch;
+  submitExtract: typeof submitExtract;
+  now: () => Date;
+}
 
 /**
  * OPE-576 — is this extraction evidence of what the page SAYS?
@@ -99,6 +128,12 @@ export interface HoldoutSamplingResult {
   skipped_dedup: number;
   /** How many events failed at fetch or extract. */
   errors: number;
+  /** OPE-576 — extracted, but the page lists several events, so not compared. */
+  skippedMultiEvent: number;
+  /** OPE-576 — candidates dropped because another sampled event shares their URL. */
+  skippedDuplicateUrl: number;
+  /** OPE-576 — URLs skipped because they were not comparable within the cooldown. */
+  skippedCooldown: number;
 }
 
 export interface HoldoutEnv {
@@ -115,7 +150,8 @@ export interface HoldoutEnv {
  */
 export async function runScheduledHoldoutSampling(
   db: Db,
-  env: HoldoutEnv
+  env: HoldoutEnv,
+  deps: HoldoutDeps = { submitFetch, submitExtract, now: () => new Date() }
 ): Promise<HoldoutSamplingResult> {
   const SOURCE = "mcp:schedule:holdout-sampling";
   const result: HoldoutSamplingResult = {
@@ -126,6 +162,9 @@ export async function runScheduledHoldoutSampling(
     emitted: 0,
     skipped_dedup: 0,
     errors: 0,
+    skippedMultiEvent: 0,
+    skippedDuplicateUrl: 0,
+    skippedCooldown: 0,
   };
 
   try {
@@ -152,7 +191,7 @@ export async function runScheduledHoldoutSampling(
     // server-side via ORDER BY RANDOM() LIMIT N. LEFT JOIN through
     // venues up front so the comparator has city/state without a
     // second round-trip per row.
-    const sampled = await db
+    const candidates = await db
       .select({
         eventId: events.id,
         eventName: events.name,
@@ -178,7 +217,29 @@ export async function runScheduledHoldoutSampling(
         )
       )
       .orderBy(sql`RANDOM()`)
-      .limit(MAX_PER_RUN);
+      .limit(CANDIDATE_POOL);
+
+    // OPE-576 — one fetch per PAGE, not per event, and none for a page that
+    // could not be compared recently. Both fall out of the same fact: the
+    // comparison reads a page, and several stored events can point at one.
+    const coolingDown = await notComparableUrls(db, deps.now());
+    const seenUrls = new Set<string>();
+    const sampled: typeof candidates = [];
+    for (const row of candidates) {
+      if (sampled.length >= MAX_PER_RUN) break;
+      const url = row.eventSourceUrl;
+      if (!url) continue;
+      if (seenUrls.has(url)) {
+        result.skippedDuplicateUrl += 1;
+        continue;
+      }
+      seenUrls.add(url);
+      if (coolingDown.has(url)) {
+        result.skippedCooldown += 1;
+        continue;
+      }
+      sampled.push(row);
+    }
 
     result.sampled = sampled.length;
 
@@ -190,7 +251,7 @@ export async function runScheduledHoldoutSampling(
       // right now; record + continue.
       let fetched: Awaited<ReturnType<typeof submitFetch>>;
       try {
-        fetched = await submitFetch(
+        fetched = await deps.submitFetch(
           { DB: env.DB, MAIN_APP_URL: env.MAIN_APP_URL, INTERNAL_API_KEY: env.INTERNAL_API_KEY },
           row.eventSourceUrl
         );
@@ -201,7 +262,7 @@ export async function runScheduledHoldoutSampling(
           source: SOURCE,
           message: `submitFetch failed for event=${row.eventId}`,
           error: err,
-          context: { sourceUrl: row.eventSourceUrl },
+          context: { sourceUrl: row.eventSourceUrl, holdoutOutcome: "fetch_failed" },
         });
         continue;
       }
@@ -212,7 +273,7 @@ export async function runScheduledHoldoutSampling(
       // its header comment). Same per-event isolation as fetch.
       let extracted: Awaited<ReturnType<typeof submitExtract>>;
       try {
-        extracted = await submitExtract(
+        extracted = await deps.submitExtract(
           { DB: env.DB, MAIN_APP_URL: env.MAIN_APP_URL, INTERNAL_API_KEY: env.INTERNAL_API_KEY },
           fetched
         );
@@ -228,7 +289,7 @@ export async function runScheduledHoldoutSampling(
           source: SOURCE,
           message: `submitExtract failed for event=${row.eventId}`,
           error: err,
-          context: { sourceUrl: row.eventSourceUrl },
+          context: { sourceUrl: row.eventSourceUrl, holdoutOutcome: "extract_failed" },
         });
         continue;
       }
@@ -250,13 +311,27 @@ export async function runScheduledHoldoutSampling(
       // both worked, and GATE-NOISE (2026-08-03) took the discrepancy queue
       // from 7,193 to ~200 open. Re-inflating it with deterministic guesses
       // would undo that quietly.
+      // OPE-576 — a page listing several events cannot be compared to ONE
+      // stored event: `submitExtract` hands back `events[0]`, which is whichever
+      // fair the page lists first, and every field of it would "drift".
+      if (extracted.totalEventsDetected > 1) {
+        result.skippedMultiEvent += 1;
+        await logError(db, {
+          level: "info",
+          source: SOURCE,
+          message: `skipping multi-event page for event=${row.eventId} — ${extracted.totalEventsDetected} events listed, events[0] is not this event`,
+          context: { sourceUrl: row.eventSourceUrl, holdoutOutcome: "multi_event" },
+        });
+        continue;
+      }
+
       if (!isComparableExtraction(extracted.extractionMethod)) {
         result.skippedThin += 1;
         await logError(db, {
           level: "warn",
           source: SOURCE,
           message: `skipping thin extraction for event=${row.eventId} — deterministic salvage is not evidence of drift`,
-          context: { sourceUrl: row.eventSourceUrl },
+          context: { sourceUrl: row.eventSourceUrl, holdoutOutcome: "thin" },
         });
         continue;
       }
@@ -338,7 +413,9 @@ export async function runScheduledHoldoutSampling(
     console.log(
       `[cron] holdout-sampling ok — sampled=${result.sampled} fetched=${result.fetched} ` +
         `extracted=${result.extracted} skippedThin=${result.skippedThin} emitted=${result.emitted} ` +
-        `skipped_dedup=${result.skipped_dedup} errors=${result.errors}`
+        `skipped_dedup=${result.skipped_dedup} errors=${result.errors} ` +
+        `skippedMultiEvent=${result.skippedMultiEvent} skippedDuplicateUrl=${result.skippedDuplicateUrl} ` +
+        `skippedCooldown=${result.skippedCooldown}`
     );
     return result;
   } catch (error) {
@@ -349,6 +426,29 @@ export async function runScheduledHoldoutSampling(
     });
     return result;
   }
+}
+
+/**
+ * OPE-576 — source URLs this job could not compare within the cooldown.
+ *
+ * Read from the job's own log rows, keyed on the `holdoutOutcome` it stamps into
+ * their context rather than on message text, so rewording a message cannot
+ * silently switch the cooldown off. `error_logs` retention (~30 days) comfortably
+ * exceeds the window.
+ */
+export async function notComparableUrls(db: Db, now: Date): Promise<Set<string>> {
+  const since = new Date(now.getTime() - NOT_COMPARABLE_COOLDOWN_DAYS * 86_400_000);
+  const rows = await db
+    .select({ url: sql<string | null>`json_extract(${errorLogs.context}, '$.sourceUrl')` })
+    .from(errorLogs)
+    .where(
+      and(
+        eq(errorLogs.source, "mcp:schedule:holdout-sampling"),
+        gte(errorLogs.timestamp, since),
+        sql`json_extract(${errorLogs.context}, '$.holdoutOutcome') IS NOT NULL`
+      )
+    );
+  return new Set(rows.map((r) => r.url).filter((u): u is string => typeof u === "string"));
 }
 
 /** Strip non-alphanumeric + lowercase + collapse whitespace. Used for

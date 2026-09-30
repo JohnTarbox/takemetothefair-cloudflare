@@ -38,9 +38,16 @@
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { and, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, like, sql } from "drizzle-orm";
 import { unsafeSlug, isPlaceholderEmail } from "@takemetothefair/utils";
-import { vendors, users, entityClaims, eventVendors } from "../schema.js";
+import {
+  vendors,
+  users,
+  entityClaims,
+  eventVendors,
+  emailSendLedger,
+  emailSuppressionList,
+} from "../schema.js";
 import { jsonContent } from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
@@ -62,6 +69,91 @@ function stamp(d: Date | null | undefined): { epoch: number | null; iso: string 
   return { epoch: Math.floor(ms / 1000), iso: new Date(ms).toISOString() };
 }
 
+const UNDELIVERED = ["bounced", "rejected", "failed"] as const;
+
+function parseDetail(raw: string | null): unknown {
+  if (raw == null) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return raw;
+  }
+}
+
+/**
+ * OPE-986 — the owner's auth-mail delivery outcome, from signals that already
+ * exist: `email_send_ledger.delivery_status` (OPE-177 delivery events) and the
+ * hard-bounce row the event handler writes to `email_suppression_list`.
+ *
+ * `undeliverable` is true when the NEWEST auth send to this address did not
+ * arrive, or the address is suppressed for a bounce. A later delivered resend
+ * clears the first half by being newer; a suppression row does not clear
+ * itself, and should not — it is the provider saying the mailbox does not exist.
+ */
+export async function readOwnerEmailDelivery(db: Db, ownerEmail: string | null) {
+  if (!ownerEmail) return null;
+  // Both spellings so a pre-OPE-601 mixed-case recipient still matches without
+  // giving up the recipient index for lower().
+  const keys = Array.from(new Set([ownerEmail, ownerEmail.toLowerCase()]));
+  const authSends = and(
+    inArray(emailSendLedger.recipient, keys),
+    like(emailSendLedger.source, "auth.%")
+  );
+
+  const [latest] = await db
+    .select({
+      sentAt: emailSendLedger.sentAt,
+      source: emailSendLedger.source,
+      status: emailSendLedger.status,
+      deliveryStatus: emailSendLedger.deliveryStatus,
+      deliveryDetail: emailSendLedger.deliveryDetail,
+    })
+    .from(emailSendLedger)
+    .where(authSends)
+    .orderBy(desc(emailSendLedger.sentAt))
+    .limit(1);
+
+  const [undelivered] = await db
+    .select({ n: sql<number>`count(*)` })
+    .from(emailSendLedger)
+    .where(and(authSends, inArray(emailSendLedger.deliveryStatus, [...UNDELIVERED])));
+
+  const [suppressed] = await db
+    .select({
+      reason: emailSuppressionList.reason,
+      source: emailSuppressionList.source,
+      createdAt: emailSuppressionList.createdAt,
+    })
+    .from(emailSuppressionList)
+    .where(eq(emailSuppressionList.email, ownerEmail.toLowerCase()))
+    .limit(1);
+
+  const latestUndelivered =
+    !!latest?.deliveryStatus && (UNDELIVERED as readonly string[]).includes(latest.deliveryStatus);
+
+  return {
+    undeliverable: latestUndelivered || suppressed?.reason === "bounce",
+    latest_auth_email: latest
+      ? {
+          sent_at: stamp(latest.sentAt),
+          source: latest.source,
+          send_status: latest.status,
+          // NULL = no delivery event seen yet, NOT "not delivered".
+          delivery_status: latest.deliveryStatus ?? null,
+          delivery_detail: parseDetail(latest.deliveryDetail ?? null),
+        }
+      : null,
+    undelivered_auth_email_count: Number(undelivered?.n ?? 0),
+    suppressed: suppressed
+      ? {
+          reason: suppressed.reason,
+          source: suppressed.source,
+          created_at: stamp(suppressed.createdAt),
+        }
+      : null,
+  };
+}
+
 export function registerAdminVendorReadTools(server: McpServer, db: Db, auth: AuthContext) {
   if (auth.role !== "ADMIN") return;
 
@@ -72,7 +164,9 @@ export function registerAdminVendorReadTools(server: McpServer, db: Db, auth: Au
       "created_at, updated_at, deleted_at, enrichment_source, enrichment_attempted_at, completeness_score, " +
       "domain_hijacked, can_self_confirm, enhanced_profile + window, featured_priority, view_count, " +
       "verified_pro + who/when, redirect_to_vendor_id, alias_of_vendor_id, and the RAW logo_url / social_links / " +
-      "gallery_images. Also decorates with the owning user's email + email_verified, whether an entity_claims row " +
+      "gallery_images. Also decorates with the owning user's email + email_verified, owner_email_delivery " +
+      "(did the verification mail arrive: latest auth-email delivery_status, bounce suppression, undeliverable flag), " +
+      "whether an entity_claims row " +
       "exists (it usually does NOT — the live claim path writes vendors.claimed only, OPE-236), and the linked-event count. " +
       "USE THIS to answer 'did this person's edit actually save?' — `updated_at` is the field that settles it, and the " +
       "public reader does not return it. Every timestamp is given as BOTH an epoch integer and an ISO string, because " +
@@ -134,6 +228,8 @@ export function registerAdminVendorReadTools(server: McpServer, db: Db, auth: Au
         .from(eventVendors)
         .where(eq(eventVendors.vendorId, v.id));
 
+      const ownerEmailDelivery = await readOwnerEmailDelivery(db, row.ownerEmail ?? null);
+
       return {
         content: [
           jsonContent({
@@ -154,6 +250,11 @@ export function registerAdminVendorReadTools(server: McpServer, db: Db, auth: Au
             owner_email_verified: stamp(row.ownerEmailVerified as Date | null),
             owner_role: row.ownerRole ?? null,
             owner_origin: row.ownerOrigin ?? null,
+            // OPE-986 — can this owner receive the verification link at all?
+            // `owner_email_verified: null` alone reads as "hasn't clicked yet";
+            // for sanzaarts@gmail.vom it meant "the mail hard-bounced in 16s and
+            // the address is suppressed", which no amount of waiting fixes.
+            owner_email_delivery: ownerEmailDelivery,
             /**
              * Is the "owner" a real person, or an ingestion placeholder?
              *

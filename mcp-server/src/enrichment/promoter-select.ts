@@ -58,7 +58,8 @@ export async function runScheduledPromoterEnrichment(
         AND (
           ${promoters.enrichmentAttemptedAt} IS NULL
           OR ${promoters.enrichmentAttemptedAt} < ${staleCutoff}
-        )`
+        )
+        AND COALESCE(${promoters.operatingStatus}, '') NOT IN ('CEASED', 'MERGED')`
     )
     .orderBy(sql`${promoters.enrichmentAttemptedAt} IS NULL DESC`)
     .limit(NIGHTLY_LIMIT);

@@ -158,6 +158,34 @@ export type SkippedStage =
   | "similar_name_date:no-name"
   | "all:no-date";
 
+/**
+ * OPE-804 — did dedup actually get to evaluate anything?
+ *
+ * The CraftFest Cotuit duplicate (`4c1dd636`, 2026-07-17) had a byte-identical
+ * name and start date to an APPROVED row committed 74 days earlier, and was
+ * created anyway. It could not be explained afterwards, because the verdict
+ * `{ isDuplicate: false }` is emitted both when four stages checked and cleared
+ * and when NO stage could run at all.
+ *
+ * Both of those happen on the same path. `source_url` NULL blinds stage 1; a
+ * missing `startDate` returns early (`:410`) and blinds stages 2–5 together. So
+ * a candidate with neither gets a confident-looking "not a duplicate" from a
+ * function that never compared it to anything.
+ *
+ * True when EVERY stage was skipped — i.e. the verdict carries no information.
+ * `all:no-date` is the load-bearing one: it alone takes out four of the five.
+ *
+ * ⚠️ This is deliberately NOT "some stage was skipped". A candidate with no
+ * source_url but a resolved venue and a date is checked perfectly well by
+ * stages 2–5, and flagging it would bury the real cases in noise.
+ */
+export function dedupWasBlind(stagesSkipped: SkippedStage[]): boolean {
+  const noDate = stagesSkipped.includes("all:no-date");
+  const noUrl = stagesSkipped.includes("exact_url:no-source-url");
+  // No date ⇒ stages 2,3,4,5 never ran. Add no URL ⇒ stage 1 never ran either.
+  return noDate && noUrl;
+}
+
 export interface ExistingEvent {
   id: string;
   slug: string;

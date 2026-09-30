@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useMemo } from "react";
+import { isPastUnconfirmed, PAST_UNCONFIRMED_LABEL } from "@/lib/events/past-unconfirmed";
 import Link from "next/link";
 import { MonthCalendar, type CalendarDay } from "@johntarbox/calendar-grid";
 import { useSearchParams } from "next/navigation";
@@ -1563,10 +1564,17 @@ export function EventsView({
                           Featured
                         </Badge>
                       )}
-                      {event.status === "TENTATIVE" && (
-                        <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-brand-blue-light text-navy-dark">
-                          Tentative
+                      {/* OPE-1098 — past TENTATIVE reads as past, not tentative-future. */}
+                      {isPastUnconfirmed(event) ? (
+                        <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-muted text-muted-foreground">
+                          {PAST_UNCONFIRMED_LABEL}
                         </span>
+                      ) : (
+                        event.status === "TENTATIVE" && (
+                          <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-brand-blue-light text-navy-dark">
+                            Tentative
+                          </span>
+                        )
                       )}
                     </td>
                     <td className="py-3 px-4 text-sm text-muted-foreground">

@@ -23,6 +23,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { and, desc, eq, gte, sql } from "drizzle-orm";
+import type { AnyColumn } from "drizzle-orm";
 import { computePromoterEnrichment, isPlaceholderDescription } from "@takemetothefair/constants";
 import { adminActions, events, promoterEnrichmentCandidates, promoters } from "../schema.js";
 import { jsonContent, logEnrichment, publicUrlFor, triggerIndexNow } from "../helpers.js";
@@ -91,7 +92,7 @@ export function registerPromoterEnrichmentReviewTools(
   // on the right column; this gives the interactive lane the same guarantee.
   server.tool(
     "list_promoter_enrichment_queue",
-    "Select the next batch of promoters to research for enrichment — the ENTITY queue (promoters.enrichment_status), not the staged-candidate queue. Filters to promoters with a website that still need enrichment and have not been ATTEMPTED within `stale_after_days`, newest-neglected first, ordered by upcoming approved-event count so the highest-traffic promoters are researched first. Use this instead of hand-writing the selection: the recency filter keys on enrichment_attempted_at ('when did we last look'), NOT last_enriched_at ('when did we last write a field'), and the latter is NULL for most of the queue. Read-only. Admin only.",
+    "Select the next batch of promoters to research for enrichment — the ENTITY queue (promoters.enrichment_status), not the staged-candidate queue. Filters to promoters with a website that still need enrichment and have not been ATTEMPTED within `stale_after_days`. Default order: never-attempted first, then longest-neglected, then upcoming approved-event count. `order_by: \"gap\"` orders instead by APPLIABLE gap — how many of the five auto-appliable fields (description, contact_email, contact_phone, social_links, hero; NOT logo, which always stages) are empty — and each row reports `appliable_gap`. EXHAUSTED promoters (OPE-962: three consecutive attempts found nothing to stage) are never selected. Use this instead of hand-writing the selection: the recency filter keys on enrichment_attempted_at ('when did we last look'), NOT last_enriched_at ('when did we last write a field'), and the latter is NULL for most of the queue. Read-only. Admin only.",
     {
       stale_after_days: z
         .number()
@@ -104,10 +105,26 @@ export function registerPromoterEnrichmentReviewTools(
           "Skip promoters attempted within this many days. Default 30, matching the nightly cron selector."
         ),
       limit: z.number().int().min(1).max(100).optional().default(25),
+      order_by: z
+        .enum(["neglected", "gap"])
+        .optional()
+        .default("neglected")
+        .describe(
+          "'neglected' (default): never-attempted, then oldest attempt, then upcoming events. 'gap': most empty auto-appliable fields first — the ordering that actually yields fills (OPE-962)."
+        ),
+      min_gap: z
+        .number()
+        .int()
+        .min(0)
+        .max(5)
+        .optional()
+        .describe("Only promoters with at least this many empty auto-appliable fields."),
     },
     async (params) => {
       const staleDays = params.stale_after_days ?? 30;
       const limit = params.limit ?? 25;
+      const orderBy = params.order_by ?? "neglected";
+      const minGap = params.min_gap ?? 0;
       const cutoff = Math.floor(Date.now() / 1000) - staleDays * 86_400;
 
       const upcoming = sql<number>`(
@@ -115,6 +132,28 @@ export function registerPromoterEnrichmentReviewTools(
          WHERE ${events.promoterId} = ${promoters.id}
            AND ${events.status} = 'APPROVED'
            AND ${events.endDate} >= unixepoch()
+      )`;
+
+      // OPE-962 — the fields a render can actually APPLY. `logo` is excluded on
+      // purpose: its rule agreement is 66.7%, so it always stages for review and
+      // a logo-only gap is not work the drain can finish. The description test
+      // mirrors isPlaceholderDescription (@takemetothefair/constants): blank, or
+      // the auto-generated "…is an event organizer" boilerplate.
+      const empty = (col: AnyColumn) =>
+        sql`(CASE WHEN ${col} IS NULL OR TRIM(${col}) = '' THEN 1 ELSE 0 END)`;
+      const gap = sql<number>`(
+        (CASE WHEN ${promoters.description} IS NULL OR TRIM(${promoters.description}) = ''
+              OR LOWER(TRIM(${promoters.description})) IN ('event organizer', 'event organizer.')
+              OR (LENGTH(TRIM(${promoters.description})) < 60
+                  AND LOWER(${promoters.description}) LIKE '%is an event organizer%')
+         THEN 1 ELSE 0 END)
+        + ${empty(promoters.contactEmail)}
+        + ${empty(promoters.contactPhone)}
+        + (CASE WHEN ${promoters.socialLinks} IS NULL
+                  OR TRIM(${promoters.socialLinks}) IN ('', '[]', '{}')
+                  OR LOWER(TRIM(${promoters.socialLinks})) = 'null'
+           THEN 1 ELSE 0 END)
+        + ${empty(promoters.heroImageUrl)}
       )`;
 
       const rows = await db
@@ -127,6 +166,7 @@ export function registerPromoterEnrichmentReviewTools(
           enrichmentAttemptedAt: promoters.enrichmentAttemptedAt,
           lastEnrichedAt: promoters.lastEnrichedAt,
           upcomingEvents: upcoming,
+          appliableGap: gap,
         })
         .from(promoters)
         .where(
@@ -138,14 +178,19 @@ export function registerPromoterEnrichmentReviewTools(
             AND (
               ${promoters.enrichmentAttemptedAt} IS NULL
               OR ${promoters.enrichmentAttemptedAt} < ${cutoff}
-            )`
+            )
+            AND ${gap} >= ${minGap}`
         )
-        // Never-attempted first (they carry the least information), then the
-        // longest-neglected, then by traffic value.
         .orderBy(
-          sql`${promoters.enrichmentAttemptedAt} IS NULL DESC`,
-          sql`${promoters.enrichmentAttemptedAt} ASC`,
-          desc(upcoming)
+          ...(orderBy === "gap"
+            ? [desc(gap), sql`${promoters.enrichmentAttemptedAt} ASC`]
+            : // Never-attempted first (they carry the least information), then
+              // the longest-neglected, then by traffic value.
+              [
+                sql`${promoters.enrichmentAttemptedAt} IS NULL DESC`,
+                sql`${promoters.enrichmentAttemptedAt} ASC`,
+                desc(upcoming),
+              ])
         )
         .limit(limit);
 
@@ -158,6 +203,7 @@ export function registerPromoterEnrichmentReviewTools(
         content: [
           jsonContent({
             stale_after_days: staleDays,
+            order_by: orderBy,
             queue_depth: total,
             returned: rows.length,
             // Named so a caller cannot mistake which column drove the filter.
@@ -173,6 +219,7 @@ export function registerPromoterEnrichmentReviewTools(
                 : null,
               last_enriched_at: r.lastEnrichedAt ? new Date(r.lastEnrichedAt).toISOString() : null,
               upcoming_approved_events: Number(r.upcomingEvents ?? 0),
+              appliable_gap: Number(r.appliableGap ?? 0),
             })),
           }),
         ],
@@ -186,7 +233,7 @@ export function registerPromoterEnrichmentReviewTools(
     "List staged promoter pre-extraction proposals from promoter_enrichment_candidates for review. Filter by decision (default 'pending'), flag status, promoter, field, or minimum confidence. Each row carries the proposed field/value, the promoter's value at proposal time, source URL, extraction method, confidence, and any safety flags. Also returns a summary of totals by decision and a clean-vs-flagged breakdown of the pending queue. Read-only. Admin only.",
     {
       decision: z
-        .enum(["pending", "approved", "rejected", "auto_merged", "all"])
+        .enum(["pending", "approved", "rejected", "auto_merged", "reverted", "all"])
         .optional()
         .default("pending")
         .describe("Filter by review decision. 'all' returns every decision. Default 'pending'."),
@@ -308,10 +355,14 @@ export function registerPromoterEnrichmentReviewTools(
   // --- review_promoter_enrichment_candidate -------------------------------
   server.tool(
     "review_promoter_enrichment_candidate",
-    "Approve or reject one staged promoter pre-extraction proposal (by candidate id from list_promoter_enrichment_candidates). approve = apply the proposed value to the live promoter, fill-empty-only (won't clobber a field populated since the proposal was staged; a placeholder description counts as empty), then recompute enrichment_status/coverage + ping IndexNow; the candidate is marked 'approved'. reject = mark 'rejected', no promoter change. All six fields (hero, logo, description, social_links, contact_email, contact_phone) are applicable. Works regardless of the global ENRICHMENT_DRY_RUN switch. Admin only.",
+    "Approve, reject or REVERT one promoter pre-extraction candidate (by candidate id from list_promoter_enrichment_candidates). approve (pending only) = apply the proposed value to the live promoter, fill-empty-only (won't clobber a field populated since the proposal was staged; a placeholder description counts as empty), then recompute enrichment_status/coverage + ping IndexNow; the candidate is marked 'approved'. reject (pending only) = mark 'rejected', no promoter change. revert (auto_merged only, OPE-964) = undo an auto-apply: restore the field to the value it held when the candidate was staged (empty for candidates staged before 2026-09-13), recompute coverage, ping IndexNow, mark 'reverted' — REFUSED, with the current value returned, if the field no longer holds exactly what the auto-merge wrote (someone edited it since). A reverted value is never auto-applied again for that promoter; a later render re-stages it for a human. Reverts count as disagreements in get_promoter_enrichment_rule_agreement. One candidate per call — a bulk revert of historical rows is an operator decision. All six fields are applicable. Admin only.",
     {
       candidate_id: z.number().int().positive().describe("Candidate row id (from list)."),
-      action: z.enum(["approve", "reject"]).describe("approve = apply fill; reject = discard."),
+      action: z
+        .enum(["approve", "reject", "revert"])
+        .describe(
+          "approve = apply fill; reject = discard; revert = undo an auto_merged apply (OPE-964)."
+        ),
       note: z
         .string()
         .max(500)
@@ -332,7 +383,23 @@ export function registerPromoterEnrichmentReviewTools(
           isError: true,
         };
       }
-      if (cand.decision !== "pending") {
+      // OPE-964 — revert is the ONLY action on a settled candidate, and only on
+      // an auto_merged one: an approved value was a human's decision, and undoing
+      // it is an edit (update_promoter), not a correction of the pipeline.
+      if (params.action === "revert" && cand.decision !== "auto_merged") {
+        return {
+          content: [
+            jsonContent({
+              error: "not_revertible",
+              candidate_id: params.candidate_id,
+              decision: cand.decision,
+              detail: "Only an auto_merged candidate can be reverted.",
+            }),
+          ],
+          isError: true,
+        };
+      }
+      if (params.action !== "revert" && cand.decision !== "pending") {
         return {
           content: [
             jsonContent({
@@ -358,6 +425,121 @@ export function registerPromoterEnrichmentReviewTools(
       }
 
       const now = new Date();
+
+      // --- revert (OPE-964) ---
+      if (params.action === "revert") {
+        const col = FIELD_TO_COLUMN[cand.proposedField];
+        if (!col) {
+          return {
+            content: [jsonContent({ error: "field_not_applicable", field: cand.proposedField })],
+            isError: true,
+          };
+        }
+        const liveValue = (promoter as Record<string, unknown>)[col] as string | null;
+        // The staleness guard, fill-empty-only in reverse: revert only what the
+        // auto-merge wrote. If the field has been edited since — by hand, by a
+        // claim, by a later approve — restoring the old value would destroy that
+        // edit, which is the OPE-849 shape (a write that clobbers newer data).
+        if ((liveValue ?? "").trim() !== cand.proposedValue.trim()) {
+          await writeAudit(db, auth, cand, {
+            action: "revert",
+            applied: false,
+            decision: cand.decision,
+            reason: "field_changed_since_merge",
+            note: params.note,
+          });
+          return {
+            content: [
+              jsonContent({
+                error: "field_changed_since_merge",
+                candidate_id: cand.id,
+                promoter_id: cand.promoterId,
+                field: cand.proposedField,
+                current_value: liveValue,
+                merged_value: cand.proposedValue,
+                detail:
+                  "The field no longer holds the auto-merged value; nothing was changed. Edit it directly with update_promoter (clear_fields to empty it) if it is still wrong.",
+              }),
+            ],
+            isError: true,
+          };
+        }
+
+        // What the field held when this candidate was staged. Candidates staged
+        // before OPE-964 recorded NULL here (the dispatcher did not capture it),
+        // and under fill-empty-only the field was empty then — so NULL is right.
+        const restored = cand.currentValue ?? null;
+        const enrichment = computePromoterEnrichment(
+          {
+            website: promoter.website,
+            heroImageUrl: promoter.heroImageUrl,
+            logoUrl: promoter.logoUrl,
+            description: promoter.description,
+            socialLinks: promoter.socialLinks,
+            contactEmail: promoter.contactEmail,
+            contactPhone: promoter.contactPhone,
+            [col]: restored,
+          },
+          promoter.enrichmentStatus
+        );
+        await db
+          .update(promoters)
+          .set({
+            [col]: restored,
+            enrichmentStatus: enrichment.status,
+            enrichmentCoverage: enrichment.coverageJson,
+            updatedAt: now,
+          })
+          .where(eq(promoters.id, promoter.id));
+        await db
+          .update(promoterEnrichmentCandidates)
+          .set({ decision: "reverted", reviewedAt: now, reviewedBy: auth.userId })
+          .where(eq(promoterEnrichmentCandidates.id, cand.id));
+        await logEnrichment(db, {
+          targetType: "promoter",
+          targetId: promoter.id,
+          source: "manual_admin",
+          status: "success",
+          fieldsChanged: [cand.proposedField],
+          actorUserId: auth.userId,
+          notes: `promoter enrichment review: reverted auto-merged ${cand.proposedField} (candidate ${cand.id})`,
+        });
+        if (env) {
+          await triggerIndexNow(
+            publicUrlFor("promoters", promoter.slug),
+            env,
+            "promoter-enrich-review",
+            {
+              defer: true,
+              db,
+              entity: { type: "promoter", id: promoter.id, slug: promoter.slug, action: "update" },
+            }
+          );
+        }
+        await writeAudit(db, auth, cand, {
+          action: "revert",
+          applied: true,
+          decision: "reverted",
+          note: params.note,
+        });
+        return {
+          content: [
+            jsonContent({
+              success: true,
+              candidate_id: cand.id,
+              promoter_id: cand.promoterId,
+              company_name: promoter.companyName,
+              field: cand.proposedField,
+              action: "revert",
+              applied: true,
+              decision: "reverted",
+              removed_value: cand.proposedValue,
+              restored_value: restored,
+              enrichment_status: enrichment.status,
+            }),
+          ],
+        };
+      }
 
       // --- reject ---
       if (params.action === "reject") {
@@ -516,7 +698,7 @@ async function writeAudit(
   auth: AuthContext,
   cand: typeof promoterEnrichmentCandidates.$inferSelect,
   detail: {
-    action: "approve" | "reject";
+    action: "approve" | "reject" | "revert";
     applied: boolean;
     decision: string;
     reason?: string;

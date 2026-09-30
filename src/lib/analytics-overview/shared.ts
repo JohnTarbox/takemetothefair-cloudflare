@@ -80,3 +80,29 @@ export function fillDailySeriesTrimTrailing(
   while (end > 0 && !rawByDate.has(series[end - 1].date)) end--;
   return series.slice(0, end);
 }
+
+/**
+ * OPE-1161 B9 — the GSC date range for an N-day dashboard window, used by every
+ * card that follows the window selector.
+ *
+ * The 30-day window was mapped to the `last_28d` preset — so "Google clicks
+ * (last 30d)" read 28 days, then compared them with a 30-day prior period — and
+ * the custom range for other windows spanned N+1 days (GSC ranges include both
+ * ends). Here an N-day window is always N inclusive days: a matching preset
+ * when one exists, otherwise N days ending 3 days ago (GSC reporting lag).
+ */
+export function gscWindowRange(
+  days: number
+):
+  | { preset: "last_7d" | "last_28d" | "last_30d" | "last_90d" }
+  | { startDate: string; endDate: string } {
+  const presetByDays: Record<number, "last_7d" | "last_28d" | "last_30d" | "last_90d"> = {
+    7: "last_7d",
+    28: "last_28d",
+    30: "last_30d",
+    90: "last_90d",
+  };
+  const preset = presetByDays[days];
+  if (preset) return { preset };
+  return { startDate: isoDaysAgo(3 + days - 1), endDate: isoDaysAgo(3) };
+}

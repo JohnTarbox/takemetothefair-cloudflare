@@ -266,18 +266,16 @@ describe("dateLooksImplausible", () => {
     if (!result.ok) expect(result.reasons).toContain("start_date_timezone_confused");
   });
 
-  it("Gate A4: flags start_date stored off UTC midnight with no time mentioned", () => {
-    // Simulates: source provided '2026-07-15T20:00:00-04:00' (midnight EDT
-    // = 4 AM UTC, which renders as '2026-07-15' in UTC formatter — still
-    // OK), OR a misparsed timestamp that shifted the day. We flag the
-    // non-midnight-UTC stored value when description doesn't justify it.
+  it("Gate A4 (OPE-1032): a same-Eastern-day clock time with no time in the description is clean", () => {
+    // Ratified by John 2026-09-15: the gate fires only on a calendar-DAY
+    // disagreement between Eastern and UTC. 14:30Z is 10:30 EDT the same day —
+    // one of the platform's own storage shapes, measured at ~100% false positive.
     const result = dateLooksImplausible({
       startDate: new Date("2026-07-15T14:30:00.000Z"),
       endDate: new Date("2026-07-15T18:00:00.000Z"),
       description: "Annual craft fair in downtown Portland.",
     });
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reasons).toContain("start_date_timezone_confused");
+    expect(result.ok).toBe(true);
   });
 
   it("Gate A4: does NOT flag when description names a specific time", () => {

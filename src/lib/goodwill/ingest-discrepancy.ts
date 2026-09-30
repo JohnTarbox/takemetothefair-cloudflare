@@ -129,12 +129,43 @@ export function compareForIngest(
   candidate: IngestCandidate,
   existing: IngestExistingEvent
 ): IngestDiscrepancy[] {
-  // OPE-454 — `series_url` joins `exact_url` here. Both mean "same source
-  // page"; neither asserts the two rows describe the same event, so there is
-  // no field-level disagreement to record. Emitting discrepancies for a
-  // series_url match would file a "date differs" row for every sibling
-  // edition of a series, which is the expected state, not a defect.
-  if (matchType === "exact_url" || matchType === "series_url") return [];
+  // A match type that does not assert IDENTITY produces no field-level
+  // disagreement. Two rows must be about the same event before their fields
+  // can be said to disagree.
+  //
+  // OPE-454 established this for `exact_url` and `series_url`: both mean "same
+  // source page", neither asserts the rows describe the same event, and
+  // emitting for `series_url` would file a "date differs" row for every
+  // sibling edition of a series — the expected state, not a defect.
+  //
+  // ⚠️ OPE-813 adds `city_state_date`, which asserts strictly LESS than those.
+  // Stage 3 matches on city + state + date within ±7 days. That is a
+  // coincidence of place and time; two unrelated events in one town in one
+  // week satisfy it completely.
+  //
+  // Measured on the 14 open rows (2026-09-06), 7 pair demonstrably distinct
+  // events:
+  //
+  //   Norwalk Oyster Festival        vs  St. George Greek Festival
+  //   Rhode Island Bridal Expo       vs  Providence Winter Farmers Market
+  //   Stonington Borough Art Walk    vs  Porchfest Stonington
+  //   Farmington Winter Farmers Mkt  vs  UMF Fall Craft Fair
+  //
+  // Every one was filed as a "name differs" or "date differs" conflict, into a
+  // queue whose purpose is to surface real conflicts, and 3 became eligible to
+  // drive a promoter email about a contradiction between two unrelated events.
+  //
+  // ⚠️ A similarity FLOOR does not fix this, and the distribution proves it:
+  // `city_state_date` name similarities run 0.15-0.46 and `venue_date` runs
+  // 0.35-0.61. They OVERLAP. No scalar separates them, because the difference
+  // is not one of degree — it is whether the match established identity at
+  // all. Stage 2 resolved a shared venue; stage 3 resolved a shared town.
+  //
+  // Stage 4 (`similar_name_date`) keeps emitting: it matched on name
+  // similarity > 0.85, which IS identity evidence.
+  if (matchType === "exact_url" || matchType === "series_url" || matchType === "city_state_date") {
+    return [];
+  }
 
   const out: IngestDiscrepancy[] = [];
 
@@ -155,11 +186,20 @@ export function compareForIngest(
 
   // ── venue ───────────────────────────────────────────────────────
   // Stage 2 matched by venueId — never a venue disagreement.
-  // Stage 3 matched by city+state — venueIds CAN still differ (two
-  //   venue rows for the same place; the Winthrop case).
-  // Stage 4 matched by name only — both venueId and city/state CAN
-  //   differ.
-  if (matchType === "city_state_date" || matchType === "similar_name_date") {
+  // Stage 4 matched by name only — both venueId and city/state CAN differ.
+  //
+  // ⚠️ OPE-813 — stage 3 (`city_state_date`) used to be here for the Winthrop
+  // case (two venue rows describing one place). It returns early now, so this
+  // branch no longer sees it, and TypeScript proved the removal was complete
+  // by flagging the dead comparison rather than leaving it to a reviewer.
+  //
+  // Losing that signal costs nothing measurable: the branch required BOTH
+  // sides to carry a resolved `venueId`, and this module's own note says
+  // "today's route leaves this undefined". It also asked a dedup question
+  // ("two venue rows for the same place?") from inside a discrepancy filer,
+  // which is the wrong queue for it — `findDuplicate`'s city_state_date stage
+  // already exists to answer exactly that.
+  if (matchType === "similar_name_date") {
     const venueNote = describeVenueDisagreement(matchType, candidate, existing);
     if (venueNote) {
       out.push({
@@ -173,9 +213,27 @@ export function compareForIngest(
 
   // ── name ────────────────────────────────────────────────────────
   // Stage 4 matched on name similarity > 0.85 — never a name
-  // disagreement. Stages 2 and 3 have no name gate, so emit when
-  // normalized names fall under the same threshold.
-  if (matchType === "venue_date" || matchType === "city_state_date") {
+  // disagreement. Stage 2 (venue_date) has no name gate, so emit when
+  // normalized names fall under the threshold.
+  //
+  // ⚠️ OPE-813 — `city_state_date` is deliberately NOT in this list any more,
+  // and the reason is that the old condition was INVERTED for it.
+  //
+  // Stage 3 matches on city + state + date. That is a coincidence of place and
+  // time, not evidence of a shared subject. A LOW name similarity there is
+  // evidence the two rows are DIFFERENT EVENTS — so emitting "name differs"
+  // precisely when similarity is lowest filed a disagreement exactly when we
+  // had most reason to believe there was nothing to disagree about.
+  //
+  // Measured on the 14 open rows (2026-09-06): 7 pair demonstrably distinct
+  // events — Norwalk Oyster Festival vs St. George Greek Festival, Rhode
+  // Island Bridal Expo vs Providence Winter Farmers Market — at sim 0.15-0.31.
+  //
+  // A similarity FLOOR cannot fix this, and the distribution says so: the
+  // `city_state_date` rows run 0.15-0.46 and the `venue_date` rows 0.35-0.61.
+  // They overlap. No scalar separates them, because the difference is not one
+  // of degree — it is whether the match established identity at all.
+  if (matchType === "venue_date") {
     if (candidate.name && existing.name) {
       const sim = similarity(normalizeName(candidate.name), normalizeName(existing.name));
       if (sim <= NAME_SIM_THRESHOLD) {
@@ -193,25 +251,10 @@ export function compareForIngest(
 }
 
 function describeVenueDisagreement(
-  matchType: Extract<MatchType, "city_state_date" | "similar_name_date">,
+  matchType: Extract<MatchType, "similar_name_date">,
   candidate: IngestCandidate,
   existing: IngestExistingEvent
 ): { authoritative: string | null; divergent: string | null; notes: string } | null {
-  // Stage 3 (city_state_date) matched on city+state, so the only
-  // venue disagreement possible is venueId. If the candidate didn't
-  // pre-resolve a venueId (typical case today), we have nothing to
-  // compare and skip. Forward-compatible: when callers start passing
-  // resolved venueIds, this fires.
-  if (matchType === "city_state_date") {
-    if (!candidate.venueId || !existing.venueId) return null;
-    if (candidate.venueId === existing.venueId) return null;
-    return {
-      authoritative: existing.venueId,
-      divergent: candidate.venueId,
-      notes: `city_state_date: venue_id differs (two venue rows for same place?)`,
-    };
-  }
-
   // Stage 4 (similar_name_date) — compare city+state strings (lossy
   // but useful) and venueId if both sides have one. Pick whichever
   // comparison produces a difference and report it as the venue

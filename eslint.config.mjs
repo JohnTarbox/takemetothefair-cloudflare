@@ -15,6 +15,92 @@ const compat = new FlatCompat({
 
 export default [
   ...compat.extends("next/core-web-vitals", "next/typescript"),
+  // OPE-902 — type-aware promise rules, scoped to the two directories where a
+  // dropped `await` is a security bug rather than a latency bug.
+  //
+  // The motivating defect: `src/lib/api-auth.ts` did
+  //     const ok = timingSafeEqualString(internalKey, expected);
+  // without `await`. `ok` was a Promise, so `!ok` was always false and the
+  // OPE-258 refusal log never ran ONCE. The function still returned the right
+  // answer, because callers awaited what it handed back — so the only symptom
+  // was a security log that was silently empty. Nothing in the suite could see
+  // it; only a rule that knows `timingSafeEqualString` returns a Promise can.
+  //
+  // Scoped rather than repo-wide on purpose: these rules need type information
+  // (`projectService`), which is slow, and a repo-wide switch-on would bury the
+  // signal in pre-existing React/event-handler noise. src/lib and mcp-server/src
+  // are where the secrets are compared.
+  {
+    // OPE-994 — widened from the 5 secret-comparison files. Measured
+    // 2026-09-13 over src/lib + src/app/api + mcp-server/src: 35 s wall, 4.1 GB
+    // peak RSS — it OOMed only because the default Node heap is ~2 GB. The lint
+    // script runs with NODE_OPTIONS=--max-old-space-size=6144 (package.json);
+    // the CI runner has 7 GB. It found one real floating promise on arrival
+    // (admin events/[id]/vendors trackVendorStatusChange), now awaited.
+    // ⚠️ `void x()` is an explicit ignore to this rule, so it does NOT flag the
+    // `void logError(...)` shape — review those by hand.
+    // ⚠️ OPE-1019 — `.catch(handler)` is ALSO "handled" to no-floating-promises,
+    // and no option changes that (checkThenables / ignoreVoid do not). That is
+    // how `triggerCorrelation(id).catch(...)` in src/app/api/report-problem sat
+    // inside this scope, un-awaited and un-registered, and was never flagged.
+    // `local/no-catch-only-promise` below closes that one shape: a statement
+    // that is nothing but `x.catch(...)`. It does NOT see `x.then(a, b)` or a
+    // promise passed to a function that drops it — review those by hand. An
+    // assigned promise (`const work = x.catch(...)`, then `ctx.waitUntil(work)`)
+    // is the pattern it steers toward and is not flagged.
+    // OPE-1019 — packages/*/src added to BOTH the lint script and this block:
+    // `timingSafeEqualString` (the helper OPE-902 exists to await) lives in
+    // packages/utils, which was never linted at all.
+    // OPE-1105 — src/middleware.ts added: it runs on EVERY request and does
+    // fire-and-forget D1 work (correctly inside ctx.waitUntil today), and it
+    // matched none of the globs above, so the rule meant for exactly this
+    // could not see it. scripts/ and e2e/ are deliberately NOT linted (a
+    // recorded decision, OPE-1105): neither runs in a Worker, so the
+    // floating-promise class this block exists for cannot reach production
+    // from them; scripts are one-shot operator tools and e2e runs under
+    // Playwright's own TS pipeline. Revisit if a script becomes a cron.
+    files: [
+      "src/lib/**/*.ts",
+      "src/app/api/**/*.ts",
+      "src/middleware.ts",
+      "mcp-server/src/**/*.ts",
+      "packages/*/src/**/*.ts",
+    ],
+    languageOptions: {
+      parserOptions: {
+        projectService: true,
+        tsconfigRootDir: __dirname,
+      },
+    },
+    plugins: {
+      local: {
+        rules: {
+          "no-catch-only-promise": {
+            meta: { type: "problem", schema: [] },
+            create: (context) => ({
+              "ExpressionStatement > CallExpression[callee.type='MemberExpression'][callee.property.name='catch']":
+                (node) =>
+                  context.report({
+                    node,
+                    message:
+                      "A promise whose only handling is .catch() still floats: on Workers the runtime may tear it down when the response is sent. Await it, or assign it and register it with ctx.waitUntil (see scheduleRefusalRecord in src/lib/api-auth.ts). OPE-1019.",
+                  }),
+            }),
+          },
+        },
+      },
+    },
+    rules: {
+      "local/no-catch-only-promise": "error",
+      "@typescript-eslint/no-floating-promises": "error",
+      "@typescript-eslint/no-misused-promises": [
+        "error",
+        // The half that catches the OPE-902 shape: a Promise used where a
+        // boolean was meant.
+        { checksConditionals: true, checksVoidReturn: false },
+      ],
+    },
+  },
   {
     rules: {
       "@typescript-eslint/no-unused-vars": [
@@ -44,7 +130,7 @@ export default [
         {
           selector: "Literal[regex.pattern='[^a-z0-9]+']",
           message:
-            "Use createSlug() from @takemetothefair/utils instead of inline /[^a-z0-9]+/ regex. The slugify library handles & → \"and\", apostrophes, and accented chars; this regex doesn't. See issue #120.",
+            'Use createSlug() from @takemetothefair/utils instead of inline /[^a-z0-9]+/ regex. The slugify library handles & → "and", apostrophes, and accented chars; this regex doesn\'t. See issue #120.',
         },
         // Cohort 5 follow-up (2026-06-01) — flag raw <button><svg/></button>
         // and <a><svg/></a> patterns. Cohort 5 (PR #293) shipped IconButton +
@@ -121,7 +207,7 @@ export default [
         {
           selector: "Literal[regex.pattern='[^a-z0-9]+']",
           message:
-            "Use createSlug() from @takemetothefair/utils instead of inline /[^a-z0-9]+/ regex. The slugify library handles & → \"and\", apostrophes, and accented chars; this regex doesn't. See issue #120.",
+            'Use createSlug() from @takemetothefair/utils instead of inline /[^a-z0-9]+/ regex. The slugify library handles & → "and", apostrophes, and accented chars; this regex doesn\'t. See issue #120.',
         },
         {
           selector:
@@ -147,12 +233,6 @@ export default [
     },
   },
   {
-    ignores: [
-      ".next/**",
-      ".vercel/**",
-      ".open-next/**",
-      "node_modules/**",
-      "packages/**/dist/**",
-    ],
+    ignores: [".next/**", ".vercel/**", ".open-next/**", "node_modules/**", "packages/**/dist/**"],
   },
 ];

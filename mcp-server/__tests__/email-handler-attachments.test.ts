@@ -23,7 +23,11 @@
  * from outside the function.
  */
 import { describe, expect, it, vi } from "vitest";
-import { captureAttachments, type AttachmentRef } from "../src/email-handler.js";
+import {
+  ATTACHMENT_MAX_COUNT,
+  captureAttachments,
+  type AttachmentRef,
+} from "../src/email-handler.js";
 
 interface PutCall {
   key: string;
@@ -106,23 +110,28 @@ describe("captureAttachments — media selection + refs", () => {
     expect(refs.length + skipped.length).toBe(3);
   });
 
-  it("caps at the first 5 image/PDF attachments", async () => {
+  it("caps at ATTACHMENT_MAX_COUNT image/PDF attachments", async () => {
     const { bucket } = mockBucket();
-    const many = Array.from({ length: 8 }, (_, i) => ({
+    const over = ATTACHMENT_MAX_COUNT + 3;
+    const many = Array.from({ length: over }, (_, i) => ({
       filename: `p${i}.png`,
       mimeType: "image/png",
       content: bytes(50),
     }));
     const { refs, skipped } = await captureAttachments(bucket, "grp3", many);
-    expect(refs).toHaveLength(5);
+    expect(refs).toHaveLength(ATTACHMENT_MAX_COUNT);
     // The live specimens: inbound_emails 2a09ef41 (8 claimed → 5 stored) and
-    // 4c536723 (6 → 5), both exactly at the cap, both with the overflow
+    // 4c536723 (6 → 5) — both at the old cap of 5, both with the overflow
     // unrecorded. Three real attachments from a craft-show promoter went
     // missing with nothing to show for them.
     expect(skipped).toHaveLength(3);
     expect(skipped.every((s) => s.reason === "over-count-cap")).toBe(true);
-    expect(skipped.map((s) => s.index)).toEqual([5, 6, 7]);
-    expect(refs.length + skipped.length).toBe(8);
+    expect(skipped.map((s) => s.index)).toEqual([
+      ATTACHMENT_MAX_COUNT,
+      ATTACHMENT_MAX_COUNT + 1,
+      ATTACHMENT_MAX_COUNT + 2,
+    ]);
+    expect(refs.length + skipped.length).toBe(over);
   });
 
   it("skips attachments over the 10 MB per-file cap", async () => {
@@ -211,8 +220,8 @@ describe("captureAttachments — best-effort isolation", () => {
 describe("everything handed in is accounted for", () => {
   const cases: Array<{ label: string; input: Parameters<typeof captureAttachments>[2] }> = [
     {
-      label: "the 4c536723 shape — 6 media parts, cap at 5",
-      input: Array.from({ length: 6 }, (_, i) => ({
+      label: "one more media part than the cap",
+      input: Array.from({ length: ATTACHMENT_MAX_COUNT + 1 }, (_, i) => ({
         filename: `p${i}.pdf`,
         mimeType: "application/pdf",
         content: bytes(100),
@@ -264,13 +273,70 @@ describe("everything handed in is accounted for", () => {
     const { bucket } = mockBucket();
     const { refs, skipped } = await captureAttachments(bucket, "order", [
       { filename: "sig.ics", mimeType: "text/calendar", content: bytes(10) },
-      ...Array.from({ length: 6 }, (_, i) => ({
+      ...Array.from({ length: ATTACHMENT_MAX_COUNT + 1 }, (_, i) => ({
         filename: `p${i}.png`,
         mimeType: "image/png",
         content: bytes(50),
       })),
     ]);
-    expect(refs).toHaveLength(5);
+    expect(refs).toHaveLength(ATTACHMENT_MAX_COUNT);
     expect(skipped.map((s) => s.reason).sort()).toEqual(["over-count-cap", "unsupported-type"]);
+  });
+});
+
+/**
+ * OPE-944 — a forwarded message is a keepable type.
+ *
+ * Before this, the allow-list was image/* + application/pdf, so a Gmail
+ * "Forward as attachment" came back `unsupported-type` and was discarded along
+ * with every PDF and image nested inside it. Measured on D1 2026-09-11: all 118
+ * attachments ever stored are png, jpeg or pdf — so this path had never run,
+ * and its silence was indistinguishable from working.
+ */
+describe("captureAttachments — forwarded messages (OPE-944)", () => {
+  const eml = (name: string | null, mimeType: string) => ({
+    filename: name,
+    mimeType,
+    content: new TextEncoder().encode("From: a@b.c\r\nSubject: packet\r\n\r\nbody").buffer,
+  });
+
+  it("STORES a message/rfc822 attachment instead of skipping it", async () => {
+    const { bucket, puts } = mockBucket();
+    const out = await captureAttachments(bucket, "grp", [eml("fwd.eml", "message/rfc822")]);
+
+    expect(out.skipped).toEqual([]);
+    expect(out.refs).toHaveLength(1);
+    expect(out.refs[0].mimeType).toBe("message/rfc822");
+    // Stored under its own content type, so a reader can find it again.
+    expect(puts[0].contentType).toBe("message/rfc822");
+  });
+
+  it("stores a .eml sent as application/octet-stream, which several clients do", async () => {
+    const { bucket } = mockBucket();
+    const out = await captureAttachments(bucket, "grp", [
+      eml("packet.eml", "application/octet-stream"),
+    ]);
+    expect(out.refs).toHaveLength(1);
+    expect(out.skipped).toEqual([]);
+  });
+
+  it("still skips a NON-.eml octet-stream — the allow-list did not just open up", async () => {
+    // The positive landmark for the two tests above: if the type gate had been
+    // removed rather than extended, this would store too.
+    const { bucket } = mockBucket();
+    const out = await captureAttachments(bucket, "grp", [eml("archive.zip", "application/zip")]);
+    expect(out.refs).toEqual([]);
+    expect(out.skipped.map((s) => s.reason)).toEqual(["unsupported-type"]);
+  });
+
+  it("keeps the OPE-467 accounting invariant across the mixed case", async () => {
+    const { bucket } = mockBucket();
+    const out = await captureAttachments(bucket, "grp", [
+      eml("fwd.eml", "message/rfc822"),
+      eml("poster.pdf", "application/pdf"),
+      eml("notes.zip", "application/zip"),
+    ]);
+    expect(out.refs.length + out.skipped.length).toBe(3);
+    expect(out.refs).toHaveLength(2);
   });
 });

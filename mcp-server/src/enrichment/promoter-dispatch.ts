@@ -12,12 +12,18 @@
 // site is itself a signal; we mark BLOCKED (+ reason) and ack. Only an
 // unexpected DB error retries → DLQ after max_retries.
 import { and, eq, inArray } from "drizzle-orm";
-import { computePromoterEnrichment, isPlaceholderDescription } from "@takemetothefair/constants";
-import { sanitizeScrapedDescription } from "@takemetothefair/utils";
+import { applyHumanVeto, HUMAN_VETO_DECISIONS } from "./human-veto.js";
+import {
+  computePromoterEnrichment,
+  isPlaceholderDescription,
+  PROMOTER_ENRICHMENT_EXHAUST_AFTER,
+} from "@takemetothefair/constants";
+import { sanitizeScrapedDescription, runChunkedInsert } from "@takemetothefair/utils";
 import { promoters, promoterEnrichmentCandidates } from "../schema.js";
 import { getDb, type Db } from "../db.js";
 import { logError } from "../logger.js";
 import { logEnrichment } from "../helpers.js";
+import { isCeasedPromoter } from "../promoters/succession.js";
 import { fetchVendorSite } from "./fetch-site.js";
 import { extractPromoterSignals, type PromoterExtraction } from "./promoter-extract.js";
 import { probePromoterImage } from "./promoter-image.js";
@@ -99,6 +105,8 @@ const PROMOTER_COLUMNS = {
   contactEmail: promoters.contactEmail,
   contactPhone: promoters.contactPhone,
   enrichmentStatus: promoters.enrichmentStatus,
+  enrichmentZeroYieldStreak: promoters.enrichmentZeroYieldStreak,
+  operatingStatus: promoters.operatingStatus,
 } as const;
 
 /** Proposed-field → live promoter column (all six are review-applicable). */
@@ -123,6 +131,106 @@ interface Proposal {
 
 function isEmpty(v: string | null | undefined): boolean {
   return v == null || v.trim() === "" || v.trim() === "{}" || v.trim() === "[]";
+}
+
+const AFFINITY_STOPWORDS = new Set(["the", "and", "inc", "llc", "org", "com", "net", "www"]);
+
+function nameTokens(s: string | null | undefined): string[] {
+  return (s ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, " ")
+    .split(" ")
+    .filter((t) => t.length >= 3 && !AFFINITY_STOPWORDS.has(t));
+}
+
+/** The website's host label without www/TLD: `worcester4h.org` → `worcester4h`. */
+function siteLabel(website: string | null | undefined): string | null {
+  try {
+    const host = new URL(website ?? "").hostname.toLowerCase().replace(/^www\./, "");
+    const parts = host.split(".");
+    return parts.length >= 2 ? parts[parts.length - 2] : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A handle that identifies an account without NAMING it — a YouTube channel id
+ * (`UCLn8aDb85tYvY…`), `profile.php?id=…`, a numeric group/page, or a bare path
+ * word. It cannot show affinity either way, so it is not evidence.
+ */
+const SOCIAL_PATH_WORDS = new Set([
+  "profilephp",
+  "groups",
+  "pages",
+  "channel",
+  "events",
+  "showcase",
+  "videos",
+  "streams",
+  "featured",
+  "about",
+  "user",
+  "c",
+]);
+
+function isOpaqueHandle(handle: string): boolean {
+  if (/^uc[a-z0-9]{20,}$/.test(handle)) return true;
+  if (/^\d+$/.test(handle) || /\d{6,}/.test(handle)) return true;
+  return SOCIAL_PATH_WORDS.has(handle);
+}
+
+/** The NAMED handle: the last path segment that is not a path word
+ *  (`youtube.com/@holycrosslutheran-kennebunk/streams` → `holycrosslutherankennebunk`). */
+function namedHandleOf(url: string): string | null {
+  let segments: string[];
+  try {
+    segments = new URL(url).pathname.split("/").filter(Boolean);
+  } catch {
+    return null;
+  }
+  const words = segments.map((seg) => seg.toLowerCase().replace(/[^a-z0-9]/g, ""));
+  while (words.length > 0 && SOCIAL_PATH_WORDS.has(words[words.length - 1])) words.pop();
+  return words.length > 0 ? words[words.length - 1] || null : null;
+}
+
+/**
+ * OPE-963 — does this social payload look like the promoter's OWN accounts?
+ *
+ * True when at least one NAMED handle contains one of the promoter's name
+ * tokens (≥3 chars, stopwords removed), or it and the website's host label
+ * contain one another. Opaque handles (channel ids, profile.php, numeric groups)
+ * are ignored; a payload with no named handle at all is NOT affine — a human
+ * looks.
+ *
+ * Why "at least one" and not "every": measured against the 205 social rows
+ * already auto-applied in prod, requiring every link staged 67 (33%), most of
+ * them genuine accounts that failed only on a YouTube channel id or a
+ * profile.php URL. The specimens this exists for — state 4-H + UMass CAFE on a
+ * county chapter, a theme vendor's accounts on SoWa Boston — have NO affine
+ * handle at all, so "at least one" still stages them. Exported for tests.
+ */
+export function socialLinksHaveNameAffinity(
+  socialJson: string,
+  companyName: string | null | undefined,
+  website: string | null | undefined
+): boolean {
+  let links: Record<string, string>;
+  try {
+    links = JSON.parse(socialJson) as Record<string, string>;
+  } catch {
+    return false;
+  }
+  const tokens = nameTokens(companyName);
+  const label = siteLabel(website);
+  return Object.values(links).some((url) => {
+    const handle = namedHandleOf(url);
+    if (!handle || handle.length < 3 || isOpaqueHandle(handle)) return false;
+    if (tokens.some((t) => handle.includes(t))) return true;
+    return (
+      label !== null && label.length >= 3 && (label.includes(handle) || handle.includes(label))
+    );
+  });
 }
 
 /**
@@ -182,14 +290,23 @@ async function buildProposals(
 
   // --- social_links (fill-empty-only; recognized domains only) ---
   if (ex.socialLinks && isEmpty(row.socialLinks as string | null)) {
+    // OPE-963 — name affinity. Worcester County 4-H auto-applied the STATE 4-H
+    // and UMass CAFE accounts: real, related, and not the chapter's. A handle
+    // that shares nothing with the promoter's name or website is staged,
+    // flagged, for a human — never applied. Mirrors OPE-249 fix #5's domain
+    // affinity for regex-scraped email.
+    const affine = socialLinksHaveNameAffinity(
+      ex.socialLinks.value,
+      row.companyName as string | null,
+      row.website as string | null
+    );
     proposals.push({
       field: "social_links",
       proposedValue: ex.socialLinks.value,
       method: ex.socialLinks.method,
-      confidence: ex.socialLinks.confidence,
-      flags: [],
-      // extractVendorContact only yields recognized social hosts → auto-apply.
-      autoApply: true,
+      confidence: affine ? ex.socialLinks.confidence : ex.socialLinks.confidence * 0.5,
+      flags: affine ? [] : ["social_no_name_affinity"],
+      autoApply: affine,
     });
   }
 
@@ -224,7 +341,7 @@ async function buildProposals(
 
 export interface PromoterEnrichmentRunSummary {
   promoterId: string;
-  outcome: "staged" | "merged" | "blocked" | "no_source" | "not_found";
+  outcome: "staged" | "merged" | "blocked" | "no_source" | "not_found" | "exhausted" | "ceased";
   candidateCount?: number;
   appliedFields?: string[];
   blockedReason?: BlockedReason;
@@ -247,6 +364,22 @@ export async function processPromoterEnrichmentJob(
     .limit(1);
 
   if (!row) return { promoterId: msg.promoterId, outcome: "not_found" };
+
+  // --- OPE-979: a business that stopped trading is not re-enriched ---
+  // Its site now says it closed; anything extracted from it is either the
+  // closure notice or a stale fact. Checked here, not only in the selector, so
+  // enrich_promoter and an already-queued message obey it too. Nothing is
+  // written: the row's enrichment state stays as the operator left it.
+  if (isCeasedPromoter(row.operatingStatus)) {
+    await logEnrichment(db, {
+      targetType: "promoter",
+      targetId: msg.promoterId,
+      source: "browser_enrich",
+      status: "skipped",
+      notes: `operating_status ${row.operatingStatus} — not re-enriched (OPE-979)`,
+    });
+    return { promoterId: msg.promoterId, outcome: "ceased" };
+  }
 
   // --- No website → NO_SOURCE, nothing to enrich from ---
   if (!row.website || row.website.trim() === "") {
@@ -291,6 +424,33 @@ export async function processPromoterEnrichmentJob(
   const extraction = extractPromoterSignals(fetched.html, sourceUrl);
   const proposals = await buildProposals(row as Record<string, unknown>, extraction);
 
+  // OPE-964 — a value a human REVERTED is never auto-applied again. Under
+  // fill-empty-only the revert leaves the field empty, so without this the next
+  // render would re-propose the identical value and auto-merge it straight
+  // back — the undo would last one cycle. It still stages (a human may change
+  // their mind); the flag keeps it out of applyFills, which skips flagged rows.
+  //
+  // OPE-249 (bounce 2026-09-23) — and a value a human REJECTED, for the same
+  // reason. This guard read only 'reverted', so a rejection bought one cycle:
+  // #1955 (maine-grain-alliance, a twitter search URL) was rejected 08-26 and
+  // the identical value auto-merged as #2875 on 09-15; #1901 → #2843 (The
+  // Weston Craft Show, Squarespace's own accounts) the same way. A rejection
+  // is the stronger of the two human verdicts; it cannot be the weaker veto.
+  const vetoed = await db
+    .select({
+      field: promoterEnrichmentCandidates.proposedField,
+      value: promoterEnrichmentCandidates.proposedValue,
+      decision: promoterEnrichmentCandidates.decision,
+    })
+    .from(promoterEnrichmentCandidates)
+    .where(
+      and(
+        eq(promoterEnrichmentCandidates.promoterId, msg.promoterId),
+        inArray(promoterEnrichmentCandidates.decision, [...HUMAN_VETO_DECISIONS])
+      )
+    );
+  applyHumanVeto(proposals, vetoed);
+
   // Idempotent re-run: clear this promoter's still-open proposals, then restage
   // (honors the one-pending-per-field partial unique index).
   await db
@@ -304,31 +464,51 @@ export async function processPromoterEnrichmentJob(
 
   const now = new Date();
   if (proposals.length > 0) {
-    await db.insert(promoterEnrichmentCandidates).values(
-      proposals.map((p) => ({
-        promoterId: msg.promoterId,
-        jobRunId: msg.jobRunId,
-        proposedField: p.field,
-        currentValue: null,
-        proposedValue: p.proposedValue,
-        sourceUrl,
-        extractionMethod: p.method,
-        fetchMethod: fetched.fetchMethod,
-        confidence: p.confidence,
-        flags: JSON.stringify(p.flags),
-        createdAt: now,
-        decision: "pending" as const,
-      }))
+    // OPE-1185 — chunked to D1's 100-param cap (~14 params/row: >7 candidates 500'd).
+    await runChunkedInsert(proposals, (chunk) =>
+      db.insert(promoterEnrichmentCandidates).values(
+        chunk.map((p) => ({
+          promoterId: msg.promoterId,
+          jobRunId: msg.jobRunId,
+          proposedField: p.field,
+          // OPE-964 — what the field holds NOW, so a later revert restores it
+          // exactly (a placeholder description, an empty "{}") instead of NULL.
+          currentValue: (FIELD_TO_COLUMN[p.field]
+            ? ((row as Record<string, unknown>)[FIELD_TO_COLUMN[p.field]] ?? null)
+            : null) as string | null,
+          proposedValue: p.proposedValue,
+          sourceUrl,
+          extractionMethod: p.method,
+          fetchMethod: fetched.fetchMethod,
+          confidence: p.confidence,
+          flags: JSON.stringify(p.flags),
+          createdAt: now,
+          decision: "pending" as const,
+        }))
+      )
     );
   }
 
   const stagedFields = proposals.map((p) => p.field);
 
+  // OPE-962 — count consecutive successful fetches that found NOTHING to stage.
+  // (A failed fetch never reaches here: that is BLOCKED, a different fact.) At
+  // the threshold a queue-selectable promoter becomes EXHAUSTED and the nightly
+  // selector stops re-fetching it. Operator-owned states are left alone.
+  const streak = proposals.length === 0 ? (row.enrichmentZeroYieldStreak ?? 0) + 1 : 0;
+  const exhaust =
+    streak >= PROMOTER_ENRICHMENT_EXHAUST_AFTER &&
+    (row.enrichmentStatus === null || row.enrichmentStatus === "NEEDS_ENRICHMENT");
+
   // --- Dry-run: stage only, stamp the attempt ---
   if (msg.dryRun) {
     await db
       .update(promoters)
-      .set({ enrichmentAttemptedAt: now })
+      .set({
+        enrichmentAttemptedAt: now,
+        enrichmentZeroYieldStreak: streak,
+        ...(exhaust ? { enrichmentStatus: "EXHAUSTED" as const } : {}),
+      })
       .where(eq(promoters.id, msg.promoterId));
     await logEnrichment(db, {
       targetType: "promoter",
@@ -336,11 +516,13 @@ export async function processPromoterEnrichmentJob(
       source: "browser_enrich",
       status: proposals.length > 0 ? "success" : "skipped",
       fieldsChanged: stagedFields,
-      notes: `dry-run: ${proposals.length} candidate(s) staged`,
+      notes:
+        `dry-run: ${proposals.length} candidate(s) staged` +
+        (exhaust ? ` — EXHAUSTED after ${streak} consecutive zero-candidate attempts` : ""),
     });
     return {
       promoterId: msg.promoterId,
-      outcome: "staged",
+      outcome: exhaust ? "exhausted" : "staged",
       candidateCount: proposals.length,
       fetchMethod: fetched.fetchMethod,
     };
@@ -349,6 +531,21 @@ export async function processPromoterEnrichmentJob(
   // --- Live: auto-apply the high-confidence fills (fill-empty-only) ---
   const applied = await applyFills(db, msg.promoterId, proposals);
   await recomputeAndStamp(db, msg.promoterId, applied.length > 0);
+  // OPE-962 — same streak on a live run. Zero proposals means nothing was
+  // applied either, so recompute cannot have completed coverage; exhaust only
+  // if the recomputed status is still the queue-selectable one.
+  await db
+    .update(promoters)
+    .set({ enrichmentZeroYieldStreak: streak })
+    .where(eq(promoters.id, msg.promoterId));
+  if (exhaust) {
+    await db
+      .update(promoters)
+      .set({ enrichmentStatus: "EXHAUSTED" })
+      .where(
+        and(eq(promoters.id, msg.promoterId), eq(promoters.enrichmentStatus, "NEEDS_ENRICHMENT"))
+      );
+  }
   await logEnrichment(db, {
     targetType: "promoter",
     targetId: msg.promoterId,

@@ -17,6 +17,7 @@ import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import * as schema from "../db/schema";
 import { autoLinkVenue } from "../venue-matching";
+import { normalizeName } from "@takemetothefair/utils";
 
 type TestDb = ReturnType<typeof drizzle<typeof schema>>;
 
@@ -31,6 +32,18 @@ const SCHEMA_SQL = `
     zip TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'ACTIVE',
     updated_at INTEGER
+  );
+  -- OPE-1180 (drizzle/0333) — the name-variant tier reads this.
+  CREATE TABLE venue_name_variants (
+    id TEXT PRIMARY KEY NOT NULL,
+    venue_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    normalized_name TEXT NOT NULL,
+    from_edtf TEXT,
+    to_edtf TEXT,
+    certainty TEXT NOT NULL DEFAULT 'certain',
+    created_by TEXT,
+    created_at INTEGER NOT NULL
   );
   CREATE TABLE admin_actions (
     id TEXT PRIMARY KEY,
@@ -220,5 +233,67 @@ describe("autoLinkVenue — null/empty input", () => {
     });
     expect(result.venueId).toBeNull();
     expect(result.decision).toBe("no-match");
+  });
+});
+
+describe("autoLinkVenue — OPE-1146: a lone same-name row in another state is NOT linked", () => {
+  it("Veterans Memorial Park, ME does not link to the only (CT) row", async () => {
+    insertVenue({ id: "v-norwalk", name: "Veterans Memorial Park", state: "CT" });
+    const result = await autoLinkVenue(asDb(db), {
+      venueName: "Veterans Memorial Park",
+      venueCity: "Old Orchard Beach",
+      venueState: "ME",
+    });
+    expect(result.venueId).toBeNull();
+    expect(result.stateCode).toBe("ME");
+  });
+
+  it("still links when the row's state is blank (no disagreement to act on)", async () => {
+    insertVenue({ id: "v-blank", name: "Veterans Memorial Park", state: "" });
+    const result = await autoLinkVenue(asDb(db), {
+      venueName: "Veterans Memorial Park",
+      venueState: "ME",
+    });
+    expect(result.venueId).toBe("v-blank");
+    expect(result.decision).toBe("exact-name-only");
+  });
+});
+
+describe("autoLinkVenue — OPE-1180 name-variant tier", () => {
+  function addVariant(venueId: string, name: string) {
+    raw
+      .prepare(
+        `INSERT INTO venue_name_variants (id, venue_id, name, normalized_name, created_at) VALUES (?,?,?,?,0)`
+      )
+      .run(`${venueId}-${name}`, venueId, name, normalizeName(name));
+  }
+
+  it("links a submission that uses a venue's recorded OTHER name", async () => {
+    insertVenue({ id: "v-park", name: "Montpelier Trotting Park", state: "VT" });
+    addVariant("v-park", "Montpelier Driving Park");
+    const r = await autoLinkVenue(db as never, {
+      venueName: "Montpelier Driving Park",
+      venueState: "VT",
+    });
+    expect(r).toMatchObject({ venueId: "v-park", decision: "name-variant" });
+  });
+
+  it("does not link a variant in another state", async () => {
+    insertVenue({ id: "v-park", name: "Montpelier Trotting Park", state: "VT" });
+    addVariant("v-park", "Montpelier Driving Park");
+    const r = await autoLinkVenue(db as never, {
+      venueName: "Montpelier Driving Park",
+      venueState: "ME",
+    });
+    expect(r.venueId).toBeNull();
+  });
+
+  it("a name with no venue and no variant is still no-match (control)", async () => {
+    insertVenue({ id: "v-park", name: "Montpelier Trotting Park", state: "VT" });
+    const r = await autoLinkVenue(db as never, {
+      venueName: "Montpelier Driving Park",
+      venueState: "VT",
+    });
+    expect(r.venueId).toBeNull();
   });
 });

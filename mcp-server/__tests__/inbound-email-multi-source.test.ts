@@ -423,3 +423,96 @@ describe("OPE-55 backward-compat — single-source fast paths unchanged", () => 
     expect(labels.some((l) => l.startsWith("submit/multi["))).toBe(false);
   });
 });
+
+describe("OPE-1057 — a trusted sender's body-only event is extracted, not bounced", () => {
+  // The trusted fast path never runs the classifier, so classified_sub_intent is
+  // NULL. Replays inbound 62252aa2's body as a fixture — never against prod.
+  const HAMFEST_BODY =
+    "---------- Forwarded message ---------\nFrom: Club Secretary <club@example.org>\n" +
+    "Date: Mon, Sep 15, 2026\nSubject: Hamfest\n\n" +
+    "This Saturday, Sep 19 is the Alexander Hamfest at the Alexander Elementary School " +
+    "in Alexander on the Airline RD (RT-9). 8am until noon.";
+
+  it("the Hamfest shape: NULL sub-intent + real prose → free-text extract → ok-low-body-extract", async () => {
+    const row: RowSnapshot = {
+      parsedUrl: null,
+      fromAddress: "jtarboxme@gmail.com",
+      subject: "Fwd: Hamfest",
+      attachmentCount: 0,
+      classifiedSubIntent: null,
+      bodyTextExcerpt: HAMFEST_BODY,
+    };
+    const { created } = installFetch({
+      bodyEvents: [
+        {
+          name: "Alexander Hamfest",
+          startDate: futureDate(2),
+          venueName: "Alexander Elementary School",
+        },
+      ],
+    });
+    const { step, labels } = makeStep(row);
+
+    const result = await makeWorkflow().runSubmitPipeline(step, "row-1");
+
+    expect(labels).toContain("submit/free-text-extract");
+    expect(result.replyKind).toBe("ok-low-body-extract");
+    expect(created).toEqual(["Alexander Hamfest"]);
+  });
+
+  it("a NULL sub-intent with a signature-only body still gets no-url — the substance gate holds", async () => {
+    const row: RowSnapshot = {
+      parsedUrl: null,
+      fromAddress: "jtarboxme@gmail.com",
+      subject: "Fwd:",
+      attachmentCount: 0,
+      classifiedSubIntent: null,
+      bodyTextExcerpt: "--\nJohn Tarbox\nSent from my iPhone",
+    };
+    const { created } = installFetch({
+      bodyEvents: [{ name: "Invented", startDate: futureDate(5) }],
+    });
+    const { step, labels } = makeStep(row);
+
+    const result = await makeWorkflow().runSubmitPipeline(step, "row-1");
+
+    expect(labels).not.toContain("submit/free-text-extract");
+    expect(result.replyKind).toBe("no-url");
+    expect(created).toEqual([]);
+  });
+
+  it("a 2-character body (the OPE-407 burst shape) is not extracted either", async () => {
+    const row: RowSnapshot = {
+      parsedUrl: null,
+      fromAddress: "jtarboxme@gmail.com",
+      subject: "Fwd: x",
+      attachmentCount: 0,
+      classifiedSubIntent: null,
+      bodyTextExcerpt: "ok",
+    };
+    installFetch({ bodyEvents: [{ name: "Invented", startDate: futureDate(5) }] });
+    const { step, labels } = makeStep(row);
+    const result = await makeWorkflow().runSubmitPipeline(step, "row-1");
+    expect(labels).not.toContain("submit/free-text-extract");
+    expect(result.replyKind).toBe("no-url");
+  });
+
+  it("a classifier that RAN and chose another sub-intent is still honoured", async () => {
+    const row: RowSnapshot = {
+      parsedUrl: null,
+      fromAddress: "stranger@example.com",
+      subject: "question",
+      attachmentCount: 0,
+      classifiedSubIntent: "single_url",
+      bodyTextExcerpt: HAMFEST_BODY,
+    };
+    const { created } = installFetch({
+      bodyEvents: [{ name: "Alexander Hamfest", startDate: futureDate(2) }],
+    });
+    const { step, labels } = makeStep(row);
+    const result = await makeWorkflow().runSubmitPipeline(step, "row-1");
+    expect(labels).not.toContain("submit/free-text-extract");
+    expect(result.replyKind).toBe("no-url");
+    expect(created).toEqual([]);
+  });
+});

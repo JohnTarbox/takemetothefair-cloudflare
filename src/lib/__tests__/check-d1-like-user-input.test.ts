@@ -173,3 +173,67 @@ describe("MCP tool arguments are user input too (OPE-630)", () => {
     expect(checkFile("mcp-server/src/tools/admin-performers.ts", src)).toHaveLength(0);
   });
 });
+
+/**
+ * OPE-1030 → the 4th call site. The guard reported 0 errors on 2026-09-15
+ * while `/blog?tag=` was throwing `LIKE or GLOB pattern too complex` 225 times
+ * in a day, because a Next.js PAGE launders its input twice before the LIKE:
+ *
+ *   const params  = await searchParams;              // tainted by the old rule
+ *   const safeTag = params.tag.replace(…);           // NOT tainted — one hop
+ *   sql`… LIKE ${'%"' + safeTag + '"%'}`             // and the expression does
+ *                                                    // not START with safeTag
+ *
+ * Two independent holes, so both halves are pinned separately below.
+ */
+describe("laundered request input is still request input (OPE-1030)", () => {
+  it("flags the /blog page shape verbatim — derived value, non-leading identifier", () => {
+    const src = `
+      const params = await searchParams;
+      const safeTag = params.tag.replace(/["%_\\\\]/g, "");
+      conditions.push(sql\`\${blogPosts.tags} LIKE \${'%"' + safeTag + '"%'}\`);
+    `;
+    const v = checkFile("src/app/blog/page.tsx", src);
+    expect(v).toHaveLength(1);
+    expect(v[0].why).toContain("request-derived");
+  });
+
+  it("flags it through two hops, and sanitising does not untaint", () => {
+    // The cap is on pattern LENGTH; stripping % and _ shortens nothing.
+    const src = `
+      const sp = await searchParams;
+      const raw = sp.q;
+      const cleaned = raw.replace(/[%_]/g, "");
+      conditions.push(like(events.name, \`%\${cleaned}%\`));
+    `;
+    expect(checkFile("src/app/events/page.tsx", src)).toHaveLength(1);
+  });
+
+  it("flags a non-leading identifier even when the expression starts with a literal", () => {
+    const src = `
+      const q = searchParams.get("q");
+      conditions.push(sql\`\${events.name} LIKE \${"%" + q + "%"}\`);
+    `;
+    expect(checkFile("src/app/api/x/route.ts", src)).toHaveLength(1);
+  });
+
+  it("stays quiet when the derived value comes from a module constant, not a request", () => {
+    // The precision half. If this flagged, every category-constant LIKE in the
+    // repo would flag with it and the guard would be allowlisted into silence.
+    const src = `
+      const PREFIX = '"producer"';
+      const pattern = '%' + PREFIX + '%';
+      conditions.push(like(events.categories, pattern));
+    `;
+    expect(checkFile("src/lib/events/facets.ts", src)).toHaveLength(0);
+  });
+
+  it("stays quiet on the converted form of the /blog site", () => {
+    const src = `
+      const params = await searchParams;
+      const safeTag = params.tag.replace(/["\\\\]/g, "");
+      conditions.push(containsCI(blogPosts.tags, \`"\${safeTag}"\`));
+    `;
+    expect(checkFile("src/app/blog/page.tsx", src)).toHaveLength(0);
+  });
+});

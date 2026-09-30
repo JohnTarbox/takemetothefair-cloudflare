@@ -44,7 +44,7 @@
  * a thing to remember: `Event` JSON-LD is emitted only by the event DETAIL
  * page, where `buildPlaceJsonLd` already cannot return an empty location.
  */
-import { and, gte, lt, sql, type SQL } from "drizzle-orm";
+import { and, lt, sql, type SQL } from "drizzle-orm";
 import { events, venues } from "@/lib/db/schema";
 import { hasOccurrenceInWindowOrUndated } from "@/lib/event-dates";
 import { findRegion, regionSlugsFor } from "@/lib/events/facet-regions";
@@ -356,7 +356,11 @@ export function facetConditions(stateSlug: string, facet: ResolvedFacet, now: Da
       // through October is ON in September, and a visitor asking what is on in
       // September must be shown it; keying the month off start_date alone would
       // hide it everywhere except May.
-      const overlap = [lt(events.startDate, w.end), gte(events.endDate, w.start)];
+      // OPE-1035 — a NULL end_date is a single-day event, as in upcomingEndPredicate.
+      const overlap = [
+        lt(events.startDate, w.end),
+        sql`COALESCE(${events.endDate}, ${events.startDate}) >= ${Math.floor(w.start.getTime() / 1000)}`,
+      ];
       // …but overlap ALONE would put that same season-long market on all twelve
       // month pages, making them near-duplicates of each other — the fastest way
       // to get a facet mesh devalued. OPE-48 already solved this shape: when an

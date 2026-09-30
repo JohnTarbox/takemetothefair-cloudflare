@@ -148,14 +148,113 @@ describe("refusal 2 — VENDOR_DIGEST_SEND_ENABLED is off", () => {
     expect(selectRecipientsMock).not.toHaveBeenCalled();
   });
 
-  it("broadcasts once the flag is on", async () => {
+  it("broadcasts once the flag is on AND the send is confirmed", async () => {
+    // OPE-862 — this test used to pass with no `require_human_confirmation`,
+    // and that is precisely the behaviour that broadcast to three vendor pilots
+    // on 2026-09-09. The flag alone is no longer sufficient; the token is the
+    // difference between "the mechanism is approved" and "this send is".
     broadcastEnabled = "true";
-    const res = await call();
+    const res = await call({ require_human_confirmation: "GO" });
     const json = (await res.json()) as Record<string, unknown>;
 
     expect(json).toMatchObject({ success: true, sent: true, broadcast: true });
     expect(enqueueEmailMock).toHaveBeenCalledTimes(1);
     expect(insertedValues[0].sentAt).toBeInstanceOf(Date);
+  });
+});
+
+/**
+ * OPE-862 — refusal 4.
+ *
+ * ⚠️ Amendment H note for whoever edits these next. Every assertion here that
+ * says "nothing was sent" is one the route can satisfy for the WRONG reason:
+ * refusal 1 (`no_new_events`, an empty week) short-circuits before any of this
+ * runs and enqueues nothing either. So each case asserts a POSITIVE landmark
+ * beside the negative one — `event_count: 1` proves the week was non-empty and
+ * the test reached refusal 4 rather than dying at refusal 1. Without that, this
+ * whole block passes with the gate deleted AND with the selector broken.
+ */
+describe("refusal 4 — require_human_confirmation (OPE-862)", () => {
+  beforeEach(() => {
+    broadcastEnabled = "true";
+  });
+
+  it("a NO-ARGUMENT call does not mail the vendor list", async () => {
+    const res = await call();
+    const json = (await res.json()) as Record<string, unknown>;
+
+    // Negative: nothing went out.
+    expect(enqueueEmailMock).not.toHaveBeenCalled();
+    // Positive landmarks: the week was non-empty and we reached refusal 4,
+    // not refusal 1.
+    expect(json).toMatchObject({
+      sent: false,
+      refused: true,
+      reason: "missing_human_confirmation",
+      event_count: 1,
+    });
+  });
+
+  it("names the token in the refusal, so the caller can act on it", async () => {
+    const res = await call();
+    const json = (await res.json()) as Record<string, string>;
+    expect(json.message).toContain('require_human_confirmation: "GO"');
+  });
+
+  it("still composes and persists the reviewable issue, unsent", async () => {
+    // The refusal degrades to refusal 2 rather than erroring: if the Monday
+    // cron is ever restored, an un-tokened run must keep producing the weekly
+    // artifact John reviews. Trading an unauthorised send for an invisible
+    // newsletter would not be a fix.
+    await call();
+    expect(insertedValues).toHaveLength(1);
+    expect(insertedValues[0].audience).toBe("vendor");
+    expect(insertedValues[0].sentAt).toBeNull();
+  });
+
+  it("does not even resolve the vendor list without the token", async () => {
+    await call();
+    expect(selectRecipientsMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["a near-miss in the wrong case", "go"],
+    ["a plausible-looking substitute", "yes"],
+    ["an explicit refusal, which is still a non-empty string", "no"],
+    ["a boolean the model might invent", true],
+    ["the empty string", ""],
+  ])("rejects %s", async (_label, token) => {
+    const res = await call({ require_human_confirmation: token });
+    const json = (await res.json()) as Record<string, unknown>;
+
+    expect(enqueueEmailMock).not.toHaveBeenCalled();
+    expect(json).toMatchObject({ reason: "missing_human_confirmation", event_count: 1 });
+  });
+
+  it("keeps the three refusal reasons distinct", async () => {
+    // The flag being off and the send being unapproved are different states
+    // needing different operator responses. Collapsing them into one string is
+    // what left the 09-09 responder unable to tell them apart.
+    broadcastEnabled = "false";
+    const off = (await (await call()).json()) as Record<string, unknown>;
+    expect(off.reason).toBe("broadcast_disabled");
+
+    broadcastEnabled = "true";
+    const unapproved = (await (await call()).json()) as Record<string, unknown>;
+    expect(unapproved.reason).toBe("missing_human_confirmation");
+
+    selectRecipientsMock.mockResolvedValue([]);
+    const empty = (await (await call({ require_human_confirmation: "GO" })).json()) as Record<
+      string,
+      unknown
+    >;
+    expect(empty.reason).toBe("no_recipients");
+  });
+
+  it("does not gate test_recipient — an unattended test send still works", async () => {
+    await call({ test_recipient: "me@example.com" });
+    expect(enqueueEmailMock).toHaveBeenCalledTimes(1);
+    expect(selectRecipientsMock).not.toHaveBeenCalled();
   });
 });
 
@@ -166,13 +265,21 @@ describe("refusal 3 — test_recipient", () => {
     expect(enqueueEmailMock).toHaveBeenCalledTimes(1);
     expect(enqueueEmailMock).toHaveBeenCalledWith({
       to: "me@example.com",
-      source: "newsletter:vendor-digest",
+      source: "newsletter:vendor-digest:test",
     });
   });
 
-  it("a test send does NOT stamp sent_at", async () => {
-    await call({ test_recipient: "me@example.com" });
-    expect(insertedValues[0].sentAt).toBeNull();
+  it("a test send writes NO issue row at all (OPE-866)", async () => {
+    // Was: "does NOT stamp sent_at" — it wrote a row with a null sent_at, which
+    // published a world-readable /newsletter/<slug> page as a side effect of
+    // asking to look at the thing. Now it writes nothing, matching
+    // send_newsletter_broadcast's identically-named argument.
+    const res = await call({ test_recipient: "me@example.com" });
+    const json = (await res.json()) as Record<string, unknown>;
+    expect(insertedValues).toHaveLength(0);
+    // Positive landmark: the week was NON-EMPTY, so we exercised the preview
+    // path and not refusal 1 (`no_new_events`), which also writes nothing.
+    expect(json).toMatchObject({ sent: true, persisted: false, event_count: 1 });
   });
 
   it("works even with the broadcast flag on — a test is still just a test", async () => {
@@ -181,7 +288,7 @@ describe("refusal 3 — test_recipient", () => {
     expect(selectRecipientsMock).not.toHaveBeenCalled();
     expect(enqueueEmailMock).toHaveBeenCalledWith({
       to: "me@example.com",
-      source: "newsletter:vendor-digest",
+      source: "newsletter:vendor-digest:test",
     });
   });
 
@@ -190,9 +297,16 @@ describe("refusal 3 — test_recipient", () => {
     // under `newsletter:weekly-digest`, making a vendor send indistinguishable
     // from an attendee one — so "did the vendor digest go out?" was
     // unanswerable from the ledger.
+    // OPE-866 — still the vendor lane's own source, now with a `:test` suffix
+    // so a preview is distinguishable from a broadcast in one ledger query.
+    // `LIKE 'newsletter%'` and `LIKE 'newsletter:vendor-digest%'` both still
+    // match, so no existing reader loses the row.
     await call({ test_recipient: "me@example.com" });
     expect(enqueueEmailMock).toHaveBeenCalledWith(
-      expect.objectContaining({ source: "newsletter:vendor-digest" })
+      expect.objectContaining({ source: "newsletter:vendor-digest:test" })
+    );
+    expect(String((enqueueEmailMock.mock.calls[0][0] as { source: string }).source)).toContain(
+      "vendor-digest"
     );
   });
 });
@@ -200,10 +314,15 @@ describe("refusal 3 — test_recipient", () => {
 describe("dry_run", () => {
   it("reports what would happen and writes nothing", async () => {
     broadcastEnabled = "true";
-    const res = await call({ dry_run: true });
+    const res = await call({ dry_run: true, require_human_confirmation: "GO" });
     const json = (await res.json()) as Record<string, unknown>;
 
-    expect(json).toMatchObject({ dry_run: true, would_broadcast: true, recipient_count: 1 });
+    expect(json).toMatchObject({
+      dry_run: true,
+      would_broadcast: true,
+      human_confirmed: true,
+      recipient_count: 1,
+    });
     expect(insertedValues).toHaveLength(0);
     expect(enqueueEmailMock).not.toHaveBeenCalled();
   });

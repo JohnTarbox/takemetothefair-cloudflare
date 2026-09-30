@@ -46,7 +46,7 @@ export const POST = withAuthorized<{ id: string }>(async ({ request, db, userId,
       })
       .returning({ id: adminActions.id });
 
-    const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+    const env = getCloudflareEnv();
     await pingIndexNow(db, indexNowUrlFor("vendors", vendor.slug), env, "vendor-undelete");
 
     return NextResponse.json({

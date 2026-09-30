@@ -103,6 +103,40 @@ export const PUBLIC_LIFECYCLE_STATUSES = [
   EVENT_LIFECYCLE.MOVED_ONLINE,
 ] as const;
 
+/** Lifecycle half of the public-visibility test. */
+export function isPublicLifecycle(lifecycle: string): boolean {
+  return (PUBLIC_LIFECYCLE_STATUSES as readonly string[]).includes(lifecycle);
+}
+
+/**
+ * OPE-829 — the ONE in-memory answer to "would the public see this row?",
+ * shared by the app and the MCP server.
+ *
+ * It is the in-memory twin of `publicEventWhere()` in
+ * `src/lib/event-lifecycle.ts`, which is what every public reader actually
+ * filters on — including the MCP `get_event_details` query
+ * (`mcp-server/src/tools/public.ts:659`). Both halves are required, and BOTH
+ * were getting dropped somewhere:
+ *
+ *   status   IN (APPROVED, TENTATIVE)   ← PUBLIC_EVENT_STATUSES
+ *   lifecycle IN (SCHEDULED, TENTATIVE, POSTPONED, RESCHEDULED, OCCURRED,
+ *                 MOVED_ONLINE)         ← PUBLIC_LIFECYCLE_STATUSES
+ *
+ * ⚠️ Why it lives in constants rather than in either caller: the admin tool's
+ * `is_publicly_visible` was a hand-written third copy reading
+ * `status === "APPROVED"` alone, and it disagreed with the reader in BOTH
+ * directions on 236 live rows (OPE-829). That is the same failure OPE-487
+ * moved `LIFECYCLE_TRANSITIONS` here to stop, and `mcp-server/src/lifecycle.ts`
+ * already says why in its own header: a guard kept as hand-synced copies fails
+ * by having one copy widened and the other not, "which looks enforced from
+ * whichever side you test."
+ */
+export function isPubliclyVisible(status: string, lifecycle: string): boolean {
+  return (
+    (PUBLIC_EVENT_STATUSES as readonly string[]).includes(status) && isPublicLifecycle(lifecycle)
+  );
+}
+
 /**
  * State-machine transitions for `events.lifecycle_status`.
  *
@@ -188,6 +222,14 @@ export const LIFECYCLE_TRANSITIONS: Record<EventLifecycle, EventLifecycle[]> = {
   NO_SHOW: [EVENT_LIFECYCLE.OCCURRED],
 };
 
+/**
+ * The `lifecycle_reason` the K27 OCCURRED sweep (`event-occurred-sweep.ts`)
+ * stamps when it moves an event to OCCURRED because its end date passed. One
+ * writer, one string — shared so the sweep and the OPE-1099 correction below
+ * cannot drift apart.
+ */
+export const AUTO_OCCURRED_REASON = "auto: end date passed";
+
 /** The two states the table treats as terminal for the event itself. */
 export const TERMINAL_LIFECYCLE_STATUSES = [
   EVENT_LIFECYCLE.OCCURRED,
@@ -203,8 +245,15 @@ export const TERMINAL_LIFECYCLE_STATUSES = [
 export interface LifecycleTransitionContext {
   /** `events.lifecycle_status_changed_at`. NULL ⇒ never explicitly transitioned. */
   lifecycleStatusChangedAt?: Date | null;
+  /** `events.lifecycle_reason` — tells an INFERRED terminal value from an observed one. */
+  lifecycleReason?: string | null;
   /** `events.start_date`. */
   startDate?: Date | null;
+  /**
+   * OPE-1218 — the start date a RESCHEDULED transition would write. The
+   * inferred-OCCURRED escape opens RESCHEDULED only when this is in the future.
+   */
+  newStartDate?: Date | null;
   /** Injectable clock, for tests. */
   now?: Date;
 }
@@ -262,6 +311,61 @@ function isSpuriousTerminalValue(
   if (!start || Number.isNaN(start.getTime())) return false;
   const now = context.now ?? new Date();
   return start.getTime() > now.getTime();
+}
+
+/**
+ * OPE-1099 — "cancelled after we published it."
+ *
+ * `firefly-yoga-wellness-festival-2026` was cancelled by its organizer, served
+ * as SCHEDULED through its date because nothing could read the organizer, and
+ * then moved to OCCURRED by the K27 sweep. The table then refused to record
+ * the truth: OCCURRED → CANCELLED is not a legal edge, and the OPE-487 escape
+ * above applies only to FUTURE-dated rows.
+ *
+ * The distinction that makes this safe is not the date but the SOURCE of the
+ * terminal value. OCCURRED stamped with `AUTO_OCCURRED_REASON` is an inference
+ * from the calendar — nobody observed the event happen — so a documented
+ * cancellation outranks it. OCCURRED written by a person ("2026 edition has
+ * concluded", "Cancelled-in-error correction step 2/2") is an observation and
+ * stays terminal. Measured 2026-09-23: 569 OCCURRED rows carry the sweep's
+ * reason, 219 carry something else or NULL; only the 569 are opened, and only
+ * toward CANCELLED.
+ *
+ * Exact equality, not a prefix: one writer produces this string.
+ *
+ * OPE-1218 — POSTPONED and RESCHEDULED open too. A storm weekend (2026-09-26/27)
+ * postponed Trumbull Arts Festival, Brookline Porchfest and Franklin Farm
+ * Harvest Festival by one to two weeks; the sweep marked all three OCCURRED on
+ * the abandoned date, and the table then had no way to say "it moved". A
+ * postponement outranks a calendar inference for the same reason a
+ * cancellation does.
+ *
+ * What stays shut is resurrecting an event that really is over. RESCHEDULED
+ * opens only when the NEW start date is in the future, since a reschedule to a
+ * past date is a rewrite of history rather than a postponement. SCHEDULED and
+ * TENTATIVE stay shut: neither says why the event did not happen on its date.
+ */
+const INFERRED_OCCURRENCE_TARGETS: readonly EventLifecycle[] = [
+  EVENT_LIFECYCLE.CANCELLED,
+  EVENT_LIFECYCLE.POSTPONED,
+  EVENT_LIFECYCLE.RESCHEDULED,
+];
+
+function isInferredOccurrence(
+  from: EventLifecycle,
+  to: EventLifecycle,
+  context: LifecycleTransitionContext | undefined
+): boolean {
+  if (from !== EVENT_LIFECYCLE.OCCURRED) return false;
+  if (context?.lifecycleReason !== AUTO_OCCURRED_REASON) return false;
+  if (!INFERRED_OCCURRENCE_TARGETS.includes(to)) return false;
+  if (to === EVENT_LIFECYCLE.RESCHEDULED) {
+    const next = context.newStartDate;
+    if (!next || Number.isNaN(next.getTime())) return false;
+    const now = context.now ?? new Date();
+    return next.getTime() > now.getTime();
+  }
+  return true;
 }
 
 /**
@@ -353,6 +457,10 @@ export function validateLifecycleTransition(
     return { ok: true, terminalCorrection: true };
   }
 
+  if (isInferredOccurrence(from, to, context)) {
+    return { ok: true, terminalCorrection: true };
+  }
+
   const refusal = describeLifecycleRefusal(from, to);
   return {
     ok: false,
@@ -368,6 +476,8 @@ export function validateLifecycleTransition(
 export const VENUE_STATUS = {
   ACTIVE: "ACTIVE",
   INACTIVE: "INACTIVE",
+  // OPE-1180 — was a venue, no longer is. Not publicly served until OPE-1181.
+  FORMER: "FORMER",
 } as const;
 export type VenueStatus = (typeof VENUE_STATUS)[keyof typeof VENUE_STATUS];
 
@@ -486,12 +596,20 @@ export type EventScale = (typeof EVENT_SCALE)[keyof typeof EVENT_SCALE];
 // ── Event categories (advisory taxonomy for dropdowns/filters) ────
 
 export const EVENT_CATEGORIES = [
+  // OPE-1058 (2026-09-17, ratified by John) — the ten values below carry the
+  // `// OPE-1058` marker. Each had live rows or a clearly distinct audience and
+  // was deferred by the TAX1 dedupe pass. Until now `suggest_event` dropped them
+  // while `update_event` stored them unchecked, so a value could be invalid and
+  // present at once: ~100 distinct values lived on events against 34 here.
+  // "Market" is the sharpest case — it has had a PUBLIC PAGE at /events/markets
+  // the whole time, so the taxonomy refused a value the site was already serving.
   "Agricultural Fair",
   // OPE-186 (2026-07-13) — large non-fair public spectacles had no taxonomy
   // lane, so air shows / balloon festivals landed as free-text or ["Event"] in
   // the uncategorized queue (the Great State of Maine Air Show + Great Falls
   // Balloon Festival were both un-modelable). "Balloon Festival" is added below.
   "Air Show",
+  "Amateur Radio Convention", // OPE-1058 — absorbs Hamfest
   "Antique Show",
   // K21 (2026-06-12). Reconciled the allow-list against live prod
   // data: 90 distinct category values were in use on APPROVED events
@@ -518,6 +636,7 @@ export const EVENT_CATEGORIES = [
   "Charity",
   "Comic Con",
   "Community Event",
+  "Concert", // OPE-1058 — ruled first-class by John, NOT folded into Music Festival
   "Convention",
   "Craft Fair",
   "Craft Show",
@@ -529,17 +648,78 @@ export const EVENT_CATEGORIES = [
   "Flea Market",
   "Food Festival",
   "Garden Show",
+  "Gem & Mineral Show", // OPE-1058
   "Gun Show",
   "Harvest Festival",
+  "Hobby Show", // OPE-1058 — absorbs Hobby, Model Train Show, Book Show
   "Holiday Market",
   "Home Show",
+  "Living History", // OPE-1058 — absorbs Historical
   "Makers Market",
+  "Market", // OPE-1058 — absorbs Outdoor Market, Sidewalk Sale; serves /events/markets
   "Music Festival",
+  "Outdoor Show", // OPE-1058 — absorbs Sportsmen's Show, RV Show, RV & Camping Show
   "Parade",
+  "Pop Culture Convention", // OPE-1058 — absorbs Pop Culture
+  "Renaissance Fair", // OPE-1058 — absorbs Renaissance Faire
+  "Senior Expo", // OPE-1058
   "Trade Show",
   "Other",
 ] as const;
 export type EventCategory = (typeof EVENT_CATEGORIES)[number];
+
+/**
+ * The placeholder a create writes when it was given nothing usable. Deliberately
+ * NOT a member of EVENT_CATEGORIES: it means "nobody categorised this", which is
+ * exactly what the admin uncategorized queue reads it as.
+ */
+export const UNCATEGORIZED_EVENT_CATEGORY = "Event";
+
+/** Exact, case-sensitive membership — the stored value IS the display value. */
+export function isEventCategory(value: unknown): value is EventCategory {
+  return typeof value === "string" && (EVENT_CATEGORIES as readonly string[]).includes(value);
+}
+
+/**
+ * OPE-1058 — the one place any writer decides what may be stored in
+ * `events.categories`.
+ *
+ * Two policies, one rule. An UNTRUSTED ingest (a public submission, an
+ * extractor) keeps K21's drop-and-warn: the event is worth having even with a
+ * bad label, and the dropped values are echoed back to the caller. An EXPLICIT
+ * EDIT (an admin or an agent naming a value) is REJECTED, because silently
+ * discarding what someone deliberately typed is how "Craft Fsir" lived in prod
+ * while the tool reported success.
+ *
+ * Both read this function, so a third policy cannot appear at a fourth call
+ * site — which is the failure this ticket IS: one writer checked the list, the
+ * other did not, and the two drifted for months.
+ */
+export function partitionEventCategories(values: readonly string[] | null | undefined): {
+  kept: EventCategory[];
+  dropped: string[];
+} {
+  const kept: EventCategory[] = [];
+  const dropped: string[] = [];
+  for (const raw of values ?? []) {
+    const value = typeof raw === "string" ? raw.trim() : "";
+    if (value === "") continue;
+    // The placeholder passes through unchanged — it is what an uncategorised
+    // create already stores, and rejecting it would break re-saving such a row.
+    if (value === UNCATEGORIZED_EVENT_CATEGORY) continue;
+    if (isEventCategory(value)) {
+      if (!kept.includes(value)) kept.push(value);
+    } else if (!dropped.includes(value)) {
+      dropped.push(value);
+    }
+  }
+  return { kept, dropped };
+}
+
+/** Off-list values in `values`; empty when every one may be stored. */
+export function invalidEventCategories(values: readonly string[] | null | undefined): string[] {
+  return partitionEventCategories(values).dropped;
+}
 
 // ── OPE-13 vendor-roster rails ────────────────────────────────────
 //
@@ -628,6 +808,56 @@ export const EVENT_APPLICATION_LANES = [
   "volunteer",
 ] as const;
 export type EventApplicationLane = (typeof EVENT_APPLICATION_LANES)[number];
+
+/**
+ * OPE-794 — whether there is a booth to apply FOR.
+ *
+ * We could record what a booth costs and when applications close, but not
+ * whether the show was already full. Two of six events approved on 2026-09-03
+ * were not open to new vendors — the Ogunquit Chamber's own page says "We are
+ * full for 2026", and Manchester Grange's first floor had sold out — and both
+ * facts survived only as hand-written prose in `vendor_fee_notes`, where
+ * nothing can query them and the next writer can overwrite them without knowing
+ * they mattered.
+ *
+ * That is a correctness problem, not a nicety: "Shows Now Open for Vendors" is
+ * the literal subject line of the weekly vendor digest, and its selection had no
+ * way to exclude a show that is full. A CTA telling a vendor to apply to a
+ * closed show is the fastest way to lose their trust in the digest.
+ *
+ * ⚠️ `UNKNOWN` is the default and it is NOT a synonym for `OPEN`. Defaulting to
+ * the optimistic value would assert something nobody checked — the
+ * `dates_confirmed DEFAULT true` failure (OPE-433), repeated in a new column.
+ * A reader must never render `UNKNOWN` to a vendor as "open".
+ */
+export const VENDOR_CAPACITY_STATUSES = [
+  /** No evidence either way. The default. Never render this as "open". */
+  "UNKNOWN",
+  /** Organizer copy says space is available. */
+  "OPEN",
+  /** Full, but taking names — "anyone on our waitlist is to be notified". */
+  "WAITLIST",
+  /** No space and no waitlist mentioned. */
+  "FULL",
+  /** Applications are not being accepted at all (closed, cancelled lane). */
+  "CLOSED",
+] as const;
+
+export type VendorCapacityStatus = (typeof VENDOR_CAPACITY_STATUSES)[number];
+
+/**
+ * The statuses a vendor may be invited to APPLY to.
+ *
+ * Expressed as the allow-list rather than as "not FULL and not CLOSED", so a
+ * status added later is excluded until somebody decides otherwise. A denylist
+ * would silently admit it.
+ */
+export const VENDOR_CAPACITY_OPEN_TO_APPLICATIONS: readonly VendorCapacityStatus[] = ["OPEN"];
+
+/** True only when we have positive evidence a vendor can still apply. */
+export function isOpenToVendorApplications(status: string | null | undefined): boolean {
+  return VENDOR_CAPACITY_OPEN_TO_APPLICATIONS.includes(status as VendorCapacityStatus);
+}
 
 // "Producer-class" events — the big PRODUCED shows that publish a
 // web exhibitor directory worth backfilling (home/garden, boat/RV,
@@ -722,8 +952,19 @@ export const PROMOTER_ENRICHMENT_STATUS_VALUES = [
   "ENRICHED",
   "NO_SOURCE",
   "BLOCKED",
+  // OPE-962 — the site was fetched successfully and staged ZERO candidates on
+  // PROMOTER_ENRICHMENT_EXHAUST_AFTER consecutive attempts: there is nothing
+  // more to extract. Distinct from NO_SOURCE (no website at all) and BLOCKED
+  // (the fetch failed). Without it NEEDS_ENRICHMENT had no exit short of every
+  // field filling, so unenrichable promoters were re-fetched every ~30 days
+  // forever and the queue could only grow (485 on 08-19, 516 on 09-13).
+  // Sticky like BLOCKED; a WEBSITE change re-opens it (see the edit paths).
+  "EXHAUSTED",
 ] as const;
 export type PromoterEnrichmentStatus = (typeof PROMOTER_ENRICHMENT_STATUS_VALUES)[number];
+
+/** OPE-962 — consecutive zero-candidate attempts before a promoter is EXHAUSTED. */
+export const PROMOTER_ENRICHMENT_EXHAUST_AFTER = 3;
 
 // The five enrichment target fields tracked in `promoters.enrichment_coverage`
 // (a JSON snapshot of which are filled). Fill-rate metrics aggregate these.
@@ -799,8 +1040,8 @@ export function isPlaceholderDescription(desc: string | null | undefined): boole
  *
  * - all five fields covered → ENRICHED (even if it was IN_PROGRESS/BLOCKED)
  * - no website → NO_SOURCE (nothing to enrich from)
- * - IN_PROGRESS/BLOCKED preserved on edits that don't complete coverage
- *   (mirrors vendor-roster not overwriting terminal states on re-sweep)
+ * - IN_PROGRESS/BLOCKED/EXHAUSTED preserved on edits that don't complete
+ *   coverage (mirrors vendor-roster not overwriting terminal states on re-sweep)
  * - otherwise → NEEDS_ENRICHMENT
  */
 export function computePromoterEnrichment(
@@ -822,7 +1063,11 @@ export function computePromoterEnrichment(
     status = "ENRICHED";
   } else if (!hasWebsite) {
     status = "NO_SOURCE";
-  } else if (currentStatus === "IN_PROGRESS" || currentStatus === "BLOCKED") {
+  } else if (
+    currentStatus === "IN_PROGRESS" ||
+    currentStatus === "BLOCKED" ||
+    currentStatus === "EXHAUSTED"
+  ) {
     status = currentStatus;
   } else {
     status = "NEEDS_ENRICHMENT";
@@ -951,6 +1196,21 @@ export function computePerformerEnrichment(
  * criterion. Widening it would cost essentially nothing operationally — noted
  * on OPE-370 as a decision available to John, not taken unilaterally.
  */
+/**
+ * OPE-971 — request_samples retention. Enforced by the MCP daily cron
+ * (mcp-server/src/request-sample-retention.ts), not on the write path.
+ */
+export const REQUEST_SAMPLE_RETENTION_DAYS = 60;
+
+/**
+ * OPE-993 — error_logs and indexnow_submissions retention. Both were a 1%
+ * dice roll on their own write paths (src/lib/logger.ts, src/lib/indexnow.ts)
+ * with a 30-day cutoff; now enforced by the MCP daily cron
+ * (mcp-server/src/log-table-retention.ts). Same 30 days as before.
+ */
+export const ERROR_LOG_RETENTION_DAYS = 30;
+export const INDEXNOW_SUBMISSION_RETENTION_DAYS = 30;
+
 export const SEARCH_PING_RETENTION_DAYS = 7;
 
 /** Env override, so the window is tunable without a deploy-time code change. */
@@ -1027,3 +1287,8 @@ export const AWAITING_SUBMITTER_REPLY_KINDS = ["no-url"] as const;
  * live row when this shipped was 89 days, so the bound is the point.
  */
 export const AWAITING_SUBMITTER_EXPIRY_DAYS = 21;
+
+// OPE-772 — the send-gate allowlist + resolver, shared by both Workers so the
+// MCP Worker can report the gates only it enforces (OPERATOR_OUTBOUND_ENABLED).
+export * from "./send-gates";
+export * from "./extraction-families";

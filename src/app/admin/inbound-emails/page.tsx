@@ -781,7 +781,16 @@ export default function AdminInboundEmailsPage() {
 
       <div className="flex flex-wrap gap-2 mb-4">
         <div className="flex gap-1">
-          {["", "failed", "received", "processing", "replied", "forwarded"].map((s) => (
+          {[
+            "",
+            "awaiting_human",
+            "failed",
+            "received",
+            "processing",
+            "replied",
+            "forwarded",
+            "closed_by_sender",
+          ].map((s) => (
             <button
               key={s || "all"}
               onClick={() => setStatusFilter(s)}

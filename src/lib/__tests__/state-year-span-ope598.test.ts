@@ -46,8 +46,12 @@ const SCHEMA_SQL = `
     lifecycle_status TEXT NOT NULL,
     state_code TEXT,
     start_date INTEGER,
-    end_date INTEGER
+    end_date INTEGER,
+    venue_id TEXT
   );
+  -- OPE-1028: the state predicate reads venues.state when a venue is linked.
+  -- These rows are venue-less, so state_code still answers for them.
+  CREATE TABLE venues (id TEXT PRIMARY KEY, state TEXT);
 `;
 
 /** Unix SECONDS — the storage unit for D1 date columns in raw SQL. A `*1000`

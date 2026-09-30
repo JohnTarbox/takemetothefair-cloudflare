@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { evaluateGates, nameMatchesAdminFlag, sourceCredibilityTier } from "./event-date-gates";
+import {
+  dateLooksImplausible,
+  evaluateGates,
+  nameMatchesAdminFlag,
+  sourceCredibilityTier,
+} from "./event-date-gates";
 
 describe("nameMatchesAdminFlag — analyst spec 2026-05-22", () => {
   it("flags 'CALL FOR' wording", () => {
@@ -321,5 +326,67 @@ describe("end_date_in_past is a DAY comparison (OPE-651)", () => {
     at("2026-08-30T16:11:00Z");
     const r = evaluateGates({ ...base, startDate: TODAYS_EVENT, endDate: null });
     expect(r.reasons).not.toContain("start_date_in_past");
+  });
+});
+
+/**
+ * OPE-1032 — gate tuning ratified by John 2026-09-15. Specimens are the names
+ * and events the 09-15 weekly drain adjudicated as false positives; each group
+ * also pins true positives that must keep firing.
+ */
+describe("OPE-1032 — name_em_dash_subvenue exempts edition, series and town qualifiers", () => {
+  const FP_SPECIMENS = [
+    "Summer Concert Series — June 29",
+    "Independence Day Parade — America 250",
+    "Makers Market — November",
+    "Tree Lighting — 500th Lighting",
+    "Rhode Island Home Show — Westerly RI",
+    // The corrective rename that re-tripped the gate on 09-15 (`ad9932d1`).
+    "Rhode Island Home Show — West Kingston RI",
+  ];
+  it.each(FP_SPECIMENS)("does not flag %s", (name) => {
+    expect(nameMatchesAdminFlag(name).reasons).not.toContain("name_em_dash_subvenue");
+  });
+
+  it.each(["Concord Arts Festival — Arts Alley", "Lakes Region Arts Festival — Field B"])(
+    "LANDMARK: still flags a real sub-venue: %s",
+    (name) => {
+      expect(nameMatchesAdminFlag(name).reasons).toContain("name_em_dash_subvenue");
+    }
+  );
+});
+
+describe("OPE-1032 — duration_too_long_for_scale exempts stated seasons", () => {
+  const long = {
+    startDate: new Date("2026-11-07T12:00:00Z"),
+    endDate: new Date("2026-12-28T12:00:00Z"),
+  };
+  const reasonsOf = (extra: Record<string, unknown>) => {
+    const r = dateLooksImplausible({ ...long, ...extra } as never);
+    return r.ok ? [] : r.reasons;
+  };
+
+  it("Snowport (`2594da27`, Nov 7–Dec 28) with a Holiday Market category is not flagged", () => {
+    expect(reasonsOf({ categories: '["Holiday Market","Craft Fair"]' })).not.toContain(
+      "duration_too_long_for_scale"
+    );
+  });
+
+  it("Christmas at Blithewold (`bd8d3228`) whose description states the span is not flagged", () => {
+    expect(
+      reasonsOf({ description: "Open daily November 24 through January 3, 10am–4pm." })
+    ).not.toContain("duration_too_long_for_scale");
+  });
+
+  it("LANDMARK: the same span with no season signal still flags", () => {
+    expect(
+      reasonsOf({ description: "A wonderful craft fair.", categories: '["Craft Fair"]' })
+    ).toContain("duration_too_long_for_scale");
+  });
+
+  it("a same-month range in the description is not a stated season", () => {
+    expect(reasonsOf({ description: "June 5 - June 7 at the fairgrounds" })).toContain(
+      "duration_too_long_for_scale"
+    );
   });
 });

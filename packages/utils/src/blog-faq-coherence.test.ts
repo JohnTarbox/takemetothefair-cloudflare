@@ -152,3 +152,126 @@ General admission is $5 at the gate.`;
     expect(r.conflicts.some((c) => c.type === "price_usd")).toBe(true);
   });
 });
+
+/**
+ * OPE-1015 — the Old Deerfield specimen, from its PRE-FIX values (the live row
+ * was corrected 2026-09-14, so it no longer reproduces). Body text is the
+ * ticket's quoted sentences placed in the sections they came from.
+ */
+const DEERFIELD_BODY = `# Old Deerfield Craft Fairs: A Guide for Vendors and Visitors
+
+## Two Locations, One Producer
+
+A point of frequent confusion: only the September festival is physically held in Deerfield. The Spring and Holiday Samplers are held at the Eastern States Exposition's indoor facility about 35 miles south, in West Springfield.
+
+## The Fall Festival
+
+The September festival fills the lawns around Memorial Hall Museum. Admission is free; the surrounding 18th-century historic district is open for tours.
+
+## The Spring Sampler
+
+A smaller indoor show. Admission is free.
+
+## The Holiday Sampler
+
+Free admission.`;
+
+const DEERFIELD_FAQS = col([
+  [
+    "Where are the Old Deerfield Craft Fairs held?",
+    "All three events are held at Memorial Hall Museum in Old Deerfield, Massachusetts.",
+  ],
+  [
+    "How much is admission?",
+    "Adult gate admission at the Old Deerfield Craft Fairs is approximately $8-$10 with discounts for children, seniors, and members.",
+  ],
+  [
+    "What are the Samplers?",
+    "The Spring and Holiday Samplers are smaller indoor shows held in Memorial Hall Museum.",
+  ],
+]);
+
+describe("OPE-1015 — admission_free_vs_paid", () => {
+  it("flags the Deerfield specimen: body free-only vs column $8-$10", () => {
+    const r = detectFaqIncoherence(DEERFIELD_FAQS, DEERFIELD_BODY);
+    const c = r.conflicts.find((x) => x.type === "admission_free_vs_paid");
+    expect(c?.bodyValues).toEqual([0]);
+    expect(c?.columnValues).toEqual(expect.arrayContaining([8]));
+  });
+
+  it("flags the mirror case: column free-only vs body paid", () => {
+    const r = detectFaqIncoherence(
+      col([["Does it cost anything?", "Admission is free for everyone."]]),
+      "## Getting in\n\nGate admission is $12 at the door."
+    );
+    expect(r.conflicts.some((x) => x.type === "admission_free_vs_paid")).toBe(true);
+  });
+
+  it("does NOT fire on a multi-show guide that says both free and paid", () => {
+    const r = detectFaqIncoherence(
+      col([["How much is admission?", "Admission to the fall festival is $7."]]),
+      "The fall festival admission is $7. The spring sampler? Admission is free."
+    );
+    expect(r.conflicts.some((x) => x.type === "admission_free_vs_paid")).toBe(false);
+  });
+
+  it("does NOT treat 'free for children' as a free-admission claim", () => {
+    const r = detectFaqIncoherence(
+      col([["How much is admission?", "Gate admission is $10."]]),
+      "Admission is free for children under 12. Kids receive free admission all weekend."
+    );
+    expect(r.conflicts.some((x) => x.type === "admission_free_vs_paid")).toBe(false);
+  });
+
+  it("does NOT fire on free parking or a free shuttle", () => {
+    const r = detectFaqIncoherence(
+      col([["How much is admission?", "Gate admission is $10."]]),
+      "Parking is free and there is a free shuttle from town."
+    );
+    expect(r.conflicts.some((x) => x.type === "admission_free_vs_paid")).toBe(false);
+  });
+});
+
+describe("OPE-1015 — venue_all_events", () => {
+  it("flags the Deerfield specimen: 'all three held at Memorial Hall' vs Samplers at Eastern States", () => {
+    const r = detectFaqIncoherence(DEERFIELD_FAQS, DEERFIELD_BODY);
+    const c = r.conflicts.find((x) => x.type === "venue_all_events");
+    expect(c).toBeDefined();
+    expect(c?.bodyValues.join(" ")).toContain("Eastern States Exposition");
+    expect(c?.columnValues.join(" ")).toContain("Memorial Hall Museum");
+    // The sentence naming the town of the column's venue must not be the conflict.
+    expect(c?.bodyValues.join(" ")).not.toMatch(/^Deerfield$/m);
+  });
+
+  it("does NOT fire when the column's venue claim is not universal (a multi-show post doing its job)", () => {
+    const r = detectFaqIncoherence(
+      col([["Where is the fall show?", "The fall show is held at Memorial Hall Museum."]]),
+      DEERFIELD_BODY
+    );
+    expect(r.conflicts.some((x) => x.type === "venue_all_events")).toBe(false);
+  });
+
+  it("does NOT fire on an alias in the same sentence ('the Big E')", () => {
+    const r = detectFaqIncoherence(
+      col([["Where?", "All shows are held at the Big E in West Springfield."]]),
+      "Every sampler is held at the Eastern States Exposition (the Big E), West Springfield."
+    );
+    expect(r.conflicts.some((x) => x.type === "venue_all_events")).toBe(false);
+  });
+
+  it("does NOT fire on the venue's own town ('held in Deerfield')", () => {
+    const r = detectFaqIncoherence(
+      col([["Where?", "Both days are held at Memorial Hall Museum in Old Deerfield."]]),
+      "The festival is held in Deerfield every September."
+    );
+    expect(r.conflicts.some((x) => x.type === "venue_all_events")).toBe(false);
+  });
+
+  it("does NOT fire on a distance phrase ('35 miles south')", () => {
+    const r = detectFaqIncoherence(
+      col([["Where?", "All events are held at Memorial Hall Museum."]]),
+      "The fair is about 35 miles south of Greenfield, and parking is plentiful."
+    );
+    expect(r.conflicts.some((x) => x.type === "venue_all_events")).toBe(false);
+  });
+});

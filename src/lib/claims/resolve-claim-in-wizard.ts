@@ -180,6 +180,46 @@ async function approveNow(
   return claimId;
 }
 
+/**
+ * OPE-1060 — this user's open claim on this entity, if one exists.
+ *
+ * The wizard can run more than once for the same person and listing: they
+ * submit evidence, come back, and pass through it again. Every pass used to
+ * insert a new row, so two of the three claimants waiting on 2026-09-17 each
+ * had a claim with their evidence plus an empty PENDING twin minutes later, and
+ * the operator notice listed them twice. `/api/claim/evidence` already reuses
+ * the open row; this makes the wizard agree with it.
+ *
+ * The method is refreshed to the rung this pass qualified for. A later
+ * DOMAIN_MATCH must reach `approvePendingDomainMatchClaims`, and a website that
+ * changed since must stop qualifying. Evidence is never touched.
+ */
+async function reuseOpenClaim(
+  db: Database,
+  entityType: ClaimEntityType,
+  entityId: string,
+  userId: string,
+  status: "PENDING" | "DISPUTED",
+  method: WizardClaimMethod
+): Promise<string | null> {
+  const [open] = await db
+    .select({ id: entityClaims.id })
+    .from(entityClaims)
+    .where(
+      and(
+        eq(entityClaims.entityType, entityType),
+        eq(entityClaims.entityId, entityId),
+        eq(entityClaims.userId, userId),
+        eq(entityClaims.status, status),
+        isNull(entityClaims.decidedAt)
+      )
+    )
+    .limit(1);
+  if (!open) return null;
+  await db.update(entityClaims).set({ method }).where(eq(entityClaims.id, open.id));
+  return open.id;
+}
+
 async function recordPending(
   db: Database,
   entityType: ClaimEntityType,
@@ -188,6 +228,8 @@ async function recordPending(
   method: WizardClaimMethod,
   now: Date
 ): Promise<string> {
+  const reused = await reuseOpenClaim(db, entityType, entityId, userId, "PENDING", method);
+  if (reused) return reused;
   const claimId = crypto.randomUUID();
   await db.insert(entityClaims).values({
     id: claimId,
@@ -237,6 +279,8 @@ export async function resolveClaimInWizard(
       : decideDomainMatch(userEmail, entity.website).match
         ? "DOMAIN_MATCH"
         : "EVIDENCE";
+    const reused = await reuseOpenClaim(db, entityType, entity.id, userId, "DISPUTED", method);
+    if (reused) return { outcome: "already_claimed", ...base, claimId: reused, method };
     const claimId = crypto.randomUUID();
     await db.insert(entityClaims).values({
       id: claimId,

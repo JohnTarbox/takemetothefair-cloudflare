@@ -4,15 +4,40 @@
 # *gzipped* size (~3.85 MiB here vs 10 MiB paid) gives real headroom.
 name = "meetmeatthefair-app"
 main = ".open-next/worker.js"
-compatibility_date = "2026-06-10"
+# OPE-994 — explicit, not the account default. The app is served only on
+# meetmeatthefair.com/* (see [[routes]]); a *.workers.dev hostname would be a
+# second front door outside every zone rule (the OPE-929 Cardworks incident).
+# Top-level on purpose: a key placed after a [table] header belongs to that table.
+workers_dev = false
+# OPE-905 — bumped 2026-06-10 -> 2026-09-10.
+compatibility_date = "2026-09-10"
+# OPE-905 — so a production stack trace names our source, not the bundle.
+upload_source_maps = true
 compatibility_flags = ["nodejs_compat"]
 
 [assets]
 directory = ".open-next/assets"
 binding = "ASSETS"
 
+# OPE-905 — logs at full rate, traces sampled. Cloudflare's Workers Best
+# Practices (2026-02) asks for both with an explicit head_sampling_rate rather
+# than the bare `enabled = true` this file used to carry.
+#
+# logs 1.0 / traces 0.1 chosen deliberately: a log line is what you read during
+# an incident and this Worker's volume makes 100% affordable, while traces are
+# per-request spans whose value is statistical — 10% is enough to see a latency
+# shape and cheap enough not to think about. If a specific investigation needs
+# more, raise it for that investigation and put it back.
 [observability]
 enabled = true
+
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+
+[observability.traces]
+enabled = true
+head_sampling_rate = 0.1
 
 # Smart Placement: run near the slow dependency (D1) rather than the user.
 [placement]
@@ -24,6 +49,18 @@ binding = "AI"
 # Browser Rendering account id (non-secret); the token is a Worker secret
 # CLOUDFLARE_BROWSER_RENDERING_TOKEN. Used by import-url/fetch escalation.
 [vars]
+# OPE-931 — "this is a deployed Worker". Read by isDeployedEnvironment() in
+# src/lib/runtime-env.ts, which decides whether a MISSING binding fails closed.
+#
+# It replaces `!!env.CF_PAGES`, a Cloudflare PAGES variable that this app has
+# not had since the 2026-06-10 OpenNext cutover — so two fail-closed branches
+# had been evaluating false in production and would have failed OPEN instead.
+#
+# A plain [vars] line, deliberately: `wrangler deploy` replaces the whole block
+# from this file on every deploy (OPE-284/OPE-509), so the committed value IS
+# the live value and a dashboard edit cannot drift it. Local dev and tests have
+# no Cloudflare env at all, so they read `false` and keep the dev-mode paths.
+DEPLOY_ENV = "production"
 CLOUDFLARE_ACCOUNT_ID = "e6011e48b7014ef83c77e3c767dac6cf"
 # OPE-191 — flip to "true" to let the Monday vendor digest actually BROADCAST to
 # the vendor list. While "false" the cron still runs every Monday: it composes
@@ -54,13 +91,15 @@ CONDITIONAL_GET_PUBLIC_CACHE = "false"
 # `entry-deadlines-gate-ope738.test.ts` asserts this literal, so changing it
 # stays a reviewed edit rather than a drive-by.
 ENTRY_DEADLINES_INDEX = "true"
-# CAL1 — flip to "true" to serve the SSR Month calendar at /events?view=calendar
-# (Month-only @jonnyboats/calendar-react). Default OFF = legacy client calendar.
-# Temporarily ON for live prod verification (Step 7) — flip back to "false" after.
+# CAL1 — serves the SSR Month calendar at /events?view=calendar
+# (@jonnyboats/calendar-react). "false" = the legacy client calendar.
+# ON PERMANENTLY since the 2026-06 prod verification: the SSR calendar is the
+# shipped calendar (OPE-994, John 2026-09-14). Turning this off reverts
+# /events?view=calendar to the legacy client calendar and disables CAL2 below.
 CAL1_SSR_MONTH = "true"
-# CAL2 — flip to "true" to add the Agenda + Year sub-views to the SSR calendar
-# (?cal_view=agenda|year). Requires CAL1_SSR_MONTH = "true". Default OFF = Month only.
-# Temporarily ON for live prod verification — flip back to "false" after.
+# CAL2 — adds the Agenda + Year sub-views to the SSR calendar
+# (?cal_view=agenda|year). Requires CAL1_SSR_MONTH = "true"; "false" = Month only.
+# ON PERMANENTLY alongside CAL1 (OPE-994, John 2026-09-14).
 CAL2_VIEWS = "true"
 # OPE-163 — customer-facing reply send gate for the /admin/inbound-emails Reply
 # panel. The endpoint refuses to enqueue unless this is "true"; the MCP consumer
@@ -132,6 +171,44 @@ database_name = "takemetothefair-db"
 database_id = "d449e416-3814-48a6-b9e8-b676333b2cdc"
 migrations_dir = "drizzle"
 
+# OPE-904 / OPE-951 — the BURST half of the two-layer limiter John approved
+# (option (c) for the eight abuse-prone policies): a HARD cap of 5 hits per key
+# per 60 s, on top of the soft hourly KV quota.
+#
+# It is a Durable Object, not the Workers Rate Limiting binding this block used
+# to declare. That binding (`BURST_LIMITER`, namespace 1001) returned success
+# for every call in production — 7+ per colo inside one window, none refused —
+# while refusing correctly in an isolated Worker; Cloudflare documents it as
+# "permissive, eventually consistent … not an accurate accounting system".
+#
+# The class `BurstCounter` lives in the MCP Worker (mcp-server/src/burst-counter.ts,
+# migration v2) and is bound here cross-script. The limit and window are code
+# constants in src/lib/rate-limit.ts (BURST_LIMIT, BURST_WINDOW_SECONDS).
+#
+# ⚠️ DEPLOY ORDER: the MCP Worker must have deployed the class before this
+# binding deploys, or this Worker's deploy fails on a missing class.
+[[durable_objects.bindings]]
+name = "BURST_COUNTER"
+class_name = "BurstCounter"
+script_name = "meetmeatthefair-mcp"
+
+# OPE-899 — OpenNext's ISR revalidation queue (open-next.config.ts `doQueue`).
+# `DOQueueHandler` is exported by OpenNext's own worker template; it dedupes
+# revalidations of the same route and calls back into THIS Worker through
+# `WORKER_SELF_REFERENCE` to regenerate. SQLite-backed (it persists a per-route
+# sync table). Inert today — see open-next.config.ts for the measurement.
+[[durable_objects.bindings]]
+name = "NEXT_CACHE_DO_QUEUE"
+class_name = "DOQueueHandler"
+
+[[migrations]]
+tag = "v1-ope899-isr-do-queue"
+new_sqlite_classes = ["DOQueueHandler"]
+
+[[services]]
+binding = "WORKER_SELF_REFERENCE"
+service = "meetmeatthefair-app"
+
 # KV namespace for rate limiting
 [[kv_namespaces]]
 binding = "RATE_LIMIT_KV"
@@ -178,13 +255,18 @@ queue = "syndication-changes"
 # ── Apex route ─────────────────────────────────────────────────────────────
 # This Worker serves meetmeatthefair.com/* directly (cutover 2026-06-10). The
 # old K2 apex-worker (meetmeatthefair-edge) that used to proxy + rewrite status
-# was retired by this cutover and deleted (B5, 2026-06-12).
+# was retired by this cutover. It was recorded here as deleted on 2026-06-12
+# (B5) but was in fact still in the account until John deleted it on
+# 2026-09-13 (OPE-895).
 # NOTE: error/notFound() responses are soft-200 on ISR routes under
 # @opennextjs/cloudflare — the status-rewrite did NOT become "moot via real
 # 500s" as first assumed; it's an accepted soft-status + noindex tradeoff
 # (docs/mig4-soft-404-opennext-isr.md).
-# Rollback = re-point this hostname at the last pre-migration Pages deployment
-# (see docs/opennext-cutover-runbook.md).
+# Rollback: there is NO Pages fallback any more. The `takemetothefair` Pages
+# project — the cutover's rollback target — had its custom domains detached and
+# was deleted on 2026-09-24 (OPE-895); it had been serving the old build against
+# the production D1/KV on pages.dev. Roll back by redeploying an earlier version
+# of THIS Worker (`npx wrangler rollback` / `wrangler versions deploy`).
 [[routes]]
 pattern = "meetmeatthefair.com/*"
 zone_name = "meetmeatthefair.com"

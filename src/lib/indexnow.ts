@@ -22,10 +22,14 @@ import {
   pendingSearchPings,
   timeToIndexLog,
 } from "@/lib/db/schema";
-import { inArray, lt } from "drizzle-orm";
+import { inArray } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import { SITE_HOSTNAME } from "@takemetothefair/constants";
-import { getCloudflareRateLimitKv, getCloudflareEnv } from "@/lib/cloudflare";
+import {
+  getCloudflareRateLimitKv,
+  getCloudflareEnv,
+  type CloudflareStringEnvKey,
+} from "@/lib/cloudflare";
 import {
   armIndexNowCooldown,
   checkIndexNowBreaker,
@@ -169,12 +173,8 @@ async function recordSubmission(
       httpStatus: httpStatus ?? undefined,
       errorMessage: errorMessage ?? undefined,
     });
-
-    // 1% probabilistic cleanup of submissions older than 30 days
-    if (Math.random() < 0.01) {
-      const thirtyDaysAgo = new Date(Date.now() - 2592000 * 1000);
-      await db.delete(indexnowSubmissions).where(lt(indexnowSubmissions.timestamp, thirtyDaysAgo));
-    }
+    // OPE-993 — no pruning here. The 30-day window is enforced by the MCP
+    // daily cron (mcp-server/src/log-table-retention.ts), not a 1% dice roll.
   } catch (err) {
     // Never throw from the logger
     console.error("[IndexNow] Failed to persist submission record:", err);
@@ -294,9 +294,10 @@ async function recordIndexNowSuccess(db: Db, urls: string[], at: Date): Promise<
   // leave the other silently un-anchored
   // ([[feedback_fix_wired_into_one_of_two_parallel_paths]]).
   //
-  // It cannot rely on `indexnow_submissions` alone: recordSubmission prunes
-  // that table at 30 days, so during a longer outage the last success row is
-  // guaranteed to vanish and the age would revert to the seeded floor.
+  // It cannot rely on `indexnow_submissions` alone: the MCP daily retention cron
+  // (mcp-server/src/log-table-retention.ts, OPE-993) prunes that table at 30
+  // days, so during a longer outage the last success row is guaranteed to vanish
+  // and the age would revert to the seeded floor.
   await advanceIndexNowOutageAnchor(db, at);
 }
 
@@ -353,10 +354,9 @@ export interface PingResult {
 
 /** REL6: read a runtime env var via CF bindings; falls back to process.env for
  *  local/dev. Mirrors the kpi-alerts pattern. */
-function getRuntimeEnv(key: string): string | undefined {
+function getRuntimeEnv(key: CloudflareStringEnvKey): string | undefined {
   try {
-    const env = getCloudflareEnv() as unknown as Record<string, string | undefined>;
-    return env[key];
+    return getCloudflareEnv()[key];
   } catch {
     return process.env[key];
   }

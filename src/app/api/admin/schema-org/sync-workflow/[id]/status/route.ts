@@ -23,7 +23,7 @@ export async function GET(request: NextRequest, { params }: Params) {
   // Pages can't bind the workflow class — proxy through the MCP Worker,
   // which has the binding and an X-Internal-Key-gated status endpoint.
   // See /api/admin/schema-org/sync-workflow/start for the same pattern.
-  const cfEnv = getCloudflareEnv() as unknown as { INTERNAL_API_KEY?: string };
+  const cfEnv = getCloudflareEnv();
   if (!cfEnv.INTERNAL_API_KEY) {
     return NextResponse.json(
       { error: "internal_misconfigured", message: "INTERNAL_API_KEY missing on Pages env" },

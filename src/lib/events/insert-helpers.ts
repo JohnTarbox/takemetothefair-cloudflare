@@ -10,7 +10,7 @@
  * See docs/event-insert-paths.md for the full per-path divergence matrix.
  */
 import type { DrizzleD1Database } from "drizzle-orm/d1";
-import { and, eq, gt, lt, or } from "drizzle-orm";
+import { and, eq, gt, lt, or, sql } from "drizzle-orm";
 import * as schema from "@/lib/db/schema";
 import { eventDays, events, entityDataCitations } from "@/lib/db/schema";
 import { recordMutation } from "@/lib/audit/record-mutation";
@@ -100,7 +100,31 @@ export async function insertEventDaysBatched(
     vendorOnly: day.vendorOnly || false,
   }));
   for (let i = 0; i < rows.length; i += EVENT_DAYS_BATCH_SIZE) {
-    await db.insert(eventDays).values(rows.slice(i, i + EVENT_DAYS_BATCH_SIZE));
+    // OPE-1088 — UPSERT, not insert. This is the path a re-ingest or an
+    // enrichment pass runs, and a blind insert is how a corrected time landed
+    // BESIDE the stale one instead of replacing it: the Hartford CT Fall Home
+    // Show carried 10:00–18:00 and 11:00–17:00 for the same day for six months,
+    // and both rendered. The April row was right.
+    //
+    // Scope 4 — the note policy is COALESCE, in both directions:
+    //   * a value the writer HAS replaces the stored one (that is the
+    //     correction this exists to let through);
+    //   * a value the writer does NOT have leaves the stored one alone.
+    // So an enrichment pass that knows the hours but not the note cannot blank
+    // a populated note — NHAC's two rows differed by nothing else — and one
+    // that knows neither cannot blank the hours.
+    await db
+      .insert(eventDays)
+      .values(rows.slice(i, i + EVENT_DAYS_BATCH_SIZE))
+      .onConflictDoUpdate({
+        target: [eventDays.eventId, eventDays.date, eventDays.vendorOnly],
+        set: {
+          openTime: sql`coalesce(excluded.open_time, ${eventDays.openTime})`,
+          closeTime: sql`coalesce(excluded.close_time, ${eventDays.closeTime})`,
+          notes: sql`coalesce(excluded.notes, ${eventDays.notes})`,
+          closed: sql`excluded.closed`,
+        },
+      });
   }
 
   // OPE-759 — this was one of four `event_days` writers that never touched

@@ -7,6 +7,7 @@ import { newsletterIssues } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { NewsletterSignupBlock } from "@/components/newsletter/newsletter-signup-block";
 import { NEWSLETTER_NAME, newsletterMastheadHtml } from "@/lib/newsletter-masthead";
+import { auth } from "@/lib/auth";
 
 /**
  * OPE-170 — public per-issue newsletter page. Renders the issue's stored HTML
@@ -17,6 +18,17 @@ import { NEWSLETTER_NAME, newsletterMastheadHtml } from "@/lib/newsletter-masthe
  * (src/lib/newsletter-masthead.ts), so "view in browser" looks like the inbox.
  * The stored `html` is inner body only, so rendering the masthead here does NOT
  * double it in the email.
+ *
+ * ⚠️ OPE-866 — an UNSENT issue is admin-only.
+ *
+ * This page's only predicate used to be the slug: no `sent_at` filter, no auth.
+ * The route that composes the issue notes that a null `sent_at` keeps it "out of
+ * the public archive", and that is true of the /newsletter INDEX — but the
+ * direct URL rendered regardless, and `generateMetadata` emitted a canonical
+ * tag for it. Unlisted is not private, and an unsent composition is a draft.
+ *
+ * Admins still see it, because reviewing the composed issue before it goes out
+ * is the entire point of persisting one (refusal 2 in the vendor-digest route).
  */
 
 interface Props {
@@ -32,6 +44,7 @@ async function getIssue(slug: string) {
         subject: newsletterIssues.subject,
         html: newsletterIssues.html,
         sentAt: newsletterIssues.sentAt,
+        audience: newsletterIssues.audience,
       })
       .from(newsletterIssues)
       .where(eq(newsletterIssues.slug, slug))
@@ -46,6 +59,9 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
   const issue = await getIssue(slug);
   if (!issue) return { title: "Newsletter | Meet Me at the Fair" };
+  // OPE-866 — never emit a canonical URL for an unsent draft. Doing so invited
+  // search engines to index a page the public cannot open.
+  if (!issue.sentAt) return { title: "Newsletter | Meet Me at the Fair", robots: { index: false } };
   return {
     title: `${issue.subject} | Meet Me at the Fair`,
     description: `A past issue of ${NEWSLETTER_NAME}, the Meet Me at the Fair weekly newsletter.`,
@@ -63,11 +79,21 @@ export default async function NewsletterIssuePage({ params }: Props) {
   const { slug } = await params;
   const issue = await getIssue(slug);
   if (!issue) notFound();
+  // OPE-866 — `sent_at` null means "composed, never broadcast". A reader who
+  // is not an admin gets the same 404 as a slug that does not exist: we do not
+  // reveal that an unsent draft is sitting there.
+  if (!issue.sentAt) {
+    const session = await auth();
+    if (session?.user?.role !== "ADMIN") notFound();
+  }
 
   return (
     <div className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8 py-12">
       <div className="mb-6">
-        <Link href="/newsletter" className="text-sm text-royal hover:underline">
+        <Link
+          href={issue.audience === "vendor" ? "/newsletter/vendor" : "/newsletter"}
+          className="text-sm text-royal hover:underline"
+        >
           ← All issues
         </Link>
       </div>
@@ -106,7 +132,12 @@ export default async function NewsletterIssuePage({ params }: Props) {
           Live on 2026-08-31: footer 51 of 73 subscribers, a bucket that
           silently absorbed this page's share. Nothing is lost retroactively —
           past rows stay as they are — but from here the archive is countable. */}
-      <NewsletterSignupBlock source="newsletter-archive" />
+      {/* OPE-1209 — a vendor issue (this is its view-in-browser target) offers
+          the vendor list; it used to offer the attendee one. */}
+      <NewsletterSignupBlock
+        source="newsletter-archive"
+        audience={issue.audience === "vendor" ? "vendor" : "weekend"}
+      />
     </div>
   );
 }

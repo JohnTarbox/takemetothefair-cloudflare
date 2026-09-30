@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { detectPossibleDuplicate } from "@/lib/duplicates/venue-date-collision";
+import { checkEventVenue } from "@/lib/venues/former-venue-guard";
 import { and, eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { requireVerifiedSession } from "@/lib/api-auth";
@@ -13,6 +14,7 @@ import { validateRequestBody, promoterEventCreateSchema } from "@/lib/validation
 import { logError } from "@/lib/logger";
 import { normalizeEventDate } from "@/lib/event-dates";
 import { recomputeEventCompleteness } from "@/lib/completeness";
+import { attachEventToSeries } from "@/lib/series/resolve-or-create-series";
 
 interface EventDayInput {
   date: string;
@@ -131,9 +133,21 @@ export async function POST(request: NextRequest) {
         );
       }
 
+      // OPE-1180 — a FORMER venue after its closure is refused; inside the
+      // closure's uncertainty window it is allowed and flagged for review.
+      const formerVenue = await checkEventVenue(
+        db,
+        data.venueId || null,
+        normalizeEventDate(endDate) ?? normalizeEventDate(startDate)
+      );
+      if (formerVenue.kind === "refuse") {
+        return NextResponse.json({ error: formerVenue.message }, { status: 409 });
+      }
+
       await db
         .update(events)
         .set({
+          ...(formerVenue.kind === "flag" ? { flaggedForReview: 1 } : {}),
           name: data.name,
           description: data.description,
           venueId: data.venueId || null,
@@ -183,6 +197,16 @@ export async function POST(request: NextRequest) {
       await db.delete(eventDays).where(eq(eventDays.eventId, existingId));
       await insertEventDaysBatched(db, existingId, eventDaysInput, session.user.id);
 
+      // OPE-472 (bounce) — the draft path never attached a series, so an
+      // event finished here (submitted, or given its venue on a later save)
+      // was born unparented: 4 PENDING rows since 08-20. Fill-only and
+      // venue-gated, so it is a no-op until a venue exists and never re-parents.
+      await attachEventToSeries(db, existingId, {
+        name: data.name,
+        venueId: data.venueId || null,
+        promoterId: promoter.id,
+      });
+
       return NextResponse.json({
         id: existingId,
         slug: existing.slug,
@@ -211,7 +235,18 @@ export async function POST(request: NextRequest) {
       name: data.name,
       promoterId: promoter.id,
     });
+    // OPE-1180 — a FORMER venue after its closure is refused; inside the
+    // closure's uncertainty window it is allowed and flagged for review.
+    const formerVenueNew = await checkEventVenue(
+      db,
+      data.venueId || null,
+      normalizeEventDate(endDate) ?? normalizeEventDate(startDate)
+    );
+    if (formerVenueNew.kind === "refuse") {
+      return NextResponse.json({ error: formerVenueNew.message }, { status: 409 });
+    }
     await db.insert(events).values({
+      ...(formerVenueNew.kind === "flag" ? { flaggedForReview: 1 } : {}),
       possibleDuplicateOf,
       // OPE-433 — named explicitly rather than inherited from the DDL default.
       //
@@ -262,6 +297,13 @@ export async function POST(request: NextRequest) {
 
     // WS2a — shared D1-safe batched insert (was an inline unbatched insert).
     await insertEventDaysBatched(db, newId, eventDaysInput);
+
+    // OPE-472 (bounce) — see the update branch above.
+    await attachEventToSeries(db, newId, {
+      name: data.name,
+      venueId: data.venueId || null,
+      promoterId: promoter.id,
+    });
 
     return NextResponse.json({ id: newId, slug, status: finalStatus }, { status: 201 });
   } catch (error) {

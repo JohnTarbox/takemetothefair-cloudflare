@@ -1,8 +1,11 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { detectPossibleDuplicate } from "@/lib/duplicates/venue-date-collision";
+import { resolveIngestVenue } from "@/lib/venues/former-venue-guard";
+import { findUndatedDuplicate } from "@/lib/duplicates/find-undated-duplicate";
+import { internalKeyMatches } from "@/lib/api-auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
-import { events, promoters, eventSchemaOrg } from "@/lib/db/schema";
+import { events, promoters, eventSchemaOrg, venues } from "@/lib/db/schema";
 import { parseJsonLd } from "@/lib/schema-org";
 import { eq } from "drizzle-orm";
 import {
@@ -22,6 +25,7 @@ import { evaluateGates } from "@/lib/event-date-gates";
 import { verifyTurnstileToken, getTurnstileErrorMessage } from "@/lib/turnstile";
 import { auth } from "@/lib/auth";
 import { inferCategoriesFromName } from "@/lib/url-import/infer-categories";
+import { UNCATEGORIZED_EVENT_CATEGORY, partitionEventCategories } from "@takemetothefair/constants";
 import { loadClassifications, gateUrlForField } from "@/lib/url-classification";
 import { PUBLIC_EVENT_STATUSES } from "@/lib/constants";
 import { classifySource, assertIngestionMethod } from "@/lib/source-classification";
@@ -36,6 +40,8 @@ import {
   isUnusableEventName,
   isLikelyImageUrl,
   isPlaceholderUrl,
+  venueStateConflict,
+  sourceOutsideNewEngland,
 } from "@takemetothefair/utils";
 import { maybeRouteToOccurrence } from "@/lib/discovery/route-to-occurrence";
 import { submitEventSchema } from "./schema";
@@ -57,13 +63,11 @@ export async function POST(request: NextRequest) {
   // their own gating (per-sender rate limit, CF Email Routing spam filter),
   // so we skip IP rate limit + Turnstile. Same pattern as the admin routes
   // that accept MCP-server writes (see admin/vendors/[id]/route.ts).
-  const internalKey = request.headers.get("x-internal-key");
-  const cfEnv = getCloudflareEnv() as unknown as { INTERNAL_API_KEY?: string };
-  const isInternal = !!(
-    internalKey &&
-    cfEnv.INTERNAL_API_KEY &&
-    internalKey === cfEnv.INTERNAL_API_KEY
-  );
+  // OPE-902 — was a `===` on the secret, which compares byte-by-byte and
+  // returns early on the first mismatch. `internalKeyMatches` digests both
+  // sides and XOR-accumulates over the digests with no early exit, and it is
+  // the one audited implementation both deploy artifacts share.
+  const isInternal = await internalKeyMatches(request);
 
   let rateLimitResult: Awaited<ReturnType<typeof checkRateLimit>> | null = null;
   if (!isInternal) {
@@ -358,6 +362,19 @@ export async function POST(request: NextRequest) {
       resolvedStateCode = result.stateCode ?? resolvedStateCode;
     } else if (resolvedVenueId) {
       venueDecision = "pre-resolved";
+      // OPE-1206 — an explicitly supplied venue in a different state than the
+      // submission's own venueState is NOT linked (the Portland OR show on the
+      // Portland ME Expo). The row lands venue-less, PENDING and flagged, and
+      // no venue is minted in its place.
+      const [picked] = await db
+        .select({ state: venues.state })
+        .from(venues)
+        .where(eq(venues.id, resolvedVenueId))
+        .limit(1);
+      if (venueStateConflict(data.venueState, picked?.state)) {
+        resolvedVenueId = null;
+        venueDecision = "state-conflict";
+      }
     }
 
     // OPE-541 / OPE-531 — mint a venue from ingest prose when nothing matched.
@@ -371,7 +388,7 @@ export async function POST(request: NextRequest) {
     // the admin importers already create venues on operator action, so
     // neither needs this and widening it would be my decision, not his.
     let venueMintReason: string | null = null;
-    if (!resolvedVenueId && data.source === "email") {
+    if (!resolvedVenueId && data.source === "email" && venueDecision !== "state-conflict") {
       const mint = await mintVenueFromIngest(db, {
         decision: venueDecision,
         venueName: data.venueName,
@@ -545,6 +562,18 @@ export async function POST(request: NextRequest) {
       if (!gateReasons.includes("past_date")) gateReasons.push("past_date");
     }
 
+    // OPE-1156 — a submission with no start date is held for a person, labelled.
+    //
+    // Every dated dedup stage needs a date window, so an undated row got a URL
+    // check and nothing else, then looked identical to a well-extracted one. A
+    // gate reason is the existing, queryable way to say why a row is waiting
+    // (the events-pending-review rule surfaces PENDING rows that carry one), and
+    // PENDING is a state nothing public reads.
+    if (!effectiveStartDate) {
+      gateRoute = "PENDING_REVIEW";
+      if (!gateReasons.includes("no_start_date")) gateReasons.push("no_start_date");
+    }
+
     // OPE-378 — a name token that appears in no source is a fabrication.
     //
     // One submission produced "28th Annual Holiday Craft Fair" from a body that
@@ -573,8 +602,23 @@ export async function POST(request: NextRequest) {
     // `gate_flags LIKE '%host_qualified_name%'` is how anyone would find out.
     if (hostQualified.applied) gateReasons.push("host_qualified_name");
 
-    const eventStatus = gateRoute === "PENDING_REVIEW" ? "PENDING" : baseEventStatus;
+    // OPE-1206 — a source outside New England, or a venue-state conflict, is
+    // never auto-published: a human looks first.
+    const stateNeedsReview =
+      venueDecision === "state-conflict" || sourceOutsideNewEngland(data.venueState);
+    const eventStatus =
+      gateRoute === "PENDING_REVIEW" || stateNeedsReview ? "PENDING" : baseEventStatus;
     const gateFlagsJson = gateReasons.length > 0 ? JSON.stringify(gateReasons) : null;
+
+    // OPE-1180 — a resolved FORMER venue is kept only for pre-closure dates.
+    // After the closure the submission lands WITHOUT a venue and flagged for
+    // review (never a failure: this is the public / email intake path).
+    const formerCheck = await resolveIngestVenue(
+      db,
+      resolvedVenueId,
+      effectiveEndDate ?? effectiveStartDate
+    );
+    resolvedVenueId = formerCheck.venueId;
 
     // K34 / EH3 P3.3b — if this submission is really a new EDITION of an
     // existing event that belongs to a SERIES (different year), attach it as an
@@ -648,6 +692,12 @@ export async function POST(request: NextRequest) {
     // venue/day collision, so it is preserved; the detector only fills the gap
     // when nothing upstream had an opinion — which is the case on every other
     // intake path.
+    //
+    // OPE-1156 — and when there is no date, neither of those can see anything:
+    // the collision detector needs a day and `findDuplicate` stops after its URL
+    // stage. The date-independent check (same venue, or same town, plus a
+    // normalised-name match) fills that gap — for undated rows ONLY, because on a
+    // dated row the same name at the same venue is usually another edition.
     const possibleDuplicateOf =
       data.possibleDuplicateOf ??
       (await detectPossibleDuplicate(db, {
@@ -656,7 +706,17 @@ export async function POST(request: NextRequest) {
         endDate: effectiveEndDate,
         name: effectiveName,
         promoterId: resolvedPromoterId,
-      }));
+      })) ??
+      (effectiveStartDate
+        ? null
+        : ((
+            await findUndatedDuplicate(db, {
+              name: effectiveName,
+              venueId: resolvedVenueId,
+              city: data.venueCity ?? null,
+              stateCode: resolvedStateCode ?? null,
+            })
+          )?.eventId ?? null));
 
     // Create the event
     const newEventId = crypto.randomUUID();
@@ -687,10 +747,15 @@ export async function POST(request: NextRequest) {
       // verified source. A vendor submission is already TENTATIVE-lifecycle for
       // exactly this reason.
       datesConfirmed: false,
+      // OPE-1058 — an untrusted submission keeps drop-and-warn (the K21 rule),
+      // but through the shared allow-list rather than storing whatever arrived.
+      // A public form could previously write any string into this column.
       categories: JSON.stringify(
-        Array.isArray(data.categories) && data.categories.length > 0
-          ? data.categories
-          : (inferCategoriesFromName(effectiveName) ?? ["Event"])
+        (() => {
+          const supplied = partitionEventCategories(data.categories).kept;
+          if (supplied.length > 0) return supplied;
+          return inferCategoriesFromName(effectiveName) ?? [UNCATEGORIZED_EVENT_CATEGORY];
+        })()
       ),
       tags: JSON.stringify(tagList),
       ticketUrl: finalTicketUrl,
@@ -745,6 +810,8 @@ export async function POST(request: NextRequest) {
       // lane (the headless worker can't web-confirm), not an upcoming event.
       // Operator triage queue at /admin/events?flagged=1.
       flaggedForReview:
+        stateNeedsReview ||
+        formerCheck.flagForReview ||
         anyHoursUnknown ||
         gateReasons.includes("past_date") ||
         // OPE-378 — an invented name reads perfectly, so it needs a human.
@@ -805,12 +872,19 @@ export async function POST(request: NextRequest) {
     //
     // After the insert, not inside it: the event is already durable, and the
     // parent is an enhancement. A series failure must never cost a submission.
-    await attachEventToSeries(db, newEventId, {
-      name: effectiveName,
-      venueId: resolvedVenueId,
-      promoterId: resolvedPromoterId,
-      description,
-    });
+    //
+    // OPE-1156 — but not for a row that has no date. A series is a public hub
+    // with its own slug; minting one from a row that could not even be dated is
+    // how "50th Common Ground Country Fair" got a second hub beside the real
+    // fair's. The event attaches later, when update_event gives it a date.
+    if (effectiveStartDate) {
+      await attachEventToSeries(db, newEventId, {
+        name: effectiveName,
+        venueId: resolvedVenueId,
+        promoterId: resolvedPromoterId,
+        description,
+      });
+    }
 
     // Store schema.org data if JSON-LD was provided
     if (data.jsonLd) {
@@ -864,7 +938,7 @@ export async function POST(request: NextRequest) {
     // bypass the PATCH-based hooks. Ping for those; PENDING community
     // suggestions stay non-public until an admin promotes them.
     if (PUBLIC_EVENT_SET.has(eventStatus)) {
-      const cfEnv = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+      const cfEnv = getCloudflareEnv();
       await pingIndexNow(db, indexNowUrlFor("events", finalEventSlug), cfEnv, "event-create");
     }
 
@@ -879,22 +953,33 @@ export async function POST(request: NextRequest) {
     // (gate off, suppressed, rate-limited) and "we tried and failed" are
     // different facts, and a fail-soft path that records neither is how a
     // silent no-op survives for months.
-    const ackOutcome = await sendSubmissionReceivedAck(
-      db,
-      getCloudflareEnv() as unknown as {
-        EMAIL_JOBS?: Queue<unknown>;
-        SUBMISSION_ACK_ENABLED?: string;
-      },
-      {
-        toEmail: data.suggesterEmail,
-        eventName: effectiveName,
-        eventId: newEventId,
-        whenText: effectiveStartDate ? formatDateRange(effectiveStartDate, effectiveEndDate) : null,
-        whereText:
-          [data.venueName, data.venueCity, resolvedStateCode].filter(Boolean).join(", ") || null,
-      }
-    );
-    if (ackOutcome !== "sent" && ackOutcome !== "skipped:no-email") {
+    //
+    // OPE-1153 — NOT on the internal (email-lane) path. The only internal
+    // caller is the MCP inbound-email workflow (mcp-server/src/email-handlers/
+    // submit.ts), which already answers the sender with its own `reply:ok-*`
+    // ack — ledgered against the inbound email and, for a multi-event email,
+    // listing every event. Sending this one too gave 5 submitters 18 duplicate
+    // pairs in 30 days (measured 2026-09-25), 3s apart, unthreaded, unlinked
+    // (inbound_email_id NULL), naming only the first event, and once
+    // contradicting the workflow reply. The web form (OPE-412's scope) is
+    // unchanged.
+    const ackOutcome = isInternal
+      ? ("skipped:internal-caller" as const)
+      : await sendSubmissionReceivedAck(db, getCloudflareEnv(), {
+          toEmail: data.suggesterEmail,
+          eventName: effectiveName,
+          eventId: newEventId,
+          whenText: effectiveStartDate
+            ? formatDateRange(effectiveStartDate, effectiveEndDate)
+            : null,
+          whereText:
+            [data.venueName, data.venueCity, resolvedStateCode].filter(Boolean).join(", ") || null,
+        });
+    if (
+      ackOutcome !== "sent" &&
+      ackOutcome !== "skipped:no-email" &&
+      ackOutcome !== "skipped:internal-caller"
+    ) {
       await logError(db, {
         level: "info",
         message: `submission-received ack not sent: ${ackOutcome}`,

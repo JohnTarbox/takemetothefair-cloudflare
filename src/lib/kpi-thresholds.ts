@@ -203,7 +203,7 @@ export function actionTitleForKpi(name: KpiName, value: number | null): string {
   return `${t.displayName} is ${formatKpiValue(name, value)} (target ${t.targetLabel})`;
 }
 
-function formatKpiValue(name: KpiName, value: number | null): string {
+export function formatKpiValue(name: KpiName, value: number | null): string {
   if (value == null) return "—";
   if (name === "time_to_index_h") return `${value.toFixed(1)}h`;
   // All other KPIs are ratios in [0, 1].

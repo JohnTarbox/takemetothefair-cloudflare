@@ -44,12 +44,17 @@ describe("the anchor is unconditionally clean", () => {
   });
 });
 
-describe("every off-anchor time present in the flagged corpus still fires", () => {
-  // Exactly the distinct UTC times measured across the 32 off-anchor rows.
-  // If any of these stopped firing, the migration would be rewriting
-  // timestamps the gate no longer objects to.
-  const CORPUS_TIMES = [
-    "00:00:00",
+describe("OPE-1032 — the gate fires on a DATE disagreement, not on a storage shape", () => {
+  // The corpus times this file originally pinned as "always fires" (OPE-435).
+  // John ratified narrowing the gate on 2026-09-15 after three weekly drains
+  // measured the storage-shape class at ~100% false positive: it now fires only
+  // when the stored instant is a different calendar day in America/New_York
+  // than in UTC — the day a visitor is actually shown.
+  //
+  // `at()` builds a SUMMER (EDT, UTC−4) date, so an instant before 04:00Z is the
+  // previous Eastern day and fires; everything from 04:00Z on is the same day.
+  const PREVIOUS_EASTERN_DAY = ["00:00:00", "03:47:11"];
+  const SAME_EASTERN_DAY = [
     "04:00:00",
     "09:00:00",
     "10:00:00",
@@ -63,16 +68,24 @@ describe("every off-anchor time present in the flagged corpus still fires", () =
     "23:30:00",
   ];
 
-  it.each(CORPUS_TIMES)("%s raises the flag with no time in the description", (t) => {
+  it.each(PREVIOUS_EASTERN_DAY)("%s (previous Eastern day) raises the flag", (t) => {
     expect(flags(at(t))).toContain(FLAG);
   });
 
-  it("…and each is clean once normalized to the anchor", () => {
-    // The post-migration state for all 32.
-    for (const t of CORPUS_TIMES) {
-      const normalized = new Date(`${at(t).toISOString().slice(0, 10)}T12:00:00Z`);
-      expect(flags(normalized), t).not.toContain(FLAG);
-    }
+  it.each(SAME_EASTERN_DAY)("%s (same Eastern day) is clean — a canonical storage shape", (t) => {
+    expect(flags(at(t))).not.toContain(FLAG);
+  });
+
+  it("LANDMARK: 04:00Z on a WINTER date is the previous Eastern day and fires", () => {
+    // The seasonal half the old description-deferral rule could pass: midnight
+    // EDT written for a date that is actually in EST renders a day early.
+    expect(flags(new Date("2026-12-12T04:00:00Z"))).toContain(FLAG);
+    expect(flags(new Date("2026-12-12T05:00:00Z"))).not.toContain(FLAG);
+  });
+
+  it("a description mentioning a time no longer changes the verdict either way", () => {
+    expect(flags(at("18:00:00"), "Doors open at 2pm")).not.toContain(FLAG);
+    expect(flags(at("00:00:00"), "Doors open at 2pm")).toContain(FLAG);
   });
 });
 
@@ -87,19 +100,4 @@ describe("normalizing preserves the UTC calendar date", () => {
       expect(normalized.toISOString().slice(0, 10)).toBe(original.toISOString().slice(0, 10));
     }
   );
-});
-
-describe("the safety net", () => {
-  it("a genuinely confused row is re-flagged, so the backfill cannot hide a defect", () => {
-    // If a future ingest writes an unnormalized timestamp, the gate raises it
-    // again on the next write. That is what makes clearing the stale strings a
-    // safe operation rather than a suppression.
-    expect(flags(at("03:47:11"))).toContain(FLAG);
-  });
-
-  it("a quarter-hour time WITH a time in the description stays clean", () => {
-    // Guards against over-normalizing: the gate defers to the description for
-    // quarter-hour-aligned times, and those rows are not in the flagged set.
-    expect(flags(at("18:00:00"), "Doors open at 2pm")).not.toContain(FLAG);
-  });
 });

@@ -147,6 +147,10 @@ Once verified:
      are looking for vendors of your type.
    - **Logo URL** — a publicly-accessible image link. Enhanced Profile
      vendors get a larger logo treatment on the public page.
+   - **Photo gallery** — up to 20 booth or product photos, shown on
+     your public listing with a click-to-enlarge lightbox. Add alt
+     text: it's what a screen reader announces, and it's what search
+     engines read. Available to every claimed vendor.
    - **Contact details** — name, email, phone. The email you list here
      is what we'd forward inbound contact-form messages to (Enhanced
      Profile only). It's never displayed in the page HTML — it stays
@@ -191,7 +195,6 @@ Once approved, you're auto-applied to the event if you want.
 A vendor with an active Enhanced Profile gets:
 
 - Larger 200×200 logo at the top of the public page
-- Photo gallery (up to 2 images) with a lightbox
 - A green "Verified" badge next to the business name
 - A contact form on the public page — visitors send you messages
   without your email ever appearing in the page source

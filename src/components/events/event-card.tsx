@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { isPastUnconfirmed, PAST_UNCONFIRMED_LABEL } from "@/lib/events/past-unconfirmed";
 import Link from "next/link";
 import Image from "next/image";
 import { cdnImage, focalPointGravity } from "@/lib/cdn-image";
@@ -19,6 +20,7 @@ import { FavoriteButton } from "@/components/FavoriteButton";
 import { getCategoryColors, getCategoryBadgeClass, getCategoryImage } from "@/lib/category-colors";
 import { getStateName } from "@/lib/states";
 import { formatDateMedium, formatDateShort, formatMonthShort } from "@/lib/datetime";
+import { DERIVED_DATE_SHORT, shouldShowProjectedDateCopy } from "@/lib/events/derived-date";
 
 type Event = typeof events.$inferSelect;
 type Venue = typeof venues.$inferSelect;
@@ -161,6 +163,14 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
     datesConfirmed: event.datesConfirmed,
     eventDayDates: event.eventDayDates,
   });
+  // OPE-740 — shared with the detail page so both cohorts are covered by one
+  // definition: the 121-row offline cohort recorded no lineage, so
+  // `ingestion_method` is its only tell; the live path sets `rolled_from_event_id`.
+  // ⚠️ shouldShowProjectedDateCopy, not hasDerivedDate. A rolled date that has
+  // SINCE been confirmed against the organizer is no longer an unconfirmed
+  // projection, and telling the reader otherwise is the original defect
+  // inverted — see the note in derived-date.ts on the Litchfield row.
+  const dateIsDerived = shouldShowProjectedDateCopy(event);
 
   const dateLabel = showNextOccurrence
     ? occurrence!.isToday
@@ -286,7 +296,12 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
           )}
           <div className="absolute top-3 left-3 flex gap-1 flex-wrap max-w-[calc(100%-48px)]">
             {event.featured && <Badge variant="warning">Featured</Badge>}
-            {event.status === "TENTATIVE" && <Badge variant="info">Tentative</Badge>}
+            {/* OPE-1098 — a past TENTATIVE event is not an unconfirmed FUTURE one. */}
+            {isPastUnconfirmed(event) ? (
+              <Badge variant="default">{PAST_UNCONFIRMED_LABEL}</Badge>
+            ) : (
+              event.status === "TENTATIVE" && <Badge variant="info">Tentative</Badge>
+            )}
             {/* TAX1 Phase 3 (2026-06-02) — A6 audience badge on cards.
                 The flex-wrap + max-w guards against the long
                 MEMBERS+OPEN label colliding with the favorite button
@@ -315,16 +330,30 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
             <Badge
               variant={FRESHNESS_VARIANT[freshness.tone]}
               className="mb-1.5"
-              // A hedged label says "expected"; the tooltip says why, so the
-              // wording stays short without hiding that the dates are unverified.
+              // ⚠️ OPE-740 — the tooltip that used to live here read "Dates as
+              // submitted — not yet confirmed with the organizer". On a
+              // projected row that is FALSE IN OUR FAVOUR: nobody submitted
+              // these dates, we generated them by shifting last year's. It
+              // claimed MORE than the truth, on 121 indexed pages.
+              //
+              // A projected date now says so in visible text below, so the
+              // tooltip is only used for the honest "as submitted" case.
               title={
-                freshness.hedged
+                freshness.hedged && !dateIsDerived
                   ? "Dates as submitted — not yet confirmed with the organizer"
                   : undefined
               }
             >
               {freshness.text}
             </Badge>
+          )}
+          {dateIsDerived && (
+            // VISIBLE text, not a `title=` attribute. The old copy was in a
+            // tooltip, which means it was in the served HTML — a raw-curl grep
+            // would pass while no sighted user on a touch device ever saw it.
+            <p className="mb-1.5 text-xs text-amber-700 dark:text-amber-500">
+              {DERIVED_DATE_SHORT}
+            </p>
           )}
           <h3 className="font-semibold text-lg text-foreground line-clamp-2">{event.name}</h3>
           <div className="mt-2 space-y-1 text-sm text-muted-foreground">

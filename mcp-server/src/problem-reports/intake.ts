@@ -41,6 +41,19 @@ export interface ProblemReportInput {
   path?: string | null;
   userAgent?: string | null;
   inboundEmailId?: string | null;
+  /**
+   * OPE-769's row discriminator. Omitted → the column default `"defect"`,
+   * which is what both original callers want.
+   *
+   * OPE-832 passes `"defect_candidate"`: a row detected from email prose rather
+   * than reported through a channel that means "this is a bug". It is
+   * deliberately NOT `defect`, because `list_problem_reports` defaults to
+   * `kind: "defect"` and the whole point of this ticket is that the defect
+   * queue must stay trustworthy. A candidate still surfaces — the tool's
+   * summary reports `open_other_kinds` — so it is reviewable without being
+   * counted as a confirmed defect.
+   */
+  kind?: string;
 }
 
 export interface ProblemReportResult {
@@ -102,6 +115,9 @@ export async function intakeProblemReport(
     path: input.path ?? null,
     userAgent: input.userAgent ?? null,
     inboundEmailId: input.inboundEmailId ?? null,
+    // Omitted → the schema default "defect"; the two pre-OPE-832 callers rely
+    // on that and are unchanged.
+    ...(input.kind ? { kind: input.kind } : {}),
     severity,
     correlatedErrorCount,
     createdAt,

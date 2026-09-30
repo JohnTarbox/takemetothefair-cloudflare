@@ -1,7 +1,13 @@
 import { describe, expect, it, beforeEach } from "vitest";
 import { createTestDb, type TestDb } from "./setup-db.js";
 import { registerAdminVendorReadTools } from "../src/tools/admin-vendor-read.js";
-import { vendors, users, entityClaims } from "../src/schema.js";
+import {
+  vendors,
+  users,
+  entityClaims,
+  emailSendLedger,
+  emailSuppressionList,
+} from "../src/schema.js";
 
 /**
  * OPE-649 — the tool that would have answered "did my edit save?" without D1.
@@ -218,6 +224,110 @@ describe("get_vendor_details_admin (OPE-649)", () => {
   it("errors rather than returning an arbitrary row when given neither key", async () => {
     const res = await tools.get("get_vendor_details_admin")!({} as never);
     expect(JSON.parse(res.content[0].text).error).toBe("slug_or_vendor_id_required");
+  });
+
+  // ── OPE-986 — can the owner receive the verification link? ───────────────
+  //
+  // The 2026-09-13 incident: the verification email to sanzaarts@gmail.vom
+  // hard-bounced ("unknown public suffix") and the address was suppressed, but
+  // this reader showed only `owner_email_verified: null` — indistinguishable
+  // from "hasn't clicked yet".
+  describe("owner_email_delivery (OPE-986)", () => {
+    const BOUNCE_DETAIL = JSON.stringify({
+      smtpStatusCode: null,
+      smtpResponse: "Permanent: no available upstream: unknown public suffix: gmail.vom",
+      bounceType: "hard",
+      bounceClassification: "permanent_failure",
+    });
+
+    async function seedUnverifiedVendor(email: string) {
+      await db.insert(users).values({
+        id: "u-sanza",
+        email,
+        origin: "registration",
+        role: "VENDOR",
+        createdAt: CREATED,
+        updatedAt: CREATED,
+      } as never);
+      await db.insert(vendors).values({
+        id: "v-sanza",
+        userId: "u-sanza",
+        businessName: "Sanza Studio Creations",
+        slug: "sanza-studio-creations",
+        claimed: true,
+        claimedBy: "u-sanza",
+        createdAt: CREATED,
+        updatedAt: CREATED,
+      } as never);
+    }
+
+    it("flags a hard-bounced, suppressed verification address as undeliverable", async () => {
+      await seedUnverifiedVendor("sanzaarts@gmail.vom");
+      await db.insert(emailSendLedger).values({
+        messageId: "m-bounce",
+        sentAt: new Date("2026-09-13T17:45:02Z"),
+        recipient: "sanzaarts@gmail.vom",
+        source: "auth.register",
+        status: "sent",
+        deliveryStatus: "bounced",
+        deliveryDetail: BOUNCE_DETAIL,
+      } as never);
+      await db.insert(emailSuppressionList).values({
+        email: "sanzaarts@gmail.vom",
+        reason: "bounce",
+        source: "cf-email-event",
+        createdAt: new Date("2026-09-13T17:45:18Z"),
+      } as never);
+
+      const out = await call({ slug: "sanza-studio-creations" });
+      expect(out.owner_email_verified).toEqual({ epoch: null, iso: null });
+      expect(out.owner_email_delivery.undeliverable).toBe(true);
+      expect(out.owner_email_delivery.latest_auth_email.delivery_status).toBe("bounced");
+      expect(out.owner_email_delivery.latest_auth_email.delivery_detail.bounceType).toBe("hard");
+      expect(out.owner_email_delivery.undelivered_auth_email_count).toBe(1);
+      expect(out.owner_email_delivery.suppressed.reason).toBe("bounce");
+    });
+
+    it("does not flag a delivered verification email that simply was not clicked", async () => {
+      await seedUnverifiedVendor("sanzaart@gmail.com");
+      await db.insert(emailSendLedger).values({
+        messageId: "m-ok",
+        sentAt: new Date("2026-09-13T17:37:21Z"),
+        recipient: "sanzaart@gmail.com",
+        source: "auth.register",
+        status: "sent",
+        deliveryStatus: "delivered",
+      } as never);
+
+      const out = await call({ slug: "sanza-studio-creations" });
+      expect(out.owner_email_delivery.undeliverable).toBe(false);
+      expect(out.owner_email_delivery.latest_auth_email.delivery_status).toBe("delivered");
+      expect(out.owner_email_delivery.suppressed).toBeNull();
+    });
+
+    it("ignores non-auth mail to the same address", async () => {
+      // A bounced outreach email is not the verification link.
+      await seedUnverifiedVendor("sanzaart@gmail.com");
+      await db.insert(emailSendLedger).values({
+        messageId: "m-outreach",
+        sentAt: new Date("2026-09-13T18:00:00Z"),
+        recipient: "sanzaart@gmail.com",
+        source: "admin.send-vendor-email",
+        status: "sent",
+        deliveryStatus: "bounced",
+      } as never);
+
+      const out = await call({ slug: "sanza-studio-creations" });
+      expect(out.owner_email_delivery.latest_auth_email).toBeNull();
+      expect(out.owner_email_delivery.undeliverable).toBe(false);
+    });
+
+    it("reports no auth mail as null, not as a failure", async () => {
+      const out = await call({ slug: "aehko" });
+      expect(out.owner_email_delivery.latest_auth_email).toBeNull();
+      expect(out.owner_email_delivery.undelivered_auth_email_count).toBe(0);
+      expect(out.owner_email_delivery.undeliverable).toBe(false);
+    });
   });
 
   it("is not registered at all for a non-admin", async () => {

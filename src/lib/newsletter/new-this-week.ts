@@ -10,7 +10,7 @@
  * TENTATIVE events are included — a vendor still wants
  * runway on a show whose dates aren't locked.
  */
-import { and, desc, eq, gte, inArray, or } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, or } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "@takemetothefair/db-schema";
 import { parseJsonArray } from "@/types";
@@ -81,10 +81,47 @@ export async function selectNewThisWeekEvents(db: Db, now: Date): Promise<Vendor
         // The required past-date guard. A dateless event (NULL start_date) is
         // allowed through only when it's TENTATIVE (dates not set yet); an
         // APPROVED event with no date is a data gap, not a real opportunity.
+        //
+        // ⚠️ OPE-863 — `isNull(events.startDate)` is the condition this branch
+        // was ALWAYS documented as having and did not have. Without it the
+        // branch carried no date test at all, so it admitted every
+        // TENTATIVE/TENTATIVE row however old, routing straight around the
+        // correct guard on the line above.
+        //
+        // Measured in prod 2026-09-09 over 2,004 events: 104 TENTATIVE/
+        // TENTATIVE, of which **7** are dateless (what this branch is for) and
+        // **27** were past-dated (what it was letting through). Written for 7
+        // rows, admitting 34.
+        //
+        // The live cost: `milford-porchfest-east-shore-2026` led the 09-09
+        // vendor digest with a confident "Sun, Sep 6, 2026" and an "Apply for a
+        // booth →" button, three days after the show had happened. Its
+        // start_date is not NULL, so it failed the real guard and passed here.
+        //
+        // The 27 past-dated rows exist because the occurred-sweep does not
+        // demote TENTATIVE (OPE-702 / OPE-611). This branch must not depend on
+        // that sweep having run — a mailing list is the wrong place to discover
+        // a lifecycle backlog.
         or(
           gte(events.startDate, startOfUtcDay(now)),
-          and(eq(events.status, "TENTATIVE"), inArray(events.lifecycleStatus, ["TENTATIVE"]))
-        )
+          and(
+            isNull(events.startDate),
+            eq(events.status, "TENTATIVE"),
+            inArray(events.lifecycleStatus, ["TENTATIVE"])
+          )
+        ),
+        // OPE-863 — never mail a row already flagged as somebody else's
+        // duplicate. `brookfield-orchards-harvest-craft-fair-2` was the ONLY
+        // live flagged duplicate in the table (1 of 2,004) and it is the one
+        // that reached vendors, rendered "Dates TBC" beside its own APPROVED
+        // original with the same start_date.
+        isNull(events.possibleDuplicateOf),
+        // OPE-863 — structural guard, and honestly INERT today: `merge_events`
+        // sets a tombstone to REJECTED, so no merged row survives the status
+        // filter above. Kept because the coupling is invisible — a future
+        // status change on merge would silently start mailing redirects — but
+        // do not credit it with fixing a live leak, because it fixes none.
+        isNull(events.mergedInto)
       )
     )
     .orderBy(desc(events.startDate))

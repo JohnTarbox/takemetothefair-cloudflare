@@ -9,7 +9,7 @@
 // away from 10%, statistical noise. Bumped to 50 (the lower bound of the
 // analyst's 50-100 range) to keep matches actionable.
 
-import { ScApiError, ScConfigError, getSiteSearchQueries, type ScEnv } from "@/lib/search-console";
+import { ScApiError, ScConfigError, getSiteSearchQueries } from "@/lib/search-console";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { resolveGscPath } from "../resolve-gsc-path";
 import type { ItemMatch, RuleDefinition } from "../engine";
@@ -28,7 +28,7 @@ export const lowCtrPagesRule: RuleDefinition = {
   // No autoResolve: GSC API failures return [] silently; auto-resolving on
   // empty would clobber valid items during a transient outage.
   async run(db): Promise<ItemMatch[]> {
-    const env = getCloudflareEnv() as unknown as ScEnv;
+    const env = getCloudflareEnv();
     let queries;
     try {
       const result = await getSiteSearchQueries(env, {

@@ -53,7 +53,7 @@ export interface Crossing {
 /**
  * First date each threshold was reached by a trailing `windowDays` sum.
  *
- * Only windows with a FULL complement of days count. A partial window at the
+ * Only windows with a FULL complement of CONSECUTIVE days count. A partial window at the
  * start of the series sums fewer days and would report a crossing late (or, for
  * a low threshold, never) — and reporting a date we cannot actually support is
  * the failure mode this whole ticket family is about. Series shorter than the
@@ -69,6 +69,14 @@ export function deriveCrossings(
   const remaining = new Set(thresholds);
 
   for (let i = windowDays - 1; i < sorted.length; i++) {
+    // A missing day inside the window makes `windowDays` rows span MORE than
+    // `windowDays` calendar days, so the sum over-counts and the crossing lands
+    // early. Such a window is skipped, not trusted.
+    const spanDays =
+      (Date.parse(`${sorted[i].date}T00:00:00Z`) -
+        Date.parse(`${sorted[i - windowDays + 1].date}T00:00:00Z`)) /
+      86_400_000;
+    if (spanDays !== windowDays - 1) continue;
     let total = 0;
     for (let j = i - windowDays + 1; j <= i; j++) total += sorted[j].clicks;
     // Ascending so several thresholds crossed on the same day all resolve to

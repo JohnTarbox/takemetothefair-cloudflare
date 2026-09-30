@@ -101,3 +101,89 @@ export function isPlaceholderEmail(email: string | null | undefined): boolean {
  */
 export const PLACEHOLDER_REFUSAL =
   "ingestion placeholder account (OPE-293): synthetic owner row, never authenticatable";
+
+// ---------------------------------------------------------------------------
+// OPE-835 — constructing the address, not just recognising one
+// ---------------------------------------------------------------------------
+
+/**
+ * RFC 5321 §4.5.3.1.1 — the local part of an address may not exceed 64 octets.
+ *
+ * Cloudflare Email enforces it and rejects the send with
+ * `Invalid email address: Invalid email user`, which is correct behaviour on
+ * their side. We were generating addresses that cross it.
+ */
+export const MAX_LOCAL_PART_OCTETS = 64;
+
+/**
+ * FNV-1a, 32-bit, as 8 lowercase hex chars.
+ *
+ * Deliberately NOT `crypto.subtle.digest`: that is async, and this helper is
+ * called from synchronous string construction at three sites. A cryptographic
+ * digest buys nothing here — the hash is a collision *discriminator* between
+ * two of our own slugs, not a security boundary — and making three call sites
+ * async to get one would be a much larger change for no benefit.
+ *
+ * Stability matters more than strength: the same slug must produce the same
+ * address forever, or a re-run mints a second placeholder for one entity.
+ */
+function shortHash(input: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    h ^= input.charCodeAt(i);
+    // 32-bit FNV prime multiply, done in parts to stay inside JS's safe range.
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, "0");
+}
+
+/**
+ * Build a placeholder address whose local part is guaranteed ≤ 64 octets.
+ *
+ * ⚠️ The hash suffix is DEFENSIVE, and the measurement says so. Grouping both
+ * over-length populations on the naive cut in prod 2026-09-07 —
+ * `substr(slug,1,47)` for promoters, `substr(slug,1,56)` for vendors — returns
+ * **zero** colliding pairs. A plain truncate would be safe today.
+ *
+ * It is still the wrong thing to ship. `users.email` is UNIQUE, so a future
+ * colliding pair is not a bounced notification, it is a failed ingestion or one
+ * promoter silently adopting another's owner row — and slugs come from entity
+ * names we do not control. Nine characters to make that impossible is cheap.
+ *
+ * (An earlier draft of this comment asserted that two real
+ * `home-builders-and-remodelers-association-of-…` promoters already collide.
+ * They do not: they diverge at character 44, inside the 47-character cut.
+ * Corrected rather than deleted, because "a naive truncate is obviously
+ * unsafe" is precisely the sort of claim that gets repeated unmeasured.)
+ *
+ * Short slugs — the overwhelming majority — are returned completely unchanged,
+ * so this does not churn the 7,000+ existing placeholders or alter the address
+ * any current row would regenerate.
+ *
+ * @param prefix local-part prefix INCLUDING the `pending+` marker and any
+ *               entity segment, e.g. `"pending+"` or `"pending+promoter-"`.
+ * @param slug   the entity slug.
+ */
+export function buildPlaceholderEmail(prefix: string, slug: string): string {
+  const full = `${prefix}${slug}`;
+  // PLACEHOLDER_DOMAIN already carries the leading "@" — reused rather than
+  // redeclared, so the domain has exactly one definition in this file.
+  if (full.length <= MAX_LOCAL_PART_OCTETS) return `${full}${PLACEHOLDER_DOMAIN}`;
+
+  const suffix = `-${shortHash(slug)}`;
+  // Everything the prefix and the hash do not already claim.
+  const room = MAX_LOCAL_PART_OCTETS - prefix.length - suffix.length;
+  // A prefix so long that nothing is left is a programming error, not input we
+  // should paper over — it would silently produce `pending+promoter--7f3a91c2`
+  // for every entity and collapse them onto one address.
+  if (room < 1) {
+    throw new Error(
+      `placeholder prefix "${prefix}" leaves no room for a slug within ` +
+        `${MAX_LOCAL_PART_OCTETS} octets`
+    );
+  }
+  // Trim a trailing hyphen so the result reads as one word rather than two,
+  // e.g. `…-remodelers-as-7f3a91c2` not `…-remodelers-a--7f3a91c2`.
+  const head = slug.slice(0, room).replace(/-+$/, "");
+  return `${prefix}${head}${suffix}${PLACEHOLDER_DOMAIN}`;
+}

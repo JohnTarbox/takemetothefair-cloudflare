@@ -100,7 +100,7 @@ export function trafficReading(report: TrafficReport): InstrumentReading {
       severity: "unknown",
       actionItems: null,
       detail: "GA4 did not return organic sessions",
-      href: "/admin/analytics?tab=overview",
+      href: "/admin/analytics?tab=site-health#traffic", // OPE-1161 optional — the traffic card, not Overview
     };
   }
 
@@ -116,12 +116,17 @@ export function trafficReading(report: TrafficReport): InstrumentReading {
     key: "traffic",
     label: "Traffic",
     severity: dropping ? "attention" : "ok",
+    // Counts toward the verdict's "N need action" total — so it stays 1/0.
     actionItems: dropping ? 1 : 0,
+    // OPE-1161 A4 — what the TILE shows: the organic-session count this card is
+    // about. It used to print actionItems, i.e. a "1" or "0" that read like a
+    // traffic figure. The drop still sets the colour and the detail line.
+    displayValue: report.current,
     detail: dropping
       ? `organic sessions down ${Math.abs(pct!)}% week over week (${report.current} vs ${report.previous})`
       : pct === null
         ? `${report.current} organic sessions`
         : `${report.current} organic sessions, ${pct >= 0 ? "+" : ""}${pct}% week over week`,
-    href: "/admin/analytics?tab=overview",
+    href: "/admin/analytics?tab=site-health#traffic", // OPE-1161 optional — the traffic card, not Overview
   };
 }

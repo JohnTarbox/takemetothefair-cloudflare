@@ -59,6 +59,8 @@ export async function PATCH(request: NextRequest, { params }: Params) {
         lifecycleStatus: events.lifecycleStatus,
         // OPE-487 — needed for the terminal-correction check below.
         lifecycleStatusChangedAt: events.lifecycleStatusChangedAt,
+        // OPE-1099 — tells a calendar-inferred OCCURRED from an observed one.
+        lifecycleReason: events.lifecycleReason,
         startDate: events.startDate,
         endDate: events.endDate,
       })
@@ -80,7 +82,11 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     // rows to resurrection.
     const check = validateLifecycleTransition(from, to, {
       lifecycleStatusChangedAt: current.lifecycleStatusChangedAt ?? null,
+      lifecycleReason: current.lifecycleReason ?? null,
       startDate: current.startDate ?? null,
+      // OPE-1218 — an inferred OCCURRED opens to RESCHEDULED only onto a future date.
+      newStartDate:
+        to === "RESCHEDULED" && new_start_date ? normalizeEventDate(new_start_date) : null,
     });
     if (!check.ok) {
       return NextResponse.json(
@@ -166,7 +172,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     // matter — going private (→ CANCELLED) should remove from index; going
     // public again (CANCELLED → SCHEDULED) should re-submit.
     if (isPublicLifecycle(from) !== isPublicLifecycle(to)) {
-      const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+      const env = getCloudflareEnv();
       await pingIndexNow(
         db,
         indexNowUrlFor("events", current.slug),

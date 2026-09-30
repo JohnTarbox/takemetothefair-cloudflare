@@ -70,11 +70,11 @@ Readiness is **three auditable tiers**, not a score. A score cannot be reviewed 
 nobody can say why 0.72 was enough. Implemented in
 `mcp-server/src/events/tentative-queue.ts` (`readinessTier`).
 
-| tier         | conditions                                                                                       | meaning                                              |
-| ------------ | ------------------------------------------------------------------------------------------------ | ---------------------------------------------------- |
-| `ready`      | `dates_confirmed = 1` **AND** ≥1 active `official_website` citation **AND** `gate_flags` IS NULL | organizer-grade provenance, nothing outstanding      |
-| `probable`   | ≥1 active `official_website` citation, but one of the other two unmet                            | a human decision, with the evidence already gathered |
-| `unverified` | no active `official_website` citation                                                            | someone must source it first                         |
+| tier         | conditions                                                                                                                                              | meaning                                                      |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| `ready`      | `dates_confirmed = 1` **AND** ≥1 active `official_website` citation **on `start_date`, not hosted on meetmeatthefair.com** **AND** `gate_flags` IS NULL | organizer-grade provenance for the DATE, nothing outstanding |
+| `probable`   | such a citation, but one of the other two unmet                                                                                                         | a human decision, with the evidence already gathered         |
+| `unverified` | no such citation                                                                                                                                        | someone must source it first                                 |
 
 Two conditions that look like decoration and are not:
 
@@ -86,10 +86,46 @@ Two conditions that look like decoration and are not:
   cohort** — the one an auto-promotion rule would take first, and exactly the
   one it must refuse.
 
+Two more, added by the OPE-611 rework from the OPE-612 drain passes:
+
+- **`field_name = 'start_date'`.** Pass 4 promoted six rows whose only official
+  citation was on `indoor_outdoor`, `vendor_fee_max`, `ticket_price_min` or
+  `application_instructions` — provenance for a field that is not the date.
+  Citations on other fields are still reported (`official_citations_other_fields`).
+- **Not our own host.** Pass 5 found the top search result for a club's 2027
+  schedule was our own blog post, generated from `events.start_date`. Citing it
+  confirms the date from itself.
+
+⚠️ **Still not an agreement test.** The rule checks that a date-level
+organizer citation exists, not that its value matches `events.start_date` today,
+and not whether the organizer hedged it — `biddeford-gun-show`'s organizer page
+reads _"May 15th & 16th, 2027 (Tentative)"_ and matches our dates exactly. That
+is why `ready` is a ranking and §4 stays unshipped.
+
+## Recording a check (OPE-611 rework)
+
+`update_event_lifecycle` writes `lifecycle_reason` only on a **transition**, so a
+row a human verified and deliberately held read back identical to one nobody had
+opened. Every drain pass re-worked its predecessors' holds: 60% of pass 2's work,
+100% of the remaining cohort by pass 5.
+
+`events.lifecycle_last_checked_at` + `lifecycle_check_note` (drizzle/0293) record
+a check whether or not it moves the row:
+
+- **`record_tentative_check(event_id, note)`** — held; TENTATIVE rows only.
+- **`update_event_lifecycle`** stamps both on every transition.
+
+A row checked within **14 days** sorts after every unchecked row and is left out
+of the operator notice; after that it is ordinary work again.
+
 ## Surfaces
 
-- **Reader** — `get_tentative_promotion_queue` (MCP, admin-only). Ranked tier →
-  soonest → most-viewed. Read-only; promotion is a separate deliberate
+- **Reader** — `get_tentative_promotion_queue` (MCP, admin-only). Scoped to
+  `status IN ('APPROVED','TENTATIVE')` — what the public reader serves. Ranked
+  unchecked-first → tier → soonest → most-viewed. Reports `as_of` (the window is
+  `now`-anchored, so two reads differ by events that started in between) and
+  `promotions_by_actor_last_30d` (a drain's count cannot reconcile against
+  promotions made by another ticket). Read-only; promotion is a separate deliberate
   `update_event_lifecycle` call.
 - **Alert** — folded into the daily `operator-queue-notice` cron as its third
   queue, firing on events **within 14 days** of opening that are `ready` or

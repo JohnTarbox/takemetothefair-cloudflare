@@ -1,17 +1,12 @@
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import * as schema from "../src/lib/db/schema";
-import { unsafeSlug } from "@takemetothefair/utils";
+import { hashPasswordPbkdf2, unsafeSlug } from "@takemetothefair/utils";
 
-// Inline hashPassword to avoid importing from src/lib/auth.ts which pulls in
-// Cloudflare-specific modules that aren't available in the seed script context.
+// OPE-902 — seed accounts use the same PBKDF2 format the app writes. This was
+// the last writer of legacy SHA-256 hashes, which both Workers now refuse.
 async function hashPassword(password: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(password + (process.env.AUTH_SECRET || "fallback-secret"));
-  const hash = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(hash))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+  return hashPasswordPbkdf2(password);
 }
 
 // Find the correct D1 database file
@@ -250,6 +245,27 @@ async function main() {
     })
     .run();
   console.log("Created event: Holiday Craft Show");
+
+  // OPE-574 — a REJECTED event, so e2e/soft-404.spec.ts can pin the
+  // middleware's REJECTED → 410 Gone branch (src/middleware.ts). Without a
+  // REJECTED row in the seed that branch can never execute under test.
+  db.insert(schema.events)
+    .values({
+      id: crypto.randomUUID(),
+      name: "Rejected Test Fair",
+      slug: unsafeSlug("e2e-rejected-test-fair"),
+      description: "Seeded as REJECTED for the OPE-574 status-code regression test.",
+      promoterId: promoterId,
+      venueId: venue1Id,
+      startDate: nextMonth,
+      endDate: nextMonth,
+      categories: JSON.stringify(["Fair"]),
+      tags: JSON.stringify([]),
+      featured: false,
+      status: "REJECTED",
+    })
+    .run();
+  console.log("Created event: Rejected Test Fair (REJECTED)");
 
   // Add vendor to events
   db.insert(schema.eventVendors)

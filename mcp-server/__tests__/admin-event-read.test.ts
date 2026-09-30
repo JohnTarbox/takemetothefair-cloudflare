@@ -95,3 +95,71 @@ describe("get_event_details_admin (OPE-500)", () => {
     expect(c.tools.size).toBe(0);
   });
 });
+
+describe("OPE-450 rework — the adjudicator is shown earlier rejections of the same event", () => {
+  async function seed(id: string, name: string, slug: string, status: string, extra = {}) {
+    await db.insert(events).values({
+      id,
+      name,
+      slug,
+      status,
+      lifecycleStatus: "SCHEDULED",
+      promoterId: "p1",
+      createdAt: new Date("2026-08-01T00:00:00Z"),
+      updatedAt: new Date("2026-08-01T00:00:00Z"),
+      ...extra,
+    } as never);
+  }
+
+  it("the Waterville shape: a PENDING row lists both bare rejections, labelled as bare", async () => {
+    await seed("w1", "Waterville Farmers' Market", "waterville-farmers-market", "REJECTED");
+    await seed("w2", "Waterville Farmers Market", "waterville-farmers-market-2", "REJECTED");
+    await seed("w3", "Waterville Farmers Market 2026", "waterville-farmers-market-3", "PENDING");
+    // Not the same event: the approved winter edition, and an unrelated rejection.
+    await seed(
+      "w4",
+      "Waterville Farmers Market Winter",
+      "waterville-farmers-market-winter",
+      "APPROVED"
+    );
+    await seed("x1", "Waterville Craft Fair", "waterville-craft-fair", "REJECTED");
+
+    const out = await call({ slug: "waterville-farmers-market-3" });
+    expect(out.prior_rejections.map((r: { slug: string }) => r.slug).sort()).toEqual([
+      "waterville-farmers-market",
+      "waterville-farmers-market-2",
+    ]);
+    expect(
+      out.prior_rejections.every(
+        (r: { ruling: string }) => r.ruling === "rejected_reason_unrecorded"
+      )
+    ).toBe(true);
+  });
+
+  it("names the kind of ruling when one was recorded", async () => {
+    await seed("k", "New England Made Autumn Show", "nem-keeper", "APPROVED");
+    await seed("s1", "New England Made Autumn Show 2026", "nem-shell-1", "REJECTED", {
+      rejectedAsDuplicateOf: "k",
+    });
+    await seed("s2", "New England Made Autumn Show 2026", "nem-shell-2", "REJECTED", {
+      mergedInto: "k",
+    });
+    await seed("s3", "New England Made Autumn Show 2026", "nem-shell-3", "PENDING");
+    const out = await call({ slug: "nem-shell-3" });
+    const bySlug = Object.fromEntries(
+      out.prior_rejections.map((r: { slug: string; ruling: string }) => [r.slug, r.ruling])
+    );
+    expect(bySlug).toEqual({ "nem-shell-1": "rejected_as_duplicate", "nem-shell-2": "merged" });
+  });
+
+  it("is an empty list, not absent, when there is no history", async () => {
+    const out = await call({ slug: "womens-collective-market-september" });
+    expect(out.prior_rejections).toEqual([]);
+  });
+
+  it("never lists the row being read", async () => {
+    await seed("self", "Solo Fair", "solo-fair", "REJECTED");
+    const out = await call({ slug: "solo-fair" });
+    expect(out.prior_rejections).toEqual([]);
+  });
+});

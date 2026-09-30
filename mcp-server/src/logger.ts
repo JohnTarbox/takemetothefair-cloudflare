@@ -9,8 +9,8 @@
  *   - Adds `sessionId` so all log lines from one inbound email (or one
  *     cron run, one workflow execution) tie together. Filterable via
  *     the existing admin-logs search box.
- *   - Skips the 1% probabilistic cleanup — the main app's higher write
- *     volume already maintains the table.
+ *   - Never prunes. error_logs retention (30 days) runs on the MCP daily
+ *     cron — see log-table-retention.ts (OPE-993).
  *   - Source naming convention: `mcp:<area>[:<sub>]`. Examples in use:
  *       `mcp:email-handler`       — inbound email pipeline
  *       `mcp:email-queue`         — EMAIL_JOBS consumer
@@ -24,6 +24,7 @@
  * uninterrupted. Logging is best-effort by design.
  */
 
+import { describeError } from "@takemetothefair/utils";
 import { errorLogs } from "./schema.js";
 import { getDb, type Db } from "./db.js";
 
@@ -69,7 +70,8 @@ export async function logError(
     error instanceof Error ? error.stack : error !== undefined ? String(error) : undefined;
   const fullMessage =
     error instanceof Error
-      ? `${message}: ${error.message}`
+      ? // OPE-1030 — with the cause chain (Drizzle keeps the D1 error on `.cause`).
+        `${message}: ${describeError(error)}`
       : error !== undefined
         ? `${message}: ${String(error)}`
         : message;

@@ -17,8 +17,10 @@
  *    flag is never a false RED).
  *  - auto-file dedup reuses OPE-76's `cpi_signal_filings` ledger — nothing new.
  */
-import { eq, isNotNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import {
+  analyticsEvents,
+  entityWriteLog,
   adminActions,
   bingLivenessLog,
   eventDataCitations,
@@ -30,9 +32,11 @@ import {
   agentHeartbeats,
   errorLogs,
   eventSeries,
+  inboundEmailEvents,
   inboundEmails,
   imageCoverageState,
   newsletterIssues,
+  urlHealthChecks,
   photoCoverageDaily,
   ga4DailyMetrics,
   membraneCrossings,
@@ -45,8 +49,13 @@ import {
   vendorEnrichmentCandidates,
   queueDrainSnapshots,
   workflowRunSteps,
+  gscMonthlyOracle,
+  vendorSelfReportedEvents,
+  performerEnrichmentCandidates,
+  vendorCategoryWatchRuns,
 } from "@/lib/db/schema";
 import { SITE_URL } from "@takemetothefair/constants";
+import { NEAR_DUPLICATE_SWEEP_ACTION } from "@/lib/duplicates/near-duplicate-sweep";
 import type { StaleRed } from "@/lib/cpi/stale-reds";
 import type { AnyColumn, SQL } from "drizzle-orm";
 import type { SQLiteTable } from "drizzle-orm/sqlite-core";
@@ -71,6 +80,21 @@ export interface HeartbeatProbe {
   lastEvidenceAt: (db: Db) => Promise<Date | null>;
 }
 
+/**
+ * OPE-325 — "last evidence" for a path that only owes evidence when there was
+ * demand for it. No outstanding demand reads as healthy NOW; outstanding
+ * demand starts the silence clock at the demand, never earlier.
+ */
+export function demandConditionalEvidence(
+  demand: Date | null,
+  evidence: Date | null,
+  now: Date
+): Date {
+  if (!demand) return now;
+  if (evidence && evidence.getTime() >= demand.getTime()) return now;
+  return demand;
+}
+
 async function maxTs(
   db: Db,
   table: SQLiteTable,
@@ -91,6 +115,222 @@ async function maxTs(
  * DORMANT via a null `enabled_at` — it can't false-fire until John flips the flag.
  */
 export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
+  {
+    // OPE-1089 — proof the intent classifier is still ANSWERING, not just running.
+    //
+    // This path has gone fully dark twice and nobody noticed from the inside:
+    // the 2026-05-22 3B model swap returned a non-string `.response` so every
+    // email routed `classifier-no-json` for days, and on 2026-06-15 the 8B model
+    // was deprecated and returned error 5028 on every call. In both cases mail
+    // kept flowing, every reply still went out, and the only symptom was that
+    // routing quietly stopped being intent-aware. That is the OPE-246 class.
+    //
+    // ⚠️ Evidence is a routing_source that ONLY a live classifier can produce.
+    // `classifier`, `classifier_override` and `fallback_low_confidence` are all
+    // written from `result.fromAi === true`; `address_only` is what a failure
+    // (or a missing AI binding) leaves behind, and `trusted_fastpath` means the
+    // classifier was deliberately skipped. So this probes the ANSWER, not the
+    // attempt — a classifier that runs and fails on every call sets
+    // `classified_at` exactly like a healthy one, which is precisely how both
+    // outages hid.
+    //
+    // ⚠️ This is a LIVENESS probe and cannot see the failure RATE. The 9.9%
+    // timeout rate that OPE-1089 was filed for would not fire it, and must not
+    // be read as covered here — the retry addresses the rate, this covers going
+    // dark. Do not widen it into a rate alarm; `HeartbeatProbe` has no shape for
+    // one, and a probe that pretends to cover both is worse than two honest ones.
+    //
+    // 240h, MEASURED against the emitting population (n=209 successful
+    // classifications): the largest gap between consecutive successes is
+    // **167.6h** all-time and 142.3h within the last 90 days, mean 14.1h.
+    // Inbound volume is low and lumpy — a quiet week is normal here — so the
+    // window clears the all-time max with ~43% margin rather than tracking the
+    // mean, which would cry wolf over an ordinary holiday lull and get muted.
+    name: "classifier-execution",
+    ownerOpe: "OPE-1089",
+    label: "inbound intent classifier returning answers",
+    priority: "P1",
+    expectedWindowHours: 240,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        inboundEmails,
+        inboundEmails.classifiedAt,
+        inArray(inboundEmails.routingSource, [
+          "classifier",
+          "classifier_override",
+          "fallback_low_confidence",
+        ])
+      ),
+  },
+  {
+    // OPE-847 — proof the roster vendor-linker is still writing.
+    //
+    // This is the only path in the inbound pipeline that creates PUBLIC vendor
+    // profiles, approved by John in session on 2026-09-07. A writer that
+    // silently stops is the OPE-246 class; a writer of public rows that
+    // silently stops is that class on the surface that matters most.
+    //
+    // ⚠️ SHIPS DORMANT — `enabled_at = NULL` in migration 0275, deliberately.
+    //
+    // The emitting population is "submissions whose site publishes a parseable
+    // roster". The crawl that produces it shipped TODAY (OPE-837) and has
+    // produced zero rows, so there is no inter-arrival distribution to size a
+    // window from. Every number I could put here would be an analogy — and a
+    // window chosen by analogy is exactly what produced the wrong 72h figure
+    // on OPE-830. CLAUDE.md explicitly permits a dormant seed for this reason:
+    // a dormant probe never false-fires, whereas a guessed window either cries
+    // wolf and gets muted, or sleeps through a real outage.
+    //
+    // ARMING CONDITION — do not skip this, or the probe is coverage-shaped and
+    // covers nothing: once `secondary-page-crawl` has produced enough rows to
+    // measure (a) the fraction of crawls that find a roster and (b) the gaps
+    // between them, set `enabled_at` and replace the placeholder window with
+    // the measured one. Tracked as its own ticket, not left implicit.
+    //
+    // The 720h below is NOT a measurement and must not be read as one. It is a
+    // deliberately loose placeholder that only takes effect the day someone
+    // arms the probe, and that person is expected to replace it.
+    name: "roster-vendor-link",
+    ownerOpe: "OPE-847",
+    label: "submit@ roster → vendor linking (public writes)",
+    priority: "P1",
+    expectedWindowHours: 720,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        workflowRunSteps,
+        workflowRunSteps.recordedAt,
+        eq(workflowRunSteps.stepName, "roster-vendor-link")
+      ),
+  },
+  {
+    // OPE-837 — proof the same-site nav crawl is still executing.
+    //
+    // This is the OPE-246 class in its purest form. The crawl is enrichment:
+    // it fills empty fields and never fails a submission, so if it stops
+    // running, every submission still succeeds, every event is still created,
+    // and the only symptom is that prices and rosters quietly stop appearing —
+    // which is indistinguishable from "the sites we were sent didn't have
+    // them". A crawl that never runs and a crawl that runs and finds nothing
+    // look identical from the outside (OPE-6 v3.8).
+    //
+    // ⚠️ Evidence is the `secondary-page-crawl` STEP ROW, not a filled field.
+    // The step is written whenever the crawl phase executes, including when it
+    // considers zero pages — so it proves EXECUTION rather than yield, which
+    // is the distinction this repo has repeatedly got wrong by probing the
+    // yield and reading a quiet week as a dead path.
+    //
+    // 576h, MEASURED — and measured against the right COHORT, which changed
+    // the answer. The population that emits this evidence is not "URL
+    // submissions" but "URL submissions that produced an event", because the
+    // crawl phase only runs once a URL source has yielded one:
+    //
+    //   all URL submissions, 180d:        151 rows, mean gap 18.0h, MAX 243.2h
+    //   ...that produced an event, 180d:   80 rows, mean gap 33.9h, MAX 371.4h
+    //
+    // Sizing the window on the first number would have put it BELOW the second
+    // cohort's observed maximum, so the probe would have gone red on an
+    // ordinary quiet fortnight. 576h is ~1.55x the real maximum, the same
+    // headroom ratio OPE-803 used, and above every gap in 180 days.
+    //
+    // ⚠️ Detection is therefore slow by construction (up to 24 days). The
+    // signal is slow: this path fires roughly twice a week. A tighter window
+    // would cry wolf, and a probe that cries wolf gets muted, and a muted
+    // probe reads as coverage while covering nothing.
+    name: "submit-secondary-page-crawl",
+    ownerOpe: "OPE-837",
+    label: "submit@ same-site nav crawl (price / roster reach)",
+    priority: "P1",
+    expectedWindowHours: 576,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        workflowRunSteps,
+        workflowRunSteps.recordedAt,
+        eq(workflowRunSteps.stepName, "secondary-page-crawl")
+      ),
+  },
+  {
+    // OPE-803 — proof the spam triple-detector is still running.
+    //
+    // `intent='spam'` is the only terminal state in the inbound lane: across
+    // all 19 historical rows, routed_to_workflow / workflow_instance_id /
+    // parsed_url / resulting_event_id are ALL zero. A detector that stops
+    // running there restores exactly that silence, and nothing downstream
+    // would notice, because "no recoveries" is the normal state.
+    //
+    // ⚠️ Evidence is the `spam.event_triple` telemetry row, written on every
+    // QUARANTINED spam row — a MISS, not a hit. That is deliberate: a
+    // dry-run over the 19 historical rows scored 1 hit / 19, so a probe
+    // watching for RECOVERIES would expect roughly one every 2-3 months and
+    // be red almost always. Misses are the high-frequency signal, and they
+    // prove the same thing: the detector executed.
+    //
+    // 504h, MEASURED against spam inter-arrival: 18 gaps, mean 4.3 days,
+    // MAXIMUM 14.0 days, none beyond. 336h would sit exactly ON the observed
+    // maximum and fire on the next slightly-longer quiet spell — the mistake
+    // made on `entity-write-log-writer` a few hours earlier, where a window
+    // was chosen by analogy rather than from the gap distribution.
+    //
+    // ⚠️ Detection is therefore slow by construction: up to 21 days. The
+    // signal is slow. A window tight enough to be fast would be a window that
+    // cries wolf, and a muted probe reads as coverage while covering nothing.
+    name: "spam-event-triple-detector",
+    ownerOpe: "OPE-803",
+    label: "Spam event-triple detector (inbound quarantine)",
+    priority: "P1",
+    expectedWindowHours: 504,
+    lastEvidenceAt: (db) =>
+      maxTs(db, adminActions, adminActions.createdAt, eq(adminActions.action, "spam.event_triple")),
+  },
+  {
+    // OPE-830 — proof the vendor write history is still recording.
+    //
+    // Two live "my profile won't save" reports in ten days could not be
+    // settled because nothing recorded what a save did. This table is the
+    // instrument built to settle the third one — and an instrument that
+    // silently stops recording is worse than no instrument, because the
+    // absence of rows will be read as "no saves happened".
+    //
+    // ⚠️ Evidence is the newest row of ANY outcome, including `rejected`.
+    // Scoping it to `applied` would go red on a quiet week rather than on a
+    // broken writer, and would miss the specific regression most worth
+    // catching: the rejection path being dropped in a refactor of the auth
+    // gate, which compiles clean and breaks no test.
+    //
+    // 336h, MEASURED — not the 72h this shipped with an hour earlier.
+    //
+    // I picked 72h by analogy with the citation probe and then checked it
+    // against the actual signal, which is `enrichment_log` where
+    // `source='vendor_self'` (the same events this table now records). Over
+    // the last 60 days: 29 active days, **mean gap 2.0 days, MAXIMUM gap 12
+    // days**, and 3 gaps exceeding 72h. A 72h window would have fired red
+    // three times in two months on entirely ordinary quiet.
+    //
+    // That is the failure the comment I wrote for it warned about, committed
+    // in the same breath — and it is the exact correction OPE-541 already had
+    // to make (drizzle/0231, 72h → 336h) for `venue-decision-writer`.
+    // `event-series-write-path` uses 336h for the same reason.
+    //
+    // ⚠️ The cost is real and accepted: a dead writer takes up to 14 days to
+    // surface. A probe that cries wolf gets muted, and a muted probe reads as
+    // coverage while covering nothing — strictly worse than a slow one.
+    //
+    // The better instrument here is a DIVERGENCE check — `enrichment_log`
+    // has vendor_self rows in a window but `entity_write_log` has none —
+    // which cannot false-fire on quiet at all. It does not fit the
+    // `lastEvidenceAt: () => timestamp` shape of this rail; noted for whoever
+    // widens that interface.
+    name: "entity-write-log-writer",
+    ownerOpe: "OPE-830",
+    label: "Vendor self-edit write history",
+    // P1 because the type admits only P0/P1 — not because a silent write log
+    // is as urgent as a dead pipeline. Recorded rather than silently rounded.
+    priority: "P1",
+    expectedWindowHours: 336,
+    lastEvidenceAt: (db) => maxTs(db, entityWriteLog, entityWriteLog.createdAt),
+  },
   {
     // OPE-540 — proof that inbound submissions are still producing PROVENANCE.
     //
@@ -115,6 +355,53 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     priority: "P1",
     expectedWindowHours: 72,
     lastEvidenceAt: (db) => maxTs(db, eventDataCitations, eventDataCitations.createdAt),
+  },
+  {
+    // OPE-838 — proof the pipeline is still recording WHAT THE SOURCE SAID,
+    // not merely that it wrote a citation row.
+    //
+    // ⚠️ This exists because the probe directly above it CANNOT catch this
+    // regression. `event-data-citations-writer` counts a citation of any kind,
+    // and a row with a null source_excerpt is still a row — so if the snapshot
+    // capture silently stopped, that probe stays green and reports coverage it
+    // does not have. Asking "what would this look like if it were inert?"
+    // (OPE-6 v3.8) of the existing probe is what produced this one.
+    //
+    // Evidence is `source_content_hash IS NOT NULL`, and that column is the
+    // discriminator on purpose. Measured on prod 2026-09-07 across all 1,539
+    // citation rows: source_content_hash is non-null on **0**, while
+    // source_title / source_fetched_at are non-null on 44 — the rows an agent
+    // wrote by hand through `update_event`'s citation arg. Keying on title or
+    // fetched_at would therefore let a HUMAN edit satisfy a probe that exists
+    // to watch a MACHINE, which is the vacuous-green shape this probe is
+    // guarding against in the first place. Only the automated writer hashes.
+    //
+    // 504h, MEASURED — not borrowed from the 72h probe above it, whose
+    // population (citations from every writer) is an order of magnitude busier
+    // than this one (inbound emails that fetched a URL and created an event).
+    // Over 180 days that population has 43 active days and 42 gaps: mean 2.67
+    // days, MAXIMUM **16 days** (2026-06-05 → 2026-06-21). A 336h window would
+    // have fired once on entirely ordinary quiet, and 384h would sit exactly ON
+    // the observed maximum — the mistake OPE-830 had to correct twice. 504h
+    // clears it with headroom.
+    //
+    // ⚠️ Armed, not dormant: the writer ships unflagged in this same PR, so
+    // there is no flag flip to wait for. With no evidence yet, OPE-243's anchor
+    // falls back to `enabled_at`, which makes this a genuine FIRST-evidence
+    // probe: if no url-sourced submission produces a hashed citation within 21
+    // days of shipping, that is the finding.
+    name: "citation-source-snapshot",
+    ownerOpe: "OPE-838",
+    label: "Citation source snapshot (title/excerpt/hash from the fetch)",
+    priority: "P1",
+    expectedWindowHours: 504,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        eventDataCitations,
+        eventDataCitations.createdAt,
+        isNotNull(eventDataCitations.sourceContentHash)
+      ),
   },
   {
     // OPE-547 — proof the daily OCCURRED sweep is executing.
@@ -226,6 +513,29 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       ),
   },
   {
+    // OPE-1117 — the possible-duplicate review queue is still being measured.
+    //
+    // Same shape and same reasoning as the held-submission probe above: the
+    // evidence is the daily snapshot ROW for this queue, not its depth. Depth
+    // reaching zero is the queue working; a missing row is the scan that feeds
+    // both the tile and the deadline red having stopped — which, for a
+    // detector whose whole defect was going unread, is the one silence worth
+    // paging on. Written by the same daily stale-red scan as its sibling, so
+    // the same 48h window.
+    name: "duplicate-flags-snapshot",
+    ownerOpe: "OPE-1117",
+    label: "Duplicate-flag queue snapshot",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        queueDrainSnapshots,
+        queueDrainSnapshots.createdAt,
+        eq(queueDrainSnapshots.queueName, "duplicate_flags")
+      ),
+  },
+  {
     // OPE-345 (A6 freshness) — the summable GSC feed. A gap here means the
     // daily ingest stopped, which would otherwise leave every property-level
     // number quietly frozen at a still-plausible value.
@@ -235,6 +545,33 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     priority: "P1",
     expectedWindowHours: 48,
     lastEvidenceAt: (db) => maxTs(db, gscDailyTotals, gscDailyTotals.updatedAt),
+  },
+  {
+    // OPE-456 — proof the derived-milestone generator is EXECUTING.
+    //
+    // Evidence is the info row the route logs on every successful run, not a
+    // `gsc_milestone_emails` row: a crossing lands every few days at best and
+    // never while traffic is flat, so probing the yield would fire on a quiet
+    // month and stay green on a cron that had stopped. Level `info` only — the
+    // failure path logs under the same source at level `error`, and a run that
+    // throws every day is not a healthy one.
+    //
+    // 48h for a daily cron: one missed run is a blip, two is a fault.
+    name: "gsc-milestone-derivation",
+    ownerOpe: "OPE-456",
+    label: "GSC click-milestone derivation (daily, after the GSC sync)",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        errorLogs,
+        errorLogs.timestamp,
+        and(
+          eq(errorLogs.source, "app/api/admin/analytics/gsc-milestones/derive"),
+          eq(errorLogs.level, "info")
+        )
+      ),
   },
   {
     // OPE-363 — proof the synthetic funnel canary is still RUNNING.
@@ -391,6 +728,114 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       maxTs(db, inboundEmails, inboundEmails.receivedAt, eq(inboundEmails.intent, "submit")),
   },
   {
+    // OPE-944 — proof the original-sender forward analysis is still executing.
+    //
+    // The path this guards is the OPE-246 class at its sharpest. Forward
+    // analysis is PURE ENRICHMENT: it records who really wrote a forwarded
+    // message and never fails a submission. If `analyzeForward` starts throwing
+    // — a DoH outage, a postal-mime upgrade, a bad deploy — the handler's
+    // fail-soft catch logs a warn and ingestion continues perfectly. Every
+    // email still lands, every event is still created, and the only symptom is
+    // that `original_sender_auth` quietly goes NULL on new rows. Nothing else
+    // in the system would ever mention it.
+    //
+    // ⚠️ EVIDENCE IS THE COLUMN BEING WRITTEN, NOT AN .EML BEING RECOVERED —
+    // probe the RUN, never the yield (this file's own rule, OPE-488).
+    //
+    // Probing "a forwarded message was recovered" would be the yield, and it
+    // would be wrong in the expensive direction: that depends on a human
+    // choosing Gmail's "Forward as attachment", which had happened ZERO times
+    // in the whole archive as of 2026-09-11. Such a probe would fire forever,
+    // get muted, and cover nothing. `analyzeForward` by contrast runs on EVERY
+    // inbound email and stamps a verdict on every row — including the
+    // overwhelmingly common `not_forwarded` — so a NULL on fresh mail is
+    // unambiguous evidence the path died.
+    //
+    // 72h, MEASURED on 195 rows over 22 days (2026-08-21 → 09-11): median
+    // inter-arrival gap 0.03h, p90 9.3h, p99 17.5h, WORST OBSERVED 18.0h. So
+    // 72h is 4x the worst real gap — loose enough that a quiet weekend cannot
+    // cry wolf, tight enough that a dead path reaches the OPE-75 digest within
+    // three days. Not an analogy: a window chosen by analogy is what produced
+    // the wrong 72h figure on OPE-830, where the real max gap was 12 days.
+    //
+    // Ships ARMED (`enabled_at` set in drizzle/0281), not dormant. The dormant
+    // cases are a flag-gated path or an unmeasurable window; this is neither —
+    // OPE-944 is live on every inbound email and the window is measured above.
+    // Pre-OPE-944 rows are NULL, so the first evidence is the first mail to
+    // arrive after the deploy, which the measurement says is inside 18h.
+    name: "inbound-forward-analysis",
+    ownerOpe: "OPE-944",
+    label: "Inbound original-sender forward analysis (verdict writer)",
+    priority: "P1",
+    expectedWindowHours: 72,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        inboundEmails,
+        inboundEmails.receivedAt,
+        isNotNull(inboundEmails.originalSenderAuth)
+      ),
+  },
+  {
+    // OPE-463 — proof the inbound → event link is still being written.
+    //
+    // `inbound_email_events` shipped in #1187 and sat EMPTY for 17 days (0 rows
+    // against 36 event-creating emails) because no writer existed: the table
+    // was "shipped" and nothing noticed it never filled. submitEvent now writes
+    // one row per created event. This probe is the thing that would have
+    // caught the original gap.
+    //
+    // 21 days = the `inbound-submit` probe's window, the same lane and inflow
+    // (~4 event-creating emails a week), so the two go quiet together only if
+    // submissions genuinely stopped.
+    name: "inbound-email-event-links",
+    ownerOpe: "OPE-463",
+    label: "Inbound email → created-event link (inbound_email_events writer)",
+    priority: "P1",
+    expectedWindowHours: 21 * 24,
+    lastEvidenceAt: (db) => maxTs(db, inboundEmailEvents, inboundEmailEvents.createdAt),
+  },
+  {
+    // OPE-325 — proof that a poster which resolved to an event left EVIDENCE:
+    // an archived copy on our CDN, citations pointing at it, a hero proposal.
+    //
+    // ⚠️ DEMAND-CONDITIONAL, because the yield is rare and bursty. Posters
+    // staged 4 events 08-24 → 08-27 and none in the 27 days since — every image
+    // after that was a booth photo. "Newest evidence row" would read a quiet
+    // month as a dead path, fire, and get muted: this file's OPE-488 rule
+    // (probe the run, not the yield) in its sharpest form.
+    //
+    // So silence is measured from DEMAND, not from the last success:
+    //   demand   = newest `poster-staged` info log (a poster resolved to an
+    //              event — created, or matched an existing one)
+    //   evidence = newest `poster-evidence` INFO log (warn = the step failed)
+    // If evidence is at or after demand, nothing is owed and the probe reads
+    // healthy. If a poster resolved and no evidence followed, the clock starts
+    // at that poster. Evidence is written seconds after demand in the same
+    // handler call, so 24h only has to outlast a slow digest cycle.
+    name: "poster-evidence",
+    ownerOpe: "OPE-325",
+    label: "Emailed poster → archived + cited + hero-proposed (photo intake)",
+    priority: "P1",
+    expectedWindowHours: 24,
+    lastEvidenceAt: async (db) =>
+      demandConditionalEvidence(
+        await maxTs(
+          db,
+          errorLogs,
+          errorLogs.timestamp,
+          and(eq(errorLogs.source, "mcp:photo-intake:poster-staged"), eq(errorLogs.level, "info"))
+        ),
+        await maxTs(
+          db,
+          errorLogs,
+          errorLogs.timestamp,
+          and(eq(errorLogs.source, "mcp:photo-intake:poster-evidence"), eq(errorLogs.level, "info"))
+        ),
+        new Date()
+      ),
+  },
+  {
     // OPE-284 — the newsletter broadcast path. Evidence is deliberately
     // `newsletter_issues.sent_at`, NOT the send ledger: a `test_recipient`
     // preview writes ledger rows with the same `newsletter:weekly-digest`
@@ -403,13 +848,170 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     // the flow is broken — which is exactly the failure that hid here before
     // (the gate silently reverted to "false" on a deploy and no one knew until
     // an approve click failed).
-    name: "newsletter-broadcast",
+    //
+    // ⚠️ OPE-865 — this used to have NO `audience` filter, and covered two
+    // independent newsletters through one query. The weekend digest sends far
+    // more often than every 21 days, so the vendor digest could be silent
+    // indefinitely without this ever going stale — the vendor list going dark
+    // being precisely the failure it read as covering. Worse: the accidental
+    // vendor broadcast of 2026-09-09 stamped `sent_at` and refreshed the probe
+    // for BOTH audiences, so the incident cleared the only signal that could
+    // have reported it.
+    //
+    // It was never inert. It ran, and it would have fired if BOTH newsletters
+    // died. It simply could not distinguish the case anyone cares about, which
+    // is the amendment-H shape: a control whose population is wider than the
+    // condition it claims to watch.
+    name: "newsletter-broadcast-weekend",
     ownerOpe: "OPE-284",
-    label: "Newsletter broadcast (real sends)",
+    label: "Newsletter broadcast — weekend digest (real sends)",
     priority: "P1",
     expectedWindowHours: 21 * 24,
     lastEvidenceAt: (db) =>
-      maxTs(db, newsletterIssues, newsletterIssues.sentAt, isNotNull(newsletterIssues.sentAt)),
+      maxTs(
+        db,
+        newsletterIssues,
+        newsletterIssues.sentAt,
+        and(isNotNull(newsletterIssues.sentAt), eq(newsletterIssues.audience, "weekend"))
+      ),
+  },
+  {
+    // OPE-865 — the vendor half, and it ships DORMANT.
+    //
+    // ⚠️ `enabled_at` is NULL on purpose (drizzle/0277). Two independent
+    // reasons, either of which alone would justify it:
+    //
+    //   1. Under the PARKED OPE-710(a) ruling, Path A — the only thing that
+    //      stamps `newsletter_issues.sent_at` for the vendor audience — is
+    //      SUPPOSED to be silent. An armed probe keyed on `sent_at` would be a
+    //      permanent false positive, which is exactly the naive canary OPE-855
+    //      item H proposed and then withdrew.
+    //   2. Path B, the rail that actually sends today, writes NO
+    //      `newsletter_issues` row at all while it rides `send_test_email`, so
+    //      there is no evidence stream to measure a window from. Any number
+    //      written now would be an analogy, and a window chosen by analogy is
+    //      what produced the wrong 72h figure on OPE-830 (real gap: 12 days).
+    //
+    // The 21 * 24 below is the weekend probe's window copied across as a
+    // PLACEHOLDER so the registry type-checks. It is not a measurement and must
+    // be replaced before arming.
+    //
+    // ARMING CONDITION (a dormant probe nobody arms is the OPE-6 v3.8 failure
+    // wearing a different hat):
+    //   1. OPE-610 §4 lands — Path B moves onto a rail that writes a real
+    //      `newsletter_issues` row with `audience='vendor'`.
+    //   2. Measure the real send cadence from those rows. OPE-855 item H
+    //      observed Mondays 11:18–14:09Z with one 23:59Z outlier; that is a
+    //      starting point, not the answer.
+    //   3. Set `expectedWindowHours` from that measurement, THEN
+    //      `UPDATE heartbeat_probes SET enabled_at = unixepoch()
+    //         WHERE probe_name = 'newsletter-broadcast-vendor';`
+    name: "newsletter-broadcast-vendor",
+    ownerOpe: "OPE-865",
+    label: "Newsletter broadcast — vendor digest (real sends)",
+    priority: "P1",
+    expectedWindowHours: 21 * 24,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        newsletterIssues,
+        newsletterIssues.sentAt,
+        and(isNotNull(newsletterIssues.sentAt), eq(newsletterIssues.audience, "vendor"))
+      ),
+  },
+  {
+    // OPE-868 — the promoter website-health sweep RAN.
+    //
+    // CLAUDE.md (OPE-246) requires a probe in the same PR as a new execution
+    // path, and this is one: a sweep driven from the daily event-date-drift
+    // workflow, writing url_health_checks rows with source_field
+    // 'promoters.website'.
+    //
+    // Evidence is scoped to THAT source_field, deliberately. OPE-860 already
+    // writes to this table from the drift sweep with source_field
+    // 'events.source_url', so an unscoped probe would be kept green by the
+    // other writer while this one was dead — the exact defect OPE-865 fixed on
+    // the newsletter probe hours earlier, and it would have been very easy to
+    // repeat here.
+    //
+    // Window 72h: the driving workflow is on `0 6 * * *`, so the cadence is
+    // daily BY CONSTRUCTION rather than by estimate, and 72h is three missed
+    // runs. That is derived from the schedule, not chosen by analogy with a
+    // neighbouring probe.
+    name: "promoter-url-health-sweep",
+    ownerOpe: "OPE-868",
+    label: "Promoter website health sweep",
+    priority: "P1",
+    expectedWindowHours: 72,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        urlHealthChecks,
+        urlHealthChecks.checkedAt,
+        eq(urlHealthChecks.sourceField, "promoters.website")
+      ),
+  },
+  {
+    // OPE-987 — the organizer-page cancellation recheck RAN.
+    //
+    // A new pass inside the daily EventDateDriftWorkflow
+    // (mcp-server/src/goodwill/cancellation-recheck.ts). check-heartbeat-probes
+    // cannot see it — a step inside an existing Workflow is not a new path by
+    // its definition — so this rests on the OPE-246 rule, not the check.
+    //
+    // ⚠️ Evidence is the RUN STAMP, not discrepancies and not url_health_checks.
+    // Discrepancies are the yield: organizers almost never cancel, so a probe on
+    // them would be red nearly always (the OPE-541 false-fire). url_health_checks
+    // rows are only written when a url is DUE, and a window with no candidates
+    // writes none. The stamp is written on every completed call, including one
+    // with nothing to read, and NOT when the pass throws — so a broken selector
+    // goes red instead of looking like a quiet week.
+    //
+    // 48h, derived from the schedule: the workflow is on `0 6 * * *`, so one
+    // missed run is tolerated and two are not — the same reasoning as the other
+    // 06:00Z run-stamp probes, from the same cron.
+    name: "organizer-cancellation-recheck",
+    ownerOpe: "OPE-987",
+    label: "Organizer-page cancellation recheck (daily drift workflow)",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        agentHeartbeats,
+        agentHeartbeats.lastSeenAt,
+        eq(agentHeartbeats.agentCode, "watchdog:organizer-cancellation-recheck")
+      ),
+  },
+  {
+    // OPE-988 — the source-agreement / domain-takeover sweep RAN.
+    //
+    // A new execution path (a loop in the daily event-date-drift workflow
+    // calling /api/admin/url-health/source-agreement/sweep), so it ships its
+    // probe in the same PR. Evidence is url_health_checks rows under
+    // source_field 'events.source_url@source-agreement' — its OWN field, because
+    // the drift sweep writes 'events.source_url' and the promoter sweep
+    // 'promoters.website' to the same table, and either would hold an unscoped
+    // probe green while this path was dead.
+    //
+    // The sweep writes a row for EVERY verdict, including `ok`, so a quiet
+    // estate still produces evidence. Disagreement rows in event_discrepancies
+    // would not do: zero findings is the expected steady state.
+    //
+    // Window 72h = three missed runs of the `0 6 * * *` driver — derived from
+    // the schedule, same as the OPE-868 probe it sits beside.
+    name: "source-agreement-sweep",
+    ownerOpe: "OPE-988",
+    label: "Source-agreement & domain-takeover sweep (events.source_url)",
+    priority: "P1",
+    expectedWindowHours: 72,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        urlHealthChecks,
+        urlHealthChecks.checkedAt,
+        eq(urlHealthChecks.sourceField, "events.source_url@source-agreement")
+      ),
   },
   {
     name: "vendor-enrichment",
@@ -446,6 +1048,27 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     lastEvidenceAt: (db) => maxTs(db, imageCoverageState, imageCoverageState.urlCheckedAt),
   },
   {
+    // OPE-227 — the photo flywheel's daily proposal run (MCP 06:00Z cron,
+    // chained after the coverage scan). Probes the RUN, not the yield: every
+    // candidate leaves exactly one row, a proposal OR an attempt, so a day of
+    // pages with no usable og:image is still evidence. The pool (664 imageless
+    // events with a source on 2026-09-16) outlasts the 30-day hold-out
+    // (10/day × 30 = 300), so a healthy run always selects something.
+    // 48h on a daily cron: one missed fire is a blip, two is a fault.
+    name: "photo-flywheel-hero-proposals",
+    ownerOpe: "OPE-227",
+    label: "Photo flywheel hero proposals (daily, after the coverage scan)",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        adminActions,
+        adminActions.createdAt,
+        inArray(adminActions.action, ["event.hero_proposed", "event.hero_propose_attempt"])
+      ),
+  },
+  {
     // OPE-226 — the scorecard's snapshot writer, which runs inside the daily
     // coverage scan. It gets its OWN probe rather than riding on the scan's
     // because the two can fail independently: the snapshot write is fail-soft
@@ -479,6 +1102,53 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     lastEvidenceAt: (db) => maxTs(db, vendorClaimEvidence, vendorClaimEvidence.createdAt),
   },
   {
+    // OPE-237 — the nightly corroboration pass RAN (MCP 08:30Z cron →
+    // /api/admin/claims/corroborate). Probes the run, not the yield: at ~1
+    // declared website a day most nights corroborate nothing, and a yield
+    // probe would be red by construction. `claim.corroborate.sweep` is written
+    // on every completed sweep call and not on a single-vendor re-check.
+    // 48h on a daily cron: one missed fire is a blip, two is a fault.
+    name: "claim-corroboration-sweep",
+    ownerOpe: "OPE-237",
+    label: "Vendor claim corroboration pass (nightly 08:30 cron)",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        adminActions,
+        adminActions.createdAt,
+        eq(adminActions.action, "claim.corroborate.sweep")
+      ),
+  },
+  {
+    // OPE-1018 — the operator notice for a customer answering a question a
+    // PERSON asked them. Evidence is the notice's own ledger row
+    // (`operator-owed-human-notice`, written by the EMAIL_JOBS consumer).
+    //
+    // ⚠️ SHIPS DORMANT — `enabled_at = NULL` in migration 0290, deliberately.
+    // `inbound_emails.thread_id` only exists from 2026-09-04, and across those
+    // 11 days exactly TWO rows qualified (both on 2026-09-14, the specimens).
+    // Two arrivals are not an inter-arrival distribution, so any window here
+    // would be a guess — and a guessed window either cries wolf on a quiet
+    // fortnight or sleeps through a dead path. A dormant probe never
+    // false-fires. ARMING CONDITION: once ≥8 qualifying replies exist, set
+    // `enabled_at` and replace this window with ~3× the measured p90 gap
+    // (tracked as its own date-gated ticket).
+    name: "owed-human-notice",
+    ownerOpe: "OPE-1018",
+    label: "Operator notice: a customer answered a human's email",
+    priority: "P1",
+    expectedWindowHours: 30 * 24,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        emailSendLedger,
+        emailSendLedger.sentAt,
+        eq(emailSendLedger.source, "operator-owed-human-notice")
+      ),
+  },
+  {
     name: "promoter-enrichment",
     ownerOpe: "OPE-36",
     label: "Promoter enrichment cron",
@@ -494,6 +1164,34 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     priority: "P1",
     expectedWindowHours: 72,
     lastEvidenceAt: (db) => maxTs(db, eventDiscrepancies, eventDiscrepancies.detectedAt),
+  },
+  {
+    // OPE-1065 — proof verification passes are filing live-field findings as
+    // work items instead of burying them in citation notes.
+    //
+    // Evidence is the newest `citation_flag` discrepancy — filed either by a
+    // pass declaring `live_defect` on a citation tool, or automatically when a
+    // citation is written with `update_event_column=false` over a differing
+    // live value. The silence this watches for is the specimen's: passes keep
+    // finding defects and writing them as prose, and the queue goes quiet.
+    //
+    // ⚠️ SHIPS DORMANT (`enabled_at` NULL, drizzle/0295). The path is new and
+    // has produced two rows (the backfill), so there is no inter-arrival to
+    // size a window from, and 720h below is a placeholder, not a measurement —
+    // the same stance as roster-vendor-link (OPE-847). Arming is its own
+    // ticket: measure the gaps once passes use the argument, then set both.
+    name: "citation-live-defect",
+    ownerOpe: "OPE-1065",
+    label: "Citation live-defect findings → event_discrepancies",
+    priority: "P1",
+    expectedWindowHours: 720,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        eventDiscrepancies,
+        eventDiscrepancies.detectedAt,
+        eq(eventDiscrepancies.detectedBy, "citation_flag")
+      ),
   },
   {
     name: "gw1d-scorer",
@@ -512,17 +1210,46 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
   {
     name: "booth-autowrite",
     ownerOpe: "OPE-240",
-    label: "Booth-photo auto-write",
+    label: "Booth-photo decision stage (auto-write + staging)",
     priority: "P1",
-    expectedWindowHours: 14 * 24,
-    // Gated by PHOTO_AUTOWRITE_ENABLED (off). Dormant until enabled_at is set.
-    // Action string mirrors mcp-server BOOTH_AUTOWRITTEN_ACTION (auto-write.ts:30).
+    // DORMANT until PHOTO_AUTOWRITE_ENABLED flips on — set `enabled_at` that day
+    // (drizzle/0164 seeded it NULL). Re-pointed 2026-09-13, while still dormant:
+    //
+    // Evidence is the booth stage's DECISION for any photo — a staged proposal
+    // OR an auto-write — not auto-writes alone. The original watched only
+    // `vendor.photo_autowritten`, which is YIELD: at the 1.0 bar only ~1 in 3
+    // booths auto-writes (4 of 12 on the first real batch), and booths arrive
+    // only when John is at a fair. That probe would page every winter and on
+    // any batch of hand-held shots, then get muted. Every booth photo the stage
+    // examines writes exactly one of these two rows, so their absence means the
+    // stage stopped running, which is what a probe here can honestly assert.
+    //
+    // 30d matches the photo-intake siblings for the same reason they give: the
+    // lane is seasonal and genuinely quiet for weeks at a time.
+    //
+    // Action strings mirror mcp-server BOOTH_PROPOSED_ACTION (booth-pipeline.ts)
+    // and BOOTH_AUTOWRITTEN_ACTION (auto-write.ts).
+    //
+    // OPE-969 (2026-09-13) split the classifier: a performer photo now writes
+    // performer.photo_proposed / performer.photo_confirmed and a neighbour's
+    // banner writes photo.signage_not_presence, instead of a booth proposal. A
+    // batch of only those would otherwise read as "the stage stopped running".
+    // Scenery still writes no audit row, as before.
+    expectedWindowHours: 30 * 24,
     lastEvidenceAt: (db) =>
       maxTs(
         db,
         adminActions,
         adminActions.createdAt,
-        eq(adminActions.action, "vendor.photo_autowritten")
+        inArray(adminActions.action, [
+          "vendor.photo_proposed",
+          "vendor.photo_autowritten",
+          "performer.photo_proposed",
+          "performer.photo_confirmed",
+          "photo.signage_not_presence",
+          // OPE-978 — scenery now records its gallery decision too.
+          "photo.gallery_attached",
+        ])
       ),
   },
   // ── OPE-309 (assurance audit A6 / A7) ──────────────────────────────
@@ -693,6 +1420,52 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       ),
   },
   {
+    // OPE-832 — proof the email defect-CANDIDATE detector is still executing.
+    //
+    // ⚠️ Watches the RUN, never the yield. Measured over 180 days in prod:
+    // three distinct customer defect reports, four emails — roughly one
+    // incident every 60 days. A probe watching for CANDIDATES would be red
+    // almost always, get muted, and a muted probe reads as coverage while
+    // covering nothing. The `defect-candidate` step row is written on EVERY
+    // dispatched email whatever the outcome (`created` / `no-defect-language`
+    // / `already-reported` / `intent-skipped`), so a MISS proves the detector
+    // ran just as well as a hit does. Same reasoning as OPE-803's spam probe.
+    //
+    // Its absence is unambiguous: the step is unconditional on the dispatch
+    // path, so no rows means the path stopped executing, not that nobody
+    // reported a bug.
+    //
+    // 240h, MEASURED on this probe's own population — every inbound email that
+    // reaches the workflow, which is far busier than the citation writer above
+    // it, so 336h would be needlessly slow here. Over 180 days: 83 active days,
+    // 82 gaps, mean 1.37 days, MAXIMUM **6.0 days (144h)**.
+    //
+    //   72h  → would have fired on 4 ordinary-quiet gaps
+    //   120h → 1
+    //   168h → 0, but only 1.17x the observed maximum
+    //   240h → 0, with real headroom
+    //
+    // ⚠️ 168h is NOT chosen despite testing clean, and the reason is a limit of
+    // the measurement rather than of the data: all 180 days sampled are fair
+    // season. Winter inbound volume is unobserved and is very likely quieter,
+    // so a window sized to summer gaps would start crying wolf in January —
+    // a seasonal version of the "chosen by analogy" error OPE-830 corrected
+    // twice. 240h buys that margin for a detection cost of at most four extra
+    // days.
+    name: "email-defect-candidate-detector",
+    ownerOpe: "OPE-832",
+    label: "Email defect-candidate detector (inbound dispatch)",
+    priority: "P1",
+    expectedWindowHours: 240,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        workflowRunSteps,
+        workflowRunSteps.recordedAt,
+        eq(workflowRunSteps.stepName, "defect-candidate")
+      ),
+  },
+  {
     // OPE-510 §3 — the newsletter list-balance canary RAN.
     //
     // Watches the run stamp, not the alert. The alert is the yield and the
@@ -718,6 +1491,32 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
         agentHeartbeats,
         agentHeartbeats.lastSeenAt,
         eq(agentHeartbeats.agentCode, "watchdog:newsletter-list-balance")
+      ),
+  },
+  {
+    // OPE-951 — proof the HARD burst cap still refuses, measured in production.
+    //
+    // Evidence is a PASS of the daily self-test, not a run: the main app drives
+    // `getBurstLimiter()` — the function the eight abuse-prone routes call — to
+    // a refusal on a throwaway key and stamps this row only when calls 1–5 are
+    // admitted AND call 6 is refused. So the probe goes silent on all three
+    // failures that matter: the cron stops, the binding disappears, or the cap
+    // stops refusing. The last is what OPE-904's binding did, invisibly, while
+    // every mocked unit test stayed green.
+    //
+    // 48h against a once-daily cron (06:00Z): tolerates one missed fire without
+    // crying wolf, the same headroom as newsletter-list-balance-canary.
+    name: "burst-cap-selftest",
+    ownerOpe: "OPE-951",
+    label: "Burst cap self-test (daily cron — the cap still refuses)",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        agentHeartbeats,
+        agentHeartbeats.lastSeenAt,
+        eq(agentHeartbeats.agentCode, "watchdog:burst-cap-selftest")
       ),
   },
   {
@@ -855,6 +1654,214 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     priority: "P1",
     expectedWindowHours: 14 * 24,
     lastEvidenceAt: (db) => maxTs(db, promoterOutreachAttempts, promoterOutreachAttempts.createdAt),
+  },
+  // ── OPE-975 — three seeds that existed with NO registry entry ─────────
+  //
+  // Found by scripts/check-heartbeat-probes.ts on its first run. A seed row
+  // with no registry entry is read by nothing: `enabled_at` means nothing, and
+  // arming it later does nothing. Registered rather than deleted because each
+  // seed records a real decision about a real path.
+  {
+    // OPE-344 — Google's monthly Search email, stored as an external oracle.
+    // Its seed (drizzle/0181) was ARMED on 2026-08-09 with "~40 days covers a
+    // late send" — and has had no registry entry since, so nothing watched it.
+    // Measured 2026-09-13: ONE row (2026-07, ingested 08-09); the August email
+    // (~Sept 4, per the seed) never landed. With this entry that silence
+    // becomes visible at 40 days instead of never.
+    name: "gsc-monthly-oracle",
+    ownerOpe: "OPE-344",
+    label: "GSC monthly oracle (Google's own monthly email figures)",
+    priority: "P1",
+    expectedWindowHours: 40 * 24,
+    lastEvidenceAt: (db) => maxTs(db, gscMonthlyOracle, gscMonthlyOracle.updatedAt),
+  },
+  {
+    // OPE-239 — vendor self-attested event participation. Seeded DORMANT
+    // (drizzle/0170): a demand-driven writer has no honest window until a
+    // baseline rate exists. The window here is a PLACEHOLDER, not a
+    // measurement — measure the real cadence, set it, THEN set enabled_at.
+    name: "vendor-self-reported-events",
+    ownerOpe: "OPE-239",
+    label: "Vendor self-reported event participation (dormant)",
+    priority: "P1",
+    expectedWindowHours: 30 * 24,
+    lastEvidenceAt: (db) => maxTs(db, vendorSelfReportedEvents, vendorSelfReportedEvents.createdAt),
+  },
+  {
+    // OPE-375 — seeded DORMANT (drizzle/0197) because the scheduled performer
+    // enrichment producer does not exist; performer-dispatch is reachable only
+    // via the manual enrich_performer tool. Arm when a scheduled selector ships
+    // (and measure its window then; this one is a placeholder).
+    name: "performer-enrichment-producer",
+    ownerOpe: "OPE-375",
+    label: "Performer enrichment producer (dormant — no scheduled selector yet)",
+    priority: "P1",
+    expectedWindowHours: 7 * 24,
+    lastEvidenceAt: (db) =>
+      maxTs(db, performerEnrichmentCandidates, performerEnrichmentCandidates.createdAt),
+  },
+  {
+    // OPE-971 — request_samples retention, moved off a 1%-per-write dice roll
+    // onto the MCP 06:00Z cron. Evidence is the RUN STAMP, not rows deleted:
+    // most days nothing ages past 60 days, and a deleted-count probe would go
+    // red on a quiet table (the OPE-541 false-fire). 48h tolerates one missed
+    // daily run, matching the other 06:00Z cron probes.
+    name: "request-sample-retention",
+    ownerOpe: "OPE-971",
+    label: "request_samples 60-day retention (daily MCP cron)",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        agentHeartbeats,
+        agentHeartbeats.lastSeenAt,
+        eq(agentHeartbeats.agentCode, "watchdog:request-sample-retention")
+      ),
+  },
+  {
+    // OPE-993 — error_logs 30-day retention, moved off a 1%-per-write dice roll
+    // (src/lib/logger.ts) onto the MCP 06:00Z cron. Evidence is the RUN STAMP,
+    // which is written only when the prune SUCCEEDED (0 deleted included): a
+    // delete that throws writes no stamp, so a broken prune goes silent here
+    // within one missed day. 48h matches the other 06:00Z cron probes.
+    name: "error-log-retention",
+    ownerOpe: "OPE-993",
+    label: "error_logs 30-day retention (daily MCP cron)",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        agentHeartbeats,
+        agentHeartbeats.lastSeenAt,
+        eq(agentHeartbeats.agentCode, "watchdog:error-log-retention")
+      ),
+  },
+  {
+    // OPE-993 — indexnow_submissions 30-day retention, moved off a 1% dice
+    // roll (src/lib/indexnow.ts recordSubmission) onto the MCP 06:00Z cron.
+    // Same run-stamp evidence and same success-only stamping as above.
+    name: "indexnow-submission-retention",
+    ownerOpe: "OPE-993",
+    label: "indexnow_submissions 30-day retention (daily MCP cron)",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        agentHeartbeats,
+        agentHeartbeats.lastSeenAt,
+        eq(agentHeartbeats.agentCode, "watchdog:indexnow-submission-retention")
+      ),
+  },
+  {
+    // OPE-1165 — every outbound ticket/application click carries the tab
+    // session's traffic source (trafficMedium), which the conversion rate's
+    // organic numerator depends on. The capture is client-side and fail-soft
+    // (a blocked sessionStorage or a render that never mounts the capture
+    // component just yields clicks without it), so the only symptom of it
+    // dying is clicks that keep arriving unattributed.
+    //
+    // Demand-conditional: demand = newest conversion click of any kind;
+    // evidence = newest one carrying trafficMedium. A quiet week with no clicks
+    // reads healthy; 24h of clicks with none attributed fires.
+    name: "click-traffic-attribution",
+    ownerOpe: "OPE-1165",
+    label: "Outbound clicks carry a traffic source (conversion-rate numerator)",
+    priority: "P1",
+    expectedWindowHours: 24,
+    lastEvidenceAt: async (db) => {
+      const clicks = inArray(analyticsEvents.eventName, [
+        "outbound_ticket_click",
+        "outbound_application_click",
+      ]);
+      return demandConditionalEvidence(
+        await maxTs(db, analyticsEvents, analyticsEvents.timestamp, clicks),
+        await maxTs(
+          db,
+          analyticsEvents,
+          analyticsEvents.timestamp,
+          and(
+            clicks,
+            sql`json_extract(${analyticsEvents.properties}, '$.trafficMedium') IS NOT NULL`
+          )
+        ),
+        new Date()
+      );
+    },
+  },
+  {
+    // OPE-1164 — the Monday vendor-category watch (MCP daily cron, gated to
+    // Monday). A run writes one vendor_category_watch_runs row per field even
+    // when nothing is new, so the RUN is the evidence, not the yield. Weekly:
+    // 8 days tolerates a late fire, a missed Monday fires.
+    name: "vendor-category-watch",
+    ownerOpe: "OPE-1164",
+    label: "Weekly vendor-category new-value watch",
+    priority: "P1",
+    expectedWindowHours: 8 * 24,
+    lastEvidenceAt: (db) => maxTs(db, vendorCategoryWatchRuns, vendorCategoryWatchRuns.runAt),
+  },
+  {
+    // OPE-1201 — proof the daily near-duplicate candidate sweep still RUNS.
+    //
+    // OPE-627's duplicate check only fires at insert, so rows that predate it
+    // were never evaluated — its own PTTF / Scarborough fixtures sat unflagged
+    // for a month. The MCP Worker's daily cron now POSTs the main app's
+    // /api/admin/duplicates/near-sweep, which records ONE admin_actions row per
+    // run whether or not it flags anything. That row is the evidence: a sweep
+    // that finds nothing is healthy, a sweep that stops running is not.
+    //
+    // 48h = two daily cron cycles, so one skipped or failed run does not page.
+    name: "near-duplicate-sweep",
+    ownerOpe: "OPE-1201",
+    label: "daily near-duplicate candidate sweep running",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        adminActions,
+        adminActions.createdAt,
+        eq(adminActions.action, NEAR_DUPLICATE_SWEEP_ACTION)
+      ),
+  },
+  {
+    // OPE-1205 — proof the daily sync-staleness sweep still RUNS. It writes one
+    // admin_actions row per run (event.sync_stale_sweep) whether or not it
+    // downgrades anything, so silence means the cron stopped, not that nothing
+    // was stale. 48h = two daily cycles.
+    name: "sync-stale-sweep",
+    ownerOpe: "OPE-1205",
+    label: "daily sync-staleness sweep running",
+    priority: "P1",
+    expectedWindowHours: 48,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        adminActions,
+        adminActions.createdAt,
+        eq(adminActions.action, "event.sync_stale_sweep")
+      ),
+  },
+  {
+    // OPE-1239 — proof the CI-trigger watchdog still RUNS. Its normal output is
+    // silence (no alert), which is indistinguishable from a dead watchdog, so it
+    // stamps admin_actions `ci.trigger_watchdog.run` at most once an hour from
+    // the */10 cron. 3h = three stamps missed before it pages.
+    name: "ci-trigger-watchdog",
+    ownerOpe: "OPE-1239",
+    label: "CI-trigger watchdog (Cloudflare cron) running",
+    priority: "P1",
+    expectedWindowHours: 3,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        adminActions,
+        adminActions.createdAt,
+        eq(adminActions.action, "ci.trigger_watchdog.run")
+      ),
   },
 ];
 

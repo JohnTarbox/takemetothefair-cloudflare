@@ -6,3 +6,5 @@
 export * from "./browser-rendering";
 export * from "./challenge-page";
 export * from "./ssrf-guard";
+// OPE-837 — robots.txt for the bounded submit@ nav crawl.
+export * from "./robots";

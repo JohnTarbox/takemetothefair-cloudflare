@@ -3,7 +3,6 @@ import { NextResponse } from "next/server";
 import { isAuthorized } from "@/lib/api-auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { runSweep } from "@/lib/gsc-sweep";
-import type { ScEnv } from "@/lib/search-console";
 
 export async function POST(request: Request) {
   if (!(await isAuthorized(request))) {
@@ -16,7 +15,7 @@ export async function POST(request: Request) {
   // browser-driven Pages Function to avoid the timeout.
   const batchSize = Math.min(parseInt(url.searchParams.get("batchSize") || "8", 10), 500);
 
-  const env = getCloudflareEnv() as unknown as ScEnv;
+  const env = getCloudflareEnv();
   const db = getCloudflareDb();
   try {
     const stats = await runSweep(db, env, { batchSize });

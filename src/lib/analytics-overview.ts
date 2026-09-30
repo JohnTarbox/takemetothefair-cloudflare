@@ -19,6 +19,8 @@
  */
 
 import { getLatestKpiStates } from "@/lib/kpi-states";
+import { getCloudflareRateLimitKv } from "@/lib/cloudflare";
+import { readIndexNowPauseForDisplay } from "@/lib/indexnow-breaker";
 import { type Ga4Env } from "@/lib/ga4";
 import { type BingEnv } from "@/lib/bing-webmaster";
 import { type ScEnv } from "@/lib/search-console";
@@ -49,7 +51,7 @@ import {
 } from "./analytics-overview/health";
 import {
   loadAccountEngagement,
-  loadActionQueue,
+  loadActionQueueWithSuppressed,
   loadActivity,
   loadPublishingSparkline,
   loadThisWeeksActions,
@@ -111,7 +113,10 @@ export async function loadOverviewSnapshot(
     loadCatalogGrowth(db, sinceDate, priorStartDate, priorEndDate, days),
     loadEnhancedProfileRevenue(db, sinceDate, priorStartDate, priorEndDate, days),
     loadSiteHealth(db),
-    loadIndexNow(db, env, todayStartUtcDate),
+    // OPE-1161 A3 — the kill-switch is READ, for display, not inferred.
+    readIndexNowPauseForDisplay(getCloudflareRateLimitKv()).then((pause) =>
+      loadIndexNow(db, env, todayStartUtcDate, pause)
+    ),
     loadRecentErrors(db, last24hDate),
     loadRecommendationsSummary(db),
     loadBlogCoverage(db),
@@ -136,7 +141,8 @@ export async function loadOverviewSnapshot(
   // Action queue is derived after the latest KPI states + tier-1 rec counts
   // are known. Cheap (1-2 SELECTs); not parallelized to keep the dependency
   // order obvious.
-  const actionQueue = await loadActionQueue(db, kpiStates);
+  const { entries: actionQueue, suppressed: actionQueueSuppressed } =
+    await loadActionQueueWithSuppressed(db, kpiStates);
 
   return {
     window,
@@ -167,5 +173,6 @@ export async function loadOverviewSnapshot(
     accountEngagement,
     kpiStates,
     actionQueue,
+    actionQueueSuppressed,
   };
 }

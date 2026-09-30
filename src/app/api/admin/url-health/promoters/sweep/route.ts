@@ -1,0 +1,346 @@
+export const dynamic = "force-dynamic";
+/**
+ * OPE-868 — re-read every promoter's own website, and record what we saw.
+ *
+ * ## Why this exists as its own sweep
+ *
+ * `promoters.website` is fetched by NOTHING. The event-date-drift sweep selects
+ * it (`sweep/route.ts`) and uses it for exactly one thing — a `sameHost()`
+ * string comparison — then fetches `events.source_url` and nothing else. So the
+ * field is read out of the database, compared as text, and never resolved over
+ * the network by any rail in either Worker.
+ *
+ * That is where the failing specimen actually lived. OPE-824 cleared the dead
+ * `ledyardfair.org` from the EVENT's `source_url` on 2026-09-06; three days
+ * later it was still in `promoters.website`, rendering as that promoter's
+ * official website, until an analyst nulled it by hand. OPE-860's fix — which
+ * rides the drift sweep — would not have caught it either.
+ *
+ * It is not bolted onto the drift sweep because that sweep is budgeted against
+ * a 5-minute step timeout already tuned down from a Worker→Pages 524, and its
+ * contract is date drift, not link health. A second URL per row changes a
+ * budget somebody measured.
+ *
+ * ## Sizing, measured rather than assumed (OPE-868 scope 5)
+ *
+ * Prod, 2026-09-09: **750 promoters, 615 with a website, 612 DISTINCT websites.**
+ * At `chunk=50` that is 13 chunks for full coverage.
+ *
+ * ⚠️ The 50 is NOT copied from the drift sweep by analogy — that is the mistake
+ * `[[feedback_a_threshold_chosen_by_analogy_is_unverified]]` warns about. It is
+ * reused because the drift sweep MEASURED it for the identical operation: one
+ * HTTP fetch per URL with the same per-URL timeout, "50 × per-URL fetch ≈ 30-45s,
+ * comfortably under" the ~100s edge budget. Same work, same measured bound. What
+ * would have been analogy is reusing its *window* or its *cadence*, and neither
+ * is reused here.
+ *
+ * ## ⚠️ This never writes to the promoter
+ *
+ * A `no_event_signal` verdict is evidence for an operator, not an instruction.
+ * A real organizer site that renders its dates in an image reads
+ * `no_event_signal` too — the asymmetry is deliberate and documented in
+ * url-health.ts. Nothing here nulls a website or unpublishes anything.
+ */
+import { NextResponse } from "next/server";
+import { and, isNotNull, ne, sql } from "drizzle-orm";
+import { isAuthorized } from "@/lib/api-auth";
+import { getCloudflareDb } from "@/lib/cloudflare";
+import { events, promoters, urlHealthChecks } from "@/lib/db/schema";
+import { classifyUrlHealth, isActionable, samePageOnEveryPath } from "@/lib/goodwill/url-health";
+import {
+  detectDomainTakeover,
+  isSweepActionable,
+  type SweepVerdict,
+} from "@/lib/goodwill/domain-takeover";
+import { SCRAPER_USER_AGENT } from "@takemetothefair/constants";
+import { logError } from "@/lib/logger";
+
+const DEFAULT_CHUNK = 50;
+const MAX_CHUNK = 100;
+const FETCH_TIMEOUT_MS = 10_000;
+
+/**
+ * The field name recorded on every row this sweep writes.
+ *
+ * ⚠️ NOT exported. A Next.js route module may only export a fixed set of names
+ * (the HTTP verbs, `dynamic`, `revalidate`, …) and the build rejects anything
+ * else with "is not a valid Route export field". `tsc --noEmit` and vitest both
+ * pass on it — only `npm run build` catches it, which is why CI found this and
+ * my local gate did not.
+ */
+const SOURCE_FIELD = "promoters.website";
+
+interface Probe {
+  reachedOrigin: boolean;
+  status: number | null;
+  html: string | null;
+  /** OPE-988 — where redirects left us; a hop to another domain is a takeover signal. */
+  finalUrl?: string | null;
+}
+
+async function probe(url: string): Promise<Probe> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, {
+      headers: { "User-Agent": SCRAPER_USER_AGENT },
+      signal: controller.signal,
+      redirect: "follow",
+    });
+    // OPE-979 — the body is read on EVERY status. The classifier still
+    // ignores a non-2xx body for its event-signal verdicts (a themed 404 must
+    // not score as healthy), but a closure announcement is routinely served as
+    // a 503 maintenance page — eagleshows.com is — and was never being read.
+    // A 2xx body is read whole, as before — a JS-heavy organizer page can carry
+    // its event text past any fixed cap (easterngunexpo.com reads `ok` whole and
+    // `no_event_signal` cut at 300 KB, measured). Only a non-2xx body, which
+    // feeds nothing but the closure check, is capped.
+    const body = await res.text().catch(() => "");
+    const html = (res.ok ? body : body.slice(0, 300_000)) || null;
+    return { reachedOrigin: true, status: res.status, html, finalUrl: res.url || null };
+  } catch {
+    return { reachedOrigin: false, status: null, html: null };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function POST(request: Request): Promise<NextResponse> {
+  if (!(await isAuthorized(request))) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const url = new URL(request.url);
+  const cursor = Math.max(0, Number(url.searchParams.get("cursor") ?? 0) || 0);
+  const chunk = Math.min(
+    MAX_CHUNK,
+    Math.max(1, Number(url.searchParams.get("chunk") ?? 0) || DEFAULT_CHUNK)
+  );
+
+  const db = getCloudflareDb();
+  const now = new Date();
+
+  try {
+    // One row per DISTINCT website. 615 promoters share 612 URLs today, so the
+    // dedup saves little — but it is the right unit regardless: fetching the
+    // same page twice because two promoters point at it would double the cost
+    // and write two rows asserting one fact.
+    //
+    // OPE-988 — grouped rather than DISTINCT so each row also carries a promoter
+    // name for the takeover detector's title check. Same unit (one row per
+    // distinct website), same order, so cursors mean what they meant before.
+    const rows = await db
+      .select({
+        website: promoters.website,
+        name: sql<string | null>`min(${promoters.companyName})`,
+      })
+      .from(promoters)
+      .where(and(isNotNull(promoters.website), ne(promoters.website, "")))
+      .groupBy(promoters.website)
+      .orderBy(promoters.website)
+      .limit(chunk)
+      .offset(cursor);
+
+    const result = {
+      success: true,
+      cursor,
+      chunk,
+      /**
+       * ⚠️ The positive landmark, and the reason it is in the RESPONSE rather
+       * than only in a log: a sweep whose selector silently stops matching
+       * reports zero flagged and reads as a clean bill of health. `examined`
+       * going to 0 while `next_cursor` is still non-null is the tell.
+       */
+      examined: rows.length,
+      ok: 0,
+      no_event_signal: 0,
+      http_error: 0,
+      unreachable: 0,
+      closure_notice: 0,
+      /** OPE-988 — the domain now belongs to someone else (lottery, pharma spam…). */
+      domain_takeover: 0,
+      /** OPE-979 — hosts where a second stored path served the same page. */
+      same_page_on_every_path: 0,
+      actionable: 0,
+      next_cursor: null as number | null,
+    };
+
+    for (const r of rows) {
+      const website = (r.website ?? "").trim();
+      if (!website) continue;
+      const p = await probe(website);
+      const health = classifyUrlHealth(p);
+
+      // OPE-988 — a hijacked domain can read `ok` (a lottery page has month
+      // names, years and "schedule"). Only a 2xx body is read for it; the
+      // verdict overrides, and the base verdict's signals are kept beside it.
+      const takeover =
+        p.status !== null && p.status >= 200 && p.status < 300
+          ? detectDomainTakeover(p.html, {
+              entityName: r.name ?? null,
+              requestedUrl: website,
+              finalUrl: p.finalUrl,
+            })
+          : null;
+      let verdict: SweepVerdict = health.verdict;
+      if (takeover?.takenOver) {
+        verdict = "domain_takeover";
+        health.signals.push(...takeover.signals);
+        health.detail = takeover.detail;
+      }
+
+      // OPE-979 structural companion — compare against ONE stored event URL on
+      // the same host (a different path). Parked, maintenance and handover pages
+      // serve the same page everywhere; token overlap cannot see that.
+      try {
+        const host = new URL(website).host;
+        const [other] = await db
+          .select({ url: events.sourceUrl })
+          .from(events)
+          // instr, not LIKE: D1 caps LIKE patterns at 50 chars and a host is data.
+          .where(
+            and(isNotNull(events.sourceUrl), sql`instr(${events.sourceUrl}, ${`://${host}/`}) > 0`)
+          )
+          .limit(1);
+        if (
+          other?.url &&
+          new URL(other.url).pathname.replace(/\/+$/, "") !==
+            new URL(website).pathname.replace(/\/+$/, "")
+        ) {
+          const q = await probe(other.url);
+          if (
+            samePageOnEveryPath([
+              { url: website, html: p.html },
+              { url: other.url, html: q.html },
+            ])
+          ) {
+            health.signals.push("same-page-on-every-path");
+            result.same_page_on_every_path += 1;
+          }
+        }
+      } catch {
+        // a bad stored URL must not stop the sweep
+      }
+
+      await db.insert(urlHealthChecks).values({
+        url: website,
+        sourceField: SOURCE_FIELD,
+        verdict,
+        httpStatus: p.status,
+        signals: health.signals.join(",") || null,
+        detail: health.detail,
+        checkedAt: now,
+      });
+
+      result[verdict] += 1;
+      if (isSweepActionable(verdict, isActionable)) result.actionable += 1;
+      if (verdict === "domain_takeover") {
+        await logError(db, {
+          level: "warn",
+          message: `promoter website looks taken over: ${website}`,
+          source: "url-health:domain-takeover",
+          context: {
+            website,
+            finalUrl: p.finalUrl,
+            detail: health.detail,
+            signals: health.signals,
+          },
+        });
+      }
+      if (health.verdict === "closure_notice") {
+        // OPE-979 — surface, never act: the review row above plus an alert. What
+        // a detector may DO about a closure is John's decision (filed apart).
+        await logError(db, {
+          level: "warn",
+          message: `promoter website announces closure/handover: ${website}`,
+          source: "url-health:closure-notice",
+          context: { website, detail: health.detail, signals: health.signals },
+        });
+      }
+    }
+
+    result.next_cursor = rows.length === chunk ? cursor + chunk : null;
+    return NextResponse.json(result);
+  } catch (error) {
+    await logError(db, {
+      message: "promoter url-health sweep threw",
+      error,
+      source: "api/admin/url-health/promoters/sweep",
+      request,
+    });
+    return NextResponse.json({ error: "sweep_failed" }, { status: 500 });
+  }
+}
+
+/**
+ * GET — the operator-readable half (OPE-868 scope 4).
+ *
+ * OPE-860 shipped `url_health_checks` with no consumer beyond a counter, which
+ * is a table nobody looks at. This is the reader.
+ *
+ * Reports the LATEST verdict per URL, not every row: the table is append-only
+ * so that a repeated `no_event_signal` can be told from a one-off blip, and a
+ * reader that dumped all history would bury the current state in it.
+ */
+export async function GET(request: Request): Promise<NextResponse> {
+  if (!(await isAuthorized(request))) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  const db = getCloudflareDb();
+  try {
+    const latest = await db.all<{
+      url: string;
+      source_field: string;
+      verdict: string;
+      detail: string | null;
+      checked_at: number;
+      consecutive: number;
+    }>(sql`
+      WITH ranked AS (
+        SELECT url, source_field, verdict, detail, checked_at,
+               -- rowid is the tiebreak, and it is load-bearing: checked_at is
+               -- unix SECONDS, so two checks of one URL inside a single second
+               -- rank arbitrarily without it and "latest verdict" silently
+               -- returns the OLDER row. The sweep runs daily in production so
+               -- this would never have surfaced there; a test that swept twice
+               -- in a row is what caught it. rowid is monotonic per insert.
+               ROW_NUMBER() OVER (PARTITION BY url ORDER BY checked_at DESC, rowid DESC) AS rn
+        FROM url_health_checks
+      )
+      SELECT r.url, r.source_field, r.verdict, r.detail, r.checked_at,
+             (SELECT COUNT(*) FROM url_health_checks h
+               WHERE h.url = r.url AND h.verdict = r.verdict) AS consecutive
+      FROM ranked r
+      WHERE r.rn = 1 AND r.verdict IN ('domain_takeover', 'closure_notice', 'no_event_signal', 'http_error')
+      ORDER BY r.checked_at DESC
+      LIMIT 200
+    `);
+
+    // Landmark again: "0 actionable" is only meaningful beside "N URLs have
+    // ever been checked". Without it, an empty table and a healthy estate are
+    // the same answer — the exact ambiguity OPE-860 was filed about.
+    const [totals] = await db.all<{ urls_checked: number; rows: number }>(sql`
+      SELECT COUNT(DISTINCT url) AS urls_checked, COUNT(*) AS rows
+      FROM url_health_checks
+    `);
+
+    return NextResponse.json({
+      success: true,
+      urls_ever_checked: totals?.urls_checked ?? 0,
+      total_observations: totals?.rows ?? 0,
+      actionable_count: latest.length,
+      actionable: latest,
+      note:
+        "Advisory only. A real organizer site that renders its dates in an image " +
+        "also reads no_event_signal. Never null a website or unpublish on this alone.",
+    });
+  } catch (error) {
+    await logError(db, {
+      message: "url-health report threw",
+      error,
+      source: "api/admin/url-health/promoters/sweep",
+      request,
+    });
+    return NextResponse.json({ error: "report_failed" }, { status: 500 });
+  }
+}

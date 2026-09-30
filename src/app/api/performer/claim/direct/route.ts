@@ -171,7 +171,7 @@ export async function POST(request: Request) {
     });
 
     try {
-      const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+      const env = getCloudflareEnv();
       await pingIndexNow(db, indexNowUrlFor("performers", performer.slug), env, "performer-claim");
     } catch (pingErr) {
       await logError(db, {

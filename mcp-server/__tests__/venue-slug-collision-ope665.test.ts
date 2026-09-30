@@ -103,17 +103,13 @@ describe("suggest_event venue creation (OPE-665)", () => {
     expect(rows[0].slug).toBe("cumberland-fairgrounds");
   });
 
-  it("REUSES a same-slug venue rather than minting a suffixed one (K44)", async () => {
-    // This is why the collision branch in this path is unreachable, and the
-    // reason is worth pinning rather than restating. `existingVenues` is
-    // populated by `slug = venueSlug OR normalizedName = …`, and K44 made the
-    // follow-up unconditional: any candidate at all means reuse. So reaching
-    // the create branch PROVES no row holds that slug — the old
-    // `slugCollides` check could never be true, and the city/uuid suffixes it
-    // guarded have never executed here.
-    // The city AND the state must both differ. A same-state fixture is
-    // rescued by `stateMatch` even with K44's fallback removed, so it passes
-    // either way and proves nothing — verified by mutation, not assumed.
+  it("OPE-1146: a same-slug venue in ANOTHER place is NOT reused — the collision branch mints the next slug", async () => {
+    // This test used to pin the opposite: K44 reused ANY same-name candidate,
+    // so "Town Hall, Portland ME" was reused for an event at "Town Hall,
+    // Bangor NH" — which is the OPE-1146 defect (Veterans Memorial Park, Old
+    // Orchard Beach ME linked to Norwalk CT). The create branch is reachable
+    // again for exactly that case, so the OPE-665 deterministic suffix is now
+    // load-bearing here, not dead code.
     seedVenue("v-existing", "Town Hall", "town-hall", "Portland", "ME");
     const { isError } = await suggest({
       ...BASE_EVENT,
@@ -123,18 +119,18 @@ describe("suggest_event venue creation (OPE-665)", () => {
     });
     expect(isError).toBe(false);
     const all = db.select().from(venues).all();
-    expect(all).toHaveLength(1);
-    expect(all[0].id).toBe("v-existing");
-    expect(all[0].slug).toBe("town-hall");
+    expect(all).toHaveLength(2);
+    const created = all.find((v) => v.id !== "v-existing")!;
+    expect(created.slug).toBe("town-hall-2");
+    expect(created.state).toBe("NH");
   });
 
   it("reuses on a normalized-name match even when the stored slug differs", async () => {
     // The legacy-generator case the OR clause exists for: stored slug dropped
     // the "&", so canonical createSlug would not find it by slug. If this ever
-    // regressed to slug-only matching, the create branch WOULD become
-    // reachable and start minting suffixed duplicates.
-    // Again: neither city nor state may agree, or the weaker matchers rescue
-    // the fixture and the test stops discriminating.
+    // regressed to slug-only matching, the create branch would mint a
+    // duplicate. Same place on both sides (OPE-1146 requires the location to
+    // agree), so the ONLY route to reuse is the normalized-name clause.
     seedVenue(
       "v-earth",
       "Earth Expo & Convention Center",
@@ -145,8 +141,8 @@ describe("suggest_event venue creation (OPE-665)", () => {
     const { isError } = await suggest({
       ...BASE_EVENT,
       venue_name: "Earth Expo & Convention Center",
-      venue_city: "Montville",
-      venue_state: "RI",
+      venue_city: "Uncasville",
+      venue_state: "CT",
     });
     expect(isError).toBe(false);
     const all = db.select().from(venues).all();

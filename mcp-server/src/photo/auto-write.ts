@@ -20,6 +20,7 @@
  * duplicate — the marker additionally stops a redundant hero upload + AI spend.)
  */
 import { and, eq } from "drizzle-orm";
+import { mainAppBindingRequest } from "../main-app-fetch.js";
 import { createOrLinkVendor } from "@takemetothefair/vendor-linking";
 import { adminActions, vendors } from "../schema.js";
 import { recomputeVendorCompleteness, logEnrichment } from "../helpers.js";
@@ -92,7 +93,7 @@ async function setHeroIfBlank(
       body: form,
     };
     const res = env.MAIN_APP
-      ? await env.MAIN_APP.fetch(new Request(url, init))
+      ? await env.MAIN_APP.fetch(mainAppBindingRequest(url, init))
       : await fetch(url, init);
     return res.ok;
   } catch {

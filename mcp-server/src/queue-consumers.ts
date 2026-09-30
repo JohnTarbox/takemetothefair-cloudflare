@@ -208,6 +208,37 @@ export async function sendViaCfEmail(
   }
 }
 
+/**
+ * OPE-1172 — send errors that can NEVER succeed on retry. An explicit
+ * allow-list: anything not matched here keeps the retry-then-DLQ path, because
+ * a transient failure misread as permanent is a dropped email, while the
+ * reverse only costs three wasted attempts.
+ *
+ * Each pattern is the provider's (or our own) exact wording, read from the
+ * stored `email_send_ledger.error` values, not reconstructed:
+ *   - suppression   "Cannot send emails to this recipient. This email address
+ *                    has been suppressed due to repeated bounces or because it
+ *                    reported your emails as spam"   (2026-09-26, a7e640ff…)
+ *   - bad address   "Invalid email address: Invalid email user"
+ *                                                   (2026-08-26, OPE-835)
+ *   - no recipient  our own `sendViaCfEmail` refusal above — the message is
+ *                    malformed and will be malformed on every redelivery.
+ *
+ * Before this, all three were retried 3× (10/20/40s) and parked in
+ * email-jobs-dlq: 4 sends, 4 provider rejection events, 4 error rows, for an
+ * outcome that was decided on the first attempt.
+ */
+const PERMANENT_SEND_ERRORS: RegExp[] = [
+  /has been suppressed due to repeated bounces/i,
+  /^Invalid email address\b/i,
+  /^no valid recipient in `to`$/,
+];
+
+export function isPermanentSendError(error: string | null | undefined): boolean {
+  const e = (error ?? "").trim();
+  return e.length > 0 && PERMANENT_SEND_ERRORS.some((re) => re.test(e));
+}
+
 export async function handleEmailBatch(
   batch: MessageBatch<EmailJobMessage>,
   env: ConsumerEnv
@@ -328,6 +359,27 @@ export async function handleEmailBatch(
         bodyHtml: m.body.html,
         bodyText: m.body.text,
       });
+      // OPE-1172 — a permanent rejection is decided on the first attempt.
+      // Ack it (no retry, no DLQ) and say so once, at warn, instead of four
+      // `error` rows that read like an outage.
+      if (isPermanentSendError(result.error)) {
+        await logError(env.DB, {
+          level: "warn",
+          source: "mcp:email-queue",
+          message: "env.EMAIL.send rejected permanently; not retrying",
+          sessionId,
+          context: {
+            permanent: true,
+            to: m.body.to,
+            subject: m.body.subject,
+            messageSource: m.body.source,
+            attempts: m.attempts,
+            error: result.error,
+          },
+        });
+        m.ack();
+        continue;
+      }
       // Retry with a modest backoff; after max_retries=3 the message parks in
       // email-jobs-dlq (no longer dropped). Cap low so transactional mail stays
       // near-real-time on a transient blip.

@@ -19,7 +19,6 @@ import {
   ScApiError,
   ScConfigError,
   requestIndexing,
-  type ScEnv,
   type RequestIndexingType,
 } from "@/lib/search-console";
 
@@ -59,7 +58,7 @@ export async function POST(request: Request) {
       ? (body.type as RequestIndexingType)
       : "URL_UPDATED";
 
-  const env = getCloudflareEnv() as unknown as ScEnv;
+  const env = getCloudflareEnv();
   try {
     const result = await requestIndexing(env, targetUrl, type);
     return NextResponse.json({ success: true, ...result });

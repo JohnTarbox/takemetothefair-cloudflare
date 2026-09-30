@@ -1,4 +1,5 @@
 import { NewsletterSignupBlock } from "@/components/newsletter/newsletter-signup-block";
+import { isPastUnconfirmed, PAST_UNCONFIRMED_LABEL } from "@/lib/event-lifecycle";
 import { getEventGallery } from "@/lib/event-photos";
 import { EventGallery } from "@/components/events/EventGallery";
 import { notFound } from "next/navigation";
@@ -21,6 +22,7 @@ import {
   Users,
   FileText,
   CheckCircle,
+  PawPrint,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -51,6 +53,7 @@ import { eventJoinProjection } from "@/lib/db/event-join-projection";
 import { DailyScheduleDisplay } from "@/components/events/DailyScheduleDisplay";
 import { EventDayImageStrip } from "@/components/events/EventDayImageStrip";
 import { parseJsonArray } from "@/types";
+import { filterPublicTags } from "@/lib/events/public-tags";
 import type { Metadata } from "next";
 import { auth } from "@/lib/auth";
 import { logError } from "@/lib/logger";
@@ -65,6 +68,7 @@ import { SameDayEventsButton } from "@/components/events/SameDayEventsButton";
 import { buildEventFaqItems } from "@/lib/event-faq";
 import { isFaqPilotEvent } from "@/lib/faq-pilot";
 import { SITE_URL } from "@takemetothefair/constants";
+import { buildAskAboutEventMailto, petPolicyDisplay } from "@takemetothefair/utils";
 import { getSeriesLanding } from "@/lib/series/get-series-landing";
 import { SeriesLandingPage } from "@/components/series/series-landing-page";
 import { buildSuperEventRef } from "@/lib/series/series-schema-org";
@@ -94,6 +98,7 @@ import { ScrollDepthTracker } from "@/components/ScrollDepthTracker";
 import { PrintBeacon } from "@/components/print/PrintBeacon";
 import { formatDateMedium } from "@/lib/datetime";
 import { cdnImage } from "@/lib/cdn-image";
+import { DERIVED_DATE_EXPLANATION, shouldShowProjectedDateCopy } from "@/lib/events/derived-date";
 
 export const revalidate = 300; // Cache for 5 minutes
 
@@ -477,6 +482,20 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
   const isAdmin = session?.user?.role === "ADMIN";
   const isVendor = !!vendorInfo;
   const isPastEvent = event.endDate ? new Date(event.endDate) < new Date() : false;
+
+  // OPE-851 Scope A — the same canonical URL the JSON-LD emits, carried into a
+  // contact link so a question about this event arrives identifying it. Built
+  // here rather than inline so the two cannot drift: a link pointing at a
+  // different URL than the one we publish would match nothing on arrival.
+  const askAboutCanonicalUrl =
+    event.series && event.startDate
+      ? `${SITE_URL}/events/${event.series.canonicalSlug}/${new Date(event.startDate).getUTCFullYear()}`
+      : `${SITE_URL}/events/${event.slug}`;
+  const askAboutHref = buildAskAboutEventMailto({
+    eventName: event.name,
+    year: event.startDate ? new Date(event.startDate).getUTCFullYear() : null,
+    canonicalUrl: askAboutCanonicalUrl,
+  });
   const eventCategories = parseJsonArray(event.categories);
   const [relatedEvents, relatedBlogPosts] = await Promise.all([
     getRelatedEvents(event.id, event.venueId, eventCategories),
@@ -567,6 +586,7 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
           categories={parseJsonArray(event.categories)}
           datesConfirmed={event.datesConfirmed}
           lifecycleStatus={event.lifecycleStatus}
+          pastUnconfirmed={isPastUnconfirmed(event)}
           previousStartDate={event.previousStartDate}
           previousEndDate={event.previousEndDate}
           eventDays={event.eventDays}
@@ -625,11 +645,35 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
           ]}
         />
         <FAQPageSchema items={faqItems} />
-        {event.status === "TENTATIVE" && (
+        {/* OPE-1098 — a TENTATIVE event whose date has passed is not an
+            unconfirmed FUTURE event. Display-only: the data stays TENTATIVE. */}
+        {isPastUnconfirmed(event) && (
+          <div className="mb-6 rounded-lg border border-border bg-muted p-4">
+            <p className="text-sm text-muted-foreground">
+              <strong>{PAST_UNCONFIRMED_LABEL}</strong> — this event&apos;s date has passed, and we
+              never confirmed with the organizer that it took place.
+            </p>
+          </div>
+        )}
+        {event.status === "TENTATIVE" && !isPastUnconfirmed(event) && (
           <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4">
             <p className="text-sm text-amber-800">
-              <strong>Tentative Event</strong> — This event has not yet been verified by our team.
-              Details may be incomplete or inaccurate.
+              {shouldShowProjectedDateCopy(event) ? (
+                // ⚠️ OPE-740 — the generic wording below is about the EVENT, not
+                // the DATE, and reads as "probably right, we just haven't rung
+                // them". For a projected row the date is the part that is
+                // uncertain, and nobody told it to us: we generated it by
+                // shifting last year's. Say that.
+                <>
+                  <strong>Projected dates</strong> — {DERIVED_DATE_EXPLANATION} We show them so you
+                  can plan roughly, but check with the organizer before travelling.
+                </>
+              ) : (
+                <>
+                  <strong>Tentative Event</strong> — This event has not yet been verified by our
+                  team. Details may be incomplete or inaccurate.
+                </>
+              )}
             </p>
           </div>
         )}
@@ -821,47 +865,26 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
             {(() => {
               const categories = parseJsonArray(event.categories);
               const tags = parseJsonArray(event.tags);
-              // UX-A1 item 4 (2026-06-04) — extended INTERNAL_TAGS to suppress
-              // operational/admin tags that don't belong on the public chip row.
-              // The earlier set covered ingest-source tags; the additions here
-              // catch scheduling-shape ("weekends-only"), workflow-state
-              // ("needs-review"), and admin-flag ("dedup-suspect") tags that
-              // operators apply for internal triage. Tags containing `.` are
-              // already excluded (versioned/qualified, e.g. "fmt.v2").
-              const INTERNAL_TAGS = new Set([
-                // Ingest-source
-                "imported",
-                "url-import",
-                "community-suggestion",
-                "vendor-submission",
-                // Scheduling-shape (UX-A1)
-                "weekends-only",
-                "weekdays-only",
-                "recurring",
-                "ongoing",
-                // Workflow/admin (UX-A1)
-                "needs-review",
-                "needs-image",
-                "needs-dates",
-                "dedup-suspect",
-                "draft",
-                "internal",
-              ]);
-              const publicTags = tags.filter(
-                (tag) =>
-                  !INTERNAL_TAGS.has(tag) &&
-                  !tag.includes(".") &&
-                  // Hide anything obviously admin-prefixed (e.g. "admin:hold").
-                  !tag.startsWith("admin:") &&
-                  !tag.startsWith("internal:")
-              );
+              // OPE-884 — the split moved to src/lib/events/public-tags.ts.
+              // What lived here was a denylist of NAMES, so every tag a new
+              // emitter invented walked straight through it: by 2026-09-10
+              // `src:daily-discovery`, `needs-enrichment` and
+              // `needs-enrichment:image` were leaking to visitors on 64 of 573
+              // upcoming events. The replacement keys on the SHAPE of an
+              // internal tag (namespaced / versioned / `needs-*`), which is the
+              // only form that holds without the emitters telling us first.
+              const publicTags = filterPublicTags(tags);
               return (
                 <>
                   <div>
                     <div className="flex flex-wrap gap-2 mb-3">
                       {event.featured && <Badge variant="warning">Featured</Badge>}
-                      {event.status === "TENTATIVE" && (
-                        <Badge variant="info">Tentative — Unverified</Badge>
+                      {isPastUnconfirmed(event) ? (
+                        <Badge variant="default">{PAST_UNCONFIRMED_LABEL}</Badge>
+                      ) : (
+                        event.status === "TENTATIVE" && (
+                          <Badge variant="info">Tentative — Unverified</Badge>
+                        )
                       )}
                       {/* TAX1 Phase 3 (2026-06-02) — A6 audience/access label.
                         Renders only for non-default audience/access pairs
@@ -1326,6 +1349,24 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
                   </div>
                 )}
 
+                {/* OPE-1061 — the EVENT's own answer only (never the venue's).
+                    UNSET / NOT_PUBLISHED render nothing; NO renders the
+                    service-animal exception, never a bare "No". */}
+                {(() => {
+                  const pet = petPolicyDisplay(event.petFriendly);
+                  if (!pet) return null;
+                  return (
+                    <div className="flex items-start gap-3" data-testid="event-pet-policy">
+                      <PawPrint
+                        className={`w-5 h-5 mt-0.5 ${pet.tone === "allowed" ? "text-green-600" : "text-amber-600"}`}
+                      />
+                      <div>
+                        <p className="font-medium text-foreground">{pet.label}</p>
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 {(event.estimatedAttendance || event.eventScale) && (
                   <div className="flex items-start gap-3">
                     <Users className="w-5 h-5 text-purple-500 mt-0.5" />
@@ -1617,6 +1658,32 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
                       Visit Website <ExternalLink className="w-3 h-3" />
                     </TrackedLink>
                   )}
+                </CardContent>
+              </Card>
+            )}
+
+            {/* OPE-851 Scope A — carry the event with the question.
+                A fair-goer asked us "is it ok to have a well-behaved dog on a
+                leash ?" and it arrived with parsed_url null and match_basis
+                'none', so nobody could tell which of ~13 fairs opening that
+                month he meant. The only recovery was to write back and ask.
+                The canonical URL rides in the mail body, which is what the
+                inbound parser reads — see buildAskAboutEventMailto. */}
+            {askAboutHref && (
+              <Card className="mt-6">
+                <CardContent className="pt-6">
+                  <h3 className="font-semibold text-foreground">Question about this event?</h3>
+                  <p className="mt-2 text-sm text-secondary/80">
+                    For details we don&apos;t list — pets, parking, accessibility — the organizer is
+                    the authority. If you&apos;d rather ask us, this carries the event with it so we
+                    know which one you mean.
+                  </p>
+                  <a
+                    href={askAboutHref}
+                    className="mt-4 inline-flex items-center gap-1 text-sm text-royal hover:text-navy"
+                  >
+                    Ask about this event
+                  </a>
                 </CardContent>
               </Card>
             )}

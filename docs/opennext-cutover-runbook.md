@@ -96,6 +96,16 @@ custom domain stay live through the soak as the rollback target.
 
 ### Stage 5 — Decommission (after clean soak)
 
+> **Status (2026-09-24, OPE-895): the Pages project and `meetmeatthefair-edge` are
+> both DELETED.** `meetmeatthefair-edge`, `takemetothefair-worker` and
+> `mmatf-sitemap-hotfix` were deleted by John on 2026-09-13/14. The `takemetothefair`
+> Pages project had its two custom domains (`meetmeatthefair.com`, `www`) detached —
+> apex 200 and `www` 301 verified after each — its 854 deployments cleared, and was
+> deleted on 2026-09-24. Its D1 (`DB`), KV (`RATE_LIMIT_KV`) and R2 (`VENDOR_ASSETS`)
+> bindings were NOT deleted; they are the production resources this Worker uses.
+> **The Pages rollback lever described in the stages above no longer exists** —
+> roll back by redeploying an earlier `meetmeatthefair-app` version.
+
 - Remove from `deploy.yml`: `deploy-pages` + `deploy-apex-worker` jobs.
 - Delete the Pages project `takemetothefair` and the `meetmeatthefair-edge` Worker.
 - Code cleanup (separate PRs): drop the queue-producer HTTP-proxy fallback in

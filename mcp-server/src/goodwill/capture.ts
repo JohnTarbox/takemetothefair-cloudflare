@@ -15,16 +15,30 @@
  * Promise.all siblings.
  */
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { eventDiscrepancies } from "../schema.js";
 import type { Db } from "../db.js";
 import { logError } from "../logger.js";
+import {
+  classifyComparisonTarget,
+  isPriorYearDrift,
+  stalePageConfidence,
+} from "./stale-page-scoring.js";
 import { initialCaptureScore } from "./queue-ranking.js";
 
 const OUTREACH_CANDIDATE_THRESHOLD = 0.6;
 
 /** field_class enum (mirrors the SQL column). */
-export type FieldClass = "date" | "hours" | "venue" | "status" | "price" | "existence" | "name";
+export type FieldClass =
+  | "date"
+  | "hours"
+  | "venue"
+  | "status"
+  | "price"
+  | "existence"
+  | "name"
+  // OPE-1065 — citation_flag rows only; see the schema comment.
+  | "other";
 
 /** detected_by enum.
  *
@@ -38,6 +52,12 @@ export type DetectedBy =
   | "stale_page_radar"
   | "self_consistency"
   | "holdout_sample"
+  // OPE-988 — the cited source page places itself in another state and never
+  // names the event's town or venue (source-agreement-capture.ts).
+  | "source_agreement"
+  // OPE-1065 — a live field contradicted by the source its own citation names
+  // (citation-flag-capture.ts). Never an outreach candidate.
+  | "citation_flag"
   | "manual";
 
 export interface CaptureDiscrepancyArgs {
@@ -55,9 +75,23 @@ export interface CaptureDiscrepancyArgs {
   divergentValue?: string | null;
   divergentSourceKey?: string | null;
   divergentSourceUrl?: string | null;
+  /**
+   * OPE-815 — force `outreach_candidate` off regardless of score.
+   *
+   * A finding can be worth recording and still be something we must never
+   * email a promoter about. An aggregator's stale listing is the aggregator's
+   * error, not theirs, and 8 of the 18 open radar rows carried
+   * `outreach_candidate=1` including aggregator ones.
+   *
+   * `undefined` leaves the normal threshold in charge; `false` overrides it.
+   * Deliberately one-directional — this can suppress, never promote.
+   */
+  forceOutreachCandidate?: false;
   /** 0..1 — confidence this is a real divergence. NULL ⇒ detector doesn't
    *  compute one. */
   confidence?: number | null;
+  /** OPE-815 — drift magnitude in days, for detectors that measure one. */
+  driftDays?: number | null;
   /** Short human-readable explanation. Used by /admin/data-health and as
    *  the audit trail when the row is resolved. */
   notes?: string | null;
@@ -141,10 +175,16 @@ export async function captureDiscrepancy(
       divergentSourceKey: args.divergentSourceKey ?? null,
       divergentSourceUrl: args.divergentSourceUrl ?? null,
       confidence: args.confidence ?? null,
+      driftDays: args.driftDays ?? null,
       notes: args.notes ?? null,
       resolutionStatus: "open",
       outreachPriorityScore: initialScore,
-      outreachCandidate: initialScore >= OUTREACH_CANDIDATE_THRESHOLD,
+      outreachCandidate:
+        args.forceOutreachCandidate === false
+          ? false
+          : initialScore >= OUTREACH_CANDIDATE_THRESHOLD,
+      // OPE-1082 — store the decision, or the re-ranker cannot honour it.
+      outreachSuppressed: args.forceOutreachCandidate === false,
     });
     return id;
   } catch (err) {
@@ -180,6 +220,14 @@ export async function captureDiscrepancy(
  * "is this a discrepancy at all?".
  */
 const LIFECYCLE_OWNED_REASONS: ReadonlySet<string> = new Set(["end_date_in_past"]);
+
+/** OPE-1032 — statuses where a PERSON decided the condition. Bookkeeping closures
+ *  (superseded_*) are not here: they settle nothing about the data. */
+const HUMAN_ADJUDICATED_STATUSES = [
+  "dismissed",
+  "resolved_authoritative",
+  "resolved_divergent",
+] as const;
 
 /**
  * Map an `evaluateGates` reason code to a discrepancy `field_class`.
@@ -252,6 +300,28 @@ export async function captureSelfConsistencyDiscrepancy(
 
   const fieldClass = gateReasonToFieldClass(args.reason);
   if (!fieldClass) return null;
+
+  // OPE-1032 — a human already adjudicated this exact condition. If a row for
+  // the same (event, reason) was dismissed or resolved while the value it was
+  // about is unchanged, re-filing it only re-asks a settled question — which is
+  // how dismissed rows reappeared in every weekly drain. A changed value (a new
+  // date, a renamed event) is a new condition and files normally.
+  const adjudicated = await db
+    .select({ id: eventDiscrepancies.id })
+    .from(eventDiscrepancies)
+    .where(
+      and(
+        eq(eventDiscrepancies.eventId, args.eventId),
+        eq(eventDiscrepancies.detectedBy, "self_consistency"),
+        eq(eventDiscrepancies.divergentValue, args.reason),
+        inArray(eventDiscrepancies.resolutionStatus, [...HUMAN_ADJUDICATED_STATUSES]),
+        args.authoritativeValue == null
+          ? isNull(eventDiscrepancies.authoritativeValue)
+          : eq(eventDiscrepancies.authoritativeValue, args.authoritativeValue)
+      )
+    )
+    .limit(1);
+  if (adjudicated.length > 0) return null;
 
   return captureDiscrepancy(db, {
     eventId: args.eventId,
@@ -336,9 +406,19 @@ export async function captureStalePageDiscrepancy(
     canonicalStartDate: Date | null;
     canonicalUrl: string | null;
     driftDays: number;
+    /**
+     * OPE-815 — the promoter's own website, so the comparison target can be
+     * classified organizer vs aggregator. Optional: when absent the target is
+     * `unknown`, which is NOT treated as organizer.
+     */
+    promoterWebsite?: string | null;
   }
 ): Promise<string | null> {
-  const conf = Math.min(1, Math.abs(args.driftDays) / 30);
+  const drift = Math.abs(args.driftDays);
+  const targetClass = classifyComparisonTarget(args.canonicalUrl, args.promoterWebsite);
+  const conf = stalePageConfidence(drift, targetClass);
+  const priorYear = isPriorYearDrift(drift);
+
   return captureDiscrepancy(db, {
     eventId: args.eventId,
     fieldClass: "date",
@@ -350,6 +430,16 @@ export async function captureStalePageDiscrepancy(
     divergentSourceKey: safeHost(args.canonicalUrl),
     divergentSourceUrl: args.canonicalUrl,
     confidence: conf,
-    notes: `drift ${args.driftDays}d between stored start_date and source's canonical date`,
+    // OPE-815 — magnitude as its own column, not only as prose in `notes`.
+    driftDays: drift,
+    // ⚠️ OPE-815 scope 4 — an aggregator's stale listing is not the promoter's
+    // error and must never drive a promoter email. Only an organizer-domain
+    // comparison is theirs to answer for.
+    forceOutreachCandidate: targetClass === "organizer" ? undefined : false,
+    notes:
+      `drift ${args.driftDays}d between stored start_date and source's canonical date` +
+      ` [target=${targetClass}` +
+      (priorYear ? `, source_holds_prior_year` : "") +
+      `]`,
   });
 }

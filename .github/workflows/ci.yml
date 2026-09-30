@@ -7,6 +7,12 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# OPE-908 — least privilege. packages:read is what setup-node's NODE_AUTH_TOKEN
+# needs to install @johntarbox/* from GitHub Packages; nothing here writes.
+permissions:
+  contents: read
+  packages: read
+
 jobs:
   test:
     name: Unit Tests
@@ -14,12 +20,12 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "20"
+          node-version: "22"
           cache: "npm"
           registry-url: "https://npm.pkg.github.com"
           scope: "@johntarbox"
@@ -50,12 +56,12 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "20"
+          node-version: "22"
           cache: "npm"
           registry-url: "https://npm.pkg.github.com"
           scope: "@johntarbox"
@@ -65,7 +71,11 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm ci
 
-      - name: Run MCP server tests
+      # OPE-907 — `npm test` in mcp-server runs BOTH projects: the Node suite
+      # (vitest.config.ts) and then the workerd suite (vitest.workerd.config.ts,
+      # @cloudflare/vitest-plugin: real local D1 + the BurstCounter Durable
+      # Object inside workerd). Either failing fails this step.
+      - name: Run MCP server tests (Node + workerd)
         run: npm test --workspace mcp-server
 
   lint:
@@ -74,12 +84,12 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "20"
+          node-version: "22"
           cache: "npm"
           registry-url: "https://npm.pkg.github.com"
           scope: "@johntarbox"
@@ -134,8 +144,46 @@ jobs:
       - name: Guard against Web APIs above the browser support floor (OPE-640)
         run: npx tsx scripts/check-browser-api-floor.ts
 
+      - name: Guard against unfalsified template assertions (OPE-771)
+        run: npx tsx scripts/check-template-assertions.ts
+
       - name: Guard against direct gtag() call sites (OPE-392)
         run: npx tsx scripts/check-gtag-call-sites.ts
+
+      - name: Guard the blind-dedup flag across the app/MCP seam (OPE-804)
+        run: npx tsx scripts/check-dedup-blind-contract.ts
+
+      - name: Guard the spam-recovery gate stays wired and gated (OPE-803)
+        run: npx tsx scripts/check-spam-recovery-wiring.ts
+
+      - name: Guard one fault-status vocabulary (OPE-811)
+        run: npx tsx scripts/check-fault-status-vocabulary.ts
+
+      - name: Guard analytics render states (OPE-808)
+        run: npx tsx scripts/check-analytics-render-states.ts
+
+      - name: Guard auto-rollover writer invariants (OPE-740)
+        run: npx tsx scripts/check-rollover-invariants.ts
+
+      - name: Guard the vendor write-log wiring (OPE-830)
+        run: npx tsx scripts/check-write-log-wiring.ts
+
+      # OPE-975 — OPE-246's probe rule, enforced: every declared execution path
+      # names a heartbeat probe or a waiver, and the probe registry matches its
+      # heartbeat_probes seed rows (read by replaying the migrations).
+      - name: Guard heartbeat probe coverage
+        run: npx tsx scripts/check-heartbeat-probes.ts
+
+      # OPE-949 — generated env types match the wrangler configs: binding names
+      # and kinds, regenerated from a lone copy of each config so no .env,
+      # .dev.vars or entry module changes the answer between machines.
+      - name: Guard generated env types against wrangler config drift
+        run: npx tsx scripts/check-env-types-drift.ts
+
+      # OPE-908 — every third-party action is SHA-pinned and every workflow
+      # declares its token permissions.
+      - name: Guard workflow action pins and permissions
+        run: npx tsx scripts/check-workflow-action-pins.ts
 
   e2e:
     name: E2E Tests
@@ -144,12 +192,12 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "20"
+          node-version: "22"
           cache: "npm"
           registry-url: "https://npm.pkg.github.com"
           scope: "@johntarbox"
@@ -181,7 +229,7 @@ jobs:
       # honest cache miss. Two entries, no cross-contamination.
       - name: Cache Playwright browsers
         id: playwright-cache
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-${{ steps.playwright-version.outputs.version }}-chromium-webkit
@@ -242,7 +290,7 @@ jobs:
           NEXTAUTH_URL: http://localhost:3000
 
       - name: Upload Playwright report
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
         with:
           name: playwright-report
@@ -256,12 +304,12 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "20"
+          node-version: "22"
           cache: "npm"
           registry-url: "https://npm.pkg.github.com"
           scope: "@johntarbox"
@@ -285,7 +333,7 @@ jobs:
 
       - name: Cache Playwright browsers
         id: playwright-cache
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-${{ steps.playwright-version.outputs.version }}-chromium
@@ -309,7 +357,7 @@ jobs:
         run: npm run test:smoke
 
       - name: Upload Playwright report
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
         with:
           name: smoke-test-report

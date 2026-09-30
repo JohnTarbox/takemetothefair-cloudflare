@@ -13,7 +13,7 @@
  *     MIDNIGHT of the last day, so an act playing at 3pm on closing day is
  *     legitimately end_date + 15h. The 2-day window still catches gross
  *     wrong-month / wrong-year rollover errors (the actual failure mode).
- *   - stale-imminent-lineup only flags upcoming events that ALREADY have a
+ *   - stale-imminent-lineup only flags in-window events (running or upcoming) that ALREADY have a
  *     lineup (≥1 CONFIRMED/PENDING appearance) — a brand-new event with no
  *     performers isn't an actionable "re-verify" target.
  *
@@ -31,6 +31,13 @@ import type { AuthContext } from "../auth.js";
 const DAY = 86400; // seconds
 /** end_date is midnight of the last day; 2 days clears the closing-day + TZ. */
 const RANGE_GRACE = 2 * DAY;
+/**
+ * OPE-959 — when an event is really over. `end_date` is stored as a point ON
+ * the last day (noon UTC since drizzle/0074; midnight on older rows), so an
+ * event is still running for the rest of that day. One day past `end_date`
+ * covers the whole closing day in every US timezone.
+ */
+const CLOSING_DAY_GRACE = DAY;
 
 export interface HealthCheck {
   key: string;
@@ -58,6 +65,8 @@ export async function getPerformerDataHealth(
   const now = Math.floor(Date.now() / 1000);
 
   // 1. Past-but-unresolved: event ended but the appearance is still PENDING.
+  //    OPE-959 — "ended" means past the whole closing day, not past the stored
+  //    end_date instant, or a PENDING act is flagged while the fair is running.
   const pastPending = await db
     .select({
       appearance_id: eventPerformers.id,
@@ -72,7 +81,7 @@ export async function getPerformerDataHealth(
       and(
         eq(eventPerformers.status, "PENDING"),
         isNotNull(events.endDate),
-        lt(events.endDate, new Date(now * 1000)),
+        sql`${events.endDate} + ${CLOSING_DAY_GRACE} < ${now}`,
         isNull(events.mergedInto)
       )
     )
@@ -104,14 +113,21 @@ export async function getPerformerDataHealth(
     )
     .limit(limit);
 
-  // 3. Stale imminent lineup: upcoming events (next N days) that HAVE a lineup
-  //    but whose roster hasn't been re-checked recently (OPE-123 fields).
+  // 3. Stale in-window lineup: events RUNNING NOW or starting within N days that
+  //    HAVE a lineup whose roster hasn't been re-checked recently (OPE-123 fields).
+  //
+  //    OPE-959 — this was `start_date BETWEEN now AND now + N`, so an event that
+  //    had already started failed the LOWER bound and was invisible for its
+  //    whole run: Litchfield Fair, mid-run with 9 CONFIRMED acts, read 0. The
+  //    window is an OVERLAP test — the event has not finished (its closing day
+  //    included) and starts within N days. Widening days_ahead could never fix it.
   const staleCutoff = new Date((now - staleDays * DAY) * 1000);
   const staleImminent = await db
     .select({
       event_id: events.id,
       event_slug: events.slug,
       start_date: events.startDate,
+      end_date: events.endDate,
       roster_checked_at: events.performerRosterCheckedAt,
       roster_status: events.performerRosterStatus,
     })
@@ -119,7 +135,8 @@ export async function getPerformerDataHealth(
     .where(
       and(
         isNotNull(events.startDate),
-        sql`${events.startDate} >= ${now} AND ${events.startDate} <= ${now + daysAhead * DAY}`,
+        sql`${events.startDate} <= ${now + daysAhead * DAY}
+          AND COALESCE(${events.endDate}, ${events.startDate}) + ${CLOSING_DAY_GRACE} >= ${now}`,
         isNull(events.mergedInto),
         or(
           isNull(events.performerRosterCheckedAt),
@@ -224,13 +241,14 @@ export async function getPerformerDataHealth(
     },
     {
       key: "stale_imminent_lineup",
-      title: `Upcoming event (≤${daysAhead}d) with a lineup not re-verified in ${staleDays}d`,
+      title: `In-window event (running now, or starting ≤${daysAhead}d) with a lineup not re-verified in ${staleDays}d`,
       suggested_action:
         "Re-ground the lineup against its source, then set_performer_roster_status VERIFIED.",
       count: staleImminent.length,
       findings: staleImminent.map((r) => ({
         ...r,
         start_date: iso(r.start_date),
+        end_date: iso(r.end_date),
         roster_checked_at: iso(r.roster_checked_at),
       })),
     },
@@ -289,7 +307,7 @@ export function registerPerformerHealthTool(server: McpServer, db: Db, auth: Aut
 
   server.tool(
     "get_performer_data_health",
-    "Read-only performer-appearance data-health report (OPE-124). Runs 7 invariant checks and returns findings grouped by check, each with entity IDs + reason + suggested action: (1) past event still PENDING, (2) performance time outside the event window (±2d grace), (3) upcoming event (≤days_ahead) with a lineup not re-verified in stale_days, (4) appearance pointing at a deleted/merged performer or merged event, (5) CONFIRMED appearance with no source_url, (6) likely-duplicate performers, (7) appearance attached to an event_day of a different event. Never mutates — produces a worklist for the re-verification drain. Admin only.",
+    "Read-only performer-appearance data-health report (OPE-124). Runs 7 invariant checks and returns findings grouped by check, each with entity IDs + reason + suggested action: (1) past event still PENDING, (2) performance time outside the event window (±2d grace), (3) in-window event — RUNNING NOW or starting within days_ahead — with a lineup not re-verified in stale_days, (4) appearance pointing at a deleted/merged performer or merged event, (5) CONFIRMED appearance with no source_url, (6) likely-duplicate performers, (7) appearance attached to an event_day of a different event. Never mutates — produces a worklist for the re-verification drain. Admin only.",
     {
       days_ahead: z
         .number()

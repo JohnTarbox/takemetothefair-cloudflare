@@ -31,6 +31,7 @@ import {
   unsafeSlug,
 } from "../helpers.js";
 import { combinedSimilarity } from "@takemetothefair/utils";
+import { toIsoDateOnlyInVenueZone } from "@takemetothefair/datetime";
 import { PERFORMER_ROSTER_STATUS_VALUES } from "@takemetothefair/constants";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
@@ -171,7 +172,46 @@ function appearanceOut(row: typeof eventPerformers.$inferSelect) {
     billing: row.billing,
     status: row.status,
     source_url: row.sourceUrl,
+    // OPE-961 — written by the status/slot tools since OPE-123 and returned by
+    // nothing, so a re-verification pass could not confirm its own stamps.
+    last_verified_at: toSec(row.lastVerifiedAt),
+    last_verified_source: row.lastVerifiedSource,
   };
+}
+
+/**
+ * OPE-1062 — is this appearance on one of the event's own calendar days?
+ *
+ * OPE-961 compared the set's INSTANT against the stored `end_date` INSTANT with
+ * zero tolerance. But `end_date` is a date-only column held at the house
+ * anchor, noon UTC (`normalizeEventDate`), so every act after 8am Eastern on
+ * the final day read as "outside the event": measured 2026-09-17, 89 of 375
+ * timed appearances flagged, all 89 on the event's own last day, and 0 of 375
+ * on the early side — a symmetric check behaving asymmetrically, because it
+ * compared a clock time with a date-shaped sentinel. (OPE-961's acceptance
+ * test asserted exactly that noon-anchored case was a hit; it read the anchor
+ * as truncation. It is the convention, so that test is rewritten here.)
+ *
+ * Now a calendar comparison in the venue zone — the zone date-only fields
+ * render in (OPE-482), via the shared `toIsoDateOnlyInVenueZone`:
+ *   - the set STARTS outside [first day, last day] → outside;
+ *   - a set that starts inside may run past midnight, so its END is outside
+ *     only if it lands after the morning following the last day.
+ * null when either side has no time. Deliberately still strict at the DAY
+ * edge — the ±2d grace in get_performer_data_health stays absent here.
+ */
+export function outsideEventWindow(
+  appearance: { performance_start: number | null; performance_end: number | null },
+  window: { start_sec: number | null; end_sec: number | null }
+): boolean | null {
+  const { performance_start: start, performance_end: end } = appearance;
+  if (start === null || window.start_sec === null || window.end_sec === null) return null;
+  const day = (sec: number) => toIsoDateOnlyInVenueZone(sec * 1000);
+  const firstDay = day(window.start_sec);
+  const lastDay = day(window.end_sec);
+  const startDay = day(start);
+  if (startDay < firstDay || startDay > lastDay) return true;
+  return end !== null && day(end) > day(window.end_sec + 86_400);
 }
 
 /** Shared writable performer fields (create + update). */
@@ -623,7 +663,7 @@ export function registerPerformerTools(server: McpServer, db: Db, auth: AuthCont
   // ── list_event_performers ─────────────────────────────────────────
   server.tool(
     "list_event_performers",
-    "List all appearances at an event, joined with performer name/slug, ordered by billing then start time. Call this FIRST before bulk-linking (roster-check). Admin only.",
+    "List all appearances at an event, joined with performer name/slug, ordered by billing then start time. Call this FIRST before bulk-linking (roster-check). OPE-961: each appearance carries last_verified_at (epoch seconds) and last_verified_source, so a re-verification pass can read back its own stamps; the top-level `event` carries the event's name, slug and raw window (ISO + epoch seconds), and each appearance carries outside_event_window — true when the set falls on a calendar day (America/New_York, the zone dates render in) outside the event's first..last day; a set may run past midnight after the last day (null when either side has no time). Admin only.",
     { event_id: z.string().min(1) },
     async (params) => {
       try {
@@ -637,13 +677,31 @@ export function registerPerformerTools(server: McpServer, db: Db, auth: AuthCont
           .innerJoin(performers, eq(eventPerformers.performerId, performers.id))
           .where(eq(eventPerformers.eventId, params.event_id))
           .orderBy(desc(eventPerformers.performanceStart));
+        const [event] = await db
+          .select({
+            name: events.name,
+            slug: events.slug,
+            startDate: events.startDate,
+            endDate: events.endDate,
+          })
+          .from(events)
+          .where(eq(events.id, params.event_id))
+          .limit(1);
+        const window = {
+          start_sec: toSec(event?.startDate),
+          end_sec: toSec(event?.endDate),
+        };
         const billingRank: Record<string, number> = { HEADLINER: 0, FEATURED: 1, SUPPORTING: 2 };
         const out = rows
-          .map((r) => ({
-            ...appearanceOut(r.appearance),
-            performer_name: r.name,
-            performer_slug: r.slug,
-          }))
+          .map((r) => {
+            const a = appearanceOut(r.appearance);
+            return {
+              ...a,
+              performer_name: r.name,
+              performer_slug: r.slug,
+              outside_event_window: outsideEventWindow(a, window),
+            };
+          })
           .sort(
             (a, b) =>
               (billingRank[a.billing ?? ""] ?? 3) - (billingRank[b.billing ?? ""] ?? 3) ||
@@ -654,7 +712,17 @@ export function registerPerformerTools(server: McpServer, db: Db, auth: AuthCont
             jsonContent({
               success: true,
               event_id: params.event_id,
+              event: event
+                ? {
+                    name: event.name,
+                    slug: event.slug,
+                    start_date: event.startDate?.toISOString() ?? null,
+                    end_date: event.endDate?.toISOString() ?? null,
+                    ...window,
+                  }
+                : null,
               count: out.length,
+              outside_event_window_count: out.filter((a) => a.outside_event_window === true).length,
               appearances: out,
             }),
           ],
@@ -960,13 +1028,33 @@ export async function linkAppearance(
     sourceUrl: string;
   }
 ): Promise<{ row: typeof eventPerformers.$inferSelect; created: boolean }> {
+  const now = new Date();
   const existing = await db
     .select()
     .from(eventPerformers)
     .where(appearanceWhere(a.eventId, a.performerId, a.eventDayId, a.performanceStart))
     .limit(1);
-  if (existing.length > 0) return { row: existing[0], created: false };
-  const now = new Date();
+
+  if (existing.length > 0) {
+    // OPE-791 — a repeat call is a RE-VERIFICATION, not a no-op.
+    //
+    // `source_url` is required on both callers, so reaching here means somebody
+    // has just re-grounded this appearance against the organizer's own page.
+    // Returning the row untouched threw that fact away and left an appearance
+    // verified today looking as stale as one nobody had checked in a month.
+    //
+    // Only the verification stamp moves. `source_url` keeps the provenance of
+    // the ORIGINAL write — where the appearance came from and where it was last
+    // confirmed are different questions, and overwriting the first with the
+    // second loses the answer to it.
+    const refreshed = await db
+      .update(eventPerformers)
+      .set({ lastVerifiedAt: now, lastVerifiedSource: a.sourceUrl, updatedAt: now })
+      .where(eq(eventPerformers.id, existing[0].id))
+      .returning();
+    return { row: refreshed[0] ?? existing[0], created: false };
+  }
+
   const rows = await db
     .insert(eventPerformers)
     .values({
@@ -979,6 +1067,16 @@ export async function linkAppearance(
       billing: a.billing,
       status: a.status,
       sourceUrl: a.sourceUrl,
+      // OPE-791 — the write IS the verification.
+      //
+      // Both callers require `source_url`, so an appearance cannot be created
+      // without the caller having grounded it. Leaving these NULL meant a
+      // just-grounded appearance was born "never verified" and immediately read
+      // as stale to the OPE-123 freshness rail. 25 of 26 rows since 2026-08-25
+      // survived only because an agent happened to follow the link call with a
+      // status call; that habit was the only thing holding the invariant.
+      lastVerifiedAt: now,
+      lastVerifiedSource: a.sourceUrl,
       createdAt: now,
       updatedAt: now,
     })

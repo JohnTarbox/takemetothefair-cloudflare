@@ -66,6 +66,14 @@ interface Event {
   // below the editorial-status dropdown so admins triaging a PENDING
   // event can see WHY it was held.
   gateFlags?: string | null;
+  // OPE-1117 — set only while the duplicate flag is unresolved.
+  possibleDuplicate?: {
+    id: string;
+    name: string;
+    slug: string;
+    status: string;
+    startDate: string | null;
+  } | null;
   eventDays?: EventDay[];
   sourceName?: string | null;
   sourceUrl?: string | null;
@@ -121,7 +129,10 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
       if (!res.ok) throw new Error("Event not found");
       const data = (await res.json()) as Event;
       setEvent(data);
-      setDatesTBD(!data.startDate || !data.datesConfirmed);
+      // OPE-1200 — TBD means "no dates", not "dates unconfirmed". Deriving it
+      // from !datesConfirmed ticked TBD on every dated-but-unconfirmed event,
+      // and saving then sent startDate/endDate = null, wiping real dates.
+      setDatesTBD(!data.startDate);
       setDiscontinuousDates(data.discontinuousDates ?? false);
       setIsStatewide(!!data.isStatewide);
       setStateCode((data.stateCode as StateCode) || "");
@@ -227,7 +238,9 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
       stateCode: stateCode || null,
       startDate: startDateISO,
       endDate: endDateISO,
-      datesConfirmed: !datesTBD,
+      // OPE-1200 — the form has no "confirmed" control of its own, so keep the
+      // stored value (the server only allows TRUE with a qualifying citation).
+      datesConfirmed: datesTBD ? false : (event?.datesConfirmed ?? false),
       discontinuousDates,
       ticketUrl: formData.get("ticketUrl") || null,
       ticketPriceMin: formData.get("ticketPriceMin")
@@ -639,6 +652,28 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
                   Read-only here in PR 1.
                 </p>
               </div>
+
+              {event.possibleDuplicate && (
+                <div className="rounded-md border border-amber-300 bg-amber-50 p-3">
+                  <Label className="text-amber-900">⚠ Possible duplicate</Label>
+                  <p className="text-xs text-amber-900 mt-1">
+                    Intake flagged this as possibly the same event as{" "}
+                    <a
+                      href={`/events/${event.possibleDuplicate.slug}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="font-medium underline"
+                    >
+                      {event.possibleDuplicate.name}
+                    </a>{" "}
+                    ({event.possibleDuplicate.status}). Nobody has ruled on it yet — decide in the{" "}
+                    <a href="/admin/duplicates/flags" className="font-medium underline">
+                      duplicate-flag queue
+                    </a>
+                    .
+                  </p>
+                </div>
+              )}
 
               {event.gateFlags && event.gateFlags !== "[]" && (
                 <div className="rounded-md border border-red-200 bg-red-50 p-3">

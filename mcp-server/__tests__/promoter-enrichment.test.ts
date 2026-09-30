@@ -355,3 +355,135 @@ describe("processPromoterEnrichmentJob", () => {
     expect(staged.some((c) => c.proposedField === "contact_phone")).toBe(true); // was empty
   });
 });
+
+// ---------------------------------------------------------------------------
+// OPE-963 — platform accounts and parent-org accounts must not auto-apply
+// ---------------------------------------------------------------------------
+import { socialLinksHaveNameAffinity } from "../src/enrichment/promoter-dispatch.js";
+
+describe("OPE-963 — promoter socials", () => {
+  let restore963: (() => void) | null = null;
+  afterEach(() => {
+    restore963?.();
+    restore963 = null;
+  });
+
+  it("THE WESTON CRAFT SHOW payload: Squarespace's own accounts yield NO social candidate", () => {
+    const html = jsonLd({
+      "@type": "Organization",
+      sameAs: [
+        "https://www.instagram.com/squarespace/?hl=en",
+        "https://www.facebook.com/squarespace",
+        "https://twitter.com/squarespace",
+      ],
+    });
+    expect(
+      extractPromoterSignals(html, "https://www.westoncraftshow.com").socialLinks
+    ).toBeUndefined();
+  });
+
+  it("a builder named only by the page's own generator meta is dropped too; a real handle beside it survives", () => {
+    const html =
+      `<meta name="generator" content="Strikingly">` +
+      jsonLd({
+        "@type": "Organization",
+        sameAs: [
+          "https://www.facebook.com/strikingly",
+          "https://www.instagram.com/westoncraftshow",
+        ],
+      });
+    const s = extractPromoterSignals(html, "https://westoncraftshow.com").socialLinks;
+    expect(s).toBeDefined();
+    const links = JSON.parse(s!.value) as Record<string, string>;
+    expect(Object.values(links)).toEqual(["https://www.instagram.com/westoncraftshow"]);
+  });
+
+  it("WORCESTER COUNTY 4-H payload has no name affinity (state 4-H + UMass CAFE)", () => {
+    const payload = JSON.stringify({
+      facebook: "https://www.facebook.com/mass4H",
+      twitter: "https://twitter.com/CAFE_UMass",
+      instagram: "https://www.instagram.com/cafe_umass/",
+      linkedin: "https://www.linkedin.com/showcase/umass-cafe/",
+    });
+    expect(
+      socialLinksHaveNameAffinity(payload, "Worcester County 4-H", "https://worcester4h.org")
+    ).toBe(false);
+  });
+
+  it("POSITIVE LANDMARK: the promoter's own handles have affinity (name token or site label)", () => {
+    expect(
+      socialLinksHaveNameAffinity(
+        JSON.stringify({ facebook: "https://facebook.com/WestonCraftShow" }),
+        "The Weston Craft Show",
+        null
+      )
+    ).toBe(true);
+    expect(
+      socialLinksHaveNameAffinity(
+        JSON.stringify({ instagram: "https://instagram.com/worcester4h" }),
+        "Worcester County 4-H",
+        "https://worcester4h.org"
+      )
+    ).toBe(true);
+  });
+
+  it("ONE named own handle is enough; opaque ids (channel id, profile.php, numeric group) are not evidence", () => {
+    // Measured on the 205 prod auto-merges: requiring EVERY link staged 33% of
+    // them, mostly genuine accounts beside a YouTube channel id.
+    const mixed = JSON.stringify({
+      facebook: "https://www.facebook.com/FryeburgFairMaine/",
+      youtube: "https://www.youtube.com/channel/UCLn8aDb85tYvY-yelSfEP4Q/",
+    });
+    expect(socialLinksHaveNameAffinity(mixed, "Fryeburg Fair", null)).toBe(true);
+    const opaqueOnly = JSON.stringify({
+      facebook: "https://www.facebook.com/profile.php?id=61552807701453",
+    });
+    expect(socialLinksHaveNameAffinity(opaqueOnly, "Kids Con New England", null)).toBe(false);
+  });
+
+  it("a trailing path word does not hide the named handle", () => {
+    const streams = JSON.stringify({
+      youtube: "https://www.youtube.com/@holycrosslutheran-kennebunk/streams",
+    });
+    expect(socialLinksHaveNameAffinity(streams, "Holy Cross Lutheran Church", null)).toBe(true);
+  });
+
+  it("SOWA BOSTON: a theme vendor's accounts (AncoraThemes) have no affinity", () => {
+    const theme = JSON.stringify({
+      facebook: "https://www.facebook.com/AncoraThemes/",
+      twitter: "https://twitter.com/ancora_themes",
+    });
+    expect(socialLinksHaveNameAffinity(theme, "SoWa Boston", "https://sowaboston.com")).toBe(false);
+  });
+
+  it("end to end, LIVE run: an affinity-less social payload is staged flagged and NOT applied", async () => {
+    const { db } = createTestDb();
+    const id = await insertPromoter(db, {
+      companyName: "Worcester County 4-H",
+      website: "https://worcester4h.org",
+    });
+    restore963 = mockSite(
+      jsonLd({
+        "@type": "Organization",
+        sameAs: ["https://www.facebook.com/mass4H", "https://twitter.com/CAFE_UMass"],
+      })
+    );
+    await processPromoterEnrichmentJob(db, ENV, {
+      promoterId: id,
+      jobRunId: "j963",
+      dryRun: false,
+    });
+    const [p] = await db
+      .select({ socials: promoters.socialLinks })
+      .from(promoters)
+      .where(eq(promoters.id, id));
+    expect(p.socials).toBeNull();
+    const [cand] = await db
+      .select()
+      .from(promoterEnrichmentCandidates)
+      .where(eq(promoterEnrichmentCandidates.promoterId, id));
+    expect(cand.proposedField).toBe("social_links");
+    expect(cand.decision).toBe("pending");
+    expect(JSON.parse(cand.flags as string)).toContain("social_no_name_affinity");
+  });
+});

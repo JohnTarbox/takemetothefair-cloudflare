@@ -12,12 +12,12 @@ import {
   blogPosts,
   blogSlugHistory,
   venues,
-  venueSlugHistory,
   promoters,
   promoterSlugHistory,
   performers,
   performerSlugHistory,
 } from "@/lib/db/schema";
+import { resolveVenueRedirect } from "@/lib/venues/slug-redirect";
 import { isPubliclyVisible, publicEventWhere, type EventLifecycle } from "@/lib/event-lifecycle";
 import {
   buildEntityEtag,
@@ -156,13 +156,13 @@ function bearerHeaderPresent(request: NextRequest): boolean {
 
 async function bearerMatchesEnv(
   request: NextRequest,
-  env: Record<string, unknown>
+  env: { CLAUDE_READONLY_TOKEN?: string }
 ): Promise<boolean> {
   const h = request.headers.get("authorization");
   if (!h || !h.startsWith("Bearer ")) return false;
   const presented = h.slice("Bearer ".length).trim();
   if (!presented) return false;
-  const expected = (env as { CLAUDE_READONLY_TOKEN?: string }).CLAUDE_READONLY_TOKEN;
+  const expected = env.CLAUDE_READONLY_TOKEN;
   return timingSafeEqualString(presented, expected);
 }
 
@@ -245,9 +245,9 @@ async function handleRouting(request: NextRequest) {
     return NextResponse.next();
   }
 
-  let env: Record<string, unknown> | null = null;
+  let env: CloudflareEnv | null = null;
   try {
-    env = getCloudflareContext().env as unknown as Record<string, unknown>;
+    env = getCloudflareContext().env;
   } catch {
     // Outside the Cloudflare runtime (local `next build`) — fall through.
     return NextResponse.next();
@@ -267,7 +267,7 @@ async function handleRouting(request: NextRequest) {
   ) {
     try {
       const cfCtx = getCloudflareContext();
-      const d1 = (cfCtx.env as unknown as { DB?: D1Database }).DB;
+      const d1 = cfCtx.env.DB;
       const cf = cfCtx.cf as
         | { asn?: number; asOrganization?: string; country?: string }
         | undefined;
@@ -709,38 +709,13 @@ async function handleRouting(request: NextRequest) {
     const db = drizzle(d1);
 
     try {
-      const [row] = await db
-        .select({ id: venues.id })
-        .from(venues)
-        .where(eq(venues.slug, unsafeSlug(slug)))
-        .limit(1);
-      if (row) return NextResponse.next();
-
-      // Walk slug history.
-      let cursor = slug;
-      const seen = new Set<string>([cursor]);
-      for (let hop = 0; hop < 5; hop++) {
-        const [historyRow] = await db
-          .select({ newSlug: venueSlugHistory.newSlug })
-          .from(venueSlugHistory)
-          .where(eq(venueSlugHistory.oldSlug, unsafeSlug(cursor)))
-          .orderBy(desc(venueSlugHistory.changedAt))
-          .limit(1);
-        if (!historyRow || seen.has(historyRow.newSlug)) break;
-        cursor = historyRow.newSlug;
-        seen.add(cursor);
-      }
-      if (cursor !== slug) {
-        const [target] = await db
-          .select({ id: venues.id })
-          .from(venues)
-          .where(eq(venues.slug, unsafeSlug(cursor)))
-          .limit(1);
-        if (target) {
-          const url = request.nextUrl.clone();
-          url.pathname = `/venues/${cursor}`;
-          return NextResponse.redirect(url, 301);
-        }
+      // OPE-1183 — shared, tested resolver; a merge tombstone (INACTIVE row at
+      // its parked slug) no longer short-circuits the walk.
+      const target = await resolveVenueRedirect(db, slug);
+      if (target) {
+        const url = request.nextUrl.clone();
+        url.pathname = `/venues/${target}`;
+        return NextResponse.redirect(url, 301);
       }
       return NextResponse.next();
     } catch {
@@ -850,7 +825,7 @@ async function handleRouting(request: NextRequest) {
 
   // ── /<key>.txt (IndexNow keyfile) ──────────────────────────────
   const requested = pathname.slice(1);
-  const key = (env as { INDEXNOW_KEY?: string }).INDEXNOW_KEY;
+  const key = env.INDEXNOW_KEY;
   if (!key || requested !== `${key}.txt`) {
     return NextResponse.next();
   }
@@ -959,9 +934,9 @@ async function applyConditionalGet(
   const matched = matchConditionalRoute(request.nextUrl.pathname);
   if (!matched) return response;
 
-  let env: Record<string, unknown>;
+  let env: CloudflareEnv;
   try {
-    env = getCloudflareContext().env as unknown as Record<string, unknown>;
+    env = getCloudflareContext().env;
   } catch {
     return response;
   }
@@ -1018,7 +993,10 @@ async function applyConditionalGet(
  * must revalidate before every reuse. That is what creates the conditional
  * request, while making it impossible to serve stale content.
  */
-function applyPublicCachePolicy(env: Record<string, unknown>, headers: Headers): void {
+function applyPublicCachePolicy(
+  env: { CONDITIONAL_GET_PUBLIC_CACHE?: string },
+  headers: Headers
+): void {
   if (String(env.CONDITIONAL_GET_PUBLIC_CACHE ?? "false") !== "true") return;
   headers.set("Cache-Control", "public, max-age=0, must-revalidate");
 }

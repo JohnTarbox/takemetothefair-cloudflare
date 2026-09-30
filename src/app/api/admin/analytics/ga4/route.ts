@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { isAuthorized } from "@/lib/api-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
-import { Ga4ApiError, Ga4ConfigError, getDashboardMetrics, type Ga4Env } from "@/lib/ga4";
+import { Ga4ApiError, Ga4ConfigError, getDashboardMetrics } from "@/lib/ga4";
 import { DateRangeError, parseAnalyticsParams } from "@/lib/analytics-params";
 
 /**
@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
   const params = parseAnalyticsParams(url.searchParams);
 
   try {
-    const env = getCloudflareEnv() as unknown as Ga4Env;
+    const env = getCloudflareEnv();
     const metrics = await getDashboardMetrics(env, {
       skipCache: params.refresh,
       dateRange: params.dateRange,

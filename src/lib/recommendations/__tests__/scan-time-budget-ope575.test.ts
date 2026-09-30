@@ -29,13 +29,42 @@ import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { getTableConfig } from "drizzle-orm/sqlite-core";
 import * as schema from "@/lib/db/schema";
-import { recommendationRules } from "@/lib/db/schema";
+import { recommendationItems, recommendationRules } from "@/lib/db/schema";
 import { is } from "drizzle-orm";
 import { SQLiteTable } from "drizzle-orm/sqlite-core";
-import { scanAll, SCAN_TIME_BUDGET_MS, type RuleDefinition } from "../engine";
+import { scanAll, SCAN_TIME_BUDGET_MS, WRITE_BATCH_SIZE, type RuleDefinition } from "../engine";
 
 let raw: Database.Database;
 let db: ReturnType<typeof drizzle<typeof schema>>;
+
+/**
+ * Every SQL statement better-sqlite3 prepared, tagged with whether it ran
+ * inside a `db.batch()` call. The batching guard below reads this.
+ */
+let prepared: Array<{ sql: string; inBatch: boolean }>;
+let batchSizes: number[];
+let inBatch = false;
+
+/**
+ * `db.batch()` is a D1 API the better-sqlite3 driver does not implement, so
+ * run the statements in order. Unlike D1 this is not atomic — fine here, since
+ * nothing below reasons about a partially-applied batch.
+ */
+function withBatch<T extends object>(d: T): T {
+  return Object.assign(d, {
+    batch: async (stmts: Array<PromiseLike<unknown>>) => {
+      batchSizes.push(stmts.length);
+      inBatch = true;
+      try {
+        const out: unknown[] = [];
+        for (const stmt of stmts) out.push(await stmt);
+        return out;
+      } finally {
+        inBatch = false;
+      }
+    },
+  });
+}
 
 function ddlFor(table: Parameters<typeof getTableConfig>[0]): string {
   const cfg = getTableConfig(table);
@@ -58,7 +87,14 @@ beforeEach(() => {
   for (const t of Object.values(schema)) {
     if (is(t, SQLiteTable)) raw.exec(ddlFor(t as never));
   }
-  db = drizzle(raw, { schema });
+  prepared = [];
+  batchSizes = [];
+  const realPrepare = raw.prepare.bind(raw);
+  raw.prepare = ((source: string) => {
+    prepared.push({ sql: source, inBatch });
+    return realPrepare(source);
+  }) as typeof raw.prepare;
+  db = withBatch(drizzle(raw, { schema }));
 });
 
 /** A rule that burns `ms` of wall clock and matches nothing. */
@@ -139,5 +175,85 @@ describe("the scan stops at a wall-clock budget", () => {
     // for that to still fit.
     expect(SCAN_TIME_BUDGET_MS).toBeLessThanOrEqual(150_000);
     expect(SCAN_TIME_BUDGET_MS).toBeGreaterThan(30_000);
+  });
+});
+
+/** A fast rule that matches `ids` — the 09-15 prod shape is 1,159 of these. */
+function matchingRule(ruleKey: string, ids: string[]): RuleDefinition {
+  return {
+    ruleKey,
+    title: ruleKey,
+    rationaleTemplate: "{n}",
+    severity: "yellow",
+    category: "revenue",
+    autoResolve: true,
+    run: async () => ids.map((id) => ({ targetType: "vendor", targetId: id, payload: { id } })),
+  } as unknown as RuleDefinition;
+}
+
+/** Item writes (INSERT/UPDATE on recommendation_items), split by batch membership. */
+function itemWrites() {
+  const isItemWrite = (q: string) =>
+    /^\s*(insert\s+into|update)\s+"?recommendation_items"?/i.test(q);
+  const writes = prepared.filter((p) => isItemWrite(p.sql));
+  return {
+    inside: writes.filter((w) => w.inBatch).length,
+    outside: writes.filter((w) => !w.inBatch).length,
+  };
+}
+
+describe("a rule's item writes go out in batches, not one round trip per match (OPE-575)", () => {
+  const ids = (n: number) => Array.from({ length: n }, (_, i) => `v-${String(i).padStart(4, "0")}`);
+
+  it("inserts 250 matches in ceil(250/WRITE_BATCH_SIZE) batches with zero unbatched item writes", async () => {
+    const res = await scanAll(db as never, [matchingRule("many", ids(250))], {
+      deadlineMs: 60_000,
+    });
+
+    expect(res.inserted).toBe(250);
+    const rows = await db.select().from(recommendationItems);
+    expect(rows).toHaveLength(250);
+
+    const w = itemWrites();
+    // Positive landmark first: the matcher DID see the writes. Without this, a
+    // regex that stopped matching would report "0 outside" on a broken engine.
+    expect(w.inside).toBe(250);
+    // The guard: this was 250 before the fix — one awaited INSERT per match.
+    expect(w.outside).toBe(0);
+    expect(batchSizes).toEqual([100, 100, 50]);
+  });
+
+  it("refresh and auto-resolve are batched too, and land the same rows the per-row loop did", async () => {
+    await scanAll(db as never, [matchingRule("many", ids(250))], { deadlineMs: 60_000 });
+    prepared = [];
+    batchSizes = [];
+
+    // 200 still match (refresh), 50 dropped out (auto-resolve).
+    const res = await scanAll(db as never, [matchingRule("many", ids(200))], {
+      deadlineMs: 60_000,
+    });
+
+    expect(res.refreshed).toBe(200);
+    expect(res.resolved).toBe(50);
+    const rows = await db.select().from(recommendationItems);
+    expect(rows).toHaveLength(250);
+    expect(rows.filter((r) => r.actedAt !== null)).toHaveLength(50);
+    // The 50 resolved are exactly the ones that left the match set.
+    const resolvedIds = rows
+      .filter((r) => r.actedAt !== null)
+      .map((r) => r.targetId)
+      .sort();
+    expect(resolvedIds).toEqual(ids(250).slice(200));
+
+    const w = itemWrites();
+    expect(w.inside).toBe(250);
+    expect(w.outside).toBe(0);
+    expect(batchSizes.every((n) => n <= WRITE_BATCH_SIZE)).toBe(true);
+  });
+
+  it("a rule with no matches and nothing to resolve issues no batch at all", async () => {
+    // D1's batch() rejects an empty statement list.
+    await scanAll(db as never, [matchingRule("none", [])], { deadlineMs: 60_000 });
+    expect(batchSizes).toEqual([]);
   });
 });

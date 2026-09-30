@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { eq, and, inArray, isNull, sql, desc, asc } from "drizzle-orm";
+import { mergeProductsJson, routeVendorCategoriesForWrite } from "@takemetothefair/vendor-linking";
 import {
   events,
   eventVendors,
@@ -15,6 +16,7 @@ import {
   venueSlugHistory,
   adminActions,
   eventDataCitations,
+  eventDuplicateDismissals,
   containsCI,
 } from "../schema.js";
 import {
@@ -31,8 +33,47 @@ import {
   coerceVenueNameAtIngest,
   VALID_TRANSITIONS,
   reportedNewValue,
+  presentStoredValue,
 } from "../helpers.js";
-import { rosterResearchTargetWhere } from "@takemetothefair/db-schema";
+import {
+  citationSupersedeScope,
+  dayHoursUnknown,
+  rosterResearchTargetWhere,
+} from "@takemetothefair/db-schema";
+import {
+  fetchImageWithFallback,
+  findPromoterDuplicates,
+  imageFetchHeaders,
+  ownedInboundAttachmentKey,
+  readInboundAttachmentAsResponse,
+  checkImageUrl,
+} from "@takemetothefair/utils";
+
+/**
+ * OPE-1112 — `logo_url` must point at an image, on every writer.
+ *
+ * The self-service form and the admin API enforce this through
+ * `imageUrlSchema` in @takemetothefair/validation; these two MCP tools have
+ * their own zod shapes, so they need their own reference to the SAME
+ * predicate. Enforcing it on the form alone would just move the bad writes to
+ * whichever surface was left unguarded — and `update_vendor` is exactly the
+ * tool an agent reaches for.
+ */
+const logoUrlParam = z
+  .string()
+  .optional()
+  .superRefine((v, ctx) => {
+    const verdict = checkImageUrl(v);
+    if (!verdict.ok) ctx.addIssue({ code: "custom", message: verdict.reason });
+  });
+import {
+  EVENT_CATEGORIES,
+  EXTRACTION_REJECT_FAMILIES,
+  humanRejectSignature,
+  invalidEventCategories,
+  rejectReasonRequired,
+} from "@takemetothefair/constants";
+import { emitExtractionFault } from "../faults/extraction-emitter.js";
 import { recordSlugRename } from "../slug-history.js";
 import { geocodeNewVenueViaMainApp } from "../venues/geocode-new.js";
 import { checkDuplicateViaMainApp } from "../duplicates/check-duplicate.js";
@@ -42,6 +83,8 @@ import {
   PAYMENT_STATUS_ENUM,
   PARTICIPATION_TYPE_ENUM,
   computePublicDates,
+  publicDatesFromDaysSet,
+  recomputePublicDatesStmt,
   publicUrlFor,
   triggerIndexNow,
   PUBLIC_EVENT_STATUSES,
@@ -57,11 +100,18 @@ import {
   areDatesContiguous,
   evaluateGates,
   eventApprovalBlockReason,
+  reviewerMarkerInCopy,
+  reviewerMarkerWarning,
   mergedTombstoneBlockReason,
   normalizeEventDate,
-  classifySource,
+  reclassifySourceOnEdit,
   assertIngestionMethod,
   nextGateFlags,
+  buildPlaceholderEmail,
+  validateVenueLifecycle,
+  checkFormerVenue,
+  gateDatesConfirmed,
+  organizerHostsFrom,
 } from "@takemetothefair/utils";
 import {
   eventOutboxStatements,
@@ -74,12 +124,35 @@ import {
   PUBLIC_ACCESS,
   computePromoterEnrichment,
   VENDOR_ROSTER_STATUS_VALUES,
+  PERFORMER_ROSTER_STATUS_VALUES,
 } from "@takemetothefair/constants";
+import {
+  ACTIVE_FROM_DESCRIPTION,
+  ACTIVE_TO_DESCRIPTION,
+  parseActiveWindow,
+} from "./event-window.js";
+import {
+  PERFORMER_ROSTER_UNSET,
+  countPerformersByEvent,
+  hasPerformersWhere,
+  performerRosterStatusWhere,
+} from "./performer-selection.js";
 import { attachEventToSeries } from "@takemetothefair/event-series";
 import { dollarsToCents } from "../helpers.js";
 import { recordMutation } from "../audit/record-mutation.js";
 import { notifyApprovalIfNeeded } from "../approval-notification.js";
 import { registerCreateOrLinkVendorTool } from "./admin-create-or-link-vendor.js";
+import {
+  petFriendlyWriteError,
+  type PetFriendly,
+  withoutGooglePlacesPhoto,
+} from "@takemetothefair/utils";
+import {
+  PET_FRIENDLY_EVIDENCE_PARAM,
+  PET_FRIENDLY_PARAM,
+  writeEventPetCitation,
+  writeVenuePetCitation,
+} from "./pet-friendly.js";
 import { registerEnrichmentReviewTools } from "./admin-enrichment-review.js";
 import { registerPromoterEnrichmentReviewTools } from "./admin-promoter-enrichment-review.js";
 import { registerPerformerEnrichmentReviewTools } from "./admin-performer-enrichment-review.js";
@@ -111,6 +184,18 @@ import { registerAgentHeartbeatTools } from "./admin-agent-heartbeat.js";
 import { registerSiteHealthSweepTool } from "./admin-site-health-sweep.js";
 import { registerPendingReplyTools } from "./admin-pending-replies.js";
 import { registerSupportObligationTools } from "./admin-support-obligations.js";
+import { registerExtractionFaultTools } from "./admin-extraction-faults.js";
+import { registerFaultFamilyTools } from "./admin-fault-family.js";
+import {
+  VENUE_LIFECYCLE_PARAMS,
+  applyVenueLifecycleUpdate,
+  loadGuardVenue,
+  writeVenueLifecycleCitations,
+} from "../venues/lifecycle.js";
+import { registerVenueHistoryTools } from "./admin-venue-history.js";
+import { registerFindDuplicateVenuesTool } from "./admin-find-duplicate-venues.js";
+import { registerIdeaTools } from "./admin-ideas.js";
+import { registerEmailThreadTools } from "./admin-email-threads.js";
 import { registerGscBackfillTools } from "./admin-gsc-backfill.js";
 import { registerVendorDigestTools } from "./admin-vendor-digest.js";
 import { registerSourceQualityTool } from "./admin-source-quality.js";
@@ -124,13 +209,38 @@ import { registerGa4LivenessTool } from "./admin-ga4-liveness.js";
 import { registerLogVendorOutreachTool } from "./admin-log-vendor-outreach.js";
 import { registerClaimCorroborateTool } from "./admin-claim-corroborate.js";
 import { registerPhotoProposalTools } from "./admin-photo-proposals.js";
-import type { MainAppEnv as MainAppEnvForCorroborate } from "../main-app-fetch.js";
+import { registerHeroProposalTools } from "./admin-hero-proposals.js";
+import { registerCategoryCleanupTool } from "./admin-category-cleanup.js";
+import { registerPropagateHoursTool } from "./admin-propagate-hours.js";
 import {
   registerCitationTools,
   DENORM_FIELD_MAP as CITATION_DENORM_FIELD_MAP,
   SOURCE_TYPE_VALUES as CITATION_SOURCE_TYPE_VALUES,
 } from "./admin-citations.js";
 import { registerEventNameVariantTools } from "./admin-event-name-variants.js";
+
+/**
+ * OPE-1110 — fields `update_event` records a citation for when one is passed.
+ *
+ * The denorm map's keys, plus fields that are tracked for PROVENANCE but must
+ * not join the denorm map itself. `promoter_id` is the case: who runs an event
+ * is structural data by K4's own standard ("the highest-stakes data on the site
+ * MUST carry an auditable source URL"), but adding it to DENORM_FIELD_MAP would
+ * also let `create_event_citation(update_event_column=true)` write an
+ * unvalidated promoter id into an FK column. `update_event` validates the
+ * promoter exists before writing, so tracking it HERE is safe.
+ */
+const CITATION_TRACKED_WITHOUT_DENORM: ReadonlySet<string> = new Set(["promoter_id"]);
+function isCitationTracked(field: string): boolean {
+  return field in CITATION_DENORM_FIELD_MAP || CITATION_TRACKED_WITHOUT_DENORM.has(field);
+}
+
+/** Written by update_event itself, not by the caller — never "ignored provenance". */
+const CITATION_SYNTHETIC_FIELDS: ReadonlySet<string> = new Set(["gate_flags"]);
+import {
+  PROMOTER_OPERATING_STATUSES,
+  validatePromoterSuccession,
+} from "../promoters/succession.js";
 
 const PUBLIC_EVENT_SET = new Set<string>(PUBLIC_EVENT_STATUSES);
 const PUBLIC_VENDOR_SET = new Set<string>(PUBLIC_VENDOR_STATUSES);
@@ -160,6 +270,46 @@ interface Env {
   /** OPE-163 — customer-facing reply send gate. reply_to_inbound_email refuses
    *  to send unless this equals "true". Shipped OFF (OPE-6). */
   EMAIL_REPLY_ENABLED?: string;
+  /** OPE-409 — upload_event_image reads our own `inbound-attachments/` objects
+   *  through this binding instead of over the public CDN edge (wrangler.toml
+   *  binds it; optional here so an unbound environment refuses loudly). */
+  VENDOR_ASSETS?: R2Bucket;
+}
+
+/**
+ * OPE-1061 — the pet_friendly write gate for both MCP writers. Evidence with no
+ * value is refused too: silently dropping it would read as "recorded".
+ */
+function petFriendlyParamError(
+  value: PetFriendly | undefined,
+  evidence: z.infer<typeof PET_FRIENDLY_EVIDENCE_PARAM>
+): string | null {
+  if (value === undefined) {
+    return evidence
+      ? "pet_friendly_evidence was given without pet_friendly — say which value it supports."
+      : null;
+  }
+  return petFriendlyWriteError(value, evidence ?? null);
+}
+
+/**
+ * OPE-1069 — "the organizer publishes no closing time" is a claim about a
+ * source, so it needs one: refuse it alongside a close time (a contradiction)
+ * or without notes saying where the writer looked.
+ */
+function closeTimeUnpublishedError(args: {
+  closeTimeUnpublished: boolean;
+  closeTime: string | null;
+  internalNotes: string | null;
+}): string | null {
+  if (!args.closeTimeUnpublished) return null;
+  if (args.closeTime) {
+    return "close_time_unpublished=true contradicts a close_time — omit close_time (or pass null) when the organizer publishes none.";
+  }
+  if (!args.internalNotes?.trim()) {
+    return "close_time_unpublished=true needs internal_notes saying where you looked (the organizer page and what it says), so the finding can be checked later.";
+  }
+  return null;
 }
 
 export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext, env?: Env) {
@@ -282,8 +432,14 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   registerCrossingRecordTools(server, auth, env);
   registerAgentHeartbeatTools(server, auth, env);
   registerSiteHealthSweepTool(server, auth, env);
+  registerFindDuplicateVenuesTool(server, auth, env);
   registerPendingReplyTools(server, db, auth);
   registerSupportObligationTools(server, db, auth);
+  registerExtractionFaultTools(server, db, auth);
+  registerFaultFamilyTools(server, db, auth);
+  registerIdeaTools(server, db, auth);
+  registerVenueHistoryTools(server, db, auth);
+  registerEmailThreadTools(server, db, auth);
   registerGscBackfillTools(server, auth, env);
   registerVendorDigestTools(server, auth, env);
   registerSourceQualityTool(server, db, auth);
@@ -317,11 +473,17 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
 
   // OPE-237 — the declared-website corroboration pass. The classifier shipped
   // with PR #791 and had no caller; this is its trigger.
-  registerClaimCorroborateTool(server, auth, env as unknown as MainAppEnvForCorroborate);
+  registerClaimCorroborateTool(server, auth, env);
 
   // OPE-240 — read the staged booth-photo proposals. The PHOTO_AUTOWRITE_ENABLED
   // gate is meant to be judged on these, and they were unreadable outside /admin.
   registerPhotoProposalTools(server, db, auth);
+  // OPE-227 — the photo flywheel's hero proposals: list + approve/reject.
+  registerHeroProposalTools(server, db, auth, env);
+  // OPE-1058 — the operator handle on the one-time category rewrite.
+  registerCategoryCleanupTool(server, auth, env);
+  // OPE-1078 — carry a sourced day's hours to a recurring market's siblings.
+  registerPropagateHoursTool(server, db, auth);
 
   // ── list_all_events ────────────────────────────────────────────
   // Whitelist of event fields that can be filtered for NULL values
@@ -386,11 +548,29 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .describe(
           "OPE-13 rails: filter by vendor-roster research state (multi-valued OR). E.g. ['NEEDS_RESEARCH'] lists the un-researched drain queue; ['PARTIAL'] locates a crashed run's resume point. Each row returns vendor_roster_status / _checked_at / _source_url / _offset + vendor_count so the roster drain can select targets in ONE call instead of pre-checking events one at a time."
         ),
+      performer_roster_status: z
+        // OPE-960 — the performer twin of vendor_roster_status (OPE-264), over
+        // the OPE-123 columns. UNSET selects NULL: most events have never had
+        // a lineup verdict written, and OPE-547 is the record of what happens
+        // when that third population is silently unselectable.
+        .array(z.enum([...PERFORMER_ROSTER_STATUS_VALUES, PERFORMER_ROSTER_UNSET]))
+        .optional()
+        .describe(
+          "OPE-960: filter by performer-lineup research state (multi-valued OR). 'UNSET' selects events with NO status written yet (the majority). E.g. ['NEEDS_RESEARCH','UNSET'] is the full un-researched worklist. Each row returns performer_roster_status / _checked_at / _source_url + performer_count. Same research-target default as vendor_roster_status (see include_non_research_targets)."
+        ),
+      has_performers: z
+        .boolean()
+        .optional()
+        .describe(
+          "OPE-960: true = only events with at least one event_performers row (any status); false = only events with none. With active_from/active_to this is the nightly re-verification set in one call."
+        ),
+      active_from: z.string().optional().describe(ACTIVE_FROM_DESCRIPTION),
+      active_to: z.string().optional().describe(ACTIVE_TO_DESCRIPTION),
       include_non_research_targets: z
         .boolean()
         .optional()
         .describe(
-          "OPE-528: by default a vendor_roster_status filter returns only rows a drain could close — APPROVED, not a merge tombstone, and not a recurring farmers market (they publish no exhibitor roster and the recurrence re-mints one row per week). Set true to see the excluded rows; they are excluded from the worklist, not hidden."
+          "OPE-528: by default a vendor_roster_status or performer_roster_status filter returns only rows a drain could close — APPROVED, not a merge tombstone, and not a recurring farmers market (they publish no exhibitor roster and the recurrence re-mints one row per week). Set true to see the excluded rows; they are excluded from the worklist, not hidden."
         ),
       sort: z
         .enum(["end_date_desc", "end_date_asc", "start_date_desc", "start_date_asc"])
@@ -431,6 +611,29 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           }
         }
       }
+      const window = parseActiveWindow(params);
+      if (!window.ok) {
+        return {
+          content: [jsonContent({ error: "invalid_window", message: window.message })],
+          isError: true,
+        };
+      }
+      conditions.push(...window.conditions);
+      if (params.has_performers !== undefined) {
+        conditions.push(
+          params.has_performers ? hasPerformersWhere() : sql`NOT ${hasPerformersWhere()}`
+        );
+      }
+      const performerRoster = params.performer_roster_status ?? [];
+      if (performerRoster.length > 0) {
+        conditions.push(performerRosterStatusWhere(performerRoster));
+      }
+      const rosterFilterActive =
+        (params.vendor_roster_status?.length ?? 0) > 0 || performerRoster.length > 0;
+      if (rosterFilterActive && !params.include_non_research_targets) {
+        // OPE-528 — see below; applied once whichever roster filter asked.
+        conditions.push(rosterResearchTargetWhere());
+      }
       if (params.vendor_roster_status && params.vendor_roster_status.length > 0) {
         // Index-backed by idx_events_vendor_roster_status (partial, IS NOT NULL).
         conditions.push(inArray(events.vendorRosterStatus, params.vendor_roster_status));
@@ -445,10 +648,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         // Shares ONE definition with the main app's get_roster_coverage
         // totals, which is the point: the two counts differed by exactly 3
         // (merge tombstones, dropped by coverage and not here) with no rule
-        // stated anywhere.
-        if (!params.include_non_research_targets) {
-          conditions.push(rosterResearchTargetWhere());
-        }
+        // stated anywhere. (Pushed above, shared with performer_roster_status.)
       }
 
       // Default is insertion order (unchanged behaviour); an explicit sort lets the
@@ -485,19 +685,33 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           vendorRosterCheckedAt: events.vendorRosterCheckedAt,
           vendorRosterSourceUrl: events.vendorRosterSourceUrl,
           vendorRosterOffset: events.vendorRosterOffset,
+          performerRosterStatus: events.performerRosterStatus,
+          performerRosterCheckedAt: events.performerRosterCheckedAt,
+          performerRosterSourceUrl: events.performerRosterSourceUrl,
         })
         .from(events)
         .leftJoin(venues, eq(events.venueId, venues.id))
         .leftJoin(promoters, eq(events.promoterId, promoters.id));
 
-      const filtered = conditions.length > 0 ? query.where(and(...conditions)) : query;
+      const where = conditions.length > 0 ? and(...conditions) : undefined;
+      const filtered = where ? query.where(where) : query;
       const sorted = orderByClause ? filtered.orderBy(orderByClause) : filtered;
       const eventRows = await sorted.limit(limit).offset(offset);
+
+      // OPE-960 scope 3 — the same joins and WHERE, counted, so a sweep can
+      // prove it saw every row instead of inferring it from a short page.
+      const countQuery = db
+        .select({ n: sql<number>`count(*)` })
+        .from(events)
+        .leftJoin(venues, eq(events.venueId, venues.id));
+      const [{ n: totalMatching }] = await (where ? countQuery.where(where) : countQuery);
 
       // Batch-fetch vendor counts per event
       const eventIds = eventRows.map((e) => e.id);
       const vendorCounts: Record<string, { total: number; applied: number; confirmed: number }> =
         {};
+
+      const performerCounts = await countPerformersByEvent(db, eventIds);
 
       if (eventIds.length > 0) {
         const allApps = await db
@@ -545,6 +759,13 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           : null,
         vendor_roster_source_url: e.vendorRosterSourceUrl ?? null,
         vendor_roster_offset: e.vendorRosterOffset ?? null,
+        // OPE-960 — performer twin of the four fields above.
+        performer_count: performerCounts.get(e.id) ?? 0,
+        performer_roster_status: e.performerRosterStatus ?? null,
+        performer_roster_checked_at: e.performerRosterCheckedAt
+          ? e.performerRosterCheckedAt.toISOString()
+          : null,
+        performer_roster_source_url: e.performerRosterSourceUrl ?? null,
       }));
 
       return {
@@ -552,7 +773,8 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           jsonContent({
             count: output.length,
             offset,
-            has_more: output.length === limit,
+            total_matching: Number(totalMatching),
+            has_more: offset + output.length < Number(totalMatching),
             events: output,
           }),
         ],
@@ -580,6 +802,12 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .describe(
           "OPE-450 — when rejecting BECAUSE this row duplicates another, the keeper's event id. Records the adjudication as a fact instead of leaving it inferrable only from the matcher's guess. Omit and it is filled from `possible_duplicate_of` automatically when that is set, so the common case needs nothing extra. Ignored unless status is REJECTED."
         ),
+      reject_reason: z
+        .enum(EXTRACTION_REJECT_FAMILIES)
+        .optional()
+        .describe(
+          "OPE-463 — WHY this extractor-created row is being rejected, as a cpi.config family_id. REQUIRED when rejecting a row whose ingestion_method demands it (today: email_submission); ignored otherwise. Measured 2026-09-06: lifecycle_reason was NULL on all 36 REJECTED email_submission events, so every one of those human adjudications — the highest-quality label this system receives about what the extractor got wrong — was discarded. Typed as family_id rather than free text so CPI Tier-0 classify resolves with no mapping layer."
+        ),
     },
     async (params) => {
       const eventRows = await db
@@ -597,6 +825,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           // OPE-450: the matcher's guess, used as the default adjudication
           // target when an operator rejects without naming one.
           possibleDuplicateOf: events.possibleDuplicateOf,
+          // OPE-463: decides whether a reject reason is required.
+          ingestionMethod: events.ingestionMethod,
+          // OPE-1114 — read to warn when public copy still carries a reviewer note.
+          description: events.description,
         })
         .from(events)
         .where(eq(events.id, params.event_id))
@@ -629,6 +861,38 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         return { content: [{ type: "text", text: tombstoneReason }], isError: true };
       }
 
+      // OPE-463 — a reject on a machine-created row is a verdict on the
+      // extractor, and we have been throwing every one of them away.
+      //
+      // Measured 2026-09-06: `lifecycle_reason` NULL on all 36 REJECTED
+      // `email_submission` events. Those are 36 expert judgements about what
+      // the extractor got wrong, discarded — and the classifier that produced
+      // the rows has never been revised against any of them.
+      //
+      // ⚠️ Scoped to ingestion methods where a machine wrote the row. A human
+      // rejecting a hand-entered admin event is not labelling an extractor;
+      // demanding a family there would collect noise and train the requirement
+      // into a nuisance.
+      if (params.status === "REJECTED" && rejectReasonRequired(event.ingestionMethod)) {
+        if (!params.reject_reason) {
+          return {
+            content: [
+              {
+                type: "text",
+                text:
+                  `This event was created by the ${event.ingestionMethod} extractor, so rejecting it ` +
+                  `requires \`reject_reason\` — the fault family that explains WHY.\n\n` +
+                  `Valid values: ${EXTRACTION_REJECT_FAMILIES.join(", ")}\n\n` +
+                  `Your verdict is the highest-quality signal we get about what the extractor got ` +
+                  `wrong; without it the reject is indistinguishable from any other and the ` +
+                  `extractor never learns. (OPE-463)`,
+              },
+            ],
+            isError: true,
+          };
+        }
+      }
+
       // OPE-244 #3 — same ingest gate as the admin approve route: don't let a
       // venue-less non-statewide event reach APPROVED (it would have no
       // derivable Event.location). Only blocks the transition INTO APPROVED.
@@ -648,9 +912,35 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       // operator nothing — but only ever on a REJECTED transition, because the
       // column means "a human ruled this a duplicate", and no other transition
       // carries that meaning.
+      //
+      // OPE-1117 — except when a human has already ruled THAT pair "not a
+      // duplicate". Defaulting from a dismissed flag would turn an unrelated
+      // rejection into a duplicate adjudication against an event it does not
+      // duplicate, which OPE-450's pre-create check then trusts. An explicit
+      // `rejected_as_duplicate_of` is still honoured: that is a new ruling.
+      let flagDismissed = false;
+      if (
+        params.status === "REJECTED" &&
+        !params.rejected_as_duplicate_of &&
+        event.possibleDuplicateOf
+      ) {
+        const hit = await db
+          .select({ id: eventDuplicateDismissals.id })
+          .from(eventDuplicateDismissals)
+          .where(
+            and(
+              eq(eventDuplicateDismissals.eventId, event.id),
+              eq(eventDuplicateDismissals.candidateId, event.possibleDuplicateOf)
+            )
+          )
+          .limit(1);
+        flagDismissed = hit.length > 0;
+      }
       const rejectedAsDuplicateOf =
         params.status === "REJECTED"
-          ? (params.rejected_as_duplicate_of ?? event.possibleDuplicateOf ?? null)
+          ? (params.rejected_as_duplicate_of ??
+            (flagDismissed ? null : event.possibleDuplicateOf) ??
+            null)
           : null;
 
       await db
@@ -661,8 +951,32 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           // Only written on a REJECTED transition; leaving it untouched
           // otherwise preserves the record if the row is later re-rejected.
           ...(params.status === "REJECTED" ? { rejectedAsDuplicateOf } : {}),
+          // OPE-463 — persist the operator's verdict on the row itself, so the
+          // label survives independently of the fault ledger. Until now this
+          // column was NULL on all 36 REJECTED email-submission events.
+          ...(params.status === "REJECTED" && params.reject_reason
+            ? { lifecycleReason: params.reject_reason }
+            : {}),
         })
         .where(eq(events.id, event.id));
+
+      // OPE-463 emitter 3 — the human verdict becomes a CPI candidate.
+      //
+      // Keyed on the FAMILY, not the event: "the extractor over-splits" is one
+      // fault seen N times, not N faults. Keying on the event id would leave
+      // `count` permanently at 1 and the recurrence threshold could never be
+      // met. Emit-only — nothing here writes an `ope_id` or calls the filing
+      // rail (scope 5: a lane with a 50% hard-fail rate wired to auto-file
+      // would flood the tracker on its first night).
+      if (params.status === "REJECTED" && params.reject_reason) {
+        const source = event.ingestionMethod ?? "unknown";
+        await emitExtractionFault(db, {
+          signature: humanRejectSignature(params.reject_reason, source),
+          source,
+          familyId: params.reject_reason,
+          detail: `${event.slug} rejected by operator`,
+        });
+      }
 
       // Audit log — material status transitions need to land in admin_actions
       // so the Analytics activity feed and any downstream auditing can see
@@ -730,11 +1044,20 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         }
       }
 
+      const approvalMarker =
+        params.status === "APPROVED" ? reviewerMarkerInCopy(event.description) : null;
+
       return {
         content: [
           jsonContent({
             updated: true,
             event: { id: event.id, name: event.name, previousStatus, newStatus: params.status },
+            // OPE-1114 — approved with a reviewer note still in the public copy.
+            ...(approvalMarker
+              ? {
+                  warnings: { reviewer_note_in_description: reviewerMarkerWarning(approvalMarker) },
+                }
+              : {}),
           }),
         ],
       };
@@ -759,7 +1082,12 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           "Custom slug. When provided, takes priority over the name-derived slug. The old slug is captured in event_slug_history for 301-redirect. Mirrors update_vendor.slug."
         ),
       description: z.string().transform(sanitizeProse).optional().describe("Event description"),
-      start_date: z.string().optional().describe("Start date as ISO 8601 string"),
+      start_date: z
+        .string()
+        .optional()
+        .describe(
+          "Start date. Prefer a bare YYYY-MM-DD: it is stored at noon UTC, the house convention. A full timestamp with a real clock time is kept as that instant; a local midnight (…T00:00:00-04:00) is anchored to noon UTC of that date."
+        ),
       end_date: z.string().optional().describe("End date as ISO 8601 string"),
       dates_confirmed: z.boolean().optional().describe("Whether dates are confirmed"),
       venue_id: z.string().optional().describe("Venue ID (FK to venues table)"),
@@ -806,6 +1134,8 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .enum(["INDOOR", "OUTDOOR", "MIXED"])
         .optional()
         .describe("Indoor/outdoor designation"),
+      pet_friendly: PET_FRIENDLY_PARAM,
+      pet_friendly_evidence: PET_FRIENDLY_EVIDENCE_PARAM,
       estimated_attendance: z.number().int().optional().describe("Expected attendance count"),
       event_scale: z
         .enum(["SMALL", "MEDIUM", "LARGE", "MAJOR"])
@@ -914,10 +1244,44 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         })
         .optional()
         .describe(
-          "Provenance for tracked-field changes (estimated_attendance, vendor_fee_min/max, ticket_price_min/max, application_deadline, start_date, end_date, venue_id, name). When set, one citation row is inserted per tracked field touched. K4 (2026-05-31) extended this to the structural fields (dates/venue/name) — the highest-stakes data on the site MUST carry an auditable source URL."
+          "Provenance for tracked-field changes (estimated_attendance, vendor_fee_min/max, ticket_price_min/max, application_deadline, start_date, end_date, venue_id, name, promoter_id). A changed field that gets NO citation row is named in warnings.citation_ignored_for (OPE-1110) — never report such a field as cited. When set, one citation row is inserted per tracked field touched. K4 (2026-05-31) extended this to the structural fields (dates/venue/name) — the highest-stakes data on the site MUST carry an auditable source URL."
         ),
     },
     async (params) => {
+      // OPE-1058 — an explicit edit REJECTS an off-list category, it does not
+      // drop one.
+      //
+      // `suggest_event` drops and warns because a public submission is worth
+      // having with a bad label. This tool is the opposite case: a caller named
+      // these values on purpose, and silently discarding them is how the same
+      // value ended up invalid at one writer and stored at the other. The
+      // Alexander Hamfest was created here with "Amateur Radio Convention"
+      // two minutes after suggest_event refused it.
+      const badCategories = invalidEventCategories(params.categories);
+      if (badCategories.length > 0) {
+        return {
+          content: [
+            jsonContent({
+              error: "invalid_categories",
+              invalid: badCategories,
+              allowed: EVENT_CATEGORIES,
+              hint: "Pick from `allowed`. suggest_event drops unknown values with a warning; this tool refuses them so a deliberate edit is never silently discarded.",
+            }),
+          ],
+          isError: true,
+        };
+      }
+
+      // OPE-1061 — refuse a pet_friendly value without its evidence BEFORE any
+      // row is written, so a refusal leaves nothing half-applied.
+      const petRefusal = petFriendlyParamError(params.pet_friendly, params.pet_friendly_evidence);
+      if (petRefusal) {
+        return {
+          content: [jsonContent({ error: "pet_friendly_evidence_required", message: petRefusal })],
+          isError: true,
+        };
+      }
+
       // Load URL domain classifications once so the ticket_url / application_url
       // transforms below can gate against known-aggregator domains.
       // See mcp-server/src/url-classification.ts.
@@ -959,6 +1323,8 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         { param: "vendor_fee_max", column: "vendorFeeMaxCents", transform: dollarsToCents },
         { param: "vendor_fee_notes", column: "vendorFeeNotes" },
         { param: "indoor_outdoor", column: "indoorOutdoor" },
+        // OPE-1061 — evidence is checked above and cited below.
+        { param: "pet_friendly", column: "petFriendly" },
         { param: "estimated_attendance", column: "estimatedAttendance" },
         { param: "event_scale", column: "eventScale" },
         {
@@ -1157,6 +1523,82 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }
 
       const event = eventRows[0];
+
+      // OPE-1180 — the row after this update may not sit at a FORMER venue past
+      // its closure (the drizzle/0333 trigger enforces it too; this makes the
+      // refusal readable). Inside the closure's uncertainty window: flag.
+      let formerVenueWarning: string | undefined;
+      if (
+        updates.venueId !== undefined ||
+        updates.startDate !== undefined ||
+        updates.endDate !== undefined
+      ) {
+        const nextVenueId =
+          updates.venueId !== undefined ? (updates.venueId as string | null) : event.venueId;
+        const nextStart =
+          updates.startDate !== undefined ? (updates.startDate as Date | null) : event.startDate;
+        const nextEnd =
+          updates.endDate !== undefined ? (updates.endDate as Date | null) : event.endDate;
+        const verdict = checkFormerVenue(
+          await loadGuardVenue(db, nextVenueId),
+          nextEnd ?? nextStart
+        );
+        if (verdict.kind === "refuse") {
+          return {
+            content: [
+              jsonContent({ error: "former_venue_after_closure", message: verdict.message }),
+            ],
+            isError: true,
+          };
+        }
+        if (verdict.kind === "flag") {
+          updates.flaggedForReview = 1;
+          formerVenueWarning = verdict.reason;
+        }
+      }
+
+      // OPE-1200 — `dates_confirmed = true` needs a qualifying start_date
+      // citation (active, not a community submission, not an aggregator), or a
+      // `citation` in this same call that will actually land on start_date —
+      // which only happens when start_date is itself being written. Otherwise
+      // write false and say so: a confirmed flag with no source is how four
+      // public listings sent visitors to the wrong day or state on 2026-09-28.
+      let datesConfirmedWarning: string | undefined;
+      if (updates.datesConfirmed === true) {
+        const existingCitations = await db
+          .select({
+            fieldName: eventDataCitations.fieldName,
+            state: eventDataCitations.state,
+            sourceType: eventDataCitations.sourceType,
+            sourceUrl: eventDataCitations.sourceUrl,
+          })
+          .from(eventDataCitations)
+          .where(
+            and(
+              eq(eventDataCitations.eventId, params.event_id),
+              eq(eventDataCitations.fieldName, "start_date"),
+              eq(eventDataCitations.state, "active")
+            )
+          );
+        // OPE-1231 — the event's own promoter's site counts as the organizer.
+        const promoterSite = await db
+          .select({ website: promoters.website })
+          .from(events)
+          .innerJoin(promoters, eq(promoters.id, events.promoterId))
+          .where(eq(events.id, params.event_id))
+          .limit(1);
+        const gate = gateDatesConfirmed({
+          requested: true,
+          organizerHosts: organizerHostsFrom(promoterSite.map((p) => p.website)),
+          citations: existingCitations,
+          callSource:
+            params.citation && updates.startDate !== undefined
+              ? { sourceType: params.citation.source_type, sourceUrl: params.citation.source_url }
+              : null,
+        });
+        updates.datesConfirmed = gate.value;
+        datesConfirmedWarning = gate.warning;
+      }
 
       // OPE-423 — a merged tombstone keeps its parked `…-merged-<id8>` slug so
       // the original URL stays free for the keeper's 301. Renaming it takes
@@ -1413,8 +1855,24 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         //
         // Reuses the merged values the gate block already computed, so the
         // classification and the gate verdict always describe the same source.
+        //
+        // ⚠️ `source_id` is deliberately NOT recomputed here (OPE-821). It is an
+        // external-system identity, not a derived field: re-scrape and dedup
+        // keys have to survive the source changing its address. Of 994 rows
+        // with a URL-shaped `source_id`, 70 disagree with their own
+        // `source_domain`, and those inspected are organizer domain migrations
+        // (`nehomeshow.com` -> `newenglandhomeshows.com`) where the old value
+        // is the correct answer to "where did we first find this?".
         if (params.source_url !== undefined || params.source_name !== undefined) {
-          const reclassified = classifySource(mergedSourceName, mergedSourceUrl);
+          // OPE-491 rework — the domain refreshes; HOW the row was collected is
+          // kept unless the edit states a new collection label, or the old
+          // value was itself domain-derived (see reclassifySourceOnEdit).
+          const reclassified = reclassifySourceOnEdit({
+            currentMethod: evRow.ingestionMethod as string | null | undefined,
+            suggesterEmail: evRow.suggesterEmail as string | null | undefined,
+            sourceName: mergedSourceName,
+            sourceUrl: mergedSourceUrl,
+          });
           updates.sourceDomain = reclassified.sourceDomain;
           updates.ingestionMethod = assertIngestionMethod(
             reclassified.ingestionMethod,
@@ -1471,7 +1929,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         }
         const mapping = fieldMap.find((f) => f.param === field);
         if (mapping) {
-          previousValues[field] = (event as Record<string, unknown>)[mapping.column];
+          previousValues[field] = presentStoredValue(
+            mapping.column,
+            (event as Record<string, unknown>)[mapping.column]
+          );
         }
       }
 
@@ -1582,11 +2043,21 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           updates.venueId !== null &&
           !event.venueId &&
           !event.seriesId;
-        if (gainedVenue) {
+        // OPE-1156 — the other missing input. The submit route no longer mints a
+        // series for a row with no start date (a public hub from an undatable
+        // row), so the moment it gains one is when it can be parented.
+        const effectiveVenueId = (updates.venueId as string | null | undefined) ?? event.venueId;
+        const gainedDate =
+          updates.startDate !== undefined &&
+          updates.startDate !== null &&
+          !event.startDate &&
+          !event.seriesId &&
+          !!effectiveVenueId;
+        if (gainedVenue || gainedDate) {
           try {
             const attached = await attachEventToSeries(db, event.id, {
               name: (updates.name as string) ?? event.name,
-              venueId: updates.venueId as string,
+              venueId: effectiveVenueId as string,
               promoterId: event.promoterId ?? null,
             });
             if (attached.outcome === "skipped") {
@@ -1693,32 +2164,36 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         citation_id: string;
         field_name: string;
         superseded_count: number;
+        /** OPE-516 — active citations for this field that this write did not
+         *  retire (another edition's, or a stamped row a year-null write must
+         *  not destroy). Empty when the field has exactly one active citation. */
+        conflicts_remaining: Array<{
+          id: string;
+          year: number | null;
+          value: string;
+          source_name: string | null;
+        }>;
       }> = [];
       if (params.citation && requestedFields.length > 0) {
         const citationYear = params.citation.year ?? null;
         for (const field of requestedFields) {
-          const denorm = CITATION_DENORM_FIELD_MAP[field];
-          if (!denorm) continue;
+          if (!isCitationTracked(field)) continue;
           const rawValue = (params as Record<string, unknown>)[field];
           if (rawValue === undefined || rawValue === null) continue;
           const valueText = String(rawValue);
 
-          // Supersede prior active for (event, field, year). Match NULL year
-          // explicitly because SQL `=` treats NULL as unequal.
+          // OPE-516 — the SAME supersede rule create_event_citation uses. This
+          // block carried its own exact-year bucket after #999 fixed the other
+          // path, and a 2026-08-24 correction here left a contradicting
+          // citation active with no warning.
           let supersededId: string | null = null;
           let supersededCount = 0;
-          const yearFilter =
-            citationYear === null
-              ? sql`${eventDataCitations.year} IS NULL`
-              : eq(eventDataCitations.year, citationYear);
           const prior = await db
             .select({ id: eventDataCitations.id })
             .from(eventDataCitations)
             .where(
               and(
-                eq(eventDataCitations.eventId, event.id),
-                eq(eventDataCitations.fieldName, field),
-                yearFilter,
+                citationSupersedeScope(event.id, field, citationYear),
                 eq(eventDataCitations.state, "active")
               )
             );
@@ -1731,6 +2206,22 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
               .where(inArray(eventDataCitations.id, ids));
             supersededCount = ids.length;
           }
+
+          const stillActive = await db
+            .select({
+              id: eventDataCitations.id,
+              year: eventDataCitations.year,
+              value: eventDataCitations.value,
+              sourceName: eventDataCitations.sourceName,
+            })
+            .from(eventDataCitations)
+            .where(
+              and(
+                eq(eventDataCitations.eventId, event.id),
+                eq(eventDataCitations.fieldName, field),
+                eq(eventDataCitations.state, "active")
+              )
+            );
 
           const citationId = crypto.randomUUID();
           await db.insert(eventDataCitations).values({
@@ -1754,6 +2245,12 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
             citation_id: citationId,
             field_name: field,
             superseded_count: supersededCount,
+            conflicts_remaining: stillActive.map((r) => ({
+              id: r.id,
+              year: r.year ?? null,
+              value: r.value,
+              source_name: r.sourceName ?? null,
+            })),
           });
         }
       }
@@ -1798,11 +2295,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       const newValues: Record<string, unknown> = {};
       for (const field of requestedFields) {
         const mapping = fieldMap.find((f) => f.param === field);
-        newValues[field] = reportedNewValue(
-          field,
-          mapping,
-          updates,
-          params as Record<string, unknown>
+        newValues[field] = presentStoredValue(
+          mapping?.column,
+          reportedNewValue(field, mapping, updates, params as Record<string, unknown>)
         );
       }
       if (params.name !== undefined && updates.slug) {
@@ -1930,9 +2425,39 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       if (venueUpdateResult) {
         result.venueUpdated = venueUpdateResult;
       }
+      if (params.pet_friendly !== undefined) {
+        // OPE-1061 — the evidence citation, after the column write (same order
+        // as the tracked-field citations above: never a citation without the
+        // value it supports).
+        result.petFriendlyCitationId = await writeEventPetCitation(db, {
+          eventId: event.id,
+          value: params.pet_friendly,
+          evidence: params.pet_friendly_evidence,
+          userId: auth.userId ?? null,
+        });
+      }
       if (citationsInserted.length > 0) {
         result.citationsInserted = citationsInserted;
       }
+
+      // OPE-1110 — a citation the caller passed but no row recorded, SAID.
+      //
+      // `promoter_id`-only reassignments used to accept a full citation object
+      // and drop it with no error, no warning and no `citationsInserted` key,
+      // so lane receipts reported "(with citation)" for provenance that never
+      // existed. Computed from what was actually inserted rather than from the
+      // allow-list, so a tracked field skipped for another reason (a cleared
+      // value) is named too — the question is "did a row land", not "should it".
+      const citationIgnoredFor = params.citation
+        ? [
+            ...requestedFields.filter(
+              (f) =>
+                !CITATION_SYNTHETIC_FIELDS.has(f) &&
+                !citationsInserted.some((c) => c.field_name === f)
+            ),
+            ...venueRequestedFields,
+          ]
+        : [];
       // Warnings: both P7c venue+date duplicates and P2 gate-flag re-eval
       // can fire on the same call. Surface both under `warnings`; admins
       // can act on either independently. The update has already succeeded
@@ -1951,6 +2476,19 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }
       if (gateFlagsWarning) {
         warnings.gate_flags = gateFlagsWarning;
+      }
+      if (formerVenueWarning) {
+        warnings.former_venue_flagged = formerVenueWarning;
+      }
+      if (datesConfirmedWarning) {
+        warnings.dates_confirmed_downgraded = datesConfirmedWarning;
+      }
+      if (citationIgnoredFor.length > 0) {
+        warnings.citation_ignored_for = citationIgnoredFor;
+        warnings.citation_ignored_message =
+          `A citation was supplied but NO citation row was recorded for: ${citationIgnoredFor.join(", ")}. ` +
+          `These fields are not citation-tracked by update_event (or were cleared). ` +
+          `Record their provenance with create_event_citation if it matters — do not report them as cited.`;
       }
       if (Object.keys(warnings).length > 0) {
         result.warnings = warnings;
@@ -2014,35 +2552,60 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       // Fetch the source image. Cap timeout at 15s — Workers have a 30s
       // budget total; 15s for the fetch + headroom for the multipart POST
       // to the main app + the main app's R2 put fits comfortably.
+      // OPE-968 — honest UA first, legacy UA only after a block; and a failure
+      // says what came back (see packages/utils/src/image-fetch.ts).
+      // OPE-409 — an `inbound-attachments/` URL on our own CDN is read through
+      // the R2 binding, never over the public edge: that prefix is being closed
+      // with a WAF rule, which cannot exempt this Worker's own fetch. Held
+      // posters are attached exactly this way, so a public fetch here would
+      // break poster attachment for every size, and fail as "no image".
+      const ownedKey = ownedInboundAttachmentKey(params.image_url);
+      if (ownedKey && !env.VENDOR_ASSETS) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `${params.image_url} is an inbound attachment in our own bucket, and upload_event_image reads those through the VENDOR_ASSETS binding, which is not bound on this Worker.`,
+            },
+          ],
+          isError: true,
+        };
+      }
       let imageResponse: Response;
       try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 15_000);
-        imageResponse = await fetch(params.image_url, {
-          // Some CDN hosts (Facebook, image-proxy services) reject the
-          // default User-Agent; setting a plausible one materially improves
-          // hit rate without any additional auth.
-          headers: { "User-Agent": "Mozilla/5.0 (compatible; MMATFBot/1.0)" },
-          signal: controller.signal,
+        const fetched = await fetchImageWithFallback(async (userAgent) => {
+          if (ownedKey && env.VENDOR_ASSETS) {
+            return readInboundAttachmentAsResponse(env.VENDOR_ASSETS, ownedKey);
+          }
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 15_000);
+          try {
+            return await fetch(params.image_url, {
+              headers: imageFetchHeaders(userAgent),
+              signal: controller.signal,
+            });
+          } finally {
+            clearTimeout(timeout);
+          }
         });
-        clearTimeout(timeout);
+        if (!fetched.ok) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `${fetched.verdict.message} Attempts: ${fetched.attempts.join("; ")}.`,
+              },
+            ],
+            isError: true,
+          };
+        }
+        imageResponse = fetched.response;
       } catch (err) {
         return {
           content: [
             {
               type: "text",
               text: `Failed to fetch source image: ${err instanceof Error ? err.message : "unknown error"}`,
-            },
-          ],
-          isError: true,
-        };
-      }
-      if (!imageResponse.ok) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Source image fetch returned HTTP ${imageResponse.status} — verify the URL is publicly accessible.`,
             },
           ],
           isError: true,
@@ -2444,103 +3007,170 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   );
 
   // ── create_vendor ──────────────────────────────────────────────
-  server.tool(
+  //
+  // OPE-1093 — the FIRST tool on `registerTool`, deliberately.
+  //
+  // Every other tool here uses `server.tool(name, description, rawShape, cb)`.
+  // The SDK turns a raw shape into `z.object(shape)`, and Zod's default is to
+  // STRIP unknown keys before the handler runs — so a caller's typo, or the
+  // sibling tool's vocabulary, vanishes without a word and the write reports
+  // success. That is how OPE-1090 produced `created: true` with five NULLs.
+  //
+  // `registerTool` accepts a fully-built schema, so `.strict()` survives to
+  // validation and an unknown key is REJECTED. `server.tool` is typed to
+  // `ZodRawShapeCompat` and cannot express this.
+  //
+  // Why this tool first: it is the one that demonstrated the defect, it has no
+  // internal callers (agent-facing only), and a create is where silence costs
+  // most — a half-empty vendor row is PUBLIC on insert. See OPE-1093 for the
+  // rollout decision on the other 241.
+  server.registerTool(
     "create_vendor",
-    "Create a new vendor profile on the platform. Returns the vendor ID for use with update_vendor_status to link to events. Admin only.",
     {
-      business_name: z
-        .string()
-        .min(1)
-        .max(200)
-        .transform(sanitizeProse)
-        .describe("Business/organization name"),
-      type: z
-        .string()
-        .max(100)
-        .transform(sanitizeProse)
-        .optional()
-        .describe("Vendor category (e.g. 'Home Improvement', 'Food', 'Crafts')"),
-      description: z
-        .string()
-        .max(500)
-        .transform(sanitizeProse)
-        .optional()
-        .describe("Business description"),
-      products: z
-        .array(z.string().transform(sanitizeProse))
-        .optional()
-        .describe("List of products/services offered"),
-      location: z.string().optional().describe("City and state, e.g. 'Portland, ME'"),
-      website: z.string().optional().describe("Vendor website URL"),
-      contact_email: z.string().optional().describe("Primary contact email address"),
-      contact_phone: z.string().optional().describe("Contact phone number"),
-      logo_url: z.string().optional().describe("URL to vendor logo image"),
-      // IMG1 §1b Phase 1 — per-image focal point. Applies to logo_url.
-      // Most logos are square so default (0.5, 0.5) center works; this
-      // exists for non-square logo rescues. Same Zod validation as the
-      // admin-UI FocalPointPicker.
-      image_focal_x: z
-        .number()
-        .min(0)
-        .max(1)
-        .optional()
-        .describe("Horizontal focal point for logo crops, 0–1. Default 0.5."),
-      image_focal_y: z
-        .number()
-        .min(0)
-        .max(1)
-        .optional()
-        .describe("Vertical focal point for logo crops, 0–1. Default 0.5."),
-      // EH1 Phase 1 — optional hierarchy + relationship fields at create
-      // time. Most callers leave these unset (the row defaults to
-      // role='INDEPENDENT', relationship_type='independent'). Useful when
-      // an ingestion path knows up-front that a row is an office of an
-      // existing brand. The three audited admin tools remain the
-      // preferred path for relationship edits after creation.
-      role: z
-        .enum(["NATIONAL", "LOCAL_OFFICE", "INDEPENDENT"])
-        .optional()
-        .describe("Hierarchy role at create time. Defaults to INDEPENDENT."),
-      brand_parent_vendor_id: z
-        .string()
-        .optional()
-        .describe("Brand-parent vendor id (the consumer-facing brand)."),
-      operator_parent_vendor_id: z
-        .string()
-        .optional()
-        .describe("Operator-parent vendor id (contracts/billing entity)."),
-      relationship_type: z
-        .enum([
-          "branch",
-          "franchise",
-          "dealer",
-          "member",
-          "agent",
-          "employee_branch",
-          "government",
-          "independent",
-        ])
-        .optional()
-        .describe("8-shape relationship typology. Defaults to 'independent'."),
-      default_child_display: z
-        .enum(["self", "brand_parent", "both"])
-        .optional()
-        .describe("For NATIONAL rows: the default display target for child offices."),
-      display_override_permitted: z
-        .boolean()
-        .optional()
-        .describe("For LOCAL_OFFICE rows: the per-office gate. Defaults to false."),
-      display_mode: z
-        .enum(["inherit", "self", "brand_parent", "operator_parent", "both"])
-        .optional()
-        .describe("For LOCAL_OFFICE rows: the office's own display preference."),
-      defer_search_ping: z
-        .boolean()
-        .optional()
-        .default(true)
-        .describe(
-          "REL4: defaults TRUE — queue the IndexNow ping to pending_search_pings (drained in one batched call by the hourly cron / flush_pending_search_pings) instead of firing inline. Pass false only when this single write needs immediate indexing."
-        ),
+      description:
+        "Create a new vendor profile on the platform. Returns the vendor ID for use with update_vendor_status to link to events. Admin only. Unknown parameters are REJECTED rather than ignored.",
+      inputSchema: z
+        .object({
+          business_name: z
+            .string()
+            .min(1)
+            .max(200)
+            .transform(sanitizeProse)
+            .describe("Business/organization name"),
+          // OPE-1090 — canonical name, matching `update_vendor`. `type` below is
+          // the legacy alias, kept so existing callers do not break.
+          vendor_type: z
+            .string()
+            .max(100)
+            .transform(sanitizeProse)
+            .optional()
+            .describe("Vendor category (e.g. 'Home Improvement', 'Food', 'Crafts')"),
+          type: z
+            .string()
+            .max(100)
+            .transform(sanitizeProse)
+            .optional()
+            .describe("DEPRECATED alias for vendor_type. Prefer vendor_type."),
+          // OPE-1164 — the three category axes vendor_type conflates. A long
+          // description in any of them goes to products, never a new category.
+          sells_category: z
+            .string()
+            .max(100)
+            .transform(sanitizeProse)
+            .optional()
+            .describe("What they sell (one short primary category, e.g. 'Jewelry')"),
+          business_sector: z
+            .string()
+            .max(100)
+            .transform(sanitizeProse)
+            .optional()
+            .describe("What kind of business (one short value, e.g. 'Brewery', 'Marine')"),
+          vendor_identity: z
+            .string()
+            .max(100)
+            .transform(sanitizeProse)
+            .optional()
+            .describe("Who they are (one short value, e.g. 'Artist', 'Nonprofit')"),
+          description: z
+            .string()
+            .max(500)
+            .transform(sanitizeProse)
+            .optional()
+            .describe("Business description"),
+          products: z
+            .array(z.string().transform(sanitizeProse))
+            .optional()
+            .describe("List of products/services offered"),
+          // OPE-1090 — city/state are what the by-state browse pages filter on, and
+          // they are separate columns. `location` remains as the legacy alias.
+          city: z.string().optional().describe("City"),
+          state: z
+            .string()
+            .max(2)
+            .optional()
+            .describe("2-letter state code, e.g. 'ME'. Matches update_vendor."),
+          location: z
+            .string()
+            .optional()
+            .describe(
+              "DEPRECATED alias: 'City, ST' split on the LAST comma. Prefer city + state — a value with no comma sets city and leaves state NULL, which drops the vendor from every by-state browse page."
+            ),
+          contact_name: z.string().optional().describe("Contact person name"),
+          social_links: z.string().optional().describe("Social media links (JSON string)"),
+          website: z.string().optional().describe("Vendor website URL"),
+          contact_email: z.string().optional().describe("Primary contact email address"),
+          contact_phone: z.string().optional().describe("Contact phone number"),
+          logo_url: logoUrlParam.describe(
+            "URL to vendor logo image. Must point at an image file, not a social/shop page."
+          ),
+          // IMG1 §1b Phase 1 — per-image focal point. Applies to logo_url.
+          // Most logos are square so default (0.5, 0.5) center works; this
+          // exists for non-square logo rescues. Same Zod validation as the
+          // admin-UI FocalPointPicker.
+          image_focal_x: z
+            .number()
+            .min(0)
+            .max(1)
+            .optional()
+            .describe("Horizontal focal point for logo crops, 0–1. Default 0.5."),
+          image_focal_y: z
+            .number()
+            .min(0)
+            .max(1)
+            .optional()
+            .describe("Vertical focal point for logo crops, 0–1. Default 0.5."),
+          // EH1 Phase 1 — optional hierarchy + relationship fields at create
+          // time. Most callers leave these unset (the row defaults to
+          // role='INDEPENDENT', relationship_type='independent'). Useful when
+          // an ingestion path knows up-front that a row is an office of an
+          // existing brand. The three audited admin tools remain the
+          // preferred path for relationship edits after creation.
+          role: z
+            .enum(["NATIONAL", "LOCAL_OFFICE", "INDEPENDENT"])
+            .optional()
+            .describe("Hierarchy role at create time. Defaults to INDEPENDENT."),
+          brand_parent_vendor_id: z
+            .string()
+            .optional()
+            .describe("Brand-parent vendor id (the consumer-facing brand)."),
+          operator_parent_vendor_id: z
+            .string()
+            .optional()
+            .describe("Operator-parent vendor id (contracts/billing entity)."),
+          relationship_type: z
+            .enum([
+              "branch",
+              "franchise",
+              "dealer",
+              "member",
+              "agent",
+              "employee_branch",
+              "government",
+              "independent",
+            ])
+            .optional()
+            .describe("8-shape relationship typology. Defaults to 'independent'."),
+          default_child_display: z
+            .enum(["self", "brand_parent", "both"])
+            .optional()
+            .describe("For NATIONAL rows: the default display target for child offices."),
+          display_override_permitted: z
+            .boolean()
+            .optional()
+            .describe("For LOCAL_OFFICE rows: the per-office gate. Defaults to false."),
+          display_mode: z
+            .enum(["inherit", "self", "brand_parent", "operator_parent", "both"])
+            .optional()
+            .describe("For LOCAL_OFFICE rows: the office's own display preference."),
+          defer_search_ping: z
+            .boolean()
+            .optional()
+            .default(true)
+            .describe(
+              "REL4: defaults TRUE — queue the IndexNow ping to pending_search_pings (drained in one batched call by the hourly cron / flush_pending_search_pings) instead of firing inline. Pass false only when this single write needs immediate indexing."
+            ),
+        })
+        .strict(),
     },
     async (params) => {
       // Check for duplicate business name (exact match, case-insensitive via LIKE)
@@ -2598,7 +3228,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }
 
       // Create placeholder user (vendor table requires userId FK)
-      const placeholderEmail = `pending+${finalSlug}@meetmeatthefair.com`;
+      // OPE-835 — capped to RFC 5321's 64-octet local part. 12 of 7,105
+      // vendor slugs cross it (longest local part 102), and the address
+      // Cloudflare rejects is generated here.
+      const placeholderEmail = buildPlaceholderEmail("pending+", finalSlug);
       const userId = crypto.randomUUID();
 
       await db.insert(users).values({
@@ -2611,8 +3244,42 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         role: "VENDOR",
       });
 
-      // Parse location into city/state
-      const loc = params.location ? parseLocation(params.location) : { city: null, state: null };
+      // OPE-1090 — resolve the two vocabularies onto the columns.
+      //
+      // `create_vendor` and `update_vendor` write the SAME columns under
+      // different parameter names, and nothing said so: `update_vendor` takes
+      // city/state/vendor_type, `create_vendor` took location/type and had no
+      // contact_name or social_links at all. A caller who used the sibling
+      // tool's names — which is the obvious thing to do — got `created: true`
+      // and a row with five NULLs, because Zod's default object behaviour
+      // STRIPS unknown keys before the handler ever runs (verified against the
+      // SDK's own normalizeObjectSchema → objectFromShape → z.object).
+      //
+      // city/state is what the by-state browse pages filter on, so the row was
+      // invisible to every one of them and the call reported success.
+      //
+      // Canonical wins over the alias when both are sent; the alias is reported
+      // back so the caller can stop using it.
+      const aliasLoc = params.location
+        ? parseLocation(params.location)
+        : { city: null, state: null };
+      const loc = {
+        city: params.city ?? aliasLoc.city,
+        state: params.state ?? aliasLoc.state,
+      };
+      // OPE-1113 — stored as the existing spelling of the same category.
+      // OPE-1164 — plus the three axes; a description goes to products.
+      const routed = await routeVendorCategoriesForWrite(db, {
+        vendorType: params.vendor_type ?? params.type ?? null,
+        sellsCategory: params.sells_category,
+        businessSector: params.business_sector,
+        vendorIdentity: params.vendor_identity,
+      });
+      const vendorType = routed.values.vendorType ?? null;
+
+      const deprecatedAliases: string[] = [];
+      if (params.location !== undefined) deprecatedAliases.push("location → city + state");
+      if (params.type !== undefined) deprecatedAliases.push("type → vendor_type");
 
       // Create vendor record
       const vendorId = crypto.randomUUID();
@@ -2622,12 +3289,21 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         userId,
         businessName: params.business_name,
         slug: finalSlug,
-        vendorType: params.type ?? null,
+        vendorType,
+        sellsCategory: routed.values.sellsCategory ?? null,
+        businessSector: routed.values.businessSector ?? null,
+        vendorIdentity: routed.values.vendorIdentity ?? null,
         description: params.description ?? null,
-        products: params.products ? JSON.stringify(params.products) : "[]",
+        products: mergeProductsJson(
+          params.products ? JSON.stringify(params.products) : "[]",
+          routed.productsToAdd
+        ),
         website: params.website ?? null,
         contactEmail: params.contact_email ?? null,
         contactPhone: params.contact_phone ?? null,
+        // OPE-1090 — previously unsettable at create; required a second call.
+        contactName: params.contact_name ?? null,
+        socialLinks: params.social_links ?? null,
         logoUrl: params.logo_url ?? null,
         // IMG1 §1b Phase 1 — focal point (clamped); omit when undefined
         // so the column DEFAULT (0.5) applies.
@@ -2681,6 +3357,34 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         });
       }
 
+      // OPE-1090 — report what LANDED, read back from the row, not what was
+      // passed. The original response said only `created: true` + id + slug, so
+      // a call that dropped five fields and a call that wrote them looked
+      // identical to the caller. These are the fields that were silently
+      // droppable, plus city/state because those drive the by-state browse.
+      const [stored] = await db
+        .select({
+          city: vendors.city,
+          state: vendors.state,
+          vendorType: vendors.vendorType,
+          contactName: vendors.contactName,
+          socialLinks: vendors.socialLinks,
+        })
+        .from(vendors)
+        .where(eq(vendors.id, vendorId))
+        .limit(1);
+
+      const warnings: Record<string, unknown> = {};
+      if (deprecatedAliases.length > 0) {
+        warnings.deprecated_params = deprecatedAliases;
+      }
+      // The specific trap that produced this ticket: a `location` with no comma
+      // sets city and leaves state NULL, and state is the browse filter.
+      if (!stored?.state) {
+        warnings.no_state =
+          "state is NULL — this vendor will not appear on any by-state browse page. Pass `state` (2-letter code).";
+      }
+
       return {
         content: [
           jsonContent({
@@ -2688,6 +3392,14 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
             vendor_id: vendorId,
             slug: finalSlug,
             business_name: params.business_name,
+            stored: {
+              city: stored?.city ?? null,
+              state: stored?.state ?? null,
+              vendor_type: stored?.vendorType ?? null,
+              contact_name: stored?.contactName ?? null,
+              social_links: stored?.socialLinks ?? null,
+            },
+            ...(Object.keys(warnings).length > 0 && { warnings }),
           }),
         ],
       };
@@ -3034,7 +3746,13 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       website: z.string().optional().describe("Website URL"),
       contact_email: z.string().optional().describe("Contact email"),
       contact_phone: z.string().optional().describe("Contact phone"),
-      image_url: z.string().optional().describe("Venue image URL"),
+      image_url: z
+        .string()
+        .optional()
+        // OPE-294 — a Google Places photo is dropped (treated as not provided),
+        // so it can neither be written nor used to clear an existing image.
+        .transform((u) => (withoutGooglePlacesPhoto(u) === null ? undefined : u))
+        .describe("Venue image URL (Google Places photo URLs are ignored — OPE-294)"),
       // IMG1 §1b Phase 1 — per-image focal point for card crops.
       image_focal_x: z
         .number()
@@ -3048,7 +3766,17 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .max(1)
         .optional()
         .describe("Vertical focal point for card crops, 0–1. Default 0.5."),
-      status: z.enum(["ACTIVE", "INACTIVE"]).optional().describe("Venue status"),
+      status: z
+        .enum(["ACTIVE", "INACTIVE", "FORMER"])
+        .optional()
+        .describe(
+          "Venue status. FORMER = was a venue, no longer is (OPE-1180): needs use_ended_edtf, and is refused while any non-REJECTED event after the closure still references the venue."
+        ),
+      ...VENUE_LIFECYCLE_PARAMS,
+      // OPE-1061 — the VENUE's own policy. Shown on the venue page only; never
+      // an event's answer (an ag fair and a lawn craft fair share fairgrounds).
+      pet_friendly: PET_FRIENDLY_PARAM,
+      pet_friendly_evidence: PET_FRIENDLY_EVIDENCE_PARAM,
       defer_search_ping: z
         .boolean()
         .optional()
@@ -3058,6 +3786,13 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         ),
     },
     async (params) => {
+      const petRefusal = petFriendlyParamError(params.pet_friendly, params.pet_friendly_evidence);
+      if (petRefusal) {
+        return {
+          content: [jsonContent({ error: "pet_friendly_evidence_required", message: petRefusal })],
+          isError: true,
+        };
+      }
       const fieldMap: Array<{
         param: string;
         column: string;
@@ -3087,6 +3822,14 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           transform: (v: number) => Math.max(0, Math.min(1, v)),
         },
         { param: "status", column: "status" },
+        { param: "pet_friendly", column: "petFriendly" },
+        // OPE-1180 — lifecycle. The derived use_ended_* bounds are set below.
+        { param: "use_started_edtf", column: "useStartedEdtf" },
+        { param: "use_ended_edtf", column: "useEndedEdtf" },
+        { param: "current_state", column: "currentState" },
+        { param: "current_use", column: "currentUse" },
+        { param: "wikidata_qid", column: "wikidataQid" },
+        { param: "nrhp_ref", column: "nrhpRef" },
       ];
 
       const updates: Record<string, unknown> = {};
@@ -3129,6 +3872,12 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }
 
       const venue = venueRows[0];
+
+      // OPE-1180 — lifecycle validation against the row as it WILL be.
+      const lifecycle = await applyVenueLifecycleUpdate(db, venue, params, updates);
+      if (!lifecycle.ok) {
+        return { content: [jsonContent(lifecycle.error)], isError: true };
+      }
 
       // If name changed, regenerate slug with collision check
       if (params.name !== undefined) {
@@ -3270,6 +4019,20 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         newValues.slug = updates.slug;
       }
 
+      // OPE-1180 — one citation per lifecycle claim written.
+      await writeVenueLifecycleCitations(db, venue.id, params, auth.userId);
+
+      // OPE-1061 — evidence citation after the column write.
+      const petFriendlyCitationId =
+        params.pet_friendly !== undefined
+          ? await writeVenuePetCitation(db, {
+              venueId: venue.id,
+              value: params.pet_friendly,
+              evidence: params.pet_friendly_evidence,
+              userId: auth.userId ?? null,
+            })
+          : undefined;
+
       return {
         content: [
           jsonContent({
@@ -3278,6 +4041,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
             fieldsUpdated: requestedFields,
             previousValues,
             newValues,
+            ...(lifecycle.notes.length > 0 ? { lifecycle_notes: lifecycle.notes } : {}),
+            ...(petFriendlyCitationId !== undefined
+              ? { pet_friendly_citation_id: petFriendlyCitationId }
+              : {}),
           }),
         ],
       };
@@ -3290,10 +4057,19 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
     "Create a new venue record. Returns the venue ID for use with update_event. Admin only.",
     {
       name: z.string().min(1).max(200).transform(sanitizeProse).describe("Venue name"),
-      address: z.string().min(1).describe("Street address"),
+      // OPE-1180 — blank allowed for a FORMER venue only (checked below).
+      address: z.string().describe("Street address (may be blank only for status FORMER)"),
       city: z.string().min(1).describe("City"),
       state: z.string().min(1).max(2).describe("State (2-letter code)"),
-      zip: z.string().min(1).describe("ZIP code"),
+      zip: z.string().describe("ZIP code (may be blank only for status FORMER)"),
+      status: z
+        .enum(["ACTIVE", "FORMER"])
+        .optional()
+        .default("ACTIVE")
+        .describe(
+          "ACTIVE (default) or FORMER — a venue that no longer exists as one (OPE-1180). FORMER needs use_ended_edtf + lifecycle_citation, is never auto-geocoded, and is not publicly served until the FORMER venue page ships."
+        ),
+      ...VENUE_LIFECYCLE_PARAMS,
       latitude: z.number().optional().describe("Latitude coordinate"),
       longitude: z.number().optional().describe("Longitude coordinate"),
       capacity: z.number().int().optional().describe("Venue capacity"),
@@ -3301,7 +4077,13 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       description: z.string().transform(sanitizeProse).optional().describe("Venue description"),
       contact_email: z.string().optional().describe("Contact email"),
       contact_phone: z.string().optional().describe("Contact phone"),
-      image_url: z.string().optional().describe("Venue image URL"),
+      image_url: z
+        .string()
+        .optional()
+        // OPE-294 — a Google Places photo is dropped (treated as not provided),
+        // so it can neither be written nor used to clear an existing image.
+        .transform((u) => (withoutGooglePlacesPhoto(u) === null ? undefined : u))
+        .describe("Venue image URL (Google Places photo URLs are ignored — OPE-294)"),
       // IMG1 §1b Phase 1 — per-image focal point. Applies to image_url.
       image_focal_x: z
         .number()
@@ -3324,6 +4106,46 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         ),
     },
     async (params) => {
+      // OPE-1180 — lifecycle checks before anything is written.
+      const isFormer = params.status === "FORMER";
+      if (!isFormer && (!params.address.trim() || !params.zip.trim())) {
+        return {
+          content: [
+            jsonContent({
+              error: "address_required",
+              message: "address and zip are required; only a FORMER venue may leave them blank.",
+            }),
+          ],
+          isError: true,
+        };
+      }
+      if (
+        (params.use_started_edtf?.trim() || params.use_ended_edtf?.trim()) &&
+        !params.lifecycle_citation
+      ) {
+        return {
+          content: [
+            jsonContent({
+              error: "lifecycle_citation_required",
+              message:
+                "use_started_edtf / use_ended_edtf are claims about the past; pass lifecycle_citation with the source that says so.",
+            }),
+          ],
+          isError: true,
+        };
+      }
+      const lifecycle = validateVenueLifecycle({
+        status: params.status,
+        useStartedEdtf: params.use_started_edtf?.trim() || null,
+        useEndedEdtf: params.use_ended_edtf?.trim() || null,
+      });
+      if (!lifecycle.ok) {
+        return {
+          content: [jsonContent({ error: "invalid_lifecycle", message: lifecycle.error })],
+          isError: true,
+        };
+      }
+
       // DQ2 (2026-06-04): coerce address-as-name BEFORE dedup. When
       // `params.name` is a bare street address or equals `params.address`,
       // derive a real name from city/state and shift the offending
@@ -3425,6 +4247,16 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         contactEmail: params.contact_email ?? null,
         contactPhone: params.contact_phone ?? null,
         imageUrl: params.image_url ?? null,
+        // OPE-1180 — lifecycle.
+        status: params.status,
+        useStartedEdtf: params.use_started_edtf?.trim() || null,
+        useEndedEdtf: params.use_ended_edtf?.trim() || null,
+        useEndedEarliest: lifecycle.derived.useEndedEarliest,
+        useEndedLatest: lifecycle.derived.useEndedLatest,
+        currentState: params.current_state ?? null,
+        currentUse: params.current_use ?? null,
+        wikidataQid: params.wikidata_qid ?? null,
+        nrhpRef: params.nrhp_ref ?? null,
         // IMG1 §1b Phase 1 — focal point (clamped); omit when undefined
         // so the column DEFAULT (0.5) applies.
         ...(params.image_focal_x !== undefined && {
@@ -3435,9 +4267,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         }),
       });
 
+      await writeVenueLifecycleCitations(db, venueId, params, auth.userId);
+
       // IndexNow: venues created via this tool default to ACTIVE (public)
-      // immediately, so ping right away.
-      if (env) {
+      // immediately, so ping right away. A FORMER venue is not served yet.
+      if (env && !isFormer) {
         await triggerIndexNow(publicUrlFor("venues", finalSlug), env, "venue-create", {
           defer: params.defer_search_ping ?? true,
           db,
@@ -3451,7 +4285,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       // nothing, and every real caller (email submission, scrape, JSON-LD
       // harvest) has a street address and no coordinates — so every venue born
       // here started NULL. Skip the round-trip when the caller supplied a pin.
-      if (params.latitude == null || params.longitude == null) {
+      //
+      // OPE-1180 — never for a FORMER venue: with no real address the geocoder
+      // can only offer a city centroid, which is exactly the fabricated
+      // "Montpelier Fairgrounds" pin. A FORMER site is placed by hand or not at all.
+      if (!isFormer && (params.latitude == null || params.longitude == null)) {
         await geocodeNewVenueViaMainApp(env, venueId);
       }
 
@@ -3463,6 +4301,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
             slug: finalSlug,
             name: params.name,
             location: `${params.city}, ${params.state.toUpperCase()}`,
+            status: params.status,
           }),
         ],
       };
@@ -3693,6 +4532,26 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .optional()
         .describe("Business name (also regenerates slug)"),
       vendor_type: z.string().transform(sanitizeProse).optional().describe("Vendor category"),
+      // OPE-1164 — the three category axes vendor_type conflates. A long
+      // description in any of them goes to products, never a new category.
+      sells_category: z
+        .string()
+        .max(100)
+        .transform(sanitizeProse)
+        .optional()
+        .describe("What they sell (one short primary category, e.g. 'Jewelry')"),
+      business_sector: z
+        .string()
+        .max(100)
+        .transform(sanitizeProse)
+        .optional()
+        .describe("What kind of business (one short value, e.g. 'Brewery', 'Marine')"),
+      vendor_identity: z
+        .string()
+        .max(100)
+        .transform(sanitizeProse)
+        .optional()
+        .describe("Who they are (one short value, e.g. 'Artist', 'Nonprofit')"),
       description: z.string().transform(sanitizeProse).optional().describe("Business description"),
       products: z
         .array(z.string().transform(sanitizeProse))
@@ -3719,7 +4578,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .describe("State (2-letter code)"),
       address: z.string().optional().describe("Street address"),
       zip: z.string().optional().describe("ZIP code"),
-      logo_url: z.string().optional().describe("Logo image URL"),
+      logo_url: logoUrlParam.describe(
+        "Logo image URL. Must point at an image file (.jpg/.png/.webp) or a known image CDN — a Facebook/Instagram/Etsy page URL is rejected."
+      ),
       // IMG1 §1b Phase 1 — per-image focal point. Applies to logo_url.
       image_focal_x: z
         .number()
@@ -3905,6 +4766,21 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         }
       }
 
+      // OPE-1113 — one spelling per category (async, so not a fieldMap transform).
+      // OPE-1164 — the same for the three axes; a description in any of them is
+      // appended to products (after the vendor row is read) instead of stored.
+      const routedCategories = await routeVendorCategoriesForWrite(db, {
+        ...(params.vendor_type !== undefined ? { vendorType: params.vendor_type } : {}),
+        ...(params.sells_category !== undefined ? { sellsCategory: params.sells_category } : {}),
+        ...(params.business_sector !== undefined ? { businessSector: params.business_sector } : {}),
+        ...(params.vendor_identity !== undefined ? { vendorIdentity: params.vendor_identity } : {}),
+      });
+      delete updates.vendorType;
+      Object.assign(updates, routedCategories.values);
+      for (const p of ["sells_category", "business_sector", "vendor_identity"] as const) {
+        if (params[p] !== undefined) requestedFields.push(p);
+      }
+
       if (params.business_name !== undefined) {
         updates.businessName = params.business_name;
         requestedFields.push("business_name");
@@ -3938,6 +4814,14 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }
 
       const vendor = vendorRows[0];
+
+      // OPE-1164 — a description sent as a category lands in products.
+      if (routedCategories.productsToAdd.length > 0) {
+        updates.products = mergeProductsJson(
+          (updates.products as string | undefined) ?? vendor.products,
+          routedCategories.productsToAdd
+        );
+      }
 
       // If a custom slug was explicitly provided, it takes priority over the
       // auto-generated slug from business_name. Both paths run through the
@@ -4305,6 +5189,36 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         };
       }
 
+      // OPE-858 — warn-only duplicate advisory.
+      //
+      // The exact-name check above is a real gate and stays. It is also why
+      // every specimen got through: `Craftah LLC` and `Craftah, LLC` differ by
+      // one comma, so an exact match saw two different names and waved the
+      // second one in.
+      //
+      // This ADVISORY never refuses. Measured over all 748 promoters, a naive
+      // rule returns more false positives than true ones (4 unrelated orgs on
+      // facebook.com, 2 different Lions clubs on e-clubhouse.org, two real
+      // Washington County Fairs in different states), so there is deliberately
+      // no confidence score and no threshold anyone could tune into a block.
+      //
+      // O(n) over the promoter table on purpose: 748 rows of five small
+      // columns, on a create path that fires a handful of times a day. Revisit
+      // if promoters reach five figures.
+      const dupCandidates = await db
+        .select({
+          id: promoters.id,
+          slug: promoters.slug,
+          companyName: promoters.companyName,
+          website: promoters.website,
+          state: promoters.state,
+        })
+        .from(promoters);
+      const possibleDuplicates = findPromoterDuplicates(
+        { name: params.name, website: params.website ?? null, state: params.state ?? null },
+        dupCandidates
+      );
+
       // Generate unique slug
       const baseSlug = createSlug(params.name);
       if (!baseSlug) {
@@ -4337,7 +5251,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }
 
       // Create placeholder user (promoters table has userId FK)
-      const placeholderEmail = `pending+promoter-${finalSlug}@meetmeatthefair.com`;
+      // OPE-835 — 19 of 747 promoter slugs produce a local part over 64
+      // octets (longest 80), which Cloudflare rejects outright.
+      const placeholderEmail = buildPlaceholderEmail("pending+promoter-", finalSlug);
       const userId = crypto.randomUUID();
 
       await db.insert(users).values({
@@ -4405,6 +5321,21 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
             promoter_id: promoterId,
             slug: finalSlug,
             name: params.name,
+            // OPE-858 — advisory only. `created: true` above is unconditional;
+            // this never becomes a reason the row was not written. Each hit
+            // names the axis that fired so the caller can log it the way the
+            // discovery skill logs Pass A/B/C.
+            ...(possibleDuplicates.length > 0
+              ? {
+                  possible_duplicates: possibleDuplicates,
+                  possible_duplicates_note:
+                    `Created anyway. ${possibleDuplicates.length} existing promoter(s) look ` +
+                    `related — review with get_promoter_details and merge_promoter if they are ` +
+                    `the same organisation. This is advisory: a shared domain can mean a shared ` +
+                    `platform, and an identical name root can be two real organisations in ` +
+                    `different places.`,
+                }
+              : {}),
           }),
         ],
       };
@@ -4464,6 +5395,25 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .optional()
         .describe("Vertical focal point for logo/hero crops, 0–1. Default 0.5."),
       social_links: z.string().optional().describe("Social media links (JSON string)"),
+      // OPE-964 — the explicit clear. Every other field here is a value-setter,
+      // and "" is NOT a clear: it writes a literal empty string (a blank
+      // logo_url reaches the OG-image builder, which only falls back on NULL).
+      clear_fields: z
+        .array(
+          z.enum([
+            "description",
+            "contact_email",
+            "contact_phone",
+            "logo_url",
+            "hero_image_url",
+            "social_links",
+            "succeeded_by_promoter_id",
+          ])
+        )
+        .optional()
+        .describe(
+          "OPE-964: set these fields to NULL (empty). The public promoter page hides description, contact_email, contact_phone, logo and hero when NULL; social_links is not rendered on the public page. A field may not be both set and cleared in one call. To undo a single auto-applied enrichment value, prefer review_promoter_enrichment_candidate action 'revert', which also keeps it from being re-applied."
+        ),
       verified: z.boolean().optional().describe("Verified status"),
       // OPE-31 — producer-wide roster-publishing behavior. Set false for a
       // producer that never publishes a public exhibitor roster; the
@@ -4475,6 +5425,25 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .describe(
           "Whether this producer ever publishes a public exhibitor roster. Set false to auto-mark their future events NO_PUBLIC_LIST (skip research)."
         ),
+      // OPE-979 — succession. Two real companies stay two rows; this records
+      // that one stopped trading and who took its shows over.
+      operating_status: z
+        .enum(PROMOTER_OPERATING_STATUSES)
+        .optional()
+        .describe(
+          "OPE-979: whether the business is still trading. CEASED/MERGED require operating_status_source_url (where you read it). Stamps operating_status_verified_at. A CEASED promoter is skipped by enrichment and by next-year rollover. Use get_promoter_blast_radius first to see what it still owns."
+        ),
+      succeeded_by_promoter_id: z
+        .string()
+        .optional()
+        .describe(
+          "OPE-979: the promoter that took this one's shows over (must exist, must not be this promoter). Not a merge — both rows stay."
+        ),
+      operating_status_source_url: z
+        .string()
+        .url()
+        .optional()
+        .describe("OPE-979: the page that shows the status, e.g. the closure notice."),
       defer_search_ping: z
         .boolean()
         .optional()
@@ -4511,6 +5480,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         { param: "social_links", column: "socialLinks" },
         { param: "verified", column: "verified" },
         { param: "vendor_roster_publishes_lists", column: "vendorRosterPublishesLists" },
+        { param: "operating_status", column: "operatingStatus" },
+        { param: "succeeded_by_promoter_id", column: "succeededByPromoterId" },
+        { param: "operating_status_source_url", column: "operatingStatusSourceUrl" },
       ];
 
       const updates: Record<string, unknown> = {};
@@ -4527,6 +5499,26 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       if (params.name !== undefined) {
         updates.companyName = params.name;
         requestedFields.push("name");
+      }
+
+      // OPE-964 — clears, after the setters so a conflict is detectable.
+      for (const param of params.clear_fields ?? []) {
+        if (requestedFields.includes(param)) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `"${param}" is both set and listed in clear_fields — pick one.`,
+              },
+            ],
+            isError: true,
+          };
+        }
+        const mapping = fieldMap.find((f) => f.param === param);
+        if (mapping) {
+          updates[mapping.column] = null;
+          requestedFields.push(param);
+        }
       }
 
       if (requestedFields.length === 0) {
@@ -4553,6 +5545,13 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }
 
       const promoter = promoterRows[0];
+
+      // OPE-979 — succession is only as good as its evidence and its target.
+      const succession = await validatePromoterSuccession(db, promoter, updates);
+      if (succession) {
+        return { content: [{ type: "text", text: succession }], isError: true };
+      }
+      if (params.operating_status !== undefined) updates.operatingStatusVerifiedAt = new Date();
 
       // If name changed, regenerate slug
       if (params.name !== undefined) {
@@ -4601,21 +5600,33 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
 
       // OPE-35 — recompute enrichment status/coverage from the merged final
       // values (current row overlaid with this patch). Preserve IN_PROGRESS /
-      // BLOCKED sticky states unless the edit now completes coverage.
+      // BLOCKED / EXHAUSTED sticky states unless the edit now completes coverage.
+      const websiteChanged =
+        updates.website !== undefined && (updates.website ?? null) !== (promoter.website ?? null);
+      // OPE-964 — `in`, not `??`: a cleared field is an explicit NULL, and `??`
+      // would read the OLD value back and compute coverage for a field that is
+      // no longer there.
+      const merged = (column: string) =>
+        (column in updates ? updates[column] : (promoter as Record<string, unknown>)[column]) as
+          | string
+          | null;
       const enrichment = computePromoterEnrichment(
         {
-          website: (updates.website ?? promoter.website) as string | null,
-          heroImageUrl: (updates.heroImageUrl ?? promoter.heroImageUrl) as string | null,
-          logoUrl: (updates.logoUrl ?? promoter.logoUrl) as string | null,
-          description: (updates.description ?? promoter.description) as string | null,
-          socialLinks: (updates.socialLinks ?? promoter.socialLinks) as string | null,
-          contactEmail: (updates.contactEmail ?? promoter.contactEmail) as string | null,
-          contactPhone: (updates.contactPhone ?? promoter.contactPhone) as string | null,
+          website: merged("website"),
+          heroImageUrl: merged("heroImageUrl"),
+          logoUrl: merged("logoUrl"),
+          description: merged("description"),
+          socialLinks: merged("socialLinks"),
+          contactEmail: merged("contactEmail"),
+          contactPhone: merged("contactPhone"),
         },
-        promoter.enrichmentStatus
+        // OPE-962 — a NEW website re-opens a promoter that exhausted the old one:
+        // EXHAUSTED is a fact about a site, not about the organizer.
+        websiteChanged ? null : promoter.enrichmentStatus
       );
       updates.enrichmentStatus = enrichment.status;
       updates.enrichmentCoverage = enrichment.coverageJson;
+      if (websiteChanged) updates.enrichmentZeroYieldStreak = 0;
 
       await db.update(promoters).set(updates).where(eq(promoters.id, promoter.id));
 
@@ -4751,6 +5762,14 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       // OPE-572 — the missing home for day-level provenance. 44 rows leaked
       // `Source: …` audit prose onto live pages because `notes` was the only
       // writable text field on the row.
+      // OPE-1069 — the organizer publishes no closing time (a settled
+      // finding), as distinct from "we have not found it" (a research gap).
+      close_time_unpublished: z
+        .boolean()
+        .optional()
+        .describe(
+          "OPE-1069: true when you LOOKED at the organizer's own site and it publishes no closing time. Leave close_time empty; the day then does NOT raise flagged_for_review and renders 'no published closing time'. Requires internal_notes saying where you looked. Omit (not false) when you simply have not found it — that is the research gap the flag exists for."
+        ),
       internal_notes: z
         .string()
         .transform(decodeHtmlEntities)
@@ -4808,15 +5827,36 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       // collapse to one row at the DB layer rather than racing past the
       // check. (Pre-existing duplicate rows from before this guard are a
       // separate one-time cleanup; idempotency is a forward guarantee.)
+      // OPE-1088 — keyed on (event, date, vendor_only), matching the unique
+      // index. Keyed on (event, date) alone, a legitimate vendor-setup window
+      // on a date that already has its public row read as "already exists" and
+      // was skipped — and those two rows are distinct visitor-facing facts.
+      const vendorOnlyFlag = params.vendor_only ?? false;
       const existingDay = await db
         .select({ id: eventDays.id })
         .from(eventDays)
-        .where(and(eq(eventDays.eventId, params.event_id), eq(eventDays.date, params.date)))
+        .where(
+          and(
+            eq(eventDays.eventId, params.event_id),
+            eq(eventDays.date, params.date),
+            eq(eventDays.vendorOnly, vendorOnlyFlag)
+          )
+        )
         .limit(1);
 
       const openTime = params.open_time ?? null;
       const closeTime = params.close_time ?? null;
-      const hoursUnknown = openTime == null || closeTime == null;
+      const closeTimeUnpublished = params.close_time_unpublished === true;
+      const unpublishedRefusal = closeTimeUnpublishedError({
+        closeTimeUnpublished,
+        closeTime,
+        internalNotes: params.internal_notes ?? null,
+      });
+      if (unpublishedRefusal) {
+        return { content: [{ type: "text", text: unpublishedRefusal }], isError: true };
+      }
+      // OPE-1069 — the SHARED per-row rule, not an inline copy of it.
+      const hoursUnknown = dayHoursUnknown({ openTime, closeTime, closeTimeUnpublished });
 
       if (existingDay.length > 0) {
         // Idempotent no-op: the day already exists. Editing it is
@@ -4836,7 +5876,13 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
 
       // Deterministic id keyed on the natural (event_id, date) pair so a
       // racing duplicate insert hits the PK and ON CONFLICT DO NOTHING.
-      const dayId = `evd_${params.event_id}_${params.date}`;
+      // OPE-1088 — the vendor row gets its own id for the same reason: the old
+      // scheme made it collide with the public row's PRIMARY KEY, so
+      // `onConflictDoNothing` dropped it before the unique index could speak.
+      // Public rows keep the historic id exactly, so existing idempotency holds.
+      const dayId = vendorOnlyFlag
+        ? `evd_${params.event_id}_${params.date}_vendor`
+        : `evd_${params.event_id}_${params.date}`;
       // DQ4: pass null through when args were omitted; drizzle/0118 made
       // the columns nullable. Flag the parent event for triage when
       // either time landed unknown.
@@ -4861,7 +5907,8 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           closeTime,
           notes: params.notes ?? null,
           internalNotes: params.internal_notes ?? null,
-          vendorOnly: params.vendor_only ?? false,
+          closeTimeUnpublished: closeTimeUnpublished ? 1 : 0,
+          vendorOnly: vendorOnlyFlag,
           // F2: per-day image; DB defaults take over when omitted.
           ...(params.image_url !== undefined && { imageUrl: params.image_url }),
           ...(params.image_focal_x !== undefined && { imageFocalX: params.image_focal_x }),
@@ -4874,7 +5921,6 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .select({ date: eventDays.date, vendorOnly: eventDays.vendorOnly })
         .from(eventDays)
         .where(eq(eventDays.eventId, params.event_id));
-      const { publicStartDate, publicEndDate } = computePublicDates(allDays);
 
       // OPE-47 (2026-07): keep events.discontinuous_dates in sync as days are
       // added one at a time. This tool was the true under-flagging source —
@@ -4892,8 +5938,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       await db
         .update(events)
         .set({
-          publicStartDate,
-          publicEndDate,
+          // OPE-1203 — computed in SQL from the rows present at write time, so a
+          // concurrent day write on the same event cannot leave a stale range.
+          ...publicDatesFromDaysSet(params.event_id),
           updatedAt: new Date(),
           ...discontinuousUpdate,
           ...(hoursUnknown ? { flaggedForReview: 1 } : {}),
@@ -4946,6 +5993,14 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       // OPE-572 — the missing home for day-level provenance. 44 rows leaked
       // `Source: …` audit prose onto live pages because `notes` was the only
       // writable text field on the row.
+      // OPE-1069 — the organizer publishes no closing time (a settled
+      // finding), as distinct from "we have not found it" (a research gap).
+      close_time_unpublished: z
+        .boolean()
+        .optional()
+        .describe(
+          "OPE-1069: true when you LOOKED at the organizer's own site and it publishes no closing time. Leave close_time empty; the day then does NOT raise flagged_for_review and renders 'no published closing time'. Requires internal_notes saying where you looked. Omit (not false) when you simply have not found it — that is the research gap the flag exists for."
+        ),
       internal_notes: z
         .string()
         .transform(decodeHtmlEntities)
@@ -4998,6 +6053,23 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       if (params.notes !== undefined) updates.notes = params.notes;
       if (params.internal_notes !== undefined) updates.internalNotes = params.internal_notes;
       if (params.closed !== undefined) updates.closed = params.closed;
+      // OPE-1069 — a published close time supersedes an "unpublished" finding;
+      // setting the finding needs provenance (this call's or the row's notes).
+      if (typeof params.close_time === "string") updates.closeTimeUnpublished = 0;
+      if (params.close_time_unpublished !== undefined) {
+        const [cur] = await db
+          .select({ closeTime: eventDays.closeTime, internalNotes: eventDays.internalNotes })
+          .from(eventDays)
+          .where(eq(eventDays.id, params.day_id))
+          .limit(1);
+        const refusal = closeTimeUnpublishedError({
+          closeTimeUnpublished: params.close_time_unpublished,
+          closeTime: params.close_time !== undefined ? params.close_time : (cur?.closeTime ?? null),
+          internalNotes: params.internal_notes ?? cur?.internalNotes ?? null,
+        });
+        if (refusal) return { content: [{ type: "text", text: refusal }], isError: true };
+        updates.closeTimeUnpublished = params.close_time_unpublished ? 1 : 0;
+      }
       if (params.vendor_only !== undefined) updates.vendorOnly = params.vendor_only;
       // F2 — per-occurrence image. Same null-vs-undefined distinction
       // as the DQ4 time args.
@@ -5037,14 +6109,15 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
             venueId: parentEvent.venueId,
           })
         : [];
+      // OPE-1203 — the day write and the public-range recompute go in one
+      // atomic batch, the range computed in SQL from the committed rows.
+      await db.batch([
+        db.update(eventDays).set(updates).where(eq(eventDays.id, params.day_id)),
+        recomputePublicDatesStmt(db, eventId),
+        ...daySyndicationStmts,
+      ] as unknown as Parameters<typeof db.batch>[0]);
       if (daySyndicationStmts.length > 0) {
-        await db.batch([
-          db.update(eventDays).set(updates).where(eq(eventDays.id, params.day_id)),
-          ...daySyndicationStmts,
-        ] as unknown as Parameters<typeof db.batch>[0]);
         await enqueueSyndicationChange(env, { entityType: "event_day", entityId: params.day_id });
-      } else {
-        await db.update(eventDays).set(updates).where(eq(eventDays.id, params.day_id));
       }
 
       // OPE-433 scope 5 — one record for both branches: the syndication
@@ -5058,17 +6131,6 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         after: updates,
         note: "mcp update_event_day",
       });
-
-      // Recompute public date range on parent event
-      const allDays = await db
-        .select({ date: eventDays.date, vendorOnly: eventDays.vendorOnly })
-        .from(eventDays)
-        .where(eq(eventDays.eventId, eventId));
-      const { publicStartDate, publicEndDate } = computePublicDates(allDays);
-      await db
-        .update(events)
-        .set({ publicStartDate, publicEndDate, updatedAt: new Date() })
-        .where(eq(events.id, eventId));
 
       return {
         content: [
@@ -5109,18 +6171,41 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         actor: auth.userId ?? "mcp:delete_event_day",
         note: `mcp delete_event_day on event ${eventId}`,
       });
-      await db.delete(eventDays).where(eq(eventDays.id, params.day_id));
-
-      // Recompute public date range on parent event
-      const remainingDays = await db
-        .select({ date: eventDays.date, vendorOnly: eventDays.vendorOnly })
-        .from(eventDays)
-        .where(eq(eventDays.eventId, eventId));
-      const { publicStartDate, publicEndDate } = computePublicDates(remainingDays);
-      await db
-        .update(events)
-        .set({ publicStartDate, publicEndDate, updatedAt: new Date() })
-        .where(eq(events.id, eventId));
+      // OPE-1203 — the delete and the public-range recompute are ONE atomic
+      // batch, and the range is computed in SQL from the rows that survive it,
+      // so parallel deletes on one event cannot leave it stale or half-done.
+      try {
+        await db.batch([
+          db.delete(eventDays).where(eq(eventDays.id, params.day_id)),
+          recomputePublicDatesStmt(db, eventId),
+        ] as unknown as Parameters<typeof db.batch>[0]);
+      } catch (err) {
+        // Say whether the day is gone from what the table holds NOW, not from
+        // what the batch is assumed to have done.
+        const still = await db
+          .select({ id: eventDays.id })
+          .from(eventDays)
+          .where(eq(eventDays.id, params.day_id))
+          .limit(1)
+          .catch(() => null);
+        const dayDeleted = still === null ? "unknown" : still.length === 0;
+        return {
+          content: [
+            jsonContent({
+              deleted: dayDeleted,
+              id: params.day_id,
+              error: `delete_event_day failed: ${err instanceof Error ? err.message : String(err)}`,
+              hint:
+                dayDeleted === false
+                  ? "Nothing changed — the day and the event's public dates are as they were. Safe to retry."
+                  : dayDeleted === true
+                    ? "The day is gone (possibly removed by a concurrent call); check the event's public dates with get_event_details_admin."
+                    : "Could not confirm the day's state; re-read with list_event_days before retrying.",
+            }),
+          ],
+          isError: true,
+        };
+      }
 
       return {
         content: [jsonContent({ deleted: true, id: params.day_id, date: dayRows[0].date })],

@@ -269,10 +269,13 @@ describe("buildReply — new intent acks", () => {
     });
   });
 
-  it("press-ack mentions media materials without committing to a URL", () => {
+  it("press-ack promises no follow-up nobody sends, and commits to no URL (OPE-1134)", () => {
+    // It used to say "A team member will follow up shortly with media
+    // materials" — false, since press has no handler that sends any (OPE-761).
     const msg = buildReply("press-ack", "press@nyt.com", { subject: "media inquiry" });
-    expect(msg.text).toMatch(/media materials/i);
-    expect(msg.text).not.toMatch(/https?:\/\//); // no URL committed in MVP
+    expect(msg.text).not.toMatch(/follow up|shortly|media materials/i);
+    expect(msg.text).toMatch(/logged/i);
+    expect(msg.text).not.toMatch(/https?:\/\//);
   });
 
   it("unsubscribe-ack confirms removal", () => {

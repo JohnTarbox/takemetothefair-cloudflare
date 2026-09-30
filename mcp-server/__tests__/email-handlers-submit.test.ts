@@ -51,6 +51,17 @@ describe("submitFetch — retry contract", () => {
     expect(JSON.parse(result.jsonLdSerialized!)).toEqual({ "@type": "Event" });
   });
 
+  // OPE-424 — the transport the main app used reaches the workflow, which
+  // flags a plain-HTTP read for review. Absent from an older deploy → absent here.
+  it("carries transport:'http' through, and omits it when the main app did not send it", async () => {
+    mockFetch(() =>
+      Response.json({ success: true, content: "c", fetchMethod: "standard", transport: "http" })
+    );
+    expect((await submitFetch(ENV, "http://example.org")).transport).toBe("http");
+    mockFetch(() => Response.json({ success: true, content: "c" }));
+    expect(await submitFetch(ENV, "http://example.org")).not.toHaveProperty("transport");
+  });
+
   it("throws NonRetryableError on 4xx (don't retry permanent failures)", async () => {
     mockFetch(() => new Response("bad url", { status: 400 }));
     await expect(submitFetch(ENV, "https://example.org")).rejects.toBeInstanceOf(NonRetryableError);
@@ -274,7 +285,8 @@ describe("submitEvent — retry contract", () => {
     const result = await submitEvent(
       ENV,
       { url: "https://x", event: { name: "My Fair" } },
-      "alice@example.com"
+      "alice@example.com",
+      { inboundEmailId: "email-test", dedupWasBlind: false }
     );
     expect(result.id).toBe("e-abc-123");
     expect(result.slug).toBe("my-fair-2026");
@@ -285,26 +297,29 @@ describe("submitEvent — retry contract", () => {
     mockFetch(
       () => new Response(JSON.stringify({ success: false, error: "validation" }), { status: 400 })
     );
-    const err = await submitEvent(ENV, { url: "https://x", event: { name: "x" } }, "a@b.com").catch(
-      (e) => e
-    );
+    const err = await submitEvent(ENV, { url: "https://x", event: { name: "x" } }, "a@b.com", {
+      inboundEmailId: "email-test",
+      dedupWasBlind: false,
+    }).catch((e) => e);
     expect(err).toBeInstanceOf(NonRetryableError);
   });
 
   it("throws plain Error on 5xx (retry transient failures)", async () => {
     mockFetch(() => new Response("oops", { status: 502 }));
-    const err = await submitEvent(ENV, { url: "https://x", event: { name: "x" } }, "a@b.com").catch(
-      (e) => e
-    );
+    const err = await submitEvent(ENV, { url: "https://x", event: { name: "x" } }, "a@b.com", {
+      inboundEmailId: "email-test",
+      dedupWasBlind: false,
+    }).catch((e) => e);
     expect(err).toBeInstanceOf(Error);
     expect(err).not.toBeInstanceOf(NonRetryableError);
   });
 
   it("throws plain Error on network failure (retryable)", async () => {
     mockFetch(() => Promise.reject(new Error("ECONNREFUSED")));
-    const err = await submitEvent(ENV, { url: "https://x", event: { name: "x" } }, "a@b.com").catch(
-      (e) => e
-    );
+    const err = await submitEvent(ENV, { url: "https://x", event: { name: "x" } }, "a@b.com", {
+      inboundEmailId: "email-test",
+      dedupWasBlind: false,
+    }).catch((e) => e);
     expect(err).toBeInstanceOf(Error);
     expect(err).not.toBeInstanceOf(NonRetryableError);
   });

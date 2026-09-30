@@ -50,6 +50,7 @@ beforeEach(async () => {
 const NON_COLUMN_WRITER_PARAMS = new Set([
   "event_id", // addresses the row; not stored on it
   "citation", // writes event_data_citations, a different table
+  "pet_friendly_evidence", // OPE-1061 — also writes event_data_citations; the VALUE (pet_friendly) is read back
   "acknowledge_possible_duplicates", // suppresses a warning
   "defer_search_ping", // suppresses an IndexNow ping
 ]);
@@ -130,6 +131,9 @@ describe("reader / writer parity", () => {
       "citation",
       "defer_search_ping",
       "event_id",
+      // OPE-1061 — deliberate: the evidence is a citation row; the value it
+      // supports (`pet_friendly`) IS a column and IS read back.
+      "pet_friendly_evidence",
     ]);
   });
 });

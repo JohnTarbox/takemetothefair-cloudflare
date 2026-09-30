@@ -24,7 +24,7 @@ import { NextResponse } from "next/server";
 import { sql } from "drizzle-orm";
 import { isAuthorized } from "@/lib/api-auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
-import { getUrlInfo, BingConfigError, type BingEnv } from "@/lib/bing-webmaster";
+import { getUrlInfo, BingConfigError } from "@/lib/bing-webmaster";
 import { timeToIndexLog } from "@/lib/db/schema";
 import { reconcileTimeToIndexFromCrawl } from "@/lib/time-to-index-reconcile";
 
@@ -37,7 +37,7 @@ export async function POST(request: Request) {
   }
 
   const db = getCloudflareDb();
-  const env = getCloudflareEnv() as unknown as BingEnv;
+  const env = getCloudflareEnv();
 
   // Missing key isn't a hard failure — return 200 so the cron logs it without
   // tripping a deploy/cron alarm. (recordScFailure-style graceful degrade.)

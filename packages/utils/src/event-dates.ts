@@ -54,6 +54,14 @@ export function normalizeEventDate(input: string | Date | null | undefined): Dat
   } else if (/^\d{4}-\d{2}-\d{2}T00:00:00(\.000)?Z?$/.test(s)) {
     // Explicit midnight UTC (with or without milliseconds / Z) → noon UTC
     s = s.slice(0, 10) + "T12:00:00Z";
+  } else if (/^\d{4}-\d{2}-\d{2}T00:00(?::00(?:\.0+)?)?[+-]\d{2}:?\d{2}$/.test(s)) {
+    // OPE-1011 — LOCAL midnight with an explicit offset ("2026-09-16T00:00:00-04:00")
+    // is a date-only value written by a client that knows its zone. Passed
+    // through, it stored as 04:00Z / 05:00Z: 99 public rows on 2026-09-14. Those
+    // render correctly only while the offset matches the season — a 04:00Z value
+    // on a winter date is 23:00 EST the PREVIOUS day under the Eastern render.
+    // The calendar date in the string is the intended day; anchor it at noon.
+    s = s.slice(0, 10) + "T12:00:00Z";
   }
   const d = new Date(s);
   return isNaN(d.getTime()) ? null : d;

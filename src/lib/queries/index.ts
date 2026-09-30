@@ -12,6 +12,7 @@ import {
   eventVendors,
   users,
   userFavorites,
+  eventInStateWhere,
 } from "@/lib/db/schema";
 import type { EventStatus, FavoritableType } from "@takemetothefair/constants";
 import { isPublicEventStatus } from "@/lib/event-status";
@@ -458,7 +459,7 @@ export async function getUpcomingEventYearSpanByState(
     .where(
       and(
         isPublicEventStatus(),
-        eq(events.stateCode, stateCode),
+        eventInStateWhere(stateCode),
         isNotNull(events.startDate),
         upcomingEndPredicate(now)
       )
@@ -506,7 +507,7 @@ export async function countUpcomingEventsByState(db: Database, stateCode: string
     .where(
       and(
         isPublicEventStatus(),
-        eq(events.stateCode, stateCode),
+        eventInStateWhere(stateCode),
         isNotNull(events.startDate),
         // A2 (Dev backlog 2026-06-05): 24h end-of-day grace.
         upcomingEndPredicate(now)

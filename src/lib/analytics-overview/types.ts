@@ -1,3 +1,4 @@
+import type { Measurement } from "./render-state";
 /**
  * Public types + value constants for the /admin/analytics Overview snapshot.
  *
@@ -44,7 +45,14 @@ export type SearchVisibilityCard =
     }
   | { ok: false; reason: string };
 
-export type ConversionsCard = Delta;
+export type ConversionsCard = Delta & {
+  /**
+   * OPE-1131 — the count, stale when the first-party beacon stopped admitting
+   * rows (MAX(analytics_events.timestamp)). A silent beacon otherwise reads as
+   * a quiet week.
+   */
+  currentMeasured: import("./render-state").Measurement<number>;
+};
 
 export type CatalogGrowthCard = {
   totals: { events: number; venues: number; vendors: number; total: number };
@@ -71,7 +79,31 @@ export type SiteHealthCard = {
 };
 
 export type IndexNowCard = {
+  /**
+   * OPE-808 — the success rate as a MEASUREMENT, which can decline to be a
+   * number. With zero attempts the rate is undefined, not 0% and not 100%;
+   * the old boolean-ish fallback returned both, on different page loads, from
+   * the same data.
+   */
+  todayRate: Measurement<number>;
+  /**
+   * Last date Bing was actually contacted (`success`/`failure`) — a `skipped`
+   * row is the breaker declining to send. Renders as "paused since ...".
+   */
+  lastAttemptAt: string | null;
+  /**
+   * OPE-1161 A3 — every row logged today, including breaker `skipped` deferrals.
+   * Kept for callers; the tile's big number is `todayAttempts`.
+   */
   todaySubmissions: number;
+  /** OPE-1161 A3 — rows where Bing was actually contacted today (success + failure). */
+  todayAttempts: number;
+  /**
+   * OPE-1161 A3 — the kill-switch as READ from KV (`indexnow:paused`), not
+   * inferred from the last send date. `unknown` when the read failed or there
+   * is no KV binding.
+   */
+  pause: { state: "paused" | "active" | "unknown"; note: string | null };
   todaySuccessRate: number; // 0..1 — over attempts (success+failure); 0 when only deferrals (OPE-243)
   todayFailures: number;
   todayDeferred: number; // OPE-243 — breaker-skipped (paused/latched) rows; deferral != success
@@ -98,6 +130,8 @@ export type RecommendationsSummaryCard = {
   // Highest severity present in the active set, or null if zero items.
   // Drives the card's border/icon color.
   maxSeverity: "red" | "yellow" | "blue" | null;
+  /** OPE-1131 — the actionable count, stale when the scanner stopped. */
+  actionableMeasured: import("./render-state").Measurement<number>;
   redCount: number;
   yellowCount: number;
   blueCount: number;
@@ -115,7 +149,10 @@ export type SiteCtrCard =
       ok: true;
       clicks: number;
       impressions: number;
+      /** @deprecated OPE-1131 — read `ctrMeasured`; this is 0 over no impressions. */
       ctr: number;
+      /** OPE-1131 — undefined over no impressions, truncated over a capped query sample. */
+      ctrMeasured: import("./render-state").Measurement<number>;
       trend: Trend;
       previousCtr: number;
     }
@@ -134,7 +171,12 @@ export type SiteCtrCard =
 export type ConversionRateCard = {
   conversions: number;
   sessions: number | null;
+  /** @deprecated OPE-1131 — read `rateMeasured`; null here conflates two causes. */
   rate: number | null;
+  /** OPE-1131 — unavailable (GA4 failed) vs undefined-rate (no sessions). */
+  rateMeasured: import("./render-state").Measurement<number>;
+  /** OPE-1165 — true once `conversions` counts ORGANIC clicks only. */
+  organicBasis: boolean;
   windowDays: number;
   /** ISO date string for the window end so the tooltip can show the lag. */
   windowEndDate: string;
@@ -149,7 +191,10 @@ export type ConversionRateCard = {
 export type AccountEngagementCard = {
   signals: number;
   sessions: number;
+  /** @deprecated OPE-1131 — read `rateMeasured`; this is 0 over no events. */
   rate: number;
+  /** OPE-1131 — undefined when no first-party events were recorded. */
+  rateMeasured: import("./render-state").Measurement<number>;
   windowDays: number;
   breakdown: { vendor_claims: number; event_favorites: number; contact_clicks: number };
 };
@@ -165,13 +210,18 @@ export type BrandVsNonBrandCard =
       brand_impressions: number;
       non_brand_clicks: number;
       non_brand_impressions: number;
+      /** @deprecated OPE-1131 — read `brandShareMeasured`; 0 over no clicks. */
       brand_share: number; // 0..1
+      /** OPE-1131 — undefined over no clicks, truncated over a capped query sample. */
+      brandShareMeasured: import("./render-state").Measurement<number>;
       windowDays: number;
     }
   | { ok: false; reason: string };
 
 /** Sitemap quality ratio: rows passing the completeness gate / total. */
 export type SitemapQualityCard = {
+  /** OPE-808 — pass rate that can decline to be a number. */
+  overallRate: Measurement<number>;
   vendors: { pass: number; total: number };
   events: { pass: number; total: number };
   overall_pass_rate: number; // 0..1
@@ -189,7 +239,7 @@ export type RenderFaultHealthCard = {
   openSignatures: number; // status proposed|filed|regressed
   autoDetectedPct: number | null; // signatures with ope_id set / total (pipeline-filed share); null if 0 sigs
   meanTimeToDetectHours: number | null; // avg(filedAt - firstSeen) over filed rows; null if none filed
-  serverMessagePct: number | null; // error_logs source='server-render' / all error rows in window; null if 0 rows
+  serverMessagePct: number | null; // OPE-1161 A2 — server-render rows / render-fault rows (server-render + client) in window; null if 0
   // Dedup collapse: 1 - (distinct signatures / total occurrences summed). The
   // share of raw occurrences the ledger folded away — HIGH is healthy (a hot
   // page's thousands of crashes collapse to one signature). Informative inverse
@@ -203,7 +253,24 @@ export type RenderFaultHealthCard = {
 
 /** Time-to-index summary computed from time_to_index_log. */
 export type TimeToIndexCard = {
+  /**
+   * Rows the statistics were computed over — the SAMPLE, capped at
+   * `sampleCap`. ⚠️ OPE-808: this used to be rendered as the resolved count.
+   * It is a LIMIT. `resolvedTotal` is the population.
+   */
   resolved: number;
+  /** True population of resolved rows (5,501 on 2026-09-05 vs a 1,000 sample). */
+  resolvedTotal: number;
+  sampleCap: number;
+  /** The sample hit the cap AND the population exceeds it. */
+  truncated: boolean;
+  /**
+   * Last date the feed ADMITTED a row (`indexnow_submitted_at`), not the last
+   * date anything in it changed. Frozen at 2026-06-13 while `first_crawl_at`
+   * keeps advancing — which is why the median climbs on its own.
+   */
+  feedLastAt: string | null;
+  feedStale: boolean;
   unresolved: number;
   median_seconds: number | null;
   p90_seconds: number | null;
@@ -224,12 +291,19 @@ export type ThisWeeksActionsCard = {
 
 /** 90-day per-KPI mini sparkline strip. */
 export type KpiSparklineStrip = {
-  searchVisibility: SparklinePoint[];
+  searchVisibility: SparklineSeries;
   conversions: SparklinePoint[];
   publishing: SparklinePoint[];
 };
 
 export type SparklinePoint = { date: string; value: number };
+
+/**
+ * OPE-1131 — a daily series that can say it was never fetched. The GSC loaders
+ * return a zero-filled series on failure so the chart still draws; without this
+ * tag the card summed those zeros into a "0" total captioned "through <today>".
+ */
+export type SparklineSeries = SparklinePoint[] & { unavailableReason?: string };
 
 export type ActivityEntry = {
   // ms-epoch
@@ -250,7 +324,15 @@ export type QueueDrainTileRow = {
   outflow7d: number | null;
   /** trailing-7d outflow ÷ inflow; null when inflow 0 or outflow unknown. */
   drainRatio7d: number | null;
+  /** OPE-1131 — figures this queue cannot compute, and why (see QueueDrainRow). */
+  unmeasured?: { flows?: string; depth?: string };
+  /** True only for zero outflow — see `drainState`. */
   frozen: boolean;
+  /**
+   * OPE-1161 E17 — `frozen` (nothing closed) vs `slow` (closing, but under the
+   * 14-day drain ratio), from the same detector and thresholds as the alert.
+   */
+  drainState: "frozen" | "slow" | null;
 };
 export type QueueDrainCard = {
   queues: QueueDrainTileRow[];
@@ -270,7 +352,7 @@ export type OverviewSnapshot = {
   blogCoverage: BlogCoverageCard;
   conversionsSparkline: SparklinePoint[];
   publishingSparkline: SparklinePoint[];
-  searchVisibilitySparkline: SparklinePoint[];
+  searchVisibilitySparkline: SparklineSeries;
   activity: ActivityEntry[];
   // §10.3 additions
   siteCtr: SiteCtrCard;
@@ -289,6 +371,8 @@ export type OverviewSnapshot = {
   accountEngagement: AccountEngagementCard;
   kpiStates: Map<KpiName, KpiStateRow>;
   actionQueue: ActionQueueEntry[];
+  /** OPE-1161 E16 — YELLOW KPIs held out of the queue because they were RED in the last 7 days. */
+  actionQueueSuppressed: KpiName[];
 };
 
 /** OPE-78 — SLA state of an action-queue item vs. its age-in-red threshold.

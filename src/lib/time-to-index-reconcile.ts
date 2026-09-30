@@ -86,7 +86,10 @@ export async function reconcileTimeToIndexFromCrawl(
     try {
       info = await lookup(r.url);
     } catch (e) {
-      if ((e as { status?: number } | null)?.status === 429) {
+      // OPE-1026: Bing's throttle arrives as HTTP 400 `17: ERROR!!! ThrottleIP`,
+      // so a 429-only check never stopped — `throttled` is set by BingApiError.
+      const err = e as { status?: number; throttled?: boolean } | null;
+      if (err?.status === 429 || err?.throttled === true) {
         quotaStopped = true;
         break;
       }

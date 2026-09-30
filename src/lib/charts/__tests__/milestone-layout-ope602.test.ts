@@ -32,7 +32,7 @@ function liveSeries(): MilestonePoint[] {
   ];
   return thresholds.map((t, i) => ({
     threshold: t,
-    emailDate: `2026-0${5 + Math.floor(i / 13)}-${String((i % 28) + 1).padStart(2, "0")}`,
+    date: `2026-0${5 + Math.floor(i / 13)}-${String((i % 28) + 1).padStart(2, "0")}`,
   }));
 }
 
@@ -64,9 +64,9 @@ describe("label collision — structural, not incidental", () => {
 
   it("keeps every label when they comfortably fit", () => {
     const few: MilestonePoint[] = [
-      { threshold: 10, emailDate: "2026-05-01" },
-      { threshold: 20, emailDate: "2026-06-01" },
-      { threshold: 30, emailDate: "2026-07-01" },
+      { threshold: 10, date: "2026-05-01" },
+      { threshold: 20, date: "2026-06-01" },
+      { threshold: 30, date: "2026-07-01" },
     ];
     const layout = computeMilestoneLayout(few, fmt);
     expect(layout.labelStride).toBe(1);
@@ -152,7 +152,7 @@ describe("degenerate input", () => {
   });
 
   it("handles a single point", () => {
-    const layout = computeMilestoneLayout([{ threshold: 100, emailDate: "2026-05-01" }], fmt);
+    const layout = computeMilestoneLayout([{ threshold: 100, date: "2026-05-01" }], fmt);
     expect(layout.coords).toHaveLength(1);
     expect(layout.dateLabelIndices).toEqual([0]);
   });

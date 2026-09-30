@@ -1,5 +1,7 @@
 name = "takemetothefair-ci"
-compatibility_date = "2026-06-10"
+# OPE-994 — kept equal to the deployed configs (OPE-905), so CI's
+# getPlatformProxy emulates the runtime production runs, not an older one.
+compatibility_date = "2026-09-10"
 compatibility_flags = ["nodejs_compat"]
 
 # NOTE: This is wrangler.ci.toml — passed to initOpenNextCloudflareForDev as the

@@ -144,16 +144,17 @@ export async function POST(request: NextRequest) {
     maxBytes: PIPELINE_MAX_BYTES,
   });
 
-  // OPE-314 — do NOT trust `new URL(request.url).origin` as the PUBLIC host.
-  // When the MCP Worker mints a slot over the MAIN_APP service binding
-  // (OPE-258), OpenNext reconstructs request.url without a usable host and
-  // the origin came out as literally "https://undefined", so every minted
-  // upload_url had to be hand-edited before it would POST.
+  // OPE-314 / OPE-1031 — the request origin is only trustworthy when the
+  // caller sent a Host. A service-binding Request has none unless it is built
+  // with one: OpenNext re-issues it with `x-forwarded-host: headers.host`,
+  // `new Headers()` turns that `undefined` into the string "undefined", and
+  // request.url became "https://undefined/..." (21 prod rows after #798).
+  // The binding is fixed at the source — every MCP caller builds its Request
+  // through `mainAppBindingRequest` (mcp-server/src/main-app-fetch.ts), which
+  // sets Host and throws on a hostless MAIN_APP_URL.
   //
-  // The request origin is still honoured when it names a real host, so local
-  // dev and preview deploys keep working; anything else falls back to the
-  // canonical SITE_URL constant. Loudly logged rather than silently patched —
-  // a broken host means a binding/runtime assumption changed.
+  // This fallback stays as a belt only. It should never fire now, so a row
+  // here is a regression of that fix, not routine noise — keep it at error.
   const requestOrigin = new URL(request.url).origin;
   const requestHost = new URL(request.url).hostname;
   const originIsUsable =

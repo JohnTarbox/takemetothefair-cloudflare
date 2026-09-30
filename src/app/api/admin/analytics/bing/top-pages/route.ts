@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { isAuthorized } from "@/lib/api-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
-import { BingApiError, BingConfigError, getPageStats, type BingEnv } from "@/lib/bing-webmaster";
+import { BingApiError, BingConfigError, getPageStats } from "@/lib/bing-webmaster";
 
 export async function GET(request: Request) {
   if (!(await isAuthorized(request))) {
@@ -11,7 +11,7 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const skipCache = url.searchParams.get("refresh") === "1";
   try {
-    const env = getCloudflareEnv() as unknown as BingEnv;
+    const env = getCloudflareEnv();
     const data = await getPageStats(env, { skipCache });
     return NextResponse.json({ success: true, data });
   } catch (error) {

@@ -150,3 +150,49 @@ describe("getPerformerDataHealth", () => {
     expect((c.findings[0] as { appearance_id: string }).appearance_id).toBe("a");
   });
 });
+
+describe("OPE-959 — events that have already STARTED", () => {
+  const stale = async () =>
+    (await getPerformerDataHealth(db)).checks.find((c) => c.key === "stale_imminent_lineup")!;
+  const pastPending = async () =>
+    (await getPerformerDataHealth(db)).checks.find((c) => c.key === "past_but_pending")!;
+
+  it("LITCHFIELD SHAPE: a mid-run fair with a stale lineup IS flagged", async () => {
+    insEvent("litchfield", { startDate: at(-1 * DAY), endDate: at(1 * DAY) });
+    insPerformer("act");
+    insAppr("a-l", "litchfield", "act", { sourceUrl: "https://x/lineup" });
+    expect((await stale()).findings.map((f) => f.event_id)).toEqual(["litchfield"]);
+  });
+
+  it("on the CLOSING DAY (stored end_date already passed this morning) it is still in-window, and its PENDING act is NOT yet 'past'", async () => {
+    insEvent("closing", { startDate: at(-2 * DAY), endDate: at(-6 * 3600_000) });
+    insPerformer("act2");
+    insAppr("a-c", "closing", "act2", { status: "PENDING", sourceUrl: "https://x/lineup" });
+    expect((await stale()).findings.map((f) => f.event_id)).toEqual(["closing"]);
+    expect((await pastPending()).count).toBe(0);
+  });
+
+  it("POSITIVE LANDMARK: a fair that ended two days ago is out of the lineup window and its PENDING act IS past", async () => {
+    insEvent("over", { startDate: at(-4 * DAY), endDate: at(-2 * DAY) });
+    insPerformer("act3");
+    insAppr("a-o", "over", "act3", { status: "PENDING", sourceUrl: "https://x/lineup" });
+    expect((await stale()).count).toBe(0);
+    expect((await pastPending()).findings.map((f) => f.appearance_id)).toEqual(["a-o"]);
+  });
+
+  it("a running fair whose roster WAS re-verified recently is not flagged", async () => {
+    insEvent("fresh", {
+      startDate: at(-1 * DAY),
+      endDate: at(1 * DAY),
+      performerRosterCheckedAt: at(-3600_000),
+      performerRosterStatus: "VERIFIED",
+    });
+    insPerformer("act4");
+    insAppr("a-f", "fresh", "act4", { sourceUrl: "https://x/lineup" });
+    expect((await stale()).count).toBe(0);
+  });
+
+  it("the title says what the window is", async () => {
+    expect((await stale()).title).toMatch(/running now/);
+  });
+});

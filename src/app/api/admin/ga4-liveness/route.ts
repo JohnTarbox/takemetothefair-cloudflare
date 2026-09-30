@@ -4,7 +4,7 @@ import { desc } from "drizzle-orm";
 import { requireAdminAuth } from "@/lib/api-auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { adminActions, ga4LivenessLog } from "@/lib/db/schema";
-import { getMaxGa4DateWithUsers, type Ga4Env } from "@/lib/ga4";
+import { getMaxGa4DateWithUsers } from "@/lib/ga4";
 import { computeAgeSeconds } from "@/lib/ga4-liveness";
 
 const DEGRADED_THRESHOLD_SECONDS = 24 * 3600; // 24h → degraded
@@ -66,7 +66,7 @@ export async function POST(request: Request) {
   if (fail) return fail;
 
   const db = getCloudflareDb();
-  const env = getCloudflareEnv() as unknown as Ga4Env;
+  const env = getCloudflareEnv();
 
   const maxDate = await getMaxGa4DateWithUsers(env);
   const now = new Date();

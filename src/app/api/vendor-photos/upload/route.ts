@@ -28,7 +28,8 @@ import { auth } from "@/lib/auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { vendorPhotos } from "@/lib/db/schema";
 import { authorizeVendorGallery, MAX_GALLERY_PHOTOS } from "@/lib/vendor-photo-auth";
-import { runUploadPipeline, type PipelineEnv } from "@/lib/upload-image-pipeline";
+import { decodeHtmlEntities } from "@/lib/utils";
+import { runUploadPipeline } from "@/lib/upload-image-pipeline";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
 const MAX_BYTES = 5 * 1024 * 1024;
@@ -89,7 +90,14 @@ export async function POST(request: Request) {
     );
   }
 
-  const caption = form.get("caption");
+  // OPE-1171 — both optional at the API; the form asks for alt text and the
+  // editor keeps prompting until one exists. Decoded and capped here to match
+  // the PATCH route's schema, which is the other writer of these columns.
+  const textField = (name: string): string | null => {
+    const v = form.get(name);
+    if (typeof v !== "string") return null;
+    return decodeHtmlEntities(v.slice(0, 300)).trim() || null;
+  };
   const result = await runUploadPipeline({
     bytes: new Uint8Array(await file.arrayBuffer()),
     declaredType: file.type,
@@ -100,11 +108,12 @@ export async function POST(request: Request) {
     // the silent overwrite increment 1's resolveImageTarget was extracted to
     // make impossible.
     imageRole: "gallery",
-    caption: typeof caption === "string" && caption ? caption : null,
+    caption: textField("caption"),
+    altText: textField("altText"),
     actorId: session!.user!.id,
     uploadSource: "vendor-self-service",
     db,
-    env: getCloudflareEnv() as unknown as PipelineEnv,
+    env: getCloudflareEnv(),
   });
 
   if (!result.ok) return NextResponse.json(result.body, { status: result.status });

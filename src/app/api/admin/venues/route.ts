@@ -8,6 +8,7 @@ import { eq } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
 import { getVenuesWithEventCounts, findVenueByGooglePlaceId } from "@/lib/queries";
 import { venueCreateSchema, validateRequestBody } from "@/lib/validations";
+import { withoutGooglePlacesPhoto } from "@takemetothefair/utils";
 import { logError } from "@/lib/logger";
 import { recordMutation } from "@/lib/audit/record-mutation";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
@@ -35,6 +36,18 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db, session })
   }
 
   const data = validation.data;
+
+  // OPE-1180 — a FORMER venue needs a closure date and its source; this form
+  // carries neither. Created via MCP create_venue only.
+  if (data.status === "FORMER") {
+    return NextResponse.json(
+      {
+        error:
+          "A FORMER venue needs use_ended_edtf and a lifecycle_citation — create it with the MCP create_venue tool.",
+      },
+      { status: 409 }
+    );
+  }
 
   try {
     // Check for duplicate Google Place ID
@@ -74,7 +87,8 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db, session })
       contactPhone: data.contactPhone,
       website: data.website,
       description: data.description,
-      imageUrl: data.imageUrl,
+      // OPE-294 — never persist a Google Places photo (see withoutGooglePlacesPhoto).
+      imageUrl: withoutGooglePlacesPhoto(data.imageUrl),
       googlePlaceId: data.googlePlaceId,
       googleMapsUrl: data.googleMapsUrl,
       openingHours: data.openingHours,
@@ -112,7 +126,7 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db, session })
     const [newVenue] = await db.select().from(venues).where(eq(venues.id, venueId)).limit(1);
 
     if (newVenue?.status === "ACTIVE") {
-      const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+      const env = getCloudflareEnv();
       await pingIndexNow(db, indexNowUrlFor("venues", newVenue.slug), env, "venue-create");
     }
 

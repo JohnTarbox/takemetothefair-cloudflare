@@ -5,7 +5,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import * as schema from "../db/schema";
-import { shouldSample, writeRequestSample, REQUEST_SAMPLE_RATE } from "../request-sampling";
+import {
+  shouldSample,
+  truncateIp,
+  writeRequestSample,
+  REQUEST_SAMPLE_RATE,
+} from "../request-sampling";
 
 describe("shouldSample", () => {
   it("captures below the rate, skips at/above it", () => {
@@ -48,49 +53,42 @@ function rowCount(): number {
 
 describe("writeRequestSample", () => {
   it("inserts a sampled row with UA/IP/ASN/path", async () => {
-    await writeRequestSample(
-      db as never,
-      {
-        path: "/events/cheshire-fair",
-        method: "GET",
-        userAgent: "BotCrawler/1.0",
-        ip: "203.0.113.7",
-        asn: 14618,
-        asOrganization: "AMAZON-AES",
-        country: "US",
-        referer: null,
-        ray: "abc-IAD",
-      },
-      { pruneRoll: 0.5 } // above PRUNE_PROBABILITY → no prune
-    );
+    await writeRequestSample(db as never, {
+      path: "/events/cheshire-fair",
+      method: "GET",
+      userAgent: "BotCrawler/1.0",
+      ip: "203.0.113.7",
+      asn: 14618,
+      asOrganization: "AMAZON-AES",
+      country: "US",
+      referer: null,
+      ray: "abc-IAD",
+    });
     const r = raw.prepare(`SELECT * FROM request_samples`).get() as Record<string, unknown>;
     expect(rowCount()).toBe(1);
     expect(r.user_agent).toBe("BotCrawler/1.0");
     expect(r.asn).toBe(14618);
     expect(r.as_organization).toBe("AMAZON-AES");
     expect(r.path).toBe("/events/cheshire-fair");
+    // OPE-971 — the network prefix is stored, never the address.
+    expect(r.ip).toBe("203.0.113.0/24");
   });
 
-  it("prunes rows older than the retention window when the prune roll fires", async () => {
+  it("OPE-971 — the write NEVER prunes, however old the table's rows are", async () => {
     const now = new Date("2026-06-26T00:00:00Z");
-    // An old row (90 days ago) seeded directly.
     raw
       .prepare(`INSERT INTO request_samples (id, timestamp) VALUES ('old', ?)`)
       .run(Math.floor(new Date("2026-03-28T00:00:00Z").getTime() / 1000));
-    // A recent row (yesterday).
-    raw
-      .prepare(`INSERT INTO request_samples (id, timestamp) VALUES ('recent', ?)`)
-      .run(Math.floor(new Date("2026-06-25T00:00:00Z").getTime() / 1000));
-
-    await writeRequestSample(db as never, { path: "/x" }, { now, pruneRoll: 0 }); // prune fires
-
-    const ids = (
-      raw.prepare(`SELECT id FROM request_samples ORDER BY id`).all() as { id: string }[]
-    ).map((r) => r.id);
-    // The 90-day-old row is gone; the recent row + the just-inserted one remain.
-    expect(ids).not.toContain("old");
-    expect(ids).toContain("recent");
-    expect(rowCount()).toBe(2);
+    for (let i = 0; i < 300; i++) {
+      await writeRequestSample(db as never, { path: `/x/${i}` }, { now });
+    }
+    // Under the old 1% roll, 300 writes all but guaranteed a prune. Retention is
+    // the MCP cron's job now (mcp-server/src/request-sample-retention.ts).
+    const ids = (raw.prepare(`SELECT id FROM request_samples`).all() as { id: string }[]).map(
+      (r) => r.id
+    );
+    expect(ids).toContain("old");
+    expect(rowCount()).toBe(301);
   });
 
   it("never throws (best-effort) — a bad db is swallowed", async () => {
@@ -100,5 +98,19 @@ describe("writeRequestSample", () => {
       },
     };
     await expect(writeRequestSample(brokenDb as never, { path: "/x" })).resolves.toBeUndefined();
+  });
+});
+
+describe("OPE-971 — truncateIp", () => {
+  it.each([
+    ["203.0.113.7", "203.0.113.0/24"],
+    ["  198.51.100.255 ", "198.51.100.0/24"],
+    ["2001:db8:85a3:8d3:1319:8a2e:370:7348", "2001:db8:85a3::/48"],
+    ["2001:db8::1", "2001:db8:0::/48"],
+    ["", null],
+    [null, null],
+    ["not-an-ip", null],
+  ])("%j → %j", (input, out) => {
+    expect(truncateIp(input as string | null)).toBe(out);
   });
 });

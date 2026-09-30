@@ -172,6 +172,21 @@ export interface RerankResult {
 
 const OUTREACH_CANDIDATE_THRESHOLD = 0.6;
 
+/**
+ * OPE-1065 — detectors whose rows are never promoter-outreach candidates,
+ * whatever their score.
+ *
+ * A `citation_flag` row says OUR live field disagrees with a source we cited:
+ * the fix is an edit on our side, and emailing the organizer about it would
+ * be asking them to correct our mistake. The score is still computed (it
+ * orders the queue), only the candidate bit is held false.
+ *
+ * Keyed on the detector, so it holds even for a row written before
+ * `outreach_suppressed` existed. Per-row suppressions (OPE-1082) are stored in
+ * that column and honoured beside this set.
+ */
+export const NEVER_OUTREACH_DETECTORS: ReadonlySet<string> = new Set(["citation_flag"]);
+
 export async function rerankOpenQueueBatch(
   db: Db,
   opts: { limit?: number; onlyMissing?: boolean } = {}
@@ -198,6 +213,8 @@ export async function rerankOpenQueueBatch(
       detectedAt: eventDiscrepancies.detectedAt,
       confidence: eventDiscrepancies.confidence,
       divergentSourceKey: eventDiscrepancies.divergentSourceKey,
+      detectedBy: eventDiscrepancies.detectedBy,
+      outreachSuppressed: eventDiscrepancies.outreachSuppressed,
       eventId: eventDiscrepancies.eventId,
       viewCount: events.viewCount,
     })
@@ -243,7 +260,12 @@ export async function rerankOpenQueueBatch(
       detectedAt: row.detectedAt,
       fieldClass: row.fieldClass,
     });
-    const isCandidate = score >= OUTREACH_CANDIDATE_THRESHOLD;
+    // OPE-1082 — a suppression the capture path stored is honoured here too;
+    // before it was stored, this line re-promoted it from score alone.
+    const isCandidate =
+      score >= OUTREACH_CANDIDATE_THRESHOLD &&
+      !NEVER_OUTREACH_DETECTORS.has(row.detectedBy) &&
+      !row.outreachSuppressed;
 
     await db
       .update(eventDiscrepancies)

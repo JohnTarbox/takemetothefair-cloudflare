@@ -42,7 +42,9 @@ import {
 } from "@takemetothefair/constants";
 import type { AnyColumn, SQL } from "drizzle-orm";
 import type { SQLiteTable } from "drizzle-orm/sqlite-core";
-import { assessQueueFreeze, type QueueFlow } from "@/lib/queue-freeze";
+import { classifyQueueDrain, type QueueFlow } from "@/lib/queue-freeze";
+import { loadQueueFreezeThresholds } from "@/lib/queue-freeze-thresholds";
+import { DUPLICATE_FLAGS_HREF, loadDuplicateFlagFlow } from "@/lib/duplicates/flag-queue";
 import type { Db } from "./shared";
 import type { QueueDrainCard } from "./types";
 
@@ -69,6 +71,12 @@ export interface QueueDrainRow extends QueueFlow {
    * Only populated for queues where the split is meaningful; undefined elsewhere.
    */
   buckets?: Array<{ label: string; count: number; severity: string }>;
+  /**
+   * OPE-1131 — figures this queue cannot compute, and why. A hard-coded
+   * `inflow7d: 0` is an assertion that nothing arrived; for these queues the
+   * flow was never measured, and the tile said "0" for it.
+   */
+  unmeasured?: { flows?: string; depth?: string };
 }
 
 function utcDate(now: Date): string {
@@ -509,6 +517,35 @@ async function pendingSubmissionsFlow(db: Db, now: Date): Promise<QueueDrainRow>
 }
 
 /**
+ * OPE-1117 — rows the OPE-627 detector flagged as possible duplicates that no
+ * human has adjudicated. Same definition as the review queue and the deadline
+ * red (`unresolvedDuplicateFlag`), so the three cannot disagree.
+ *
+ * The freeze detector applied to this row is a backstop, not the alarm: the
+ * failure that produced this queue was two flags expiring unread against their
+ * own event date, which depth and drain ratio cannot see. That alarm is
+ * `assessAllDuplicateFlagDeadlines`, merged into the same digest.
+ */
+async function duplicateFlagsFlow(db: Db, now: Date): Promise<QueueDrainRow> {
+  const f = await loadDuplicateFlagFlow(db, now);
+  return {
+    queueName: "duplicate_flags",
+    label: "Possible duplicates awaiting a verdict",
+    href: DUPLICATE_FLAGS_HREF,
+    depth: f.depth,
+    inflow7d: f.inflow7d,
+    outflow7d: f.outflow7d,
+    inflow14d: f.inflow14d,
+    outflow14d: f.outflow14d,
+    oldestOpenAgeHours:
+      f.oldestOpenAt != null ? (now.getTime() - f.oldestOpenAt.getTime()) / 3_600_000 : null,
+    inflow1d: f.inflow1d,
+    outflow1d: f.outflow1d,
+    drainRatio7d: ratio(f.outflow7d, f.inflow7d),
+  };
+}
+
+/**
  * OPE-177 — auth/verification mail that did NOT reach the recipient.
  *
  * The case this exists for: a vendor registered, asked for the confirmation
@@ -558,6 +595,10 @@ export async function undeliveredAuthEmailFlow(db: Db, now: Date): Promise<Queue
       inflow1d: 0,
       outflow1d: null,
       drainRatio7d: null,
+      unmeasured: {
+        flows: "no delivery events received yet",
+        depth: "no delivery events received yet",
+      },
     };
   }
 
@@ -867,6 +908,8 @@ export async function promoterNeedsEnrichmentFlow(db: Db): Promise<QueueDrainRow
     inflow1d: 0,
     outflow1d: null,
     drainRatio7d: null,
+    // An entity status flag has no arrival/departure history to count.
+    unmeasured: { flows: "entity flag — no flow history" },
   };
 }
 
@@ -949,6 +992,8 @@ export async function gatherQueueFlows(db: Db, now: Date): Promise<QueueDrainRow
     // OPE-413 — the only queue in this list with members of the public waiting
     // on the other end. Reached 138 days unwatched.
     pendingSubmissionsFlow(db, now),
+    // OPE-1117 — the detector's flags, which nothing read until this row.
+    duplicateFlagsFlow(db, now),
     // OPE-177 — verification mail that provably did not arrive. Reads 0 until
     // the CF Email Sending subscription publishes its first event (the window
     // starts there), so it cannot cry wolf on historical NULLs.
@@ -980,7 +1025,12 @@ export async function gatherQueueFlows(db: Db, now: Date): Promise<QueueDrainRow
  *  the alert uses, so the tile's red rows match the digest). */
 export async function loadQueueDrain(db: Db): Promise<QueueDrainCard> {
   const now = new Date();
-  const flows = await gatherQueueFlows(db, now);
+  // OPE-1161 E17 — the SAME overrides the daily alert reads, so a tile row and
+  // the digest cannot disagree about one queue.
+  const [flows, thresholds] = await Promise.all([
+    gatherQueueFlows(db, now),
+    loadQueueFreezeThresholds(db),
+  ]);
   return {
     queues: flows.map((f) => ({
       queueName: f.queueName,
@@ -989,7 +1039,9 @@ export async function loadQueueDrain(db: Db): Promise<QueueDrainCard> {
       inflow7d: f.inflow7d,
       outflow7d: f.outflow7d,
       drainRatio7d: f.drainRatio7d,
-      frozen: assessQueueFreeze(f, now) !== null,
+      unmeasured: (f as QueueDrainRow).unmeasured,
+      drainState: classifyQueueDrain(f, now, thresholds),
+      frozen: classifyQueueDrain(f, now, thresholds) === "frozen",
     })),
   };
 }

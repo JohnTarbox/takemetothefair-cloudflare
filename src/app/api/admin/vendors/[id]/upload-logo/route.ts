@@ -104,7 +104,7 @@ export const POST = withAuth<{ id: string }>(
       return NextResponse.json({ error: "Unsupported content type" }, { status: 400 });
     }
 
-    const env = getCloudflareEnv() as unknown as { VENDOR_ASSETS?: R2Bucket };
+    const env = getCloudflareEnv();
     const bucket = env.VENDOR_ASSETS;
     if (!bucket) {
       return NextResponse.json(

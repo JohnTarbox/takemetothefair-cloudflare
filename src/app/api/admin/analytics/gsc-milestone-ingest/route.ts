@@ -195,8 +195,7 @@ async function ingestMonthlyOracle(oracle: GscMonthlyOracle) {
     // requires errors on >=3 distinct days before escalating, which suits a
     // daily failure — but this comparison happens once a MONTH, so a real
     // divergence would never reach the threshold and would escalate never.
-    const to = (getCloudflareEnv() as unknown as { ALERT_EMAIL_TECHNICAL?: string })
-      .ALERT_EMAIL_TECHNICAL;
+    const to = getCloudflareEnv().ALERT_EMAIL_TECHNICAL;
     if (to) {
       await enqueueEmail({
         to,

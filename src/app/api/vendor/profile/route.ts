@@ -1,13 +1,20 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
+import { mergeProductsJson, routeVendorCategoriesForWrite } from "@takemetothefair/vendor-linking";
 import { auth } from "@/lib/auth";
 import { requireVerifiedSession } from "@/lib/api-auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
-import { vendors, vendorSlugHistory, adminActions } from "@/lib/db/schema";
+import { vendors, vendorSlugHistory, adminActions, users } from "@/lib/db/schema";
 import { and, eq, ne } from "drizzle-orm";
 import { appendSlugSegment, createSlug, type Slug } from "@/lib/utils";
 import { validateRequestBody, vendorProfileUpdateSchema } from "@/lib/validations";
 import { logError } from "@/lib/logger";
+import {
+  ALWAYS_IGNORED,
+  diffFields,
+  isDestructiveBlank,
+  recordEntityWrite,
+} from "@/lib/audit/entity-write-log";
 import { recomputeVendorCompleteness } from "@/lib/completeness";
 import { logEnrichment } from "@/lib/enrichment-log";
 import { indexNowUrlFor, pingIndexNow } from "@/lib/indexnow";
@@ -30,7 +37,37 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Vendor profile not found" }, { status: 404 });
     }
 
-    return NextResponse.json(vendor[0]);
+    // OPE-830 — tell the page whether edits will actually SAVE.
+    //
+    // Without this the form cannot know the caller is unverified until a save
+    // has already been refused, which is how a vendor spent 3½ minutes filling
+    // it in while every PATCH 403'd. The site-wide banner
+    // (components/layout/unverified-banner) does render for these users, but
+    // it says "Please verify your email" — a nag, not a consequence — and it
+    // sits at the top of the page, out of sight on a 276-line form.
+    //
+    // Read from `users`, not from the session: the session is minted at
+    // sign-in and a user who verifies mid-visit would keep a stale `false`.
+    let ownerEmailVerified = true;
+    // OPE-986 — the caller's own account address, so the page's resend button
+    // shows where the link goes instead of an email box the API ignores.
+    let ownerEmail: string | undefined;
+    try {
+      const [owner] = await db
+        .select({ emailVerified: users.emailVerified, email: users.email })
+        .from(users)
+        .where(eq(users.id, session.user.id))
+        .limit(1);
+      ownerEmailVerified = Boolean(owner?.emailVerified);
+      ownerEmail = owner?.email ?? undefined;
+    } catch {
+      // ⚠️ Fail OPEN — assume verified. A DB hiccup must not put a scary
+      // "your edits will not save" notice in front of a verified vendor. The
+      // PATCH gate is the real enforcement; this field only drives copy.
+      ownerEmailVerified = true;
+    }
+
+    return NextResponse.json({ ...vendor[0], ownerEmailVerified, ownerEmail });
   } catch (error) {
     await logError(db, {
       message: "Failed to fetch vendor profile",
@@ -52,7 +89,37 @@ export async function PATCH(request: NextRequest) {
   // link. OAuth signups are auto-verified at user-create time so
   // they pass this gate transparently.
   const gate = await requireVerifiedSession();
-  if (!gate.ok) return gate.response;
+  if (!gate.ok) {
+    // OPE-830 — record the refusal.
+    //
+    // This return sits ABOVE every log call in the route, so until now a
+    // rejected save left no trace anywhere: `enrichment_log` records
+    // successes only, and nothing else fired. That is what made two live
+    // "my profile won't save" reports unanswerable — "no record of a save"
+    // and "no save was attempted" were the same observation.
+    //
+    // The specimen: a vendor uploaded a photo at 21:47:53 (which passes on
+    // the session-only gate) and verified his email at 21:51:18. Whether he
+    // typed into the form during those 3½ minutes is precisely what nothing
+    // could say. It can now.
+    if (gate.reason !== "unauthenticated" && gate.userId) {
+      const [refused] = await db
+        .select({ id: vendors.id })
+        .from(vendors)
+        .where(eq(vendors.userId, gate.userId))
+        .limit(1);
+      if (refused) {
+        await recordEntityWrite(db, {
+          entityType: "vendor",
+          entityId: refused.id,
+          source: "vendor_self",
+          actorUserId: gate.userId,
+          rejectReason: gate.reason === "email_unverified" ? "email_unverified" : "forbidden",
+        });
+      }
+    }
+    return gate.response;
+  }
 
   try {
     const validation = await validateRequestBody(request, vendorProfileUpdateSchema);
@@ -63,6 +130,9 @@ export async function PATCH(request: NextRequest) {
       businessName,
       description,
       vendorType,
+      sellsCategory,
+      businessSector,
+      vendorIdentity,
       products,
       website,
       logoUrl,
@@ -82,31 +152,31 @@ export async function PATCH(request: NextRequest) {
       displayMode,
       displayName,
     } = validation.data;
+    // OPE-1113 — stored as the existing spelling of the same category.
+    // OPE-1164 — the three axes too; a description typed into any category
+    // field is appended to products instead of becoming a new category.
+    const routed = await routeVendorCategoriesForWrite(db, {
+      ...(vendorType !== undefined ? { vendorType } : {}),
+      ...(sellsCategory !== undefined ? { sellsCategory } : {}),
+      ...(businessSector !== undefined ? { businessSector } : {}),
+      ...(vendorIdentity !== undefined ? { vendorIdentity } : {}),
+    });
+    const resolvedVendorType = "vendorType" in routed.values ? routed.values.vendorType : undefined;
 
     // Snapshot current vendor for slug-change detection, slug history,
     // and IndexNow material-change comparison. Mirrors the admin PATCH at
     // src/app/api/admin/vendors/[id]/route.ts — keeping the self-edit
     // surface in parity so renames don't silently break branded URLs.
     // EH1 Phase 1: also reads `role` for the displayMode gate below.
+    // ⚠️ OPE-830 — full row, not a column subset.
+    //
+    // This was a 12-column select. A before/after diff can only report the
+    // fields it can see, and a partial snapshot would silently report every
+    // unselected column as unchanged — the same class of blind spot as the
+    // `fields_changed` this replaces. The row is small and already fetched
+    // once per request; widening it costs nothing and removes the trap.
     const [currentVendor] = await db
-      .select({
-        id: vendors.id,
-        slug: vendors.slug,
-        businessName: vendors.businessName,
-        vendorType: vendors.vendorType,
-        description: vendors.description,
-        city: vendors.city,
-        state: vendors.state,
-        logoUrl: vendors.logoUrl,
-        role: vendors.role,
-        // A5 — prior values for change detection + audit context. The
-        // override flag tells us whether a displayMode preference is actually
-        // honored at render (resolveVendorDisplay), so we record it on the
-        // audit row rather than re-deriving it later.
-        displayMode: vendors.displayMode,
-        displayName: vendors.displayName,
-        displayOverridePermitted: vendors.displayOverridePermitted,
-      })
+      .select()
       .from(vendors)
       .where(eq(vendors.userId, gate.userId))
       .limit(1);
@@ -165,8 +235,17 @@ export async function PATCH(request: NextRequest) {
       }
     }
     if (description !== undefined) updateData.description = description;
-    if (vendorType !== undefined) updateData.vendorType = vendorType;
+    if (resolvedVendorType !== undefined) updateData.vendorType = resolvedVendorType;
+    for (const col of ["sellsCategory", "businessSector", "vendorIdentity"] as const) {
+      if (col in routed.values) updateData[col] = routed.values[col] ?? null;
+    }
     if (products) updateData.products = JSON.stringify(products);
+    if (routed.productsToAdd.length > 0) {
+      updateData.products = mergeProductsJson(
+        (updateData.products as string | undefined) ?? currentVendor.products,
+        routed.productsToAdd
+      );
+    }
     if (website !== undefined) updateData.website = website;
     if (logoUrl !== undefined) updateData.logoUrl = logoUrl;
     // Contact Information
@@ -232,13 +311,59 @@ export async function PATCH(request: NextRequest) {
 
     if (updatedVendor[0]) {
       await recomputeVendorCompleteness(db, updatedVendor[0].id);
+      // ⚠️ `fieldsChanged` here is `Object.keys(updateData)` — the fields
+      // PRESENT in the payload, not the ones that changed. It is byte-identical
+      // across all 18 saves on the OPE-830 specimen and would be identical on a
+      // no-op resubmit. Left as-is because coverage dashboards read this column
+      // and its meaning, though badly named, is stable; the real diff goes to
+      // entity_write_log below. Do not "fix" this in place without checking
+      // those readers first.
+      // OPE-849 — compute the real diff ONCE, and use it for both logs.
+      //
+      // `entity_write_log` needs it anyway; `enrichment_log` needs it to stop
+      // calling a data-destroying save an unqualified success.
+      const changes = diffFields(currentVendor as unknown as Record<string, unknown>, updateData, {
+        ignore: ALWAYS_IGNORED,
+      });
+      const blanked = changes
+        .filter((c) => isDestructiveBlank(c.before, c.after))
+        .map((c) => c.field);
+
       await logEnrichment(db, {
         targetType: "vendor",
         targetId: updatedVendor[0].id,
         source: "vendor_self",
+        // ⚠️ `status` deliberately stays "success", and OPE-849's acceptance
+        // asks that this be addressed rather than assumed. The write DID
+        // succeed — it is the OUTCOME that is destructive, not the operation —
+        // and coverage dashboards read this column with the existing
+        // vocabulary. Inventing a new status here would change what those
+        // readers count without their knowing.
+        //
+        // What was actually wrong is that a destructive save was
+        // INDISTINGUISHABLE from a constructive one: identical status,
+        // identical `fieldsChanged`. `notes` removes that, in the same table,
+        // without moving anyone's denominator.
         status: "success",
         actorUserId: gate.userId,
         fieldsChanged: Object.keys(updateData),
+        ...(blanked.length > 0
+          ? {
+              notes: `destructive: blanked ${blanked.length} previously-populated field(s): ${blanked.join(", ")}`,
+            }
+          : {}),
+      });
+
+      // OPE-830 — what this save actually did.
+      //
+      // Diffed against the pre-update row, so a resubmit records `noop` with
+      // an empty change list rather than looking identical to a real edit.
+      await recordEntityWrite(db, {
+        entityType: "vendor",
+        entityId: updatedVendor[0].id,
+        source: "vendor_self",
+        actorUserId: gate.userId,
+        changes,
       });
     }
 
@@ -257,7 +382,8 @@ export async function PATCH(request: NextRequest) {
     // Claimed, Verified Pro) that this self-edit surface can't touch.
     const materialChanged =
       (businessName !== undefined && businessName !== currentVendor.businessName) ||
-      (vendorType !== undefined && (vendorType ?? null) !== currentVendor.vendorType) ||
+      (resolvedVendorType !== undefined &&
+        (resolvedVendorType ?? null) !== currentVendor.vendorType) ||
       (description !== undefined && (description ?? null) !== currentVendor.description) ||
       (city !== undefined && (city ?? null) !== currentVendor.city) ||
       (state !== undefined && (state ?? null) !== currentVendor.state) ||
@@ -265,7 +391,7 @@ export async function PATCH(request: NextRequest) {
       resolvedSlug !== null;
     if (materialChanged) {
       const finalSlug = resolvedSlug ?? currentVendor.slug;
-      const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+      const env = getCloudflareEnv();
       await pingIndexNow(db, indexNowUrlFor("vendors", finalSlug), env, "vendor-self-update");
     }
 

@@ -53,23 +53,30 @@ export function EventGallery({
       <h2 className="text-xl font-semibold text-foreground mb-3">Photos from {eventName}</h2>
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
         {images.map((img, i) => (
-          <button
-            key={img.id}
-            type="button"
-            onClick={() => setOpen(i)}
-            className="relative aspect-[3/2] overflow-hidden rounded-lg border border-border hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-royal"
-            aria-label={`Open photo: ${img.alt}`}
-          >
-            <Image
-              src={cdnImage(img.url, { ...CARD_THUMB, rotate: img.rotation })}
-              alt={img.alt}
-              fill
-              sizes="(max-width: 640px) 50vw, 300px"
-              // Below the fold, always. The hero above keeps fetchpriority.
-              loading="lazy"
-              className="object-cover"
-            />
-          </button>
+          // OPE-1171 — caption visible in the grid, not only in the lightbox.
+          <figure key={img.id} className="m-0">
+            <button
+              type="button"
+              onClick={() => setOpen(i)}
+              className="relative aspect-[3/2] w-full overflow-hidden rounded-lg border border-border hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-royal"
+              aria-label={`Open photo: ${img.alt}`}
+            >
+              <Image
+                src={cdnImage(img.url, { ...CARD_THUMB, rotate: img.rotation })}
+                alt={img.alt}
+                fill
+                sizes="(max-width: 640px) 50vw, 300px"
+                // Below the fold, always. The hero above keeps fetchpriority.
+                loading="lazy"
+                className="object-cover"
+              />
+            </button>
+            {img.caption && (
+              <figcaption className="mt-1 text-sm text-muted-foreground line-clamp-2">
+                {img.caption}
+              </figcaption>
+            )}
+          </figure>
         ))}
       </div>
 

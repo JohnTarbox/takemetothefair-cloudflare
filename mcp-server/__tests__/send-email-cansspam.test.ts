@@ -19,6 +19,7 @@ import { vendors, emailSuppressionList, vendorOutreachAttempts } from "../src/sc
 import {
   base64UrlEncode,
   computeUnsubscribeToken,
+  openUnsubscribeEmail,
   verifyUnsubscribeToken,
 } from "@takemetothefair/utils";
 
@@ -82,10 +83,13 @@ describe("send_vendor_email — K41 free-form + K36 footer", () => {
     expect(primary.text).toContain("Unsubscribe:");
     expect(primary.html).toContain("Unsubscribe</a>");
 
-    // The link carries the correct HMAC token for this recipient, in PATH form
-    // (no `=`, so quoted-printable transport can't corrupt the hex token).
-    const token = await computeUnsubscribeToken("test-secret", "owner@acme.test");
-    expect(primary.text).toContain(`/unsubscribe/${base64UrlEncode("owner@acme.test")}/${token}`);
+    // OPE-864 — the link is `/unsubscribe/v2/<sealed>`: PATH form (no `=`, so
+    // quoted-printable transport can't corrupt it) and the address is SEALED,
+    // not base64'd — it must open back to this recipient and nobody else.
+    const m = primary.text.match(/\/unsubscribe\/v2\/([A-Za-z0-9_-]+)/);
+    expect(m).not.toBeNull();
+    expect(await openUnsubscribeEmail("test-secret", m![1])).toBe("owner@acme.test");
+    expect(primary.text).not.toContain(base64UrlEncode("owner@acme.test"));
     expect(primary.text).not.toContain("&t="); // the corruption-prone form is gone
   });
 

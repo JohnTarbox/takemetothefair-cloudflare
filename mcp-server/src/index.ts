@@ -1,19 +1,17 @@
+import { opaqueErrorResponse } from "./error-response.js";
+import { lastGeocodeSweepCursor, sweepGeocodePages } from "./venues/geocode-sweep-pager.js";
 import OAuthProvider from "@cloudflare/workers-oauth-provider";
 import type { EmailGateEnv } from "./email-gates.js";
 import { McpAgent } from "agents/mcp";
-import { getCurrentAgent } from "agents";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { withMainAppSlot, isWorkerOom, classifyCronFailure } from "./main-app-gate.js";
 import { LoginHandler } from "./oauth/login-handler.js";
-import {
-  decideSendRouting,
-  sendViaConnection,
-  type ConnectionLike,
-  type TransportPrivates,
-} from "./transport-collision-fix.js";
 import { timingSafeEqualString } from "@takemetothefair/utils";
 import { getDb } from "./db.js";
+import { runRequestSampleRetention } from "./request-sample-retention.js";
+import { runErrorLogRetention, runIndexNowSubmissionRetention } from "./log-table-retention.js";
 import { authenticateToken } from "./auth.js";
+import { applyToolParamPolicy } from "./tool-param-policy.js";
 import { registerPublicTools } from "./tools/public.js";
 import { registerUserTools } from "./tools/user.js";
 import { registerVendorTools } from "./tools/vendor.js";
@@ -32,6 +30,7 @@ import { registerVendorRosterTools } from "./tools/admin-vendor-roster.js";
 import { registerSyndicationTools } from "./tools/admin-syndication.js";
 import { registerEnrichVendorTool } from "./tools/admin-enrich-vendor.js";
 import { registerEnrichPromoterTool } from "./tools/admin-enrich-promoter.js";
+import { registerPromoterBlastRadiusTool } from "./tools/admin-promoter-blast-radius.js";
 import { registerEnrichPerformerTool } from "./tools/admin-enrich-performer.js";
 import { registerSendVendorEmailTool } from "./tools/admin-send-vendor-email.js";
 import { registerSendTestEmailTool } from "./tools/admin-send-test-email.js";
@@ -42,10 +41,19 @@ import { registerPromoterOutreachLifecycleTools } from "./tools/admin-promoter-o
 import { registerPromoterReplyIngestTools } from "./tools/admin-promoter-reply-ingest.js";
 import { registerGalleryPhotoTools } from "./tools/admin-gallery-photos.js";
 import { registerSendNewsletterBroadcastTool } from "./tools/admin-send-newsletter-broadcast.js";
+import { registerSendGatesTool } from "./tools/admin-send-gates.js";
+import { registerApiTokenTools } from "./tools/admin-api-tokens.js";
+
+// OPE-772 / OPE-950 — both `registerSendGatesTool` call sites must stay on ONE
+// line each. The OPE-469 CI guard matches a register call and its server
+// argument on a single line, so a call wrapped across lines reads to it as a
+// tool registered on the legacy path only. (A `GateEnv` alias used to exist to
+// keep the `as unknown as` cast short enough; OPE-950 removed the cast.)
 import { registerCreateClaimInviteTool } from "./tools/admin-claim-invite.js";
 import { registerClaimReviewTools, type ClaimReviewEnv } from "./tools/admin-claim-review.js";
 import { registerResolveHeldPhotosTool } from "./tools/admin-resolve-held-photos.js";
 import { registerReplayInboundAttachmentTool } from "./tools/admin-replay-inbound-attachment.js";
+import { registerReadEventPosterTool } from "./tools/read-event-poster.js";
 import { registerAnalyticsTools } from "./tools/analytics.js";
 import { mainAppFetch } from "./main-app-fetch.js";
 import { registerBlogTools } from "./tools/blog.js";
@@ -56,12 +64,17 @@ import {
   runScheduledInboundEmailStaleSweep,
 } from "./inbound-email-stale-sweep.js";
 import { runScheduledDedupSweepCanary } from "./dedup-sweep-canary.js";
+import { runScheduledNearDuplicateSweep } from "./near-duplicate-sweep-cron.js";
+import { runScheduledCiTriggerWatchdog } from "./ci-trigger-watchdog.js";
+import { runScheduledSyncStaleSweep } from "./sync-stale-sweep.js";
 import { runScheduledCpiStaleRedCanary } from "./cpi-stale-red-canary.js";
 import { runScheduledNewsletterListBalanceCanary } from "./newsletter-list-balance-canary.js";
+import { runScheduledBurstCapSelfTest } from "./burst-cap-selftest-canary.js";
 import { runScheduledOperatorQueueNotice } from "./operator-queue-notice.js";
 import { runAgentSilenceWatchdog } from "./agent-silence-watchdog.js";
 import { runScheduledCpiScanWatchdog } from "./cpi-scan-watchdog.js";
 import {
+  runScheduledHeroProposals,
   runScheduledImageUrlHealthSweep,
   runScheduledPhotoCoverageScan,
 } from "./photo-coverage-canary.js";
@@ -73,6 +86,7 @@ import { runOccurredTransitionSweep } from "./event-occurred-sweep.js";
 
 import { runInboundExceptionNotice } from "./inbound-exception-notice.js";
 import { runWeeklyInventoryNotice } from "./weekly-inventory-notice.js";
+import { runScheduledVendorCategoryWatch } from "./vendor-category-watch.js";
 import { runScheduledSelfConsistencyCron } from "./goodwill/self-consistency-cron.js";
 import { runScheduledQueueRerank } from "./goodwill/queue-ranking.js";
 import { runScheduledGoodwillHealthCanary } from "./goodwill/health-canary.js";
@@ -95,112 +109,137 @@ import type { UserProps } from "./oauth/utils.js";
 // EmailGateEnv. It previously declared neither, which is a large part of why
 // EMAIL_REPLY_ENABLED had no single enforcement point: three modules each read
 // it through a local interface of their own and nothing tied them together.
-interface Env extends EmailGateEnv {
-  DB: D1Database;
-  OAUTH_KV: KVNamespace;
-  MCP_OBJECT: DurableObjectNamespace;
-  MAIN_APP_URL: string;
-  INTERNAL_API_KEY: string;
-  // K36 (2026-06-25) — outbound CAN-SPAM footer. MAILING_ADDRESS is the
-  // physical postal address (§5(a)(5)); UNSUBSCRIBE_SECRET signs the one-click
-  // unsubscribe token (falls back to INTERNAL_API_KEY when unset). Both
-  // optional — set MAILING_ADDRESS before sending real outbound mail at volume.
-  MAILING_ADDRESS?: string;
-  UNSUBSCRIBE_SECRET?: string;
-  // Optional Pages service binding — bound in production via wrangler.toml,
-  // typically absent in local dev. When present, internal API calls (IndexNow
-  // ping, future cross-Worker calls) skip the public-internet round-trip.
-  MAIN_APP?: Fetcher;
-  // Cloudflare Queues — producer side. Same bindings as the main app, so
-  // MCP tools can enqueue work to the same consumer (this Worker, below).
-  EMAIL_JOBS?: Queue;
-  /**
-   * OPE-357 — the STOP-gate on mailing STRANGERS.
-   *
-   * Deliberately separate from EMAIL_REPLY_ENABLED. That flag governs replies to
-   * people who wrote to a lane we understood; this one governs asking someone we
-   * could not place "which fair did you mean?". Sharing a flag would mean the day
-   * somebody enables ordinary replies, we also silently start mailing unknown
-   * senders — a customer-facing behaviour change nobody asked for, arriving as a
-   * side effect. When not "true" the mail is still stored, queued and forwarded
-   * to admin; only the outbound question is withheld.
-   */
-  UNROUTED_ASK_ENABLED?: string;
-  INDEXNOW_PINGS?: Queue;
-  // GW1.1 (2026-06-03) — ingest_addverify discrepancy capture. Producer
-  // here is used by the /api/admin/internal/enqueue-discrepancy proxy
-  // (Pages → MCP HTTP hop); consumer drains and writes via captureDiscrepancy.
-  EVENT_DISCREPANCIES?: Queue;
-  // SYN1 (2026-06-12) — syndication change triggers. Producer (MCP update_*
-  // tools + main-app PATCH routes) and consumer (handleSyndicationBatch) both
-  // bound here.
-  SYNDICATION_CHANGES?: Queue;
-  // I1 (2026-06-13) — vendor-enrichment jobs. Producer (nightly cron selector +
-  // enrich_vendor tool) and consumer (handleEnrichmentBatch) both bound here.
-  VENDOR_ENRICHMENT?: Queue;
-  // OPE-36 (2026-07-01) — promoter-enrichment jobs. Producer (nightly selector +
-  // enrich_promoter tool) and consumer (handlePromoterEnrichmentBatch) bound here.
-  PROMOTER_ENRICHMENT?: Queue;
-  // I1 — Browser-Rendering REST credentials for the enrichment fetch path.
-  // Account id is a [vars] entry; the token is a secret (same value the main
-  // app holds). When the token is unset the BR escalation no-ops cleanly.
-  CLOUDFLARE_ACCOUNT_ID?: string;
-  CLOUDFLARE_BROWSER_RENDERING_TOKEN?: string;
-  // I1 — "false" enables Phase-2 auto-merge; anything else (incl. unset) keeps
-  // the Phase-1 dry-run-only behavior.
-  ENRICHMENT_DRY_RUN?: string;
-  // Cloudflare Email Service outbound binding (public beta). The EMAIL_JOBS
-  // consumer uses this to send transactional/auto-reply mail. Bound via
-  // `[[send_email]]` in wrangler.toml — no API key needed.
-  EMAIL?: SendEmail;
-  // IndexNow API key — same pattern, for the queue consumer to call
-  // api.indexnow.org directly without going through the main app.
-  INDEXNOW_KEY?: string;
-  // Where inbound emails are forwarded when we can't process them
-  // (parse failure, no URL, extract/submit failure). Must be a verified
-  // destination address in Cloudflare Email Routing. Set via
-  // `wrangler secret put SUBMIT_ADMIN_FORWARD` (or as a [vars] entry).
-  SUBMIT_ADMIN_FORWARD?: string;
-  // Cloudflare Workflows bindings. SCHEMA_ORG_SYNC is also reachable
-  // from Pages via the HTTP escape hatch at
-  // /api/admin/workflows/schema-org-sync/*. The other two are
-  // cron-only (fired from scheduled() below).
-  SCHEMA_ORG_SYNC: Workflow<SchemaOrgSyncParams>;
-  RECOMMENDATIONS_SCAN: Workflow<RecommendationsScanParams>;
-  EVENT_DATE_DRIFT: Workflow<EventDateDriftParams>;
-  /** Inbound email orchestrator. Created from email() entrypoint, one
-   *  instance per received message. See workflows/inbound-email.ts. */
-  INBOUND_EMAIL: Workflow<InboundEmailParams>;
-  // Build fingerprint — injected by `wrangler deploy --var` at deploy time.
-  // Empty in local dev; populated in production so `whoami` can answer
-  // "which bundle is the server running?" without a client round-trip.
-  GIT_SHA?: string;
-  BUILD_TIME?: string;
-  // A3 / PR-6 (2026-06-01 EVE) — Slack incoming-webhook URL for technical
-  // alerts (KPI alerts + dedup-sweep canary). Set via
-  // `wrangler secret put SLACK_WEBHOOK_URL_TECHNICAL` on the MCP Worker.
-  // Same channel as the main app's SLACK_WEBHOOK_URL_TECHNICAL secret
-  // (which feeds src/lib/kpi-alerts.ts); they're independently bound
-  // per-artifact per [[feedback_pages_secret_requires_redeploy]]. When
-  // unset, the dedup canary no-ops cleanly (logs configuration note,
-  // never throws), so local dev / CI without secrets keeps working.
-  SLACK_WEBHOOK_URL_TECHNICAL?: string;
-  // PR-8 (2026-06-02) — Email alternative to Slack for the dedup-sweep
-  // canary. Set to a destination email address via
-  // `wrangler secret put ALERT_EMAIL_TECHNICAL` on the MCP Worker. When
-  // set, RED/YELLOW canary transitions push to env.EMAIL_JOBS for
-  // delivery via the same queue-consumer path that handles every other
-  // outbound MCP email. Independent of the Slack webhook — set either,
-  // both, or neither.
-  ALERT_EMAIL_TECHNICAL?: string;
-  // OPE-68 (2026-07-03) — shared vendor-assets R2 bucket (same bucket the main
-  // app binds as VENDOR_ASSETS). The email() entrypoint persists inbound
-  // poster/PDF attachment bytes here at receive-time; the inbound-email
-  // Workflow reads them back to OCR via env.AI.toMarkdown. Optional so unit
-  // tests / non-R2 environments can omit it — capture + OCR no-op gracefully
-  // when unbound.
-  VENDOR_ASSETS?: R2Bucket;
-}
+/**
+ * OPE-906 — the hand-written half of this Worker's env.
+ *
+ * `WorkerEnv` is GENERATED from mcp-server/wrangler.toml (`npm run cf:typegen`)
+ * and is the source of truth for every binding and `[vars]` entry. Extending it
+ * means a binding added to the config appears here without anyone remembering
+ * to mirror it — which is exactly what had stopped happening.
+ *
+ * The drift this replaced, reported by tsc the moment the hand-written version
+ * was checked against the real config: it was missing SIX real bindings —
+ * AI, PROMOTER_OUTREACH_ENABLED, OPERATOR_OUTBOUND_ENABLED,
+ * SPAM_EVENT_RECOVERY_ENABLED, and two more. Code reaching for any of those got
+ * a type error or an `as unknown as` cast, which is how the casts accumulated.
+ *
+ * What stays hand-written below is only what wrangler cannot know: SECRETS
+ * (never in wrangler.toml) and optional vars that may be unset.
+ */
+type Env = WorkerEnv &
+  EmailGateEnv & {
+    INTERNAL_API_KEY: string;
+    // K36 (2026-06-25) — outbound CAN-SPAM footer. MAILING_ADDRESS is the
+    // physical postal address (§5(a)(5)); UNSUBSCRIBE_SECRET signs the one-click
+    // unsubscribe token (falls back to INTERNAL_API_KEY when unset). Both
+    // optional — set MAILING_ADDRESS before sending real outbound mail at volume.
+    MAILING_ADDRESS?: string;
+    UNSUBSCRIBE_SECRET?: string;
+    // Optional Pages service binding — bound in production via wrangler.toml,
+    // typically absent in local dev. When present, internal API calls (IndexNow
+    // ping, future cross-Worker calls) skip the public-internet round-trip.
+    MAIN_APP?: Fetcher;
+    // Cloudflare Queues — producer side. Same bindings as the main app, so
+    // MCP tools can enqueue work to the same consumer (this Worker, below).
+    EMAIL_JOBS?: Queue;
+    /**
+     * OPE-357 — the STOP-gate on mailing STRANGERS.
+     *
+     * Deliberately separate from EMAIL_REPLY_ENABLED. That flag governs replies to
+     * people who wrote to a lane we understood; this one governs asking someone we
+     * could not place "which fair did you mean?". Sharing a flag would mean the day
+     * somebody enables ordinary replies, we also silently start mailing unknown
+     * senders — a customer-facing behaviour change nobody asked for, arriving as a
+     * side effect. When not "true" the mail is still stored, queued and forwarded
+     * to admin; only the outbound question is withheld.
+     */
+    UNROUTED_ASK_ENABLED?: string;
+    INDEXNOW_PINGS?: Queue;
+    // GW1.1 (2026-06-03) — ingest_addverify discrepancy capture. Producer
+    // here is used by the /api/admin/internal/enqueue-discrepancy proxy
+    // (Pages → MCP HTTP hop); consumer drains and writes via captureDiscrepancy.
+    EVENT_DISCREPANCIES?: Queue;
+    // SYN1 (2026-06-12) — syndication change triggers. Producer (MCP update_*
+    // tools + main-app PATCH routes) and consumer (handleSyndicationBatch) both
+    // bound here.
+    SYNDICATION_CHANGES?: Queue;
+    // I1 (2026-06-13) — vendor-enrichment jobs. Producer (nightly cron selector +
+    // enrich_vendor tool) and consumer (handleEnrichmentBatch) both bound here.
+    VENDOR_ENRICHMENT?: Queue;
+    // OPE-36 (2026-07-01) — promoter-enrichment jobs. Producer (nightly selector +
+    // enrich_promoter tool) and consumer (handlePromoterEnrichmentBatch) bound here.
+    PROMOTER_ENRICHMENT?: Queue;
+    // I1 — Browser-Rendering REST credentials for the enrichment fetch path.
+    // Account id is a [vars] entry; the token is a secret (same value the main
+    // app holds). When the token is unset the BR escalation no-ops cleanly.
+    CLOUDFLARE_ACCOUNT_ID?: string;
+    CLOUDFLARE_BROWSER_RENDERING_TOKEN?: string;
+    // I1 — "false" enables Phase-2 auto-merge; anything else (incl. unset) keeps
+    // the Phase-1 dry-run-only behavior.
+    ENRICHMENT_DRY_RUN?: string;
+    // Cloudflare Email Service outbound binding (public beta). The EMAIL_JOBS
+    // consumer uses this to send transactional/auto-reply mail. Bound via
+    // `[[send_email]]` in wrangler.toml — no API key needed.
+    EMAIL?: SendEmail;
+    // IndexNow API key — same pattern, for the queue consumer to call
+    // api.indexnow.org directly without going through the main app.
+    INDEXNOW_KEY?: string;
+    // Where inbound emails are forwarded when we can't process them
+    // (parse failure, no URL, extract/submit failure). Must be a verified
+    // destination address in Cloudflare Email Routing. Set via
+    // `wrangler secret put SUBMIT_ADMIN_FORWARD` (or as a [vars] entry).
+    SUBMIT_ADMIN_FORWARD?: string;
+    // Cloudflare Workflows bindings. SCHEMA_ORG_SYNC is also reachable
+    // from Pages via the HTTP escape hatch at
+    // /api/admin/workflows/schema-org-sync/*. The other two are
+    // cron-only (fired from scheduled() below).
+    SCHEMA_ORG_SYNC: Workflow<SchemaOrgSyncParams>;
+    RECOMMENDATIONS_SCAN: Workflow<RecommendationsScanParams>;
+    EVENT_DATE_DRIFT: Workflow<EventDateDriftParams>;
+    /** Inbound email orchestrator. Created from email() entrypoint, one
+     *  instance per received message. See workflows/inbound-email.ts. */
+    INBOUND_EMAIL: Workflow<InboundEmailParams>;
+    // Build fingerprint — injected by `wrangler deploy --var` at deploy time.
+    // Empty in local dev; populated in production so `whoami` can answer
+    // "which bundle is the server running?" without a client round-trip.
+    GIT_SHA?: string;
+    BUILD_TIME?: string;
+    /**
+     * OPE-370 — override for the pending-search-ping retention window (days).
+     * ⚠️ OPE-950 FINDING: read by the cron prune, bound NOWHERE — absent from
+     * mcp-server/wrangler.toml (grep -c → 0) and from docs/. Until someone sets
+     * it (a deployed secret is UNVERIFIED), `searchPingRetentionDays` returns
+     * its built-in default. Previously reachable only through a cast.
+     */
+    SEARCH_PING_RETENTION_DAYS?: string;
+    // A3 / PR-6 (2026-06-01 EVE) — Slack incoming-webhook URL for technical
+    // alerts (KPI alerts + dedup-sweep canary). Set via
+    // `wrangler secret put SLACK_WEBHOOK_URL_TECHNICAL` on the MCP Worker.
+    // Same channel as the main app's SLACK_WEBHOOK_URL_TECHNICAL secret
+    // (which feeds src/lib/kpi-alerts.ts); they're independently bound
+    // per-artifact per [[feedback_pages_secret_requires_redeploy]]. When
+    // unset, the dedup canary no-ops cleanly (logs configuration note,
+    // never throws), so local dev / CI without secrets keeps working.
+    SLACK_WEBHOOK_URL_TECHNICAL?: string;
+    // PR-8 (2026-06-02) — Email alternative to Slack for the dedup-sweep
+    // canary. Set to a destination email address via
+    // `wrangler secret put ALERT_EMAIL_TECHNICAL` on the MCP Worker. When
+    // set, RED/YELLOW canary transitions push to env.EMAIL_JOBS for
+    // delivery via the same queue-consumer path that handles every other
+    // outbound MCP email. Independent of the Slack webhook — set either,
+    // both, or neither.
+    ALERT_EMAIL_TECHNICAL?: string;
+    // OPE-1239 — optional read-only GitHub token for the CI-trigger watchdog.
+    // The repo is public, so the watchdog works without it; set it only to lift
+    // the shared unauthenticated rate limit (`wrangler secret put GITHUB_TOKEN`).
+    GITHUB_TOKEN?: string;
+    // OPE-68 (2026-07-03) — shared vendor-assets R2 bucket (same bucket the main
+    // app binds as VENDOR_ASSETS). The email() entrypoint persists inbound
+    // poster/PDF attachment bytes here at receive-time; the inbound-email
+    // Workflow reads them back to OCR via env.AI.toMarkdown. Optional so unit
+    // tests / non-R2 environments can omit it — capture + OCR no-op gracefully
+    // when unbound.
+  };
 
 // Re-export for the canary helper, which needs the same Env type.
 export type { Env };
@@ -211,10 +250,14 @@ export type { Env };
 export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, UserProps> {
   // Type assertion needed: @modelcontextprotocol/sdk and agents bundle separate
   // copies of McpServer with incompatible private fields but identical public API.
-  server = new McpServer({
-    name: "MeetMeAtTheFair",
-    version: "1.0.0",
-  }) as any;
+  // OPE-1132 — the param policy wraps `tool()` on THIS instance, so it must be
+  // applied before init() registers anything. Same call on the legacy path.
+  server = applyToolParamPolicy(
+    new McpServer({
+      name: "MeetMeAtTheFair",
+      version: "1.0.0",
+    })
+  ) as any;
 
   async init() {
     const db = getDb(this.env.DB);
@@ -363,6 +406,7 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
         // I1 (2026-06-13) — synchronous one-off vendor enrichment trigger.
         registerEnrichVendorTool(this.server, db, auth, this.env);
         registerEnrichPromoterTool(this.server, db, auth, this.env);
+        registerPromoterBlastRadiusTool(this.server, db, auth);
         // OPE-116 — synchronous one-off performer enrichment trigger.
         registerEnrichPerformerTool(this.server, db, auth, this.env);
         // K31 (2026-06-21) — send_vendor_email (claim invites + outreach).
@@ -378,6 +422,8 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
         // OPE-190 (2026-07-13) — send_newsletter_broadcast (wraps the OPE-169
         // broadcast endpoint; STOP-gated real broadcast, unattended test/preview).
         registerSendNewsletterBroadcastTool(this.server, db, auth, this.env);
+        registerSendGatesTool(this.server, db, auth, this.env);
+        registerApiTokenTools(this.server, db, auth);
         // OPE-67 (2026-07-02) — claim tooling: create_claim_invite (cold invite)
         // + list_claims / approve_claim / reject_claim (review queue).
         registerCreateClaimInviteTool(this.server, db, auth, this.env);
@@ -389,6 +435,7 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
         // photo lane can be tested against the 87 stored originals instead of
         // by attending a fair.
         registerReplayInboundAttachmentTool(this.server, db, auth, this.env);
+        registerReadEventPosterTool(this.server, db, auth, this.env);
         groups.admin = diff(before);
 
         before = snapshot();
@@ -406,173 +453,18 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
     }
   }
 
-  // ───────────────────────────────────────────────────────────────────────
-  // Routing fix for upstream MCP TS SDK #1186 (open) / our issue #121:
-  // "Zombie Task Collision in StreamableHTTPServerTransport"
-  //
-  // The agents package's StreamableHTTPServerTransport.send() routes responses
-  // by walking agent.getConnections() and picking the first connection whose
-  // state.requestIds includes the response's request id. When two concurrent
-  // clients (or one client reusing JSON-RPC ids across parallel requests) end
-  // up with the same id in their per-connection state, find() returns either
-  // connection arbitrarily. Result: the response is written to the wrong
-  // client's HTTP socket — silently, with the wrong shape.
-  //
-  // Production manifestations:
-  //   - 2026-05-10: 8 parallel update_event MCP calls, 3 returned
-  //     page_analytics-shaped responses.
-  //   - 2026-05-24 (analyst report): update_blog_post / get_blog_links_in_post
-  //     during a bulk blog-linking session, several echoed an unrelated
-  //     post or event payload. Writes landed correctly; responses didn't.
-  //
-  // What this wrap does:
-  //   1. Hook transport.onmessage to record (requestId -> connection.id) at
-  //      intake. The agents transport sets connection.state.requestIds in
-  //      handlePostRequest before calling onmessage, so by intake time the
-  //      async-context connection from getCurrentAgent() is the originating
-  //      connection.
-  //   2. Replace transport.send with a router that:
-  //        - passes through to original when no collision (≤1 match);
-  //        - direct-writes to the tracked connection on a fixable collision,
-  //          bypassing the buggy find();
-  //        - throws a structured error when collision is unfixable (intake
-  //          record missing), surfacing as a JSON-RPC error to the caller
-  //          rather than a silent wrong-shape response.
-  //
-  // Removable when: agents package upgrades past the upstream SDK fix for
-  // #1186, OR the agents transport switches to composite (streamId,
-  // requestId) keys. The pure routing logic and direct-write helper live in
-  // ./transport-collision-fix.ts and are unit-tested there.
-  async onStart(props?: UserProps) {
-    await super.onStart(props);
-    const transport = (this as unknown as { _transport?: unknown })._transport as
-      | (TransportPrivates & {
-          send?: (m: unknown, o?: { relatedRequestId?: unknown }) => Promise<unknown>;
-          onmessage?: (m: unknown, extra: unknown) => unknown;
-        })
-      | undefined;
-    if (!transport || typeof transport.send !== "function") return;
-
-    // Per-DO map of intake-recorded (requestId -> Set<connection.id>).
-    //
-    // K19 (2026-06-07): upgraded from `Map<unknown, string>` to a multi-
-    // valued set so two concurrent intakes that share a JSON-RPC id no
-    // longer clobber each other. The original wrap correctly handled the
-    // single-collision case at send time, but `intakeConnByReqId.set(id,
-    // connId)` overwrote on key collision — so when subagent B's intake
-    // arrived after A's with id=1, A's tracking was lost, A's send picked
-    // up B's connection id from the map, and A's response was routed to
-    // B's socket. The test file explicitly documented this gap at
-    // transport-collision-fix.test.ts:213-251 but didn't fix it.
-    //
-    // We remove a specific connection.id from its set at send time once
-    // we know which connection that response was for (via the routing
-    // decision). If the set goes empty, the key is dropped. Memory is
-    // bounded by concurrent in-flight count, same as the single-valued
-    // version was.
-    const intakeConnByReqId = new Map<unknown, Set<string>>();
-
-    // Hook onmessage to record the originating connection at intake time.
-    // Defense in depth: any throw inside the recording branch is caught so
-    // a tracking failure can never block message intake.
-    const originalOnMessage = transport.onmessage;
-    if (typeof originalOnMessage === "function") {
-      const boundOnMessage = originalOnMessage.bind(transport);
-      transport.onmessage = (m: unknown, extra: unknown) => {
-        try {
-          const message = m as { id?: unknown };
-          if (message && message.id !== undefined && message.id !== null) {
-            const { connection } = getCurrentAgent();
-            if (connection?.id) {
-              let set = intakeConnByReqId.get(message.id);
-              if (!set) {
-                set = new Set<string>();
-                intakeConnByReqId.set(message.id, set);
-              }
-              set.add(connection.id);
-            }
-          }
-        } catch {
-          /* never block intake on tracking failure */
-        }
-        return boundOnMessage(m, extra);
-      };
-    }
-
-    const originalSend = transport.send.bind(transport);
-    const getConnsArr = (): ConnectionLike[] =>
-      Array.from(this.getConnections() ?? []) as ConnectionLike[];
-
-    // Remove a single connection.id from the intake set for `reqId`,
-    // dropping the key when the set is exhausted. No-op if reqId is
-    // nullish or the set is missing. Called from each routing branch
-    // with the connection.id we actually routed to (or attempted to);
-    // the surviving entries belong to other concurrent in-flight calls.
-    const consumeIntake = (reqId: unknown, connectionId: string | undefined): void => {
-      if (reqId === undefined || reqId === null) return;
-      const set = intakeConnByReqId.get(reqId);
-      if (!set) return;
-      if (connectionId) set.delete(connectionId);
-      // Clear the key if exhausted, OR if we couldn't identify the
-      // connection (no connectionId) — that branch falls back to the
-      // pre-K19 behavior of dropping the key, preventing an unbounded
-      // leak when both signals are unavailable.
-      if (!connectionId || set.size === 0) {
-        intakeConnByReqId.delete(reqId);
-      }
-    };
-
-    transport.send = async (m: unknown, o?: { relatedRequestId?: unknown }) => {
-      const message = m as { id?: unknown };
-      const reqId = o?.relatedRequestId ?? message?.id;
-
-      const intakeConnectionIds =
-        reqId !== undefined && reqId !== null ? intakeConnByReqId.get(reqId) : undefined;
-
-      // K19: read the send-time async-context connection as the strongest
-      // disambiguating signal. When ALS propagates from intake → tool
-      // callback → send (the common case), this uniquely identifies the
-      // originating connection regardless of how many concurrent intakes
-      // collided on the same id. Wrapped in try/catch because some SDK
-      // paths historically broke ALS, in which case we fall back to the
-      // intake set.
-      let sendTimeConnectionId: string | undefined;
-      try {
-        sendTimeConnectionId = getCurrentAgent().connection?.id;
-      } catch {
-        /* ALS unavailable — rely on intake set */
-      }
-
-      const decision = decideSendRouting(getConnsArr(), reqId, {
-        sendTimeConnectionId,
-        intakeConnectionIds,
-      });
-
-      if (decision.kind === "passthrough") {
-        consumeIntake(reqId, decision.matched?.id ?? sendTimeConnectionId);
-        return originalSend(m, o);
-      }
-
-      if (decision.kind === "ambiguous") {
-        // Broken request — drop the entire key so subsequent calls aren't
-        // poisoned by stale intake entries from the failed batch.
-        if (reqId !== undefined && reqId !== null) intakeConnByReqId.delete(reqId);
-        console.error(
-          `[MCP/#121] response routing ambiguous for request id ${String(reqId)} — refusing send to prevent wrong-shape response. Matching connections: ${decision.matchedIds.join(", ")}; sendTimeConn=${sendTimeConnectionId ?? "none"}; intakeConns=${intakeConnectionIds ? Array.from(intakeConnectionIds).join(",") : "none"}`
-        );
-        throw new Error(
-          `MCP response routing ambiguous for request id ${String(reqId)}; ${decision.matchedIds.length} connections collide and no send-time signal disambiguates. Caller should re-fetch the underlying record.`
-        );
-      }
-
-      // decision.kind === "fixed" — direct-write to the correct connection.
-      consumeIntake(reqId, decision.connection.id);
-      console.warn(
-        `[MCP/#121] collision routed to connection ${decision.connection.id} via ${decision.via} for request id ${String(reqId)} (bypassed buggy find())`
-      );
-      await sendViaConnection(transport, decision.connection, m, reqId);
-    };
-  }
+  // OPE-900 step 1 (2026-09-13) — the onStart transport wrap for upstream MCP
+  // TS SDK #1186 / our #121 ("Zombie Task Collision": a response written to
+  // the wrong client's socket when two in-flight requests share a JSON-RPC id)
+  // is REMOVED, on the removal condition it named: agents upgraded past the
+  // upstream fix. Read from agents@0.23.0 `StreamableHTTPServerTransport
+  // .sendForRequest`: it routes to the ORIGINATING connection via
+  // getCurrentAgent() (our K19 send-time signal), falls back to a single
+  // match, and on true ambiguity sends a JSON-RPC internal error to every
+  // candidate instead of guessing. Keeping the wrap would have been harmful,
+  // not redundant: its direct-write path bypassed the new `sendOnStream`
+  // (event-store cleanup) and depended on `_requestResponseMap`, which 0.23
+  // no longer has.
 }
 
 // ---------------------------------------------------------------------------
@@ -587,6 +479,10 @@ const oauthProvider = new OAuthProvider({
   authorizeEndpoint: "/authorize",
   tokenEndpoint: "/token",
   clientRegistrationEndpoint: "/register",
+  // OPE-900 step 5 — S256 only. Live metadata already reads ["S256"], but only
+  // because 0.10.x flipped the library DEFAULT (0.3.3 advertised "plain" too);
+  // nothing here asked for it. Explicit, so a future release cannot re-enable it.
+  allowPlainPKCE: false,
 });
 
 // ---------------------------------------------------------------------------
@@ -609,7 +505,13 @@ function getCorsOrigin(request: Request): string {
 // ---------------------------------------------------------------------------
 // Legacy stateless handler for mmatf_ Bearer tokens
 // ---------------------------------------------------------------------------
-async function handleLegacyMcpRequest(request: Request, env: Env): Promise<Response> {
+async function handleLegacyMcpRequest(
+  request: Request,
+  env: Env,
+  // OPE-903 — threaded through so the token's `last_used_at` write survives
+  // the response instead of racing it.
+  ctx?: ExecutionContext
+): Promise<Response> {
   const { WebStandardStreamableHTTPServerTransport } =
     await import("@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js");
 
@@ -628,12 +530,12 @@ async function handleLegacyMcpRequest(request: Request, env: Env): Promise<Respo
   }
 
   const db = getDb(env.DB);
-  const server = new McpServer({ name: "MeetMeAtTheFair", version: "1.0.0" });
+  const server = applyToolParamPolicy(new McpServer({ name: "MeetMeAtTheFair", version: "1.0.0" }));
 
   registerPublicTools(server, db);
 
   const authHeader = request.headers.get("Authorization");
-  const auth = await authenticateToken(db, authHeader);
+  const auth = await authenticateToken(db, authHeader, ctx);
 
   if (auth) {
     registerUserTools(server, db, auth);
@@ -651,6 +553,7 @@ async function handleLegacyMcpRequest(request: Request, env: Env): Promise<Respo
       registerVendorRosterTools(server, db, auth);
       registerEnrichVendorTool(server, db, auth, env);
       registerEnrichPromoterTool(server, db, auth, env);
+      registerPromoterBlastRadiusTool(server, db, auth);
       registerEnrichPerformerTool(server, db, auth, env);
       registerSendVendorEmailTool(server, db, auth, env);
       registerSendTestEmailTool(server, db, auth, env);
@@ -661,6 +564,8 @@ async function handleLegacyMcpRequest(request: Request, env: Env): Promise<Respo
       registerPromoterReplyIngestTools(server, db, auth);
       registerGalleryPhotoTools(server, auth, env);
       registerSendNewsletterBroadcastTool(server, db, auth, env);
+      registerSendGatesTool(server, db, auth, env);
+      registerApiTokenTools(server, db, auth);
       registerCreateClaimInviteTool(server, db, auth, env);
       registerClaimReviewTools(server, db, auth, env as unknown as ClaimReviewEnv);
       registerResolveHeldPhotosTool(server, db, auth, env);
@@ -671,6 +576,7 @@ async function handleLegacyMcpRequest(request: Request, env: Env): Promise<Respo
       // is what happened on the first ship, and the `mmatf_` path is exactly the
       // one an agent uses for direct curl when the tool registry is frozen.
       registerReplayInboundAttachmentTool(server, db, auth, env);
+      registerReadEventPosterTool(server, db, auth, env);
       registerAnalyticsTools(server, auth, env);
       registerBlogTools(server, db, auth, env);
       registerContentLinksTools(server, db, auth, env);
@@ -726,7 +632,10 @@ async function runMainAppSweep(
   // OPE-408 — some sweeps need arguments (geocode wants `missing_only`).
   // Optional so every existing caller is byte-for-byte unchanged.
   body?: Record<string, unknown>
-): Promise<void> {
+  // OPE-408 — returns the parsed result on success, null on failure, so a
+  // caller that pages (the geocode sweep) can read `next_cursor`. Every
+  // fire-and-forget caller ignores it and is unchanged.
+): Promise<Record<string, unknown> | null> {
   const sessionId = crypto.randomUUID();
   try {
     // OPE-258 — shared caller: prefers the service binding, falls back to
@@ -781,10 +690,11 @@ async function runMainAppSweep(
           cause,
         },
       });
-      return;
+      return null;
     }
     const result = (await response.json().catch(() => ({}))) as Record<string, unknown>;
     console.log(`[cron] ${label} ok — ${format(result)}`);
+    return result;
   } catch (error) {
     await logError(env.DB, {
       source: `mcp:schedule:${label.replace(/\s+/g, "-")}`,
@@ -793,6 +703,7 @@ async function runMainAppSweep(
       sessionId,
       context: { path },
     });
+    return null;
   }
 }
 
@@ -866,7 +777,10 @@ async function runScheduledBingInspectionSweep(env: Env): Promise<void> {
     env,
     "bing inspection sweep",
     "/api/admin/analytics/bing/inspection-sweep",
-    (r) => `inspected=${r.inspected ?? "?"} skipped=${r.skipped ?? "?"}`
+    (r) => {
+      const d = (r.data ?? r) as Record<string, unknown>;
+      return `inspected=${d.inspected ?? "?"} skipped=${d.skipped ?? "?"} throttled=${d.throttled ?? "?"}`;
+    }
   );
 }
 
@@ -980,6 +894,18 @@ async function runScheduledGscMetricsSync(env: Env): Promise<void> {
     return `gsc=${gsc.upserted ?? "?"} ga4=${ga4.upserted ?? "?"} bing=${bing.upserted ?? "?"} ok=${r.ok}`;
   });
 
+  // OPE-456 — record click-milestone crossings from the dailies just synced.
+  // Sequenced AFTER the sync (it reads `gsc_daily_totals`), and it only counts
+  // days older than the sync's revision window, so a same-run revision cannot
+  // move a crossing it writes.
+  await runMainAppSweep(
+    env,
+    "gsc milestone derive",
+    "/api/admin/analytics/gsc-milestones/derive",
+    (r) =>
+      `inserted=${Array.isArray(r.inserted) ? r.inserted.length : "?"} settledThrough=${r.settled_through ?? "?"} ok=${r.ok}`
+  );
+
   // OPE-637 constraint 3 — self-tune the verification staleness window.
   //
   // Moves `verification_alert_threshold_hours` to the p90 of observed confirm
@@ -1022,9 +948,7 @@ async function runScheduledPendingPingsFlush(env: Env): Promise<void> {
     //
     // Deliberately does NOT touch the circuit breaker and submits nothing —
     // breaker-clear is John-owned per OPE-243.
-    const retentionDays = searchPingRetentionDays(
-      env as unknown as { SEARCH_PING_RETENTION_DAYS?: string }
-    );
+    const retentionDays = searchPingRetentionDays(env);
     const pruned = await prunePendingPings(db, new Date(), retentionDays);
     // Logged every run, including zero: the point of the prune is that the
     // discard is VISIBLE. A silent delete is the defect class this repo keeps
@@ -1060,6 +984,10 @@ export { SchemaOrgSyncWorkflow } from "./workflows/schema-org-sync.js";
 export { RecommendationsScanWorkflow } from "./workflows/recommendations-scan.js";
 export { EventDateDriftWorkflow } from "./workflows/event-date-drift.js";
 export { InboundEmailWorkflow } from "./workflows/inbound-email.js";
+
+// OPE-951 — the hard burst cap. Bound here as BURST_COUNTER and, cross-script,
+// by the main app (its wrangler.toml names script_name = "meetmeatthefair-mcp").
+export { BurstCounter } from "./burst-counter.js";
 
 // ---------------------------------------------------------------------------
 // Workflow trigger endpoints (HTTP escape hatch for Pages)
@@ -1131,13 +1059,14 @@ async function handleWorkflowEndpoints(
       const state = await instance.status();
       return jsonResponse({ workflowId: id, ...state });
     } catch (err) {
-      return jsonResponse(
-        {
-          error: "workflow_not_found",
-          message: err instanceof Error ? err.message : "unknown",
-        },
-        404
-      );
+      return opaqueErrorResponse(env.DB, request, {
+        source: "mcp:workflows-api",
+        message: "schema-org-sync status lookup failed",
+        err,
+        code: "workflow_not_found",
+        status: 404,
+        context: { workflowId: id },
+      });
     }
   }
 
@@ -1155,10 +1084,14 @@ async function handleWorkflowEndpoints(
       const state = await instance.status();
       return jsonResponse({ workflowId: id, ...state });
     } catch (err) {
-      return jsonResponse(
-        { error: "workflow_not_found", message: err instanceof Error ? err.message : "unknown" },
-        404
-      );
+      return opaqueErrorResponse(env.DB, request, {
+        source: "mcp:workflows-api",
+        message: "inbound-email status lookup failed",
+        err,
+        code: "workflow_not_found",
+        status: 404,
+        context: { workflowId: id },
+      });
     }
   }
 
@@ -1754,6 +1687,8 @@ export default {
           runScheduledKpiRecompute(env),
           runScheduledInboundEmailStaleSweep(env),
           runScheduledPageErrorCanary(env),
+          // OPE-1239 — main's HEAD must have a push CI run (else it never deployed).
+          runScheduledCiTriggerWatchdog(env),
         ]).then(() => undefined)
       );
       return;
@@ -1780,19 +1715,47 @@ export default {
       // that do not exist yet.
       //
       // 08:30 UTC: after the 08:00 promoter-enrichment sweep so the two do not
-      // contend for the main app. `missing_only` pages via the OPE-214 cursor,
-      // and non-writing outcomes (low-confidence, non-point) do not stall it.
+      // contend for the main app. OPE-408 (bounce 09-23): this comment used to
+      // say it "pages via the OPE-214 cursor" while making ONE call with no
+      // `after_id` — so it re-read the same 25 refused rows for 14 nights.
+      // It now resumes from last night's cursor and walks up to
+      // GEOCODE_SWEEP_MAX_PAGES pages (see geocode-sweep-pager.ts).
+      ctx.waitUntil(
+        (async () => {
+          const start = await lastGeocodeSweepCursor(env.DB).catch(() => null);
+          const outcome = await sweepGeocodePages(
+            (afterId) =>
+              runMainAppSweep(
+                env,
+                "venue geocode",
+                "/api/admin/venues/geocode-venues",
+                (r) => {
+                  const results = Array.isArray(r.results) ? r.results : [];
+                  const ok = results.filter(
+                    (x) => (x as { status?: string }).status === "ok"
+                  ).length;
+                  return `after=${afterId ?? "start"} attempted=${results.length} written=${ok} next_cursor=${r.next_cursor ?? "none"}`;
+                },
+                afterId ? { missing_only: true, after_id: afterId } : { missing_only: true }
+              ),
+            start
+          );
+          console.log(`[cron] venue geocode sweep — ${JSON.stringify(outcome)}`);
+        })()
+      );
+      // OPE-237 — the vendor-registration corroboration pass. It shipped
+      // 2026-08-20 as admin-triggered only and nobody triggered it: on
+      // 2026-09-14, 22 evidence rows had a declared website and none had ever
+      // been checked. Fetches only rows never attempted (≈1 new a day), each
+      // through the SSRF guard; writes the realness row, never the public
+      // profile. Behind the same main-app slot gate as the geocode sweep.
       ctx.waitUntil(
         runMainAppSweep(
           env,
-          "venue geocode",
-          "/api/admin/venues/geocode-venues",
-          (r) => {
-            const results = Array.isArray(r.results) ? r.results : [];
-            const ok = results.filter((x) => (x as { status?: string }).status === "ok").length;
-            return `attempted=${results.length} written=${ok} next_cursor=${r.next_cursor ?? "none"}`;
-          },
-          { missing_only: true }
+          "claim corroboration",
+          "/api/admin/claims/corroborate",
+          (r) => `eligible=${r.eligible ?? "?"} corroborated=${r.corroborated ?? "?"}`,
+          { limit: 20 }
         )
       );
       // OPE-489 — this `return` was MISSING. Every other cron branch has one;
@@ -1899,6 +1862,14 @@ export default {
         runScheduledDedupSweepCanary(env, "events"),
         runScheduledDedupSweepCanary(env, "venues"),
         runScheduledDedupSweepCanary(env, "promoters"),
+        // OPE-1201 — daily near-duplicate CANDIDATE pass over existing events.
+        // OPE-627's check only runs at insert, so rows that predate it (its own
+        // PTTF / Scarborough fixtures) were never evaluated. Report-only: writes
+        // possible_duplicate_of where NULL; the OPE-1117 queue is the reader.
+        runScheduledNearDuplicateSweep(env),
+        // OPE-1205 — a synced row whose source went quiet (> N days, tunable)
+        // stops claiming confirmed dates unless a qualifying citation backs it.
+        runScheduledSyncStaleSweep(env),
         // OPE-75 (2026-07-03) — CPI Move 1: daily stale-red canary. POSTs the
         // main-app scan endpoint, which rebuilds the §6.3 action queue, picks
         // the P0/P1 signals red past threshold (P0 > 24h, P1 > 72h), and
@@ -1921,6 +1892,11 @@ export default {
         // is an invariant violation, not a backlog, and a steady count of 4 is
         // four people still receiving nothing. Failsoft; never throws.
         runScheduledNewsletterListBalanceCanary(env),
+        // OPE-951 (2026-09-13) — burst-cap self-test. The Workers Rate Limiting
+        // binding it replaced was inert in production for its whole life while
+        // every mocked test passed. This drives the REAL cap to a refusal once a
+        // day and stamps a heartbeat only on a pass. Failsoft; never throws.
+        runScheduledBurstCapSelfTest(env),
         // OPE-599 (2026-08-28) — operator work queues with something waiting.
         //
         // A vendor's claim on his own listing sat PENDING for 36 DAYS in a
@@ -1944,7 +1920,12 @@ export default {
         // table on day one and checked nothing (url_checked stayed 0). The
         // sweep reads rows the scan writes, so it must follow it. Chained
         // rather than merged so a sweep failure still cannot fail the scan.
-        runScheduledPhotoCoverageScan(env).then(() => runScheduledImageUrlHealthSweep(env)),
+        runScheduledPhotoCoverageScan(env)
+          .then(() => runScheduledImageUrlHealthSweep(env))
+          // OPE-227 — hero proposals read the scan's fresh demand ranking, so
+          // they follow it too. Each runner swallows its own failure, so one
+          // stage cannot stop the next.
+          .then(() => runScheduledHeroProposals(env)),
         // GW1b (analyst, 2026-06-02) — Goodwill Engine Phase 1 capture
         // hooks. Both consume the foundations from GW1a (drizzle/0101)
         // and emit event_discrepancies rows for GW1c/d/e to score and
@@ -2000,6 +1981,27 @@ export default {
         // "how big is the backlog", which has a weekly rhythm, and daily sends
         // are how a channel stops being read. The sweep itself is unchanged.
         runOccurredTransitionSweep(getDb(env.DB)).then(() => undefined),
+        // OPE-971 — request_samples retention on a schedule (was a 1% dice roll
+        // on the middleware's write path). Stamps watchdog:request-sample-retention.
+        runRequestSampleRetention(getDb(env.DB)).then(() => undefined),
+        // OPE-993 — error_logs + indexnow_submissions 30-day retention (were 1%
+        // dice rolls on their write paths). Each in its own try/catch so a
+        // throw — sync or async — cannot skip a sibling. Each stamps
+        // watchdog:<table>-retention ONLY on a successful run.
+        (async () => {
+          try {
+            await runErrorLogRetention(getDb(env.DB));
+          } catch (error) {
+            console.error("[cron] runErrorLogRetention threw", error);
+          }
+        })(),
+        (async () => {
+          try {
+            await runIndexNowSubmissionRetention(getDb(env.DB));
+          } catch (error) {
+            console.error("[cron] runIndexNowSubmissionRetention threw", error);
+          }
+        })(),
         // OPE-17 (2026-06-29) — inbound-email exception rails. Reconciles
         // exception statuses (already-handled → salvaged; spam/unsubscribe →
         // reversible rejected) then notifies the operator when the human-triage
@@ -2011,7 +2013,11 @@ export default {
         // (roster research + promoter enrichment + goodwill open count), with a
         // week-over-week delta. Self-gates to Monday, so it is safe to call on
         // the daily cron. Alarms are untouched and still push on condition.
-        runWeeklyInventoryNotice(env),
+        // OPE-1164 — the weekly vendor-category watch runs FIRST (Monday-gated,
+        // once per Monday) so the inventory email can report its new values.
+        runScheduledVendorCategoryWatch(getDb(env.DB), (message, error) =>
+          logError(env.DB, { source: "mcp:schedule:vendor-category-watch", message, error })
+        ).then(() => runWeeklyInventoryNotice(env)),
         // A3.2 / K43 (2026-06-25) — nightly blog-link integrity audit. Sweeps
         // every PUBLISHED post and reports internal /events,/vendors,/venues,
         // /blog links that no longer resolve (drift a slug rename/merge left
@@ -2058,7 +2064,7 @@ export default {
 
     // Legacy mmatf_ tokens bypass OAuth and use the stateless handler
     if (url.pathname === "/mcp" && authHeader?.includes("mmatf_")) {
-      return handleLegacyMcpRequest(request, env);
+      return handleLegacyMcpRequest(request, env, ctx);
     }
 
     // Internal endpoints — Pages (which can't bind workflows directly per
@@ -2085,11 +2091,15 @@ export default {
       const response = await oauthProvider.fetch(request, env, ctx);
       console.log(`[MCP] ${url.pathname} → ${response.status}`);
       return response;
-    } catch (err: any) {
-      console.error("[MCP] OAuthProvider error:", err?.message, err?.stack);
-      return new Response(JSON.stringify({ error: err?.message || "Internal error" }), {
+    } catch (err) {
+      // OPE-909 — this path is reachable unauthenticated; the thrown message is
+      // logged under the request id and never returned.
+      return opaqueErrorResponse(env.DB, request, {
+        source: "mcp:oauth-provider",
+        message: `OAuthProvider threw on ${request.method} ${url.pathname}`,
+        err,
+        code: "internal_error",
         status: 500,
-        headers: { "Content-Type": "application/json" },
       });
     }
   },

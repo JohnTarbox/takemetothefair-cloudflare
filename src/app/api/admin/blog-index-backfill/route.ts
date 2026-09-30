@@ -5,8 +5,8 @@ import { isAuthorized } from "@/lib/api-auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { blogPosts, gscInspectionState, bingInspectionState } from "@/lib/db/schema";
 import { SITE_URL } from "@takemetothefair/constants";
-import { inspectUrl, type ScEnv } from "@/lib/search-console";
-import { getUrlInfo, type BingEnv } from "@/lib/bing-webmaster";
+import { inspectUrl } from "@/lib/search-console";
+import { getUrlInfo } from "@/lib/bing-webmaster";
 
 /**
  * OPE-94 — one-shot blog index-status backfill.
@@ -47,7 +47,7 @@ export async function POST(request: Request) {
       MAX_CHUNK
     );
 
-    const env = getCloudflareEnv() as unknown as ScEnv & BingEnv;
+    const env = getCloudflareEnv();
     const db = getCloudflareDb();
 
     const [{ total }] = await db

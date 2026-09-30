@@ -51,7 +51,13 @@ describe("appearance verification stamp (OPE-123)", () => {
   it("set_event_performer_status stamps last_verified_at + source", async () => {
     const apprId = await makeAppearance();
     const [before] = await db.select().from(eventPerformers).where(eq(eventPerformers.id, apprId));
-    expect(before.lastVerifiedAt).toBeNull();
+    // OPE-791 — this used to assert NULL here, which was the defect: creation
+    // requires `source_url`, so the appearance HAD been grounded and was still
+    // born "never verified". It is now stamped at creation from the creating
+    // source, and the assertion below is that a status call MOVES the stamp to
+    // the newer source rather than setting it for the first time.
+    expect(before.lastVerifiedAt).not.toBeNull();
+    expect(before.lastVerifiedSource).toBe("https://fair.example/lineup");
 
     await call("set_event_performer_status", {
       event_performer_id: apprId,
@@ -120,5 +126,115 @@ describe("set_performer_roster_status (OPE-123)", () => {
       status: "VERIFIED",
     });
     expect(bad.error).toBe("not_found");
+  });
+});
+
+/**
+ * OPE-791 — the write IS the verification.
+ *
+ * Both `link_performer_to_event` and `create_or_link_performer` REQUIRE
+ * `source_url`, so an appearance cannot be created without the caller having
+ * grounded it against the organizer's own page. Neither stamped
+ * `last_verified_at`, so a just-grounded appearance was born "never verified"
+ * and read as stale to the OPE-123 rail immediately.
+ *
+ * 25 of the 26 appearances created since 2026-08-25 survived only because an
+ * agent happened to follow the link call with a status call. That habit was the
+ * only thing holding the invariant, and one row (`1dfc38ae…`, Kylie Morgan @
+ * oxford-fair) escaped it.
+ */
+describe("appearance creation stamps its own verification (OPE-791)", () => {
+  it("create_or_link_performer stamps last_verified_at + source at creation", async () => {
+    await call("create_or_link_performer", {
+      event_id: "e1",
+      name: "Windsor Fair Headliner",
+      status: "CONFIRMED",
+      source_url: "https://windsorfair.example/lineup.png",
+    });
+    const [row] = await db.select().from(eventPerformers).where(eq(eventPerformers.eventId, "e1"));
+    expect(row.lastVerifiedAt).not.toBeNull();
+    expect(row.lastVerifiedSource).toBe("https://windsorfair.example/lineup.png");
+  });
+
+  it("link_performer_to_event does too — one helper, both tools", async () => {
+    // The fix lives in the shared `linkAppearance`, so both callers inherit it.
+    // Fixing only one is the "wired into one of two parallel paths" shape.
+    await call("create_or_link_performer", {
+      event_id: "e1",
+      name: "Solo Act",
+      status: "PENDING",
+      source_url: "https://fair.example/first",
+    });
+    const [seeded] = await db
+      .select()
+      .from(eventPerformers)
+      .where(eq(eventPerformers.eventId, "e1"));
+    await db.delete(eventPerformers).where(eq(eventPerformers.id, seeded.id)).run();
+
+    await call("link_performer_to_event", {
+      event_id: "e1",
+      performer_id: seeded.performerId,
+      status: "PENDING",
+      source_url: "https://fair.example/schedule",
+    });
+    const [row] = await db.select().from(eventPerformers).where(eq(eventPerformers.eventId, "e1"));
+    expect(row.lastVerifiedAt).not.toBeNull();
+    expect(row.lastVerifiedSource).toBe("https://fair.example/schedule");
+  });
+
+  it("a REPEAT link refreshes the stamp instead of no-op'ing, and does not duplicate", async () => {
+    // Reaching the helper again means somebody re-grounded the appearance. The
+    // old code returned the row untouched and threw that fact away.
+    //
+    // NOTE the `performer_id`: create_or_link_performer's fuzzy dedup returns
+    // CANDIDATES for a same-name repeat rather than linking, so a repeat by name
+    // never reaches linkAppearance at all. My first draft of this test did that
+    // and was asserting on a path it never exercised.
+    await call("create_or_link_performer", {
+      event_id: "e1",
+      name: "Repeat Act",
+      status: "PENDING",
+      source_url: "https://fair.example/v1",
+    });
+    const [first] = await db
+      .select()
+      .from(eventPerformers)
+      .where(eq(eventPerformers.eventId, "e1"));
+
+    await call("link_performer_to_event", {
+      event_id: "e1",
+      performer_id: first.performerId,
+      status: "PENDING",
+      source_url: "https://fair.example/v2-rechecked",
+    });
+
+    const rows = await db.select().from(eventPerformers).where(eq(eventPerformers.eventId, "e1"));
+    expect(rows).toHaveLength(1); // idempotent — no duplicate row
+    expect(rows[0].id).toBe(first.id);
+    expect(rows[0].lastVerifiedSource).toBe("https://fair.example/v2-rechecked");
+  });
+
+  it("a repeat keeps the ORIGINAL source_url — provenance and freshness are different questions", async () => {
+    // Where the appearance came from, and where it was last confirmed, are two
+    // facts. Overwriting the first with the second loses the answer to it.
+    await call("create_or_link_performer", {
+      event_id: "e1",
+      name: "Provenance Act",
+      status: "PENDING",
+      source_url: "https://fair.example/original",
+    });
+    const [first] = await db
+      .select()
+      .from(eventPerformers)
+      .where(eq(eventPerformers.eventId, "e1"));
+    await call("link_performer_to_event", {
+      event_id: "e1",
+      performer_id: first.performerId,
+      status: "PENDING",
+      source_url: "https://fair.example/recheck",
+    });
+    const [row] = await db.select().from(eventPerformers).where(eq(eventPerformers.eventId, "e1"));
+    expect(row.sourceUrl).toBe("https://fair.example/original");
+    expect(row.lastVerifiedSource).toBe("https://fair.example/recheck");
   });
 });

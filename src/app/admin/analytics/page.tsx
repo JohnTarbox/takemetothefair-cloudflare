@@ -1,5 +1,23 @@
 import Link from "next/link";
 import {
+  bingPagesIndexed,
+  bingScanIssueCount,
+  bingWeekTotal,
+  indexNowChip,
+  indexNowCount,
+  type BingReport,
+  bingActionInputsUnmeasured,
+  bingSubmittedUrlCount,
+} from "@/lib/analytics-overview/bing-tiles";
+import {
+  freshness,
+  measurementText,
+  sparklineTotal,
+  unavailable,
+  type Measurement,
+} from "@/lib/analytics-overview/render-state";
+import type { TileId } from "@/lib/analytics-overview/tile-definitions";
+import {
   Activity,
   AlertTriangle,
   ArrowDown,
@@ -18,10 +36,11 @@ import {
 import { count, desc, eq, gte, sql } from "drizzle-orm";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { IndexNowKillSwitchToggle } from "@/components/admin/indexnow-kill-switch-toggle";
+import { TileInfo } from "@/components/admin/tile-info";
 import { getCloudflareDb, getCloudflareEnv, getCloudflareRateLimitKv } from "@/lib/cloudflare";
 import {
   checkIndexNowBreaker,
-  getIndexNowPauseState,
+  readIndexNowPauseForDisplay,
   type BreakerState,
 } from "@/lib/indexnow-breaker";
 import { analyticsEvents, indexnowSubmissions } from "@/lib/db/schema";
@@ -35,7 +54,6 @@ import {
   getIndexNowQuota,
   getTrafficStats,
   getSitemaps,
-  type BingEnv,
   type BingQueryRow,
   type BingPageRow,
   type BingCrawlStatsRow,
@@ -50,12 +68,12 @@ import {
   getSiteSearchQueries,
   getSitePropertyTotals,
   getSitemapStatus,
-  type ScEnv,
   type SitePropertyTotals,
   type SiteSearchQueriesResult,
   type SitemapStatus,
 } from "@/lib/search-console";
 import { computeMilestoneLayout, MILESTONE_CHART_DIMS } from "@/lib/charts/milestone-layout";
+import { toMilestonePoints, type GscMilestonePoint } from "@/lib/charts/milestone-points";
 import { formatDateOnly, formatTimestampForServer } from "@/lib/datetime";
 import {
   isWindowKey,
@@ -70,7 +88,13 @@ import {
 } from "@/lib/analytics-overview";
 import type { SiteHealthVerdict, InstrumentReading } from "@/lib/site-health-unified/verdict";
 import { ENGAGEMENT_WINDOW_DAYS } from "@/lib/site-health-unified/engagement";
-import { KPI_THRESHOLDS, formatStaleAge, type KpiName, type KpiState } from "@/lib/kpi-thresholds";
+import {
+  KPI_THRESHOLDS,
+  formatKpiValue,
+  formatStaleAge,
+  type KpiName,
+  type KpiState,
+} from "@/lib/kpi-thresholds";
 import { isExpectedNonIndexing } from "@/lib/site-health-classify";
 import {
   AEO_BUCKET_LABELS,
@@ -79,6 +103,7 @@ import {
   Ga4ConfigError,
   getAeoReferrals,
   getFacebookTrafficSafe,
+  TRAFFIC_SOURCE_LIMIT,
   type AeoReferralsResult,
   type FacebookTrafficSummary,
   type Ga4Env,
@@ -184,7 +209,7 @@ async function loadAeoReferralsSafe(env: Ga4Env): Promise<AeoReferralsResult | n
 
 async function OverviewTab({ window }: { window: WindowKey }) {
   const db = getCloudflareDb();
-  const env = getCloudflareEnv() as unknown as ScEnv & BingEnv & Ga4Env;
+  const env = getCloudflareEnv();
   const [snapshot, aeo, fb] = await Promise.all([
     loadOverviewSnapshot(db, env, window),
     loadAeoReferralsSafe(env),
@@ -260,6 +285,7 @@ async function OverviewTab({ window }: { window: WindowKey }) {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
         <SparklineCard
           title="Search visibility (last 30 days)"
+          tileId="overview.search-visibility-30d"
           subtitle={`Daily Google search clicks · source: GSC${throughCaption(
             snapshot.searchVisibilitySparkline
           )}`}
@@ -269,6 +295,7 @@ async function OverviewTab({ window }: { window: WindowKey }) {
         />
         <SparklineCard
           title="Conversions (last 30 days)"
+          tileId="overview.conversions-30d"
           subtitle="Daily outbound ticket + application clicks · source: D1 analytics_events"
           points={snapshot.conversionsSparkline}
           colorClass="stroke-blue-600"
@@ -276,8 +303,15 @@ async function OverviewTab({ window }: { window: WindowKey }) {
         />
         <SparklineCard
           title="Publishing activity (last 30 days)"
+          tileId="overview.publishing-30d"
+          pausedReason={
+            snapshot.indexnow.pause.state === "paused"
+              ? "IndexNow paused (kill-switch set) — nothing is sent"
+              : undefined
+          }
           subtitle="Successful IndexNow submissions per day · source: D1 indexnow_submissions"
           points={snapshot.publishingSparkline}
+          feed="indexnow_submissions"
           colorClass="stroke-emerald-600"
           fillClass="fill-emerald-100"
         />
@@ -289,6 +323,7 @@ async function OverviewTab({ window }: { window: WindowKey }) {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
         <SparklineCard
           title="Search visibility (last 90 days)"
+          tileId="overview.search-visibility-90d"
           subtitle={`Daily Google search clicks · source: GSC${throughCaption(
             snapshot.kpiStrip90d.searchVisibility
           )}`}
@@ -298,18 +333,15 @@ async function OverviewTab({ window }: { window: WindowKey }) {
         />
         <SparklineCard
           title="Conversions (last 90 days)"
+          tileId="overview.conversions-90d"
           subtitle="Daily outbound ticket + application clicks · source: D1 analytics_events"
           points={snapshot.kpiStrip90d.conversions}
           colorClass="stroke-blue-600"
           fillClass="fill-blue-100"
         />
-        <SparklineCard
-          title="Publishing activity (last 90 days)"
-          subtitle="Successful IndexNow submissions per day · source: D1 indexnow_submissions"
-          points={snapshot.kpiStrip90d.publishing}
-          colorClass="stroke-emerald-600"
-          fillClass="fill-emerald-100"
-        />
+        {/* OPE-1161 B10 — no 90-day publishing chart: indexnow_submissions keeps
+            30 days (INDEXNOW_SUBMISSION_RETENTION_DAYS), so it could never show
+            more than a third of its own window. */}
       </div>
 
       {/* Analyst cross-cutting fix (2026-05-29): split activity feed into
@@ -324,11 +356,13 @@ async function OverviewTab({ window }: { window: WindowKey }) {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <ActivityFeedCard
           title="User activity"
+          tileId="overview.user-activity"
           subtitle="Visitor clicks on ticket / application URLs"
           activity={snapshot.activity.filter((a) => a.kind === "conversion")}
         />
         <ActivityFeedCard
           title="Operator activity"
+          tileId="overview.operator-activity"
           subtitle="Admin actions + high-priority IndexNow"
           activity={snapshot.activity.filter((a) => a.kind === "admin" || a.kind === "indexnow")}
         />
@@ -435,8 +469,14 @@ function KpiCard({
   footer,
   state,
   actionPrompt,
+  tileId,
+  measurement,
 }: {
   title: string;
+  /** OPE-1159 — required, so a new KPI card cannot ship without a definition. */
+  tileId: TileId;
+  /** OPE-1159 — this tile's render state, echoed in its tooltip when not `ok`. */
+  measurement?: Measurement<unknown> | null;
   value: React.ReactNode;
   icon: React.ReactNode;
   iconColor: string;
@@ -454,7 +494,7 @@ function KpiCard({
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">
-              {title}
+              {title} <TileInfo id={tileId} title={title} measurement={measurement} />
             </p>
             <p className="text-3xl font-bold text-foreground mt-2 tabular-nums">{value}</p>
             {(state === "RED" || state === "STALE") && actionPrompt && (
@@ -486,12 +526,39 @@ function KpiCard({
   );
   if (href) {
     return (
-      <Link href={href} className="block hover:opacity-90 transition-opacity">
+      <CardLink href={href} label={title} className="h-full">
         {inner}
-      </Link>
+      </CardLink>
     );
   }
   return inner;
+}
+
+/**
+ * OPE-1159 — a whole-card link that leaves room for the ⓘ.
+ *
+ * These cards used to be wrapped in a `<Link>`, and a tooltip button inside an
+ * `<a>` is invalid HTML — and a tap on it navigated away. The link is now an
+ * overlay stretched over the card; `InfoTip` sits above it (`z-10`), so the
+ * whole card still clicks through and the ⓘ still opens.
+ */
+function CardLink({
+  href,
+  label,
+  className,
+  children,
+}: {
+  href: string;
+  label: string;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className={`relative block hover:opacity-90 transition-opacity ${className ?? ""}`.trim()}>
+      {children}
+      <Link href={href} aria-label={label} className="absolute inset-0 rounded-lg" />
+    </div>
+  );
 }
 
 function SearchVisibilityCard({ snapshot }: { snapshot: OverviewSnapshot }) {
@@ -499,6 +566,7 @@ function SearchVisibilityCard({ snapshot }: { snapshot: OverviewSnapshot }) {
   if (!card.ok) {
     return (
       <KpiCard
+        tileId="overview.google-clicks"
         title="Google clicks"
         value="—"
         icon={<Search className="w-5 h-5 text-muted-foreground" />}
@@ -524,6 +592,7 @@ function SearchVisibilityCard({ snapshot }: { snapshot: OverviewSnapshot }) {
   );
   return (
     <KpiCard
+      tileId="overview.google-clicks"
       title={`Google clicks (last ${card.windowDays}d)`}
       value={fmt(card.current)}
       icon={<Search className="w-5 h-5 text-royal" />}
@@ -538,8 +607,10 @@ function ConversionsCard({ snapshot }: { snapshot: OverviewSnapshot }) {
   const card = snapshot.conversions;
   return (
     <KpiCard
+      tileId="overview.conversions"
+      measurement={card.currentMeasured}
       title={`Conversions (last ${card.windowDays}d)`}
-      value={fmt(card.current)}
+      value={measurementText(card.currentMeasured, fmt)}
       icon={<TrendingUp className="w-5 h-5 text-emerald-600" />}
       iconColor="bg-emerald-100"
       href="/admin/analytics?tab=first-party-events"
@@ -552,6 +623,7 @@ function CatalogGrowthCard({ snapshot }: { snapshot: OverviewSnapshot }) {
   const card = snapshot.catalogGrowth;
   return (
     <KpiCard
+      tileId="overview.catalog-growth"
       title={`Catalog growth (last ${card.windowDays}d)`}
       value={`+${fmt(card.newInWindow)}`}
       icon={<BarChart3 className="w-5 h-5 text-violet-600" />}
@@ -577,6 +649,7 @@ function RevenueCard({ snapshot }: { snapshot: OverviewSnapshot }) {
   const card = snapshot.enhancedProfileRevenue;
   return (
     <KpiCard
+      tileId="overview.enhanced-profile-revenue"
       title="Enhanced Profile (annualized)"
       value={fmtUsd(card.annualizedUsd)}
       icon={<DollarSign className="w-5 h-5 text-amber-600" />}
@@ -601,7 +674,7 @@ function SiteHealthCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
   const c = snapshot.siteHealth;
   const hasErrors = c.errors > 0;
   return (
-    <Link href="/admin/analytics?tab=site-health" className="block hover:opacity-90">
+    <CardLink href="/admin/analytics?tab=site-health" label="Site health">
       <Card
         className={`h-full ${hasErrors ? "border-red-300" : c.warnings > 0 ? "border-amber-300" : ""}`}
       >
@@ -610,6 +683,7 @@ function SiteHealthCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
             <div>
               <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">
                 Site health
+                <TileInfo id="overview.site-health" title="Site health" />
               </p>
               <p className="text-3xl font-bold text-foreground mt-2 tabular-nums">{fmt(c.total)}</p>
               <div className="mt-2 text-xs flex gap-2">
@@ -642,12 +716,16 @@ function SiteHealthCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
           </div>
         </CardContent>
       </Card>
-    </Link>
+    </CardLink>
   );
 }
 
 // §10.3 cards ─────────────────────────────────────────────────
 
+/**
+ * `x` is a FRACTION (0.75 → "75.0%"). OPE-1131 found three call sites passing
+ * `x * 100`, which rendered a 75% coverage as "7500.0%" — pinned by a test.
+ */
 function fmtPct(x: number, digits = 1): string {
   return `${(x * 100).toFixed(digits)}%`;
 }
@@ -663,11 +741,38 @@ function fmtSeconds(s: number | null): string {
 // §6.3 helper: read the latest state + action prompt for a KPI.
 // RED → "fix the value" prompt. STALE → "fix the data feed" prompt.
 // Returns INDETERMINATE when the recompute hasn't fired yet (cold-start).
+/**
+ * OPE-1161 C11 — the value the KPI BADGE was computed from, formatted the way
+ * the action queue formats it.
+ *
+ * Four cards showed one number and coloured it from another: the value came
+ * from the card's own loader (a windowed, sampled or all-status basis) while
+ * the badge came from the KPI state machine on a different population or
+ * window. The big number is now the badge's own value, so the number and its
+ * colour always describe the same thing; the card's former figure stays as a
+ * labelled secondary line.
+ */
+function badgeValue(snapshot: OverviewSnapshot, name: KpiName): string | null {
+  const row = snapshot.kpiStates.get(name);
+  return row && row.value != null ? formatKpiValue(name, row.value) : null;
+}
+
 function kpiCardState(
   snapshot: OverviewSnapshot,
   name: KpiName
 ): { state: KpiState; actionPrompt?: string } {
   const row = snapshot.kpiStates.get(name);
+  // OPE-1131 — a badge is itself a measurement. If the */10 recompute stops,
+  // the last state stays on the card forever; judge it on its own age.
+  if (row) {
+    const badge = freshness(row.state, "kpi_state_history", row.computedAt, snapshot.generatedAt);
+    if (badge.state === "stale") {
+      return {
+        state: "STALE",
+        actionPrompt: `KPI badge frozen — ${badge.reason} (recompute stopped)`,
+      };
+    }
+  }
   const state: KpiState = row?.state ?? "INDETERMINATE";
   if (state === "RED") {
     const cfg = KPI_THRESHOLDS[name];
@@ -688,6 +793,7 @@ function SiteCtrCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
   if (!c.ok) {
     return (
       <KpiCard
+        tileId="overview.site-ctr"
         title="Site CTR"
         value="—"
         icon={<Search className="w-5 h-5 text-muted-foreground" />}
@@ -705,10 +811,13 @@ function SiteCtrCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
       : trend === "down"
         ? "text-red-600"
         : "text-muted-foreground";
+  const badge = badgeValue(snapshot, "site_ctr");
   return (
     <KpiCard
-      title="Site CTR (Google, last window)"
-      value={fmtPct(c.ctr, 2)}
+      tileId="overview.site-ctr"
+      measurement={badge ? null : c.ctrMeasured}
+      title={badge ? "Site CTR (Google, 7d)" : "Site CTR (Google, last window)"}
+      value={badge ?? measurementText(c.ctrMeasured, (v) => fmtPct(v, 2))}
       icon={<Search className="w-5 h-5 text-violet-600" />}
       iconColor="bg-violet-100"
       href="/admin/analytics?tab=google"
@@ -716,6 +825,11 @@ function SiteCtrCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
       actionPrompt={actionPrompt}
       footer={
         <div className="flex flex-col gap-0.5">
+          {badge && (
+            <span className="text-xs text-muted-foreground">
+              window view (top 500 queries): {measurementText(c.ctrMeasured, (v) => fmtPct(v, 2))}
+            </span>
+          )}
           <span className={`inline-flex items-center gap-1 text-xs font-medium ${trendColor}`}>
             <TrendIcon className="w-3 h-3" /> prev {fmtPct(c.previousCtr, 2)}
           </span>
@@ -733,17 +847,25 @@ function ConversionRateCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
   const { state, actionPrompt } = kpiCardState(snapshot, "conversion_rate");
   return (
     <KpiCard
+      tileId="overview.conversion-rate"
+      measurement={c.rateMeasured}
       title={`Conversion rate (${c.windowDays}d)`}
-      value={c.rate != null ? fmtPct(c.rate, 2) : "—"}
+      value={measurementText(c.rateMeasured, (v) => fmtPct(v, 2))}
       icon={<TrendingUp className="w-5 h-5 text-emerald-600" />}
       iconColor="bg-emerald-100"
       state={state}
       actionPrompt={actionPrompt}
       footer={
         <div className="flex flex-col gap-0.5 text-xs text-muted-foreground">
+          {/* OPE-1165 — organic clicks ÷ organic sessions once 21 days of clicks
+              carry a traffic source (John, OPE-1161 D13 option C). Until then
+              the rate is "insufficient data" and the footer keeps the #1418
+              all-source wording, so the number shown is never the old
+              mismatched fraction. */}
           <span>
-            {fmt(c.conversions)} ticket clicks / {c.sessions != null ? fmt(c.sessions) : "—"}{" "}
-            organic sessions
+            {fmt(c.conversions)} ticket + application clicks (
+            {c.organicBasis ? "organic search" : "all sources"}) /{" "}
+            {c.sessions != null ? fmt(c.sessions) : "—"} organic sessions
           </span>
           <span title={`Window ends ${c.windowEndDate} (48h GA4 finalization lag)`}>
             window ends {c.windowEndDate}
@@ -758,8 +880,10 @@ function AccountEngagementCardView({ snapshot }: { snapshot: OverviewSnapshot })
   const c = snapshot.accountEngagement;
   return (
     <KpiCard
+      tileId="overview.account-engagement"
+      measurement={c.rateMeasured}
       title={`Account engagement (${c.windowDays}d)`}
-      value={fmtPct(c.rate, 2)}
+      value={measurementText(c.rateMeasured, (v) => fmtPct(v, 2))}
       icon={<Activity className="w-5 h-5 text-emerald-600" />}
       iconColor="bg-emerald-100"
       footer={
@@ -792,6 +916,7 @@ function AeoReferralsCardView({ aeo }: { aeo: AeoReferralsResult | null }) {
   if (!aeo) {
     return (
       <KpiCard
+        tileId="overview.aeo-referrals"
         title="AEO referrals (last 7d)"
         value="—"
         icon={<Sparkles className="w-5 h-5 text-muted-foreground" />}
@@ -803,6 +928,7 @@ function AeoReferralsCardView({ aeo }: { aeo: AeoReferralsResult | null }) {
   }
   return (
     <KpiCard
+      tileId="overview.aeo-referrals"
       title="AEO referrals (last 7d)"
       value={fmt(aeo.total)}
       icon={<Sparkles className="w-5 h-5 text-purple-600" />}
@@ -828,6 +954,7 @@ function FacebookReferralsCardView({ summary }: { summary: FacebookTrafficSummar
   if (!summary) {
     return (
       <KpiCard
+        tileId="overview.facebook-traffic"
         title="Facebook traffic (last 28d)"
         value="—"
         icon={<Facebook className="w-5 h-5 text-muted-foreground" />}
@@ -837,10 +964,19 @@ function FacebookReferralsCardView({ summary }: { summary: FacebookTrafficSummar
       />
     );
   }
+  const sessionsM: Measurement<number> = summary.sourcesCapped
+    ? {
+        state: "truncated",
+        value: summary.sessions,
+        reason: `from GA4's top ${TRAFFIC_SOURCE_LIMIT} sources — may undercount`,
+      }
+    : { state: "ok", value: summary.sessions, reason: "" };
   return (
     <KpiCard
+      tileId="overview.facebook-traffic"
+      measurement={sessionsM}
       title="Facebook traffic (last 28d)"
-      value={fmt(summary.sessions)}
+      value={measurementText(sessionsM, fmt)}
       icon={<Facebook className="w-5 h-5 text-royal" />}
       iconColor="bg-info-soft"
       href="/admin/analytics/ga4"
@@ -860,6 +996,7 @@ function BrandVsNonBrandCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
   if (!c.ok) {
     return (
       <KpiCard
+        tileId="overview.brand-share"
         title="Brand share"
         value="—"
         icon={<Search className="w-5 h-5 text-muted-foreground" />}
@@ -869,10 +1006,15 @@ function BrandVsNonBrandCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
       />
     );
   }
+  const badge = badgeValue(snapshot, "brand_share");
   return (
     <KpiCard
-      title={`Brand vs non-brand (last ${c.windowDays}d, Google)`}
-      value={fmtPct(c.brand_share, 0)}
+      tileId="overview.brand-share"
+      measurement={badge ? null : c.brandShareMeasured}
+      title={
+        badge ? "Brand share (Google, 28d)" : `Brand vs non-brand (last ${c.windowDays}d, Google)`
+      }
+      value={badge ?? measurementText(c.brandShareMeasured, (v) => fmtPct(v, 0))}
       icon={<TrendingUp className="w-5 h-5 text-royal" />}
       iconColor="bg-info-soft"
       href="/admin/analytics?tab=google"
@@ -880,6 +1022,12 @@ function BrandVsNonBrandCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
       actionPrompt={actionPrompt}
       footer={
         <div className="flex flex-col gap-0.5 text-xs text-muted-foreground">
+          {badge && (
+            <span>
+              last {c.windowDays}d view:{" "}
+              {measurementText(c.brandShareMeasured, (v) => fmtPct(v, 0))}
+            </span>
+          )}
           <span>
             brand {fmt(c.brand_clicks)} clicks · non-brand {fmt(c.non_brand_clicks)} clicks
           </span>
@@ -895,16 +1043,22 @@ function BrandVsNonBrandCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
 function SitemapQualityCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
   const c = snapshot.sitemapQuality;
   const { state, actionPrompt } = kpiCardState(snapshot, "sitemap_quality");
+  const badge = badgeValue(snapshot, "sitemap_quality");
   return (
     <KpiCard
+      tileId="overview.sitemap-quality"
+      measurement={badge ? null : c.overallRate}
       title={`Sitemap quality (≥ ${c.threshold})`}
-      value={fmtPct(c.overall_pass_rate, 0)}
+      value={badge ?? measurementText(c.overallRate, (v) => fmtPct(v, 0))}
       icon={<CheckCircle2 className="w-5 h-5 text-emerald-600" />}
       iconColor="bg-emerald-100"
       state={state}
       actionPrompt={actionPrompt}
       footer={
         <div className="flex flex-col gap-0.5 text-xs text-muted-foreground">
+          {badge && (
+            <span>all-status view: {measurementText(c.overallRate, (v) => fmtPct(v, 0))}</span>
+          )}
           <span>
             vendors {fmt(c.vendors.pass)}/{fmt(c.vendors.total)}
           </span>
@@ -927,7 +1081,10 @@ function TimeToIndexCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center justify-between">
-          <span>Time-to-index (median lag)</span>
+          <span>
+            Time-to-index (median lag){" "}
+            <TileInfo id="overview.time-to-index" title="Time-to-index" />
+          </span>
           {state !== "INDETERMINATE" && (
             <span aria-label={KPI_STATE_STYLES[state].ariaLabel} className="text-base">
               {KPI_STATE_STYLES[state].badge}
@@ -965,11 +1122,33 @@ function TimeToIndexCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
             {actionPrompt}
           </p>
         )}
+        {/* OPE-1161 C11 — the badge is the 30-day median; the grid above is the
+            latest 1,000 resolved rows of any age. Say which is which. */}
+        {badgeValue(snapshot, "time_to_index_h") && (
+          <p className="text-xs text-muted-foreground mt-3">
+            Badge basis — 30-day median: {badgeValue(snapshot, "time_to_index_h")}. Grid: latest
+            resolved rows, any age.
+          </p>
+        )}
         <p className="text-xs text-muted-foreground mt-4">
           {state === "INDETERMINATE"
             ? "Data collection in progress — first results expected ~7 days post-deploy."
-            : `${fmt(c.resolved)} resolved · ${fmt(c.unresolved)} unresolved`}
+            : // OPE-808 — `c.resolved` is a LIMIT, not a count. Rendering it
+              // bare read "1,000 resolved" against a store holding 5,501, and
+              // the capped sample reported 61.6d where the population mean is
+              // 40.8d. Say which number is which.
+              `${c.truncated ? `${fmt(c.resolved)} of ${fmt(c.resolvedTotal)} sampled` : `${fmt(c.resolved)} resolved`} · ${fmt(c.unresolved)} unresolved`}
         </p>
+        {c.feedStale && (
+          // The 🕒 state the Overview legend has always documented and nothing
+          // rendered. A closed cohort is not a live KPI: this feed is admitted
+          // by IndexNow submission, which is paused, while crawls keep
+          // resolving — so the median climbs on its own and the figure can only
+          // worsen regardless of real indexing performance.
+          <p className="text-xs text-orange-600 mt-1">
+            🕒 feed closed {c.feedLastAt ?? "unknown"} — closed cohort, not a live breach
+          </p>
+        )}
       </CardContent>
     </Card>
   );
@@ -987,6 +1166,7 @@ function TimeToIndexCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
  */
 function ActionQueueCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
   const entries = snapshot.actionQueue;
+  const suppressed = snapshot.actionQueueSuppressed ?? [];
   return (
     <Card>
       <CardHeader>
@@ -998,19 +1178,28 @@ function ActionQueueCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
               {entries.filter((e) => e.priority === "P1").length} P1)
             </span>
           )}
+          <TileInfo id="overview.action-queue" title="Action queue" />
         </CardTitle>
       </CardHeader>
       <CardContent>
-        {entries.length === 0 ? (
+        {entries.length === 0 && suppressed.length === 0 ? (
           <p className="text-sm text-emerald-700">
             All clear — no KPIs in RED/YELLOW state, no T1 rules above threshold.
           </p>
-        ) : (
+        ) : entries.length === 0 ? null : (
           <ul className="space-y-3">
             {entries.map((e) => (
               <ActionQueueRow key={`${e.source}:${e.refKey}`} entry={e} />
             ))}
           </ul>
+        )}
+        {/* OPE-1161 E16 — say what the suppression rule is holding back, rather
+            than printing "All clear" while a KPI is YELLOW. */}
+        {suppressed.length > 0 && (
+          <p className="mt-3 text-sm text-amber-700">
+            {suppressed.length} YELLOW KPI{suppressed.length === 1 ? "" : "s"} suppressed (RED in
+            the last 7 days): {suppressed.map((k) => KPI_THRESHOLDS[k].displayName).join(", ")}.
+          </p>
         )}
       </CardContent>
     </Card>
@@ -1079,6 +1268,7 @@ function RecentActivityCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
       <CardHeader>
         <CardTitle className="text-sm">
           Admin actions ({fmt(c.count)} last 7 days · source: admin_actions)
+          <TileInfo id="overview.admin-actions" title="Admin actions" />
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -1114,13 +1304,14 @@ function BlogCoverageCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
   const worstRatio = Math.max(...groups.map((g) => (g.total > 0 ? g.uncovered / g.total : 0)));
   const border = worstRatio >= 0.9 ? "border-red-300" : worstRatio >= 0.5 ? "border-amber-300" : "";
   return (
-    <Link href="/admin/coverage" className="block hover:opacity-90 mb-6">
+    <CardLink href="/admin/coverage" label="Blog coverage gaps" className="mb-6">
       <Card className={border}>
         <CardContent className="p-5">
           <div className="flex items-start justify-between gap-3 mb-4">
             <div>
               <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">
                 Blog coverage gaps
+                <TileInfo id="overview.blog-coverage" title="Blog coverage gaps" />
               </p>
               <p className="text-3xl font-bold text-foreground mt-2 tabular-nums">
                 {fmt(c.totalUncovered)}
@@ -1153,7 +1344,7 @@ function BlogCoverageCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
           </div>
         </CardContent>
       </Card>
-    </Link>
+    </CardLink>
   );
 }
 
@@ -1169,19 +1360,27 @@ function RecommendationsSummaryCardView({ snapshot }: { snapshot: OverviewSnapsh
     ? sevStyle[c.maxSeverity]
     : { border: "", bg: "bg-muted", icon: "text-muted-foreground" };
   return (
-    <Link href="/admin/analytics?tab=recommendations" className="block hover:opacity-90">
+    <CardLink href="/admin/analytics?tab=recommendations" label="Recommendations (actionable)">
       <Card className={`h-full ${style.border}`}>
         <CardContent className="p-5">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">
                 Recommendations (actionable)
+                <TileInfo
+                  id="overview.recommendations-summary"
+                  title="Recommendations (actionable)"
+                />
               </p>
               <p className="text-3xl font-bold text-foreground mt-2 tabular-nums">
-                {fmt(c.actionableCount)}
+                {measurementText(c.actionableMeasured, fmt)}
               </p>
               <div className="mt-2 text-xs">
-                {c.totalItems === 0 ? (
+                {c.actionableMeasured.state === "stale" ? (
+                  <span className="text-orange-600">
+                    scanner stopped — items age out after 7d, so this is not a clean bill
+                  </span>
+                ) : c.totalItems === 0 ? (
                   <span className="text-muted-foreground">All clear</span>
                 ) : (
                   <>
@@ -1210,31 +1409,58 @@ function RecommendationsSummaryCardView({ snapshot }: { snapshot: OverviewSnapsh
           </div>
         </CardContent>
       </Card>
-    </Link>
+    </CardLink>
   );
 }
 
 function IndexNowCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
   const c = snapshot.indexnow;
   const hasFailures = c.todayFailures > 0;
-  const successPct = Math.round(c.todaySuccessRate * 100);
+  // OPE-808 — the rate may legitimately have no value. `todayRate` says which;
+  // `todaySuccessRate` is retained only for callers not yet migrated.
+  const successPct = c.todayRate.value == null ? null : Math.round(c.todayRate.value * 100);
   return (
-    <Link href="/admin/analytics?tab=indexnow" className="block hover:opacity-90">
+    <CardLink href="/admin/analytics?tab=indexnow" label="IndexNow today">
       <Card className={`h-full ${hasFailures ? "border-red-300" : ""}`}>
         <CardContent className="p-5">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">
                 IndexNow today
+                <TileInfo id="overview.indexnow-today" title="IndexNow today" />
               </p>
+              {/* OPE-1161 A3 — sent to Bing, not every log row: breaker-skipped
+                  deferrals used to fill this number while nothing reached Bing. */}
               <p className="text-3xl font-bold text-foreground mt-2 tabular-nums">
-                {fmt(c.todaySubmissions)}
+                {fmt(c.todayAttempts)}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                sent to Bing
+                {c.todayDeferred > 0 ? ` · ${fmt(c.todayDeferred)} deferred by the breaker` : ""}
               </p>
               <div className="mt-2 text-xs">
                 <span
                   className={hasFailures ? "text-red-700 font-semibold" : "text-muted-foreground"}
                 >
-                  {successPct}% success
+                  {successPct == null ? (
+                    // No attempts → the rate does not exist. Say what happened
+                    // and when, rather than picking 0% or 100% — the old
+                    // expression returned BOTH on different loads of the same
+                    // data, depending on whether a `skipped` row landed.
+                    // OPE-1161 A3 — "paused" comes from the kill-switch in KV;
+                    // the last send date is a separate fact, labelled as one.
+                    <>
+                      — ·{" "}
+                      {c.pause.state === "paused"
+                        ? "paused (kill-switch set)"
+                        : c.pause.state === "unknown"
+                          ? "pause state unknown"
+                          : c.todayRate.reason || "no sends"}
+                      {c.lastAttemptAt ? ` · last sent ${c.lastAttemptAt}` : ""}
+                    </>
+                  ) : (
+                    `${successPct}% success`
+                  )}
                 </span>
                 {c.quota && (
                   <span className="text-muted-foreground ml-2">
@@ -1258,7 +1484,7 @@ function IndexNowCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
           </div>
         </CardContent>
       </Card>
-    </Link>
+    </CardLink>
   );
 }
 
@@ -1272,6 +1498,7 @@ function RecentErrorsCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
           <div className="min-w-0">
             <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">
               Errors (last 24h)
+              <TileInfo id="overview.recent-errors" title="Errors (last 24h)" />
             </p>
             <p className="text-3xl font-bold text-foreground mt-2 tabular-nums">
               {fmt(c.last24hCount)}
@@ -1304,23 +1531,26 @@ function RecentErrorsCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
 // alert (selectStaleFaultReds) points at.
 function RenderFaultHealthCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
   const c = snapshot.renderFaultHealth;
-  const pct = (x: number | null) => (x === null ? "—" : `${Math.round(x * 100)}%`);
+  // OPE-1131 — each null names its empty denominator (fault-health.ts:94-102)
+  // rather than a bare "—".
+  const pct = (x: number | null, why: string) =>
+    x === null ? `— · ${why}` : `${Math.round(x * 100)}%`;
   const mttd =
     c.meanTimeToDetectHours === null
-      ? "—"
+      ? "— · none filed yet"
       : c.meanTimeToDetectHours < 48
         ? `${Math.round(c.meanTimeToDetectHours)}h`
         : `${(c.meanTimeToDetectHours / 24).toFixed(1)}d`;
   const rows: Array<{ label: string; value: string }> = [
     { label: "Open signatures", value: `${fmt(c.openSignatures)} / ${fmt(c.totalSignatures)}` },
-    { label: "Auto-detected", value: pct(c.autoDetectedPct) },
+    { label: "Auto-detected", value: pct(c.autoDetectedPct, "no signatures yet") },
     { label: "Mean time to detect", value: mttd },
-    { label: "Server-message share", value: pct(c.serverMessagePct) },
-    { label: "Dedup collapse", value: pct(c.dedupCollapseRate) },
-    { label: "Recurrence rate", value: pct(c.recurrenceRate) },
+    { label: "Server-message share", value: pct(c.serverMessagePct, "no error rows in window") },
+    { label: "Dedup collapse", value: pct(c.dedupCollapseRate, "no occurrences") },
+    { label: "Recurrence rate", value: pct(c.recurrenceRate, "none resolved yet") },
     {
       label: "Guard coverage",
-      value: c.guardCoveragePct === null ? "n/a" : pct(c.guardCoveragePct),
+      value: pct(c.guardCoveragePct, "not instrumented yet"),
     },
   ];
   const hasOpen = c.openSignatures > 0;
@@ -1332,6 +1562,7 @@ function RenderFaultHealthCardView({ snapshot }: { snapshot: OverviewSnapshot })
             className={`w-4 h-4 ${hasOpen ? "text-amber-600" : "text-muted-foreground"}`}
           />
           Render-fault health
+          <TileInfo id="overview.render-fault-health" title="Render-fault health" />
         </CardTitle>
         <p className="text-xs text-muted-foreground">
           OPE-81 ledger · error_logs (last {c.windowDays}d)
@@ -1370,6 +1601,7 @@ function QueueDrainRatiosCardView({ snapshot }: { snapshot: OverviewSnapshot }) 
             className={`w-4 h-4 ${anyFrozen ? "text-red-600" : "text-muted-foreground"}`}
           />
           Queue drain ratios
+          <TileInfo id="overview.queue-drain" title="Queue drain ratios" />
         </CardTitle>
         <p className="text-xs text-muted-foreground">
           inflow vs outflow per work queue · trailing 7d · frozen = backlog with 0 outflow/7d
@@ -1392,20 +1624,59 @@ function QueueDrainRatiosCardView({ snapshot }: { snapshot: OverviewSnapshot }) 
               {queues.map((q) => (
                 <tr
                   key={q.queueName}
-                  className={`border-t ${q.frozen ? "bg-red-50 text-red-900" : ""}`}
+                  className={`border-t ${
+                    q.drainState === "frozen"
+                      ? "bg-red-50 text-red-900"
+                      : q.drainState === "slow"
+                        ? "bg-amber-50 text-amber-900"
+                        : ""
+                  }`}
                 >
                   <td className="text-left py-1.5 pr-2">
                     {q.label}
-                    {q.frozen && (
+                    {/* OPE-1161 E17 — FROZEN only when nothing closed; a queue that
+                        is closing items, just too slowly, is SLOW. */}
+                    {q.drainState === "frozen" && (
                       <span className="ml-2 text-xs font-semibold text-red-600">FROZEN</span>
                     )}
+                    {q.drainState === "slow" && (
+                      <span className="ml-2 text-xs font-semibold text-amber-700">SLOW</span>
+                    )}
+                    {q.unmeasured?.flows && (
+                      <span className="ml-2 text-xs text-muted-foreground">
+                        · flows not measured: {q.unmeasured.flows}
+                      </span>
+                    )}
                   </td>
-                  <td className="text-right py-1.5">{fmt(q.depth)}</td>
-                  <td className="text-right py-1.5">{fmt(q.inflow7d)}</td>
-                  <td className="text-right py-1.5">
-                    {q.outflow7d === null ? "—" : fmt(q.outflow7d)}
+                  {/* OPE-1131 — a flow that was never measured says so, not "0". */}
+                  <td className="text-right py-1.5" title={q.unmeasured?.depth}>
+                    {q.unmeasured?.depth ? "—" : fmt(q.depth)}
                   </td>
-                  <td className="text-right py-1.5 font-semibold">{fmtRatio(q.drainRatio7d)}</td>
+                  <td className="text-right py-1.5" title={q.unmeasured?.flows}>
+                    {q.unmeasured?.flows ? "—" : fmt(q.inflow7d)}
+                  </td>
+                  <td
+                    className="text-right py-1.5"
+                    title={
+                      q.unmeasured?.flows ??
+                      (q.outflow7d === null ? "no snapshot history yet" : undefined)
+                    }
+                  >
+                    {q.unmeasured?.flows || q.outflow7d === null ? "—" : fmt(q.outflow7d)}
+                  </td>
+                  <td
+                    className="text-right py-1.5 font-semibold"
+                    title={
+                      q.unmeasured?.flows ??
+                      (q.drainRatio7d === null
+                        ? q.outflow7d === null
+                          ? "outflow not yet computable"
+                          : "no inflow in 7d — ratio undefined"
+                        : undefined)
+                    }
+                  >
+                    {q.unmeasured?.flows ? "—" : fmtRatio(q.drainRatio7d)}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -1438,6 +1709,7 @@ function HeartbeatProbesCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
             className={`w-4 h-4 ${anySilent ? "text-red-600" : "text-muted-foreground"}`}
           />
           Post-ship heartbeat
+          <TileInfo id="overview.heartbeat-probes" title="Heartbeat probes" />
         </CardTitle>
         <p className="text-xs text-muted-foreground">
           first-evidence probes · SILENT = 0 evidence past the window (escalates + auto-files) ·
@@ -1485,8 +1757,9 @@ function HeartbeatProbesCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
  * point, so a GSC chart states its data window and the trailing-lag trim is
  * explicit. Empty string when there are no points.
  */
-function throughCaption(points: SparklinePoint[]): string {
-  if (points.length === 0) return "";
+function throughCaption(points: SparklinePoint[] & { unavailableReason?: string }): string {
+  // A zero-filled failure series ends "today" — that date is not a data window.
+  if (points.length === 0 || points.unavailableReason) return "";
   const last = points[points.length - 1].date;
   const d = new Date(`${last}T00:00:00Z`);
   if (Number.isNaN(d.getTime())) return "";
@@ -1499,23 +1772,39 @@ function SparklineCard({
   points,
   colorClass,
   fillClass,
+  feed,
+  tileId,
+  pausedReason,
 }: {
   title: string;
+  /** OPE-1159 — required: the card's tooltip definition. */
+  tileId: TileId;
+  /**
+   * OPE-1161 B10 — when the feed is deliberately stopped, the total is "not
+   * measured, because paused", not a flat 0 that reads as "we published nothing".
+   */
+  pausedReason?: string;
   subtitle: string;
-  points: SparklinePoint[];
+  points: SparklinePoint[] & { unavailableReason?: string };
   colorClass: string;
   fillClass: string;
+  /** OPE-1131 — judge the total for staleness on this feed (render-state). */
+  feed?: string;
 }) {
-  const total = points.reduce((acc, p) => acc + p.value, 0);
+  const total = pausedReason ? unavailable(pausedReason) : sparklineTotal(points, feed);
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="text-base">{title}</CardTitle>
+        <CardTitle className="text-base">
+          {title} <TileInfo id={tileId} title={title} measurement={total} />
+        </CardTitle>
         <p className="text-xs text-muted-foreground">{subtitle}</p>
       </CardHeader>
       <CardContent>
         <div className="flex items-end justify-between mb-2">
-          <p className="text-2xl font-bold text-foreground tabular-nums">{fmt(total)}</p>
+          <p className="text-2xl font-bold text-foreground tabular-nums">
+            {measurementText(total, fmt)}
+          </p>
           <p className="text-xs text-muted-foreground">{points.length}-day total</p>
         </div>
         <Sparkline points={points} colorClass={colorClass} fillClass={fillClass} />
@@ -1587,7 +1876,10 @@ function GscMilestoneChartCard({ points }: { points: GscMilestonePoint[] }) {
     return (
       <Card className="mb-6">
         <CardHeader>
-          <CardTitle>Search clicks milestones</CardTitle>
+          <CardTitle>
+            Search clicks milestones{" "}
+            <TileInfo id="google.milestones" title="Search clicks milestones" />
+          </CardTitle>
           <p className="text-xs text-muted-foreground mt-0.5">
             Milestones as reported by Google Search Console emails
           </p>
@@ -1599,30 +1891,34 @@ function GscMilestoneChartCard({ points }: { points: GscMilestonePoint[] }) {
     );
   }
 
-  const sorted = [...points]; // already sorted by emailDate in loader
+  const sorted = [...points]; // already sorted by reached date in loader
   const latest = sorted[sorted.length - 1];
   const earliest = sorted[0];
   // "May ramp" = total threshold growth across May 2026 — the cited story
   // from the email. Defined as (last May threshold) - (last April threshold,
   // or earliest if no April rows). Falls back to 0 if either side is missing.
-  const maySorted = sorted.filter((p) => p.emailDate.startsWith("2026-05"));
-  const aprilOrEarlier = sorted.filter((p) => p.emailDate < "2026-05-01");
+  const maySorted = sorted.filter((p) => p.date.startsWith("2026-05"));
+  const aprilOrEarlier = sorted.filter((p) => p.date < "2026-05-01");
+  // OPE-1131 — a missing side is no measurement, not a flat ramp of 0.
   const mayRamp =
     maySorted.length > 0 && aprilOrEarlier.length > 0
       ? maySorted[maySorted.length - 1].threshold -
         aprilOrEarlier[aprilOrEarlier.length - 1].threshold
-      : 0;
+      : null;
 
   // Default the plotted series to the post-launch arc (May 1 onward). Fall
   // back to the full series if that leaves nothing to draw (e.g. a property
   // with only pre-May milestones) so the chart never renders blank.
-  const inRange = sorted.filter((p) => p.emailDate >= MILESTONE_CHART_DEFAULT_START);
+  const inRange = sorted.filter((p) => p.date >= MILESTONE_CHART_DEFAULT_START);
   const chartPoints = inRange.length > 0 ? inRange : sorted;
 
   return (
     <Card className="mb-6">
       <CardHeader>
-        <CardTitle>Search clicks milestones</CardTitle>
+        <CardTitle>
+          Search clicks milestones{" "}
+          <TileInfo id="google.milestones" title="Search clicks milestones" />
+        </CardTitle>
         <p className="text-xs text-muted-foreground mt-0.5">
           28-day click window · log scale · from May 2026
         </p>
@@ -1652,18 +1948,14 @@ function GscMilestoneChartCard({ points }: { points: GscMilestonePoint[] }) {
             <p className="text-2xl font-bold text-foreground tabular-nums">
               {fmt(latest.threshold)}
             </p>
-            <p className="text-xs text-muted-foreground">
-              {formatDateOnly(latest.emailDate) || "—"}
-            </p>
+            <p className="text-xs text-muted-foreground">{formatDateOnly(latest.date) || "—"}</p>
           </div>
           <div>
             <p className="text-xs text-muted-foreground">Earliest</p>
             <p className="text-2xl font-bold text-foreground tabular-nums">
               {fmt(earliest.threshold)}
             </p>
-            <p className="text-xs text-muted-foreground">
-              {formatDateOnly(earliest.emailDate) || "—"}
-            </p>
+            <p className="text-xs text-muted-foreground">{formatDateOnly(earliest.date) || "—"}</p>
           </div>
           <div>
             <p className="text-xs text-muted-foreground">Milestones</p>
@@ -1683,7 +1975,11 @@ function GscMilestoneChartCard({ points }: { points: GscMilestonePoint[] }) {
           <div>
             <p className="text-xs text-muted-foreground">May ramp</p>
             <p className="text-2xl font-bold text-foreground tabular-nums">
-              {mayRamp > 0 ? `+${fmt(mayRamp)}` : fmt(mayRamp)}
+              {mayRamp === null
+                ? `— · no ${maySorted.length === 0 ? "May" : "April"} milestone`
+                : mayRamp > 0
+                  ? `+${fmt(mayRamp)}`
+                  : fmt(mayRamp)}
             </p>
             <p className="text-xs text-muted-foreground">vs. April end</p>
           </div>
@@ -1758,7 +2054,7 @@ function MilestoneChart({ points }: { points: GscMilestonePoint[] }) {
       <path d={areaPath} className="fill-blue-100" opacity={0.5} />
       <path d={linePath} className="stroke-blue-600 fill-none" strokeWidth={2} />
       {coords.map((c, i) => (
-        <g key={`${c.emailDate}-${i}`}>
+        <g key={`${c.date}-${i}`}>
           {/* dot — OPE-456: a HOLLOW dot is a crossing we derived from our own
               daily totals; a solid dot is a badge Google actually awarded.
               Shape rather than colour so the distinction survives a greyscale
@@ -1774,7 +2070,7 @@ function MilestoneChart({ points }: { points: GscMilestonePoint[] }) {
               elements and one aria-label on the whole svg, so hovering a dot
               gave nothing and a screen reader got "growth chart" and no data. */}
           <title>
-            {`${fmt(c.threshold)} clicks — ${formatDateOnly(c.emailDate) || c.emailDate}${
+            {`${fmt(c.threshold)} clicks — ${formatDateOnly(c.date) || c.date}${
               c.derived ? " (derived from our own daily totals)" : ""
             }`}
           </title>
@@ -1806,7 +2102,7 @@ function MilestoneChart({ points }: { points: GscMilestonePoint[] }) {
             className="fill-gray-600"
             style={{ fontSize: "11px" }}
           >
-            {formatDateOnly(c.emailDate) || c.emailDate}
+            {formatDateOnly(c.date) || c.date}
           </text>
         );
       })}
@@ -1837,16 +2133,20 @@ function ActivityFeedCard({
   activity,
   title = "Activity feed",
   subtitle,
+  tileId,
 }: {
   activity: ActivityEntry[];
   title?: string;
   subtitle?: string;
+  /** OPE-1159 — required: the card's tooltip definition. */
+  tileId: TileId;
 }) {
   return (
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
-          <Activity className="w-4 h-4 text-muted-foreground" /> {title}
+          <Activity className="w-4 h-4 text-muted-foreground" /> {title}{" "}
+          <TileInfo id={tileId} title={title} />
         </CardTitle>
         {subtitle && <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>}
       </CardHeader>
@@ -1937,8 +2237,17 @@ function ScanFreshnessBadge({ lastScannedAt }: { lastScannedAt: Date | null }) {
   );
 }
 
+/**
+ * OPE-1160 — why the Recommendations week-over-week chip is not measured
+ * (OPE-808 "unavailable" state): a delta between two differently-defined
+ * counts is not a trend, and last week's count cannot be rebuilt on the same
+ * basis as this week's.
+ */
+const RECS_WOW_UNAVAILABLE_REASON =
+  "Week-over-week not measured: last week's active count can't be rebuilt (last-seen times and snoozes aren't kept as history), and comparing it with a different count showed changes that never happened.";
+
 async function RecommendationsTab() {
-  const { getActiveItems, getScanState, getCycleState, getOpenMatchCountsAsOf } =
+  const { getActiveItems, getScanState, getCycleState } =
     await import("@/lib/recommendations/engine");
   const { RecommendationActions } = await import("@/components/admin/recommendation-actions");
   const { RecommendationBulkActions } =
@@ -1950,16 +2259,11 @@ async function RecommendationsTab() {
   type Tier = import("@/lib/recommendations/tiers").Tier;
 
   const db = getCloudflareDb();
-  // Analyst Item 10 (split, 2026-05-30): per-rule WoW trend column. The
-  // 7d-ago snapshot is computed at query time from recommendation_items —
-  // no schema change needed. Single COUNT(*) GROUP BY plus filter on
-  // firstSeenAt + actedAt; cheap enough to run on every render.
-  const sevenDaysAgo = new Date(Date.now() - 7 * 86400_000);
-  const [rawItems, scanState, cycleState, weekAgoCounts] = await Promise.all([
+  // OPE-1160 — no week-over-week query here any more; see the chip below.
+  const [rawItems, scanState, cycleState] = await Promise.all([
     getActiveItems(db),
     getScanState(db),
     getCycleState(db),
-    getOpenMatchCountsAsOf(db, sevenDaysAgo),
   ]);
 
   // Resolve gsc_query items' topPagePath through slug-history at render
@@ -2311,7 +2615,10 @@ async function RecommendationsTab() {
       {perItemOpportunities.length > 0 && (
         <Card className="mb-6">
           <CardHeader>
-            <CardTitle>Top opportunities (next 10 to work)</CardTitle>
+            <CardTitle>
+              Top opportunities (next 10 to work){" "}
+              <TileInfo id="recommendations.top-opportunities" title="Top opportunities" />
+            </CardTitle>
             <p className="text-xs text-muted-foreground mt-0.5">
               Highest-impact individual queries across all SEO rules. Sorted by impressions —
               biggest potential traffic recovery first.
@@ -2370,7 +2677,10 @@ async function RecommendationsTab() {
       {opportunities.length > 0 && (
         <Card className="mb-6">
           <CardHeader>
-            <CardTitle>Top rules by impact ({opportunities.length})</CardTitle>
+            <CardTitle>
+              Top rules by impact ({opportunities.length}){" "}
+              <TileInfo id="recommendations.top-rules" title="Top rules by impact" />
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <ul className="space-y-1.5 text-sm">
@@ -2425,7 +2735,10 @@ async function RecommendationsTab() {
                               <span className="text-muted-foreground group-open:rotate-90 transition-transform inline-block">
                                 ▶
                               </span>
-                              <p className="text-sm font-semibold text-foreground">{group.title}</p>
+                              <p className="text-sm font-semibold text-foreground">
+                                {group.title}{" "}
+                                <TileInfo id="recommendations.rule-group" title={group.title} />
+                              </p>
                               <span
                                 className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium border ${meta.chip}`}
                               >
@@ -2433,35 +2746,23 @@ async function RecommendationsTab() {
                                   ? `${count} of ${group.totalMatchCount} affected`
                                   : `${count} affected`}
                               </span>
-                              {(() => {
-                                // Analyst Item 10 (split, 2026-05-30) WoW chip:
-                                // delta vs. open-count 7 days ago. Direction
-                                // colored from the operator's perspective —
-                                // ↓ (shrinking queue) = green, ↑ (growing) =
-                                // amber, no change = gray dash. Hidden when
-                                // both counts are 0 (avoids 0-vs-0 noise on
-                                // freshly-shipped rules).
-                                const prev = weekAgoCounts.get(group.ruleId) ?? 0;
-                                const delta = count - prev;
-                                if (prev === 0 && count === 0) return null;
-                                const arrow = delta > 0 ? "↑" : delta < 0 ? "↓" : "—";
-                                const sign = delta > 0 ? "+" : "";
-                                const trendClass =
-                                  delta > 0
-                                    ? "text-amber-700 bg-amber-50 border-amber-200"
-                                    : delta < 0
-                                      ? "text-emerald-700 bg-emerald-50 border-emerald-200"
-                                      : "text-muted-foreground bg-muted border-border";
-                                return (
-                                  <span
-                                    className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-medium border tabular-nums ${trendClass}`}
-                                    title={`Week-over-week: ${prev} open 7d ago → ${count} now`}
-                                  >
-                                    {arrow}
-                                    {delta === 0 ? "" : `${sign}${delta}`}
-                                  </span>
-                                );
-                              })()}
+                              {/* OPE-1160 — the week-over-week chip is NOT
+                                  measured. It compared the ACTIVE count now
+                                  (seen by a scan in the last 7d, not acted on,
+                                  not snoozed, rule enabled) with every item
+                                  first seen by a week ago and not acted on —
+                                  snoozed and aged-out items included. Prod
+                                  2026-09-26: page_1_zero_click_queries showed
+                                  "↓ −436" (108 now vs 544) for an improvement
+                                  that never happened. Last week's ACTIVE count
+                                  cannot be rebuilt: last_seen_at and snoozes are
+                                  overwritten, not kept as history. */}
+                              <span
+                                className="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium border tabular-nums text-muted-foreground bg-muted border-border"
+                                title={RECS_WOW_UNAVAILABLE_REASON}
+                              >
+                                wk/wk —
+                              </span>
                             </div>
                             <p className="text-sm text-foreground mt-1.5 ml-6">
                               {rationaleFor(group)}
@@ -2534,6 +2835,7 @@ async function RecommendationsTab() {
             <CardTitle className="text-sm">
               Scan freshness ({scanState.allRules.length} enabled rule
               {scanState.allRules.length === 1 ? "" : "s"})
+              <TileInfo id="recommendations.scan-freshness" title="Scan freshness" />
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -2646,6 +2948,7 @@ async function IndexNowTab({ limit: rawLimit, source }: { limit?: string; source
           <CardTitle>
             Recent IndexNow submissions
             {trimmedSource ? ` · source=${trimmedSource}` : ""} (last {limit})
+            <TileInfo id="indexnow.recent-submissions" title="Recent IndexNow submissions" />
           </CardTitle>
           <div className="flex items-center gap-2 text-sm">
             {/* Source dropdown — server-rendered <select> wrapped as a controlled
@@ -2804,11 +3107,25 @@ async function FirstPartyEventsTab() {
       .orderBy(sql`COUNT(*) DESC`),
   ]);
 
+  // OPE-1131 — a stopped beacon and a quiet month render the same table. Judge
+  // the feed on the newest row it admitted (`recent` is newest-first).
+  const beacon = recent[0]
+    ? freshness(null, "analytics_events", recent[0].timestamp)
+    : { state: "stale" as const, reason: `no events in ${days} days` };
+
   return (
     <>
       <Card className="mb-6">
         <CardHeader>
-          <CardTitle>Event counts (last {days} days)</CardTitle>
+          <CardTitle>
+            Event counts (last {days} days){" "}
+            <TileInfo id="first-party-events.event-counts" title="Event counts" />
+          </CardTitle>
+          {beacon.state === "stale" && (
+            <p className="text-xs text-orange-600 mt-1">
+              🕒 beacon {beacon.reason} — counts below are not a live reading
+            </p>
+          )}
         </CardHeader>
         <CardContent className="p-0">
           <table className="w-full text-sm">
@@ -2840,7 +3157,9 @@ async function FirstPartyEventsTab() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Recent events</CardTitle>
+          <CardTitle>
+            Recent events <TileInfo id="first-party-events.recent-events" title="Recent events" />
+          </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
           <table className="w-full text-sm">
@@ -2932,9 +3251,12 @@ type GscLoad =
 
 async function loadGscData(): Promise<GscLoad> {
   try {
-    const env = getCloudflareEnv() as unknown as ScEnv;
+    const env = getCloudflareEnv();
     const settled = await Promise.allSettled([
-      getSiteSearchQueries(env, { rowLimit: 25 }),
+      // OPE-1161 D12 — top 25 BY CLICKS, as both cards below are labelled. The
+      // helper defaults to impressions, which made "Top-25 query clicks" the
+      // clicks of the 25 most-SEEN queries.
+      getSiteSearchQueries(env, { rowLimit: 25, orderBy: "clicks" }),
       getSitemapStatus(env),
       // OPE-312 (A3) — real property totals. The rowLimit-25 pull above can
       // only ever sum its own 25 rows, so it must not feed a tile that says
@@ -3004,27 +3326,8 @@ async function loadGscMilestones(): Promise<GscMilestonePoint[]> {
       )
     )
     .orderBy(asc(gscMilestoneEmails.emailDate));
-  // The Mar 1 → Mar 5 dip (30 → 20) is a Google send-order artifact, NOT a
-  // real decline. Render faithfully in email_date order — do not smooth or
-  // sort by threshold.
-  return rows.map((r) => ({
-    threshold: r.threshold,
-    emailDate: r.emailDate,
-    reachedDate: r.reachedDate,
-    derived: r.source === DERIVED_MILESTONE_SOURCE,
-  }));
-}
-
-/** OPE-456 — `source` value for a crossing computed from `gsc_daily_totals`
- *  rather than awarded by Google. Matches drizzle/0222. */
-const DERIVED_MILESTONE_SOURCE = "derived_from_gsc_daily_totals";
-
-interface GscMilestonePoint {
-  threshold: number;
-  emailDate: string;
-  reachedDate: string | null;
-  /** True when we computed this crossing ourselves; false = Google badge. */
-  derived: boolean;
+  // OPE-456 — points plot the REACHED date; see toMilestonePoints.
+  return toMilestonePoints(rows);
 }
 
 async function GoogleTab() {
@@ -3070,7 +3373,9 @@ async function GoogleTab() {
         <Card>
           <CardContent className="p-6">
             {/* OPE-312 (A3) — property total, not the sum of the top 25. */}
-            <p className="text-sm text-muted-foreground">Total clicks</p>
+            <p className="text-sm text-muted-foreground">
+              Total clicks <TileInfo id="google.total-clicks" title="Total clicks" />
+            </p>
             <p className="text-2xl font-bold text-foreground mt-1 tabular-nums">
               {propertyTotals ? fmt(propertyTotals.clicks) : <UnavailableBadge />}
             </p>
@@ -3085,7 +3390,10 @@ async function GoogleTab() {
           <CardContent className="p-6">
             {/* OPE-312 (A3) — this pull is rowLimit 25, so the tile says so
                 rather than implying a site-wide figure. */}
-            <p className="text-sm text-muted-foreground">Top-25 query clicks</p>
+            <p className="text-sm text-muted-foreground">
+              Top-25 query clicks{" "}
+              <TileInfo id="google.top25-query-clicks" title="Top-25 query clicks" />
+            </p>
             <p className="text-2xl font-bold text-foreground mt-1 tabular-nums">
               {queries ? fmt(queries.totals.clicks) : <UnavailableBadge />}
             </p>
@@ -3098,7 +3406,9 @@ async function GoogleTab() {
         </Card>
         <Card>
           <CardContent className="p-6">
-            <p className="text-sm text-muted-foreground">Sitemap status</p>
+            <p className="text-sm text-muted-foreground">
+              Sitemap status <TileInfo id="google.sitemap-status" title="Sitemap status" />
+            </p>
             <p className="text-2xl font-bold text-foreground mt-1 tabular-nums">
               {fmt(indexedCount)} /{" "}
               <span className="text-base font-normal text-muted-foreground">
@@ -3106,8 +3416,11 @@ async function GoogleTab() {
               </span>
             </p>
             <p className="text-xs text-muted-foreground mt-1">
-              indexed / submitted · {fmt(sitemapErrorCount)} errors · {fmt(sitemapWarningCount)}{" "}
-              warnings
+              {/* OPE-1131 — with the Sitemaps API down, "0 errors" was a reading it never took. */}
+              indexed / submitted ·{" "}
+              {sitemaps
+                ? `${fmt(sitemapErrorCount)} errors · ${fmt(sitemapWarningCount)} warnings`
+                : "errors / warnings — · GSC Sitemaps unavailable"}
             </p>
             <p className="text-xs text-muted-foreground mt-2">
               Indexed = URLs with PASS verdict in our URL Inspection sweep ({fmt(inspectedCount)}{" "}
@@ -3121,7 +3434,10 @@ async function GoogleTab() {
 
       <Card className="mb-6">
         <CardHeader>
-          <CardTitle>Top GSC queries</CardTitle>
+          <CardTitle>
+            Top GSC queries (by clicks){" "}
+            <TileInfo id="google.top-queries" title="Top GSC queries (by clicks)" />
+          </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
           <table className="w-full text-sm">
@@ -3165,7 +3481,10 @@ async function GoogleTab() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Submitted sitemaps</CardTitle>
+          <CardTitle>
+            Submitted sitemaps{" "}
+            <TileInfo id="google.submitted-sitemaps" title="Submitted sitemaps" />
+          </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
           <table className="w-full text-sm">
@@ -3188,7 +3507,8 @@ async function GoogleTab() {
               {!sitemaps || sitemaps.sitemaps.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-6 py-6 text-muted-foreground">
-                    No sitemaps submitted to GSC.
+                    {/* OPE-1131 — a failed fetch is not "none submitted". */}
+                    {sitemaps ? "No sitemaps submitted to GSC." : "GSC Sitemaps API unavailable."}
                   </td>
                 </tr>
               ) : (
@@ -3278,6 +3598,8 @@ interface IndexNowOps {
   skipped24h: number;
   sent7d: number;
   kvAvailable: boolean;
+  /** OPE-1131 — false when the D1 read failed, so the zeros above are not counts. */
+  countsAvailable: boolean;
 }
 
 const EMPTY_INDEXNOW_OPS: IndexNowOps = {
@@ -3289,6 +3611,7 @@ const EMPTY_INDEXNOW_OPS: IndexNowOps = {
   skipped24h: 0,
   sent7d: 0,
   kvAvailable: false,
+  countsAvailable: false,
 };
 
 /**
@@ -3300,9 +3623,11 @@ const EMPTY_INDEXNOW_OPS: IndexNowOps = {
 async function loadIndexNowOps(): Promise<IndexNowOps> {
   try {
     const kv = getCloudflareRateLimitKv();
+    // OPE-1161 E15 — the display reader: a KV read that throws is "unknown",
+    // not "not paused" (the send path's fail-open reader showed a green Active).
     const [breaker, pause] = await Promise.all([
       checkIndexNowBreaker(kv),
-      getIndexNowPauseState(kv),
+      readIndexNowPauseForDisplay(kv),
     ]);
 
     const now = Date.now();
@@ -3313,6 +3638,7 @@ async function loadIndexNowOps(): Promise<IndexNowOps> {
     let failed24h = 0;
     let skipped24h = 0;
     let sent7d = 0;
+    let countsAvailable = true;
     try {
       const db = getCloudflareDb();
       const rows = await db
@@ -3338,7 +3664,9 @@ async function loadIndexNowOps(): Promise<IndexNowOps> {
         }
       }
     } catch {
-      /* DB read failed — leave counts at 0; breaker state is still useful. */
+      // DB read failed — breaker state is still useful, but the zeros are not
+      // counts (OPE-1131: they rendered as "0 sent · 0 failed").
+      countsAvailable = false;
     }
 
     return {
@@ -3349,7 +3677,8 @@ async function loadIndexNowOps(): Promise<IndexNowOps> {
       failed24h,
       skipped24h,
       sent7d,
-      kvAvailable: kv !== null,
+      kvAvailable: kv !== null && pause.readOk,
+      countsAvailable,
     };
   } catch {
     return EMPTY_INDEXNOW_OPS;
@@ -3368,11 +3697,13 @@ interface BingTabData {
   // warning + index-coverage ratio. Both degrade to [] on failure.
   traffic: BingTrafficStatsRow[];
   sitemaps: BingSitemap[];
+  /** OPE-1131 — reports that were REJECTED, so their `[]` is not "no data". */
+  failed: BingReport[];
 }
 
 async function loadBingData(): Promise<BingLoad> {
   try {
-    const env = getCloudflareEnv() as unknown as BingEnv;
+    const env = getCloudflareEnv();
     // Run all Bing reports in parallel. Each result is independently catchable
     // so a transient failure on one (e.g. site-scan returning 404 before Bing
     // has completed a scan) doesn't blank the whole tab.
@@ -3397,6 +3728,18 @@ async function loadBingData(): Promise<BingLoad> {
     const [queries, pages, crawl, scan, quota, traffic, sitemaps] = settled.map((r) =>
       r.status === "fulfilled" ? r.value : null
     );
+    const reportOrder: Array<BingReport | null> = [
+      "queries",
+      "pages",
+      "crawl",
+      "scan",
+      null, // quota already renders its own "—"
+      "traffic",
+      "sitemaps",
+    ];
+    const failed = settled.flatMap((r, i) =>
+      r.status === "rejected" && reportOrder[i] ? [reportOrder[i] as BingReport] : []
+    );
     // Operational IndexNow state — self-contained + non-throwing, so it never
     // affects whether the rest of the Bing tab renders.
     const indexnow = await loadIndexNowOps();
@@ -3411,6 +3754,7 @@ async function loadBingData(): Promise<BingLoad> {
         indexnow,
         traffic: (traffic as BingTrafficStatsRow[] | null) ?? [],
         sitemaps: (sitemaps as BingSitemap[] | null) ?? [],
+        failed,
       },
     };
   } catch (error) {
@@ -3488,7 +3832,28 @@ async function BingTab() {
   if (!result.ok) {
     return <BingErrorPanel kind={result.kind} message={result.message} />;
   }
-  const { queries, pages, crawl, scan, quota, indexnow, traffic, sitemaps } = result.data;
+  const { queries, pages, crawl, scan, quota, indexnow, traffic, sitemaps, failed } = result.data;
+  // OPE-1131 — headline figures that can say "not measured" (bing-tiles.ts).
+  const clicks7dM = bingWeekTotal(
+    traffic,
+    (r) => r.clicks,
+    failed.includes("traffic"),
+    "bing_traffic"
+  );
+  const impr7dM = bingWeekTotal(
+    traffic,
+    (r) => r.impressions,
+    failed.includes("traffic"),
+    "bing_traffic"
+  );
+  const pagesIndexedM = bingPagesIndexed(crawl, failed.includes("crawl"));
+  const crawlErrors7dM = bingWeekTotal(
+    crawl,
+    (r) => r.crawlErrors,
+    failed.includes("crawl"),
+    "bing_crawl"
+  );
+  const scanFailed = failed.includes("scan");
   const errorCount = scan.filter((i) => i.severity === "Error").length;
   const warningCount = scan.filter((i) => i.severity === "Warning").length;
 
@@ -3514,8 +3879,10 @@ async function BingTab() {
   const pagesIndexed = latestCrawl ? latestCrawl.totalPages : null;
   const crawlErrors7d = crawlDesc.slice(0, 7).reduce((a, r) => a + r.crawlErrors, 0);
 
-  // Index coverage — indexed (latest totalPages) ÷ submitted (Σ sitemap urlCount).
-  const submittedUrlCount = sitemaps.reduce((a, s) => a + s.urlCount, 0);
+  // Index coverage — Bing's site-wide in-index count ÷ our sitemap URLs.
+  // OPE-1161 F18 — deduplicated: www/non-www copies once, and the sitemap index
+  // not counted alongside the children it lists.
+  const submittedUrlCount = bingSubmittedUrlCount(sitemaps);
   const coveragePct =
     pagesIndexed !== null && submittedUrlCount > 0
       ? (pagesIndexed / submittedUrlCount) * 100
@@ -3546,11 +3913,7 @@ async function BingTab() {
           className: "text-amber-600",
         }
       : { label: "Active", className: "text-emerald-600" };
-  const inChip: { label: string; className: string } = indexnow.paused
-    ? { label: "Paused", className: "text-amber-600" }
-    : indexnow.breaker.reason === "cooldown"
-      ? { label: "Cooldown", className: "text-amber-600" }
-      : { label: "Active", className: "text-emerald-600" };
+  const inChip = indexNowChip(indexnow);
 
   // ── Block 5 — actionable issues synthesized from the loaded data ──
   const actionItems: string[] = [];
@@ -3572,7 +3935,7 @@ async function BingTab() {
   }
   if (coveragePct !== null && coveragePct < 90) {
     actionItems.push(
-      `Index coverage ${coveragePct.toFixed(0)}% (<90%) — indexed pages below submitted URLs`
+      `Indexed ${coveragePct.toFixed(0)}% of sitemap URLs (<90%) — site-wide indexed pages below deduplicated sitemap URLs`
     );
   }
   if (errorCount > 0) {
@@ -3582,7 +3945,15 @@ async function BingTab() {
     actionItems.push(`IndexNow failures: ${fmt(indexnow.failed24h)} in the last 24h`);
   }
 
-  const crawlErrColor = crawlErrors7d === 0 ? "text-emerald-600" : "text-amber-600";
+  const actionInputsUnmeasured = bingActionInputsUnmeasured(failed, indexnow);
+
+  // Green only for a MEASURED zero — an unavailable report is not clean.
+  const crawlErrColor =
+    crawlErrors7dM.state !== "ok" && crawlErrors7dM.state !== "stale"
+      ? "text-muted-foreground"
+      : crawlErrors7d === 0
+        ? "text-emerald-600"
+        : "text-amber-600";
   const coverageColor =
     coveragePct === null
       ? "text-foreground"
@@ -3598,12 +3969,16 @@ async function BingTab() {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-4">
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-base">Search clicks (7d)</CardTitle>
+            <CardTitle className="text-base">
+              Search clicks (7d) <TileInfo id="bing.search-clicks" title="Search clicks (7d)" />
+            </CardTitle>
             <p className="text-xs text-muted-foreground">Bing · last 7 days vs prior 7</p>
           </CardHeader>
           <CardContent>
             <div className="flex items-end justify-between mb-2">
-              <p className="text-2xl font-bold text-foreground tabular-nums">{fmt(clicks7d)}</p>
+              <p className="text-2xl font-bold text-foreground tabular-nums">
+                {measurementText(clicks7dM, fmt)}
+              </p>
               <TrendBadge
                 trend={bingTrend(clicks7d, clicksPrior7d)}
                 current={clicks7d}
@@ -3625,12 +4000,16 @@ async function BingTab() {
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-base">Impressions (7d)</CardTitle>
+            <CardTitle className="text-base">
+              Impressions (7d) <TileInfo id="bing.impressions" title="Impressions (7d)" />
+            </CardTitle>
             <p className="text-xs text-muted-foreground">Bing · last 7 days vs prior 7</p>
           </CardHeader>
           <CardContent>
             <div className="flex items-end justify-between mb-2">
-              <p className="text-2xl font-bold text-foreground tabular-nums">{fmt(impr7d)}</p>
+              <p className="text-2xl font-bold text-foreground tabular-nums">
+                {measurementText(impr7dM, fmt)}
+              </p>
               <TrendBadge
                 trend={bingTrend(impr7d, imprPrior7d)}
                 current={impr7d}
@@ -3652,9 +4031,12 @@ async function BingTab() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
         <Card>
           <CardContent className="p-6">
-            <p className="text-sm text-muted-foreground">Pages indexed</p>
+            <p className="text-sm text-muted-foreground">
+              Pages indexed{" "}
+              <TileInfo id="bing.pages-indexed" title="Pages indexed" measurement={pagesIndexedM} />
+            </p>
             <p className="text-2xl font-bold text-foreground mt-1 tabular-nums">
-              {pagesIndexed !== null ? fmt(pagesIndexed) : "—"}
+              {measurementText(pagesIndexedM, fmt)}
             </p>
             <p className="text-xs text-muted-foreground mt-1">
               {latestCrawl ? `Latest crawl ${latestCrawl.date}` : "No crawl data yet"}
@@ -3663,26 +4045,40 @@ async function BingTab() {
         </Card>
         <Card>
           <CardContent className="p-6">
-            <p className="text-sm text-muted-foreground">Crawl errors (7d)</p>
+            <p className="text-sm text-muted-foreground">
+              Crawl errors (7d){" "}
+              <TileInfo
+                id="bing.crawl-errors"
+                title="Crawl errors (7d)"
+                measurement={crawlErrors7dM}
+              />
+            </p>
             <p className={`text-2xl font-bold mt-1 tabular-nums ${crawlErrColor}`}>
-              {fmt(crawlErrors7d)}
+              {measurementText(crawlErrors7dM, fmt)}
             </p>
             <p className="text-xs text-muted-foreground mt-1">
-              {crawl.length === 0
-                ? "No crawl data yet"
-                : crawlErrors7d === 0
-                  ? "Clean — no errors in last 7 crawl days"
-                  : "Sum over last 7 crawl days"}
+              {failed.includes("crawl")
+                ? "Bing crawl report unavailable"
+                : crawl.length === 0
+                  ? "No crawl data yet"
+                  : crawlErrors7d === 0
+                    ? "Clean — no errors in last 7 crawl days"
+                    : "Sum over last 7 crawl days"}
             </p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-6">
-            <p className="text-sm text-muted-foreground">IndexNow health</p>
+            <p className="text-sm text-muted-foreground">
+              IndexNow health <TileInfo id="bing.indexnow-health" title="IndexNow health" />
+            </p>
             <p className={`text-2xl font-bold mt-1 ${inChip.className}`}>{inChip.label}</p>
             <p className="text-xs text-muted-foreground mt-1 tabular-nums">
-              {fmt(indexnow.sent24h)} sent · {fmt(indexnow.failed24h)} failed ·{" "}
-              {fmt(indexnow.skipped24h)} skipped (24h)
+              {indexnow.countsAvailable
+                ? `${fmt(indexnow.sent24h)} sent · ${fmt(indexnow.failed24h)} failed · ${fmt(
+                    indexnow.skipped24h
+                  )} skipped (24h)`
+                : "— · indexnow_submissions read failed"}
             </p>
             {indexnow.paused && indexnow.pauseNote && (
               <p className="text-xs text-amber-600 mt-1">{indexnow.pauseNote}</p>
@@ -3697,7 +4093,9 @@ async function BingTab() {
       </h3>
       <Card className="mb-6">
         <CardHeader>
-          <CardTitle>Top Bing queries</CardTitle>
+          <CardTitle>
+            Top Bing queries <TileInfo id="bing.top-queries" title="Top Bing queries" />
+          </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
           <table className="w-full text-sm">
@@ -3714,8 +4112,14 @@ async function BingTab() {
               {queries.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="px-6 py-6 text-muted-foreground">
-                    No Bing query data yet. Bing typically takes 7&ndash;14 days after site
-                    verification to start reporting search-performance data.
+                    {failed.includes("queries") ? (
+                      "Bing query report unavailable — not measured."
+                    ) : (
+                      <>
+                        No Bing query data yet. Bing typically takes 7&ndash;14 days after site
+                        verification to start reporting search-performance data.
+                      </>
+                    )}
                   </td>
                 </tr>
               ) : (
@@ -3745,7 +4149,9 @@ async function BingTab() {
 
       <Card className="mb-8">
         <CardHeader>
-          <CardTitle>Top pages (Bing)</CardTitle>
+          <CardTitle>
+            Top pages (Bing) <TileInfo id="bing.top-pages" title="Top pages (Bing)" />
+          </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
           <table className="w-full text-sm">
@@ -3762,8 +4168,14 @@ async function BingTab() {
               {pages.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="px-6 py-6 text-muted-foreground">
-                    No page data yet. Populates after Bing accumulates impression data (typically
-                    7&ndash;14 days post-verification).
+                    {failed.includes("pages") ? (
+                      "Bing page report unavailable — not measured."
+                    ) : (
+                      <>
+                        No page data yet. Populates after Bing accumulates impression data
+                        (typically 7&ndash;14 days post-verification).
+                      </>
+                    )}
                   </td>
                 </tr>
               ) : (
@@ -3798,7 +4210,9 @@ async function BingTab() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
         <Card>
           <CardHeader>
-            <CardTitle>Crawl trend</CardTitle>
+            <CardTitle>
+              Crawl trend <TileInfo id="bing.crawl-trend" title="Crawl trend" />
+            </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
             <table className="w-full text-sm">
@@ -3845,14 +4259,22 @@ async function BingTab() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center justify-between gap-2">
-                <span>Crawl issues</span>
+                <span>
+                  Crawl issues <TileInfo id="bing.crawl-issues" title="Crawl issues" />
+                </span>
                 <span className="text-xs font-normal text-muted-foreground">
-                  {fmt(errorCount)} errors · {fmt(warningCount)} warnings
+                  {scanFailed
+                    ? measurementText(bingScanIssueCount(scan, true), fmt)
+                    : `${fmt(errorCount)} errors · ${fmt(warningCount)} warnings`}
                 </span>
               </CardTitle>
             </CardHeader>
             <CardContent>
-              {scanSorted.length === 0 ? (
+              {scanFailed ? (
+                <p className="text-sm text-muted-foreground">
+                  Bing site-scan report unavailable — not measured, not healthy.
+                </p>
+              ) : scanSorted.length === 0 ? (
                 <p className="text-sm text-emerald-600 font-medium">0 issues — healthy ✓</p>
               ) : (
                 <ul className="space-y-2">
@@ -3897,7 +4319,13 @@ async function BingTab() {
 
           <Card>
             <CardHeader>
-              <CardTitle>Index coverage</CardTitle>
+              <CardTitle>
+                {/* OPE-1161 F18 — relabelled: the numerator is Bing's SITE-WIDE
+                    in-index count (the API gives no per-sitemap figure), so this
+                    compares two populations and can exceed 100%. */}
+                Indexed (site-wide) vs sitemap URLs{" "}
+                <TileInfo id="bing.index-coverage" title="Indexed (site-wide) vs sitemap URLs" />
+              </CardTitle>
             </CardHeader>
             <CardContent>
               {coveragePct !== null ? (
@@ -3943,7 +4371,9 @@ async function BingTab() {
       )}
       <Card className="mb-6">
         <CardHeader>
-          <CardTitle>Submitted sitemaps</CardTitle>
+          <CardTitle>
+            Submitted sitemaps <TileInfo id="bing.submitted-sitemaps" title="Submitted sitemaps" />
+          </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
           <table className="w-full text-sm">
@@ -3989,7 +4419,10 @@ async function BingTab() {
       <Card className="mb-6">
         <CardHeader>
           <CardTitle className="flex items-center justify-between gap-2">
-            <span>IndexNow operations</span>
+            <span>
+              IndexNow operations{" "}
+              <TileInfo id="bing.indexnow-operations" title="IndexNow operations" />
+            </span>
             <IndexNowKillSwitchToggle />
           </CardTitle>
         </CardHeader>
@@ -4008,21 +4441,34 @@ async function BingTab() {
               <div>
                 <p className="text-xs text-muted-foreground">Sent 24h / 7d</p>
                 <p className="font-semibold tabular-nums mt-1">
-                  {fmt(indexnow.sent24h)} / {fmt(indexnow.sent7d)}
+                  {measurementText(indexNowCount(indexnow.sent24h, indexnow.countsAvailable), fmt)}{" "}
+                  / {measurementText(indexNowCount(indexnow.sent7d, indexnow.countsAvailable), fmt)}
                 </p>
               </div>
               <div>
                 <p className="text-xs text-muted-foreground">Failed 24h</p>
-                <p className="font-semibold tabular-nums mt-1">{fmt(indexnow.failed24h)}</p>
+                <p className="font-semibold tabular-nums mt-1">
+                  {measurementText(
+                    indexNowCount(indexnow.failed24h, indexnow.countsAvailable),
+                    fmt
+                  )}
+                </p>
               </div>
               <div>
                 <p className="text-xs text-muted-foreground">Skipped 24h</p>
-                <p className="font-semibold tabular-nums mt-1">{fmt(indexnow.skipped24h)}</p>
+                <p className="font-semibold tabular-nums mt-1">
+                  {measurementText(
+                    indexNowCount(indexnow.skipped24h, indexnow.countsAvailable),
+                    fmt
+                  )}
+                </p>
               </div>
               <div>
                 <p className="text-xs text-muted-foreground">BWT submit quota</p>
                 <p className="font-semibold tabular-nums mt-1">
-                  {quota ? `${fmt(quota.dailyRemaining)} / ${fmt(quota.dailyQuota)}` : "—"}
+                  {quota
+                    ? `${fmt(quota.dailyRemaining)} / ${fmt(quota.dailyQuota)}`
+                    : "— · quota API unavailable"}
                 </p>
               </div>
             </div>
@@ -4038,10 +4484,18 @@ async function BingTab() {
       {/* ══ Block 5 — Actionable issues ══════════════════════════════════ */}
       <Card className="mt-6">
         <CardHeader>
-          <CardTitle>Action items</CardTitle>
+          <CardTitle>
+            Action items <TileInfo id="bing.action-items" title="Action items" />
+          </CardTitle>
         </CardHeader>
         <CardContent>
-          {actionItems.length === 0 ? (
+          {actionItems.length === 0 && actionInputsUnmeasured.length > 0 ? (
+            // OPE-1161 E14 — an empty list over inputs we could not read is not
+            // "healthy"; say what was not measured.
+            <p className="text-sm text-muted-foreground">
+              Nothing flagged — but not measured: {actionInputsUnmeasured.join(", ")}.
+            </p>
+          ) : actionItems.length === 0 ? (
             <p className="text-sm text-emerald-600 font-medium">No action items — healthy ✓</p>
           ) : (
             <ul className="space-y-2">
@@ -4052,6 +4506,11 @@ async function BingTab() {
                 </li>
               ))}
             </ul>
+          )}
+          {actionItems.length > 0 && actionInputsUnmeasured.length > 0 && (
+            <p className="mt-3 text-xs text-muted-foreground">
+              Also not measured: {actionInputsUnmeasured.join(", ")}.
+            </p>
           )}
         </CardContent>
       </Card>
@@ -4396,14 +4855,21 @@ function InstrumentTile({ reading }: { reading: InstrumentReading }) {
     <Card>
       <CardContent className="p-5">
         <div className="flex items-baseline justify-between gap-2">
-          <p className="text-sm text-muted-foreground">{reading.label}</p>
+          <p className="text-sm text-muted-foreground">
+            {reading.label}{" "}
+            <TileInfo id={`site-health.instrument.${reading.key}` as const} title={reading.label} />
+          </p>
           <span className={`text-xs font-medium uppercase tracking-wide ${tone}`}>
             {reading.severity === "ok" ? "ok" : reading.severity}
           </span>
         </div>
         <p className={`mt-1 text-3xl font-bold tabular-nums ${tone}`}>
           {/* An em dash, never 0 — see verdict.ts. */}
-          {reading.actionItems === null ? "—" : fmt(reading.actionItems)}
+          {(() => {
+            const shown =
+              reading.displayValue !== undefined ? reading.displayValue : reading.actionItems;
+            return shown === null ? "—" : fmt(shown);
+          })()}
         </p>
         <p className="mt-1 text-xs text-muted-foreground">{reading.detail}</p>
         {reading.href && (
@@ -4434,7 +4900,7 @@ function StatRow({ label, value, hint }: { label: string; value: string; hint?: 
 
 async function SiteHealthTab() {
   const db = getCloudflareDb();
-  const env = getCloudflareEnv() as unknown as Ga4Env;
+  const env = getCloudflareEnv();
   const { getCurrentIssues } = await import("@/lib/site-health");
   const { getUnclassifiedOutboundDestinations } =
     await import("@/lib/url-classification-discovery");
@@ -4522,21 +4988,35 @@ async function SiteHealthTab() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-6">
         <Card>
           <CardContent className="p-6">
-            <p className="text-sm text-muted-foreground">Action errors</p>
-            <p className="text-3xl font-bold text-red-700 mt-1 tabular-nums">{fmt(errorCount)}</p>
+            <p className="text-sm text-muted-foreground">
+              Action errors <TileInfo id="site-health.action-errors" title="Action errors" />
+            </p>
+            {/* OPE-1161 optional — red only when there IS an error (was fixed red, even at 0). */}
+            <p
+              className={`text-3xl font-bold mt-1 tabular-nums ${errorCount > 0 ? "text-red-700" : "text-foreground"}`}
+            >
+              {fmt(errorCount)}
+            </p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-6">
-            <p className="text-sm text-muted-foreground">Action warnings</p>
-            <p className="text-3xl font-bold text-amber-700 mt-1 tabular-nums">
+            <p className="text-sm text-muted-foreground">
+              Action warnings <TileInfo id="site-health.action-warnings" title="Action warnings" />
+            </p>
+            <p
+              className={`text-3xl font-bold mt-1 tabular-nums ${warningCount > 0 ? "text-amber-700" : "text-foreground"}`}
+            >
               {fmt(warningCount)}
             </p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-6">
-            <p className="text-sm text-muted-foreground">Expected (non-indexing)</p>
+            <p className="text-sm text-muted-foreground">
+              Expected (non-indexing){" "}
+              <TileInfo id="site-health.expected-count" title="Expected (non-indexing)" />
+            </p>
             <p className="text-3xl font-bold text-muted-foreground mt-1 tabular-nums">
               {fmt(expectedCount)}
             </p>
@@ -4544,7 +5024,9 @@ async function SiteHealthTab() {
         </Card>
         <Card>
           <CardContent className="p-6">
-            <p className="text-sm text-muted-foreground">Snoozed</p>
+            <p className="text-sm text-muted-foreground">
+              Snoozed <TileInfo id="site-health.snoozed" title="Snoozed" />
+            </p>
             <p className="text-3xl font-bold text-muted-foreground mt-1 tabular-nums">
               {fmt(activeSnoozeCount)}
             </p>
@@ -4554,7 +5036,9 @@ async function SiteHealthTab() {
 
       <Card id="technical">
         <CardHeader>
-          <CardTitle>Action needed</CardTitle>
+          <CardTitle>
+            Action needed <TileInfo id="site-health.action-needed" title="Action needed" />
+          </CardTitle>
           <p className="text-sm text-muted-foreground mt-1">
             Real defects — 5xx/fetch errors, broken structured data, sitemap errors, robots blocks.
             Near-identical rows are grouped; expand a group to see the affected URLs. Grey rows with
@@ -4574,7 +5058,10 @@ async function SiteHealthTab() {
 
       <Card className="mt-6">
         <CardHeader>
-          <CardTitle>Expected (non-indexing)</CardTitle>
+          <CardTitle>
+            Expected (non-indexing){" "}
+            <TileInfo id="site-health.expected-non-indexing" title="Expected (non-indexing)" />
+          </CardTitle>
           <p className="text-sm text-muted-foreground mt-1">
             Normal GSC coverage states for thin / seasonal / duplicate pages (e.g. &quot;Discovered
             – currently not indexed&quot; on an off-season market page). Not defects — collapsed by
@@ -4619,7 +5106,13 @@ async function SiteHealthTab() {
 
       <Card className="mt-8">
         <CardHeader>
-          <CardTitle>Unclassified outbound destinations</CardTitle>
+          <CardTitle>
+            Unclassified outbound destinations{" "}
+            <TileInfo
+              id="site-health.unclassified-outbound"
+              title="Unclassified outbound destinations"
+            />
+          </CardTitle>
           <p className="text-sm text-muted-foreground mt-1">
             Domains that received outbound ticket clicks in the last 7 days but aren&apos;t in{" "}
             <code>url_domain_classifications</code> yet. Classify each one so the ingestion gate
@@ -4686,7 +5179,10 @@ async function SiteHealthTab() {
           canary cannot freeze them at their last good value. */}
       <Card className="mt-8" id="data-health">
         <CardHeader>
-          <CardTitle>Data health — Goodwill discrepancy pipeline</CardTitle>
+          <CardTitle>
+            Data health — Goodwill discrepancy pipeline{" "}
+            <TileInfo id="site-health.data-health" title="Data health" />
+          </CardTitle>
           <p className="text-sm text-muted-foreground mt-1">
             Where our event data disagrees with a source we trust. Counts are queried live; the
             trend comes from the nightly snapshot.
@@ -4710,10 +5206,13 @@ async function SiteHealthTab() {
                 label="Weighted priority"
                 value={dataHealth.liveWeightedPriority.toFixed(1)}
               />
+              {/* OPE-1161 A5 — relabelled: no override action exists to count.
+                  The query counts every discrepancy.* audit row (create +
+                  resolve), and nothing in a resolve marks it as an override. */}
               <StatRow
-                label="Operator overrides"
+                label="Operator discrepancy actions"
                 value={fmt(dataHealth.operatorOverrides28d)}
-                hint="28d"
+                hint="28d · created + resolved"
               />
             </div>
             <div>
@@ -4725,8 +5224,8 @@ async function SiteHealthTab() {
                 label="Adjudicated coverage"
                 value={
                   dataHealth.resolutions.adjudicatedCoverage === null
-                    ? "—"
-                    : fmtPct(dataHealth.resolutions.adjudicatedCoverage * 100)
+                    ? "— · nothing judged in 28d"
+                    : fmtPct(dataHealth.resolutions.adjudicatedCoverage)
                 }
                 hint="judged rows only, 28d"
               />
@@ -4774,9 +5273,11 @@ async function SiteHealthTab() {
       </Card>
 
       {/* ── OPE-391 Block D1 — traffic ────────────────────────────────── */}
-      <Card className="mt-6">
+      <Card id="traffic" className="mt-6">
         <CardHeader>
-          <CardTitle>Traffic</CardTitle>
+          <CardTitle>
+            Traffic <TileInfo id="site-health.traffic" title="Traffic" />
+          </CardTitle>
           <p className="text-sm text-muted-foreground mt-1">
             Organic search sessions, not raw active users — the raw figure is inflated by (direct)
             and bot traffic. Window ends {traffic.windowEndDate}, two days back, because GA4
@@ -4799,13 +5300,15 @@ async function SiteHealthTab() {
                 />
                 <StatRow
                   label="Previous period"
-                  value={traffic.previous === null ? "—" : fmt(traffic.previous)}
+                  value={traffic.previous === null ? "— · GA4 unavailable" : fmt(traffic.previous)}
                 />
                 <StatRow
                   label="Week over week"
                   value={
                     traffic.deltaPct === null
-                      ? "—"
+                      ? traffic.current == null || traffic.previous == null
+                        ? "— · GA4 unavailable"
+                        : "— · no sessions in previous window"
                       : `${traffic.deltaPct >= 0 ? "+" : ""}${Math.round(traffic.deltaPct * 100)}%`
                   }
                 />
@@ -4821,7 +5324,10 @@ async function SiteHealthTab() {
           2026-08-25 GA4 saw 3,151 blog outbound clicks against our 4,113. */}
       <Card className="mt-6">
         <CardHeader>
-          <CardTitle>On-site engagement — first-party</CardTitle>
+          <CardTitle>
+            On-site engagement — first-party{" "}
+            <TileInfo id="site-health.engagement" title="On-site engagement" />
+          </CardTitle>
           <p className="text-sm text-muted-foreground mt-1">
             Last {engagement.windowDays} days, from our own beacons. Anonymous behaviour; the email
             facet below is the identity-bearing half and is deliberately kept separate.
@@ -4889,7 +5395,7 @@ async function SiteHealthTab() {
                   value={`${fmt(t.count)} · ${
                     engagement.blogClickTotal === 0
                       ? "—"
-                      : fmtPct((t.count / engagement.blogClickTotal) * 100)
+                      : fmtPct(t.count / engagement.blogClickTotal)
                   }`}
                 />
               ))}
@@ -4932,7 +5438,10 @@ async function SiteHealthTab() {
       {/* ── OPE-391 Block E — email & relationship ─────────────────────── */}
       <Card className="mt-6">
         <CardHeader>
-          <CardTitle>Email &amp; relationships</CardTitle>
+          <CardTitle>
+            Email &amp; relationships{" "}
+            <TileInfo id="site-health.email-relationships" title="Email & relationships" />
+          </CardTitle>
           <p className="text-sm text-muted-foreground mt-1">
             Higher-intent, identity-bearing engagement — read by intent, not volume. Queue counts
             are all-time (an obligation stays open until closed); click-back rates cover the last{" "}
@@ -4971,8 +5480,8 @@ async function SiteHealthTab() {
                 label="Confirm rate"
                 value={
                   email.newsletterConfirmRate === null
-                    ? "—"
-                    : fmtPct(email.newsletterConfirmRate * 100)
+                    ? "— · no newsletter submits"
+                    : fmtPct(email.newsletterConfirmRate)
                 }
               />
               <StatRow label="Register views" value={fmt(email.registerViews)} />

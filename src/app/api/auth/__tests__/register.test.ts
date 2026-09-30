@@ -29,6 +29,13 @@ vi.mock("@/lib/logger", () => ({
 }));
 import { logError } from "@/lib/logger";
 
+// OPE-986 — the near-duplicate check has its own sqlite-backed tests; here we
+// only assert the route calls it, with the right ids, on the right path.
+vi.mock("@/lib/auth/near-duplicate-registration", () => ({
+  flagNearDuplicateVendorRegistration: vi.fn().mockResolvedValue([]),
+}));
+import { flagNearDuplicateVendorRegistration } from "@/lib/auth/near-duplicate-registration";
+
 // Import after mocks are set up
 import { POST } from "../register/route";
 
@@ -400,5 +407,97 @@ describe("POST /api/auth/register", () => {
 
     expect(response.status).toBe(500);
     expect(data.error).toContain("error occurred");
+  });
+});
+
+// ── OPE-986 — undeliverable domains + near-duplicate visibility ─────────────
+describe("POST /api/auth/register — OPE-986", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const vendorBody = {
+    password: "password123",
+    name: "Douglas Souza",
+    role: "VENDOR",
+    businessName: "Sanza Studio Creations",
+  };
+
+  function post(body: unknown) {
+    return POST(
+      new NextRequest("http://localhost:3000/api/auth/register", {
+        method: "POST",
+        body: JSON.stringify(body),
+      })
+    );
+  }
+
+  function allowInserts() {
+    mockDb.limit.mockResolvedValue([]);
+    mockDb.values.mockImplementation(() =>
+      Object.assign(Promise.resolve(undefined), {
+        onConflictDoNothing: () => Promise.resolve(undefined),
+      })
+    );
+  }
+
+  it("refuses sanzaarts@gmail.vom with a 'Did you mean' and creates nothing", async () => {
+    allowInserts();
+    const response = await post({ ...vendorBody, email: "sanzaarts@gmail.vom" });
+    const data = (await response.json()) as any;
+
+    expect(response.status).toBe(400);
+    expect(data.error).toBe("Did you mean sanzaarts@gmail.com?");
+    // No users row and no vendor row. (registration_attempts may be written by
+    // its own fail-soft helper — that row carries neither field.)
+    const inserted = mockDb.values.mock.calls.map((c) => c[0] as Record<string, unknown>);
+    expect(inserted.some((row) => row && "passwordHash" in row)).toBe(false);
+    expect(inserted.some((row) => row && "businessName" in row)).toBe(false);
+  });
+
+  it("accepts sanzaart@gmail.com — deliverable, so not this check's call", async () => {
+    allowInserts();
+    const response = await post({ ...vendorBody, email: "sanzaart@gmail.com" });
+    expect(response.status).toBe(201);
+  });
+
+  it.each(["info@grange.org", "clerk@merrimack.nh.us", "hello@beadshop.shop"])(
+    "accepts %s",
+    async (email) => {
+      allowInserts();
+      const response = await post({ ...vendorBody, email });
+      expect(response.status).toBe(201);
+    }
+  );
+
+  it("runs the near-duplicate check for a self-registered vendor, with both ids", async () => {
+    allowInserts();
+    const response = await post({ ...vendorBody, email: "sanzaarts@gmail.com" });
+    const data = (await response.json()) as any;
+
+    expect(response.status).toBe(201);
+    expect(flagNearDuplicateVendorRegistration).toHaveBeenCalledTimes(1);
+    const [, input] = vi.mocked(flagNearDuplicateVendorRegistration).mock.calls[0];
+    expect(input.userId).toBe(data.user.id);
+    expect(input.businessName).toBe("Sanza Studio Creations");
+    expect(input.ownerName).toBe("Douglas Souza");
+    expect(input.email).toBe("sanzaarts@gmail.com");
+    // The vendorId handed to the check is the id actually inserted.
+    const vendorRow = mockDb.values.mock.calls
+      .map((c) => c[0] as Record<string, unknown>)
+      .find((row) => row?.businessName === "Sanza Studio Creations" && "slug" in row);
+    expect(vendorRow).toBeDefined();
+    expect(input.vendorId).toBe(vendorRow!.id);
+  });
+
+  it("does not run it for a non-vendor signup or a claim-funnel signup", async () => {
+    allowInserts();
+    await post({ email: "fan@example.com", password: "password123", name: "A Fan" });
+    await post({
+      ...vendorBody,
+      email: "claimer@example.com",
+      claimSlug: "sanza-studio-creations",
+    });
+    expect(flagNearDuplicateVendorRegistration).not.toHaveBeenCalled();
   });
 });

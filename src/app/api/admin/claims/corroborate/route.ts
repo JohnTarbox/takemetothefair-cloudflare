@@ -43,10 +43,10 @@ export const dynamic = "force-dynamic";
  * Auth: admin session OR X-Internal-Key (the MCP tool uses the latter).
  */
 import { NextResponse } from "next/server";
-import { and, eq, isNotNull, ne, sql } from "drizzle-orm";
+import { and, eq, isNotNull, isNull, ne, sql } from "drizzle-orm";
 import { isAuthorized } from "@/lib/api-auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { vendorClaimEvidence } from "@/lib/db/schema";
+import { adminActions, vendorClaimEvidence } from "@/lib/db/schema";
 import { classifyDeclaredPresence, reassessClaimEvidence } from "@/lib/claims/claim-evidence";
 import { fetchHtmlWithSsrfGuard } from "@takemetothefair/site-fetch";
 import { logError } from "@/lib/logger";
@@ -79,15 +79,22 @@ export async function POST(request: Request) {
 
   const db = getCloudflareDb();
 
-  // Eligible = has a declared site AND has not been corroborated yet. A row
-  // already classified is left alone: re-fetching every run would turn an
-  // operator action into a crawler.
+  // Eligible = has a declared site AND has never been attempted. A row already
+  // classified is left alone: re-fetching every run would turn the daily cron
+  // into a crawler.
+  //
+  // OPE-237, 2026-09-14 — "never attempted" is `corroboration_detail IS NULL`,
+  // not `corroboration = 'UNAVAILABLE'`. An attempt can now END in UNAVAILABLE
+  // (a bot wall, a 429), and keyed on the class alone those rows would be
+  // re-fetched every night forever. Only this pass writes the detail, so NULL
+  // means untouched. `vendor_id` still forces a re-check.
   const where = vendorId
     ? eq(vendorClaimEvidence.vendorId, vendorId)
     : and(
         isNotNull(vendorClaimEvidence.declaredWebsite),
         ne(vendorClaimEvidence.declaredWebsite, ""),
-        eq(vendorClaimEvidence.corroboration, "UNAVAILABLE")
+        eq(vendorClaimEvidence.corroboration, "UNAVAILABLE"),
+        isNull(vendorClaimEvidence.corroborationDetail)
       );
 
   const rows = await db
@@ -188,6 +195,26 @@ export async function POST(request: Request) {
     }
   }
 
+  // OPE-237 — record that the PASS RAN, not what it found. At ~1 declared site
+  // a day most runs corroborate nothing, so a yield probe would cry wolf; this
+  // row is written on every completed run and is what the
+  // `claim-corroboration-sweep` heartbeat probe reads. Not for a single
+  // `vendor_id` re-check: that is somebody calling the tool by hand, and it
+  // must not refresh the cron's liveness. Same shape as `venue.geocode.sweep`.
+  if (!vendorId) {
+    try {
+      await db.insert(adminActions).values({
+        action: "claim.corroborate.sweep",
+        targetType: "vendor",
+        targetId: "sweep",
+        createdAt: new Date(),
+        payloadJson: JSON.stringify({ eligible: rows.length, corroborated: results.length }),
+      });
+    } catch {
+      // A liveness row must never fail the pass it describes.
+    }
+  }
+
   return NextResponse.json({
     success: true,
     eligible: rows.length,
@@ -198,7 +225,7 @@ export async function POST(request: Request) {
     // finding in other people's instruments.
     note:
       rows.length === 0
-        ? "No eligible rows — every evidence row either has no declared website or is already corroborated."
+        ? "No eligible rows — every evidence row either has no declared website or has already been attempted."
         : `Corroborated ${results.length} of ${rows.length} eligible row(s).`,
   });
 }

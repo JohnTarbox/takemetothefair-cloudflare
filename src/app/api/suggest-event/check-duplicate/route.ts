@@ -3,8 +3,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { checkDuplicateSchema } from "./schema";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
+import { internalKeyMatches } from "@/lib/api-auth";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { events, venues } from "@/lib/db/schema";
+import { dedupWasBlind } from "@/lib/duplicates/find-duplicate";
 import { findDuplicate } from "@/lib/duplicates/find-duplicate";
 import { findPriorAdjudication } from "@/lib/duplicates/prior-adjudication";
 import { compareForIngest } from "@/lib/goodwill/ingest-discrepancy";
@@ -34,13 +36,11 @@ export async function POST(request: NextRequest) {
   // present `X-Internal-Key` matching INTERNAL_API_KEY. They've already gated
   // on their own per-sender / per-tier limits, so skip the IP-based rate limit
   // here. Same pattern as /api/suggest-event/submit's internal-key bypass.
-  const internalKey = request.headers.get("x-internal-key");
-  const cfEnv = getCloudflareEnv() as unknown as { INTERNAL_API_KEY?: string };
-  const isInternal = !!(
-    internalKey &&
-    cfEnv.INTERNAL_API_KEY &&
-    internalKey === cfEnv.INTERNAL_API_KEY
-  );
+  // OPE-902 — was a `===` on the secret, which compares byte-by-byte and
+  // returns early on the first mismatch. `internalKeyMatches` digests both
+  // sides and XOR-accumulates over the digests with no early exit, and it is
+  // the one audited implementation both deploy artifacts share.
+  const isInternal = await internalKeyMatches(request);
 
   if (!isInternal) {
     const rateLimitResult = await checkRateLimit(request, "suggest-event-check-duplicate");
@@ -91,7 +91,23 @@ export async function POST(request: NextRequest) {
     }
 
     if (!result.isDuplicate) {
-      return NextResponse.json({ success: true, isDuplicate: false });
+      // OPE-804 — say WHY there was no match.
+      //
+      // `stagesSkipped` has existed since OPE-477 and was dropped right here:
+      // computed in findDuplicate, never returned, read by nothing. So
+      // "checked four ways, genuinely new" and "every stage was blind" arrived
+      // at the caller as the identical `{ isDuplicate: false }`.
+      //
+      // That is why the CraftFest Cotuit duplicate (4c1dd636, 2026-07-17)
+      // cannot be explained 49 days later: the row carries no record of
+      // whether dedup evaluated. `dedupWasBlind` is the one bit a caller
+      // actually needs — no stage could run, so this verdict means nothing.
+      return NextResponse.json({
+        success: true,
+        isDuplicate: false,
+        stagesSkipped: result.stagesSkipped,
+        dedupWasBlind: dedupWasBlind(result.stagesSkipped),
+      });
     }
 
     // GW1.1 (2026-06-03) — ingest_addverify discrepancy capture.
@@ -136,6 +152,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       isDuplicate: true,
+      // OPE-477 asked for this on BOTH shapes: a hit on a weak stage while the
+      // strong ones were blind is still worth knowing about.
+      stagesSkipped: result.stagesSkipped,
+      dedupWasBlind: dedupWasBlind(result.stagesSkipped),
       matchType: result.matchType,
       // OPE-454 — the wire contract has to carry the MEANING, not just the
       // label, or every remote consumer re-derives "is series_url blocking?"
@@ -259,9 +279,7 @@ async function enqueueDiscrepanciesAsync(
     // GOODWILL_FLIP_ENABLED env flag is set) or log a 'would_flip'
     // shadow note. Spec requires the discrepancy to be emitted in
     // all cases — the decision augments notes, never gates emit.
-    const flipEnabled =
-      (getCloudflareEnv() as unknown as { GOODWILL_FLIP_ENABLED?: string })
-        .GOODWILL_FLIP_ENABLED === "1";
+    const flipEnabled = getCloudflareEnv().GOODWILL_FLIP_ENABLED === "1";
     // Read the flip margin once per request — cheap (single-row table)
     // and avoids per-disagreement query amplification on multi-field
     // discrepancies.

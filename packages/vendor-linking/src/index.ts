@@ -22,6 +22,7 @@ import { and, eq, isNull, sql, type SQL } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "@takemetothefair/db-schema";
 import { containsCI } from "@takemetothefair/db-schema";
+import { mergeProductsJson, routeVendorCategoriesForWrite, sameVendorType } from "./vendor-type";
 import {
   appendSlugSegment,
   createSlug,
@@ -31,6 +32,7 @@ import {
   normalizeVendorName,
   VENDOR_FORM_WORDS,
   type Slug,
+  buildPlaceholderEmail,
 } from "@takemetothefair/utils";
 import {
   SITE_URL,
@@ -76,9 +78,24 @@ export interface CreateOrLinkVendorInput {
   eventId: string;
   businessName: string;
   type?: string | null;
+  /** OPE-1164 — the three category axes; applied on create, like `type`. */
+  sellsCategory?: string | null;
+  businessSector?: string | null;
+  vendorIdentity?: string | null;
   status?: EventVendorStatus;
   description?: string | null;
   products?: string[] | null;
+  /**
+   * OPE-1094 — canonical, and preferred over `location`.
+   *
+   * `location` is a single "City, ST" string split on its LAST comma, so a
+   * value with no comma sets `city` and leaves `state` NULL without a word.
+   * `state` is what every by-state browse page filters on, and this writer
+   * created 4,637 of the 5,626 stateless vendors in prod (82%) — each one
+   * absent from those pages, each call reporting success.
+   */
+  city?: string | null;
+  state?: string | null;
   location?: string | null;
   website?: string | null;
   contactEmail?: string | null;
@@ -127,6 +144,16 @@ export interface CreateOrLinkVendorSuccess {
   /** True when the link is in a public status — the adapter decides whether to
    *  ping IndexNow for the event. */
   linkIsPublic: boolean;
+  /**
+   * OPE-1094 — the created vendor's stored `state`, read back from the row.
+   *
+   * null on a create means the vendor will not appear on ANY by-state browse
+   * page, which is the defect this exists to surface: 4,637 rows reached that
+   * condition and every call said success. Undefined when nothing was created
+   * (the match branch did not write these columns).
+   */
+  createdState?: string | null;
+  createdCity?: string | null;
 }
 
 export interface CreateOrLinkVendorFailure {
@@ -478,7 +505,20 @@ export async function createOrLinkVendor(
   deps: CreateOrLinkVendorDeps
 ): Promise<CreateOrLinkVendorResult> {
   const businessName = sanitizeProse(input.businessName ?? "");
-  const vendorType = input.type != null ? sanitizeProse(input.type) : null;
+  // OPE-1113 — resolve to the existing spelling of the same category, so a
+  // roster that writes "crafts " stores "Crafts" rather than a new variant.
+  //
+  // OPE-1164 — a DESCRIPTIVE type ("hand-turned wooden bowls, cutting boards")
+  // that matches no existing category goes to `products`, not vendor_type, so
+  // it never becomes a new category value. Same for the three axis fields.
+  const clean = (v: string | null | undefined) => (v != null ? sanitizeProse(v) : undefined);
+  const routed = await routeVendorCategoriesForWrite(db, {
+    vendorType: clean(input.type),
+    sellsCategory: clean(input.sellsCategory),
+    businessSector: clean(input.businessSector),
+    vendorIdentity: clean(input.vendorIdentity),
+  });
+  const vendorType = routed.values.vendorType ?? null;
   const description = input.description != null ? sanitizeProse(input.description) : null;
   const productsClean = Array.isArray(input.products)
     ? input.products.map((p) => sanitizeProse(p))
@@ -549,7 +589,9 @@ export async function createOrLinkVendor(
   // drain or ignore the queue. `vendor_enrichment_candidates` already carries a
   // partial unique on (vendor, field) WHERE decision='pending', so the fiftieth
   // drain to meet Cutco does not create a fiftieth row.
-  if (matched && vendorType && matched.row.vendorType !== vendorType) {
+  // OPE-1113 — a case- or plural-only difference is the same category, not a
+  // disagreement. "Fine Craft" vs "Craft" still differs and is still staged.
+  if (matched && vendorType && !sameVendorType(matched.row.vendorType, vendorType)) {
     try {
       await db
         .insert(vendorEnrichmentCandidates)
@@ -581,6 +623,8 @@ export async function createOrLinkVendor(
   let vendorId: string;
   let vendorSlug: Slug;
   let wasCreated = false;
+  /** OPE-1094 — what the create branch actually stored, for the result. */
+  let createdLoc: { city: string | null; state: string | null } = { city: null, state: null };
   const matchedExisting = matched
     ? { name: matched.row.businessName, similarity_score: matched.score }
     : null;
@@ -614,7 +658,10 @@ export async function createOrLinkVendor(
       }
     }
 
-    const placeholderEmail = `pending+${finalSlug}@meetmeatthefair.com`;
+    // OPE-835 — the third construction site. The filed ticket named only
+    // the promoter one; a fix wired there alone would have left this and
+    // the vendor site in admin.ts still minting invalid addresses.
+    const placeholderEmail = buildPlaceholderEmail("pending+", finalSlug);
     const userId = crypto.randomUUID();
     await db.insert(users).values({
       id: userId,
@@ -640,7 +687,15 @@ export async function createOrLinkVendor(
       role: "VENDOR",
     });
 
-    const loc = input.location ? parseLocation(input.location) : { city: null, state: null };
+    // OPE-1094 — canonical city/state win; `location` remains as the alias so
+    // existing callers keep working. Resolved here rather than at the adapter
+    // so every runtime calling the core gets the same precedence.
+    const aliasLoc = input.location ? parseLocation(input.location) : { city: null, state: null };
+    const loc = {
+      city: input.city ?? aliasLoc.city,
+      state: input.state ?? aliasLoc.state,
+    };
+    createdLoc = loc;
 
     vendorId = crypto.randomUUID();
     await db.insert(vendors).values({
@@ -649,8 +704,14 @@ export async function createOrLinkVendor(
       businessName,
       slug: finalSlug,
       vendorType,
+      sellsCategory: routed.values.sellsCategory ?? null,
+      businessSector: routed.values.businessSector ?? null,
+      vendorIdentity: routed.values.vendorIdentity ?? null,
       description,
-      products: productsClean ? JSON.stringify(productsClean) : "[]",
+      products: mergeProductsJson(
+        productsClean ? JSON.stringify(productsClean) : "[]",
+        routed.productsToAdd
+      ),
       website: input.website ?? null,
       contactEmail: input.contactEmail ?? null,
       contactPhone: input.contactPhone ?? null,
@@ -800,5 +861,27 @@ export async function createOrLinkVendor(
     statusChanged,
     matchedExisting,
     linkIsPublic: (wasLinked || statusChanged) && PUBLIC_VENDOR_SET.has(status),
+    // OPE-1094 — only meaningful on a create; the match branch leaves the
+    // existing row's location alone (see the scope-3 note on the ticket).
+    ...(wasCreated && { createdCity: createdLoc.city, createdState: createdLoc.state }),
   };
 }
+
+export {
+  CATEGORY_MAX_CHARS,
+  CATEGORY_MAX_WORDS,
+  isDescriptiveVendorType,
+  mergeProductsJson,
+  routeVendorTypeForWrite,
+  routeCategoryForWrite,
+  routeVendorCategoriesForWrite,
+  resolveCategoryForWrite,
+  type RoutedVendorType,
+  type VendorCategoryColumn,
+  VENDOR_TYPE_ALIASES,
+  pickVendorTypeSpelling,
+  resolveVendorTypeForWrite,
+  sameVendorType,
+  vendorTypeFoldKey,
+  vendorTypeKey,
+} from "./vendor-type";

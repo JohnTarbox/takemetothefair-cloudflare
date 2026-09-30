@@ -3,14 +3,12 @@ import { NextResponse } from "next/server";
 import { isAuthorized } from "@/lib/api-auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { refreshIssues } from "@/lib/site-health";
-import type { BingEnv } from "@/lib/bing-webmaster";
-import type { ScEnv } from "@/lib/search-console";
 
 export async function POST(request: Request) {
   if (!(await isAuthorized(request))) {
     return NextResponse.json({ success: false, error: "unauthorized" }, { status: 401 });
   }
-  const env = getCloudflareEnv() as unknown as BingEnv & ScEnv;
+  const env = getCloudflareEnv();
   const db = getCloudflareDb();
   try {
     const stats = await refreshIssues(db, env, env);

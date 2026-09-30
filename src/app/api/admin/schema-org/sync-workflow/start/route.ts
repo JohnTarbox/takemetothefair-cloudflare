@@ -120,7 +120,7 @@ export async function POST(request: NextRequest) {
   // We HTTP-fetch the MCP Worker, which has the binding and exposes a
   // matching endpoint at /api/admin/workflows/schema-org-sync/start.
   // Same X-Internal-Key auth pattern the cron sweeps + email handler use.
-  const cfEnv = getCloudflareEnv() as unknown as { INTERNAL_API_KEY?: string };
+  const cfEnv = getCloudflareEnv();
   if (!cfEnv.INTERNAL_API_KEY) {
     return NextResponse.json(
       { error: "internal_misconfigured", message: "INTERNAL_API_KEY missing on Pages env" },

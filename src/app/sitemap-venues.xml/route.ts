@@ -1,8 +1,8 @@
 export const dynamic = "force-dynamic";
 import { getSitemapTypeLastMod } from "@/lib/sitemap-lastmod";
-import { eq } from "drizzle-orm";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { venues } from "@/lib/db/schema";
+import { indexableVenueWhere } from "@/lib/venues/venue-history-public";
 import {
   SITEMAP_BASE_URL,
   safeLastMod,
@@ -17,7 +17,9 @@ async function buildVenueUrls(): Promise<SitemapUrl[]> {
   const rows = await db
     .select({ slug: venues.slug, updatedAt: venues.updatedAt })
     .from(venues)
-    .where(eq(venues.status, "ACTIVE"));
+    // OPE-1181 — ACTIVE, plus FORMER venues with cited history: the same
+    // predicate the page's robots tag uses, so a listed URL is never noindex.
+    .where(indexableVenueWhere());
   return rows.map((v) => ({
     url: `${SITEMAP_BASE_URL}/venues/${v.slug}`,
     lastModified: safeLastMod(v.updatedAt),

@@ -11,6 +11,7 @@
  */
 
 import { timingSafeEqualString } from "./timing-safe-equal";
+import { openClaim, sealClaim } from "./unsubscribe-seal";
 
 const encoder = new TextEncoder();
 
@@ -81,7 +82,28 @@ export async function buildUnsubscribeUrl(
   secret: string,
   email: string
 ): Promise<string> {
-  const token = await computeUnsubscribeToken(secret, email);
-  const e = base64UrlEncode(normalizeEmail(email));
-  return `${publicHost.replace(/\/$/, "")}/unsubscribe/${e}/${token}`;
+  // OPE-864 — `/unsubscribe/v2/<sealed>`: the address is ENCRYPTED, not
+  // base64'd, so the link no longer hands the recipient's email to anyone who
+  // sees the URL. The legacy `/unsubscribe/<b64-email>/<hmac>` form still
+  // verifies (see the route) for every link already delivered.
+  const sealed = await sealClaim(secret, normalizeEmail(email));
+  return `${publicHost.replace(/\/$/, "")}/unsubscribe/${SEALED_SEGMENT}/${sealed}`;
+}
+
+/** The first path segment that marks a sealed (v2) link. Never a legacy b64 email (≥ 8 chars). */
+export const SEALED_SEGMENT = "v2";
+
+/** The address inside a sealed link, or null if it is forged, truncated or not an email. */
+export async function openUnsubscribeEmail(secret: string, sealed: string): Promise<string | null> {
+  const claim = await openClaim(secret, sealed);
+  return claim && claim.includes("@") ? claim : null;
+}
+
+/** `verify` for a sealed link: the seal must open, under this secret, to this address. */
+export async function verifySealedUnsubscribe(
+  secret: string,
+  email: string,
+  sealed: string
+): Promise<boolean> {
+  return (await openUnsubscribeEmail(secret, sealed)) === normalizeEmail(email);
 }

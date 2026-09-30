@@ -40,7 +40,7 @@ import {
   type SeriesGroup,
 } from "@/lib/series/group-events";
 import { selectCommittableGroups } from "@/lib/series/commit-selection";
-import { chunkedInArray } from "@takemetothefair/utils";
+import { chunkedInArray, chunkIds } from "@takemetothefair/utils";
 
 // EH3 — non-public statuses are NOT occurrences and must be excluded from the
 // backfill grouping. Counting a REJECTED duplicate as a group member created
@@ -197,7 +197,7 @@ async function commitBackfill(
   db: ReturnType<typeof getCloudflareDb>,
   body: { confirm_series_slugs?: string[] }
 ): Promise<NextResponse> {
-  const env = getCloudflareEnv() as unknown as { EH3_P1_BACKFILL_ENABLED?: string };
+  const env = getCloudflareEnv();
   if (env.EH3_P1_BACKFILL_ENABLED !== "true") {
     return NextResponse.json(
       {
@@ -293,7 +293,10 @@ async function commitBackfill(
       })
     );
     const memberIds = g.members.map((m) => m.id);
-    phaseA.push(db.update(events).set({ seriesId }).where(inArray(events.id, memberIds)));
+    // OPE-1029 — chunked: a weekly market series can exceed D1's 100-param cap.
+    for (const batch of chunkIds(memberIds)) {
+      phaseA.push(db.update(events).set({ seriesId }).where(inArray(events.id, batch)));
+    }
     manifest.push({ seriesId, canonicalSlug: g.canonicalSlug, memberIds });
   }
   await runBatched(db, phaseA);

@@ -93,8 +93,15 @@ describe("the kind gate is as narrow as it claims", () => {
     }
   });
 
-  it("exposes exactly the two kinds the measured rows produced", () => {
-    expect([...THREAD_REPLY_OVERRIDABLE_KINDS].sort()).toEqual(["correction-ack", "support-ack"]);
+  it("exposes exactly the kinds that claim 'not read by a person yet'", () => {
+    // The two measured kinds, plus OPE-1134's two new acks, which make the same
+    // claim and are just as false mid-thread.
+    expect([...THREAD_REPLY_OVERRIDABLE_KINDS].sort()).toEqual([
+      "claim-request-ack",
+      "correction-ack",
+      "support-ack",
+      "vendor-inquiry-ack",
+    ]);
   });
 
   it("does nothing when there is no reply at all", () => {

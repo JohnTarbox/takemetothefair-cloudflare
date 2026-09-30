@@ -32,6 +32,7 @@
  */
 
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
+import { mainAppBindingRequest } from "../main-app-fetch.js";
 import { NonRetryableError } from "cloudflare:workflows";
 import { logError } from "../logger.js";
 
@@ -102,7 +103,7 @@ export class SchemaOrgSyncWorkflow extends WorkflowEntrypoint<Env, SchemaOrgSync
             };
 
             const response = this.env.MAIN_APP
-              ? await this.env.MAIN_APP.fetch(new Request(url, init))
+              ? await this.env.MAIN_APP.fetch(mainAppBindingRequest(url, init))
               : await fetch(url, init);
 
             if (response.status >= 500) {

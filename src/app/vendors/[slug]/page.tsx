@@ -60,6 +60,7 @@ import {
   canonicalParentSlugFor,
   chunkedInArray,
   displayVendorName,
+  galleryDisplayText,
   type DisplayableParent,
   type ParentDisplayInput,
   type VendorDisplayInput,
@@ -873,7 +874,11 @@ export default async function VendorDetailPage({ params }: Props) {
   // Until PR #740's table is read by something, it is write-only: prod held
   // 0 rows and no code selected from it.
   const galleryPhotos = await getVendorGallery(getCloudflareDb(), vendor.id, vendor.galleryImages);
-  const galleryImages: GalleryImage[] = galleryPhotos.map((p) => ({
+  // OPE-1171 — decoded captions and a never-blank alt, for display only.
+  const galleryImages: GalleryImage[] = galleryDisplayText(
+    galleryPhotos,
+    resolveDisplayName(vendor)
+  ).map((p) => ({
     url: p.url,
     alt: p.alt,
     caption: p.caption,
@@ -913,7 +918,11 @@ export default async function VendorDetailPage({ params }: Props) {
         paymentMethods={paymentMethods}
         socialLinks={vendor.socialLinks}
         products={products}
-        galleryImageUrls={isEnhanced ? galleryImages.map((g) => g.url) : undefined}
+        /* OPE-1111 — the SECOND place the tier gated the gallery. The visible
+           render and the JSON-LD are parallel paths off the same array, so
+           ungating only the render would show a photo to a person and hide it
+           from every crawler. Both move together or neither does. */
+        galleryImageUrls={galleryImages.length > 0 ? galleryImages.map((g) => g.url) : undefined}
         /* EH2.3 — JSON-LD parentOrganization for LOCAL_OFFICE rows, pointing
            at the brand hub. Pairs with the brand hub's subOrganization
            below so search engines see the brand → office relationship. */
@@ -1125,7 +1134,18 @@ export default async function VendorDetailPage({ params }: Props) {
               />
             )}
 
-            {isEnhanced && galleryImages.length > 0 && (
+            {/* OPE-1111 — NOT gated on `isEnhanced`. That gate shipped with the
+                tier and suppressed every vendor photo ever uploaded: on
+                2026-09-22 prod held 72 photos across 26 vendors and ALL 26 were
+                non-enhanced, against 2 enhanced vendors site-wide (of 7,331) who
+                had none. So the gate's measured pass rate over its whole life
+                was zero, while the upload path stayed open to any claimed
+                vendor — the site invited photos it would never show, and the
+                first report came from the maker who uploaded one, not from us.
+                John removed the gate on 2026-09-22; `vendor-guide` §6 no longer
+                sells the gallery as an Enhanced perk. Enhanced keeps the larger
+                logo, Verified badge, contact form and Featured placement. */}
+            {galleryImages.length > 0 && (
               <VendorGallery images={galleryImages} vendorName={resolvedName} />
             )}
 

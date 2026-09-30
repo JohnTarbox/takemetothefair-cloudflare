@@ -12,7 +12,12 @@
  * writes.
  */
 import type { ExtractionMethod } from "./types.js";
-import { extractVendorContact } from "./extract.js";
+import {
+  detectSitePlatforms,
+  extractVendorContact,
+  isPlatformPlaceholderHandle,
+  socialHandleOf,
+} from "./extract.js";
 
 /** Extraction methods a promoter signal can carry (vendor set + og:image). */
 export type PromoterExtractionMethod = ExtractionMethod | "og-image";
@@ -86,11 +91,28 @@ export function extractPromoterSignals(html: string, sourceUrl: string): Promote
     };
   }
   if (v.social) {
-    out.socialLinks = {
-      value: JSON.stringify(v.social.value),
-      method: v.social.method,
-      confidence: v.social.confidence,
-    };
+    // OPE-963 — drop the WEBSITE PLATFORM's own accounts, per link. The vendor
+    // lane has done this since OPE-504 (safety-rules.ts); the promoter lane read
+    // the same shared extraction and never applied it, so The Weston Craft Show
+    // auto-applied Squarespace's Instagram, Facebook and Twitter to a live page.
+    // Two tests: a known builder handle, and a handle equal to the builder the
+    // page's own <meta name="generator"> names.
+    const platforms = new Set(detectSitePlatforms(html));
+    const kept: Record<string, string> = {};
+    for (const [network, url] of Object.entries(v.social.value)) {
+      const handle = socialHandleOf(url);
+      if (isPlatformPlaceholderHandle(url)) continue;
+      if (handle !== null && platforms.has(handle)) continue;
+      kept[network] = url;
+    }
+    // Every link was platform residue: there is no candidate.
+    if (Object.keys(kept).length > 0) {
+      out.socialLinks = {
+        value: JSON.stringify(kept),
+        method: v.social.method,
+        confidence: v.social.confidence,
+      };
+    }
   }
   if (v.email) {
     out.contactEmail = {

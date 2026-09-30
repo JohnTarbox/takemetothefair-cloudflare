@@ -170,14 +170,119 @@ export async function applyCanSpamFooter(
     opts.recipientEmail
   );
 
-  const footerText = `\n\n--\nYou're receiving this because ${opts.reasonLine}\nUnsubscribe: ${unsubscribeUrl}\nMeet Me at the Fair · ${mailingAddress}`;
-  const footerHtml = `<hr style="margin-top:24px;border:none;border-top:1px solid #ddd"><p style="font-size:12px;color:#666;line-height:1.5">You're receiving this because ${escapeHtml(opts.reasonLine)}<br><a href="${escapeHtml(unsubscribeUrl)}">Unsubscribe</a> · Meet Me at the Fair · ${escapeHtml(mailingAddress)}</p>`;
+  // OPE-867 — does the rendered body ALREADY carry a compliant footer?
+  //
+  // The newsletter layout emits its own consent line and its own working
+  // unsubscribe link. When a pre-rendered newsletter is passed through this
+  // wrapper (which is what `send_test_email` does), appending a second one
+  // shipped TWO "You're receiving this because…" statements and TWO Unsubscribe
+  // links in one message — and at most one of two contradictory consent claims
+  // can be true.
+  //
+  // Detected on the unsubscribe ROUTE rather than on any prose, because the
+  // prose is what varies. Both live unsubscribe surfaces are checked.
+  //
+  // OPE-867 (bounce) — a caller-supplied body can carry a DEAD Unsubscribe
+  // anchor (`href="#"`: the vendor-digest HTML passed through send_test_email
+  // on 09-14 and 09-21). It matched neither route, so the body was judged
+  // non-compliant and a SECOND consent claim was appended beside the dead link.
+  // Wire the dead anchor to the real URL first; the body is then compliant.
+  const html = wireDeadUnsubscribeAnchors(rendered.html, unsubscribeUrl);
+  const alreadyCompliant =
+    html.includes("/api/newsletter/unsubscribe") || html.includes("/unsubscribe/");
+
+  // The text part must say what the HTML says: its consent line, if the HTML
+  // has one the text lacks, and a working link, if the text has none.
+  const bodyReason = consentLineOf(html);
+  const textLacksReason = bodyReason !== null && !/receiving this because/i.test(rendered.text);
+  const textLacksLink = !/\/unsubscribe/.test(rendered.text);
+
+  // When the body is already compliant we add CONTEXT, not a second consent
+  // claim and not a second link. A test send still discloses that it is a test.
+  const reasonText = alreadyCompliant
+    ? `\n\n--\n${textLacksReason ? `You're receiving this because ${bodyReason}\n` : ""}${
+        textLacksLink ? `Unsubscribe: ${unsubscribeUrl}\n` : ""
+      }Note: ${opts.reasonLine}`
+    : `\n\n--\nYou're receiving this because ${opts.reasonLine}\nUnsubscribe: ${unsubscribeUrl}\nMeet Me at the Fair · ${mailingAddress}`;
+
+  const footerHtml = alreadyCompliant
+    ? `<p style="font-size:12px;color:#666;line-height:1.5">Note: ${escapeHtml(opts.reasonLine)}</p>`
+    : `<hr style="margin-top:24px;border:none;border-top:1px solid #ddd"><p style="font-size:12px;color:#666;line-height:1.5">You're receiving this because ${escapeHtml(opts.reasonLine)}<br><a href="${escapeHtml(unsubscribeUrl)}">Unsubscribe</a> · Meet Me at the Fair · ${escapeHtml(mailingAddress)}</p>`;
 
   return {
     subject: rendered.subject,
-    text: rendered.text + footerText,
-    html: rendered.html + footerHtml,
+    text: rendered.text + reasonText,
+    html: insertBeforeBodyEnd(html, footerHtml),
   };
+}
+
+/** An `<a>` whose visible text is "Unsubscribe" but whose href goes nowhere. */
+const DEAD_UNSUB_ANCHOR =
+  /<a\b([^>]*?)\bhref\s*=\s*(["'])(?:#|\s*|\{\{[^}]*\}\}|\[[^\]]*\]|%[A-Z_]+%)\2([^>]*)>(\s*unsubscribe\s*)<\/a>/gi;
+
+/**
+ * OPE-867 — point every dead "Unsubscribe" anchor (`#`, empty, or an unfilled
+ * `{{…}}` / `[…]` / `%…%` placeholder) at the real one-click URL. Exported for
+ * tests. Live anchors are untouched.
+ */
+export function wireDeadUnsubscribeAnchors(html: string, unsubscribeUrl: string): string {
+  return html.replace(
+    DEAD_UNSUB_ANCHOR,
+    (_m, before: string, q: string, after: string, label: string) =>
+      `<a${before}href=${q}${escapeHtml(unsubscribeUrl)}${q}${after}>${label}</a>`
+  );
+}
+
+/** The body's own "You're receiving this because …" reason, as plain text, or null. */
+export function consentLineOf(html: string): string | null {
+  const m = html.match(/You(?:'|&#39;|&#x27;|’|&rsquo;)re receiving this because\s+([^<]+)/i);
+  if (!m) return null;
+  return m[1]
+    .replace(/&amp;/g, "&")
+    .replace(/&#39;|&#x27;|&rsquo;/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * OPE-867 — put `fragment` INSIDE the document, immediately before `</body>`.
+ *
+ * This used to be `rendered.html + footerHtml`. `renderEmailBody` returns a
+ * COMPLETE document (src/lib/email/templates.ts closes with `</html>`), so the
+ * concatenation emitted the footer AFTER the closing tag. Content after
+ * `</html>` is undefined behaviour across mail clients: most render it, some do
+ * not, so what any given recipient saw is not reconstructable from the bytes we
+ * sent — and the CAN-SPAM footer is the one part of the message that must be
+ * there.
+ *
+ * String insertion rather than parsing: this runs per-recipient in a Worker,
+ * and an HTML parser is a large dependency for finding one closing tag. The
+ * trade is that it must FAIL LOUDLY when the tag is absent, which is the whole
+ * point of the throw below.
+ *
+ * ⚠️ Do NOT "fall back to appending" when `</body>` is missing. That is the
+ * defect this function replaces, and a silent fallback would restore it for
+ * exactly the inputs nobody tested. A body with no `</body>` is a caller bug
+ * and should surface as one.
+ *
+ * A fragment (no `</body>` at all, e.g. a free-form plain body rendered to
+ * simple markup) is handled explicitly rather than by accident: appending is
+ * correct there, because there is no document to be outside of.
+ */
+export function insertBeforeBodyEnd(html: string, fragment: string): string {
+  const idx = html.toLowerCase().lastIndexOf("</body>");
+  if (idx !== -1) return html.slice(0, idx) + fragment + html.slice(idx);
+
+  // No </body>. Only legitimate when there is no </html> either — i.e. this is
+  // a fragment, not a document. A document that closes </html> without </body>
+  // is malformed, and appending after it is the bug we are removing.
+  if (html.toLowerCase().includes("</html>")) {
+    throw new Error(
+      "applyCanSpamFooter: HTML closes </html> with no </body> — refusing to emit the " +
+        "CAN-SPAM footer outside the document (OPE-867)"
+    );
+  }
+  return html + fragment;
 }
 
 /**

@@ -95,11 +95,29 @@ export const POST = withAuthorized(async ({ request, db, userId }) => {
       statusCode: isTimeout ? 503 : 500,
     });
 
+    // OPE-793 — translate a D1 UNIQUE violation instead of echoing it.
+    //
+    // `error.message` was handed to the caller verbatim, so an operator running
+    // merge_events saw `D1_ERROR: UNIQUE constraint failed:
+    // event_series.canonical_slug: SQLITE_CONSTRAINT (extended:
+    // SQLITE_CONSTRAINT_UNIQUE)` and had no way to know what to do about it.
+    // Same leak shape as OPE-573's raw `vendors.slug` traceback on the signup
+    // path: a constraint name is a schema detail, not an instruction.
+    //
+    // The collision this names is fixed above; the translation stays because a
+    // constraint we have not met yet will leak the same way.
+    const constraintMatch =
+      error instanceof Error
+        ? /UNIQUE constraint failed: ([a-z_]+)\.([a-z_]+)/i.exec(error.message)
+        : null;
+
     const userMessage = isTimeout
       ? "The merge operation timed out. This can happen with records that have many relationships. Please try again."
-      : error instanceof Error
-        ? error.message
-        : "Failed to execute merge";
+      : constraintMatch
+        ? `The merge could not complete: another row already holds the same \`${constraintMatch[2]}\` in \`${constraintMatch[1]}\`. Nothing was changed. This is a bug in the merge, not something you can fix by retrying — report it with both event ids.`
+        : error instanceof Error
+          ? error.message
+          : "Failed to execute merge";
 
     return NextResponse.json({ error: userMessage, isTimeout }, { status: isTimeout ? 503 : 500 });
   }

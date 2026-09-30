@@ -15,8 +15,38 @@ import {
   BLOG_POST_STATUS,
   INDOOR_OUTDOOR,
   EVENT_SCALE,
+  EVENT_CATEGORIES,
+  invalidEventCategories,
 } from "@takemetothefair/constants";
-import { sanitizeProse, decodeHtmlEntities, coerceVenueNameAtIngest } from "@takemetothefair/utils";
+import {
+  sanitizeProse,
+  decodeHtmlEntities,
+  coerceVenueNameAtIngest,
+  checkImageUrl,
+} from "@takemetothefair/utils";
+
+/**
+ * OPE-1058 — `events.categories`, validated at the schema boundary.
+ *
+ * An admin or promoter naming a category is an EXPLICIT EDIT, so an off-list
+ * value is REJECTED and named, rather than dropped. These routes used to accept
+ * `z.array(z.string())`: every value a human typed was stored verbatim, which is
+ * how "Craft Fsir" and ~65 other off-list values reached prod while
+ * `suggest_event` was refusing the same strings.
+ *
+ * Untrusted ingest keeps drop-and-warn — that lives in
+ * `partitionEventCategories`, which this shares its allow-list with.
+ */
+const eventCategoriesSchema = z.array(z.string()).superRefine((values, ctx) => {
+  const invalid = invalidEventCategories(values);
+  if (invalid.length === 0) return;
+  ctx.addIssue({
+    code: z.ZodIssueCode.custom,
+    message:
+      `Unknown categor${invalid.length === 1 ? "y" : "ies"}: ${invalid.join(", ")}. ` +
+      `Allowed: ${EVENT_CATEGORIES.join(", ")}.`,
+  });
+});
 import { parseDateOnly } from "@takemetothefair/datetime";
 
 /** Length and format limits used across input validators. App-only
@@ -81,6 +111,30 @@ const urlSchema = z
   .optional()
   .nullable()
   .or(z.literal(""));
+/**
+ * OPE-1112 — a URL that must point at an IMAGE, not merely be well-formed.
+ *
+ * `urlSchema` accepts `https://www.facebook.com/profile.php?id=…` because that
+ * is a perfectly valid URL. It was also, on 2026-09-22, the contents of a
+ * claimed vendor's `logo_url`, rendering as a blank square on her public page.
+ * Eight prod rows held a page link in an image column, every one typed in by a
+ * real person through a field that asked for a "Logo URL" and offered no way
+ * to upload a file.
+ *
+ * The predicate is shared with the client form and `update_vendor` — see
+ * `checkImageUrl` in @takemetothefair/utils — so the rule cannot be enforced
+ * on one writer and not the others. Empty stays valid: clearing a logo is a
+ * legitimate edit, and the repair for those eight rows is to null them.
+ */
+const imageUrlSchema = urlSchema.superRefine((v, ctx) => {
+  const verdict = checkImageUrl(v);
+  // superRefine rather than refine so the vendor sees WHICH problem she has.
+  // "That link points to a Facebook page, not an image file" tells her what to
+  // do differently; a generic "invalid logo URL" is the message she already
+  // effectively received by seeing a blank square.
+  if (!verdict.ok) ctx.addIssue({ code: "custom", message: verdict.reason });
+});
+
 const emailSchema = z
   .string()
   .email()
@@ -128,8 +182,10 @@ const _venueCreateBaseSchema = z.object({
   googleTypes: z.string().optional().nullable(),
   accessibility: z.string().optional().nullable(),
   parking: z.string().optional().nullable(),
+  // OPE-1180 — FORMER round-trips through the admin form (read-only there);
+  // the PATCH route refuses to SET it and never changes a FORMER venue's status.
   status: z
-    .enum([VENUE_STATUS.ACTIVE, VENUE_STATUS.INACTIVE])
+    .enum([VENUE_STATUS.ACTIVE, VENUE_STATUS.INACTIVE, VENUE_STATUS.FORMER])
     .optional()
     .default(VENUE_STATUS.ACTIVE),
 });
@@ -170,10 +226,17 @@ export const vendorCreateSchema = z.object({
   businessName: nameSchema,
   description: descriptionSchema,
   vendorType: z.string().max(100).optional().nullable(),
+  // OPE-1164 — the three category axes. A long description in any of them is
+  // moved to products by the route, never stored as a category.
+  sellsCategory: z.string().max(100).optional().nullable(),
+  businessSector: z.string().max(100).optional().nullable(),
+  vendorIdentity: z.string().max(100).optional().nullable(),
   products: z.array(z.string()).optional().default([]),
   website: urlSchema,
   socialLinks: z.string().optional().nullable(), // JSON string
-  logoUrl: urlSchema,
+  // OPE-1112 — see imageUrlSchema. Admin create/update only (vendorUpdateSchema
+  // derives from this), so a human sees the rejection and can fix it.
+  logoUrl: imageUrlSchema,
   verified: z.boolean().optional().default(false),
   commercial: z.boolean().optional().default(false),
   // IMG1 §1b Phase 1 — per-image focal point (0–1). Applies to logo_url.
@@ -345,7 +408,7 @@ const eventBaseSchema = z.object({
   datesConfirmed: z.boolean().optional().default(true),
   discontinuousDates: z.boolean().optional().default(false),
   recurrenceRule: z.string().optional().nullable(),
-  categories: z.array(z.string()).optional().default([]),
+  categories: eventCategoriesSchema.optional().default([]),
   tags: z.array(z.string()).optional().default([]),
   ticketUrl: urlSchema,
   ticketPriceMin: z.number().min(0).optional().nullable(),
@@ -580,9 +643,16 @@ export const vendorProfileUpdateSchema = z.object({
   businessName: nameSchema.optional(),
   description: descriptionSchema,
   vendorType: z.string().max(100).optional().nullable(),
+  // OPE-1164 — the three category axes. A long description in any of them is
+  // moved to products by the route, never stored as a category.
+  sellsCategory: z.string().max(100).optional().nullable(),
+  businessSector: z.string().max(100).optional().nullable(),
+  vendorIdentity: z.string().max(100).optional().nullable(),
   products: z.array(z.string()).optional(),
   website: urlSchema,
-  logoUrl: urlSchema,
+  // OPE-1112 — an image column takes an image URL. `website` above stays a
+  // plain urlSchema on purpose: a vendor's website SHOULD be a page.
+  logoUrl: imageUrlSchema,
   contactName: z.string().max(VALIDATION.NAME_MAX_LENGTH).optional().nullable(),
   contactEmail: emailSchema,
   contactPhone: phoneSchema,
@@ -658,7 +728,7 @@ export const promoterEventCreateSchema = z
     startDate: z.string().datetime().optional().nullable(),
     endDate: z.string().datetime().optional().nullable(),
     discontinuousDates: z.boolean().optional().default(false),
-    categories: z.array(z.string()).optional().default([]),
+    categories: eventCategoriesSchema.optional().default([]),
     tags: z.array(z.string()).optional().default([]),
     ticketUrl: urlSchema,
     ticketPriceMin: z.number().min(0).optional().nullable(),
@@ -805,6 +875,9 @@ export const blogPostUpdateSchema = blogPostCreateSchema
     categories: z.array(z.string()).optional(),
     faqs: z.array(blogFaqItemSchema).optional(),
     status: z.enum([BLOG_POST_STATUS.DRAFT, BLOG_POST_STATUS.PUBLISHED]).optional(),
+    // OPE-1202 — the only way to change a PUBLISHED post's URL. A title change
+    // alone keeps a published slug (drafts still regenerate from the title).
+    newSlug: z.string().min(1).max(200).optional(),
     // K43 / A3.1 — escape hatch for the publish-time broken-link gate. When a
     // PUBLISHED save introduces an internal /events,/vendors,/venues,/blog link
     // that doesn't resolve, the PUT is rejected 422 unless this is true. Lets a

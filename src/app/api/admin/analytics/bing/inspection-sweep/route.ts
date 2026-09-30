@@ -3,7 +3,6 @@ import { NextResponse } from "next/server";
 import { isAuthorized } from "@/lib/api-auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { runBingSweep } from "@/lib/bing-inspection-sweep";
-import type { BingEnv } from "@/lib/bing-webmaster";
 
 export async function POST(request: Request) {
   if (!(await isAuthorized(request))) {
@@ -15,7 +14,7 @@ export async function POST(request: Request) {
   // to 100.
   const batchSize = Math.min(parseInt(url.searchParams.get("batchSize") || "10", 10), 100);
 
-  const env = getCloudflareEnv() as unknown as BingEnv;
+  const env = getCloudflareEnv();
   const db = getCloudflareDb();
   try {
     const stats = await runBingSweep(db, env, { batchSize });

@@ -9,6 +9,7 @@
  * with `asOccurrence`, instead of falling back to the series-landing metadata.
  * The page body (`EventDetailPage`) imports `getEvent` from here unchanged.
  */
+import { stripPrivateDayFields } from "@/lib/events/public-day-fields";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { eq, and, ne, sql, isNull, inArray } from "drizzle-orm";
@@ -35,8 +36,19 @@ import { buildEventTitle, buildEventMetaDescription } from "@/lib/seo-utils";
 import { cdnImage, OG_EVENT } from "@/lib/cdn-image";
 import { getSeriesLanding } from "@/lib/series/get-series-landing";
 import { chunkedInArray } from "@takemetothefair/utils";
+import { withD1ReadLogged } from "@/lib/db/d1-resilience";
 
-export async function getEvent(slug: string) {
+/**
+ * OPE-790 — one jittered retry on a Cloudflare-side D1 blip before the failure
+ * reaches the user. Wraps the fetcher rather than its body so every call site
+ * inherits it, and so the diagnostic catch inside stays exactly as OPE-548 left
+ * it. Only a PLATFORM fault is retried; a query defect fails the same way twice.
+ */
+export function getEvent(slug: string) {
+  return withD1ReadLogged("app/events/[slug]/page.tsx:getEvent", () => getEventOnce(slug));
+}
+
+async function getEventOnce(slug: string) {
   const db = getCloudflareDb();
 
   try {
@@ -116,11 +128,20 @@ export async function getEvent(slug: string) {
     const parentById = new Map(parentRows.map((p) => [p.id, p]));
 
     // Get event days (per-day schedule)
-    const eventDayResults = await db
-      .select()
-      .from(eventDays)
-      .where(eq(eventDays.eventId, eventData.events.id))
-      .orderBy(eventDays.date);
+    //
+    // OPE-1084 — `internal_notes` is a PRIVATE operator column (OPE-572:
+    // hours provenance, fetch dates, submitter details). These rows are handed
+    // to client components (DailyScheduleDisplay is "use client"), and every
+    // prop a client component receives is serialized into the page's RSC
+    // payload — so a full-row select shipped 309 private notes in page source.
+    // Nulled HERE, at the one loader, so no consumer can pass it on.
+    const eventDayResults = (
+      await db
+        .select()
+        .from(eventDays)
+        .where(eq(eventDays.eventId, eventData.events.id))
+        .orderBy(eventDays.date)
+    ).map(stripPrivateDayFields);
 
     // OPE-709 — application routes other than the commercial-vendor one.
     //

@@ -1,5 +1,6 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { fetchWithTimeout } from "@/lib/fetch-timeout";
+import { isDeployedEnvironment } from "@/lib/runtime-env";
 
 export interface TurnstileVerifyResult {
   success: boolean;
@@ -13,20 +14,6 @@ interface TurnstileResponse {
   "error-codes"?: string[];
   challenge_ts?: string;
   hostname?: string;
-}
-
-/**
- * Detect if running on Cloudflare Pages (production/preview)
- */
-function isCloudflarePages(): boolean {
-  try {
-    const { env } = getCloudflareContext();
-    return !!(env as unknown as Record<string, unknown>).CF_PAGES;
-  } catch {
-    // getCloudflareContext() throws outside the Cloudflare runtime (local
-    // `next build` / unit tests) — treat that as "not on Pages".
-    return false;
-  }
 }
 
 /**
@@ -72,7 +59,8 @@ export async function verifyTurnstileToken(
 
   if (!secretKey) {
     // In production (Cloudflare Pages), fail closed — missing secret key is a misconfiguration
-    const isProduction = isCloudflarePages();
+    // OPE-931 — one shared predicate; see src/lib/runtime-env.ts.
+    const isProduction = isDeployedEnvironment();
     if (isProduction) {
       console.error("[Turnstile] Secret key not configured in production — rejecting request");
       return { success: false, errorCodes: ["missing-input-secret"] };

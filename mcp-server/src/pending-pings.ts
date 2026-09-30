@@ -21,6 +21,7 @@
  */
 
 import { and, asc, eq, isNull, lt, sql } from "drizzle-orm";
+import { mainAppBindingRequest } from "./main-app-fetch.js";
 import { pendingSearchPings } from "./schema.js";
 import type { Db } from "./db.js";
 import { publicUrlFor } from "./helpers.js";
@@ -348,7 +349,7 @@ export async function submitIndexNowBatch(
 
   if (env.MAIN_APP) {
     const response = await env.MAIN_APP.fetch(
-      new Request("https://meetmeatthefair.com/api/internal/indexnow", {
+      mainAppBindingRequest("https://meetmeatthefair.com/api/internal/indexnow", {
         method: "POST",
         headers,
         body,

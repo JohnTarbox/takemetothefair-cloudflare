@@ -39,6 +39,12 @@ export function registerEventLifecycleTools(
       "CANCELLED → EventCancelled, MOVED_ONLINE → EventMovedOnline. OCCURRED and",
       "NO_SHOW are MMATF-specific past-event annotations with no schema.org",
       "equivalent.",
+      "",
+      "OPE-1099: OCCURRED → CANCELLED is permitted ONLY when the OCCURRED was",
+      "inferred by the end-date sweep (lifecycle_reason 'auto: end date passed'),",
+      "i.e. nobody observed the event happen. Use it when an organizer's own page",
+      "shows the event was cancelled, and put that evidence in `reason`. An",
+      "OCCURRED written by a person stays terminal.",
     ].join(" "),
     {
       event_id: z.string().min(1).describe("Event UUID."),
@@ -65,9 +71,31 @@ export function registerEventLifecycleTools(
         .datetime()
         .optional()
         .describe("ISO 8601. Required for RESCHEDULED; ignored otherwise."),
+      previous_start_date: z
+        .string()
+        .datetime()
+        .optional()
+        .describe(
+          "ISO 8601. RESCHEDULED/POSTPONED only: the date the event was moved FROM, when the row's " +
+            "start_date was already edited to the new date before this transition (otherwise the " +
+            "current start_date is recorded as previous, which is then the NEW date — OPE-1218/1219)."
+        ),
+      previous_end_date: z
+        .string()
+        .datetime()
+        .optional()
+        .describe("ISO 8601. Pairs with previous_start_date; defaults to it when omitted."),
     },
     async (params) => {
-      const { event_id, new_lifecycle, reason, new_start_date, new_end_date } = params;
+      const {
+        event_id,
+        new_lifecycle,
+        reason,
+        new_start_date,
+        new_end_date,
+        previous_start_date,
+        previous_end_date,
+      } = params;
       const decodedReason = reason ? decodeHtmlEntities(reason) : null;
       const to = new_lifecycle as EventLifecycle;
 
@@ -78,6 +106,8 @@ export function registerEventLifecycleTools(
           lifecycleStatus: events.lifecycleStatus,
           // OPE-487 — feeds the terminal-correction check below.
           lifecycleStatusChangedAt: events.lifecycleStatusChangedAt,
+          // OPE-1099 — tells a calendar-inferred OCCURRED from an observed one.
+          lifecycleReason: events.lifecycleReason,
           startDate: events.startDate,
           endDate: events.endDate,
           // OPE-450 — the keeper this row was rejected AGAINST, when a human
@@ -127,7 +157,10 @@ export function registerEventLifecycleTools(
       // state. Both conditions required.
       const check = validateLifecycleTransition(from, to, {
         lifecycleStatusChangedAt: current.lifecycleStatusChangedAt ?? null,
+        lifecycleReason: current.lifecycleReason ?? null,
         startDate: current.startDate ?? null,
+        // OPE-1218 — an inferred OCCURRED opens to RESCHEDULED only onto a future date.
+        newStartDate: to === "RESCHEDULED" && new_start_date ? new Date(new_start_date) : null,
       });
       if (!check.ok) {
         return {
@@ -171,17 +204,25 @@ export function registerEventLifecycleTools(
         previousEndDate?: Date | null;
         datesConfirmed?: boolean;
       } = {};
+      // OPE-1218 — an explicit previous pair wins over the row's current dates,
+      // for the row whose dates were already moved by update_event.
+      const prevStart = previous_start_date
+        ? new Date(previous_start_date)
+        : (current.startDate ?? null);
+      const prevEnd = previous_start_date
+        ? new Date(previous_end_date ?? previous_start_date)
+        : (current.endDate ?? null);
       if (to === "RESCHEDULED") {
         dateUpdate.startDate = new Date(new_start_date!);
         dateUpdate.endDate = new Date(new_end_date!);
-        dateUpdate.previousStartDate = current.startDate ?? null;
-        dateUpdate.previousEndDate = current.endDate ?? null;
+        dateUpdate.previousStartDate = prevStart;
+        dateUpdate.previousEndDate = prevEnd;
         dateUpdate.datesConfirmed = true;
       } else if (to === "POSTPONED") {
         dateUpdate.startDate = null;
         dateUpdate.endDate = null;
-        dateUpdate.previousStartDate = current.startDate ?? null;
-        dateUpdate.previousEndDate = current.endDate ?? null;
+        dateUpdate.previousStartDate = prevStart;
+        dateUpdate.previousEndDate = prevEnd;
         dateUpdate.datesConfirmed = false;
       }
 
@@ -192,6 +233,10 @@ export function registerEventLifecycleTools(
           lifecycleStatus: to,
           lifecycleStatusChangedAt: now,
           lifecycleReason: decodedReason,
+          // OPE-611 — a transition is also a check; stamp it so the TENTATIVE
+          // queue does not hand this row back as unopened work.
+          lifecycleLastCheckedAt: now,
+          lifecycleCheckNote: decodedReason,
           updatedAt: now,
           ...dateUpdate,
         })

@@ -1,3 +1,4 @@
+import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { apiTokens, vendors } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
@@ -55,12 +56,22 @@ export async function authenticateVendorToken(
   // logError — this is a hot-path background write; if D1 is degraded
   // we don't want to compound the problem by logging to D1 too. The
   // console log surfaces in `wrangler tail` for forensic diagnosis.
-  db.update(apiTokens)
+  //
+  // OPE-1019 — "fire and forget" still has to be REGISTERED on Workers, or the
+  // runtime may drop the write when the response is sent. Not awaited, so the
+  // auth path gains no D1 latency.
+  const touch = db
+    .update(apiTokens)
     .set({ lastUsedAt: new Date() })
     .where(eq(apiTokens.tokenHash, tokenHash))
     .catch((err) => {
       console.error("[API Token] Failed to update lastUsedAt:", err);
     });
+  try {
+    getCloudflareContext().ctx.waitUntil(touch);
+  } catch {
+    // Outside the Cloudflare runtime (unit tests, local dev) there is no ctx.
+  }
 
   // Verify the vendor belongs to this user
   const vendorResults = await db

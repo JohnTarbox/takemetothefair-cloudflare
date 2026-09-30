@@ -94,6 +94,8 @@ export const userRoles = sqliteTable(
     grantedBy: text("granted_by").references(() => users.id, { onDelete: "set null" }),
   },
   (t) => ({
+    // OPE-1121 phase 1 — FK child columns with no index; every parent delete/merge scanned these.
+    userRolesGrantedByIdx: index("idx_user_roles_granted_by").on(t.grantedBy),
     uniqueUserRole: uniqueIndex("user_roles_user_role_unique").on(t.userId, t.role),
     userIdIdx: index("idx_user_roles_user_id").on(t.userId),
     roleIdx: index("idx_user_roles_role").on(t.role),
@@ -158,6 +160,12 @@ export const venues = sqliteTable(
     contactPhone: text("contact_phone"),
     website: text("website"),
     description: text("description"),
+    // OPE-1061 (drizzle/0296) — the VENUE's own pet policy. Rendered on the
+    // venue page only, labelled as the venue's; never displayed as, merged
+    // into, or defaulted onto an event's answer.
+    petFriendly: text("pet_friendly", { enum: ["UNSET", "YES", "NO", "NOT_PUBLISHED"] })
+      .notNull()
+      .default("UNSET"),
     imageUrl: text("image_url"),
     googlePlaceId: text("google_place_id"),
     googleMapsUrl: text("google_maps_url"),
@@ -167,9 +175,30 @@ export const venues = sqliteTable(
     googleTypes: text("google_types"),
     accessibility: text("accessibility"),
     parking: text("parking"),
-    status: text("status", { enum: ["ACTIVE", "INACTIVE"] })
+    /**
+     * OPE-1180 — FORMER = was a venue, no longer is (a closed fairground).
+     * INACTIVE stays the hidden merge tombstone. Every public reader filters
+     * `status = 'ACTIVE'`, so FORMER is not served until OPE-1181 ships its page.
+     * (Not "HISTORIC": that collides with NRHP-listed venues still in use.)
+     */
+    status: text("status", { enum: ["ACTIVE", "INACTIVE", "FORMER"] })
       .default("ACTIVE")
       .notNull(),
+    // OPE-1180 (drizzle/0333) — when the site was used as a venue, as EDTF
+    // strings ("1866", "1881~", "195X"). `use_ended_*` are the derived UTC
+    // bounds of `use_ended_edtf`, epoch seconds, read by the event date guard.
+    // A FORMER venue requires use_ended_edtf (validateVenueLifecycle).
+    useStartedEdtf: text("use_started_edtf"),
+    useEndedEdtf: text("use_ended_edtf"),
+    useEndedEarliest: integer("use_ended_earliest", { mode: "timestamp" }),
+    useEndedLatest: integer("use_ended_latest", { mode: "timestamp" }),
+    currentState: text("current_state", {
+      enum: ["REPURPOSED", "VACANT", "DEMOLISHED", "UNKNOWN"],
+    }),
+    currentUse: text("current_use"),
+    /** Optional authority ids — allowed on ANY venue, not only FORMER. */
+    wikidataQid: text("wikidata_qid"),
+    nrhpRef: text("nrhp_ref"),
     // Cross-zone columns (drizzle/0112, P3a — 2026-06-06). Every existing
     // venue row defaults to US-Eastern via the migration's NOT NULL DEFAULT
     // clauses, so this is zero-behavior-change at deploy. Phase 3b will
@@ -218,108 +247,142 @@ export const venues = sqliteTable(
 );
 
 // Promoters table
-export const promoters = sqliteTable("promoters", {
-  id: text("id")
-    .primaryKey()
-    .$defaultFn(() => crypto.randomUUID()),
-  userId: text("user_id")
-    .unique()
-    .references(() => users.id, { onDelete: "set null" }),
-  companyName: text("company_name").notNull(),
-  slug: text("slug").$type<Slug>().notNull().unique(),
-  description: text("description"),
-  website: text("website"),
-  socialLinks: text("social_links"),
-  logoUrl: text("logo_url"),
-  // OPE-34 (drizzle/0138, 2026-06-30) — full-bleed hero/banner for the promoter
-  // detail page, distinct from the small square `logo_url`. Rendered object-cover
-  // with focal-point crop (image_focal_x/y below). NULL = no hero band.
-  heroImageUrl: text("hero_image_url"),
-  city: text("city"),
-  state: text("state"),
-  contactEmail: text("contact_email"),
-  contactPhone: text("contact_phone"),
-  verified: integer("verified", { mode: "boolean" }).default(false),
-  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
-  /**
-   * OPE-332 — `$onUpdateFn` is what makes this column trustworthy as an HTTP
-   * validator. Before it, updated_at was set only where a writer remembered:
-   * an audit found 36/58 event updates, 26/31 vendor, 16/17 promoter and 10/11
-   * venue updates never touched it — including imageUrl, venueId and geocode
-   * writes, all of which change the rendered page. A 304 built on that would
-   * have told Google "unchanged" after a hero image swap.
-   *
-   * Fixing the ~100 call sites would have fixed today and started rotting
-   * immediately. This fixes the type: every Drizzle update bumps it, and a
-   * future writer cannot forget. The one deliberate exception is the view-count
-   * increment, which goes through raw SQL precisely so page views don't
-   * invalidate the validator — see event-detail-data.ts.
-   *
-   * Fails safe in the right direction: an unnecessary bump costs one extra 200,
-   * a missed bump would serve stale content as fresh.
-   */
-  updatedAt: integer("updated_at", { mode: "timestamp" })
-    .$defaultFn(() => new Date())
-    .$onUpdateFn(() => new Date()),
-  // IMG1 §1b Phase 1 — focal point for crops. Applies to both logo_url and the
-  // OPE-34 hero_image_url (operators may want focal-point on wide hero uploads).
-  imageFocalX: real("image_focal_x").notNull().default(0.5),
-  imageFocalY: real("image_focal_y").notNull().default(0.5),
-  // OPE-31 (drizzle/0139, 2026-06-30) — producer-wide roster-publishing behavior.
-  //   NULL  = unknown / not assessed (default; events research as NEEDS_RESEARCH)
-  //   true  = this producer publishes exhibitor rosters (research normally)
-  //   false = this producer NEVER publishes a public roster — the occurred-sweep
-  //           auto-sets its events to NO_PUBLIC_LIST instead of NEEDS_RESEARCH,
-  //           so research passes stop grinding the same producer-wide dead-end.
-  vendorRosterPublishesLists: integer("vendor_roster_publishes_lists", { mode: "boolean" }),
-  // OPE-35 (drizzle/0140, 2026-07-01) — promoter-enrichment rails, the promoter
-  // analog of the vendor-roster rails. NULL enrichment_status = never assessed.
-  // Set by the create/update enqueue hook (computePromoterEnrichment): website
-  // present + any target field empty → NEEDS_ENRICHMENT. IN_PROGRESS/BLOCKED are
-  // agent/operator-owned; ENRICHED/NO_SOURCE are derived-terminal.
-  enrichmentStatus: text("enrichment_status", {
-    enum: ["NEEDS_ENRICHMENT", "IN_PROGRESS", "ENRICHED", "NO_SOURCE", "BLOCKED"],
-  }),
-  // JSON snapshot of which target fields are filled: {hero,logo,description,socials,contact}.
-  enrichmentCoverage: text("enrichment_coverage"),
-  /**
-   * When a render last WROTE a field to this row. NOT "when did we last look".
-   *
-   * OPE-496 — these two columns are one word apart and mean different things,
-   * and the drain lane keyed its recency filter on this one. It is NULL for 91%
-   * of promoters (including 51 of 56 ENRICHED) precisely because most renders
-   * find nothing to write, so the filter excluded almost nothing and the same
-   * top-25 were re-rendered daily — ~2 promoters/day of real progress against a
-   * 485-deep queue, with every call still returning success.
-   *
-   * A recency filter wants `enrichmentAttemptedAt` below. Use
-   * `list_promoter_enrichment_queue`, which keys on the right one.
-   */
-  lastEnrichedAt: integer("last_enriched_at", { mode: "timestamp" }),
-  // Why a NEEDS_ENRICHMENT promoter can't be drained; set alongside BLOCKED.
-  enrichmentBlockedReason: text("enrichment_blocked_reason", {
-    enum: ["js_gated", "host_gated", "parked", "hijacked", "no_image", "stale", "rate_limited"],
-  }),
-  // OPE-36 (drizzle/0141) — last time the pre-extraction job tried this promoter
-  // (success OR fail). The nightly selector prefers never-attempted, then stale.
-  /**
-   * When a render last LOOKED at this row, whether or not it wrote anything.
-   *
-   * This is the column a recency / "don't re-research yet" filter wants — it is
-   * populated 485/485 across the NEEDS_ENRICHMENT queue and 28/28 for BLOCKED.
-   * See the OPE-496 note on `lastEnrichedAt` for what happens when the two are
-   * confused.
-   */
-  enrichmentAttemptedAt: integer("enrichment_attempted_at", { mode: "timestamp" }),
-  // OPE-63 (drizzle/0144, 2026-07-02) — promoter claim state, parity with the
-  // vendors.claimed/claimedAt/claimedBy trio (see vendors table). `claimed` =
-  // a user has confirmed ownership of this promoter (drives the claim program +
-  // the PROMOTER role grant). Distinct from `user_id`, which merely links an
-  // owning account. Set by approvePromoterClaim (OPE-63) / the claim wizard.
-  claimed: integer("claimed", { mode: "boolean" }).notNull().default(false),
-  claimedAt: integer("claimed_at", { mode: "timestamp" }),
-  claimedBy: text("claimed_by").references(() => users.id, { onDelete: "set null" }),
-});
+export const promoters = sqliteTable(
+  "promoters",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .unique()
+      .references(() => users.id, { onDelete: "set null" }),
+    companyName: text("company_name").notNull(),
+    slug: text("slug").$type<Slug>().notNull().unique(),
+    description: text("description"),
+    website: text("website"),
+    socialLinks: text("social_links"),
+    logoUrl: text("logo_url"),
+    // OPE-34 (drizzle/0138, 2026-06-30) — full-bleed hero/banner for the promoter
+    // detail page, distinct from the small square `logo_url`. Rendered object-cover
+    // with focal-point crop (image_focal_x/y below). NULL = no hero band.
+    heroImageUrl: text("hero_image_url"),
+    city: text("city"),
+    state: text("state"),
+    contactEmail: text("contact_email"),
+    contactPhone: text("contact_phone"),
+    verified: integer("verified", { mode: "boolean" }).default(false),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    /**
+     * OPE-332 — `$onUpdateFn` is what makes this column trustworthy as an HTTP
+     * validator. Before it, updated_at was set only where a writer remembered:
+     * an audit found 36/58 event updates, 26/31 vendor, 16/17 promoter and 10/11
+     * venue updates never touched it — including imageUrl, venueId and geocode
+     * writes, all of which change the rendered page. A 304 built on that would
+     * have told Google "unchanged" after a hero image swap.
+     *
+     * Fixing the ~100 call sites would have fixed today and started rotting
+     * immediately. This fixes the type: every Drizzle update bumps it, and a
+     * future writer cannot forget. The one deliberate exception is the view-count
+     * increment, which goes through raw SQL precisely so page views don't
+     * invalidate the validator — see event-detail-data.ts.
+     *
+     * Fails safe in the right direction: an unnecessary bump costs one extra 200,
+     * a missed bump would serve stale content as fresh.
+     */
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .$defaultFn(() => new Date())
+      .$onUpdateFn(() => new Date()),
+    // IMG1 §1b Phase 1 — focal point for crops. Applies to both logo_url and the
+    // OPE-34 hero_image_url (operators may want focal-point on wide hero uploads).
+    imageFocalX: real("image_focal_x").notNull().default(0.5),
+    imageFocalY: real("image_focal_y").notNull().default(0.5),
+    // OPE-31 (drizzle/0139, 2026-06-30) — producer-wide roster-publishing behavior.
+    //   NULL  = unknown / not assessed (default; events research as NEEDS_RESEARCH)
+    //   true  = this producer publishes exhibitor rosters (research normally)
+    //   false = this producer NEVER publishes a public roster — the occurred-sweep
+    //           auto-sets its events to NO_PUBLIC_LIST instead of NEEDS_RESEARCH,
+    //           so research passes stop grinding the same producer-wide dead-end.
+    vendorRosterPublishesLists: integer("vendor_roster_publishes_lists", { mode: "boolean" }),
+    // OPE-35 (drizzle/0140, 2026-07-01) — promoter-enrichment rails, the promoter
+    // analog of the vendor-roster rails. NULL enrichment_status = never assessed.
+    // Set by the create/update enqueue hook (computePromoterEnrichment): website
+    // present + any target field empty → NEEDS_ENRICHMENT. IN_PROGRESS/BLOCKED are
+    // agent/operator-owned; ENRICHED/NO_SOURCE are derived-terminal.
+    enrichmentStatus: text("enrichment_status", {
+      enum: ["NEEDS_ENRICHMENT", "IN_PROGRESS", "ENRICHED", "NO_SOURCE", "BLOCKED", "EXHAUSTED"],
+    }),
+    // JSON snapshot of which target fields are filled: {hero,logo,description,socials,contact}.
+    enrichmentCoverage: text("enrichment_coverage"),
+    // OPE-962 (drizzle/0283) — consecutive successful fetches that staged ZERO
+    // candidates. Reset to 0 by any attempt that stages one, and by a website
+    // change. At PROMOTER_ENRICHMENT_EXHAUST_AFTER the promoter becomes EXHAUSTED.
+    enrichmentZeroYieldStreak: integer("enrichment_zero_yield_streak").notNull().default(0),
+    /**
+     * When a render last WROTE a field to this row. NOT "when did we last look".
+     *
+     * OPE-496 — these two columns are one word apart and mean different things,
+     * and the drain lane keyed its recency filter on this one. It is NULL for 91%
+     * of promoters (including 51 of 56 ENRICHED) precisely because most renders
+     * find nothing to write, so the filter excluded almost nothing and the same
+     * top-25 were re-rendered daily — ~2 promoters/day of real progress against a
+     * 485-deep queue, with every call still returning success.
+     *
+     * A recency filter wants `enrichmentAttemptedAt` below. Use
+     * `list_promoter_enrichment_queue`, which keys on the right one.
+     */
+    lastEnrichedAt: integer("last_enriched_at", { mode: "timestamp" }),
+    // Why a NEEDS_ENRICHMENT promoter can't be drained; set alongside BLOCKED.
+    enrichmentBlockedReason: text("enrichment_blocked_reason", {
+      enum: ["js_gated", "host_gated", "parked", "hijacked", "no_image", "stale", "rate_limited"],
+    }),
+    // OPE-36 (drizzle/0141) — last time the pre-extraction job tried this promoter
+    // (success OR fail). The nightly selector prefers never-attempted, then stale.
+    /**
+     * When a render last LOOKED at this row, whether or not it wrote anything.
+     *
+     * This is the column a recency / "don't re-research yet" filter wants — it is
+     * populated 485/485 across the NEEDS_ENRICHMENT queue and 28/28 for BLOCKED.
+     * See the OPE-496 note on `lastEnrichedAt` for what happens when the two are
+     * confused.
+     */
+    enrichmentAttemptedAt: integer("enrichment_attempted_at", { mode: "timestamp" }),
+    // OPE-63 (drizzle/0144, 2026-07-02) — promoter claim state, parity with the
+    // vendors.claimed/claimedAt/claimedBy trio (see vendors table). `claimed` =
+    // a user has confirmed ownership of this promoter (drives the claim program +
+    // the PROMOTER role grant). Distinct from `user_id`, which merely links an
+    // owning account. Set by approvePromoterClaim (OPE-63) / the claim wizard.
+    claimed: integer("claimed", { mode: "boolean" }).notNull().default(false),
+    claimedAt: integer("claimed_at", { mode: "timestamp" }),
+    claimedBy: text("claimed_by").references(() => users.id, { onDelete: "set null" }),
+    /**
+     * OPE-979 (drizzle/0285) — is this business still trading?
+     *
+     * NULL = never assessed (every row at ship). CEASED means the company closed;
+     * `succeededByPromoterId` names who took its shows over, when anyone did. That
+     * is deliberately NOT a merge: merge_promoter erases one of two real companies,
+     * and the handover is the fact worth keeping.
+     *
+     * Readers today: the enrichment selector and dispatcher (a CEASED promoter is
+     * never re-fetched) and rollover (a CEASED promoter's event is not rolled into
+     * next year). Nothing sets it automatically — the url-health closure_notice
+     * verdict surfaces a candidate; a person records the status.
+     */
+    operatingStatus: text("operating_status", {
+      enum: ["ACTIVE", "CEASED", "MERGED", "UNKNOWN"],
+    }),
+    succeededByPromoterId: text("succeeded_by_promoter_id").references(
+      (): AnySQLiteColumn => promoters.id,
+      { onDelete: "set null" }
+    ),
+    operatingStatusSourceUrl: text("operating_status_source_url"),
+    operatingStatusVerifiedAt: integer("operating_status_verified_at", { mode: "timestamp" }),
+  },
+  (t) => ({
+    // OPE-1121 phase 1 — FK child columns with no index; every parent delete/merge scanned these.
+    promotersClaimedByIdx: index("idx_promoters_claimed_by").on(t.claimedBy),
+    promotersSucceededByIdx: index("idx_promoters_succeeded_by").on(t.succeededByPromoterId),
+  })
+);
 
 // Event series — EH3 P0 (drizzle/0127, 2026-06-21). Thin parent table: the
 // stable identity + canonical-metadata home for a recurring event. Each `events`
@@ -379,6 +442,9 @@ export const events = sqliteTable(
     stateCode: text("state_code"),
     // True for events with no single physical venue (statewide tours, multi-location trails).
     isStatewide: integer("is_statewide", { mode: "boolean" }).notNull().default(false),
+    // Calendar date stored at NOON UTC (normalizeEventDate, OPE-307); rendered in
+    // America/New_York (OPE-482). Route every write through normalizeEventDate —
+    // a local midnight stored as 04:00Z renders a day early in winter (OPE-1011).
     startDate: integer("start_date", { mode: "timestamp" }),
     endDate: integer("end_date", { mode: "timestamp" }),
     publicStartDate: integer("public_start_date", { mode: "timestamp" }),
@@ -437,7 +503,43 @@ export const events = sqliteTable(
     sourceDomain: text("source_domain"), // canonical hostname only
     ingestionMethod: text("ingestion_method"), // enum (see comment above)
     sourceUrl: text("source_url"), // URL of the event on the source site
-    sourceId: text("source_id"), // Unique identifier from the source (e.g., slug or ID)
+    /**
+     * The source system's identifier for this event — its slug, its numeric id,
+     * or (when it has none) a slugified copy of the URL we first found it at.
+     *
+     * ⚠️ **IMMUTABLE AFTER CREATION. This is deliberate.** OPE-821 was filed
+     * because a `source_url` correction left this column holding the previous
+     * organizer's URL, which reads like a bug. It is not.
+     *
+     * `source_domain` and `ingestion_method` ARE derived and are recomputed on
+     * every write (OPE-491 §3, `mcp-server/src/tools/admin.ts`). `source_id` is
+     * excluded from that recompute on purpose: it is an external-system
+     * identity, and re-scrape and dedup keys have to survive the source
+     * changing its address.
+     *
+     * Measured 2026-09-06: of 994 rows with a URL-shaped `source_id`, 70
+     * disagree with their own `source_domain` — and the ones inspected are
+     * organizer domain MIGRATIONS, not errors:
+     *
+     *   hamptonbeachseafoodfestival.com -> seafoodfestivalnh.com
+     *   nehomeshow.com                  -> newenglandhomeshows.com
+     *   feastofthreesaints.com          -> threesaintsinc.org
+     *
+     * In each case the old value is the correct answer to "where did we first
+     * find this?", and recomputing it would erase that.
+     *
+     * See `mcp-server/src/tools/vendor.ts` — "stability matters more than
+     * canonical-slug semantics" — which is why this column is exempt from the
+     * canonical-slug lint rule.
+     *
+     * ⚠️ OPE-1121 — NOT a foreign key, despite the `_id` name. It is an
+     * external scraper/source key (e.g. `houlton-fair`, or a URL), and it does
+     * NOT reference `sources`: measured 2026-09-22, 0 of 1,449 non-null values
+     * match `sources.source_key` (1,270 distinct values). Never wire an FK or a
+     * join to `sources` from this column. Documented rather than renamed: a
+     * rename touches every scraper, dedup key and MCP tool that reads it.
+     */
+    sourceId: text("source_id"),
     /**
      * OPE-433 — defaults to FALSE. This is clobber PERMISSION: it lets a later
      * importer overwrite this row. Granting that by default meant a promoter's
@@ -453,6 +555,14 @@ export const events = sqliteTable(
     vendorFeeMaxCents: integer("vendor_fee_max_cents"),
     vendorFeeNotes: text("vendor_fee_notes"),
     indoorOutdoor: text("indoor_outdoor"), // INDOOR, OUTDOOR, MIXED
+    // OPE-1061 (drizzle/0296) — UNSET | YES | NO | NOT_PUBLISHED. The event's
+    // OWN answer: never inherited from the venue, never inferred from type or
+    // category. YES/NO carry an event_data_citations row (field_name
+    // 'pet_friendly') with a verbatim excerpt. Rules: @takemetothefair/utils
+    // pet-policy.ts. CHECK-constrained in the DDL.
+    petFriendly: text("pet_friendly", { enum: ["UNSET", "YES", "NO", "NOT_PUBLISHED"] })
+      .notNull()
+      .default("UNSET"),
     estimatedAttendance: integer("estimated_attendance"),
     eventScale: text("event_scale"), // SMALL, MEDIUM, LARGE, MAJOR
     applicationDeadline: integer("application_deadline", { mode: "timestamp" }),
@@ -559,6 +669,13 @@ export const events = sqliteTable(
       .default("SCHEDULED"),
     lifecycleStatusChangedAt: integer("lifecycle_status_changed_at", { mode: "timestamp" }),
     lifecycleReason: text("lifecycle_reason"),
+    // OPE-611 — when a human last CHECKED this row's lifecycle, and what they
+    // found, whether or not the check changed it. `lifecycle_reason` is written
+    // only on a transition, so a TENTATIVE row verified-and-held was
+    // byte-identical to one nobody had opened, and every drain pass re-worked
+    // its predecessor's holds (60% → 100% of a pass by the fifth).
+    lifecycleLastCheckedAt: integer("lifecycle_last_checked_at", { mode: "timestamp" }),
+    lifecycleCheckNote: text("lifecycle_check_note"),
     // For RESCHEDULED events — the dates the event was previously scheduled
     // for. Schema.org's EventRescheduled rich snippet needs the immediately-
     // previous pair to render in Google. Single pair only; multi-reschedule
@@ -691,6 +808,8 @@ export const events = sqliteTable(
     performerRosterSourceUrl: text("performer_roster_source_url"),
   },
   (table) => [
+    // OPE-1121 phase 1 — FK child columns with no index; every parent delete/merge scanned these.
+    index("idx_events_submitted_by_user_id").on(table.submittedByUserId),
     index("idx_events_status_startdate").on(table.status, table.startDate),
     index("idx_events_venueid").on(table.venueId),
     index("idx_events_promoterid").on(table.promoterId),
@@ -776,193 +895,271 @@ export const eventDateDriftFindings = sqliteTable(
   ]
 );
 
+/**
+ * OPE-860 — the last time we LOOKED at an outbound URL, and what we saw.
+ *
+ * ## Why a table and not a column
+ *
+ * The URLs we publish live in at least two places (`events.source_url`,
+ * `promoters.website`) and will live in more. A `last_verified_at` column per
+ * field means the next field added quietly has no history and nobody notices —
+ * the same shape as the gate that was enforced on one of two senders (OPE-862).
+ * Keyed by the URL itself, one row answers the question for every field that
+ * points at it.
+ *
+ * ## What the absence of a row means
+ *
+ * Before this table, a URL checked yesterday and found healthy and a URL last
+ * looked at in 2024 were **the same state**: the drift sweep writes a row only
+ * on `drift-recorded`, so a clean check left no trace at all. That is the
+ * amendment-H shape in storage form — a successful control that is
+ * indistinguishable from one that never ran.
+ *
+ * So: a row means we looked. No row means we have never looked. Those are now
+ * different, which is the precondition for any staleness question at all.
+ *
+ * ## Append-only
+ *
+ * One row per look, never updated. "This domain has read `no_event_signal`
+ * every day for three weeks" and "it blipped once" need very different
+ * responses, and an in-place update destroys the only thing that tells them
+ * apart. Same reasoning as `market_player_snapshots`.
+ */
+export const urlHealthChecks = sqliteTable(
+  "url_health_checks",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    /** The URL as fetched, after redirects were followed. */
+    url: text("url").notNull(),
+    /** Which field this URL was reached from, e.g. `events.source_url`. */
+    sourceField: text("source_field").notNull(),
+    /** `ok` | `no_event_signal` | `http_error` | `unreachable` — see url-health.ts. */
+    verdict: text("verdict").notNull(),
+    /** HTTP status when there was one; NULL means we never reached the origin. */
+    httpStatus: integer("http_status"),
+    /** Which signals fired, comma-separated, so a surprising verdict is auditable. */
+    signals: text("signals"),
+    /** Short human-readable reason. Never the whole page. */
+    detail: text("detail"),
+    checkedAt: integer("checked_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    index("idx_url_health_checks_url").on(t.url),
+    index("idx_url_health_checks_checked_at").on(t.checkedAt),
+    index("idx_url_health_checks_verdict").on(t.verdict),
+  ]
+);
+
 // Vendors table
-export const vendors = sqliteTable("vendors", {
-  id: text("id")
-    .primaryKey()
-    .$defaultFn(() => crypto.randomUUID()),
-  userId: text("user_id")
-    .notNull()
-    .unique()
-    .references(() => users.id, { onDelete: "cascade" }),
-  businessName: text("business_name").notNull(),
-  // EH2.1 (drizzle/0121, 2026-06-09) — optional brand display override.
-  // Resolved at render time via displayVendorName() in @takemetothefair/utils.
-  // NULL = render business_name as today (zero behavior change for ~99% of rows).
-  displayName: text("display_name"),
-  slug: text("slug").$type<Slug>().notNull().unique(),
-  description: text("description"),
-  vendorType: text("vendor_type"),
-  products: text("products").default("[]"),
-  website: text("website"),
-  socialLinks: text("social_links"),
-  logoUrl: text("logo_url"),
-  verified: integer("verified", { mode: "boolean" }).default(false),
-  commercial: integer("commercial", { mode: "boolean" }).default(false),
-  canSelfConfirm: integer("can_self_confirm", { mode: "boolean" }).default(false),
-  // Contact Information
-  contactName: text("contact_name"),
-  contactEmail: text("contact_email"),
-  contactPhone: text("contact_phone"),
-  // Physical Address
-  address: text("address"),
-  city: text("city"),
-  state: text("state"),
-  zip: text("zip"),
-  // Geolocation (auto-populated from Google Places)
-  latitude: real("latitude"),
-  longitude: real("longitude"),
-  // Business Details
-  yearEstablished: integer("year_established"),
-  paymentMethods: text("payment_methods").default("[]"), // JSON array
-  licenseInfo: text("license_info"),
-  insuranceInfo: text("insurance_info"),
-  // Enhanced Profile (paid tier, round-3 — drizzle/0037)
-  enhancedProfile: integer("enhanced_profile", { mode: "boolean" }).notNull().default(false),
-  enhancedProfileStartedAt: integer("enhanced_profile_started_at", { mode: "timestamp" }),
-  enhancedProfileExpiresAt: integer("enhanced_profile_expires_at", { mode: "timestamp" }),
-  galleryImages: text("gallery_images").notNull().default("[]"), // JSON array of {url, alt, caption?}
-  featuredPriority: integer("featured_priority").notNull().default(0),
-  // Claimed tier (drizzle/0049) — vendor-confirmed ownership, distinct from userId
-  // which every vendor has. Drives the Claimed badge and tier-transition rules.
-  claimed: integer("claimed", { mode: "boolean" }).notNull().default(false),
-  claimedAt: integer("claimed_at", { mode: "timestamp" }),
-  claimedBy: text("claimed_by").references(() => users.id, { onDelete: "set null" }),
-  // Per-vendor view count (drizzle/0051). Server-incremented on each cached
-  // page render; ISR cache provides implicit ~5-min dedup. Used by the
-  // claimed_ready_for_enhanced_upsell rule for top-decile-by-views ranking.
-  viewCount: integer("view_count").notNull().default(0),
-  // Verified Pro tier scaffold (drizzle/0052). Credentialed identity-verification
-  // signal, orthogonal to the four-tier model. Admin-only set today; the actual
-  // identity-verification UX (LLC lookup, address validation, etc.) is a separate
-  // Q1-2027 product feature that just flips this flag when ready.
-  verifiedPro: integer("verified_pro", { mode: "boolean" }).notNull().default(false),
-  verifiedProAt: integer("verified_pro_at", { mode: "timestamp" }),
-  verifiedProBy: text("verified_pro_by").references(() => users.id, { onDelete: "set null" }),
-  // Soft delete (drizzle/0053). Non-null = vendor invisible everywhere; URL
-  // returns 410 Gone or 301 to redirectToVendorId if set. Hard purge happens
-  // after a 30-day grace window via the sweep-purge-deleted endpoint.
-  deletedAt: integer("deleted_at", { mode: "timestamp" }),
-  redirectToVendorId: text("redirect_to_vendor_id").references((): AnySQLiteColumn => vendors.id, {
-    onDelete: "set null",
-  }),
-  // §10.2 enrichment + quality tracking (drizzle/0054). enrichmentSource is one
-  // of: ai_workers | scraper | manual_admin | vendor_self | mcp_create. The
-  // enum lives in src/lib/enrichment-log.ts (TS-only, not DB-enforced because
-  // adding a new source shouldn't require a migration). completenessScore is
-  // a cached 0-100 value; recomputed via computeVendorCompleteness on every
-  // insert/update and gates inclusion in /sitemap.xml at >= 40.
-  enrichmentSource: text("enrichment_source"),
-  /**
-   * When a render last LOOKED at this row, whether or not it wrote anything.
-   *
-   * This is the column a recency / "don't re-research yet" filter wants — it is
-   * populated 485/485 across the NEEDS_ENRICHMENT queue and 28/28 for BLOCKED.
-   * See the OPE-496 note on `lastEnrichedAt` for what happens when the two are
-   * confused.
-   */
-  enrichmentAttemptedAt: integer("enrichment_attempted_at", { mode: "timestamp" }),
-  domainHijacked: integer("domain_hijacked", { mode: "boolean" }).notNull().default(false),
-  completenessScore: integer("completeness_score").notNull().default(0),
-  // EH1 Phase 1 — vendor hierarchy + relationship model.
-  // Originally added in drizzle/0106 (minimal model: role + parent_vendor_id
-  // + default_display/override_permitted/display_preference). Extended in
-  // drizzle/0107 (2026-06-05) to the full relationship model approved in
-  // Dev-Spec-Vendor-Hierarchy-Phase1-2026-06-04.md: brand vs operator
-  // parent split, 8-shape relationship_type enum, alias links, and a
-  // wider display vocabulary that can express operator_parent + both.
-  //
-  // `role` stays as a fast NATIONAL/LOCAL_OFFICE/INDEPENDENT discriminator
-  // (existing render page + sitemap SQL + admin form read it heavily).
-  role: text("role", { enum: ["NATIONAL", "LOCAL_OFFICE", "INDEPENDENT"] })
-    .notNull()
-    .default("INDEPENDENT"),
-  // Brand parent: who the consumer sees on signage (the national brand).
-  // The display resolver consumes this one. NULL for INDEPENDENT and
-  // for brand-parent rows themselves.
-  brandParentVendorId: text("brand_parent_vendor_id").references(
-    (): AnySQLiteColumn => vendors.id,
-    { onDelete: "set null" }
-  ),
-  // Operator parent: who signs contracts / pays booth fees (e.g. Esler
-  // Companies). Drives sales-motion + portfolio analytics, NOT public
-  // display. Often equal to brandParentVendorId for branch shapes;
-  // distinct for shape C (franchise with multi-market operator).
-  operatorParentVendorId: text("operator_parent_vendor_id").references(
-    (): AnySQLiteColumn => vendors.id,
-    { onDelete: "set null" }
-  ),
-  // Alias link: "this row IS that row, different spelling." Resolved
-  // transparently by resolveAlias() in src/lib/vendor-hierarchy.ts; the
-  // aliased row is also soft-deleted (deletedAt + redirectToVendorId)
-  // so middleware can 301-redirect its URL to the canonical.
-  aliasOfVendorId: text("alias_of_vendor_id").references((): AnySQLiteColumn => vendors.id, {
-    onDelete: "set null",
-  }),
-  // 8 shapes from the design doc — branch (W-2), franchise (independent
-  // operator), dealer (reseller), member (cooperative), agent (1099),
-  // employee_branch (small-corp branch), government (gov entity),
-  // independent (default — no relationship). SQL CHECK enforces.
-  relationshipType: text("relationship_type", {
-    enum: [
-      "branch",
-      "franchise",
-      "dealer",
-      "member",
-      "agent",
-      "employee_branch",
-      "government",
-      "independent",
-    ],
+export const vendors = sqliteTable(
+  "vendors",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .unique()
+      .references(() => users.id, { onDelete: "cascade" }),
+    businessName: text("business_name").notNull(),
+    // EH2.1 (drizzle/0121, 2026-06-09) — optional brand display override.
+    // Resolved at render time via displayVendorName() in @takemetothefair/utils.
+    // NULL = render business_name as today (zero behavior change for ~99% of rows).
+    displayName: text("display_name"),
+    slug: text("slug").$type<Slug>().notNull().unique(),
+    description: text("description"),
+    vendorType: text("vendor_type"),
+    // OPE-1164 — `vendor_type` answers three questions at once; these split
+    // them. Nullable, single value each, no controlled list yet (a separate
+    // decision). `vendor_type` is unchanged and still what the site renders.
+    /** What they sell (primary), e.g. "Jewelry", "Pottery". */
+    sellsCategory: text("sells_category"),
+    /** What kind of business they are, e.g. "Marine", "Brewery". */
+    businessSector: text("business_sector"),
+    /** Who they are, e.g. "Artist", "Nonprofit". NOT `role` (brand structure). */
+    vendorIdentity: text("vendor_identity"),
+    products: text("products").default("[]"),
+    website: text("website"),
+    socialLinks: text("social_links"),
+    logoUrl: text("logo_url"),
+    verified: integer("verified", { mode: "boolean" }).default(false),
+    commercial: integer("commercial", { mode: "boolean" }).default(false),
+    canSelfConfirm: integer("can_self_confirm", { mode: "boolean" }).default(false),
+    // Contact Information
+    contactName: text("contact_name"),
+    contactEmail: text("contact_email"),
+    contactPhone: text("contact_phone"),
+    // Physical Address
+    address: text("address"),
+    city: text("city"),
+    state: text("state"),
+    zip: text("zip"),
+    // Geolocation (auto-populated from Google Places)
+    latitude: real("latitude"),
+    longitude: real("longitude"),
+    // Business Details
+    yearEstablished: integer("year_established"),
+    paymentMethods: text("payment_methods").default("[]"), // JSON array
+    licenseInfo: text("license_info"),
+    insuranceInfo: text("insurance_info"),
+    // Enhanced Profile (paid tier, round-3 — drizzle/0037)
+    enhancedProfile: integer("enhanced_profile", { mode: "boolean" }).notNull().default(false),
+    enhancedProfileStartedAt: integer("enhanced_profile_started_at", { mode: "timestamp" }),
+    enhancedProfileExpiresAt: integer("enhanced_profile_expires_at", { mode: "timestamp" }),
+    galleryImages: text("gallery_images").notNull().default("[]"), // JSON array of {url, alt, caption?}
+    featuredPriority: integer("featured_priority").notNull().default(0),
+    // Claimed tier (drizzle/0049) — vendor-confirmed ownership, distinct from userId
+    // which every vendor has. Drives the Claimed badge and tier-transition rules.
+    claimed: integer("claimed", { mode: "boolean" }).notNull().default(false),
+    claimedAt: integer("claimed_at", { mode: "timestamp" }),
+    claimedBy: text("claimed_by").references(() => users.id, { onDelete: "set null" }),
+    // Per-vendor view count (drizzle/0051). Server-incremented on each cached
+    // page render; ISR cache provides implicit ~5-min dedup. Used by the
+    // claimed_ready_for_enhanced_upsell rule for top-decile-by-views ranking.
+    viewCount: integer("view_count").notNull().default(0),
+    // Verified Pro tier scaffold (drizzle/0052). Credentialed identity-verification
+    // signal, orthogonal to the four-tier model. Admin-only set today; the actual
+    // identity-verification UX (LLC lookup, address validation, etc.) is a separate
+    // Q1-2027 product feature that just flips this flag when ready.
+    verifiedPro: integer("verified_pro", { mode: "boolean" }).notNull().default(false),
+    verifiedProAt: integer("verified_pro_at", { mode: "timestamp" }),
+    verifiedProBy: text("verified_pro_by").references(() => users.id, { onDelete: "set null" }),
+    // Soft delete (drizzle/0053). Non-null = vendor invisible everywhere; URL
+    // returns 410 Gone or 301 to redirectToVendorId if set. Hard purge happens
+    // after a 30-day grace window via the sweep-purge-deleted endpoint.
+    deletedAt: integer("deleted_at", { mode: "timestamp" }),
+    redirectToVendorId: text("redirect_to_vendor_id").references(
+      (): AnySQLiteColumn => vendors.id,
+      {
+        onDelete: "set null",
+      }
+    ),
+    // §10.2 enrichment + quality tracking (drizzle/0054). enrichmentSource is one
+    // of: ai_workers | scraper | manual_admin | vendor_self | mcp_create. The
+    // enum lives in src/lib/enrichment-log.ts (TS-only, not DB-enforced because
+    // adding a new source shouldn't require a migration). completenessScore is
+    // a cached 0-100 value; recomputed via computeVendorCompleteness on every
+    // insert/update and gates inclusion in /sitemap.xml at >= 40.
+    enrichmentSource: text("enrichment_source"),
+    /**
+     * When a render last LOOKED at this row, whether or not it wrote anything.
+     *
+     * This is the column a recency / "don't re-research yet" filter wants — it is
+     * populated 485/485 across the NEEDS_ENRICHMENT queue and 28/28 for BLOCKED.
+     * See the OPE-496 note on `lastEnrichedAt` for what happens when the two are
+     * confused.
+     */
+    enrichmentAttemptedAt: integer("enrichment_attempted_at", { mode: "timestamp" }),
+    domainHijacked: integer("domain_hijacked", { mode: "boolean" }).notNull().default(false),
+    completenessScore: integer("completeness_score").notNull().default(0),
+    // EH1 Phase 1 — vendor hierarchy + relationship model.
+    // Originally added in drizzle/0106 (minimal model: role + parent_vendor_id
+    // + default_display/override_permitted/display_preference). Extended in
+    // drizzle/0107 (2026-06-05) to the full relationship model approved in
+    // Dev-Spec-Vendor-Hierarchy-Phase1-2026-06-04.md: brand vs operator
+    // parent split, 8-shape relationship_type enum, alias links, and a
+    // wider display vocabulary that can express operator_parent + both.
+    //
+    // `role` stays as a fast NATIONAL/LOCAL_OFFICE/INDEPENDENT discriminator
+    // (existing render page + sitemap SQL + admin form read it heavily).
+    role: text("role", { enum: ["NATIONAL", "LOCAL_OFFICE", "INDEPENDENT"] })
+      .notNull()
+      .default("INDEPENDENT"),
+    // Brand parent: who the consumer sees on signage (the national brand).
+    // The display resolver consumes this one. NULL for INDEPENDENT and
+    // for brand-parent rows themselves.
+    brandParentVendorId: text("brand_parent_vendor_id").references(
+      (): AnySQLiteColumn => vendors.id,
+      { onDelete: "set null" }
+    ),
+    // Operator parent: who signs contracts / pays booth fees (e.g. Esler
+    // Companies). Drives sales-motion + portfolio analytics, NOT public
+    // display. Often equal to brandParentVendorId for branch shapes;
+    // distinct for shape C (franchise with multi-market operator).
+    operatorParentVendorId: text("operator_parent_vendor_id").references(
+      (): AnySQLiteColumn => vendors.id,
+      { onDelete: "set null" }
+    ),
+    // Alias link: "this row IS that row, different spelling." Resolved
+    // transparently by resolveAlias() in src/lib/vendor-hierarchy.ts; the
+    // aliased row is also soft-deleted (deletedAt + redirectToVendorId)
+    // so middleware can 301-redirect its URL to the canonical.
+    aliasOfVendorId: text("alias_of_vendor_id").references((): AnySQLiteColumn => vendors.id, {
+      onDelete: "set null",
+    }),
+    // 8 shapes from the design doc — branch (W-2), franchise (independent
+    // operator), dealer (reseller), member (cooperative), agent (1099),
+    // employee_branch (small-corp branch), government (gov entity),
+    // independent (default — no relationship). SQL CHECK enforces.
+    relationshipType: text("relationship_type", {
+      enum: [
+        "branch",
+        "franchise",
+        "dealer",
+        "member",
+        "agent",
+        "employee_branch",
+        "government",
+        "independent",
+      ],
+    })
+      .notNull()
+      .default("independent"),
+    // Parent-side: what the brand-parent picks as its offices' default
+    // display target. 'self' = each office is its own canonical surface;
+    // 'brand_parent' = offices canonical-up to the brand hub; 'both' =
+    // office is canonical but also shown under the brand. NULL on
+    // non-parent rows.
+    defaultChildDisplay: text("default_child_display", {
+      enum: ["self", "brand_parent", "both"],
+    }),
+    // Child-side: parent-controlled gate. Default 0 — the parent's
+    // defaultChildDisplay always wins until the parent explicitly grants
+    // override. A vendor claim grants edit rights but NEVER bypasses this
+    // gate (spec §4.4 — parent's gate always wins).
+    displayOverridePermitted: integer("display_override_permitted", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    // Child-side: the office's own requested preference. Honored only when
+    // displayOverridePermitted=true AND displayMode != 'inherit'. INHERIT
+    // falls through to parent.defaultChildDisplay.
+    displayMode: text("display_mode", {
+      enum: ["inherit", "self", "brand_parent", "operator_parent", "both"],
+    }),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    /**
+     * OPE-332 — `$onUpdateFn` is what makes this column trustworthy as an HTTP
+     * validator. Before it, updated_at was set only where a writer remembered:
+     * an audit found 36/58 event updates, 26/31 vendor, 16/17 promoter and 10/11
+     * venue updates never touched it — including imageUrl, venueId and geocode
+     * writes, all of which change the rendered page. A 304 built on that would
+     * have told Google "unchanged" after a hero image swap.
+     *
+     * Fixing the ~100 call sites would have fixed today and started rotting
+     * immediately. This fixes the type: every Drizzle update bumps it, and a
+     * future writer cannot forget. The one deliberate exception is the view-count
+     * increment, which goes through raw SQL precisely so page views don't
+     * invalidate the validator — see event-detail-data.ts.
+     *
+     * Fails safe in the right direction: an unnecessary bump costs one extra 200,
+     * a missed bump would serve stale content as fresh.
+     */
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .$defaultFn(() => new Date())
+      .$onUpdateFn(() => new Date()),
+    // IMG1 §1b Phase 1 — applies to logo_url. See events table comment.
+    imageFocalX: real("image_focal_x").notNull().default(0.5),
+    imageFocalY: real("image_focal_y").notNull().default(0.5),
+  },
+  (t) => ({
+    // OPE-1121 phase 1 — FK child columns with no index; every parent delete/merge scanned these.
+    vendorsClaimedByIdx: index("idx_vendors_claimed_by").on(t.claimedBy),
+    vendorsRedirectToIdx: index("idx_vendors_redirect_to").on(t.redirectToVendorId),
+    vendorsVerifiedProByIdx: index("idx_vendors_verified_pro_by").on(t.verifiedProBy),
   })
-    .notNull()
-    .default("independent"),
-  // Parent-side: what the brand-parent picks as its offices' default
-  // display target. 'self' = each office is its own canonical surface;
-  // 'brand_parent' = offices canonical-up to the brand hub; 'both' =
-  // office is canonical but also shown under the brand. NULL on
-  // non-parent rows.
-  defaultChildDisplay: text("default_child_display", {
-    enum: ["self", "brand_parent", "both"],
-  }),
-  // Child-side: parent-controlled gate. Default 0 — the parent's
-  // defaultChildDisplay always wins until the parent explicitly grants
-  // override. A vendor claim grants edit rights but NEVER bypasses this
-  // gate (spec §4.4 — parent's gate always wins).
-  displayOverridePermitted: integer("display_override_permitted", { mode: "boolean" })
-    .notNull()
-    .default(false),
-  // Child-side: the office's own requested preference. Honored only when
-  // displayOverridePermitted=true AND displayMode != 'inherit'. INHERIT
-  // falls through to parent.defaultChildDisplay.
-  displayMode: text("display_mode", {
-    enum: ["inherit", "self", "brand_parent", "operator_parent", "both"],
-  }),
-  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
-  /**
-   * OPE-332 — `$onUpdateFn` is what makes this column trustworthy as an HTTP
-   * validator. Before it, updated_at was set only where a writer remembered:
-   * an audit found 36/58 event updates, 26/31 vendor, 16/17 promoter and 10/11
-   * venue updates never touched it — including imageUrl, venueId and geocode
-   * writes, all of which change the rendered page. A 304 built on that would
-   * have told Google "unchanged" after a hero image swap.
-   *
-   * Fixing the ~100 call sites would have fixed today and started rotting
-   * immediately. This fixes the type: every Drizzle update bumps it, and a
-   * future writer cannot forget. The one deliberate exception is the view-count
-   * increment, which goes through raw SQL precisely so page views don't
-   * invalidate the validator — see event-detail-data.ts.
-   *
-   * Fails safe in the right direction: an unnecessary bump costs one extra 200,
-   * a missed bump would serve stale content as fresh.
-   */
-  updatedAt: integer("updated_at", { mode: "timestamp" })
-    .$defaultFn(() => new Date())
-    .$onUpdateFn(() => new Date()),
-  // IMG1 §1b Phase 1 — applies to logo_url. See events table comment.
-  imageFocalX: real("image_focal_x").notNull().default(0.5),
-  imageFocalY: real("image_focal_y").notNull().default(0.5),
-});
+);
 
 /**
  * Vendor gallery photos — OPE-211 (drizzle/0160, 2026-07-15).
@@ -1000,9 +1197,15 @@ export const vendorPhotos = sqliteTable(
       .references(() => vendors.id, { onDelete: "cascade" }),
     /** R2-backed master on cdn.meetmeatthefair.com. Never a hot-linked origin. */
     photoUrl: text("photo_url").notNull(),
+    /** PUBLIC — rendered under the photo. Provenance goes in `sourceNote`. */
     caption: text("caption"),
     /** Accessibility text. Falls back to the vendor name at render time. */
     altText: text("alt_text"),
+    /**
+     * OPE-1171 — INTERNAL provenance ("From vendor's Facebook page, …").
+     * Never selected by a public reader; see drizzle/0328.
+     */
+    sourceNote: text("source_note"),
     sortOrder: integer("sort_order").notNull().default(0),
     /**
      * booth | product | owner | other. TS-only enum (VENDOR_PHOTO_TYPES below)
@@ -1057,8 +1260,11 @@ export const eventPhotos = sqliteTable(
       .notNull()
       .references(() => events.id, { onDelete: "cascade" }),
     photoUrl: text("photo_url").notNull(),
+    /** PUBLIC — rendered under the photo. Provenance goes in `sourceNote`. */
     caption: text("caption"),
     altText: text("alt_text"),
+    /** OPE-1171 — INTERNAL provenance. Never selected by a public reader. */
+    sourceNote: text("source_note"),
     sortOrder: integer("sort_order").notNull().default(0),
     /** midway | vendors | food | stage | other — TS-only (EVENT_PHOTO_TYPES). */
     photoType: text("photo_type").notNull().default("other"),
@@ -1122,6 +1328,8 @@ export const entityClaims = sqliteTable(
     decidedBy: text("decided_by").references(() => users.id, { onDelete: "set null" }),
   },
   (t) => ({
+    // OPE-1121 phase 1 — FK child columns with no index; every parent delete/merge scanned these.
+    entityClaimsDecidedByIdx: index("idx_entity_claims_decided_by").on(t.decidedBy),
     entityIdx: index("idx_entity_claims_entity").on(t.entityType, t.entityId),
     userIdx: index("idx_entity_claims_user").on(t.userId),
     statusIdx: index("idx_entity_claims_status").on(t.status),
@@ -1161,6 +1369,8 @@ export const claimTokens = sqliteTable(
     expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
   },
   (t) => ({
+    // OPE-1121 phase 1 — FK child columns with no index; every parent delete/merge scanned these.
+    claimTokensUserIdIdx: index("idx_claim_tokens_user_id").on(t.userId),
     entityIdx: index("idx_claim_tokens_entity").on(t.entityType, t.entityId),
     expiresIdx: index("idx_claim_tokens_expires").on(t.expiresAt),
   })
@@ -1221,115 +1431,125 @@ export const eventSlugHistory = sqliteTable(
 // sibling `vendors.vendor_type` is likewise free text with a TS-level vocabulary.
 // Phase 1 will pin the allowed values in a TS enum (same pattern as
 // enrichment_source) — a value-set change must not require a migration.
-export const performers = sqliteTable("performers", {
-  id: text("id")
-    .primaryKey()
-    .$defaultFn(() => crypto.randomUUID()),
-  // Nullable (unlike vendors): a performer can exist unclaimed with no account.
-  // Unique so a claimed performer maps to one user (NULLs are distinct in SQLite).
-  userId: text("user_id")
-    .unique()
-    .references(() => users.id, { onDelete: "set null" }),
-  name: text("name").notNull(),
-  slug: text("slug").$type<Slug>().notNull().unique(),
-  // PERSON = solo act; GROUP = band/troupe. TS-typed at the app layer.
-  performerType: text("performer_type", { enum: ["PERSON", "GROUP"] }),
-  // Free text; see the block comment above re: deferred enum.
-  actCategory: text("act_category"),
-  description: text("description"),
-  website: text("website"),
-  socialLinks: text("social_links"), // JSON
-  imageUrl: text("image_url"),
-  imageFocalX: real("image_focal_x").notNull().default(0.5),
-  imageFocalY: real("image_focal_y").notNull().default(0.5),
-  homeBaseCity: text("home_base_city"),
-  homeBaseState: text("home_base_state"),
-  contactName: text("contact_name"),
-  contactEmail: text("contact_email"),
-  contactPhone: text("contact_phone"),
-  verified: integer("verified", { mode: "boolean" }).notNull().default(false),
-  verifiedPro: integer("verified_pro", { mode: "boolean" }).notNull().default(false),
-  // OPE-113 (drizzle/0153) — verify audit columns, mirroring vendors. The OPE-112
-  // ticket's inline list omitted these; the design doc §3.1 includes them.
-  verifiedProAt: integer("verified_pro_at", { mode: "timestamp" }),
-  verifiedProBy: text("verified_pro_by").references(() => users.id, { onDelete: "set null" }),
-  // Claimed tier — mirrors vendors.claimed.
-  claimed: integer("claimed", { mode: "boolean" }).notNull().default(false),
-  claimedAt: integer("claimed_at", { mode: "timestamp" }),
-  claimedBy: text("claimed_by").references(() => users.id, { onDelete: "set null" }),
-  // Enhanced Profile (paid tier) — mirrors vendors.
-  enhancedProfile: integer("enhanced_profile", { mode: "boolean" }).notNull().default(false),
-  enhancedProfileStartedAt: integer("enhanced_profile_started_at", { mode: "timestamp" }),
-  enhancedProfileExpiresAt: integer("enhanced_profile_expires_at", { mode: "timestamp" }),
-  // Enrichment + quality tracking — mirrors vendors §10.2.
-  enrichmentSource: text("enrichment_source"),
-  /**
-   * When a render last LOOKED at this row, whether or not it wrote anything.
-   *
-   * This is the column a recency / "don't re-research yet" filter wants — it is
-   * populated 485/485 across the NEEDS_ENRICHMENT queue and 28/28 for BLOCKED.
-   * See the OPE-496 note on `lastEnrichedAt` for what happens when the two are
-   * confused.
-   */
-  enrichmentAttemptedAt: integer("enrichment_attempted_at", { mode: "timestamp" }),
-  domainHijacked: integer("domain_hijacked", { mode: "boolean" }).notNull().default(false),
-  completenessScore: integer("completeness_score").notNull().default(0),
-  // OPE-116 (drizzle/0154) — enrichment rails, mirroring promoters (drizzle/0140).
-  // The enrich_performer pipeline drives these; NULL status = never assessed.
-  enrichmentStatus: text("enrichment_status", {
-    enum: ["NEEDS_ENRICHMENT", "IN_PROGRESS", "ENRICHED", "NO_SOURCE", "BLOCKED"],
-  }),
-  enrichmentCoverage: text("enrichment_coverage"), // JSON {image,description,socials,contact}
-  /**
-   * When a render last WROTE a field to this row. NOT "when did we last look".
-   *
-   * OPE-496 — these two columns are one word apart and mean different things,
-   * and the drain lane keyed its recency filter on this one. It is NULL for 91%
-   * of promoters (including 51 of 56 ENRICHED) precisely because most renders
-   * find nothing to write, so the filter excluded almost nothing and the same
-   * top-25 were re-rendered daily — ~2 promoters/day of real progress against a
-   * 485-deep queue, with every call still returning success.
-   *
-   * A recency filter wants `enrichmentAttemptedAt` below. Use
-   * `list_promoter_enrichment_queue`, which keys on the right one.
-   */
-  lastEnrichedAt: integer("last_enriched_at", { mode: "timestamp" }),
-  enrichmentBlockedReason: text("enrichment_blocked_reason", {
-    enum: ["js_gated", "host_gated", "parked", "hijacked", "no_image", "stale", "rate_limited"],
-  }),
-  // Soft-delete + redirect/alias — mirrors vendors.
-  redirectToPerformerId: text("redirect_to_performer_id").references(
-    (): AnySQLiteColumn => performers.id,
-    { onDelete: "set null" }
-  ),
-  aliasOfPerformerId: text("alias_of_performer_id").references(
-    (): AnySQLiteColumn => performers.id,
-    { onDelete: "set null" }
-  ),
-  viewCount: integer("view_count").notNull().default(0),
-  deletedAt: integer("deleted_at", { mode: "timestamp" }),
-  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
-  /**
-   * OPE-332 — `$onUpdateFn` is what makes this column trustworthy as an HTTP
-   * validator. Before it, updated_at was set only where a writer remembered:
-   * an audit found 36/58 event updates, 26/31 vendor, 16/17 promoter and 10/11
-   * venue updates never touched it — including imageUrl, venueId and geocode
-   * writes, all of which change the rendered page. A 304 built on that would
-   * have told Google "unchanged" after a hero image swap.
-   *
-   * Fixing the ~100 call sites would have fixed today and started rotting
-   * immediately. This fixes the type: every Drizzle update bumps it, and a
-   * future writer cannot forget. The one deliberate exception is the view-count
-   * increment, which goes through raw SQL precisely so page views don't
-   * invalidate the validator — see event-detail-data.ts.
-   *
-   * Fails safe in the right direction: an unnecessary bump costs one extra 200,
-   * a missed bump would serve stale content as fresh.
-   */
-  updatedAt: integer("updated_at", { mode: "timestamp" })
-    .$defaultFn(() => new Date())
-    .$onUpdateFn(() => new Date()),
-});
+export const performers = sqliteTable(
+  "performers",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    // Nullable (unlike vendors): a performer can exist unclaimed with no account.
+    // Unique so a claimed performer maps to one user (NULLs are distinct in SQLite).
+    userId: text("user_id")
+      .unique()
+      .references(() => users.id, { onDelete: "set null" }),
+    name: text("name").notNull(),
+    slug: text("slug").$type<Slug>().notNull().unique(),
+    // PERSON = solo act; GROUP = band/troupe. TS-typed at the app layer.
+    performerType: text("performer_type", { enum: ["PERSON", "GROUP"] }),
+    // Free text; see the block comment above re: deferred enum.
+    actCategory: text("act_category"),
+    description: text("description"),
+    website: text("website"),
+    socialLinks: text("social_links"), // JSON
+    imageUrl: text("image_url"),
+    imageFocalX: real("image_focal_x").notNull().default(0.5),
+    imageFocalY: real("image_focal_y").notNull().default(0.5),
+    homeBaseCity: text("home_base_city"),
+    homeBaseState: text("home_base_state"),
+    contactName: text("contact_name"),
+    contactEmail: text("contact_email"),
+    contactPhone: text("contact_phone"),
+    verified: integer("verified", { mode: "boolean" }).notNull().default(false),
+    verifiedPro: integer("verified_pro", { mode: "boolean" }).notNull().default(false),
+    // OPE-113 (drizzle/0153) — verify audit columns, mirroring vendors. The OPE-112
+    // ticket's inline list omitted these; the design doc §3.1 includes them.
+    verifiedProAt: integer("verified_pro_at", { mode: "timestamp" }),
+    verifiedProBy: text("verified_pro_by").references(() => users.id, { onDelete: "set null" }),
+    // Claimed tier — mirrors vendors.claimed.
+    claimed: integer("claimed", { mode: "boolean" }).notNull().default(false),
+    claimedAt: integer("claimed_at", { mode: "timestamp" }),
+    claimedBy: text("claimed_by").references(() => users.id, { onDelete: "set null" }),
+    // Enhanced Profile (paid tier) — mirrors vendors.
+    enhancedProfile: integer("enhanced_profile", { mode: "boolean" }).notNull().default(false),
+    enhancedProfileStartedAt: integer("enhanced_profile_started_at", { mode: "timestamp" }),
+    enhancedProfileExpiresAt: integer("enhanced_profile_expires_at", { mode: "timestamp" }),
+    // Enrichment + quality tracking — mirrors vendors §10.2.
+    enrichmentSource: text("enrichment_source"),
+    /**
+     * When a render last LOOKED at this row, whether or not it wrote anything.
+     *
+     * This is the column a recency / "don't re-research yet" filter wants — it is
+     * populated 485/485 across the NEEDS_ENRICHMENT queue and 28/28 for BLOCKED.
+     * See the OPE-496 note on `lastEnrichedAt` for what happens when the two are
+     * confused.
+     */
+    enrichmentAttemptedAt: integer("enrichment_attempted_at", { mode: "timestamp" }),
+    domainHijacked: integer("domain_hijacked", { mode: "boolean" }).notNull().default(false),
+    completenessScore: integer("completeness_score").notNull().default(0),
+    // OPE-116 (drizzle/0154) — enrichment rails, mirroring promoters (drizzle/0140).
+    // The enrich_performer pipeline drives these; NULL status = never assessed.
+    enrichmentStatus: text("enrichment_status", {
+      enum: ["NEEDS_ENRICHMENT", "IN_PROGRESS", "ENRICHED", "NO_SOURCE", "BLOCKED"],
+    }),
+    enrichmentCoverage: text("enrichment_coverage"), // JSON {image,description,socials,contact}
+    /**
+     * When a render last WROTE a field to this row. NOT "when did we last look".
+     *
+     * OPE-496 — these two columns are one word apart and mean different things,
+     * and the drain lane keyed its recency filter on this one. It is NULL for 91%
+     * of promoters (including 51 of 56 ENRICHED) precisely because most renders
+     * find nothing to write, so the filter excluded almost nothing and the same
+     * top-25 were re-rendered daily — ~2 promoters/day of real progress against a
+     * 485-deep queue, with every call still returning success.
+     *
+     * A recency filter wants `enrichmentAttemptedAt` below. Use
+     * `list_promoter_enrichment_queue`, which keys on the right one.
+     */
+    lastEnrichedAt: integer("last_enriched_at", { mode: "timestamp" }),
+    enrichmentBlockedReason: text("enrichment_blocked_reason", {
+      enum: ["js_gated", "host_gated", "parked", "hijacked", "no_image", "stale", "rate_limited"],
+    }),
+    // Soft-delete + redirect/alias — mirrors vendors.
+    redirectToPerformerId: text("redirect_to_performer_id").references(
+      (): AnySQLiteColumn => performers.id,
+      { onDelete: "set null" }
+    ),
+    aliasOfPerformerId: text("alias_of_performer_id").references(
+      (): AnySQLiteColumn => performers.id,
+      { onDelete: "set null" }
+    ),
+    viewCount: integer("view_count").notNull().default(0),
+    deletedAt: integer("deleted_at", { mode: "timestamp" }),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    /**
+     * OPE-332 — `$onUpdateFn` is what makes this column trustworthy as an HTTP
+     * validator. Before it, updated_at was set only where a writer remembered:
+     * an audit found 36/58 event updates, 26/31 vendor, 16/17 promoter and 10/11
+     * venue updates never touched it — including imageUrl, venueId and geocode
+     * writes, all of which change the rendered page. A 304 built on that would
+     * have told Google "unchanged" after a hero image swap.
+     *
+     * Fixing the ~100 call sites would have fixed today and started rotting
+     * immediately. This fixes the type: every Drizzle update bumps it, and a
+     * future writer cannot forget. The one deliberate exception is the view-count
+     * increment, which goes through raw SQL precisely so page views don't
+     * invalidate the validator — see event-detail-data.ts.
+     *
+     * Fails safe in the right direction: an unnecessary bump costs one extra 200,
+     * a missed bump would serve stale content as fresh.
+     */
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .$defaultFn(() => new Date())
+      .$onUpdateFn(() => new Date()),
+  },
+  (t) => ({
+    // OPE-1121 phase 1 — FK child columns with no index; every parent delete/merge scanned these.
+    performersAliasOfIdx: index("idx_performers_alias_of").on(t.aliasOfPerformerId),
+    performersClaimedByIdx: index("idx_performers_claimed_by").on(t.claimedBy),
+    performersRedirectToIdx: index("idx_performers_redirect_to").on(t.redirectToPerformerId),
+    performersVerifiedProByIdx: index("idx_performers_verified_pro_by").on(t.verifiedProBy),
+  })
+);
 
 // One row = one performance/set (an APPEARANCE), mirroring event_vendors. A
 // performer can appear multiple times at one event (Sat 3 PM + Sun 10 AM), so the
@@ -1515,6 +1735,45 @@ export const blogSlugHistory = sqliteTable(
   })
 );
 
+/**
+ * OPE-1117 (drizzle/0301) — "a human looked at this flagged pair and they are
+ * two different events."
+ *
+ * The third of three duplicate facts, and deliberately its own table rather
+ * than a column on `events`:
+ *
+ *   events.possible_duplicate_of    — a MATCHER suspected this. A guess.
+ *   events.rejected_as_duplicate_of — a HUMAN ruled it IS a duplicate.
+ *   event_duplicate_dismissals      — a HUMAN ruled it is NOT.
+ *
+ * Writing a dismissal into either `events` column would poison the second:
+ * `update_event_status` defaults `rejected_as_duplicate_of` FROM
+ * `possible_duplicate_of`, so a later, unrelated rejection of a dismissed row
+ * would silently become a duplicate adjudication against an event it does not
+ * duplicate — and OPE-450 exists precisely because those adjudications are
+ * trusted. Keyed on the PAIR, so a row that is later flagged against a
+ * different candidate re-enters the queue instead of inheriting the verdict.
+ */
+export const eventDuplicateDismissals = sqliteTable(
+  "event_duplicate_dismissals",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    eventId: text("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    /** The candidate the matcher named. No FK: the verdict outlives a deleted candidate. */
+    candidateId: text("candidate_id").notNull(),
+    dismissedBy: text("dismissed_by"),
+    dismissedAt: integer("dismissed_at", { mode: "timestamp" }).notNull(),
+    note: text("note"),
+  },
+  (t) => ({
+    pairIdx: uniqueIndex("uq_event_duplicate_dismissals_pair").on(t.eventId, t.candidateId),
+  })
+);
+
 // Admin actions audit log — drizzle/0039.
 // Generic enough for non-vendor actions later; first user is the Enhanced
 // Profile lifecycle (activate / expire_set / auto_expire).
@@ -1606,6 +1865,8 @@ export const eventVendors = sqliteTable(
     updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   },
   (table) => [
+    // OPE-1121 phase 1 — FK child columns with no index; every parent delete/merge scanned these.
+    index("idx_event_vendors_event_day_id").on(table.eventDayId),
     index("idx_eventvendors_eventid_status").on(table.eventId, table.status),
     index("idx_eventvendors_vendorid").on(table.vendorId),
     // K18 Phase 1: new index shapes for per-occurrence queries.
@@ -1710,6 +1971,9 @@ export const eventDataCitations = sqliteTable(
       .$defaultFn(() => new Date()),
   },
   (table) => [
+    // OPE-1121 phase 1 — FK child columns with no index; every parent delete/merge scanned these.
+    index("idx_event_data_citations_created_by").on(table.createdBy),
+    index("idx_event_data_citations_supersedes").on(table.supersedesCitationId),
     index("idx_citations_event_field").on(table.eventId, table.fieldName),
     // OPE-692 — "which citations has nobody been able to re-check?"
     index("idx_citations_recheck_state").on(table.recheckState, table.recheckAt),
@@ -1808,6 +2072,36 @@ export const eventApplications = sqliteTable(
      */
     opensAt: integer("opens_at", { mode: "timestamp" }),
     closesAt: integer("closes_at", { mode: "timestamp" }),
+    /**
+     * OPE-794 — is there a booth to apply FOR? One of VENDOR_CAPACITY_STATUSES.
+     *
+     * Per-LANE deliberately: a fair can be full for crafters and open for food
+     * trucks, and OPE-709 already made the lane the unit an applicant deals
+     * with. Putting it on `events` would force one answer for all of them.
+     *
+     * ⚠️ Defaults to 'UNKNOWN', NOT 'OPEN'. An optimistic default asserts
+     * something nobody checked — the `dates_confirmed DEFAULT true` failure
+     * (OPE-433) in a new column. Readers must not render UNKNOWN as "open".
+     */
+    capacityStatus: text("capacity_status").notNull().default("UNKNOWN"),
+    /**
+     * When the capacity claim was true. NULL for UNKNOWN.
+     *
+     * Capacity is the most perishable field on the record: "full" in September
+     * says nothing about January, and a stale FULL is exactly as wrong as a
+     * stale OPEN — it hides a show a vendor could have applied to. Nullable and
+     * never inferred, same contract as `closesAt`.
+     */
+    capacityAsOf: integer("capacity_as_of", { mode: "timestamp" }),
+    /**
+     * The qualifier a bare enum cannot hold — "first floor sold out, second
+     * floor tables still available" (Manchester Grange, 2026-08-27).
+     *
+     * Free text on purpose. Partial capacity is real but its shape is not:
+     * modelling floors, sections and categories would be inventing a taxonomy
+     * from one specimen. The enum carries the decision; this carries the detail.
+     */
+    capacityNote: text("capacity_note"),
     createdAt: integer("created_at", { mode: "timestamp" })
       .notNull()
       .$defaultFn(() => new Date()),
@@ -1851,6 +2145,11 @@ export const eventDays = sqliteTable("event_days", {
   // docs/runbooks/dq4-9-5-daily-sweep.md.
   openTime: text("open_time"), // "HH:MM" 24-hour format, or NULL
   closeTime: text("close_time"), // "HH:MM" 24-hour format, or NULL
+  // OPE-1069 (drizzle/0297) — 1 when a writer LOOKED and the organizer
+  // publishes no closing time. Distinguishes a settled finding from a research
+  // gap: a NULL close_time with this set is NOT "hours unknown" for the review
+  // flag (hours-review-flag.ts), and renders as "no published closing time".
+  closeTimeUnpublished: integer("close_time_unpublished").notNull().default(0),
   notes: text("notes"),
   /**
    * OPE-572 — operator/provenance notes for this day. NEVER rendered publicly.
@@ -2162,6 +2461,16 @@ export const apiTokens = sqliteTable("api_tokens", {
   name: text("name").notNull().default("Default"),
   lastUsedAt: integer("last_used_at", { mode: "timestamp" }),
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  /**
+   * OPE-903 — NULL means "never expires". Nullable with no default so every
+   * pre-existing token keeps working until somebody deliberately sets one.
+   */
+  expiresAt: integer("expires_at", { mode: "timestamp" }),
+  /**
+   * OPE-903 — NULL means "not revoked". Set it and the next MCP call using
+   * this token gets the same 401 an unknown token gets.
+   */
+  revokedAt: integer("revoked_at", { mode: "timestamp" }),
 });
 
 // Blog Posts table
@@ -2479,7 +2788,10 @@ export const supportObligations = sqliteTable(
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
     /** UNIQUE — makes the writer and the backfill idempotent by construction. */
-    inboundEmailId: text("inbound_email_id").notNull().unique(),
+    inboundEmailId: text("inbound_email_id")
+      .notNull()
+      .unique()
+      .references(() => inboundEmails.id), // OPE-1121 (0310): NO ACTION, NOT NULL forbids SET NULL
     fromAddress: text("from_address").notNull(),
     subject: text("subject"),
     /**
@@ -2531,7 +2843,9 @@ export const pendingEmailReplies = sqliteTable(
     id: text("id")
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
-    inboundEmailId: text("inbound_email_id").notNull(),
+    inboundEmailId: text("inbound_email_id")
+      .notNull()
+      .references(() => inboundEmails.id, { onDelete: "cascade" }), // OPE-1121 (0309)
     toAddress: text("to_address").notNull(),
     subject: text("subject"),
     bodyText: text("body_text").notNull(),
@@ -2938,6 +3252,68 @@ export type CpiSignalFilingRow = typeof cpiSignalFilings.$inferSelect;
 //   filed_at    → seconds-epoch; set when the agent records the OPE id.
 //   resolved_at → seconds-epoch; set when the signature is marked done.
 //   created_at  → seconds-epoch of the first proposal; preserved on reopen.
+/**
+ * OPE-463 — the fault record for inbound extraction.
+ *
+ * A SIBLING of `fault_signatures`, not a widening of it. That table's `route`
+ * means a browser page route and its `error_class` means a JS error class; an
+ * extraction fault has neither. It is also the table `/admin/analytics` counts
+ * as "render fault health", so mixing populations would silently change a
+ * displayed number to mean two things — the exact defect class OPE-808 removed.
+ *
+ * What IS shared is the status vocabulary (`src/lib/faults/status.ts`, OPE-811).
+ * One vocabulary, separable populations.
+ */
+export const extractionFaults = sqliteTable(
+  "extraction_faults",
+  {
+    signature: text("signature").primaryKey(),
+    /** What produced it: 'email_submission' | 'url_import' | 'photo_intake'. */
+    source: text("source").notNull(),
+    /**
+     * The fault family, typed as a `cpi.config` family_id rather than free
+     * text, so CPI stage 2 (Tier-0 classify) resolves with no mapping layer.
+     */
+    familyId: text("family_id").notNull(),
+    detail: text("detail"),
+    firstSeen: integer("first_seen", { mode: "timestamp" }).notNull(),
+    lastSeen: integer("last_seen", { mode: "timestamp" }).notNull(),
+    count: integer("count").notNull().default(1),
+    status: text("status").notNull().default("proposed"),
+    opeId: text("ope_id"),
+    filedAt: integer("filed_at", { mode: "timestamp" }),
+    resolvedAt: integer("resolved_at", { mode: "timestamp" }),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    index("idx_extraction_faults_status").on(t.status),
+    index("idx_extraction_faults_family").on(t.familyId),
+  ]
+);
+
+/**
+ * OPE-463 scope 4 — one inbound email, many events.
+ *
+ * `inbound_emails.resulting_event_id` is singular, so a submission that created
+ * six events recorded one, and per-submission precision was not computable at
+ * all. Additive: `resulting_event_id` is untouched.
+ */
+export const inboundEmailEvents = sqliteTable(
+  "inbound_email_events",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    inboundEmailId: text("inbound_email_id").notNull(),
+    eventId: text("event_id").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    uniqueIndex("idx_inbound_email_events_pair").on(t.inboundEmailId, t.eventId),
+    index("idx_inbound_email_events_event").on(t.eventId),
+  ]
+);
+
 export const faultSignatures = sqliteTable(
   "fault_signatures",
   {
@@ -2952,6 +3328,8 @@ export const faultSignatures = sqliteTable(
     filedAt: integer("filed_at", { mode: "timestamp" }),
     resolvedAt: integer("resolved_at", { mode: "timestamp" }),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    /** OPE-1174 — 'class' when the status was inherited, not ruled. See drizzle/0330. */
+    inheritedFrom: text("inherited_from"),
   },
   (t) => [index("idx_fault_signatures_status").on(t.status)]
 );
@@ -2959,6 +3337,7 @@ export const faultSignatures = sqliteTable(
 export type FaultSignatureRow = typeof faultSignatures.$inferSelect;
 
 // IndexNow Submissions table — records every pingIndexNow() attempt for observability.
+// Pruned to 30 days by the MCP daily cron (OPE-993, mcp-server/src/log-table-retention.ts).
 // timestamp: seconds-epoch (mode:"timestamp"). Migrated from raw seconds in 0043.
 export const indexnowSubmissions = sqliteTable(
   "indexnow_submissions",
@@ -3025,7 +3404,9 @@ export const emailSendLedger = sqliteTable(
     subject: text("subject"),
     // Link back to the triggering inbound email (auto-replies) — powers the
     // OPE-152 admin thread view.
-    inboundEmailId: text("inbound_email_id"),
+    inboundEmailId: text("inbound_email_id").references(() => inboundEmails.id, {
+      onDelete: "set null",
+    }), // OPE-1121 (0308)
     provider: text("provider"), // 'cf-email' | 'resend' | 'stub'
     // OPE-155 — the rendered body that actually went out, so the admin Sent
     // viewer shows full content (not just metadata). Inline; admin-gated read.
@@ -3116,13 +3497,16 @@ export const emailDeliveryEvents = sqliteTable(
      *  proves the subscription is still publishing. */
     receivedAt: integer("received_at", { mode: "timestamp" }).notNull(),
     /** email_send_ledger.message_id this event was matched to; NULL = unmatched. */
-    ledgerMessageId: text("ledger_message_id"),
+    ledgerMessageId: text("ledger_message_id").references(() => emailSendLedger.messageId, {
+      onDelete: "set null",
+    }), // OPE-1121 (0315)
   },
   (table) => [
     index("idx_email_delivery_events_received_at").on(table.receivedAt),
     index("idx_email_delivery_events_provider_message_id").on(table.providerMessageId),
     index("idx_email_delivery_events_recipient").on(table.recipient),
     index("idx_email_delivery_events_status").on(table.status),
+    index("idx_email_delivery_events_ledger").on(table.ledgerMessageId), // OPE-1121 (0315)
   ]
 );
 
@@ -3209,7 +3593,8 @@ export const urlDomainClassifications = sqliteTable(
   (table) => [index("idx_udc_domain_type").on(table.domainType)]
 );
 
-// Error Logs table.
+// Error Logs table. Pruned to 30 days by the MCP daily cron (OPE-993,
+// mcp-server/src/log-table-retention.ts).
 // timestamp: seconds-epoch (mode:"timestamp"). Migrated from raw seconds in 0043.
 export const errorLogs = sqliteTable("error_logs", {
   id: text("id").primaryKey(),
@@ -3232,10 +3617,11 @@ export const errorLogs = sqliteTable("error_logs", {
 // A9 (drizzle/0130, 2026-06-26) — edge request sampling to identify the
 // recurring 21st-of-month bot inflating GA4. The zone is on the FREE plan (no
 // Logpush — the only CF-native raw-UA capture, and it's Enterprise-only), so we
-// sample a small slice of page requests at the middleware edge: UA + IP + ASN
-// (from getCloudflareContext().cf) + path. Written fire-and-forget via
-// ctx.waitUntil (never blocks the response) and pruned to ~60 days
-// probabilistically. Aggregated via GET /api/admin/request-samples.
+// sample a small slice of page requests at the middleware edge: UA + a network
+// prefix of the IP + ASN (from getCloudflareContext().cf) + path. Written via
+// ctx.waitUntil (never blocks the response). Pruned at 60 days by the daily MCP
+// cron (mcp-server/src/request-sample-retention.ts, OPE-971) — no longer the
+// per-write dice roll. Aggregated via GET /api/admin/request-samples.
 export const requestSamples = sqliteTable(
   "request_samples",
   {
@@ -3246,6 +3632,9 @@ export const requestSamples = sqliteTable(
     path: text("path"),
     method: text("method"),
     userAgent: text("user_agent"),
+    // A /24 (IPv4) or /48 (IPv6) PREFIX, not the address — truncateIp in
+    // src/lib/request-sampling.ts records why (OPE-971). Rows before 2026-09-13
+    // hold full addresses and age out by 2026-11-12.
     ip: text("ip"),
     asn: integer("asn"),
     asOrganization: text("as_organization"),
@@ -3426,7 +3815,9 @@ export const workflowRunSteps = sqliteTable(
     /** e.g. "inbound-email". */
     workflowName: text("workflow_name").notNull(),
     /** Resolves a run back to the email that caused it (OPE-501 item 3). */
-    inboundEmailId: text("inbound_email_id"),
+    inboundEmailId: text("inbound_email_id").references(() => inboundEmails.id, {
+      onDelete: "set null",
+    }), // OPE-1121 (0312)
     stepName: text("step_name").notNull(),
     /**
      * `ok` | `failed` | `skipped`.
@@ -3461,6 +3852,42 @@ export const staleRedSignals = sqliteTable("stale_red_signals", {
   /** Set by the first scan that no longer sees it. NULL = currently red. */
   resolvedAt: integer("resolved_at", { mode: "timestamp" }),
 });
+
+/**
+ * OPE-1164 — every distinct category value ever seen, per field, with the day
+ * the weekly watch first saw it. "New this week" is a first_seen_at in the last
+ * 7 days; the first run marks everything `baseline` so it never reports the
+ * whole vocabulary as new.
+ */
+export const vendorCategoryValues = sqliteTable(
+  "vendor_category_values",
+  {
+    /** vendor_type | sells_category | business_sector | vendor_identity */
+    field: text("field").notNull(),
+    value: text("value").notNull(),
+    firstSeenAt: integer("first_seen_at", { mode: "timestamp" }).notNull(),
+    baseline: integer("baseline", { mode: "boolean" }).notNull().default(false),
+  },
+  (t) => [primaryKey({ columns: [t.field, t.value] })]
+);
+
+/** OPE-1164 — one row per (weekly run, field): the new values and whether it alerted. */
+export const vendorCategoryWatchRuns = sqliteTable(
+  "vendor_category_watch_runs",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    runAt: integer("run_at", { mode: "timestamp" }).notNull(),
+    field: text("field").notNull(),
+    newCount: integer("new_count").notNull(),
+    /** JSON array of the new values themselves, not just the count. */
+    newValues: text("new_values").notNull().default("[]"),
+    threshold: integer("threshold").notNull(),
+    fired: integer("fired", { mode: "boolean" }).notNull().default(false),
+  },
+  (t) => [index("idx_vendor_category_watch_runs_run_at").on(t.runAt)]
+);
 
 export const weeklyInventoryState = sqliteTable("weekly_inventory_state", {
   id: text("id").primaryKey(),
@@ -3564,6 +3991,61 @@ export const promoterEnrichmentNoticeState = sqliteTable("promoter_enrichment_no
 // attempt (success or failure). source values: ai_workers | scraper |
 // manual_admin | vendor_self | mcp_create. fieldsChanged is JSON array of
 // field names. See src/lib/enrichment-log.ts for the writer.
+/**
+ * OPE-830 — a per-entity write history that can record a save NOT happening.
+ *
+ * `enrichment_log` (below) answers "when was this entity last enriched, and by
+ * which source". It cannot answer "what did this save do", for two reasons
+ * that together made two live "my profile won't save" reports unanswerable:
+ *
+ *   1. **It records successes only.** A save rejected at the auth gate returns
+ *      before any logging, so "no record of a save" and "no save attempted"
+ *      are the same observation.
+ *   2. **`fields_changed` is `Object.keys(updateData)`** — the fields present
+ *      in the payload, not the ones that changed. On the OPE-830 specimen it
+ *      is byte-identical across all 18 saves.
+ *
+ * This table fixes both: `outcome` is explicit, rejections are first-class
+ * rows, and `changesJson` is a real before/after diff against the stored row.
+ */
+export const entityWriteLog = sqliteTable(
+  "entity_write_log",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    /** 'vendor' | 'event' | 'promoter' | 'performer' — mirrors enrichmentLog.targetType. */
+    entityType: text("entity_type").notNull(),
+    entityId: text("entity_id").notNull(),
+    /** Which surface wrote: 'vendor_self', 'admin_ui', 'mcp', … */
+    source: text("source").notNull(),
+    /**
+     * ⚠️ The column this table exists for.
+     *
+     * `noop` is separate from `applied` deliberately — "saved, nothing to do"
+     * and "saved, here is what moved" are different facts, and collapsing them
+     * rebuilds the ambiguity the table was built to remove.
+     */
+    outcome: text("outcome", { enum: ["applied", "noop", "rejected"] }).notNull(),
+    /** Why a `rejected` row was refused. NULL on applied/noop. */
+    rejectReason: text("reject_reason"),
+    /**
+     * JSON `[{field, before, after, truncated?}]`.
+     *
+     * ⚠️ NULL on `rejected` — nothing was compared, which is NOT the same as
+     * an empty diff and must never render as one.
+     */
+    changesJson: text("changes_json"),
+    actorUserId: text("actor_user_id"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    index("idx_entity_write_log_entity").on(t.entityType, t.entityId, t.createdAt),
+    index("idx_entity_write_log_outcome").on(t.outcome, t.createdAt),
+    index("idx_entity_write_log_actor").on(t.actorUserId, t.createdAt),
+  ]
+);
+
 export const enrichmentLog = sqliteTable(
   "enrichment_log",
   {
@@ -3674,8 +4156,11 @@ export const vendorClaimEvidence = sqliteTable(
     id: text("id")
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
-    vendorId: text("vendor_id").notNull(),
-    /** The registrant. NOT an FK to keep the row as an audit tombstone if the account goes. */
+    vendorId: text("vendor_id")
+      .notNull()
+      .references(() => vendors.id, { onDelete: "cascade" }), // OPE-1121 (0322)
+    /** The registrant. NOT an FK to keep the row as an audit tombstone if the account goes.
+     *  OPE-1121 Phase 3 kept it that way deliberately (0322 adds the vendor FK only). */
     userId: text("user_id"),
     /** Registrant-supplied values, snapshotted at signup so later edits don't rewrite history. */
     claimantName: text("claimant_name"),
@@ -3726,7 +4211,9 @@ export const vendorEnrichmentCandidates = sqliteTable(
   "vendor_enrichment_candidates",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
-    vendorId: text("vendor_id").notNull(),
+    vendorId: text("vendor_id")
+      .notNull()
+      .references(() => vendors.id, { onDelete: "cascade" }), // OPE-1121 (0316)
     // Groups one cron run's proposals for batch review. Synchronous
     // enrich_vendor calls use a 'manual-<uuid>' run id.
     jobRunId: text("job_run_id").notNull(),
@@ -3772,7 +4259,9 @@ export const promoterEnrichmentCandidates = sqliteTable(
   "promoter_enrichment_candidates",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
-    promoterId: text("promoter_id").notNull(),
+    promoterId: text("promoter_id")
+      .notNull()
+      .references(() => promoters.id, { onDelete: "cascade" }), // OPE-1121 (0321)
     // Groups one cron run's proposals; synchronous enrich_promoter uses 'manual-<uuid>'.
     jobRunId: text("job_run_id").notNull(),
     // hero | logo | description | social_links | contact_email | contact_phone
@@ -3791,9 +4280,12 @@ export const promoterEnrichmentCandidates = sqliteTable(
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
     reviewedAt: integer("reviewed_at", { mode: "timestamp" }),
     reviewedBy: text("reviewed_by"),
-    // pending | approved | rejected | auto_merged
+    // pending | approved | rejected | auto_merged | reverted
+    // OPE-964 — `reverted`: an auto_merged value a human undid. Distinct from
+    // `rejected` (declined before it applied) so the agreement metric can tell
+    // them apart; both count as a human disagreement.
     decision: text("decision", {
-      enum: ["pending", "approved", "rejected", "auto_merged"],
+      enum: ["pending", "approved", "rejected", "auto_merged", "reverted"],
     })
       .notNull()
       .default("pending"),
@@ -3817,7 +4309,9 @@ export const performerEnrichmentCandidates = sqliteTable(
   "performer_enrichment_candidates",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
-    performerId: text("performer_id").notNull(),
+    performerId: text("performer_id")
+      .notNull()
+      .references(() => performers.id, { onDelete: "cascade" }), // OPE-1121 (0317)
     // Groups one enrich run's proposals; synchronous enrich_performer uses 'manual-<uuid>'.
     jobRunId: text("job_run_id").notNull(),
     // image | description | social_links | contact_email | contact_phone
@@ -3953,6 +4447,8 @@ export const promoterOutreachAttempts = sqliteTable(
     followUpOf: text("follow_up_of"),
   },
   (t) => [
+    // OPE-1121 phase 1 — FK child columns with no index; every parent delete/merge scanned these.
+    index("idx_poa_follow_up_of").on(t.followUpOf),
     index("idx_promoter_outreach_promoter").on(t.promoterId),
     index("idx_promoter_outreach_status").on(t.status, t.createdAt),
     index("idx_promoter_outreach_event").on(t.eventId),
@@ -4125,7 +4621,12 @@ export const locationZips = sqliteTable(
       .references(() => locations.id, { onDelete: "cascade" }),
     zip: text("zip").notNull(),
   },
-  (t) => [primaryKey({ columns: [t.locationId, t.zip] }), index("idx_location_zips_zip").on(t.zip)]
+  (t) => [
+    primaryKey({ columns: [t.locationId, t.zip] }),
+    index("idx_location_zips_zip").on(t.zip),
+    // OPE-1121 phase 1 — the FK child column had no index.
+    index("idx_location_zips_location_id").on(t.locationId),
+  ]
 );
 
 export const timeToIndexLog = sqliteTable(
@@ -4315,6 +4816,75 @@ export const pageErrorCanaryState = sqliteTable(
   ]
 );
 
+// OPE-1178 (drizzle/0331, 2026-09-27) — product IDEAS: features and
+// improvements worth remembering, not yet decided. Deliberately its OWN table:
+// every existing tracker (event_discrepancies, problem_reports,
+// site_health_issues, extraction_faults, fault_signatures) is a DEFECT ledger
+// with counts, KPIs and silence alarms built on it, and an idea filed into one
+// would inflate a defect total and be "resolved" by a fault workflow.
+//
+// Reading across is allowed (John, 2026-09-27): `related_refs` points at
+// fault-side rows, and fault-side code may read this table. What must never
+// happen is COUNTING — no defect total, KPI, stuck-red signal or alarm reads
+// this table as work.
+export const IDEA_PRODUCTS = ["mmatf", "cardworks", "other"] as const;
+export const IDEA_SOURCE_TYPES = [
+  "customer_email",
+  "organizer",
+  "vendor",
+  "john",
+  "agent",
+  "other",
+] as const;
+export const IDEA_STATUSES = ["new", "considering", "planned", "declined", "shipped"] as const;
+/** `related_refs` entries are `<kind>:<id>`; these are the kinds. */
+export const IDEA_REF_KINDS = [
+  "event_discrepancies",
+  "problem_reports",
+  "site_health_issues",
+  "extraction_faults",
+  "fault_signatures",
+  "cpi",
+  "idea",
+] as const;
+
+export const productIdeas = sqliteTable(
+  "product_ideas",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    title: text("title").notNull(),
+    description: text("description"),
+    product: text("product", { enum: IDEA_PRODUCTS }).notNull().default("mmatf"),
+    area: text("area"),
+    sourceType: text("source_type", { enum: IDEA_SOURCE_TYPES }).notNull().default("other"),
+    /** e.g. an inbound_email id or a URL. */
+    sourceRef: text("source_ref"),
+    /** JSON string[] — further source refs recorded when the idea recurs. */
+    extraSourceRefs: text("extra_source_refs").notNull().default("[]"),
+    /** A NAME only. Never an email address (enforced at the write tools). */
+    sourcePerson: text("source_person"),
+    status: text("status", { enum: IDEA_STATUSES }).notNull().default("new"),
+    /** The OPE id once the idea becomes work. */
+    linkedIssue: text("linked_issue"),
+    /** Bumped each time the same idea comes up again. */
+    votes: integer("votes").notNull().default(1),
+    /** JSON string[] of `<kind>:<id>` — see IDEA_REF_KINDS. */
+    relatedRefs: text("related_refs").notNull().default("[]"),
+    notes: text("notes"),
+    createdBy: text("created_by"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    index("idx_product_ideas_status").on(t.status),
+    index("idx_product_ideas_created_at").on(t.createdAt),
+  ]
+);
+
+export type ProductIdeaRow = typeof productIdeas.$inferSelect;
+
 // UR1 Phase 1 (drizzle/0104, 2026-06-04) — user-reported problem tracking.
 // Direct response to the 6/3-6/4 outage being caught by a user not by
 // monitoring (17h MTTD). Web form + email intake both write here; the
@@ -4330,11 +4900,29 @@ export const problemReports = sqliteTable(
     source: text("source", { enum: ["web", "email"] }).notNull(),
     path: text("path"), // page the user was on, when known
     userAgent: text("user_agent"), // captured at web intake only
-    inboundEmailId: text("inbound_email_id"), // FK to inbound_emails(id); null for web
+    inboundEmailId: text("inbound_email_id").references(() => inboundEmails.id, {
+      onDelete: "set null",
+    }), // null for web; OPE-1121 (0311)
     severity: text("severity", { enum: ["LOW", "HIGH"] })
       .notNull()
       .default("LOW"),
     correlatedErrorCount: integer("correlated_error_count").notNull().default(0),
+    /**
+     * OPE-769 — WHICH QUEUE this row belongs to.
+     *
+     * The table held two unrelated kinds of work: actual defect reports, and
+     * claim-verification evidence that `/api/claim/evidence` wrote here as an
+     * operator notification. Four of the five open `web` rows were the latter,
+     * so "5 unresolved problem reports" read as five open bugs when it was one.
+     *
+     * An unresolved count that mixes two work types is worse than no count: it
+     * looks drained when it is not, and alarming when it is fine.
+     *
+     * `'defect'` is the default — the overwhelming majority, and the safe
+     * direction: a new row of an unclassified kind shows up in the queue
+     * somebody drains rather than vanishing from it.
+     */
+    kind: text("kind").notNull().default("defect"),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
     resolvedAt: integer("resolved_at", { mode: "timestamp" }),
     resolvedByUserId: text("resolved_by_user_id"), // FK to users(id), set on resolve
@@ -4648,6 +5236,33 @@ export const inboundEmails = sqliteTable(
      *  bounce. NULL when absent. Added drizzle/0162. */
     emailReferences: text("email_references"),
     /**
+     * OPE-768 — which CONVERSATION this message belongs to.
+     *
+     * Every table in this lane was keyed to a single message, so a person who
+     * wrote twice read as two waiting people: Heather Santiago sat as two open
+     * support obligations for eight weeks after one reply had discharged both.
+     * `in_reply_to` was already captured and drove nothing.
+     *
+     * Assigned at ingest by `resolveThread`. A message that starts a
+     * conversation gets its own new id, so this is never NULL on a row written
+     * after drizzle/0263 — a NULL means the row predates it.
+     */
+    threadId: text("thread_id"),
+    /** 1-based position within the thread, in receipt order. */
+    threadPosition: integer("thread_position"),
+    /**
+     * How `threadId` was decided: 'header_chain' (RFC 5322 In-Reply-To /
+     * References — exact, against our inbound rows OR our own sends in
+     * `email_send_ledger`), 'operator_forward' (a trusted sender forwarding a
+     * customer's message — joins the customer's thread, opens no obligation;
+     * OPE-768 scope 3), 'subject_participants' (heuristic), or 'new'.
+     *
+     * Stored because the heuristic tier must be auditable. A thread assembled
+     * from a guess and one assembled from headers are different claims, and a
+     * backfill that cannot tell them apart cannot be reviewed.
+     */
+    threadBasis: text("thread_basis"),
+    /**
      * OPE-763 (drizzle/0259) — the sender-authenticity signals.
      *
      * Cloudflare Email Routing attaches `Authentication-Results`, and the
@@ -4673,12 +5288,57 @@ export const inboundEmails = sqliteTable(
     dmarcResult: text("dmarc_result"),
     /** `pass` | `partial` | `fail` | `unknown` — see `parseEmailAuthDetail`. */
     senderAuth: text("sender_auth"),
+    /**
+     * OPE-944 — the ORIGINAL sender, when this message is a forward.
+     *
+     * Every column above describes the hop that reached us. When a contributor
+     * forwards an organizer's mail, that is the CONTRIBUTOR: on inbound
+     * `9fc287ef` the stored verdict is `dkim=pass header.d=gmail.com`,
+     * `dmarc=pass`, `sender_auth='partial'` — all true, and all about Carolyn's
+     * Gmail, while the packet we published from was the Town of New
+     * Gloucester's. A reader cannot tell those apart from the row alone, which
+     * is what these three columns fix.
+     *
+     * `originalSenderAuth` is deliberately SIX values, not a boolean:
+     *   verified / failed / no_signature / key_unavailable
+     *     — a `message/rfc822` part was attached and its DKIM was checked.
+     *       `key_unavailable` is separate from `failed` because selectors get
+     *       rotated, so an old but genuine forward loses its key long before it
+     *       loses its authenticity.
+     *   unverifiable_inline_forward
+     *     — the body is a forward with no attached message. The quoted `From:`
+     *       is prose. This is the honest verdict, and the reason the outer
+     *       pass can never be read as the organizer's.
+     *   not_forwarded — `senderAuth` already describes this row fully.
+     *
+     * `originalSenderDomainAligned` is set only when a signature actually
+     * VERIFIED; a `d=` on a failed signature says nothing about who sent it.
+     *
+     * ⚠️ REPORT-ONLY, same contract as the block above. Nothing branches on
+     * these — not routing, not trust, not auto-publication, not a reply. That
+     * remains John's call on OPE-765 / OPE-839.
+     *
+     * NULL means no verdict was recorded: the row predates capture, or the
+     * analysis threw (which logs a warn, so the two stay distinguishable). It
+     * is NOT the same as `'not_forwarded'`, which is a positive finding that
+     * the message was examined and was not a forward.
+     *
+     * Unlike `senderAuth` a backfill IS partly possible here, because an inline
+     * forward can be re-read from the stored body — but never for a signature,
+     * since no .eml was ever stored.
+     */
+    originalSenderAddress: text("original_sender_address"),
+    originalSenderAuth: text("original_sender_auth"),
+    originalSenderDomainAligned: integer("original_sender_domain_aligned"),
     /** The display name, which is where `"Jeremy Hall" <random@gmail.com>` shows. */
     fromDisplayName: text("from_display_name"),
     replyTo: text("reply_to"),
     returnPath: text("return_path"),
     /** Originating host from the last `Received` hop, e.g. a `*.outlook.com` tenant. */
     sendingHost: text("sending_host"),
+    /** OPE-1148 — JSON of the automation headers present (Auto-Submitted, Precedence,
+     *  List-Id, List-Unsubscribe, X-Forwarded-For/-To); null when none. */
+    automationHeaders: text("automation_headers"),
     /**
      * OPE-764 (drizzle/0260) — who this sender resolves to in our own data.
      *
@@ -4815,7 +5475,9 @@ export const emailSourceSuggestions = sqliteTable(
      *  inbound row for cheap admin queries. */
     suggestedByEmail: text("suggested_by_email"),
     /** FK-style link back to inbound_emails.id. NULL if entered manually. */
-    suggestedViaInboundId: text("suggested_via_inbound_id"),
+    suggestedViaInboundId: text("suggested_via_inbound_id").references(() => inboundEmails.id, {
+      onDelete: "set null",
+    }), // OPE-1121 (0314)
     reviewedAt: integer("reviewed_at", { mode: "timestamp" }),
     reviewedByUserId: text("reviewed_by_user_id"),
     adminNotes: text("admin_notes"),
@@ -4824,6 +5486,7 @@ export const emailSourceSuggestions = sqliteTable(
   (t) => [
     index("idx_email_source_suggestions_host").on(t.host),
     index("idx_email_source_suggestions_status").on(t.status),
+    index("idx_email_source_suggestions_inbound").on(t.suggestedViaInboundId), // OPE-1121 (0314)
     // One pending suggestion per host — multiple senders flagging the
     // same domain pile into one row instead of spawning a duplicate queue.
     uniqueIndex("uq_email_source_suggestions_pending_host")
@@ -4893,16 +5556,21 @@ export const submissionCorrectionTokens = sqliteTable(
   "submission_correction_tokens",
   {
     token: text("token").primaryKey(),
-    eventId: text("event_id").notNull(),
+    eventId: text("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }), // OPE-1121 (0313)
     /** Inbound email that produced this token. Useful for the admin UI
      *  to backlink "this event was corrected via inbound 2f5f0c74". */
-    inboundEmailId: text("inbound_email_id").notNull(),
+    inboundEmailId: text("inbound_email_id")
+      .notNull()
+      .references(() => inboundEmails.id, { onDelete: "cascade" }), // OPE-1121 (0313)
     expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
     usedAt: integer("used_at", { mode: "timestamp" }),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   },
   (t) => [
     index("idx_submission_correction_tokens_event").on(t.eventId),
+    index("idx_submission_correction_tokens_inbound").on(t.inboundEmailId), // OPE-1121 (0313)
     index("idx_submission_correction_tokens_expires")
       .on(t.expiresAt)
       .where(sql`used_at IS NULL`),
@@ -5014,6 +5682,8 @@ export const inboundEmailSenderFeedback = sqliteTable(
     submitterUserAgent: text("submitter_user_agent"),
   },
   (t) => [
+    // OPE-1121 phase 1 — FK child columns with no index; every parent delete/merge scanned these.
+    index("idx_iesf_resulting_event_id").on(t.resultingEventId),
     index("idx_sender_feedback_email").on(t.inboundEmailId),
     index("idx_sender_feedback_moment").on(t.feedbackMoment, t.feedbackValue),
   ]
@@ -5039,9 +5709,15 @@ export const eventDiscrepancies = sqliteTable("event_discrepancies", {
   eventId: text("event_id")
     .notNull()
     .references(() => events.id, { onDelete: "cascade" }),
-  /** date | hours | venue | status | price | existence | name */
+  /** date | hours | venue | status | price | existence | name | other
+   *
+   *  `other` added OPE-1065 (2026-09-19) for `citation_flag` rows only: a
+   *  verification pass can find a live field wrong that none of the seven
+   *  classes names — the Harwich specimen was a parking claim in
+   *  `description`. TS-only (no CHECK in the DDL). `source_reliability` keeps
+   *  the seven: citation-flag rows carry no source keys, so they never score. */
   fieldClass: text("field_class", {
-    enum: ["date", "hours", "venue", "status", "price", "existence", "name"],
+    enum: ["date", "hours", "venue", "status", "price", "existence", "name", "other"],
   }).notNull(),
   /** The value MMATF currently treats as correct (events column value
    *  at capture time). NULL when the field is absent. */
@@ -5060,9 +5736,26 @@ export const eventDiscrepancies = sqliteTable("event_discrepancies", {
    *
    *  holdout_sample added GW1.3 (2026-06-03) — daily random sample of
    *  high-trust source events re-checked against the live source page.
-   *  No CHECK constraint in the DDL so the addition is TS-only. */
+   *  No CHECK constraint in the DDL so the addition is TS-only.
+   *
+   *  source_agreement added OPE-988 (2026-09-13) — the page an event cites as
+   *  its source never names the event's town or venue and places itself in
+   *  another US state. Its own value, not stale_page_radar: the open-row dedup
+   *  keys on (event_id, field_class, detected_by), so sharing a detector name
+   *  would let one finding silently refresh the other's row. TS-only again. */
   detectedBy: text("detected_by", {
-    enum: ["ingest_addverify", "stale_page_radar", "self_consistency", "holdout_sample", "manual"],
+    enum: [
+      "ingest_addverify",
+      "stale_page_radar",
+      "self_consistency",
+      "holdout_sample",
+      "source_agreement",
+      // OPE-1065 — a verification pass declared (or its own citation proved)
+      // that a LIVE field disagrees with the source it just cited. Our error,
+      // not a promoter's: never an outreach candidate (see queue-ranking.ts).
+      "citation_flag",
+      "manual",
+    ],
   }).notNull(),
   /** Epoch seconds — `mode: "timestamp"` convention. */
   detectedAt: integer("detected_at", { mode: "timestamp" }).notNull(),
@@ -5073,6 +5766,10 @@ export const eventDiscrepancies = sqliteTable("event_discrepancies", {
   lastSeenAt: integer("last_seen_at", { mode: "timestamp" }),
   /** 0..1 detector confidence. NULL when capture path doesn't compute it. */
   confidence: real("confidence"),
+  /** OPE-815 (drizzle/0304) — stale_page_radar only: |source date − our date|
+   *  in days. A separate column from `confidence`, which a prior-year organizer
+   *  finding and an aggregator's week-off listing can share. NULL elsewhere. */
+  driftDays: integer("drift_days"),
   /** open | resolved_authoritative | resolved_divergent | self_resolved |
    *  dismissed | superseded_duplicate | superseded_by_lifecycle |
    *  superseded_by_normalization
@@ -5099,6 +5796,17 @@ export const eventDiscrepancies = sqliteTable("event_discrepancies", {
       // the normalizer already fixed it, so the detector short-circuits and
       // would never re-file. Stale, not resolved.
       "superseded_by_normalization",
+      // OPE-813 (GATE-NOISE G4) — the match that opened this row never
+      // established that the two events were the same event. A
+      // `city_state_date` hit is a coincidence of town and week, so there was
+      // never a conflict to resolve. NOT `dismissed` (a human judging the data
+      // and feeding a live metric) and NOT `resolved_authoritative` (nobody
+      // adjudicated anything) — the row should never have been opened.
+      "superseded_by_identity_gate",
+      // OPE-1032 — the self-consistency cron re-evaluated the event and the
+      // gate no longer fires this reason (retuned gate or corrected event).
+      // Bookkeeping like the three above: it settles nothing about the data.
+      "superseded_by_reevaluation",
     ],
   })
     .notNull()
@@ -5111,6 +5819,14 @@ export const eventDiscrepancies = sqliteTable("event_discrepancies", {
   resolvedAt: integer("resolved_at", { mode: "timestamp" }),
   /** Computed by GW1d queue ranker. Boolean-as-integer. */
   outreachCandidate: integer("outreach_candidate", { mode: "boolean" }).notNull().default(false),
+  /** OPE-1082 (drizzle/0298) — the capture path decided this row must never
+   *  be a promoter-outreach candidate (an aggregator's stale listing, a
+   *  cancellation the organizer itself published, a source that describes
+   *  another event, a citation flag on our own row). Stored because
+   *  `outreach_candidate` alone cannot say WHY it is 0, and the re-ranker
+   *  recomputes that bit from score — so an unstored suppression was undone
+   *  by the first manual `rerank_outreach_queue` past 24h. */
+  outreachSuppressed: integer("outreach_suppressed", { mode: "boolean" }).notNull().default(false),
   outreachPriorityScore: real("outreach_priority_score"),
   /** Phase 2 placeholder — always NULL in Phase 1 per B13. Reserving
    *  the column now means the Phase 2 wiring is a no-migration change. */
@@ -5612,6 +6328,107 @@ export const gscMonthlyOracle = sqliteTable("gsc_monthly_oracle", {
  * entry, and that is the companion to the `name` citation in
  * `event_data_citations`.
  */
+/**
+ * OPE-1180 — "series S was held at venue V from A to B". A cited fact, entered
+ * directly; deliberately independent of `events.series_id` (OPE-472: occurrence
+ * history would be near-empty). `to_edtf` NULL = still held there.
+ *
+ * `series_id` OR `series_name`: a historical series with no MMATF events (the
+ * 1869 Washington County fair) is recorded by NAME rather than by creating an
+ * `event_series` row, because a zero-occurrence series row would render an
+ * empty, indexable /events/<series> hub.
+ */
+export const seriesVenuePeriods = sqliteTable(
+  "series_venue_periods",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    seriesId: text("series_id").references(() => eventSeries.id, { onDelete: "set null" }),
+    seriesName: text("series_name"),
+    venueId: text("venue_id")
+      .notNull()
+      .references(() => venues.id, { onDelete: "cascade" }),
+    fromEdtf: text("from_edtf"),
+    toEdtf: text("to_edtf"),
+    fromEarliest: integer("from_earliest", { mode: "timestamp" }),
+    toLatest: integer("to_latest", { mode: "timestamp" }),
+    certainty: text("certainty", { enum: ["certain", "less-certain", "uncertain"] })
+      .notNull()
+      .default("certain"),
+    notes: text("notes"),
+    createdBy: text("created_by"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    index("idx_series_venue_periods_venue").on(t.venueId),
+    index("idx_series_venue_periods_series").on(t.seriesId),
+  ]
+);
+
+/** OPE-1180 — a venue's other names, time-scoped. Mirrors event_name_variants. */
+export const venueNameVariants = sqliteTable(
+  "venue_name_variants",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    venueId: text("venue_id")
+      .notNull()
+      .references(() => venues.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    /** normalizeName(name) — the lookup key for dedup / auto-match / search. */
+    normalizedName: text("normalized_name").notNull(),
+    fromEdtf: text("from_edtf"),
+    toEdtf: text("to_edtf"),
+    certainty: text("certainty", { enum: ["certain", "less-certain", "uncertain"] })
+      .notNull()
+      .default("certain"),
+    createdBy: text("created_by"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    uniqueIndex("idx_venue_name_variants_unique").on(t.venueId, t.normalizedName),
+    index("idx_venue_name_variants_normalized").on(t.normalizedName),
+  ]
+);
+
+/**
+ * OPE-1180 — one source per claim. Exactly one target: the venue itself (a
+ * lifecycle field), a series↔venue period, or a name variant. Conflicting
+ * citations may coexist; certainty says how far each one goes.
+ */
+export const venueClaimCitations = sqliteTable(
+  "venue_claim_citations",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    venueId: text("venue_id").references(() => venues.id, { onDelete: "cascade" }),
+    seriesVenuePeriodId: text("series_venue_period_id").references(() => seriesVenuePeriods.id, {
+      onDelete: "cascade",
+    }),
+    venueNameVariantId: text("venue_name_variant_id").references(() => venueNameVariants.id, {
+      onDelete: "cascade",
+    }),
+    /** For a venue target: use_started / use_ended / current_state / … */
+    field: text("field"),
+    sourceUrl: text("source_url").notNull(),
+    sourceType: text("source_type").notNull(),
+    certainty: text("certainty", { enum: ["certain", "less-certain", "uncertain"] })
+      .notNull()
+      .default("certain"),
+    notes: text("notes"),
+    createdBy: text("created_by"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    index("idx_venue_claim_citations_venue").on(t.venueId),
+    index("idx_venue_claim_citations_period").on(t.seriesVenuePeriodId),
+    index("idx_venue_claim_citations_variant").on(t.venueNameVariantId),
+  ]
+);
+
 export const eventNameVariants = sqliteTable(
   "event_name_variants",
   {
@@ -5651,7 +6468,9 @@ export const newsletterListSubscriptions = sqliteTable(
   "newsletter_list_subscriptions",
   {
     id: text("id").primaryKey(),
-    subscriberId: text("subscriber_id").notNull(),
+    subscriberId: text("subscriber_id")
+      .notNull()
+      .references(() => newsletterSubscribers.id, { onDelete: "cascade" }), // OPE-1121 (0318)
     /** 'weekend' (attendee digest) | 'vendor' (New This Week). */
     list: text("list").notNull(),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
@@ -5771,7 +6590,9 @@ export const marketPlayerSnapshots = sqliteTable(
     id: text("id")
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
-    playerId: text("player_id").notNull(),
+    playerId: text("player_id")
+      .notNull()
+      .references(() => marketPlayers.id, { onDelete: "cascade" }), // OPE-1121 (0319)
     /** Total events listed on the site, when countable. */
     eventCount: integer("event_count"),
     /** Of those, how many are in New England — the overlap that matters to us. */
@@ -5804,7 +6625,9 @@ export const marketPlayerSerpRanks = sqliteTable(
     id: text("id")
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
-    playerId: text("player_id").notNull(),
+    playerId: text("player_id")
+      .notNull()
+      .references(() => marketPlayers.id, { onDelete: "cascade" }), // OPE-1121 (0320)
     /** The search query exactly as issued. */
     query: text("query").notNull(),
     /** Geographic market the query was issued for, e.g. 'Bangor, ME'. NULL =
@@ -5936,6 +6759,9 @@ export type RegistrationAttemptOutcome =
 export * from "./contains-ci";
 export * from "./real-users";
 export * from "./vendor-link-visibility";
+// OPE-1028 — "is this event in state X?", shared so list pages and the MCP
+// reader run the same SQL.
+export * from "./event-state";
 
 // OPE-391 — shared with the MCP Worker; see the file header.
 export * from "./data-health-kpis";
@@ -5953,3 +6779,24 @@ export * from "./hours-review-flag";
 
 // OPE-236 §4 — the canonical claim row, shared by the app AND the MCP Worker.
 export * from "./entity-claim-record";
+
+// OPE-1058 — the reversal record for the one-time category rewrite. Written in
+// the same statement as each UPDATE, so a partial run records exactly what it
+// changed; read back to verify the end state, and the only route back.
+export const eventCategoryMigrationLog = sqliteTable(
+  "event_category_migration_log",
+  {
+    id: text("id").primaryKey(),
+    eventId: text("event_id").notNull(),
+    categoriesBefore: text("categories_before").notNull(),
+    categoriesAfter: text("categories_after").notNull(),
+    tagsBefore: text("tags_before"),
+    tagsAfter: text("tags_after"),
+    migratedAt: integer("migrated_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [index("idx_event_category_migration_log_event").on(t.eventId)]
+);
+
+// OPE-516 — the citation supersede rule; every writer must use it.
+export * from "./citation-supersede-scope";
+export * from "./promoter-merge-children";

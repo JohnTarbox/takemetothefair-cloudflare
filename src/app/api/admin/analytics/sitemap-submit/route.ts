@@ -15,7 +15,7 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { isAuthorized } from "@/lib/api-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
-import { ScApiError, ScConfigError, submitSitemap, type ScEnv } from "@/lib/search-console";
+import { ScApiError, ScConfigError, submitSitemap } from "@/lib/search-console";
 
 type PostBody = { sitemap_url?: unknown };
 
@@ -46,7 +46,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const env = getCloudflareEnv() as unknown as ScEnv;
+  const env = getCloudflareEnv();
   try {
     const result = await submitSitemap(env, sitemapUrl);
     return NextResponse.json({ success: true, ...result });

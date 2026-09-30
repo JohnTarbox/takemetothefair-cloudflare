@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { isAuthorized } from "@/lib/api-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
-import { BingApiError, BingConfigError, getCrawledUrls, type BingEnv } from "@/lib/bing-webmaster";
+import { BingApiError, BingConfigError, getCrawledUrls } from "@/lib/bing-webmaster";
 
 export async function GET(request: Request) {
   if (!(await isAuthorized(request))) {
@@ -17,7 +17,7 @@ export async function GET(request: Request) {
   const dir = url.searchParams.get("dir") ?? undefined;
   const page = Number(url.searchParams.get("page") ?? 0) || 0;
   try {
-    const env = getCloudflareEnv() as unknown as BingEnv;
+    const env = getCloudflareEnv();
     const data = await getCrawledUrls(env, { dir, page, skipCache });
     return NextResponse.json({ success: true, data, dir: dir ?? null, page });
   } catch (error) {

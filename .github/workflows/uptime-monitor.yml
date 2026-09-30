@@ -5,6 +5,12 @@ on:
     - cron: "*/30 * * * *" # Every 30 minutes
   workflow_dispatch:
 
+# OPE-908 — least privilege. issues:write is declared, not inherited: the
+# github-script step opens or comments on the downtime issue.
+permissions:
+  contents: read
+  issues: write
+
 jobs:
   uptime:
     name: Health Check
@@ -82,7 +88,7 @@ jobs:
 
       - name: Create issue on failure
         if: steps.health.outputs.healthy == 'false' || steps.homepage.outputs.healthy == 'false' || steps.sitemap.outputs.healthy == 'false' || steps.robots.outputs.healthy == 'false'
-        uses: actions/github-script@v9
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const healthCode = '${{ steps.health.outputs.http_code }}';

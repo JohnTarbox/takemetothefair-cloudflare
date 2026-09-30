@@ -86,3 +86,47 @@ export async function chunkedInArray<T, R>(
   }
   return out;
 }
+
+/**
+ * OPE-1185 — rows per multi-row INSERT that keep the statement under the cap.
+ *
+ * Every row binds `paramsPerRow` parameters, INCLUDING the ones the ORM fills
+ * itself: Drizzle binds a column's `$defaultFn` value (a generated `id`, a
+ * `created_at`) exactly like a caller-supplied one. That is how
+ * `import_bing_backlinks` shipped at 30 rows on the belief of "3 columns per
+ * row" and bound 30 × 5 = 150 — the comment counted the values it wrote, not
+ * the values it sent. So measure `paramsPerRow` from the built statement
+ * (`insert(...).values([oneRow]).toSQL().params.length`), don't count by eye.
+ *
+ * `fixedParams` = parameters the statement binds once regardless of row count
+ * (e.g. an ON CONFLICT ... SET with a literal). Always ≥ 1 row.
+ */
+export function rowsPerInsert(paramsPerRow: number, fixedParams = 0): number {
+  if (!Number.isFinite(paramsPerRow) || paramsPerRow <= 0) return 1;
+  return Math.max(1, Math.floor((D1_MAX_BIND_PARAMS - fixedParams) / paramsPerRow));
+}
+
+/**
+ * OPE-1185 — run a multi-row INSERT in chunks that fit D1's parameter cap.
+ *
+ * `build(chunk)` returns the ORM statement for those rows (a Drizzle insert,
+ * with whatever ON CONFLICT it needs). The parameters one row binds are
+ * MEASURED from `build([firstRow]).toSQL()`, so ORM-supplied defaults are
+ * counted and a later schema change re-sizes the chunks by itself. Returns the
+ * number of statements executed. Rows are written in order; not atomic across
+ * chunks (each chunk is its own statement), same as a hand-rolled loop.
+ */
+export async function runChunkedInsert<R>(
+  rows: readonly R[],
+  build: (chunk: R[]) => { toSQL(): { params: unknown[] } } & PromiseLike<unknown>
+): Promise<number> {
+  if (rows.length === 0) return 0;
+  const perRow = build(rows.slice(0, 1) as R[]).toSQL().params.length;
+  const size = rowsPerInsert(perRow);
+  let statements = 0;
+  for (let i = 0; i < rows.length; i += size) {
+    await build(rows.slice(i, i + size) as R[]);
+    statements++;
+  }
+  return statements;
+}

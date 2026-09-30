@@ -26,7 +26,13 @@
  */
 
 import { NonRetryableError } from "cloudflare:workflows";
+import { eq } from "drizzle-orm";
 import type { HandlerEnv } from "./types.js";
+import { adminActions, inboundEmailEvents, inboundEmails } from "../schema.js";
+import { getDb } from "../db.js";
+import { logError } from "../logger.js";
+import { decideEventGrounding, type EventGroundingDecision } from "@takemetothefair/utils";
+import { emitExtractionFault } from "../faults/extraction-emitter.js";
 
 const SOURCE_FETCH = "mcp:email-handler:extract:fetch";
 const SOURCE_EXTRACT = "mcp:email-handler:extract:ai";
@@ -36,7 +42,10 @@ const SOURCE_SUBMIT = "mcp:email-handler:submit";
 /** Cap the fetched content stored as step output. CF Workflows allows
  *  1 MiB per step output but smaller is better — and the AI prompt
  *  already caps below this. 100 KB is well under both. */
-const MAX_FETCH_CONTENT_LEN = 100_000;
+export const MAX_FETCH_CONTENT_LEN = 100_000;
+
+/** OPE-837 — ceiling on discovered anchors carried through a workflow step. */
+const MAX_LINKS = 300;
 
 /**
  * Step output shape. The workflow's `Serializable<T>` constraint trips
@@ -54,11 +63,21 @@ export interface SubmitFetchResult {
   ogImage: string | null;
   /** JSON-stringified `jsonLd`, or null if the page had none. */
   jsonLdSerialized: string | null;
+  /** OPE-837 — same-site anchors (plus known ticket-vendor hosts) found on the
+   *  fetched page, with their visible text. Empty when the main app is on a
+   *  deploy predating OPE-837, which degrades the crawl to today's behaviour
+   *  rather than failing it. The submit@ crawl classifies these to decide
+   *  which secondary pages carry price / roster / application fields. */
+  links: Array<{ url: string; text: string }>;
   /** Which fetch path the main app used. `'standard'` for the cheap path,
    *  `'browser-rendering'` for the Cloudflare Browser Rendering escalation
    *  on 401/403/429/timeout. Forwarded to workflow's mark-done step which
    *  persists it to inbound_emails.fetch_method (drizzle/0078). */
   fetchMethod: "standard" | "browser-rendering";
+  /** OPE-424 — `"http"` when the page could only be read over plain HTTP
+   *  (the origin has no working TLS). Lower-confidence: the workflow flags
+   *  the email for review. Absent on an older main-app deploy. */
+  transport?: "https" | "http";
 }
 
 export interface SubmitExtractResult {
@@ -179,10 +198,33 @@ export interface SubmitEventResult {
   id: string;
   slug: string;
   eventName: string;
+  /**
+   * OPE-325 — what the submit route actually did. `occurrence_exists` means NO
+   * event was created: the edition already exists under its series, `id` is
+   * that existing event, and the route sends no slug (the poster lane logged
+   * "staged as PENDING event undefined" for exactly this, 2026-08-24).
+   */
+  routed: "created" | "occurrence" | "occurrence_exists";
 }
 
 export interface SubmitCheckDuplicateResult {
   isDuplicate: boolean;
+  /**
+   * OPE-804 — TRUE when no dedup stage could evaluate, so `isDuplicate: false`
+   * carries no information.
+   *
+   * `source_url` NULL blinds stage 1; a missing `startDate` returns early and
+   * blinds stages 2–5 together. A candidate with neither is compared to
+   * nothing and still comes back "not a duplicate" — which is how the
+   * CraftFest Cotuit duplicate (`4c1dd636`, 2026-07-17) was created against a
+   * byte-identical APPROVED row committed 74 days earlier.
+   *
+   * ⚠️ Defaults to FALSE on every failure path below (network error, non-2xx,
+   * unparseable body) DELIBERATELY. Those are dedup-endpoint failures, which
+   * this function has always failed open on; turning them into "blind" would
+   * flag every transient blip for review and bury the real cases.
+   */
+  dedupWasBlind?: boolean;
   /** Match type when isDuplicate is true: "exact_url" or "similar_name_date".
    *  Empty when isDuplicate is false. Used by the workflow to pick the right
    *  reply phrasing. */
@@ -288,11 +330,13 @@ export async function submitFetch(env: HandlerEnv, url: string): Promise<SubmitF
     | {
         success: true;
         content: string;
+        links?: Array<{ url: string; text: string }>;
         title?: string | null;
         description?: string | null;
         ogImage?: string | null;
         jsonLd?: unknown;
         fetchMethod?: "standard" | "browser-rendering";
+        transport?: "https" | "http";
       }
     | { success: false; error: string; fetchMethod?: "failed" | "pdf_unsupported" }
     | null;
@@ -311,6 +355,10 @@ export async function submitFetch(env: HandlerEnv, url: string): Promise<SubmitF
   return {
     url,
     content: body.content.slice(0, MAX_FETCH_CONTENT_LEN),
+    // Capped so a link-farm footer cannot push a Workflow step output toward
+    // the 1 MiB ceiling. The crawl cap is 15 pages; 300 candidates is far more
+    // than that selection ever needs.
+    links: (body.links ?? []).slice(0, MAX_LINKS),
     title: body.title ?? null,
     description: body.description ?? null,
     ogImage: body.ogImage ?? null,
@@ -320,6 +368,7 @@ export async function submitFetch(env: HandlerEnv, url: string): Promise<SubmitF
     // older deploy that doesn't return the field. Better to under-count
     // browser-rendering than fail the workflow.
     fetchMethod: body.fetchMethod ?? "standard",
+    ...(body.transport ? { transport: body.transport } : {}),
   };
 }
 
@@ -592,6 +641,9 @@ export async function submitCheckDuplicate(
     | {
         success: true;
         isDuplicate: boolean;
+        // OPE-804 — the endpoint now says whether any stage could run.
+        stagesSkipped?: string[];
+        dedupWasBlind?: boolean;
         matchType?: string;
         // OPE-450 — present when a human already ruled on this candidate.
         priorAdjudication?: {
@@ -610,7 +662,13 @@ export async function submitCheckDuplicate(
     | { success: false; error: string }
     | null;
   if (!data || !data.success || !data.isDuplicate) {
-    return { isDuplicate: false };
+    // OPE-804 — relay the blindness on the NOT-duplicate shape. This is the
+    // shape that creates a row, so it is the one where "we checked" versus
+    // "we could not check" actually changes what should happen.
+    return {
+      isDuplicate: false,
+      ...(data?.success && data.dedupWasBlind ? { dedupWasBlind: true } : {}),
+    };
   }
   return {
     isDuplicate: true,
@@ -645,21 +703,80 @@ export async function submitCheckDuplicate(
  *   - 4xx response → NonRetryableError "submit-${status}"
  *   - 5xx response or network → plain Error, workflow retries
  */
+/**
+ * What the dedup step concluded, handed to the creation step that acts on it.
+ *
+ * OPE-804 — this parameter is **required**, and that is the point of it.
+ *
+ * Every event this workflow creates is created because a dedup verdict said it
+ * was safe to. Before this type existed, that verdict was consumed at four
+ * separate call sites and a fifth pipeline could create events without ever
+ * consulting one — silently, because "no duplicate found" and "nothing was
+ * compared" are the same boolean. Making the context mandatory means a new
+ * creation path cannot compile until it states which verdict permitted it.
+ */
+export interface SubmitEventContext {
+  /**
+   * The inbound row this creation came from. Used to flag the row for review
+   * when the verdict was blind.
+   */
+  inboundEmailId: string;
+  /**
+   * True when NO dedup stage could evaluate — see
+   * `SubmitCheckDuplicateResult.dedupWasBlind`. Not "we found nothing";
+   * "we compared nothing".
+   */
+  dedupWasBlind: boolean;
+  /**
+   * Cohort 2 (analyst, 2026-06-01) — optional MEDIUM-confidence dedup tag.
+   * When set, the route writes events.possible_duplicate_of so /admin/events
+   * PENDING queue can surface the candidate inline with a merge button.
+   * HIGH-confidence dedup short-circuits before calling submitEvent, so this
+   * is only ever set on the MEDIUM path.
+   */
+  possibleDuplicateOf?: string | null;
+  /**
+   * OPE-465 — the exact source text(s) the extracted fields came from: the
+   * fetched page, the email body, the OCR'd attachment.
+   *
+   * Optional, and absent means "no source captured", which grounds every
+   * field as `supported` and drops nothing. That direction is deliberate: a
+   * caller that has not been wired yet behaves exactly as it does today, and
+   * a fetch failure never becomes a data-loss event.
+   */
+  sourceTexts?: string[];
+}
+
 export async function submitEvent(
   env: HandlerEnv,
   extracted: SubmitExtractResult,
   fromAddress: string,
-  // Cohort 2 (analyst, 2026-06-01) — optional MEDIUM-confidence dedup
-  // tag. When set, the route writes events.possible_duplicate_of so
-  // /admin/events PENDING queue can surface the candidate inline with
-  // a merge button. HIGH-confidence dedup short-circuits before
-  // calling submitEvent, so this is only ever set on the MEDIUM path.
-  possibleDuplicateOf?: string | null
+  context: SubmitEventContext
 ): Promise<SubmitEventResult> {
+  const possibleDuplicateOf = context.possibleDuplicateOf;
+
+  // OPE-465 — verify before write. This is the ONE chokepoint every creating
+  // branch funnels through (single-URL, free-text, fan-out, multi-source), so
+  // a check here cannot be wired into one of several parallel paths, which is
+  // this codebase's most-repeated defect shape.
+  const grounding = decideEventGrounding({
+    startDate: extracted.event.startDate,
+    endDate: extracted.event.endDate,
+    sources: context.sourceTexts ?? [],
+  });
+  const groundedEvent: SubmitExtractResult["event"] = { ...extracted.event };
+  for (const field of grounding.dropFields) {
+    // Abstention: the value is NOT written. A required-field constraint must
+    // never be satisfiable by inference — if the source gave month precision,
+    // the row carries no date rather than an invented one.
+    if (field === "start_date") groundedEvent.startDate = null;
+    if (field === "end_date") groundedEvent.endDate = null;
+  }
+
   let res: Response;
   try {
     const submitBody: Record<string, unknown> = {
-      ...extracted.event,
+      ...groundedEvent,
       source: "email",
       suggesterEmail: fromAddress,
     };
@@ -681,7 +798,11 @@ export async function submitEvent(
     throw new Error(`submit-network: ${err instanceof Error ? err.message : String(err)}`);
   }
   const body = (await res.json().catch(() => null)) as
-    | { success: true; event: { id: string; slug: string } }
+    | {
+        success: true;
+        routed?: "occurrence" | "occurrence_exists";
+        event: { id: string; slug: string };
+      }
     | { success: false; error: string }
     | null;
   if (!res.ok || !body || !body.success) {
@@ -691,7 +812,183 @@ export async function submitEvent(
     }
     throw new Error(`submit-${res.status}: ${upstream}`);
   }
-  return { id: body.event.id, slug: body.event.slug, eventName: extracted.event.name };
+  const created = {
+    id: body.event.id,
+    slug: body.event.slug,
+    eventName: extracted.event.name,
+    routed: body.routed ?? ("created" as const),
+  };
+
+  // OPE-463 (review bounce 2026-09-23) — the one-to-many link, written HERE.
+  // `inbound_email_events` shipped in #1187 and stayed EMPTY: 0 rows against 36
+  // emails that created events, because nothing inserted into it. This is the
+  // chokepoint every creating branch funnels through (single-URL, free-text,
+  // fan-out, multi-source, the poster lane), so one write covers them all —
+  // and a fan-out that creates six events writes six links, which is the whole
+  // point: `resulting_event_id` can only ever hold one.
+  // `occurrence_exists` created nothing, so it links nothing. Idempotent on the
+  // (inbound_email_id, event_id) unique index; fail-soft, because a missing
+  // link must never fail an event that now exists.
+  if (context.inboundEmailId && created.routed !== "occurrence_exists") {
+    try {
+      await getDb(env.DB)
+        .insert(inboundEmailEvents)
+        .values({
+          inboundEmailId: context.inboundEmailId,
+          eventId: created.id,
+          createdAt: new Date(),
+        })
+        .onConflictDoNothing();
+    } catch (err) {
+      await logError(env.DB, {
+        level: "warn",
+        source: "submit:inbound-email-events",
+        message: "could not record the inbound_email → event link",
+        error: err,
+        context: { inboundEmailId: context.inboundEmailId, eventId: created.id },
+      });
+    }
+  }
+
+  // OPE-465 scope 4 — emit, don't just suppress. A verifier that silently
+  // drops bad fields fixes the data and hides the defect, and this lane would
+  // lose the only automatic signal it has for extractor fabrication.
+  if (grounding.dropFields.length > 0) {
+    await recordUngroundedFields(env, grounding, created, context.inboundEmailId);
+  }
+
+  // OPE-804 — the event exists now. If the dedup that permitted it compared
+  // nothing, say so where a person will see it, because the row itself looks
+  // identical to one that passed a real check.
+  if (context.dedupWasBlind) {
+    await recordBlindDedupCreation(env, extracted, created, context.inboundEmailId);
+  }
+
+  return created;
+}
+
+/**
+ * OPE-465 scope 4 — record the fields the source did not support.
+ *
+ * Three writes, each the channel an existing neighbour already uses rather
+ * than a fourth invented one:
+ *
+ *  1. `extraction_faults` via the OPE-463 emitter — `extract.unsupported_field:<field>`
+ *     is emitter 1 from that ticket, which was written and left uncalled
+ *     pending this one. One signature per field, so a recurrence bumps the
+ *     count instead of splitting one fault's history.
+ *  2. `admin_actions(action='extract.ungrounded')` — the durable trail,
+ *     alongside `dedup.blind`.
+ *  3. `inbound_emails.flagged_for_review = 1` — the queue an operator opens.
+ *     SET only; it never clears an operator's own flag.
+ *
+ * ⚠️ Never throws, for the same reason as its neighbour: the event exists by
+ * the time this runs, and throwing would make the workflow retry a create
+ * that already happened.
+ */
+async function recordUngroundedFields(
+  env: HandlerEnv,
+  grounding: EventGroundingDecision,
+  created: SubmitEventResult,
+  inboundEmailId: string
+): Promise<void> {
+  try {
+    const db = getDb(env.DB);
+    for (const field of grounding.dropFields) {
+      const result = grounding.results.find((r) => r.field === field);
+      await emitExtractionFault(db, {
+        signature: `extract.unsupported_field:${field}`,
+        source: SOURCE_SUBMIT,
+        familyId: "extract.unsupported_field",
+        detail: result?.reason ?? null,
+      });
+    }
+    await db.insert(adminActions).values({
+      action: "extract.ungrounded",
+      actorUserId: null,
+      targetType: "event",
+      targetId: created.id,
+      payloadJson: JSON.stringify({
+        inboundEmailId,
+        eventName: created.eventName,
+        eventSlug: created.slug,
+        droppedFields: grounding.dropFields,
+        // The verdicts, so a review does not have to re-derive them — and so
+        // a wrong drop is arguable against the text that caused it.
+        verdicts: grounding.results.map((r) => ({
+          field: r.field,
+          verdict: r.verdict,
+          reason: r.reason,
+          span: r.span,
+        })),
+      }),
+      createdAt: new Date(),
+    });
+    await db
+      .update(inboundEmails)
+      .set({ flaggedForReview: 1 })
+      .where(eq(inboundEmails.id, inboundEmailId));
+  } catch (err) {
+    await logError(getDb(env.DB), {
+      source: SOURCE_SUBMIT,
+      message: "ungrounded-field annotation failed",
+      error: err,
+    }).catch(() => {});
+  }
+}
+
+/**
+ * Record that an event was created behind a dedup verdict that evaluated
+ * nothing (OPE-804).
+ *
+ * Two writes, matching what the adjacent dedup paths already do rather than
+ * inventing a third channel:
+ *
+ *  1. `admin_actions(action='dedup.blind')` — the durable, queryable trail,
+ *     alongside `dedup.would_enrich` and `dedup.enrich_proposed`.
+ *  2. `inbound_emails.flagged_for_review = 1` — puts the row in the queue an
+ *     operator actually opens. SET only; never clears an operator's own flag.
+ *
+ * ⚠️ Never throws. A failure to *annotate* a created event must not fail the
+ * submission that already succeeded — the event is in the database by the time
+ * we get here, and throwing would make the workflow retry a create that
+ * already happened.
+ */
+async function recordBlindDedupCreation(
+  env: HandlerEnv,
+  extracted: SubmitExtractResult,
+  created: SubmitEventResult,
+  inboundEmailId: string
+): Promise<void> {
+  try {
+    const db = getDb(env.DB);
+    await db.insert(adminActions).values({
+      action: "dedup.blind",
+      actorUserId: null,
+      targetType: "event",
+      targetId: created.id,
+      payloadJson: JSON.stringify({
+        inboundEmailId,
+        eventName: created.eventName,
+        eventSlug: created.slug,
+        // The two facts that made the check impossible, recorded so the
+        // review does not have to re-derive them.
+        hadSourceUrl: Boolean(extracted.url),
+        startDate: extracted.event.startDate ?? null,
+      }),
+      createdAt: new Date(),
+    });
+    await db
+      .update(inboundEmails)
+      .set({ flaggedForReview: 1 })
+      .where(eq(inboundEmails.id, inboundEmailId));
+  } catch (err) {
+    await logError(getDb(env.DB), {
+      source: SOURCE_SUBMIT,
+      message: "blind-dedup annotation failed",
+      error: err,
+    }).catch(() => {});
+  }
 }
 
 // SOURCE_* constants exported for the workflow's error-log calls.

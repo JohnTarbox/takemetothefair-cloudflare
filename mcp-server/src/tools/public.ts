@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { eq, and, or, gte, lte, inArray, isNull, sql, desc } from "drizzle-orm";
+import { loadVenueHistory } from "../venues/history.js";
+import { eq, and, or, gte, lte, inArray, isNull, sql, desc, asc } from "drizzle-orm";
 import {
   events,
   eventNameVariants,
@@ -11,14 +12,16 @@ import {
   promoters,
   eventSeries,
   eventSlugHistory,
+  vendorPhotos,
   vendorSlugHistory,
   venueSlugHistory,
+  venueNameVariants,
   promoterSlugHistory,
   // OPE-630 — LIKE-cap-safe substring predicate, shared with the Next.js app.
   containsCI,
   nameOrSlugContains,
 } from "../schema.js";
-import { vendorLinkIsPublicallyVisible } from "@takemetothefair/db-schema";
+import { vendorLinkIsPublicallyVisible, rotationCdnOption } from "@takemetothefair/db-schema";
 import { PRIMARY_AUDIENCE, PUBLIC_ACCESS, EVENT_STATUS_VALUES } from "@takemetothefair/constants";
 import {
   parseJsonArray,
@@ -37,11 +40,18 @@ import {
 import {
   displayVendorName,
   chunkIds,
+  resolveVendorGallery,
+  galleryDisplayText,
   type ParentDisplayInput,
   type VendorDisplayInput,
 } from "@takemetothefair/utils";
 import { logError } from "../logger.js";
 import type { Db } from "../db.js";
+import {
+  ACTIVE_FROM_DESCRIPTION,
+  ACTIVE_TO_DESCRIPTION,
+  parseActiveWindow,
+} from "./event-window.js";
 import type { SQLiteColumn } from "drizzle-orm/sqlite-core";
 import type { SQL } from "drizzle-orm";
 
@@ -246,6 +256,8 @@ export function registerPublicTools(server: McpServer, db: Db) {
         .describe("Filter by promoter ID (UUID) — returns all events by a specific promoter"),
       start_after: z.string().optional().describe("Events starting after this date (YYYY-MM-DD)"),
       start_before: z.string().optional().describe("Events starting before this date (YYYY-MM-DD)"),
+      active_from: z.string().optional().describe(ACTIVE_FROM_DESCRIPTION),
+      active_to: z.string().optional().describe(ACTIVE_TO_DESCRIPTION),
       // TAX1 Phase 1 (2026-06-02) — audience / access filters.
       // Defaults aren't applied here; omitting either param skips
       // the filter so existing callers see no behavior change.
@@ -313,6 +325,15 @@ export function registerPublicTools(server: McpServer, db: Db) {
       }
 
       const conditions = [searchEventStatusWhere(requested)];
+
+      const window = parseActiveWindow(params);
+      if (!window.ok) {
+        return {
+          content: [jsonContent({ error: "invalid_window", message: window.message })],
+          isError: true,
+        };
+      }
+      conditions.push(...window.conditions);
 
       if (params.query && !params.fuzzy) {
         // OPE-517 — the organizer's name for a fair must find the same page.
@@ -473,7 +494,11 @@ export function registerPublicTools(server: McpServer, db: Db) {
       const fuzzyOrder =
         params.query && params.fuzzy
           ? (() => {
-              const toks = tokenize(params.query!);
+              // OPE-593 (09-23 bounce) — the SAME cap as the WHERE gate. This
+              // term binds one parameter per token, and it was uncapped: a
+              // 48-token query bound 108 parameters against D1's 100 and threw.
+              // Scoring past token 24 never changed which candidates exist.
+              const toks = tokenize(params.query!).slice(0, MAX_FUZZY_TOKENS);
               if (toks.length === 0) return null;
               // Whole-query match counts double — an exact substring is the
               // strongest possible signal and must never be truncated away.
@@ -515,6 +540,21 @@ export function registerPublicTools(server: McpServer, db: Db) {
       if (fuzzyOrder) query.orderBy(sql`${fuzzyOrder} DESC`);
 
       const rows = await query.limit(sqlLimit).offset(sqlOffset);
+
+      // OPE-960 scope 3 — a total, so a sweep can prove coverage. Exact only
+      // when SQL decides membership: the category filter (JSON column) and the
+      // fuzzy scorer both drop rows in JS after an over-fetch capped at
+      // `sqlLimit`, so no SQL count equals what they would return. Those paths
+      // say so rather than report a number that looks authoritative.
+      let totalMatching: number | null = null;
+      if (!needsOverfetch) {
+        const [{ n }] = await db
+          .select({ n: sql<number>`count(*)` })
+          .from(events)
+          .leftJoin(venues, eq(events.venueId, venues.id))
+          .where(and(...conditions));
+        totalMatching = Number(n);
+      }
 
       // Post-filter by category (stored as JSON, can't filter in SQL)
       let results = rows;
@@ -598,7 +638,17 @@ export function registerPublicTools(server: McpServer, db: Db) {
           jsonContent({
             count: output.length,
             offset,
-            has_more: output.length === limit,
+            total_matching: totalMatching,
+            ...(totalMatching == null
+              ? {
+                  total_matching_unavailable:
+                    "category and fuzzy filter rows after a capped over-fetch, so no exact total exists; page until has_more is false",
+                }
+              : {}),
+            has_more:
+              totalMatching == null
+                ? output.length === limit
+                : offset + output.length < totalMatching,
             events: output,
           }),
         ],
@@ -1053,7 +1103,19 @@ export function registerPublicTools(server: McpServer, db: Db) {
       if (params.query) {
         // OPE-653 — 18 of 1,002 prod venue names hold a character a keyboard
         // does not produce; all 18 are reachable through the slug.
-        conditions.push(nameOrSlugContains(params.query, venues.name, venues.slug));
+        conditions.push(
+          or(
+            nameOrSlugContains(params.query, venues.name, venues.slug),
+            // OPE-1180 — a venue's recorded other names.
+            inArray(
+              venues.id,
+              db
+                .select({ id: venueNameVariants.venueId })
+                .from(venueNameVariants)
+                .where(containsCI(venueNameVariants.name, params.query))
+            )
+          )!
+        );
       }
       if (params.city) {
         conditions.push(containsCI(venues.city, params.city));
@@ -1144,10 +1206,18 @@ export function registerPublicTools(server: McpServer, db: Db) {
             contactPhone: venues.contactPhone,
             website: venues.website,
             description: venues.description,
+            petFriendly: venues.petFriendly,
             imageUrl: venues.imageUrl,
             googleMapsUrl: venues.googleMapsUrl,
             googleRating: venues.googleRating,
             status: venues.status,
+            // OPE-1180 — lifecycle.
+            useStartedEdtf: venues.useStartedEdtf,
+            useEndedEdtf: venues.useEndedEdtf,
+            currentState: venues.currentState,
+            currentUse: venues.currentUse,
+            wikidataQid: venues.wikidataQid,
+            nrhpRef: venues.nrhpRef,
             createdAt: venues.createdAt,
           })
           .from(venues)
@@ -1206,10 +1276,24 @@ export function registerPublicTools(server: McpServer, db: Db) {
             contactPhone: venue.contactPhone,
             website: venue.website,
             description: venue.description,
+            // OPE-1061 — the venue's OWN pet policy (UNSET | YES | NO |
+            // NOT_PUBLISHED). Not an answer for any event held here.
+            pet_friendly: venue.petFriendly,
+            // OPE-1180 — lifecycle + cited history (periods, name variants,
+            // citations, and the "where these events went" fan-out).
+            status: venue.status,
+            lifecycle: {
+              use_started_edtf: venue.useStartedEdtf,
+              use_ended_edtf: venue.useEndedEdtf,
+              current_state: venue.currentState,
+              current_use: venue.currentUse,
+              wikidata_qid: venue.wikidataQid,
+              nrhp_ref: venue.nrhpRef,
+            },
+            history: await loadVenueHistory(db, venue.id),
             imageUrl: venue.imageUrl || null,
             googleMapsUrl: venue.googleMapsUrl,
             googleRating: venue.googleRating,
-            status: venue.status,
             upcomingEventCount: upcomingEvents.length,
           }),
         ],
@@ -1250,6 +1334,9 @@ export function registerPublicTools(server: McpServer, db: Db) {
             products: vendors.products,
             website: vendors.website,
             logoUrl: vendors.logoUrl,
+            // OPE-1111 — the legacy gallery column, needed for the same
+            // table-first/legacy-fallback choice the web page makes.
+            galleryImages: vendors.galleryImages,
             verified: vendors.verified,
             commercial: vendors.commercial,
             contactName: vendors.contactName,
@@ -1375,6 +1462,48 @@ export function registerPublicTools(server: McpServer, db: Db) {
           )
         );
 
+      // OPE-1111 — the gallery, which this reader did not return.
+      //
+      // That silence is the reason a broken gallery survived 23 days: the
+      // photos were in D1, the admin tool listed them, and the ONLY surface
+      // that claimed to show "the public shape" of a vendor had no opinion
+      // about them at all. So every automated check agreed with every human
+      // check, and both were looking away from the defect. A reader that
+      // omits a public field cannot be used to verify that field renders.
+      //
+      // Ordering and the legacy-column fallback come from the same shared
+      // helper the web page uses — see packages/utils/src/vendor-gallery.ts.
+      const galleryRows = await db
+        .select({
+          id: vendorPhotos.id,
+          url: vendorPhotos.photoUrl,
+          alt: vendorPhotos.altText,
+          caption: vendorPhotos.caption,
+          isFeatured: vendorPhotos.isFeatured,
+          rotation: vendorPhotos.rotation,
+        })
+        .from(vendorPhotos)
+        .where(and(eq(vendorPhotos.vendorId, vendor.id), isNull(vendorPhotos.deletedAt)))
+        .orderBy(asc(vendorPhotos.sortOrder));
+
+      // OPE-1171 — the same display text the page renders (decoded caption,
+      // never-blank alt), so this reader can verify what the page shows.
+      const gallery = galleryDisplayText(
+        resolveVendorGallery(
+          galleryRows.map((r) => ({
+            id: r.id,
+            url: r.url,
+            alt: r.alt ?? "",
+            caption: r.caption ?? undefined,
+            isFeatured: !!r.isFeatured,
+            isLegacy: false,
+            rotation: rotationCdnOption(r.rotation),
+          })),
+          vendor.galleryImages
+        ),
+        resolvedDisplayName
+      );
+
       return {
         content: [
           jsonContent({
@@ -1405,6 +1534,12 @@ export function registerPublicTools(server: McpServer, db: Db) {
             city: vendor.city,
             state: vendor.state,
             upcomingEventCount: confirmedEvents.length,
+            // OPE-1111 — always present, `[]` when empty rather than omitted.
+            // An absent key and an empty gallery are the same thing to a
+            // reader skimming JSON, and telling them apart is exactly what
+            // this field exists to make possible.
+            gallery,
+            galleryCount: gallery.length,
             // EH1 hierarchy (raw column values + resolved parent objects)
             role: vendor.role,
             brandParentVendorId: vendor.brandParentVendorId,

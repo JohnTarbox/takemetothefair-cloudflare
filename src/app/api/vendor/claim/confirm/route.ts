@@ -124,7 +124,7 @@ export async function GET(request: NextRequest) {
         await enqueueEmail({ to: user.email, ...tpl, source: "vendor.claim-confirm" });
       }
       if (vendor) {
-        const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+        const env = getCloudflareEnv();
         await pingIndexNow(db, indexNowUrlFor("vendors", vendor.slug), env, "vendor-claim");
       }
     } catch (postErr) {

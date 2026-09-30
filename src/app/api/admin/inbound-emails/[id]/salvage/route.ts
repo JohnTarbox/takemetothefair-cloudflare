@@ -56,9 +56,7 @@ async function authorize(request: NextRequest): Promise<AuthResult> {
 }
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const env = getCloudflareEnv() as unknown as {
-    EMAIL_JOBS?: Queue<unknown>;
-  };
+  const env = getCloudflareEnv();
   const authResult = await authorize(request);
   if (!authResult.ok) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

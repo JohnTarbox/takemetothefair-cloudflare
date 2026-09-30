@@ -1,6 +1,9 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { detectPossibleDuplicate } from "@/lib/duplicates/venue-date-collision";
+import { venueStateConflict, sourceOutsideNewEngland } from "@takemetothefair/utils";
+import { resolveIngestVenue } from "@/lib/venues/former-venue-guard";
+import { gateDatesConfirmed } from "@takemetothefair/utils";
 import { withAuth } from "@/lib/api/with-auth";
 import { recordMutation } from "@/lib/audit/record-mutation";
 import { events, venues, promoters, eventSchemaOrg } from "@/lib/db/schema";
@@ -12,6 +15,7 @@ import { createSlug, dollarsToCents, appendSlugSegment, unsafeSlug } from "@/lib
 import { resolveUniqueEventSlug, insertEventDaysBatched } from "@/lib/events/insert-helpers";
 import type { VenueOption, ExtractedEventData } from "@/lib/url-import/types";
 import { inferCategoriesFromName } from "@/lib/url-import/infer-categories";
+import { UNCATEGORIZED_EVENT_CATEGORY, partitionEventCategories } from "@takemetothefair/constants";
 import { logError } from "@/lib/logger";
 import { recomputeEventCompleteness } from "@/lib/completeness";
 import { logEnrichment } from "@/lib/enrichment-log";
@@ -60,6 +64,7 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
 
     // Handle venue
     let venueId: string | null = null;
+    let venueStateMismatch: { sourceState: string; venueState: string } | null = null;
     let newVenueSlug: string | null = null;
 
     if (venueOption.type === "existing") {
@@ -73,7 +78,16 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
       if (existingVenue.length === 0) {
         return NextResponse.json({ success: false, error: "Venue not found" }, { status: 400 });
       }
-      venueId = venueOption.id;
+      // OPE-1206 — the page's own state (JSON-LD addressRegion, surfaced by the
+      // extractor as event.venueState) vs the venue picked for it. A mismatch
+      // is NOT linked: the event saves venue-less, PENDING and flagged, and the
+      // response says why — never an Oregon show on a Maine building.
+      const conflict = venueStateConflict(event.venueState, existingVenue[0].state);
+      if (conflict) {
+        venueStateMismatch = conflict;
+      } else {
+        venueId = venueOption.id;
+      }
     } else if (venueOption.type === "new") {
       // Create new venue
       const venueSlug = createSlug(venueOption.name);
@@ -216,8 +230,17 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
         : null,
       description: event.description,
     });
-    const finalStatus = gateResult.route === "PENDING_REVIEW" ? "PENDING" : "APPROVED";
+    // OPE-1206 — a source outside New England, or a venue-state mismatch, is
+    // never auto-published.
+    const stateNeedsReview = !!venueStateMismatch || sourceOutsideNewEngland(event.venueState);
+    const finalStatus =
+      gateResult.route === "PENDING_REVIEW" || stateNeedsReview ? "PENDING" : "APPROVED";
     const gateFlagsJson = gateResult.reasons.length > 0 ? JSON.stringify(gateResult.reasons) : null;
+
+    // OPE-1180 — a FORMER venue is kept only for pre-closure dates; after the
+    // closure the event is saved WITHOUT a venue and flagged for review.
+    const formerCheck = await resolveIngestVenue(db, venueId, endDate ?? startDate);
+    venueId = formerCheck.venueId;
 
     // Create the event
     const newEventId = crypto.randomUUID();
@@ -231,6 +254,7 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
     });
     await db.insert(events).values({
       possibleDuplicateOf,
+      ...(stateNeedsReview || formerCheck.flagForReview ? { flaggedForReview: 1 } : {}),
       id: newEventId,
       name: event.name,
       slug: finalEventSlug,
@@ -252,17 +276,27 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
       // read `startDate !== null`, so any URL import that managed to parse a
       // date claimed the date was confirmed. See the sibling note in
       // /api/admin/import.
-      datesConfirmed: event.datesConfirmed ?? false,
+      // OPE-1200 — the wizard's checkbox starts ticked; with no citation on a
+      // new row, a confirmed claim is written as false until start_date is cited.
+      datesConfirmed: gateDatesConfirmed({
+        requested: event.datesConfirmed ?? false,
+        citations: [],
+      }).value,
       // OPE-47 (2026-07): a specificDates list is discontinuous ONLY when the
       // dates aren't a gap-free daily run — a cadence-expanded weekly market
       // (every Saturday) → true; a contiguous multi-day fair the AI happened
       // to enumerate day-by-day → false, so it keeps its "Daily:" label. Same
       // `!areDatesContiguous` rule the display uses, so flag and label agree.
       discontinuousDates: hasSpecificDates ? !areDatesContiguous(event.specificDates!) : false,
+      // OPE-1058 — same drop-and-warn rule as the public submit path: the AI
+      // extractor is told the allow-list but is not bound by it, so what it
+      // returns is filtered here rather than stored verbatim.
       categories: JSON.stringify(
-        Array.isArray(event.categories) && event.categories.length > 0
-          ? event.categories
-          : (inferCategoriesFromName(event.name) ?? ["Event"])
+        (() => {
+          const extracted = partitionEventCategories(event.categories).kept;
+          if (extracted.length > 0) return extracted;
+          return inferCategoriesFromName(event.name) ?? [UNCATEGORIZED_EVENT_CATEGORY];
+        })()
       ),
       tags: JSON.stringify(["imported", "url-import"]),
       ticketUrl: gatedTicketUrl,
@@ -473,7 +507,7 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
     // any newly-created venue. Reused/existing venues are skipped — they're
     // already indexed.
     {
-      const cfEnv = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+      const cfEnv = getCloudflareEnv();
       if (newVenueSlug) {
         await pingIndexNow(db, indexNowUrlFor("venues", newVenueSlug), cfEnv, "venue-create");
       }
@@ -487,6 +521,11 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
         slug: finalEventSlug,
       },
       venueId, // Return venueId for reuse in batch imports
+      ...(venueStateMismatch
+        ? {
+            warning: `The selected venue is in ${venueStateMismatch.venueState} but this page says ${venueStateMismatch.sourceState}. The event was saved WITHOUT a venue, as PENDING, for review.`,
+          }
+        : {}),
     });
   } catch (error) {
     await logError(db, {

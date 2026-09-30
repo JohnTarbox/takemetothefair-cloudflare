@@ -2,28 +2,34 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { SITE_URL } from "@takemetothefair/constants";
 import { withInternalKey } from "@/lib/api/with-auth";
-import { getCloudflareEnv, getCloudflareRateLimitKv } from "@/lib/cloudflare";
+import {
+  getCloudflareEnv,
+  getCloudflareRateLimitKv,
+  type CloudflareStringEnvKey,
+} from "@/lib/cloudflare";
 import { getLatestKpiStates } from "@/lib/kpi-states";
 import { loadActionQueue } from "@/lib/analytics-overview/activity";
 import { enqueueEmail } from "@/lib/queues/producers";
 import { logError } from "@/lib/logger";
+import { persistStaleRedSignals } from "@/lib/cpi/stale-red-persistence";
 import {
   faultSignatures,
   indexnowSubmissions,
   pendingSearchPings,
   weeklyInventoryState,
-  staleRedSignals,
 } from "@/lib/db/schema";
-import { and, count, desc, eq, isNull, notInArray } from "drizzle-orm";
-import { getIndexNowQuota, type BingEnv } from "@/lib/bing-webmaster";
+import { count, desc, eq, isNull } from "drizzle-orm";
+import { getIndexNowQuota } from "@/lib/bing-webmaster";
 import { assessAllIntegrationSilence, type IntegrationActivity } from "@/lib/integration-silence";
 import { assessAllQueueFreeze } from "@/lib/queue-freeze";
+import { assessAllDuplicateFlagDeadlines } from "@/lib/duplicates/flag-queue";
 import { loadQueueFreezeThresholds } from "@/lib/queue-freeze-thresholds";
 import { gatherQueueFlows, persistQueueSnapshots } from "@/lib/analytics-overview/queue-drain";
 import { assessAllHeartbeat } from "@/lib/heartbeat";
 import { assessPhotoEffectiveness } from "@/lib/photo-effectiveness/load";
 import { assessPhotoIntakeStorage } from "@/lib/photo-intake-reconcile";
 import { assessAllUncitedConfirmedDates } from "@/lib/uncited-confirmed-dates";
+import { assessAllProjectedDateAttestation } from "@/lib/events/projected-date-attestation";
 import {
   formatStaleRedDigest,
   selectStaleFaultReds,
@@ -54,10 +60,9 @@ const STALE_RED_FINGERPRINT_KEY = "cpi:stale-red:last-fingerprint";
  */
 
 /** Read a runtime env var via CF bindings; falls back to process.env for local/dev. */
-function getRuntimeEnv(key: string): string | undefined {
+function getRuntimeEnv(key: CloudflareStringEnvKey): string | undefined {
   try {
-    const env = getCloudflareEnv() as unknown as Record<string, string | undefined>;
-    return env[key];
+    return getCloudflareEnv()[key];
   } catch {
     return process.env[key];
   }
@@ -101,7 +106,7 @@ async function gatherIntegrationActivity(
 
   let quotaNote = "quota unknown";
   try {
-    const env = getCloudflareEnv() as unknown as BingEnv;
+    const env = getCloudflareEnv();
     const quota = await getIndexNowQuota(env);
     quotaNote = `Bing monthly quota ${quota.monthlyRemaining}/${quota.monthlyQuota} unspent`;
   } catch {
@@ -142,6 +147,12 @@ export const POST = withInternalKey({ source: "cpi:stale-red-scan" }, async ({ d
           route: faultSignatures.route,
           status: faultSignatures.status,
           firstSeen: faultSignatures.firstSeen,
+          // OPE-1096 — `lastSeen` decides whether the fault is still happening
+          // and `errorClass` is what the digest groups by. Neither was selected
+          // before, so the digest could only age a signature from its FIRST
+          // occurrence and could only print it per-route.
+          lastSeen: faultSignatures.lastSeen,
+          errorClass: faultSignatures.errorClass,
         })
         .from(faultSignatures);
       faultReds = selectStaleFaultReds(
@@ -150,6 +161,8 @@ export const POST = withInternalKey({ source: "cpi:stale-red-scan" }, async ({ d
           route: r.route,
           status: r.status,
           firstSeen: r.firstSeen.getTime(),
+          lastSeen: r.lastSeen.getTime(),
+          errorClass: r.errorClass,
         })),
         now
       );
@@ -279,8 +292,49 @@ export const POST = withInternalKey({ source: "cpi:stale-red-scan" }, async ({ d
       });
     }
 
+    // OPE-740 scope 5 — projected dates nothing can ever check.
+    //
+    // The sibling of the block above, and deliberately a narrower claim. A
+    // rolled-forward date is now visibly labelled "Projected from last year",
+    // which is honest, and for 99 of the 124 the hedge is temporary: OPE-814
+    // widened the drift sweep to reach TENTATIVE promoter-domain rows outside
+    // the forward window, which is exactly what these 2027-dated rows needed.
+    //
+    // The 23 with no citation, no event_days and no source_url have no such
+    // path. There is nowhere to look, so no sweep resolves them and they do not
+    // age out — they age IN, as 2027 approaches. Defensive, like every block
+    // above: a failure here degrades to the prior reds rather than the scan.
+    let projectedDateReds: StaleRed[] = [];
+    try {
+      projectedDateReds = await assessAllProjectedDateAttestation(db, now);
+    } catch (err) {
+      await logError(db, {
+        level: "warn",
+        source: "cpi:stale-red-scan",
+        message: "projected-date attestation scan failed; degrading to the prior reds",
+        error: err,
+      });
+    }
+
+    // OPE-1117 — a duplicate flag nobody has read, on an event about to happen
+    // or already under way. Keyed on the EVENT's own start date, not on queue
+    // depth: both misses that produced this were a flag expiring unread, one of
+    // them flagged the day before its fair. Defensive, like every block above.
+    let duplicateFlagReds: StaleRed[] = [];
+    try {
+      duplicateFlagReds = await assessAllDuplicateFlagDeadlines(db, now);
+    } catch (err) {
+      await logError(db, {
+        level: "warn",
+        source: "cpi:stale-red-scan",
+        message: "duplicate-flag deadline scan failed; degrading to the prior reds",
+        error: err,
+      });
+    }
+
     const allReds = [
       ...reds,
+      ...duplicateFlagReds,
       ...faultReds,
       ...integrationReds,
       ...queueReds,
@@ -288,6 +342,7 @@ export const POST = withInternalKey({ source: "cpi:stale-red-scan" }, async ({ d
       ...photoReds,
       ...photoIntakeReds,
       ...uncitedDateReds,
+      ...projectedDateReds,
     ];
 
     // OPE-308 — push on CHANGE, not on existence.
@@ -362,50 +417,16 @@ export const POST = withInternalKey({ source: "cpi:stale-red-scan" }, async ({ d
     // so `resolved_at IS NULL` is the answer to "what is red right now".
     // Best-effort, like the count write: the scan's job is the digest.
     try {
-      const seenAt = new Date();
-      for (const red of allReds) {
-        await db
-          .insert(staleRedSignals)
-          .values({
-            refKey: red.refKey,
-            priority: red.priority,
-            title: red.title,
-            href: red.href ?? null,
-            firstDetectedAt: red.firstDetectedAt ? new Date(red.firstDetectedAt) : null,
-            hoursInRed: red.hoursInRed ?? null,
-            lastSeenAt: seenAt,
-            resolvedAt: null,
-          })
-          .onConflictDoUpdate({
-            target: staleRedSignals.refKey,
-            set: {
-              priority: red.priority,
-              title: red.title,
-              href: red.href ?? null,
-              hoursInRed: red.hoursInRed ?? null,
-              lastSeenAt: seenAt,
-              // A signal that went green and came back is red again. Clearing
-              // this is what makes recurrence visible rather than looking like
-              // one continuous outage.
-              resolvedAt: null,
-            },
-          });
-      }
-      // Anything still open but not seen this run has recovered.
-      const openKeys = allReds.map((r) => r.refKey);
-      await db
-        .update(staleRedSignals)
-        .set({ resolvedAt: seenAt })
-        .where(
-          openKeys.length > 0
-            ? and(isNull(staleRedSignals.resolvedAt), notInArray(staleRedSignals.refKey, openKeys))
-            : isNull(staleRedSignals.resolvedAt)
-        );
+      await persistStaleRedSignals(db, allReds, new Date());
     } catch (err) {
       await logError(db, {
         level: "warn",
         source: "cpi:stale-red-scan",
-        message: "stale-red signal persistence failed; digest unaffected",
+        // OPE-1029 — "digest unaffected" was true of delivery and false of what
+        // the digest says: a failure here freezes resolution state, so reds that
+        // have cleared keep reporting as open.
+        message:
+          "stale-red signal persistence failed — resolution state did NOT advance (digest delivery unaffected)",
         error: err,
       });
     }

@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { containsCI } from "@takemetothefair/db-schema";
 import { z } from "zod";
-import { eq, and, desc, sql } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import { blogPosts, users } from "../schema.js";
 import {
   parseJsonArray,
@@ -154,7 +155,7 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
   // ── get_blog_post ────────────────────────────────────────────────
   server.tool(
     "get_blog_post",
-    "Retrieve a single blog post by its slug. Returns full post including Markdown body, tags, categories, author info, and a computed `faq_source` ('column' | 'markdown' | 'none') indicating which source is currently driving the post's FAQPage JSON-LD emission on the public detail page, plus `faq_coherence` ({incoherent, conflicts[]}) flagging a body-vs-column numeric contradiction (OPE-280).",
+    "Retrieve a single blog post by its slug. Returns full post including Markdown body, tags, categories, author info, and a computed `faq_source` ('column' | 'markdown' | 'none') indicating which source is currently driving the post's FAQPage JSON-LD emission on the public detail page, plus `faq_coherence` ({incoherent, conflicts[]}) flagging a body-vs-column contradiction: route miles, attendance, admission price, free-vs-paid admission, or a column claiming ALL events share a venue the body places elsewhere (OPE-280, OPE-1015). A clean result means none of those typed checks fired, not that the post was verified.",
     {
       slug: z.string().min(1).describe("The URL slug of the blog post"),
     },
@@ -219,7 +220,7 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
   // ── list_blog_posts ──────────────────────────────────────────────
   server.tool(
     "list_blog_posts",
-    "List blog posts with optional filters for status and tag. Returns posts ordered by publish date (newest first). Admin sees all posts including drafts. Each row includes a computed `faq_source` ('column' | 'markdown' | 'none') so FAQPage emission drift after an edit is visible at a glance, plus `faq_coherence` ({incoherent, conflicts[]}) flagging posts whose body `## Q:` FAQ blocks and `faqs` column assert conflicting numeric claims (route miles, attendance counts, prices, years) — the column emits as JSON-LD while the stale body is what readers see (OPE-280).",
+    "List blog posts with optional filters for status and tag. Returns posts ordered by publish date (newest first). Admin sees all posts including drafts. Each row includes a computed `faq_source` ('column' | 'markdown' | 'none') so FAQPage emission drift after an edit is visible at a glance, plus `faq_coherence` ({incoherent, conflicts[]}) flagging posts whose body and `faqs` column assert conflicting typed claims (route miles, attendance counts, admission prices, free-vs-paid admission, an all-events venue) — the column emits as JSON-LD while the stale body is what readers see (OPE-280).",
     {
       status: z.enum(BLOG_STATUS_ENUM).optional().describe("Filter by status: DRAFT or PUBLISHED"),
       tag: z.string().optional().describe("Filter by tag name"),
@@ -246,8 +247,12 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
       }
 
       if (params.tag) {
-        const safeTag = params.tag.replace(/["%_\\]/g, "");
-        conditions.push(sql`${blogPosts.tags} LIKE ${'%"' + safeTag + '"%'}`);
+        // Same family as the two app-side tag filters — see OPE-1030. The MCP
+        // Worker is a separate artifact, so a fix in `src/` does not reach it
+        // (that is precisely what OPE-630 found); containsCI lives in the
+        // shared package for this reason.
+        const safeTag = params.tag.replace(/["\\]/g, "");
+        conditions.push(containsCI(blogPosts.tags, `"${safeTag}"`));
       }
 
       const where = conditions.length > 0 ? and(...conditions) : undefined;
@@ -300,10 +305,24 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
   // ── update_blog_post ─────────────────────────────────────────────
   server.tool(
     "update_blog_post",
-    "Update an existing blog post by slug. Only provided fields are changed. Body should be Markdown.",
+    "Update an existing blog post by slug. Only provided fields are changed. Body should be Markdown. A PUBLISHED post keeps its slug when the title changes (OPE-1202) — pass new_slug to move its URL deliberately; a DRAFT's slug still follows its title. When the slug does change, the response carries slugChange { old, new, linkingPublishedPosts } — the old URL 301s, but those posts still link it until repointed.",
     {
       slug: z.string().min(1).describe("Current slug of the post to update"),
-      title: z.string().min(1).max(200).transform(sanitizeProse).optional().describe("New title"),
+      title: z
+        .string()
+        .min(1)
+        .max(200)
+        .transform(sanitizeProse)
+        .optional()
+        .describe("New title. Does NOT change a published post's URL — use new_slug for that."),
+      new_slug: z
+        .string()
+        .min(1)
+        .max(200)
+        .optional()
+        .describe(
+          "Move the post to this URL slug (normalized). The old slug 301s via blog_slug_history; the response lists published posts still linking the old one."
+        ),
       body: z
         .string()
         .min(1)
@@ -393,6 +412,7 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
           payload.metaDescription = params.meta_description;
         if (params.allow_broken_links !== undefined)
           payload.allowBrokenLinks = params.allow_broken_links;
+        if (params.new_slug !== undefined) payload.newSlug = params.new_slug;
 
         const response = await fetch(
           `${env.MAIN_APP_URL}/api/blog-posts/${encodeURIComponent(params.slug)}`,

@@ -6,6 +6,7 @@
 
 import { and, count, eq, gte, inArray, sql } from "drizzle-orm";
 import { analyticsEvents, indexnowSubmissions } from "@/lib/db/schema";
+import { rateOverSample } from "./render-state";
 import { BingApiError, BingConfigError, getQueryStats, type BingEnv } from "@/lib/bing-webmaster";
 import {
   ScApiError,
@@ -21,7 +22,7 @@ import {
   emptyDailySeries,
   fillDailySeries,
   fillDailySeriesTrimTrailing,
-  isoDaysAgo,
+  gscWindowRange,
   isoFromDate,
   trendOf,
   type Db,
@@ -32,6 +33,7 @@ import type {
   SearchVisibilityCard,
   SiteCtrCard,
   SparklinePoint,
+  SparklineSeries,
 } from "./types";
 
 /**
@@ -40,7 +42,7 @@ import type {
  */
 const BRAND_KEYWORDS = ["meet me at the fair", "meetmeatthefair", "mmatf", "take me to the fair"];
 
-export async function loadSearchVisibilitySparkline(env: ScEnv): Promise<SparklinePoint[]> {
+export async function loadSearchVisibilitySparkline(env: ScEnv): Promise<SparklineSeries> {
   // GSC daily aggregation. Returns 0-filled empty series on config/api errors so
   // the UI doesn't break — error visibility lives in the Google tab.
   try {
@@ -52,7 +54,10 @@ export async function loadSearchVisibilitySparkline(env: ScEnv): Promise<Sparkli
     return fillDailySeriesTrimTrailing(byDate, SPARKLINE_DAYS);
   } catch (e) {
     if (e instanceof ScConfigError || e instanceof ScApiError) {
-      return emptyDailySeries(SPARKLINE_DAYS);
+      // Zero-filled so the chart draws; TAGGED so the total is not read as 0.
+      return Object.assign(emptyDailySeries(SPARKLINE_DAYS), {
+        unavailableReason: `GSC unavailable — ${e.message}`,
+      });
     }
     throw e;
   }
@@ -71,21 +76,8 @@ export async function loadSearchVisibility(
   // number would mislead. Surfacing both honestly fixes the analyst's complaint
   // that "-100%" reads as catastrophic when Bing is delivering ~28 clicks fine.
   try {
-    const presetByDays: Record<number, "last_7d" | "last_28d" | "last_90d"> = {
-      7: "last_7d",
-      28: "last_28d",
-      30: "last_28d",
-      90: "last_90d",
-    };
-    const preset = presetByDays[days];
-    const dateRange = preset
-      ? { preset }
-      : (() => {
-          // Custom range: ending 3 days ago (GSC has reporting lag).
-          const end = isoDaysAgo(3);
-          const start = isoDaysAgo(3 + days);
-          return { startDate: start, endDate: end };
-        })();
+    // OPE-1161 B9 — N inclusive days, shared with Brand share.
+    const dateRange = gscWindowRange(days);
     // OPE-312 (audit A3) — read the headline from a TRUE property total.
     //
     // getSiteSearchQueries sums the rows it fetched, so its `totals` are really
@@ -143,6 +135,9 @@ export async function loadSearchVisibility(
 
 // §10.3 loaders ─────────────────────────────────────────────────
 
+/** Queries read for the site-wide CTR / brand-share figures (a GSC sample cap). */
+const QUERY_SAMPLE_CAP = 500;
+
 export async function loadSiteCtr(env: ScEnv, days: number): Promise<SiteCtrCard> {
   // Prior period of equal length, immediately preceding.
   const today = new Date();
@@ -152,11 +147,11 @@ export async function loadSiteCtr(env: ScEnv, days: number): Promise<SiteCtrCard
   try {
     const [curr, prev] = await Promise.all([
       getSiteSearchQueries(env, {
-        rowLimit: 500,
+        rowLimit: QUERY_SAMPLE_CAP,
         dateRange: { startDate: fmtDate(startCurr), endDate: fmtDate(today) },
       }),
       getSiteSearchQueries(env, {
-        rowLimit: 500,
+        rowLimit: QUERY_SAMPLE_CAP,
         dateRange: { startDate: fmtDate(startPrev), endDate: fmtDate(startCurr) },
       }),
     ]);
@@ -167,6 +162,16 @@ export async function loadSiteCtr(env: ScEnv, days: number): Promise<SiteCtrCard
       clicks: curr.totals.clicks,
       impressions: curr.totals.impressions,
       ctr,
+      // OPE-1131 — the totals are summed over the top QUERY_SAMPLE_CAP queries
+      // only, and 0/0 impressions is not a 0% CTR.
+      ctrMeasured: rateOverSample(
+        curr.totals.clicks,
+        curr.totals.impressions,
+        "no impressions in window",
+        curr.totals.queries,
+        QUERY_SAMPLE_CAP,
+        curr.totals.queriesBeforeLimit
+      ),
       previousCtr: prevCtr,
       trend: trendOf(ctr, prevCtr),
     };
@@ -184,22 +189,9 @@ export async function loadBrandVsNonBrand(env: ScEnv, days: number): Promise<Bra
   // discrepancy where SearchVisibility shows 25 clicks @ 7d but
   // brand+non-brand summed to 53 clicks @ 28d on the same page.
   try {
-    const presetByDays: Record<number, "last_7d" | "last_28d" | "last_90d"> = {
-      7: "last_7d",
-      28: "last_28d",
-      30: "last_28d",
-      90: "last_90d",
-    };
-    const preset = presetByDays[days];
-    const dateRange = preset
-      ? { preset }
-      : (() => {
-          const today = new Date();
-          const start = new Date(today.getTime() - days * 86400 * 1000);
-          const fmt = (d: Date) => d.toISOString().slice(0, 10);
-          return { startDate: fmt(start), endDate: fmt(today) };
-        })();
-    const result = await getSiteSearchQueries(env, { rowLimit: 500, dateRange });
+    // OPE-1161 B9 — the same N-inclusive-day range as the Google clicks card.
+    const dateRange = gscWindowRange(days);
+    const result = await getSiteSearchQueries(env, { rowLimit: QUERY_SAMPLE_CAP, dateRange });
     let brand_clicks = 0;
     let brand_impressions = 0;
     let non_brand_clicks = 0;
@@ -223,6 +215,14 @@ export async function loadBrandVsNonBrand(env: ScEnv, days: number): Promise<Bra
       non_brand_clicks,
       non_brand_impressions,
       brand_share: total_clicks > 0 ? brand_clicks / total_clicks : 0,
+      brandShareMeasured: rateOverSample(
+        brand_clicks,
+        total_clicks,
+        "no clicks in window",
+        result.totals.queries,
+        QUERY_SAMPLE_CAP,
+        result.totals.queriesBeforeLimit
+      ),
       windowDays: days,
     };
   } catch (e) {
@@ -246,7 +246,11 @@ export async function loadKpiStrip90d(db: Db, env: ScEnv): Promise<KpiSparklineS
         // OPE-95: trim the unreported GSC trailing days (see the 30d loader).
         return fillDailySeriesTrimTrailing(byDate, 90);
       } catch (e) {
-        if (e instanceof ScConfigError || e instanceof ScApiError) return emptyDailySeries(90);
+        if (e instanceof ScConfigError || e instanceof ScApiError) {
+          return Object.assign(emptyDailySeries(90), {
+            unavailableReason: `GSC unavailable — ${e.message}`,
+          });
+        }
         throw e;
       }
     })(),

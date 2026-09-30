@@ -228,7 +228,7 @@ export async function POST(request: Request) {
     // refreshed (now-claimed) vendor page sooner. Failures are
     // logged but don't fail the claim.
     try {
-      const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+      const env = getCloudflareEnv();
       await pingIndexNow(db, indexNowUrlFor("vendors", vendor.slug), env, "vendor-claim");
     } catch (pingErr) {
       await logError(db, {

@@ -39,10 +39,12 @@ import {
   operatorOutboundDrafts,
   inboundEmails,
   users,
+  tunableThresholds,
 } from "@takemetothefair/db-schema";
 import type { Env } from "./index.js";
 import { getDb, type Db } from "./db.js";
 import { logError } from "./logger.js";
+import { toIsoDateOnly, toIsoDateOnlyInVenueZone } from "@takemetothefair/datetime";
 // OPE-611 — the third queue. This file's own docblock predicted it ("a third
 // is a few lines"); the alternative was a bespoke notifier, which is how the
 // fourth silent queue gets missed.
@@ -88,6 +90,18 @@ export const QUEUE_SLA_HOURS = 48;
  */
 export const ADMIN_DECISION_TIMEOUT_HOURS = 168;
 
+/**
+ * OPE-599 rework — the verification grace window, read from the SAME
+ * `tunable_thresholds` row the queue-drain page uses (OPE-637), with the same
+ * fail-open default and clamp. The MCP Worker cannot import `src/lib`, so these
+ * three numbers are mirrored and a test pins them to
+ * `src/lib/verification-threshold.ts`.
+ */
+export const VERIFICATION_GRACE_KEY = "verification_alert_threshold_hours";
+export const DEFAULT_VERIFICATION_GRACE_HOURS = 48;
+export const VERIFICATION_GRACE_FLOOR_HOURS = 12;
+export const VERIFICATION_GRACE_CEILING_HOURS = 168;
+
 export interface OperatorQueueCounts {
   /** entity_claims rows PENDING or DISPUTED past the SLA. */
   agedClaims: number;
@@ -128,6 +142,27 @@ export interface OperatorQueueCounts {
    * somebody has not got to it yet.
    */
   droppedRealAttachments: number;
+  /**
+   * OPE-1011 — upcoming public events whose `start_date` or `public_start_date`
+   * renders a DIFFERENT calendar date in America/New_York than in UTC.
+   *
+   * An INVARIANT, like the two above: it should be zero, and a non-zero value is
+   * a wrong date on a live page, not a queue somebody has not got to.
+   */
+  venueDateShifts: number;
+  /**
+   * OPE-599 rework (OPE-177's routing instruction, 2026-08-14: "Route it to the
+   * operator alert channel, not a robot inbox") — people who could not finish
+   * signing up, counted on ARRIVAL rather than as standing depth:
+   *   - auth mail whose delivery event says bounced / rejected / failed, sent in
+   *     the last 24h;
+   *   - a real registration whose delivered verification mail crossed the grace
+   *     window unconfirmed in the last 24h.
+   * Standing depth would be wallpaper — `unconfirmed_auth_email` sat at 13 and
+   * is a ceiling on drop-off, not a fault count. Each person appears on exactly
+   * one day's notice.
+   */
+  authEmailProblems: number;
   /** Oldest waiting row in either queue, in days. */
   oldestDays: number;
   /** Human-readable lines for the alert body. */
@@ -150,6 +185,8 @@ export function decideOperatorQueueNotice(
     | "pendingOperatorDrafts"
     | "agedAwaitingDecision"
     | "droppedRealAttachments"
+    | "venueDateShifts"
+    | "authEmailProblems"
   >,
   alreadySentToday: boolean
 ): boolean {
@@ -176,6 +213,8 @@ export function totalWaiting(
     | "pendingOperatorDrafts"
     | "agedAwaitingDecision"
     | "droppedRealAttachments"
+    | "venueDateShifts"
+    | "authEmailProblems"
   >
 ): number {
   // `?? 0` per term is not defensive clutter — it is load-bearing, and adding
@@ -199,7 +238,9 @@ export function totalWaiting(
     // call site makes the sum NaN, and `NaN <= 0` is false, so the notice fires
     // on a completely empty queue.
     (counts.agedAwaitingDecision ?? 0) +
-    (counts.droppedRealAttachments ?? 0)
+    (counts.droppedRealAttachments ?? 0) +
+    (counts.venueDateShifts ?? 0) +
+    (counts.authEmailProblems ?? 0)
   );
 }
 
@@ -222,6 +263,24 @@ export function shouldReportUngatedReplies(
 ): boolean {
   if (replyEnabled === "true") return false;
   return sentLast24h > 0;
+}
+
+/** Mirrors `loadVerificationGraceHours` in src/lib/verification-threshold.ts. */
+async function loadGraceHours(db: Db): Promise<number> {
+  try {
+    const [row] = await db
+      .select({ value: tunableThresholds.value })
+      .from(tunableThresholds)
+      .where(eq(tunableThresholds.key, VERIFICATION_GRACE_KEY))
+      .limit(1);
+    const v = row?.value;
+    if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) {
+      return DEFAULT_VERIFICATION_GRACE_HOURS;
+    }
+    return Math.min(VERIFICATION_GRACE_CEILING_HOURS, Math.max(VERIFICATION_GRACE_FLOOR_HOURS, v));
+  } catch {
+    return DEFAULT_VERIFICATION_GRACE_HOURS;
+  }
 }
 
 /** Start of the current UTC day — the debounce window boundary. */
@@ -467,6 +526,110 @@ export async function readOperatorQueues(
     // Observability must not take the notice down with it.
   }
 
+  // OPE-1011 — a start date that renders as a different day in Eastern.
+  //
+  // Date-only fields render in America/New_York since OPE-482, and the storage
+  // convention is noon UTC. Measured 2026-09-14/15 over 1,718 public rows:
+  // 1,282 at noon, 99 at local midnight (04:00Z/05:00Z), 337 at a clock time.
+  // None rendered a different day that week — every 04:00Z row was dated in
+  // EDT — but a 04:00Z value on a winter date is 23:00 EST the previous day.
+  // `start_date_timezone_confused` flags the whole off-noon population on the
+  // row it is evaluating and nothing else; this watches the subset that is
+  // actually wrong on the page, across every row.
+  //
+  // Pre-filter is exact, not a heuristic: Eastern is UTC−4 or UTC−5, so only an
+  // instant before 05:00 UTC can fall on the previous Eastern calendar day.
+  let venueDateShifts = 0;
+  try {
+    const cutoffSec = Math.floor(now.getTime() / 1000) - 86400;
+    const candidates = await db.all<{
+      slug: string;
+      start_date: number | null;
+      public_start_date: number | null;
+    }>(sql`
+      SELECT slug, start_date, public_start_date
+      FROM events
+      WHERE status IN ('APPROVED', 'TENTATIVE')
+        AND merged_into IS NULL
+        AND start_date >= ${cutoffSec}
+        AND (start_date % 86400 < 18000 OR public_start_date % 86400 < 18000)
+    `);
+    for (const c of candidates) {
+      const shifted = (["start_date", "public_start_date"] as const).filter((col) => {
+        const v = c[col];
+        if (v == null) return false;
+        const d = new Date(Number(v) * 1000);
+        return toIsoDateOnly(d) !== toIsoDateOnlyInVenueZone(d);
+      });
+      if (shifted.length > 0) {
+        venueDateShifts++;
+        lines.push(
+          `⚠️ ${c.slug}: ${shifted.join(" + ")} renders a different calendar day in Eastern than it stores ` +
+            `(${new Date(Number(c[shifted[0]]) * 1000).toISOString()}) — re-anchor at noon UTC (OPE-1011)`
+        );
+      }
+    }
+  } catch {
+    // Observability must not take the notice down with it.
+  }
+
+  // OPE-599 rework — auth email that failed to land, and registrations that
+  // just crossed the verification window unconfirmed. Arrival-based, so each
+  // person is named once rather than every morning.
+  let authEmailProblems = 0;
+  try {
+    const dayAgo = new Date(now.getTime() - 24 * 3600_000);
+    const undelivered = await db
+      .select({
+        recipient: emailSendLedger.recipient,
+        source: emailSendLedger.source,
+        deliveryStatus: emailSendLedger.deliveryStatus,
+      })
+      .from(emailSendLedger)
+      .where(
+        and(
+          sql`${emailSendLedger.source} LIKE 'auth.%'`,
+          inArray(emailSendLedger.deliveryStatus, ["bounced", "rejected", "failed"]),
+          gte(emailSendLedger.sentAt, dayAgo)
+        )
+      );
+    for (const u of undelivered) {
+      authEmailProblems++;
+      lines.push(
+        `⚠️ ${u.source} to ${u.recipient ?? "(no address)"} was ${u.deliveryStatus} — ` +
+          `this person cannot finish signing up (OPE-177)`
+      );
+    }
+
+    const grace = await loadGraceHours(db);
+    const crossedEnd = new Date(now.getTime() - grace * 3600_000);
+    const crossedStart = new Date(crossedEnd.getTime() - 24 * 3600_000);
+    const crossed = await db
+      .selectDistinct({ email: users.email, createdAt: users.createdAt })
+      .from(users)
+      .innerJoin(emailSendLedger, sql`lower(${emailSendLedger.recipient}) = lower(${users.email})`)
+      .where(
+        and(
+          // Placeholder owner accounts (OPE-292) are not registrations and never verify.
+          eq(users.origin, "registration"),
+          isNull(users.emailVerified),
+          gte(users.createdAt, crossedStart),
+          sql`${users.createdAt} < ${Math.floor(crossedEnd.getTime() / 1000)}`,
+          sql`${emailSendLedger.source} LIKE 'auth.%'`,
+          eq(emailSendLedger.deliveryStatus, "delivered")
+        )
+      );
+    for (const c of crossed) {
+      authEmailProblems++;
+      lines.push(
+        `registration ${c.email} still unverified ${grace}h after a DELIVERED verification email ` +
+          `— delivered is not read; a ceiling on drop-off, not a fault (OPE-177)`
+      );
+    }
+  } catch {
+    // Observability must not take the notice down with it.
+  }
+
   return {
     agedClaims: claims.length,
     agedReplies: replies.length,
@@ -475,6 +638,8 @@ export async function readOperatorQueues(
     pendingOperatorDrafts,
     agedAwaitingDecision,
     droppedRealAttachments,
+    venueDateShifts,
+    authEmailProblems,
     oldestDays: Math.floor(oldestMs / 86400_000),
     lines,
   };

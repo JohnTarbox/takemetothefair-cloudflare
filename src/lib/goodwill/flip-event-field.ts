@@ -47,9 +47,9 @@
  *     the citation helper). Same shape, intentional.
  */
 
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import type { Database } from "@/lib/db";
-import { events, eventDataCitations } from "@/lib/db/schema";
+import { citationSupersedeScope, events, eventDataCitations } from "@/lib/db/schema";
 
 /** What we can flip today. See header for why `venue` is deferred. */
 export type FlippableFieldClass = "date" | "name";
@@ -120,10 +120,10 @@ export async function flipEventField(
     .from(eventDataCitations)
     .where(
       and(
-        eq(eventDataCitations.eventId, args.eventId),
-        eq(eventDataCitations.fieldName, fieldName),
-        eq(eventDataCitations.state, "active"),
-        year === null ? sql`${eventDataCitations.year} IS NULL` : eq(eventDataCitations.year, year)
+        // OPE-516 — the shared supersede rule: a year-stamped flip also retires
+        // the pipeline's year-null citation for this field.
+        citationSupersedeScope(args.eventId, fieldName, year),
+        eq(eventDataCitations.state, "active")
       )
     );
   const supersededId = priorActive.length > 0 ? priorActive[0].id : null;

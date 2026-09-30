@@ -34,12 +34,39 @@
  * went through the one path that flags. Patching `update_event_day` alone would
  * have fixed the specimen and left all seven exactly as they were.
  */
-import { isNull, or, sql, type SQL } from "drizzle-orm";
+import { and, eq, isNull, or, sql, type SQL } from "drizzle-orm";
 import { eventDays } from "./index";
 
-/** A day whose hours are not fully known. */
+/**
+ * A day whose hours are not fully known.
+ *
+ * OPE-1069 — a NULL `close_time` is unknown ONLY when nobody has recorded that
+ * the organizer publishes none. "We have not found the closing time" is a
+ * research gap; "the organizer does not publish one" is a settled finding, and
+ * collapsing them put The Big E (17 organizer-sourced days) in the review queue
+ * looking exactly like an event nobody had researched. A NULL `open_time` is
+ * still always unknown — no event publishes no opening time.
+ */
 export function hoursUnknownWhere(): SQL {
-  return or(isNull(eventDays.openTime), isNull(eventDays.closeTime)) as SQL;
+  return or(
+    isNull(eventDays.openTime),
+    and(isNull(eventDays.closeTime), eq(eventDays.closeTimeUnpublished, 0))
+  ) as SQL;
+}
+
+/**
+ * The per-row twin of `hoursUnknownWhere`, for a writer that decides before
+ * the row exists (MCP `create_event_day`). One rule, two shapes — a writer
+ * that re-derived it inline is how OPE-1069's distinction would have been
+ * honoured by the SQL and ignored by the tool.
+ */
+export function dayHoursUnknown(day: {
+  openTime: string | null | undefined;
+  closeTime: string | null | undefined;
+  closeTimeUnpublished?: boolean | number | null;
+}): boolean {
+  if (day.openTime == null) return true;
+  return day.closeTime == null && !day.closeTimeUnpublished;
 }
 
 /**
@@ -48,10 +75,10 @@ export function hoursUnknownWhere(): SQL {
  * Counted over the FULL day set rather than tested against the row being
  * written. That is precisely what the specimen needed: filling the fourth of
  * four days has to be able to observe "zero remain", which a per-row predicate
- * structurally cannot do.
+ * structurally cannot do. Same predicate as `hoursUnknownWhere` (OPE-1069).
  */
 export function unknownHoursCountSql(): SQL<number> {
-  return sql<number>`sum(case when ${eventDays.openTime} is null or ${eventDays.closeTime} is null then 1 else 0 end)`;
+  return sql<number>`sum(case when ${eventDays.openTime} is null or (${eventDays.closeTime} is null and ${eventDays.closeTimeUnpublished} = 0) then 1 else 0 end)`;
 }
 
 /**

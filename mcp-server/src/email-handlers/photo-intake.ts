@@ -42,8 +42,9 @@ import { logError } from "../logger.js";
 import { chunkedInArray, createSlug } from "@takemetothefair/utils";
 import { runBoothPipeline, type BoothPipelineResult } from "../photo/booth-pipeline.js";
 import { classifyPosterText, type PosterClassification } from "../photo/poster-classify.js";
-import { mainAppFetch, type MainAppEnv } from "../main-app-fetch.js";
+import { mainAppFetch } from "../main-app-fetch.js";
 import { submitCheckDuplicate, submitEvent, submitExtract } from "./submit.js";
+import { attachPosterEvidence, type PosterEvidenceResult } from "../photo/poster-evidence.js";
 import { parseExif, type ExifData } from "../photo/exif.js";
 import {
   resolveOccurrence,
@@ -617,12 +618,10 @@ async function classifyAsPoster(
     const bytes = await obj.arrayBuffer();
 
     const form = buildExtractImageForm(bytes, images[0]);
-    const res = await mainAppFetch(
-      env as unknown as MainAppEnv,
-      "/api/admin/import-url/extract-image",
-      "workflow",
-      { method: "POST", body: form }
-    );
+    const res = await mainAppFetch(env, "/api/admin/import-url/extract-image", "workflow", {
+      method: "POST",
+      body: form,
+    });
     if (!res.ok) {
       return giveUp("extract-image returned non-OK", {
         status: res.status,
@@ -684,13 +683,45 @@ async function classifyAsPoster(
 async function stagePosterAsPendingEvent(
   env: HandlerEnv,
   ocrText: string,
-  row: { id: string; fromAddress: string; subject: string | null }
+  row: { id: string; fromAddress: string; subject: string | null },
+  image: AttachmentRef | undefined
 ): Promise<{
   outcome: "created" | "duplicate" | "failed";
   eventId: string | null;
   eventName: string | null;
   detail?: string;
+  evidence?: PosterEvidenceResult;
 }> {
+  // OPE-325 bounce item 1 + 2 — the poster becomes evidence on whichever event
+  // it resolved to: a new PENDING one, or an EXISTING one (enrich, not create).
+  // See photo/poster-evidence.ts; nothing it writes is public.
+  const evidenceFor = async (
+    eventId: string,
+    eventName: string | null,
+    extracted: Awaited<ReturnType<typeof submitExtract>>
+  ): Promise<PosterEvidenceResult | undefined> => {
+    if (!image) return undefined;
+    const evidence = await attachPosterEvidence(
+      { bucket: env.VENDOR_ASSETS as never, db: getDb(env.DB) },
+      {
+        eventId,
+        eventName,
+        image,
+        ocrText,
+        inboundId: row.id,
+        fromAddress: row.fromAddress,
+        extracted,
+      }
+    );
+    await logError(env.DB, {
+      level: evidence.error ? "warn" : "info",
+      source: "mcp:photo-intake:poster-evidence",
+      message: `poster evidence: archived=${evidence.archivedUrl ? "yes" : "no"} citations=${evidence.citationsInserted} hero=${evidence.hero}`,
+      context: { messageRowId: row.id, eventId, ...evidence },
+    });
+    return evidence;
+  };
+
   try {
     // A poster has no page, so there is no source URL.
     //
@@ -719,6 +750,9 @@ async function stagePosterAsPendingEvent(
         description: null,
         ogImage: null,
         jsonLdSerialized: null,
+        // OPE-837 — this synthetic fetch result feeds the extractor directly
+        // and is not a crawl entry point, so it carries no discovered links.
+        links: [],
         fetchMethod: "standard",
       },
       ""
@@ -734,25 +768,57 @@ async function stagePosterAsPendingEvent(
 
     const dup = await submitCheckDuplicate(env, extracted);
     if (dup.isDuplicate && dup.existingEventId) {
+      const eventName = dup.existingEventName ?? extracted.event.name;
+      // Logged like the create path so the heartbeat probe's DEMAND side sees
+      // every poster that resolved to an event, not only the new ones.
+      await logError(env.DB, {
+        level: "info",
+        source: "mcp:photo-intake:poster-staged",
+        message: `poster matched EXISTING event ${dup.existingEventId} (${dup.matchType})`,
+        context: { messageRowId: row.id, eventId: dup.existingEventId, eventName },
+      });
       return {
         outcome: "duplicate",
         eventId: dup.existingEventId,
-        eventName: dup.existingEventName ?? extracted.event.name,
+        eventName,
         detail: dup.matchType,
+        evidence: await evidenceFor(dup.existingEventId, eventName, extracted),
       };
     }
 
-    const created = await submitEvent(env, extracted, row.fromAddress);
+    // OPE-804 — the poster lane is the sharpest case of a blind verdict: OCR
+    // extraction passes `url: ""`, so `source_url` is NULL by construction and
+    // stage 1 can NEVER evaluate here. A poster with no readable date is
+    // compared against nothing at all, and the "not a duplicate" it returns
+    // means only that.
+    const created = await submitEvent(env, extracted, row.fromAddress, {
+      inboundEmailId: row.id,
+      dedupWasBlind: dup.dedupWasBlind === true,
+    });
+    // The submit route can decline to create: `occurrence_exists` means this
+    // edition is already on file under its series and `created.id` is THAT
+    // event (no slug is sent). It logged "staged as PENDING event undefined"
+    // and reported `created` on 2026-08-24; it is the duplicate case.
+    const existed = created.routed === "occurrence_exists";
     await logError(env.DB, {
       level: "info",
       source: "mcp:photo-intake:poster-staged",
-      message: `poster staged as PENDING event ${created.slug}`,
-      context: { messageRowId: row.id, eventId: created.id, eventName: created.eventName },
+      message: existed
+        ? `poster matched EXISTING event ${created.id} (occurrence_exists)`
+        : `poster staged as PENDING event ${created.slug}`,
+      context: {
+        messageRowId: row.id,
+        eventId: created.id,
+        eventName: created.eventName,
+        routed: created.routed,
+      },
     });
     return {
-      outcome: "created",
+      outcome: existed ? "duplicate" : "created",
       eventId: created.id,
       eventName: created.eventName,
+      ...(existed ? { detail: "occurrence_exists" } : {}),
+      evidence: await evidenceFor(created.id, created.eventName, extracted),
     };
   } catch (err) {
     await logError(env.DB, {
@@ -830,7 +896,12 @@ export function describePhotoStorage(
   const stored = booths?.galleryAttached ?? 0;
   const staged = booths?.staged ?? 0;
   const autoWritten = (booths?.autoWritten ?? []).filter((a) => !a.error).length;
-  const accountedFor = stored + staged + autoWritten;
+  // OPE-969 — a performer photo held for review and a signage-not-presence
+  // record are both deliberate outcomes, not photos that "landed nowhere".
+  // Without them a batch of only signage would read as an unstored-photo defect.
+  const performerStaged = booths?.performerStaged ?? 0;
+  const signageRecorded = booths?.signageRecorded ?? 0;
+  const accountedFor = stored + staged + autoWritten + performerStaged + signageRecorded;
 
   // No images on the mail, or the photos went somewhere: nothing to explain.
   if (offered === 0 || accountedFor > 0) {
@@ -1134,7 +1205,7 @@ export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> =
   // decides reaches a visitor without a human approving it.
   // Already classified above on the hold path — do not OCR the image twice.
   if (poster && poster.classification.verdict === "POSTER") {
-    const staged = await stagePosterAsPendingEvent(env, poster.text, row);
+    const staged = await stagePosterAsPendingEvent(env, poster.text, row, imageRefs(refs)[0]);
     return {
       replyKind: "photo-intake-poster",
       replyParams: {

@@ -1,4 +1,9 @@
 export const dynamic = "force-dynamic";
+import { attachEventToSeries } from "@/lib/series/resolve-or-create-series";
+import { venueStateConflict } from "@takemetothefair/utils";
+import { resolveIngestVenue } from "@/lib/venues/former-venue-guard";
+import { gateDatesConfirmedWrite } from "@/lib/events/dates-confirmed-write";
+import { gateDatesConfirmed } from "@takemetothefair/utils";
 import { NextResponse } from "next/server";
 import { detectPossibleDuplicate } from "@/lib/duplicates/venue-date-collision";
 import { withAuth } from "@/lib/api/with-auth";
@@ -57,7 +62,10 @@ async function findOrCreateVenue(
 
   // Look for a venue with matching city (if we have city info)
   if (existingVenues.length > 0 && venueCity) {
-    const matchingVenue = existingVenues.find((v) => v.city.toLowerCase().trim() === venueCity);
+    // OPE-1206 — a same-name, same-city row in ANOTHER state is not this venue.
+    const matchingVenue = existingVenues.find(
+      (v) => v.city.toLowerCase().trim() === venueCity && !venueStateConflict(venueState, v.state)
+    );
     if (matchingVenue) {
       return { id: matchingVenue.id, newSlug: null };
     }
@@ -75,10 +83,15 @@ async function findOrCreateVenue(
     }
     // No state match either - just use the first existing venue with this slug
     // This is safer than creating duplicates with no distinguishing info
-    console.warn(
-      `[findOrCreateVenue] Using existing venue "${existingVenues[0].name}" for "${decodedName}" (no city/state match available)`
-    );
-    return { id: existingVenues[0].id, newSlug: null };
+    // OPE-1206 — the blind first-row fallback is kept only when it cannot put
+    // the event in the wrong state; a known conflicting state falls through
+    // to creating the venue in the scraped state.
+    if (!venueStateConflict(venueState, existingVenues[0].state)) {
+      console.warn(
+        `[findOrCreateVenue] Using existing venue "${existingVenues[0].name}" for "${decodedName}" (no city/state match available)`
+      );
+      return { id: existingVenues[0].id, newSlug: null };
+    }
   }
 
   // No existing venue found, or existing venue has different city - create new one
@@ -395,7 +408,14 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
           let matchedVenue = null;
           if (existingVenues.length > 0 && venueCity) {
             // Look for venue with matching city
-            matchedVenue = existingVenues.find((v) => v.city.toLowerCase().trim() === venueCity);
+            // OPE-1206 — name + city is not enough: "Portland Expo" in Portland,
+            // OREGON is not the Portland, MAINE building. A known scraped state
+            // that disagrees with the row's state rules the row out.
+            matchedVenue = existingVenues.find(
+              (v) =>
+                v.city.toLowerCase().trim() === venueCity &&
+                !venueStateConflict(eventData.venue?.state, v.state)
+            );
             if (matchedVenue) {
               console.warn(`[Venue Match] Matched existing venue by name+city: ${matchedVenue.id}`);
             } else {
@@ -427,6 +447,19 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
         }
         // eventVenueId can be null - event will be created without a venue
 
+        // OPE-1180 — a matched FORMER venue is kept only for pre-closure dates.
+        // After the closure the event is imported WITHOUT a venue and flagged
+        // for review — an import never fails on a bad venue match.
+        const formerCheck = await resolveIngestVenue(
+          db,
+          eventVenueId,
+          normalizeEventDate(eventData.endDate) ??
+            normalizeEventDate(eventData.startDate) ??
+            (existing[0]?.endDate as Date | null | undefined) ??
+            null
+        );
+        eventVenueId = formerCheck.venueId;
+
         if (existing.length > 0) {
           // Event already exists
           // Respect syncEnabled=false — admins set this after hand-editing so re-imports don't clobber enrichments
@@ -448,6 +481,7 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
               ),
               imageUrl: eventData.imageUrl || existing[0].imageUrl,
               venueId: eventVenueId,
+              ...(formerCheck.flagForReview ? { flaggedForReview: 1 } : {}),
               lastSyncedAt: new Date(),
               updatedAt: new Date(),
             };
@@ -459,7 +493,14 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
             if (updateStart) updateData.startDate = updateStart;
             if (updateEnd) updateData.endDate = updateEnd;
             if (eventData.datesConfirmed !== undefined) {
-              updateData.datesConfirmed = eventData.datesConfirmed;
+              // OPE-1200 — a scraper's "a date parsed" is not a citation; TRUE
+              // survives only if the row already carries a qualifying one.
+              updateData.datesConfirmed = (
+                await gateDatesConfirmedWrite(db, {
+                  eventId: existing[0].id,
+                  requested: eventData.datesConfirmed,
+                })
+              ).value;
             }
             // Update commercial vendors allowed if provided
             if (eventData.commercialVendorsAllowed !== undefined) {
@@ -549,6 +590,7 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
         await db.insert(events).values({
           id: newEventId,
           possibleDuplicateOf,
+          ...(formerCheck.flagForReview ? { flaggedForReview: 1 } : {}),
           name: decodedNewEventName,
           slug,
           description: decodedNewDescription,
@@ -575,7 +617,12 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
           // organizer stood behind the date. `annual_rollover` and the vendor
           // tool already hardcode `false` and are the reference behaviour
           // (rollover: 121 events, exactly 1 claiming confirmation).
-          datesConfirmed: eventData.datesConfirmed ?? false,
+          // OPE-1200 — a new row has no citation, so this is always false; the
+          // scrapers report true whenever a date parses, which is not a source.
+          datesConfirmed: gateDatesConfirmed({
+            requested: eventData.datesConfirmed ?? false,
+            citations: [],
+          }).value,
           categories: JSON.stringify(["Fair", "Festival"]),
           tags: JSON.stringify(["imported", eventData.sourceName]),
           ticketUrl: gateUrlForField(
@@ -599,6 +646,15 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
           syncEnabled: true,
           lastSyncedAt: new Date(),
           commercialVendorsAllowed: eventData.commercialVendorsAllowed ?? true,
+        });
+
+        // OPE-472 (bounce) — the bulk import path (aggregator_import /
+        // direct_scrape) never attached a series: 65 of 65 rows imported on
+        // 09-23 were unparented. Same fill-only helper every other writer uses.
+        await attachEventToSeries(db, newEventId, {
+          name: decodedNewEventName,
+          venueId: eventVenueId,
+          promoterId,
         });
 
         // Persist per-day open/close hours when the scraper extracted them
@@ -669,7 +725,7 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
     // the PATCH-based hooks. Batch-ping all imported event URLs and any
     // newly-created venue URLs in two POSTs (max 10k URLs each).
     {
-      const cfEnv = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+      const cfEnv = getCloudflareEnv();
       if (results.importedEvents.length > 0) {
         const eventUrls = results.importedEvents.map((e) => indexNowUrlFor("events", e.slug));
         await pingIndexNow(db, eventUrls, cfEnv, "event-create");

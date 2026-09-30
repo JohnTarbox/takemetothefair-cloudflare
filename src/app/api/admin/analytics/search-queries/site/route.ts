@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { isAuthorized } from "@/lib/api-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
-import { getSiteSearchQueries, ScApiError, ScConfigError, type ScEnv } from "@/lib/search-console";
+import { getSiteSearchQueries, ScApiError, ScConfigError } from "@/lib/search-console";
 import { DateRangeError, parseAnalyticsParams } from "@/lib/analytics-params";
 
 type ScOrderBy = "impressions" | "clicks" | "position" | "ctr";
@@ -36,7 +36,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const env = getCloudflareEnv() as unknown as ScEnv;
+    const env = getCloudflareEnv();
     const result = await getSiteSearchQueries(env, {
       skipCache: params.refresh,
       dateRange: params.dateRange,

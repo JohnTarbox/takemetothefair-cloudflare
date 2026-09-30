@@ -4,8 +4,13 @@
  */
 
 import { and, count, gte, inArray, lt, sql } from "drizzle-orm";
+import {
+  insufficientAttributionReason,
+  readOrganicConversionClicks,
+} from "@/lib/analytics/organic-conversion-clicks";
 import { analyticsEvents } from "@/lib/db/schema";
 import { getOrganicSessions, type Ga4Env } from "@/lib/ga4";
+import { freshness, rate as rateOf, unavailable } from "./render-state";
 import {
   CONVERSION_EVENT_NAMES,
   SPARKLINE_DAYS,
@@ -22,7 +27,7 @@ export async function loadConversions(
   priorEndDate: Date,
   days: number
 ): Promise<ConversionsCard> {
-  const [currentRows, priorRows] = await Promise.all([
+  const [currentRows, priorRows, beaconRows] = await Promise.all([
     db
       .select({ c: count() })
       .from(analyticsEvents)
@@ -42,14 +47,25 @@ export async function loadConversions(
           lt(analyticsEvents.timestamp, priorEndDate)
         )
       ),
+    // Freshness on the column that ADMITS rows (any event, not just
+    // conversions — a quiet conversion week is real; a quiet beacon is not).
+    db
+      .select({ last: sql<number | null>`max(${analyticsEvents.timestamp})` })
+      .from(analyticsEvents),
   ]);
   const current = currentRows[0]?.c ?? 0;
   const previous = priorRows[0]?.c ?? 0;
+  const lastSec = beaconRows[0]?.last;
   return {
     current,
     previous,
     trend: trendOf(current, previous),
     windowDays: days,
+    currentMeasured: freshness(
+      current,
+      "analytics_events",
+      typeof lastSec === "number" ? lastSec * 1000 : null
+    ),
   };
 }
 
@@ -92,25 +108,28 @@ export async function loadConversionRate(
   const stableEndDate = new Date(stableEndMs);
   const fmt = (d: Date) => d.toISOString().slice(0, 10);
 
-  const [numRow, sessions] = await Promise.all([
-    db
-      .select({ n: count() })
-      .from(analyticsEvents)
-      .where(
-        and(
-          inArray(analyticsEvents.eventName, [...CONVERSION_EVENT_NAMES]),
-          gte(analyticsEvents.timestamp, stableStartDate),
-          lt(analyticsEvents.timestamp, stableEndDate)
-        )
-      ),
+  // OPE-1165 — organic clicks ÷ organic sessions, and "insufficient data"
+  // (not a number) until 21 days of clicks carry a traffic source.
+  const [clicks, sessions] = await Promise.all([
+    readOrganicConversionClicks(db, { since: stableStartDate, until: stableEndDate }),
     getOrganicSessions(env, fmt(stableStartDate), fmt(stableEndDate)),
   ]);
-  const conversions = numRow[0]?.n ?? 0;
-  const rate = sessions != null && sessions > 0 ? conversions / sessions : null;
+  const conversions = clicks.status === "ready" ? clicks.organicClicks : clicks.allClicks;
+  const rate =
+    clicks.status === "ready" && sessions != null && sessions > 0 ? conversions / sessions : null;
   return {
     conversions,
     sessions,
     rate,
+    // OPE-1131 — a GA4 failure and an empty week both used to print "—".
+    // A GA4 outage is still named first — it is the louder, fixable cause.
+    rateMeasured:
+      sessions == null
+        ? unavailable("GA4 organic sessions unavailable")
+        : clicks.status === "insufficient"
+          ? unavailable(insufficientAttributionReason(clicks))
+          : rateOf(conversions, sessions, "no organic sessions in window"),
+    organicBasis: clicks.status === "ready",
     windowDays: days,
     windowEndDate: fmt(stableEndDate),
   };

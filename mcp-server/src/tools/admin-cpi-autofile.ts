@@ -27,7 +27,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { jsonContent } from "../helpers.js";
-import { mainAppFetch, type MainAppEnv } from "../main-app-fetch.js";
+import { mainAppFetch } from "../main-app-fetch.js";
 import type { AuthContext } from "../auth.js";
 
 interface Env {
@@ -59,7 +59,7 @@ async function postInternal(
     // own zone's apex never reaches the main-app Worker. Every CPI tool here
     // was dead because of it, silently, and the error hint below had been
     // pointing at the wrong diagnosis (401) the whole time.
-    response = await mainAppFetch(env as unknown as MainAppEnv, path, "fetch", {
+    response = await mainAppFetch(env, path, "fetch", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

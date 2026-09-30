@@ -127,7 +127,7 @@ export const POST = withAuth<{ id: string }>(
     // to MCP because the workflow binding lives there.
     let rerunStatus: number | null = null;
     if (alsoRerunWorkflow) {
-      const cfEnv = getCloudflareEnv() as unknown as { INTERNAL_API_KEY?: string };
+      const cfEnv = getCloudflareEnv();
       if (!cfEnv.INTERNAL_API_KEY) {
         return NextResponse.json(
           { ok: true, rerunSkipped: "INTERNAL_API_KEY missing" },

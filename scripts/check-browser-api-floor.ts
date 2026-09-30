@@ -62,7 +62,13 @@ const ALLOWLIST_PATH = join(ROOT, "scripts", "check-browser-api-floor.allowlist"
  * people to ignore the guard. `String.prototype.replaceAll` (Safari 13.1 /
  * Chrome 85) is deliberately absent for that reason: it is below the floor.
  */
-const ABOVE_FLOOR: { pattern: RegExp; api: string; since: string; fix: string }[] = [
+const ABOVE_FLOOR: {
+  pattern: RegExp;
+  api: string;
+  since: string;
+  fix: string;
+  unguardable?: boolean;
+}[] = [
   {
     pattern: /\bcrypto\s*\.\s*randomUUID\s*\(/,
     api: "crypto.randomUUID()",
@@ -93,10 +99,39 @@ const ABOVE_FLOOR: { pattern: RegExp; api: string; since: string; fix: string }[
     since: "Safari 18.2",
     fix: "setTimeout fallback, or guard with `typeof requestIdleCallback === 'function'`",
   },
+  // OPE-1128 — SYNTAX, not an API, so no call can guard it: old WebKit throws
+  // "invalid group specifier name" the moment the pattern is compiled. A
+  // module-level `new RegExp` in packages/utils/src/blog-faq-coherence.ts took
+  // down every page for Safari 15.1–16.3.1 via the utils barrel. Matches a
+  // literal and a `new RegExp` string alike (both carry the `(?<=` / `(?<!`
+  // text). Named groups `(?<name>…)` are deliberately absent: Safari 11.1 —
+  // below the floor.
+  {
+    pattern: /\(\?<[=!]/,
+    api: "regex lookbehind (?<= / (?<!",
+    since: "Safari 16.4",
+    fix: "match without the lookbehind and test the preceding text in code",
+    unguardable: true,
+  },
 ];
 
-/** A guarded call is fine — the point is the UNguarded one. */
-const GUARDED = /\?\.\s*\(|typeof\s+\w|["']randomUUID["']\s+in\b|&&\s*\w+\s*\.\s*randomUUID/;
+/**
+ * A guarded call is fine — the point is the UNguarded one. A Drizzle
+ * `$defaultFn(() => …)` is deferred, not guarded: it runs only when a row is
+ * INSERTed, which no browser does. The db-schema barrel reaches the client
+ * graph through `src/lib/vendor-status.ts`, and its ~70 id defaults would
+ * otherwise bury the one real finding.
+ */
+const GUARDED =
+  /\?\.\s*\(|typeof\s+\w|["']randomUUID["']\s+in\b|&&\s*\w+\s*\.\s*randomUUID|\$defaultFn\s*\(/;
+
+/**
+ * Workspace packages resolve to their `src/index.ts` barrel. Before OPE-1128
+ * these returned null ("not our source"), so NOTHING under packages/ was ever
+ * scanned — while the `@takemetothefair/utils` barrel re-exports ~60 modules
+ * into any client component that imports one helper from it.
+ */
+const WORKSPACE_PREFIX = "@takemetothefair/";
 
 interface Violation {
   file: string;
@@ -131,12 +166,21 @@ export function isClientEntry(src: string): boolean {
   return /^\s*(\/\*[\s\S]*?\*\/\s*|\/\/[^\n]*\n\s*)*["']use client["']/.test(head);
 }
 
-/** Import specifiers in a module, in source order. */
+/**
+ * Runtime import specifiers in a module, in source order. `import type` /
+ * `export type` are skipped: the compiler erases them, so they put nothing in
+ * the bundle — following them would flag server-only modules a browser never
+ * loads (OPE-1128 widened the walk into packages/, where that matters).
+ */
 export function importSpecifiers(src: string): string[] {
   const out: string[] = [];
-  const re = /\bfrom\s+["']([^"']+)["']|\bimport\s*\(\s*["']([^"']+)["']/g;
+  const re =
+    /\b(?:import|export)\s+(type\s+)?[^;'"]*?\bfrom\s+["']([^"']+)["']|\bimport\s*\(\s*["']([^"']+)["']/g;
   let m: RegExpExecArray | null;
-  while ((m = re.exec(src)) !== null) out.push(m[1] ?? m[2]);
+  while ((m = re.exec(src)) !== null) {
+    if (m[1]) continue;
+    out.push(m[2] ?? m[3]);
+  }
   return out;
 }
 
@@ -145,7 +189,9 @@ function resolveSpecifier(spec: string, fromFile: string): string | null {
   let base: string;
   if (spec.startsWith("@/")) base = join(ROOT, "src", spec.slice(2));
   else if (spec.startsWith(".")) base = resolve(dirname(fromFile), spec);
-  else return null; // node_modules or a workspace package — not our source
+  else if (spec.startsWith(WORKSPACE_PREFIX))
+    base = join(ROOT, "packages", spec.slice(WORKSPACE_PREFIX.length), "src");
+  else return null; // node_modules — not our source
   for (const cand of [
     base,
     `${base}.ts`,
@@ -199,7 +245,7 @@ export function checkSource(rel: string, src: string, via: string): Violation[] 
     if (line.startsWith("//") || line.startsWith("*") || line.startsWith("/*")) return;
     for (const rule of ABOVE_FLOOR) {
       if (!rule.pattern.test(line)) continue;
-      if (GUARDED.test(line)) continue;
+      if (!rule.unguardable && GUARDED.test(line)) continue;
       out.push({
         file: rel,
         line: i + 1,

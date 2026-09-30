@@ -142,9 +142,17 @@ describe("OPE-365 exclusion rule", () => {
   });
 
   it("ignores intents whose handler takes an action rather than acking", () => {
-    // submit / correction / unsubscribe do something; they do not leave a
-    // person waiting on a human.
-    for (const intent of ["submit", "correction", "unsubscribe", "spam", "photo_intake"]) {
+    // submit / unsubscribe / spam / photo_intake do something; they do not leave
+    // a person waiting on a human.
+    //
+    // OPE-1066 removed `correction` from this list. The original rationale —
+    // "correction does something" — was wrong about its own handler:
+    // `correction.ts` returns `correction-ack` and defers to an admin decision
+    // that the workflow waits up to seven days for. It acknowledges and defers,
+    // which is the definition this list is drawn against. Twelve human emails in
+    // twenty-one days proved it in production, including the only report that
+    // caught a venue address four miles wrong six days before the fair.
+    for (const intent of ["submit", "unsubscribe", "spam", "photo_intake"]) {
       expect(decideObligation({ fromAddress: "a@b.com", classifiedIntent: intent }).obligated).toBe(
         false
       );

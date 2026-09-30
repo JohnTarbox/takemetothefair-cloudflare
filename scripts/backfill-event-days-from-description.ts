@@ -173,7 +173,10 @@ function main() {
         // gap from operators.
         for (const date of dates) {
           const id = randomUUID();
-          const sql = `INSERT INTO event_days (id, event_id, date, open_time, close_time, notes, closed, vendor_only, created_at) VALUES (${quote(id)}, ${quote(row.id)}, ${quote(date)}, NULL, NULL, ${quote("backfilled from description (UX-R1, 2026-06-01); hours pending operator triage (DQ4)")}, 0, 0, unixepoch())`;
+          // OPE-1211 — provenance goes to `internal_notes`. `notes` renders
+          // verbatim on the public event page; this string sat there on 514
+          // days until drizzle/0337 moved it.
+          const sql = `INSERT INTO event_days (id, event_id, date, open_time, close_time, internal_notes, closed, vendor_only, created_at) VALUES (${quote(id)}, ${quote(row.id)}, ${quote(date)}, NULL, NULL, ${quote("backfilled from description (UX-R1, 2026-06-01); hours pending operator triage (DQ4)")}, 0, 0, unixepoch())`;
           runD1(sql, remote);
         }
         if (apply) {

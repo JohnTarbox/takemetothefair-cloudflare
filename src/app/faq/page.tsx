@@ -96,6 +96,22 @@ const faqCategories = [
         answer:
           "While we don't currently offer email notifications, you can check back regularly or follow your favorite promoters and venues to stay updated on their upcoming events.",
       },
+      // OPE-851 Scope C — deflect the whole class, honestly.
+      //
+      // A fair-goer asked us "is it ok to have a well-behaved dog on a leash ?"
+      // and we could not answer: we do not carry a pet-policy field, and his
+      // mail did not say which fair. He was not confused — every other question
+      // in this section is about operating the WEBSITE, so a fair-going
+      // question finds nothing here and lands on Contact.
+      //
+      // This says who actually knows, without pretending we do. It deliberately
+      // does NOT promise a policy field: OPE-852 ruled "do not build" on
+      // 2026-09-08, so copy claiming we show one would be false.
+      {
+        question: "Can I bring my dog? What about parking, cash, or accessibility?",
+        answer:
+          "Policies like these are set by each fair individually and vary a lot — one fair welcomes leashed dogs, the next allows only service animals. We don't publish a pet or parking policy for every event, so the organizer is the authority. Every event page links the organizer's own site and, where we have it, their contact details. If you'd rather ask us, use the \u201cAsk about this event\u201d link on the event page — it carries the event with your question so we know which fair you mean.",
+      },
     ],
   },
   {

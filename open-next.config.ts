@@ -1,23 +1,31 @@
 import { defineCloudflareConfig } from "@opennextjs/cloudflare";
 import r2IncrementalCache from "@opennextjs/cloudflare/overrides/incremental-cache/r2-incremental-cache";
+import doQueue from "@opennextjs/cloudflare/overrides/queue/do-queue";
 
-// ISR cache backend (John's call: preserve ISR). The `revalidate` `[slug]`
-// detail pages (events/vendors/venues/promoters/blog) render on-demand — no
-// generateStaticParams anywhere, so nothing prerenders at build — and their
-// rendered output is cached in R2 keyed per route, revalidated on the
-// `revalidate` interval. The static-shell D1 pages (home, listings, admin,
-// dashboard) are `force-dynamic` instead (they can't prerender without
-// bindings) and rely on the existing Cloudflare-CDN-Cache-Control headers.
+// ISR cache backend (John's call: preserve ISR): rendered ISR output is cached
+// in R2 under `NEXT_INC_CACHE_R2_BUCKET`, and a stale entry is revalidated
+// through OpenNext's Durable Object queue — the setup OpenNext recommends for
+// production (R2 incremental cache + DO queue; a D1 tag cache only once
+// on-demand revalidation exists, and this app has none).
 //
-// Requires an R2 bucket bound as `NEXT_INC_CACHE_R2_BUCKET` (wrangler, Phase 3).
+// OPE-899 (2026-09-13) replaced `queue: "direct"`, which OpenNext documents as
+// debug-only. Its comment justified it with CDN `stale-while-revalidate`
+// headers, but public HTML is served `private, no-cache, no-store` (OPE-332
+// governs that), so no CDN was serving stale.
 //
-// queue: "direct" — revalidation runs inline on the stale request rather than
-// via a Durable Object queue. Acceptable here because the CDN headers carry
-// `stale-while-revalidate`, so the CDN serves stale while the origin
-// revalidates; this avoids standing up a new Durable Object. The app uses no
-// on-demand revalidation (revalidateTag/revalidatePath), so no tag cache is
-// needed.
+// ⚠️ What this queue does TODAY, measured rather than assumed: nothing. The
+// build prerenders only `/favicon.ico` and `/llms.txt` (both `revalidate:
+// false`, never stale) plus the 500 page, and `dynamicRoutes` is empty — every
+// `[slug]` page with `export const revalidate` also calls `auth()`, which makes
+// it dynamic, so `revalidate` there is inert and no response carries
+// `x-nextjs-cache`. The R2 bucket holds exactly those three entries per build
+// id, written at deploy, none at request time. The queue becomes live the day a
+// page renders without request data; this makes that day correct by default.
+//
+// The DO needs `NEXT_CACHE_DO_QUEUE` (class `DOQueueHandler`, exported by
+// OpenNext's worker template) and the `WORKER_SELF_REFERENCE` service binding —
+// both in wrangler.toml.
 export default defineCloudflareConfig({
   incrementalCache: r2IncrementalCache,
-  queue: "direct",
+  queue: doQueue,
 });

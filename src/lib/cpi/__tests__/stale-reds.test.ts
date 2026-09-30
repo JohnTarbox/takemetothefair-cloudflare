@@ -103,17 +103,27 @@ describe("selectStaleReds", () => {
   });
 });
 
-/** Build a FaultRedInput first seen `hoursAgo` before NOW. */
+/**
+ * Build a FaultRedInput first seen `hoursAgo` before NOW.
+ *
+ * OPE-1096 — `lastSeen` defaults to `firstSeen`, i.e. a fault seen ONCE. That
+ * is deliberate: defaulting it to "now" would have exempted every existing
+ * case from the new recurrence window and left the suite green while testing
+ * nothing about it. Cases that mean "still firing" pass `lastSeen` explicitly.
+ */
 function faultRow(
   status: string,
   hoursAgo: number,
   overrides: Partial<FaultRedInput> = {}
 ): FaultRedInput {
+  const firstSeen = NOW.getTime() - hoursAgo * 3_600_000;
   return {
     signature: `sig-${status}-${hoursAgo}`,
     route: "/events/[slug]",
     status,
-    firstSeen: NOW.getTime() - hoursAgo * 3_600_000,
+    firstSeen,
+    lastSeen: firstSeen,
+    errorClass: "typeerror: cannot read properties of undefined",
     ...overrides,
   };
 }
@@ -168,15 +178,23 @@ describe("selectStaleFaultReds", () => {
   });
 
   it("sorts longest-red first", () => {
+    // OPE-1096 — all three are STILL FIRING (explicit recent `lastSeen`), so
+    // this case tests the sort and nothing else. Without that, "ancient" at
+    // 500h would be dropped by the recurrence window and the sort would be
+    // asserted over two elements while appearing to cover three.
+    const stillFiring = { lastSeen: NOW.getTime() - 3_600_000 };
     const reds = selectStaleFaultReds(
       [
-        faultRow("proposed", 30, { signature: "young" }),
-        faultRow("regressed", 500, { signature: "ancient" }),
-        faultRow("filed", 100, { signature: "mid" }),
+        faultRow("proposed", 30, { signature: "young", ...stillFiring }),
+        faultRow("regressed", 500, { signature: "ancient", ...stillFiring }),
+        faultRow("filed", 100, { signature: "mid", ...stillFiring }),
       ],
       NOW
     );
     expect(reds.map((r) => r.refKey)).toEqual(["ancient", "mid", "young"]);
+    // Age-in-red still comes from firstSeen — the window gates entry, it does
+    // not rewrite how long something has been red.
+    expect(reds[0].hoursInRed).toBeCloseTo(500, 0);
   });
 });
 

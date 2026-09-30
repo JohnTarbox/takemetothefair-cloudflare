@@ -406,7 +406,7 @@ export async function getDashboardMetrics(
         dimensions: [{ name: "sessionSource" }, { name: "sessionMedium" }],
         metrics: [{ name: "sessions" }, { name: "activeUsers" }],
         orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
-        limit: 10,
+        limit: TRAFFIC_SOURCE_LIMIT,
       },
       passthrough
     ),
@@ -974,9 +974,12 @@ const AEO_DOMAIN_BUCKETS: Array<{ bucket: AeoBucket; domains: string[] }> = [
   // NOTE: `www.bing.com/chat` is path-scoped and GA4 sessionSource is
   // hostname-only, so Bing Copilot Chat traffic surfaces as `www.bing.com`
   // and isn't separable from organic Bing search here.
+  // OPE-1161 A6 — no DuckDuckGo hosts. `duckduckgo.com` is ordinary search,
+  // and `noai.duckduckgo.com` is DuckDuckGo with its AI features switched OFF;
+  // both were being counted as AI referrals.
   {
     bucket: "other",
-    domains: ["noai.duckduckgo.com", "duckduckgo.com", "you.com", "phind.com", "kagi.com"],
+    domains: ["you.com", "phind.com", "kagi.com"],
   },
 ];
 
@@ -1163,10 +1166,20 @@ export type FacebookTrafficSummary = {
   sessions: number;
   activeUsers: number;
   rows: TrafficSourceRow[];
+  /**
+   * OPE-1131 — true when the source report came back FULL, so a Facebook
+   * source ranked below the cut was never read and `sessions` may undercount.
+   */
+  sourcesCapped?: boolean;
 };
 
+/** Rows in the dashboard's source/medium report (the Facebook tile sums over these). */
+export const TRAFFIC_SOURCE_LIMIT = 10;
+
 export function summarizeFacebookTraffic(
-  trafficSources: TrafficSourceRow[]
+  trafficSources: TrafficSourceRow[],
+  /** The report's row limit, when known — lets the summary say it read a sample. */
+  sourceLimit?: number
 ): FacebookTrafficSummary {
   const rows = trafficSources.filter((r) => isFacebookSource(r.source));
   const sessions = rows.reduce((sum, r) => sum + r.sessions, 0);
@@ -1174,7 +1187,9 @@ export function summarizeFacebookTraffic(
   // Sort by sessions descending so the dominant surface (usually m.facebook.com)
   // renders first in the breakdown table.
   rows.sort((a, b) => b.sessions - a.sessions);
-  return { sessions, activeUsers, rows };
+  const sourcesCapped =
+    sourceLimit !== undefined && trafficSources.length >= sourceLimit ? true : undefined;
+  return { sessions, activeUsers, rows, sourcesCapped };
 }
 
 /**
@@ -1194,7 +1209,7 @@ export function summarizeFacebookTraffic(
 export async function getFacebookTrafficSafe(env: Ga4Env): Promise<FacebookTrafficSummary | null> {
   try {
     const data = await getDashboardMetrics(env);
-    return summarizeFacebookTraffic(data.trafficSources);
+    return summarizeFacebookTraffic(data.trafficSources, TRAFFIC_SOURCE_LIMIT);
   } catch (e) {
     if (e instanceof Ga4ConfigError || e instanceof Ga4ApiError) return null;
     return null;

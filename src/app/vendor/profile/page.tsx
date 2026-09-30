@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { VendorGalleryLoader } from "@/components/vendors/gallery/VendorGalleryLoader";
+import { VendorLogoManager } from "@/components/vendors/VendorLogoManager";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,17 +11,52 @@ import { Badge } from "@/components/ui/badge";
 import { GooglePlaceSearch } from "@/components/google-place-search";
 import type { PlaceLookupResult } from "@/lib/google-maps";
 import { WelcomeBanner } from "@/components/onboarding/welcome-banner";
+import { ResendVerificationButton } from "@/components/auth/ResendVerificationButton";
 import { useAutosave, formatSavedAgo } from "@/lib/hooks/use-autosave";
 import { VendorClaimWidget } from "@/components/vendor/claim-widget";
 import { SelfReportedFairsEditor } from "@/components/vendor/SelfReportedFairsEditor";
+// OPE-831 — warns, at the field, that a missing/unrecognised state keeps this
+// listing off every by-state browse page. Keyed on the same predicate the
+// grouper uses, so the warning cannot disagree with the behaviour.
+import { StateBrowseHint } from "@/components/vendor/state-browse-hint";
+import { parseJsonArray } from "@/types";
+
+/**
+ * The one string that renders as success.
+ *
+ * ⚠️ The banner used to colour itself with `message.includes("success")`, and
+ * the server's error text is surfaced verbatim in this same box — so any error
+ * mentioning "successfully" would have painted green. Comparing against the
+ * exact constant removes the class of bug rather than the instance.
+ */
+const SAVE_SUCCESS = "Profile updated successfully";
 
 interface VendorProfile {
   id: string;
+  /**
+   * OPE-830 — whether saves from this page will actually persist.
+   *
+   * The PATCH gate refuses unverified callers, and without this the form has
+   * no way to know until a save has already been refused. Optional so an older
+   * cached response (or a test fixture) reads as verified rather than putting
+   * a false "your edits will not save" notice in front of someone.
+   */
+  ownerEmailVerified?: boolean;
+  /**
+   * OPE-986 — the account address the verification link goes to. Passed to
+   * the resend button so it does not render an email box: signed in, the API
+   * sends to the SESSION address and ignores whatever is typed, so a vendor
+   * correcting a typo there was told "a fresh link is on its way" while it went
+   * to the typo again.
+   */
+  ownerEmail?: string;
   businessName: string;
   slug: string;
   description: string | null;
   vendorType: string | null;
-  products: string[];
+  // Stored as a JSON-array STRING (the house SQLite convention) and returned
+  // raw by GET /api/vendor/profile — never an array on the wire. See below.
+  products: string | null;
   website: string | null;
   logoUrl: string | null;
   verified: boolean;
@@ -54,9 +90,29 @@ interface VendorProfile {
 export default function VendorProfilePage() {
   const [profile, setProfile] = useState<VendorProfile | null>(null);
   const [loading, setLoading] = useState(true);
+  // OPE-849 (rework) — the load threw part-way. Distinct from "no profile": the
+  // vendor HAS data, we just failed to read it, and nothing may be saved.
+  const [loadFailed, setLoadFailed] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
+  // OPE-830 — bring the result into view. The button sits at the bottom of a
+  // long form, so on a phone the user is already here; this covers the autosave
+  // case and anyone who submits with the keyboard from higher up.
+  const messageRef = useRef<HTMLDivElement | null>(null);
   const [showGoogleLookup, setShowGoogleLookup] = useState(false);
+  /**
+   * OPE-849 — the server state this form was last loaded from.
+   *
+   * The payload is diffed against THIS, not sent wholesale. Without it a page
+   * holding stale state overwrites every field it has not got, which is how a
+   * live vendor lost her street address, city, state, zip, description, type,
+   * products and all three contact fields in a single save that set one field.
+   *
+   * Kept as a ref, not state: it must never trigger a render, and it is read
+   * only at submit time. Written by `fetchProfile` — which runs on mount and
+   * again after every successful save, so the baseline follows the server.
+   */
+  const savedSnapshot = useRef<typeof formData | null>(null);
   const [formData, setFormData] = useState({
     businessName: "",
     description: "",
@@ -96,7 +152,12 @@ export default function VendorProfilePage() {
       const res = await fetch("/api/vendor/profile");
       if (res.ok) {
         const data = (await res.json()) as VendorProfile;
-        setProfile(data);
+        // OPE-849 (rework) — `setProfile` moved to the END of this block. It
+        // used to run first, so when anything below threw (it did, for every
+        // vendor: `products.join` on a JSON string, fixed in #1361) the page
+        // rendered a BLANK form with autosave armed (`enabled: !!profile`) and
+        // no snapshot — and a null snapshot sent every field. That is how
+        // returning vendors' first save blanked ~11 fields after #1207.
         // Parse paymentMethods from JSON string
         let paymentMethods: string[] = [];
         try {
@@ -107,11 +168,20 @@ export default function VendorProfilePage() {
           paymentMethods = [];
         }
 
-        setFormData({
+        const loaded = {
           businessName: data.businessName || "",
           description: data.description || "",
           vendorType: data.vendorType || "",
-          products: data.products?.join(", ") || "",
+          // OPE-1112 — this line was `data.products?.join(", ")`, typed as if the
+          // API returned an array. It returns the stored JSON string, and a
+          // string has no `.join`, so it threw — before `setFormData` — for
+          // every vendor (7,559 of 7,559 rows hold a JSON-array string, "[]"
+          // included). The throw was swallowed by the catch below, so the page
+          // rendered EVERY field blank: name, description, contact, logo. A
+          // vendor saw an empty form and reasonably filled the logo box with
+          // the only URL she had. Found by driving the page as a vendor, which
+          // is the one thing no test here had done.
+          products: parseJsonArray(data.products).join(", "),
           website: data.website || "",
           logoUrl: data.logoUrl || "",
           // Contact Information
@@ -133,10 +203,17 @@ export default function VendorProfilePage() {
           // A5 — "" sentinel for unset; displayMode "" === "inherit/none".
           displayName: data.displayName || "",
           displayMode: data.displayMode || "",
-        });
+        };
+        setFormData(loaded);
+        // OPE-849 — the diff baseline, captured from the SAME object the form
+        // is seeded with so the two can never drift apart.
+        savedSnapshot.current = loaded;
+        // Only now is it safe to render the form and arm saving.
+        setProfile(data);
       }
     } catch (error) {
       console.error("Failed to fetch profile:", error);
+      setLoadFailed(true);
     } finally {
       setLoading(false);
     }
@@ -168,31 +245,104 @@ export default function VendorProfilePage() {
     setMessage("Address auto-filled from Google. Review and save changes.");
   };
 
+  /**
+   * OPE-849 — send only what this form actually CHANGED.
+   *
+   * ## The defect this replaces
+   *
+   * This used to be `{ ...rest }` — every field of `formData`, unconditionally,
+   * on every save. The server's guard is `!== undefined`, not "is non-empty",
+   * so every field was written every time, blank or not. A page holding stale
+   * state therefore overwrote newer server data field-for-field, with no
+   * concurrency control anywhere in the path: no version, no precondition, no
+   * dirty tracking. Last writer wins, and a stale writer wins with blanks.
+   *
+   * Measured cost: vendor `3dc49a04` set her display name at 21:03:38 on
+   * 2026-09-07 and lost description, vendorType, products, contactName,
+   * contactEmail, contactPhone, address, city, state and zip in the same
+   * request. One field set, ten destroyed. `entity_write_log` row `9ef74078`
+   * holds the before/after verbatim. Live since 2026-06-10 (#436).
+   *
+   * ## Why a client-side diff is the fix, and not a server-side rule
+   *
+   * The server CANNOT tell "the user cleared this" from "a stale tab never had
+   * it" — both arrive as `""`. Only the client knows what it loaded. So the
+   * client sends a field only when it differs from the server state this form
+   * was seeded with, and the server's existing `!== undefined` guard then
+   * leaves untouched anything not sent.
+   *
+   * This preserves clearing exactly: a field the user empties DIFFERS from the
+   * snapshot, so it is sent as `""` and cleared, as it should be. What can no
+   * longer happen is a field being blanked because it was never loaded.
+   *
+   * ⚠️ A version/`If-Match` precondition was considered and rejected:
+   * `vendors.updated_at` is bumped by page views through `$onUpdateFn`, so it
+   * does not track edits and a precondition on it would reject honest saves.
+   */
   const buildPayload = (form: typeof formData) => {
+    const snapshot = savedSnapshot.current;
+    // Only keys whose value differs from what the server gave us.
+    //
+    // OPE-849 (rework) — NO baseline means NOTHING is sent. The old fallback
+    // ("send everything") is exactly the wipe: a form that never loaded holds
+    // blanks, and sending them writes blanks over the vendor's real data. With
+    // `profile` now set only after the snapshot, this should be unreachable —
+    // it is kept as the second wall, not the first.
+    const changed = (key: keyof typeof formData): boolean =>
+      snapshot !== null && form[key] !== snapshot[key];
+
     const { displayMode, displayName, ...rest } = form;
+    const restChanged = Object.fromEntries(
+      Object.entries(rest).filter(([k]) => changed(k as keyof typeof formData))
+    );
+
     return {
-      ...rest,
-      products: form.products
-        .split(",")
-        .map((p) => p.trim())
-        .filter(Boolean),
-      paymentMethods: form.paymentMethods
-        .split(",")
-        .map((p) => p.trim())
-        .filter(Boolean),
-      yearEstablished: form.yearEstablished ? parseInt(form.yearEstablished, 10) : null,
+      ...restChanged,
+      // Each derived field carries its own `changed` test for the same reason:
+      // the transform must not resurrect a key the diff excluded.
+      ...(changed("products")
+        ? {
+            products: form.products
+              .split(",")
+              .map((p) => p.trim())
+              .filter(Boolean),
+          }
+        : {}),
+      ...(changed("paymentMethods")
+        ? {
+            paymentMethods: form.paymentMethods
+              .split(",")
+              .map((p) => p.trim())
+              .filter(Boolean),
+          }
+        : {}),
+      ...(changed("yearEstablished")
+        ? { yearEstablished: form.yearEstablished ? parseInt(form.yearEstablished, 10) : null }
+        : {}),
       // A5 — empty display name clears the alias (→ business_name at render).
-      displayName: displayName.trim() ? displayName.trim() : null,
+      // Sent only when changed, so a stale form cannot null an alias it never
+      // loaded — which is the exact field the specimen save DID set.
+      ...(changed("displayName")
+        ? { displayName: displayName.trim() ? displayName.trim() : null }
+        : {}),
       // A5 — only send displayMode when the office actually picked one. Sending
       // null/"" for a non-LOCAL_OFFICE vendor would trip the route's role gate
       // (400); `undefined` is dropped by JSON.stringify so the field is omitted.
-      ...(displayMode ? { displayMode } : {}),
+      ...(displayMode && changed("displayMode") ? { displayMode } : {}),
     };
   };
 
   // Serialize formData to a string for stable comparison — the form has
   // nested primitive fields only, so JSON is fine and cheap.
   const serialized = useMemo(() => JSON.stringify(formData), [formData]);
+
+  // Scroll the result into view when it appears. Guarded on the ref existing
+  // and on scrollIntoView being present — jsdom and older WebKit both lack it,
+  // and a save must never fail because feedback could not be scrolled to.
+  useEffect(() => {
+    if (!message) return;
+    messageRef.current?.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
+  }, [message]);
 
   const autosave = useAutosave({
     value: serialized,
@@ -224,7 +374,7 @@ export default function VendorProfilePage() {
       });
 
       if (res.ok) {
-        setMessage("Profile updated successfully");
+        setMessage(SAVE_SUCCESS);
         fetchProfile();
       } else {
         // Surface the server's actual error so we don't paper over the
@@ -270,6 +420,19 @@ export default function VendorProfilePage() {
         <div className="h-8 bg-muted rounded w-1/4"></div>
         <div className="h-64 bg-muted rounded"></div>
       </div>
+    );
+  }
+
+  if (loadFailed) {
+    return (
+      <Card>
+        <CardContent className="py-12 text-center">
+          <p className="text-muted-foreground">
+            We couldn&apos;t load your profile, so editing is switched off to protect what&apos;s
+            already saved. Please reload the page; if it keeps happening, contact support.
+          </p>
+        </CardContent>
+      </Card>
     );
   }
 
@@ -327,15 +490,32 @@ export default function VendorProfilePage() {
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
-            {message && (
+            {profile.ownerEmailVerified === false && (
+              // ⚠️ This states the CONSEQUENCE, which the site-wide banner does
+              // not. That banner (components/layout/unverified-banner) already
+              // renders for these users and says "Please verify your email" —
+              // a nag. Nothing connects it to the Save button quietly refusing,
+              // and it sits in the layout, scrolled far out of sight on a form
+              // this long. A vendor spent 3½ minutes filling this in while
+              // every save 403'd, then wrote in to say only his photo saved.
+              // (Photo upload takes auth(); this form takes a verified email.)
               <div
-                className={`p-3 rounded-lg text-sm ${
-                  message.includes("success")
-                    ? "bg-green-50 text-green-700"
-                    : "bg-red-50 text-red-600"
-                }`}
+                role="alert"
+                className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900"
               >
-                {message}
+                <p className="font-semibold">
+                  Your changes here won&apos;t save until you verify your email.
+                </p>
+                <p className="mt-1">
+                  We sent a verification link when you signed up. Photo uploads work either way,
+                  which is why a photo can save when other changes don&apos;t.
+                </p>
+                <div className="mt-3">
+                  <ResendVerificationButton
+                    email={profile.ownerEmail}
+                    label="Resend verification email"
+                  />
+                </div>
               </div>
             )}
 
@@ -447,14 +627,38 @@ export default function VendorProfilePage() {
               placeholder="https://..."
             />
 
-            <Input
-              label="Logo URL"
-              type="url"
-              name="logoUrl"
-              value={formData.logoUrl}
-              onChange={handleChange}
-              placeholder="https://..."
-            />
+            {/* OPE-1112 — the logo half of OPE-211 §5, three weeks and one
+                customer complaint after the gallery half.
+
+                The URL box below used to be the ONLY way a vendor could set a
+                logo. A maker with photos on her phone and a Facebook page has
+                no hosted image URL, so she pastes her page link and the public
+                page renders a blank square — 8 prod rows looked exactly like
+                that, every one typed in by a claimed vendor. Upload comes
+                first because it is the answer for most people; the URL field
+                stays for anyone who genuinely has a hosted image, and is now
+                validated so a page link is refused with a reason. */}
+            <div className="border-t pt-6 mt-6">
+              <h3 className="text-lg font-medium text-foreground mb-1">Logo</h3>
+              <p className="text-sm text-muted-foreground mb-4">
+                Your brand image, shown at the top of your public listing.
+              </p>
+              <VendorLogoManager
+                vendorId={profile.id}
+                logoUrl={formData.logoUrl || null}
+                onChanged={(url) => setFormData((prev) => ({ ...prev, logoUrl: url ?? "" }))}
+              />
+              <div className="mt-4">
+                <Input
+                  label="…or paste an image link"
+                  type="url"
+                  name="logoUrl"
+                  value={formData.logoUrl}
+                  onChange={handleChange}
+                  placeholder="https://example.com/logo.png"
+                />
+              </div>
+            </div>
 
             {/* OPE-211 increment 3 — vendor self-service gallery.
                 Greenlit by John on the issue 2026-07-15: "A logged-in vendor
@@ -467,8 +671,13 @@ export default function VendorProfilePage() {
               <p className="text-sm text-muted-foreground mb-4">
                 Booth and product photos for your listing. Captions and alt text are optional, but
                 alt text is what a screen reader announces — worth writing.{" "}
-                <strong>The gallery displays on your public page with an Enhanced Profile.</strong>{" "}
-                Photos you add now are kept either way.
+                {/* OPE-1111 — this used to read "displays on your public page with an
+                    Enhanced Profile". That was true, and it was the whole defect: the
+                    upload was open to every claimed vendor while the render was not, so
+                    72 photos from 26 makers were stored and never shown. The gate is
+                    gone; this sentence has to stop hedging or it teaches the vendor to
+                    expect nothing. */}
+                <strong>These photos show on your public listing.</strong>
               </p>
               <VendorGalleryLoader vendorId={profile.id} />
             </div>
@@ -556,6 +765,11 @@ export default function VendorProfilePage() {
                     placeholder="04101"
                   />
                 </div>
+                {/* OPE-831 — see StateBrowseHint for why this is a component. */}
+                <StateBrowseHint
+                  state={formData.state}
+                  onUseLookup={() => setShowGoogleLookup(true)}
+                />
                 {formData.latitude && formData.longitude && (
                   <p className="text-xs text-muted-foreground mt-2">
                     Coordinates: {formData.latitude.toFixed(4)}, {formData.longitude.toFixed(4)}{" "}
@@ -610,7 +824,30 @@ export default function VendorProfilePage() {
               </div>
             </div>
 
-            <div className="pt-6">
+            {/* OPE-830 — the result renders WHERE THE ACTION IS.
+                This block used to sit at the top of the form, 276 lines above
+                the button, with no scroll-to and no toast. Tapping Save on a
+                phone produced no visible feedback at all: the spinner stopped
+                and nothing else changed, so a success and a refusal looked
+                identical from where the user was standing. */}
+            <div ref={messageRef} className="pt-6">
+              {message && (
+                <div
+                  role="status"
+                  aria-live="polite"
+                  className={`mb-4 p-3 rounded-lg text-sm ${
+                    // ⚠️ Keyed on the exact success string, not
+                    // `message.includes("success")` — the server's error text
+                    // is passed through verbatim here, and any error mentioning
+                    // "successfully" would have rendered green.
+                    message === SAVE_SUCCESS
+                      ? "bg-green-50 text-green-700"
+                      : "bg-red-50 text-red-600"
+                  }`}
+                >
+                  {message}
+                </div>
+              )}
               <Button type="submit" isLoading={saving} disabled={saving}>
                 Save Changes
               </Button>

@@ -171,7 +171,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       if (v && !v.logoUrl) {
         // VENDOR_ASSETS isn't on the generated CloudflareEnv type; the
         // upload-image-bytes route casts the same way.
-        const env = getCloudflareEnv() as unknown as { VENDOR_ASSETS?: R2Bucket };
+        const env = getCloudflareEnv();
         const obj = await env.VENDOR_ASSETS?.get(payload.photo_key);
         if (obj) {
           const bytes = new Uint8Array(await obj.arrayBuffer());

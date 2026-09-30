@@ -116,7 +116,7 @@ async function readBytesFromRequest(
 export async function POST(request: NextRequest, context: { params: Promise<{ token: string }> }) {
   const { token } = await context.params;
 
-  const env = getCloudflareEnv() as unknown as { VENDOR_ASSETS?: R2Bucket };
+  const env = getCloudflareEnv();
 
   const kv = getCloudflareRateLimitKv();
   if (!kv) {

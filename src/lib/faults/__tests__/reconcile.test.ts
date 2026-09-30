@@ -10,11 +10,19 @@ const NOW = new Date("2026-07-03T12:00:00.000Z");
 const HOUR = 3_600_000;
 
 /** Build a grouped fault. Defaults clear the threshold gate. */
+/** The class half of a `route#class` signature, or the whole id. */
+function classOf(signature: string): string {
+  const i = signature.indexOf("#");
+  return i >= 0 ? signature.slice(i + 1) : signature;
+}
+
 function group(signature: string, over: Partial<GroupedFault> = {}): GroupedFault {
   return {
     signature,
     route: "/events/[slug]",
-    errorClass: "boom",
+    // OPE-613 — each fixture signature is its own fault shape unless a test
+    // says otherwise; a shared class on two routes is now ONE shape.
+    errorClass: classOf(signature),
     count: 5,
     distinctSessions: 3,
     firstSeen: NOW.getTime() - 10 * HOUR,
@@ -32,7 +40,9 @@ function ledgerRow(
   return {
     signature,
     route: "/events/[slug]",
-    errorClass: "boom",
+    // OPE-613 — each fixture signature is its own fault shape unless a test
+    // says otherwise; a shared class on two routes is now ONE shape.
+    errorClass: classOf(signature),
     firstSeen: NOW.getTime() - 100 * HOUR,
     lastSeen: NOW.getTime() - 50 * HOUR,
     count: 12,
@@ -212,28 +222,35 @@ describe("reconcileFaults — sub-threshold accounting (OPE-488)", () => {
 
   it("accounts for EVERY group — no signature falls out of all buckets", () => {
     const groups = [
-      group("/hot#boom", { count: 9, distinctSessions: 4 }), // eligible → toEmit
-      group("/cold-a#boom", { count: 1, distinctSessions: 1 }), // sub-threshold
-      group("/cold-b#boom", { count: 2, distinctSessions: 1 }), // sub-threshold
-      group("/known#boom", { count: 1, distinctSessions: 1 }), // sub-threshold BUT in ledger
+      group("/hot#boom-hot", { count: 9, distinctSessions: 4 }), // eligible → toEmit
+      group("/cold-a#boom-a", { count: 1, distinctSessions: 1 }), // sub-threshold
+      group("/cold-b#boom-b", { count: 2, distinctSessions: 1 }), // sub-threshold
+      group("/known#boom-known", { count: 1, distinctSessions: 1 }), // sub-threshold BUT in ledger
     ];
-    const r = reconcileFaults(groups, [ledgerRow("/known#boom", "filed")], NOW);
+    const r = reconcileFaults(groups, [ledgerRow("/known#boom-known", "filed")], NOW);
 
+    // OPE-613 added two buckets; the invariant must count them or it stops
+    // being an invariant.
     const accounted =
       r.toEmit.length +
       r.regressions.length +
       r.existing.length +
       r.deferred.length +
-      r.subThreshold.length;
+      r.subThreshold.length +
+      r.linked.length +
+      r.heldForSibling.length;
     expect(accounted).toBe(groups.length);
-    expect(r.toEmit.map((c) => c.signature)).toEqual(["/hot#boom"]);
-    expect(r.subThreshold.map((d) => d.signature).sort()).toEqual(["/cold-a#boom", "/cold-b#boom"]);
+    expect(r.toEmit.map((c) => c.signature)).toEqual(["/hot#boom-hot"]);
+    expect(r.subThreshold.map((d) => d.signature).sort()).toEqual([
+      "/cold-a#boom-a",
+      "/cold-b#boom-b",
+    ]);
     // A sub-threshold group already in the ledger is still touched, never dropped.
-    expect(r.existing.map((e) => e.signature)).toEqual(["/known#boom"]);
+    expect(r.existing.map((e) => e.signature)).toEqual(["/known#boom-known"]);
   });
 
   it("leaves subThreshold empty when every group clears a gate", () => {
-    const r = reconcileFaults([group("/a#boom"), group("/b#boom")], [], NOW);
+    const r = reconcileFaults([group("/a#boom-a"), group("/b#boom-b")], [], NOW);
     expect(r.subThreshold).toEqual([]);
     expect(r.toEmit).toHaveLength(2);
   });

@@ -3,7 +3,14 @@ import type { Metadata } from "next";
 import { MapPin } from "lucide-react";
 import { EventsView } from "@/components/events/events-view";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { events, venues, promoters, eventVendors, vendors } from "@/lib/db/schema";
+import {
+  events,
+  venues,
+  promoters,
+  eventVendors,
+  vendors,
+  eventInStateWhere,
+} from "@/lib/db/schema";
 import { eq, and, isNotNull, count, inArray, sql } from "drizzle-orm";
 import { isPubliclyVisibleVendorLink } from "@/lib/vendor-status";
 import { isPublicEventStatus } from "@/lib/event-status";
@@ -63,7 +70,7 @@ async function getStateEvents(
   const db = getCloudflareDb();
   const offset = (page - 1) * limit;
 
-  const conditions = [isPublicEventStatus(), eq(events.stateCode, stateCode)];
+  const conditions = [isPublicEventStatus(), eventInStateWhere(stateCode)];
   if (!includePast) {
     conditions.push(isNotNull(events.startDate));
     // A2 (Dev backlog 2026-06-05): 24h end-of-day grace per upcomingEndPredicate.
@@ -77,7 +84,10 @@ async function getStateEvents(
     .leftJoin(venues, eq(events.venueId, venues.id))
     .leftJoin(promoters, eq(events.promoterId, promoters.id))
     .where(and(...conditions))
-    .orderBy(sql`COALESCE(${events.startDate}, 9999999999) ASC`)
+    // OPE-1028 — `id` breaks start_date ties. Most events sit at noon UTC, so a
+    // whole day ties; without a unique key SQLite may order that tie differently
+    // for the page-1 and page-2 OFFSET queries, and a row can land on both or neither.
+    .orderBy(sql`COALESCE(${events.startDate}, 9999999999) ASC`, events.id)
     .limit(limit)
     .offset(offset);
 
@@ -235,7 +245,7 @@ async function getStateInventory(stateCode: string): Promise<StateInventory> {
   const db = getCloudflareDb();
   const conditions = [
     isPublicEventStatus(),
-    eq(events.stateCode, stateCode),
+    eventInStateWhere(stateCode),
     isNotNull(events.startDate),
     upcomingEndPredicate(new Date()),
   ];

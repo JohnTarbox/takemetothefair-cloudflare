@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import {
   runBoothPipeline,
   BOOTH_PROPOSED_ACTION,
+  GALLERY_ATTACHED_ACTION,
   type BoothPipelineEnv,
 } from "../src/photo/booth-pipeline.js";
 import { createTestDb } from "./setup-db.js";
@@ -15,8 +16,12 @@ const reply = (over: Record<string, unknown> = {}) => ({
     business_name: "Maple Hollow Farm",
     website: null,
     products: ["syrup"],
-    confidence: 0.9,
+    confidence: 1,
     rationale: "banner on the stall",
+    identifiable_minor: false,
+    // OPE-240 — the same mock answers the separate presence question too, as a
+    // real stall photo does. The refusal side is pinned in photo-presence-ope240.
+    mounted_on: "vendor_table_or_tent",
     ...over,
   }),
 });
@@ -144,7 +149,7 @@ describe("runBoothPipeline — enabled", () => {
     expect(payload.stage_reason).toContain("below");
   });
 
-  it("skips general scenery — no staged row, no flag", async () => {
+  it("skips general scenery — no staged PROPOSAL, no flag, but one gallery decision row (OPE-978)", async () => {
     const { db } = createTestDb();
     await seedEmail(db as unknown as Db);
     const res = await runBoothPipeline(
@@ -155,12 +160,15 @@ describe("runBoothPipeline — enabled", () => {
       photos
     );
     expect(res).toMatchObject({ examined: 1, staged: 0, skipped: 1 });
-    expect(await db.select().from(adminActions)).toHaveLength(0);
+    // OPE-978 — scenery used to write nothing at all, so a scenery photo could
+    // not be told apart from a lost one. It now leaves its decision row.
+    const rows = await db.select().from(adminActions);
+    expect(rows.map((r) => r.action)).toEqual([GALLERY_ATTACHED_ACTION]);
     const email = await db.select().from(inboundEmails).where(eq(inboundEmails.id, "ie1"));
     expect(email[0].flaggedForReview).toBe(0);
   });
 
-  it("survives an unreadable photo (missing from R2) without throwing", async () => {
+  it("survives an unreadable photo (missing from R2) without throwing — and RECORDS it (OPE-978)", async () => {
     const { db } = createTestDb();
     await seedEmail(db as unknown as Db);
     const res = await runBoothPipeline(
@@ -170,8 +178,12 @@ describe("runBoothPipeline — enabled", () => {
       "e1",
       photos
     );
-    expect(res.examined).toBe(0);
-    expect(res.staged).toBe(0);
+    // Was examined 0 / staged 0: the photo vanished without a row or reason.
+    expect(res.examined).toBe(1);
+    expect(res.staged).toBe(1);
+    expect(res.visionFailures[0]).toMatch(/r2-object-missing/);
+    const [row] = await db.select().from(adminActions);
+    expect(JSON.parse(row.payloadJson as string).failure_reason).toMatch(/r2-object-missing/);
   });
 
   it("stages an unusable model reply for review rather than dropping it", async () => {

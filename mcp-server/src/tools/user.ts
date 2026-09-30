@@ -42,7 +42,10 @@ export function registerUserTools(server: McpServer, db: Db, auth: AuthContext) 
                 .from(events)
                 .where(eq(events.id, fav.favoritableId))
                 .limit(1);
-              if (rows[0]) { name = rows[0].name; slug = rows[0].slug; }
+              if (rows[0]) {
+                name = rows[0].name;
+                slug = rows[0].slug;
+              }
               break;
             }
             case "VENUE": {
@@ -51,7 +54,10 @@ export function registerUserTools(server: McpServer, db: Db, auth: AuthContext) 
                 .from(venues)
                 .where(eq(venues.id, fav.favoritableId))
                 .limit(1);
-              if (rows[0]) { name = rows[0].name; slug = rows[0].slug; }
+              if (rows[0]) {
+                name = rows[0].name;
+                slug = rows[0].slug;
+              }
               break;
             }
             case "VENDOR": {
@@ -60,7 +66,10 @@ export function registerUserTools(server: McpServer, db: Db, auth: AuthContext) 
                 .from(vendors)
                 .where(eq(vendors.id, fav.favoritableId))
                 .limit(1);
-              if (rows[0]) { name = rows[0].name; slug = rows[0].slug; }
+              if (rows[0]) {
+                name = rows[0].name;
+                slug = rows[0].slug;
+              }
               break;
             }
             case "PROMOTER": {
@@ -69,7 +78,10 @@ export function registerUserTools(server: McpServer, db: Db, auth: AuthContext) 
                 .from(promoters)
                 .where(eq(promoters.id, fav.favoritableId))
                 .limit(1);
-              if (rows[0]) { name = rows[0].name; slug = rows[0].slug; }
+              if (rows[0]) {
+                name = rows[0].name;
+                slug = rows[0].slug;
+              }
               break;
             }
           }
@@ -80,15 +92,25 @@ export function registerUserTools(server: McpServer, db: Db, auth: AuthContext) 
             name,
             slug,
           };
-        }),
+        })
       );
 
       const resolved = results
         .filter((r) => r.status === "fulfilled")
-        .map((r) => (r as PromiseFulfilledResult<{ type: string; id: string; name: string | null; slug: string | null }>).value);
+        .map(
+          (r) =>
+            (
+              r as PromiseFulfilledResult<{
+                type: string;
+                id: string;
+                name: string | null;
+                slug: string | null;
+              }>
+            ).value
+        );
 
       return { content: [jsonContent({ count: resolved.length, favorites: resolved })] };
-    },
+    }
   );
 
   // ── toggle_favorite ────────────────────────────────────────────
@@ -108,16 +130,14 @@ export function registerUserTools(server: McpServer, db: Db, auth: AuthContext) 
           and(
             eq(userFavorites.userId, auth.userId),
             eq(userFavorites.favoritableType, params.type),
-            eq(userFavorites.favoritableId, params.id),
-          ),
+            eq(userFavorites.favoritableId, params.id)
+          )
         )
         .limit(1);
 
       if (existing.length > 0) {
         // Remove favorite
-        await db
-          .delete(userFavorites)
-          .where(eq(userFavorites.id, existing[0].id));
+        await db.delete(userFavorites).where(eq(userFavorites.id, existing[0].id));
         return { content: [jsonContent({ favorited: false, type: params.type, id: params.id })] };
       } else {
         // Add favorite
@@ -130,6 +150,6 @@ export function registerUserTools(server: McpServer, db: Db, auth: AuthContext) 
         });
         return { content: [jsonContent({ favorited: true, type: params.type, id: params.id })] };
       }
-    },
+    }
   );
 }

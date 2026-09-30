@@ -19,6 +19,7 @@ import { NextResponse } from "next/server";
 import { withAuthorized } from "@/lib/api/with-auth";
 import { getCloudflareAi } from "@/lib/cloudflare";
 import { logError } from "@/lib/logger";
+import { checkRateLimit, meteredCallerIdentifier, rateLimitResponse } from "@/lib/rate-limit";
 import { toMarkdownWithRetry, type ToMarkdownAi } from "@takemetothefair/utils";
 
 /** Per-image ceiling. A phone screenshot is ~1-3 MB; 10 MB is generous. */
@@ -30,7 +31,14 @@ const OCR_MAX_ATTEMPTS = 2;
 
 const ACCEPTED_PREFIX = "image/";
 
-export const POST = withAuthorized(async ({ request, db }) => {
+export const POST = withAuthorized(async ({ request, db, userId }) => {
+  // OPE-972 — each call is up to MAX_IMAGES × OCR_MAX_ATTEMPTS Workers AI calls.
+  // Metered: keyed on the admin (or the internal caller), fail-closed.
+  const rate = await checkRateLimit(request, "import-url-extract-image", {
+    metered: { identifier: meteredCallerIdentifier(request, userId) },
+  });
+  if (!rate.allowed) return rateLimitResponse(rate);
+
   let form: FormData;
   try {
     form = await request.formData();
@@ -81,6 +89,7 @@ export const POST = withAuthorized(async ({ request, db }) => {
   // usually enough to extract from.
   const perImage: { name: string; chars: number; outcome: string }[] = [];
   const sections: string[] = [];
+  const attemptLogs: Promise<void>[] = [];
   for (const [i, file] of files.entries()) {
     const name = file.name || `pasted-image-${i + 1}`;
     const result = await toMarkdownWithRetry(
@@ -90,14 +99,21 @@ export const POST = withAuthorized(async ({ request, db }) => {
       // Record EVERY attempt, not just the winner — the OPE-189 observability
       // contract. A cold-start timeout that a retry recovers is still the most
       // useful signal we get about AI-binding health.
+      //
+      // OPE-994 — collected and awaited below, not fired with `void`: in a
+      // request context an unawaited write can be cancelled when the response
+      // returns, which silently under-records exactly what this contract promises.
       (attempt, outcome) => {
-        void logError(db, {
-          level: "info",
-          source: "import-url:extract-image",
-          message: `OCR attempt ${attempt} for '${name}': ${outcome}`,
-        });
+        attemptLogs.push(
+          logError(db, {
+            level: "info",
+            source: "import-url:extract-image",
+            message: `OCR attempt ${attempt} for '${name}': ${outcome}`,
+          }).catch(() => {})
+        );
       }
     );
+    await Promise.all(attemptLogs.splice(0));
     perImage.push({ name, chars: result.text?.trim().length ?? 0, outcome: result.outcome });
     const text = result.text?.trim();
     if (text) sections.push(text);

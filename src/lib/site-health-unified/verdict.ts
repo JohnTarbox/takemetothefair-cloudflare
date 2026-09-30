@@ -47,6 +47,11 @@ export interface InstrumentReading {
    * repeats.
    */
   actionItems: number | null;
+  /**
+   * OPE-1161 A4 — the tile's big number when it is NOT a count of action items
+   * (traffic shows sessions). `actionItems` still feeds the verdict total.
+   */
+  displayValue?: number | null;
   /** One clause describing the finding, e.g. "2 pages failing rich results". */
   detail: string;
   /** Where clicking the item goes. */

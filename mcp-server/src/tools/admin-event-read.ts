@@ -18,9 +18,16 @@
  * against and would hand un-adjudicated rows to unauthenticated callers.
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { isPubliclyVisible } from "../lifecycle.js";
 import { z } from "zod";
-import { and, eq, isNull, inArray } from "drizzle-orm";
-import { unsafeSlug, centsToDollars } from "@takemetothefair/utils";
+import { and, eq, isNull, inArray, ne, sql } from "drizzle-orm";
+import {
+  unsafeSlug,
+  centsToDollars,
+  classifyVendorCapacity,
+  normalizeName,
+} from "@takemetothefair/utils";
+import { isOpenToVendorApplications } from "@takemetothefair/constants";
 import {
   events,
   eventApplications,
@@ -44,7 +51,8 @@ export function registerAdminEventReadTools(server: McpServer, db: Db, auth: Aut
     "Read one event in full by slug OR id, at ANY status — including PENDING, DRAFT and REJECTED rows that get_event_details filters out. " +
       "NOTE: TENTATIVE is NOT one of them — the public reader SERVES TENTATIVE events in full, badged as such, so `get_event_details` returns them normally. " +
       "The public gate is publicEventWhere(): status IN (APPROVED, TENTATIVE) AND lifecycle_status IN (PUBLIC_LIFECYCLE_STATUSES, which excludes CANCELLED/NO_SHOW). " +
-      "The public LIST pages share that exact predicate (isPublicEventStatus() delegates to it), so list and detail agree by construction rather than by coincidence. " +
+      "The public LIST pages share that exact STATUS predicate (isPublicEventStatus() delegates to it), so list and detail agree on which statuses are public. " +
+      "That is NOT a promise that every public event appears on a list: lists also filter by state (eventInStateWhere — venue state, or state_code when venue-less; shared with search_events since OPE-1028) and by end date (an event with end_date NULL is excluded from upcoming lists but still returned by search_events). " +
       "Returns the same record plus status, lifecycle_status, dates_confirmed, and RAW ISO start/end dates alongside the formatted string. " +
       "Use this to review an un-adjudicated submission: the public reader reports PENDING/DRAFT/REJECTED as 'not found'. Read-only. Admin only.",
     {
@@ -94,6 +102,7 @@ export function registerAdminEventReadTools(server: McpServer, db: Db, auth: Aut
           venueState: venues.state,
           venueAddress: venues.address,
           venueZip: venues.zip,
+          venuePetFriendly: venues.petFriendly,
           // OPE-534 — everything below here is writable by `update_event` and
           // was NOT readable through this tool. An agent that sets a field it
           // has never seen destroys whatever was there, silently: no error, no
@@ -119,6 +128,7 @@ export function registerAdminEventReadTools(server: McpServer, db: Db, auth: Aut
           estimatedAttendance: events.estimatedAttendance,
           eventScale: events.eventScale,
           indoorOutdoor: events.indoorOutdoor,
+          petFriendly: events.petFriendly,
           imageUrl: events.imageUrl,
           imageFocalX: events.imageFocalX,
           imageFocalY: events.imageFocalY,
@@ -203,9 +213,69 @@ export function registerAdminEventReadTools(server: McpServer, db: Db, auth: Aut
           notes: eventApplications.notes,
           opensAt: eventApplications.opensAt,
           closesAt: eventApplications.closesAt,
+          // OPE-794 — same reasoning as hazard 4 above, applied to the new
+          // columns: a field the admin reader cannot see is a field nobody can
+          // verify was written correctly. Surfaced from their first commit.
+          capacityStatus: eventApplications.capacityStatus,
+          capacityAsOf: eventApplications.capacityAsOf,
+          capacityNote: eventApplications.capacityNote,
         })
         .from(eventApplications)
         .where(eq(eventApplications.eventId, event.id));
+
+      // OPE-450 rework — earlier REJECTED rows for the same event name, shown to
+      // whoever is adjudicating this one.
+      //
+      // The 08-31 ruling forbids SUPPRESSING a submission on a bare rejection
+      // (a row rejected as spam or past-dated is not a duplicate ruling), and
+      // that stays true. It says nothing against SHOWING it. On 2026-09-06
+      // `waterville-farmers-market-3` arrived PENDING with two earlier bare
+      // rejections of the same market, and the reviewer could only learn that by
+      // being told. Names are compared with the dedup matcher's normalizeName,
+      // across ALL dates: "rejected twice before" is the question a human asks
+      // whether or not the dates line up.
+      const priorRejections = await (async () => {
+        const norm = normalizeName(event.name ?? "");
+        const anchor = norm.split(" ").sort((a, b) => b.length - a.length)[0] ?? "";
+        if (anchor.length < 3) return [];
+        const candidates = await db
+          .select({
+            id: events.id,
+            name: events.name,
+            slug: events.slug,
+            startDate: events.startDate,
+            createdAt: events.createdAt,
+            rejectedAsDuplicateOf: events.rejectedAsDuplicateOf,
+            mergedInto: events.mergedInto,
+          })
+          .from(events)
+          .where(
+            and(
+              eq(events.status, "REJECTED"),
+              ne(events.id, event.id),
+              // instr, not LIKE: a pattern built from a name trips D1's 50-char cap.
+              sql`instr(lower(${events.name}), ${anchor}) > 0`
+            )
+          )
+          .limit(200);
+        return candidates
+          .filter((c) => normalizeName(c.name ?? "") === norm)
+          .slice(0, 10)
+          .map((c) => ({
+            slug: c.slug,
+            start_date: c.startDate ? new Date(c.startDate).toISOString() : null,
+            created_at: c.createdAt ? new Date(c.createdAt).toISOString() : null,
+            // Which kind of ruling it was. Only these two ever suppress a
+            // future submission; a row with neither is a bare rejection.
+            rejected_as_duplicate_of: c.rejectedAsDuplicateOf,
+            merged_into: c.mergedInto,
+            ruling: c.mergedInto
+              ? "merged"
+              : c.rejectedAsDuplicateOf
+                ? "rejected_as_duplicate"
+                : "rejected_reason_unrecorded",
+          }));
+      })();
 
       return {
         content: [
@@ -218,8 +288,31 @@ export function registerAdminEventReadTools(server: McpServer, db: Db, auth: Aut
             // mistake one for a published event.
             status: event.status,
             lifecycle_status: event.lifecycleStatus,
-            is_publicly_visible: event.status === "APPROVED" && event.mergedInto === null,
+            // OPE-829 — the SAME predicate the public reader filters on
+            // (`publicEventWhere()`), not a third hand-written copy.
+            //
+            // This read `event.status === "APPROVED"` alone and so ignored
+            // `lifecycle_status` entirely, which made it wrong in BOTH
+            // directions on 236 live rows (measured in prod 2026-09-07):
+            //
+            //   6 rows said TRUE while hidden   — APPROVED + CANCELLED (2)
+            //                                     and APPROVED + NO_SHOW (4)
+            //   230 rows said FALSE while live  — status TENTATIVE, which
+            //                                     PUBLIC_EVENT_STATUSES has
+            //                                     always included
+            //
+            // The false-NEGATIVE population is 38x larger and was not in the
+            // ticket: an operator asking "is this live?" was told no for 230
+            // events that are.
+            //
+            // `mergedInto` stays as an extra condition even though it changes
+            // no row today (all 54 merged rows are REJECTED, so `status`
+            // already excludes them). A tombstone 301s away, so it must never
+            // read as live even if a future merge path forgets to set REJECTED.
+            is_publicly_visible:
+              isPubliclyVisible(event.status, event.lifecycleStatus) && event.mergedInto === null,
             merged_into: event.mergedInto,
+            prior_rejections: priorRejections,
             description: event.description,
             // OPE-482 — raw values, not just the rendered string. MCP shares the
             // site's formatter, so a formatted date read back is not an
@@ -255,6 +348,9 @@ export function registerAdminEventReadTools(server: McpServer, db: Db, auth: Aut
                   state: event.venueState,
                   address: event.venueAddress,
                   zip: event.venueZip,
+                  // OPE-1061 — the VENUE's own policy, labelled as such. It is
+                  // never the event's answer; see `pet_friendly` below.
+                  pet_friendly: event.venuePetFriendly,
                 }
               : null,
             // OPE-534 — the writable field set, in full. Flat and always
@@ -267,6 +363,33 @@ export function registerAdminEventReadTools(server: McpServer, db: Db, auth: Aut
             vendor_fee_min: centsToDollars(event.vendorFeeMinCents),
             vendor_fee_max: centsToDollars(event.vendorFeeMaxCents),
             vendor_fee_notes: event.vendorFeeNotes,
+            /**
+             * OPE-794 — what the event's OWN PROSE says about vendor capacity.
+             *
+             * The ticket's complaint was that "we are full for 2026" and "first
+             * floor sold out" survived only as hand-written text in
+             * `vendor_fee_notes` and the description, where nothing could query
+             * them and the next writer could overwrite them without knowing they
+             * mattered. This surfaces that text as a reading.
+             *
+             * ⚠️ It is DERIVED, not stored. It is a hint about the prose in this
+             * response, not a fact about the event, and it must never be treated
+             * as the stored `event_applications.capacity_status`. `null` means
+             * the prose said nothing recognisable — which is UNKNOWN, and
+             * UNKNOWN is never "open".
+             */
+            vendor_capacity_reading: (() => {
+              const reading = classifyVendorCapacity(
+                [event.vendorFeeNotes, event.description].filter(Boolean).join("\n")
+              );
+              if (!reading) return null;
+              return {
+                status: reading.status,
+                evidence: reading.evidence,
+                open_to_applications: isOpenToVendorApplications(reading.status),
+                derived_from: "prose",
+              };
+            })(),
             // OPE-709 — the legacy single-route columns. Retained as a
             // read-through for the commercial lane; `applications` below is the
             // model. Do not add a second lane here.
@@ -280,6 +403,10 @@ export function registerAdminEventReadTools(server: McpServer, db: Db, auth: Aut
             estimated_attendance: event.estimatedAttendance,
             event_scale: event.eventScale,
             indoor_outdoor: event.indoorOutdoor,
+            // OPE-1061 — returned so a read-modify-write caller cannot erase it
+            // (the OPE-497 shape). The event's OWN value; the venue's is under
+            // `venue.pet_friendly` and must not be substituted for it.
+            pet_friendly: event.petFriendly,
             image_url: event.imageUrl,
             image_focal_x: event.imageFocalX,
             image_focal_y: event.imageFocalY,

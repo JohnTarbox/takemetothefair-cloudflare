@@ -28,8 +28,11 @@ import {
   emailSendLedger,
   promoters,
   vendors,
+  venues,
 } from "@takemetothefair/db-schema";
+import { isGenericEmailProvider, isBareGenericProviderAddress } from "@takemetothefair/utils";
 import type { Db } from "../db.js";
+import { resolveOwnEventUrl } from "./own-event-url.js";
 
 /**
  * Brand key: lowercase, alphanumerics only.
@@ -80,10 +83,28 @@ export function senderNameVariants(fromAddress: string, signatureName?: string |
   const at = fromAddress.indexOf("@");
   if (at > 0) {
     const domain = fromAddress.slice(at + 1).toLowerCase();
-    // Strip the public suffix and any leading `www.`/`mail.` label.
-    const label = domain.replace(/^(www|mail|smtp)\./, "").split(".")[0];
-    push(label);
-    push(domain);
+    // OPE-856 — a mailbox provider is not a business name.
+    //
+    // `someone@gmail.com` used to contribute BOTH `gmail` and `gmail.com`.
+    // `brandKey("gmail.com")` is "gmailcom" — eight characters, so it clears
+    // the fragment matcher's six-character gate — and it substring-matches the
+    // vendor whose businessName is the bare address `craftigalcreative@gmail.com`.
+    // Six of twelve real inbound emails in the 09-09 audit census carried that
+    // false "existing vendor" match.
+    //
+    // Both variants are dropped, not just the full domain: `gmail` alone is
+    // five characters and would fail the fragment gate today, but it would
+    // still reach the exact and brand-key matchers above it, and a vendor
+    // literally named "Gmail" is not the sender's business either.
+    //
+    // The signature name is untouched — that is real evidence about who is
+    // writing, whatever their mailbox provider.
+    if (!isGenericEmailProvider(domain)) {
+      // Strip the public suffix and any leading `www.`/`mail.` label.
+      const label = domain.replace(/^(www|mail|smtp)\./, "").split(".")[0];
+      push(label);
+      push(domain);
+    }
   }
   return out;
 }
@@ -191,10 +212,20 @@ export async function matchVendorByVariants(
         })
         .from(vendors)
         .where(and(isNull(vendors.deletedAt), sql`instr(${despacedCol}, ${key}) > 0`))
-        .limit(1);
-      if (byFragment.length > 0) {
+        // OPE-856 scope 2 — a vendor whose businessName is a bare address on a
+        // generic provider must not be FRAGMENT-reachable. The only
+        // distinctive part of `craftigalcreative@gmail.com` is the local part;
+        // the provider half is what every unrelated sender collides with.
+        //
+        // Filtered in JS rather than SQL because the predicate is "is this
+        // string a bare address on a known provider", which is a set lookup —
+        // expressing it as ~35 SQL LIKEs would be both slower and a second
+        // place for the provider list to live. Bounded by the limit below.
+        .limit(5);
+      const usable = byFragment.filter((v) => !isBareGenericProviderAddress(v.businessName));
+      if (usable.length > 0) {
         return {
-          match: { ...byFragment[0], matchedVariant: "fragment", matchedOn: raw },
+          match: { ...usable[0], matchedVariant: "fragment", matchedOn: raw },
           variantsTried,
         };
       }
@@ -295,14 +326,31 @@ export interface VendorInquiryBriefing {
     slug: string;
     name: string;
     url: string;
-    matchedOn: "source_url" | "subject";
+    matchedOn: "own_event_url" | "source_url" | "subject";
   } | null;
+  /**
+   * OPE-977 — what happened to `parsed_url`, stated rather than implied:
+   * absent · not-ours (another host) · ours-not-an-event-page · ours-unresolved
+   * · resolved (with how). The warnings below are derived from this.
+   */
+  urlResolution: { status: string; detail?: string };
   confidence: EventConfidence | null;
   handoff: {
     sourceUrl: string | null;
     applicationUrl: string | null;
     applicationInstructions: string | null;
     promoterWebsite: string | null;
+  } | null;
+  /**
+   * OPE-1061 — "can I bring my dog?" answered from the briefing alone. `event`
+   * is the ONLY answer for the fair; `venue` is the venue's own policy and is
+   * carried separately, labelled, because an ag fair and a lawn craft fair can
+   * share one fairgrounds. UNSET = nobody looked; NOT_PUBLISHED = looked, silent.
+   */
+  petPolicy: {
+    event: string;
+    eventEvidence: { sourceUrl: string; excerpt: string | null } | null;
+    venueOwnPolicy: string | null;
   } | null;
   vendor: VendorMatch | null;
   vendorVariantsTried: string[];
@@ -359,6 +407,21 @@ const GENERIC_EVENT_WORDS = new Set([
  * ready to hand over. One character.
  */
 export function distinctiveToken(query: string): string | null {
+  return distinctiveTokens(query)[0] ?? null;
+}
+
+/** Upper bound on Tier 3 lookups: one bounded query per token. */
+export const MAX_SUBJECT_TOKENS = 6;
+
+/**
+ * OPE-1056 — EVERY distinctive token in a subject, longest first, de-duplicated.
+ *
+ * Length is a poor proxy for distinctiveness. "Derry Big Summer blow out Sat
+ * 19th Craft market" yields derry, summer, blow, 19th; the longest, "summer",
+ * names half the calendar, while "blow" names exactly one event. Tier 3 used to
+ * try only the longest and give up.
+ */
+export function distinctiveTokens(query: string): string[] {
   // `match` rather than `split(/[^a-z0-9]+/)`: the split form is banned by the
   // #120 slug-defence lint rule. That rule is blunt on purpose and this is a
   // search tokenizer rather than slug generation — but matching the tokens
@@ -366,8 +429,7 @@ export function distinctiveToken(query: string): string | null {
   const tokens = (query.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter(
     (t) => t.length >= 4 && !GENERIC_EVENT_WORDS.has(t) && !/^\d+$/.test(t)
   );
-  if (tokens.length === 0) return null;
-  return tokens.sort((a, b) => b.length - a.length)[0];
+  return [...new Set(tokens)].sort((a, b) => b.length - a.length).slice(0, MAX_SUBJECT_TOKENS);
 }
 
 /** Words that carry no event-name signal when matching a subject line. */
@@ -410,7 +472,35 @@ export async function buildVendorInquiryBriefing(
   // an inference, and conflating the two is how the wrong event's dates end up
   // in a reply.
   let matched: VendorInquiryBriefing["matchedEvent"] = null;
-  if (inbound.parsedUrl) {
+
+  // OPE-977 — our OWN event URL first. A reader linking the exact page they are
+  // looking at is the strongest identification this lane ever receives.
+  const own = await resolveOwnEventUrl(db, inbound.parsedUrl);
+  let urlResolution: VendorInquiryBriefing["urlResolution"] = { status: own.status };
+  if (own.status === "resolved") {
+    matched = {
+      ...own.event,
+      url: `https://meetmeatthefair.com/events/${own.event.slug}`,
+      matchedOn: "own_event_url",
+    };
+    urlResolution = { status: "resolved", detail: `${own.path} via ${own.via}` };
+    if (own.via === "merged-into" || own.via === "slug-history") {
+      warnings.push(
+        `The linked page ${own.path} is an OLD address (${own.via}); resolved to the current event "${own.event.name}".`
+      );
+    }
+  } else if (own.status === "ours-unresolved" || own.status === "ours-not-an-event-page") {
+    urlResolution = { status: own.status, detail: own.path };
+    warnings.push(
+      own.status === "ours-unresolved"
+        ? `The email links OUR page ${own.path}, but it resolves to no current event (deleted, or a year with no occurrence). Matching fell back to the subject.`
+        : `The email links a meetmeatthefair.com page that is not an event page (${own.path}). Matching fell back to the subject.`
+    );
+  } else if (own.status === "not-ours") {
+    urlResolution = { status: "not-ours", detail: own.host };
+  }
+
+  if (!matched && inbound.parsedUrl) {
     const [byUrl] = await db
       .select({ id: events.id, slug: events.slug, name: events.name })
       .from(events)
@@ -464,8 +554,13 @@ export async function buildVendorInquiryBriefing(
     // excluded by the generic-word list. Requiring uniqueness is what keeps
     // this from becoming a guess: two hits means the token did not identify
     // anything, and a wrong event here puts another fair's dates in a reply.
-    const token = distinctiveToken(subjectToEventQuery(inbound.subject));
-    if (token) {
+    //
+    // OPE-1056 — every distinctive token is tried, longest first, and the FIRST
+    // one that identifies exactly one event wins. The uniqueness rule is
+    // unchanged; only the number of tokens it is applied to is.
+    const tokens = distinctiveTokens(subjectToEventQuery(inbound.subject));
+    const tried: string[] = [];
+    for (const token of tokens) {
       const hits = await db
         .select({ id: events.id, slug: events.slug, name: events.name })
         .from(events)
@@ -478,20 +573,36 @@ export async function buildVendorInquiryBriefing(
           matchedOn: "subject",
         };
         warnings.push(
-          `Event matched on a SINGLE TOKEN ("${token}") — the subject did not match any event name directly. Confirm it is the right event before quoting anything from it.`
+          `Event matched on a SINGLE TOKEN ("${token}"${tried.length ? `, after ${tried.join(", ")}` : ""}) — the subject did not match any event name directly. Confirm it is the right event before quoting anything from it.`
         );
-      } else if (hits.length > 1) {
-        warnings.push(
-          `No event matched; the token "${token}" is ambiguous across several events, so none was chosen.`
-        );
+        break;
       }
+      tried.push(`"${token}" (${hits.length > 1 ? "ambiguous" : "no match"})`);
+    }
+    if (!matched && tried.some((t) => t.endsWith("(ambiguous)"))) {
+      // Names every attempt, so the operator can see what was tried (OPE-977:
+      // never assert an attempt that was not made, and never hide one that was).
+      warnings.push(
+        `No event matched; tried ${tried.join(", ")} — none identified a single event, so none was chosen.`
+      );
     }
   }
-  if (!matched) warnings.push("No event matched from the subject or a parsed URL.");
+  if (!matched) {
+    // OPE-977 — say which evidence existed; the old single line asserted a URL
+    // attempt whether or not there was a URL, and whether or not it was ours.
+    const why =
+      own.status === "absent"
+        ? "the email carries no URL"
+        : own.status === "not-ours"
+          ? `its URL is on another site (${own.host}) and matches no event's source_url`
+          : "its link to our site did not resolve";
+    warnings.push(`No event matched: ${why}, and the subject did not identify a single event.`);
+  }
 
   // ── Confidence + hand-off ───────────────────────────────────────────────
   let confidence: EventConfidence | null = null;
   let handoff: VendorInquiryBriefing["handoff"] = null;
+  let petPolicy: VendorInquiryBriefing["petPolicy"] = null;
   if (matched) {
     confidence = await readEventConfidence(db, matched.id);
     if (confidence.warning) warnings.push(confidence.warning);
@@ -508,6 +619,41 @@ export async function buildVendorInquiryBriefing(
       .where(eq(events.id, matched.id))
       .limit(1);
     handoff = h ?? null;
+
+    // OPE-1061 — the event's own value, its evidence, and the venue's value.
+    const [p] = await db
+      .select({ event: events.petFriendly, venue: venues.petFriendly })
+      .from(events)
+      .leftJoin(venues, eq(events.venueId, venues.id))
+      .where(eq(events.id, matched.id))
+      .limit(1);
+    if (p) {
+      const [cite] = await db
+        .select({
+          sourceUrl: eventDataCitations.sourceUrl,
+          excerpt: eventDataCitations.sourceExcerpt,
+        })
+        .from(eventDataCitations)
+        .where(
+          and(
+            eq(eventDataCitations.eventId, matched.id),
+            eq(eventDataCitations.fieldName, "pet_friendly"),
+            eq(eventDataCitations.state, "active")
+          )
+        )
+        .orderBy(desc(eventDataCitations.createdAt))
+        .limit(1);
+      petPolicy = {
+        event: p.event,
+        eventEvidence: cite ?? null,
+        venueOwnPolicy: p.venue ?? null,
+      };
+      if ((p.event === "UNSET" || p.event === "NOT_PUBLISHED") && p.venue && p.venue !== "UNSET") {
+        warnings.push(
+          `Pet policy: the VENUE's own value is ${p.venue}, but this fair has no answer of its own (${p.event}). Do not answer for the fair from the venue — the fair can differ (livestock barns, biosecurity).`
+        );
+      }
+    }
     if (h && !h.applicationUrl && !h.applicationInstructions) {
       // OPE-526: application_url capture still is not landing on the scrape
       // path, so its absence means "never captured", not "none exists".
@@ -543,8 +689,10 @@ export async function buildVendorInquiryBriefing(
   return {
     inboundEmailId: inbound.id,
     matchedEvent: matched,
+    urlResolution,
     confidence,
     handoff,
+    petPolicy,
     vendor,
     vendorVariantsTried: variantsTried,
     priorSends: sends.map((s) => ({

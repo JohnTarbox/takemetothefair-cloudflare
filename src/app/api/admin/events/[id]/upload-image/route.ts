@@ -55,7 +55,7 @@ function extensionFor(contentType: string): string | null {
 }
 
 export const POST = withAuthorized<{ id: string }>(async ({ request, db, params, userId }) => {
-  const env = getCloudflareEnv() as unknown as { VENDOR_ASSETS?: R2Bucket };
+  const env = getCloudflareEnv();
 
   // Audit actor for the R2 customMetadata: the admin user id, or the
   // "mcp-server" sentinel when authorized via X-Internal-Key (userId is null

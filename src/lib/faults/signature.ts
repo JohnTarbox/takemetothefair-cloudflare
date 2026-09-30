@@ -107,6 +107,37 @@ export const THIRD_PARTY_NOISE_DENYLIST: readonly string[] = [
 ];
 
 /**
+ * OPE-1174 — in-app-browser / extension shapes that are noise only when the
+ * error carries NO STACK (or, for one, a DuckDuckGo user agent).
+ *
+ * Each was ruled noise by hand on route after route, and because signatures
+ * are route-scoped every new page re-proposed it (specimen: `runtime.sendMessage
+ * … tab not found` — 5 rows ruled noise, a 6th minted on /events/maine ~11h
+ * later). Measured shape, all three: iOS host or extension, `stack_trace` NULL.
+ *
+ *   - DuckDuckGo iOS extension: `invalid call to runtime.sendmessage(). tab not
+ *     found.` — UA carries `Ddg/`.
+ *   - iOS in-app browser host: `wkwebview api client did not respond to this
+ *     postmessage`.
+ *   - iOS in-app browser: `invalid origin`.
+ *
+ * The stack condition is the point. A stackless throw has no frame of ours in
+ * it; the same words WITH a stack could be our own code, and stay candidates.
+ * Third-party class, so the OPE-173 auth carve-out applies: on /login or
+ * /register an origin error could be real and is never suppressed.
+ */
+export const STACKLESS_THIRD_PARTY_SHAPES: ReadonlyArray<{
+  /** Every substring must be present (raw or normalized message). */
+  all: readonly string[];
+  /** A user-agent substring that also qualifies when a stack is present. */
+  uaAlso?: string;
+}> = [
+  { all: ["runtime.sendmessage", "tab not found"], uaAlso: "ddg/" },
+  { all: ["wkwebview api client did not respond to this postmessage"] },
+  { all: ["invalid origin"] },
+];
+
+/**
  * Route prefixes where NOTHING is auto-suppressed (OPE-173).
  *
  * Conversion and auth paths: a suppressed fault here costs a signup or a claim,
@@ -227,8 +258,10 @@ export function classifyNoise(input: {
   context?: string | null;
   /** OPE-577 — for extension-injection stack-shape detection. */
   stackTrace?: string | null;
+  /** OPE-1174 — for the DuckDuckGo condition on a stackless shape. */
+  userAgent?: string | null;
 }): NoiseVerdict {
-  const { message, route, context, stackTrace } = input;
+  const { message, route, context, stackTrace, userAgent } = input;
   if (!message) return { noise: false, reason: null, matched: null };
   const raw = message.toLowerCase();
   const normalized = normalizeErrorClass(message);
@@ -253,6 +286,18 @@ export function classifyNoise(input: {
   if (provenance) {
     if (isNoiseExemptRoute(route)) return { noise: false, reason: null, matched: provenance };
     return { noise: true, reason: "third-party", matched: provenance };
+  }
+
+  // OPE-1174 — stack-conditioned shapes. Same carve-out as the list below.
+  const stackless = !stackTrace || !stackTrace.trim();
+  const ua = (userAgent ?? "").toLowerCase();
+  const shape = STACKLESS_THIRD_PARTY_SHAPES.find(
+    (sh) => sh.all.every(hits) && (stackless || (sh.uaAlso != null && ua.includes(sh.uaAlso)))
+  );
+  if (shape) {
+    const matched = `stackless:${shape.all.join(" … ")}`;
+    if (isNoiseExemptRoute(route)) return { noise: false, reason: null, matched };
+    return { noise: true, reason: "third-party", matched };
   }
 
   const thirdParty = THIRD_PARTY_NOISE_DENYLIST.find(hits);
@@ -359,11 +404,67 @@ export function isNoise(message: string | null | undefined, route?: string | nul
 }
 
 /**
+ * OPE-1081 — caps on the signature key. A signature is a fingerprint, and both
+ * of its halves can carry text an unauthenticated visitor chose.
+ *
+ * Measured on prod 2026-09-19 before choosing them: legitimate path-keyed
+ * routes top out at 85 characters and whole signatures at 491 (a long
+ * query-shaped error class — that axis is OPE-613's). Both caps sit above
+ * every existing legitimate key, so no filed/done row is re-keyed and loses
+ * its regression match; they bound only what nothing legitimate reaches.
+ */
+export const FAULT_ROUTE_MAX = 128;
+export const FAULT_SIGNATURE_MAX = 512;
+
+/** FNV-1a 32-bit, hex. Synchronous (crypto.subtle is not), and a fingerprint
+ *  tail only needs to be stable and well-spread, not secret. */
+function fnv1a(s: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(16).padStart(8, "0");
+}
+
+/** Truncate to `max` characters with a hash of the WHOLE input as the tail, so
+ *  two long inputs that share a prefix still key apart. */
+function boundWithHash(s: string, max: number): string {
+  if (s.length <= max) return s;
+  return `${s.slice(0, max - 9)}~${fnv1a(s)}`;
+}
+
+/**
+ * OPE-1081 — the route half of the key is the PATH, nothing else.
+ *
+ * `capture-render-error.ts` records `request.path`, which includes the query
+ * string. Keying on it let one SQL-injection scanner against `/blog?tag=`
+ * mint 137 signatures (80 distinct routes, avg key 234 chars) for what is one
+ * defect (OPE-1045), bury the real faults in the triage queue, and defeat
+ * every occurrence threshold because each payload was unique.
+ *
+ * Search and fragment are dropped (the fragment also collided with the `#`
+ * separator), then the path is bounded. Non-path keys — the `source` names and
+ * `file:function` locators server rows key on — contain neither and pass
+ * through unchanged. `null` stays `null`.
+ */
+export function normalizeFaultRoute(route: string | null | undefined): string | null {
+  if (route == null) return null;
+  const cut = route.search(/[?#]/);
+  const path = cut === -1 ? route : route.slice(0, cut);
+  return boundWithHash(path, FAULT_ROUTE_MAX);
+}
+
+/**
  * Compute the stable signature for a fault occurrence. The error class is
  * `normalizeErrorClass(message)`; when that's empty (a client-only row with no
  * real message) it falls back to the `digest` (OPE-80's cross-row join key). The
  * signature is `${route}#${errorClass || "digest:<digest>"}` with `route`
  * defaulting to `"unknown"`. Deterministic + stable across occurrences.
+ *
+ * OPE-1081: the route is normalized to its path and the whole key bounded at
+ * FAULT_SIGNATURE_MAX, so no input can mint an unbounded family of keys or a
+ * key of unbounded length.
  */
 export function computeSignature(input: {
   route: string | null | undefined;
@@ -371,9 +472,9 @@ export function computeSignature(input: {
   digest: string | null | undefined;
 }): string {
   const errorClass = normalizeErrorClass(input.message);
-  const routePart = input.route ?? "unknown";
+  const routePart = normalizeFaultRoute(input.route) ?? "unknown";
   const classPart = errorClass || `digest:${input.digest ?? "none"}`;
-  return `${routePart}#${classPart}`;
+  return boundWithHash(`${routePart}#${classPart}`, FAULT_SIGNATURE_MAX);
 }
 
 /**

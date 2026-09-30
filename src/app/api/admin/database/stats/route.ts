@@ -1,5 +1,6 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
+import { quoteKnownTable, UnknownTableError } from "@/lib/db/known-table-identifier";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { withAuth } from "@/lib/api/with-auth";
 import { logError } from "@/lib/logger";
@@ -30,13 +31,16 @@ export const GET = withAuth({ role: "ADMIN" }, async ({ request, db: errorDb }) 
       .all();
 
     const tables: TableStats[] = [];
+    // OPE-1105 — the only names allowed into the interpolated query below.
+    const knownTables = new Set(tablesResult.results.map((r) => r.name as string));
 
     for (const row of tablesResult.results) {
       const tableName = row.name as string;
+      // A table name cannot be bound as a parameter in SQLite, so it is
+      // interpolated — through the allow-list, never raw. Refused (400) below.
+      const quoted = quoteKnownTable(tableName, knownTables);
       try {
-        const countResult = await db
-          .prepare(`SELECT COUNT(*) as count FROM "${tableName}"`)
-          .first();
+        const countResult = await db.prepare(`SELECT COUNT(*) as count FROM ${quoted}`).first();
         tables.push({
           name: tableName,
           rowCount: (countResult?.count as number) || 0,
@@ -71,6 +75,11 @@ export const GET = withAuth({ role: "ADMIN" }, async ({ request, db: errorDb }) 
       },
     });
   } catch (error) {
+    // OPE-1105 — a table name outside the sqlite_master allow-list is refused
+    // before it reaches SQL.
+    if (error instanceof UnknownTableError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
     await logError(errorDb, {
       message: "Stats error",
       error,

@@ -4,7 +4,14 @@
  * 101-item batch through reintroduces the exact prod 500 they exist to prevent.
  */
 import { describe, it, expect } from "vitest";
-import { chunkIds, chunkedInArray, D1_SAFE_IN_CHUNK, D1_MAX_BIND_PARAMS } from "./chunk-in-array";
+import {
+  chunkIds,
+  chunkedInArray,
+  D1_SAFE_IN_CHUNK,
+  D1_MAX_BIND_PARAMS,
+  rowsPerInsert,
+  runChunkedInsert,
+} from "./chunk-in-array";
 
 describe("chunkIds (OPE-241)", () => {
   it("returns no batches for an empty list, so callers never issue `IN ()`", () => {
@@ -96,5 +103,56 @@ describe("chunkedInArray (OPE-241)", () => {
         }
       )
     ).rejects.toThrow("D1 down");
+  });
+});
+
+describe("rowsPerInsert (OPE-1185)", () => {
+  it("5 params per row → 20 rows (the bing_backlinks case: 30 rows was 150 params)", () => {
+    expect(rowsPerInsert(5)).toBe(20);
+    expect(rowsPerInsert(5) * 5).toBeLessThanOrEqual(D1_MAX_BIND_PARAMS);
+  });
+  it("reserves fixed params, and never returns 0", () => {
+    expect(rowsPerInsert(9, 10)).toBe(10);
+    expect(rowsPerInsert(500)).toBe(1);
+    expect(rowsPerInsert(0)).toBe(1);
+  });
+});
+
+describe("runChunkedInsert (OPE-1185)", () => {
+  // A fake statement that binds `per` params per row, so the helper's
+  // measurement and chunking can be checked without a database.
+  const fake = (per: number, executed: number[][]) => (chunk: number[]) => {
+    const stmt = {
+      toSQL: () => ({ params: new Array(chunk.length * per).fill(0) }),
+      then<T1 = unknown, T2 = never>(
+        ok?: ((v: unknown) => T1 | PromiseLike<T1>) | null,
+        bad?: ((e: unknown) => T2 | PromiseLike<T2>) | null
+      ): PromiseLike<T1 | T2> {
+        executed.push(chunk);
+        return Promise.resolve(undefined).then(ok, bad);
+      },
+    };
+    return stmt;
+  };
+
+  it("measures params/row and keeps every executed statement ≤ 100 params", async () => {
+    const executed: number[][] = [];
+    const rows = Array.from({ length: 60 }, (_, i) => i);
+    const n = await runChunkedInsert(rows, fake(5, executed));
+    expect(n).toBe(3);
+    expect(executed.map((c) => c.length)).toEqual([20, 20, 20]);
+    expect(executed.flat()).toEqual(rows); // every row, in order, once
+  });
+
+  it("measuring does not execute: only the real chunks run", async () => {
+    const executed: number[][] = [];
+    await runChunkedInsert([1, 2, 3], fake(14, executed));
+    expect(executed).toEqual([[1, 2, 3]]);
+  });
+
+  it("an empty list runs nothing", async () => {
+    const executed: number[][] = [];
+    expect(await runChunkedInsert([], fake(5, executed))).toBe(0);
+    expect(executed).toEqual([]);
   });
 });

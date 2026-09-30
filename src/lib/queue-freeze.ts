@@ -119,6 +119,23 @@ export function assessQueueFreeze(
   return null;
 }
 
+/**
+ * OPE-1161 E17 — WHICH verdict `assessQueueFreeze` reached, for the tile.
+ *
+ * The dashboard printed "FROZEN" for any non-null verdict, so a queue that was
+ * closing items — just fewer than half of what arrived — read the same as one
+ * nobody had touched in a week. Same detector, split by cause: `frozen` is zero
+ * outflow over the window; `slow` is the 14-day drain ratio under threshold.
+ */
+export function classifyQueueDrain(
+  flow: QueueFlow,
+  now: Date,
+  thresholds: QueueFreezeThresholds = {}
+): "frozen" | "slow" | null {
+  if (!assessQueueFreeze(flow, now, thresholds)) return null;
+  return flow.outflow7d === 0 ? "frozen" : "slow";
+}
+
 /** Assess every queue; returns the drain REDs (healthy ones drop out). */
 export function assessAllQueueFreeze(
   flows: QueueFlow[],

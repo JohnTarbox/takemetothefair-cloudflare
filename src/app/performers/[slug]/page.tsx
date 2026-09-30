@@ -21,7 +21,7 @@ import {
   promoters,
   eventSeries,
 } from "@/lib/db/schema";
-import { eq, and, lt, inArray } from "drizzle-orm";
+import { eq, and, lt, inArray, sql } from "drizzle-orm";
 import { occurrenceUrl } from "@/lib/series/series-schema-org";
 import { SITE_URL } from "@takemetothefair/constants";
 import { isPublicEventStatus } from "@/lib/event-status";
@@ -151,6 +151,30 @@ async function getPerformer(slug: string) {
     };
 
     const [upcomingEvents, pastEvents] = await Promise.all([loadEvents(true), loadEvents(false)]);
+
+    // OPE-796 — count the view. `performers.view_count` has existed since
+    // OPE-112 and was read by the weekly digest's `ORDER BY view_count DESC`,
+    // but nothing ever wrote it: 0 across all 309 rows, so that ORDER BY was an
+    // arbitrary tie and the digest carried the same three pages for three runs.
+    //
+    // RAW SQL DELIBERATELY (OPE-332) — `performers.updated_at` carries
+    // `$onUpdateFn`, so a Drizzle `.update(performers)` would stamp it. That
+    // column is the page's HTTP validator AND its sitemap <lastmod>, so
+    // counting a view through Drizzle would kill the 304 path and tell Google
+    // every performer changed on every view. A view is not an edit.
+    // `scripts/check-view-counters-raw-sql.ts` enforces this.
+    //
+    // ⚠️ Placed inside `getPerformer`, which `generateMetadata` ALSO calls, so
+    // one request increments twice. That is deliberate: it is exactly what
+    // `getVendor` and `getEvent` already do, and the ticket asks for the vendor
+    // semantics rather than a second convention. Every entity therefore carries
+    // the same 2x multiplier, so both within-entity ordering (what the digest
+    // needs) and cross-entity comparison stay sound. The absolute number is not
+    // a visit count and must not be reported as one — noted on OPE-796.
+    await db.run(
+      sql`UPDATE performers SET view_count = COALESCE(view_count, 0) + 1 WHERE id = ${performer.id}`
+    );
+
     return { ...performer, upcomingEvents, pastEvents: pastEvents.slice(0, 12) };
   } catch (e) {
     await logError(db, {

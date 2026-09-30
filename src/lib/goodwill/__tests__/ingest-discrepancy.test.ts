@@ -112,7 +112,22 @@ describe("compareForIngest — venue_date match (stage 2)", () => {
 });
 
 describe("compareForIngest — city_state_date match (stage 3)", () => {
-  it("emits date when start_dates differ", () => {
+  // ⚠️ OPE-813 — these two cases used to assert the OPPOSITE, and they were
+  // right for the design as it stood. Stage 3 matches on city + state + date
+  // within ±7 days, and the module treated that as enough to call two rows the
+  // same event and report their fields as disagreeing.
+  //
+  // Measured on the 14 open rows in prod (2026-09-06), 7 paired demonstrably
+  // distinct events — Norwalk Oyster Festival vs St. George Greek Festival,
+  // Rhode Island Bridal Expo vs Providence Winter Farmers Market — and 3 were
+  // eligible to drive a promoter email about a contradiction between two
+  // unrelated events.
+  //
+  // A place-and-time coincidence is not identity, so there is nothing for the
+  // fields to disagree about. Same principle OPE-454 applied to `exact_url`
+  // and `series_url`.
+
+  it("emits NOTHING when start_dates differ — two events, one town, one week", () => {
     const out = compareForIngest(
       "city_state_date",
       {
@@ -124,10 +139,39 @@ describe("compareForIngest — city_state_date match (stage 3)", () => {
       },
       baseExisting
     );
-    expect(out.map((x) => x.fieldClass)).toContain("date");
+    expect(out).toEqual([]);
   });
 
-  it("emits venue when both sides have venueIds and they differ (Winthrop two-row case)", () => {
+  it("emits NOTHING for the specimen pair — Norwalk Oyster vs St. George Greek", () => {
+    // Row 58712d2d, verbatim from prod. Filed as `name differs (sim=0.27)`.
+    // Two real, unrelated festivals in one town on one weekend.
+    const out = compareForIngest(
+      "city_state_date",
+      {
+        name: "St. George Greek Festival 2026",
+        startDate: "2026-09-12",
+        venueCity: "Norwalk",
+        venueState: "CT",
+        sourceUrl: "https://ctcraftfairconnection.com/",
+      },
+      {
+        ...baseExisting,
+        name: "Norwalk Oyster Festival 2026",
+        venueCity: "Norwalk",
+        venueState: "CT",
+        sourceUrl: "https://seaport.org/",
+      }
+    );
+    expect(out).toEqual([]);
+  });
+
+  it("emits NOTHING even when both sides carry differing venueIds", () => {
+    // The Winthrop "two venue rows for one place" case. That is a DEDUP
+    // question and `findDuplicate`'s own city_state_date stage already asks
+    // it; asking it from inside a discrepancy filer put the answer in a queue
+    // that cannot act on it. The branch also required both sides to carry a
+    // resolved venueId, which this module's own note says today's route never
+    // supplies.
     const out = compareForIngest(
       "city_state_date",
       {
@@ -140,10 +184,22 @@ describe("compareForIngest — city_state_date match (stage 3)", () => {
       },
       baseExisting
     );
-    const venueRow = out.find((x) => x.fieldClass === "venue");
-    expect(venueRow).toBeDefined();
-    expect(venueRow?.authoritativeValue).toBe("venue-A");
-    expect(venueRow?.divergentValue).toBe("venue-B-duplicate-row");
+    expect(out).toEqual([]);
+  });
+
+  it("the OTHER stages still emit — this is not a blanket silencing", () => {
+    // Positive landmark. A change that made compareForIngest return [] for
+    // everything would satisfy all three assertions above.
+    const venueDateOut = compareForIngest(
+      "venue_date",
+      {
+        name: "Holly Jolly Craft Fair",
+        startDate: "2026-06-08",
+        sourceUrl: "https://organizer.example/holly-jolly",
+      },
+      { ...baseExisting, name: "Completely Different Fair Name" }
+    );
+    expect(venueDateOut.map((x) => x.fieldClass)).toContain("name");
   });
 
   it("does NOT emit venue when candidate has no resolved venueId (today's typical case)", () => {

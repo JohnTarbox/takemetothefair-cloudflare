@@ -2,13 +2,14 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/api/with-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
-import { promoters, events, users } from "@/lib/db/schema";
-import { eq, desc } from "drizzle-orm";
+import { promoters, events, users, adminActions } from "@/lib/db/schema";
+import { eq, desc, sql } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
 import { promoterUpdateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 import { computePromoterEnrichment } from "@takemetothefair/constants";
+import { deletePromoterChildren } from "@takemetothefair/db-schema";
 
 export const GET = withAuth<{ id: string }>({ role: "ADMIN" }, async ({ request, db, params }) => {
   const { id } = params;
@@ -87,6 +88,9 @@ export const PATCH = withAuth<{ id: string }>(
 
       // OPE-35 — recompute enrichment from the merged final values. hero/contact/
       // socials aren't editable via this API, so they carry over from `prior`.
+      const websiteChanged =
+        updateData.website !== undefined &&
+        (updateData.website ?? null) !== (prior?.website ?? null);
       const enrichment = computePromoterEnrichment(
         {
           website: (updateData.website ?? prior?.website) as string | null,
@@ -97,10 +101,12 @@ export const PATCH = withAuth<{ id: string }>(
           contactEmail: prior?.contactEmail ?? null,
           contactPhone: prior?.contactPhone ?? null,
         },
-        prior?.enrichmentStatus
+        // OPE-962 — a new website re-opens an EXHAUSTED (or any sticky) promoter.
+        websiteChanged ? null : prior?.enrichmentStatus
       );
       updateData.enrichmentStatus = enrichment.status;
       updateData.enrichmentCoverage = enrichment.coverageJson;
+      if (websiteChanged) updateData.enrichmentZeroYieldStreak = 0;
 
       await db.update(promoters).set(updateData).where(eq(promoters.id, id));
 
@@ -113,7 +119,7 @@ export const PATCH = withAuth<{ id: string }>(
       // IndexNow: ping on every update (content changed). Include the prior
       // slug too if it differs, so search engines can crawl-and-redirect.
       if (updatedPromoter?.slug) {
-        const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+        const env = getCloudflareEnv();
         const urls = [indexNowUrlFor("promoters", updatedPromoter.slug)];
         if (prior?.slug && prior.slug !== updatedPromoter.slug) {
           urls.push(indexNowUrlFor("promoters", prior.slug));
@@ -136,19 +142,67 @@ export const PATCH = withAuth<{ id: string }>(
 
 export const DELETE = withAuth<{ id: string }>(
   { role: "ADMIN" },
-  async ({ request, db, params }) => {
+  async ({ request, db, params, session }) => {
     const { id } = params;
 
     try {
       // Get promoter to find user
       const promoter = await db.select().from(promoters).where(eq(promoters.id, id)).limit(1);
 
+      // OPE-1125 — `events.promoter_id` is ON DELETE CASCADE, so deleting a
+      // promoter that still owns events deletes those events (and everything
+      // that cascades from them) with no warning and no record of what was
+      // lost. Refuse; the merge tools reassign events first for this reason.
+      // Checked BEFORE any write, so a refusal changes nothing — including the
+      // owner's role, which the old code reset first.
+      const [{ n: eventCount }] = await db
+        .select({ n: sql<number>`count(*)` })
+        .from(events)
+        .where(eq(events.promoterId, id));
+      if (Number(eventCount) > 0) {
+        return NextResponse.json(
+          {
+            error: "promoter_has_events",
+            eventCount: Number(eventCount),
+            message:
+              `This promoter still owns ${eventCount} event(s). Deleting it would delete ` +
+              `those events too. Merge it into the right promoter (Duplicates, or ` +
+              `merge_promoter) or reassign its events first.`,
+          },
+          { status: 409 }
+        );
+      }
+
       if (promoter.length > 0) {
         // Reset user role to USER
         await db.update(users).set({ role: "USER" }).where(eq(users.id, promoter[0].userId!));
       }
 
+      // OPE-1125 — no keeper to repoint to, so the FK-less rows go with it
+      // rather than being left pointing at a dead id (the OPE-1120 orphans).
+      const children = await deletePromoterChildren(db, id);
+
       await db.delete(promoters).where(eq(promoters.id, id));
+
+      // OPE-1120 — this route deleted promoters with no audit row at all; it is
+      // one of the two paths that can have removed the 2 orphaned promoter ids
+      // with no admin_actions record. Written AFTER the delete succeeds.
+      try {
+        await db.insert(adminActions).values({
+          action: "promoter.delete",
+          actorUserId: session.user.id,
+          targetType: "promoter",
+          targetId: id,
+          payloadJson: JSON.stringify({
+            company_name: promoter[0]?.companyName ?? null,
+            slug: promoter[0]?.slug ?? null,
+            children,
+          }),
+          createdAt: new Date(),
+        });
+      } catch {
+        // Never fail the delete over its audit row.
+      }
       return NextResponse.json({ success: true });
     } catch (error) {
       await logError(db, {

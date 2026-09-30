@@ -1,0 +1,60 @@
+name: CI Trigger Watchdog
+
+# OPE-1227 — a merge to main whose `push` event never fires is never deployed.
+#
+# deploy.yml runs only when CI completes, and its gate (scripts/deploy-gate.mjs)
+# accepts only a PUSH-triggered CI run. On 2026-09-28 two squash merges
+# (53c888a9, bfd9dcdd) produced no push CI run at all, so neither deployed until
+# something else carried it — and from outside that looks exactly like a slow
+# pipeline. This fails loudly instead: GitHub emails the owner of a failed
+# scheduled run.
+#
+# It ALERTS; it does not deploy. A manual deploy.yml dispatch bypasses the CI
+# gate, so that remains a person's call (the recovery commands are in the error).
+on:
+  schedule:
+    - cron: "7,22,37,52 * * * *" # every 15 min, off the hour
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Check this SHA instead of main's HEAD (to drive the check to failure)"
+        required: false
+      grace_minutes:
+        description: "Minutes a commit may go without a push CI run"
+        required: false
+        default: "15"
+
+# Least privilege: it only reads commits and workflow runs.
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  watchdog:
+    name: main HEAD has a push CI run
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          OVERRIDE_SHA: ${{ inputs.sha }}
+          GRACE: ${{ inputs.grace_minutes || '15' }}
+        run: |
+          set -euo pipefail
+          SHA="${OVERRIDE_SHA:-$(gh api "repos/$REPO/commits/main" --jq .sha)}"
+          COMMITTED=$(gh api "repos/$REPO/commits/$SHA" --jq .commit.committer.date)
+          AGE_MIN=$(( ( $(date -u +%s) - $(date -u -d "$COMMITTED" +%s) ) / 60 ))
+          RUNS=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&event=push" --jq '.total_count')
+          echo "sha=$SHA committed=$COMMITTED age=${AGE_MIN}m push_ci_runs=$RUNS grace=${GRACE}m"
+          if [ "$RUNS" -gt 0 ]; then
+            echo "OK: $SHA has $RUNS push-triggered CI run(s)."
+            exit 0
+          fi
+          if [ "$AGE_MIN" -lt "$GRACE" ]; then
+            echo "Within grace: $SHA is ${AGE_MIN}m old; its push CI may still be queuing."
+            exit 0
+          fi
+          echo "::error::main HEAD $SHA is ${AGE_MIN}m old with NO push-triggered CI run, so it has not deployed. Recover: gh workflow run ci.yml --ref main (evidence), then once green: gh workflow run deploy.yml --ref main -f reason='push event for $SHA never fired (OPE-1227 watchdog)'."
+          exit 1

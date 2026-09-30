@@ -7,6 +7,8 @@
  */
 import { z } from "zod";
 import Database from "better-sqlite3";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import * as schema from "../src/schema.js";
 
@@ -49,6 +51,7 @@ const SCHEMA_SQL = `
     contact_phone TEXT,
     website TEXT,
     description TEXT,
+    pet_friendly TEXT NOT NULL DEFAULT 'UNSET',
     image_url TEXT,
     google_place_id TEXT,
     google_maps_url TEXT,
@@ -65,7 +68,59 @@ const SCHEMA_SQL = `
     created_at INTEGER,
     updated_at INTEGER,
     image_focal_x REAL NOT NULL DEFAULT 0.5,
-    image_focal_y REAL NOT NULL DEFAULT 0.5
+    image_focal_y REAL NOT NULL DEFAULT 0.5,
+    -- OPE-1180 (drizzle/0333) — FORMER-venue lifecycle.
+    use_started_edtf TEXT,
+    use_ended_edtf TEXT,
+    use_ended_earliest INTEGER,
+    use_ended_latest INTEGER,
+    current_state TEXT,
+    current_use TEXT,
+    wikidata_qid TEXT,
+    nrhp_ref TEXT
+  );
+
+  -- OPE-1180 (drizzle/0333) — venue history tables, CHECKs included.
+  CREATE TABLE series_venue_periods (
+    id TEXT PRIMARY KEY NOT NULL,
+    series_id TEXT,
+    series_name TEXT,
+    venue_id TEXT NOT NULL,
+    from_edtf TEXT,
+    to_edtf TEXT,
+    from_earliest INTEGER,
+    to_latest INTEGER,
+    certainty TEXT NOT NULL DEFAULT 'certain',
+    notes TEXT,
+    created_by TEXT,
+    created_at INTEGER NOT NULL,
+    CHECK (series_id IS NOT NULL OR (series_name IS NOT NULL AND length(trim(series_name)) > 0))
+  );
+  CREATE TABLE venue_name_variants (
+    id TEXT PRIMARY KEY NOT NULL,
+    venue_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    normalized_name TEXT NOT NULL,
+    from_edtf TEXT,
+    to_edtf TEXT,
+    certainty TEXT NOT NULL DEFAULT 'certain',
+    created_by TEXT,
+    created_at INTEGER NOT NULL,
+    UNIQUE (venue_id, normalized_name)
+  );
+  CREATE TABLE venue_claim_citations (
+    id TEXT PRIMARY KEY NOT NULL,
+    venue_id TEXT,
+    series_venue_period_id TEXT REFERENCES series_venue_periods(id) ON DELETE CASCADE,
+    venue_name_variant_id TEXT REFERENCES venue_name_variants(id) ON DELETE CASCADE,
+    field TEXT,
+    source_url TEXT NOT NULL,
+    source_type TEXT NOT NULL,
+    certainty TEXT NOT NULL DEFAULT 'certain',
+    notes TEXT,
+    created_by TEXT,
+    created_at INTEGER NOT NULL,
+    CHECK ((venue_id IS NOT NULL) + (series_venue_period_id IS NOT NULL) + (venue_name_variant_id IS NOT NULL) = 1)
   );
 
   CREATE TABLE promoters (
@@ -101,12 +156,19 @@ const SCHEMA_SQL = `
     enrichment_blocked_reason TEXT,
     -- OPE-36 (drizzle/0141) — pre-extraction last-attempt marker.
     enrichment_attempted_at INTEGER,
+    -- OPE-962 (drizzle/0283) — consecutive zero-candidate attempts.
+    enrichment_zero_yield_streak INTEGER NOT NULL DEFAULT 0,
     -- OPE-63 (drizzle/0144) — promoter claim state (parity with vendors.claimed
     -- trio). approvePromoterClaim writes claimed/claimed_at/claimed_by, and the
     -- WS2b schema-sync guard covers promoters, so these are required here.
     claimed INTEGER NOT NULL DEFAULT 0,
     claimed_at INTEGER,
-    claimed_by TEXT
+    claimed_by TEXT,
+    -- OPE-979 (drizzle/0285) — operating status + succession.
+    operating_status TEXT,
+    succeeded_by_promoter_id TEXT,
+    operating_status_source_url TEXT,
+    operating_status_verified_at INTEGER
   );
 
   CREATE TABLE events (
@@ -146,6 +208,7 @@ const SCHEMA_SQL = `
     vendor_fee_max_cents INTEGER,
     vendor_fee_notes TEXT,
     indoor_outdoor TEXT,
+    pet_friendly TEXT NOT NULL DEFAULT 'UNSET',
     estimated_attendance INTEGER,
     event_scale TEXT,
     application_deadline INTEGER,
@@ -158,6 +221,8 @@ const SCHEMA_SQL = `
     lifecycle_status TEXT NOT NULL DEFAULT 'SCHEDULED',
     lifecycle_status_changed_at INTEGER,
     lifecycle_reason TEXT,
+    lifecycle_last_checked_at INTEGER,
+    lifecycle_check_note TEXT,
     previous_start_date INTEGER,
     previous_end_date INTEGER,
     gate_flags TEXT,
@@ -170,7 +235,7 @@ const SCHEMA_SQL = `
     possible_duplicate_of TEXT,
     rejected_as_duplicate_of TEXT,
     -- K27 (drizzle/0124, 2026-06-15) — auto-rollover provenance pointer.
-    rolled_from_event_id TEXT,
+    rolled_from_event_id TEXT REFERENCES events(id) ON DELETE SET NULL,
     -- UX-R1 / C1 (drizzle/0098, analyst 2026-06-01 EVE) — post-ingest operator-
     -- review marker. Set by scripts/backfill-event-days-from-description.ts
     -- when expandCadence can't determine a pattern. Drizzle inserts SQL that
@@ -369,6 +434,18 @@ const SCHEMA_SQL = `
     note TEXT
   );
 
+  -- OPE-987: mirrors drizzle/0276 (the cancellation recheck's rotation state).
+  CREATE TABLE url_health_checks (
+    id TEXT PRIMARY KEY,
+    url TEXT NOT NULL,
+    source_field TEXT NOT NULL,
+    verdict TEXT NOT NULL,
+    http_status INTEGER,
+    signals TEXT,
+    detail TEXT,
+    checked_at INTEGER NOT NULL
+  );
+
   CREATE TABLE weekly_inventory_state (
     id TEXT PRIMARY KEY,
     last_sent_date TEXT,
@@ -401,6 +478,8 @@ const SCHEMA_SQL = `
     resolution_source TEXT,
     resolved_at INTEGER,
     outreach_candidate INTEGER NOT NULL DEFAULT 0,
+    outreach_suppressed INTEGER NOT NULL DEFAULT 0,
+    drift_days INTEGER,
     outreach_priority_score REAL,
     outreach_id TEXT,
     notes TEXT,
@@ -416,6 +495,9 @@ const SCHEMA_SQL = `
     slug TEXT NOT NULL UNIQUE,
     description TEXT,
     vendor_type TEXT,
+    sells_category TEXT,
+    business_sector TEXT,
+    vendor_identity TEXT,
     products TEXT DEFAULT '[]',
     website TEXT,
     social_links TEXT,
@@ -474,6 +556,29 @@ const SCHEMA_SQL = `
     image_focal_y REAL NOT NULL DEFAULT 0.5
   );
 
+  -- OPE-211 increment 1 / OPE-1111. Added when get_vendor_details began
+  -- returning the gallery; before that no MCP tool read the table, which is
+  -- itself why the broken gallery went unnoticed for 23 days.
+  -- created_at/updated_at are NOT NULL on the real table with no DB default,
+  -- so fixtures must supply them -- matching prod is the point of this block.
+  CREATE TABLE vendor_photos (
+    id TEXT PRIMARY KEY,
+    vendor_id TEXT NOT NULL,
+    photo_url TEXT NOT NULL,
+    caption TEXT,
+    alt_text TEXT,
+    source_note TEXT,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    photo_type TEXT NOT NULL DEFAULT 'other',
+    is_featured INTEGER NOT NULL DEFAULT 0,
+    uploaded_by TEXT,
+    deleted_at INTEGER,
+    content_sha256 TEXT,
+    rotation INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+
   CREATE TABLE vendor_slug_history (
     id TEXT PRIMARY KEY,
     vendor_id TEXT NOT NULL,
@@ -520,6 +625,39 @@ const SCHEMA_SQL = `
     target_id TEXT NOT NULL,
     payload_json TEXT,
     created_at INTEGER NOT NULL
+  );
+
+  -- OPE-1117 (drizzle/0301) — "a human ruled this pair NOT a duplicate".
+  -- update_event_status reads it before defaulting rejected_as_duplicate_of.
+  CREATE TABLE event_duplicate_dismissals (
+    id TEXT PRIMARY KEY,
+    event_id TEXT NOT NULL,
+    candidate_id TEXT NOT NULL,
+    dismissed_by TEXT,
+    dismissed_at INTEGER NOT NULL,
+    note TEXT
+  );
+  CREATE UNIQUE INDEX uq_event_duplicate_dismissals_pair
+    ON event_duplicate_dismissals (event_id, candidate_id);
+
+  -- OPE-225 (drizzle/0165 + 0166). Mirrored for OPE-1120: merge_promoter now
+  -- deletes the loser's coverage row, so any test that merges needs the table.
+  CREATE TABLE image_coverage_state (
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    slug TEXT NOT NULL,
+    has_image INTEGER NOT NULL DEFAULT 0,
+    image_url TEXT,
+    url_health TEXT NOT NULL DEFAULT 'MISSING',
+    image_set_at INTEGER,
+    baseline_had_image INTEGER NOT NULL DEFAULT 0,
+    first_seen_at INTEGER NOT NULL,
+    demand_impressions INTEGER NOT NULL DEFAULT 0,
+    demand_tier TEXT NOT NULL DEFAULT 'T4',
+    checked_at INTEGER NOT NULL,
+    url_checked_at INTEGER,
+    url_status_code INTEGER,
+    PRIMARY KEY (entity_type, entity_id)
   );
 
   -- OPE-112/113 performer tracking. Full column set — the MCP tools use
@@ -699,6 +837,11 @@ const SCHEMA_SQL = `
     -- schema docblock for why a deadline must not be inferred.
     opens_at INTEGER,
     closes_at INTEGER,
+    -- OPE-794. DEFAULT 'UNKNOWN', never 'OPEN': an optimistic default asserts
+    -- something nobody checked (the OPE-433 dates_confirmed failure).
+    capacity_status TEXT NOT NULL DEFAULT 'UNKNOWN',
+    capacity_as_of INTEGER,
+    capacity_note TEXT,
     created_at INTEGER NOT NULL DEFAULT 0,
     updated_at INTEGER NOT NULL DEFAULT 0
   );
@@ -712,6 +855,7 @@ const SCHEMA_SQL = `
     -- (create_event_day without time args, update_event_day clearing).
     open_time TEXT,
     close_time TEXT,
+    close_time_unpublished INTEGER NOT NULL DEFAULT 0,
     notes TEXT,
     internal_notes TEXT,
     closed INTEGER DEFAULT 0,
@@ -943,11 +1087,67 @@ const SCHEMA_SQL = `
   );
 
   -- OPE-413 — operator-tunable thresholds (drizzle/0196).
+  -- OPE-1164 — weekly vendor-category watch.
+  CREATE TABLE vendor_category_values (
+    field TEXT NOT NULL,
+    value TEXT NOT NULL,
+    first_seen_at INTEGER NOT NULL,
+    baseline INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (field, value)
+  );
+  CREATE TABLE vendor_category_watch_runs (
+    id TEXT PRIMARY KEY,
+    run_at INTEGER NOT NULL,
+    field TEXT NOT NULL,
+    new_count INTEGER NOT NULL,
+    new_values TEXT NOT NULL DEFAULT '[]',
+    threshold INTEGER NOT NULL,
+    fired INTEGER NOT NULL DEFAULT 0
+  );
   CREATE TABLE tunable_thresholds (
     key TEXT PRIMARY KEY,
     value REAL NOT NULL,
     unit TEXT NOT NULL,
     note TEXT,
+    updated_at INTEGER NOT NULL
+  );
+
+  -- OPE-1173 — mirrors drizzle/0150 exactly (no CHECK on status: prod holds
+  -- both the code's and the agents' vocabularies, see src/lib/faults/status.ts).
+  CREATE TABLE fault_signatures (
+    signature TEXT PRIMARY KEY NOT NULL,
+    route TEXT,
+    error_class TEXT NOT NULL,
+    first_seen INTEGER NOT NULL,
+    last_seen INTEGER NOT NULL,
+    count INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    ope_id TEXT,
+    filed_at INTEGER,
+    resolved_at INTEGER,
+    created_at INTEGER NOT NULL,
+    -- OPE-1174 — drizzle/0330.
+    inherited_from TEXT
+  );
+
+  -- OPE-1178 — mirrors drizzle/0331.
+  CREATE TABLE product_ideas (
+    id TEXT PRIMARY KEY NOT NULL,
+    title TEXT NOT NULL,
+    description TEXT,
+    product TEXT NOT NULL DEFAULT 'mmatf',
+    area TEXT,
+    source_type TEXT NOT NULL DEFAULT 'other',
+    source_ref TEXT,
+    extra_source_refs TEXT NOT NULL DEFAULT '[]',
+    source_person TEXT,
+    status TEXT NOT NULL DEFAULT 'new',
+    linked_issue TEXT,
+    votes INTEGER NOT NULL DEFAULT 1,
+    related_refs TEXT NOT NULL DEFAULT '[]',
+    notes TEXT,
+    created_by TEXT,
+    created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   );
 
@@ -1106,6 +1306,10 @@ const SCHEMA_SQL = `
     content_length_chars INTEGER,
     -- OPE-254 (2026-07-18) — drizzle/0162 inbound reply threading headers.
     in_reply_to TEXT,
+    -- OPE-768 — conversation key, assigned at ingest by resolveThread.
+    thread_id TEXT,
+    thread_position INTEGER,
+    thread_basis TEXT,
     email_references TEXT,
     -- OPE-763 (drizzle/0259) — sender-authenticity capture. Report-only.
     auth_results_raw TEXT,
@@ -1113,10 +1317,16 @@ const SCHEMA_SQL = `
     dkim_result TEXT,
     dmarc_result TEXT,
     sender_auth TEXT,
+    -- OPE-944 (drizzle/0280) — the ORIGINAL sender on a forwarded message,
+    -- kept separate from the forwarder's verdict above it.
+    original_sender_address TEXT,
+    original_sender_auth TEXT,
+    original_sender_domain_aligned INTEGER,
     from_display_name TEXT,
     reply_to TEXT,
     return_path TEXT,
     sending_host TEXT,
+    automation_headers TEXT,
     -- OPE-764 (drizzle/0260) — sender identity resolution. Report-only.
     matched_entities TEXT,
     matched_entity_type TEXT,
@@ -1338,9 +1548,73 @@ const SCHEMA_SQL = `
     duration_ms INTEGER,
     recorded_at INTEGER NOT NULL
   );
+  -- OPE-832 — the defect queue. The kind column carries OPE-769's row
+  -- discriminator and defaults to 'defect', exactly as in drizzle; the
+  -- defect-candidate path relies on that default being overridable, not
+  -- assumed. (No backticks in here: SCHEMA_SQL is a template literal.)
+  CREATE TABLE problem_reports (
+    id TEXT PRIMARY KEY,
+    reporter_email TEXT,
+    body TEXT NOT NULL,
+    source TEXT NOT NULL,
+    path TEXT,
+    user_agent TEXT,
+    inbound_email_id TEXT,
+    severity TEXT NOT NULL DEFAULT 'LOW',
+    correlated_error_count INTEGER NOT NULL DEFAULT 0,
+    kind TEXT NOT NULL DEFAULT 'defect',
+    resolved_at INTEGER,
+    resolved_by_user_id TEXT,
+    notes TEXT,
+    created_at INTEGER NOT NULL
+  );
+  -- Present so intakeProblemReport's severity correlation runs its real query
+  -- instead of taking the catch branch. An empty table is the honest
+  -- no-outage case and resolves severity to LOW.
+  -- OPE-846 — this DDL was STALE and nothing had noticed.
+  --
+  -- It declared (id, source, level, message, created_at). The real table — prod
+  -- and packages/db-schema alike — has timestamp, context, stack_trace, url,
+  -- method, status_code, user_agent, route, digest, and NO created_at. So every
+  -- insert the MCP logger attempted against this harness failed on
+  -- "table error_logs has no column named timestamp".
+  --
+  -- And it failed SILENTLY: logger.ts wraps its insert in try/catch and only
+  -- console-logs. A test asserting "a fault was logged" would have seen zero
+  -- rows and read that as the emitter being broken — or worse, a test asserting
+  -- "no rows" would have passed for entirely the wrong reason.
+  --
+  -- Nothing depended on the old shape: the one other suite touching this table
+  -- (page-error-canary-hygiene) declares its own correct DDL locally, which is
+  -- exactly why the shared one could rot unobserved.
+  CREATE TABLE error_logs (
+    id TEXT PRIMARY KEY,
+    timestamp INTEGER NOT NULL,
+    level TEXT NOT NULL DEFAULT 'error',
+    message TEXT NOT NULL,
+    context TEXT DEFAULT '{}',
+    url TEXT,
+    method TEXT,
+    status_code INTEGER,
+    stack_trace TEXT,
+    user_agent TEXT,
+    source TEXT,
+    route TEXT,
+    digest TEXT
+  );
   CREATE INDEX idx_claim_tokens_entity ON claim_tokens (entity_type, entity_id);
   CREATE INDEX idx_claim_tokens_expires ON claim_tokens (expires_at);
 `;
+
+const FORMER_VENUE_TRIGGERS_SQL = (() => {
+  // __dirname, not import.meta.url: this harness is also imported by app-side
+  // tests whose environment does not give import.meta.url a file: scheme.
+  const sql = readFileSync(join(__dirname, "../../drizzle/0333_ope1180_former_venues.sql"), "utf8");
+  const start = sql.indexOf("CREATE TRIGGER");
+  if (start < 0)
+    throw new Error("0333 has no CREATE TRIGGER — the loader is reading the wrong file");
+  return sql.slice(start);
+})();
 
 export function createTestDb(): { db: TestDb; raw: Database.Database } {
   const raw = new Database(":memory:");
@@ -1349,6 +1623,9 @@ export function createTestDb(): { db: TestDb; raw: Database.Database } {
   // misreads better-sqlite3's API as Node's child_process. The semantics
   // are identical.
   raw["exec"](SCHEMA_SQL);
+  // OPE-1180 — the FORMER-venue triggers, loaded from the migration itself so
+  // the tests run against the exact SQL prod runs (one source, no copy to drift).
+  raw["exec"](FORMER_VENUE_TRIGGERS_SQL);
   const db = drizzle(raw, { schema });
   // D1 exposes `db.batch([...])` (atomic, sequential); better-sqlite3 doesn't.
   // Shim it so code paths that batch — e.g. SYN1's outbox-row + version-bump
@@ -1429,13 +1706,43 @@ export class CapturingMcpServer {
     }
   }
 
+  /**
+   * OPE-1093 — the `registerTool` path.
+   *
+   * `tool()` above takes a raw SHAPE and this harness wraps it in `z.object()`
+   * at validation time, exactly as the SDK does — which is why unknown keys are
+   * STRIPPED and a caller's typo vanishes without a word. `registerTool` takes a
+   * fully-built schema instead, so a `.strict()` object survives to validation
+   * and the unknown key is rejected.
+   *
+   * Stored separately from `schemas` rather than reusing it: that map holds raw
+   * shapes and is read as such by existing tests, and a ZodObject smuggled into
+   * it would be wrapped a second time by `z.object()` — losing the strictness
+   * that is the entire point.
+   */
+  registerTool(
+    name: string,
+    config: { title?: string; description?: string; inputSchema?: unknown },
+    handler: (params: Record<string, unknown>) => Promise<unknown>
+  ) {
+    this.handlers.set(name, handler);
+    if (typeof config?.description === "string") this.descriptions.set(name, config.description);
+    if (config?.inputSchema) {
+      this.objectSchemas.set(name, config.inputSchema as z.ZodTypeAny);
+    }
+  }
+
+  /** Fully-built schemas from `registerTool`, kept apart from raw shapes. */
+  objectSchemas = new Map<string, z.ZodTypeAny>();
+
   invoke(name: string, params: Record<string, unknown> = {}) {
     const handler = this.handlers.get(name);
     if (!handler) throw new Error(`Tool not registered: ${name}`);
+    const built = this.objectSchemas.get(name);
     const shape = this.schemas.get(name);
-    if (!this.validate || !shape) return handler(params);
+    if (!this.validate || (!shape && !built)) return handler(params);
 
-    const parsed = z.object(shape).safeParse(params);
+    const parsed = (built ?? z.object(shape!)).safeParse(params);
     if (!parsed.success) {
       // Returned, not thrown — the real MCP surface answers a bad argument with
       // an error RESULT, and a test asserting rejection should be able to read

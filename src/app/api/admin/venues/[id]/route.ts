@@ -1,4 +1,5 @@
 export const dynamic = "force-dynamic";
+import { withoutGooglePlacesPhoto } from "@takemetothefair/utils";
 import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/api/with-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
@@ -141,7 +142,10 @@ export const PATCH = withAuth<{ id: string }>(
       if (data.contactPhone !== undefined) updateData.contactPhone = data.contactPhone;
       if (data.website !== undefined) updateData.website = data.website;
       if (data.description !== undefined) updateData.description = data.description;
-      if (data.imageUrl !== undefined) updateData.imageUrl = data.imageUrl;
+      // OPE-294 — a Google Places photo is IGNORED (not written, not used to
+      // clear the existing image); any other value, including "" to clear, lands.
+      if (data.imageUrl !== undefined && withoutGooglePlacesPhoto(data.imageUrl) === data.imageUrl)
+        updateData.imageUrl = data.imageUrl;
       // IMG1 §1b Phase 1 (2026-06-08) — focal point clamped (defense in depth).
       if (typeof data.imageFocalX === "number" && Number.isFinite(data.imageFocalX)) {
         updateData.imageFocalX = Math.max(0, Math.min(1, data.imageFocalX));
@@ -158,7 +162,20 @@ export const PATCH = withAuth<{ id: string }>(
       if (data.googleTypes !== undefined) updateData.googleTypes = data.googleTypes;
       if (data.accessibility !== undefined) updateData.accessibility = data.accessibility;
       if (data.parking !== undefined) updateData.parking = data.parking;
-      if (data.status) updateData.status = data.status;
+      // OPE-1180 — FORMER is owned by MCP update_venue, which carries the
+      // lifecycle fields, their citation, and the events-after-closure check.
+      // This form has none of those, so it may neither set FORMER nor move a
+      // venue out of it (the zod default would otherwise write ACTIVE).
+      if (data.status === "FORMER" && currentVenue.status !== "FORMER") {
+        return NextResponse.json(
+          {
+            error:
+              "Marking a venue FORMER needs a closure date, a source and a check for later events — use the MCP update_venue tool (status, use_ended_edtf, lifecycle_citation).",
+          },
+          { status: 409 }
+        );
+      }
+      if (data.status && currentVenue.status !== "FORMER") updateData.status = data.status;
 
       // SYN1 — venue correction fans out to every event at this venue. The
       // outbox row + the events-version bump commit in the SAME batch as the
@@ -229,7 +246,7 @@ export const PATCH = withAuth<{ id: string }>(
 
       if (venueIndexNowSource) {
         const finalSlug = (updateData.slug as string | undefined) ?? currentVenue.slug;
-        const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+        const env = getCloudflareEnv();
         await pingIndexNow(db, indexNowUrlFor("venues", finalSlug), env, venueIndexNowSource);
       }
 

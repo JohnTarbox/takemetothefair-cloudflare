@@ -19,6 +19,7 @@ import {
   vendors,
   userFavorites,
   eventDays,
+  eventInStateWhere,
 } from "@/lib/db/schema";
 import {
   eq,
@@ -47,6 +48,7 @@ import { ItemListTracker } from "@/components/analytics/ItemListTracker";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { MobileFilterDrawer } from "@/components/ui/mobile-filter-drawer";
 import { countPublicFilteredEvents, hasPublicFilters } from "@/lib/events-filter-count";
+import { withD1ReadLogged } from "@/lib/db/d1-resilience";
 
 export const revalidate = 300; // Cache for 5 minutes
 
@@ -164,7 +166,24 @@ async function getVendorForUser(
   }
 }
 
-async function getEvents(
+/**
+ * OPE-790 — one jittered retry on a Cloudflare-side D1 blip before the failure
+ * reaches the user. Wraps the fetcher rather than its body so every call site
+ * inherits it, and so the diagnostic catch inside stays exactly as OPE-548 left
+ * it. Only a PLATFORM fault is retried; a query defect fails the same way twice.
+ */
+function getEvents(
+  searchParams: SearchParams,
+  vendorId?: string,
+  favoriteUserId?: string,
+  includeVendorDays?: boolean
+) {
+  return withD1ReadLogged("app/events/page.tsx:getEvents", () =>
+    getEventsOnce(searchParams, vendorId, favoriteUserId, includeVendorDays)
+  );
+}
+
+async function getEventsOnce(
   searchParams: SearchParams,
   vendorId?: string,
   favoriteUserId?: string,
@@ -327,7 +346,7 @@ async function getEvents(
     // Get events with joins
     // Build separate queries for calendar (no pagination) vs cards/table (paginated)
     const stateConditions = searchParams.state
-      ? [...conditions, eq(events.stateCode, searchParams.state)]
+      ? [...conditions, eventInStateWhere(searchParams.state)]
       : conditions;
 
     // COALESCE protects ORDER BY against NULL start_date even though the

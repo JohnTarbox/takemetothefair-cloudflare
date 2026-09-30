@@ -28,20 +28,21 @@ export const dynamic = "force-dynamic";
  * coordination with the existing crons. The endpoint itself can be
  * polled today from the admin UI.
  *
- * Filtering:
- *   - status='APPROVED' only — DRAFT/PENDING/REJECTED rows shouldn't
- *     surface as 'duplicates' until they've actually been admitted.
- *   - REJECTED rows are explicitly excluded (these are merge
- *     tombstones from K3 / drizzle/0095).
+ * Filtering (OPE-967 — see src/lib/duplicates/sweep-clusters.ts):
+ *   - the PUBLIC set, via `publicEventWhere()` — APPROVED and TENTATIVE
+ *     together. This used to read status='APPROVED' only, which could not see
+ *     an APPROVED + TENTATIVE pair: both served publicly, invisible to the
+ *     sweep (Brookfield Orchards Harvest Craft Fair, 2026-09-12).
+ *   - REJECTED rows (merge tombstones from K3 / drizzle/0095), PENDING and
+ *     DRAFT remain excluded, because the public predicate excludes them.
  *   - Future: once K2 part 5 lands (drizzle/0096), exclude rows whose
  *     possible_duplicate_of IS NOT NULL — they're already flagged.
  */
 
 import { NextResponse } from "next/server";
 import { withAuthorized } from "@/lib/api/with-auth";
-import { events, venues } from "@/lib/db/schema";
-import { sql, eq, and, isNotNull } from "drizzle-orm";
 import { logError } from "@/lib/logger";
+import { findDuplicateClusters } from "@/lib/duplicates/sweep-clusters";
 
 /**
  * Dual auth: admin session OR X-Internal-Key (via withAuthorized). The latter
@@ -49,96 +50,16 @@ import { logError } from "@/lib/logger";
  * read-only endpoint without an admin session. Same shape as the other
  * internal-cron-friendly admin routes (see backfill/source-domain etc).
  */
-interface VenueDateCluster {
-  cluster_key: "venue_date";
-  venue_id: string;
-  start_date: string; // ISO
-  count: number;
-  event_ids: string[];
-}
-
-interface CityStateDateCluster {
-  cluster_key: "city_state_date";
-  city: string;
-  state: string;
-  start_date: string;
-  count: number;
-  event_ids: string[];
-}
-
-type Cluster = VenueDateCluster | CityStateDateCluster;
 
 export const GET = withAuthorized(async ({ request, db }) => {
   try {
     const limitParam = parseInt(request.nextUrl.searchParams.get("limit") || "100", 10);
     const limit = Math.max(1, Math.min(500, isNaN(limitParam) ? 100 : limitParam));
 
-    // ── Query 1: (venue_id, start_date) clusters ──────────────────
-    //
-    // GROUP_CONCAT is SQLite's standard array-aggregator. We get a
-    // comma-separated id list per cluster, split client-side. Filter
-    // on count > 1 AND not REJECTED so tombstones from K3
-    // (slug='*-merged-*', status='REJECTED') don't show up.
-    const venueDateRows = await db
-      .select({
-        venueId: events.venueId,
-        startDate: events.startDate,
-        cnt: sql<number>`COUNT(*)`.as("cnt"),
-        ids: sql<string>`GROUP_CONCAT(${events.id})`.as("ids"),
-      })
-      .from(events)
-      .where(
-        and(eq(events.status, "APPROVED"), isNotNull(events.venueId), isNotNull(events.startDate))
-      )
-      .groupBy(events.venueId, events.startDate)
-      .having(sql`COUNT(*) > 1`)
-      .limit(limit);
-
-    const venueDateClusters: VenueDateCluster[] = venueDateRows.map((r) => ({
-      cluster_key: "venue_date",
-      venue_id: r.venueId as string,
-      start_date: r.startDate?.toISOString() ?? "",
-      count: r.cnt,
-      event_ids: r.ids.split(","),
-    }));
-
-    // ── Query 2: (venues.city, venues.state, start_date) clusters ─
-    //
-    // INNER JOIN venues so we can group on city + state. Excludes
-    // events without a venue and statewide events (no venue).
-    const cityStateDateRows = await db
-      .select({
-        city: venues.city,
-        state: venues.state,
-        startDate: events.startDate,
-        cnt: sql<number>`COUNT(*)`.as("cnt"),
-        ids: sql<string>`GROUP_CONCAT(${events.id})`.as("ids"),
-      })
-      .from(events)
-      .innerJoin(venues, eq(events.venueId, venues.id))
-      .where(and(eq(events.status, "APPROVED"), isNotNull(events.startDate)))
-      .groupBy(venues.city, venues.state, events.startDate)
-      .having(sql`COUNT(*) > 1`)
-      .limit(limit);
-
-    const cityStateDateClusters: CityStateDateCluster[] = cityStateDateRows.map((r) => ({
-      cluster_key: "city_state_date",
-      city: r.city,
-      state: r.state,
-      start_date: r.startDate?.toISOString() ?? "",
-      count: r.cnt,
-      event_ids: r.ids.split(","),
-    }));
-
-    // Combine — city+state clusters that are SUBSETS of an existing
-    // venue+date cluster are noise (they'd surface the same events
-    // twice). Filter them.
-    const venueDateEventIds = new Set(venueDateClusters.flatMap((c) => c.event_ids));
-    const filteredCityStateClusters = cityStateDateClusters.filter(
-      (c) => !c.event_ids.every((id) => venueDateEventIds.has(id))
+    const { venueDateClusters, filteredCityStateClusters, clusters } = await findDuplicateClusters(
+      db,
+      limit
     );
-
-    const clusters: Cluster[] = [...venueDateClusters, ...filteredCityStateClusters];
 
     return NextResponse.json({
       success: true,
@@ -147,7 +68,7 @@ export const GET = withAuthorized(async ({ request, db }) => {
         city_state_date_clusters: filteredCityStateClusters.length,
         total_clusters: clusters.length,
         // Useful headline metric for the (deferred) daily canary —
-        // total APPROVED events involved in any cluster.
+        // total publicly-served events involved in any cluster.
         events_in_clusters: new Set(clusters.flatMap((c) => c.event_ids)).size,
       },
       clusters,

@@ -16,7 +16,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { jsonContent } from "../helpers.js";
-import { mainAppFetch, type MainAppEnv } from "../main-app-fetch.js";
+import { mainAppFetch } from "../main-app-fetch.js";
 import type { AuthContext } from "../auth.js";
 
 interface Env {
@@ -76,23 +76,18 @@ export function registerGscMilestoneIngestTool(server: McpServer, auth: AuthCont
       // bypasses zone routing entirely.
       let response: Response;
       try {
-        response = await mainAppFetch(
-          env as unknown as MainAppEnv,
-          "/api/admin/analytics/gsc-milestone-ingest",
-          "fetch",
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              subject: params.subject,
-              body: params.body,
-              email_date: params.email_date,
-              note: params.note,
-            }),
-          }
-        );
+        response = await mainAppFetch(env, "/api/admin/analytics/gsc-milestone-ingest", "fetch", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            subject: params.subject,
+            body: params.body,
+            email_date: params.email_date,
+            note: params.note,
+          }),
+        });
       } catch (e) {
         return {
           content: [

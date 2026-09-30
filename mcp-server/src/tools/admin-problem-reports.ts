@@ -37,6 +37,15 @@ export function registerAdminProblemReportTools(server: McpServer, db: Db) {
         .enum(["true", "false", "any"])
         .optional()
         .describe("'false' = only open (default); 'true' = only resolved; 'any' = both."),
+      kind: z
+        .enum(["defect", "claim_evidence", "any"])
+        .optional()
+        .describe(
+          "OPE-769 — which queue. Defaults to 'defect', because this table held two " +
+            "unrelated kinds of work and the defect queue is what this tool is for. " +
+            "Claim evidence now lives in entity_claims (list_claims); 'claim_evidence' " +
+            "returns the historical rows written here before that changed."
+        ),
       limit: z.number().int().min(1).max(200).optional().describe("Default 50."),
     },
     async (params) => {
@@ -49,6 +58,11 @@ export function registerAdminProblemReportTools(server: McpServer, db: Db) {
       if (severityFilter !== "any") conditions.push(eq(problemReports.severity, severityFilter));
       const sourceFilter = params.source ?? "any";
       if (sourceFilter !== "any") conditions.push(eq(problemReports.source, sourceFilter));
+      // OPE-769 — default to the defect queue. Before this, four of the five
+      // open rows were claim evidence, so an operator draining "problem
+      // reports" was looking at four things that were not problems.
+      const kindFilter = params.kind ?? "defect";
+      if (kindFilter !== "any") conditions.push(eq(problemReports.kind, kindFilter));
 
       const rows = await db
         .select()
@@ -297,18 +311,44 @@ export function registerAdminProblemReportTools(server: McpServer, db: Db) {
     "Return the count of open (unresolved) problem reports, split by severity. Useful for at-a-glance polling.",
     {},
     async () => {
+      // OPE-769 — count DEFECTS. This number is polled at a glance, and it was
+      // counting claim-verification evidence alongside bugs: 5 open, of which 1
+      // was a defect. A mixed count is worse than none — it reads as alarming
+      // when the queue is fine, and as drained when it is not.
       const rows = await db
         .select({
+          kind: problemReports.kind,
           severity: problemReports.severity,
           count: sql<number>`count(*)`,
         })
         .from(problemReports)
         .where(isNull(problemReports.resolvedAt))
-        .groupBy(problemReports.severity);
-      const high = rows.find((r) => r.severity === "HIGH")?.count ?? 0;
-      const low = rows.find((r) => r.severity === "LOW")?.count ?? 0;
+        .groupBy(problemReports.kind, problemReports.severity);
+
+      const defects = rows.filter((r) => r.kind === "defect");
+      const high = defects.find((r) => r.severity === "HIGH")?.count ?? 0;
+      const low = defects.find((r) => r.severity === "LOW")?.count ?? 0;
+      // Reported, not silently dropped: an operator who remembers a bigger
+      // number should be able to see where it went rather than assume a bug.
+      const otherKinds = rows
+        .filter((r) => r.kind !== "defect")
+        .reduce<Record<string, number>>((acc, r) => {
+          acc[r.kind] = (acc[r.kind] ?? 0) + Number(r.count);
+          return acc;
+        }, {});
+
       return {
-        content: [jsonContent({ open: { high, low, total: high + low } })],
+        content: [
+          jsonContent({
+            open: { high, low, total: high + low },
+            kind: "defect",
+            open_other_kinds: otherKinds,
+            note:
+              Object.keys(otherKinds).length > 0
+                ? "`open` counts defects only (OPE-769). Claim evidence is reviewed via list_claims, not here."
+                : undefined,
+          }),
+        ],
       };
     }
   );

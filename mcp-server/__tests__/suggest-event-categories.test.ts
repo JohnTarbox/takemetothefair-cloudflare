@@ -16,7 +16,7 @@
  * and the IndexNow ping are both skipped — keeping the test focused on the
  * category branch.
  */
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { CapturingMcpServer, createTestDb, type TestDb } from "./setup-db.js";
 import { registerVendorTools } from "../src/tools/vendor.js";
@@ -27,7 +27,24 @@ const AUTH = { userId: "u-submitter", role: "USER" as const };
 let db: TestDb;
 let server: CapturingMcpServer;
 
+/**
+ * The clock is PINNED. These fixtures carry literal 2026 start dates, and
+ * suggest_event routes a start date that is in the past (or more than ~18
+ * months out) to review with a `gate_flags` warning — so on 2026-09-16 the
+ * "no warnings" assertions began failing on every PR with no code change,
+ * because 2026-09-15 had become yesterday. Pinning `Date` (only `Date`, so the
+ * harness's async work is untouched) keeps every fixture date inside the window
+ * forever instead of until the next one passes.
+ */
+const PINNED_NOW = new Date("2026-08-01T12:00:00Z");
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(PINNED_NOW);
   ({ db } = createTestDb());
   server = new CapturingMcpServer();
   db.insert(users).values({ id: "u-submitter", email: "submitter@test", role: "USER" }).run();
@@ -134,6 +151,7 @@ describe("suggest_event source_label (K26)", () => {
         sourceName: events.sourceName,
         ingestionMethod: events.ingestionMethod,
         sourceDomain: events.sourceDomain,
+        tags: events.tags,
       })
       .from(events)
       .where(eq(events.id, eventId))
@@ -195,6 +213,26 @@ describe("suggest_event source_label (K26)", () => {
     const p = await storedProvenance(payload!.event.id);
     expect(p.sourceName).toBe("vendor-submission");
     expect(p.ingestionMethod).toBe("vendor_submission");
+  });
+
+  it("OPE-1058 — tags follow the label actually passed, not a fixed vendor claim", async () => {
+    const cases: Array<[string | undefined, string[]]> = [
+      ["email-submission", ["community-suggestion", "email-submission"]],
+      ["vendor-submission", ["community-suggestion", "vendor-submission"]],
+      ["daily-discovery", ["src:daily-discovery"]],
+      [undefined, []],
+    ];
+    let day = 1;
+    for (const [label, expected] of cases) {
+      const { payload } = await suggest({
+        name: `Provenance Tag Fair ${day}`,
+        start_date: `2026-10-${String(day).padStart(2, "0")}`,
+        ...(label ? { source_label: label } : {}),
+      });
+      const p = await storedProvenance(payload!.event.id);
+      expect(JSON.parse(p.tags ?? "[]"), String(label)).toEqual(expected);
+      day++;
+    }
   });
 
   it("tags discovery-harvested events as ingestion_method='discovery'", async () => {

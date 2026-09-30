@@ -4,6 +4,7 @@
  */
 
 import { ALL_FUNNEL_STEP_NAMES } from "@/lib/analytics/funnel-steps";
+import { getTrafficAttribution } from "@/lib/analytics/traffic-attribution";
 import { findTrackedEvent } from "@/lib/analytics/event-sinks";
 
 declare global {
@@ -127,6 +128,12 @@ export function trackApiError(endpoint: string, statusCode: number, detail?: str
 
 type BeaconCategory = "funnel" | "engagement" | "conversion";
 
+/** OPE-1165 — `{trafficMedium, trafficSource}` for a click beacon, or nothing. */
+function trafficProps(): Record<string, string> {
+  const a = getTrafficAttribution();
+  return a ? { trafficMedium: a.medium, trafficSource: a.source } : {};
+}
+
 function sendBeacon(name: string, category: BeaconCategory, properties?: Record<string, unknown>) {
   if (typeof window === "undefined") return;
   const payload = JSON.stringify({ name, category, properties });
@@ -138,6 +145,10 @@ function sendBeacon(name: string, category: BeaconCategory, properties?: Record<
     const blob = new Blob([payload], { type: "application/json" });
     if (navigator.sendBeacon("/api/analytics/track", blob)) return;
   }
+  // Browser code (returns early without `window`): `keepalive` is what keeps this
+  // request alive past navigation, not a Workers ctx — so there is nothing to
+  // register it with, and awaiting it would block the click handler.
+  // eslint-disable-next-line local/no-catch-only-promise
   fetch("/api/analytics/track", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -192,6 +203,9 @@ export function trackOutboundApplicationClick(eventSlug: string, destinationUrl:
   sendBeacon("outbound_application_click", "conversion", {
     eventSlug,
     destinationUrl,
+    // OPE-1165 — the tab session's GA4-style attribution, so the conversion
+    // rate can count organic clicks against organic sessions.
+    ...trafficProps(),
   });
 }
 
@@ -205,6 +219,9 @@ export function trackOutboundTicketClick(eventSlug: string, destinationUrl: stri
   sendBeacon("outbound_ticket_click", "conversion", {
     eventSlug,
     destinationUrl,
+    // OPE-1165 — the tab session's GA4-style attribution, so the conversion
+    // rate can count organic clicks against organic sessions.
+    ...trafficProps(),
   });
 }
 

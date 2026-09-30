@@ -1,6 +1,9 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { detectPossibleDuplicate } from "@/lib/duplicates/venue-date-collision";
+import { checkEventVenue } from "@/lib/venues/former-venue-guard";
+import { gateDatesConfirmed } from "@takemetothefair/utils";
+import { dismissedFlagIds } from "@/lib/duplicates/flag-queue";
 import { withAuth } from "@/lib/api/with-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { events, contentLinks, blogPosts, venues } from "@/lib/db/schema";
@@ -95,12 +98,21 @@ export const GET = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
       }
     }
 
+    // OPE-1117 — a pair a human already ruled "not a duplicate" stops being
+    // badged. Keyed on the CURRENT pair, so a re-flag against a different
+    // candidate is badged again.
+    const dismissed = await dismissedFlagIds(
+      db,
+      eventsList.filter((e) => e.possibleDuplicateOf).map((e) => e.id)
+    );
+
     const enriched = eventsList.map((e) => ({
       ...e,
       blogPostCount: byEvent.get(e.id) ?? 0,
-      possibleDuplicate: e.possibleDuplicateOf
-        ? (candidateMap.get(e.possibleDuplicateOf) ?? null)
-        : null,
+      possibleDuplicate:
+        e.possibleDuplicateOf && !dismissed.has(e.id)
+          ? (candidateMap.get(e.possibleDuplicateOf) ?? null)
+          : null,
     }));
 
     return NextResponse.json(enriched);
@@ -208,6 +220,13 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
     const gateFlagsJson = gateResult.reasons.length > 0 ? JSON.stringify(gateResult.reasons) : null;
     const sourceClassification = classifySource(data.sourceName, data.sourceUrl);
 
+    // OPE-1180 — an admin-chosen FORMER venue after its closure is refused;
+    // inside the closure's uncertainty window it is allowed and flagged.
+    const formerVenue = await checkEventVenue(db, data.venueId, endDate ?? startDate);
+    if (formerVenue.kind === "refuse") {
+      return NextResponse.json({ error: formerVenue.message }, { status: 409 });
+    }
+
     // OPE-627 — report-only duplicate check. Writes the flag; merges nothing.
     const possibleDuplicateOf = await detectPossibleDuplicate(db, {
       venueId: data.venueId,
@@ -216,8 +235,13 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
       name: data.name,
       promoterId: data.promoterId,
     });
+    const datesConfirmedGate = gateDatesConfirmed({
+      requested: data.datesConfirmed ?? false,
+      citations: [],
+    });
     await db.insert(events).values({
       possibleDuplicateOf,
+      ...(formerVenue.kind === "flag" ? { flaggedForReview: 1 } : {}),
       id: eventId,
       name: data.name,
       slug: unsafeSlug(slug),
@@ -230,7 +254,9 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
       endDate,
       publicStartDate,
       publicEndDate,
-      datesConfirmed: data.datesConfirmed,
+      // OPE-1200 — a new row has no citations, so TRUE (the zod default when the
+      // field is omitted) is written as FALSE; confirm after citing start_date.
+      datesConfirmed: datesConfirmedGate.value,
       // OPE-433 — stated, not inherited. An admin creating an event by hand is
       // authoring first-party data; a later importer must not overwrite it.
       syncEnabled: data.syncEnabled ?? false,
@@ -285,11 +311,16 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
 
     // IndexNow: ping if the admin created this event already publicly visible.
     if (newEvent && PUBLIC_EVENT_SET.has(newEvent.status)) {
-      const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+      const env = getCloudflareEnv();
       await pingIndexNow(db, indexNowUrlFor("events", newEvent.slug), env, "event-create");
     }
 
-    return NextResponse.json(newEvent, { status: 201 });
+    return NextResponse.json(
+      datesConfirmedGate.warning
+        ? { ...newEvent, warnings: { dates_confirmed_downgraded: datesConfirmedGate.warning } }
+        : newEvent,
+      { status: 201 }
+    );
   } catch (error) {
     await logError(db, {
       message: "Failed to create event",

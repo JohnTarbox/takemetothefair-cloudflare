@@ -4,7 +4,7 @@ import { desc } from "drizzle-orm";
 import { requireAdminAuth } from "@/lib/api-auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { adminActions, bingLivenessLog } from "@/lib/db/schema";
-import { getCrawlStats, type BingEnv } from "@/lib/bing-webmaster";
+import { getCrawlStats } from "@/lib/bing-webmaster";
 import {
   classifyBingLiveness,
   nextConsecutiveFailures,
@@ -49,7 +49,7 @@ export async function POST(request: Request) {
   if (fail) return fail;
 
   const db = getCloudflareDb();
-  const env = getCloudflareEnv() as unknown as BingEnv;
+  const env = getCloudflareEnv();
   const now = new Date();
 
   // A ping that throws IS the signal — capture it rather than 500ing, so a
@@ -58,7 +58,9 @@ export async function POST(request: Request) {
   let reachable = true;
   let error: string | null = null;
   try {
-    const rows = await getCrawlStats(env, { skipCache: true });
+    // OPE-1026: this check is the one caller allowed through the throttle
+    // latch — it is how the latch learns Bing has recovered.
+    const rows = await getCrawlStats(env, { skipCache: true, ignoreThrottleLatch: true });
     const dates = rows.map((r) => r.date).filter((d): d is string => Boolean(d));
     // Lexical max is the calendar max for zero-padded YYYY-MM-DD. Seeded with
     // "" so the reduce is empty-safe by construction (FAM-EMPTY-COLLECTION).

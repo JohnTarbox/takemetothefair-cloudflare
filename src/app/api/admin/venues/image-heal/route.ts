@@ -108,7 +108,7 @@ export const GET = withAuthorized(async ({ db }) => {
 });
 
 export const POST = withAuthorized(async ({ request, db, userId }) => {
-  const env = getCloudflareEnv() as unknown as { VENDOR_ASSETS?: R2Bucket };
+  const env = getCloudflareEnv();
   const actorId = userId ?? "internal";
 
   let body: { apply?: boolean; limit?: number; offset?: number; clear_unsourceable?: boolean } = {};

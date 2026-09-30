@@ -79,12 +79,20 @@ describe("every wired auth path consults the guard", () => {
     // `!user.passwordHash` check already refuses them. Kept because the reset
     // path is what would mint that hash, and a guard that only holds while a
     // second guard holds is not a guard.
-    expect(authSource).toContain("isPlaceholderEmail");
-    const authorizeBody = authSource.slice(
-      authSource.indexOf("async authorize(credentials)"),
-      authSource.indexOf("const facebookClientId")
-    );
-    expect(guardCallIndex(authorizeBody)).toBeGreaterThan(-1);
+    //
+    // OPE-935 moved the Credentials authorize body into
+    // src/lib/auth/credentials-authorize.ts (so the throttle ordering could be
+    // tested). The guard moved with it, so this reads the module that now holds
+    // it — and asserts auth.ts really delegates there, or reading the new file
+    // would prove nothing about the provider that runs.
+    expect(authSource).toMatch(/return authorizeCredentials\(credentials, request, \{/);
+    const body = read("src/lib/auth/credentials-authorize.ts");
+    const guardAt = guardCallIndex(body);
+    expect(guardAt).toBeGreaterThan(-1);
+    // Before the user lookup (the original rule) AND before the sign-in
+    // throttle, so a placeholder never spends a real account's budget.
+    expect(guardAt).toBeLessThan(body.indexOf("deps.findUserByEmail("));
+    expect(guardAt).toBeLessThan(body.indexOf("deps.throttle("));
   });
 
   it("the OAuth signIn callback refuses BEFORE the email-match lookup", () => {

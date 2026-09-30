@@ -1,5 +1,5 @@
 import { and, eq, isNotNull, notLike, or, isNull, lte, count } from "drizzle-orm";
-import { events } from "@/lib/db/schema";
+import { events, eventInStateWhere } from "@/lib/db/schema";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { upcomingEndPredicate, whenWindowEnd } from "@/lib/event-dates";
 import { containsCI } from "@/lib/db/contains-ci";
@@ -115,7 +115,7 @@ export async function countPublicFilteredEvents(
   }
 
   if (searchParams.state) {
-    conditions.push(eq(events.stateCode, searchParams.state));
+    conditions.push(eventInStateWhere(searchParams.state));
   }
 
   const [row] = await db
