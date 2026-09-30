@@ -21,7 +21,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { and, desc, eq, inArray } from "drizzle-orm";
-import { entityClaims, vendors, promoters, users, userRoles, adminActions } from "../schema.js";
+import { entityClaims, vendors, promoters, users } from "../schema.js";
 import { jsonContent, decodeHtmlEntities } from "../helpers.js";
 import { chunkedInArray } from "@takemetothefair/utils";
 import type { Db } from "../db.js";
@@ -29,49 +29,65 @@ import type { AuthContext } from "../auth.js";
 
 const LIST_LIMIT = 200;
 
-type ReviewEntityType = "VENDOR" | "PROMOTER";
-
-interface EntityLookup {
-  ownerUserId: string | null;
-  claimed: boolean;
-  name: string;
-  slug: string;
+export interface ClaimReviewEnv {
+  MAIN_APP_URL?: string;
+  INTERNAL_API_KEY?: string;
 }
 
-async function loadEntity(
+/**
+ * OPE-792 — `approve_claim` / `reject_claim` now DELEGATE to the main app's
+ * `/api/admin/claims` instead of re-implementing the transition here.
+ *
+ * They used to do it themselves: ownership transfer, role grant, status flip,
+ * audit row — a faithful copy of `src/lib/claims/admin-review.ts` except for the
+ * two steps only the core performs, the claimant notification row and the
+ * decision email. So a claim approved from an agent session moved ownership
+ * correctly and told the claimant nothing. Three claims were approved that way;
+ * `email_send_ledger` has never held a `claims.decision` row; the one claimant
+ * who heard anything was written to by hand.
+ *
+ * The copy was not wrong when it was written — the email landed in the core
+ * later (OPE-65, #645) and nothing carried it across. Which is the argument for
+ * one implementation rather than a better-maintained second one.
+ */
+export function registerClaimReviewTools(
+  server: McpServer,
   db: Db,
-  entityType: ReviewEntityType,
-  entityId: string
-): Promise<EntityLookup | undefined> {
-  if (entityType === "VENDOR") {
-    const [row] = await db
-      .select({
-        ownerUserId: vendors.userId,
-        claimed: vendors.claimed,
-        name: vendors.businessName,
-        slug: vendors.slug,
-      })
-      .from(vendors)
-      .where(eq(vendors.id, entityId))
-      .limit(1);
-    if (!row) return undefined;
-    return { ...row, slug: row.slug as unknown as string };
+  auth: AuthContext,
+  env?: ClaimReviewEnv
+) {
+  /** Forward a decision to the single implementation, over X-Internal-Key. */
+  async function decide(
+    action: "approve" | "reject",
+    claimId: string,
+    reason?: string
+  ): Promise<{ ok: boolean; status: number; data: Record<string, unknown> }> {
+    if (!env?.MAIN_APP_URL || !env?.INTERNAL_API_KEY) {
+      return {
+        ok: false,
+        status: 0,
+        data: {
+          ok: false,
+          reason: "not_configured",
+          message: "MAIN_APP_URL or INTERNAL_API_KEY not configured.",
+        },
+      };
+    }
+    const res = await fetch(`${env.MAIN_APP_URL}/api/admin/claims`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-internal-key": env.INTERNAL_API_KEY },
+      body: JSON.stringify({
+        claimId,
+        action,
+        ...(reason ? { reason } : {}),
+        // No session on this path — attribute the audit row to the calling agent.
+        actorUserId: auth.userId,
+      }),
+    });
+    const data = ((await res.json().catch(() => null)) ?? {}) as Record<string, unknown>;
+    return { ok: res.ok, status: res.status, data };
   }
-  const [row] = await db
-    .select({
-      ownerUserId: promoters.userId,
-      claimed: promoters.claimed,
-      name: promoters.companyName,
-      slug: promoters.slug,
-    })
-    .from(promoters)
-    .where(eq(promoters.id, entityId))
-    .limit(1);
-  if (!row) return undefined;
-  return { ...row, slug: row.slug as unknown as string };
-}
 
-export function registerClaimReviewTools(server: McpServer, db: Db, auth: AuthContext) {
   if (auth.role !== "ADMIN") return;
 
   // ── list_claims ────────────────────────────────────────────────────────
@@ -195,111 +211,27 @@ export function registerClaimReviewTools(server: McpServer, db: Db, auth: AuthCo
         .describe("Optional note stored in the admin_actions audit payload."),
     },
     async ({ claim_id, reason }) => {
-      const now = new Date();
-
-      const [claim] = await db
-        .select({
-          id: entityClaims.id,
-          entityType: entityClaims.entityType,
-          entityId: entityClaims.entityId,
-          userId: entityClaims.userId,
-          method: entityClaims.method,
-          status: entityClaims.status,
-        })
-        .from(entityClaims)
-        .where(eq(entityClaims.id, claim_id))
-        .limit(1);
-
-      if (!claim) {
-        return { content: [jsonContent({ ok: false, reason: "not_found" })], isError: true };
-      }
-      if (claim.status !== "PENDING" && claim.status !== "DISPUTED") {
+      const { ok, status, data } = await decide("approve", claim_id, reason);
+      if (!ok) {
         return {
-          content: [jsonContent({ ok: false, reason: "not_reviewable", status: claim.status })],
+          content: [jsonContent({ ok: false, http_status: status, ...data })],
           isError: true,
         };
       }
-      if (claim.entityType !== "VENDOR" && claim.entityType !== "PROMOTER") {
-        return {
-          content: [jsonContent({ ok: false, reason: "unsupported_entity" })],
-          isError: true,
-        };
-      }
-      const entityType = claim.entityType;
-
-      const entity = await loadEntity(db, entityType, claim.entityId);
-      if (!entity) {
-        return { content: [jsonContent({ ok: false, reason: "entity_missing" })], isError: true };
-      }
-
-      // NO SILENT TAKEOVER — a different owner is a genuine dispute.
-      if (entity.claimed && entity.ownerUserId !== claim.userId) {
-        return {
-          content: [
-            jsonContent({
-              ok: false,
-              reason: "already_claimed_by_other",
-              entityType,
-              entitySlug: entity.slug,
-              entityName: decodeHtmlEntities(entity.name),
-            }),
-          ],
-          isError: true,
-        };
-      }
-
-      // Transfer ownership, guarded by claimed=false (idempotent).
-      if (entityType === "VENDOR") {
-        await db
-          .update(vendors)
-          .set({ userId: claim.userId, claimed: true, claimedAt: now, claimedBy: claim.userId })
-          .where(and(eq(vendors.id, claim.entityId), eq(vendors.claimed, false)));
-      } else {
-        await db
-          .update(promoters)
-          .set({ userId: claim.userId, claimed: true, claimedAt: now, claimedBy: claim.userId })
-          .where(and(eq(promoters.id, claim.entityId), eq(promoters.claimed, false)));
-      }
-
-      // Grant the entity role (idempotent).
-      await db
-        .insert(userRoles)
-        .values({ userId: claim.userId, role: entityType, grantedAt: now, grantedBy: auth.userId })
-        .onConflictDoNothing();
-
-      // Mark APPROVED.
-      await db
-        .update(entityClaims)
-        .set({ status: "APPROVED", decidedAt: now, decidedBy: auth.userId })
-        .where(eq(entityClaims.id, claim.id));
-
-      // Audit.
-      await db.insert(adminActions).values({
-        action:
-          entityType === "VENDOR"
-            ? "vendor.claim_admin_review_approve"
-            : "promoter.claim_admin_review_approve",
-        actorUserId: auth.userId,
-        targetType: entityType.toLowerCase(),
-        targetId: claim.entityId,
-        payloadJson: JSON.stringify({
-          via: "mcp:approve_claim",
-          claimId: claim.id,
-          method: claim.method,
-          reason: reason ?? null,
-        }),
-        createdAt: now,
-      });
-
+      // Shape preserved for existing callers: the core returns claimantUserId
+      // where this tool has always returned grantedTo.
       return {
         content: [
           jsonContent({
             ok: true,
-            claimId: claim.id,
-            entityType,
-            entitySlug: entity.slug,
-            entityName: decodeHtmlEntities(entity.name),
-            grantedTo: claim.userId,
+            claimId: claim_id,
+            entityType: data.entityType,
+            entitySlug: data.entitySlug,
+            entityName: data.entityName,
+            grantedTo: data.claimantUserId,
+            // OPE-792 — the whole point. `null` means we had no address for the
+            // claimant, which is a different fact from "no mail was sent".
+            claimantNotified: data.claimantEmail ?? null,
           }),
         ],
       };
@@ -319,64 +251,22 @@ export function registerClaimReviewTools(server: McpServer, db: Db, auth: AuthCo
         .describe("Why the claim is being rejected. Stored in the admin_actions audit payload."),
     },
     async ({ claim_id, reason }) => {
-      const now = new Date();
-
-      const [claim] = await db
-        .select({
-          id: entityClaims.id,
-          entityType: entityClaims.entityType,
-          entityId: entityClaims.entityId,
-          userId: entityClaims.userId,
-          status: entityClaims.status,
-        })
-        .from(entityClaims)
-        .where(eq(entityClaims.id, claim_id))
-        .limit(1);
-
-      if (!claim) {
-        return { content: [jsonContent({ ok: false, reason: "not_found" })], isError: true };
-      }
-      if (claim.status !== "PENDING" && claim.status !== "DISPUTED") {
+      const { ok, status, data } = await decide("reject", claim_id, reason);
+      if (!ok) {
         return {
-          content: [jsonContent({ ok: false, reason: "not_reviewable", status: claim.status })],
+          content: [jsonContent({ ok: false, http_status: status, ...data })],
           isError: true,
         };
       }
-      if (claim.entityType !== "VENDOR" && claim.entityType !== "PROMOTER") {
-        // VENUE has no claim funnel — treat as not reviewable (parity with approve).
-        return {
-          content: [jsonContent({ ok: false, reason: "not_reviewable" })],
-          isError: true,
-        };
-      }
-      const entityType = claim.entityType;
-
-      // Mark REJECTED. Ownership untouched.
-      await db
-        .update(entityClaims)
-        .set({ status: "REJECTED", decidedAt: now, decidedBy: auth.userId })
-        .where(eq(entityClaims.id, claim.id));
-
-      await db.insert(adminActions).values({
-        action:
-          entityType === "VENDOR"
-            ? "vendor.claim_admin_review_reject"
-            : "promoter.claim_admin_review_reject",
-        actorUserId: auth.userId,
-        targetType: entityType.toLowerCase(),
-        targetId: claim.entityId,
-        payloadJson: JSON.stringify({ via: "mcp:reject_claim", claimId: claim.id, reason }),
-        createdAt: now,
-      });
-
       return {
         content: [
           jsonContent({
             ok: true,
-            claimId: claim.id,
-            entityType,
-            entityId: claim.entityId,
+            claimId: claim_id,
+            entityType: data.entityType,
+            entityId: data.entitySlug,
             rejectReason: reason,
+            claimantNotified: data.claimantEmail ?? null,
           }),
         ],
       };
