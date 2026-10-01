@@ -190,6 +190,15 @@ export const TYPE_FACETS: Record<string, { label: string; category: string; blur
     category: "Community Event",
     blurb: "Town days, block parties and local celebrations.",
   },
+  // OPE-955 (John, 2026-09-30) — the one event family with no durable URL: no
+  // fixed venue, and nothing else in the taxonomy selects it. 11 MA editions in
+  // a rolling year clear FACET_MIN_EVENTS, and the facet's off-season line keeps
+  // the page useful from November to July instead of going dead.
+  porchfests: {
+    label: "Porchfests",
+    category: "Porchfest",
+    blurb: "Free neighbourhood music festivals played from residents' front porches.",
+  },
 };
 
 export interface ResolvedFacet {
