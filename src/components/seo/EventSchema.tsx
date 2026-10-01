@@ -136,6 +136,48 @@ interface EventSchemaProps {
   emitPerformerSubevents?: boolean;
 }
 
+/**
+ * OPE-1241 — exactly 12:00:00.000 UTC is `normalizeEventDate`'s DATE-ONLY
+ * sentinel ("we know the day, not the hour"), not a time. Rendered in Eastern it
+ * reads 08:00, so the JSON-LD told search engines A Different Drummer opened at
+ * 8 AM (it opens at 10) and ENDED at 8 AM on its last day. 356 of the upcoming
+ * starts carried it on 2026-10-01.
+ */
+export function isDateOnlySentinel(d: Date): boolean {
+  return (
+    d.getUTCHours() === 12 &&
+    d.getUTCMinutes() === 0 &&
+    d.getUTCSeconds() === 0 &&
+    d.getUTCMilliseconds() === 0
+  );
+}
+
+/**
+ * A start/end column value as JSON-LD. A real instant is emitted as-is in the
+ * venue zone. The date-only sentinel takes that day's hours from event_days
+ * (earliest open for the start, latest close for the end), and with no hours on
+ * that day it is emitted as a bare date, which schema.org accepts.
+ */
+export function columnDateForJsonLd(
+  value: Date,
+  edge: "start" | "end",
+  eventDays: EventDay[] | undefined,
+  venueTz: string | undefined
+): string | undefined {
+  if (!isDateOnlySentinel(value)) return formatIsoInVenueZone(value, venueTz) || undefined;
+  // Noon UTC falls on the same calendar day in every US zone.
+  const day = value.toISOString().slice(0, 10);
+  const instants = (eventDays ?? [])
+    .filter((d) => d.date === day && !d.closed && d.openTime != null && d.closeTime != null)
+    .map((d) =>
+      parseWallClockInVenueZone(day, (edge === "start" ? d.openTime : d.closeTime)!, venueTz)
+    )
+    .filter((x): x is Date => x != null);
+  if (instants.length === 0) return day;
+  const pick = instants.reduce((a, b) => ((edge === "start" ? a < b : a > b) ? a : b), instants[0]);
+  return formatIsoInVenueZone(pick, venueTz) || day;
+}
+
 function getEventType(categories?: string[]): string {
   if (!categories?.length) return "Event";
   const cats = categories.map((c) => c.toLowerCase());
@@ -267,11 +309,13 @@ export function EventSchema({
   // Sep 26. This also makes the top-level dates consistent with the subEvents,
   // which have emitted venue-zone offsets since P3b.
   const venueTzForJsonLd = venue?.timezone ?? undefined;
+  // OPE-1241 — a date-only (noon-UTC) column takes its hours from event_days.
   const resolvedStartDate =
-    (startDate ? formatIsoInVenueZone(startDate, venueTzForJsonLd) || undefined : undefined) ??
-    dayDerivedDates?.start;
+    (startDate
+      ? columnDateForJsonLd(startDate, "start", eventDays, venueTzForJsonLd)
+      : undefined) ?? dayDerivedDates?.start;
   const resolvedEndDate =
-    (endDate ? formatIsoInVenueZone(endDate, venueTzForJsonLd) || undefined : undefined) ??
+    (endDate ? columnDateForJsonLd(endDate, "end", eventDays, venueTzForJsonLd) : undefined) ??
     dayDerivedDates?.end;
   if (!resolvedStartDate) return null;
   if (pastUnconfirmed) return null;
@@ -318,14 +362,17 @@ export function EventSchema({
   // EventRescheduled rich snippet requires previousStartDate to render. Emit
   // both endpoints when present so Google can show the "rescheduled from X
   // to Y" annotation in search results.
+  // OPE-1241 — a date-only (noon-UTC) previous date is emitted as a bare date;
+  // there are no event_days for the old schedule to take hours from.
+  const previousIso = (d: Date | null | undefined) => {
+    const parsed = d ? parseDateLoose(d) : null;
+    if (!parsed) return undefined;
+    return isDateOnlySentinel(parsed) ? parsed.toISOString().slice(0, 10) : parsed.toISOString();
+  };
   const previousStartIso =
-    lifecycleStatus === "RESCHEDULED" && previousStartDate
-      ? (parseDateLoose(previousStartDate)?.toISOString() ?? undefined)
-      : undefined;
+    lifecycleStatus === "RESCHEDULED" ? previousIso(previousStartDate) : undefined;
   const previousEndIso =
-    lifecycleStatus === "RESCHEDULED" && previousEndDate
-      ? (parseDateLoose(previousEndDate)?.toISOString() ?? undefined)
-      : undefined;
+    lifecycleStatus === "RESCHEDULED" ? previousIso(previousEndDate) : undefined;
 
   // TAX1 Phase 3 (2026-06-02) — A7 SEO accuracy lever. When the event
   // is CLOSED to the public (members-only, credential-gated B2B,
