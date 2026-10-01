@@ -45,6 +45,13 @@ jobs:
       - name: Build with OpenNext adapter
         run: npx opennextjs-cloudflare build
 
+      # OPE-1128 — Safari < 16.4 cannot parse a lookbehind regex LITERAL, and one
+      # in any emitted chunk crashes every route that loads it. Source scans
+      # (check-browser-api-floor.ts) cannot see dependencies; the emitted chunks
+      # are what ships. Fails on a missing/empty chunk dir too.
+      - name: Guard emitted chunks against lookbehind regex literals
+        run: npx tsx scripts/check-emitted-regex-floor.ts .next/static/chunks
+
       - name: Measure worker size via wrangler dry-run
         run: |
           set -euo pipefail

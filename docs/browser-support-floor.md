@@ -82,6 +82,16 @@ compile time) and treats Drizzle `$defaultFn(() => …)` as deferred (it runs on
 on INSERT), because the db-schema barrel is client-reachable via
 `src/lib/vendor-status.ts`.
 
+**A source scan cannot see dependencies, so the emitted bundle is checked too.**
+The second instance (2026-09-30) was remark-gfm's email-autolink regex, a
+lookbehind _literal_ that reached the browser because `MarkdownContent` was a
+client component. A regex literal is checked when the whole script is parsed, so
+it fails the entire chunk. `MarkdownContent` now renders on the server, and
+`scripts/check-emitted-regex-floor.ts` runs after the OpenNext build in
+`opennext-size-check.yml`. It parses every `.next/static/chunks/*.js` and fails on
+any lookbehind regex **literal**. It does not flag strings passed to
+`new RegExp` inside a `try`, which is how core-js feature-tests and is harmless.
+
 ## Changing the floor
 
 1. Edit `package.json#browserslist` and this table.
