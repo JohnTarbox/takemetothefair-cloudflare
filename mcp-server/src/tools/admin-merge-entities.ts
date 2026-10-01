@@ -52,7 +52,7 @@ import {
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 import { jsonContent, unsafeSlug } from "../helpers.js";
-import { repointPromoterChildren } from "@takemetothefair/db-schema";
+import { repointPromoterChildren, repointVenueChildren } from "@takemetothefair/db-schema";
 
 export function registerMergeEntitiesTools(server: McpServer, db: Db, auth: AuthContext) {
   // ── merge_venue ─────────────────────────────────────────────────
@@ -135,6 +135,15 @@ export function registerMergeEntitiesTools(server: McpServer, db: Db, auth: Auth
         .returning({ id: events.id });
       const reassignedCount = reassignResult.length;
 
+      // OPE-1232 — every other table that REFERENCES venues: series hubs,
+      // series↔venue periods, name variants, claim citations, old redirects.
+      // Before this, 10 series hubs were left on `*-merged-*` tombstones.
+      const children = await repointVenueChildren(
+        db,
+        params.keeper_venue_id,
+        params.duplicate_venue_id
+      );
+
       // 2. Write slug-history row BEFORE the tombstone rename. Points
       //    at the KEEPER's id, so the duplicate's eventual delete (none
       //    today, but a future operator might run DELETE FROM venues
@@ -191,6 +200,7 @@ export function registerMergeEntitiesTools(server: McpServer, db: Db, auth: Auth
             duplicate_original_slug: dupRow.slug,
             duplicate_tombstone_slug: tombstoneSlug,
             events_reassigned: reassignedCount,
+            children_repointed: children,
             slug_history_written: true,
           }),
           createdAt: new Date(),
@@ -209,6 +219,7 @@ export function registerMergeEntitiesTools(server: McpServer, db: Db, auth: Auth
             duplicate_tombstone_slug: tombstoneSlug,
             keeper_slug: keeperRow.slug,
             events_reassigned: reassignedCount,
+            children_repointed: children,
             slug_history_written: true,
           }),
         ],
