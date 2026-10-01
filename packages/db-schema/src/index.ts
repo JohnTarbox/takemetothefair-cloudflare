@@ -3979,6 +3979,32 @@ export const unterminatedCrossingNoticeState = sqliteTable("unterminated_crossin
 // in a forwarded, DKIM-verified email ("visit us at Booth 510") but is not yet a
 // vendor. Staged, not created: a vendor row is a public page (John, option A).
 // Resolved by the MCP `review_exhibitor_proposal` tool. Unique per (email, event).
+/**
+ * OPE-328 (Demux D-3) — a gemba@ email, tagged with a project and queued for an
+ * agent session to post to that project's Linear anchor (no Linear credential on
+ * the Worker, per John's 2026-09-30 ruling). `held` = untaggable or no anchor
+ * yet: waits for a person, never guessed, never dropped.
+ */
+export const gembaObservations = sqliteTable(
+  "gemba_observations",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    inboundEmailId: text("inbound_email_id").notNull().unique(),
+    project: text("project"),
+    anchorIssue: text("anchor_issue"),
+    status: text("status", { enum: ["pending", "held", "posted"] })
+      .notNull()
+      .default("pending"),
+    routingReason: text("routing_reason").notNull(),
+    postedRef: text("posted_ref"),
+    postedAt: integer("posted_at", { mode: "timestamp" }),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [index("idx_gemba_observations_status").on(t.status, t.createdAt)]
+);
+
 export const exhibitorProposals = sqliteTable(
   "exhibitor_proposals",
   {

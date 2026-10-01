@@ -53,6 +53,7 @@ import {
   vendorSelfReportedEvents,
   performerEnrichmentCandidates,
   vendorCategoryWatchRuns,
+  gembaObservations,
 } from "@/lib/db/schema";
 import { SITE_URL } from "@takemetothefair/constants";
 import { NEAR_DUPLICATE_SWEEP_ACTION } from "@/lib/duplicates/near-duplicate-sweep";
@@ -203,6 +204,17 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
         workflowRunSteps.recordedAt,
         eq(workflowRunSteps.stepName, "roster-vendor-link")
       ),
+  },
+  {
+    // OPE-328 — gemba@ observations queued for an agent to post to Linear.
+    // DORMANT (enabled_at NULL, drizzle/0348) until the gemba@ Email Routing
+    // rule exists; then a month without one row means the lane went dark.
+    name: "gemba-observation",
+    ownerOpe: "OPE-328",
+    label: "gemba@ → gemba_observations queue",
+    priority: "P1",
+    expectedWindowHours: 720,
+    lastEvidenceAt: (db) => maxTs(db, gembaObservations, gembaObservations.createdAt),
   },
   {
     // OPE-1139 — the self-announced exhibitor lane (link an existing vendor

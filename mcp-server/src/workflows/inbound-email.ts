@@ -107,6 +107,7 @@ import { handle as handleUnsubscribe } from "../email-handlers/unsubscribe.js";
 import { handle as handleUnknown } from "../email-handlers/unknown.js";
 import { handle as handleSpam } from "../email-handlers/spam.js";
 import { handle as handleNoop } from "../email-handlers/noop.js";
+import { handle as handleGemba } from "../email-handlers/gemba.js";
 import { recordCrossing, ref } from "../inbound/crossing-ledger.js";
 import { routeToProject } from "../inbound/project-router.js";
 import {
@@ -369,6 +370,8 @@ const HANDLERS: Record<Exclude<EmailIntent, "submit" | "new_event">, HandlerFn> 
   // send the sender a "we couldn't understand this" reply after they had
   // just successfully signed up.
   newsletter_subscribe: handleNoop,
+  // OPE-328 — gemba@: queue the observation for an agent to post; no reply.
+  gemba_observation: handleGemba,
 };
 
 /** Map an error message thrown by a submit-leg or handler to a user-
