@@ -1583,7 +1583,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         // OPE-1251 — the operator dismissed it: no reply, an honest status.
         // The dismiss tool wrote the audit row before delivering the event.
         result = { ...result, status: "dismissed" };
-      } else if (disposition === "reply" && decision !== null) {
+      } else if (decision !== null) {
         const decisionKind = decisionToReplyKind(intent, decision);
         try {
           await step.do(

@@ -19,6 +19,10 @@ import { registerPromoterTools } from "./tools/promoter.js";
 import { registerAdminTools } from "./tools/admin.js";
 import { registerMarketPlayerTools } from "./tools/admin-market-players.js";
 import { registerInboundReadTools } from "./tools/admin-inbound-read.js";
+import {
+  registerDismissInboundTool,
+  type WorkflowInstanceBinding,
+} from "./tools/admin-dismiss-inbound.js";
 import { registerAdminEventReadTools } from "./tools/admin-event-read.js";
 import { registerAdminVendorReadTools } from "./tools/admin-vendor-read.js";
 import { registerAdminProblemReportTools } from "./tools/admin-problem-reports.js";
@@ -394,6 +398,13 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
         registerAdminProblemReportTools(this.server, db);
         // OPE-499 — inbound-correspondence read surface (input side of a submission).
         registerInboundReadTools(this.server, db, auth, this.env);
+        // OPE-1251 — the inbound lane's one WRITER, kept out of the read registrar.
+        registerDismissInboundTool(
+          this.server,
+          db,
+          auth,
+          this.env.INBOUND_EMAIL as unknown as WorkflowInstanceBinding | undefined
+        );
         // OPE-500 — read an event at ANY status (the public reader is APPROVED-only).
         registerAdminEventReadTools(this.server, db, auth);
         registerAdminVendorReadTools(this.server, db, auth);
@@ -551,6 +562,13 @@ async function handleLegacyMcpRequest(
       registerAdminTools(server, db, auth, env);
       registerAdminProblemReportTools(server, db);
       registerInboundReadTools(server, db, auth, env);
+      // OPE-1251 — the inbound lane's one WRITER, kept out of the read registrar.
+      registerDismissInboundTool(
+        server,
+        db,
+        auth,
+        env.INBOUND_EMAIL as unknown as WorkflowInstanceBinding | undefined
+      );
       registerAdminEventReadTools(server, db, auth);
       registerAdminVendorReadTools(server, db, auth);
       registerMergeEntitiesTools(server, db, auth);
