@@ -28,6 +28,10 @@ import { jsonContent } from "../helpers.js";
 import { mainAppFetch, type MainAppEnv } from "../main-app-fetch.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
+import {
+  registerDismissInboundTool,
+  type WorkflowInstanceBinding,
+} from "./admin-dismiss-inbound.js";
 
 /**
  * OPE-944 — what each `original_sender_auth` value licenses a reader to say.
@@ -85,6 +89,15 @@ export function registerInboundReadTools(
   }
 ) {
   if (auth.role !== "ADMIN") return;
+
+  // OPE-1251 — registered here so it rides both MCP registration paths
+  // (OAuth `this.server` and legacy `server`) with the same binding.
+  registerDismissInboundTool(
+    server,
+    db,
+    auth,
+    env?.INBOUND_EMAIL as unknown as WorkflowInstanceBinding | undefined
+  );
 
   // --- get_inbound_email ---------------------------------------------------
   server.tool(
