@@ -284,7 +284,7 @@ describe("submitEvent — retry contract", () => {
     );
     const result = await submitEvent(
       ENV,
-      { url: "https://x", event: { name: "My Fair" } },
+      { url: "https://x", event: { name: "My Fair", startDate: "2026-10-10" } },
       "alice@example.com",
       { inboundEmailId: "email-test", dedupWasBlind: false }
     );
@@ -297,29 +297,44 @@ describe("submitEvent — retry contract", () => {
     mockFetch(
       () => new Response(JSON.stringify({ success: false, error: "validation" }), { status: 400 })
     );
-    const err = await submitEvent(ENV, { url: "https://x", event: { name: "x" } }, "a@b.com", {
-      inboundEmailId: "email-test",
-      dedupWasBlind: false,
-    }).catch((e) => e);
+    const err = await submitEvent(
+      ENV,
+      { url: "https://x", event: { name: "x", startDate: "2026-10-10" } },
+      "a@b.com",
+      {
+        inboundEmailId: "email-test",
+        dedupWasBlind: false,
+      }
+    ).catch((e) => e);
     expect(err).toBeInstanceOf(NonRetryableError);
   });
 
   it("throws plain Error on 5xx (retry transient failures)", async () => {
     mockFetch(() => new Response("oops", { status: 502 }));
-    const err = await submitEvent(ENV, { url: "https://x", event: { name: "x" } }, "a@b.com", {
-      inboundEmailId: "email-test",
-      dedupWasBlind: false,
-    }).catch((e) => e);
+    const err = await submitEvent(
+      ENV,
+      { url: "https://x", event: { name: "x", startDate: "2026-10-10" } },
+      "a@b.com",
+      {
+        inboundEmailId: "email-test",
+        dedupWasBlind: false,
+      }
+    ).catch((e) => e);
     expect(err).toBeInstanceOf(Error);
     expect(err).not.toBeInstanceOf(NonRetryableError);
   });
 
   it("throws plain Error on network failure (retryable)", async () => {
     mockFetch(() => Promise.reject(new Error("ECONNREFUSED")));
-    const err = await submitEvent(ENV, { url: "https://x", event: { name: "x" } }, "a@b.com", {
-      inboundEmailId: "email-test",
-      dedupWasBlind: false,
-    }).catch((e) => e);
+    const err = await submitEvent(
+      ENV,
+      { url: "https://x", event: { name: "x", startDate: "2026-10-10" } },
+      "a@b.com",
+      {
+        inboundEmailId: "email-test",
+        dedupWasBlind: false,
+      }
+    ).catch((e) => e);
     expect(err).toBeInstanceOf(Error);
     expect(err).not.toBeInstanceOf(NonRetryableError);
   });
