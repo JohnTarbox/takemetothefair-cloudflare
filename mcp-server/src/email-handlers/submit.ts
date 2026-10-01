@@ -447,12 +447,15 @@ export async function submitExtract(
         // a single event from deterministic signals when AI returns 0.
         extractionMethod?: "json-ld" | "ai" | "thin";
       }
-    | { success: false; error: string }
+    | { success: false; error: string; aiFailure?: string }
     | null;
   if (!body || !body.success || body.events.length === 0) {
     const upstream =
       body && "error" in body ? body.error : body && body.success ? "zero-events" : "no-body";
-    throw new NonRetryableError(`extract-upstream: ${upstream}`);
+    // OPE-1249 — the route's own record of WHY the AI failed, so a timeout is
+    // classified as one instead of as `other`.
+    const ai = body && !body.success && body.aiFailure ? ` [ai: ${body.aiFailure}]` : "";
+    throw new NonRetryableError(`extract-upstream: ${upstream}${ai}`);
   }
   // Default extractionMethod to 'ai' when the upstream doesn't return the
   // field (older deploy / fallback path). The endpoint returns 'json-ld'
@@ -548,12 +551,15 @@ export async function submitFreeTextExtract(
         count: number;
         confidence?: Record<string, Record<string, "high" | "medium" | "low">>;
       }
-    | { success: false; error: string }
+    | { success: false; error: string; aiFailure?: string }
     | null;
   if (!body || !body.success || body.events.length === 0) {
     const upstream =
       body && "error" in body ? body.error : body && body.success ? "zero-events" : "no-body";
-    throw new NonRetryableError(`extract-upstream: ${upstream}`);
+    // OPE-1249 — the route's own record of WHY the AI failed, so a timeout is
+    // classified as one instead of as `other`.
+    const ai = body && !body.success && body.aiFailure ? ` [ai: ${body.aiFailure}]` : "";
+    throw new NonRetryableError(`extract-upstream: ${upstream}${ai}`);
   }
   const event = body.events[0];
   const extractId = event._extractId;
