@@ -209,16 +209,25 @@ export function trackOutboundApplicationClick(eventSlug: string, destinationUrl:
   });
 }
 
-/** Track a click on an outbound ticket URL on an event detail page. */
-export function trackOutboundTicketClick(eventSlug: string, destinationUrl: string) {
+/** Track a click on an outbound ticket URL on an event detail page.
+ *  `ctaSource` (OPE-265) says which field the link came from, so the CTA
+ *  experiment's `source_url` fallback clicks are separable from ticket-URL
+ *  clicks. Omitted by callers that predate it, and then absent from the row. */
+export function trackOutboundTicketClick(
+  eventSlug: string,
+  destinationUrl: string,
+  ctaSource?: "ticket_url" | "source_url"
+) {
   trackEvent("outbound_ticket_click", {
     category: "conversion",
     label: eventSlug,
     destination_url: destinationUrl,
+    ...(ctaSource ? { cta_source: ctaSource } : {}),
   });
   sendBeacon("outbound_ticket_click", "conversion", {
     eventSlug,
     destinationUrl,
+    ...(ctaSource ? { ctaSource } : {}),
     // OPE-1165 — the tab session's GA4-style attribution, so the conversion
     // rate can count organic clicks against organic sessions.
     ...trafficProps(),

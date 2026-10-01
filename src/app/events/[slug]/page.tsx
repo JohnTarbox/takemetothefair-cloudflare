@@ -99,6 +99,8 @@ import { PrintBeacon } from "@/components/print/PrintBeacon";
 import { formatDateMedium } from "@/lib/datetime";
 import { cdnImage } from "@/lib/cdn-image";
 import { DERIVED_DATE_EXPLANATION, shouldShowProjectedDateCopy } from "@/lib/events/derived-date";
+import { isFairgoerSourceUrl, pickEventCta } from "@/lib/events/event-cta";
+import { gateUrlOnce } from "@/lib/url-classification";
 
 export const revalidate = 300; // Cache for 5 minutes
 
@@ -444,6 +446,29 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
   // anything. Empty for ~all events today, so the block and the JSON-LD change
   // are both no-ops until photos exist.
   const eventGallery = await getEventGallery(getCloudflareDb(), event.id, event.name);
+  // OPE-265 — the primary CTA. Without a ticket URL the page used to render no
+  // outbound button at all (91% of upcoming events). The source_url fallback
+  // must pass the shape check AND the aggregator gate the ingestion paths use
+  // for ticket_url; one small query, and only when there is no ticket URL. A
+  // failed gate read drops the fallback, never the page.
+  let vettedSourceUrl: string | null = null;
+  if (!event.ticketUrl?.trim() && isFairgoerSourceUrl(event.sourceUrl)) {
+    try {
+      vettedSourceUrl = await gateUrlOnce(getCloudflareDb(), event.sourceUrl, "ticket");
+    } catch (error) {
+      await logError(getCloudflareDb(), {
+        message: "Event CTA classification gate read failed",
+        error,
+        source: "app/events/[slug]/page.tsx:primaryCta",
+        context: { slug },
+      });
+    }
+  }
+  const primaryCta = pickEventCta({
+    ticketUrl: event.ticketUrl,
+    vettedSourceUrl,
+    ticketPriceMaxCents: event.ticketPriceMaxCents,
+  });
   let emitPerformerSubevents = false;
   try {
     emitPerformerSubevents =
@@ -1495,11 +1520,16 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
                   </div>
                 )}
 
-                {event.ticketUrl && (
-                  <OutboundEventLink kind="ticket" eventSlug={event.slug} href={event.ticketUrl}>
+                {primaryCta && (
+                  <OutboundEventLink
+                    kind="ticket"
+                    eventSlug={event.slug}
+                    href={primaryCta.url}
+                    ctaSource={primaryCta.ctaSource}
+                  >
                     <Button className="w-full" size="lg">
                       <ExternalLink className="w-4 h-4 mr-2" />
-                      Event Website
+                      {primaryCta.label}
                     </Button>
                   </OutboundEventLink>
                 )}
