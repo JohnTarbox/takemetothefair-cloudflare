@@ -3971,6 +3971,39 @@ export const unterminatedCrossingNoticeState = sqliteTable("unterminated_crossin
   lastNotifiedAt: integer("last_notified_at", { mode: "timestamp" }).notNull(),
 });
 
+// OPE-1139 (drizzle/0343) — a business that announced ITSELF as an exhibitor
+// in a forwarded, DKIM-verified email ("visit us at Booth 510") but is not yet a
+// vendor. Staged, not created: a vendor row is a public page (John, option A).
+// Resolved by the MCP `review_exhibitor_proposal` tool. Unique per (email, event).
+export const exhibitorProposals = sqliteTable(
+  "exhibitor_proposals",
+  {
+    id: text("id").primaryKey(),
+    eventId: text("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    inboundEmailId: text("inbound_email_id").notNull(),
+    businessName: text("business_name"),
+    website: text("website"),
+    senderAddress: text("sender_address"),
+    city: text("city"),
+    state: text("state"),
+    boothInfo: text("booth_info"),
+    /** The first-person phrase that triggered the lane. */
+    evidence: text("evidence"),
+    /** pending | approved | rejected */
+    status: text("status").notNull().default("pending"),
+    resolvedVendorId: text("resolved_vendor_id"),
+    resolutionNote: text("resolution_note"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    resolvedAt: integer("resolved_at", { mode: "timestamp" }),
+  },
+  (t) => [
+    uniqueIndex("idx_exhibitor_proposals_email_event").on(t.inboundEmailId, t.eventId),
+    index("idx_exhibitor_proposals_status").on(t.status, t.createdAt),
+  ]
+);
+
 export const rosterResearchNoticeState = sqliteTable("roster_research_notice_state", {
   id: text("id").primaryKey(),
   lastNoticeDate: text("last_notice_date").notNull(),
@@ -5341,9 +5374,13 @@ export const inboundEmails = sqliteTable(
      * `originalSenderDomainAligned` is set only when a signature actually
      * VERIFIED; a `d=` on a failed signature says nothing about who sent it.
      *
-     * ⚠️ REPORT-ONLY, same contract as the block above. Nothing branches on
-     * these — not routing, not trust, not auto-publication, not a reply. That
-     * remains John's call on OPE-765 / OPE-839.
+     * ⚠️ REPORT-ONLY, same contract as the block above, with ONE authorised
+     * exception: the OPE-1139 self-announced-exhibitor lane
+     * (mcp-server/src/email-handlers/self-announcement.ts) runs only when
+     * `originalSenderAuth='verified'` AND domain-aligned (John, 2026-09-30,
+     * option A). Nothing else branches on these — not routing, not trust, not
+     * event auto-publication, not a reply. That remains John's call on
+     * OPE-765 / OPE-839.
      *
      * NULL means no verdict was recorded: the row predates capture, or the
      * analysis threw (which logs a warn, so the two stay distinguishable). It

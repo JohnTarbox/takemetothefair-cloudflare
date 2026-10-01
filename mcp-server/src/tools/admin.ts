@@ -216,6 +216,7 @@ import { registerClaimCorroborateTool } from "./admin-claim-corroborate.js";
 import { registerPhotoProposalTools } from "./admin-photo-proposals.js";
 import { registerHeroProposalTools } from "./admin-hero-proposals.js";
 import { eventDaysOutsideRange } from "../events/event-days-range.js";
+import { registerExhibitorProposalTools } from "./admin-exhibitor-proposals.js";
 import { registerCategoryCleanupTool } from "./admin-category-cleanup.js";
 import { registerPropagateHoursTool } from "./admin-propagate-hours.js";
 import {
@@ -514,6 +515,8 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   registerPhotoProposalTools(server, db, auth);
   // OPE-227 — the photo flywheel's hero proposals: list + approve/reject.
   registerHeroProposalTools(server, db, auth, env);
+  // OPE-1139 — staged self-announced exhibitors: list + approve/reject.
+  registerExhibitorProposalTools(server, db, auth);
   // OPE-1058 — the operator handle on the one-time category rewrite.
   registerCategoryCleanupTool(server, auth, env);
   // OPE-1078 — carry a sourced day's hours to a recurring market's siblings.
