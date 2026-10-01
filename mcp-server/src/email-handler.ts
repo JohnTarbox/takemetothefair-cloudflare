@@ -45,6 +45,7 @@ import {
 } from "./email-handlers/forwarded-message.js";
 import { createDohResolver } from "./email-handlers/dkim-verify.js";
 import { getDb, type Db } from "./db.js";
+import { findHeldPhotoParents, parseThreadMessageIds } from "./photo/resolve-held-photos.js";
 import {
   inboundEmails,
   inboundEmailSenders,
@@ -1771,6 +1772,83 @@ async function lookupSenderTrust(db: D1Database, fromAddr: string): Promise<Send
   }
 }
 
+/**
+ * OPE-254 — a reply threaded to a held photo goes to the held-photo resolver,
+ * whatever its words look like.
+ *
+ * The hold notice says "reply to this email naming the fair", and the resolver
+ * for that reply (`resolveHeldPhotosFromReply`) is reached only through the
+ * `correction` handler. A reply only got there if the CLASSIFIER called it a
+ * correction — and a bare fair name does not read like one. Since #990 shipped,
+ * every real reply took another lane: "New Portland Lions Fair" (09-18,
+ * `unknown`, forwarded) and "Senior Expo / Southern Maine Successful Aging Expo
+ * 2026" (10-01 `a38d02bf`, `new_event`, prose extraction failed). The row had
+ * recorded that it threaded to a held photo; routing ignored it.
+ *
+ * Thread parentage is a fact; the intent label is a guess. So this runs BEFORE
+ * the classifier and the trusted fast-path, keyed on the same predicate the
+ * resolver itself uses (`findHeldPhotoParents`: the parent's message-id is in
+ * the reply's In-Reply-To/References, it is still `photo-intake-unresolved`
+ * with no event, and it is from the same sender). One predicate, so a reply
+ * routed here is exactly a reply the resolver will find parents for.
+ *
+ * Routing to `correction` rather than a new lane keeps the fall-through: a
+ * reply that threads to a hold but names no resolvable fair continues as an
+ * ordinary correction, which is what it was before #990.
+ *
+ * Fail-soft: a lookup error returns null and the classifier routes as before.
+ */
+export async function heldPhotoReplyRouting(
+  dbOrD1: Db | D1Database,
+  args: { fromAddr: string; inReplyTo: string | null; references: string | null; sessionId: string }
+): Promise<RoutingDecision | null> {
+  const ids = parseThreadMessageIds(args.inReplyTo, args.references);
+  if (ids.length === 0) return null;
+  let parents: { id: string }[];
+  try {
+    const db =
+      typeof (dbOrD1 as { insert?: unknown }).insert === "function"
+        ? (dbOrD1 as Db)
+        : getDb(dbOrD1 as D1Database);
+    parents = await findHeldPhotoParents(db, ids, args.fromAddr);
+  } catch (err) {
+    await logError(dbOrD1, {
+      level: "warn",
+      source: SOURCE,
+      message: "held-photo reply lookup failed; routing by classifier",
+      error: err,
+      sessionId: args.sessionId,
+    });
+    return null;
+  }
+  if (parents.length === 0) return null;
+
+  const rationale = `held-photo-reply: threads to ${parents.length} held photo email(s) (${parents
+    .map((p) => p.id.slice(0, 8))
+    .join(", ")})`;
+  return {
+    routed: [
+      {
+        intent: "correction",
+        classifiedIntent: null,
+        classifiedSubIntent: null,
+        confidence: null,
+        rationale,
+        routingSource: "held_photo_reply",
+        flaggedForReview: false,
+        refUrl: null,
+      },
+    ],
+    classifierVersion: null,
+    routingSource: "held_photo_reply",
+    aggregateConfidence: null,
+    aggregateRationale: rationale,
+    flaggedForReview: false,
+    spamQuarantine: false,
+    spamRationale: "",
+  };
+}
+
 /** Drive the per-email routing decision. Single source of truth for the
  *  classifier ↔ address-fallback ↔ trusted-fastpath logic. Pure(ish) —
  *  reaches into env.AI for the classifier call but does not write to D1
@@ -1816,6 +1894,15 @@ async function computeRouting(args: {
   // (SPF/DKIM/DMARC). On "fail" we skip the fast-path and fall through to the
   // full classifier, so a spoofed From of a trusted sender gets normal
   // scrutiny instead of a free pass. "unknown" still takes the fast-path.
+  // OPE-254 — before the fast-path AND the classifier: see heldPhotoReplyRouting.
+  const heldPhotoReply = await heldPhotoReplyRouting(env.DB, {
+    fromAddr,
+    inReplyTo,
+    references,
+    sessionId,
+  });
+  if (heldPhotoReply) return heldPhotoReply;
+
   const replyChainHeader = isReplyToOurThread(inReplyTo, references);
   if (senderTrust === "trusted" && emailAuth !== "fail" && env.AI) {
     const fastpath = hasMultiIntentOrSpecialSignal({
