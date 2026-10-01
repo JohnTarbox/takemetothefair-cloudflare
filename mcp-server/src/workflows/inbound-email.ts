@@ -141,6 +141,7 @@ import {
   mergeRosterLinkOutcomes,
   ROSTER_LINK_MAX,
 } from "../email-handlers/roster-link.js";
+import { recordSelfAnnouncedExhibitor } from "../email-handlers/self-announcement.js";
 import {
   crawlSecondaryPages,
   applyCrawlEnrichment,
@@ -3593,6 +3594,81 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     });
   }
 
+  /**
+   * OPE-1139 — an exhibitor announcing ITSELF ("visit us at Booth 510"). Runs
+   * beside every roster-link call site: created, keeper and fan-out. An existing
+   * vendor matched exactly is linked live; anyone else is staged in
+   * `exhibitor_proposals` (John, option A). Never creates a vendor.
+   *
+   * Best-effort like the roster lane: the event already exists. The step record
+   * is written on every evaluation, declines included, so "the lane ran and
+   * declined" and "the lane never ran" stay distinguishable.
+   */
+  private async recordSelfAnnouncementBestEffort(
+    step: WorkflowStep,
+    labelPrefix: string,
+    instanceId: string,
+    messageRowId: string,
+    eventId: string,
+    emailBody: string | null
+  ): Promise<void> {
+    let outcome: Awaited<ReturnType<typeof recordSelfAnnouncedExhibitor>> | { kind: "error" };
+    try {
+      outcome = await step.do(
+        `${labelPrefix}/self-announcement`,
+        { retries: { limit: 1, delay: "5 seconds", backoff: "constant" }, timeout: "30 seconds" },
+        async () => {
+          const [fwd] = await getDb(this.env.DB)
+            .select({
+              address: inboundEmails.originalSenderAddress,
+              auth: inboundEmails.originalSenderAuth,
+              aligned: inboundEmails.originalSenderDomainAligned,
+            })
+            .from(inboundEmails)
+            .where(eq(inboundEmails.id, messageRowId))
+            .limit(1);
+          return recordSelfAnnouncedExhibitor(
+            getDb(this.env.DB),
+            {
+              eventId,
+              inboundEmailId: messageRowId,
+              originalSenderAddress: fwd?.address ?? null,
+              originalSenderAuth: fwd?.auth ?? null,
+              originalSenderDomainAligned: fwd?.aligned ?? null,
+              body: emailBody,
+            },
+            { actorUserId: null, recomputeVendorCompleteness, logEnrichment }
+          );
+        }
+      );
+    } catch (err) {
+      outcome = { kind: "error" };
+      await logError(getDb(this.env.DB), {
+        message: "self-announced exhibitor step failed; event unaffected",
+        error: err,
+        source: SOURCE,
+        context: { eventId, messageRowId },
+      });
+    }
+    await recordWorkflowStep(getDb(this.env.DB), {
+      instanceId,
+      workflowName: "inbound-email",
+      inboundEmailId: messageRowId,
+      stepName: "self-announced-exhibitor",
+      status:
+        outcome.kind === "linked" ||
+        outcome.kind === "already_linked" ||
+        outcome.kind === "proposed"
+          ? "ok"
+          : outcome.kind === "error"
+            ? "failed"
+            : "skipped",
+      detail: { event_id: eventId, ...outcome },
+    }).catch(() => {
+      // Cosmetic-failsoft, like every other observability write here.
+    });
+  }
+
   private async recordCitationsBestEffort(
     step: WorkflowStep,
     label: string,
@@ -4499,6 +4575,16 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             only.crawlRosterSource.url
           );
         }
+        // OPE-1139 — the sender announcing itself as an exhibitor. Every site
+        // that links a roster also runs this (OPE-847's three-site discipline).
+        await this.recordSelfAnnouncementBestEffort(
+          step,
+          "submit/single",
+          instanceId,
+          messageRowId,
+          res.resultingEventId,
+          emailBody
+        );
       }
       if (only.mergedSiblings?.length && res.resultingEventId) {
         await this.recordMergedSiblingCitations(
@@ -4620,6 +4706,14 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
                 cand.crawlRosterSource.url
               );
             }
+            await this.recordSelfAnnouncementBestEffort(
+              step,
+              `${labelPrefix}/keeper`,
+              instanceId,
+              messageRowId,
+              dedup.existingEventId,
+              emailBody
+            );
             if (cand.mergedSiblings?.length) {
               await this.recordMergedSiblingCitations(
                 step,
@@ -4692,6 +4786,14 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             cand.crawlRosterSource.url
           );
         }
+        await this.recordSelfAnnouncementBestEffort(
+          step,
+          labelPrefix,
+          instanceId,
+          messageRowId,
+          submitted.id,
+          emailBody
+        );
         if (cand.mergedSiblings?.length) {
           await this.recordMergedSiblingCitations(
             step,
