@@ -1457,6 +1457,27 @@ const SCHEMA_SQL = `
     last_notified_at INTEGER NOT NULL
   );
 
+  -- OPE-1139 (drizzle/0343) — staged self-announced exhibitors.
+  CREATE TABLE exhibitor_proposals (
+    id TEXT PRIMARY KEY,
+    event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    inbound_email_id TEXT NOT NULL,
+    business_name TEXT,
+    website TEXT,
+    sender_address TEXT,
+    city TEXT,
+    state TEXT,
+    booth_info TEXT,
+    evidence TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    resolved_vendor_id TEXT,
+    resolution_note TEXT,
+    created_at INTEGER NOT NULL,
+    resolved_at INTEGER
+  );
+  CREATE UNIQUE INDEX idx_exhibitor_proposals_email_event
+    ON exhibitor_proposals (inbound_email_id, event_id);
+
   -- OPE-37 (drizzle/0142) — promoter-enrichment notice debounce state. The
   -- notice module reads/upserts this single-row table, so the test schema needs it.
   CREATE TABLE promoter_enrichment_notice_state (

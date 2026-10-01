@@ -217,6 +217,7 @@ describe("OPE-975 — every probe's window is pinned", () => {
       "vendor-self-reported-events": 30 * 24,
       "performer-enrichment-producer": 7 * 24,
       "request-sample-retention": 48,
+      "self-announced-exhibitor": 720,
       "unterminated-crossing-notice": 6,
       "error-log-retention": 48,
       "indexnow-submission-retention": 48,
