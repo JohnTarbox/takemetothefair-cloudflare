@@ -192,6 +192,59 @@ describe("it emits rather than silently suppressing (scope 4)", () => {
   });
 });
 
+/**
+ * OPE-465 — John, 2026-09-30: "details to follow" submissions are FLAGGED for
+ * review, not refused. The UMF December fair, verbatim.
+ */
+describe("a 'details to follow' submission is created AND flagged", () => {
+  const UMF =
+    "Thank you for your interest! Information regarding the December Craft Fair will be sent out later this year.";
+
+  it("the UMF specimen (no dates at all) still creates, and lands in the review queue", async () => {
+    await submitEvent(
+      envFor(),
+      extracted({ name: "UMF December Craft Fair", startDate: null, endDate: null }),
+      "organizer@example.org",
+      { inboundEmailId: "in-1", dedupWasBlind: false, sourceTexts: [UMF] }
+    );
+    expect(posted).not.toBeNull(); // created, not refused
+    const row = raw
+      .prepare("SELECT flagged_for_review FROM inbound_emails WHERE id = 'in-1'")
+      .get() as { flagged_for_review: number };
+    expect(row.flagged_for_review).toBe(1);
+    const action = raw
+      .prepare("SELECT payload_json FROM admin_actions WHERE action = 'extract.ungrounded'")
+      .get() as { payload_json: string };
+    expect(JSON.parse(action.payload_json)).toMatchObject({
+      droppedFields: [],
+      detailsForthcoming: true,
+    });
+    const fault = raw
+      .prepare(
+        "SELECT signature FROM extraction_faults WHERE signature = 'extract.details_forthcoming'"
+      )
+      .get();
+    expect(fault).toBeTruthy();
+  });
+
+  it("an ordinary dateless submission (nothing says 'to follow') is NOT flagged", async () => {
+    await submitEvent(
+      envFor(),
+      extracted({ name: "Fall Fair", startDate: null, endDate: null }),
+      "organizer@example.org",
+      {
+        inboundEmailId: "in-1",
+        dedupWasBlind: false,
+        sourceTexts: ["Our fall fair has crafts and food."],
+      }
+    );
+    const row = raw
+      .prepare("SELECT flagged_for_review FROM inbound_emails WHERE id = 'in-1'")
+      .get() as { flagged_for_review: number };
+    expect(row.flagged_for_review).toBe(0);
+  });
+});
+
 describe("structural guard — no creation path can skip the source text", () => {
   const SRC = readFileSync(
     fileURLToPath(new URL("../src/workflows/inbound-email.ts", import.meta.url)),
