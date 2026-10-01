@@ -5374,9 +5374,13 @@ export const inboundEmails = sqliteTable(
      * `originalSenderDomainAligned` is set only when a signature actually
      * VERIFIED; a `d=` on a failed signature says nothing about who sent it.
      *
-     * ⚠️ REPORT-ONLY, same contract as the block above. Nothing branches on
-     * these — not routing, not trust, not auto-publication, not a reply. That
-     * remains John's call on OPE-765 / OPE-839.
+     * ⚠️ REPORT-ONLY, same contract as the block above, with ONE authorised
+     * exception: the OPE-1139 self-announced-exhibitor lane
+     * (mcp-server/src/email-handlers/self-announcement.ts) runs only when
+     * `originalSenderAuth='verified'` AND domain-aligned (John, 2026-09-30,
+     * option A). Nothing else branches on these — not routing, not trust, not
+     * event auto-publication, not a reply. That remains John's call on
+     * OPE-765 / OPE-839.
      *
      * NULL means no verdict was recorded: the row predates capture, or the
      * analysis threw (which logs a warn, so the two stay distinguishable). It
