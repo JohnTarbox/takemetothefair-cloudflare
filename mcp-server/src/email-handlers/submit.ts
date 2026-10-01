@@ -78,6 +78,29 @@ export interface SubmitFetchResult {
    *  (the origin has no working TLS). Lower-confidence: the workflow flags
    *  the email for review. Absent on an older main-app deploy. */
   transport?: "https" | "http";
+  /** OPE-1250 — set when `url` is the page a cross-host redirect landed on
+   *  (a share.google / shortener link). The link the sender actually sent is
+   *  kept here as secondary provenance; `url` is what dedup and citations use. */
+  requestedUrl?: string;
+}
+
+/**
+ * OPE-1250 — adopt a redirect's final URL only when it changed HOST. A share or
+ * short link (share.google → wgme.com) is opaque and unique per share, so
+ * storing it as `source_url` defeats URL dedup and provenance. A same-host
+ * redirect (http→https, a trailing slash, www.) is left alone: existing
+ * `source_url` dedup keys were stored in that form and must keep matching.
+ */
+export function adoptFinalUrl(requested: string, finalUrl: string | null | undefined): string {
+  if (!finalUrl || finalUrl === requested) return requested;
+  try {
+    const host = (u: string) => new URL(u).hostname.toLowerCase().replace(/^www\./, "");
+    const f = new URL(finalUrl);
+    if (f.protocol !== "https:" && f.protocol !== "http:") return requested;
+    return host(requested) === host(finalUrl) ? requested : finalUrl;
+  } catch {
+    return requested;
+  }
 }
 
 export interface SubmitExtractResult {
@@ -337,6 +360,8 @@ export async function submitFetch(env: HandlerEnv, url: string): Promise<SubmitF
         jsonLd?: unknown;
         fetchMethod?: "standard" | "browser-rendering";
         transport?: "https" | "http";
+        /** OPE-1250 — post-redirect URL, when it differs from the requested one. */
+        finalUrl?: string;
       }
     | { success: false; error: string; fetchMethod?: "failed" | "pdf_unsupported" }
     | null;
@@ -352,8 +377,10 @@ export async function submitFetch(env: HandlerEnv, url: string): Promise<SubmitF
     }
     throw new NonRetryableError(`fetch-upstream: ${upstream}`);
   }
+  const adopted = adoptFinalUrl(url, body.finalUrl);
   return {
-    url,
+    url: adopted,
+    ...(adopted !== url ? { requestedUrl: url } : {}),
     content: body.content.slice(0, MAX_FETCH_CONTENT_LEN),
     // Capped so a link-farm footer cannot push a Workflow step output toward
     // the 1 MiB ceiling. The crawl cap is 15 pages; 300 candidates is far more
@@ -447,12 +474,15 @@ export async function submitExtract(
         // a single event from deterministic signals when AI returns 0.
         extractionMethod?: "json-ld" | "ai" | "thin";
       }
-    | { success: false; error: string }
+    | { success: false; error: string; aiFailure?: string }
     | null;
   if (!body || !body.success || body.events.length === 0) {
     const upstream =
       body && "error" in body ? body.error : body && body.success ? "zero-events" : "no-body";
-    throw new NonRetryableError(`extract-upstream: ${upstream}`);
+    // OPE-1249 — the route's own record of WHY the AI failed, so a timeout is
+    // classified as one instead of as `other`.
+    const ai = body && !body.success && body.aiFailure ? ` [ai: ${body.aiFailure}]` : "";
+    throw new NonRetryableError(`extract-upstream: ${upstream}${ai}`);
   }
   // Default extractionMethod to 'ai' when the upstream doesn't return the
   // field (older deploy / fallback path). The endpoint returns 'json-ld'
@@ -548,12 +578,15 @@ export async function submitFreeTextExtract(
         count: number;
         confidence?: Record<string, Record<string, "high" | "medium" | "low">>;
       }
-    | { success: false; error: string }
+    | { success: false; error: string; aiFailure?: string }
     | null;
   if (!body || !body.success || body.events.length === 0) {
     const upstream =
       body && "error" in body ? body.error : body && body.success ? "zero-events" : "no-body";
-    throw new NonRetryableError(`extract-upstream: ${upstream}`);
+    // OPE-1249 — the route's own record of WHY the AI failed, so a timeout is
+    // classified as one instead of as `other`.
+    const ai = body && !body.success && body.aiFailure ? ` [ai: ${body.aiFailure}]` : "";
+    throw new NonRetryableError(`extract-upstream: ${upstream}${ai}`);
   }
   const event = body.events[0];
   const extractId = event._extractId;

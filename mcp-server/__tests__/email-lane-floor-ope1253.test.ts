@@ -154,6 +154,9 @@ describe("ACCEPTANCE — replaying 46d46ee0 creates zero rows and records why", 
     const r = await run();
     expect(submits).toHaveLength(0);
     expect(r.extractFailReason).toBe("non-event-name");
+    // The tracker WAS tried, so the reply is chosen as unfetchable-url here —
+    // not `no-url` downgraded at send by the OPE-453 invariant (OPE-1249).
+    expect(r.replyKind).toBe("unfetchable-url");
   });
 
   it("a real name with no date is refused too (the dateless floor)", async () => {
