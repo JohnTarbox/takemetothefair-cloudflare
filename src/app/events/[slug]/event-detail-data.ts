@@ -35,6 +35,7 @@ import { logError } from "@/lib/logger";
 import { buildEventTitle, buildEventMetaDescription } from "@/lib/seo-utils";
 import { cdnImage, OG_EVENT } from "@/lib/cdn-image";
 import { getSeriesLanding } from "@/lib/series/get-series-landing";
+import { seriesHubCanonicalPath } from "@/lib/series/occurrence-view";
 import { chunkedInArray } from "@takemetothefair/utils";
 import { withD1ReadLogged } from "@/lib/db/d1-resilience";
 
@@ -258,7 +259,8 @@ async function getEventOnce(slug: string) {
  */
 export async function buildEventMetadata(slug: string, asOccurrence = false): Promise<Metadata> {
   // EH3 P2.3 — series-first resolution. When the slug is a series canonical_slug,
-  // render the series-landing metadata (self-canonical to /events/<series>).
+  // render the series-landing metadata. OPE-589: its canonical is the hero
+  // occurrence's /events/<series>/<year>, NOT itself (see seriesHubCanonicalPath).
   // Returns null until the gated backfill creates series, so event pages are
   // unaffected today.
   // K46 — the /year occurrence route passes asOccurrence so the occurrence
@@ -266,6 +268,13 @@ export async function buildEventMetadata(slug: string, asOccurrence = false): Pr
   const landing = asOccurrence ? null : await getSeriesLanding(slug);
   if (landing) {
     const url = `${SITE_URL}/events/${landing.series.canonicalSlug}`;
+    // OPE-589 — the hub is served, but the canonical is the hero occurrence's
+    // /year page, agreeing with the sitemap (John, 2026-09-30).
+    const canonical = `${SITE_URL}${seriesHubCanonicalPath(
+      landing.series.canonicalSlug,
+      landing.occurrences,
+      new Date()
+    )}`;
     const title = `${landing.series.name} — Meet Me at the Fair`;
     const description =
       landing.series.description ??
@@ -281,7 +290,7 @@ export async function buildEventMetadata(slug: string, asOccurrence = false): Pr
     return {
       title,
       description,
-      alternates: { canonical: url },
+      alternates: { canonical },
       openGraph: {
         title,
         description,

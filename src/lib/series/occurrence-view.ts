@@ -96,6 +96,29 @@ export function pickHeroOccurrence(occurrences: OccurrenceRow[], now: Date): Occ
 }
 
 /**
+ * OPE-589 — the canonical path for a series hub (`/events/<series>`).
+ *
+ * John's ruling 2026-09-30: for a recurring event the `/<year>` page is the
+ * canonical URL. Measured 2026-09-08 over gsc_search_metrics: occurrence pages
+ * `/events/<slug>/<year>` 601k impressions at 2.35% CTR; series hubs 74k at
+ * 0.69% — the hub ranked and then failed to satisfy, while declaring itself
+ * canonical against the sitemap (which already lists the /year form).
+ *
+ * The hub keeps serving (a canonical is not a redirect); it points search
+ * engines at the hero occurrence — the same one the landing page leads with —
+ * using the same UTC-year rule as the sitemap's `canonicalEventPath`. A series
+ * with no dated occurrence stays self-canonical: there is no /year to name.
+ */
+export function seriesHubCanonicalPath(
+  canonicalSlug: string,
+  occurrences: OccurrenceRow[],
+  now: Date
+): string {
+  const hero = pickHeroOccurrence(occurrences, now);
+  return hero?.year != null ? `/events/${canonicalSlug}/${hero.year}` : `/events/${canonicalSlug}`;
+}
+
+/**
  * OPE-182 — read-through for the drift-prone denormalized `event_series` columns.
  *
  * `event_series.description` and `.image_url` are write-once backfill SNAPSHOTS:
