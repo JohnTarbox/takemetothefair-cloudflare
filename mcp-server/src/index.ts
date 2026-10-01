@@ -85,6 +85,7 @@ import { runScheduledStalePageRadar } from "./goodwill/stale-page-radar.js";
 import { runOccurredTransitionSweep } from "./event-occurred-sweep.js";
 
 import { runInboundExceptionNotice } from "./inbound-exception-notice.js";
+import { runUnterminatedCrossingNotice } from "./inbound/unterminated-crossing-notice.js";
 import { runWeeklyInventoryNotice } from "./weekly-inventory-notice.js";
 import { runScheduledVendorCategoryWatch } from "./vendor-category-watch.js";
 import { runScheduledSelfConsistencyCron } from "./goodwill/self-consistency-cron.js";
@@ -229,6 +230,11 @@ type Env = WorkerEnv &
     // outbound MCP email. Independent of the Slack webhook — set either,
     // both, or neither.
     ALERT_EMAIL_TECHNICAL?: string;
+    // OPE-366 — recipient for the unterminated-crossing E2 alarm (committed
+    // [vars]; John's 2026-09-30 ruling named john@pimboat.com).
+    UNTERMINATED_CROSSING_ALERT_EMAIL?: string;
+    // OPE-366 — hours a crossing may sit destination-less before it counts.
+    UNTERMINATED_CROSSING_AGE_HOURS?: string;
     // OPE-1239 — optional read-only GitHub token for the CI-trigger watchdog.
     // The repo is public, so the watchdog works without it; set it only to lift
     // the shared unauthenticated rate limit (`wrangler secret put GITHUB_TOKEN`).
@@ -1699,6 +1705,10 @@ export default {
           runScheduledPendingPingsFlush(env),
           // OPE-93 — hourly render-fault emitter run (error_logs → fault_signatures).
           runScheduledFaultCandidatesEmit(env),
+          // OPE-366 — E2 conditional push: email when a NEW membrane crossing
+          // has sat destination-less past the age threshold. The standing
+          // backlog stays in the Monday inventory. Failsoft (catches its own).
+          runUnterminatedCrossingNotice(env, getDb(env.DB)).then(() => undefined),
         ])
       );
       return;
