@@ -5,6 +5,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { render } from "@testing-library/react";
+import type { ComponentProps } from "react";
 import { EventSchema, isDateOnlySentinel } from "../EventSchema";
 
 function ld(container: HTMLElement): Record<string, unknown> {
@@ -15,15 +16,18 @@ const noon = (d: string) => new Date(`${d}T12:00:00Z`);
 const base = {
   name: "A Different Drummer Craft Fair",
   slug: "a-different-drummer-craft-fair-october-2026",
+  url: "https://meetmeatthefair.com/events/a-different-drummer-craft-fair-october/2026",
   venue: { name: "Hall", city: "Cicero", state: "NY", timezone: "America/New_York" },
+  stateCode: "NY",
+  organizer: null,
   lifecycleStatus: "SCHEDULED",
-} as const;
+} as unknown as ComponentProps<typeof EventSchema>;
 
 describe("OPE-1241 — date-only sentinel in Event JSON-LD", () => {
   it("takes the first day's open and the last day's close from event_days", () => {
     const { container } = render(
       <EventSchema
-        {...(base as never)}
+        {...base}
         startDate={noon("2026-10-03")}
         endDate={noon("2026-10-04")}
         eventDays={[
@@ -40,7 +44,7 @@ describe("OPE-1241 — date-only sentinel in Event JSON-LD", () => {
   it("emits a bare date when that day has no captured hours", () => {
     const { container } = render(
       <EventSchema
-        {...(base as never)}
+        {...base}
         startDate={noon("2026-10-03")}
         endDate={noon("2026-10-04")}
         eventDays={[]}
@@ -54,7 +58,7 @@ describe("OPE-1241 — date-only sentinel in Event JSON-LD", () => {
   it("ignores event_days on OTHER dates (a stranded day must not lend its hours)", () => {
     const { container } = render(
       <EventSchema
-        {...(base as never)}
+        {...base}
         startDate={noon("2026-10-04")}
         endDate={noon("2026-10-04")}
         eventDays={[{ date: "2026-09-27", openTime: "11:00", closeTime: "17:00" }]}
@@ -66,7 +70,7 @@ describe("OPE-1241 — date-only sentinel in Event JSON-LD", () => {
   it("control: a real stored time is emitted unchanged (New Haven Chalk Art, 16:00Z)", () => {
     const { container } = render(
       <EventSchema
-        {...(base as never)}
+        {...base}
         startDate={new Date("2026-10-03T16:00:00Z")}
         endDate={new Date("2026-10-03T20:00:00Z")}
         eventDays={[{ date: "2026-10-03", openTime: "09:00", closeTime: "18:00" }]}
@@ -80,7 +84,7 @@ describe("OPE-1241 — date-only sentinel in Event JSON-LD", () => {
   it("a date-only previousStartDate is a bare date (Peabody: moved from 09-27)", () => {
     const { container } = render(
       <EventSchema
-        {...(base as never)}
+        {...base}
         lifecycleStatus="RESCHEDULED"
         startDate={noon("2026-10-04")}
         endDate={noon("2026-10-04")}
