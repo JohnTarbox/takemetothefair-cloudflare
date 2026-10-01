@@ -187,3 +187,33 @@ export function buildPlaceholderEmail(prefix: string, slug: string): string {
   const head = slug.slice(0, room).replace(/-+$/, "");
   return `${prefix}${head}${suffix}${PLACEHOLDER_DOMAIN}`;
 }
+
+/**
+ * OPE-1223 — a placeholder address that is not already taken.
+ *
+ * The vendor/promoter slug loops check only their own table's `slug`, but the
+ * placeholder OWNER row lives in `users`, whose `email` is unique. A merge or
+ * delete leaves the loser's owner row behind — 128 vendor tombstones in prod
+ * still hold their `pending+<slug>@` address — and renames the loser's SLUG
+ * (`…-merged-<id8>`), freeing the slug but not the email. So re-creating the
+ * name passed the slug check and died on a raw `insert into "users"` error
+ * ("Kim Ferreira ~ Joie De Vivre", 2026-09-30).
+ *
+ * Tries the address `buildPlaceholderEmail` would give, then `-2`, `-3`, … on
+ * the slug, so a vendor whose slug was free keeps it and only its owner
+ * address moves. Each candidate still goes through the 64-octet cap.
+ */
+export async function freePlaceholderEmail(
+  prefix: string,
+  slug: string,
+  isTaken: (email: string) => Promise<boolean>,
+  maxAttempts = 20
+): Promise<string> {
+  for (let n = 1; n <= maxAttempts; n++) {
+    const email = buildPlaceholderEmail(prefix, n === 1 ? slug : `${slug}-${n}`);
+    if (!(await isTaken(email))) return email;
+  }
+  throw new Error(
+    `no free placeholder address for "${prefix}${slug}" after ${maxAttempts} attempts`
+  );
+}
