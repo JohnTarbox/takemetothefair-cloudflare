@@ -37,6 +37,7 @@ import { events, eventDays, venues, inboundEmails } from "../schema.js";
 import { getDb, type Db } from "../db.js";
 import { and, eq, inArray, isNull, isNotNull, gte, lte, sql } from "drizzle-orm";
 import type { HandlerFn, HandlerEnv, HandlerResult } from "./types.js";
+import type { InboundEmail } from "@takemetothefair/db-schema";
 import { parsePlusSegment } from "../email-intents.js";
 import { logError } from "../logger.js";
 import { chunkedInArray, createSlug } from "@takemetothefair/utils";
@@ -554,6 +555,45 @@ export async function resolvePhotoEvent(
 /** Operator-facing explanation for each hold reason — quoted in the reply. */
 
 /**
+ * OPE-1262 — the classify call's own wall-clock budget.
+ *
+ * The call is OPTIONAL enrichment on the hold path: without it the photo still
+ * holds and the sender still gets the "which fair?" notice. On 2026-10-01 it
+ * took 26–54s on large, text-poor camera originals, against the dispatch
+ * step's 30s timeout. When it lost, the whole step timed out, the step retry
+ * re-ran it from scratch (three calls for one photo), and one email
+ * (`8c8c054e`) ended `failed` with no reply at all.
+ *
+ * 60s covers every duration observed that day. The photo_intake dispatch step
+ * is given 120s (inbound-email.ts) so this budget, plus the R2 reads, EXIF and
+ * D1 writes around it, always lands inside the step — a slow OCR now costs the
+ * enrichment, never the email.
+ */
+export const POSTER_CLASSIFY_BUDGET_MS = 60_000;
+
+/** Sentinel for a lost race — distinct from any value the work can produce. */
+const BUDGET_EXCEEDED = Symbol("budget-exceeded");
+
+/**
+ * Race `work` against a timer. Deliberately NOT an AbortSignal: `mainAppFetch`
+ * falls through to the public `fetch` when the binding call throws, so
+ * aborting the binding would START a second, unbounded call — the opposite of
+ * the point. The losing promise is left to settle on its own and its result is
+ * discarded.
+ */
+async function withinBudget<T>(work: Promise<T>, ms: number): Promise<T | typeof BUDGET_EXCEEDED> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<typeof BUDGET_EXCEEDED>((resolve) => {
+    timer = setTimeout(() => resolve(BUDGET_EXCEEDED), ms);
+  });
+  try {
+    return await Promise.race([work, timeout]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+/**
  * OPE-325 — OCR the first image and decide whether this is a POSTER.
  *
  * Runs only on the hold path (we could not identify a fair), so a normal
@@ -569,10 +609,11 @@ export async function resolvePhotoEvent(
  * read — all return null, and the caller falls through to the existing
  * which-fair flow. The worst case is the behaviour we have today.
  */
-async function classifyAsPoster(
+export async function classifyAsPoster(
   env: HandlerEnv,
   refs: AttachmentRef[],
-  messageRowId: string
+  messageRowId: string,
+  budgetMs: number = POSTER_CLASSIFY_BUDGET_MS
 ): Promise<{ classification: PosterClassification; text: string } | null> {
   const bucket = env.VENDOR_ASSETS;
   const images = imageRefs(refs);
@@ -618,18 +659,41 @@ async function classifyAsPoster(
     const bytes = await obj.arrayBuffer();
 
     const form = buildExtractImageForm(bytes, images[0]);
-    const res = await mainAppFetch(env, "/api/admin/import-url/extract-image", "workflow", {
-      method: "POST",
-      body: form,
-    });
-    if (!res.ok) {
-      return giveUp("extract-image returned non-OK", {
-        status: res.status,
-        body: (await res.text().catch(() => "")).slice(0, 200),
+    // OPE-1262 — the request AND the body read sit inside one budget: the
+    // route answers only once OCR has finished, so either can be the slow half.
+    const startedAt = Date.now();
+    const outcome = await withinBudget(
+      (async () => {
+        const res = await mainAppFetch(env, "/api/admin/import-url/extract-image", "workflow", {
+          method: "POST",
+          body: form,
+        });
+        if (!res.ok) {
+          return {
+            ok: false as const,
+            status: res.status,
+            body: (await res.text().catch(() => "")).slice(0, 200),
+          };
+        }
+        const data = (await res.json().catch(() => ({}))) as { content?: string };
+        return { ok: true as const, text: data.content ?? "" };
+      })(),
+      budgetMs
+    );
+    if (outcome === BUDGET_EXCEEDED) {
+      return giveUp("budget exceeded", {
+        budgetMs,
+        elapsedMs: Date.now() - startedAt,
+        bytes: bytes.byteLength,
       });
     }
-    const data = (await res.json().catch(() => ({}))) as { content?: string };
-    const text = data.content ?? "";
+    if (!outcome.ok) {
+      return giveUp("extract-image returned non-OK", {
+        status: outcome.status,
+        body: outcome.body,
+      });
+    }
+    const text = outcome.text;
     if (!text.trim()) return giveUp("extract-image returned empty content");
 
     const classification = classifyPosterText(text);
@@ -936,7 +1000,48 @@ const HOLD_ASK: Record<string, string> = {
   // them to re-shoot it, which fixes nothing.
   "resolver-error":
     "something went wrong on our side while looking up the fair — your photos are safe and held",
+  // OPE-1262 — the handler itself failed. Same rule as resolver-error: the
+  // sender did nothing wrong, so the copy must not send them to re-shoot.
+  "dispatch-error":
+    "something went wrong on our side while reading the photos — they're safe and held",
 };
+
+/**
+ * OPE-1262 — the reply a photo email gets when its handler FAILED.
+ *
+ * Before this, `errorToReplyKind` returned null for every non-submit intent,
+ * so a photo whose dispatch threw ended `status='failed'` with no reply at all
+ * (`8c8c054e`, 2026-10-01). The sender heard nothing, and because the row's
+ * reply_kind stayed NULL, a reply naming the fair could never find it either:
+ * `findHeldPhotoParents` keys on `reply_kind='photo-intake-unresolved'`.
+ *
+ * Answering with the ordinary hold notice fixes both at once — the sender is
+ * told how to name the fair, and that same reply_kind makes the row a held
+ * parent the reply→resolve path and `resolve_held_photos` both recover. The
+ * row still ends `status='failed'` (mark-done keys on the caught error), and
+ * `resolveHeldPhotoEmail` moves it to `salvaged` once its photos attach.
+ *
+ * Only the facts the row itself holds — no EXIF, no OCR: whatever failed may
+ * have been one of those reads.
+ */
+export function photoIntakeFailureReply(
+  row: Pick<InboundEmail, "subject" | "toAddress" | "attachmentRefs" | "attachmentCount">
+): Pick<HandlerResult, "replyKind" | "replyParams" | "resultingEventId"> {
+  return {
+    replyKind: "photo-intake-unresolved",
+    replyParams: {
+      subject: row.subject ?? "",
+      photoCount: countPhotos(row.attachmentRefs, row.attachmentCount),
+      eventHint: parsePlusSegment(row.toAddress) ?? null,
+      holdReason: "dispatch-error",
+      holdAsk: HOLD_ASK["dispatch-error"],
+      holdDetail: null,
+      sawGps: false,
+      sawDate: null,
+    },
+    resultingEventId: null,
+  };
+}
 
 export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> => {
   const refs = parseRefs(row.attachmentRefs);
