@@ -24,7 +24,7 @@ import { inboundEmails, adminActions, pendingEmailReplies } from "../schema.js";
 // OPE-368 — shared with the admin route so both refusal sites behave identically.
 import { buildRefusedReply, refusedReplyMessage } from "@takemetothefair/utils";
 import { logError } from "../logger.js";
-import { closeObligationsAnsweredBy } from "../support-obligations-close.js";
+import { MANUAL_REPLY_SOURCE } from "../support-obligations-close.js";
 import { jsonContent } from "../helpers.js";
 import { isEmailSuppressed } from "./admin-send-vendor-email.js";
 import type { Db } from "../db.js";
@@ -34,7 +34,7 @@ import type { AuthContext } from "../auth.js";
  *  reply here; ensure Cloudflare Email Routing routes support@ back to inbound
  *  so their replies thread (see the ticket's routing caveat). */
 const REPLY_FROM = "Meet Me at the Fair <support@meetmeatthefair.com>";
-const REPLY_SOURCE = "reply:manual";
+const REPLY_SOURCE = MANUAL_REPLY_SOURCE;
 
 /** Minimal shape of the EMAIL_JOBS queue message (mirrors the consumer's
  *  EmailJobMessage; kept local since mcp-server has no shared export). */
@@ -66,7 +66,7 @@ export interface ReplyArgs {
 
 export type ReplyResult =
   | { ok: false; reason: "disabled" | "no_queue" | "not_found" | "suppressed"; message: string }
-  | { ok: true; to: string; subject: string; inboundEmailId: string; obligationsClosed: number };
+  | { ok: true; to: string; subject: string; inboundEmailId: string };
 
 function escapeHtml(s: string): string {
   return s
@@ -244,26 +244,10 @@ export async function handleReplyToInbound(
     createdAt: new Date(),
   });
 
-  // OPE-1226 — the reply answers this message's obligation (and any on the
-  // same thread). Same optimism as `status: "replied"` above. Best-effort: a
-  // failure here must never turn a sent reply into an error.
-  let obligationsClosed = 0;
-  try {
-    obligationsClosed = await closeObligationsAnsweredBy(
-      db,
-      row.id,
-      `Answered by a manual reply via reply_to_inbound_email (${REPLY_SOURCE}).`
-    );
-  } catch (err) {
-    await logError(db, {
-      source: "mcp:reply_to_inbound_email",
-      message: `support obligation auto-close failed for inbound ${row.id}`,
-      error: err,
-      context: { inboundEmailId: row.id },
-    }).catch(() => {});
-  }
-
-  return { ok: true, to: row.fromAddress, subject, inboundEmailId: row.id, obligationsClosed };
+  // OPE-1226 / OPE-1252 — the obligation this reply answers is closed by the
+  // email-jobs consumer once the send is CONFIRMED (sent ledger row), not here
+  // on enqueue: a held, failed or provider-rejected send must leave it open.
+  return { ok: true, to: row.fromAddress, subject, inboundEmailId: row.id };
 }
 
 interface ReplyToolEnv {
