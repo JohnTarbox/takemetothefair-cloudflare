@@ -660,6 +660,10 @@ export const EVENT_CATEGORIES = [
   "Music Festival",
   "Outdoor Show", // OPE-1058 — absorbs Sportsmen's Show, RV Show, RV & Camping Show
   "Parade",
+  // OPE-955 (John, 2026-09-30) — neighbourhood porch-music festivals. No fixed
+  // venue (the stages are residents' porches), so neither a venue page nor
+  // "Music Festival" could aggregate them; this value backs /events/<state>/porchfests.
+  "Porchfest",
   "Pop Culture Convention", // OPE-1058 — absorbs Pop Culture
   "Renaissance Fair", // OPE-1058 — absorbs Renaissance Faire
   "Senior Expo", // OPE-1058
