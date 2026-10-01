@@ -70,6 +70,8 @@ export interface SweepEventRow {
   seriesId?: string | null;
   promoterId: string | null;
   startDate: Date | null;
+  /** OPE-1229 — the range matters: a sub-event sits INSIDE its parent's dates. */
+  endDate?: Date | null;
   createdAt: Date | null;
   possibleDuplicateOf: string | null;
 }
@@ -105,6 +107,57 @@ const REGION_TOKENS = new Set([
   "east",
   "west",
 ]);
+
+/**
+ * OPE-1229 — words naming an OCCASION. Two names at one venue that differ by
+ * one of these are different occasions of one organizer's calendar, not one
+ * event entered twice: "Bangor Elks Lodge Thanksgiving / Christmas Craft Fair",
+ * "PVD Artisans Holiday Premiere / Small Business Saturday", "Last Minute …
+ * Finale", "Night Before Pumpkin Festival". Seasons are deliberately NOT here:
+ * "Fall Harvest" vs "Harvest Festival" (OPE-1201's 8-days-off twin) must pair.
+ */
+const OCCASION_QUALIFIERS = new Set([
+  "thanksgiving",
+  "christmas",
+  "halloween",
+  "easter",
+  "valentine",
+  "valentines",
+  "finale",
+  "premiere",
+  "preview",
+  "kickoff",
+  "parade",
+  "eve",
+]);
+const OCCASION_PHRASES = [
+  "night before",
+  "small business saturday",
+  "opening night",
+  "closing day",
+];
+
+function occasionMarkers(name: string): Set<string> {
+  const n = normalizeName(name);
+  const out = new Set<string>();
+  for (const t of n.split(/\s+/)) if (OCCASION_QUALIFIERS.has(t)) out.add(t);
+  for (const ph of OCCASION_PHRASES) if (n.includes(ph)) out.add(ph);
+  return out;
+}
+
+/** Plain words two names share, generic ones included, place and filler excluded. */
+const FILLER = new Set(["of", "the", "and", "at", "in", "on", "a", "an", "for", "to"]);
+function sharedPlainWords(a: string, b: string, place: Array<string | null | undefined>): string[] {
+  const placeWords = new Set(place.flatMap((p) => (p ? normalizeName(p).split(/\s+/) : [])));
+  const words = (s: string) =>
+    new Set(
+      normalizeName(s)
+        .split(/\s+/)
+        .filter((w) => w && !FILLER.has(w) && !placeWords.has(w) && !/^\d+$/.test(w))
+    );
+  const wb = words(b);
+  return [...words(a)].filter((w) => wb.has(w));
+}
 
 /** Tokens that say WHICH event this is — not where or when. */
 export function identifyingTokens(
@@ -150,8 +203,38 @@ export function nearDuplicateReason(
   const tb = identifyingTokens(b.name, place);
   const sharedDistinctive = [...ta].filter((t) => tb.has(t)).sort();
 
-  if (startDeltaDays === 0)
+  // OPE-1229 — the ranges, not just the starts.
+  const day = (d: Date) => Date.parse(d.toISOString().slice(0, 10));
+  const [sA, eA] = [day(a.startDate), day(a.endDate ?? a.startDate)];
+  const [sB, eB] = [day(b.startDate), day(b.endDate ?? b.startDate)];
+  const overlap = sA <= eB + DAY_MS && sB <= eA + DAY_MS; // overlapping or touching
+  const identical = sA === sB && eA === eB;
+  const strictlyContains = (s1: number, e1: number, s2: number, e2: number) =>
+    s1 <= s2 && e2 <= e1 && !(s1 === s2 && e1 === e2);
+
+  // A one-day thing inside a month-long thing is a sub-event (the Salem Grand
+  // Parade inside Haunted Happenings), not the same event entered twice.
+  if (!identical && (strictlyContains(sA, eA, sB, eB) || strictlyContains(sB, eB, sA, eA)))
+    return null;
+
+  // Different occasions of one venue's calendar are not duplicates, however
+  // close (Thanksgiving vs Christmas fair). Only for ranges that do not overlap:
+  // two names for one weekend are still worth a look.
+  if (!overlap) {
+    const oa = occasionMarkers(a.name);
+    const ob = occasionMarkers(b.name);
+    const differ = [...oa].some((m) => !ob.has(m)) || [...ob].some((m) => !oa.has(m));
+    if (differ) return null;
+  }
+
+  if (startDeltaDays === 0) {
+    // Same day at a multi-building ground is not enough on its own (Fiber
+    // Festival vs Old Deerfield at the Eastern States Exposition): the names
+    // must share at least one plain word. PTTF ↔ Thornton's Ferry and the
+    // Tanger pair share "craft"/"fair"; the two ESE events share nothing.
+    if (sharedPlainWords(a.name, b.name, place).length === 0) return null;
     return { reason: "same_venue_same_day", sharedDistinctive, startDeltaDays };
+  }
   if (sharedDistinctive.length >= 1)
     return { reason: "same_venue_name", sharedDistinctive, startDeltaDays };
   return null;
@@ -265,6 +348,7 @@ export async function runNearDuplicateSweep(
       seriesId: events.seriesId,
       promoterId: events.promoterId,
       startDate: events.startDate,
+      endDate: events.endDate,
       createdAt: events.createdAt,
       possibleDuplicateOf: events.possibleDuplicateOf,
     })
