@@ -17,7 +17,7 @@ import {
   adminActions,
 } from "@/lib/db/schema";
 import { unsafeSlug } from "@takemetothefair/utils";
-import { repointPromoterChildren } from "@takemetothefair/db-schema";
+import { repointPromoterChildren, repointVenueChildren } from "@takemetothefair/db-schema";
 import { repairBlogLinksForSlugChange } from "@/lib/content-links-sync";
 import { logError } from "@/lib/logger";
 import type {
@@ -221,6 +221,10 @@ async function mergeVenues(
 
   // Transfer favorites (D1-safe in-memory exclusion + chunked PK transfer).
   transferred.favorites = await transferFavorites(db, "VENUE", primaryId, duplicateId);
+
+  // OPE-1232 — BEFORE the hard delete below: event_series would be SET NULL and
+  // periods / name variants / claim citations / slug history CASCADE-deleted.
+  await repointVenueChildren(db, primaryId, duplicateId);
 
   // Batch 2: Cleanup and final fetch
   await db.batch([

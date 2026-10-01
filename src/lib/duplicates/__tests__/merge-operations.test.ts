@@ -9,12 +9,14 @@ import { describe, it, expect, vi } from "vitest";
 // helper itself is tested against real SQLite on the MCP side
 // (mcp-server/__tests__/merge-promoter-children-ope1120.test.ts). Here it is
 // stubbed, and the promoters test asserts the app path CALLS it.
-const { repointPromoterChildren } = vi.hoisted(() => ({
+const { repointPromoterChildren, repointVenueChildren } = vi.hoisted(() => ({
   repointPromoterChildren: vi.fn(async () => ({})),
+  repointVenueChildren: vi.fn(async () => ({})),
 }));
 vi.mock("@takemetothefair/db-schema", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@takemetothefair/db-schema")>()),
   repointPromoterChildren,
+  repointVenueChildren,
 }));
 
 import { getMergePreview, executeMerge, transferFavorites } from "../merge-operations";
