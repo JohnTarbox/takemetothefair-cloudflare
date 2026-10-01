@@ -85,6 +85,12 @@ export const config = {
     // pages like /events/maine, not category pages, not /events/past, etc.
     // Those are handled by their own static routes — see app/events/).
     "/events/:slug",
+    // OPE-1188 — the OCCURRENCE form, /events/<series>/<4-digit year>. Without
+    // this matcher the OPE-471 walker below (series_slug_history for the year
+    // form) never ran: `/events/fryeburg-fair-me` 301'd while
+    // `/events/fryeburg-fair-me/2027` 404'd, with the history row present.
+    // Year-only, so /events/<state>/<category> facet routes stay out.
+    "/events/:slug/:year(\\d{4})",
     // Blog detail pages (single slug only; not /blog itself, not /blog/tag/*,
     // not /blog/feed.xml — feed.xml is excluded by name below).
     "/blog/:slug",
