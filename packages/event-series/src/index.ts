@@ -49,10 +49,26 @@ type Db = DrizzleD1Database<typeof schema>;
  *
  *   Fryeburg Fair 2026                              → Fryeburg Fair
  *   Burlington Summer Farmers Market — 2026-09-19   → Burlington Summer Farmers Market
+ *   Sterling Fair 2026 — Sep 11–13 in Sterling, MA  → Sterling Fair            (OPE-1233)
+ *   The Big E 2026 (Eastern States Exposition)      → The Big E (Eastern States Exposition)
  *   Newport Boat Show / Route 66 Rally              → unchanged
  */
 export function stripNameEditionSuffix(name: string): string {
-  const stripped = name.replace(/\s*[—–-]?\s*(?:19|20)\d\d(?:-\d\d){0,2}\s*$/, "").trim();
+  const stripped = name
+    // OPE-1233 — an SEO date tail: "Sterling Fair 2026 — Sep 11–13 in Sterling, MA".
+    // A dash, then a month and a day number, to the end. Eight 2026 fair events
+    // still carried one, so their name key never met their 2027 edition's and
+    // each year kept its own series. A month with no day is left alone.
+    .replace(
+      /\s*[—–-]\s*(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2}\b.*$/i,
+      ""
+    )
+    // OPE-1187 — a year just before a parenthetical: "The Big E 2026 (Eastern
+    // States Exposition)". A year followed by an ordinary word ("Summer 2026
+    // Kickoff") is part of the name and stays.
+    .replace(/\s+(?:19|20)\d\d(?=\s*\()/, "")
+    .replace(/\s*[—–-]?\s*(?:19|20)\d\d(?:-\d\d){0,2}\s*$/, "")
+    .trim();
   return stripped || name;
 }
 

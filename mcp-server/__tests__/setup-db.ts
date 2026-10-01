@@ -1210,6 +1210,10 @@ const SCHEMA_SQL = `
     changed_at INTEGER NOT NULL,
     changed_by TEXT
   );
+  -- Mirrors drizzle/0209. Without it this test schema let a duplicate redirect
+  -- row through that prod refuses, so a migration's idempotency could not be
+  -- rehearsed here (found by OPE-1233's 0344 rehearsal).
+  CREATE UNIQUE INDEX idx_series_slug_history_old_slug_unique ON series_slug_history(old_slug);
 
   CREATE TABLE entity_data_citations (
     id TEXT PRIMARY KEY,
