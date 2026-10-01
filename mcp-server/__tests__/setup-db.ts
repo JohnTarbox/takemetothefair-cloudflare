@@ -1172,7 +1172,10 @@ const SCHEMA_SQL = `
     slug TEXT NOT NULL UNIQUE,
     title TEXT NOT NULL DEFAULT '',
     body TEXT,
-    status TEXT NOT NULL DEFAULT 'PUBLISHED'
+    status TEXT NOT NULL DEFAULT 'PUBLISHED',
+    -- OPE-1188 — read by the visitor-guide lookup (src/lib/blog/event-guides.ts).
+    excerpt TEXT,
+    publish_date INTEGER
   );
 
   CREATE TABLE content_links (
