@@ -10,7 +10,9 @@ import {
   venues,
   raiseEventReviewFlag,
 } from "../schema.js";
-import { attachEventToSeries } from "../series/resolve-or-create-series.js";
+// OPE-1233 — the SHARED attach, like update_event. A local copy kept its own
+// edition-stripping rule, so a key fix reached one MCP write path and not this one.
+import { attachEventToSeries } from "@takemetothefair/event-series";
 import { recordMutation } from "../audit/record-mutation.js";
 import {
   parseJsonArray,
