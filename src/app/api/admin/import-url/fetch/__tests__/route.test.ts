@@ -431,3 +431,54 @@ describe("GET /api/admin/import-url/fetch — OPE-837 link discovery", () => {
     expect(body.links.some((l) => l.url.includes("someone-else.org"))).toBe(false);
   });
 });
+
+/**
+ * OPE-1250 — a share.google link redirects to the article. Its relative nav
+ * must resolve against where the redirect LANDED (37da2bf5 fetched
+ * `share.google/news/…`), and the route reports that URL so the pipeline can
+ * store it as source_url.
+ */
+describe("GET /api/admin/import-url/fetch — OPE-1250 post-redirect page URL", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it("resolves anchors against, and reports, the URL the redirect landed on", async () => {
+    const landed = "https://wgme.com/news/local/cumberland-fair-returns";
+    global.fetch = vi.fn(async () => {
+      const r = new Response("<html><body>ok</body></html>", { status: 200 });
+      Object.defineProperty(r, "url", { value: landed });
+      return r;
+    }) as unknown as typeof fetch;
+    const { extractAnchors } = await import("@/lib/url-import/html-parser");
+    vi.mocked(extractAnchors).mockReturnValue([
+      { url: "https://wgme.com/news/local", text: "Local" },
+      { url: "https://share.google/news/local", text: "wrong base" },
+    ]);
+
+    const res = await GET(makeRequest("https://share.google/dep4eDy9xPosZHWTH"), noParams);
+    const body = (await res.json()) as {
+      success: boolean;
+      finalUrl?: string;
+      links: Array<{ url: string }>;
+    };
+
+    expect(body.success).toBe(true);
+    expect(body.finalUrl).toBe(landed);
+    expect(vi.mocked(extractAnchors).mock.calls[0][1]).toBe(landed);
+    // Same-site is judged against the landed site, not share.google.
+    expect(body.links.map((l) => l.url)).toEqual(["https://wgme.com/news/local"]);
+  });
+
+  it("control: no redirect → no finalUrl, anchors resolve against the requested URL", async () => {
+    global.fetch = vi.fn(
+      async () => new Response("<html><body>ok</body></html>", { status: 200 })
+    ) as unknown as typeof fetch;
+    const { extractAnchors } = await import("@/lib/url-import/html-parser");
+    vi.mocked(extractAnchors).mockReturnValue([]);
+    const res = await GET(makeRequest("https://example.com/ok"), noParams);
+    const body = (await res.json()) as { finalUrl?: string };
+    expect(body.finalUrl).toBeUndefined();
+    expect(vi.mocked(extractAnchors).mock.calls[0][1]).toBe("https://example.com/ok");
+  });
+});
