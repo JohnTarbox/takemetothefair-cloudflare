@@ -898,6 +898,10 @@ export const eventLifecycleUpdateSchema = z
     reason: z.string().min(1).max(500).transform(decodeHtmlEntities).optional().nullable(),
     new_start_date: z.string().datetime().optional().nullable(),
     new_end_date: z.string().datetime().optional().nullable(),
+    // OPE-1219 — parity with the MCP tool (OPE-1218): the date the event moved
+    // FROM, for a row whose dates were already edited before this transition.
+    previous_start_date: z.string().datetime().optional().nullable(),
+    previous_end_date: z.string().datetime().optional().nullable(),
   })
   .refine(
     (d) => {

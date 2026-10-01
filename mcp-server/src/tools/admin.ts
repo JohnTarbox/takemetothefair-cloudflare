@@ -215,6 +215,7 @@ import { registerLogVendorOutreachTool } from "./admin-log-vendor-outreach.js";
 import { registerClaimCorroborateTool } from "./admin-claim-corroborate.js";
 import { registerPhotoProposalTools } from "./admin-photo-proposals.js";
 import { registerHeroProposalTools } from "./admin-hero-proposals.js";
+import { eventDaysOutsideRange } from "../events/event-days-range.js";
 import { registerExhibitorProposalTools } from "./admin-exhibitor-proposals.js";
 import { registerCategoryCleanupTool } from "./admin-category-cleanup.js";
 import { registerPropagateHoursTool } from "./admin-propagate-hours.js";
@@ -2528,6 +2529,37 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           `A citation was supplied but NO citation row was recorded for: ${citationIgnoredFor.join(", ")}. ` +
           `These fields are not citation-tracked by update_event (or were cleared). ` +
           `Record their provenance with create_event_citation if it matters — do not report them as cited.`;
+      }
+      // OPE-1219 — a date move that strands event_days outside the new range
+      // (Peabody: header Oct 4, day list Sep 27). Warn, never block: whether the
+      // days move with the dates is a separate call (update_event_day).
+      if (params.start_date !== undefined || params.end_date !== undefined) {
+        try {
+          const [row] = await db
+            .select({ startDate: events.startDate, endDate: events.endDate })
+            .from(events)
+            .where(eq(events.id, params.event_id))
+            .limit(1);
+          const dayRows = await db
+            .select({ date: eventDays.date, vendorOnly: eventDays.vendorOnly })
+            .from(eventDays)
+            .where(eq(eventDays.eventId, params.event_id));
+          const stranded = eventDaysOutsideRange(
+            dayRows,
+            row?.startDate ?? null,
+            row?.endDate ?? null
+          );
+          if (stranded.length > 0) {
+            warnings.event_days_outside_dates = stranded;
+            warnings.event_days_outside_dates_message =
+              `This date change left ${stranded.length} event_days row(s) outside the event's dates ` +
+              `(${stranded.join(", ")}). The page will list days the event no longer runs. Move or ` +
+              `delete them with update_event_day / delete_event_day. If this was a postponement, ` +
+              `record it with update_event_lifecycle RESCHEDULED and previous_start_date.`;
+          }
+        } catch {
+          // Advisory only: a failed read must not turn a successful update into an error.
+        }
       }
       if (Object.keys(warnings).length > 0) {
         result.warnings = warnings;
