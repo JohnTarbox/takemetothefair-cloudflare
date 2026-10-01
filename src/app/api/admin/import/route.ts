@@ -1,4 +1,5 @@
 export const dynamic = "force-dynamic";
+import { raiseEventReviewFlag } from "@/lib/db/schema";
 import { attachEventToSeries } from "@/lib/series/resolve-or-create-series";
 import { venueStateConflict } from "@takemetothefair/utils";
 import { resolveIngestVenue } from "@/lib/venues/former-venue-guard";
@@ -481,7 +482,6 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
               ),
               imageUrl: eventData.imageUrl || existing[0].imageUrl,
               venueId: eventVenueId,
-              ...(formerCheck.flagForReview ? { flaggedForReview: 1 } : {}),
               lastSyncedAt: new Date(),
               updatedAt: new Date(),
             };
@@ -507,6 +507,10 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
               updateData.commercialVendorsAllowed = eventData.commercialVendorsAllowed;
             }
             await db.update(events).set(updateData).where(eq(events.id, existing[0].id));
+            // OPE-767 — recorded as a reason, so it can be discharged on its own.
+            if (formerCheck.flagForReview) {
+              await raiseEventReviewFlag(db, existing[0].id, "former_venue");
+            }
             await recomputeEventCompleteness(db, existing[0].id);
             results.updated++;
             results.updatedEvents.push({
@@ -590,7 +594,6 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
         await db.insert(events).values({
           id: newEventId,
           possibleDuplicateOf,
-          ...(formerCheck.flagForReview ? { flaggedForReview: 1 } : {}),
           name: decodedNewEventName,
           slug,
           description: decodedNewDescription,
@@ -647,6 +650,8 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
           lastSyncedAt: new Date(),
           commercialVendorsAllowed: eventData.commercialVendorsAllowed ?? true,
         });
+        // OPE-767 — recorded as a reason, so it can be discharged on its own.
+        if (formerCheck.flagForReview) await raiseEventReviewFlag(db, newEventId, "former_venue");
 
         // OPE-472 (bounce) — the bulk import path (aggregator_import /
         // direct_scrape) never attached a series: 65 of 65 rows imported on

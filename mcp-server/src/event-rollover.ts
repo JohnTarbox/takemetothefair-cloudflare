@@ -38,7 +38,7 @@ import {
   unsafeSlug,
   type Slug,
 } from "@takemetothefair/utils";
-import { events, eventDays, adminActions, promoters } from "./schema.js";
+import { events, eventDays, adminActions, promoters, raiseEventReviewFlag } from "./schema.js";
 import { isCeasedPromoter } from "./promoters/succession.js";
 import { recomputeEventCompleteness } from "./helpers.js";
 import type { Db } from "./db.js";
@@ -206,7 +206,6 @@ export async function rolloverEventIfRecurring(
     description: source.description,
     promoterId: source.promoterId,
     venueId: dropFormerVenue ? null : source.venueId,
-    ...(dropFormerVenue ? { flaggedForReview: 1 } : {}),
     stateCode: source.stateCode,
     isStatewide: source.isStatewide,
     startDate: next.start,
@@ -273,9 +272,6 @@ export async function rolloverEventIfRecurring(
     lifecycleStatusChangedAt: now,
     lifecycleReason: `auto-rollover from ${source.slug}`,
     rolledFromEventId: sourceEventId,
-    // Surface in the /admin/events?flagged=1 reconcile queue: an operator (or a
-    // scheduled reconcile) must confirm the predicted dates and flip to APPROVED.
-    flaggedForReview: 1,
     completenessScore: 0,
     createdAt: now,
     updatedAt: now,
@@ -299,6 +295,11 @@ export async function rolloverEventIfRecurring(
   });
 
   await db.batch([insertEvent, insertAudit]);
+  // Surface in the /admin/events?flagged=1 reconcile queue: an operator (or a
+  // scheduled reconcile) must confirm the predicted dates and flip to APPROVED.
+  // OPE-767 — recorded as reasons, so each can be discharged on its own.
+  await raiseEventReviewFlag(db, newEventId, "rollover");
+  if (dropFormerVenue) await raiseEventReviewFlag(db, newEventId, "former_venue");
 
   // Recompute AFTER the row exists — the scorer reads it back by id. A
   // date-predicted skeleton is objectively less complete than its parent, so

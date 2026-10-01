@@ -1,4 +1,5 @@
 export const dynamic = "force-dynamic";
+import { raiseEventReviewFlag } from "@/lib/db/schema";
 import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/api/with-auth";
 import { checkEventVenue } from "@/lib/venues/former-venue-guard";
@@ -227,6 +228,7 @@ export const PATCH = withAuth<{ id: string }>(
 
       // OPE-1180 — the row AFTER this PATCH may not sit at a FORMER venue past
       // its closure. Checked on any venue or date change.
+      let raiseFormerVenueFlag = false;
       if ("venueId" in updateData || "startDate" in updateData || "endDate" in updateData) {
         const nextVenueId =
           "venueId" in updateData ? (updateData.venueId as string | null) : currentEvent.venueId;
@@ -240,7 +242,7 @@ export const PATCH = withAuth<{ id: string }>(
         if (formerVenue.kind === "refuse") {
           return NextResponse.json({ error: formerVenue.message }, { status: 409 });
         }
-        if (formerVenue.kind === "flag") updateData.flaggedForReview = 1;
+        if (formerVenue.kind === "flag") raiseFormerVenueFlag = true;
       }
 
       // Auto-compute public date range (excluding vendor-only days).
@@ -607,6 +609,11 @@ export const PATCH = withAuth<{ id: string }>(
           console.error("[OPE-759] hours-review flag update failed", { eventId: id, flagErr });
         }
       }
+
+      // OPE-767 — the former-venue reason, after the batch has committed (a
+      // rolled-back edit raises nothing) and after the day-write audit above
+      // (nothing may sit between that write and its evidence — see OPE-759).
+      if (raiseFormerVenueFlag) await raiseEventReviewFlag(db, id, "former_venue");
 
       // SYN1 — trigger the dispatcher only when an outbox row was actually
       // written (mirrored field changed). Never throws; the durable outbox row

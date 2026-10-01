@@ -761,6 +761,13 @@ const SCHEMA_SQL = `
     updated_at INTEGER
   );
 
+  CREATE TABLE event_review_flags (
+    id TEXT PRIMARY KEY, event_id TEXT NOT NULL, reason TEXT NOT NULL,
+    raised_at INTEGER NOT NULL, raised_by TEXT, cleared_at INTEGER, cleared_by TEXT, note TEXT
+  );
+  CREATE UNIQUE INDEX idx_event_review_flags_active
+    ON event_review_flags (event_id, reason) WHERE cleared_at IS NULL;
+
   CREATE TABLE event_performers (
     id TEXT PRIMARY KEY,
     event_id TEXT NOT NULL,

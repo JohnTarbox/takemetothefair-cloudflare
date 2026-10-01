@@ -7,14 +7,19 @@
  * all of them. This is the app-side db call; `create_event_day` in the MCP
  * Worker already does the equivalent inline.
  *
- * ⚠️ MONOTONIC. It raises; it never clears. The reason is in
- * `shouldRaiseHoursFlag`'s docblock and it is not a shortcut:
- * `flagged_for_review` carries several independent reasons and nothing records
- * which one applies, so clearing on the hours axis would silently discharge a
- * series rollover's or a URL import's review obligation.
+ * OPE-767 — no longer monotonic. Reasons are now recorded per axis
+ * (`event_review_flags`), so this raises `missing_hours` when a day lacks hours
+ * and clears ONLY `missing_hours` when none do. Any other active reason keeps
+ * the flag up — that was the whole reason it used to be raise-only.
  */
-import { and, eq, sql } from "drizzle-orm";
-import { events, eventDays, unknownHoursCountSql, shouldRaiseHoursFlag } from "@/lib/db/schema";
+import { eq, sql } from "drizzle-orm";
+import {
+  eventDays,
+  unknownHoursCountSql,
+  shouldRaiseHoursFlag,
+  raiseEventReviewFlag,
+  clearEventReviewFlag,
+} from "@/lib/db/schema";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import type * as schema from "@/lib/db/schema";
 
@@ -32,6 +37,8 @@ export interface HoursFlagOutcome {
   daysChecked: number;
   unknownDays: number;
   flagRaised: boolean;
+  /** OPE-767 — the hours REASON was cleared (every day now has hours). */
+  reasonCleared: boolean;
 }
 
 /**
@@ -56,17 +63,20 @@ export async function raiseHoursReviewFlag(db: Db, eventId: string): Promise<Hou
     unknownDays: Number(counts?.unknownDays ?? 0),
   };
 
-  if (!shouldRaiseHoursFlag(observed)) {
-    return { ...observed, flagRaised: false };
+  if (shouldRaiseHoursFlag(observed)) {
+    // OPE-767 — recorded as the `missing_hours` reason, so the hours axis can
+    // later clear exactly this and nothing else. Idempotent.
+    await raiseEventReviewFlag(db, eventId, "missing_hours");
+    return { ...observed, flagRaised: true, reasonCleared: false };
   }
 
-  // Guarded on `flaggedForReview = 0` so a no-op does not churn `updatedAt` on
-  // every day written to an already-flagged event — an import writing 400 days
-  // would otherwise bump the parent row 400 times.
-  await db
-    .update(events)
-    .set({ flaggedForReview: 1, updatedAt: new Date() })
-    .where(and(eq(events.id, eventId), eq(events.flaggedForReview, 0)));
-
-  return { ...observed, flagRaised: true };
+  // OPE-767 — the hours axis clears ITS OWN reason once every recorded day has
+  // hours. It cannot discharge a rollover's or an import's review: those are
+  // separate reasons, and the flag stays up while any of them is active.
+  // `daysChecked === 0` is "no days recorded", not "hours confirmed".
+  if (observed.daysChecked > 0 && observed.unknownDays === 0) {
+    await clearEventReviewFlag(db, eventId, "missing_hours", "hours-axis");
+    return { ...observed, flagRaised: false, reasonCleared: true };
+  }
+  return { ...observed, flagRaised: false, reasonCleared: false };
 }

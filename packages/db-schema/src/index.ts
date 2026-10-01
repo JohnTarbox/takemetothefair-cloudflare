@@ -6776,6 +6776,7 @@ export * from "./promoter-reply-link";
 export * from "./gallery-photos";
 // OPE-759 — the hours-review rule, shared because event_days has five writers.
 export * from "./hours-review-flag";
+export * from "./review-flags";
 
 // OPE-236 §4 — the canonical claim row, shared by the app AND the MCP Worker.
 export * from "./entity-claim-record";

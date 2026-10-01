@@ -1,4 +1,5 @@
 export const dynamic = "force-dynamic";
+import { raiseEventReviewFlag } from "@/lib/db/schema";
 import { NextResponse } from "next/server";
 import { detectPossibleDuplicate } from "@/lib/duplicates/venue-date-collision";
 import { checkEventVenue } from "@/lib/venues/former-venue-guard";
@@ -241,7 +242,6 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
     });
     await db.insert(events).values({
       possibleDuplicateOf,
-      ...(formerVenue.kind === "flag" ? { flaggedForReview: 1 } : {}),
       id: eventId,
       name: data.name,
       slug: unsafeSlug(slug),
@@ -288,6 +288,8 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
       applicationInstructions: data.applicationInstructions,
       walkInsAllowed: data.walkInsAllowed,
     });
+    // OPE-767 — the reason is recorded, so it can be discharged on its own.
+    if (formerVenue.kind === "flag") await raiseEventReviewFlag(db, eventId, "former_venue");
 
     // OPE-472 — attach to a series parent at write time. `event_series`
     // minted nothing between 2026-06-30 and this fix, so every event from

@@ -24,6 +24,10 @@ const SCHEMA_SQL = `
     primary_audience TEXT NOT NULL DEFAULT 'PUBLIC',
     public_access TEXT NOT NULL DEFAULT 'OPEN'
   );
+  CREATE TABLE event_review_flags (
+    id TEXT PRIMARY KEY, event_id TEXT NOT NULL, reason TEXT NOT NULL,
+    raised_at INTEGER NOT NULL, raised_by TEXT, cleared_at INTEGER, cleared_by TEXT, note TEXT
+  );
   CREATE TABLE events (
     id TEXT PRIMARY KEY,
     series_id TEXT,
