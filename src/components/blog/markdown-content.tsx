@@ -11,6 +11,7 @@ import { headingSlug } from "@/lib/markdown-utils";
 import { remarkBlogEmbeds } from "@/lib/remark-blog-embeds";
 import { BLOG_EMBEDS, BLOG_EMBED_NAMES } from "@/components/blog/embeds/registry";
 import { BlogOutboundClickTracker } from "@/components/blog/blog-outbound-click-tracker";
+import { eventHrefKey } from "@/lib/blog/event-guides";
 
 interface MarkdownContentProps {
   content: string;
@@ -19,6 +20,9 @@ interface MarkdownContentProps {
    *  GA4 event + a first-party beacon. Omitting it keeps the legacy zero-
    *  instrumentation behavior (no listener wired) — caller decides. */
   sourceSlug?: string;
+  /** OPE-1188 — `/events/<slug>` → canonical `/events/<series>/<year>`, resolved
+   *  server-side by `resolveEventHrefs`. A link not in the map keeps its href. */
+  eventHrefMap?: Record<string, string>;
 }
 
 /**
@@ -57,7 +61,15 @@ function Heading3({ children, ...rest }: ComponentProps<"h3">) {
   );
 }
 
-export function MarkdownContent({ content, sourceSlug }: MarkdownContentProps) {
+export function MarkdownContent({ content, sourceSlug, eventHrefMap }: MarkdownContentProps) {
+  // OPE-1188 — blog bodies link events by the slug that was current when they
+  // were written, each now a 301 hop. Rewrite to the canonical path at render;
+  // the stored body is untouched.
+  const Anchor = ({ href, ...rest }: ComponentProps<"a">) => {
+    const key = eventHrefKey(href);
+    const canonical = key && eventHrefMap ? eventHrefMap[key] : undefined;
+    return <a href={canonical ?? href} {...rest} />;
+  };
   return (
     <BlogOutboundClickTracker
       sourceSlug={sourceSlug}
@@ -75,6 +87,7 @@ export function MarkdownContent({ content, sourceSlug }: MarkdownContentProps) {
         components={{
           h2: Heading2,
           h3: Heading3,
+          a: Anchor,
           ...(BLOG_EMBEDS as Record<string, React.ComponentType<Record<string, unknown>>>),
         }}
       >
