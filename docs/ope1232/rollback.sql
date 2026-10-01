@@ -1,5 +1,8 @@
 -- OPE-1232 rollback for drizzle/0345. Before-state read from prod D1 on
 -- 2026-10-01 (planned set = 10 rows, every new venue resolved and ACTIVE).
+-- UPDATE 12:00Z: drizzle/0344 (OPE-1233, deployed first) DELETED series
+-- 5baca53e… (tunbridge-worlds-fair-vt) as a split-series duplicate, so the
+-- live planned set at apply time is 9. Its rollback line below is a no-op.
 -- series_id | canonical_slug | venue_id BEFORE -> AFTER
 --   67c5f163… bar-harbor-eden-farmers-market          02a3e45e… -> 3b405528… (the-mount-desert-island-ymca)
 --   f79dc0f7… augusta-farmers-market-winter-2026      38792939… -> 30fd29ea… (buker-community-center)
