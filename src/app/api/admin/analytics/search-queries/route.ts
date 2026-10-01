@@ -4,6 +4,7 @@ import { isAuthorized } from "@/lib/api-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { getSearchQueriesForPage, ScApiError, ScConfigError } from "@/lib/search-console";
 import { DateRangeError, parseAnalyticsParams } from "@/lib/analytics-params";
+import { isGscExportRowQuery } from "@takemetothefair/utils";
 
 /**
  * GET /api/admin/analytics/search-queries?path=/events
@@ -38,6 +39,18 @@ export async function GET(request: NextRequest) {
       dateRange: params.dateRange,
       rowLimit: params.rowLimit,
     });
+    // OPE-1255 — exclude GSC export-row junk queries unless asked for.
+    if (url.searchParams.get("include_export_rows") !== "1") {
+      const kept = queries.filter((q) => !isGscExportRowQuery(q.query));
+      if (kept.length !== queries.length) {
+        return NextResponse.json({
+          success: true,
+          path,
+          queries: kept,
+          excludedExportRowQueries: { count: queries.length - kept.length },
+        });
+      }
+    }
     return NextResponse.json({ success: true, path, queries });
   } catch (error) {
     if (error instanceof DateRangeError) {
