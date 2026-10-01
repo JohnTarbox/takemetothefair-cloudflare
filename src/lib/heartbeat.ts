@@ -205,6 +205,27 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       ),
   },
   {
+    // OPE-1139 — the self-announced exhibitor lane (link an existing vendor
+    // live, or stage a new one in exhibitor_proposals). Evidence: its step
+    // record, written on EVERY evaluation, declines included.
+    //
+    // Seeded DORMANT (drizzle/0343, enabled_at NULL): one specimen to date, so
+    // the 720h below is a placeholder, not a measurement — the same stance as
+    // roster-vendor-link. Whoever arms it replaces the window with a measured one.
+    name: "self-announced-exhibitor",
+    ownerOpe: "OPE-1139",
+    label: "submit@ self-announcement → exhibitor link / proposal",
+    priority: "P1",
+    expectedWindowHours: 720,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        workflowRunSteps,
+        workflowRunSteps.recordedAt,
+        eq(workflowRunSteps.stepName, "self-announced-exhibitor")
+      ),
+  },
+  {
     // OPE-837 — proof the same-site nav crawl is still executing.
     //
     // This is the OPE-246 class in its purest form. The crawl is enrichment:
