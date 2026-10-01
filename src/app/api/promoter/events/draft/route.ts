@@ -1,4 +1,5 @@
 export const dynamic = "force-dynamic";
+import { raiseEventReviewFlag } from "@/lib/db/schema";
 import { NextRequest, NextResponse } from "next/server";
 import { detectPossibleDuplicate } from "@/lib/duplicates/venue-date-collision";
 import { checkEventVenue } from "@/lib/venues/former-venue-guard";
@@ -147,7 +148,6 @@ export async function POST(request: NextRequest) {
       await db
         .update(events)
         .set({
-          ...(formerVenue.kind === "flag" ? { flaggedForReview: 1 } : {}),
           name: data.name,
           description: data.description,
           venueId: data.venueId || null,
@@ -180,6 +180,10 @@ export async function POST(request: NextRequest) {
           updatedAt: new Date(),
         })
         .where(eq(events.id, existingId));
+      // OPE-767 — recorded as a reason, so it can be discharged on its own.
+      if (formerVenue.kind === "flag") {
+        await raiseEventReviewFlag(db, existingId, "former_venue");
+      }
 
       // Replace event days wholesale — simpler than diffing.
       // WS2a — shared D1-safe batched insert (was an inline unbatched insert).
@@ -246,7 +250,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: formerVenueNew.message }, { status: 409 });
     }
     await db.insert(events).values({
-      ...(formerVenueNew.kind === "flag" ? { flaggedForReview: 1 } : {}),
       possibleDuplicateOf,
       // OPE-433 — named explicitly rather than inherited from the DDL default.
       //
@@ -292,6 +295,8 @@ export async function POST(request: NextRequest) {
       applicationInstructions: data.applicationInstructions,
       walkInsAllowed: data.walkInsAllowed,
     });
+    // OPE-767 — recorded as a reason, so it can be discharged on its own.
+    if (formerVenueNew.kind === "flag") await raiseEventReviewFlag(db, newId, "former_venue");
 
     await recomputeEventCompleteness(db, newId);
 

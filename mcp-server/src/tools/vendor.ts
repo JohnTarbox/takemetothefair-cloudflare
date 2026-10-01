@@ -2,7 +2,14 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { eq, and, or, sql } from "drizzle-orm";
 import { mergeProductsJson, routeVendorTypeForWrite } from "@takemetothefair/vendor-linking";
-import { vendors, events, eventVendors, promoters, venues } from "../schema.js";
+import {
+  vendors,
+  events,
+  eventVendors,
+  promoters,
+  venues,
+  raiseEventReviewFlag,
+} from "../schema.js";
 import { attachEventToSeries } from "../series/resolve-or-create-series.js";
 import { recordMutation } from "../audit/record-mutation.js";
 import {
@@ -1329,7 +1336,6 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
 
       const eventId = crypto.randomUUID();
       await db.insert(events).values({
-        ...(venueStateMismatch || outsideNewEngland || formerFlag ? { flaggedForReview: 1 } : {}),
         id: eventId,
         name: effectiveName,
         slug: finalSlug,
@@ -1409,6 +1415,14 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
         lastSyncedAt: new Date(),
         submittedByUserId: auth.userId,
       });
+      // OPE-767 — each reason recorded, so each can be discharged on its own.
+      for (const reason of [
+        venueStateMismatch && "venue_state_mismatch",
+        outsideNewEngland && "outside_new_england",
+        formerFlag && "former_venue",
+      ] as const) {
+        if (reason) await raiseEventReviewFlag(db, eventId, reason);
+      }
 
       // OPE-472 — attach to a series parent at write time.
       //

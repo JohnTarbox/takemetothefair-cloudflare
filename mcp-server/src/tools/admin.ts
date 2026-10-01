@@ -18,6 +18,10 @@ import {
   eventDataCitations,
   eventDuplicateDismissals,
   containsCI,
+  raiseEventReviewFlag,
+  clearEventReviewFlag,
+  unknownHoursCountSql,
+  shouldRaiseHoursFlag,
 } from "../schema.js";
 import {
   formatDateRange,
@@ -163,6 +167,7 @@ import { registerBingSitemapResubmitTool } from "./admin-bing-sitemap-resubmit.j
 import { registerReplyToInboundEmailTool } from "./reply-to-inbound-email.js";
 import { registerGscMilestoneIngestTool } from "./admin-gsc-milestone-ingest.js";
 import { registerPerformerTools } from "./admin-performers.js";
+import { registerEventReviewFlagTools } from "./admin-review-flags.js";
 import { registerPerformerDiscoveryTools } from "./admin-performer-discovery.js";
 import { registerPerformerClaimTools } from "./performer-claim-approval.js";
 import { registerPerformerHealthTool } from "./admin-performer-health.js";
@@ -312,6 +317,33 @@ function closeTimeUnpublishedError(args: {
   return null;
 }
 
+/**
+ * OPE-767 — the hours axis of `flagged_for_review`, both directions, as one
+ * reason. Raises `missing_hours` while any day lacks hours; clears ONLY that
+ * reason once none do (every other active reason keeps the flag up). Same rule
+ * as the app side (`src/lib/events/hours-review-flag.ts`), from the same
+ * shared `unknownHoursCountSql` / `shouldRaiseHoursFlag`.
+ */
+async function syncHoursReason(db: Db, eventId: string): Promise<"raised" | "cleared" | "none"> {
+  const [counts] = await db
+    .select({ daysChecked: sql<number>`count(*)`, unknownDays: unknownHoursCountSql() })
+    .from(eventDays)
+    .where(eq(eventDays.eventId, eventId));
+  const observed = {
+    daysChecked: Number(counts?.daysChecked ?? 0),
+    unknownDays: Number(counts?.unknownDays ?? 0),
+  };
+  if (shouldRaiseHoursFlag(observed)) {
+    await raiseEventReviewFlag(db, eventId, "missing_hours");
+    return "raised";
+  }
+  if (observed.daysChecked > 0 && observed.unknownDays === 0) {
+    await clearEventReviewFlag(db, eventId, "missing_hours", "hours-axis");
+    return "cleared";
+  }
+  return "none";
+}
+
 export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext, env?: Env) {
   // Defense-in-depth: guard even though registration is already gated in index.ts
   if (auth.role !== "ADMIN") return;
@@ -353,6 +385,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   });
   registerGscMilestoneIngestTool(server, auth, env);
   registerPerformerTools(server, db, auth);
+  registerEventReviewFlagTools(server, db, auth);
   // OPE-116 (2/3) — discovery harvest (event_schema_org) + dedup sweep.
   registerPerformerDiscoveryTools(server, db, auth);
   // OPE-116 (3/3) — performer claim approval + enhanced-profile activation.
@@ -1528,6 +1561,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       // its closure (the drizzle/0333 trigger enforces it too; this makes the
       // refusal readable). Inside the closure's uncertainty window: flag.
       let formerVenueWarning: string | undefined;
+      let raiseFormerVenueFlag = false;
       if (
         updates.venueId !== undefined ||
         updates.startDate !== undefined ||
@@ -1552,7 +1586,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           };
         }
         if (verdict.kind === "flag") {
-          updates.flaggedForReview = 1;
+          raiseFormerVenueFlag = true;
           formerVenueWarning = verdict.reason;
         }
       }
@@ -2019,6 +2053,8 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           await db.update(events).set(updates).where(eq(events.id, event.id));
         }
         await recomputeEventCompleteness(db, event.id);
+        // OPE-767 — after the write lands, recorded as a reason.
+        if (raiseFormerVenueFlag) await raiseEventReviewFlag(db, event.id, "former_venue");
 
         // OPE-472 rework — LATE series attach, when a venue arrives after the
         // event was created.
@@ -5943,9 +5979,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           ...publicDatesFromDaysSet(params.event_id),
           updatedAt: new Date(),
           ...discontinuousUpdate,
-          ...(hoursUnknown ? { flaggedForReview: 1 } : {}),
         })
         .where(eq(events.id, params.event_id));
+      // OPE-767 — the hours axis, recorded as its own reason, both directions.
+      await syncHoursReason(db, params.event_id);
 
       return {
         content: [
@@ -6119,6 +6156,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       if (daySyndicationStmts.length > 0) {
         await enqueueSyndicationChange(env, { entityType: "event_day", entityId: params.day_id });
       }
+      // OPE-767 — filling in the last unknown day clears `missing_hours`
+      // (and only it); blanking one raises it. This tool's description always
+      // said it cleared the flag; until now nothing did.
+      const hoursAxis = await syncHoursReason(db, eventId);
 
       // OPE-433 scope 5 — one record for both branches: the syndication
       // fan-out changes how the write is issued, not what changed.
@@ -6137,6 +6178,8 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           jsonContent({
             updated: true,
             id: params.day_id,
+            // OPE-767 — what the hours axis did to the review flag.
+            hours_review_reason: hoursAxis,
             fieldsUpdated: Object.keys(updates),
           }),
         ],

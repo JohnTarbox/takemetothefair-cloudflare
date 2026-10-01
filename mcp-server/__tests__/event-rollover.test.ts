@@ -7,7 +7,14 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createTestDb, mockIndexNowFetch, type TestDb } from "./setup-db.js";
 import { rolloverEventIfRecurring } from "../src/event-rollover.js";
-import { events, eventDays, eventVendors, adminActions, promoters } from "../src/schema.js";
+import {
+  events,
+  eventDays,
+  eventVendors,
+  adminActions,
+  promoters,
+  eventReviewFlags,
+} from "../src/schema.js";
 import { eq } from "drizzle-orm";
 import { unsafeSlug } from "@takemetothefair/utils";
 
@@ -80,6 +87,12 @@ describe("rolloverEventIfRecurring — happy path", () => {
     expect(rolled.endDate?.toISOString()).toBe("2027-10-13T12:00:00.000Z");
     expect(rolled.rolledFromEventId).toBe(sourceId);
     expect(rolled.flaggedForReview).toBe(1);
+    // OPE-767 — flagged FOR A REASON, so the hours axis cannot discharge it.
+    const reasons = await db
+      .select({ reason: eventReviewFlags.reason })
+      .from(eventReviewFlags)
+      .where(eq(eventReviewFlags.eventId, rolled.id));
+    expect(reasons.map((r) => r.reason)).toContain("rollover");
     expect(rolled.ingestionMethod).toBe("auto_rollover");
     // Inherited fields
     expect(rolled.description).toBe("A big agricultural fair.");

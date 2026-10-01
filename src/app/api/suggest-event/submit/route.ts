@@ -1,4 +1,5 @@
 export const dynamic = "force-dynamic";
+import { raiseEventReviewFlag } from "@/lib/db/schema";
 import { NextRequest, NextResponse } from "next/server";
 import { detectPossibleDuplicate } from "@/lib/duplicates/venue-date-collision";
 import { resolveIngestVenue } from "@/lib/venues/former-venue-guard";
@@ -809,16 +810,19 @@ export async function POST(request: NextRequest) {
       // EDITION that needs web-confirmation → OCCURRED in the review/analyst
       // lane (the headless worker can't web-confirm), not an upcoming event.
       // Operator triage queue at /admin/events?flagged=1.
-      flaggedForReview:
-        stateNeedsReview ||
-        formerCheck.flagForReview ||
-        anyHoursUnknown ||
-        gateReasons.includes("past_date") ||
-        // OPE-378 — an invented name reads perfectly, so it needs a human.
-        gateReasons.includes("ungrounded_name")
-          ? 1
-          : 0,
     });
+    // OPE-767 — each reason recorded, so each can be discharged on its own.
+    // (Was one boolean OR of all five; nothing could tell them apart later.)
+    // OPE-378 — an invented name reads perfectly, so it needs a human.
+    for (const reason of [
+      stateNeedsReview && "venue_state_mismatch",
+      formerCheck.flagForReview && "former_venue",
+      anyHoursUnknown && "missing_hours",
+      gateReasons.includes("past_date") && "past_dated",
+      gateReasons.includes("ungrounded_name") && "ungrounded_name",
+    ] as const) {
+      if (reason) await raiseEventReviewFlag(db, newEventId, reason);
+    }
 
     // OPE-541 — one row per submission saying how the venue resolved.
     // Deliberately logged for EVERY outcome, matches included: a record that

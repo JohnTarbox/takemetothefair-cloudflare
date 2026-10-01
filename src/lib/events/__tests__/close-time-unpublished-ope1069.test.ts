@@ -16,7 +16,11 @@ const db = () => drizzle(sqlite, { schema }) as never;
 beforeEach(() => {
   sqlite = new Database(":memory:");
   sqlite.exec(`
-    CREATE TABLE events (id TEXT PRIMARY KEY, flagged_for_review INTEGER NOT NULL DEFAULT 0, updated_at INTEGER);
+    CREATE TABLE event_review_flags (
+    id TEXT PRIMARY KEY, event_id TEXT NOT NULL, reason TEXT NOT NULL,
+    raised_at INTEGER NOT NULL, raised_by TEXT, cleared_at INTEGER, cleared_by TEXT, note TEXT
+  );
+  CREATE TABLE events (id TEXT PRIMARY KEY, flagged_for_review INTEGER NOT NULL DEFAULT 0, updated_at INTEGER);
     CREATE TABLE event_days (
       id TEXT PRIMARY KEY, event_id TEXT NOT NULL, date TEXT NOT NULL,
       open_time TEXT, close_time TEXT,
@@ -54,14 +58,15 @@ describe("raiseHoursReviewFlag — OPE-1069", () => {
     seed("big-e", 17, { open: "08:00", close: null, unpublished: 1 });
     const r = await raiseHoursReviewFlag(db(), "big-e");
     // Landmark: 17 days were examined — a zero over an empty set proves nothing.
-    expect(r).toEqual({ daysChecked: 17, unknownDays: 0, flagRaised: false });
+    // OPE-767 — every day accounted for: nothing raised, and missing_hours cleared.
+    expect(r).toEqual({ daysChecked: 17, unknownDays: 0, flagRaised: false, reasonCleared: true });
     expect(flag("big-e")).toBe(0);
   });
 
   it("the same days WITHOUT the finding are a research gap → flag", async () => {
     seed("gap", 17, { open: "08:00", close: null, unpublished: 0 });
     const r = await raiseHoursReviewFlag(db(), "gap");
-    expect(r).toEqual({ daysChecked: 17, unknownDays: 17, flagRaised: true });
+    expect(r).toEqual({ daysChecked: 17, unknownDays: 17, flagRaised: true, reasonCleared: false });
     expect(flag("gap")).toBe(1);
   });
 

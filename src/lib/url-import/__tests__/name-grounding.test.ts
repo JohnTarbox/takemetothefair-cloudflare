@@ -124,11 +124,12 @@ describe("wired into the submit route", () => {
     expect(ROUTE).toContain('gateRoute = "PENDING_REVIEW"');
   });
 
-  it("sets flaggedForReview so it reaches the queue a human reads", () => {
+  it("raises the review flag so it reaches the queue a human reads", () => {
     // Gate flags alone are recorded but not surfaced; the flag is what puts it
-    // in front of someone.
-    expect(ROUTE).toContain('gateReasons.includes("ungrounded_name")');
-    expect(ROUTE).toMatch(/flaggedForReview:/);
+    // in front of someone. OPE-767 — keyed on the ACT (raising the
+    // ungrounded_name reason), not on one spelling of the write.
+    expect(ROUTE).toContain('gateReasons.includes("ungrounded_name") && "ungrounded_name"');
+    expect(ROUTE).toMatch(/raiseEventReviewFlag\(db, newEventId, reason\)/);
   });
 
   it("checks against the description, not just the submitted name", () => {

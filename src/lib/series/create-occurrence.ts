@@ -6,6 +6,7 @@
  * and the K27 rollover all funnel through here. Pure field-inheritance stays in
  * create-occurrence-core.ts; this module owns the lookup + idempotency + insert.
  */
+import { raiseEventReviewFlag } from "@/lib/db/schema";
 import { and, eq } from "drizzle-orm";
 import type { Database } from "@/lib/db";
 import { events, eventSeries, eventDays, adminActions } from "@/lib/db/schema";
@@ -289,8 +290,6 @@ export async function createOccurrenceForSeries(
     publicAccess: values.publicAccess,
     status: values.status,
     lifecycleStatus: values.lifecycleStatus,
-    // flagged_for_review is a plain INTEGER column (not boolean-mode).
-    flaggedForReview: values.flaggedForReview ? 1 : 0,
     rolledFromEventId: values.rolledFromEventId,
     sourceName: input.sourceName ?? "series-occurrence",
     ingestionMethod: input.ingestionMethod ?? "admin_manual",
@@ -314,6 +313,9 @@ export async function createOccurrenceForSeries(
     }),
     createdAt: now,
   });
+
+  // OPE-767 — recorded as a reason, so it can be discharged on its own.
+  if (values.flaggedForReview) await raiseEventReviewFlag(db, eventId, "new_occurrence");
 
   return { created: true, occurrenceId: eventId, slug: finalSlug, year };
 }

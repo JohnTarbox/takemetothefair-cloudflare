@@ -29,7 +29,11 @@ const MIGRATION = readFileSync(
 beforeEach(() => {
   sqlite = new Database(":memory:");
   sqlite.exec(`
-    CREATE TABLE events (id TEXT PRIMARY KEY, flagged_for_review INTEGER NOT NULL DEFAULT 0, updated_at INTEGER);
+    CREATE TABLE event_review_flags (
+    id TEXT PRIMARY KEY, event_id TEXT NOT NULL, reason TEXT NOT NULL,
+    raised_at INTEGER NOT NULL, raised_by TEXT, cleared_at INTEGER, cleared_by TEXT, note TEXT
+  );
+  CREATE TABLE events (id TEXT PRIMARY KEY, flagged_for_review INTEGER NOT NULL DEFAULT 0, updated_at INTEGER);
     CREATE TABLE event_days (
       id TEXT PRIMARY KEY, event_id TEXT NOT NULL, date TEXT NOT NULL,
       open_time TEXT, close_time TEXT, close_time_unpublished INTEGER NOT NULL DEFAULT 0,
