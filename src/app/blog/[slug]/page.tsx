@@ -229,6 +229,14 @@ export default async function BlogPostPage({ params }: Props) {
   ]);
   const hasLinkedEntities =
     linkedEntities.events.length + linkedEntities.vendors.length + linkedEntities.venues.length > 0;
+  // OPE-1188 follow-up — the sidebar cards ("Mentioned in this post", "Related
+  // Events") interpolated `/events/<slug>` too, so a series occurrence cost a
+  // 301 hop there after the body was fixed. Same resolver, one batched lookup.
+  const sidebarHrefMap = await resolveEventHrefs(getCloudflareDb(), [
+    ...linkedEntities.events.map((e) => e.slug),
+    ...relatedEvents.map((e) => e.slug),
+  ]);
+  const eventHref = (slug: string) => sidebarHrefMap.get(`/events/${slug}`) ?? `/events/${slug}`;
   const parsedRecentPosts = recentPosts.map((p) => ({
     ...p,
     authorName: formatAuthorName(p.authorName),
@@ -496,7 +504,7 @@ export default async function BlogPostPage({ params }: Props) {
                       {linkedEntities.events.map((e) => (
                         <li key={`e-${e.slug}`}>
                           <Link
-                            href={`/events/${e.slug}`}
+                            href={eventHref(e.slug)}
                             className="text-sm text-royal hover:text-navy hover:underline"
                           >
                             {e.name}
@@ -570,7 +578,7 @@ export default async function BlogPostPage({ params }: Props) {
             {relatedEvents.map((event) => (
               <Link
                 key={event.id}
-                href={`/events/${event.slug}`}
+                href={eventHref(event.slug)}
                 className="flex gap-4 p-4 bg-card rounded-lg border border-border hover:border-royal hover:shadow-sm transition-all group"
               >
                 {event.imageUrl && (
