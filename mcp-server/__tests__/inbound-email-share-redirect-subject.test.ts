@@ -220,8 +220,12 @@ describe("OPE-277 — share-redirect recovery in the multi-source fan-out", () =
     expect(created).toEqual([]);
     expect(labels).toContain("submit/multi[0]/resolve-share-redirect");
     expect(labels).not.toContain("submit/multi[0]/fetch-resolved-url");
-    // No attachments → the bounce is the plain no-url ask (not the prose-failed variant).
-    expect(result.replyKind).toBe("no-url");
+    // OPE-1249 — a URL WAS tried, so the bounce is `unfetchable-url`, chosen
+    // here. This used to assert `no-url`, which the OPE-453 send-time invariant
+    // then downgraded to `unfetchable-url` anyway (log ce709c3e): the sender
+    // always received the unfetchable copy; only the row's record was wrong.
+    expect(result.replyKind).toBe("unfetchable-url");
+    expect(result.extractFailReason).toBe("no-fetchable-url");
   });
 });
 
