@@ -42,6 +42,7 @@ import {
   vendors,
   blogPosts,
   contentLinks,
+  eventSeries,
 } from "@/lib/db/schema";
 import { eq, and, ne, like, desc, or } from "drizzle-orm";
 import { dedupeByResolvedSlug } from "@/lib/event-vendor-display";
@@ -100,6 +101,7 @@ import { formatDateMedium } from "@/lib/datetime";
 import { cdnImage } from "@/lib/cdn-image";
 import { DERIVED_DATE_EXPLANATION, shouldShowProjectedDateCopy } from "@/lib/events/derived-date";
 import { isFairgoerSourceUrl, pickEventCta } from "@/lib/events/event-cta";
+import { getVisitorGuides } from "@/lib/blog/event-guides";
 import { gateUrlOnce } from "@/lib/url-classification";
 
 export const revalidate = 300; // Cache for 5 minutes
@@ -309,9 +311,10 @@ type RelatedBlogPost = {
   slug: string;
   excerpt: string | null;
   publishDate: Date | null;
-  /** "direct" = the post body contains a /events/<slug> link to this event.
+  /** "guide" = written about this fair itself (OPE-1188, always first).
+   *  "direct" = the post body contains a /events/<slug> link to this event.
    *  "category" = matched on shared tag/category only (topical fallback). */
-  kind: "direct" | "category";
+  kind: "guide" | "direct" | "category";
 };
 
 /**
@@ -395,18 +398,42 @@ async function getCategoryMatchedBlogPosts(
 async function getRelatedBlogPosts(
   eventId: string,
   eventName: string,
-  categories: string[]
+  categories: string[],
+  seriesId: string | null
 ): Promise<RelatedBlogPost[]> {
-  const direct = await getDirectlyLinkedBlogPosts(eventId, 3);
-  const remaining = 3 - direct.length;
-  if (remaining <= 0) return direct;
+  // OPE-1188 — the fair's own visitor guide first. Direct links are ordered
+  // newest-first, so a September roundup that mentions every fair used to push
+  // the fair's April guide off the page (Fryeburg showed Topsfield and Salem).
+  let seriesName: string | null = null;
+  if (seriesId) {
+    try {
+      const [s] = await getCloudflareDb()
+        .select({ name: eventSeries.name })
+        .from(eventSeries)
+        .where(eq(eventSeries.id, seriesId))
+        .limit(1);
+      seriesName = s?.name ?? null;
+    } catch {
+      seriesName = null;
+    }
+  }
+  const guides = (await getVisitorGuides(getCloudflareDb(), seriesName ?? eventName, 2)).map(
+    (g) => ({ ...g, kind: "guide" as const })
+  );
+  const seen = new Set(guides.map((g) => g.slug));
+  const direct = (await getDirectlyLinkedBlogPosts(eventId, 3 + guides.length)).filter(
+    (p) => !seen.has(p.slug)
+  );
+  const picked: RelatedBlogPost[] = [...guides, ...direct].slice(0, 3);
+  const remaining = 3 - picked.length;
+  if (remaining <= 0) return picked;
   const category = await getCategoryMatchedBlogPosts(
     eventName,
     categories,
-    direct.map((p) => p.slug),
+    picked.map((p) => p.slug),
     remaining
   );
-  return [...direct, ...category];
+  return [...picked, ...category];
 }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
@@ -427,7 +454,9 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
   // render the occurrence's Event detail (one EventSeries block per URL).
   const landing = asOccurrence ? null : await getSeriesLanding(slug);
   if (landing) {
-    return <SeriesLandingPage landing={landing} now={new Date()} />;
+    // OPE-1188 — the hub had no /blog/ link at all; it now names the fair's own guide.
+    const visitorGuides = await getVisitorGuides(getCloudflareDb(), landing.series.name, 2);
+    return <SeriesLandingPage landing={landing} now={new Date()} visitorGuides={visitorGuides} />;
   }
 
   const event = await getEvent(slug);
@@ -524,7 +553,7 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
   const eventCategories = parseJsonArray(event.categories);
   const [relatedEvents, relatedBlogPosts] = await Promise.all([
     getRelatedEvents(event.id, event.venueId, eventCategories),
-    getRelatedBlogPosts(event.id, event.name, eventCategories),
+    getRelatedBlogPosts(event.id, event.name, eventCategories, event.seriesId ?? null),
   ]);
 
   // FAQ Phase A: only render for events in the FAQ_PILOT_EVENT_SLUGS env
@@ -1756,6 +1785,11 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
                   href={`/blog/${post.slug}`}
                   className="p-4 bg-card rounded-lg border border-border hover:border-amber hover:shadow-sm transition-all group"
                 >
+                  {post.kind === "guide" && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 mb-2 rounded-full text-[11px] font-medium bg-amber-light text-amber-bg-fg">
+                      Visitor guide
+                    </span>
+                  )}
                   {post.kind === "direct" && (
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 mb-2 rounded-full text-[11px] font-medium bg-amber-light text-amber-bg-fg">
                       Written about this event

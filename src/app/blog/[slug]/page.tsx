@@ -12,6 +12,7 @@ import { upcomingEndPredicate } from "@/lib/event-dates";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { auth } from "@/lib/auth";
 import { MarkdownContent } from "@/components/blog/markdown-content";
+import { extractEventSlugs, resolveEventHrefs } from "@/lib/blog/event-guides";
 import { ShareButtons } from "@/components/ShareButtons";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { BlogPostCard } from "@/components/blog/blog-post-card";
@@ -194,6 +195,13 @@ export default async function BlogPostPage({ params }: Props) {
   if (post.status !== "PUBLISHED" && !isAdmin) {
     notFound();
   }
+
+  // OPE-1188 — event links in the body point at the slug that was current when
+  // the post was written; resolve each to its canonical /events/<series>/<year>
+  // so a reader (and a crawler) lands without a 301 hop. One batched lookup.
+  const eventHrefMap = Object.fromEntries(
+    await resolveEventHrefs(getCloudflareDb(), extractEventSlugs(post.body))
+  );
 
   // Coarse popularity signal for homepage ranking (src/lib/blog/homepage-ranking.ts).
   // Mirrors events/vendors detail pages: incremented inside the ISR-cached render,
@@ -395,7 +403,7 @@ export default async function BlogPostPage({ params }: Props) {
               docs/bc2-ga4-custom-dimensions.md for the GA4 Admin
               registration step that surfaces source_slug/target_type/
               target_slug as custom dimensions. */}
-          <MarkdownContent content={post.body} sourceSlug={post.slug} />
+          <MarkdownContent content={post.body} sourceSlug={post.slug} eventHrefMap={eventHrefMap} />
 
           {/* Tags */}
           {tags.length > 0 && (

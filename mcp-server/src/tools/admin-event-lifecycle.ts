@@ -5,7 +5,11 @@ import { events, adminActions, eventSlugHistory } from "../schema.js";
 import { EVENT_LIFECYCLE_VALUES, type EventLifecycle } from "@takemetothefair/constants";
 import { decodeHtmlEntities } from "@takemetothefair/utils";
 import { jsonContent, publicUrlFor, triggerIndexNow } from "../helpers.js";
-import { validateLifecycleTransition, isPublicLifecycle } from "../lifecycle.js";
+import {
+  validateLifecycleTransition,
+  isPublicLifecycle,
+  noOpRescheduleReason,
+} from "../lifecycle.js";
 import { rolloverEventIfRecurring } from "../event-rollover.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
@@ -193,6 +197,22 @@ export function registerEventLifecycleTools(
           ],
           isError: true,
         };
+      }
+
+      // OPE-1219 — a reschedule onto the row's own current start would record
+      // the new date as previous (Peabody: previousStartDate == startDate).
+      if (to === "RESCHEDULED") {
+        const noOp = noOpRescheduleReason({
+          currentStartDate: current.startDate ?? null,
+          newStartDate: new_start_date ? new Date(new_start_date) : null,
+          previousSupplied: Boolean(previous_start_date),
+        });
+        if (noOp) {
+          return {
+            content: [jsonContent({ error: "noop_reschedule", message: noOp, from, to })],
+            isError: true,
+          };
+        }
       }
 
       // Compute date updates for RESCHEDULED / POSTPONED. Other transitions

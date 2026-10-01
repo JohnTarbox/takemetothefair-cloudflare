@@ -18,6 +18,7 @@ import {
 import { buildEventSeriesJsonLd, seriesUrl } from "@/lib/series/series-schema-org";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import type { SeriesLanding, LandingOccurrence } from "@/lib/series/get-series-landing";
+import type { VisitorGuide } from "@/lib/blog/event-guides";
 import { formatDateRange } from "@/lib/utils";
 import { cdnImage } from "@/lib/cdn-image";
 import { toIsoDateOnlyInVenueZone } from "@/lib/datetime";
@@ -28,7 +29,16 @@ function venueLabel(o: LandingOccurrence): string {
   return [o.venue?.city, o.venue?.state].filter(Boolean).join(", ");
 }
 
-export function SeriesLandingPage({ landing, now }: { landing: SeriesLanding; now: Date }) {
+export function SeriesLandingPage({
+  landing,
+  now,
+  visitorGuides = [],
+}: {
+  landing: SeriesLanding;
+  now: Date;
+  /** OPE-1188 — posts written about this fair; the hub links them first. */
+  visitorGuides?: VisitorGuide[];
+}) {
   const { series, occurrences } = landing;
   // OPE-27 — effective series image (already resolved in getSeriesLanding to fall
   // back to the hero occurrence when the series row has none).
@@ -169,6 +179,27 @@ export function SeriesLandingPage({ landing, now }: { landing: SeriesLanding; no
         <h1 className="mt-1 font-display text-3xl font-bold text-secondary">{series.name}</h1>
         {series.description ? <p className="mt-3 text-secondary/80">{series.description}</p> : null}
       </header>
+
+      {visitorGuides.length > 0 ? (
+        <section className="mb-10" aria-labelledby="visitor-guide-heading">
+          <h2
+            id="visitor-guide-heading"
+            className="mb-2 font-display text-lg font-semibold text-secondary"
+          >
+            Plan your visit
+          </h2>
+          <ul className="space-y-2">
+            {visitorGuides.map((g) => (
+              <li key={g.slug}>
+                <Link href={`/blog/${g.slug}`} className="text-royal underline hover:text-royal/80">
+                  {g.title}
+                </Link>
+                {g.excerpt ? <p className="text-sm text-secondary/70">{g.excerpt}</p> : null}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
       {current.length > 0 ? (
         <section className="mb-10">

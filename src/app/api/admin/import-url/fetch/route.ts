@@ -291,11 +291,16 @@ export const GET = withAuthorized(
       // to same-site links plus known ticket-vendor hosts, which is exactly the
       // set the crawler is allowed to act on — anything else would be payload
       // the consumer must discard.
-      const links = extractAnchors(html, parsedUrl.href).filter((link) => {
+      // OPE-1250 — the page's own URL is where the redirect LANDED, not the
+      // link we were handed. Resolving anchors against `share.google/…` turned
+      // wgme.com's relative nav into `share.google/news/…` (37da2bf5) and the
+      // same-site filter compared against the wrong site. Only the standard
+      // path exposes redirects; Browser Rendering keeps the requested URL.
+      const finalUrl = fetchMethod === "standard" && standard.ok ? standard.finalUrl : undefined;
+      const pageUrl = finalUrl ?? parsedUrl.href;
+      const links = extractAnchors(html, pageUrl).filter((link) => {
         try {
-          return (
-            isSameSite(link.url, parsedUrl.href) || isTicketVendorHost(new URL(link.url).hostname)
-          );
+          return isSameSite(link.url, pageUrl) || isTicketVendorHost(new URL(link.url).hostname);
         } catch {
           return false;
         }
@@ -316,6 +321,7 @@ export const GET = withAuthorized(
         jsonLdEvents: metadata.jsonLdEvents || null,
         fetchMethod,
         ...(fetchMethod === "standard" && transport ? { transport } : {}),
+        ...(finalUrl && finalUrl !== parsedUrl.href ? { finalUrl } : {}),
       });
     } catch (error) {
       await logError(db, {
