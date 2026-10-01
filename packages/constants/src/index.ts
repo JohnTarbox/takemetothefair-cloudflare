@@ -859,6 +859,34 @@ export function isOpenToVendorApplications(status: string | null | undefined): b
   return VENDOR_CAPACITY_OPEN_TO_APPLICATIONS.includes(status as VendorCapacityStatus);
 }
 
+/**
+ * OPE-794 — one event's capacity, summarised across its application LANES, for
+ * a vendor-facing surface that shows the event once (the vendor digest).
+ *
+ * The best lane wins: a fair full for crafters but open for food trucks is
+ * still worth a vendor's attention. Order: OPEN > UNKNOWN > WAITLIST > the rest.
+ *
+ *  - `OPEN`        positive evidence a lane is taking applications
+ *  - `UNKNOWN`     no lanes, or no evidence — never rendered as "open", but
+ *                  not hidden either: it is ~every row today
+ *  - `WAITLIST`    the best a vendor can do is join a waitlist
+ *  - `UNAVAILABLE` every lane is FULL or CLOSED, or carries a status this code
+ *                  does not know — a status added later is NOT treated as an
+ *                  invitation until somebody decides it is (allow-list, as
+ *                  above)
+ */
+export type EventCapacitySummary = "OPEN" | "UNKNOWN" | "WAITLIST" | "UNAVAILABLE";
+
+export function summarizeLaneCapacity(
+  laneStatuses: ReadonlyArray<string | null | undefined>
+): EventCapacitySummary {
+  if (laneStatuses.length === 0) return "UNKNOWN";
+  if (laneStatuses.some((s) => s === "OPEN")) return "OPEN";
+  if (laneStatuses.some((s) => s === "UNKNOWN" || s == null)) return "UNKNOWN";
+  if (laneStatuses.some((s) => s === "WAITLIST")) return "WAITLIST";
+  return "UNAVAILABLE";
+}
+
 // "Producer-class" events — the big PRODUCED shows that publish a
 // web exhibitor directory worth backfilling (home/garden, boat/RV,
 // sportsman, trade, fiber, craft-festival, fairs). Deliberately
