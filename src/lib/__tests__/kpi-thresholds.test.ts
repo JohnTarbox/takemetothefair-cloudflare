@@ -28,9 +28,11 @@ describe("classifyKpi", () => {
   });
 
   it("higher_better: covers conversion_rate and sitemap_quality", () => {
-    expect(classifyKpi("conversion_rate", 0.08, FRESH)).toBe("GREEN");
-    expect(classifyKpi("conversion_rate", 0.06, FRESH)).toBe("YELLOW");
-    expect(classifyKpi("conversion_rate", 0.04, FRESH)).toBe("RED");
+    // OPE-265 — green 4.5%, red 3%. The measured 3.5–4.4% range reads amber.
+    expect(classifyKpi("conversion_rate", 0.045, FRESH)).toBe("GREEN");
+    expect(classifyKpi("conversion_rate", 0.04, FRESH)).toBe("YELLOW");
+    expect(classifyKpi("conversion_rate", 0.035, FRESH)).toBe("YELLOW");
+    expect(classifyKpi("conversion_rate", 0.029, FRESH)).toBe("RED");
     expect(classifyKpi("sitemap_quality", 0.9, FRESH)).toBe("GREEN");
     expect(classifyKpi("sitemap_quality", 0.7, FRESH)).toBe("YELLOW");
     expect(classifyKpi("sitemap_quality", 0.5, FRESH)).toBe("RED");

@@ -79,10 +79,15 @@ export const KPI_THRESHOLDS: Record<KpiName, KpiThreshold> = {
     staleSlaSeconds: 120 * HOURS,
   },
   conversion_rate: {
-    green: 0.08,
-    red: 0.05,
+    // OPE-265 — John's ruling 2026-09-30: target reset from 8% to 4.5%. No 28-
+    // or 90-day window had ever reached 8%; measured rates run 3.5–4.4%, so 8%
+    // held the badge RED permanently and RED stopped meaning anything. Red at
+    // 3% sits below that whole measured range: normal weeks read amber, and
+    // RED means a real drop.
+    green: 0.045,
+    red: 0.03,
     direction: "higher_better",
-    targetLabel: "≥ 8%",
+    targetLabel: "≥ 4.5%",
     effort: "0.5 dev day",
     actionDescription: "Audit content quality; check destination engagement",
     href: "/admin/analytics",

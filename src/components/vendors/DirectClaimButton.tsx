@@ -34,6 +34,11 @@ export function DirectClaimButton({ vendorSlug, vendorId }: Props) {
     // ENG1.5 (2026-06-10) — funnel: intent fires before the request. Direct
     // claim is one-click (email already matched), so method is "register".
     trackVendorClaim("started", "register", vendorSlug, vendorId);
+    // OPE-364 (1a, John 2026-09-30) — funnel step 4 fires on the ATTEMPT,
+    // before the POST, like register_submitted and submit_submitted. Success-only
+    // made the step unprovable without creating a real claim, and hid a claim
+    // endpoint that rejects everyone. `approved` stays success-only below.
+    trackVendorClaim("submitted", "register", vendorSlug, vendorId);
     try {
       const res = await fetch("/api/vendor/claim/direct", {
         method: "POST",
@@ -51,9 +56,8 @@ export function DirectClaimButton({ vendorSlug, vendorId }: Props) {
       // before router.refresh() so the beacon goes out under the
       // current session before the navigation invalidates it.
       trackFormSubmit("vendor_claim", { vendor_slug: vendorSlug });
-      // ENG1.5 (2026-06-10) — direct claim is granted instantly, so submitted
-      // and approved both fire on success.
-      trackVendorClaim("submitted", "register", vendorSlug, vendorId);
+      // ENG1.5 (2026-06-10) — direct claim is granted instantly, so approved
+      // fires on success.
       trackVendorClaim("approved", "register", vendorSlug, vendorId);
       // Force a refresh so the page re-fetches the vendor with
       // claimed=true and the session.roles array picks up the new
