@@ -176,7 +176,13 @@ export async function runUnterminatedCrossingNotice(
     const note = `unterminated=${crossings.length} fresh=${decision.fresh.length} notified=${notified}`;
     await db
       .insert(agentHeartbeats)
-      .values({ agentCode: UNTERMINATED_NOTICE_RUN_CODE, kind: "watchdog", lastSeenAt: now, note })
+      .values({
+        id: crypto.randomUUID(),
+        agentCode: UNTERMINATED_NOTICE_RUN_CODE,
+        kind: "watchdog",
+        lastSeenAt: now,
+        note,
+      })
       .onConflictDoUpdate({
         target: agentHeartbeats.agentCode,
         set: { lastSeenAt: now, kind: "watchdog", note },
