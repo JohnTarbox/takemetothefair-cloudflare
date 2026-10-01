@@ -18,14 +18,23 @@ export function easternDay(d: Date): string {
   }).format(d);
 }
 
-/** event_days dates (YYYY-MM-DD) that fall outside [start, end], sorted. */
+/**
+ * Public event_days dates (YYYY-MM-DD) that fall outside [start, end], sorted.
+ *
+ * vendor_only rows are skipped: a setup day before the public start is correct
+ * data, not a stranded day (measured 2026-10-01: 5 of the 12 out-of-range rows
+ * in prod were exactly that — Sterling's drop-off day, Shaker Hill's setup).
+ */
 export function eventDaysOutsideRange(
-  dayDates: string[],
+  days: Array<{ date: string; vendorOnly?: boolean | null }>,
   startDate: Date | null | undefined,
   endDate: Date | null | undefined
 ): string[] {
   if (!startDate) return [];
   const from = easternDay(startDate);
   const to = easternDay(endDate ?? startDate);
-  return dayDates.filter((d) => d < from || d > to).sort();
+  return days
+    .filter((d) => !d.vendorOnly && (d.date < from || d.date > to))
+    .map((d) => d.date)
+    .sort();
 }

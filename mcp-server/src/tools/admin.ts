@@ -2538,11 +2538,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
             .where(eq(events.id, params.event_id))
             .limit(1);
           const dayRows = await db
-            .select({ date: eventDays.date })
+            .select({ date: eventDays.date, vendorOnly: eventDays.vendorOnly })
             .from(eventDays)
             .where(eq(eventDays.eventId, params.event_id));
           const stranded = eventDaysOutsideRange(
-            dayRows.map((d) => d.date),
+            dayRows,
             row?.startDate ?? null,
             row?.endDate ?? null
           );

@@ -53,16 +53,20 @@ describe("noOpRescheduleReason (pure)", () => {
 });
 
 describe("eventDaysOutsideRange (pure, Eastern calendar days)", () => {
-  it("names days outside the range and none inside it", () => {
-    expect(
-      eventDaysOutsideRange(["2026-09-27", "2026-10-04"], noon("2026-10-04"), noon("2026-10-04"))
-    ).toEqual(["2026-09-27"]);
-    expect(eventDaysOutsideRange(["2026-10-04"], noon("2026-10-04"), null)).toEqual([]);
+  it("names public days outside the range and none inside it", () => {
+    const days = [{ date: "2026-09-27" }, { date: "2026-10-04" }];
+    expect(eventDaysOutsideRange(days, noon("2026-10-04"), noon("2026-10-04"))).toEqual([
+      "2026-09-27",
+    ]);
+    expect(eventDaysOutsideRange([{ date: "2026-10-04" }], noon("2026-10-04"), null)).toEqual([]);
+  });
+  it("skips a vendor-only setup day before the public start (Sterling's drop-off day)", () => {
+    const days = [{ date: "2026-09-10", vendorOnly: true }, { date: "2026-09-11" }];
+    expect(eventDaysOutsideRange(days, noon("2026-09-11"), noon("2026-09-13"))).toEqual([]);
   });
   it("uses the Eastern day: 02:00Z on the 5th is still the 4th in New York", () => {
-    expect(eventDaysOutsideRange(["2026-10-04"], new Date("2026-10-05T02:00:00Z"), null)).toEqual(
-      []
-    );
+    const late = new Date("2026-10-05T02:00:00Z");
+    expect(eventDaysOutsideRange([{ date: "2026-10-04" }], late, null)).toEqual([]);
   });
 });
 
