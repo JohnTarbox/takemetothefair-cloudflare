@@ -86,6 +86,8 @@ export const FANOUT_REPLY_RANK: Record<EmailIntent, number> = {
   unknown: 10,
   spam: 0,
   multi: 0,
+  // OPE-328 — gemba sends no reply at all, so it never leads a fan-out reply.
+  gemba_observation: 0,
 };
 
 export interface FanoutSibling {

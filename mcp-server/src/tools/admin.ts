@@ -217,6 +217,7 @@ import { registerPhotoProposalTools } from "./admin-photo-proposals.js";
 import { registerHeroProposalTools } from "./admin-hero-proposals.js";
 import { eventDaysOutsideRange } from "../events/event-days-range.js";
 import { registerExhibitorProposalTools } from "./admin-exhibitor-proposals.js";
+import { registerGembaTools } from "./admin-gemba.js";
 import { registerCategoryCleanupTool } from "./admin-category-cleanup.js";
 import { registerPropagateHoursTool } from "./admin-propagate-hours.js";
 import {
@@ -517,6 +518,8 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   registerHeroProposalTools(server, db, auth, env);
   // OPE-1139 — staged self-announced exhibitors: list + approve/reject.
   registerExhibitorProposalTools(server, db, auth);
+  // OPE-328 — gemba@ queue: agents post observations to the Linear anchor.
+  registerGembaTools(server, db, auth);
   // OPE-1058 — the operator handle on the one-time category rewrite.
   registerCategoryCleanupTool(server, auth, env);
   // OPE-1078 — carry a sourced day's hours to a recurring market's siblings.

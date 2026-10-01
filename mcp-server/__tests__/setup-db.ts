@@ -1465,6 +1465,18 @@ const SCHEMA_SQL = `
   );
 
   -- OPE-1139 (drizzle/0343) — staged self-announced exhibitors.
+  -- OPE-328 (drizzle/0348) — gemba@ observations queued for an agent to post.
+  CREATE TABLE gemba_observations (
+    id TEXT PRIMARY KEY,
+    inbound_email_id TEXT NOT NULL UNIQUE,
+    project TEXT,
+    anchor_issue TEXT,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'held', 'posted')),
+    routing_reason TEXT NOT NULL,
+    posted_ref TEXT,
+    posted_at INTEGER,
+    created_at INTEGER NOT NULL
+  );
   CREATE TABLE exhibitor_proposals (
     id TEXT PRIMARY KEY,
     event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
