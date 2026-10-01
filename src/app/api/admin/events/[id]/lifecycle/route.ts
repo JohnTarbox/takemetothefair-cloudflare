@@ -6,6 +6,7 @@ import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { events, adminActions } from "@/lib/db/schema";
 import {
   validateLifecycleTransition,
+  noOpRescheduleReason,
   swapDatesForLifecycle,
   isPublicLifecycle,
   type EventLifecycle,
@@ -48,7 +49,14 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error, issues: parsed.issues }, { status: 400 });
   }
-  const { new_lifecycle, reason, new_start_date, new_end_date } = parsed.data;
+  const {
+    new_lifecycle,
+    reason,
+    new_start_date,
+    new_end_date,
+    previous_start_date,
+    previous_end_date,
+  } = parsed.data;
 
   const db = getCloudflareDb();
   try {
@@ -104,6 +112,27 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       );
     }
 
+    // OPE-1219 — same refusal as the MCP tool: a reschedule onto the row's own
+    // current start would record the new date as previous.
+    if (to === "RESCHEDULED") {
+      const noOp = noOpRescheduleReason({
+        currentStartDate: current.startDate ?? null,
+        newStartDate: new_start_date ? normalizeEventDate(new_start_date) : null,
+        previousSupplied: Boolean(previous_start_date),
+      });
+      if (noOp) {
+        return NextResponse.json(
+          { error: "noop_reschedule", message: noOp, from, to },
+          { status: 400 }
+        );
+      }
+    }
+    // An explicit previous pair wins over the row's current dates (OPE-1218 parity).
+    const suppliedPrevStart = previous_start_date ? normalizeEventDate(previous_start_date) : null;
+    const suppliedPrevEnd = previous_start_date
+      ? normalizeEventDate(previous_end_date ?? previous_start_date)
+      : null;
+
     // Compute date updates for RESCHEDULED / POSTPONED.
     let dateUpdate: {
       startDate?: Date | null;
@@ -125,8 +154,8 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       dateUpdate = {
         startDate: swap.startDate,
         endDate: swap.endDate,
-        previousStartDate: swap.previousStartDate,
-        previousEndDate: swap.previousEndDate,
+        previousStartDate: suppliedPrevStart ?? swap.previousStartDate,
+        previousEndDate: suppliedPrevEnd ?? swap.previousEndDate,
         datesConfirmed: true,
       };
     } else if (to === "POSTPONED") {
@@ -136,8 +165,8 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       dateUpdate = {
         startDate: null,
         endDate: null,
-        previousStartDate: current.startDate ?? null,
-        previousEndDate: current.endDate ?? null,
+        previousStartDate: suppliedPrevStart ?? current.startDate ?? null,
+        previousEndDate: suppliedPrevEnd ?? current.endDate ?? null,
         datesConfirmed: false,
       };
     }

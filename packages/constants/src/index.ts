@@ -436,6 +436,38 @@ export function describeLifecycleRefusal(
  * the strict table applies unchanged, so every existing caller keeps its
  * current behaviour until it opts in.
  */
+/**
+ * OPE-1219 — refuse a RESCHEDULED that would record the NEW date as "previous".
+ *
+ * RESCHEDULED snapshots the row's current dates into previous_*. That is right
+ * only when the dates have not already been moved. When `update_event` moved
+ * them first (Peabody International Festival: 09-27 → 10-04, then RESCHEDULED
+ * to 10-04), the snapshot is the new date, and the page told search engines
+ * previousStartDate == startDate. The tell is a "reschedule" whose new start is
+ * the row's current start day. Supplying the true previous date (OPE-1218's
+ * `previous_start_date`) is the way through, so the refusal names it.
+ *
+ * Shared by the MCP tool and the admin route, which swap dates separately.
+ * Compared by UTC calendar day because dates are stored at noon UTC.
+ */
+export function noOpRescheduleReason(input: {
+  currentStartDate: Date | null | undefined;
+  newStartDate: Date | null | undefined;
+  previousSupplied: boolean;
+}): string | null {
+  const { currentStartDate, newStartDate, previousSupplied } = input;
+  if (previousSupplied || !currentStartDate || !newStartDate) return null;
+  if (Number.isNaN(currentStartDate.getTime()) || Number.isNaN(newStartDate.getTime())) return null;
+  const day = (d: Date) => d.toISOString().slice(0, 10);
+  if (day(currentStartDate) !== day(newStartDate)) return null;
+  return (
+    `RESCHEDULED to ${day(newStartDate)}, which is already this event's start date: ` +
+    "the dates were moved before this transition, so recording them as previous would " +
+    "claim the event moved from that date to itself. Pass previous_start_date (and " +
+    "previous_end_date) with the date it was actually moved FROM."
+  );
+}
+
 export function validateLifecycleTransition(
   from: EventLifecycle,
   to: EventLifecycle,
