@@ -79,7 +79,12 @@ function installFetch(cfg: {
       const target = u.searchParams.get("url") ?? "";
       return Response.json({
         success: true,
-        content: `CONTENT_FOR:${target}`,
+        // OPE-1253 — the page states the dates of the events it yields; a
+        // date the source never names is dropped by grounding and the row refused.
+        content: `CONTENT_FOR:${target} ${(cfg.urlEvents[target] ?? [])
+          .map((e) => e.startDate)
+          .filter(Boolean)
+          .join(" ")}`.trim(),
         fetchMethod: "standard",
       });
     }
@@ -202,7 +207,10 @@ describe("OPE-1123 specimen 1 — a listing page is not an event", () => {
       bodyExtract: () => [
         {
           name: "Thomas College Craft Fair",
-          startDate: futureDate(3),
+          // OPE-1253 — the date the verbatim specimen states. A date the
+          // source never names is dropped by grounding, and the email lane
+          // refuses a dateless create.
+          startDate: "2026-09-26",
           venueName: "Thomas College Field House",
         },
       ],

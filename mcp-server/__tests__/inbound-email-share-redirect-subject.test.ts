@@ -113,7 +113,12 @@ function installFetch(cfg: MockCfg) {
       }
       return Response.json({
         success: true,
-        content: `CONTENT_FOR:${target}`,
+        // OPE-1253 — the page states the dates of the events it yields; a
+        // date the source never names is dropped by grounding and the row refused.
+        content: `CONTENT_FOR:${target} ${(cfg.urlEvents?.[target] ?? [])
+          .map((e) => e.startDate)
+          .filter(Boolean)
+          .join(" ")}`.trim(),
         fetchMethod: "standard",
       });
     }

@@ -106,9 +106,17 @@ function installFetch(cfg: FetchConfig) {
       if ((cfg.failFetch ?? []).some((s) => target.includes(s))) {
         return new Response("upstream down", { status: 500 });
       }
+      // OPE-1253 — the page STATES the dates of the events it yields. Grounding
+      // (OPE-465) drops a date the source never names, and the email lane now
+      // refuses a dateless create, so a page that silently omitted them would
+      // test the refusal instead of the fan-out.
+      const pageDates = (cfg.urlEvents?.[target] ?? [])
+        .map((e) => e.startDate)
+        .filter(Boolean)
+        .join(" ");
       return Response.json({
         success: true,
-        content: `CONTENT_FOR:${target}`,
+        content: `CONTENT_FOR:${target} ${pageDates}`.trim(),
         fetchMethod: "standard",
       });
     }
@@ -183,6 +191,8 @@ function futureDate(days: number): string {
   return new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
 
+// OPE-1253 — body prose states its events' (relative) dates: grounding drops a
+// date the source never names, and the email lane refuses a dateless create.
 describe("OPE-55 multi-source fan-out", () => {
   it("creates N events for N DISTINCT events across body + URL", async () => {
     // Body mentions a distinct event AND links a URL describing another.
@@ -193,7 +203,7 @@ describe("OPE-55 multi-source fan-out", () => {
       attachmentCount: 0,
       classifiedSubIntent: "new_event",
       bodyTextExcerpt:
-        "Please add Riverside Fair happening June 1 2026 at Riverside Park. " +
+        `Please add Riverside Fair happening ${futureDate(90)} at Riverside Park. ` +
         "Our other event is at https://ex.test/a — thanks!",
     };
     // Dates are computed forward from the real clock, not hardcoded. The
@@ -234,8 +244,7 @@ describe("OPE-55 multi-source fan-out", () => {
       subject: "Spring Fair",
       attachmentCount: 0,
       classifiedSubIntent: "new_event",
-      bodyTextExcerpt:
-        "Spring Fair is May 5 2026 at Town Green. Full details at https://ex.test/a. Thanks!",
+      bodyTextExcerpt: `Spring Fair is ${futureDate(30)} at Town Green. Full details at https://ex.test/a. Thanks!`,
     };
     // Both the URL and the body describe the SAME event name.
     const { created, submitBodies } = installFetch({
@@ -371,8 +380,7 @@ describe("OPE-55 backward-compat — single-source fast paths unchanged", () => 
       subject: "Event details",
       attachmentCount: 0,
       classifiedSubIntent: "free_text",
-      bodyTextExcerpt:
-        "Autumn Market is October 12 2026 at the Village Commons. Hope you can list it!",
+      bodyTextExcerpt: `Autumn Market is ${futureDate(90)} at the Village Commons. Hope you can list it!`,
     };
     const { created, submitBodies } = installFetch({
       bodyEvents: [
@@ -404,8 +412,7 @@ describe("OPE-55 backward-compat — single-source fast paths unchanged", () => 
       subject: "Event",
       attachmentCount: 0,
       classifiedSubIntent: "free_text",
-      bodyTextExcerpt:
-        "Winter Fest is December 6 2026 at the Grange Hall. Sent from https://ex.test/signature",
+      bodyTextExcerpt: `Winter Fest is ${futureDate(105)} at the Grange Hall. Sent from https://ex.test/signature`,
     };
     const { created } = installFetch({
       // If the pipeline wrongly fetched the signature URL it would 500.
@@ -430,7 +437,7 @@ describe("OPE-1057 — a trusted sender's body-only event is extracted, not boun
   const HAMFEST_BODY =
     "---------- Forwarded message ---------\nFrom: Club Secretary <club@example.org>\n" +
     "Date: Mon, Sep 15, 2026\nSubject: Hamfest\n\n" +
-    "This Saturday, Sep 19 is the Alexander Hamfest at the Alexander Elementary School " +
+    `This Saturday, ${futureDate(2)} is the Alexander Hamfest at the Alexander Elementary School ` +
     "in Alexander on the Airline RD (RT-9). 8am until noon.";
 
   it("the Hamfest shape: NULL sub-intent + real prose → free-text extract → ok-low-body-extract", async () => {

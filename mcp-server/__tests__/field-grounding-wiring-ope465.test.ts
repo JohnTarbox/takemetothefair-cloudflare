@@ -98,17 +98,17 @@ afterEach(() => {
 
 describe("submitEvent applies the verdict before the POST", () => {
   it("does NOT send a whole-month span the source never stated", async () => {
-    await submitEvent(envFor(), extracted(), "organizer@example.org", {
-      inboundEmailId: "in-1",
-      dedupWasBlind: false,
-      sourceTexts: [NOV_7_FLYER],
-    });
-    expect(posted).not.toBeNull();
-    // The abstention: the fields are absent from the write, not "corrected"
-    // to a guess. The event itself is still created — it is real.
-    expect(posted!.startDate).toBeNull();
-    expect(posted!.endDate).toBeNull();
-    expect(posted!.name).toBe("Holiday Craft Fair");
+    // OPE-1253 — the abstention leaves no start_date, and the email lane no
+    // longer writes a dateless row: nothing is POSTed, and the refusal says why.
+    // (Before OPE-1253 this created the event with both dates NULL.)
+    await expect(
+      submitEvent(envFor(), extracted(), "organizer@example.org", {
+        inboundEmailId: "in-1",
+        dedupWasBlind: false,
+        sourceTexts: [NOV_7_FLYER],
+      })
+    ).rejects.toThrow(/submit-refused: no-date/);
+    expect(posted).toBeNull();
   });
 
   it("sends a date the source states, unchanged", async () => {
@@ -134,12 +134,14 @@ describe("submitEvent applies the verdict before the POST", () => {
 
 describe("it emits rather than silently suppressing (scope 4)", () => {
   it("writes one extraction fault per dropped field, and re-running bumps rather than duplicates", async () => {
+    // OPE-1253 — the candidate is now refused (no date remains), and the fault
+    // emission still happens: a refusal is recorded, never silent.
     const call = () =>
       submitEvent(envFor(), extracted(), "organizer@example.org", {
         inboundEmailId: "in-1",
         dedupWasBlind: false,
         sourceTexts: [NOV_7_FLYER],
-      });
+      }).catch(() => null);
     await call();
     const after1 = raw
       .prepare("SELECT signature, count, detail FROM extraction_faults ORDER BY signature")
@@ -159,15 +161,17 @@ describe("it emits rather than silently suppressing (scope 4)", () => {
   });
 
   it("records the verdicts on admin_actions and flags the inbound row", async () => {
+    // OPE-1253 — refused, so the trail names the INBOUND email (there is no
+    // event to target) under `email.candidate_refused`.
     await submitEvent(envFor(), extracted(), "organizer@example.org", {
       inboundEmailId: "in-1",
       dedupWasBlind: false,
       sourceTexts: [NOV_7_FLYER],
-    });
+    }).catch(() => null);
     const action = raw
       .prepare("SELECT action, target_id, payload_json FROM admin_actions WHERE action = ?")
-      .get("extract.ungrounded") as { target_id: string; payload_json: string };
-    expect(action.target_id).toBe("evt-1");
+      .get("email.candidate_refused") as { target_id: string; payload_json: string };
+    expect(action.target_id).toBe("in-1");
     const payload = JSON.parse(action.payload_json) as {
       droppedFields: string[];
       verdicts: { field: string; verdict: string; reason: string }[];
@@ -227,21 +231,25 @@ describe("a 'details to follow' submission is created AND flagged", () => {
     expect(fault).toBeTruthy();
   });
 
-  it("an ordinary dateless submission (nothing says 'to follow') is NOT flagged", async () => {
-    await submitEvent(
-      envFor(),
-      extracted({ name: "Fall Fair", startDate: null, endDate: null }),
-      "organizer@example.org",
-      {
-        inboundEmailId: "in-1",
-        dedupWasBlind: false,
-        sourceTexts: ["Our fall fair has crafts and food."],
-      }
-    );
+  it("OPE-1253 — an ordinary dateless submission (nothing says 'to follow') is REFUSED, and recorded", async () => {
+    // Was: created, unflagged — the silent dateless row OPE-1253 exists to stop.
+    await expect(
+      submitEvent(
+        envFor(),
+        extracted({ name: "Fall Fair", startDate: null, endDate: null }),
+        "organizer@example.org",
+        {
+          inboundEmailId: "in-1",
+          dedupWasBlind: false,
+          sourceTexts: ["Our fall fair has crafts and food."],
+        }
+      )
+    ).rejects.toThrow(/submit-refused: no-date/);
+    expect(posted).toBeNull();
     const row = raw
       .prepare("SELECT flagged_for_review FROM inbound_emails WHERE id = 'in-1'")
       .get() as { flagged_for_review: number };
-    expect(row.flagged_for_review).toBe(0);
+    expect(row.flagged_for_review).toBe(1);
   });
 });
 
@@ -277,7 +285,8 @@ describe("structural guard — no creation path can skip the source text", () =>
     const offenders: string[] = [];
     for (let m = re.exec(SRC); m; m = re.exec(SRC)) {
       const tail = SRC.slice(m.index, SRC.indexOf(");", m.index) + 2);
-      if (!/\[[^\]]*\]/.test(tail)) {
+      // OPE-1253 — `candidateSourceTexts(…)` is the fan-out's source array.
+      if (!/\[[^\]]*\]|candidateSourceTexts\(/.test(tail)) {
         offenders.push(`line ${SRC.slice(0, m.index).split("\n").length}`);
       }
     }

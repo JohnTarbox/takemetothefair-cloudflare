@@ -49,7 +49,11 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 const ENV = { DB: {}, MAIN_APP_URL: "https://app.test", INTERNAL_API_KEY: "k" } as never;
-const EXTRACTED = { url: "", event: { name: "UMF Fall Craft Fair" } } as never;
+// OPE-1253 — dated: the email lane refuses a dateless create.
+const EXTRACTED = {
+  url: "",
+  event: { name: "UMF Fall Craft Fair", startDate: "2026-12-05" },
+} as never;
 function routeReturns(...bodies: Record<string, unknown>[]) {
   let i = 0;
   vi.stubGlobal(

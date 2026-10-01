@@ -780,6 +780,166 @@ export interface SubmitEventContext {
   sourceTexts?: string[];
 }
 
+/**
+ * OPE-1253 — what the email lane must never turn into an event row.
+ *
+ * `suggest_event` refuses a dateless create ("start_date is required so
+ * duplicate-detection can run"); the email lane had no such floor. 20
+ * `email_submission` rows were created with no start_date, 7 still PENDING on
+ * 2026-09-30, among them "Weekly Polls on Facebook" (a link label in a
+ * forwarded newsletter) and "- YouTube" (a page title). None could be deduped.
+ */
+export type EmailCandidateRefusal = "no-date" | "non-event-name";
+
+/** Platform link labels and page titles that read as names but are not events. */
+const NON_EVENT_NAME_PATTERNS: RegExp[] = [
+  // "Weekly Polls on Facebook", "Follow us on Instagram"
+  /\bon\s+(facebook|instagram|twitter|x|tiktok|youtube|linkedin|pinterest|threads)\s*$/i,
+  // "- YouTube", "| Facebook" — a page-title suffix with the title stripped off
+  /^\s*[-–—|:]\s*(youtube|facebook|instagram|tiktok|twitter|x|linkedin)\s*$/i,
+  // a bare platform name
+  /^\s*(youtube|facebook|instagram|tiktok|twitter|linkedin|pinterest)\s*$/i,
+  // "Watch on YouTube", "Watch now", "Watch the video"
+  /^\s*watch\s+(on|now|live|the\s+video|our|this)\b/i,
+  // "Follow us", "Like us", "Subscribe", "Join us on …"
+  /^\s*(follow|like|subscribe\s+to|join)\s+us\b/i,
+];
+
+export function emailCandidateRefusal(ev: {
+  name?: string | null;
+  startDate?: string | null;
+}): EmailCandidateRefusal | null {
+  const name = (ev.name ?? "").trim();
+  if (!name || NON_EVENT_NAME_PATTERNS.some((r) => r.test(name))) return "non-event-name";
+  if (!ev.startDate) return "no-date";
+  return null;
+}
+
+/**
+ * The refusal as submitEvent will see it: AFTER grounding, which can itself
+ * drop an unsupported start_date (OPE-465 abstention) — so a candidate that
+ * arrived dated can still be one that would be written dateless.
+ */
+export function refusalForCandidate(
+  extracted: Pick<SubmitExtractResult, "event">,
+  sourceTexts: string[] = []
+): EmailCandidateRefusal | null {
+  const grounding = decideEventGrounding({
+    startDate: extracted.event.startDate,
+    endDate: extracted.event.endDate,
+    sources: sourceTexts,
+  });
+  const startDate = grounding.dropFields.includes("start_date") ? null : extracted.event.startDate;
+  return refusalAfterGrounding(extracted.event.name, startDate, grounding);
+}
+
+/**
+ * The one rule, given a grounding verdict. OPE-465's ruling (John, 2026-09-30)
+ * is kept as the single exception: a source that says the details are not
+ * available YET ("information … will be sent out later this year" — the UMF
+ * December fair) is still created, and flagged into the review queue. Every
+ * other dateless candidate is refused.
+ */
+function refusalAfterGrounding(
+  name: string | null | undefined,
+  startDate: string | null | undefined,
+  grounding: EventGroundingDecision
+): EmailCandidateRefusal | null {
+  const refusal = emailCandidateRefusal({ name, startDate });
+  if (refusal === "no-date" && grounding.refuseCreate) return null;
+  return refusal;
+}
+
+/**
+ * OPE-1253 — a refused candidate is never a silent drop. Same channels as
+ * OPE-465's ungrounded-field record: one extraction fault per dropped field,
+ * an `admin_actions(action='email.candidate_refused')` row naming the inbound
+ * email and the verdicts, and the inbound row flagged for review. Never throws.
+ */
+export async function recordCandidateRefusal(
+  env: HandlerEnv,
+  extracted: Pick<SubmitExtractResult, "event" | "url">,
+  sourceTexts: string[],
+  inboundEmailId: string,
+  reason: EmailCandidateRefusal
+): Promise<void> {
+  try {
+    const db = getDb(env.DB);
+    const grounding = decideEventGrounding({
+      startDate: extracted.event.startDate,
+      endDate: extracted.event.endDate,
+      sources: sourceTexts,
+    });
+    for (const field of grounding.dropFields) {
+      const result = grounding.results.find((r) => r.field === field);
+      await emitExtractionFault(db, {
+        signature: `extract.unsupported_field:${field}`,
+        source: SOURCE_SUBMIT,
+        familyId: "extract.unsupported_field",
+        detail: result?.reason ?? null,
+      });
+    }
+    await db.insert(adminActions).values({
+      action: "email.candidate_refused",
+      actorUserId: null,
+      targetType: "inbound_email",
+      targetId: inboundEmailId,
+      payloadJson: JSON.stringify({
+        reason,
+        name: extracted.event.name ?? null,
+        extractedStartDate: extracted.event.startDate ?? null,
+        sourceUrl: extracted.url || null,
+        droppedFields: grounding.dropFields,
+        verdicts: grounding.results.map((r) => ({
+          field: r.field,
+          verdict: r.verdict,
+          reason: r.reason,
+        })),
+      }),
+      createdAt: new Date(),
+    });
+    await db
+      .update(inboundEmails)
+      .set({ flaggedForReview: 1 })
+      .where(eq(inboundEmails.id, inboundEmailId));
+  } catch (err) {
+    await logError(getDb(env.DB), {
+      source: SOURCE_SUBMIT,
+      message: "candidate-refusal record failed",
+      error: err,
+    }).catch(() => {});
+  }
+}
+
+/** Prefix of the error submitEvent throws for a refused candidate. */
+export const SUBMIT_REFUSED_PREFIX = "submit-refused: ";
+
+/**
+ * OPE-1253 — newsletter click-trackers. Opaque, expiring, unique per send:
+ * useless as provenance or a dedup key. A tracker that redirected is replaced
+ * by its destination upstream (adoptFinalUrl, OPE-1250); one that did not is
+ * stored as NO source_url rather than as the tracker.
+ */
+const CLICK_TRACKER_HOST_SUFFIXES = [
+  "rs6.net",
+  "ccsend.com",
+  "mlsend.com",
+  "list-manage.com",
+  "mailchi.mp",
+  "sendgrid.net",
+  "hubspotlinks.com",
+];
+
+export function isClickTrackerUrl(url: string | null | undefined): boolean {
+  if (!url) return false;
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return CLICK_TRACKER_HOST_SUFFIXES.some((s) => host === s || host.endsWith(`.${s}`));
+  } catch {
+    return false;
+  }
+}
+
 export async function submitEvent(
   env: HandlerEnv,
   extracted: SubmitExtractResult,
@@ -806,6 +966,22 @@ export async function submitEvent(
     if (field === "end_date") groundedEvent.endDate = null;
   }
 
+  // OPE-1253 — the floor, at the one chokepoint every creating branch funnels
+  // through. Callers pre-check with refusalForCandidate so a refused candidate
+  // gets a recorded disposition; this throw is the backstop for any path that
+  // does not, and it fires AFTER grounding because grounding can drop the date.
+  const refusal = refusalAfterGrounding(groundedEvent.name, groundedEvent.startDate, grounding);
+  if (refusal) {
+    await recordCandidateRefusal(
+      env,
+      extracted,
+      context.sourceTexts ?? [],
+      context.inboundEmailId,
+      refusal
+    );
+    throw new NonRetryableError(`${SUBMIT_REFUSED_PREFIX}${refusal}`);
+  }
+
   let res: Response;
   try {
     const submitBody: Record<string, unknown> = {
@@ -816,7 +992,8 @@ export async function submitEvent(
     // Omit sourceUrl entirely when free-text-extracted (no source URL
     // exists). The submitEventSchema requires sourceUrl to be a valid
     // URL when present, so passing empty-string would fail validation.
-    if (extracted.url) {
+    // OPE-1253 — never a newsletter click-tracker.
+    if (extracted.url && !isClickTrackerUrl(extracted.url)) {
       submitBody.sourceUrl = extracted.url;
     }
     if (possibleDuplicateOf) {

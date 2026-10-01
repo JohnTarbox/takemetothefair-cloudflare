@@ -154,6 +154,9 @@ import {
   submitFreeTextExtract,
   submitCheckDuplicate,
   submitEvent,
+  refusalForCandidate,
+  recordCandidateRefusal,
+  type EmailCandidateRefusal,
   stripSignature,
   stripForwardedPreamble,
   MAX_FETCH_CONTENT_LEN,
@@ -289,6 +292,26 @@ const MAX_OCR_ATTEMPTS = 3;
  * submitExtract (`extract-upstream: zero-events`, `extract-network:`,
  * `extract-<status>`).
  */
+/**
+ * OPE-1253 — the text a fan-out candidate's fields were read from. A URL
+ * candidate has its fetched page; an attachment or body candidate has the
+ * text it was extracted from. The OCR text was missing before: a poster's
+ * date was grounded against the email body only, so it was usually dropped
+ * as "unsupported" — and a dateless row is now refused, not written.
+ */
+function candidateSourceTexts(
+  cand: { snapshot?: { text: string }; source: SubmitSource },
+  emailBody: string | null | undefined
+): string[] {
+  const own = cand.snapshot?.text ?? (cand.source.kind === "url" ? "" : (cand.source.text ?? ""));
+  return [own, emailBody ?? ""];
+}
+
+/** OPE-1253 — one reason for a set of refusals; a missing date is the floor that matters most. */
+function refusedReason(refused: Array<{ reason: EmailCandidateRefusal }>): string {
+  return refused.some((r) => r.reason === "no-date") ? "no-date" : "non-event-name";
+}
+
 function classifyExtractFailure(e: unknown): string {
   if (!(e instanceof Error) || typeof e.message !== "string") return "other";
   const msg = e.message;
@@ -2743,6 +2766,19 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         sourceTexts
       );
     }
+    // OPE-1253 — the email lane's floor, checked BEFORE dedup: a dateless
+    // candidate cannot be deduped, and a link label is not an event.
+    const refusal = refusalForCandidate(extracted, sourceTexts);
+    if (refusal) {
+      await recordCandidateRefusal(this.env, extracted, sourceTexts, messageRowId, refusal);
+      return await this.refusedCandidatesResult(
+        subject,
+        extracted.url || null,
+        hasAttachments,
+        [{ name: extracted.event.name ?? "", reason: refusal }],
+        messageRowId
+      );
+    }
     // Duplicate-check before insert. Two-stage (exact source_url, then
     // name+date similarity ≥0.85 within ±7d) — sender of an already-
     // listed event gets the tailored "already-exists" reply pointing at
@@ -3074,6 +3110,34 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
    * deferred. fetchMethod is forwarded so /admin/source-quality keeps
    * accurate path attribution across the fanned-out events.
    */
+  /**
+   * OPE-1253 — every candidate this message produced was refused by the email
+   * lane's floor (no start_date after grounding, or a platform link label as
+   * its name). No row is created; the disposition is recorded on the inbound
+   * row (`extract_fail_reason`) and logged, so it is never a silent drop. The
+   * reply is the existing no-URL-family copy — no new wording.
+   */
+  private async refusedCandidatesResult(
+    subject: string,
+    url: string | null,
+    hasAttachments: boolean,
+    refused: Array<{ name: string; reason: EmailCandidateRefusal }>,
+    messageRowId: string
+  ): Promise<HandlerResult> {
+    await logError(getDb(this.env.DB), {
+      level: "warn",
+      source: "mcp:workflow:candidate-refused",
+      message: `email produced no event: ${refused.length} candidate(s) refused`,
+      context: { messageRowId, refused },
+    });
+    return {
+      replyKind: chooseNoUrlReplyKind({ parsedUrl: url, attemptedProse: !url || hasAttachments }),
+      replyParams: { subject, hasAttachments, ...(url ? { attemptedUrl: url } : {}) },
+      status: "replied",
+      extractFailReason: refusedReason(refused),
+    };
+  }
+
   private async runMultiEventFanOut(
     step: WorkflowStep,
     extracted: import("../email-handlers/submit.js").SubmitExtractResult,
@@ -3100,6 +3164,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     }
     const outcomes: EventOutcome[] = [];
     let firstCreatedEventId: string | null = null;
+    // OPE-1253 — candidates the floor refused; never rows.
+    const refused: Array<{ name: string; reason: EmailCandidateRefusal }> = [];
 
     for (let i = 0; i < extracted.events.length; i++) {
       const childEvent = extracted.events[i];
@@ -3112,6 +3178,12 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         event: childEvent,
       };
       const labelPrefix = `submit/fanout[${i}]`;
+      const childRefusal = refusalForCandidate(perEvent, sourceTexts);
+      if (childRefusal) {
+        await recordCandidateRefusal(this.env, perEvent, sourceTexts, messageRowId, childRefusal);
+        refused.push({ name: childEvent.name ?? "", reason: childRefusal });
+        continue;
+      }
       try {
         const dedup = await step.do(
           `${labelPrefix}/check-duplicate`,
@@ -3165,6 +3237,16 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           error: err,
         });
       }
+    }
+
+    if (outcomes.length === 0 && refused.length > 0) {
+      return await this.refusedCandidatesResult(
+        subject,
+        extracted.url || null,
+        hasAttachments,
+        refused,
+        messageRowId
+      );
     }
 
     // Reuse the ok-multi template's bullet shape. Each event becomes one
@@ -4513,7 +4595,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         // OPE-465 — this candidate's own captured page text, plus the email
         // body. The snapshot is page-level, which is all the grounding check
         // needs: it asks whether the text SAYS the value, not where in it.
-        [only.snapshot?.text ?? "", emailBody ?? ""]
+        candidateSourceTexts(only, emailBody)
       );
       // OPE-68 — when this lone candidate came from a poster/PDF and a NEW
       // event was created (ok / ok-medium / ok-low), set the poster as its
@@ -4660,12 +4742,29 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     // OPE-68 — how many CREATED events came from an OCR'd attachment. Threaded
     // into the reply so copy can reflect "we read your poster/PDF".
     let attachmentEventsCreated = 0;
+    // OPE-1253 — candidates the floor refused; never rows.
+    const refusedCandidates: Array<{
+      name: string;
+      reason: EmailCandidateRefusal;
+      url?: string;
+    }> = [];
 
     for (let i = 0; i < candidates.length; i++) {
       const cand = candidates[i];
       const { extracted } = cand;
       const sourceUrl = extracted.url; // "" for body-sourced events
       const labelPrefix = `submit/source-event[${i}]`;
+      const candTexts = candidateSourceTexts(cand, emailBody);
+      const candRefusal = refusalForCandidate(extracted, candTexts);
+      if (candRefusal) {
+        await recordCandidateRefusal(this.env, extracted, candTexts, messageRowId, candRefusal);
+        refusedCandidates.push({
+          name: extracted.event.name ?? "",
+          reason: candRefusal,
+          url: sourceUrl || undefined,
+        });
+        continue;
+      }
       try {
         const dedup = await step.do(
           `${labelPrefix}/check-duplicate`,
@@ -4752,8 +4851,9 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             submitEvent(this.env, extracted, fromAddress, {
               inboundEmailId: messageRowId,
               dedupWasBlind: dedup.dedupWasBlind === true,
-              // OPE-465 — this candidate's own page text, plus the email body.
-              sourceTexts: [cand.snapshot?.text ?? "", emailBody ?? ""],
+              // OPE-465 — this candidate's own text (its page, or its poster's
+              // OCR text — OPE-1253), plus the email body.
+              sourceTexts: candidateSourceTexts(cand, emailBody),
             })
         );
         outcomes.push({
@@ -4866,7 +4966,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       //   - it fetched and extraction failed → that failure's own reason
       //     (`ai-timeout`, `zero-events`, …), never `no-fetchable-url`;
       //   - it never fetched → `no-fetchable-url`, as before.
-      const triedUrl = sourceFailures[0]?.url ?? null;
+      // OPE-1253 — a refused URL candidate was tried too (46d46ee0's tracker).
+      const triedUrl = sourceFailures[0]?.url ?? refusedCandidates.find((r) => r.url)?.url ?? null;
       const extractFailure = sourceFailures.find((f) => f.kind === "extract-failed");
       return {
         replyKind: chooseNoUrlReplyKind({
@@ -4878,13 +4979,18 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         // OPE-174 — same telemetry gap as the single-source no-URL branch: record
         // the bounce reason. `prose-extract-failed` covers the attachments-OCR'd-
         // to-noise case (the reply_kind already folds attachments into that bucket).
-        extractFailReason: extractFailure
-          ? (extractFailure.reason ?? "other")
-          : triedUrl
-            ? "no-fetchable-url"
-            : hasAttachments
-              ? "prose-extract-failed"
-              : "no-fetchable-url",
+        // OPE-1253 first: a refused candidate is the most specific account —
+        // its source fetched and extracted, and the floor declined the result.
+        extractFailReason:
+          refusedCandidates.length > 0
+            ? refusedReason(refusedCandidates)
+            : extractFailure
+              ? (extractFailure.reason ?? "other")
+              : triedUrl
+                ? "no-fetchable-url"
+                : hasAttachments
+                  ? "prose-extract-failed"
+                  : "no-fetchable-url",
       };
     }
 
@@ -5026,6 +5132,26 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           // the function arg.
           () => submitExtract(this.env, fetched, emailBody)
         );
+        // OPE-1253 — a refused candidate is reported like an extraction that
+        // yielded nothing usable (existing bullet copy), never written.
+        const urlRefusal = refusalForCandidate(extracted, [fetched.content]);
+        if (urlRefusal) {
+          await recordCandidateRefusal(
+            this.env,
+            extracted,
+            [fetched.content],
+            messageRowId,
+            urlRefusal
+          );
+          outcomes.push({ url, kind: "extract-failed" });
+          await logError(getDb(this.env.DB), {
+            level: "warn",
+            source: "mcp:workflow:candidate-refused",
+            message: `multi-url candidate refused: ${urlRefusal}`,
+            context: { messageRowId, url, name: extracted.event.name ?? null },
+          });
+          continue;
+        }
         const dedup = await step.do(
           `${labelPrefix}/check-duplicate`,
           { retries: { limit: 2, delay: "5 seconds", backoff: "constant" }, timeout: "10 seconds" },

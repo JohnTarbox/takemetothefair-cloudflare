@@ -206,7 +206,11 @@ describe("attachPosterEvidence — archive, cite, offer", () => {
 
 describe("submitEvent surfaces what the route did (the `undefined` slug)", () => {
   const env = { MAIN_APP_URL: "https://app.test", INTERNAL_API_KEY: "k" } as never;
-  const extracted = { url: "", event: { name: "Easter Craft Fair" } } as never;
+  // OPE-1253 — dated: the email lane refuses a dateless create.
+  const extracted = {
+    url: "",
+    event: { name: "Easter Craft Fair", startDate: "2027-03-28" },
+  } as never;
   afterEach(() => vi.unstubAllGlobals());
 
   it("occurrence_exists → routed says so, and no event was created", async () => {
