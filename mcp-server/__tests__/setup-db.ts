@@ -865,6 +865,8 @@ const SCHEMA_SQL = `
     open_time TEXT,
     close_time TEXT,
     close_time_unpublished INTEGER NOT NULL DEFAULT 0,
+    -- OPE-1256 (drizzle/0347) — organizer publishes no hours for the day.
+    hours_unpublished INTEGER NOT NULL DEFAULT 0,
     notes TEXT,
     internal_notes TEXT,
     closed INTEGER DEFAULT 0,

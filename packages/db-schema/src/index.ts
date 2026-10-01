@@ -2165,6 +2165,10 @@ export const eventDays = sqliteTable("event_days", {
   // gap: a NULL close_time with this set is NOT "hours unknown" for the review
   // flag (hours-review-flag.ts), and renders as "no published closing time".
   closeTimeUnpublished: integer("close_time_unpublished").notNull().default(0),
+  // OPE-1256 (drizzle/0347) — 1 when a writer LOOKED and the organizer
+  // publishes NO hours for this day at all. Like closeTimeUnpublished, a
+  // settled finding: the day no longer counts as "hours unknown".
+  hoursUnpublished: integer("hours_unpublished").notNull().default(0),
   notes: text("notes"),
   /**
    * OPE-572 — operator/provenance notes for this day. NEVER rendered publicly.

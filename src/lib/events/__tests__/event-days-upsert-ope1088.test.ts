@@ -36,7 +36,7 @@ beforeEach(() => {
   CREATE TABLE events (id TEXT PRIMARY KEY, flagged_for_review INTEGER NOT NULL DEFAULT 0, updated_at INTEGER);
     CREATE TABLE event_days (
       id TEXT PRIMARY KEY, event_id TEXT NOT NULL, date TEXT NOT NULL,
-      open_time TEXT, close_time TEXT, close_time_unpublished INTEGER NOT NULL DEFAULT 0,
+      open_time TEXT, close_time TEXT, close_time_unpublished INTEGER NOT NULL DEFAULT 0, hours_unpublished INTEGER NOT NULL DEFAULT 0,
       notes TEXT, internal_notes TEXT, image_url TEXT, image_focal_x REAL,
       image_focal_y REAL, closed INTEGER DEFAULT 0, vendor_only INTEGER DEFAULT 0,
       created_at INTEGER, updated_at INTEGER

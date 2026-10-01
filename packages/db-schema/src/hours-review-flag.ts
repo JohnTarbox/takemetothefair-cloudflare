@@ -48,9 +48,15 @@ import { eventDays } from "./index";
  * still always unknown — no event publishes no opening time.
  */
 export function hoursUnknownWhere(): SQL {
-  return or(
-    isNull(eventDays.openTime),
-    and(isNull(eventDays.closeTime), eq(eventDays.closeTimeUnpublished, 0))
+  // OPE-1256 — a day the organizer publishes no hours for is a settled
+  // finding, not a gap ("no event publishes no opening time" was wrong:
+  // harmony-free-fair's organizer publishes none).
+  return and(
+    eq(eventDays.hoursUnpublished, 0),
+    or(
+      isNull(eventDays.openTime),
+      and(isNull(eventDays.closeTime), eq(eventDays.closeTimeUnpublished, 0))
+    )
   ) as SQL;
 }
 
@@ -64,7 +70,9 @@ export function dayHoursUnknown(day: {
   openTime: string | null | undefined;
   closeTime: string | null | undefined;
   closeTimeUnpublished?: boolean | number | null;
+  hoursUnpublished?: boolean | number | null;
 }): boolean {
+  if (day.hoursUnpublished) return false; // OPE-1256 — settled: none published
   if (day.openTime == null) return true;
   return day.closeTime == null && !day.closeTimeUnpublished;
 }
@@ -78,7 +86,7 @@ export function dayHoursUnknown(day: {
  * structurally cannot do. Same predicate as `hoursUnknownWhere` (OPE-1069).
  */
 export function unknownHoursCountSql(): SQL<number> {
-  return sql<number>`sum(case when ${eventDays.openTime} is null or (${eventDays.closeTime} is null and ${eventDays.closeTimeUnpublished} = 0) then 1 else 0 end)`;
+  return sql<number>`sum(case when ${eventDays.hoursUnpublished} = 1 then 0 when ${eventDays.openTime} is null or (${eventDays.closeTime} is null and ${eventDays.closeTimeUnpublished} = 0) then 1 else 0 end)`;
 }
 
 /**

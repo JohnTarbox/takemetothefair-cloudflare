@@ -24,7 +24,8 @@ beforeEach(() => {
     CREATE TABLE event_days (
       id TEXT PRIMARY KEY, event_id TEXT NOT NULL, date TEXT NOT NULL,
       open_time TEXT, close_time TEXT,
-      close_time_unpublished INTEGER NOT NULL DEFAULT 0
+      close_time_unpublished INTEGER NOT NULL DEFAULT 0,
+      hours_unpublished INTEGER NOT NULL DEFAULT 0
     );
   `);
 });
