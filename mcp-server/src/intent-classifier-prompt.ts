@@ -33,8 +33,13 @@
  *    Cloudflare (error 5028) and the binding moved to the centralized
  *    @takemetothefair/constants.WORKERS_AI_MODEL (fp8-fast Llama 3.3 70B).
  *    Prompt itself unchanged; bumped per the "model binding changes" rule
- *    so the accuracy dashboard attributes any shift to the new model. */
-export const CLASSIFIER_VERSION = "c-2026-06-16-v5";
+ *    so the accuracy dashboard attributes any shift to the new model.
+ *  v6 (2026-10-01, OPE-1247): dropped "a meetmeatthefair.com/events/ URL
+ *    in the body" from the `correction` examples. The event page's "ask a
+ *    question" mailto puts that URL in every body, so with the template
+ *    subject it pushed plain questions to `correction` at exactly 0.85.
+ *    A link to our listing says WHICH event, not that anything is wrong. */
+export const CLASSIFIER_VERSION = "c-2026-10-01-v6";
 
 /** Default confidence gate. Below this, we fall back to address-based
  *  routing and flag the row for admin review. Tuned per Q1 in spec —
@@ -63,8 +68,7 @@ export const INTENT_TAXONOMY_DOC = `INTENT TAXONOMY (pick exactly one per messag
 - correction:         Sender claims something on an existing meetmeatthefair
                       event listing is wrong (date, venue, name, etc.) or
                       that a published event is incorrect/cancelled.
-                      Examples: a meetmeatthefair.com/events/ URL in the body;
-                      "the date is wrong"; "appears to be incorrect";
+                      Examples: "the date is wrong"; "appears to be incorrect";
                       a reply to one of our approval-notification emails.
 - claim_request:      Sender is EXPLICITLY claiming ownership/representation
                       of an event listing (organizer or promoter). Requires
