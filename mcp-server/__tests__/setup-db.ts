@@ -1449,6 +1449,14 @@ const SCHEMA_SQL = `
   CREATE INDEX idx_syndication_subscriptions_event
     ON syndication_subscriptions (event_id);
 
+  -- OPE-366 (drizzle/0342) — unterminated-crossing E2 notice debounce state.
+  CREATE TABLE unterminated_crossing_notice_state (
+    id TEXT PRIMARY KEY,
+    high_water_created_at INTEGER NOT NULL,
+    last_count INTEGER NOT NULL,
+    last_notified_at INTEGER NOT NULL
+  );
+
   -- OPE-37 (drizzle/0142) — promoter-enrichment notice debounce state. The
   -- notice module reads/upserts this single-row table, so the test schema needs it.
   CREATE TABLE promoter_enrichment_notice_state (

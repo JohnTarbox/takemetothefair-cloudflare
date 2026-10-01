@@ -119,6 +119,7 @@ export const HEARTBEAT_INVENTORY: Record<string, InventoryEntry> = {
   "cron:main-app:/api/admin/content-links/audit": U,
   "cron:runOccurredTransitionSweep": { probes: ["occurred-transition-sweep"] },
   "cron:runRequestSampleRetention": { probes: ["request-sample-retention"] },
+  "cron:runUnterminatedCrossingNotice": { probes: ["unterminated-crossing-notice"] },
   "cron:runScheduledBingInspectionSweep": U,
   "cron:runScheduledBingLivenessCheck": { probes: ["bing-liveness"] },
   "cron:runScheduledBurstCapSelfTest": { probes: ["burst-cap-selftest"] },

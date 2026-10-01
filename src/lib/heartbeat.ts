@@ -1530,6 +1530,24 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       maxTs(db, errorLogs, errorLogs.timestamp, eq(errorLogs.source, "mcp:fault-signatures-emit")),
   },
   {
+    // OPE-366 — the hourly E2 push over unterminated membrane crossings.
+    // Evidence is the RUN stamp, written on every completed run whether or not
+    // it notified: a quiet week has no notices, and keying on sends would go
+    // red on a healthy table. Same 6h tolerance as the other hourly cron.
+    name: "unterminated-crossing-notice",
+    ownerOpe: "OPE-366",
+    label: "Unterminated-crossing E2 alarm run (hourly MCP cron)",
+    priority: "P1",
+    expectedWindowHours: 6,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        agentHeartbeats,
+        agentHeartbeats.lastSeenAt,
+        eq(agentHeartbeats.agentCode, "watchdog:unterminated-crossing-notice")
+      ),
+  },
+  {
     name: "gsc-search-metrics-ingest",
     ownerOpe: "OPE-309",
     label: "GSC search-metrics ingest",

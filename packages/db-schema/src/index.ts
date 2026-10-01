@@ -3959,6 +3959,18 @@ export const membraneCrossings = sqliteTable("membrane_crossings", {
     .$defaultFn(() => new Date()),
 });
 
+// OPE-366 (drizzle/0342) — debounce state for the hourly E2 push over
+// unterminated membrane crossings (mcp-server/src/inbound/unterminated-crossing-notice.ts).
+// Single row. A crossing whose created_at is newer than highWaterCreatedAt is a
+// NEW dead-end and fires; the standing backlog is reported only by the Monday
+// inventory. No row = never notified, so the first run reports the backlog once.
+export const unterminatedCrossingNoticeState = sqliteTable("unterminated_crossing_notice_state", {
+  id: text("id").primaryKey(),
+  highWaterCreatedAt: integer("high_water_created_at", { mode: "timestamp" }).notNull(),
+  lastCount: integer("last_count").notNull(),
+  lastNotifiedAt: integer("last_notified_at", { mode: "timestamp" }).notNull(),
+});
+
 export const rosterResearchNoticeState = sqliteTable("roster_research_notice_state", {
   id: text("id").primaryKey(),
   lastNoticeDate: text("last_notice_date").notNull(),

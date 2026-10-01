@@ -62,6 +62,10 @@ MAIN_APP_URL = "https://meetmeatthefair.com"
 # silently wiped by the next `wrangler deploy` (only secrets survive) — the
 # OPE-284 time bomb. Not a secret: these are our own operator addresses.
 ALERT_EMAIL_TECHNICAL = "alert@meetmeatthefair.com, jtarboxme@gmail.com"
+# OPE-366 — recipient for the unterminated-membrane-crossing E2 alarm (hourly
+# cron, inbound/unterminated-crossing-notice.ts). Its own var because John's
+# 2026-09-30 ruling named this address, which is not in ALERT_EMAIL_TECHNICAL.
+UNTERMINATED_CROSSING_ALERT_EMAIL = "john@pimboat.com"
 # I1 vendor-enrichment Worker (2026-06-13). Account id is non-secret; the
 # Browser-Rendering token is a Worker secret set via
 # `wrangler secret put CLOUDFLARE_BROWSER_RENDERING_TOKEN` (same value the main

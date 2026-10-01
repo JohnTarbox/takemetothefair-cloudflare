@@ -15,6 +15,7 @@ interface __BaseEnv_WorkerEnv {
   AI: Ai;
   MAIN_APP_URL: string;
   ALERT_EMAIL_TECHNICAL: string;
+  UNTERMINATED_CROSSING_ALERT_EMAIL: string;
   CLOUDFLARE_ACCOUNT_ID: string;
   PROMOTER_OUTREACH_ENABLED: string;
   ENRICHMENT_DRY_RUN: string;
