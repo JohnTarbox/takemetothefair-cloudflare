@@ -298,6 +298,13 @@ function classifyExtractFailure(e: unknown): string {
   // a step-level timeout that doesn't reach our catch. The network
   // bucket covers the former.
   if (msg.startsWith("extract-network:") && /timeout|timed.?out/i.test(msg)) return "ai-timeout";
+  // OPE-1249 — the extract ROUTE caught the Workers AI timeout itself, tried the
+  // deterministic salvage, and failed closed with `success:false`; submitExtract
+  // carries its `aiFailure` through as `[ai: …]`. That reached us as
+  // `extract-upstream: …` and bucketed `other` — or, on the fan-out path, was
+  // never classified at all and recorded as `no-fetchable-url`.
+  if (msg.startsWith("extract-upstream: ") && /\[ai: [^\]]*timed.?out/i.test(msg))
+    return "ai-timeout";
   if (msg.startsWith("extract-upstream: ") && /parse|json/i.test(msg)) return "parse-error";
   return "other";
 }
@@ -3998,6 +4005,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     interface SourceFailure {
       url: string;
       kind: "fetch-failed" | "extract-failed";
+      /** OPE-1249 — extract-failed only: why, in the extract_fail_reason vocabulary. */
+      reason?: string;
     }
     const candidates: SourceCandidate[] = [];
     const sourceFailures: SourceFailure[] = [];
@@ -4136,8 +4145,12 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             snapshot: { title: fetched.title, text: fetched.content, fetchedAt },
           });
         }
-      } catch {
-        sourceFailures.push({ url: source.url, kind: "extract-failed" });
+      } catch (err) {
+        sourceFailures.push({
+          url: source.url,
+          kind: "extract-failed",
+          reason: classifyExtractFailure(err),
+        });
       }
     }
 
@@ -4842,20 +4855,36 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     // prevents a nonsensical "Thanks for submitting 0 events" reply — fall back
     // to the soft prose/no-url ask instead.
     if (outcomes.length === 0) {
+      // OPE-1249 — this guard is ALSO reached when URL sources were tried and
+      // every one failed (their failures are folded into `outcomes` only below).
+      // It used to answer as if no URL existed: `no-url` (downgraded at send by
+      // the OPE-453 invariant, log ce709c3e) and `no-fetchable-url`, even when
+      // the page fetched fine and only the AI extraction timed out
+      // (c8f9d623, Harvest on the Harbor). Now:
+      //   - a URL was tried → `unfetchable-url`, chosen here rather than by the
+      //     downgrade (same copy, same attemptedUrl line);
+      //   - it fetched and extraction failed → that failure's own reason
+      //     (`ai-timeout`, `zero-events`, …), never `no-fetchable-url`;
+      //   - it never fetched → `no-fetchable-url`, as before.
+      const triedUrl = sourceFailures[0]?.url ?? null;
+      const extractFailure = sourceFailures.find((f) => f.kind === "extract-failed");
       return {
-        // OPE-453 — no URL reached this path at all (every candidate failed
-        // cleanUrl or none existed), so the no-URL family is honest here. Routed
-        // through the shared chooser anyway so there is ONE place that decides.
         replyKind: chooseNoUrlReplyKind({
-          parsedUrl: null,
+          parsedUrl: triedUrl,
           attemptedProse: hasAttachments,
         }),
-        replyParams: { subject, hasAttachments },
+        replyParams: { subject, hasAttachments, ...(triedUrl ? { attemptedUrl: triedUrl } : {}) },
         status: "replied",
         // OPE-174 — same telemetry gap as the single-source no-URL branch: record
         // the bounce reason. `prose-extract-failed` covers the attachments-OCR'd-
         // to-noise case (the reply_kind already folds attachments into that bucket).
-        extractFailReason: hasAttachments ? "prose-extract-failed" : "no-fetchable-url",
+        extractFailReason: extractFailure
+          ? (extractFailure.reason ?? "other")
+          : triedUrl
+            ? "no-fetchable-url"
+            : hasAttachments
+              ? "prose-extract-failed"
+              : "no-fetchable-url",
       };
     }
 

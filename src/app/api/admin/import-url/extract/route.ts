@@ -262,6 +262,9 @@ export const POST = withAuthorized(async ({ request, db }) => {
           error:
             "Could not extract event data from this page — the extractor timed out and no " +
             "usable title or date could be recovered. Retrying is unlikely to help; please add the event manually.",
+          // OPE-1249 — machine-readable cause for the email pipeline, which
+          // otherwise records a post-fetch AI timeout as a fetch failure.
+          aiFailure,
         },
         { status: 200 }
       );
