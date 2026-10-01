@@ -116,13 +116,48 @@ export interface ContainmentMatch {
  *
  * Symmetric: which argument is longer does not matter.
  */
+/**
+ * OPE-1254 — an initialism in one name standing for a run of words in the other:
+ * "VCS Holiday Market" vs "Vassalboro Community School Holiday Market". Every
+ * other signal missed that pair (the venue was not resolved on either row), and
+ * a school, a club or a fairground is routinely written both ways.
+ *
+ * Only a 3–5 letter token that is NOT already a word of the other name, and only
+ * when a run of exactly that many consecutive words in the other name has those
+ * initials. The replaced run still has to pass the containment and
+ * MIN_DISTINCTIVE checks below like any other token.
+ */
+function expandInitialisms(tokens: string[], other: string[]): string[] {
+  const otherSet = new Set(other);
+  const out: string[] = [];
+  for (const t of tokens) {
+    if (otherSet.has(t) || !/^[a-z]{3,5}$/.test(t)) {
+      out.push(t);
+      continue;
+    }
+    let run: string[] | null = null;
+    for (let i = 0; i + t.length <= other.length; i++) {
+      const slice = other.slice(i, i + t.length);
+      if (slice.map((w) => w[0]).join("") === t) {
+        run = slice;
+        break;
+      }
+    }
+    if (run) out.push(...run);
+    else out.push(t);
+  }
+  return out;
+}
+
 export function nameContainmentMatch(
   normalizedA: string,
   normalizedB: string
 ): ContainmentMatch | null {
-  const a = tokenize(normalizedA);
-  const b = tokenize(normalizedB);
-  if (a.length === 0 || b.length === 0) return null;
+  const rawA = tokenize(normalizedA);
+  const rawB = tokenize(normalizedB);
+  if (rawA.length === 0 || rawB.length === 0) return null;
+  const a = expandInitialisms(rawA, rawB);
+  const b = expandInitialisms(rawB, rawA);
 
   const [shorter, longer] = a.length <= b.length ? [a, b] : [b, a];
   const longerSet = new Set(longer);
@@ -137,8 +172,8 @@ export function nameContainmentMatch(
   // Containment alone is not enough. "craft fair" is contained in almost
   // everything, and matching on it would flag every craft fair in the state
   // against every other one in the same week.
-  const distinctA = distinctiveTokens(normalizedA);
-  const distinctB = distinctiveTokens(normalizedB);
+  const distinctA = distinctiveTokens(a.join(" "));
+  const distinctB = distinctiveTokens(b.join(" "));
   const sharedDistinctive = [...distinctA].filter((t) => distinctB.has(t)).sort();
   if (sharedDistinctive.length < MIN_DISTINCTIVE) return null;
 
