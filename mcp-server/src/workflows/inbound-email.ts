@@ -117,7 +117,10 @@ import {
   type HoldSuppressionReason,
 } from "../inbound/unrouted-hold.js";
 import { handle as handleSourceSuggestion } from "../email-handlers/source-suggestion.js";
-import { handle as handlePhotoIntake } from "../email-handlers/photo-intake.js";
+import {
+  handle as handlePhotoIntake,
+  photoIntakeFailureReply,
+} from "../email-handlers/photo-intake.js";
 import {
   isContentFreeEmail,
   assessContentFreeBurst,
@@ -816,9 +819,27 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             "dispatch",
             {
               retries: { limit: 2, delay: "10 seconds", backoff: "constant" },
-              timeout: "30 seconds",
+              // OPE-1262 — photo_intake gets room for its bounded OCR call
+              // (POSTER_CLASSIFY_BUDGET_MS = 60s, observed 26–54s). At 30s the
+              // step timed out mid-OCR, and the retry re-ran it from scratch.
+              timeout: intent === "photo_intake" ? "120 seconds" : "30 seconds",
             },
-            async () => {
+            async (stepCtx) => {
+              // OPE-1262 — a retry re-runs the whole handler, including any slow
+              // optional call inside it, and nothing recorded that it happened:
+              // three OCR calls for one photo were only reconstructable from
+              // timestamps. Name every repeat, so "more than one call" always
+              // comes with its reason.
+              const attempt = stepCtx?.attempt ?? 1;
+              if (attempt > 1) {
+                await logError(this.env.DB, {
+                  level: "warn",
+                  source: SOURCE,
+                  message: `dispatch retry: attempt ${attempt} for intent=${intent} re-runs the handler`,
+                  sessionId,
+                  context: { messageRowId, intent, attempt },
+                });
+              }
               const db = getDb(this.env.DB);
               const rows = await db
                 .select()
@@ -850,6 +871,40 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           sessionId,
           context: { messageRowId, intent, error: caughtError },
         });
+        // OPE-1262 — a photo we hold must still be answered, and must stay
+        // recoverable. The hold notice does both: the sender learns how to name
+        // the fair, and `reply_kind='photo-intake-unresolved'` makes the row a
+        // held parent for the reply→resolve path. Its own step, so a replay
+        // returns the cached params rather than re-reading the row.
+        if (intent === "photo_intake") {
+          try {
+            const fallback = await step.do(
+              "dispatch-failed/photo-hold",
+              {
+                retries: { limit: 2, delay: "5 seconds", backoff: "constant" },
+                timeout: "10 seconds",
+              },
+              async () => {
+                const [row] = await getDb(this.env.DB)
+                  .select()
+                  .from(inboundEmails)
+                  .where(eq(inboundEmails.id, messageRowId))
+                  .limit(1);
+                return row ? photoIntakeFailureReply(row) : null;
+              }
+            );
+            if (fallback) result = { ...fallback, status: "replied" };
+          } catch (fallbackErr) {
+            // Degrades to the old behaviour (no reply) — logged, never thrown.
+            await logError(this.env.DB, {
+              source: SOURCE,
+              message: "photo dispatch failed and the hold-notice fallback failed too",
+              error: fallbackErr,
+              sessionId,
+              context: { messageRowId, intent },
+            });
+          }
+        }
       }
 
       // OPE-832 — defect-candidate detection.
