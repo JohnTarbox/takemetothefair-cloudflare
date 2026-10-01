@@ -111,7 +111,7 @@ import {
   reclassifySourceOnEdit,
   assertIngestionMethod,
   nextGateFlags,
-  buildPlaceholderEmail,
+  freePlaceholderEmail,
   validateVenueLifecycle,
   checkFormerVenue,
   gateDatesConfirmed,
@@ -3302,7 +3302,16 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       // OPE-835 — capped to RFC 5321's 64-octet local part. 12 of 7,105
       // vendor slugs cross it (longest local part 102), and the address
       // Cloudflare rejects is generated here.
-      const placeholderEmail = buildPlaceholderEmail("pending+", finalSlug);
+      // OPE-1223 — a FREE address: a tombstone's owner row can still hold the
+      // one this slug would give (the slug was renamed on merge, the email not).
+      const placeholderEmail = await freePlaceholderEmail("pending+", finalSlug, async (email) => {
+        const taken = await db
+          .select({ id: users.id })
+          .from(users)
+          .where(eq(users.email, email))
+          .limit(1);
+        return taken.length > 0;
+      });
       const userId = crypto.randomUUID();
 
       await db.insert(users).values({
@@ -5324,7 +5333,20 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       // Create placeholder user (promoters table has userId FK)
       // OPE-835 — 19 of 747 promoter slugs produce a local part over 64
       // octets (longest 80), which Cloudflare rejects outright.
-      const placeholderEmail = buildPlaceholderEmail("pending+promoter-", finalSlug);
+      // OPE-1223 — a FREE address: a tombstone's owner row can still hold the
+      // one this slug would give (the slug was renamed on merge, the email not).
+      const placeholderEmail = await freePlaceholderEmail(
+        "pending+promoter-",
+        finalSlug,
+        async (email) => {
+          const taken = await db
+            .select({ id: users.id })
+            .from(users)
+            .where(eq(users.email, email))
+            .limit(1);
+          return taken.length > 0;
+        }
+      );
       const userId = crypto.randomUUID();
 
       await db.insert(users).values({

@@ -32,7 +32,7 @@ import {
   normalizeVendorName,
   VENDOR_FORM_WORDS,
   type Slug,
-  buildPlaceholderEmail,
+  freePlaceholderEmail,
 } from "@takemetothefair/utils";
 import {
   SITE_URL,
@@ -254,7 +254,33 @@ export async function findStrictMatch(
     if (normalizeVendorName(candidate.businessName) !== normalizedTarget) continue;
     if (!bestId || candidate.id < bestId.id) bestId = candidate;
   }
-  return bestId;
+  if (bestId) return bestId;
+
+  // OPE-1223 — no live row, but a MERGED-AWAY one with exactly this name. The
+  // tombstone is soft-deleted and redirects to its keeper; returning it lets
+  // the caller's resolveRedirectChain land on the keeper instead of creating a
+  // fresh duplicate of a vendor a person already merged. Only a tombstone that
+  // HAS a redirect qualifies — a plain delete has no keeper to resolve to.
+  // ("Kim Ferreira ~ Joie De Vivre" → tombstone "Kim Ferreira - Joie de Vivre"
+  // → keeper "Kim Ferreira", 2026-09-30.)
+  const tombstones = await db
+    .select({
+      id: vendors.id,
+      businessName: vendors.businessName,
+      vendorType: vendors.vendorType,
+      redirectToVendorId: vendors.redirectToVendorId,
+      slug: vendors.slug,
+    })
+    .from(vendors)
+    .where(
+      and(sql`${vendors.deletedAt} IS NOT NULL`, sql`${vendors.redirectToVendorId} IS NOT NULL`)
+    );
+  let tomb: VendorRow | null = null;
+  for (const t of tombstones) {
+    if (normalizeVendorName(t.businessName) !== normalizedTarget) continue;
+    if (!tomb || t.id < tomb.id) tomb = t;
+  }
+  return tomb;
 }
 
 /**
@@ -661,7 +687,16 @@ export async function createOrLinkVendor(
     // OPE-835 — the third construction site. The filed ticket named only
     // the promoter one; a fix wired there alone would have left this and
     // the vendor site in admin.ts still minting invalid addresses.
-    const placeholderEmail = buildPlaceholderEmail("pending+", finalSlug);
+    // OPE-1223 — a FREE address: a tombstone's owner row can still hold the
+    // one this slug would give (the slug was renamed on merge, the email not).
+    const placeholderEmail = await freePlaceholderEmail("pending+", finalSlug, async (email) => {
+      const taken = await db
+        .select({ id: users.id })
+        .from(users)
+        .where(eq(users.email, email))
+        .limit(1);
+      return taken.length > 0;
+    });
     const userId = crypto.randomUUID();
     await db.insert(users).values({
       id: userId,
