@@ -11,7 +11,7 @@ import { eq } from "drizzle-orm";
 import { createTestDb, type TestDb } from "./setup-db.js";
 import { inboundEmails, supportObligations } from "../src/schema.js";
 import { handleReplyToInbound } from "../src/tools/reply-to-inbound-email.js";
-import { AUTO_CLOSED_BY } from "../src/support-obligations-close.js";
+import { AUTO_CLOSED_BY, closeObligationsAnsweredBy } from "../src/support-obligations-close.js";
 
 /** Generated from the schema, as obligation-lanes-ope1066 does, so it cannot drift. */
 function ddlFor(table: Parameters<typeof getTableConfig>[0]): string {
@@ -62,7 +62,10 @@ const statusOf = (id: string) =>
 const queue = () => ({ send: async () => {} });
 const enabled = { emailJobs: queue(), replyEnabled: true, actorUserId: "admin-1" };
 
-describe("reply_to_inbound_email closes the answered conversation's obligations", () => {
+// OPE-1252 — the close now runs in the email-jobs consumer once the send is
+// confirmed (see obligation-close-on-send-ope1252.test.ts); the conversation
+// scoping it applies is tested here on the shared closer directly.
+describe("closing an answered conversation's obligations (scope)", () => {
   beforeEach(() => {
     ({ db, raw } = createTestDb());
     raw["exec"](ddlFor(supportObligations));
@@ -75,18 +78,14 @@ describe("reply_to_inbound_email closes the answered conversation's obligations"
   });
 
   it("closes the replied-to message's obligation and the same-thread one", async () => {
-    const res = await handleReplyToInbound(db as never, enabled, {
-      inboundEmailId: "a",
-      body: "Hi",
-    });
-    expect(res).toMatchObject({ ok: true, obligationsClosed: 2 });
+    expect(await closeObligationsAnsweredBy(db as never, "a", "note")).toBe(2);
     for (const id of ["oa", "ob"]) {
       expect(statusOf(id)).toMatchObject({ status: "answered", closedBy: AUTO_CLOSED_BY });
     }
   });
 
   it("leaves the same person's obligation on ANOTHER thread open", async () => {
-    await handleReplyToInbound(db as never, enabled, { inboundEmailId: "a", body: "Hi" });
+    await closeObligationsAnsweredBy(db as never, "a", "note");
     expect(statusOf("oc").status).toBe("open");
   });
 
@@ -94,11 +93,7 @@ describe("reply_to_inbound_email closes the answered conversation's obligations"
     raw["prepare"](
       "UPDATE support_obligations SET status='not_an_obligation', closed_by='john' WHERE id='ob'"
     ).run();
-    const res = await handleReplyToInbound(db as never, enabled, {
-      inboundEmailId: "a",
-      body: "Hi",
-    });
-    expect(res).toMatchObject({ obligationsClosed: 1 });
+    expect(await closeObligationsAnsweredBy(db as never, "a", "note")).toBe(1);
     expect(statusOf("ob")).toMatchObject({ status: "not_an_obligation", closedBy: "john" });
   });
 
@@ -107,21 +102,24 @@ describe("reply_to_inbound_email closes the answered conversation's obligations"
     inbound("e", null);
     obligation("od", "d");
     obligation("oe", "e");
-    await handleReplyToInbound(db as never, enabled, { inboundEmailId: "d", body: "Hi" });
+    await closeObligationsAnsweredBy(db as never, "d", "note");
     expect(statusOf("od").status).toBe("answered");
     expect(statusOf("oe").status).toBe("open");
   });
 });
 
-describe("the close is best-effort: it never fails a sent reply", () => {
-  it("with no support_obligations table the reply still succeeds", async () => {
-    ({ db, raw } = createTestDb()); // no obligations table
+describe("OPE-1252 — queuing a reply closes nothing", () => {
+  it("the obligation is still open after reply_to_inbound_email returns", async () => {
+    ({ db, raw } = createTestDb());
+    raw["exec"](ddlFor(supportObligations));
     inbound("a", "t1");
+    obligation("oa", "a");
     const res = await handleReplyToInbound(db as never, enabled, {
       inboundEmailId: "a",
       body: "Hi",
     });
-    expect(res).toMatchObject({ ok: true, obligationsClosed: 0 });
+    expect(res).toMatchObject({ ok: true });
+    expect(statusOf("oa").status).toBe("open");
   });
 });
 
