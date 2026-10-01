@@ -853,7 +853,14 @@ export async function submitEvent(
   // OPE-465 scope 4 — emit, don't just suppress. A verifier that silently
   // drops bad fields fixes the data and hides the defect, and this lane would
   // lose the only automatic signal it has for extractor fabrication.
-  if (grounding.dropFields.length > 0) {
+  //
+  // OPE-465 (John, 2026-09-30) — "details to follow" is FLAGGED, not refused.
+  // `refuseCreate` is the verifier's "the source says the details do not exist
+  // yet, and no supported date remains" — the UMF December fair. The event is
+  // still created (a refusal would need new customer-facing copy), but it lands
+  // in the review queue. This had to be its own trigger: the UMF specimen has
+  // no dates at all, so nothing is DROPPED and the dropFields branch never ran.
+  if (grounding.dropFields.length > 0 || grounding.refuseCreate) {
     await recordUngroundedFields(env, grounding, created, context.inboundEmailId);
   }
 
@@ -903,6 +910,14 @@ async function recordUngroundedFields(
         detail: result?.reason ?? null,
       });
     }
+    if (grounding.refuseCreate) {
+      await emitExtractionFault(db, {
+        signature: "extract.details_forthcoming",
+        source: SOURCE_SUBMIT,
+        familyId: "extract.details_forthcoming",
+        detail: grounding.reason,
+      });
+    }
     await db.insert(adminActions).values({
       action: "extract.ungrounded",
       actorUserId: null,
@@ -913,6 +928,9 @@ async function recordUngroundedFields(
         eventName: created.eventName,
         eventSlug: created.slug,
         droppedFields: grounding.dropFields,
+        // OPE-465 — the source says the details are not available yet.
+        detailsForthcoming: grounding.refuseCreate,
+        reason: grounding.reason,
         // The verdicts, so a review does not have to re-derive them — and so
         // a wrong drop is arguable against the text that caused it.
         verdicts: grounding.results.map((r) => ({
