@@ -265,12 +265,19 @@ export function registerAnalyticsTools(server: McpServer, auth: AuthContext, env
         .max(500)
         .optional()
         .describe("Max rows to return (default 15, max 500)."),
+      include_export_rows: z
+        .boolean()
+        .optional()
+        .describe(
+          "OPE-1255 — include queries that are rows of someone else's GSC CSV export typed into Google (e.g. 'craft fairs on cape cod this weekend,410,3051,13.44%,3.16'). Excluded by default; 0 clicks, ~7k impressions May–Sep 2026."
+        ),
       refresh: z.boolean().optional().describe("Bypass the 15-minute cache (default false)."),
     },
     async (params) => {
       try {
         const qs = buildDateQuery(params);
         qs.set("path", params.path);
+        if (params.include_export_rows) qs.set("include_export_rows", "1");
         if (params.rowLimit !== undefined) qs.set("rowLimit", String(params.rowLimit));
         const data = await fetchAnalyticsJson(
           `/api/admin/analytics/search-queries?${qs.toString()}`
@@ -319,6 +326,12 @@ export function registerAnalyticsTools(server: McpServer, auth: AuthContext, env
         .enum(["impressions", "clicks", "position", "ctr"])
         .optional()
         .describe("Sort order (default impressions desc; position sorts ascending)."),
+      include_export_rows: z
+        .boolean()
+        .optional()
+        .describe(
+          "OPE-1255 — include queries that are rows of someone else's GSC CSV export typed into Google (e.g. 'craft fairs on cape cod this weekend,410,3051,13.44%,3.16'). Excluded by default; 0 clicks, ~7k impressions May–Sep 2026."
+        ),
       refresh: z.boolean().optional().describe("Bypass the 15-minute cache (default false)."),
     },
     async (params) => {
@@ -329,6 +342,7 @@ export function registerAnalyticsTools(server: McpServer, auth: AuthContext, env
         if (params.minImpressions !== undefined)
           qs.set("minImpressions", String(params.minImpressions));
         if (params.orderBy) qs.set("orderBy", params.orderBy);
+        if (params.include_export_rows) qs.set("include_export_rows", "1");
         const q = qs.toString();
         const data = await fetchAnalyticsJson(
           `/api/admin/analytics/search-queries/site${q ? "?" + q : ""}`

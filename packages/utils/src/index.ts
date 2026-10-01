@@ -667,3 +667,4 @@ export * from "./describe-error";
 export * from "./field-grounding";
 // OPE-1061 — the four-state pet_friendly field: write gate + display rules.
 export * from "./pet-policy";
+export * from "./gsc-export-row-query";
