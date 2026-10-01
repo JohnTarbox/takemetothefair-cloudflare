@@ -6,6 +6,7 @@
  * that do not exist all render perfectly well and are only visible as a slow
  * leak in Search Console weeks later.
  */
+import { EVENT_CATEGORIES } from "@takemetothefair/constants";
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
@@ -237,6 +238,21 @@ describe("type facets", () => {
     expect(TYPE_FACETS["agricultural-fairs"].category).toBe("Agricultural Fair");
     const tokens = Object.values(TYPE_FACETS).map((t) => t.category);
     expect(new Set(tokens).size).toBe(tokens.length);
+  });
+
+  it("OPE-955 — porchfests is a type facet on the exact 'Porchfest' token", () => {
+    expect(TYPE_FACETS["porchfests"]).toMatchObject({ label: "Porchfests", category: "Porchfest" });
+  });
+
+  it("every type facet's token is a sanctioned EVENT_CATEGORIES value", () => {
+    // A facet keyed on a value suggest_event refuses would be a page that can
+    // never fill from the submission lane. Pin both sides of the contract.
+    const allowed = new Set<string>(EVENT_CATEGORIES);
+    const offenders = Object.values(TYPE_FACETS)
+      .map((t) => t.category)
+      .filter((c) => !allowed.has(c));
+    expect(offenders).toEqual([]);
+    expect(Object.keys(TYPE_FACETS).length).toBeGreaterThan(10); // positive landmark
   });
 });
 
