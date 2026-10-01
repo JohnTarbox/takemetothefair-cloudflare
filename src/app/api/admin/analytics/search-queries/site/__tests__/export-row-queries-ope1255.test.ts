@@ -29,13 +29,19 @@ vi.mock("@/lib/search-console", async (orig) => ({
 
 import { GET } from "../route";
 
+type Body = {
+  queries: Array<{ query: string }>;
+  totals: Record<string, number>;
+  excludedExportRowQueries?: { count: number; impressions: number };
+};
+
 const req = (qs = "") =>
   new NextRequest(`https://meetmeatthefair.com/api/admin/analytics/search-queries/site${qs}`);
 
 describe("GET /api/admin/analytics/search-queries/site — OPE-1255", () => {
   it("excludes export-row queries by default and reports the removal", async () => {
-    const body = await (await GET(req())).json();
-    expect(body.queries.map((q: { query: string }) => q.query)).toEqual([
+    const body = (await (await GET(req())).json()) as Body;
+    expect(body.queries.map((q) => q.query)).toEqual([
       "fryeburg fair 2026",
       "fairs in bangor, me", // a comma alone is a real query
     ]);
@@ -44,7 +50,7 @@ describe("GET /api/admin/analytics/search-queries/site — OPE-1255", () => {
   });
 
   it("keeps them when include_export_rows=1", async () => {
-    const body = await (await GET(req("?include_export_rows=1"))).json();
+    const body = (await (await GET(req("?include_export_rows=1"))).json()) as Body;
     expect(body.queries).toHaveLength(3);
     expect(body.excludedExportRowQueries).toBeUndefined();
   });
