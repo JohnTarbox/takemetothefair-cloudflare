@@ -571,6 +571,10 @@ async function handleLegacyMcpRequest(
       );
       registerAdminEventReadTools(server, db, auth);
       registerAdminVendorReadTools(server, db, auth);
+      // OPE-478 — John's ruling (2026-09-30): the mmatf_ admin token reaches the
+      // market-player and syndication tools too; they were left off by omission.
+      registerMarketPlayerTools(server, db, auth);
+      registerSyndicationTools(server, db, auth);
       registerMergeEntitiesTools(server, db, auth);
       registerMergeVendorTool(server, db, auth);
       registerVendorHierarchyTools(server, db, auth);
