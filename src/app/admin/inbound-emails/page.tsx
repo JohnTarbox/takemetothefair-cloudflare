@@ -790,6 +790,7 @@ export default function AdminInboundEmailsPage() {
             "replied",
             "forwarded",
             "closed_by_sender",
+            "dismissed",
           ].map((s) => (
             <button
               key={s || "all"}

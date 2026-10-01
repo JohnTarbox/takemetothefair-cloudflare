@@ -176,7 +176,8 @@ export type ReplyKind =
  * asks them to resend, so marking it `replied` would make a row nobody has
  * answered read as handled. Same column, same filter on /admin/inbound-emails.
  */
-export type FinalStatus = "replied" | "forwarded" | "awaiting_human";
+// OPE-1251 — `dismissed`: an operator ended a parked row; nothing was sent.
+export type FinalStatus = "replied" | "forwarded" | "awaiting_human" | "dismissed";
 
 /**
  * Values that can appear in `HandlerResult.replyParams`. Restricted to

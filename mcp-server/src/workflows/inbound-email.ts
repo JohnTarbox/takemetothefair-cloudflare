@@ -423,9 +423,26 @@ function decisionToReplyKind(intent: EmailIntent, decision: AdminDecision | null
 /** Shape of the payload sent via instance.sendEvent for correction/press
  *  intents. The MCP endpoint at /api/admin/inbound-emails/:id/decide
  *  produces this; the admin UI's action buttons drive it. */
-interface AdminDecision {
-  action: "applied" | "rejected" | "needs-more-info";
+export interface AdminDecision {
+  // OPE-1251 — `dismissed`: an operator ended a parked row that should never
+  // have waited (a mis-split demux child). Sends NOTHING; marks it dismissed.
+  action: "applied" | "rejected" | "needs-more-info" | "dismissed";
   note?: string;
+}
+
+/**
+ * OPE-1251 — what the workflow does once the admin-decision wait ends.
+ *   timeout   → nothing (OPE-766: the arrival ack already went out)
+ *   dismissed → nothing, and the row is marked `dismissed`
+ *   reply     → the decision's tailored reply
+ * Pulled out so "a dismissal never sends" is a tested guard, not a comment.
+ */
+export function decisionDisposition(
+  decision: AdminDecision | null
+): "timeout" | "dismissed" | "reply" {
+  if (decision === null) return "timeout";
+  if (decision.action === "dismissed") return "dismissed";
+  return "reply";
 }
 
 export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailParams> {
@@ -1561,7 +1578,12 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       //
       // A real decision still produces its tailored reply, which is the entire
       // reason the pause exists.
-      if (decision !== null) {
+      const disposition = decisionDisposition(decision);
+      if (disposition === "dismissed") {
+        // OPE-1251 — the operator dismissed it: no reply, an honest status.
+        // The dismiss tool wrote the audit row before delivering the event.
+        result = { ...result, status: "dismissed" };
+      } else if (decision !== null) {
         const decisionKind = decisionToReplyKind(intent, decision);
         try {
           await step.do(
