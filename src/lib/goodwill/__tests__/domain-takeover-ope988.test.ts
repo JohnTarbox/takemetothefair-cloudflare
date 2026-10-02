@@ -13,7 +13,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { classifyUrlHealth } from "../url-health";
-import { detectDomainTakeover, englishRatio } from "../domain-takeover";
+import { BLOG_INDEX_MIN_READTIMES, detectDomainTakeover, englishRatio } from "../domain-takeover";
 
 const F = (dir: string, f: string) => readFileSync(join(__dirname, "fixtures", dir, f), "utf8");
 
@@ -71,11 +71,14 @@ describe("OPE-988 ACCEPTANCE — the real specimen pages", () => {
     expect(r.takenOver).toBe(false);
   });
 
-  it("GREEN: none of the OPE-979 real pages is a takeover (closure and parked pages are other verdicts)", () => {
+  it("GREEN: the live OPE-979 organizer pages are not takeovers (closure and parked pages are other verdicts)", () => {
+    // OPE-1281 — ledyardfair_org.html was removed from this list. It was here as
+    // a "not a takeover" page, but the 09-30 capture IS one: a content-farm blog
+    // index wearing the dissolved fair's name (see the OPE-1281 block below).
+    // This assertion was pinning the false negative the ticket is about.
     for (const f of [
       "eagleshows_com.html",
       "easterngunexpo_com.html",
-      "ledyardfair_org.html",
       "clintonlionsagfair207_com.html",
     ]) {
       expect(detectDomainTakeover(F("ope979", f), { entityName: "Some Promoter" }).takenOver).toBe(
@@ -241,5 +244,72 @@ describe("independent signals", () => {
 
   it("no body, no verdict", () => {
     expect(detectDomainTakeover(null, { entityName: "X" }).takenOver).toBe(false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OPE-1281 — an AI content-farm blog index wearing the organizer's name.
+//
+// The specimen is the 2026-09-30 capture already in fixtures/ope979: OPE-868's
+// own negative control, which read `ok` (year + event-language) and no takeover
+// (the title keeps "Ledyard Fair"). Measured before shipping against the 500
+// promoter pages reading `ok` on 2026-10-02: 0 takeovers, 0 blog-index hits,
+// 50 with bylines — which is exactly why bylines alone must never decide.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("OPE-1281 — impersonation content farm", () => {
+  it("ACCEPTANCE: ledyardfair.org (09-30 capture) is a takeover, with the title still naming the fair", () => {
+    const html = F("ope979", "ledyardfair_org.html");
+    expect(html).toContain("Ledyard Fair"); // landmark: the name IS in the page
+    const r = detectDomainTakeover(html, {
+      entityName: "Ledyard Fair",
+      requestedUrl: "https://ledyardfair.org/",
+      finalUrl: "https://www.ledyardfair.org/",
+    });
+    expect(r.takenOver).toBe(true);
+    expect(r.signals).toEqual(expect.arrayContaining(["blog-index:4", "bylined-posts:2"]));
+    expect(r.signals).not.toContain("title-no-entity-token");
+  });
+
+  it("GREEN: the positive control and a real long-form organizer page stay clean", () => {
+    for (const f of ["easterngunexpo_com.html", "eagleshows_com.html"]) {
+      const r = detectDomainTakeover(F("ope979", f), { entityName: "Some Promoter" });
+      expect(r.signals.some((s) => s.startsWith("blog-index"))).toBe(false);
+    }
+  });
+
+  it("bylines alone never decide — a real page with 'Photos by Jane Smith' credits is not a takeover", () => {
+    const page = `<html lang="en"><head><title>Hebron Harvest Fair</title></head><body><p>${ENGLISH_PROSE}</p><p>Photos by Jane Smith. Story by Mark Jones. Poster by Ann Lee.</p></body></html>`;
+    const r = detectDomainTakeover(page, { entityName: "Hebron Harvest Fair" });
+    expect(r.signals.some((s) => s.startsWith("bylined-posts"))).toBe(true);
+    expect(r.takenOver).toBe(false);
+  });
+
+  it("bylines are STRUCTURAL: bylines + a title not naming the entity is still two shapes, no content — not a takeover", () => {
+    // The case that separates structural from content: two structural signals
+    // must not add up to a takeover. If bylines counted as content, this page
+    // (a real org whose site is titled by its tagline) would be flagged.
+    const page = `<html lang="en"><head><title>Celebrating Our Rural Heritage Since 1852</title></head><body><p>${ENGLISH_PROSE}</p><p>Photos by Jane Smith. Story by Mark Jones.</p></body></html>`;
+    const r = detectDomainTakeover(page, { entityName: "Hebron Harvest Fair" });
+    expect(r.signals).toEqual(expect.arrayContaining(["title-no-entity-token"]));
+    expect(r.signals.some((s) => s.startsWith("bylined-posts"))).toBe(true);
+    expect(r.takenOver).toBe(false);
+  });
+
+  it(`a page needs ${BLOG_INDEX_MIN_READTIMES} read-time stamps: one long-read link is not a blog index`, () => {
+    const mk = (n: number) =>
+      `<html lang="en"><head><title>Ledyard Fair</title></head><body><p>${ENGLISH_PROSE}</p>${Array.from(
+        { length: n },
+        (_, i) =>
+          `<article><h2>Post ${i}</h2><span>📚 ${i + 5}-min read</span> by Leila Haddad</article>`
+      ).join("")}</body></html>`;
+    expect(detectDomainTakeover(mk(1), { entityName: "Ledyard Fair" }).takenOver).toBe(false);
+    expect(
+      detectDomainTakeover(mk(BLOG_INDEX_MIN_READTIMES), { entityName: "Ledyard Fair" }).takenOver
+    ).toBe(true);
+  });
+
+  it("read-time spellings: '8-min read', '5 minute read', '12 mins read'", () => {
+    const page = `<html><head><title>X Fair</title></head><body><p>${ENGLISH_PROSE}</p><p>8-min read</p><p>5 minute read</p><p>12 mins read</p></body></html>`;
+    expect(detectDomainTakeover(page, { entityName: "X Fair" }).signals).toContain("blog-index:3");
   });
 });

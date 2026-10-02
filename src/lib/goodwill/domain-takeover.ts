@@ -103,6 +103,13 @@ const WEAK: Record<SpamClass, RegExp> = {
 };
 
 /** A host label that is only ever a spam network's. */
+/** OPE-1281 — "8-min read", "5 minute read", "📚 12-min read". */
+const READ_TIME_RE = /\b\d{1,2}[- ]?min(?:ute)?s?\s+read\b/gi;
+/** OPE-1281 — a blog index lists several posts; one long-read link is not that. */
+export const BLOG_INDEX_MIN_READTIMES = 3;
+/** "by Leila Haddad" — a capitalised first + last name after "by". */
+const BYLINE_RE = /\bby\s+[A-Z][a-z]+\s+[A-Z][a-z]+/g;
+
 const SPAM_HOST_RE = /(togel|gacor|sbobet|judi|casino|poker|slot|viagra|cialis)/i;
 
 const ENGLISH_FUNCTION_WORDS = new Set(
@@ -228,6 +235,27 @@ export function detectDomainTakeover(html: string | null, opts: TakeoverOptions)
   if (spamHosts.size >= 2 || (spamHosts.size === 1 && self && SPAM_HOST_RE.test(self))) {
     content.push(`spam-links:${spamHosts.size}`);
   }
+
+  // ── 4b. an AI content-farm blog index wearing the organizer's name ────
+  //
+  // OPE-1281. ledyardfair.org (Ledyard Fair Inc dissolved 2024) now serves
+  // "Your Hub for the Ledyard Fair in Connecticut": a blog index of filler posts
+  // ("12 Booth Layout Ideas That Help Fair Vendors Serve Visitors Faster") under
+  // made-up bylines, each stamped "📚 8-min read". It keeps the fair's name in
+  // its title, so check 5 passes it, and it is full of event vocabulary, so the
+  // event-signal classifier calls it `ok`. Neither existing family can see it.
+  //
+  // The read-time stamp is the shape: an organizer's own site is a calendar,
+  // not a feed of long reads. CONTENT, because it is about what the page is.
+  // Measured before shipping: 0 of the 500 promoter pages reading `ok` on
+  // 2026-10-02 carry ≥ BLOG_INDEX_MIN_READTIMES of them; the specimen carries 4.
+  const readTimes = (body.match(READ_TIME_RE) ?? []).length;
+  if (readTimes >= BLOG_INDEX_MIN_READTIMES) content.push(`blog-index:${readTimes}`);
+
+  // Bylined posts corroborate it — STRUCTURAL, since "Photos by Jane Smith" is
+  // an innocent byline on any real page. Never decides alone.
+  const bylines = (body.match(BYLINE_RE) ?? []).length;
+  if (bylines >= 2) structural.push(`bylined-posts:${bylines}`);
 
   // ── 5. the title does not name the entity at all (structural) ────────
   const names = [opts.entityName, ...(opts.aliases ?? [])].filter(
