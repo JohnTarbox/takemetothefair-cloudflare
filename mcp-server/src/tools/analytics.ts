@@ -1032,7 +1032,11 @@ export function registerAnalyticsTools(server: McpServer, auth: AuthContext, env
     "get_site_health_issues",
     [
       "Unified Bing + GSC site health issues with snooze state. Filter by source",
-      "(BING_SCAN | BING_SITEMAP | GSC_SITEMAP | GSC_URL_INSPECTION), severity, or hideSnoozed.",
+      "(BING_SCAN | BING_SITEMAP | GSC_SITEMAP | GSC_URL_INSPECTION | URL_HEALTH), severity, or hideSnoozed.",
+      "URL_HEALTH (OPE-1280) = an outbound website we store on a promoter/vendor that reads",
+      "domain_takeover / closure_notice (ERROR) or http_error / unreachable (WARNING) on its daily",
+      "re-check; the message names the field and the date it was last checked, and the row closes",
+      "itself when a re-check reads ok.",
       "Severities actually present are ERROR | WARNING | INFO — NOT 'NOTICE', which this",
       "description claimed for months and which has never existed in the table.",
       "",
@@ -1044,7 +1048,9 @@ export function registerAnalyticsTools(server: McpServer, auth: AuthContext, env
       "Admin only.",
     ].join(" "),
     {
-      source: z.enum(["BING_SCAN", "BING_SITEMAP", "GSC_SITEMAP", "GSC_URL_INSPECTION"]).optional(),
+      source: z
+        .enum(["BING_SCAN", "BING_SITEMAP", "GSC_SITEMAP", "GSC_URL_INSPECTION", "URL_HEALTH"])
+        .optional(),
       severity: z.enum(["ERROR", "WARNING", "NOTICE"]).optional(),
       hideSnoozed: z.boolean().optional(),
     },

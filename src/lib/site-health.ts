@@ -38,7 +38,14 @@ export type HealthSource =
    * ledger, which is the trap that comment describes. It closes through its own
    * `recordHealthIssue(failing:false)` on the first clean window instead.
    */
-  | "EMAIL_DELIVERY";
+  | "EMAIL_DELIVERY"
+  /**
+   * OPE-1280 — outbound links we store (promoters.website, vendors.website…),
+   * projected from `url_health_checks` by `projectUrlHealthVerdict`. Like
+   * EMAIL_DELIVERY it is NOT in COLLECTED_SOURCES: its rows open and close on
+   * each daily re-check of the URL, never on absence from a refresh batch.
+   */
+  | "URL_HEALTH";
 
 /**
  * OPE-244 — the sources `collectFreshIssues` actually re-collects each refresh.
