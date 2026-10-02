@@ -177,7 +177,14 @@ export type ReplyKind =
  * answered read as handled. Same column, same filter on /admin/inbound-emails.
  */
 // OPE-1251 — `dismissed`: an operator ended a parked row; nothing was sent.
-export type FinalStatus = "replied" | "forwarded" | "awaiting_human" | "dismissed";
+export type FinalStatus =
+  | "replied"
+  | "forwarded"
+  | "awaiting_human"
+  | "dismissed"
+  // OPE-1265 — parked for a lane that will process it later (lists@ mail waits
+  // for the OPE-1264 newsletter lane). Replayable; nothing was sent.
+  | "held";
 
 /**
  * Values that can appear in `HandlerResult.replyParams`. Restricted to

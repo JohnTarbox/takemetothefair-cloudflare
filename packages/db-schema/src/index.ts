@@ -4010,6 +4010,63 @@ export const gembaObservations = sqliteTable(
   (t) => [index("idx_gemba_observations_status").on(t.status, t.createdAt)]
 );
 
+/**
+ * OPE-1265 — the registry of promoter mailing lists MMATF subscribed its own
+ * address to (lists@ / lists+<promoter-slug>@). See drizzle/0350.
+ */
+export const promoterListSubscriptions = sqliteTable(
+  "promoter_list_subscriptions",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    promoterId: text("promoter_id")
+      .notNull()
+      .references(() => promoters.id, { onDelete: "cascade" }),
+    address: text("address").notNull(),
+    signupUrl: text("signup_url"),
+    esp: text("esp"),
+    status: text("status", {
+      enum: ["requested", "confirmed", "active", "unsubscribed", "bounced"],
+    })
+      .notNull()
+      .default("requested"),
+    requestedAt: integer("requested_at", { mode: "timestamp" }).notNull(),
+    confirmedAt: integer("confirmed_at", { mode: "timestamp" }),
+    lastReceivedAt: integer("last_received_at", { mode: "timestamp" }),
+    issueCount: integer("issue_count").notNull().default(0),
+    confirmUrl: text("confirm_url"),
+    note: text("note"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    uniqueIndex("uq_promoter_list_subscriptions_addr").on(t.promoterId, t.address),
+    index("idx_promoter_list_subscriptions_status").on(t.status),
+  ]
+);
+
+/** OPE-1265 — one row per inbound email to lists@ / lists+*@. drizzle/0350. */
+export const promoterListArrivals = sqliteTable(
+  "promoter_list_arrivals",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    inboundEmailId: text("inbound_email_id").notNull().unique(),
+    promoterId: text("promoter_id"),
+    matchBasis: text("match_basis", { enum: ["subscription-address", "unattributed"] }).notNull(),
+    plusTag: text("plus_tag"),
+    subscriptionId: text("subscription_id"),
+    kind: text("kind", { enum: ["confirmation", "issue"] }).notNull(),
+    confirmUrl: text("confirm_url"),
+    senderDomain: text("sender_domain"),
+    senderMismatch: integer("sender_mismatch").notNull().default(0),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [index("idx_promoter_list_arrivals_promoter").on(t.promoterId, t.createdAt)]
+);
+
 export const exhibitorProposals = sqliteTable(
   "exhibitor_proposals",
   {

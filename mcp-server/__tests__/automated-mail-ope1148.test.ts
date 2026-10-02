@@ -301,7 +301,17 @@ describe("OPE-1148 — held rows are stored, findable and salvageable", () => {
 describe("OPE-1148 — wiring", () => {
   const handler = read("src/email-handler.ts");
   it("the gate runs before the workflow is created, and both held paths return", () => {
-    const gate = handler.indexOf("const automated = detectAutomatedMail({");
+    // OPE-1265 — the gate is now `isListAddress ? null : detectAutomatedMail({`:
+    // lists@ (newsletters we subscribed to) is exempt, because every arrival
+    // there is bulk mail by design and has its own no-reply lane. The anchor
+    // follows the call; the exemption is pinned to that one address below.
+    const gate = handler.indexOf("detectAutomatedMail({");
+    expect(handler).toContain(
+      'const isListAddress = resolveIntent(toAddr) === "list_subscription";'
+    );
+    expect(handler).toMatch(
+      /const automated = isListAddress\s*\?\s*null\s*:\s*detectAutomatedMail\(\{/
+    );
     const burst = handler.indexOf(
       "const burst = await checkInboundBurst(getDb(env.DB), toAddr, fromAddr);"
     );

@@ -54,6 +54,7 @@ import {
   performerEnrichmentCandidates,
   vendorCategoryWatchRuns,
   gembaObservations,
+  promoterListArrivals,
 } from "@/lib/db/schema";
 import { SITE_URL } from "@takemetothefair/constants";
 import { NEAR_DUPLICATE_SWEEP_ACTION } from "@/lib/duplicates/near-duplicate-sweep";
@@ -215,6 +216,19 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     priority: "P1",
     expectedWindowHours: 720,
     lastEvidenceAt: (db) => maxTs(db, gembaObservations, gembaObservations.createdAt),
+  },
+  {
+    // OPE-1265 — mail arriving at lists@ / lists+<promoter-slug>@ (promoter
+    // mailing lists we subscribed to). DORMANT (enabled_at NULL, drizzle/0350):
+    // the population is empty until the OPE-1266 pilot subscribes and the lists@
+    // Email Routing rule exists. 720h is a PLACEHOLDER, not a measurement —
+    // whoever arms it replaces it with the measured issue cadence.
+    name: "promoter-list-arrival",
+    ownerOpe: "OPE-1265",
+    label: "lists@ → promoter_list_arrivals",
+    priority: "P1",
+    expectedWindowHours: 720,
+    lastEvidenceAt: (db) => maxTs(db, promoterListArrivals, promoterListArrivals.createdAt),
   },
   {
     // OPE-1139 — the self-announced exhibitor lane (link an existing vendor

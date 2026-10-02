@@ -22,7 +22,14 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
-import { emailSendLedger, events, inboundEmails, workflowRunSteps, containsCI } from "../schema.js";
+import {
+  emailSendLedger,
+  events,
+  inboundEmails,
+  promoterListArrivals,
+  workflowRunSteps,
+  containsCI,
+} from "../schema.js";
 import { buildVendorInquiryBriefing } from "../inbound/vendor-inquiry-briefing.js";
 import { jsonContent } from "../helpers.js";
 import { mainAppFetch, type MainAppEnv } from "../main-app-fetch.js";
@@ -195,6 +202,15 @@ export function registerInboundReadTools(
         acknowledgment = null;
       }
 
+      // OPE-1265 — mail to lists@: attribution, and a double-opt-in's confirm
+      // link (opened BY HAND — nothing fetches it). Null for every other row.
+      const [listArrival] = await db
+        .select()
+        .from(promoterListArrivals)
+        .where(eq(promoterListArrivals.inboundEmailId, row.id))
+        .limit(1)
+        .catch(() => []);
+
       // OPE-604 — on a `vendor_inquiry`, assemble the answer's inputs.
       //
       // Attached to the READ rather than left to the operator because the six
@@ -327,6 +343,7 @@ export function registerInboundReadTools(
             // "did we acknowledge them?". `null` means the ledger read failed,
             // which is distinguishable from `{auto_acked: false}`.
             acknowledgment,
+            list_arrival: listArrival ?? null,
             workflow_instance_id: row.workflowInstanceId,
             message_id: row.messageId,
             parsed_url: row.parsedUrl,
