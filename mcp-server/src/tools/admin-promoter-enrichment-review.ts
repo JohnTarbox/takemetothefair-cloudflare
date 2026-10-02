@@ -22,6 +22,8 @@
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { SCRAPER_USER_AGENT } from "@takemetothefair/constants";
+import { annotateForReview } from "../enrichment/structured-data-check.js";
 import { and, desc, eq, gte, sql } from "drizzle-orm";
 import type { AnyColumn } from "drizzle-orm";
 import { computePromoterEnrichment, isPlaceholderDescription } from "@takemetothefair/constants";
@@ -230,7 +232,7 @@ export function registerPromoterEnrichmentReviewTools(
   // --- list_promoter_enrichment_candidates --------------------------------
   server.tool(
     "list_promoter_enrichment_candidates",
-    "List staged promoter pre-extraction proposals from promoter_enrichment_candidates for review. Filter by decision (default 'pending'), flag status, promoter, field, or minimum confidence. Each row carries the proposed field/value, the promoter's value at proposal time, source URL, extraction method, confidence, and any safety flags. Also returns a summary of totals by decision and a clean-vs-flagged breakdown of the pending queue. Read-only. Admin only.",
+    "List staged promoter pre-extraction proposals from promoter_enrichment_candidates for review. Filter by decision (default 'pending'), flag status, promoter, field, or minimum confidence. Each row carries the proposed field/value, the promoter's value at proposal time, source URL, extraction method, confidence, and any safety flags. Also returns a summary of totals by decision and a clean-vs-flagged breakdown of the pending queue. Read-only. Admin only. OPE-1269 — REVIEW EVIDENCE: a row with extraction_method=\"jsonld\" was read from the page's JSON-LD (<script type=application/ld+json>), which a browser does not render and text/markdown fetch tools strip, so checking the visible page is NOT evidence for or against it. Pass verify_structured_data: true to re-read each source_url (first 25 rows) and get structured_data_check: found | not_found | no_structured_data | fetch_failed | not_applicable. fetch_failed means we could not look — never treat it as not_found.",
     {
       decision: z
         .enum(["pending", "approved", "rejected", "auto_merged", "reverted", "all"])
@@ -253,6 +255,13 @@ export function registerPromoterEnrichmentReviewTools(
         .optional()
         .describe("Only proposals at or above this confidence (0–1)."),
       limit: z.number().int().min(1).max(200).optional().default(50),
+      verify_structured_data: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe(
+          "OPE-1269 — re-fetch each row's source_url (first 25) and report whether the proposed value is in its JSON-LD. Use before deciding any extraction_method='jsonld' row."
+        ),
     },
     async (params) => {
       const decision = params.decision ?? "pending";
@@ -330,22 +339,26 @@ export function registerPromoterEnrichmentReviewTools(
               pending_clean: Number(pendingClean),
               pending_flagged: Number(pendingFlagged),
             },
-            candidates: rows.map((r) => ({
-              id: r.id,
-              promoter_id: r.promoterId,
-              company_name: r.companyName,
-              field: r.field,
-              current_value: r.currentValue,
-              proposed_value: r.proposedValue,
-              extraction_method: r.extractionMethod,
-              fetch_method: r.fetchMethod,
-              confidence: r.confidence,
-              flags: JSON.parse(r.flags) as string[],
-              source_url: r.sourceUrl,
-              decision: r.decision,
-              job_run_id: r.jobRunId,
-              created_at: r.createdAt instanceof Date ? r.createdAt.toISOString() : r.createdAt,
-            })),
+            candidates: await annotateForReview(
+              rows.map((r) => ({
+                id: r.id,
+                promoter_id: r.promoterId,
+                company_name: r.companyName,
+                field: r.field,
+                current_value: r.currentValue,
+                proposed_value: r.proposedValue,
+                extraction_method: r.extractionMethod,
+                fetch_method: r.fetchMethod,
+                confidence: r.confidence,
+                flags: JSON.parse(r.flags) as string[],
+                source_url: r.sourceUrl,
+                decision: r.decision,
+                job_run_id: r.jobRunId,
+                created_at: r.createdAt instanceof Date ? r.createdAt.toISOString() : r.createdAt,
+              })),
+              params.verify_structured_data ?? false,
+              { userAgent: SCRAPER_USER_AGENT }
+            ),
           }),
         ],
       };
