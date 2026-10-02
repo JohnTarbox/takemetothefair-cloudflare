@@ -231,6 +231,25 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     lastEvidenceAt: (db) => maxTs(db, promoterListArrivals, promoterListArrivals.createdAt),
   },
   {
+    // OPE-1264 — the newsletter classifier RAN. Evidence is its step record,
+    // written for EVERY email the inbound workflow evaluates (newsletter or
+    // not), so a quiet fortnight of newsletters cannot false-fire it. 72h is
+    // MEASURED: the largest gap between workflow emails in the 60 days to
+    // 2026-10-02 was 50.5h (255 emails, mean gap 5.6h).
+    name: "newsletter-classify",
+    ownerOpe: "OPE-1264",
+    label: "inbound workflow newsletter/classify step",
+    priority: "P1",
+    expectedWindowHours: 72,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        workflowRunSteps,
+        workflowRunSteps.recordedAt,
+        eq(workflowRunSteps.stepName, "newsletter/classify")
+      ),
+  },
+  {
     // OPE-1139 — the self-announced exhibitor lane (link an existing vendor
     // live, or stage a new one in exhibitor_proposals). Evidence: its step
     // record, written on EVERY evaluation, declines included.

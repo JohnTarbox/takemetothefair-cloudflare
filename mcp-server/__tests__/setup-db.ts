@@ -1511,6 +1511,17 @@ const SCHEMA_SQL = `
     sender_mismatch INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL
   );
+  CREATE TABLE inbound_newsletters (
+    id TEXT PRIMARY KEY,
+    inbound_email_id TEXT NOT NULL UNIQUE,
+    markers TEXT NOT NULL,
+    promoter_id TEXT,
+    match_basis TEXT NOT NULL CHECK (match_basis IN
+      ('subscription-address', 'sender-domain', 'contact-email', 'footer-name', 'unmatched')),
+    sender_address TEXT,
+    items_json TEXT,
+    created_at INTEGER NOT NULL
+  );
   CREATE TABLE exhibitor_proposals (
     id TEXT PRIMARY KEY,
     event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,

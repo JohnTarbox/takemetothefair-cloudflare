@@ -4067,6 +4067,26 @@ export const promoterListArrivals = sqliteTable(
   (t) => [index("idx_promoter_list_arrivals_promoter").on(t.promoterId, t.createdAt)]
 );
 
+/** OPE-1264 — an inbound email recognised as a promoter newsletter. drizzle/0351. */
+export const inboundNewsletters = sqliteTable(
+  "inbound_newsletters",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    inboundEmailId: text("inbound_email_id").notNull().unique(),
+    markers: text("markers").notNull(),
+    promoterId: text("promoter_id"),
+    matchBasis: text("match_basis", {
+      enum: ["subscription-address", "sender-domain", "contact-email", "footer-name", "unmatched"],
+    }).notNull(),
+    senderAddress: text("sender_address"),
+    itemsJson: text("items_json"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [index("idx_inbound_newsletters_promoter").on(t.promoterId, t.createdAt)]
+);
+
 export const exhibitorProposals = sqliteTable(
   "exhibitor_proposals",
   {
