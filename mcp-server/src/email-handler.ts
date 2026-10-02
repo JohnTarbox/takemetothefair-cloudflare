@@ -427,11 +427,19 @@ export async function handleInboundEmail(
       rawSize: message.rawSize,
       messageId: (parsed.messageId || "").trim() || null,
     };
-    const automated = detectAutomatedMail({
-      headers: message.headers,
-      fromAddr,
-      sendingHost: senderSignals.sendingHost,
-    });
+    // OPE-1265 — mail to lists@ IS automated bulk mail by design: every arrival
+    // carries List-Unsubscribe / precedence:bulk. Holding it here as
+    // `held-automated` would swallow every issue before it reached its lane. The
+    // list lane is itself a no-reply hold, so it skips this hold and the burst
+    // hold below (an ESP send is not a per-address burst).
+    const isListAddress = resolveIntent(toAddr) === "list_subscription";
+    const automated = isListAddress
+      ? null
+      : detectAutomatedMail({
+          headers: message.headers,
+          fromAddr,
+          sendingHost: senderSignals.sendingHost,
+        });
     if (automated) {
       const operatorRelevant = automated.kind !== "automated";
       try {
@@ -475,7 +483,7 @@ export async function handleInboundEmail(
     }
 
     const burst = await checkInboundBurst(getDb(env.DB), toAddr, fromAddr);
-    if (burst.tripped) {
+    if (burst.tripped && !isListAddress) {
       try {
         await insertAuditNoopRow(getDb(env.DB), {
           ...heldTerminalArgs,
@@ -594,6 +602,8 @@ export async function handleInboundEmail(
     let effectiveAddressIntent = addressIntent;
     if (
       addressIntent !== "photo_intake" &&
+      // OPE-1265 — a list issue stays in the list lane whatever it carries.
+      addressIntent !== "list_subscription" &&
       senderTrust === "trusted" &&
       isPhotoOnlySubmission({ attachments: effectiveAttachments, bodyText })
     ) {
@@ -1894,6 +1904,35 @@ async function computeRouting(args: {
   // (SPF/DKIM/DMARC). On "fail" we skip the fast-path and fall through to the
   // full classifier, so a spoofed From of a trusted sender gets normal
   // scrutiny instead of a free pass. "unknown" still takes the fast-path.
+  // OPE-1265 — lists@ is ADDRESS-BOUND. Its senders are promoters' email
+  // service providers: untrusted by construction, so they would hit the
+  // classifier, which can re-route a newsletter to the submit lane or
+  // quarantine it as spam. What arrives at an address we subscribed ourselves
+  // is a list issue by definition; the address is the fact.
+  if (addressIntent === "list_subscription") {
+    return {
+      routed: [
+        {
+          intent: "list_subscription",
+          classifiedIntent: null,
+          classifiedSubIntent: null,
+          confidence: null,
+          rationale: "list-subscription address (OPE-1265): never classified",
+          routingSource: "list_subscription_address",
+          flaggedForReview: false,
+          refUrl: null,
+        },
+      ],
+      classifierVersion: null,
+      routingSource: "list_subscription_address",
+      aggregateConfidence: null,
+      aggregateRationale: "list-subscription address (OPE-1265): never classified",
+      flaggedForReview: false,
+      spamQuarantine: false,
+      spamRationale: "",
+    };
+  }
+
   // OPE-254 — before the fast-path AND the classifier: see heldPhotoReplyRouting.
   const heldPhotoReply = await heldPhotoReplyRouting(env.DB, {
     fromAddr,

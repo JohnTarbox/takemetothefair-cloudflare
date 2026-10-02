@@ -78,6 +78,9 @@ export const FANOUT_REPLY_RANK: Record<EmailIntent, number> = {
   // Photos actually landed somewhere — a countable outcome, above the
   // acknowledgement-only intents below.
   photo_intake: 65,
+  // OPE-1265 — never replies; ranks at the floor so a list issue can never be
+  // the child that speaks for a fan-out.
+  list_subscription: 0,
   vendor_inquiry: 60,
   source_suggestion: 50,
   press: 40,

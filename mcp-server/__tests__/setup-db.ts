@@ -1479,6 +1479,38 @@ const SCHEMA_SQL = `
     posted_at INTEGER,
     created_at INTEGER NOT NULL
   );
+  CREATE TABLE promoter_list_subscriptions (
+    id TEXT PRIMARY KEY,
+    promoter_id TEXT NOT NULL REFERENCES promoters(id) ON DELETE CASCADE,
+    address TEXT NOT NULL,
+    signup_url TEXT,
+    esp TEXT,
+    status TEXT NOT NULL DEFAULT 'requested'
+      CHECK (status IN ('requested', 'confirmed', 'active', 'unsubscribed', 'bounced')),
+    requested_at INTEGER NOT NULL,
+    confirmed_at INTEGER,
+    last_received_at INTEGER,
+    issue_count INTEGER NOT NULL DEFAULT 0,
+    confirm_url TEXT,
+    note TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE UNIQUE INDEX uq_promoter_list_subscriptions_addr
+    ON promoter_list_subscriptions (promoter_id, address);
+  CREATE TABLE promoter_list_arrivals (
+    id TEXT PRIMARY KEY,
+    inbound_email_id TEXT NOT NULL UNIQUE,
+    promoter_id TEXT,
+    match_basis TEXT NOT NULL CHECK (match_basis IN ('subscription-address', 'unattributed')),
+    plus_tag TEXT,
+    subscription_id TEXT,
+    kind TEXT NOT NULL CHECK (kind IN ('confirmation', 'issue')),
+    confirm_url TEXT,
+    sender_domain TEXT,
+    sender_mismatch INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+  );
   CREATE TABLE exhibitor_proposals (
     id TEXT PRIMARY KEY,
     event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
