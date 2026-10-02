@@ -5930,6 +5930,9 @@ export const eventDiscrepancies = sqliteTable("event_discrepancies", {
       // that a LIVE field disagrees with the source it just cited. Our error,
       // not a promoter's: never an outreach candidate (see queue-ranking.ts).
       "citation_flag",
+      // OPE-1285 — a promoter's own newsletter states dates that disagree with
+      // the event we hold. TS-only, like the others.
+      "newsletter",
       "manual",
     ],
   }).notNull(),

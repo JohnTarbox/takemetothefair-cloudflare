@@ -250,6 +250,25 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       ),
   },
   {
+    // OPE-1285 — a newsletter was itemized SUCCESSFULLY. Keyed on status='ok',
+    // not on the step running: a model that times out every time still writes
+    // a step record, and a stream of `failed` rows must not read as alive.
+    // 720h is MEASURED: 12 newsletters 2026-07-10 → 10-02, mean gap 7.6 days,
+    // largest 17.9 days.
+    name: "newsletter-itemize",
+    ownerOpe: "OPE-1285",
+    label: "inbound workflow newsletter/itemize step (status ok)",
+    priority: "P1",
+    expectedWindowHours: 720,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        workflowRunSteps,
+        workflowRunSteps.recordedAt,
+        and(eq(workflowRunSteps.stepName, "newsletter/itemize"), eq(workflowRunSteps.status, "ok"))
+      ),
+  },
+  {
     // OPE-1139 — the self-announced exhibitor lane (link an existing vendor
     // live, or stage a new one in exhibitor_proposals). Evidence: its step
     // record, written on EVERY evaluation, declines included.

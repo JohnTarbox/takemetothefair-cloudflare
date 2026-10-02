@@ -354,7 +354,20 @@ export function registerInboundReadTools(
             // which is distinguishable from `{auto_acked: false}`.
             acknowledgment,
             list_arrival: listArrival ?? null,
-            newsletter: newsletter ?? null,
+            // OPE-1285 — `items` is the parsed item list with each item's
+            // disposition (matched / discrepancy / unmatched / skipped).
+            newsletter: newsletter
+              ? {
+                  ...newsletter,
+                  items: (() => {
+                    try {
+                      return newsletter.itemsJson ? JSON.parse(newsletter.itemsJson) : null;
+                    } catch {
+                      return null;
+                    }
+                  })(),
+                }
+              : null,
             workflow_instance_id: row.workflowInstanceId,
             message_id: row.messageId,
             parsed_url: row.parsedUrl,
