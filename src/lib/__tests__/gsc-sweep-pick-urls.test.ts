@@ -234,6 +234,37 @@ describe("REL5 — pickUrls surfaces unresolved time_to_index_log URLs", () => {
   });
 });
 
+describe("OPE-1283 — batch size 0 inspects nothing", () => {
+  function seedEveryType() {
+    raw
+      .prepare(
+        `INSERT INTO events (id, slug, status, lifecycle_status) VALUES (?, ?, 'APPROVED', 'SCHEDULED')`
+      )
+      .run("e1", "an-event");
+    raw
+      .prepare(
+        `INSERT INTO venues (id, slug, status, city, state) VALUES (?, ?, 'ACTIVE', 'Skowhegan', 'ME')`
+      )
+      .run("v1", "a-venue");
+    raw.prepare(`INSERT INTO promoters (id, slug) VALUES (?, ?)`).run("p1", "a-promoter");
+    raw
+      .prepare(`INSERT INTO blog_posts (id, slug, status) VALUES (?, ?, 'PUBLISHED')`)
+      .run("b1", "a-post");
+  }
+
+  it("landmark: with entities seeded, a batch of 1 still ships the guaranteed per-type tier", async () => {
+    // The by-design behaviour the 0 case has to opt out of — if this ever
+    // returned [], the test below would pass for the wrong reason.
+    seedEveryType();
+    expect((await pickUrls(db as never, 1)).length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("ACCEPTANCE: batchSize 0 returns no URLs even with every type seeded", async () => {
+    seedEveryType();
+    expect(await pickUrls(db as never, 0)).toEqual([]);
+  });
+});
+
 describe("A10/A11 — per-page-type guaranteed coverage", () => {
   it("includes a venue, promoter, blog, event AND indexable vendor each run", async () => {
     raw
