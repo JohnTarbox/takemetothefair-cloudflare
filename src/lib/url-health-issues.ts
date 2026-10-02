@@ -70,10 +70,16 @@ export const PROJECTED_URL_HEALTH: Readonly<Record<string, "ERROR" | "WARNING">>
   closure_notice: "ERROR",
   http_error: "WARNING",
   unreachable: "WARNING",
-  // OPE-1270 — vendor-site verdicts (vendor-site-health.ts). A promoter sweep
-  // never emits them, so they cost that source nothing.
-  empty_page: "WARNING",
+  // OPE-1270 — vendor-site verdict (vendor-site-health.ts). A promoter sweep
+  // never emits it, so it costs that source nothing.
   moved: "WARNING",
+  // ⚠️ `empty_page` is deliberately NOT projected (OPE-1281 measurement,
+  // 2026-10-02): 58 of 127 promoter `no_event_signal` URLs are in the same
+  // near-empty branch, and spot-checked live ones (durhamfair.com, osv.org,
+  // waterfire.org, deerfieldfair.com) serve 45–326 KB to a normal client — the
+  // sweep runs from a Worker and gets a bot wall. Near-empty from a Worker is
+  // "could not see the page", not "the site is parked"; projecting it would
+  // fill the queue with live sites. It stays recorded in url_health_checks.
 };
 
 const PHRASE: Record<string, string> = {
@@ -81,7 +87,6 @@ const PHRASE: Record<string, string> = {
   closure_notice: "announces a closure or handover",
   http_error: "returns an HTTP error",
   unreachable: "did not respond",
-  empty_page: "serves an empty page (parked or emptied)",
   moved: "redirects to a different domain",
 };
 

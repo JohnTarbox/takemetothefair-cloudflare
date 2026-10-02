@@ -148,7 +148,7 @@ describe("vendor verdicts — healthy means substantive, not 'has fair dates'", 
     expect(r.verdict).toBe("ok");
   });
 
-  it("a 200 with almost no text is empty_page (the parked-shell shape)", () => {
+  it("a 200 with almost no text is empty_page (recorded as evidence, not queued)", () => {
     const r = classifyVendorSite(
       { reachedOrigin: true, status: 200, html: "<html><body></body></html>", finalUrl: site },
       { requestedUrl: site, businessName: "Example Crafts" }
@@ -209,6 +209,19 @@ describe("vendor rows reach the queue through OPE-1280's projector", () => {
     expect(row.message).toBe(
       "vendors.website redirects to a different domain · HTTP 200 · last checked 2026-10-02"
     );
+  });
+
+  it("empty_page is recorded but NOT queued — from a Worker it is usually a bot wall (OPE-1281)", async () => {
+    const db = makeDb();
+    const r = await projectUrlHealthVerdict(asDb(db), {
+      sourceField: V,
+      url: U,
+      verdict: "empty_page",
+      httpStatus: 200,
+      checkedAt: D1,
+    });
+    expect(r).toEqual({ opened: 0, reopened: 0, refreshed: 0, resolved: 0 });
+    expect(db.select().from(healthIssues).all()).toHaveLength(0);
   });
 
   it("name drift is a separate INFO row that an ok verdict does NOT close", async () => {

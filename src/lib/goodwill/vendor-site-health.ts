@@ -14,8 +14,10 @@
  *
  *   unreachable / http_error / closure_notice — the base classifier's, unchanged
  *   domain_takeover — the OPE-988 detector, unchanged, on a 2xx body
- *   empty_page      — 2xx with < MIN_MEANINGFUL_TEXT visible chars: a parked or
- *                     emptied shell (clintonlionsagfair207.com reads like this)
+ *   empty_page      — 2xx with < MIN_MEANINGFUL_TEXT visible chars. Recorded,
+ *                     NOT queued: from a Worker this is usually a bot wall in
+ *                     front of a live site (OPE-1281 measured it), not a
+ *                     parked domain, so it is evidence of "could not see"
  *   moved           — 2xx, but redirects landed on ANOTHER registrable domain:
  *                     baystatesavingsbank.com → baystatebank.com. A plain up/down
  *                     check calls that healthy; the stored link is stale anyway
