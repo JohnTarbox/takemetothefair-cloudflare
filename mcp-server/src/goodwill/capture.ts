@@ -58,6 +58,9 @@ export type DetectedBy =
   // OPE-1065 — a live field contradicted by the source its own citation names
   // (citation-flag-capture.ts). Never an outreach candidate.
   | "citation_flag"
+  // OPE-1285 — a promoter's newsletter disagrees with the stored dates
+  // (inbound/newsletter-dispose.ts). Never an outreach candidate.
+  | "newsletter"
   | "manual";
 
 export interface CaptureDiscrepancyArgs {
