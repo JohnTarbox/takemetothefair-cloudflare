@@ -216,3 +216,93 @@ describe("bucketByWeek", () => {
     expect(bucketByWeek([])).toEqual([]);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OPE-249 (2026-10-02 rework) — the gate measures the population it acts on.
+//
+// The review scored social-link at 38.5% (10/26). Read from prod: 4 of the 16
+// "rejects" were reviewed_by='system:promoter-merge' (a merged-away promoter's
+// open candidates, closed as housekeeping), and every post-09-13 decision was a
+// FLAGGED row — which auto-merge never applies (promoter-dispatch.ts skips any
+// candidate with flags). Neither is evidence about whether the rule's CLEAN
+// output can be auto-applied.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("OPE-249 — system closes and flagged rows do not move the promotion gate", () => {
+  const r = (decision: string, over: Partial<{ reviewedBy: string; flags: string }> = {}) => ({
+    decision,
+    proposedField: "social_links",
+    extractionMethod: "social-link",
+    ...over,
+  });
+
+  it("a system:promoter-merge reject is not a human disagreement — it is counted separately", () => {
+    const [e] = computeRuleAgreement([
+      r("approved", { reviewedBy: "admin-user-001", flags: "[]" }),
+      r("rejected", { reviewedBy: "system:promoter-merge", flags: "[]" }),
+    ]);
+    expect(e.humanRejected).toBe(0);
+    expect(e.humanSampleSize).toBe(1);
+    expect(e.systemClosed).toBe(1);
+  });
+
+  it("a flagged decision counts in the human figure but NOT in the clean figure the gate uses", () => {
+    const [e] = computeRuleAgreement([
+      r("approved", { reviewedBy: "admin-user-001", flags: "[]" }),
+      r("rejected", { reviewedBy: "admin-user-001", flags: '["social_no_name_affinity"]' }),
+    ]);
+    expect(e.humanSampleSize).toBe(2);
+    expect(e.cleanHumanSampleSize).toBe(1);
+    expect(e.cleanHumanAgreementPct).toBe(100);
+  });
+
+  it("promotion is gated on CLEAN human decisions: 20 clean approvals promote despite flagged rejects", () => {
+    const rows = [
+      ...Array.from({ length: 20 }, () => r("approved", { reviewedBy: "u", flags: "[]" })),
+      ...Array.from({ length: 5 }, () =>
+        r("rejected", { reviewedBy: "u", flags: '["social_no_name_affinity"]' })
+      ),
+    ];
+    const [e] = computeRuleAgreement(rows);
+    expect(e.humanAgreementPct).toBe(80); // the old gate would read 80% — not promotable
+    expect(e.cleanHumanAgreementPct).toBe(100);
+    expect(e.promotable).toBe(true);
+  });
+
+  it("…and a clean human reject still blocks it (the gate is not loosened for clean output)", () => {
+    const rows = [
+      ...Array.from({ length: 19 }, () => r("approved", { reviewedBy: "u", flags: "[]" })),
+      r("rejected", { reviewedBy: "u", flags: "[]" }),
+    ];
+    const [e] = computeRuleAgreement(rows);
+    expect(e.cleanHumanAgreementPct).toBe(95);
+    expect(e.promotable).toBe(true);
+    const [f] = computeRuleAgreement([...rows, r("rejected", { reviewedBy: "u", flags: "[]" })]);
+    expect(f.promotable).toBe(false);
+  });
+
+  it("the prod social-link mix (2026-10-02) is NOT promotable under the corrected gate either", () => {
+    // 26 clean approvals + 4 flagged approvals; 11 clean human rejects + 6
+    // flagged human rejects; 4 system closes. Measured by direct D1 query.
+    const rows = [
+      ...Array.from({ length: 26 }, () => r("approved", { reviewedBy: "u", flags: "[]" })),
+      ...Array.from({ length: 4 }, () => r("approved", { reviewedBy: "u", flags: '["x"]' })),
+      ...Array.from({ length: 11 }, () => r("rejected", { reviewedBy: "u", flags: "[]" })),
+      ...Array.from({ length: 6 }, () => r("rejected", { reviewedBy: "u", flags: '["x"]' })),
+      ...Array.from({ length: 4 }, () =>
+        r("rejected", { reviewedBy: "system:promoter-merge", flags: "[]" })
+      ),
+    ];
+    const [e] = computeRuleAgreement(rows);
+    expect(e.systemClosed).toBe(4);
+    expect(e.cleanHumanSampleSize).toBe(37);
+    expect(e.cleanHumanAgreementPct).toBe(70.3);
+    expect(e.promotable).toBe(false);
+  });
+
+  it("rows with no reviewedBy/flags (older callers) behave exactly as before", () => {
+    const [e] = computeRuleAgreement([r("approved"), r("rejected")]);
+    expect(e.humanSampleSize).toBe(2);
+    expect(e.cleanHumanSampleSize).toBe(2);
+    expect(e.systemClosed).toBe(0);
+  });
+});
