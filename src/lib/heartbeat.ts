@@ -985,6 +985,31 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       ),
   },
   {
+    // OPE-1270 — the vendor website-health sweep RAN.
+    //
+    // Driven by the same daily EventDateDriftWorkflow as the promoter sweep, 20
+    // chunks a run, rotating least-recently-checked first. Every chunk writes a
+    // row per site it examines (3,181 live sites, so a chunk is never empty), so
+    // the evidence is the newest check itself — daily by construction, and 72h
+    // is three missed runs.
+    //
+    // ⚠️ Scoped to source_field='vendors.website': four other writers share
+    // url_health_checks, and an unscoped probe would be kept green by any of
+    // them while this sweep was dead (the OPE-865 defect).
+    name: "vendor-url-health-sweep",
+    ownerOpe: "OPE-1270",
+    label: "Vendor website health sweep",
+    priority: "P1",
+    expectedWindowHours: 72,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        urlHealthChecks,
+        urlHealthChecks.checkedAt,
+        eq(urlHealthChecks.sourceField, "vendors.website")
+      ),
+  },
+  {
     // OPE-987 — the organizer-page cancellation recheck RAN.
     //
     // A new pass inside the daily EventDateDriftWorkflow

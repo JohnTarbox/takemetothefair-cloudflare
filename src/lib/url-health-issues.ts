@@ -70,6 +70,10 @@ export const PROJECTED_URL_HEALTH: Readonly<Record<string, "ERROR" | "WARNING">>
   closure_notice: "ERROR",
   http_error: "WARNING",
   unreachable: "WARNING",
+  // OPE-1270 — vendor-site verdicts (vendor-site-health.ts). A promoter sweep
+  // never emits them, so they cost that source nothing.
+  empty_page: "WARNING",
+  moved: "WARNING",
 };
 
 const PHRASE: Record<string, string> = {
@@ -77,6 +81,8 @@ const PHRASE: Record<string, string> = {
   closure_notice: "announces a closure or handover",
   http_error: "returns an HTTP error",
   unreachable: "did not respond",
+  empty_page: "serves an empty page (parked or emptied)",
+  moved: "redirects to a different domain",
 };
 
 /** `URL_HEALTH_HTTP_ERROR` etc. One issue type per verdict class. */
@@ -211,6 +217,92 @@ export async function projectUrlHealthVerdict(
     await db
       .update(healthIssues)
       .set({ lastDetectedAt: checkedAt, severity, message })
+      .where(eq(healthIssues.id, existing.id));
+    out.refreshed++;
+  }
+  return out;
+}
+
+/**
+ * OPE-1270 — a FLAG is a fact about the URL that is independent of its health
+ * verdict: today only `name_drift` (the site's own JSON-LD names the business
+ * differently from our record). It has its own fingerprint family, so a
+ * healthy `ok` re-check does not close it — only a re-check that can SEE the
+ * site's name and finds it matching does.
+ *
+ *   present === true  → open / re-open / refresh
+ *   present === false → close as verified_fixed (we read the name; it matches)
+ *   present === null  → nothing: the site declared no name this time, and an
+ *                       absent declaration is not evidence the name matches
+ *
+ * INFO severity: it is a review prompt (should our record be renamed?), never
+ * an outage, and a rename is a deliberate operator act through update_vendor —
+ * this surface has no apply button by design (OPE-1270's STOP).
+ */
+export const URL_HEALTH_FLAGS: Readonly<Record<string, { severity: string; phrase: string }>> = {
+  name_drift: { severity: "INFO", phrase: "names the business differently from our record" },
+};
+
+export async function projectUrlHealthFlag(
+  db: Db,
+  check: {
+    sourceField: string;
+    url: string;
+    flag: string;
+    present: boolean | null;
+    checkedAt: Date;
+  }
+): Promise<UrlHealthProjection> {
+  const out: UrlHealthProjection = { opened: 0, reopened: 0, refreshed: 0, resolved: 0 };
+  const def = URL_HEALTH_FLAGS[check.flag];
+  if (!def || check.present === null) return out;
+
+  const fp = await urlHealthFingerprint(check.sourceField, check.url, check.flag);
+  const [existing] = await db
+    .select()
+    .from(healthIssues)
+    .where(eq(healthIssues.fingerprint, fp))
+    .limit(1);
+  const day = check.checkedAt.toISOString().slice(0, 10);
+
+  if (!check.present) {
+    if (existing && !existing.resolvedAt) {
+      await db
+        .update(healthIssues)
+        .set({
+          resolvedAt: check.checkedAt,
+          resolutionReason: HEALTH_RESOLUTION_REASON.VERIFIED_FIXED,
+          message: `${existing.message} — resolved: names match (${day})`,
+        })
+        .where(and(eq(healthIssues.id, existing.id), isNull(healthIssues.resolvedAt)));
+      out.resolved++;
+    }
+    return out;
+  }
+
+  const message = `${check.sourceField} ${def.phrase} · last checked ${day}`;
+  if (!existing) {
+    await db.insert(healthIssues).values({
+      fingerprint: fp,
+      source: URL_HEALTH_SOURCE,
+      issueType: urlHealthIssueType(check.flag),
+      severity: def.severity,
+      url: check.url,
+      message,
+      firstDetectedAt: check.checkedAt,
+      lastDetectedAt: check.checkedAt,
+    });
+    out.opened++;
+  } else if (existing.resolvedAt) {
+    await db
+      .update(healthIssues)
+      .set({ resolvedAt: null, resolutionReason: null, lastDetectedAt: check.checkedAt, message })
+      .where(eq(healthIssues.id, existing.id));
+    out.reopened++;
+  } else {
+    await db
+      .update(healthIssues)
+      .set({ lastDetectedAt: check.checkedAt, message })
       .where(eq(healthIssues.id, existing.id));
     out.refreshed++;
   }
