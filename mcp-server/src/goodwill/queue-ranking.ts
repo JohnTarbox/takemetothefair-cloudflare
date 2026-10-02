@@ -185,7 +185,12 @@ const OUTREACH_CANDIDATE_THRESHOLD = 0.6;
  * `outreach_suppressed` existed. Per-row suppressions (OPE-1082) are stored in
  * that column and honoured beside this set.
  */
-export const NEVER_OUTREACH_DETECTORS: ReadonlySet<string> = new Set(["citation_flag"]);
+export const NEVER_OUTREACH_DETECTORS: ReadonlySet<string> = new Set([
+  "citation_flag",
+  // OPE-1285 — the dissenting source IS the promoter's own newsletter. Which of
+  // their two statements is right is ours to check, not theirs to be asked.
+  "newsletter",
+]);
 
 export async function rerankOpenQueueBatch(
   db: Db,

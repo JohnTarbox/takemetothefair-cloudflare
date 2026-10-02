@@ -110,6 +110,7 @@ import { handle as handleNoop } from "../email-handlers/noop.js";
 import { handle as handleGemba } from "../email-handlers/gemba.js";
 import { handle as handleListSubscription } from "../email-handlers/list-subscription.js";
 import { classifyAndRecordNewsletter } from "../inbound/newsletter-record.js";
+import { processNewsletter } from "../inbound/newsletter-process.js";
 import { recordCrossing, ref } from "../inbound/crossing-ledger.js";
 import { routeToProject } from "../inbound/project-router.js";
 import {
@@ -1162,6 +1163,28 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         context: { messageRowId, replyKind: result.replyKind, basis: newsletter.basis },
       });
       result = { ...result, suppressReply: true };
+    }
+    // OPE-1285 — itemize the newsletter and dispose of each dated item against
+    // our events: corroborating citations, date discrepancies, and a recorded
+    // list. Additive only (no event is edited or created), so it runs beside
+    // the submit pipeline in shadow mode. Its own failure costs the itemizing,
+    // never the email — the step records it and the workflow carries on.
+    if (newsletter.isNewsletter) {
+      try {
+        await step.do(
+          "newsletter/itemize",
+          { retries: { limit: 1, delay: "10 seconds", backoff: "constant" }, timeout: "3 minutes" },
+          async () => processNewsletter(getDb(this.env.DB), this.env, messageRowId, sessionId)
+        );
+      } catch (err) {
+        await logError(this.env.DB, {
+          source: SOURCE,
+          message: "newsletter/itemize step failed (OPE-1285)",
+          sessionId,
+          error: err,
+          context: { messageRowId },
+        });
+      }
     }
 
     // OPE-1148 item 6 — no ack for a zero-confidence `unclear`. Read from the
