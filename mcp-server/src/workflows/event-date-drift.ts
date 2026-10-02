@@ -52,6 +52,9 @@ interface ChunkResponse {
 }
 
 const DEFAULT_MAX_CHUNKS = 50;
+/** OPE-1270 — vendor url-health chunks per daily run (see the loop's note). */
+export const VENDOR_URL_HEALTH_CHUNKS_PER_RUN = 20;
+
 const SOURCE = "mcp:workflow:event-date-drift";
 
 export class EventDateDriftWorkflow extends WorkflowEntrypoint<Env, EventDateDriftParams> {
@@ -199,6 +202,56 @@ export class EventDateDriftWorkflow extends WorkflowEntrypoint<Env, EventDateDri
           error: err,
           sessionId: event.instanceId,
           context: { cursor: uhCursor, chunk: i + 1, urlHealth },
+        });
+        break;
+      }
+    }
+
+    // OPE-1270 — vendor website health, on the same daily run, after the
+    // promoter sweep and for the same reasons (this workflow holds the binding
+    // and the key; a sweep nobody schedules is inert).
+    //
+    // Sized from a real count: 3,181 DISTINCT live vendor websites on
+    // 2026-10-02 = 64 chunks of 50. The route rotates least-recently-checked
+    // first, so there is no cursor: 20 chunks a day covers the estate every ~3
+    // days, and a missed day only means tomorrow starts with the oldest. 20 x
+    // the promoter sweep's measured ~30-45s per chunk is ~10-15 min of steps.
+    // Failures are logged and swallowed — link health never aborts the drift
+    // sweep.
+    const vendorUrlHealth = { chunks: 0, examined: 0, failed: false };
+    for (let i = 0; i < VENDOR_URL_HEALTH_CHUNKS_PER_RUN; i++) {
+      try {
+        const res = await step.do(
+          `vendor-url-health-${i + 1}`,
+          { retries: { limit: 1, delay: "10 seconds" }, timeout: "5 minutes" },
+          async (): Promise<{ examined: number }> => {
+            const u = `${this.env.MAIN_APP_URL}/api/admin/url-health/vendors/sweep?chunk=50`;
+            const init: RequestInit = {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-Internal-Key": this.env.INTERNAL_API_KEY,
+              },
+            };
+            const r = this.env.MAIN_APP
+              ? await this.env.MAIN_APP.fetch(mainAppBindingRequest(u, init))
+              : await fetch(u, init);
+            if (!r.ok) throw new Error(`vendor url-health ${r.status}@chunk${i + 1}`);
+            return (await r.json()) as { examined: number };
+          }
+        );
+        vendorUrlHealth.chunks++;
+        vendorUrlHealth.examined += res.examined ?? 0;
+        // Fewer than a full chunk means the whole estate fits in what remains.
+        if ((res.examined ?? 0) < 50) break;
+      } catch (err) {
+        vendorUrlHealth.failed = true;
+        await logError(this.env.DB, {
+          source: SOURCE,
+          message: "vendor url-health chunk failed; drift results are unaffected",
+          error: err,
+          sessionId: event.instanceId,
+          context: { chunk: i + 1, vendorUrlHealth },
         });
         break;
       }
@@ -370,6 +423,7 @@ export class EventDateDriftWorkflow extends WorkflowEntrypoint<Env, EventDateDri
       cappedAtMaxChunks: chunks >= maxChunks,
       ...totals,
       url_health: urlHealth,
+      vendor_url_health: vendorUrlHealth,
       cancellation_recheck: cancellation,
       source_agreement: sourceAgreement,
     };

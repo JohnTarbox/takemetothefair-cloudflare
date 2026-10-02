@@ -195,7 +195,7 @@ export function visibleText(html: string): string {
  * Parked domains frequently serve a near-empty 200. Treating that as `ok`
  * because it "loaded fine" is the status-code mistake one level up.
  */
-const MIN_MEANINGFUL_TEXT = 200;
+export const MIN_MEANINGFUL_TEXT = 200;
 
 export function classifyUrlHealth(input: UrlHealthInput): UrlHealthResult {
   if (!input.reachedOrigin) {

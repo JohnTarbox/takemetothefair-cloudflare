@@ -70,6 +70,16 @@ export const PROJECTED_URL_HEALTH: Readonly<Record<string, "ERROR" | "WARNING">>
   closure_notice: "ERROR",
   http_error: "WARNING",
   unreachable: "WARNING",
+  // OPE-1270 — vendor-site verdict (vendor-site-health.ts). A promoter sweep
+  // never emits it, so it costs that source nothing.
+  moved: "WARNING",
+  // ⚠️ `empty_page` is deliberately NOT projected (OPE-1281 measurement,
+  // 2026-10-02): 58 of 127 promoter `no_event_signal` URLs are in the same
+  // near-empty branch, and spot-checked live ones (durhamfair.com, osv.org,
+  // waterfire.org, deerfieldfair.com) serve 45–326 KB to a normal client — the
+  // sweep runs from a Worker and gets a bot wall. Near-empty from a Worker is
+  // "could not see the page", not "the site is parked"; projecting it would
+  // fill the queue with live sites. It stays recorded in url_health_checks.
 };
 
 const PHRASE: Record<string, string> = {
@@ -77,6 +87,7 @@ const PHRASE: Record<string, string> = {
   closure_notice: "announces a closure or handover",
   http_error: "returns an HTTP error",
   unreachable: "did not respond",
+  moved: "redirects to a different domain",
 };
 
 /** `URL_HEALTH_HTTP_ERROR` etc. One issue type per verdict class. */
@@ -211,6 +222,92 @@ export async function projectUrlHealthVerdict(
     await db
       .update(healthIssues)
       .set({ lastDetectedAt: checkedAt, severity, message })
+      .where(eq(healthIssues.id, existing.id));
+    out.refreshed++;
+  }
+  return out;
+}
+
+/**
+ * OPE-1270 — a FLAG is a fact about the URL that is independent of its health
+ * verdict: today only `name_drift` (the site's own JSON-LD names the business
+ * differently from our record). It has its own fingerprint family, so a
+ * healthy `ok` re-check does not close it — only a re-check that can SEE the
+ * site's name and finds it matching does.
+ *
+ *   present === true  → open / re-open / refresh
+ *   present === false → close as verified_fixed (we read the name; it matches)
+ *   present === null  → nothing: the site declared no name this time, and an
+ *                       absent declaration is not evidence the name matches
+ *
+ * INFO severity: it is a review prompt (should our record be renamed?), never
+ * an outage, and a rename is a deliberate operator act through update_vendor —
+ * this surface has no apply button by design (OPE-1270's STOP).
+ */
+export const URL_HEALTH_FLAGS: Readonly<Record<string, { severity: string; phrase: string }>> = {
+  name_drift: { severity: "INFO", phrase: "names the business differently from our record" },
+};
+
+export async function projectUrlHealthFlag(
+  db: Db,
+  check: {
+    sourceField: string;
+    url: string;
+    flag: string;
+    present: boolean | null;
+    checkedAt: Date;
+  }
+): Promise<UrlHealthProjection> {
+  const out: UrlHealthProjection = { opened: 0, reopened: 0, refreshed: 0, resolved: 0 };
+  const def = URL_HEALTH_FLAGS[check.flag];
+  if (!def || check.present === null) return out;
+
+  const fp = await urlHealthFingerprint(check.sourceField, check.url, check.flag);
+  const [existing] = await db
+    .select()
+    .from(healthIssues)
+    .where(eq(healthIssues.fingerprint, fp))
+    .limit(1);
+  const day = check.checkedAt.toISOString().slice(0, 10);
+
+  if (!check.present) {
+    if (existing && !existing.resolvedAt) {
+      await db
+        .update(healthIssues)
+        .set({
+          resolvedAt: check.checkedAt,
+          resolutionReason: HEALTH_RESOLUTION_REASON.VERIFIED_FIXED,
+          message: `${existing.message} — resolved: names match (${day})`,
+        })
+        .where(and(eq(healthIssues.id, existing.id), isNull(healthIssues.resolvedAt)));
+      out.resolved++;
+    }
+    return out;
+  }
+
+  const message = `${check.sourceField} ${def.phrase} · last checked ${day}`;
+  if (!existing) {
+    await db.insert(healthIssues).values({
+      fingerprint: fp,
+      source: URL_HEALTH_SOURCE,
+      issueType: urlHealthIssueType(check.flag),
+      severity: def.severity,
+      url: check.url,
+      message,
+      firstDetectedAt: check.checkedAt,
+      lastDetectedAt: check.checkedAt,
+    });
+    out.opened++;
+  } else if (existing.resolvedAt) {
+    await db
+      .update(healthIssues)
+      .set({ resolvedAt: null, resolutionReason: null, lastDetectedAt: check.checkedAt, message })
+      .where(eq(healthIssues.id, existing.id));
+    out.reopened++;
+  } else {
+    await db
+      .update(healthIssues)
+      .set({ lastDetectedAt: check.checkedAt, message })
       .where(eq(healthIssues.id, existing.id));
     out.refreshed++;
   }

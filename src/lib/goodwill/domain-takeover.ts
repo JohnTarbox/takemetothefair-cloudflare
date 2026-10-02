@@ -127,7 +127,7 @@ function meaningfulTokens(s: string): string[] {
     .filter((t) => t.length >= 3 && !NON_IDENTIFYING.has(t) && !/^\d+$/.test(t));
 }
 
-function registrable(url: string | null | undefined): string | null {
+export function registrable(url: string | null | undefined): string | null {
   if (!url) return null;
   try {
     const parts = new URL(url).hostname
