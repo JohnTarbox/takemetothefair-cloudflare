@@ -223,6 +223,8 @@ describe("OPE-975 — every probe's window is pinned", () => {
       "gemba-observation": 720,
       // OPE-1265 — dormant placeholder, same stance as gemba-observation.
       "promoter-list-arrival": 720,
+      // OPE-1264 — measured: the largest gap between workflow emails over 60 days was 50.5h.
+      "newsletter-classify": 72,
       "unterminated-crossing-notice": 6,
       "error-log-retention": 48,
       "indexnow-submission-retention": 48,

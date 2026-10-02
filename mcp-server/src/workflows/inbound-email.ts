@@ -109,6 +109,7 @@ import { handle as handleSpam } from "../email-handlers/spam.js";
 import { handle as handleNoop } from "../email-handlers/noop.js";
 import { handle as handleGemba } from "../email-handlers/gemba.js";
 import { handle as handleListSubscription } from "../email-handlers/list-subscription.js";
+import { classifyAndRecordNewsletter } from "../inbound/newsletter-record.js";
 import { recordCrossing, ref } from "../inbound/crossing-ledger.js";
 import { routeToProject } from "../inbound/project-router.js";
 import {
@@ -1137,6 +1138,30 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           fanoutOtherIntents: fanoutRole.otherIntents,
         },
       };
+    }
+
+    // OPE-1264 — recognise a promoter newsletter, record whose it is, and keep
+    // it from drawing a single-event ack. Runs for EVERY email (cheap: string
+    // markers + one promoter read only when it IS a newsletter) and records its
+    // step every time, which is the heartbeat's evidence. Shadow mode: the
+    // dispatch above still ran, so an event the submit lane found is kept;
+    // what changes is that a newsletter never gets `no-url` / `unfetchable-url`
+    // / `ok-*` back. Its own reply copy is gated on John (OPE-1264 STOP), so
+    // until then: no reply rather than a wrong one.
+    const newsletter = await step.do(
+      "newsletter/classify",
+      { retries: { limit: 2, delay: "5 seconds", backoff: "constant" }, timeout: "10 seconds" },
+      async () => classifyAndRecordNewsletter(getDb(this.env.DB), messageRowId, sessionId)
+    );
+    if (newsletter.isNewsletter && result.replyKind !== null && !result.suppressReply) {
+      await logError(this.env.DB, {
+        level: "info",
+        source: SOURCE,
+        message: `reply suppressed: promoter newsletter (OPE-1264), was ${result.replyKind}`,
+        sessionId,
+        context: { messageRowId, replyKind: result.replyKind, basis: newsletter.basis },
+      });
+      result = { ...result, suppressReply: true };
     }
 
     // OPE-1148 item 6 — no ack for a zero-confidence `unclear`. Read from the

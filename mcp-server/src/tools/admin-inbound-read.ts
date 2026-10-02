@@ -26,6 +26,7 @@ import {
   emailSendLedger,
   events,
   inboundEmails,
+  inboundNewsletters,
   promoterListArrivals,
   workflowRunSteps,
   containsCI,
@@ -211,6 +212,15 @@ export function registerInboundReadTools(
         .limit(1)
         .catch(() => []);
 
+      // OPE-1264 — recognised as a promoter newsletter: markers, whose it is and
+      // on what basis. Null for every other row.
+      const [newsletter] = await db
+        .select()
+        .from(inboundNewsletters)
+        .where(eq(inboundNewsletters.inboundEmailId, row.id))
+        .limit(1)
+        .catch(() => []);
+
       // OPE-604 — on a `vendor_inquiry`, assemble the answer's inputs.
       //
       // Attached to the READ rather than left to the operator because the six
@@ -344,6 +354,7 @@ export function registerInboundReadTools(
             // which is distinguishable from `{auto_acked: false}`.
             acknowledgment,
             list_arrival: listArrival ?? null,
+            newsletter: newsletter ?? null,
             workflow_instance_id: row.workflowInstanceId,
             message_id: row.messageId,
             parsed_url: row.parsedUrl,
