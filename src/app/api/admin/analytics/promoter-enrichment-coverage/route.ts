@@ -84,6 +84,9 @@ export async function GET(request: NextRequest) {
         decision: promoterEnrichmentCandidates.decision,
         proposedField: promoterEnrichmentCandidates.proposedField,
         extractionMethod: promoterEnrichmentCandidates.extractionMethod,
+        // OPE-249 — the gate needs WHO settled it and WHETHER it was clean.
+        reviewedBy: promoterEnrichmentCandidates.reviewedBy,
+        flags: promoterEnrichmentCandidates.flags,
       })
       .from(promoterEnrichmentCandidates);
     const autoApply = computeAutoApplyShare(candidateRows);
