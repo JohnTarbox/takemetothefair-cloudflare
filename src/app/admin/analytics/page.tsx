@@ -4620,6 +4620,14 @@ function nextStepForIssue(issueType: string, tier: "ACTION" | "EXPECTED"): strin
     case "GSC_SITEMAP_ERRORS":
     case "GSC_SITEMAP_WARNINGS":
       return "Review the sitemap entry in Search Console";
+    // OPE-1280 — an outbound link we store on a promoter/vendor record.
+    case "URL_HEALTH_DOMAIN_TAKEOVER":
+      return "Remove or replace the stored website — it now serves someone else's site";
+    case "URL_HEALTH_CLOSURE_NOTICE":
+      return "Read the notice, then check the organizer's upcoming listings";
+    case "URL_HEALTH_HTTP_ERROR":
+    case "URL_HEALTH_UNREACHABLE":
+      return "Open the link; if it stays down, find the organizer's current site";
     default:
       if (issueType.startsWith("SITEMAP_")) return "Resubmit the sitemap in Bing Webmaster Tools";
       return "Investigate the flagged URL";

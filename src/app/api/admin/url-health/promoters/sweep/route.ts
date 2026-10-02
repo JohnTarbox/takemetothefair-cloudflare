@@ -54,6 +54,7 @@ import {
 } from "@/lib/goodwill/domain-takeover";
 import { SCRAPER_USER_AGENT } from "@takemetothefair/constants";
 import { logError } from "@/lib/logger";
+import { projectUrlHealthVerdict } from "@/lib/url-health-issues";
 
 const DEFAULT_CHUNK = 50;
 const MAX_CHUNK = 100;
@@ -162,6 +163,10 @@ export async function POST(request: Request): Promise<NextResponse> {
       /** OPE-979 — hosts where a second stored path served the same page. */
       same_page_on_every_path: 0,
       actionable: 0,
+      /** OPE-1280 — site-health rows opened (or re-opened) / closed by this chunk. */
+      issues_opened: 0,
+      issues_resolved: 0,
+      issues_projection_failed: 0,
       next_cursor: null as number | null,
     };
 
@@ -231,6 +236,30 @@ export async function POST(request: Request): Promise<NextResponse> {
         detail: health.detail,
         checkedAt: now,
       });
+
+      // OPE-1280 — the operator-visible half: open/refresh/close this URL's
+      // site-health row. Its own try: a queue write failing must not stop the
+      // sweep or lose the check row above, which is already written.
+      try {
+        const proj = await projectUrlHealthVerdict(db, {
+          sourceField: SOURCE_FIELD,
+          url: website,
+          verdict,
+          httpStatus: p.status,
+          checkedAt: now,
+        });
+        result.issues_opened += proj.opened + proj.reopened;
+        result.issues_resolved += proj.resolved;
+      } catch (projectErr) {
+        result.issues_projection_failed += 1;
+        await logError(db, {
+          level: "warn",
+          message: "url-health → health_issues projection failed",
+          error: projectErr,
+          source: "api/admin/url-health/promoters/sweep",
+          context: { website, verdict },
+        });
+      }
 
       result[verdict] += 1;
       if (isSweepActionable(verdict, isActionable)) result.actionable += 1;

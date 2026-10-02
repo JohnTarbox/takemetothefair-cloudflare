@@ -2998,6 +2998,11 @@ export const HEALTH_RESOLUTION_REASON = {
   WITHDRAWN: "withdrawn",
   /** The scan stopped seeing it. Absence of evidence, not evidence of fix. */
   NO_LONGER_DETECTED: "no_longer_detected",
+  /**
+   * OPE-1280 — a fresh check of the same URL now reads a DIFFERENT non-green
+   * verdict. The old condition is provably gone; it is not "fixed".
+   */
+  SUPERSEDED: "superseded",
 } as const;
 
 export type HealthResolutionReason =

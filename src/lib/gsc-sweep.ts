@@ -339,10 +339,14 @@ export async function checkStubbedSends(
  * Pure and cheap — no network, no GSC quota, decided entirely from `message`.
  */
 export async function refreshOpenSeverities(db: Db): Promise<number> {
+  // OPE-1280 — GSC rows only. The rule below reads a GSC coverage phrase out of
+  // `message`; for any other source it finds none and returns WARNING, so it
+  // was silently re-grading every EMAIL_DELIVERY row and would have demoted a
+  // URL_HEALTH `domain_takeover` ERROR on its first nightly run.
   const open = await db
     .select({ id: healthIssues.id, message: healthIssues.message, severity: healthIssues.severity })
     .from(healthIssues)
-    .where(isNull(healthIssues.resolvedAt));
+    .where(and(isNull(healthIssues.resolvedAt), eq(healthIssues.source, "GSC_URL_INSPECTION")));
 
   let updated = 0;
   for (const row of open) {
