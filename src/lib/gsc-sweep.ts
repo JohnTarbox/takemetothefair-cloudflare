@@ -586,6 +586,13 @@ export async function pickUrlsDetailed(
    *  passes the same `now` it uses everywhere else in the pass. */
   now: Date = new Date()
 ): Promise<{ urls: string[]; fillerSelected: number; guaranteedSelected: number }> {
+  // OPE-1283 — a batch of 0 means "inspect nothing" (run_site_health_sweep's
+  // documented maintenance-only mode, no GSC quota). The guaranteed per-type
+  // tier below ships in full regardless of batchSize BY DESIGN, so without this
+  // a 0 batch still inspected it: 19 URLs on 2026-10-02. Returning before any
+  // tier also means no Tier 0 cursor is stamped for rows nobody will inspect.
+  if (batchSize <= 0) return { urls: [], fillerSelected: 0, guaranteedSelected: 0 };
+
   const oneDayAgo = new Date(Date.now() - 86400 * 1000);
   const sixHoursAgo = new Date(Date.now() - 6 * 3600 * 1000);
 
