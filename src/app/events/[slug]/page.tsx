@@ -61,6 +61,7 @@ import { logError } from "@/lib/logger";
 import { VendorApplyButton } from "@/components/events/VendorApplyButton";
 import { AddToCalendar } from "@/components/events/AddToCalendar";
 import { EventSchema } from "@/components/seo/EventSchema";
+import { getPublicNameVariants } from "@/lib/events/public-name-variants";
 import { groupVendorsByDay } from "@/lib/k18-vendor-grouping";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { FAQPageSchema } from "@/components/seo/FAQPageSchema";
@@ -566,9 +567,11 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
     canonicalUrl: askAboutCanonicalUrl,
   });
   const eventCategories = parseJsonArray(event.categories);
-  const [relatedEvents, relatedBlogPosts] = await Promise.all([
+  const [relatedEvents, relatedBlogPosts, alsoKnownAs] = await Promise.all([
     getRelatedEvents(event.id, event.venueId, eventCategories),
     getRelatedBlogPosts(event.id, event.name, eventCategories, event.seriesId ?? null),
+    // OPE-517 — public name variants (never `historical`; see the helper).
+    getPublicNameVariants(getCloudflareDb(), event.id, event.name),
   ]);
 
   // FAQ Phase A: only render for events in the FAQ_PILOT_EVENT_SLUGS env
@@ -611,6 +614,7 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
         <PrintBeacon entityType="EVENT" entityId={event.id} entitySlug={event.slug} />
         <EventSchema
           name={event.name}
+          alternateNames={alsoKnownAs}
           slug={event.slug}
           description={event.description || undefined}
           startDate={event.startDate}
@@ -977,9 +981,17 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
                       ))}
                     </div>
                     <div className="flex items-start justify-between gap-4">
-                      <h1 className="text-3xl md:text-4xl font-bold text-foreground">
-                        {event.name}
-                      </h1>
+                      <div>
+                        <h1 className="text-3xl md:text-4xl font-bold text-foreground">
+                          {event.name}
+                        </h1>
+                        {/* OPE-517 — the names the organizer and others use. */}
+                        {alsoKnownAs.length > 0 && (
+                          <p className="mt-1 text-sm text-muted-foreground" data-also-known-as>
+                            Also known as {alsoKnownAs.join(" · ")}
+                          </p>
+                        )}
+                      </div>
                       <div className="flex items-center gap-2 print:hidden">
                         <FavoriteButton type="EVENT" id={event.id} slug={event.slug} size="lg" />
                         <ShareButtons
