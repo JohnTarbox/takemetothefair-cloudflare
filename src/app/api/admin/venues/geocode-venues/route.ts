@@ -46,9 +46,10 @@ import { NextResponse } from "next/server";
 import { withInternalKey } from "@/lib/api/with-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { venues, adminActions } from "@/lib/db/schema";
-import { inArray, isNull, and, gt, ne } from "drizzle-orm";
+import { inArray, isNull, and, gt, ne, sql } from "drizzle-orm";
 import { logError } from "@/lib/logger";
 import { geocodeVenueRow } from "@/lib/venues/geocode-one";
+import { PARKED, isSweepRefusal, recordSweepRefusal } from "@/lib/venues/geocode-sweep-park";
 import {
   nextCursor,
   type GeocodeOutcome,
@@ -66,6 +67,9 @@ import {
  * inside the budget at 25, but page smaller if a name-heavy batch runs long.
  */
 const MAX_PER_CALL = 25;
+
+// OPE-408 rework — parking rule, refusal statuses and the raw-SQL counter live
+// in src/lib/venues/geocode-sweep-park.ts (tested against real SQLite there).
 
 /** Pacing between Google calls — mirrors the existing geocode-batch route. */
 const PACE_MS = 100;
@@ -136,6 +140,8 @@ export const POST = withInternalKey(
             isNull(venues.latitude),
             ne(venues.status, "FORMER"),
             isNull(venues.longitude),
+            // OPE-408 rework — skip parked venues (see GEOCODE_PARK_AFTER).
+            sql`NOT ${PARKED}`,
             body.after_id ? gt(venues.id, body.after_id) : undefined
           )
         )
@@ -184,7 +190,21 @@ export const POST = withInternalKey(
       // hardening passes (OPE-213/214/215/219/228) improved the sweep and left
       // every newly-created venue ungeocoded. One gate, two callers.
       try {
-        results.push(await geocodeVenueRow(db, v, apiKey, force));
+        const outcome = await geocodeVenueRow(db, v, apiKey, force);
+        results.push(outcome);
+        // OPE-408 rework — count the nightly sweep's refusals only. An explicit
+        // id list is a person asking, and must not park anything.
+        //
+        // RAW SQL DELIBERATELY: `venues.updatedAt` carries `$onUpdateFn`, so a
+        // Drizzle update would stamp it — moving this venue's ETag and sitemap
+        // lastmod every night (the #819 class), and un-parking it instantly.
+        if (body.missing_only && isSweepRefusal(outcome.status)) {
+          try {
+            await recordSweepRefusal(db, v.id);
+          } catch {
+            // A missed count delays parking by a night; it must not fail the sweep.
+          }
+        }
       } catch (error) {
         // One venue's failure must not tank the batch (scope §5).
         await logError(db, {
@@ -230,6 +250,24 @@ export const POST = withInternalKey(
     // Only for `missing_only` — an explicit id list is somebody calling the
     // tool by hand, which is not the cron and must not refresh its liveness.
     if (body.missing_only) {
+      let parked: number | null = null;
+      try {
+        const [row] = await db
+          .select({ n: sql<number>`COUNT(*)` })
+          .from(venues)
+          .where(
+            and(
+              isNull(venues.latitude),
+              isNull(venues.longitude),
+              ne(venues.status, "FORMER"),
+              PARKED
+            )
+          );
+        parked = Number(row?.n ?? 0);
+      } catch {
+        // Reported as null (unknown), never as 0 — an unknown count must not
+        // read as "nothing parked".
+      }
       try {
         await db.insert(adminActions).values({
           action: "venue.geocode.sweep",
@@ -242,6 +280,10 @@ export const POST = withInternalKey(
           payloadJson: JSON.stringify({
             attempted: results.length,
             written: summary.ok ?? 0,
+            // OPE-408 rework — how many unpinned venues the sweep SKIPPED as
+            // parked. Without this, "attempted fell" is indistinguishable from
+            // "the venues got pinned" or "the selection broke".
+            parked,
             summary,
             // OPE-408 — where this page started, so the nightly rows show the
             // sweep actually advancing (the stall was 14 identical rows).
