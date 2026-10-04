@@ -94,6 +94,50 @@ describe("OPE-705 — Playwright install steps carry an adequate timeout", () =>
     ).toEqual([]);
   });
 
+  it("OPE-1287 — every job that installs Playwright serves the apt .debs from cache", () => {
+    // The 2026-10-01/02 timeouts were a slow mirror (125 MB at ~75 KB/s), not a
+    // hang, so neither a retry nor a bigger timeout fixes them — only taking the
+    // mirror out of the download path does. A job that installs Playwright
+    // without the restore → seed → install → collect sequence is back on the
+    // mirror. Order matters: a cache restored AFTER the install seeds nothing.
+    const jobsChecked: string[] = [];
+    const broken: string[] = [];
+    for (const [jobName, job] of Object.entries(workflow.jobs)) {
+      const steps = (job.steps ?? []) as (Step & { uses?: string; with?: { path?: string } })[];
+      const installAt = steps.findIndex(
+        (s) => typeof s.run === "string" && /playwright\s+install/.test(s.run)
+      );
+      if (installAt === -1) continue;
+      jobsChecked.push(jobName);
+      const restoreAt = steps.findIndex(
+        (s) =>
+          s.uses?.startsWith("actions/cache@") && s.with?.path === "~/.cache/playwright-apt-debs"
+      );
+      const seedAt = steps.findIndex(
+        (s) => typeof s.run === "string" && s.run.includes("/var/cache/apt/archives/ ")
+      );
+      const lastInstallAt = steps.reduce(
+        (last, s, i) =>
+          typeof s.run === "string" && /playwright\s+install/.test(s.run) ? i : last,
+        -1
+      );
+      const collectAt = steps.findIndex(
+        (s, i) =>
+          i > lastInstallAt &&
+          typeof s.run === "string" &&
+          s.run.includes("/var/cache/apt/archives/*.deb")
+      );
+      if (restoreAt === -1 || restoreAt > installAt)
+        broken.push(`${jobName}: no apt cache restore before install`);
+      if (seedAt === -1 || seedAt < restoreAt || seedAt > installAt)
+        broken.push(`${jobName}: no seed step between restore and install`);
+      if (collectAt === -1) broken.push(`${jobName}: no collect step after the last install`);
+    }
+    // Positive landmark: both Playwright jobs were actually examined.
+    expect(jobsChecked.sort()).toEqual(["e2e", "smoke"]);
+    expect(broken).toEqual([]);
+  });
+
   it("keeps the deps step and the browsers step on the same ceiling", () => {
     // They hit the same apt mirror on the same runners. Letting them diverge is
     // how one of two identical paths gets fixed — this repo's most-repeated
