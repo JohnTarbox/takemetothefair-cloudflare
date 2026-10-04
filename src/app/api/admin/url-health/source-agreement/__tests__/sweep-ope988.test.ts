@@ -32,6 +32,7 @@ const SCHEMA_SQL = `
   CREATE TABLE url_health_checks (
     id TEXT PRIMARY KEY, url TEXT NOT NULL, source_field TEXT NOT NULL,
     verdict TEXT NOT NULL, http_status INTEGER, signals TEXT, detail TEXT,
+    body_bytes INTEGER,
     checked_at INTEGER NOT NULL
   );
 `;

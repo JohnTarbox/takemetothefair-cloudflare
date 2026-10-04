@@ -958,6 +958,12 @@ export const urlHealthChecks = sqliteTable(
     signals: text("signals"),
     /** Short human-readable reason. Never the whole page. */
     detail: text("detail"),
+    /**
+     * OPE-1294 — UTF-8 size of the response body the sweep received; NULL when
+     * there was no body. Separates a parked shell (~1 KB) from a bot wall or a
+     * JS-rendered site, which "visible chars" alone cannot.
+     */
+    bodyBytes: integer("body_bytes"),
     checkedAt: integer("checked_at", { mode: "timestamp" }).notNull(),
   },
   (t) => [

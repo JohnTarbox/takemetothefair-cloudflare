@@ -300,3 +300,11 @@ export function samePageOnEveryPath(pages: Array<{ url: string; html: string | n
   const texts = [...byPath.values()];
   return texts[0].length >= 50 && texts.every((t) => t === texts[0]);
 }
+
+/**
+ * OPE-1294 — UTF-8 byte length of a probe body; null when there was none.
+ * Stored on every url_health_checks row by the promoter and vendor sweeps.
+ */
+export function bodyBytesOf(html: string | null | undefined): number | null {
+  return html == null ? null : new TextEncoder().encode(html).length;
+}

@@ -445,6 +445,7 @@ const SCHEMA_SQL = `
     http_status INTEGER,
     signals TEXT,
     detail TEXT,
+    body_bytes INTEGER,
     checked_at INTEGER NOT NULL
   );
 
