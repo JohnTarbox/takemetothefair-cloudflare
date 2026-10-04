@@ -1,4 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import {
+  CAPABILITY_FLAGS,
+  resolveCapabilityFlags,
+} from "@/lib/analytics-overview/dark-capabilities";
 import {
   buildEntityEtag,
   hasSessionCookie,
@@ -209,5 +215,41 @@ describe("hasSessionCookie (OPE-332)", () => {
     // session and shouldn't suppress validators site-wide.
     expect(hasSessionCookie("authjs.csrf-token=abc")).toBe(false);
     expect(hasSessionCookie("my-authjs.session-tokenish=abc")).toBe(false);
+  });
+});
+
+/**
+ * OPE-332 — John flipped `CONDITIONAL_GET_PUBLIC_CACHE` on 2026-10-04 ("turn it
+ * on"). The validators keep being emitted whether the flag is on or off, so a
+ * silent revert changes nothing visible except `Cache-Control` — this pins the
+ * committed value (the realistic revert path; a dashboard override is wiped by
+ * the next deploy, OPE-284) and keeps the flag on the live capability inventory,
+ * where a revert reads as dark.
+ */
+describe("OPE-332 — the public cache policy is ON and stays visible", () => {
+  const toml = readFileSync(join(__dirname, "..", "..", "..", "wrangler.toml"), "utf8");
+
+  it('wrangler.toml [vars] sets CONDITIONAL_GET_PUBLIC_CACHE = "true", exactly once', () => {
+    const matches = [...toml.matchAll(/^CONDITIONAL_GET_PUBLIC_CACHE\s*=\s*"([^"]*)"\s*$/gm)];
+    // Positive landmark: exactly one live assignment, so a stray duplicate or
+    // a rename cannot pass this over an empty match.
+    expect(matches).toHaveLength(1);
+    expect(matches[0][1], "John turned this on 2026-10-04; reverting it is his call").toBe("true");
+    // ...and it sits inside the top-level [vars] table, not under another section.
+    const at = matches[0].index ?? -1;
+    const varsAt = toml.indexOf("\n[vars]\n");
+    const nextSection = toml.slice(varsAt + 1).search(/\n\[/);
+    expect(varsAt).toBeGreaterThan(-1);
+    expect(at).toBeGreaterThan(varsAt);
+    expect(at).toBeLessThan(varsAt + 1 + (nextSection === -1 ? Infinity : nextSection));
+  });
+
+  it('is on the capability inventory, and a revert to "false" reads as dark and NOT deliberate', () => {
+    const flag = CAPABILITY_FLAGS.find((f) => f.name === "CONDITIONAL_GET_PUBLIC_CACHE");
+    expect(flag).toMatchObject({ worker: "main-app", offIsDeliberate: false });
+    const [off] = resolveCapabilityFlags({ CONDITIONAL_GET_PUBLIC_CACHE: "false" }, [flag!]);
+    const [on] = resolveCapabilityFlags({ CONDITIONAL_GET_PUBLIC_CACHE: "true" }, [flag!]);
+    expect(off.dark).toBe(true);
+    expect(on.dark).toBe(false);
   });
 });

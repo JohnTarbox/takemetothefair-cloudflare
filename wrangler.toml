@@ -72,11 +72,14 @@ CLOUDFLARE_ACCOUNT_ID = "e6011e48b7014ef83c77e3c767dac6cf"
 VENDOR_DIGEST_SEND_ENABLED = "true"
 # OPE-332 — relax `no-store` on anonymous public detail pages so conditional
 # requests (304) can actually happen. GATED: this changes how every public page
-# is served, so it ships OFF and only John flips it. Must live HERE, not in the
+# is served, so it shipped OFF and only John flips it. Must live HERE, not in the
 # dashboard — a dashboard [vars] override is silently wiped by the next deploy
 # (OPE-284). While "false", validators are still emitted but the 304 path is
 # largely inert, because a client told no-store has nothing to revalidate.
-CONDITIONAL_GET_PUBLIC_CACHE = "false"
+# ON since 2026-10-04 — John, in session: "turn it on". Pinned by
+# src/lib/__tests__/conditional-get.test.ts; flipping it back is a decision for
+# John, not a cleanup.
+CONDITIONAL_GET_PUBLIC_CACHE = "true"
 # OPE-738 — flip to "true" to serve /fair-entry-deadlines, the cross-event
 # exhibitor & competition entry-deadline index, and to show its footer link.
 # LIVE since 2026-09-02 — /fair-entry-deadlines is public.

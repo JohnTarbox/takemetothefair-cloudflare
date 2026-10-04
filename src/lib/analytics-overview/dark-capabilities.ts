@@ -75,6 +75,18 @@ export const CAPABILITY_FLAGS: CapabilityFlag[] = [
     offIsDeliberate: false,
   },
   {
+    // OPE-332 — ON since 2026-10-04 (John: "turn it on"). Listed so a silent
+    // revert (a dashboard override, or a commit) reads as dark on the live
+    // inventory instead of going unnoticed: the code keeps emitting validators
+    // either way, so nothing else would look different.
+    name: "CONDITIONAL_GET_PUBLIC_CACHE",
+    worker: "main-app",
+    darkMeans:
+      "Anonymous public detail pages are sent `no-store`, so crawlers re-download every " +
+      "unchanged page in full and the 304 (Not Modified) path never fires.",
+    offIsDeliberate: false,
+  },
+  {
     name: "PHOTO_VISION_ENABLED",
     worker: "mcp",
     darkMeans:
