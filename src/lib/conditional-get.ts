@@ -39,7 +39,9 @@ export type ConditionalEntityType =
   | "venue"
   | "promoter"
   | "performer"
-  | "blog";
+  | "blog"
+  /** OPE-1291 — /events/<series-canonical-slug>/<year>; `slug` is the series. */
+  | "event-occurrence";
 
 /**
  * `/events/<slug>` → `{ type: "event", slug }`. Returns null for anything with
@@ -51,8 +53,17 @@ export type ConditionalEntityType =
  */
 export function matchConditionalRoute(
   pathname: string
-): { type: ConditionalEntityType; slug: string } | null {
+): { type: ConditionalEntityType; slug: string; year?: number } | null {
   const segments = pathname.split("/").filter(Boolean);
+  // OPE-1291 — the series/year occurrence page, /events/<series>/<year>. 406 of
+  // 469 upcoming APPROVED events (87%) are served here, and the two-segment-only
+  // matcher gave none of them a validator. Only a canonical 4-digit year
+  // matches, so /events/<slug>/vendors and /events/maine/<facet> never do.
+  if (segments.length === 3 && segments[0] === "events" && /^\d{4}$/.test(segments[2])) {
+    const [, series, year] = segments;
+    if (series.includes(".")) return null;
+    return { type: "event-occurrence", slug: series, year: Number(year) };
+  }
   if (segments.length !== 2) return null;
   const [prefix, slug] = segments;
   const map: Record<string, ConditionalEntityType> = {
@@ -82,10 +93,11 @@ export function matchConditionalRoute(
 export function buildEntityEtag(
   type: ConditionalEntityType,
   slug: string,
-  updatedAt: Date | null
+  updatedAt: Date | null,
+  year?: number
 ): string {
   const stamp = updatedAt ? Math.floor(updatedAt.getTime() / 1000) : 0;
-  return `W/"${type}-${slug}-${stamp}-v${TEMPLATE_VERSION}"`;
+  return `W/"${type}-${slug}${year === undefined ? "" : `-${year}`}-${stamp}-v${TEMPLATE_VERSION}"`;
 }
 
 /**
