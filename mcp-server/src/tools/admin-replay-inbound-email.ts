@@ -20,6 +20,14 @@
  * Deliberately narrow: intent `new_event` only (other intents' handlers have
  * their own side effects this was not reviewed against), and status `failed`
  * only (a row that already produced events or replies is not a replay target).
+ *
+ * OPE-405 (John, 2026-10-04) — ONE opt-in exception: an already-answered
+ * (`replied`) row may be replayed with `allow_answered: true`, and only when it
+ * already has a `resulting_event_id`. The use is re-running the pipeline's
+ * side passes (roster capture, which runs before event creation and regardless
+ * of its outcome) on a submission that pre-dates a fix. The existing event is
+ * dedup's anchor, so the replay matches it rather than minting a second row;
+ * the suppression flag keeps the submitter from hearing about it again.
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
@@ -31,6 +39,8 @@ import type { AuthContext } from "../auth.js";
 
 export const REPLAYABLE_INTENTS = ["new_event"] as const;
 export const REPLAYABLE_STATUSES = ["failed"] as const;
+/** OPE-405 — replayable only with `allowAnswered` AND an existing resulting event. */
+export const OPT_IN_STATUSES = ["replied"] as const;
 
 export interface WorkflowCreateBinding {
   create(opts: { params: unknown; retention?: unknown }): Promise<{ id: string }>;
@@ -42,6 +52,8 @@ export type ReplayResult =
       inboundEmailId: string;
       workflowInstanceId: string;
       repliesSuppressedReason: string;
+      /** OPE-405 — the event an answered row already produced (dedup's anchor). */
+      existingEventId: string | null;
     }
   | {
       ok: false;
@@ -49,6 +61,8 @@ export type ReplayResult =
         | "not_found"
         | "intent_not_replayable"
         | "status_not_replayable"
+        | "answered_needs_opt_in"
+        | "answered_without_event"
         | "no_binding"
         | "flag_not_set";
       message: string;
@@ -57,11 +71,16 @@ export type ReplayResult =
 export async function handleReplayInbound(
   db: Db,
   binding: WorkflowCreateBinding | undefined,
-  args: { inboundEmailId: string; reason: string },
+  args: { inboundEmailId: string; reason: string; allowAnswered?: boolean },
   actorUserId: string | null
 ): Promise<ReplayResult> {
   const [row] = await db
-    .select({ id: inboundEmails.id, status: inboundEmails.status, intent: inboundEmails.intent })
+    .select({
+      id: inboundEmails.id,
+      status: inboundEmails.status,
+      intent: inboundEmails.intent,
+      resultingEventId: inboundEmails.resultingEventId,
+    })
     .from(inboundEmails)
     .where(eq(inboundEmails.id, args.inboundEmailId))
     .limit(1);
@@ -75,7 +94,22 @@ export async function handleReplayInbound(
       message: `Inbound ${row.id} has intent '${row.intent}'. Only ${REPLAYABLE_INTENTS.join(", ")} can be replayed.`,
     };
   }
-  if (!(REPLAYABLE_STATUSES as readonly string[]).includes(row.status)) {
+  const answered = (OPT_IN_STATUSES as readonly string[]).includes(row.status);
+  if (answered && !args.allowAnswered) {
+    return {
+      ok: false,
+      reason: "answered_needs_opt_in",
+      message: `Inbound ${row.id} is '${row.status}' — it was already answered. Pass allow_answered: true to replay it anyway (replies stay suppressed).`,
+    };
+  }
+  if (answered && !row.resultingEventId) {
+    return {
+      ok: false,
+      reason: "answered_without_event",
+      message: `Inbound ${row.id} is '${row.status}' but produced no event, so a replay has no dedup anchor and could mint a duplicate. Not replaying.`,
+    };
+  }
+  if (!answered && !(REPLAYABLE_STATUSES as readonly string[]).includes(row.status)) {
     return {
       ok: false,
       reason: "status_not_replayable",
@@ -97,7 +131,11 @@ export async function handleReplayInbound(
     actorUserId,
     targetType: "inbound_email",
     targetId: row.id,
-    payloadJson: JSON.stringify({ reason: args.reason, previousStatus: row.status }),
+    payloadJson: JSON.stringify({
+      reason: args.reason,
+      previousStatus: row.status,
+      ...(answered ? { allowAnswered: true, existingEventId: row.resultingEventId } : {}),
+    }),
     createdAt: new Date(),
   });
   await db
@@ -128,6 +166,7 @@ export async function handleReplayInbound(
     inboundEmailId: row.id,
     workflowInstanceId: instance.id,
     repliesSuppressedReason: suppressed,
+    existingEventId: row.resultingEventId ?? null,
   };
 }
 
@@ -145,7 +184,9 @@ export function registerReplayInboundEmailTool(
       "Sets inboundEmails.replies_suppressed_reason on the row first (read back before the run starts),",
       "so every send path, including the stale-inbound sweep and its give-up notice, holds its mail as",
       "'stubbed' in the ledger instead of sending. Creates events exactly as the original run would have.",
-      "Only intent new_event and status failed. Admin only; writes an inbound.replayed audit row.",
+      "Only intent new_event and status failed — or, with allow_answered: true, an already-replied row",
+      "that has a resulting event (dedup's anchor; used to re-run roster capture). Admin only; writes an",
+      "inbound.replayed audit row.",
     ].join(" "),
     {
       inbound_email_id: z.string().min(1).describe("inbound_emails.id of the failed submission."),
@@ -154,12 +195,22 @@ export function registerReplayInboundEmailTool(
         .min(3)
         .max(300)
         .describe("Why it is being replayed, e.g. 'OPE-954: OCR bound shipped; John approved'."),
+      allow_answered: z
+        .boolean()
+        .optional()
+        .describe(
+          "OPE-405: also replay an already-'replied' row (must have a resulting event). Replies stay suppressed."
+        ),
     },
     async (params) => {
       const res = await handleReplayInbound(
         db,
         binding,
-        { inboundEmailId: params.inbound_email_id, reason: params.reason },
+        {
+          inboundEmailId: params.inbound_email_id,
+          reason: params.reason,
+          allowAnswered: params.allow_answered === true,
+        },
         auth.userId ?? null
       );
       return { content: [jsonContent(res)], ...(res.ok ? {} : { isError: true }) };

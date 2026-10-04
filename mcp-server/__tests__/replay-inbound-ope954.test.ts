@@ -35,7 +35,9 @@ describe("heldSendReason — the rule every inbound send path asks", () => {
 let db: TestDb;
 const ID = "f8ef71e5-3ee4-4fc5-b6fa-1e58b18e7705";
 
-function seed(over: Partial<{ status: string; intent: string }> = {}) {
+function seed(
+  over: Partial<{ status: string; intent: string; resultingEventId: string | null }> = {}
+) {
   db.insert(inboundEmails)
     .values({
       id: ID,
@@ -46,6 +48,7 @@ function seed(over: Partial<{ status: string; intent: string }> = {}) {
       subject: "Fwd: our fair",
       status: over.status ?? "failed",
       intent: over.intent ?? "new_event",
+      resultingEventId: over.resultingEventId ?? null,
     } as never)
     .run();
 }
@@ -96,7 +99,7 @@ describe("replay_inbound_email — the handler, against real SQLite", () => {
   });
 
   it.each([
-    [{ status: "replied" }, "status_not_replayable"],
+    [{ status: "replied" }, "answered_needs_opt_in"],
     [{ status: "processing" }, "status_not_replayable"],
     [{ intent: "support" }, "intent_not_replayable"],
   ])("refuses %o and creates no run", async (over, reason) => {
@@ -104,6 +107,59 @@ describe("replay_inbound_email — the handler, against real SQLite", () => {
     const b = recordingBinding();
     const r = await handleReplayInbound(db, b, { inboundEmailId: ID, reason: "x" }, null);
     expect(r).toMatchObject({ ok: false, reason });
+    expect(b.calls).toHaveLength(0);
+  });
+
+  // OPE-405 (John, 2026-10-04) — the one opt-in: an already-answered row, to
+  // re-run roster capture on 9fc287ef. Only WITH the flag and WITH an anchor.
+  it("OPE-405: a replied row with allow_answered AND a resulting event replays, flag first", async () => {
+    seed({ status: "replied", resultingEventId: "4fde2cf7-9298-4b8d-b32f-36b79c376ad0" });
+    const b = recordingBinding();
+    const r = await handleReplayInbound(
+      db,
+      b,
+      { inboundEmailId: ID, reason: "OPE-405", allowAnswered: true },
+      "u-admin"
+    );
+    expect(r).toMatchObject({
+      ok: true,
+      existingEventId: "4fde2cf7-9298-4b8d-b32f-36b79c376ad0",
+    });
+    expect(b.calls[0].flagAtCreate).toBe("replay: OPE-405");
+    const [audit] = db
+      .select()
+      .from(adminActions)
+      .where(eq(adminActions.action, "inbound.replayed"))
+      .all();
+    expect(JSON.parse(audit.payloadJson!)).toMatchObject({
+      allowAnswered: true,
+      existingEventId: "4fde2cf7-9298-4b8d-b32f-36b79c376ad0",
+    });
+  });
+
+  it("OPE-405: a replied row WITHOUT an event is refused even with the opt-in (no dedup anchor)", async () => {
+    seed({ status: "replied", resultingEventId: null });
+    const b = recordingBinding();
+    const r = await handleReplayInbound(
+      db,
+      b,
+      { inboundEmailId: ID, reason: "x", allowAnswered: true },
+      null
+    );
+    expect(r).toMatchObject({ ok: false, reason: "answered_without_event" });
+    expect(b.calls).toHaveLength(0);
+  });
+
+  it("OPE-405: the opt-in does not open any OTHER status", async () => {
+    seed({ status: "processing", resultingEventId: "e1" });
+    const b = recordingBinding();
+    const r = await handleReplayInbound(
+      db,
+      b,
+      { inboundEmailId: ID, reason: "x", allowAnswered: true },
+      null
+    );
+    expect(r).toMatchObject({ ok: false, reason: "status_not_replayable" });
     expect(b.calls).toHaveLength(0);
   });
 
