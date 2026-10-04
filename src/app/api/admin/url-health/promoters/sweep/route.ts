@@ -41,6 +41,7 @@ export const dynamic = "force-dynamic";
  * `no_event_signal` too — the asymmetry is deliberate and documented in
  * url-health.ts. Nothing here nulls a website or unpublishes anything.
  */
+import { bodyBytesOf } from "@/lib/goodwill/url-health";
 import { NextResponse } from "next/server";
 import { and, isNotNull, ne, sql } from "drizzle-orm";
 import { isAuthorized } from "@/lib/api-auth";
@@ -198,6 +199,8 @@ export async function POST(request: Request): Promise<NextResponse> {
         httpStatus: p.status,
         signals: health.signals.join(",") || null,
         detail: health.detail,
+        // OPE-1294 — the raw size, so a parked shell is separable from a bot wall.
+        bodyBytes: bodyBytesOf(p.html),
         checkedAt: now,
       });
 

@@ -36,6 +36,7 @@ export const dynamic = "force-dynamic";
  * when history is not written — so no `business_name` and no `website` is ever
  * touched here.
  */
+import { bodyBytesOf } from "@/lib/goodwill/url-health";
 import { NextResponse } from "next/server";
 import { sql } from "drizzle-orm";
 import { isAuthorized } from "@/lib/api-auth";
@@ -130,6 +131,8 @@ export async function POST(request: Request): Promise<NextResponse> {
         httpStatus: p.status,
         signals: v.signals.join(",") || null,
         detail: v.detail,
+        // OPE-1294 — the raw size, so a parked shell is separable from a bot wall.
+        bodyBytes: bodyBytesOf(p.html),
         checkedAt: now,
       });
 
