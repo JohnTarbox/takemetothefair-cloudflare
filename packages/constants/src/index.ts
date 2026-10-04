@@ -1355,4 +1355,6 @@ export const AWAITING_SUBMITTER_EXPIRY_DAYS = 21;
 // OPE-772 — the send-gate allowlist + resolver, shared by both Workers so the
 // MCP Worker can report the gates only it enforces (OPERATOR_OUTBOUND_ENABLED).
 export * from "./send-gates";
+// OPE-1293 — the shared "is this flag dark?" rule (main app + MCP inventory).
+export * from "./capability-flag-dark";
 export * from "./extraction-families";

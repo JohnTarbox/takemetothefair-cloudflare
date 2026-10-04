@@ -21,6 +21,10 @@
  * own. Folding it away would delete a working alarm to solve a problem that no
  * longer exists. Reported here as inventory; still able to shout on real growth.
  */
+import {
+  formatDarkCapabilitiesSection,
+  readCapabilityFlags,
+} from "./inventory-dark-capabilities.js";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { events, promoters, eventDiscrepancies, tunableThresholds } from "./schema.js";
 import type { Env } from "./index.js";
@@ -335,11 +339,18 @@ export async function runWeeklyInventoryNotice(env: Env): Promise<void> {
     .catch(() => false);
   const watchText = watchRanToday ? formatWatchSection(watch) : "";
 
+  // OPE-1293 — the dark-capability inventory finally has a reader. Never
+  // throws; a failed read renders as UNKNOWN, never as "all lit".
+  const darkText = formatDarkCapabilitiesSection(
+    await readCapabilityFlags(env as unknown as Parameters<typeof readCapabilityFlags>[0])
+  );
+
   const textBody =
     `Backlog as of ${todayIso} (Δ vs last Monday):\n\n` +
     rows.map((r) => ` • ${r.label}: ${r.current} (${formatDelta(r.current, r.prior)})`).join("\n") +
     waitingText +
     watchText +
+    darkText +
     `\n\nThis replaces the daily queue notices — alarms still push on condition.\n`;
   const htmlBody =
     `<p><strong>📋 MMATF Monday inventory</strong> — backlog as of ${todayIso}.</p>` +
@@ -362,6 +373,9 @@ export async function runWeeklyInventoryNotice(env: Env): Promise<void> {
             (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c] as string
           )}</pre>`
       : "") +
+    `<pre style="white-space:pre-wrap;font-family:inherit">${darkText
+      .trim()
+      .replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c] as string)}</pre>` +
     `<p style="color:#666;font-size:12px">Replaces the daily queue notices. Alarms still push on condition.</p>`;
 
   const alertEmail = env.ALERT_EMAIL_TECHNICAL;
