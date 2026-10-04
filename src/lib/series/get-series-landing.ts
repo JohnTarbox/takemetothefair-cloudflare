@@ -15,6 +15,7 @@ import { cache } from "react";
 import { eq, and } from "drizzle-orm";
 import { unsafeSlug } from "@takemetothefair/utils";
 import { getCloudflareDb } from "@/lib/cloudflare";
+import { withD1ReadLogged } from "@/lib/db/d1-resilience";
 import { eventSeries, events, venues, promoters } from "@/lib/db/schema";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { pickHeroOccurrence, resolveSeriesLandingContent } from "@/lib/series/occurrence-view";
@@ -65,7 +66,19 @@ export interface SeriesLanding {
   occurrences: LandingOccurrence[];
 }
 
-export const getSeriesLanding = cache(async (slug: string): Promise<SeriesLanding | null> => {
+/**
+ * OPE-1301 — retry-wrapped like the browse fetchers (OPE-790). Both the event
+ * page and its metadata call this BEFORE their getEvent try-block, so a D1 blip
+ * here used to bypass the degraded panel entirely.
+ */
+export const getSeriesLanding = cache(
+  (slug: string): Promise<SeriesLanding | null> =>
+    withD1ReadLogged("lib/series/get-series-landing.ts:getSeriesLanding", () =>
+      getSeriesLandingOnce(slug)
+    )
+);
+
+async function getSeriesLandingOnce(slug: string): Promise<SeriesLanding | null> {
   const db = getCloudflareDb();
 
   // OPE-18 — leftJoin the series promoter so the EventSeries JSON-LD can emit
@@ -199,4 +212,4 @@ export const getSeriesLanding = cache(async (slug: string): Promise<SeriesLandin
     },
     occurrences,
   };
-});
+}

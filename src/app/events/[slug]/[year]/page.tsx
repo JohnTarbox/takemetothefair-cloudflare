@@ -16,6 +16,8 @@ import type { Metadata } from "next";
 import EventDetailPage from "../page";
 import { buildEventMetadata } from "../event-detail-data";
 import { resolveOccurrenceSlug } from "@/lib/series/get-occurrence";
+import { DEGRADED_METADATA, isD1PlatformFault } from "@/lib/db/degraded";
+import { DegradedPanel } from "@/components/layout/degraded-panel";
 
 export const revalidate = 300;
 
@@ -25,7 +27,14 @@ interface OccurrenceProps {
 
 export async function generateMetadata({ params }: OccurrenceProps): Promise<Metadata> {
   const { slug, year } = await params;
-  const occSlug = await resolveOccurrenceSlug(slug, year);
+  let occSlug: string | null;
+  try {
+    occSlug = await resolveOccurrenceSlug(slug, year);
+  } catch (e) {
+    // OPE-1301 — a D1 blip that survived the retry: noindex, not a crash.
+    if (isD1PlatformFault(e)) return DEGRADED_METADATA;
+    throw e;
+  }
   if (!occSlug) return {};
   // K46 — asOccurrence forces the occurrence's Event-detail metadata (canonical
   // /events/<series>/<year>), not the series-landing metadata. Without it a
@@ -36,7 +45,16 @@ export async function generateMetadata({ params }: OccurrenceProps): Promise<Met
 
 export default async function OccurrencePage({ params }: OccurrenceProps) {
   const { slug, year } = await params;
-  const occSlug = await resolveOccurrenceSlug(slug, year);
+  let occSlug: string | null;
+  try {
+    occSlug = await resolveOccurrenceSlug(slug, year);
+  } catch (e) {
+    // OPE-1301 — an honest degraded panel, not the error boundary (09-27 specimen).
+    if (isD1PlatformFault(e)) {
+      return <DegradedPanel what="this event" retryHref={`/events/${slug}/${year}`} />;
+    }
+    throw e;
+  }
   if (!occSlug) notFound();
   // K46 — render the occurrence Event detail (with superEvent), not the series
   // landing, so each URL emits exactly one EventSeries block. Called as a plain

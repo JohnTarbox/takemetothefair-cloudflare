@@ -9,6 +9,9 @@ import { BlogPostCard } from "@/components/blog/blog-post-card";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { extractFirstImage } from "@/lib/markdown-utils";
 import { formatAuthorName } from "@/lib/utils";
+import { withD1ReadLogged } from "@/lib/db/d1-resilience";
+import { DEGRADED_METADATA, isD1PlatformFault } from "@/lib/db/degraded";
+import { DegradedPanel } from "@/components/layout/degraded-panel";
 
 export const revalidate = 600; // 10 minutes
 
@@ -25,7 +28,18 @@ function tagToUrlSlug(tag: string): string {
     .replace(/^-|-$/g, "");
 }
 
-async function getPostsByTagSlug(tagSlug: string) {
+/**
+ * OPE-1301 — retry-wrapped like the browse fetchers (OPE-790). On 2026-10-04
+ * 14:09Z a D1 reset put /blog/tag/connecticut and /blog/tag/salem-holiday-market
+ * on the error boundary while getEvents, in the same second, was absorbed.
+ */
+function getPostsByTagSlug(tagSlug: string) {
+  return withD1ReadLogged("app/blog/tag/[tag]/page.tsx:getPostsByTagSlug", () =>
+    getPostsByTagSlugOnce(tagSlug)
+  );
+}
+
+async function getPostsByTagSlugOnce(tagSlug: string) {
   const db = getCloudflareDb();
   const rows = await db
     .select({
@@ -67,7 +81,14 @@ async function getPostsByTagSlug(tagSlug: string) {
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { tag } = await params;
   const tagSlug = decodeURIComponent(tag).toLowerCase();
-  const { displayName, posts } = await getPostsByTagSlug(tagSlug);
+  let found: Awaited<ReturnType<typeof getPostsByTagSlug>>;
+  try {
+    found = await getPostsByTagSlug(tagSlug);
+  } catch (e) {
+    if (isD1PlatformFault(e)) return DEGRADED_METADATA;
+    throw e;
+  }
+  const { displayName, posts } = found;
   const name = displayName ?? tagSlug;
   const url = `https://meetmeatthefair.com/blog/tag/${tagSlug}`;
   const description = `Blog posts tagged "${name}" — ${posts.length} article${posts.length === 1 ? "" : "s"} about fairs, vendors, and events in New England.`;
@@ -87,7 +108,17 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 export default async function BlogTagPage({ params }: Props) {
   const { tag } = await params;
   const tagSlug = decodeURIComponent(tag).toLowerCase();
-  const { posts, displayName } = await getPostsByTagSlug(tagSlug);
+  let found: Awaited<ReturnType<typeof getPostsByTagSlug>>;
+  try {
+    found = await getPostsByTagSlug(tagSlug);
+  } catch (e) {
+    // OPE-1301 — an honest degraded panel on a surviving platform blip only.
+    if (isD1PlatformFault(e)) {
+      return <DegradedPanel what="these posts" retryHref={`/blog/tag/${tagSlug}`} />;
+    }
+    throw e;
+  }
+  const { posts, displayName } = found;
 
   if (posts.length === 0 || !displayName) {
     notFound();

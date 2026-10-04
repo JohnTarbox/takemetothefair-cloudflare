@@ -282,7 +282,14 @@ export async function buildEventMetadata(slug: string, asOccurrence = false): Pr
   // unaffected today.
   // K46 — the /year occurrence route passes asOccurrence so the occurrence
   // canonicalizes to /events/<series>/<year> instead of the landing URL.
-  const landing = asOccurrence ? null : await getSeriesLanding(slug);
+  // OPE-1301 — this read precedes getEvent's try-block; same noindex fallback.
+  let landing: Awaited<ReturnType<typeof getSeriesLanding>>;
+  try {
+    landing = asOccurrence ? null : await getSeriesLanding(slug);
+  } catch (e) {
+    if (isD1PlatformFault(e)) return DEGRADED_METADATA;
+    throw e;
+  }
   if (landing) {
     const url = `${SITE_URL}/events/${landing.series.canonicalSlug}`;
     // OPE-589 — the hub is served, but the canonical is the hero occurrence's

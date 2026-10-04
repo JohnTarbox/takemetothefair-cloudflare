@@ -455,7 +455,17 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
   // cached, so this shares the lookup with generateMetadata; null until backfill.
   // K46 — the /year occurrence route passes asOccurrence to skip this branch and
   // render the occurrence's Event detail (one EventSeries block per URL).
-  const landing = asOccurrence ? null : await getSeriesLanding(slug);
+  // OPE-1301 — inside the degraded path too: this read precedes getEvent's
+  // try-block, so a blip here used to reach the error boundary.
+  let landing: Awaited<ReturnType<typeof getSeriesLanding>>;
+  try {
+    landing = asOccurrence ? null : await getSeriesLanding(slug);
+  } catch (e) {
+    if (isD1PlatformFault(e)) {
+      return <DegradedPanel what="this event" retryHref={`/events/${slug}`} />;
+    }
+    throw e;
+  }
   if (landing) {
     // OPE-1188 — the hub had no /blog/ link at all; it now names the fair's own guide.
     const visitorGuides = await getVisitorGuides(getCloudflareDb(), landing.series.name, 2);
