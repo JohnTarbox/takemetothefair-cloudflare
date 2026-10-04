@@ -73,7 +73,7 @@ export default async function NewsletterArchivePage() {
             people who navigated to /newsletter ON PURPOSE were counted as
             footer signups. That is the most intentional traffic on the page
             and it was invisible; "footer" now means the footer. */}
-        <NewsletterSignup source="newsletter-page" />
+        <NewsletterSignup source="newsletter-page" tone="surface" />
       </div>
 
       {issues.length === 0 ? (
