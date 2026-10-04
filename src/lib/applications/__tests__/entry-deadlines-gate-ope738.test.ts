@@ -18,6 +18,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { readWranglerConfig, wranglerVars } from "../../../../scripts/lib/wrangler-config";
 
 const ROOT = process.cwd();
 const read = (...p: string[]) => readFileSync(join(ROOT, ...p), "utf8");
@@ -27,7 +28,8 @@ describe("OPE-738 — /fair-entry-deadlines and its flag", () => {
     // It must live in the committed file, not the dashboard: a dashboard
     // [vars] override is wiped wholesale by the next `wrangler deploy`
     // (OPE-284/OPE-509).
-    expect(read("wrangler.toml")).toMatch(/^ENTRY_DEADLINES_INDEX\s*=/m);
+    // OPE-1292 — parsed: the top-level [vars] table, not a line anywhere.
+    expect(wranglerVars(readWranglerConfig("main"))).toHaveProperty("ENTRY_DEADLINES_INDEX");
   });
 
   it('has that flag committed as "true" — LIVE since 2026-09-02', () => {
@@ -42,8 +44,9 @@ describe("OPE-738 — /fair-entry-deadlines and its flag", () => {
     //
     // So the expected value moves with the decision, and changing it stays a
     // reviewed edit rather than a drive-by.
-    const m = read("wrangler.toml").match(/^ENTRY_DEADLINES_INDEX\s*=\s*"([^"]*)"/m);
-    expect(m?.[1]).toBe("true");
+    const vars = wranglerVars(readWranglerConfig("main"));
+    expect(vars).toHaveProperty("ENTRY_DEADLINES_INDEX");
+    expect(vars.ENTRY_DEADLINES_INDEX).toBe("true");
   });
 
   it("404s the route when the flag is off — the page actually consults it", () => {

@@ -12,15 +12,22 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readWranglerConfig, wranglerTables } from "../../scripts/lib/wrangler-config";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
+/**
+ * OPE-1292 — parsed, the way Cloudflare reads it. The regex this replaced took
+ * every quoted string between `[` and `]`, so a commented-out address inside the
+ * array counted as ALLOWED here while Cloudflare would refuse it: measured, a
+ * `# retired: "press@…"` line made the regex return 4 senders, the parser 3.
+ */
 function allowlist(): string[] {
-  const toml = readFileSync(join(ROOT, "mcp-server/wrangler.toml"), "utf8");
-  const block = toml.slice(toml.indexOf("[[send_email]]"));
-  const m = block.match(/allowed_sender_addresses\s*=\s*\[([\s\S]*?)\]/);
-  if (!m) return [];
-  return [...m[1].matchAll(/"([^"]+)"/g)].map((x) => x[1].toLowerCase());
+  const binding = wranglerTables(readWranglerConfig("mcp", ROOT), "send_email").find(
+    (b) => b.name === "EMAIL"
+  );
+  const list = binding?.allowed_sender_addresses;
+  return Array.isArray(list) ? list.map((a) => String(a).toLowerCase()) : [];
 }
 
 function walk(dir: string, out: string[] = []): string[] {

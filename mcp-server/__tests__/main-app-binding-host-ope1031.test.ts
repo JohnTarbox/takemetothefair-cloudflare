@@ -20,6 +20,11 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  readWranglerConfig,
+  wranglerTables,
+  wranglerVars,
+} from "../../scripts/lib/wrangler-config";
 import { mainAppBindingRequest, mainAppFetch, realHostOf } from "../src/main-app-fetch.js";
 
 const BASE = "https://meetmeatthefair.com";
@@ -166,10 +171,14 @@ describe("structural guard — every MAIN_APP binding call builds its Request th
 
 describe("deployed config", () => {
   it("mcp-server/wrangler.toml names a MAIN_APP_URL with a real host alongside the MAIN_APP binding", () => {
-    const toml = readFileSync(fileURLToPath(new URL("../wrangler.toml", import.meta.url)), "utf8");
-    expect(toml).toMatch(/binding\s*=\s*"MAIN_APP"/);
-    const m = toml.match(/^MAIN_APP_URL\s*=\s*"([^"]*)"/m);
-    expect(m, "MAIN_APP_URL missing from [vars]").not.toBeNull();
-    expect(realHostOf(m![1])).toBe("meetmeatthefair.com");
+    // OPE-1292 — parsed: a [[services]] binding and a top-level [vars] key, not
+    // two regexes that would also match a comment.
+    const config = readWranglerConfig("mcp");
+    expect(wranglerTables(config, "services")).toContainEqual(
+      expect.objectContaining({ binding: "MAIN_APP" })
+    );
+    const vars = wranglerVars(config);
+    expect(vars, "MAIN_APP_URL missing from [vars]").toHaveProperty("MAIN_APP_URL");
+    expect(realHostOf(String(vars.MAIN_APP_URL))).toBe("meetmeatthefair.com");
   });
 });

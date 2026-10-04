@@ -17,6 +17,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { readWranglerConfig, wranglerVars } from "../../scripts/lib/wrangler-config";
 import { CapturingMcpServer } from "./setup-db.js";
 import { registerSendGatesTool } from "../src/tools/admin-send-gates.js";
 import { SEND_GATE_NAMES } from "@takemetothefair/constants";
@@ -100,12 +101,13 @@ describe("get_send_gates — the gate only this Worker can answer for (OPE-772)"
 
 describe("OPE-772 — the flag is declared in the committed config", () => {
   // mcp-server/__tests__ runs with cwd = mcp-server.
-  const toml = readFileSync(join(process.cwd(), "wrangler.toml"), "utf8");
+  // OPE-1292 — parsed: "declared" means in the top-level [vars] table.
+  const mcpVars = wranglerVars(readWranglerConfig("mcp"));
 
   it("declares OPERATOR_OUTBOUND_ENABLED in mcp-server/wrangler.toml", () => {
     // Committed, not dashboard: a dashboard [vars] value is wiped wholesale by
     // the next `wrangler deploy` (OPE-284/OPE-509).
-    expect(toml).toMatch(/^OPERATOR_OUTBOUND_ENABLED\s*=/m);
+    expect(mcpVars).toHaveProperty("OPERATOR_OUTBOUND_ENABLED");
   });
 
   it('has it committed as "false" — OPE-772 provisions the flag, it does not enable it', () => {
@@ -113,7 +115,8 @@ describe("OPE-772 — the flag is declared in the committed config", () => {
     // turn delivery on, flipping the value fails this test — which is the point:
     // the flip becomes a reviewed edit rather than a drive-by, and this is also
     // the only thing that would notice a silent flip.
-    expect(toml).toMatch(/^OPERATOR_OUTBOUND_ENABLED\s*=\s*"false"/m);
+    expect(mcpVars).toHaveProperty("OPERATOR_OUTBOUND_ENABLED");
+    expect(mcpVars.OPERATOR_OUTBOUND_ENABLED).toBe("false");
   });
 });
 
@@ -166,18 +169,16 @@ describe("OPE-772 rework — the gates the reader was missing", () => {
   });
 
   it("every allowlisted gate is declared in the committed wrangler.toml of each Worker that enforces it", async () => {
-    const mcpToml = readFileSync(join(process.cwd(), "wrangler.toml"), "utf8");
-    const appToml = readFileSync(join(process.cwd(), "..", "wrangler.toml"), "utf8");
+    const mcpDeclared = wranglerVars(readWranglerConfig("mcp"));
+    const appDeclared = wranglerVars(readWranglerConfig("main"));
     const out = await gates({});
     // Positive landmark: the loop really covered every gate.
     expect(out.gates).toHaveLength(SEND_GATE_NAMES.length);
     for (const g of out.gates) {
       if (g.enforced_on.includes("mcp"))
-        expect(mcpToml, `${g.name} in mcp-server/wrangler.toml`).toMatch(
-          new RegExp(`^${g.name}\\s*=`, "m")
-        );
+        expect(mcpDeclared, `${g.name} in mcp-server/wrangler.toml [vars]`).toHaveProperty(g.name);
       if (g.enforced_on.includes("main-app"))
-        expect(appToml, `${g.name} in wrangler.toml`).toMatch(new RegExp(`^${g.name}\\s*=`, "m"));
+        expect(appDeclared, `${g.name} in wrangler.toml [vars]`).toHaveProperty(g.name);
     }
   });
 

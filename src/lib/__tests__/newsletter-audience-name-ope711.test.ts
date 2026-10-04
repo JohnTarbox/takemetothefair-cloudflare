@@ -19,6 +19,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
+import { readWranglerConfig, readWranglerText } from "../../../scripts/lib/wrangler-config";
 import { join } from "node:path";
 import { newsletterDigestTemplate } from "@/lib/email/templates";
 import {
@@ -95,19 +96,21 @@ describe("the vendor route actually passes it (not just that it could)", () => {
 });
 
 describe("the Sunday cron is gone", () => {
-  const toml = readFileSync(
-    join(__dirname, "..", "..", "..", "mcp-server", "wrangler.toml"),
-    "utf8"
-  );
+  // OPE-1292 — the crons are read parsed. The raw text is kept ONLY for the
+  // "1 = SUNDAY" check below, which is deliberately about a COMMENT surviving.
+  const config = readWranglerConfig("mcp", join(__dirname, "..", "..", ".."));
+  const toml = readWranglerText("mcp", join(__dirname, "..", "..", ".."));
   const dispatcher = readFileSync(
     join(__dirname, "..", "..", "..", "mcp-server", "src", "index.ts"),
     "utf8"
   );
 
   it("no weekday cron is registered", () => {
-    const crons = /^crons = \[(.*)\]$/m.exec(toml)?.[1] ?? "";
-    expect(crons).not.toContain("* 1");
-    expect(crons.length).toBeGreaterThan(0); // non-vacuous: we found the line
+    const crons = (config.triggers as { crons?: unknown } | undefined)?.crons;
+    expect(Array.isArray(crons) && crons.length).toBeGreaterThan(0); // non-vacuous
+    // Day-of-week is the 5th field; Cloudflare's 1 is SUNDAY (see below).
+    const weekday1 = (crons as string[]).filter((c) => c.trim().split(/\s+/)[4] === "1");
+    expect(weekday1).toEqual([]);
   });
 
   it("nothing dispatches on the removed expression", () => {

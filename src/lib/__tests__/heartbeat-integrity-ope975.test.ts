@@ -17,6 +17,7 @@ import {
   runCheck,
   seededNames,
 } from "../../../scripts/check-heartbeat-probes";
+import { parseWranglerConfig, readWranglerConfig } from "../../../scripts/lib/wrangler-config";
 import { HEARTBEAT_PROBES } from "@/lib/heartbeat";
 import { GRANDFATHERED_UNREVIEWED, HEARTBEAT_INVENTORY } from "@/lib/heartbeat-inventory";
 
@@ -48,7 +49,7 @@ describe("OPE-975 — the real tree", () => {
 
   it("discovers the declared paths: 7 queue consumers, 4 Workflows, and the scheduled jobs", () => {
     const paths = discoverPaths(
-      readFileSync(join(ROOT, "mcp-server/wrangler.toml"), "utf8"),
+      readWranglerConfig("mcp", ROOT),
       readFileSync(join(ROOT, "mcp-server/src/index.ts"), "utf8")
     );
     expect(paths.filter((p) => p.startsWith("queue:"))).toHaveLength(7);
@@ -56,6 +57,21 @@ describe("OPE-975 — the real tree", () => {
     expect(paths).toContain("cron:runScheduledBurstCapSelfTest");
     expect(paths).toContain("cron:main-app:/api/admin/venues/geocode-venues");
     expect(Object.keys(HEARTBEAT_INVENTORY).sort()).toEqual(paths);
+  });
+
+  it("OPE-1292: a comment or an array value inside a queue/workflow block hides no path", () => {
+    // The regexes this replaced needed `queue = ` on the line right after
+    // `[[queues.consumers]]`, and stopped a workflow scan at any `[`. Both
+    // reformattings below are legal TOML that the old discovery silently lost.
+    const text = readFileSync(join(ROOT, "mcp-server/wrangler.toml"), "utf8")
+      .replace(/\[\[queues\.consumers\]\]\n/g, "[[queues.consumers]]\n# a reviewer's note\n")
+      .replace(/\[\[workflows\]\]\n/g, '[[workflows]]\ntags = ["x"]\n');
+    expect(text).toContain("# a reviewer's note"); // the mutation landed
+    expect(text).toContain('tags = ["x"]');
+    const index = readFileSync(join(ROOT, "mcp-server/src/index.ts"), "utf8");
+    expect(discoverPaths(parseWranglerConfig(text), index)).toEqual(
+      discoverPaths(readWranglerConfig("mcp", ROOT), index)
+    );
   });
 
   it("the grandfathered set only ever shrinks: every member is still an unreviewed entry", () => {
