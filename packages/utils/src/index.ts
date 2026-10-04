@@ -523,6 +523,7 @@ export * from "./source-classification";
 export * from "./source-state";
 export * from "./former-venue";
 export * from "./dates-confirmed-gate";
+export * from "./non-source-url";
 // OPE-411 — ingest-time sanity checks for user-supplied submissions. Shared
 // because BOTH the app route and the MCP suggest_event tool create events from
 // them, and a validator wired into one of two parallel paths gets bypassed.

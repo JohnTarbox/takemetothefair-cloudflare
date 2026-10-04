@@ -96,3 +96,28 @@ describe("OPE-1154 — Browser Rendering returning a deny page is a FAILED fetch
     expect(out.error).toContain("cloudfront");
   });
 });
+
+describe("OPE-1154 rework — Google's consent interstitial", () => {
+  it("the captured specimen title is a block page", () => {
+    // 0e39e183, 2026-10-04: source_title exactly as stored.
+    expect(detectBlockedSnapshot("Before you continue to Google Maps", "").isChallenge).toBe(true);
+    expect(detectBlockedSnapshot("Before you continue to YouTube", "").vendor).toBe(
+      "google-consent"
+    );
+  });
+
+  it("a consent.google.com body is a block page", () => {
+    expect(
+      detectChallengePage('<html><form action="https://consent.google.com/save">').isChallenge
+    ).toBe(true);
+  });
+
+  it("control: event prose that says 'before you continue' is not", () => {
+    expect(
+      detectBlockedSnapshot(
+        "Gunstock Labor Day Craft Fair",
+        "Before you continue to the parking lot, check in at the gate."
+      ).isChallenge
+    ).toBe(false);
+  });
+});

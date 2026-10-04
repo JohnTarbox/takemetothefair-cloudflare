@@ -23,6 +23,7 @@
  * shared by the main app and the MCP Worker, which write the same column.
  */
 import { classifySource, normalizeHostname } from "./source-classification";
+import { isNonSourceUrl } from "./non-source-url";
 
 export interface DateCitationLike {
   fieldName: string;
@@ -65,9 +66,13 @@ export function dateSourceDisqualifier(
     sourceUrl?: string | null;
   },
   organizerHosts: readonly string[] = []
-): "no_source_url" | "community_submission" | "aggregator" | null {
+): "no_source_url" | "non_source_url" | "community_submission" | "aggregator" | null {
   const url = src.sourceUrl?.trim();
   if (!url) return "no_source_url";
+  // OPE-1154 rework — a map/search link is a pointer, not a statement about
+  // the event, so it can never confirm a date (it is not on AGGREGATOR_HOSTS,
+  // and before this it QUALIFIED).
+  if (isNonSourceUrl(url)) return "non_source_url";
   if (src.sourceType === "user_submitted") return "community_submission";
   if (classifySource(null, url).ingestionMethod === "aggregator_import") {
     const host = normalizeHostname(url);
@@ -133,16 +138,21 @@ export function gateDatesConfirmed(args: {
         : null
     )
     .find((h): h is string => h !== null);
+  const nonSourceCited = activeStartNonSource(args.citations);
   const reason =
-    why === "aggregator"
-      ? "the source supplied is an aggregator, not the organizer"
-      : why === "community_submission"
-        ? "the source supplied is a community submission"
-        : aggregatorHost
-          ? `the active start_date citation is from ${aggregatorHost}, an aggregator site, and that is not this event's promoter's website`
-          : activeStart.length > 0
-            ? "the active start_date citation is a community submission or has no source URL"
-            : "there is no active start_date citation from an organizer or primary source";
+    why === "non_source_url"
+      ? "the source supplied is a map or search link, which cannot confirm a date"
+      : why === "aggregator"
+        ? "the source supplied is an aggregator, not the organizer"
+        : why === "community_submission"
+          ? "the source supplied is a community submission"
+          : aggregatorHost
+            ? `the active start_date citation is from ${aggregatorHost}, an aggregator site, and that is not this event's promoter's website`
+            : nonSourceCited
+              ? "the active start_date citation is a map or search link, which cannot confirm a date"
+              : activeStart.length > 0
+                ? "the active start_date citation is a community submission or has no source URL"
+                : "there is no active start_date citation from an organizer or primary source";
   return {
     value: false,
     downgraded: true,
@@ -151,4 +161,10 @@ export function gateDatesConfirmed(args: {
       "Add a start_date citation (update_event `citation`, or create_event_citation) " +
       "from the organizer's own page, then set dates_confirmed again.",
   };
+}
+
+/** OPE-1154 rework — is every active start_date citation a map/search link? */
+function activeStartNonSource(citations: readonly DateCitationLike[]): boolean {
+  const active = citations.filter((c) => c.fieldName === "start_date" && c.state === "active");
+  return active.length > 0 && active.every((c) => isNonSourceUrl(c.sourceUrl));
 }
