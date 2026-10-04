@@ -1,3 +1,4 @@
+import { isCapabilityFlagDark } from "@takemetothefair/constants";
 /**
  * OPE-368 (R4) item 4 — report which customer-facing capabilities are dark.
  *
@@ -138,7 +139,9 @@ export function resolveCapabilityFlags(
     // caught it. The lesson is not "be careful with inverted flags": it is that
     // a reporter must re-derive the consumer's own rule rather than restate it
     // from memory, which is the OPE-372 defect wearing a smaller hat.
-    const dark = flag.name === "ENRICHMENT_DRY_RUN" ? value !== "false" : value !== "true";
+    // OPE-1293 — the rule now lives in @takemetothefair/constants so the MCP
+    // Worker's Monday inventory resolves its own flags with the same code.
+    const dark = isCapabilityFlagDark(flag.name, value);
     return { ...flag, value, dark };
   });
 }
