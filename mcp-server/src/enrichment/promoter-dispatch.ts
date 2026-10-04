@@ -18,7 +18,11 @@ import {
   isPlaceholderDescription,
   PROMOTER_ENRICHMENT_EXHAUST_AFTER,
 } from "@takemetothefair/constants";
-import { sanitizeScrapedDescription, runChunkedInsert } from "@takemetothefair/utils";
+import {
+  sanitizeScrapedDescription,
+  runChunkedInsert,
+  computeRuleAgreement,
+} from "@takemetothefair/utils";
 import { promoters, promoterEnrichmentCandidates } from "../schema.js";
 import { getDb, type Db } from "../db.js";
 import { logError } from "../logger.js";
@@ -344,6 +348,8 @@ export interface PromoterEnrichmentRunSummary {
   outcome: "staged" | "merged" | "blocked" | "no_source" | "not_found" | "exhausted" | "ceased";
   candidateCount?: number;
   appliedFields?: string[];
+  /** OPE-1295 — affine social proposals held for review because the rule is not promotable. */
+  socialStagedNotPromotable?: number;
   blockedReason?: BlockedReason;
   fetchMethod?: string;
 }
@@ -529,6 +535,7 @@ export async function processPromoterEnrichmentJob(
   }
 
   // --- Live: auto-apply the high-confidence fills (fill-empty-only) ---
+  const socialStagedNotPromotable = await holdSocialUnlessPromotable(db, proposals);
   const applied = await applyFills(db, msg.promoterId, proposals);
   await recomputeAndStamp(db, msg.promoterId, applied.length > 0);
   // OPE-962 — same streak on a live run. Zero proposals means nothing was
@@ -552,7 +559,9 @@ export async function processPromoterEnrichmentJob(
     source: "browser_enrich",
     status: applied.length > 0 ? "success" : "skipped",
     fieldsChanged: applied,
-    notes: `auto-apply: applied ${applied.length} field(s)`,
+    notes:
+      `auto-apply: applied ${applied.length} field(s)` +
+      (socialStagedNotPromotable > 0 ? ` — social_links held: rule not promotable` : ""),
   });
 
   return {
@@ -560,8 +569,56 @@ export async function processPromoterEnrichmentJob(
     outcome: "merged",
     candidateCount: proposals.length,
     appliedFields: applied,
+    socialStagedNotPromotable,
     fetchMethod: fetched.fetchMethod,
   };
+}
+
+/**
+ * OPE-1295 — is the social_links rule for this extraction method `promotable`
+ * right now? The SAME figure `get_promoter_enrichment_rule_agreement` reports
+ * (`computeRuleAgreement`, ≥95% over ≥20 clean human decisions), read from the
+ * candidates table at run time, so the gate opens by itself once enough human
+ * reviews accumulate — there is no flag to flip. Exported for tests.
+ */
+export async function socialRulePromotable(db: Db, method: string): Promise<boolean> {
+  const rows = await db
+    .select({
+      decision: promoterEnrichmentCandidates.decision,
+      proposedField: promoterEnrichmentCandidates.proposedField,
+      extractionMethod: promoterEnrichmentCandidates.extractionMethod,
+      reviewedBy: promoterEnrichmentCandidates.reviewedBy,
+      flags: promoterEnrichmentCandidates.flags,
+    })
+    .from(promoterEnrichmentCandidates)
+    .where(
+      and(
+        eq(promoterEnrichmentCandidates.proposedField, "social_links"),
+        eq(promoterEnrichmentCandidates.extractionMethod, method)
+      )
+    );
+  return computeRuleAgreement(rows).some((e) => e.extractionMethod === method && e.promotable);
+}
+
+/**
+ * OPE-1295 — an affine social payload auto-applied on name affinity alone, and
+ * 70 such applies since 09-23 drew ~70% human agreement (John, 2026-10-04:
+ * auto-apply only when the rule is promotable). Affinity stays a condition;
+ * this adds the rule's measured accuracy as a second one. A held proposal is
+ * already staged as a pending candidate, so it simply waits for a reviewer.
+ *
+ * Queries only when a live run actually holds an apply-eligible social
+ * proposal. Returns how many were held, for the run's result and log.
+ */
+async function holdSocialUnlessPromotable(db: Db, proposals: Proposal[]): Promise<number> {
+  let held = 0;
+  for (const p of proposals) {
+    if (p.field !== "social_links" || !p.autoApply || p.flags.length > 0) continue;
+    if (await socialRulePromotable(db, p.method)) continue;
+    p.autoApply = false;
+    held++;
+  }
+  return held;
 }
 
 /**

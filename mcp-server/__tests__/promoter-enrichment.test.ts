@@ -63,6 +63,25 @@ async function insertPromoter(db: TestDb, over: Record<string, unknown>): Promis
   return id;
 }
 
+/** OPE-1295 — settled human decisions on the social_links rule, on other promoters. */
+async function seedSocialHistory(db: TestDb, method: string, approved: number, rejected: number) {
+  const rows = [
+    ...Array.from({ length: approved }, () => "approved"),
+    ...Array.from({ length: rejected }, () => "rejected"),
+  ].map((decision, i) => ({
+    promoterId: `hist-${i}`,
+    jobRunId: "hist",
+    proposedField: "social_links",
+    proposedValue: "{}",
+    sourceUrl: "https://hist.example.com",
+    extractionMethod: method,
+    createdAt: new Date(),
+    reviewedBy: "u-admin",
+    decision,
+  }));
+  for (const r of rows) await db.insert(promoterEnrichmentCandidates).values(r as never);
+}
+
 // ---------------------------------------------------------------------------
 // classifyPromoterImage (pure)
 // ---------------------------------------------------------------------------
@@ -259,6 +278,10 @@ describe("processPromoterEnrichmentJob", () => {
         sameAs: ["https://www.facebook.com/acmepromotions"],
       });
     restore = mockSite(html, { "banner.png": makePng(1200, 600) });
+    // OPE-1295 — social links auto-apply only once the rule is promotable
+    // (≥95% over ≥20 clean human decisions). Seed that history; the held case
+    // is pinned in promoter-social-promotable-ope1295.test.ts.
+    await seedSocialHistory(db, "jsonld", 20, 0);
 
     const summary = await processPromoterEnrichmentJob(db, ENV, {
       promoterId: id,
