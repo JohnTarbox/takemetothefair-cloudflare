@@ -280,7 +280,8 @@ describe("OPE-1281 — impersonation content farm", () => {
   it("bylines alone never decide — a real page with 'Photos by Jane Smith' credits is not a takeover", () => {
     const page = `<html lang="en"><head><title>Hebron Harvest Fair</title></head><body><p>${ENGLISH_PROSE}</p><p>Photos by Jane Smith. Story by Mark Jones. Poster by Ann Lee.</p></body></html>`;
     const r = detectDomainTakeover(page, { entityName: "Hebron Harvest Fair" });
-    expect(r.signals.some((s) => s.startsWith("bylined-posts"))).toBe(true);
+    // OPE-1281 rework — bylines alone are no longer even emitted as a signal.
+    expect(r.signals.some((s) => s.startsWith("bylined-posts"))).toBe(false);
     expect(r.takenOver).toBe(false);
   });
 
@@ -291,7 +292,7 @@ describe("OPE-1281 — impersonation content farm", () => {
     const page = `<html lang="en"><head><title>Celebrating Our Rural Heritage Since 1852</title></head><body><p>${ENGLISH_PROSE}</p><p>Photos by Jane Smith. Story by Mark Jones.</p></body></html>`;
     const r = detectDomainTakeover(page, { entityName: "Hebron Harvest Fair" });
     expect(r.signals).toEqual(expect.arrayContaining(["title-no-entity-token"]));
-    expect(r.signals.some((s) => s.startsWith("bylined-posts"))).toBe(true);
+    expect(r.signals.some((s) => s.startsWith("bylined-posts"))).toBe(false);
     expect(r.takenOver).toBe(false);
   });
 
@@ -311,5 +312,71 @@ describe("OPE-1281 — impersonation content farm", () => {
   it("read-time spellings: '8-min read', '5 minute read', '12 mins read'", () => {
     const page = `<html><head><title>X Fair</title></head><body><p>${ENGLISH_PROSE}</p><p>8-min read</p><p>5 minute read</p><p>12 mins read</p></body></html>`;
     expect(detectDomainTakeover(page, { entityName: "X Fair" }).signals).toContain("blog-index:3");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OPE-1281 rework (2026-10-04) — the REVIEW RETURNED shapes, from prod
+// url_health_checks: m5d.com (blog-index:3, bylined-posts:3), avalonpontoons.com
+// (weak-keyword:gambling, bylined-posts:4), the Androscoggin chamber Riverfire
+// page (weak-keyword:gambling, bylined-posts:6), casinotoyou.com
+// (weak-keyword:gambling, spam-links:1 — its own domain).
+// ─────────────────────────────────────────────────────────────────────────────
+describe("OPE-1281 rework — a company blog is not a takeover; the Ledyard shape still is", () => {
+  const blogIndex = (title: string) =>
+    `<html lang="en"><head><title>${title}</title></head><body><p>${ENGLISH_PROSE}</p>` +
+    ["One", "Two", "Three"]
+      .map((n) => `<article><h2>Post ${n}</h2><p>Posted by Jane Smith · 5 min read</p></article>`)
+      .join("") +
+    `<p>Written by Mark Jones and edited by Ann Lee</p></body></html>`;
+
+  it("m5d shape: a VENDOR's blog index with bylines is not a takeover", () => {
+    const r = detectDomainTakeover(blogIndex("MasterGraphics Home"), {
+      entityName: "MasterGraphics",
+      entityKind: "vendor",
+    });
+    expect(r.signals.some((s) => s.startsWith("blog-index"))).toBe(false);
+    expect(r.takenOver).toBe(false);
+  });
+
+  it("…while the SAME page on an ORGANIZER's site is (the Ledyard rule, decisive)", () => {
+    const r = detectDomainTakeover(blogIndex("Your Hub for the Ledyard Fair"), {
+      entityName: "Ledyard Fair",
+    });
+    expect(r.takenOver).toBe(true);
+    expect(r.signals.some((s) => s.startsWith("blog-index"))).toBe(true);
+  });
+
+  it("avalon / Riverfire shape: one weak keyword + bylines is not a takeover, on either kind", () => {
+    const page = `<html lang="en"><head><title>Avalon Pontoon Boats — Casino Night Raffle</title></head><body><p>${ENGLISH_PROSE}</p><p>By Jane Smith. By Mark Jones. By Ann Lee. By Tom Ray.</p></body></html>`;
+    for (const entityKind of ["vendor", "organizer"] as const) {
+      const r = detectDomainTakeover(page, { entityName: "Avalon Pontoon Boats", entityKind });
+      expect(r.signals).toEqual(["weak-keyword:gambling"]);
+      expect(r.takenOver, entityKind).toBe(false);
+    }
+  });
+
+  it("casinotoyou shape: links to the site's OWN domain are never spam links", () => {
+    const page = `<html lang="en"><head><title>Casino To You — Casino Party Rentals</title></head><body><p>${ENGLISH_PROSE}</p><a href="https://www.casinotoyou.com/tables">Tables</a><a href="/contact">Contact</a></body></html>`;
+    const r = detectDomainTakeover(page, {
+      entityName: "Casino To You",
+      entityKind: "vendor",
+      requestedUrl: "https://www.casinotoyou.com/",
+      finalUrl: "https://www.casinotoyou.com/",
+    });
+    expect(r.signals.some((s) => s.startsWith("spam-links"))).toBe(false);
+    expect(r.takenOver).toBe(false);
+  });
+
+  it("control: two EXTERNAL spam-named hosts still count (the biwaa shape stays flagged)", () => {
+    const page = `<html lang="en"><head><title>Biwaa Fishing Casino</title></head><body><p>${ENGLISH_PROSE}</p><a href="https://slot-gacor-88.example/">a</a><a href="https://togel-online.example/">b</a></body></html>`;
+    const r = detectDomainTakeover(page, {
+      entityName: "Biwaa Fishing Performance",
+      entityKind: "vendor",
+      requestedUrl: "https://biwaa.com/",
+      finalUrl: "https://biwaa.com/",
+    });
+    expect(r.signals).toEqual(expect.arrayContaining(["spam-links:2"]));
+    expect(r.takenOver).toBe(true);
   });
 });

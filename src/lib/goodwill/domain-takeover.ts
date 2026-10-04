@@ -68,6 +68,15 @@ export interface TakeoverOptions {
   /** The URL we asked for, and where redirects left us. Both optional. */
   requestedUrl?: string | null;
   finalUrl?: string | null;
+  /**
+   * OPE-1281 rework — what KIND of site this is supposed to be. A blog index
+   * with bylines is impersonation on an ORGANIZER's site (a fair's own page is
+   * a calendar, not a feed of long reads) and perfectly normal on a VENDOR's
+   * (a company blog). Shipped without this distinction on 10-02, it flagged
+   * m5d.com and avalonpontoons.com — real companies — as ERROR takeovers.
+   * Defaults to "organizer" (promoter websites, event source URLs).
+   */
+  entityKind?: "organizer" | "vendor";
 }
 
 export interface TakeoverResult {
@@ -227,6 +236,10 @@ export function detectDomainTakeover(html: string | null, opts: TakeoverOptions)
       continue;
     }
     if (host === "placeholder.invalid") continue;
+    // OPE-1281 rework — a site's links to ITSELF are never a spam network.
+    // casinotoyou.com (a casino-party rental vendor) scored `spam-links:1` on
+    // links to its own domain, whose name happens to contain "casino".
+    if (self && registrable(`https://${host}/`) === self) continue;
     if (SPAM_HOST_RE.test(host)) spamHosts.add(host);
   }
   // Two DISTINCT hosts, so one sponsor link to a casino resort is not enough.
@@ -249,13 +262,23 @@ export function detectDomainTakeover(html: string | null, opts: TakeoverOptions)
   // not a feed of long reads. CONTENT, because it is about what the page is.
   // Measured before shipping: 0 of the 500 promoter pages reading `ok` on
   // 2026-10-02 carry ≥ BLOG_INDEX_MIN_READTIMES of them; the specimen carries 4.
+  //
+  // OPE-1281 rework (2026-10-04) — the 10-02 version emitted these two signals
+  // for EVERY site and let bylines count on their own, and two real vendor
+  // companies were flagged ERROR: m5d.com (blog-index + bylined-posts — a
+  // company blog) and avalonpontoons.com (bylined-posts tipping a lone weak
+  // keyword over the 2-signal line), plus a chamber-of-commerce event page.
+  // Now: only on an ORGANIZER's site, and bylines only alongside a blog index —
+  // the content-farm shape. The pair is one content + one structural signal,
+  // which is already a verdict under the 2-signal rule below, so it needs no
+  // special case (a "decisive" flag here was tried and changed no outcome).
+  // Bylines alone are never emitted: real pages are full of them.
   const readTimes = (body.match(READ_TIME_RE) ?? []).length;
-  if (readTimes >= BLOG_INDEX_MIN_READTIMES) content.push(`blog-index:${readTimes}`);
-
-  // Bylined posts corroborate it — STRUCTURAL, since "Photos by Jane Smith" is
-  // an innocent byline on any real page. Never decides alone.
   const bylines = (body.match(BYLINE_RE) ?? []).length;
-  if (bylines >= 2) structural.push(`bylined-posts:${bylines}`);
+  if ((opts.entityKind ?? "organizer") === "organizer" && readTimes >= BLOG_INDEX_MIN_READTIMES) {
+    content.push(`blog-index:${readTimes}`);
+    if (bylines >= 2) structural.push(`bylined-posts:${bylines}`);
+  }
 
   // ── 5. the title does not name the entity at all (structural) ────────
   const names = [opts.entityName, ...(opts.aliases ?? [])].filter(

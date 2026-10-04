@@ -80,6 +80,8 @@ export function classifyVendorSite(
     entityName: ctx.businessName,
     requestedUrl: ctx.requestedUrl,
     finalUrl: probe.finalUrl,
+    // OPE-1281 rework — a company blog is not impersonation.
+    entityKind: "vendor",
   });
   if (takeover.takenOver) {
     return {
