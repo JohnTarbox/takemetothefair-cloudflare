@@ -669,3 +669,5 @@ export * from "./field-grounding";
 // OPE-1061 — the four-state pet_friendly field: write gate + display rules.
 export * from "./pet-policy";
 export * from "./gsc-export-row-query";
+// OPE-38/249/1295 — rule agreement + the promotable gate (dashboard AND live auto-apply).
+export * from "./promoter-rule-agreement";
