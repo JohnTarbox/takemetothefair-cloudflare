@@ -9,6 +9,7 @@ import { cache } from "react";
 import { eq, and } from "drizzle-orm";
 import { unsafeSlug } from "@takemetothefair/utils";
 import { getCloudflareDb } from "@/lib/cloudflare";
+import { withD1ReadLogged } from "@/lib/db/d1-resilience";
 import { eventSeries, events } from "@/lib/db/schema";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { parseOccurrenceYear, pickOccurrenceForYear } from "./occurrence-year";
@@ -17,22 +18,30 @@ export const resolveOccurrenceSlug = cache(
   async (seriesSlug: string, yearStr: string): Promise<string | null> => {
     const year = parseOccurrenceYear(yearStr);
     if (year === null) return null;
-
-    const db = getCloudflareDb();
-    const [series] = await db
-      .select({ id: eventSeries.id })
-      .from(eventSeries)
-      .where(eq(eventSeries.canonicalSlug, unsafeSlug(seriesSlug)))
-      .limit(1);
-    if (!series) return null;
-
-    // Few occurrences per series — match the start-year in JS rather than with
-    // a SQLite strftime predicate.
-    const occ = await db
-      .select({ slug: events.slug, startDate: events.startDate })
-      .from(events)
-      .where(and(eq(events.seriesId, series.id), isPublicEventStatus()));
-
-    return pickOccurrenceForYear(occ, year)?.slug ?? null;
+    // OPE-1301 — the series lookup failed on a D1 reset on 09-27
+    // (cumberland-county-fair/2026, old-wethersfield…/2026) with no retry and
+    // no degraded path. Retry-wrapped like the browse fetchers (OPE-790).
+    return withD1ReadLogged("lib/series/get-occurrence.ts:resolveOccurrenceSlug", () =>
+      resolveOnce(seriesSlug, year)
+    );
   }
 );
+
+async function resolveOnce(seriesSlug: string, year: number): Promise<string | null> {
+  const db = getCloudflareDb();
+  const [series] = await db
+    .select({ id: eventSeries.id })
+    .from(eventSeries)
+    .where(eq(eventSeries.canonicalSlug, unsafeSlug(seriesSlug)))
+    .limit(1);
+  if (!series) return null;
+
+  // Few occurrences per series — match the start-year in JS rather than with
+  // a SQLite strftime predicate.
+  const occ = await db
+    .select({ slug: events.slug, startDate: events.startDate })
+    .from(events)
+    .where(and(eq(events.seriesId, series.id), isPublicEventStatus()));
+
+  return pickOccurrenceForYear(occ, year)?.slug ?? null;
+}

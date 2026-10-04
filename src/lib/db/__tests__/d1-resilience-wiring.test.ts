@@ -155,3 +155,65 @@ describe("OPE-790 rework — degraded panel on a surviving platform blip, and on
     expect(read(file)).toContain("if (isD1PlatformFault(e)) return DEGRADED_METADATA;");
   });
 });
+
+/**
+ * OPE-1301 — the routes OPE-790 did not claim, found on live D1 resets:
+ * /blog/tag/[tag] (2026-10-04 14:09Z, two pages on the error boundary while
+ * getEvents in the same second was absorbed), and the series lookups on the
+ * event page and /events/<slug>/<year> (2026-09-27). These fetchers have no
+ * catch at all — a surviving error propagates raw, so it can never be
+ * swallowed into an empty default (the REL1' concern the FetchError assertion
+ * above protects).
+ */
+const OPE1301: Array<[string, string]> = [
+  ["src/app/blog/tag/[tag]/page.tsx", "app/blog/tag/[tag]/page.tsx:getPostsByTagSlug"],
+  ["src/lib/series/get-series-landing.ts", "lib/series/get-series-landing.ts:getSeriesLanding"],
+  ["src/lib/series/get-occurrence.ts", "lib/series/get-occurrence.ts:resolveOccurrenceSlug"],
+];
+
+describe("OPE-1301 — the blog-tag and series reads are retry-wrapped and degrade", () => {
+  it("examines exactly the three reads (landmark)", () => {
+    expect(OPE1301).toHaveLength(3);
+  });
+
+  it.each(OPE1301)("%s wraps %s", (file, source) => {
+    expect(read(file)).toContain(`withD1ReadLogged("${source}"`);
+  });
+
+  it.each(["src/app/blog/tag/[tag]/page.tsx", "src/app/events/[slug]/[year]/page.tsx"])(
+    "%s: page renders DegradedPanel behind isD1PlatformFault and re-throws the rest",
+    (file) => {
+      const full = read(file);
+      const src = full.slice(full.indexOf("export default async function"));
+      const at = src.indexOf("if (isD1PlatformFault(e))");
+      expect(at, "no platform-fault branch").toBeGreaterThan(-1);
+      const branch = src.slice(at, at + 260);
+      expect(branch).toContain("<DegradedPanel");
+      expect(branch).toContain("throw e;");
+    }
+  );
+
+  it.each(["src/app/blog/tag/[tag]/page.tsx", "src/app/events/[slug]/[year]/page.tsx"])(
+    "%s: metadata returns noindex on a surviving blip",
+    (file) => {
+      expect(read(file)).toContain("if (isD1PlatformFault(e)) return DEGRADED_METADATA;");
+    }
+  );
+
+  it("the event page and its metadata degrade the series-landing read too (it precedes getEvent's try)", () => {
+    const page = read("src/app/events/[slug]/page.tsx");
+    const landingAt = page.indexOf("landing = asOccurrence ? null : await getSeriesLanding(slug);");
+    expect(landingAt).toBeGreaterThan(-1);
+    // The read sits inside a try whose catch degrades.
+    const before = page.slice(Math.max(0, landingAt - 80), landingAt);
+    expect(before).toContain("try {");
+    const after = page.slice(landingAt, landingAt + 300);
+    expect(after).toContain("<DegradedPanel");
+
+    const meta = read("src/app/events/[slug]/event-detail-data.ts");
+    const mAt = meta.indexOf("landing = asOccurrence ? null : await getSeriesLanding(slug);");
+    expect(mAt).toBeGreaterThan(-1);
+    expect(meta.slice(Math.max(0, mAt - 80), mAt)).toContain("try {");
+    expect(meta.slice(mAt, mAt + 200)).toContain("return DEGRADED_METADATA;");
+  });
+});
