@@ -132,6 +132,30 @@ function collectNodes(value: unknown, out: Record<string, unknown>[]): void {
 
 /** Every `name` / `legalName` the page declares for an organization-type node. */
 export function declaredOrganizationNames(html: string | null): string[] {
+  return declaredNames(html, isOrganizationNode);
+}
+
+/**
+ * OPE-1270 (rework 2026-10-04) — a `WebSite` node's `name`: the site's own
+ * title for itself, i.e. its TRADING name. Squarespace fills Organization
+ * `legalName` / LocalBusiness `name` from its business-info panel, where a sole
+ * trader types their PERSONAL name — laikenmaehandmade.squarespace.com declares
+ * WebSite "Laiken Mae Handmade" (ours) but Organization/LocalBusiness "Laiken
+ * Flynn", and reading only the org nodes raised drift on an acceptance negative.
+ *
+ * ASYMMETRIC by design: a WebSite name can CLEAR drift (the site still calls
+ * itself what we call it), never RAISE it — a site title can be "Home" or a
+ * tagline, which is no evidence of a rebrand. And it clears only on an EXACT
+ * normalised match, never containment (see detectNameDrift).
+ */
+export function declaredWebsiteNames(html: string | null): string[] {
+  return declaredNames(html, (n) => typesOf(n).some((t) => /^website$/i.test(t)));
+}
+
+function declaredNames(
+  html: string | null,
+  accept: (node: Record<string, unknown>) => boolean
+): string[] {
   if (!html) return [];
   const names = new Set<string>();
   for (const m of html.matchAll(
@@ -146,7 +170,7 @@ export function declaredOrganizationNames(html: string | null): string[] {
     const nodes: Record<string, unknown>[] = [];
     collectNodes(parsed, nodes);
     for (const node of nodes) {
-      if (!isOrganizationNode(node)) continue;
+      if (!accept(node)) continue;
       for (const key of ["name", "legalName"]) {
         const v = node[key];
         if (typeof v === "string" && v.trim()) names.add(decodeEntities(v.trim()));
@@ -164,11 +188,18 @@ export interface NameDrift {
 }
 
 /**
- * Drift = the site declares at least one organization name and NONE of them is
- * the same business name as ours.
+ * Drift = the site declares at least one organization name and NONE of its
+ * names — organization or WebSite (which can only clear, see above) — is the
+ * same business name as ours.
  */
 export function detectNameDrift(ourName: string | null, html: string | null): NameDrift {
   const declared = declaredOrganizationNames(html);
   if (!ourName?.trim() || declared.length === 0) return { drift: null, declared };
-  return { drift: !declared.some((d) => sameBusinessName(ourName, d)), declared };
+  if (declared.some((d) => sameBusinessName(ourName, d))) return { drift: false, declared };
+  // A WebSite name clears only on an EXACT normalised match — not containment.
+  // Site titles are short ("Promethea" on Promethea Arts' own site), and the
+  // containment rule would let that short title clear a real rebrand.
+  const ours = compact(ourName);
+  const clearedBySiteTitle = declaredWebsiteNames(html).some((w) => compact(w) === ours);
+  return { drift: !clearedBySiteTitle, declared };
 }
