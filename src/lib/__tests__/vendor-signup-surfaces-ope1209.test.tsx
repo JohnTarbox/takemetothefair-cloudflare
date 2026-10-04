@@ -178,3 +178,52 @@ describe("the shared send rail threads the audience to the template", () => {
     expect((await send("weekend")).html).not.toContain("/newsletter/vendor");
   });
 });
+
+/**
+ * OPE-1209 (rework 2026-10-04) — the in-page block is LEGIBLE and says its name
+ * once. Seen in a real browser: the block wrapped the footer-styled form, so on
+ * every event page, blog post, /newsletter and /vendors the label, blurb and
+ * typed email rendered near-white (`text-footer-foreground`) on a light card,
+ * and the label + blurb duplicated the card's own heading.
+ */
+describe("legibility on light surfaces", () => {
+  const footerClass = (el: Element) => /\bfooter-foreground\b/.test(el.className);
+
+  it.each([
+    ["vendor", VENDOR_NEWSLETTER_NAME],
+    ["weekend", NEWSLETTER_NAME],
+  ] as const)("the %s block uses NO footer (light-on-dark) tokens anywhere", (aud, name) => {
+    const { container } = render(<NewsletterSignupBlock source="x" audience={aud} />);
+    expect([...container.querySelectorAll("*")].filter(footerClass)).toEqual([]);
+    // …and states its name exactly once visibly: the heading. The form's label
+    // is kept for screen readers only.
+    const label = container.querySelector("form label")!;
+    expect(label.textContent).toBe(name);
+    expect(label.className).toContain("sr-only");
+    expect(container.querySelector("form p")).toBeNull(); // no second blurb
+  });
+
+  it("the sr-only label still pairs with the input, and the input keeps its accessible name", () => {
+    const { container, getByLabelText } = render(
+      <NewsletterSignupBlock source="x" audience="vendor" />
+    );
+    const label = container.querySelector("form label") as HTMLLabelElement;
+    const input = container.querySelector("input[type=email]")!;
+    expect(label.htmlFor).toBe(input.id);
+    // aria-label wins the accessible-name computation (unchanged by this rework).
+    expect(getByLabelText("Email address")).toBe(input);
+  });
+
+  it("NO REGRESSION: the footer form (no tone) keeps its light-on-dark tokens and visible intro", () => {
+    const { container } = render(<NewsletterSignup />);
+    const label = container.querySelector("form label")!;
+    expect(label.className).not.toContain("sr-only");
+    expect(footerClass(label)).toBe(true);
+    expect(footerClass(container.querySelector("input[type=email]")!)).toBe(true);
+  });
+
+  it("/newsletter renders its form in surface tone", () => {
+    const src = readFileSync(join(process.cwd(), "src/app/newsletter/page.tsx"), "utf8");
+    expect(src).toContain('<NewsletterSignup source="newsletter-page" tone="surface" />');
+  });
+});
