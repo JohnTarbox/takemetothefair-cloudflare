@@ -77,6 +77,7 @@ import {
   type OwedHumanVerdict,
 } from "../email-handlers/owed-human.js";
 import { openObligationIfOwed } from "../email-handlers/open-obligation.js";
+import { heldSendReason } from "../inbound/replies-suppressed.js";
 import { isZeroConfidenceUnclear } from "../email-handlers/automated-mail.js";
 import { inboundEmails, adminActions, events } from "../schema.js";
 import { logError } from "../logger.js";
@@ -1301,6 +1302,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
                 // headers, because the sender's client may thread on either.
                 inReplyTo: inboundEmails.inReplyTo,
                 emailReferences: inboundEmails.emailReferences,
+                // OPE-954 — a replayed row sends nothing (heldSendReason).
+                repliesSuppressedReason: inboundEmails.repliesSuppressedReason,
               })
               .from(inboundEmails)
               .where(eq(inboundEmails.id, messageRowId))
@@ -1560,7 +1563,14 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             // vanished with no row is indistinguishable from one that was never
             // composed, and this whole ticket exists because a send path was
             // invisible.
-            if (!isAutoReplyEnabled(this.env)) {
+            // OPE-954 — the same gate also holds a row whose replies are
+            // suppressed (a replay); the ledger names whichever reason applies.
+            const heldReason = heldSendReason(
+              rows[0],
+              isAutoReplyEnabled(this.env),
+              AUTO_REPLY_HELD_REASON
+            );
+            if (heldReason) {
               await ledgerEmailSend(db, {
                 messageId: `reply-${messageRowId}`,
                 recipient: msg.to,
@@ -1568,13 +1578,13 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
                 subject: msg.subject,
                 status: "stubbed",
                 provider: "stub",
-                error: AUTO_REPLY_HELD_REASON,
+                error: heldReason,
                 inboundEmailId: messageRowId,
                 bodyHtml: msg.html,
                 bodyText: msg.text,
               });
               console.warn(
-                `[workflow:send-reply] auto-reply held (disabled) inbound=${messageRowId} kind=${replyKind}`
+                `[workflow:send-reply] auto-reply held (${heldReason}) inbound=${messageRowId} kind=${replyKind}`
               );
               return;
             }
@@ -1718,6 +1728,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
                   fromAddress: inboundEmails.fromAddress,
                   subject: inboundEmails.subject,
                   messageId: inboundEmails.messageId,
+                  // OPE-954 — a replayed row sends nothing (heldSendReason).
+                  repliesSuppressedReason: inboundEmails.repliesSuppressedReason,
                 })
                 .from(inboundEmails)
                 .where(eq(inboundEmails.id, messageRowId))
@@ -1750,7 +1762,12 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
 
               // Same gate as the ack path (OPE-626), and held mail is
               // LEDGERED rather than dropped for the same reason.
-              if (!isAutoReplyEnabled(this.env)) {
+              const decisionHeld = heldSendReason(
+                rows[0],
+                isAutoReplyEnabled(this.env),
+                AUTO_REPLY_HELD_REASON
+              );
+              if (decisionHeld) {
                 await ledgerEmailSend(db, {
                   messageId: ledgerKey,
                   recipient: msg.to,
@@ -1758,7 +1775,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
                   subject: msg.subject,
                   status: "stubbed",
                   provider: "stub",
-                  error: AUTO_REPLY_HELD_REASON,
+                  error: decisionHeld,
                   inboundEmailId: messageRowId,
                   bodyHtml: msg.html,
                   bodyText: msg.text,
@@ -1925,6 +1942,15 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             timeout: "10 seconds",
           },
           async () => {
+            // OPE-954 — a replay emails no one, operator included: the
+            // "a person is owed a reply" alarm would be about a message that
+            // was already handled the first time round.
+            const [flag] = await getDb(this.env.DB)
+              .select({ repliesSuppressedReason: inboundEmails.repliesSuppressedReason })
+              .from(inboundEmails)
+              .where(eq(inboundEmails.id, messageRowId))
+              .limit(1);
+            if (heldSendReason(flag, true, "")) return;
             const to = this.env.ALERT_EMAIL_TECHNICAL;
             if (!to || !this.env.EMAIL_JOBS) {
               await logError(this.env.DB, {

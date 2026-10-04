@@ -204,7 +204,9 @@ describe("workflow wiring (source-level: the fix is an ordering and a gate)", ()
     );
     const notify = at('"notify/owed-human"');
     expect(notify).toBeGreaterThan(at('"mark-done"'));
-    expect(SRC.slice(notify, notify + 1400)).toContain("source: OWED_HUMAN_NOTICE_SOURCE");
+    // 2200, not 1400: OPE-954 added the replay-suppression check at the top of
+    // this step, which moved the send further down. The send is unchanged.
+    expect(SRC.slice(notify, notify + 2200)).toContain("source: OWED_HUMAN_NOTICE_SOURCE");
     expect(OWED_HUMAN_STATUS).toBe("awaiting_human");
   });
 });
