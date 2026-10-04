@@ -1318,6 +1318,7 @@ const SCHEMA_SQL = `
     flagged_for_review INTEGER NOT NULL DEFAULT 0,
     parent_email_id TEXT,
     recovery_attempt_n INTEGER NOT NULL DEFAULT 0,
+    replies_suppressed_reason TEXT,
     salvage_notified_at INTEGER,
     -- K7.4 (analyst, 2026-05-31) — drizzle/0094 extract telemetry. See
     -- packages/db-schema/src/index.ts inboundEmails for column doc comments.

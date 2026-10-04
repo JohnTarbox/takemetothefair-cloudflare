@@ -5381,6 +5381,13 @@ export const inboundEmails = sqliteTable(
      *  (root-caused 2026-05-19 hamxposition.org NonRetryableError loop).
      *  Added drizzle/0082. */
     recoveryAttemptN: integer("recovery_attempt_n").notNull().default(0),
+    // OPE-954 (drizzle/0354) — when non-NULL, NO send path may email anyone
+    // about this row, and this text says why ("replay: …"). Lives on the ROW,
+    // not on one workflow run, because a run is not the only sender: the
+    // stale-inbound sweep re-dispatches a stuck row as a normal run, and its
+    // give-up path emails the submitter itself. Set by `replay_inbound_email`
+    // so a replay can never send a submitter another automated message.
+    repliesSuppressedReason: text("replies_suppressed_reason"),
     /** Categorical failure reason for submit-intent rows whose AI extract
      *  was reached but didn't yield a usable event. Values:
      *    - `'zero-events'`  — AI returned success with empty events[]
