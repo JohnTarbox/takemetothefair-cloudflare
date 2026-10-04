@@ -425,7 +425,13 @@ export const eventSeries = sqliteTable(
       .notNull()
       .default("OPEN"),
     createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
-    updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    // OPE-1291 — maintained on every drizzle update, like the entity tables
+    // (OPE-332's audit). A series/year page's ETag includes this; without it a
+    // series rename would leave the validator unchanged and a 304 would keep a
+    // crawler on the old name.
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .$defaultFn(() => new Date())
+      .$onUpdateFn(() => new Date()),
   },
   (table) => [
     index("idx_event_series_venue_id").on(table.venueId),

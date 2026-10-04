@@ -11,6 +11,10 @@ import {
   matchConditionalRoute,
   TEMPLATE_VERSION,
 } from "@/lib/conditional-get";
+import { parseOccurrenceYear, pickOccurrenceForYear } from "@/lib/series/occurrence-year";
+import { eventSeries } from "@/lib/db/schema";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 describe("matchConditionalRoute (OPE-332)", () => {
   it("matches the six public detail routes", () => {
@@ -30,11 +34,10 @@ describe("matchConditionalRoute (OPE-332)", () => {
     expect(matchConditionalRoute("/blog")).toBeNull();
   });
 
-  it("does NOT match deeper paths like /blog/tag/x or a series year", () => {
+  it("does NOT match deeper paths like /blog/tag/x", () => {
     // A tag index is not a blog post; giving it a post's validator would let
     // one entity's mtime speak for a page it doesn't control.
     expect(matchConditionalRoute("/blog/tag/fairs")).toBeNull();
-    expect(matchConditionalRoute("/events/skowhegan-fair/2026")).toBeNull();
   });
 
   it("does NOT match a dotted final segment (feed.xml lives under /blog)", () => {
@@ -44,6 +47,82 @@ describe("matchConditionalRoute (OPE-332)", () => {
   it("ignores unrelated prefixes rather than guessing", () => {
     expect(matchConditionalRoute("/admin/events")).toBeNull();
     expect(matchConditionalRoute("/dashboard/x")).toBeNull();
+  });
+});
+
+/**
+ * OPE-1291 — the series/year occurrence page. OPE-332 deliberately matched only
+ * two segments, and so gave no validator to /events/<series>/<year>, where 406
+ * of 469 upcoming APPROVED events (87%) are served.
+ */
+describe("matchConditionalRoute — series/year occurrence (OPE-1291)", () => {
+  it("matches /events/<series>/<year>, carrying the year", () => {
+    expect(matchConditionalRoute("/events/freeport-fall-festival/2026")).toEqual({
+      type: "event-occurrence",
+      slug: "freeport-fall-festival",
+      year: 2026,
+    });
+  });
+
+  it("does NOT match other three-segment shapes", () => {
+    expect(matchConditionalRoute("/events/skowhegan-fair/vendors")).toBeNull();
+    expect(matchConditionalRoute("/events/maine/portland")).toBeNull();
+    expect(matchConditionalRoute("/events/skowhegan-fair/26")).toBeNull();
+    expect(matchConditionalRoute("/events/skowhegan-fair/20261")).toBeNull();
+    expect(matchConditionalRoute("/vendors/acme/2026")).toBeNull();
+    expect(matchConditionalRoute("/events/x/y/2026")).toBeNull();
+  });
+
+  it("two-segment matching is unchanged (no year key)", () => {
+    expect(matchConditionalRoute("/events/skowhegan-fair")).toEqual({
+      type: "event",
+      slug: "skowhegan-fair",
+    });
+  });
+
+  it("the ETag names the year, so two years of one series never share a validator", () => {
+    const t = new Date("2026-09-01T00:00:00Z");
+    const a = buildEntityEtag("event-occurrence", "freeport-fall-festival", t, 2026);
+    const b = buildEntityEtag("event-occurrence", "freeport-fall-festival", t, 2027);
+    expect(a).toBe(
+      `W/"event-occurrence-freeport-fall-festival-2026-${t.getTime() / 1000}-v${TEMPLATE_VERSION}"`
+    );
+    expect(a).not.toBe(b);
+  });
+});
+
+describe("the occurrence the validator describes is the one the page renders (OPE-1291)", () => {
+  const occ = [
+    { slug: "ff-2025", startDate: new Date("2025-09-20T12:00:00Z") },
+    { slug: "ff-2026", startDate: new Date("2026-09-19T12:00:00Z") },
+    { slug: "undated", startDate: null },
+  ];
+  it("one shared picker, by UTC start year", () => {
+    expect(pickOccurrenceForYear(occ, 2026)?.slug).toBe("ff-2026");
+    expect(pickOccurrenceForYear(occ, 2024)).toBeUndefined();
+  });
+  it("year parsing rejects non-canonical strings exactly as the page does", () => {
+    expect(parseOccurrenceYear("2026")).toBe(2026);
+    expect(parseOccurrenceYear("02026")).toBeNull();
+    expect(parseOccurrenceYear("2026x")).toBeNull();
+  });
+  it("the page resolver and the middleware both use it (no second copy of the rule)", () => {
+    const resolver = readFileSync(join(process.cwd(), "src/lib/series/get-occurrence.ts"), "utf8");
+    const mw = readFileSync(join(process.cwd(), "src/middleware.ts"), "utf8");
+    expect(resolver).toContain("pickOccurrenceForYear(occ, year)");
+    expect(mw).toContain("pickOccurrenceForYear(occ, year)");
+    // Same population: public occurrences only, in both.
+    expect(resolver).toMatch(/eq\(events\.seriesId, series\.id\), isPublicEventStatus\(\)/);
+    expect(mw).toMatch(/eq\(events\.seriesId, series\.id\), isPublicEventStatus\(\)/);
+  });
+  it("the validator is the later of series and occurrence updated_at (the page renders both)", () => {
+    const mw = readFileSync(join(process.cwd(), "src/middleware.ts"), "utf8");
+    expect(mw).toContain("return latestOf(series.u, match.u);");
+  });
+  it("a series edit moves updated_at — otherwise a rename would 304 to the old name", () => {
+    expect(typeof (eventSeries.updatedAt as unknown as { onUpdateFn?: unknown }).onUpdateFn).toBe(
+      "function"
+    );
   });
 });
 

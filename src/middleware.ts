@@ -17,6 +17,8 @@ import {
   performers,
   performerSlugHistory,
 } from "@/lib/db/schema";
+import { isPublicEventStatus } from "@/lib/event-status";
+import { pickOccurrenceForYear } from "@/lib/series/occurrence-year";
 import { resolveVenueRedirect } from "@/lib/venues/slug-redirect";
 import { isPubliclyVisible, publicEventWhere, type EventLifecycle } from "@/lib/event-lifecycle";
 import {
@@ -866,7 +868,8 @@ export async function middleware(request: NextRequest) {
 async function loadEntityMtime(
   db: ReturnType<typeof drizzle>,
   type: ConditionalEntityType,
-  slug: string
+  slug: string,
+  year?: number
 ): Promise<Date | null | undefined> {
   const s = unsafeSlug(slug);
   // `undefined` = no such row (leave routing's answer alone); `null` = found
@@ -912,6 +915,26 @@ async function loadEntityMtime(
         .limit(1);
       return r ? r.u : undefined;
     }
+    case "event-occurrence": {
+      // OPE-1291 — the SAME row the page renders: resolveOccurrenceSlug's rule
+      // (series by canonical slug → public occurrences → start year), via the
+      // shared picker. The page also renders series fields (name, canonical
+      // slug), so the validator is the later of the two rows' updated_at.
+      if (year === undefined) return undefined;
+      const [series] = await db
+        .select({ id: eventSeries.id, u: eventSeries.updatedAt })
+        .from(eventSeries)
+        .where(eq(eventSeries.canonicalSlug, s))
+        .limit(1);
+      if (!series) return undefined;
+      const occ = await db
+        .select({ startDate: events.startDate, u: events.updatedAt })
+        .from(events)
+        .where(and(eq(events.seriesId, series.id), isPublicEventStatus()));
+      const match = pickOccurrenceForYear(occ, year);
+      if (!match) return undefined; // the page 404s — no validator
+      return latestOf(series.u, match.u);
+    }
     case "blog": {
       const [r] = await db
         .select({ u: blogPosts.updatedAt })
@@ -921,6 +944,13 @@ async function loadEntityMtime(
       return r ? r.u : undefined;
     }
   }
+}
+
+/** Later of two nullable timestamps; null only when both are. */
+function latestOf(a: Date | null, b: Date | null): Date | null {
+  if (!a) return b;
+  if (!b) return a;
+  return a.getTime() >= b.getTime() ? a : b;
 }
 
 async function applyConditionalGet(
@@ -952,14 +982,14 @@ async function applyConditionalGet(
 
   let updatedAt: Date | null | undefined;
   try {
-    updatedAt = await loadEntityMtime(drizzle(d1), matched.type, matched.slug);
+    updatedAt = await loadEntityMtime(drizzle(d1), matched.type, matched.slug, matched.year);
   } catch {
     // A validator is an optimisation; never fail a page render for one.
     return response;
   }
   if (updatedAt === undefined) return response;
 
-  const etag = buildEntityEtag(matched.type, matched.slug, updatedAt);
+  const etag = buildEntityEtag(matched.type, matched.slug, updatedAt, matched.year);
 
   if (
     isNotModified({

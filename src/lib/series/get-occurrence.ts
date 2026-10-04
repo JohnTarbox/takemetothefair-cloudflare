@@ -11,11 +11,12 @@ import { unsafeSlug } from "@takemetothefair/utils";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { eventSeries, events } from "@/lib/db/schema";
 import { isPublicEventStatus } from "@/lib/event-status";
+import { parseOccurrenceYear, pickOccurrenceForYear } from "./occurrence-year";
 
 export const resolveOccurrenceSlug = cache(
   async (seriesSlug: string, yearStr: string): Promise<string | null> => {
-    const year = Number.parseInt(yearStr, 10);
-    if (!Number.isInteger(year) || String(year) !== yearStr) return null;
+    const year = parseOccurrenceYear(yearStr);
+    if (year === null) return null;
 
     const db = getCloudflareDb();
     const [series] = await db
@@ -32,7 +33,6 @@ export const resolveOccurrenceSlug = cache(
       .from(events)
       .where(and(eq(events.seriesId, series.id), isPublicEventStatus()));
 
-    const match = occ.find((o) => o.startDate && new Date(o.startDate).getUTCFullYear() === year);
-    return match?.slug ?? null;
+    return pickOccurrenceForYear(occ, year)?.slug ?? null;
   }
 );
