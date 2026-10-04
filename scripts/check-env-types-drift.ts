@@ -86,7 +86,13 @@ export const TARGETS = [
   { config: "mcp-server/wrangler.toml", types: "mcp-server/worker-env.d.ts", iface: "WorkerEnv" },
 ] as const;
 
-/** Types as the config alone implies them: a temp dir holding only the config. */
+/**
+ * Types as the config alone implies them: a temp dir holding only the config.
+ *
+ * OPE-1292 exception, deliberately: this copies the FILE and lets `wrangler
+ * types` read it, so wrangler's own parser is the reader. It never matches a
+ * value, so it does not use scripts/lib/wrangler-config.
+ */
 function regenerate(configPath: string, iface: string): string {
   const dir = mkdtempSync(join(tmpdir(), "env-types-"));
   try {
