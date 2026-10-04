@@ -247,7 +247,11 @@ export type BlogOutboundTargetType =
   // in the meter because only detail links classified.
   | "EVENT_DIRECTORY"
   | "VENDOR_DIRECTORY"
-  | "VENUE_DIRECTORY";
+  | "VENUE_DIRECTORY"
+  // OPE-1298 — the claim CTA (/for-vendors) OPE-100 added beside the directory
+  // CTA. It classified as nothing, so 48 days of the treatment measured only
+  // half of what it put on the page.
+  | "VENDOR_CLAIM";
 
 /** First path segment → target type. Matches the prefix-to-type contract
  *  the GA4 custom dimensions will be filtered on (see
@@ -305,6 +309,11 @@ export function classifyBlogOutboundLink(
   if (d) {
     const targetType = DIRECTORY_TYPE[d[1]];
     return targetType ? { targetType, targetSlug: href } : null;
+  }
+  // OPE-1298 — the vendor claim page. targetSlug keeps the full href so any
+  // campaign query on the CTA survives into the event.
+  if (/^\/for-vendors(?:[/?#]|$)/.test(href)) {
+    return { targetType: "VENDOR_CLAIM", targetSlug: href };
   }
   return null;
 }
