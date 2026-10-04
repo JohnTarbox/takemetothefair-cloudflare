@@ -75,7 +75,9 @@ import { SeriesLandingPage } from "@/components/series/series-landing-page";
 import { buildSuperEventRef } from "@/lib/series/series-schema-org";
 // K46 — getEvent + buildEventMetadata moved to a sibling module so the /year
 // occurrence route can share them (Next forbids extra exports from page.tsx).
-import { getEvent, buildEventMetadata } from "./event-detail-data";
+import { getEvent, buildEventMetadata, countEventView } from "./event-detail-data";
+import { isD1PlatformFault } from "@/lib/db/degraded";
+import { DegradedPanel } from "@/components/layout/degraded-panel";
 import { ShareButtons } from "@/components/ShareButtons";
 import { PrintButton } from "@/components/print/PrintButton";
 // PRINT1 (Dev-Email-2026-06-08 §B): the v1 standalone <PrintEventMap> +
@@ -459,11 +461,24 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
     return <SeriesLandingPage landing={landing} now={new Date()} visitorGuides={visitorGuides} />;
   }
 
-  const event = await getEvent(slug);
+  let event: Awaited<ReturnType<typeof getEvent>>;
+  try {
+    event = await getEvent(slug);
+  } catch (e) {
+    // OPE-790 rework (John, 10-04) — an honest degraded panel, not the error
+    // boundary. Only a platform blip; our own query defects still throw.
+    if (isD1PlatformFault(e)) {
+      return <DegradedPanel what="this event" retryHref={`/events/${slug}`} />;
+    }
+    throw e;
+  }
 
   if (!event) {
     notFound();
   }
+
+  // OPE-790 rework — counted here, once, outside getEvent's retry.
+  await countEventView(event.id);
 
   // OPE-114 — CONFIRMED performer appearances for the "Who's Performing" block +
   // the schema.org `performer` emission. emit_performer_subevents is a global

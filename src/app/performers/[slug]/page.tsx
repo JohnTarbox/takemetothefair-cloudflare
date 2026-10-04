@@ -22,6 +22,9 @@ import {
   eventSeries,
 } from "@/lib/db/schema";
 import { eq, and, lt, inArray, sql } from "drizzle-orm";
+import { withD1ReadLogged } from "@/lib/db/d1-resilience";
+import { DEGRADED_METADATA, isD1PlatformFault } from "@/lib/db/degraded";
+import { DegradedPanel } from "@/components/layout/degraded-panel";
 import { occurrenceUrl } from "@/lib/series/series-schema-org";
 import { SITE_URL } from "@takemetothefair/constants";
 import { isPublicEventStatus } from "@/lib/event-status";
@@ -80,7 +83,40 @@ const CATEGORY_LABEL: Record<string, string> = {
   OTHER: "Entertainment",
 };
 
-async function getPerformer(slug: string) {
+/**
+ * OPE-790 rework — one jittered retry on a Cloudflare-side D1 blip (a performer
+ * page hit "Network connection lost" on 10-04). Wraps a PURE read: the view
+ * counter lives in `countPerformerView`, never retried.
+ */
+function getPerformer(slug: string) {
+  return withD1ReadLogged("app/performers/[slug]/page.tsx:getPerformer", () =>
+    getPerformerOnce(slug)
+  );
+}
+
+/**
+ * OPE-796 — count the view (performers.view_count feeds the weekly digest's
+ * ORDER BY). OPE-790 rework: once per render, from the page, OUTSIDE the retry,
+ * best-effort. It used to run inside getPerformer, which generateMetadata also
+ * calls, so every entity counted twice per render — deliberately uniform
+ * (OPE-796). Events, vendors and performers all moved to once-per-render
+ * TOGETHER on 2026-10-04, so cross-entity comparison stays sound.
+ *
+ * RAW SQL DELIBERATELY (OPE-332; scripts/check-view-counters-raw-sql.ts):
+ * performers.updated_at carries `$onUpdateFn` and is the page's validator and
+ * sitemap <lastmod>; a view is not an edit.
+ */
+async function countPerformerView(performerId: string): Promise<void> {
+  try {
+    await getCloudflareDb().run(
+      sql`UPDATE performers SET view_count = COALESCE(view_count, 0) + 1 WHERE id = ${performerId}`
+    );
+  } catch (e) {
+    console.warn(`[performer-detail] view count skipped for ${performerId}:`, e);
+  }
+}
+
+async function getPerformerOnce(slug: string) {
   const db = getCloudflareDb();
   try {
     const rows = await db
@@ -152,28 +188,8 @@ async function getPerformer(slug: string) {
 
     const [upcomingEvents, pastEvents] = await Promise.all([loadEvents(true), loadEvents(false)]);
 
-    // OPE-796 — count the view. `performers.view_count` has existed since
-    // OPE-112 and was read by the weekly digest's `ORDER BY view_count DESC`,
-    // but nothing ever wrote it: 0 across all 309 rows, so that ORDER BY was an
-    // arbitrary tie and the digest carried the same three pages for three runs.
-    //
-    // RAW SQL DELIBERATELY (OPE-332) — `performers.updated_at` carries
-    // `$onUpdateFn`, so a Drizzle `.update(performers)` would stamp it. That
-    // column is the page's HTTP validator AND its sitemap <lastmod>, so
-    // counting a view through Drizzle would kill the 304 path and tell Google
-    // every performer changed on every view. A view is not an edit.
-    // `scripts/check-view-counters-raw-sql.ts` enforces this.
-    //
-    // ⚠️ Placed inside `getPerformer`, which `generateMetadata` ALSO calls, so
-    // one request increments twice. That is deliberate: it is exactly what
-    // `getVendor` and `getEvent` already do, and the ticket asks for the vendor
-    // semantics rather than a second convention. Every entity therefore carries
-    // the same 2x multiplier, so both within-entity ordering (what the digest
-    // needs) and cross-entity comparison stay sound. The absolute number is not
-    // a visit count and must not be reported as one — noted on OPE-796.
-    await db.run(
-      sql`UPDATE performers SET view_count = COALESCE(view_count, 0) + 1 WHERE id = ${performer.id}`
-    );
+    // OPE-790 rework — the view-count UPDATE moved out of this read into
+    // `countPerformerView`, called once by the page outside the retry (see there).
 
     return { ...performer, upcomingEvents, pastEvents: pastEvents.slice(0, 12) };
   } catch (e) {
@@ -190,7 +206,14 @@ async function getPerformer(slug: string) {
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
-  const performer = await getPerformer(slug);
+  let performer: Awaited<ReturnType<typeof getPerformer>>;
+  try {
+    performer = await getPerformer(slug);
+  } catch (e) {
+    // OPE-790 rework — a D1 blip that survived the retry: noindex, not a crash.
+    if (isD1PlatformFault(e)) return DEGRADED_METADATA;
+    throw e;
+  }
   if (!performer) return { title: "Performer Not Found" };
 
   const category = performer.actCategory ? CATEGORY_LABEL[performer.actCategory] : null;
@@ -219,8 +242,21 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function PerformerDetailPage({ params }: Props) {
   const { slug } = await params;
-  const performer = await getPerformer(slug);
+  let performer: Awaited<ReturnType<typeof getPerformer>>;
+  try {
+    performer = await getPerformer(slug);
+  } catch (e) {
+    // OPE-790 rework (John, 10-04) — an honest degraded panel, not the error
+    // boundary. Only a platform blip; our own query defects still throw.
+    if (isD1PlatformFault(e)) {
+      return <DegradedPanel what="this performer" retryHref={`/performers/${slug}`} />;
+    }
+    throw e;
+  }
   if (!performer) notFound();
+
+  // OPE-790 rework — counted here, once, outside getPerformer's retry.
+  await countPerformerView(performer.id);
 
   // OPE-116 — claim + enhanced-profile state (customer-facing surface).
   const session = await auth();

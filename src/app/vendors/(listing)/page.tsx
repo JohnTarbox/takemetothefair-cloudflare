@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import { isD1PlatformFault } from "@/lib/db/degraded";
+import { DegradedPanel } from "@/components/layout/degraded-panel";
 import { searchSlugForm } from "@takemetothefair/utils";
 import Link from "next/link";
 import { Search, X, Heart, Calendar } from "lucide-react";
@@ -559,11 +561,25 @@ export default async function VendorsPage({
 
   const favoriteUserId = isLoggedIn && params.favorites === "true" ? session.user.id : undefined;
 
-  const [vendorList, vendorTypes, featuredVendors] = await Promise.all([
-    getVendors(params, favoriteUserId),
-    getVendorTypes(),
-    getFeaturedVendors(params.type),
-  ]);
+  let loaded: [
+    Awaited<ReturnType<typeof getVendors>>,
+    Awaited<ReturnType<typeof getVendorTypes>>,
+    Awaited<ReturnType<typeof getFeaturedVendors>>,
+  ];
+  try {
+    loaded = await Promise.all([
+      getVendors(params, favoriteUserId),
+      getVendorTypes(),
+      getFeaturedVendors(params.type),
+    ]);
+  } catch (e) {
+    // OPE-790 rework (John, 10-04) — an honest degraded panel, not the error
+    // boundary, when a D1 platform blip survives the retry. Our own query
+    // defects still throw.
+    if (isD1PlatformFault(e)) return <DegradedPanel what="vendors" retryHref="/vendors" />;
+    throw e;
+  }
+  const [vendorList, vendorTypes, featuredVendors] = loaded;
 
   const currentPage = Math.max(1, parseInt(params.page ?? "1", 10) || 1);
   const totalCount = vendorList.length;

@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import { isD1PlatformFault } from "@/lib/db/degraded";
+import { DegradedPanel } from "@/components/layout/degraded-panel";
 import { Suspense } from "react";
 import Link from "next/link";
 import { Search, Filter, Store, Heart, X } from "lucide-react";
@@ -975,11 +977,26 @@ export default async function EventsPage({
   // (Month-only) instead of the legacy client calendar. Default OFF → no change.
   const useSsrCalendar = viewMode === "calendar" && isCal1SsrMonthEnabled();
   const cal2Enabled = isCal2ViewsEnabled();
-  const [{ events: eventsList, total, page, limit }, categories, states] = await Promise.all([
-    getEvents(params, vendorId, favoriteUserId, isVendor || session?.user?.role === "ADMIN"),
-    getCategories(),
-    getStates(),
-  ]);
+  let loaded: [
+    Awaited<ReturnType<typeof getEvents>>,
+    Awaited<ReturnType<typeof getCategories>>,
+    Awaited<ReturnType<typeof getStates>>,
+  ];
+  try {
+    loaded = await Promise.all([
+      getEvents(params, vendorId, favoriteUserId, isVendor || session?.user?.role === "ADMIN"),
+      getCategories(),
+      getStates(),
+    ]);
+  } catch (e) {
+    // OPE-790 rework (John, 10-04) — an honest degraded panel, not the error
+    // boundary, when a D1 platform blip survives the retry. Our own query
+    // defects still throw. (No noindex here: this route's metadata cannot see
+    // the failure — see the OPE-790 receipt.)
+    if (isD1PlatformFault(e)) return <DegradedPanel what="events" retryHref="/events" />;
+    throw e;
+  }
+  const [{ events: eventsList, total, page, limit }, categories, states] = loaded;
 
   const totalPages = Math.ceil(total / limit);
 

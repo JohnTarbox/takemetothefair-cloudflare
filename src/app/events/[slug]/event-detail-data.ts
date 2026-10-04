@@ -38,6 +38,7 @@ import { getSeriesLanding } from "@/lib/series/get-series-landing";
 import { seriesHubCanonicalPath } from "@/lib/series/occurrence-view";
 import { chunkedInArray } from "@takemetothefair/utils";
 import { withD1ReadLogged } from "@/lib/db/d1-resilience";
+import { DEGRADED_METADATA, isD1PlatformFault } from "@/lib/db/degraded";
 
 /**
  * OPE-790 — one jittered retry on a Cloudflare-side D1 blip before the failure
@@ -47,6 +48,26 @@ import { withD1ReadLogged } from "@/lib/db/d1-resilience";
  */
 export function getEvent(slug: string) {
   return withD1ReadLogged("app/events/[slug]/page.tsx:getEvent", () => getEventOnce(slug));
+}
+
+/**
+ * OPE-790 rework — count one page view. Called ONCE per render, by the page
+ * (not by generateMetadata), OUTSIDE `getEvent`'s retry, and best-effort: a
+ * view counter is never worth an error page, and is never retried (a retried
+ * write can apply twice).
+ *
+ * RAW SQL DELIBERATELY (OPE-332). `events.updatedAt` carries `$onUpdateFn`, so
+ * a Drizzle `.update(events)` would stamp updated_at — the HTTP validator for
+ * this page — on every view, and the 304 path could never fire.
+ */
+export async function countEventView(eventId: string): Promise<void> {
+  try {
+    await getCloudflareDb().run(
+      sql`UPDATE events SET view_count = COALESCE(view_count, 0) + 1 WHERE id = ${eventId}`
+    );
+  } catch (e) {
+    console.warn(`[event-detail] view count skipped for ${eventId}:`, e);
+  }
 }
 
 async function getEventOnce(slug: string) {
@@ -166,17 +187,13 @@ async function getEventOnce(slug: string) {
       )
       .orderBy(eventApplications.lane, eventApplications.department);
 
-    // Increment view count.
-    //
-    // RAW SQL DELIBERATELY (OPE-332). `events.updatedAt` now carries
-    // `$onUpdateFn`, so any Drizzle `.update(events)` also stamps updated_at —
-    // and updated_at is the HTTP validator for this page. Routing a per-view
-    // counter through Drizzle would therefore invalidate the validator on every
-    // single page view, so the 304 path could never fire. A view is not a
-    // content change; this is the one write that must not say it is.
-    await db.run(
-      sql`UPDATE events SET view_count = COALESCE(view_count, 0) + 1 WHERE id = ${eventData.events.id}`
-    );
+    // OPE-790 rework — the view-count UPDATE used to run HERE, inside the
+    // function `getEvent` retries. So the retried "read" contained a write: a
+    // D1 timeout that committed and reported failure (the very class retried)
+    // could count a view twice, and a failed COUNTER took the page down — both
+    // absorbed blips on 10-03/10-04 were this UPDATE. It also ran twice per
+    // render (generateMetadata and the page both call getEvent). It now lives
+    // in `countEventView`, called once by the page, outside the retry.
 
     // venue/promoter are the lite projection from eventJoinProjection;
     // cast back to the schema row type so consumer prop types compile
@@ -303,7 +320,14 @@ export async function buildEventMetadata(slug: string, asOccurrence = false): Pr
     };
   }
 
-  const event = await getEvent(slug);
+  let event: Awaited<ReturnType<typeof getEvent>>;
+  try {
+    event = await getEvent(slug);
+  } catch (e) {
+    // OPE-790 rework — a D1 blip that survived the retry: noindex, not a crash.
+    if (isD1PlatformFault(e)) return DEGRADED_METADATA;
+    throw e;
+  }
 
   if (!event) {
     // MIG4 — notFound() here renders the canonical global 404 page
