@@ -89,6 +89,7 @@ import {
 import { hasMultiIntentOrSpecialSignal, isReplyToOurThread } from "./intent-fastpath.js";
 import { isDenylistedHost } from "./url-denylist.js";
 import { resolveSenderIdentity } from "./inbound/resolve-sender-identity.js";
+import { decideSolicitationHold } from "./email-handlers/solicitation-hold.js";
 import {
   parseEmailAuth,
   parseEmailAuthDetail,
@@ -516,6 +517,47 @@ export async function handleInboundEmail(
       return;
     }
 
+    // 1c. OPE-278 — an operator-BLOCKED sender, or an attendee-list broker by
+    //     sender token / subject shape, is held here: no classifier, no
+    //     workflow, no ack. Before this, `blocked` only suppressed the UNROUTED
+    //     follow-up question, and a broker on a fresh address re-ran the whole
+    //     gauntlet (one got a support-ack through a classifier timeout). The
+    //     trust lookup is hoisted here and reused by the trusted fast-path below.
+    const senderTrust = await lookupSenderTrust(env.DB, fromAddr);
+    const solicitation = decideSolicitationHold({ senderTrust, subject, fromAddr });
+    if (solicitation) {
+      try {
+        await insertAuditNoopRow(getDb(env.DB), {
+          ...heldTerminalArgs,
+          reason: solicitation.reason,
+          disposition: {
+            intent: "held-automated",
+            status: "held-automated",
+            routingSource: `solicitation:${solicitation.kind}`,
+            // A pattern hold is reviewable in case the shape ever catches a
+            // real organizer; an explicit block is the operator's own decision.
+            flagged: solicitation.kind === "list-broker" ? 1 : 0,
+          },
+        });
+      } catch (err) {
+        await logError(env.DB, {
+          source: SOURCE,
+          message: "failed to insert solicitation-held row",
+          error: err,
+          sessionId,
+          context: { from: fromAddr, to: toAddr, reason: solicitation.reason },
+        }).catch(() => {});
+      }
+      await logError(env.DB, {
+        level: "info",
+        source: SOURCE,
+        message: `solicitation held (no reply, no event): ${solicitation.reason}`,
+        sessionId,
+        context: { from: fromAddr, to: toAddr, subject, reason: solicitation.reason },
+      }).catch(() => {});
+      return;
+    }
+
     // 2. Rate limit (silent drop on hit — anti-reflection)
     // Tiered: ADMIN/PROMOTER/VENDOR/USER verified senders get higher
     // daily allowances than the anonymous floor. See ROLE_LIMITS and
@@ -575,7 +617,7 @@ export async function handleInboundEmail(
     // 3b. Look up sender trust tier (B6, drizzle/0075). Drives the
     //     trusted-sender fast-path decision below. Failure-safe: any
     //     lookup error treats the sender as 'unknown'.
-    const senderTrust = await lookupSenderTrust(env.DB, fromAddr);
+    //     (Hoisted to step 1c — OPE-278 — and reused here.)
 
     // 3b-ii. WS3e (2026-06-11) — verify the message actually authenticated
     //     before the trusted fast-path honors a (spoofable) From address.
