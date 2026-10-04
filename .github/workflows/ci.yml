@@ -234,6 +234,45 @@ jobs:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-${{ steps.playwright-version.outputs.version }}-chromium-webkit
 
+      # OPE-1287 — cache the apt .debs the Playwright installers fetch. The
+      # browser cache above holds BINARIES only; the ~180 system packages
+      # (`Need to get 125 MB of archives`) were downloaded from the Azure
+      # Ubuntu mirror on every run. On a healthy day that is ~25s. On
+      # 2026-10-01/02 three push-CI runs timed out at 10 minutes, and the log
+      # shows it was NOT a hang: packages were still arriving, at ~75 KB/s
+      # (the 7.5 MB fonts-wqy-zenhei took 96s), so 125 MB needed ~28 minutes.
+      # A retry would have hit the same slow mirror; a timeout raise would
+      # have spent 28 minutes. Serving the debs from the Actions cache takes
+      # the mirror out of the download path, leaving only `apt-get update`.
+      #
+      # apt-get installs a matching .deb already present in
+      # /var/cache/apt/archives instead of downloading it, so seeding that
+      # directory is all the install step needs. The key carries the runner
+      # image version (debs track the image's package versions); the
+      # restore-keys fall back to the previous image's debs, of which most
+      # are still current, and apt fetches only the difference.
+      - name: Resolve runner image version
+        id: runner-image
+        run: echo "version=${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright apt packages
+        id: playwright-apt-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/playwright-apt-debs
+          key: ${{ runner.os }}-playwright-apt-${{ steps.playwright-version.outputs.version }}-chromium-webkit-${{ steps.runner-image.outputs.version }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-apt-${{ steps.playwright-version.outputs.version }}-chromium-webkit-
+
+      # Best-effort: a missing or empty cache must never fail the job — the
+      # install step below simply downloads what is not already present.
+      - name: Seed apt archive from cache
+        run: |
+          shopt -s nullglob
+          debs=(~/.cache/playwright-apt-debs/*.deb)
+          echo "seeding ${#debs[@]} cached .deb file(s) into /var/cache/apt/archives"
+          if (( ${#debs[@]} )); then sudo cp "${debs[@]}" /var/cache/apt/archives/ || true; fi
+
       # OPE-361 — webkit as well as chromium. The /register mobile-layout bug was
       # reported on an iPhone and desktop-width Chromium testing could not see
       # it; the mobile-safari project (iPhone 13 profile) is what covers that
@@ -278,6 +317,20 @@ jobs:
         if: steps.playwright-cache.outputs.cache-hit == 'true'
         timeout-minutes: 10
         run: npx playwright install-deps chromium webkit
+
+      # Copy what apt fetched back into the cached path. Only on a non-exact
+      # hit: an exact hit already holds this set, and re-saving is a no-op the
+      # cache action would skip anyway. The count is logged so a run where apt
+      # kept nothing (e.g. an image that cleans its archive) is visible in the
+      # log rather than silently caching an empty directory.
+      - name: Collect apt packages for cache
+        if: steps.playwright-apt-cache.outputs.cache-hit != 'true'
+        run: |
+          shopt -s nullglob
+          mkdir -p ~/.cache/playwright-apt-debs
+          debs=(/var/cache/apt/archives/*.deb)
+          echo "collecting ${#debs[@]} .deb file(s) for the apt cache"
+          if (( ${#debs[@]} )); then cp "${debs[@]}" ~/.cache/playwright-apt-debs/; fi
 
       # mobile-safari is testMatch-scoped to *-mobile-*.spec.ts, so this adds
       # ~8 tests rather than a fourth full pass of the suite.
@@ -338,6 +391,33 @@ jobs:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-${{ steps.playwright-version.outputs.version }}-chromium
 
+      # OPE-1287 — the same apt .deb cache as the E2E job; see the reasoning
+      # recorded there. Same mirror, same runners, so fixing one of the two
+      # would be this repo's most-repeated defect shape. Separate key: the
+      # chromium-only deps set is a subset, and a shared key would let the
+      # smaller set register as an exact hit for E2E.
+      - name: Resolve runner image version
+        id: runner-image
+        run: echo "version=${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright apt packages
+        id: playwright-apt-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/playwright-apt-debs
+          key: ${{ runner.os }}-playwright-apt-${{ steps.playwright-version.outputs.version }}-chromium-${{ steps.runner-image.outputs.version }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-apt-${{ steps.playwright-version.outputs.version }}-chromium-
+
+      # Best-effort: a missing or empty cache must never fail the job — the
+      # install step below simply downloads what is not already present.
+      - name: Seed apt archive from cache
+        run: |
+          shopt -s nullglob
+          debs=(~/.cache/playwright-apt-debs/*.deb)
+          echo "seeding ${#debs[@]} cached .deb file(s) into /var/cache/apt/archives"
+          if (( ${#debs[@]} )); then sudo cp "${debs[@]}" /var/cache/apt/archives/ || true; fi
+
       - name: Install Playwright browsers
         if: steps.playwright-cache.outputs.cache-hit != 'true'
         timeout-minutes: 10
@@ -352,6 +432,20 @@ jobs:
         if: steps.playwright-cache.outputs.cache-hit == 'true'
         timeout-minutes: 10
         run: npx playwright install-deps chromium
+
+      # Copy what apt fetched back into the cached path. Only on a non-exact
+      # hit: an exact hit already holds this set, and re-saving is a no-op the
+      # cache action would skip anyway. The count is logged so a run where apt
+      # kept nothing (e.g. an image that cleans its archive) is visible in the
+      # log rather than silently caching an empty directory.
+      - name: Collect apt packages for cache
+        if: steps.playwright-apt-cache.outputs.cache-hit != 'true'
+        run: |
+          shopt -s nullglob
+          mkdir -p ~/.cache/playwright-apt-debs
+          debs=(/var/cache/apt/archives/*.deb)
+          echo "collecting ${#debs[@]} .deb file(s) for the apt cache"
+          if (( ${#debs[@]} )); then cp "${debs[@]}" ~/.cache/playwright-apt-debs/; fi
 
       - name: Run smoke tests
         run: npm run test:smoke
