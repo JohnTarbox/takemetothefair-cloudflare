@@ -79,7 +79,11 @@ import {
 } from "@takemetothefair/constants";
 import { emitExtractionFault } from "../faults/extraction-emitter.js";
 import { recordSlugRename } from "../slug-history.js";
-import { geocodeNewVenueViaMainApp } from "../venues/geocode-new.js";
+import {
+  geocodeNewVenueViaMainApp,
+  recordNewVenueGeocodeRefusal,
+  type NewVenueGeocodeVerdict,
+} from "../venues/geocode-new.js";
 import { checkDuplicateViaMainApp } from "../duplicates/check-duplicate.js";
 import {
   EVENT_STATUS_ENUM,
@@ -4395,8 +4399,29 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       // OPE-1180 — never for a FORMER venue: with no real address the geocoder
       // can only offer a city centroid, which is exactly the fabricated
       // "Montpelier Fairgrounds" pin. A FORMER site is placed by hand or not at all.
-      if (!isFormer && (params.latitude == null || params.longitude == null)) {
-        await geocodeNewVenueViaMainApp(env, venueId);
+      //
+      // OPE-408 (10-04) — the verdict is RETURNED and a refusal RECORDED. It used
+      // to be discarded: `dd7c30cb` was refused, the session never saw it, and
+      // an event created there 20s later lost seven on-site photos the next day.
+      let geocode: NewVenueGeocodeVerdict;
+      if (isFormer) {
+        geocode = {
+          pinned: params.latitude != null && params.longitude != null,
+          status: "skipped-former",
+          reason: "FORMER venues are never auto-geocoded (OPE-1180)",
+          candidate: null,
+        };
+      } else if (params.latitude != null && params.longitude != null) {
+        geocode = { pinned: true, status: "caller-supplied", reason: null, candidate: null };
+      } else {
+        geocode = await geocodeNewVenueViaMainApp(env, venueId);
+        await recordNewVenueGeocodeRefusal(
+          db,
+          venueId,
+          geocode,
+          "mcp:create_venue",
+          auth.userId ?? null
+        );
       }
 
       return {
@@ -4408,6 +4433,17 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
             name: params.name,
             location: `${params.city}, ${params.state.toUpperCase()}`,
             status: params.status,
+            geocode,
+            ...(geocode.pinned || isFormer
+              ? {}
+              : {
+                  warning:
+                    `Venue saved WITHOUT a map pin (${geocode.status}: ${geocode.reason}). ` +
+                    "Photo intake matches by GPS, so on-site photos cannot attach to events here until it is pinned. " +
+                    (geocode.candidate
+                      ? `Google's candidate: "${geocode.candidate}" — if that is this venue, run venues_geocode with force: true.`
+                      : "Correct the address, or set latitude/longitude with update_venue."),
+                }),
           }),
         ],
       };

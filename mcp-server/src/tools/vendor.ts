@@ -28,7 +28,11 @@ import {
   unsafeSlug,
   coerceVenueNameAtIngest,
 } from "../helpers.js";
-import { geocodeNewVenueViaMainApp } from "../venues/geocode-new.js";
+import {
+  geocodeNewVenueViaMainApp,
+  recordNewVenueGeocodeRefusal,
+  type NewVenueGeocodeVerdict,
+} from "../venues/geocode-new.js";
 import { checkDuplicateViaMainApp } from "../duplicates/check-duplicate.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
@@ -870,6 +874,8 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
       // ── Venue matching / creation ──────────────────────────────────
       let venueId: string | null = null;
       let venueResult: { matched: boolean; venueId: string; name: string } | null = null;
+      // OPE-408 — set only when this call CREATED the venue; the pin verdict.
+      let venueGeocode: NewVenueGeocodeVerdict | null = null;
 
       // OPE-1206 — the source's own state (the caller's venue_state) vs the
       // venue it would be linked to. Set when they disagree.
@@ -1060,8 +1066,17 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
           // OPE-408 — geocode at creation. `suggest_event` is the highest-volume
           // unattended venue-creation path there is, so an ungeocoded venue born
           // here is the single biggest contributor to the missing-coords curve.
-          // Best-effort: never allowed to fail the submission.
-          await geocodeNewVenueViaMainApp(env, newVenueId);
+          // Best-effort: never allowed to fail the submission. A refusal is
+          // recorded (OPE-408, 10-04) so an unpinned venue born here is visible,
+          // not just retried nightly against the same answer.
+          venueGeocode = await geocodeNewVenueViaMainApp(env, newVenueId);
+          await recordNewVenueGeocodeRefusal(
+            db,
+            newVenueId,
+            venueGeocode,
+            "mcp:suggest_event",
+            auth.userId ?? null
+          );
         }
       }
 
@@ -1513,12 +1528,21 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
         suggestWarnings.status_note = `Created as ${eventStatus}, not TENTATIVE, because the ingest gates routed it to review (${gateResult.reasons.join(", ") || "no reason recorded"}). A PENDING row is NOT on the publication path until an admin reviews it.`;
       }
 
+      if (venueGeocode && !venueGeocode.pinned) {
+        suggestWarnings.venue_unpinned =
+          `The venue this call created has no map pin (${venueGeocode.status}: ${venueGeocode.reason}), so on-site photos cannot match this event by GPS.` +
+          (venueGeocode.candidate
+            ? ` Google's candidate: "${venueGeocode.candidate}" — if correct, run venues_geocode with force: true.`
+            : " Correct the venue address, or set latitude/longitude with update_venue.");
+      }
+
       return {
         content: [
           jsonContent({
             created: true,
             event: { id: eventId, slug: finalSlug, name: params.name, status: eventStatus },
-            venue: venueResult,
+            venue:
+              venueResult && venueGeocode ? { ...venueResult, geocode: venueGeocode } : venueResult,
             ...(Object.keys(suggestWarnings).length > 0 && { warnings: suggestWarnings }),
           }),
         ],
