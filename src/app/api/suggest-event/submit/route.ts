@@ -23,6 +23,7 @@ import { mintVenueFromIngest } from "@/lib/venue-minting";
 import { recomputeEventCompleteness } from "@/lib/completeness";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { evaluateGates } from "@/lib/event-date-gates";
+import { hasCalendarDayPassed } from "@takemetothefair/datetime";
 import { verifyTurnstileToken, getTurnstileErrorMessage } from "@/lib/turnstile";
 import { auth } from "@/lib/auth";
 import { inferCategoriesFromName } from "@/lib/url-import/infer-categories";
@@ -259,7 +260,11 @@ export async function POST(request: NextRequest) {
     // the submitter's email body — producing a past-dated PENDING/TENTATIVE
     // row that pollutes the public listings and wastes admin review time.
     // Force PENDING + flag for human review.
-    if (startDate && startDate.getTime() < Date.now()) {
+    // OPE-651 — a calendar-DAY comparison in the venue zone, not an instant
+    // one. Dates are stored at noon UTC, so `< Date.now()` called a same-day
+    // event "past" from 08:00 Eastern on its own morning (the bug #1102 fixed
+    // in the shared gate, surviving here on the email/suggest path).
+    if (startDate && hasCalendarDayPassed(startDate, new Date())) {
       gateRoute = "PENDING_REVIEW";
       if (!gateReasons.includes("past_date")) gateReasons.push("past_date");
     }
@@ -558,7 +563,7 @@ export async function POST(request: NextRequest) {
     //
     // Idempotent: `past_date` is only appended when absent, so a row already
     // gated above is unchanged.
-    if (effectiveStartDate && effectiveStartDate.getTime() < Date.now()) {
+    if (effectiveStartDate && hasCalendarDayPassed(effectiveStartDate, new Date())) {
       gateRoute = "PENDING_REVIEW";
       if (!gateReasons.includes("past_date")) gateReasons.push("past_date");
     }
