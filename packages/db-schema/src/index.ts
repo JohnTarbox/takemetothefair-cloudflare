@@ -154,6 +154,15 @@ export const venues = sqliteTable(
     locationMatchKm: real("location_match_km"),
     latitude: real("latitude"),
     longitude: real("longitude"),
+    // OPE-408 (drizzle/0353) — the nightly geocode sweep re-asked the same 45
+    // refused venues every night, wrote nothing, and paid for each lookup. The
+    // gate's answer is deterministic for an unchanged record, so after
+    // GEOCODE_PARK_AFTER refusals the sweep parks a venue until its record is
+    // edited (updated_at > geocode_last_refused_at). Written with RAW SQL only:
+    // through Drizzle, `$onUpdateFn` would stamp updated_at — moving the ETag
+    // and sitemap lastmod nightly (the #819 class) and un-parking it at once.
+    geocodeRefusals: integer("geocode_refusals").notNull().default(0),
+    geocodeLastRefusedAt: integer("geocode_last_refused_at", { mode: "timestamp" }),
     capacity: integer("capacity"),
     amenities: text("amenities").default("[]"),
     contactEmail: text("contact_email"),
