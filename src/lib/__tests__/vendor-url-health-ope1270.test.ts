@@ -16,6 +16,7 @@ import {
   sameBusinessName,
 } from "../goodwill/name-drift";
 import { classifyVendorSite } from "../goodwill/vendor-site-health";
+import { normalizeHealthMessageKey } from "../site-health-group-key";
 import { projectUrlHealthFlag, projectUrlHealthVerdict } from "../url-health-issues";
 
 const ld = (obj: unknown) => `<script type="application/ld+json">${JSON.stringify(obj)}</script>`;
@@ -303,5 +304,118 @@ describe("the sweep is wired and never writes the vendor (source-level)", () => 
   it("the daily workflow drives it", () => {
     expect(WORKFLOW).toContain("/api/admin/url-health/vendors/sweep?chunk=50");
     expect(WORKFLOW).toMatch(/for \(let i = 0; i < VENDOR_URL_HEALTH_CHUNKS_PER_RUN; i\+\+\)/);
+  });
+});
+
+// ── OPE-1270 rework (2026-10-04) — the three items the review returned ─────
+
+describe("rework 1 — Laiken Mae: the site's TRADING name is its WebSite title", () => {
+  // The live shape of laikenmaehandmade.squarespace.com, read 2026-10-04:
+  // Squarespace's business-info panel holds the owner's personal name.
+  const LAIKEN =
+    page(
+      ld({
+        "@type": "WebSite",
+        name: "Laiken Mae Handmade",
+        url: "https://laikenmaehandmade.squarespace.com",
+      })
+    ) +
+    ld({ "@type": "Organization", legalName: "Laiken Flynn", telephone: "5182670524" }) +
+    ld({ "@type": "LocalBusiness", name: "Laiken Flynn", address: "364 Leedale Street" });
+
+  it("ACCEPTANCE NEGATIVE: 'Laiken Mae Hand Made' raises NOTHING", () => {
+    expect(detectNameDrift("Laiken Mae Hand Made", LAIKEN).drift).toBe(false);
+  });
+
+  it("a WebSite title alone never RAISES drift — no org declaration stays unknown", () => {
+    const html = page(ld({ "@type": "WebSite", name: "Home" }));
+    expect(detectNameDrift("Bay State Savings Bank", html).drift).toBeNull();
+  });
+
+  it("a WebSite title clears only on an EXACT match — a different title does not clear real drift", () => {
+    const html =
+      page(ld({ "@type": "WebSite", name: "Welcome to our shop" })) +
+      ld({ "@type": "Organization", name: "Bay State Bank" });
+    expect(detectNameDrift("Bay State Savings Bank", html).drift).toBe(true);
+  });
+});
+
+describe("rework 2 — a NAME_DRIFT row names both sides, and still groups", () => {
+  it("the evidence rides in the message", async () => {
+    const db = makeDb();
+    await projectUrlHealthFlag(asDb(db), {
+      sourceField: V,
+      url: U,
+      flag: "name_drift",
+      present: true,
+      checkedAt: D1,
+      evidence: 'ours "Bay State Savings Bank" · site "Bay State Bank"',
+    });
+    const [row] = db.select().from(healthIssues).all();
+    expect(row.message).toBe(
+      'vendors.website names the business differently from our record · ours "Bay State Savings Bank" · site "Bay State Bank" · last checked 2026-10-02'
+    );
+  });
+
+  it("two rows with different names fold to ONE Site Health group key", () => {
+    const a =
+      'vendors.website names the business differently from our record · ours "Bay State Savings Bank" · site "Bay State Bank" · last checked 2026-10-02';
+    const b =
+      'vendors.website names the business differently from our record · ours "Promethea Potters" · site "Promethea Arts" · last checked 2026-10-03';
+    expect(normalizeHealthMessageKey(a)).toBe(normalizeHealthMessageKey(b));
+  });
+
+  it("the sweep passes the evidence, quoting both names", () => {
+    const src = readFileSync(
+      join(process.cwd(), "src/app/api/admin/url-health/vendors/sweep/route.ts"),
+      "utf8"
+    );
+    expect(src).toMatch(/evidence:\s*\n?\s*v\.nameDrift\.drift === true/);
+    expect(src).toContain('`ours "${');
+  });
+});
+
+describe("rework 3 — 403 / 429 are a bot wall, not a broken site", () => {
+  const site = "https://example-vendor.com/";
+  it.each([403, 429])("HTTP %i → blocked, with a bot-wall signal", (status) => {
+    const v = classifyVendorSite(
+      { reachedOrigin: true, status, html: "Access denied", finalUrl: site },
+      { requestedUrl: site, businessName: "X" }
+    );
+    expect(v.verdict).toBe("blocked");
+    expect(v.signals).toEqual([`bot-wall:http_${status}`]);
+  });
+
+  it("404 / 530 stay http_error (a genuinely broken link)", () => {
+    for (const status of [404, 530]) {
+      expect(
+        classifyVendorSite(
+          { reachedOrigin: true, status, html: "x", finalUrl: site },
+          { requestedUrl: site, businessName: "X" }
+        ).verdict
+      ).toBe("http_error");
+    }
+  });
+
+  it("blocked is NOT queued, and closes an open http_error row for the URL", async () => {
+    const db = makeDb();
+    await projectUrlHealthVerdict(asDb(db), {
+      sourceField: V,
+      url: U,
+      verdict: "http_error",
+      httpStatus: 403,
+      checkedAt: D1,
+    });
+    const r = await projectUrlHealthVerdict(asDb(db), {
+      sourceField: V,
+      url: U,
+      verdict: "blocked",
+      httpStatus: 403,
+      checkedAt: D2,
+    });
+    expect(r.opened).toBe(0);
+    const rows = db.select().from(healthIssues).all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].resolvedAt).not.toBeNull();
   });
 });

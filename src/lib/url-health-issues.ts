@@ -256,6 +256,15 @@ export async function projectUrlHealthFlag(
     flag: string;
     present: boolean | null;
     checkedAt: Date;
+    /**
+     * OPE-1270 (rework) — the evidence, shown in the row so it can be triaged
+     * from the queue: e.g. `ours "Bay State Savings Bank" · site "Bay State
+     * Bank"`. Without it 138 open rows said only "names the business
+     * differently". Each name is QUOTED: the Site Health grouping key folds
+     * quoted spans (like digit runs), so the evidence shows per row without
+     * splitting the group.
+     */
+    evidence?: string | null;
   }
 ): Promise<UrlHealthProjection> {
   const out: UrlHealthProjection = { opened: 0, reopened: 0, refreshed: 0, resolved: 0 };
@@ -285,7 +294,9 @@ export async function projectUrlHealthFlag(
     return out;
   }
 
-  const message = `${check.sourceField} ${def.phrase} · last checked ${day}`;
+  const message = `${check.sourceField} ${def.phrase}${
+    check.evidence ? ` · ${check.evidence}` : ""
+  } · last checked ${day}`;
   if (!existing) {
     await db.insert(healthIssues).values({
       fingerprint: fp,

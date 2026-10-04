@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { normalizeHealthMessageKey } from "@/lib/site-health-group-key";
 import {
   bingPagesIndexed,
   bingScanIssueCount,
@@ -4632,14 +4633,6 @@ function nextStepForIssue(issueType: string, tier: "ACTION" | "EXPECTED"): strin
       if (issueType.startsWith("SITEMAP_")) return "Resubmit the sitemap in Bing Webmaster Tools";
       return "Investigate the flagged URL";
   }
-}
-
-/** Collapse near-identical messages so rows that differ only by a URL/entity
- *  name or a count fold into one group: lower-case, unicode dashes → "-",
- *  digit runs → "#". */
-function normalizeHealthMessageKey(message: string | null): string {
-  if (!message) return "";
-  return message.toLowerCase().replace(/[‐-―]/g, "-").replace(/\d+/g, "#").trim();
 }
 
 interface SiteHealthRowInput {

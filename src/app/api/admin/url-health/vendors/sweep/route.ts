@@ -97,6 +97,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       domain_takeover: 0,
       empty_page: 0,
       moved: 0,
+      blocked: 0,
     };
     const result = {
       success: true,
@@ -151,6 +152,14 @@ export async function POST(request: Request): Promise<NextResponse> {
           flag: "name_drift",
           present: v.nameDrift.drift,
           checkedAt: now,
+          evidence:
+            v.nameDrift.drift === true
+              ? // A `"` inside a name would break the grouping key's quote folding.
+                `ours "${(r.name ?? "").replace(/"/g, "'").slice(0, 80)}" · site "${v.nameDrift.declared
+                  .join(" | ")
+                  .replace(/"/g, "'")
+                  .slice(0, 120)}"`
+              : null,
         });
         result.issues_opened += a.opened + a.reopened + b.opened + b.reopened;
         result.issues_resolved += a.resolved + b.resolved;

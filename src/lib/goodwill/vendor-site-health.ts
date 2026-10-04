@@ -42,7 +42,11 @@ export type VendorSiteVerdict =
   | "closure_notice"
   | "domain_takeover"
   | "empty_page"
-  | "moved";
+  | "moved"
+  | "blocked";
+
+/** Statuses that mean "we were refused", not "the site is broken". */
+export const BOT_WALL_STATUSES: ReadonlySet<number> = new Set([403, 429]);
 
 export interface VendorSiteResult {
   verdict: VendorSiteVerdict;
@@ -57,6 +61,19 @@ export function classifyVendorSite(
 ): VendorSiteResult {
   const unknownDrift: NameDrift = { drift: null, declared: [] };
   const base = classifyUrlHealth(probe);
+  // OPE-1270 (rework 2026-10-04) — 403 / 429 from the sweep's Worker egress is
+  // a bot wall or a rate limit, not evidence the site is down: 148 of the first
+  // 227 vendor http_error rows (403 ×104, 429 ×44). Recorded as `blocked`,
+  // which is NOT projected to the queue — the empty_page precedent: "could not
+  // see the page" is not "the page is broken".
+  if (base.verdict === "http_error" && BOT_WALL_STATUSES.has(probe.status ?? -1)) {
+    return {
+      verdict: "blocked",
+      signals: [`bot-wall:http_${probe.status}`],
+      detail: base.detail,
+      nameDrift: unknownDrift,
+    };
+  }
   if (
     base.verdict === "unreachable" ||
     base.verdict === "http_error" ||
