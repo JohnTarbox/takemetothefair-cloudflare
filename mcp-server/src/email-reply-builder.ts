@@ -322,7 +322,14 @@ ${SIGN_OFF}`;
       // standing at 0-of-6 met.
       const reviewLine =
         count > 0 ? "\n\nOur team will review pending submissions within 24 hours." : "";
-      return `Thanks for submitting ${count} event${count === 1 ? "" : "s"} to Meet Me at the Fair!
+      // OPE-460 (John, 2026-10-04) — when every source failed, `count` is 0 and
+      // "Thanks for submitting 0 events" was accurate but read badly. Approved
+      // headline, verbatim.
+      const headline =
+        count > 0
+          ? `Thanks for submitting ${count} event${count === 1 ? "" : "s"} to Meet Me at the Fair!`
+          : "We couldn't read any of the links you sent.";
+      return `${headline}
 
 ${resultsText}${reviewLine}${overflowLine}
 

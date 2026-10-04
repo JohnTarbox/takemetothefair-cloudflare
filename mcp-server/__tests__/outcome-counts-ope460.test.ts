@@ -120,8 +120,13 @@ describe("the review promise is conditional", () => {
       eventCount: 0,
       resultsText: "❌ Couldn't fetch https://example.test/",
     });
-    expect(text).toContain("0 events");
+    // OPE-460 (John, 2026-10-04) — the all-failed headline, verbatim.
+    expect(text.startsWith("We couldn't read any of the links you sent.")).toBe(true);
+    expect(text).not.toContain("0 events");
+    expect(text).not.toContain("Thanks for submitting");
     expect(text).not.toContain("within 24 hours");
+    // The per-link failure lines still follow, so they know WHICH links.
+    expect(text).toContain("❌ Couldn't fetch https://example.test/");
   });
 
   it("keeps the promise when something did land", () => {
