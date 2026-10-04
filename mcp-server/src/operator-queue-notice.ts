@@ -58,6 +58,27 @@ import {
 
 const SOURCE = "mcp:schedule:operator-queue-notice";
 
+/** OPE-1290 — how far ahead an unpinned venue becomes an operator task. */
+export const UNPINNED_IMMINENT_DAYS = 7;
+
+/** The latest `venue.geocode.refused` payload (OPE-408 / #1513), if any. */
+export function parseRefusal(
+  json: string | null
+): { status: string; reason: string | null; candidate: string | null } | null {
+  if (!json) return null;
+  try {
+    const p = JSON.parse(json) as { status?: unknown; reason?: unknown; candidate?: unknown };
+    if (typeof p.status !== "string") return null;
+    return {
+      status: p.status,
+      reason: typeof p.reason === "string" ? p.reason : null,
+      candidate: typeof p.candidate === "string" ? p.candidate : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /** `email_send_ledger.source` for this notice — also its once-per-day key. */
 export const NOTICE_EMAIL_SOURCE = "operator-queue-notice";
 
@@ -163,6 +184,16 @@ export interface OperatorQueueCounts {
    * one day's notice.
    */
   authEmailProblems: number;
+  /**
+   * OPE-1290 — APPROVED/TENTATIVE events starting within UNPINNED_IMMINENT_DAYS
+   * whose venue has no map pin (`latitude IS NULL`). Nothing else connects an
+   * unpinned venue to an imminent event: on 10-01 a Freeport hotel ran an
+   * APPROVED event with no pin and seven on-site GPS photos matched nothing.
+   * FORMER venues and venues the gate calls `not-a-point` are excluded.
+   */
+  unpinnedVenueImminent: number;
+  /** OPE-1290 landmark: upcoming events the unpinned-venue check examined. */
+  unpinnedVenueExamined?: number;
   /** Oldest waiting row in either queue, in days. */
   oldestDays: number;
   /** Human-readable lines for the alert body. */
@@ -187,6 +218,7 @@ export function decideOperatorQueueNotice(
     | "droppedRealAttachments"
     | "venueDateShifts"
     | "authEmailProblems"
+    | "unpinnedVenueImminent"
   >,
   alreadySentToday: boolean
 ): boolean {
@@ -215,6 +247,7 @@ export function totalWaiting(
     | "droppedRealAttachments"
     | "venueDateShifts"
     | "authEmailProblems"
+    | "unpinnedVenueImminent"
   >
 ): number {
   // `?? 0` per term is not defensive clutter — it is load-bearing, and adding
@@ -240,7 +273,9 @@ export function totalWaiting(
     (counts.agedAwaitingDecision ?? 0) +
     (counts.droppedRealAttachments ?? 0) +
     (counts.venueDateShifts ?? 0) +
-    (counts.authEmailProblems ?? 0)
+    (counts.authEmailProblems ?? 0) +
+    // OPE-1290 — `?? 0` for the reason the comment above gives.
+    (counts.unpinnedVenueImminent ?? 0)
   );
 }
 
@@ -573,6 +608,70 @@ export async function readOperatorQueues(
     // Observability must not take the notice down with it.
   }
 
+  // OPE-1290 — an imminent public event on a venue with no map pin.
+  //
+  // The nightly geocode sweep re-asks the gate and gets the same refusal (39 of
+  // 47 `low-confidence` on 10-01), so an unpinned venue stays unpinned; what
+  // changes is the calendar moving an event toward it. That is when a person
+  // can still pin it by hand. Measured 10-04: 5 of 64 events starting in the
+  // next 7 days sat on an unpinned venue.
+  let unpinnedVenueImminent = 0;
+  let unpinnedVenueExamined = 0;
+  try {
+    const nowSec = Math.floor(now.getTime() / 1000);
+    const fromSec = nowSec - 86400;
+    const toSec = nowSec + UNPINNED_IMMINENT_DAYS * 86400;
+    const [examined] = await db.all<{ n: number }>(sql`
+      SELECT COUNT(*) AS n FROM events
+      WHERE status IN ('APPROVED', 'TENTATIVE') AND merged_into IS NULL
+        AND start_date >= ${fromSec} AND start_date < ${toSec}
+    `);
+    unpinnedVenueExamined = Number(examined?.n ?? 0);
+    const rows = await db.all<{
+      slug: string;
+      start_date: number;
+      venue_name: string;
+      city: string | null;
+      state: string | null;
+      refusals: number | null;
+      last_refusal: string | null;
+    }>(sql`
+      SELECT e.slug, e.start_date, v.name AS venue_name, v.city, v.state,
+             v.geocode_refusals AS refusals,
+             (SELECT a.payload_json FROM admin_actions a
+               WHERE a.action = 'venue.geocode.refused' AND a.target_id = v.id
+               ORDER BY a.created_at DESC LIMIT 1) AS last_refusal
+      FROM events e JOIN venues v ON v.id = e.venue_id
+      WHERE e.status IN ('APPROVED', 'TENTATIVE') AND e.merged_into IS NULL
+        AND e.start_date >= ${fromSec} AND e.start_date < ${toSec}
+        AND v.latitude IS NULL
+        AND v.status <> 'FORMER'
+      ORDER BY e.start_date
+    `);
+    for (const r of rows) {
+      const verdict = parseRefusal(r.last_refusal);
+      // A venue the gate says is not a single point (a statewide trail, a
+      // multi-site event) is correctly unpinned — not an operator task.
+      if (verdict?.status === "not-a-point") continue;
+      unpinnedVenueImminent++;
+      lines.push(
+        `📍 ${r.slug} starts ${new Date(Number(r.start_date) * 1000).toISOString().slice(0, 10)} at ` +
+          `"${r.venue_name}"${r.city ? ` (${r.city}${r.state ? `, ${r.state}` : ""})` : ""} — venue has no map pin` +
+          (verdict
+            ? `; gate: ${verdict.status}${verdict.reason ? ` (${verdict.reason})` : ""}` +
+              (verdict.candidate ? `, Google's candidate: ${verdict.candidate}` : "")
+            : "") +
+          (r.refusals ? `; sweep refusals: ${r.refusals}` : "") +
+          ` (OPE-1290)`
+      );
+    }
+  } catch {
+    // Observability must not take the notice down with it.
+  }
+  console.log(
+    `[operator-queue] OPE-1290 unpinned-venue check examined ${unpinnedVenueExamined} upcoming event(s), flagged ${unpinnedVenueImminent}`
+  );
+
   // OPE-599 rework — auth email that failed to land, and registrations that
   // just crossed the verification window unconfirmed. Arrival-based, so each
   // person is named once rather than every morning.
@@ -640,6 +739,8 @@ export async function readOperatorQueues(
     droppedRealAttachments,
     venueDateShifts,
     authEmailProblems,
+    unpinnedVenueImminent,
+    unpinnedVenueExamined,
     oldestDays: Math.floor(oldestMs / 86400_000),
     lines,
   };
