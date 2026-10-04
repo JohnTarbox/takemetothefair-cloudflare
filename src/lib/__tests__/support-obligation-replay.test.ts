@@ -173,3 +173,48 @@ describe("extractEmailAddress", () => {
     expect(extractEmailAddress("ktkellycrafts@gmail.com")).toBe("ktkellycrafts@gmail.com");
   });
 });
+
+/**
+ * OPE-985 B, condition 2 (John, 2026-09-20): a blank ask-about-event body must
+ * open an obligation whatever the classifier said. The workflow test
+ * (`blank-question-ope985.test.ts`) only asserts that the call site PASSES
+ * `forceOwed: true` — a source-level check that stays green if the decision
+ * ignores the flag. These pin what the decision DOES with it, from both sides.
+ * Fixture intent: `submit`. NOT the real specimen's `correction` (Nancy
+ * Lasson's blank mailto, 0.9) — `correction` is itself ack-terminating, so
+ * that row was obligated with or without force. The override only changes the
+ * outcome when the subject classifies as an ACTION intent, and `submit` is the
+ * plausible one for an "about this event" mailto.
+ */
+describe("OPE-985 — forceOwed overrides the classifier, and nothing else", () => {
+  const blank = {
+    fromAddress: "reader@example.com",
+    classifiedIntent: "submit",
+    classifiedConfidence: 0.9,
+  };
+
+  it("control: the same row WITHOUT force is not obligated (the classifier decides)", () => {
+    expect(ACK_TERMINATING_INTENTS as readonly string[]).not.toContain("submit");
+    expect(decideObligation(blank)).toEqual({ obligated: false, reason: "not_ack_terminating" });
+  });
+
+  it("forceOwed opens the obligation for a non-ack-terminating intent", () => {
+    expect(decideObligation({ ...blank, forceOwed: true })).toEqual({ obligated: true });
+  });
+
+  it("forceOwed opens it when the classifier never ran (null intent)", () => {
+    expect(decideObligation({ ...blank, classifiedIntent: null, forceOwed: true }).obligated).toBe(
+      true
+    );
+  });
+
+  it("forceOwed does NOT override may-we-write refusals: system sender, suppressed", () => {
+    expect(
+      decideObligation({ ...blank, fromAddress: "mailer-daemon@example.com", forceOwed: true })
+    ).toEqual({ obligated: false, reason: "system_sender" });
+    expect(decideObligation({ ...blank, suppressed: true, forceOwed: true })).toEqual({
+      obligated: false,
+      reason: "suppressed",
+    });
+  });
+});
