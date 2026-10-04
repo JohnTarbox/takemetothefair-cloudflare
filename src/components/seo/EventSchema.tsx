@@ -50,6 +50,8 @@ interface EventVendor {
 
 interface EventSchemaProps {
   name: string;
+  /** OPE-517 — public name variants → schema.org `alternateName`. */
+  alternateNames?: string[];
   slug: string;
   description?: string;
   startDate?: Date | null;
@@ -191,6 +193,7 @@ function getEventType(categories?: string[]): string {
 
 export function EventSchema({
   name,
+  alternateNames,
   galleryPhotos,
   // `slug` kept in the prop type for caller compatibility but no longer
   // consumed inside the component (the dynamic /api/og?slug=… image URL
@@ -590,6 +593,10 @@ export function EventSchema({
     "@context": "https://schema.org",
     "@type": getEventType(categories),
     name,
+    // OPE-517 — the names the organizer / others use for this same event.
+    ...(alternateNames && alternateNames.length > 0
+      ? { alternateName: alternateNames.length === 1 ? alternateNames[0] : alternateNames }
+      : {}),
     // EH3 P2.3b — superEvent → the parent EventSeries (occurrences only).
     ...(superEvent ? { superEvent } : {}),
     description: description || `${name} - a fair and community event.`,
