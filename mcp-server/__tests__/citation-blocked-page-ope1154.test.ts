@@ -92,3 +92,50 @@ describe("OPE-1154 — no citation from a blocked page", () => {
     );
   });
 });
+
+describe("OPE-1154 rework — a map/search URL is never cited, whatever it returned", () => {
+  const MAPS = "https://www.google.com/maps/search/153+Hospital+Street%C2%A0+Augusta,+ME";
+
+  it("SPECIMEN: Google's consent wall on a Maps search writes nothing (0e39e183)", async () => {
+    const res = await recordSourceCitations(db, {
+      eventId: "event-1",
+      extracted: { ...extracted, url: MAPS },
+      source: { kind: "url", url: MAPS },
+      fromAddress: "organizer@example.org",
+      snapshot: {
+        title: "Before you continue to Google Maps",
+        text: "Before you continue to Google Maps We use cookies and data to deliver and maintain Google services",
+        fetchedAt: new Date("2026-10-04T00:42:00Z"),
+      },
+    });
+    expect(res).toEqual({ inserted: 0, reason: "non-source-url" });
+    expect(rows()).toHaveLength(0);
+  });
+
+  it("with NO snapshot at all (the 08-29 Gilford shape) it still writes nothing", async () => {
+    const res = await recordSourceCitations(db, {
+      eventId: "event-1",
+      extracted: { ...extracted, url: MAPS },
+      source: { kind: "url", url: MAPS },
+      fromAddress: "organizer@example.org",
+    });
+    expect(res).toEqual({ inserted: 0, reason: "non-source-url" });
+    expect(rows()).toHaveLength(0);
+  });
+
+  it("control: the same extraction from the organizer's ticket page is cited", async () => {
+    const TICKETS = "https://events.humanitix.com/lilac-festival-planning-meeting";
+    const res = await recordSourceCitations(db, {
+      eventId: "event-1",
+      extracted: { ...extracted, url: TICKETS },
+      source: { kind: "url", url: TICKETS },
+      fromAddress: "organizer@example.org",
+      snapshot: {
+        title: "Lilac Festival Planning Meeting | Humanitix",
+        text: "October 15, 2026 · 153 Hospital Street, Augusta",
+        fetchedAt: new Date("2026-10-04T00:42:00Z"),
+      },
+    });
+    expect(res.inserted).toBeGreaterThan(0);
+  });
+});
