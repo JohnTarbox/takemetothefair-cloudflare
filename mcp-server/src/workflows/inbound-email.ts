@@ -54,6 +54,11 @@
 
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { NonRetryableError } from "cloudflare:workflows";
+import {
+  classifyExtractFailure,
+  isZeroEventsFailure,
+  pipelineErrorMessage,
+} from "./pipeline-error.js";
 import { and, eq, gte, sql } from "drizzle-orm";
 import { getDb } from "../db.js";
 import { ledgerEmailSend } from "../mailer.js";
@@ -280,26 +285,9 @@ const ROSTER_CITATION_MAX_CHARS = 2000;
 // strand the OCR. Non-transient errors fail fast (see isTransientAiError).
 const MAX_OCR_ATTEMPTS = 3;
 
-/**
- * Classify an error thrown by the AI extract step into the small bucket
- * persisted to inbound_emails.extract_fail_reason (drizzle/0094, K7.4).
- *
- * Why a fixed taxonomy: `error` already carries the full message text,
- * which is good for triage but terrible for GROUP BY on the source-
- * quality dashboard. This collapses the variability into 5 buckets that
- * lend themselves to "what's broken this week" queries.
- *
- * Bucket meanings:
- *   - 'zero-events'  : AI returned success with an empty events[]
- *   - 'thin-content' : content sent to AI was <500 chars after strip
- *   - 'parse-error'  : AI response wasn't parseable JSON
- *   - 'ai-timeout'   : Workers AI didn't respond within budget
- *   - 'other'        : anything else; check `error` column for detail
- *
- * Pattern-matches on the NonRetryableError messages produced by
- * submitExtract (`extract-upstream: zero-events`, `extract-network:`,
- * `extract-<status>`).
- */
+// `classifyExtractFailure` (the K7.4 extract_fail_reason buckets) lives in
+// ./pipeline-error.ts with the step-boundary token reader it depends on (OPE-1316).
+
 /**
  * OPE-1253 — the text a fan-out candidate's fields were read from. A URL
  * candidate has its fetched page; an attachment or body candidate has the
@@ -318,26 +306,6 @@ function candidateSourceTexts(
 /** OPE-1253 — one reason for a set of refusals; a missing date is the floor that matters most. */
 function refusedReason(refused: Array<{ reason: EmailCandidateRefusal }>): string {
   return refused.some((r) => r.reason === "no-date") ? "no-date" : "non-event-name";
-}
-
-function classifyExtractFailure(e: unknown): string {
-  if (!(e instanceof Error) || typeof e.message !== "string") return "other";
-  const msg = e.message;
-  if (msg.startsWith("extract-upstream: zero-events")) return "zero-events";
-  if (msg.startsWith("extract-upstream: thin-content")) return "thin-content";
-  // Workers AI load timeouts surface as 'extract-network: timeout' or as
-  // a step-level timeout that doesn't reach our catch. The network
-  // bucket covers the former.
-  if (msg.startsWith("extract-network:") && /timeout|timed.?out/i.test(msg)) return "ai-timeout";
-  // OPE-1249 — the extract ROUTE caught the Workers AI timeout itself, tried the
-  // deterministic salvage, and failed closed with `success:false`; submitExtract
-  // carries its `aiFailure` through as `[ai: …]`. That reached us as
-  // `extract-upstream: …` and bucketed `other` — or, on the fan-out path, was
-  // never classified at all and recorded as `no-fetchable-url`.
-  if (msg.startsWith("extract-upstream: ") && /\[ai: [^\]]*timed.?out/i.test(msg))
-    return "ai-timeout";
-  if (msg.startsWith("extract-upstream: ") && /parse|json/i.test(msg)) return "parse-error";
-  return "other";
 }
 
 /** Dispatch table for non-submit, non-new_event intents. The submit
@@ -390,7 +358,7 @@ const HANDLERS: Record<Exclude<EmailIntent, "submit" | "new_event">, HandlerFn> 
  *  treatment. */
 function errorToReplyKind(intent: EmailIntent, errMsg: string): ReplyKind | null {
   if (intent === "submit" || intent === "new_event") {
-    if (errMsg.startsWith("submit-")) return "submit-failed";
+    if (pipelineErrorMessage(errMsg).startsWith("submit-")) return "submit-failed";
     return "extract-failed";
   }
   return null;
@@ -1840,9 +1808,10 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     // both-paths-failed cohort. Phase 2 will replace this with actual
     // PDF text extraction.
     let inferredFetchMethod: "standard" | "browser-rendering" | "failed" | "pdf_unsupported" | null;
-    if (caughtError && caughtError.startsWith("fetch-pdf:")) {
+    const caughtToken = caughtError ? pipelineErrorMessage(caughtError) : null;
+    if (caughtToken && caughtToken.startsWith("fetch-pdf:")) {
       inferredFetchMethod = "pdf_unsupported";
-    } else if (caughtError && caughtError.startsWith("fetch-")) {
+    } else if (caughtToken && caughtToken.startsWith("fetch-")) {
       inferredFetchMethod = "failed";
     } else {
       inferredFetchMethod = result.fetchMethod ?? null;
@@ -2805,10 +2774,9 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         }
       );
 
-      const isZeroEvents =
-        e instanceof NonRetryableError &&
-        typeof e.message === "string" &&
-        e.message.startsWith("extract-upstream: zero-events");
+      // OPE-1316 — not `instanceof NonRetryableError` + `startsWith`: neither
+      // survives the step boundary, so this fallback never fired.
+      const isZeroEvents = isZeroEventsFailure(e);
       const bodyText = rowSnapshot.bodyTextExcerpt;
       if (!isZeroEvents || !bodyText || bodyText.trim().length === 0) throw e;
       extracted = await step.do(
@@ -5093,7 +5061,9 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         // Per-candidate failure degrades gracefully — the others still run.
         const msg = err instanceof Error ? err.message : String(err);
         outcomes.push({
-          kind: msg.startsWith("submit-") ? "submit-failed" : "extract-failed",
+          kind: pipelineErrorMessage(err).startsWith("submit-")
+            ? "submit-failed"
+            : "extract-failed",
           eventName: extracted.event.name || `Event ${i + 1}`,
           url: sourceUrl || undefined,
         });
@@ -5351,7 +5321,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         // Per-URL failures degrade gracefully — the other URLs still run.
         // Map common prefixes to outcome kinds; everything else is a
         // generic extract-failed for the sender-facing list.
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = pipelineErrorMessage(err);
         const kind = msg.startsWith("fetch-")
           ? "fetch-failed"
           : msg.startsWith("submit-")
