@@ -110,13 +110,15 @@ describe("OPE-772 — the flag is declared in the committed config", () => {
     expect(mcpVars).toHaveProperty("OPERATOR_OUTBOUND_ENABLED");
   });
 
-  it('has it committed as "false" — OPE-772 provisions the flag, it does not enable it', () => {
-    // ⚠️ Kept, not deleted, and it must stay able to FAIL. When John decides to
-    // turn delivery on, flipping the value fails this test — which is the point:
-    // the flip becomes a reviewed edit rather than a drive-by, and this is also
-    // the only thing that would notice a silent flip.
+  it('has it committed as "true" — turned on by John (OPE-596, 2026-10-05)', () => {
+    // ⚠️ Kept, not deleted, and it must stay able to FAIL. It pinned "false"
+    // until John's ruling (OPE-596: approved 10-04, "turn on
+    // OPERATOR_OUTBOUND_ENABLED" in session 10-05), and this edit IS the
+    // reviewed flip it was written to force. It now pins "true", so a silent
+    // flip back OFF is noticed the same way. Delivery still needs a human
+    // approve on each draft (review_operator_draft).
     expect(mcpVars).toHaveProperty("OPERATOR_OUTBOUND_ENABLED");
-    expect(mcpVars.OPERATOR_OUTBOUND_ENABLED).toBe("false");
+    expect(mcpVars.OPERATOR_OUTBOUND_ENABLED).toBe("true");
   });
 });
 
