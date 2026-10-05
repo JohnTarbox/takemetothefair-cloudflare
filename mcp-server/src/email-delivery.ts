@@ -132,12 +132,45 @@ export function messageIdCandidates(raw: string | null | undefined): string[] {
   return Array.from(new Set([v, bare, wrapped]));
 }
 
+/**
+ * OPE-1317 — a FULL MAILBOX is temporary, whatever the provider calls it.
+ * Cloudflare labels every bounce we have received `hard/permanent_failure`,
+ * the over-quota ones included (`552 5.2.2 … user is over quota`), so the
+ * soft-bounce rule below never fired and 2 of 7 bounce suppressions were full
+ * mailboxes. John, 2026-10-05: "full mailbox should not put someone on the
+ * suppression list."
+ *
+ * Keyed on the ENHANCED status (x.2.2 = mailbox full, RFC 3463) or explicit
+ * quota/full wording — never on a bare 552, which also means "message too
+ * large" (5.3.4).
+ */
+export function isFullMailbox(
+  smtp: {
+    enhancedStatusCode?: string | null;
+    response?: string | null;
+    reason?: string | null;
+  } = {}
+): boolean {
+  if (/^[45]\.2\.2$/.test((smtp.enhancedStatusCode ?? "").trim())) return true;
+  const text = `${smtp.response ?? ""} ${smtp.reason ?? ""}`;
+  return /\b[45]\.2\.2\b|over ?quota|quota exceeded|exceeded (?:its|the|their) (?:storage )?quota|mailbox (?:is )?full|insufficient storage/i.test(
+    text
+  );
+}
+
 /** True when this event means the address must never be mailed again.
  *  Soft bounces and deferrals must NOT suppress — a full mailbox or a greylist
  *  is temporary, and suppressing on it would quietly blacklist a real user. */
-export function shouldSuppress(status: string, bounceType: string | null | undefined): boolean {
+export function shouldSuppress(
+  status: string,
+  bounceType: string | null | undefined,
+  smtp?: Parameters<typeof isFullMailbox>[0]
+): boolean {
   if (status === "complained") return true;
-  if (status === "bounced") return (bounceType ?? "").toLowerCase() === "hard";
+  if (status === "bounced") {
+    if (isFullMailbox(smtp)) return false;
+    return (bounceType ?? "").toLowerCase() === "hard";
+  }
   return false;
 }
 
@@ -289,7 +322,13 @@ export async function processDeliveryEvent(
       .where(eq(emailSendLedger.messageId, ledgerRow.messageId));
   }
 
-  if (shouldSuppress(status, bounceType)) {
+  if (
+    shouldSuppress(status, bounceType, {
+      enhancedStatusCode: payload.delivery?.smtpEnhancedStatusCode ?? null,
+      response: payload.delivery?.smtpResponse ?? null,
+      reason: payload.bounce?.reason ?? null,
+    })
+  ) {
     await suppressRecipient(db, payload.recipient, status);
   }
 }
