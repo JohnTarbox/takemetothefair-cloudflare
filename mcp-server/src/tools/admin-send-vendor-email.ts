@@ -598,7 +598,7 @@ export function registerSendVendorEmailTool(
   // see the suppression list"). Read-only.
   server.tool(
     "list_email_suppressions",
-    "List addresses on the email suppression list (people who unsubscribed or were manually suppressed). Solicited sends (send_vendor_email, send_test_email, K41 free-form) skip these. Admin only.",
+    "List addresses on the email suppression list (people who unsubscribed, bounced, complained, or were manually suppressed). Solicited sends (send_vendor_email, send_test_email, reply_to_inbound_email, K41 free-form) skip these. To take an address back off the list (e.g. a temporary over-quota bounce), use remove_email_suppression. Admin only.",
     {
       limit: z
         .number()
@@ -629,4 +629,119 @@ export function registerSendVendorEmailTool(
       };
     }
   );
+
+  // OPE-1305 — the way back off the list. A temporary bounce (a full mailbox)
+  // suppressed a fair-goer permanently, and nothing could undo it.
+  server.tool(
+    "remove_email_suppression",
+    "Remove ONE address from the email suppression list so solicited sends (including reply_to_inbound_email) reach it again. Returns the row it removed. Refuses rows whose reason is 'unsubscribe' or 'complaint' (the person opted out) unless override_opt_out is true. Returns not_found if the address is not on the list. Every removal is written to admin_actions (email.suppression_removed). Removing a real person's suppression is an operator decision each time. Admin only.",
+    {
+      email: z.string().min(3).max(320).describe("The suppressed address (case-insensitive)."),
+      reason: z
+        .string()
+        .min(3)
+        .max(500)
+        .describe("Why it is being removed; stored in the audit row."),
+      override_opt_out: z
+        .boolean()
+        .optional()
+        .describe(
+          "Required to remove an 'unsubscribe' or 'complaint' row. Removes ONLY the suppression row; a newsletter opt-out (newsletter_subscribers) is left as is."
+        ),
+    },
+    async (params) => {
+      const result = await removeEmailSuppression(db, auth.userId, params);
+      return { content: [jsonContent(result)], ...(result.ok ? {} : { isError: true }) };
+    }
+  );
+}
+
+/** Reasons that record the PERSON opting out, as opposed to a delivery fault. */
+export const OPT_OUT_SUPPRESSION_REASONS: ReadonlySet<string> = new Set([
+  "unsubscribe",
+  "complaint",
+]);
+
+export type RemoveSuppressionResult =
+  | {
+      ok: true;
+      removed: { email: string; reason: string | null; source: string | null; created_at: Date };
+    }
+  | { ok: false; error: "not_found" | "opt_out_requires_override"; message: string };
+
+export async function removeEmailSuppression(
+  db: Db,
+  actorUserId: string,
+  params: { email: string; reason: string; override_opt_out?: boolean }
+): Promise<RemoveSuppressionResult> {
+  const email = params.email.trim().toLowerCase();
+  const [row] = await db
+    .select()
+    .from(emailSuppressionList)
+    .where(eq(emailSuppressionList.email, email))
+    .limit(1);
+
+  if (!row) {
+    return {
+      ok: false,
+      error: "not_found",
+      message: `${email} is not on the suppression list. Nothing was changed.`,
+    };
+  }
+
+  if (row.reason && OPT_OUT_SUPPRESSION_REASONS.has(row.reason) && !params.override_opt_out) {
+    return {
+      ok: false,
+      error: "opt_out_requires_override",
+      message: `${email} is suppressed because of '${row.reason}' — the person opted out. Nothing was changed. Pass override_opt_out: true only if they have asked to hear from us again.`,
+    };
+  }
+
+  // Delete keyed on the reason we just read, so a row re-suppressed for a
+  // different reason in between (e.g. an unsubscribe landing now) is not
+  // removed on the strength of the check above.
+  const reasonMatch =
+    row.reason === null
+      ? sql`${emailSuppressionList.reason} IS NULL`
+      : eq(emailSuppressionList.reason, row.reason);
+  const deleted = await db
+    .delete(emailSuppressionList)
+    .where(and(eq(emailSuppressionList.email, email), reasonMatch))
+    .returning();
+
+  if (deleted.length === 0) {
+    return {
+      ok: false,
+      error: "not_found",
+      message: `${email} changed while it was being removed. Nothing was changed; read it again with list_email_suppressions.`,
+    };
+  }
+
+  await db.insert(adminActions).values({
+    action: "email.suppression_removed",
+    actorUserId,
+    targetType: "email",
+    targetId: email,
+    payloadJson: JSON.stringify({
+      removed: {
+        reason: row.reason,
+        source: row.source,
+        created_at: row.createdAt,
+      },
+      stated_reason: params.reason,
+      override_opt_out: !!params.override_opt_out,
+      via: "mcp",
+    }),
+    createdAt: new Date(),
+  });
+
+  return {
+    ok: true,
+    removed: {
+      email: row.email,
+      reason: row.reason,
+      source: row.source,
+      created_at: row.createdAt,
+    },
+  };
 }
