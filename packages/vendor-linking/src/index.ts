@@ -31,6 +31,7 @@ import {
   getVendorComparisonString,
   normalizeVendorName,
   VENDOR_FORM_WORDS,
+  US_STATE_ABBREVIATION_MAP,
   type Slug,
   freePlaceholderEmail,
 } from "@takemetothefair/utils";
@@ -324,9 +325,23 @@ const LOW_SELECTIVITY_TOKENS = new Set(["and", "the"]);
  *             `%company%` cannot find the stored "Soap Co." This is caught by
  *             OPE-451's "folds a trailing legal form" test, which failed the
  *             first time this selector was changed to prefer the longest token.
+ *  - state names — normalize ADDS them, from a mapped code (`nh` → "new
+ *             hampshire"), so the abbreviated row never contains them. OPE-739's
+ *             review return: "New Hampshire State Grange" (minted 2026-10-01
+ *             beside two "NH State Grange" rows) stemmed on `hampshire`, the
+ *             stored rows were never fetched, so they were never scored. It
+ *             now stems on `grange`, which both spellings contain.
  */
+const STATE_EXPANSION_WORDS = new Set(
+  Object.values(US_STATE_ABBREVIATION_MAP).flatMap((name) => name.split(" "))
+);
+
 function isUnsafeStem(token: string): boolean {
-  return LOW_SELECTIVITY_TOKENS.has(token) || VENDOR_FORM_WORDS.has(token);
+  return (
+    LOW_SELECTIVITY_TOKENS.has(token) ||
+    VENDOR_FORM_WORDS.has(token) ||
+    STATE_EXPANSION_WORDS.has(token)
+  );
 }
 
 /**
