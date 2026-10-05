@@ -17,6 +17,17 @@
  * The repo is public, so the GitHub API needs no token. Unauthenticated calls
  * share a 60/hour limit per egress IP, so a throttled or failed call is an
  * `unknown` and never an alert. An optional GITHUB_TOKEN secret lifts the limit.
+ *
+ * OPE-1239 rework (review return 2026-10-04). Two false "not deployed" emails
+ * (bcc76d0c 10-01 08:00, dbfe34d1 10-02 07:10): each SHA had read `ok` several
+ * times in the hours before, then the runs lookup answered 200 with
+ * total_count 0. That is not a throttle, so it was not `unknown` — GitHub's
+ * runs search simply came back empty once. So:
+ *   1. an `ok` once seen for a SHA STICKS — a later zero for it is `unknown`;
+ *   2. `missing` must be seen on two ticks ≥ CONFIRM_MS apart before it emails;
+ *   3. 35 of 90 runs were blind (commits HTTP 403) and the hourly heartbeat
+ *      counted them healthy, so a stretch with no real answer for BLIND_MS
+ *      emails once that the watchdog itself is blind.
  */
 import { and, desc, eq, gt } from "drizzle-orm";
 import { adminActions, tunableThresholds } from "./schema.js";
@@ -31,7 +42,19 @@ export const CI_WATCHDOG_DEFAULT_GRACE_MINUTES = 15;
 /** Heartbeat evidence — at most one row an hour, so a 10-minute cron is not 144 rows a day. */
 export const CI_WATCHDOG_RUN_ACTION = "ci.trigger_watchdog.run";
 export const CI_WATCHDOG_ALERT_ACTION = "ci.trigger_watchdog.alert";
+/** Written once per SHA the first time it reads `ok`; later zeros for it are noise. */
+export const CI_WATCHDOG_SEEN_OK_ACTION = "ci.trigger_watchdog.seen_ok";
+/** Written on the first `missing` for a SHA; the alert needs a second sighting. */
+export const CI_WATCHDOG_SUSPECT_ACTION = "ci.trigger_watchdog.suspect";
+/** At most hourly, whenever the API gave a real answer (any verdict but `unknown`). */
+export const CI_WATCHDOG_READ_OK_ACTION = "ci.trigger_watchdog.read_ok";
+export const CI_WATCHDOG_BLIND_ALERT_ACTION = "ci.trigger_watchdog.blind_alert";
 const RUN_STAMP_EVERY_MS = 60 * 60 * 1000;
+/** A second `missing` must come at least this long after the first (the cron is every 10m). */
+export const CI_WATCHDOG_CONFIRM_MS = 9 * 60 * 1000;
+/** No real answer from GitHub for this long → the watchdog is blind; say so once a day. */
+export const CI_WATCHDOG_BLIND_MS = 6 * 60 * 60 * 1000;
+const BLIND_ALERT_EVERY_MS = 24 * 60 * 60 * 1000;
 
 export type CiTriggerVerdict = "ok" | "grace" | "missing" | "unknown";
 
@@ -130,6 +153,30 @@ type CiWatchdogEnv = Pick<Env, "DB" | "EMAIL_JOBS" | "ALERT_EMAIL_TECHNICAL"> & 
   GITHUB_TOKEN?: string;
 };
 
+async function latestRow(db: Db, action: string, targetId?: string) {
+  const [row] = await db
+    .select({ id: adminActions.id, createdAt: adminActions.createdAt })
+    .from(adminActions)
+    .where(
+      targetId
+        ? and(eq(adminActions.action, action), eq(adminActions.targetId, targetId))
+        : eq(adminActions.action, action)
+    )
+    .orderBy(desc(adminActions.createdAt))
+    .limit(1);
+  return row ?? null;
+}
+
+async function stamp(db: Db, action: string, targetId: string, payload: unknown, now: Date) {
+  await db.insert(adminActions).values({
+    action,
+    targetType: "COMMIT",
+    targetId,
+    payloadJson: JSON.stringify(payload),
+    createdAt: now,
+  });
+}
+
 export async function runCiTriggerWatchdog(
   db: Db,
   env: Omit<CiWatchdogEnv, "DB">,
@@ -138,15 +185,50 @@ export async function runCiTriggerWatchdog(
   const now = deps.now ?? new Date();
   const head = await readMainHead(deps.fetchImpl ?? fetch, env.GITHUB_TOKEN);
   const graceMinutes = await loadGraceMinutes(db);
-  const { verdict, ageMinutes } = decideCiTrigger({
+  const decided = decideCiTrigger({
     committedAt: head.committedAt,
     pushRuns: head.pushRuns,
     now,
     graceMinutes,
   });
+  let { verdict } = decided;
+  const { ageMinutes } = decided;
+  let note = head.note;
+
+  // (1) An `ok` sticks. Record the first one; a later zero for that SHA is the
+  // runs search misbehaving, not the push event disappearing after the fact.
+  if (head.sha && verdict === "ok") {
+    if (!(await latestRow(db, CI_WATCHDOG_SEEN_OK_ACTION, head.sha))) {
+      await stamp(db, CI_WATCHDOG_SEEN_OK_ACTION, head.sha, { ageMinutes }, now);
+    }
+  } else if (head.sha && verdict === "missing") {
+    if (await latestRow(db, CI_WATCHDOG_SEEN_OK_ACTION, head.sha)) {
+      verdict = "unknown";
+      note = "runs lookup returned 0 for a SHA already seen ok";
+    }
+  }
+
+  // (3) Any real answer from GitHub resets the blind clock (hourly row at most).
+  if (verdict !== "unknown") {
+    const lastRead = await latestRow(db, CI_WATCHDOG_READ_OK_ACTION);
+    if (!lastRead || now.getTime() - lastRead.createdAt.getTime() >= RUN_STAMP_EVERY_MS) {
+      await stamp(db, CI_WATCHDOG_READ_OK_ACTION, head.sha ?? "unknown", { verdict }, now);
+    }
+  }
 
   let alerted = false;
+  // (2) `missing` must be seen twice, CONFIRM_MS apart, before it emails.
+  let confirmed = false;
   if (verdict === "missing" && head.sha) {
+    const suspect = await latestRow(db, CI_WATCHDOG_SUSPECT_ACTION, head.sha);
+    if (!suspect) {
+      await stamp(db, CI_WATCHDOG_SUSPECT_ACTION, head.sha, { ageMinutes }, now);
+      note = "missing (first sighting; alerts if still missing next run)";
+    } else if (now.getTime() - suspect.createdAt.getTime() >= CI_WATCHDOG_CONFIRM_MS) {
+      confirmed = true;
+    }
+  }
+  if (confirmed && head.sha) {
     // Once per SHA: a stuck commit must not email every ten minutes.
     const [already] = await db
       .select({ id: adminActions.id })
@@ -195,6 +277,40 @@ export async function runCiTriggerWatchdog(
     }
   }
 
+  // (3) Blind: there WAS a real answer once, and none for BLIND_MS since. Only
+  // after a first real read, so a fresh deploy cannot alarm on its own start.
+  if (verdict === "unknown") {
+    const lastRead = await latestRow(db, CI_WATCHDOG_READ_OK_ACTION);
+    const blindForMs = lastRead ? now.getTime() - lastRead.createdAt.getTime() : 0;
+    if (lastRead && blindForMs >= CI_WATCHDOG_BLIND_MS) {
+      const lastBlind = await latestRow(db, CI_WATCHDOG_BLIND_ALERT_ACTION);
+      if (!lastBlind || now.getTime() - lastBlind.createdAt.getTime() >= BLIND_ALERT_EVERY_MS) {
+        const hours = Math.floor(blindForMs / 3_600_000);
+        const subject = `⚠️ CI-trigger watchdog is blind — no answer from GitHub for ${hours}h`;
+        const body = [
+          `The watchdog has not had a real answer from the GitHub API for ${hours} hours (last: ${head.note}). While blind it cannot tell you a merge went undeployed.`,
+          `Usual cause: the unauthenticated 60/hour limit is shared with other Cloudflare egress. Fix: add a read-only GITHUB_TOKEN secret to the meetmeatthefair-mcp Worker (wrangler secret put GITHUB_TOKEN).`,
+          `Check main by hand meanwhile: gh run list --workflow ci.yml --branch main --event push --limit 3`,
+        ];
+        if (env.ALERT_EMAIL_TECHNICAL && env.EMAIL_JOBS) {
+          try {
+            await env.EMAIL_JOBS.send({
+              to: env.ALERT_EMAIL_TECHNICAL,
+              subject,
+              text: `${body.join("\n\n")}\n\nSent by the Cloudflare CI-trigger watchdog (OPE-1239).\n`,
+              html: `<p><strong>${subject}</strong></p>${body.map((l) => `<p>${l}</p>`).join("")}`,
+              source: "ci-trigger-watchdog",
+            });
+            await stamp(db, CI_WATCHDOG_BLIND_ALERT_ACTION, "watchdog", { hours }, now);
+            alerted = true;
+          } catch (error) {
+            await logError(db, { source: SOURCE, message: "ci-trigger blind alert failed", error });
+          }
+        }
+      }
+    }
+  }
+
   // Heartbeat evidence LAST, so a crash above never reads as a healthy run —
   // and at most hourly: the probe needs liveness, not every tick.
   const [recent] = await db
@@ -213,12 +329,12 @@ export async function runCiTriggerWatchdog(
       action: CI_WATCHDOG_RUN_ACTION,
       targetType: "COMMIT",
       targetId: head.sha ?? "unknown",
-      payloadJson: JSON.stringify({ verdict, ageMinutes, note: head.note }),
+      payloadJson: JSON.stringify({ verdict, ageMinutes, note }),
       createdAt: now,
     });
   }
 
-  return { sha: head.sha, verdict, ageMinutes, alerted, note: head.note };
+  return { sha: head.sha, verdict, ageMinutes, alerted, note };
 }
 
 export async function runScheduledCiTriggerWatchdog(env: CiWatchdogEnv): Promise<void> {

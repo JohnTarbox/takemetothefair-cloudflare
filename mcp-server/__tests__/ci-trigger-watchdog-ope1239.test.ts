@@ -11,6 +11,7 @@ import { createTestDb, type TestDb } from "./setup-db.js";
 import { adminActions, tunableThresholds } from "../src/schema.js";
 import {
   CI_WATCHDOG_ALERT_ACTION,
+  CI_WATCHDOG_BLIND_ALERT_ACTION,
   CI_WATCHDOG_RUN_ACTION,
   decideCiTrigger,
   runCiTriggerWatchdog,
@@ -95,18 +96,18 @@ describe("runCiTriggerWatchdog", () => {
     expect(gh.calls[1]).toContain(`head_sha=${SHA}&event=push`);
   });
 
-  it("missing push CI: emails ONCE for the SHA, not again on the next run", async () => {
+  it("missing push CI: emails on the SECOND sighting, once for the SHA, not again after", async () => {
     const gh = github({ minAgo: 40, runs: 0 });
-    const first = await runCiTriggerWatchdog(db as never, env(), {
+    const at = (m: number) => ({
       fetchImpl: gh.fetchImpl,
-      now: NOW,
+      now: new Date(NOW.getTime() + m * 60_000),
     });
-    const second = await runCiTriggerWatchdog(db as never, env(), {
-      fetchImpl: gh.fetchImpl,
-      now: new Date(NOW.getTime() + 10 * 60_000),
-    });
-    expect(first).toMatchObject({ verdict: "missing", alerted: true });
-    expect(second).toMatchObject({ verdict: "missing", alerted: false });
+    const first = await runCiTriggerWatchdog(db as never, env(), at(0));
+    const second = await runCiTriggerWatchdog(db as never, env(), at(10));
+    const third = await runCiTriggerWatchdog(db as never, env(), at(20));
+    expect(first).toMatchObject({ verdict: "missing", alerted: false });
+    expect(second).toMatchObject({ verdict: "missing", alerted: true });
+    expect(third).toMatchObject({ verdict: "missing", alerted: false });
     expect(sent).toHaveLength(1);
     expect(sent[0].subject).toContain(SHA.slice(0, 8));
     expect(rows(CI_WATCHDOG_ALERT_ACTION)).toHaveLength(1);
@@ -175,5 +176,73 @@ describe("runCiTriggerWatchdog", () => {
       now: new Date(NOW.getTime() + 61 * 60_000),
     });
     expect(rows(CI_WATCHDOG_RUN_ACTION)).toHaveLength(2);
+  });
+});
+
+/**
+ * OPE-1239 rework — the two false "not deployed" emails of 10-01 and 10-02.
+ * Each SHA read `ok` for hours, then one runs lookup answered 200 with
+ * total_count 0. Replayed here tick by tick.
+ */
+describe("OPE-1239 rework — no alarm on a SHA already seen ok; confirm before alerting; say when blind", () => {
+  const tick = (m: number, gh: ReturnType<typeof github>) =>
+    runCiTriggerWatchdog(db as never, env(), {
+      fetchImpl: gh.fetchImpl,
+      now: new Date(NOW.getTime() + m * 60_000),
+    });
+
+  it("bcc76d0c replay: ok for hours, then repeated 200/total_count:0 → unknown, NO email", async () => {
+    const ok = github({ minAgo: 300, runs: 1 });
+    const empty = github({ minAgo: 300, runs: 0 });
+    for (const m of [0, 60, 130, 250]) expect((await tick(m, ok)).verdict).toBe("ok");
+    for (const m of [310, 320, 330]) {
+      const r = await tick(m, empty);
+      expect(r.verdict).toBe("unknown");
+      expect(r.note).toContain("already seen ok");
+    }
+    expect(sent).toHaveLength(0);
+    expect(rows(CI_WATCHDOG_ALERT_ACTION)).toHaveLength(0);
+  });
+
+  it("one missing sighting alone never emails", async () => {
+    await tick(0, github({ minAgo: 40, runs: 0 }));
+    await tick(10, github({ minAgo: 50, runs: 1 })); // the next look finds the run
+    expect(sent).toHaveLength(0);
+  });
+
+  it("a second sighting too soon (< 9 min) does not confirm", async () => {
+    const gh = github({ minAgo: 40, runs: 0 });
+    await tick(0, gh);
+    const r = await tick(5, gh);
+    expect(r.alerted).toBe(false);
+    expect(sent).toHaveLength(0);
+  });
+
+  it("blind for 6h after a real answer → ONE blind email, not one per tick", async () => {
+    await tick(0, github({ minAgo: 300, runs: 1 })); // a real answer
+    const throttled = github({ minAgo: 400, runs: 0, status: 403 });
+    for (let m = 10; m < 360; m += 10) await tick(m, throttled);
+    expect(sent).toHaveLength(0); // under 6h: silent
+    await tick(360, throttled);
+    await tick(370, throttled);
+    await tick(480, throttled);
+    expect(sent).toHaveLength(1);
+    expect(sent[0].subject).toContain("blind");
+    expect(rows(CI_WATCHDOG_BLIND_ALERT_ACTION)).toHaveLength(1);
+  });
+
+  it("a fresh deploy that has never had a real answer does not call itself blind", async () => {
+    const throttled = github({ minAgo: 400, runs: 0, status: 403 });
+    for (let m = 0; m <= 420; m += 60) await tick(m, throttled);
+    expect(sent).toHaveLength(0);
+  });
+
+  it("any real answer resets the blind clock", async () => {
+    await tick(0, github({ minAgo: 300, runs: 1 }));
+    const throttled = github({ minAgo: 400, runs: 0, status: 403 });
+    for (let m = 10; m < 300; m += 10) await tick(m, throttled);
+    await tick(300, github({ minAgo: 600, runs: 1 })); // real answer at 5h
+    for (let m = 310; m < 600; m += 10) await tick(m, throttled); // 4h50m blind
+    expect(sent).toHaveLength(0);
   });
 });
