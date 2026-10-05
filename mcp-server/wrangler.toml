@@ -136,13 +136,15 @@ UNROUTED_ASK_ENABLED = "false"
 # meetmeatthefair-app" — correctly, it was never anywhere), and an agent asking
 # "is delivery on?" cannot tell "off" from "I failed to read it".
 #
-# NOT flipped by this ticket. The value is John's call, made separately; OPE-772
-# was scoped to make the flag exist and be readable, explicitly not to enable it.
-# Three drafts are waiting on that decision: cfb242dd, 7d26f538, fb2ff331.
+# ON since 2026-10-05 — John, OPE-596 (10-04 ruling; "turn on
+# OPERATOR_OUTBOUND_ENABLED" in session 10-05). Delivery still happens ONLY when
+# a person approves a draft with review_operator_draft; enabling this sends
+# nothing by itself, and a draft already 'approved' before the flip is not swept
+# up and sent.
 #
 # Lives here, not in the dashboard: a dashboard [vars] value is silently wiped by
 # the next `wrangler deploy` (OPE-284/OPE-509).
-OPERATOR_OUTBOUND_ENABLED = "false"
+OPERATOR_OUTBOUND_ENABLED = "true"
 
 # OPE-803 — spam-lane event recovery. When "true", a quarantined-spam row whose
 # body names a specific event (name + date + place) is routed to admin triage
