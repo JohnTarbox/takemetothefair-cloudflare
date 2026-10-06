@@ -2003,16 +2003,21 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     // key until OPE-1327 ships the writer and OPE-1328 flips NEAR-Fest, so an
     // armed probe would only false-fire. OPE-1328 sets enabled_at.
     //
-    // ⚠️ The window is a PLACEHOLDER, not a measurement: there is no emitting
-    // population to measure yet. NEAR-Fest runs May + October, so a new edition
-    // row should appear about twice a year; 183 days is that cadence with no
-    // margin. OPE-1328 must re-derive it from real rows (or widen it) when it
-    // arms the probe — a window set before the path exists is a guess.
+    // ARMED 2026-10-06 (drizzle/0358) after the NEAR-Fest flip (OPE-1328).
+    //
+    // ⚠️ The window is a JUDGEMENT, not a measurement: one multi-edition series
+    // with one member (n=1), so there is no inter-arrival to measure. Evidence
+    // is the newest keyed row's created_at — XL's is 2026-05-18, because it was
+    // created annual and keyed at the flip. A twice-yearly series adds a new
+    // edition row only when its organizer publishes dates, which can trail the
+    // previous edition by 6+ months; 183 days (the dormant placeholder) would
+    // have fired ~2026-11-17 on a healthy writer. 270 days clears that. Re-derive
+    // it from real rows once a second edition (or series) exists.
     name: "series-edition-key",
     ownerOpe: "OPE-1325",
     label: "multi-edition series writing edition keys",
     priority: "P1",
-    expectedWindowHours: 4392,
+    expectedWindowHours: 6480,
     lastEvidenceAt: (db) => maxTs(db, events, events.createdAt, isNotNull(events.editionKey)),
   },
   {
