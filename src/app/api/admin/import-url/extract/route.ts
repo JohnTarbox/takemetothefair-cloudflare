@@ -9,6 +9,7 @@ import type { PageMetadata, ExtractedEvent } from "@/lib/url-import/types";
 import { expandCadence } from "@/lib/url-import/cadence-expander";
 import { composeDeterministicExtract } from "@/lib/url-import/deterministic/compose";
 import { logError } from "@/lib/logger";
+import { AI_EXTRACTION_OK_MESSAGE } from "@/lib/url-import/extract-telemetry";
 
 const extractRequestSchema = z.object({
   content: z.string().min(1, "Content is required"),
@@ -44,11 +45,15 @@ const extractRequestSchema = z.object({
   // template ("Every other Saturday beginning 4/11/2026"). Capped at
   // 8KB before reaching the prompt — same budget as content.
   emailBody: z.string().max(8000).optional(),
+  // OPE-1316 — who asked (the MCP Worker names itself: email-workflow,
+  // holdout-sampler, photo-intake). Recorded on the timing rows below; an
+  // admin session with no caller is recorded as "admin".
+  caller: z.string().max(40).optional(),
 });
 
 // Accept admin session OR X-Internal-Key (MCP Worker email handler), via
 // withAuthorized — constant-time, replacing a prior timing-unsafe `===`.
-export const POST = withAuthorized(async ({ request, db }) => {
+export const POST = withAuthorized(async ({ request, db, userId }) => {
   try {
     const body = await request.json();
     const validation = extractRequestSchema.safeParse(body);
@@ -61,6 +66,8 @@ export const POST = withAuthorized(async ({ request, db }) => {
     }
 
     const { content, url, metadata, emailBody } = validation.data;
+    // OPE-1316 — an internal-key caller names itself; a session is the admin import.
+    const caller = validation.data.caller ?? (userId ? "admin" : "internal-unnamed");
 
     // JSON-LD priority extraction: if the fetched page emitted complete-
     // enough schema.org Event node(s), skip the AI call entirely and return
@@ -161,6 +168,29 @@ export const POST = withAuthorized(async ({ request, db }) => {
           contentLength: content.length,
           hasMetadataTitle: Boolean((metadata as PageMetadata | undefined)?.title),
           url,
+          caller,
+        },
+        request,
+      });
+    }
+
+    // OPE-1316 Ask 1 — time the SUCCESSES too. Until now only failures logged
+    // `elapsedMs`, so the 20 s limit could only be judged against the calls
+    // that broke it: no latency distribution existed to size a new one against
+    // (OPE-1089's lesson — decide a timeout on the tail, which needs the body).
+    // `info`, one row per AI answer; `eventsReturned` beside `elapsedMs` is what
+    // showed the slow pages were the ones writing many sub-events.
+    if (!aiFailure) {
+      await logError(db, {
+        level: "info",
+        message: AI_EXTRACTION_OK_MESSAGE,
+        source: "api/admin/import-url/extract",
+        context: {
+          elapsedMs: Date.now() - aiStartedAt,
+          contentLength: content.length,
+          eventsReturned: events.length,
+          url,
+          caller,
         },
         request,
       });

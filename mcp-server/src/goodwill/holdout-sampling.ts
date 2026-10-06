@@ -134,6 +134,8 @@ export interface HoldoutSamplingResult {
   skippedDuplicateUrl: number;
   /** OPE-576 — URLs skipped because they were not comparable within the cooldown. */
   skippedCooldown: number;
+  /** OPE-1316 — persistently-unreadable pages alerted on this run (each at most once). */
+  alertsRaised: number;
 }
 
 export interface HoldoutEnv {
@@ -165,6 +167,7 @@ export async function runScheduledHoldoutSampling(
     skippedMultiEvent: 0,
     skippedDuplicateUrl: 0,
     skippedCooldown: 0,
+    alertsRaised: 0,
   };
 
   try {
@@ -275,7 +278,9 @@ export async function runScheduledHoldoutSampling(
       try {
         extracted = await deps.submitExtract(
           { DB: env.DB, MAIN_APP_URL: env.MAIN_APP_URL, INTERNAL_API_KEY: env.INTERNAL_API_KEY },
-          fetched
+          fetched,
+          "",
+          "holdout-sampler"
         );
       } catch (err) {
         result.errors += 1;
@@ -410,12 +415,17 @@ export async function runScheduledHoldoutSampling(
       }
     }
 
+    // OPE-1316 — the cooldown stops the daily re-fetch, but on its own it
+    // retries an unreadable page every 8 days forever and tells nobody:
+    // mafa.org was not comparable on every attempt for a month. Say so once.
+    result.alertsRaised = await alertPersistentlyUnreadable(db, deps.now(), SOURCE);
+
     console.log(
       `[cron] holdout-sampling ok — sampled=${result.sampled} fetched=${result.fetched} ` +
         `extracted=${result.extracted} skippedThin=${result.skippedThin} emitted=${result.emitted} ` +
         `skipped_dedup=${result.skipped_dedup} errors=${result.errors} ` +
         `skippedMultiEvent=${result.skippedMultiEvent} skippedDuplicateUrl=${result.skippedDuplicateUrl} ` +
-        `skippedCooldown=${result.skippedCooldown}`
+        `skippedCooldown=${result.skippedCooldown} alertsRaised=${result.alertsRaised}`
     );
     return result;
   } catch (error) {
@@ -483,4 +493,104 @@ function isoOrNull(s: string | null | undefined): string | null {
   const d = new Date(s);
   if (isNaN(d.getTime())) return null;
   return toIsoDate(d);
+}
+
+/**
+ * OPE-1316 — a page the sampler has failed to compare on this many DISTINCT
+ * days within the lookback is not a blip. With the 7-day cooldown, 3 days means
+ * three consecutive cooldown cycles (~3 weeks) without a single readable visit.
+ */
+export const PERSISTENT_UNREADABLE_MIN_DAYS = 3;
+export const PERSISTENT_UNREADABLE_LOOKBACK_DAYS = 30;
+// "Not comparable", not "unreadable": `multi_event` is a page we read fine and
+// deliberately do not compare (a list page whose first event is not this one).
+// All three outcomes mean the same thing to the drift check — it learned nothing.
+export const PERSISTENT_UNREADABLE_MESSAGE =
+  "holdout-sampling: high-trust source page not comparable in 3+ cooldown cycles — the drift check has learned nothing from it";
+
+/**
+ * OPE-1316 — raise ONE error-level row per persistently-unreadable page.
+ *
+ * Evidence is the job's own `holdoutOutcome` rows (the same rows the cooldown
+ * reads), counted by distinct day. De-duplicated against an existing alert row
+ * for the same URL inside the lookback, so a page is named once a month, not
+ * once a run. The alert row deliberately carries NO `holdoutOutcome`, so it can
+ * never feed back into the cooldown or this count.
+ *
+ * WHERE IT SURFACES — read from source, 2026-10-06:
+ *   - the fault ledger: the hourly emitter (OPE-93, widened by OPE-615) ingests
+ *     every `error` row except its own (`faults/candidates/route.ts`, the
+ *     `notInArray(NEVER_INGEST_SOURCES)` filter), grouped by (source, message),
+ *     so every alert row joins ONE family. It becomes a fileable candidate for
+ *     the OPE-84 scan at count ≥ 3 in 7 days — true of a first run that finds
+ *     several pages (7 on 2026-10-06), NOT of a lone page found later;
+ *   - the admin data-health report and the analytics health tile (pull);
+ *   - NOT the page-error canary (`app/%page.tsx:%` only) and NOT the
+ *     standing-failure canary (≥3 distinct days per source) — so nothing
+ *     pushes it to Slack/email. Whether it should is John's call (OPE-1316).
+ */
+export async function alertPersistentlyUnreadable(
+  db: Db,
+  now: Date,
+  source: string
+): Promise<number> {
+  const since = new Date(now.getTime() - PERSISTENT_UNREADABLE_LOOKBACK_DAYS * 86_400_000);
+  const urlExpr = sql<string | null>`json_extract(${errorLogs.context}, '$.sourceUrl')`;
+  const persistent = await db
+    .select({
+      url: urlExpr,
+      days: sql<number>`count(DISTINCT date(${errorLogs.timestamp}, 'unixepoch'))`,
+      attempts: sql<number>`count(*)`,
+      outcomes: sql<string>`group_concat(DISTINCT json_extract(${errorLogs.context}, '$.holdoutOutcome'))`,
+      firstAt: sql<number>`min(${errorLogs.timestamp})`,
+      lastAt: sql<number>`max(${errorLogs.timestamp})`,
+    })
+    .from(errorLogs)
+    .where(
+      and(
+        eq(errorLogs.source, source),
+        gte(errorLogs.timestamp, since),
+        sql`json_extract(${errorLogs.context}, '$.holdoutOutcome') IS NOT NULL`
+      )
+    )
+    .groupBy(urlExpr)
+    .having(
+      sql`count(DISTINCT date(${errorLogs.timestamp}, 'unixepoch')) >= ${PERSISTENT_UNREADABLE_MIN_DAYS}`
+    );
+  if (persistent.length === 0) return 0;
+
+  const alerted = await db
+    .select({ url: urlExpr })
+    .from(errorLogs)
+    .where(
+      and(
+        eq(errorLogs.source, source),
+        eq(errorLogs.message, PERSISTENT_UNREADABLE_MESSAGE),
+        gte(errorLogs.timestamp, since)
+      )
+    );
+  const already = new Set(alerted.map((a) => a.url));
+
+  let raised = 0;
+  for (const p of persistent) {
+    if (!p.url || already.has(p.url)) continue;
+    await logError(db, {
+      level: "error",
+      source,
+      message: PERSISTENT_UNREADABLE_MESSAGE,
+      context: {
+        sourceUrl: p.url,
+        notComparableDays: p.days,
+        attempts: p.attempts,
+        outcomes: p.outcomes,
+        firstAt: new Date(Number(p.firstAt) * 1000).toISOString(),
+        lastAt: new Date(Number(p.lastAt) * 1000).toISOString(),
+        remedy:
+          "Re-check the page by hand. If it is a multi-event list page the extractor cannot read, " +
+          "point the events at their own pages, or drop the source's high-trust standing.",
+      },
+    });
+    raised += 1;
+  }
+  return raised;
 }
