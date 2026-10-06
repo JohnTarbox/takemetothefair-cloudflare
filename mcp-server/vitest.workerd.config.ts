@@ -22,6 +22,9 @@
  *                      so the Durable Object tests do not depend on D1.
  *   - BURST_COUNTER  — the real `BurstCounter` class (src/burst-counter.ts),
  *                      SQLite-backed like the `new_sqlite_classes` migration.
+ *   - OAUTH_KV       — a local KV for the OAuth provider's login-flow tests
+ *                      (OPE-1323): 1.x keys grants by KV key METADATA, which an
+ *                      in-memory fake would only imitate.
  *
  * `compatibilityDate` / `compatibilityFlags` mirror `wrangler.toml`.
  */
@@ -39,6 +42,7 @@ export default defineConfig({
           compatibilityDate: "2026-09-10",
           compatibilityFlags: ["nodejs_compat"],
           d1Databases: ["DB"],
+          kvNamespaces: ["OAUTH_KV"],
           durableObjects: {
             BURST_COUNTER: { className: "BurstCounter", useSQLite: true },
           },

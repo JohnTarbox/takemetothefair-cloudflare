@@ -9,4 +9,5 @@ export interface WorkerdTestEnv {
   DB: D1Database;
   BURST_COUNTER: DurableObjectNamespace<BurstCounter>;
   TEST_MIGRATIONS: D1Migration[];
+  OAUTH_KV: KVNamespace;
 }

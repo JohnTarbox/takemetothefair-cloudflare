@@ -1,6 +1,7 @@
 import { opaqueErrorResponse } from "./error-response.js";
 import { lastGeocodeSweepCursor, sweepGeocodePages } from "./venues/geocode-sweep-pager.js";
 import OAuthProvider from "@cloudflare/workers-oauth-provider";
+import { mcpOAuthProviderOptions } from "./oauth/provider-options";
 import type { EmailGateEnv } from "./email-gates.js";
 import { McpAgent } from "agents/mcp";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -498,20 +499,13 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
 // ---------------------------------------------------------------------------
 // OAuth provider — handles /register, /authorize, /token, and routes /mcp to DO
 // ---------------------------------------------------------------------------
-const oauthProvider = new OAuthProvider({
-  apiHandlers: {
-    "/mcp": MeetMeAtTheFairMCP.serve("/mcp"),
-    "/sse": MeetMeAtTheFairMCP.serveSSE("/sse"),
-  },
-  defaultHandler: LoginHandler,
-  authorizeEndpoint: "/authorize",
-  tokenEndpoint: "/token",
-  clientRegistrationEndpoint: "/register",
-  // OPE-900 step 5 — S256 only. Live metadata already reads ["S256"], but only
-  // because 0.10.x flipped the library DEFAULT (0.3.3 advertised "plain" too);
-  // nothing here asked for it. Explicit, so a future release cannot re-enable it.
-  allowPlainPKCE: false,
-});
+const oauthProvider = new OAuthProvider<Env>(
+  mcpOAuthProviderOptions<Env>({
+    mcp: MeetMeAtTheFairMCP.serve("/mcp"),
+    sse: MeetMeAtTheFairMCP.serveSSE("/sse"),
+    login: LoginHandler,
+  })
+);
 
 // ---------------------------------------------------------------------------
 // CORS helpers (for legacy mmatf_ token requests)
