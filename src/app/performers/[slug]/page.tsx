@@ -26,6 +26,7 @@ import { withD1ReadLogged } from "@/lib/db/d1-resilience";
 import { DEGRADED_METADATA, isD1PlatformFault } from "@/lib/db/degraded";
 import { DegradedPanel } from "@/components/layout/degraded-panel";
 import { occurrenceUrl } from "@/lib/series/series-schema-org";
+import { occurrenceYear } from "@takemetothefair/utils";
 import { SITE_URL } from "@takemetothefair/constants";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { upcomingEndPredicate } from "@/lib/event-dates";
@@ -179,7 +180,7 @@ async function getPerformerOnce(slug: string) {
       }
       return withDays.map((e) => {
         const cslug = e.seriesId ? seriesSlugById.get(e.seriesId) : null;
-        const year = e.startDate ? new Date(e.startDate).getUTCFullYear() : null;
+        const year = occurrenceYear(e.startDate);
         const occurrenceHref =
           cslug && year ? occurrenceUrl(cslug, year, e.slug).replace(SITE_URL, "") : undefined;
         return { ...e, occurrenceHref };

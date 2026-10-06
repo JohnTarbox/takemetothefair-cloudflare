@@ -20,6 +20,7 @@ import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import type { SeriesLanding, LandingOccurrence } from "@/lib/series/get-series-landing";
 import type { VisitorGuide } from "@/lib/blog/event-guides";
 import { formatDateRange } from "@/lib/utils";
+import { seriesOccurrencePath } from "@takemetothefair/utils";
 import { cdnImage } from "@/lib/cdn-image";
 import { toIsoDateOnlyInVenueZone } from "@/lib/datetime";
 
@@ -81,7 +82,7 @@ export function SeriesLandingPage({
 
   // Relative Option-A occurrence path (year page, or the event slug when undated).
   const occPath = (year: number | null, slug: string) =>
-    year === null ? `/events/${slug}` : `/events/${series.canonicalSlug}/${year}`;
+    year === null ? `/events/${slug}` : seriesOccurrencePath(series.canonicalSlug, year);
 
   const renderRow = (v: { id: string; year: number | null }) => {
     const o = byId.get(v.id);

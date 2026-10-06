@@ -671,3 +671,6 @@ export * from "./pet-policy";
 export * from "./gsc-export-row-query";
 // OPE-38/249/1295 — rule agreement + the promotable gate (dashboard AND live auto-apply).
 export * from "./promoter-rule-agreement";
+// OPE-1324 — the one occurrence URL builder/parser, shared by the app and the
+// MCP Worker (which cannot import src/). See scripts/check-occurrence-paths.ts.
+export * from "./edition-path";

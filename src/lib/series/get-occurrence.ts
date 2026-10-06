@@ -39,7 +39,9 @@ async function resolveOnce(seriesSlug: string, year: number): Promise<string | n
   // Few occurrences per series — match the start-year in JS rather than with
   // a SQLite strftime predicate.
   const occ = await db
-    .select({ slug: events.slug, startDate: events.startDate })
+    // `id` — OPE-1324: the shared picker tie-breaks on it, so the page and the
+    // middleware's ETag lookup choose the same row even for two same-year members.
+    .select({ id: events.id, slug: events.slug, startDate: events.startDate })
     .from(events)
     .where(and(eq(events.seriesId, series.id), isPublicEventStatus()));
 

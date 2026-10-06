@@ -17,6 +17,7 @@
  * venue-zone ISO dates; this module only shapes JSON-LD.
  */
 import { SITE_URL } from "@takemetothefair/constants";
+import { seriesOccurrencePath } from "@takemetothefair/utils";
 import { buildPlaceJsonLd, type PlaceVenue } from "@/lib/seo/place-jsonld";
 import { LIFECYCLE_TO_SCHEMA_ORG, type EventLifecycle } from "@/lib/event-lifecycle";
 import { isPastUnconfirmed, PAST_UNCONFIRMED_GRACE_MS } from "@/lib/events/past-unconfirmed";
@@ -250,7 +251,7 @@ export function occurrenceUrl(
 ): string {
   return year === null
     ? `${SITE_URL}/events/${fallbackSlug}`
-    : `${SITE_URL}/events/${canonicalSlug}/${year}`;
+    : `${SITE_URL}${seriesOccurrencePath(canonicalSlug, year)}`;
 }
 
 function occurrenceNode(

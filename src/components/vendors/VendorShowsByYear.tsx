@@ -4,6 +4,7 @@
  * vendor has at least one 2+-year series (the caller filters), so it's a
  * highlight, not a restatement of the chronological event lists.
  */
+import { seriesOccurrencePath } from "@takemetothefair/utils";
 import Link from "next/link";
 import { Calendar } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -38,7 +39,9 @@ export function VendorShowsByYear({ series }: { series: VendorShowSeries[] }) {
                 {s.years.map((y) => (
                   <Link
                     key={`${s.seriesSlug}-${y.year ?? y.eventSlug}`}
-                    href={y.year ? `/events/${s.seriesSlug}/${y.year}` : `/events/${y.eventSlug}`}
+                    href={
+                      y.year ? seriesOccurrencePath(s.seriesSlug, y.year) : `/events/${y.eventSlug}`
+                    }
                     className="rounded border border-secondary/20 px-2 py-0.5 text-sm font-medium text-secondary hover:border-terracotta hover:text-terracotta"
                   >
                     {y.year ?? "—"}

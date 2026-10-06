@@ -19,6 +19,11 @@ import {
 } from "@/lib/db/schema";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { pickOccurrenceForYear } from "@/lib/series/occurrence-year";
+import {
+  occurrencePath,
+  parseOccurrenceSegment,
+  seriesOccurrencePath,
+} from "@takemetothefair/utils";
 import { resolveVenueRedirect } from "@/lib/venues/slug-redirect";
 import { isPubliclyVisible, publicEventWhere, type EventLifecycle } from "@/lib/event-lifecycle";
 import {
@@ -338,7 +343,7 @@ async function handleRouting(request: NextRequest) {
   {
     const rest = pathname.startsWith("/events/") ? pathname.slice("/events/".length) : "";
     const parts = rest.split("/");
-    if (parts.length === 2 && /^\d{4}$/.test(parts[1])) {
+    if (parts.length === 2 && parseOccurrenceSegment(parts[1])) {
       const [seriesSlug, year] = parts;
       const d1 = env.DB as D1Database | undefined;
       if (d1) {
@@ -374,7 +379,7 @@ async function handleRouting(request: NextRequest) {
                 const url = request.nextUrl.clone();
                 // Keep the year: a reader asking for the 2026 edition should
                 // land on the 2026 edition, not the hub.
-                url.pathname = `/events/${cursor}/${year}`;
+                url.pathname = seriesOccurrencePath(cursor, year);
                 return NextResponse.redirect(url, 301);
               }
             }
@@ -439,10 +444,13 @@ async function handleRouting(request: NextRequest) {
         // Option-A URL /events/<series-slug>/<year>. Skip when the slug already
         // EQUALS the series canonical slug: that bare slug is the series LANDING
         // (a clean-slug member), which the page must render, not redirect.
-        if (row.seriesSlug && row.startDate && slug !== row.seriesSlug) {
-          const year = new Date(row.startDate).getUTCFullYear();
+        const occPath =
+          row.seriesSlug && slug !== row.seriesSlug
+            ? occurrencePath(row.seriesSlug, row.startDate)
+            : null;
+        if (occPath) {
           const url = request.nextUrl.clone();
-          url.pathname = `/events/${row.seriesSlug}/${year}`;
+          url.pathname = occPath;
           return NextResponse.redirect(url, 301);
         }
         // Public — let the page render.
@@ -928,7 +936,7 @@ async function loadEntityMtime(
         .limit(1);
       if (!series) return undefined;
       const occ = await db
-        .select({ startDate: events.startDate, u: events.updatedAt })
+        .select({ id: events.id, startDate: events.startDate, u: events.updatedAt })
         .from(events)
         .where(and(eq(events.seriesId, series.id), isPublicEventStatus()));
       const match = pickOccurrenceForYear(occ, year);

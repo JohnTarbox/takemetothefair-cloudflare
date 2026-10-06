@@ -41,6 +41,7 @@ import {
 } from "@/lib/series/group-events";
 import { selectCommittableGroups } from "@/lib/series/commit-selection";
 import { chunkedInArray, chunkIds } from "@takemetothefair/utils";
+import { occurrenceYear } from "@takemetothefair/utils";
 
 // EH3 — non-public statuses are NOT occurrences and must be excluded from the
 // backfill grouping. Counting a REJECTED duplicate as a group member created
@@ -60,7 +61,7 @@ function serializeMember(e: GroupableEvent) {
   return {
     id: e.id,
     slug: e.slug,
-    start_year: e.startDate ? e.startDate.getUTCFullYear() : null,
+    start_year: occurrenceYear(e.startDate),
     vendor_links: e.vendorLinkCount,
   };
 }
