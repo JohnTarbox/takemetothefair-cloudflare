@@ -12,11 +12,11 @@
  * (slug, year) today, so this route 404s exactly like any unknown path.
  */
 import { seriesOccurrencePath } from "@takemetothefair/utils";
-import { notFound } from "next/navigation";
+import { notFound, permanentRedirect } from "next/navigation";
 import type { Metadata } from "next";
 import EventDetailPage from "../page";
 import { buildEventMetadata } from "../event-detail-data";
-import { resolveOccurrenceSlug } from "@/lib/series/get-occurrence";
+import { resolveOccurrenceTarget } from "@/lib/series/get-occurrence";
 import { DEGRADED_METADATA, isD1PlatformFault } from "@/lib/db/degraded";
 import { DegradedPanel } from "@/components/layout/degraded-panel";
 
@@ -28,15 +28,17 @@ interface OccurrenceProps {
 
 export async function generateMetadata({ params }: OccurrenceProps): Promise<Metadata> {
   const { slug, year } = await params;
-  let occSlug: string | null;
+  let target: Awaited<ReturnType<typeof resolveOccurrenceTarget>>;
   try {
-    occSlug = await resolveOccurrenceSlug(slug, year);
+    target = await resolveOccurrenceTarget(slug, year);
   } catch (e) {
     // OPE-1301 — a D1 blip that survived the retry: noindex, not a crash.
     if (isD1PlatformFault(e)) return DEGRADED_METADATA;
     throw e;
   }
-  if (!occSlug) return {};
+  // OPE-1326 — a redirect target has no metadata of its own; the page 301s.
+  if (!target || target.redirectTo) return {};
+  const occSlug = target.slug;
   // K46 — asOccurrence forces the occurrence's Event-detail metadata (canonical
   // /events/<series>/<year>), not the series-landing metadata. Without it a
   // single-occurrence series whose canonical_slug == the occurrence slug would
@@ -46,9 +48,9 @@ export async function generateMetadata({ params }: OccurrenceProps): Promise<Met
 
 export default async function OccurrencePage({ params }: OccurrenceProps) {
   const { slug, year } = await params;
-  let occSlug: string | null;
+  let target: Awaited<ReturnType<typeof resolveOccurrenceTarget>>;
   try {
-    occSlug = await resolveOccurrenceSlug(slug, year);
+    target = await resolveOccurrenceTarget(slug, year);
   } catch (e) {
     // OPE-1301 — an honest degraded panel, not the error boundary (09-27 specimen).
     if (isD1PlatformFault(e)) {
@@ -56,7 +58,11 @@ export default async function OccurrencePage({ params }: OccurrenceProps) {
     }
     throw e;
   }
-  if (!occSlug) notFound();
+  if (!target) notFound();
+  // OPE-1326 — the middleware 301s these before the render; this is the backstop
+  // if it was bypassed (e.g. an ISR revalidation reaching the page directly).
+  if (target.redirectTo) permanentRedirect(target.redirectTo);
+  const occSlug = target.slug;
   // K46 — render the occurrence Event detail (with superEvent), not the series
   // landing, so each URL emits exactly one EventSeries block. Called as a plain
   // function (not JSX) to pass the 2nd positional `asOccurrence` arg.

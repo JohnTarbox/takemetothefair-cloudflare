@@ -168,7 +168,7 @@ describe("OPE-790 rework — degraded panel on a surviving platform blip, and on
 const OPE1301: Array<[string, string]> = [
   ["src/app/blog/tag/[tag]/page.tsx", "app/blog/tag/[tag]/page.tsx:getPostsByTagSlug"],
   ["src/lib/series/get-series-landing.ts", "lib/series/get-series-landing.ts:getSeriesLanding"],
-  ["src/lib/series/get-occurrence.ts", "lib/series/get-occurrence.ts:resolveOccurrenceSlug"],
+  ["src/lib/series/get-occurrence.ts", "lib/series/get-occurrence.ts:resolveOccurrenceTarget"],
 ];
 
 describe("OPE-1301 — the blog-tag and series reads are retry-wrapped and degrade", () => {

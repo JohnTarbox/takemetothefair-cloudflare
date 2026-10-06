@@ -42,10 +42,12 @@ const SCHEMA_SQL = `
     completeness_score INTEGER DEFAULT 80,
     start_date INTEGER DEFAULT 1790000000,
     end_date INTEGER,
-    series_id TEXT
+    series_id TEXT,
+    edition_key TEXT
   );
   CREATE TABLE event_series (
     id TEXT PRIMARY KEY,
+    edition_mode TEXT NOT NULL DEFAULT \'annual\',
     canonical_slug TEXT NOT NULL
   );
   -- OPE-1181 — the venue indexability predicate reads these.

@@ -8,7 +8,7 @@
  * formatting are P2.3 glue; the selection/partition judgment lives here so it's
  * unit-tested in isolation (same pattern as the rest of src/lib/series/).
  */
-import { occurrenceYear, seriesOccurrencePath } from "@takemetothefair/utils";
+import { occurrencePath, occurrenceYear } from "@takemetothefair/utils";
 import type { OccurrenceForSchema } from "./series-schema-org";
 import type { PlaceVenue } from "@/lib/seo/place-jsonld";
 import { toIsoDateOnlyInVenueZone } from "@/lib/datetime";
@@ -38,6 +38,8 @@ export interface OccurrenceRow {
   ticketUrl?: string | null;
   ticketPriceMinCents?: number | null;
   ticketPriceMaxCents?: number | null;
+  /** OPE-1326 — the stored edition key; addresses the member on a multi-edition series. */
+  editionKey?: string | null;
 }
 
 export interface OccurrenceView extends OccurrenceRow {
@@ -113,12 +115,20 @@ export function pickHeroOccurrence(occurrences: OccurrenceRow[], now: Date): Occ
 export function seriesHubCanonicalPath(
   canonicalSlug: string,
   occurrences: OccurrenceRow[],
-  now: Date
+  now: Date,
+  // OPE-1326 — required: on a multi-edition series the hub canonical is the
+  // hero's EDITION path (/2026-10), which a year-only caller would get wrong.
+  editionMode: string | null
 ): string {
   const hero = pickHeroOccurrence(occurrences, now);
-  return hero?.year != null
-    ? seriesOccurrencePath(canonicalSlug, hero.year)
-    : `/events/${canonicalSlug}`;
+  return (
+    (hero &&
+      occurrencePath(canonicalSlug, hero.startDate, {
+        editionMode,
+        editionKey: hero.editionKey,
+      })) ??
+    `/events/${canonicalSlug}`
+  );
 }
 
 /**
@@ -164,6 +174,8 @@ export function toSchemaOccurrences(occurrences: OccurrenceRow[]): OccurrenceFor
   return [...occurrences].sort(byStartAsc).map((o) => ({
     slug: o.slug,
     year: occYear(o),
+    // OPE-1326 — the subEvent url uses it on a multi-edition series.
+    editionKey: o.editionKey ?? null,
     name: o.name,
     // OPE-482 follow-up — Eastern calendar date. These feed the subEvent
     // `startDate`/`endDate` in the series JSON-LD; the UTC slice put an

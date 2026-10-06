@@ -7,10 +7,16 @@
  * create-occurrence-core.ts; this module owns the lookup + idempotency + insert.
  */
 import { raiseEventReviewFlag } from "@/lib/db/schema";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull, ne } from "drizzle-orm";
 import type { Database } from "@/lib/db";
 import { events, eventSeries, eventDays, adminActions } from "@/lib/db/schema";
-import { createSlug, appendSlugSegment, unsafeSlug } from "@takemetothefair/utils";
+import {
+  createSlug,
+  appendSlugSegment,
+  deriveEditionKey,
+  isEditionKey,
+  unsafeSlug,
+} from "@takemetothefair/utils";
 import { partitionEventCategories } from "@takemetothefair/constants";
 
 /** Tolerant read of the stored JSON array; a malformed value is no categories. */
@@ -51,15 +57,28 @@ export interface CreateOccurrenceInput {
    * route was never covered by that fix.
    */
   sourceUrl?: string | null;
+  /**
+   * OPE-1327 — the edition key, on a multi-edition series only (ignored on an
+   * annual one). Omitted → derived from `overrides.startDate` (`YYYY-MM`, venue
+   * zone). Pass an explicit key (`2027-05-xli`) to resolve a same-month clash.
+   */
+  editionKey?: string | null;
 }
 
 export type CreateOccurrenceResult =
   | { created: false; reason: "series_not_found"; year: number }
+  /**
+   * OPE-1327 — a multi-edition series needs a key: none given, no start date to
+   * derive one from, or the given key is malformed.
+   */
+  | { created: false; reason: "edition_key_required"; message: string; year: number }
   | {
       created: false;
       reason: "occurrence_exists";
       existingEventId: string;
       year: number;
+      /** OPE-1327 — set when the clash was on a multi-edition key. */
+      editionKey?: string;
       /**
        * OPE-28 — for a sub-annual (FREQ=MONTHLY/WEEKLY/DAILY) series, true when
        * the incoming date was attached as a NEW event_day on the existing
@@ -70,7 +89,7 @@ export type CreateOccurrenceResult =
   | { created: false; reason: "promoter_required"; year: number }
   /** OPE-1180 — an EXPLICIT venue override is a FORMER venue closed before this date. */
   | { created: false; reason: "former_venue_after_closure"; message: string; year: number }
-  | { created: true; occurrenceId: string; slug: string; year: number };
+  | { created: true; occurrenceId: string; slug: string; year: number; editionKey?: string };
 
 /** Year of an existing series sibling — from its start date, else a -YYYY slug suffix. */
 function siblingYear(startDate: Date | null, slug: string): number | null {
@@ -170,6 +189,7 @@ export async function createOccurrenceForSeries(
       tags: eventSeries.tags,
       primaryAudience: eventSeries.primaryAudience,
       publicAccess: eventSeries.publicAccess,
+      editionMode: eventSeries.editionMode,
     })
     .from(eventSeries)
     .where(eq(eventSeries.id, seriesId))
@@ -177,17 +197,55 @@ export async function createOccurrenceForSeries(
 
   if (!series) return { created: false, reason: "series_not_found", year };
 
-  // Year-bucketed idempotency: one occurrence per series per year.
+  // OPE-1327 — a multi-edition series keys idempotency on the EDITION, not the
+  // year: May and October of one year are two occurrences, not a duplicate.
+  const multi = series.editionMode === "multi";
+  let editionKey: string | null = null;
+  if (multi) {
+    editionKey = input.editionKey
+      ? isEditionKey(input.editionKey)
+        ? input.editionKey
+        : null
+      : deriveEditionKey(input.overrides?.startDate ?? null);
+    if (!editionKey) {
+      return {
+        created: false,
+        reason: "edition_key_required",
+        message: input.editionKey
+          ? `edition_key "${input.editionKey}" is not YYYY-MM or YYYY-MM-<lowercase-suffix>`
+          : "this series is multi-edition: pass edition_key, or a start_date to derive it from",
+        year,
+      };
+    }
+  }
+
+  // Idempotency: one occurrence per series per year (annual) or per edition key
+  // (multi). OPE-1327 — a REJECTED row or a merge tombstone is not a sibling: it
+  // holds no public page, so it must not stop a real edition being created.
   const siblings = await db
     .select({
       id: events.id,
       slug: events.slug,
       startDate: events.startDate,
       endDate: events.endDate,
+      editionKey: events.editionKey,
     })
     .from(events)
-    .where(eq(events.seriesId, seriesId));
-  const clash = siblings.find((s) => siblingYear(s.startDate ?? null, s.slug) === year);
+    .where(
+      and(eq(events.seriesId, seriesId), ne(events.status, "REJECTED"), isNull(events.mergedInto))
+    );
+  const clash = multi
+    ? siblings.find((s) => s.editionKey === editionKey)
+    : siblings.find((s) => siblingYear(s.startDate ?? null, s.slug) === year);
+  if (clash && multi) {
+    return {
+      created: false,
+      reason: "occurrence_exists",
+      existingEventId: clash.id,
+      year,
+      editionKey: editionKey!,
+    };
+  }
   if (clash) {
     // OPE-28 — for a sub-annual series (FREQ=MONTHLY/WEEKLY), a same-year hit is
     // a NEW DATE of the existing year-occurrence, not a duplicate: attach it as
@@ -267,6 +325,8 @@ export async function createOccurrenceForSeries(
   await db.insert(events).values({
     id: eventId,
     seriesId: values.seriesId,
+    // OPE-1327 — stored and frozen; NULL on every annual-series occurrence.
+    editionKey,
     name: values.name,
     slug: finalSlug,
     description: values.description,
@@ -307,6 +367,7 @@ export async function createOccurrenceForSeries(
     payloadJson: JSON.stringify({
       series_id: values.seriesId,
       year,
+      ...(editionKey ? { edition_key: editionKey } : {}),
       slug: finalSlug,
       rolled_from_event_id: values.rolledFromEventId,
       source: input.sourceName ?? "series-occurrence",
@@ -317,5 +378,11 @@ export async function createOccurrenceForSeries(
   // OPE-767 — recorded as a reason, so it can be discharged on its own.
   if (values.flaggedForReview) await raiseEventReviewFlag(db, eventId, "new_occurrence");
 
-  return { created: true, occurrenceId: eventId, slug: finalSlug, year };
+  return {
+    created: true,
+    occurrenceId: eventId,
+    slug: finalSlug,
+    year,
+    ...(editionKey ? { editionKey } : {}),
+  };
 }
