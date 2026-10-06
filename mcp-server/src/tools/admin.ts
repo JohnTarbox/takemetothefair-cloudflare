@@ -180,6 +180,7 @@ import { registerAdminClaimApprovalTool } from "./admin-claim-approval.js";
 import { registerEventLifecycleTools } from "./admin-event-lifecycle.js";
 import { registerSeriesBackfillTools } from "./admin-series-backfill.js";
 import { registerCreateOccurrenceTool } from "./admin-create-occurrence.js";
+import { registerSeriesEditionModeTool } from "./admin-series-edition-mode.js";
 import { registerRecommendationsTools } from "./admin-recommendations.js";
 import { registerUploadImageBytesTool } from "./upload-image-bytes.js";
 import { registerRequestImageUploadSlotTool } from "./request-image-upload-slot.js";
@@ -457,6 +458,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
 
   // EH3 P3.1 — create_occurrence (new dated edition under a series).
   registerCreateOccurrenceTool(server, auth, env);
+
+  // OPE-1327 — set_series_edition_mode (flag + edition keys, atomically; dry-run default).
+  registerSeriesEditionModeTool(server, db, auth);
 
   // Read-only recommendations feed — same data as /admin/analytics ▸
   // Recommendations. Adds get_recommendations, get_recommendation_rule.

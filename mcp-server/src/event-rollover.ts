@@ -34,11 +34,19 @@ import {
   appendSlugSegment,
   normalizeName,
   computeNextOccurrence,
+  deriveEditionKey,
   parseRecurrenceRule,
   unsafeSlug,
   type Slug,
 } from "@takemetothefair/utils";
-import { events, eventDays, adminActions, promoters, raiseEventReviewFlag } from "./schema.js";
+import {
+  events,
+  eventDays,
+  eventSeries,
+  adminActions,
+  promoters,
+  raiseEventReviewFlag,
+} from "./schema.js";
 import { isCeasedPromoter } from "./promoters/succession.js";
 import { recomputeEventCompleteness } from "./helpers.js";
 import type { Db } from "./db.js";
@@ -126,10 +134,43 @@ export async function rolloverEventIfRecurring(
   const next = computeNextOccurrence(source.startDate, source.endDate, source.recurrenceRule);
   if (!next) return { created: false, skipReason: "cannot-compute-next" };
 
+  // --- OPE-1327: multi-edition series bucket by (series, edition key) ---------
+  // NEAR-Fest runs May AND October. Bucketing them by (promoter, name, year)
+  // made the second roll of a year see the first one's edition and skip as
+  // "edition-exists" — the fall edition was never rolled. On a multi-edition
+  // series the rolled edition's key is derived from its computed start (October
+  // 2027 → 2028-10), and idempotency is "this series already holds that key".
+  let rolledEditionKey: string | null = null;
+  if (source.seriesId) {
+    const [series] = await db
+      .select({ editionMode: eventSeries.editionMode })
+      .from(eventSeries)
+      .where(eq(eventSeries.id, source.seriesId))
+      .limit(1);
+    if (series?.editionMode === "multi") {
+      rolledEditionKey = deriveEditionKey(next.start);
+      if (!rolledEditionKey) return { created: false, skipReason: "cannot-compute-next" };
+      const [held] = await db
+        .select({ id: events.id })
+        .from(events)
+        .where(
+          and(
+            eq(events.seriesId, source.seriesId),
+            eq(events.editionKey, rolledEditionKey),
+            isNull(events.mergedInto),
+            ne(events.status, "REJECTED")
+          )
+        )
+        .limit(1);
+      if (held) return { created: false, skipReason: "edition-exists" };
+    }
+  }
+
   // --- Idempotency: skip if a next-year edition already exists ---------------
   // Year-bucketed match on (promoter, normalized name). Annual fairs drift a
   // few days year-to-year, so a fixed day window would false-negative; the
   // calendar-year bucket is the right unit for a YEARLY cadence.
+  // OPE-1327 — annual series only; a multi-edition series was decided above.
   const nextYear = next.start.getUTCFullYear();
   const yearStart = new Date(Date.UTC(nextYear, 0, 1));
   const yearEnd = new Date(Date.UTC(nextYear + 1, 0, 1));
@@ -148,7 +189,7 @@ export async function rolloverEventIfRecurring(
       )
     );
   const existing = candidates.find((c) => normalizeName(c.name) === normalizedSourceName);
-  if (existing) return { created: false, skipReason: "edition-exists" };
+  if (existing && !rolledEditionKey) return { created: false, skipReason: "edition-exists" };
 
   // --- Derive the new edition's name + slug ---------------------------------
   // Swap a standalone source-year token (e.g. "Fryeburg Fair 2026") for the
@@ -201,6 +242,8 @@ export async function rolloverEventIfRecurring(
     // This achieves the chosen goal — series-linked editions, automation kept —
     // with zero inheritance regression. Revisit if a single create-path is wanted.
     seriesId: source.seriesId,
+    // OPE-1327 — the rolled edition's own frozen key (NULL on annual series).
+    editionKey: rolledEditionKey,
     name: newName,
     slug: finalSlug,
     description: source.description,

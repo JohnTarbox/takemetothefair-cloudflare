@@ -1,5 +1,5 @@
 import { eq, and, inArray, sql, or, isNull } from "drizzle-orm";
-import { differentEditionYears } from "@/lib/series/merge-year-guard";
+import { differentEditions, differentEditionYears } from "@/lib/series/merge-year-guard";
 import type { Database } from "@/lib/db";
 import {
   venues,
@@ -736,6 +736,8 @@ async function mergeEvents(
         sourceName: events.sourceName,
         // OPE-481 — needed by the cross-year guard below.
         startDate: events.startDate,
+        // OPE-1327 — and the edition key, for the same-year/different-edition case.
+        editionKey: events.editionKey,
       })
       .from(events)
       .where(eq(events.id, primaryId)),
@@ -750,6 +752,8 @@ async function mergeEvents(
         sourceName: events.sourceName,
         // OPE-481 — needed by the cross-year guard below.
         startDate: events.startDate,
+        // OPE-1327 — and the edition key, for the same-year/different-edition case.
+        editionKey: events.editionKey,
       })
       .from(events)
       .where(eq(events.id, duplicateId)),
@@ -786,14 +790,22 @@ async function mergeEvents(
   // `allowCrossYearMerge` exists so a deliberate cross-year merge is still
   // possible, but only by saying so explicitly — the force_create shape used in
   // intake. Never default it to true.
-  if (
-    !options?.allowCrossYearMerge &&
-    differentEditionYears(keeper.startDate, duplicate.startDate)
-  ) {
+  //
+  // OPE-1327 — and same-year merges of two DIFFERENT editions of a multi-edition
+  // series (both carry an edition key, and the keys differ). The same override
+  // applies: the cost is the same fused roster.
+  if (!options?.allowCrossYearMerge && differentEditions(keeper, duplicate)) {
+    // The cross-year wording is unchanged (callers and tests match on it); the
+    // same-year/different-key case says which keys collided.
     throw new Error(
-      `mergeEvents: refusing cross-year merge — keeper ${primaryId} and duplicate ${duplicateId} ` +
-        `start in different years. These are different editions of a series; link them as ` +
-        `occurrences instead. Pass allowCrossYearMerge to override deliberately.`
+      differentEditionYears(keeper.startDate, duplicate.startDate)
+        ? `mergeEvents: refusing cross-year merge — keeper ${primaryId} and duplicate ${duplicateId} ` +
+            `start in different years. These are different editions of a series; link them as ` +
+            `occurrences instead. Pass allowCrossYearMerge to override deliberately.`
+        : `mergeEvents: refusing a merge of two different editions — keeper ${primaryId} ` +
+            `(${keeper.editionKey}) and duplicate ${duplicateId} (${duplicate.editionKey}) are ` +
+            `different editions of a multi-edition series; link them as occurrences instead. ` +
+            `Pass allowCrossYearMerge to override deliberately.`
     );
   }
 

@@ -612,9 +612,8 @@ export async function POST(request: NextRequest) {
     // never auto-published: a human looks first.
     const stateNeedsReview =
       venueDecision === "state-conflict" || sourceOutsideNewEngland(data.venueState);
-    const eventStatus =
-      gateRoute === "PENDING_REVIEW" || stateNeedsReview ? "PENDING" : baseEventStatus;
-    const gateFlagsJson = gateReasons.length > 0 ? JSON.stringify(gateReasons) : null;
+    // `eventStatus` / `gateFlagsJson` are derived BELOW the occurrence routing:
+    // OPE-1327 can still send an edition-ambiguous submission to review.
 
     // OPE-1180 — a resolved FORMER venue is kept only for pre-closure dates.
     // After the closure the submission lands WITHOUT a venue and flagged for
@@ -667,6 +666,21 @@ export async function POST(request: NextRequest) {
       // insert (safe default — better a standalone row than a dropped submission).
     }
 
+    // OPE-1327 — a multi-edition series could not place this edition safely
+    // (its key is held, or another edition starts within ±7 days). Never drop it:
+    // insert the standalone below, held for review and pointed at the edition it
+    // collided with, so an operator decides "same edition" vs "new edition".
+    let stagedEditionOf: string | null = null;
+    if (!occRoute.routed && "staged" in occRoute) {
+      stagedEditionOf = occRoute.nearEditionId;
+      gateReasons.push("edition_ambiguous");
+      gateRoute = "PENDING_REVIEW";
+    }
+
+    const eventStatus =
+      gateRoute === "PENDING_REVIEW" || stateNeedsReview ? "PENDING" : baseEventStatus;
+    const gateFlagsJson = gateReasons.length > 0 ? JSON.stringify(gateReasons) : null;
+
     // OPE-458 scope 3 — resolve the owning promoter instead of defaulting every
     // submission to the community placeholder.
     //
@@ -706,6 +720,7 @@ export async function POST(request: NextRequest) {
     // dated row the same name at the same venue is usually another edition.
     const possibleDuplicateOf =
       data.possibleDuplicateOf ??
+      stagedEditionOf ??
       (await detectPossibleDuplicate(db, {
         venueId: resolvedVenueId,
         startDate: effectiveStartDate,

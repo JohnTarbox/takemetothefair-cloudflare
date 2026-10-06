@@ -22,6 +22,7 @@
  *
  * Lives in packages/utils because the MCP Worker cannot import `src/`.
  */
+import { getVenueZoneYearMonth } from "@takemetothefair/datetime";
 
 /** The occurrence segment of an annual series: a canonical 4-digit year. */
 export const OCCURRENCE_YEAR_SEGMENT_RE = /^\d{4}$/;
@@ -46,6 +47,24 @@ export interface EditionInput {
 /** Is this a well-formed edition key? */
 export function isEditionKey(value: string | null | undefined): value is string {
   return typeof value === "string" && EDITION_KEY_SEGMENT_RE.test(value);
+}
+
+/**
+ * OPE-1327 — derive an edition key: `YYYY-MM` of the start in the venue zone,
+ * plus an optional operator suffix for a same-month clash (`2027-05-xli`).
+ * Null when undated, or when the suffix would not round-trip through the
+ * parser (uppercase, spaces, punctuation) — a key that cannot be a URL segment
+ * must never be stored.
+ */
+export function deriveEditionKey(
+  startDate: Date | number | string | null | undefined,
+  suffix?: string | null
+): string | null {
+  const ym = getVenueZoneYearMonth(startDate);
+  if (!ym) return null;
+  const base = `${ym.y}-${String(ym.m).padStart(2, "0")}`;
+  const key = suffix ? `${base}-${suffix}` : base;
+  return isEditionKey(key) ? key : null;
 }
 
 /** The key a member is addressed by, or null when it is addressed by its year. */
@@ -194,4 +213,36 @@ export function resolveOccurrence<
   if (multi) return { action: "render", occurrence: hit };
   const path = occurrencePath(seriesSlug, hit.startDate);
   return path ? { action: "redirect", occurrence: hit, path } : null;
+}
+
+/**
+ * OPE-1327 — where may an incoming edition go on a MULTI-EDITION series?
+ * `create` with its derived key only when that key is free AND no live member
+ * starts within ±7 days; otherwise `stage`, naming the member it collided with
+ * (the same edition resubmitted, or a dates-changed resubmission — a human
+ * decides). Pure: each workspace runs its own member query (live members only:
+ * not REJECTED, not merged) and calls this, so the app's submit route and the
+ * MCP suggest_event agree by construction.
+ */
+export const EDITION_NEAR_WINDOW_MS = 7 * 24 * 3600 * 1000;
+
+export type EditionPlacement =
+  | { kind: "create"; editionKey: string }
+  | { kind: "stage"; editionKey: string | null; nearEditionId: string | null };
+
+export function decideEditionPlacement(
+  members: readonly { id: string; startDate: Date | null; editionKey: string | null }[],
+  incomingStart: Date
+): EditionPlacement {
+  const editionKey = deriveEditionKey(incomingStart);
+  const keyHolder = editionKey ? members.find((m) => m.editionKey === editionKey) : undefined;
+  const near = members.find(
+    (m) =>
+      m.startDate &&
+      Math.abs(new Date(m.startDate).getTime() - incomingStart.getTime()) <= EDITION_NEAR_WINDOW_MS
+  );
+  if (!editionKey || keyHolder || near) {
+    return { kind: "stage", editionKey, nearEditionId: (near ?? keyHolder)?.id ?? null };
+  }
+  return { kind: "create", editionKey };
 }

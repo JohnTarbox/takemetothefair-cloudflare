@@ -16,12 +16,16 @@
  * insert, behaviour unchanged. The only live effect pre-backfill is the
  * read-only findDuplicate query.
  */
-import { and, eq, isNotNull, sql } from "drizzle-orm";
+import { and, eq, isNotNull, isNull, ne, sql } from "drizzle-orm";
 import type { Database } from "@/lib/db";
 import { events, eventVendors, eventSeries } from "@/lib/db/schema";
 import { findDuplicate } from "@/lib/duplicates/find-duplicate";
 import { normalizeName } from "@/lib/duplicates/normalize-name";
-import { decideDiscoveryRouting } from "@takemetothefair/utils";
+import {
+  decideDiscoveryRouting,
+  decideEditionPlacement,
+  type EditionPlacement,
+} from "@takemetothefair/utils";
 import {
   createOccurrenceForSeries,
   type CreateOccurrenceResult,
@@ -46,7 +50,47 @@ export interface RouteToOccurrenceInput {
 
 export type RouteToOccurrenceResult =
   | { routed: false }
+  /**
+   * OPE-1327 — a submission to a MULTI-EDITION series that could not be placed
+   * safely: its derived edition key is already held, or another edition starts
+   * within ±7 days (the same edition again, or a dates-changed resubmission —
+   * a human must say which). The caller inserts it as a reviewed standalone with
+   * `possible_duplicate_of` = `nearEditionId`, never drops it.
+   */
+  | {
+      routed: false;
+      staged: "edition-ambiguous";
+      seriesId: string;
+      editionKey: string | null;
+      nearEditionId: string | null;
+    }
   | { routed: true; result: CreateOccurrenceResult };
+
+/**
+ * OPE-1327 — on a multi-edition series, where may an incoming edition go? The
+ * rule is `decideEditionPlacement` (shared with MCP suggest_event); this only
+ * loads the live members. Null when the series is annual (the caller keeps
+ * today's year-bucketed path).
+ */
+async function placeInMultiEditionSeries(
+  db: Db,
+  seriesId: string,
+  start: Date
+): Promise<EditionPlacement | null> {
+  const [series] = await db
+    .select({ editionMode: eventSeries.editionMode })
+    .from(eventSeries)
+    .where(eq(eventSeries.id, seriesId))
+    .limit(1);
+  if (series?.editionMode !== "multi") return null;
+  const members = await db
+    .select({ id: events.id, startDate: events.startDate, editionKey: events.editionKey })
+    .from(events)
+    .where(
+      and(eq(events.seriesId, seriesId), ne(events.status, "REJECTED"), isNull(events.mergedInto))
+    );
+  return decideEditionPlacement(members, start);
+}
 
 /**
  * Cross-year, DATE-WINDOW-FREE series match: find the unique series with an
@@ -102,6 +146,19 @@ export async function maybeRouteToOccurrence(
   if (input.name && input.venueId) {
     const seriesId = await matchSeriesByNameVenue(db, input.name, input.venueId);
     if (seriesId) {
+      // OPE-1327 — a multi-edition series never answers "occurrence_exists" for
+      // a same-year submission: that answer returned routed:true with NOTHING
+      // written, and a second edition (October, after May) vanished silently.
+      const placement = await placeInMultiEditionSeries(db, seriesId, input.startDate);
+      if (placement?.kind === "stage") {
+        return {
+          routed: false,
+          staged: "edition-ambiguous",
+          seriesId,
+          editionKey: placement.editionKey,
+          nearEditionId: placement.nearEditionId,
+        };
+      }
       const result = await createOccurrenceForSeries(db, {
         seriesId,
         year: incomingYear,
@@ -109,8 +166,9 @@ export async function maybeRouteToOccurrence(
         actorUserId: input.actorUserId ?? null,
         sourceName: "discovery-occurrence",
         ingestionMethod: "community_suggestion",
+        editionKey: placement?.editionKey ?? null,
       });
-      if (result.created || result.reason === "occurrence_exists") {
+      if (result.created || (!placement && result.reason === "occurrence_exists")) {
         return { routed: true, result };
       }
       // series_not_found (race) / promoter_required → fall through to findDuplicate.
@@ -144,6 +202,36 @@ export async function maybeRouteToOccurrence(
     .select({ n: sql<number>`COUNT(*)` })
     .from(eventVendors)
     .where(eq(eventVendors.eventId, dupe.existingEvent.id));
+
+  // OPE-1327 — on a multi-edition series a same-year match is not automatically
+  // a duplicate: it may be the other edition. Place it with the same rule as
+  // path 1, and stage it (never drop it) when the placement is ambiguous.
+  const placement =
+    matched.seriesId != null
+      ? await placeInMultiEditionSeries(db, matched.seriesId, input.startDate)
+      : null;
+  if (placement?.kind === "stage") {
+    return {
+      routed: false,
+      staged: "edition-ambiguous",
+      seriesId: matched.seriesId!,
+      editionKey: placement.editionKey,
+      nearEditionId: placement.nearEditionId ?? dupe.existingEvent.id,
+    };
+  }
+  if (placement?.kind === "create") {
+    const result = await createOccurrenceForSeries(db, {
+      seriesId: matched.seriesId!,
+      year: incomingYear,
+      overrides: { startDate: input.startDate, endDate: input.endDate ?? null },
+      actorUserId: input.actorUserId ?? null,
+      sourceName: "discovery-occurrence",
+      ingestionMethod: "community_suggestion",
+      editionKey: placement.editionKey,
+    });
+    if (result.created) return { routed: true, result };
+    return { routed: false };
+  }
 
   const routing = decideDiscoveryRouting({
     matched: true,

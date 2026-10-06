@@ -33,7 +33,9 @@ const SCHEMA_SQL = `
   );
   CREATE TABLE event_series (
     id TEXT PRIMARY KEY,
-    name TEXT NOT NULL
+    name TEXT NOT NULL,
+    -- OPE-1327 — read by the multi-edition placement check (annual here).
+    edition_mode TEXT NOT NULL DEFAULT 'annual'
   );
   CREATE TABLE event_vendors (
     id TEXT PRIMARY KEY,
