@@ -73,6 +73,9 @@ export const PROJECTED_URL_HEALTH: Readonly<Record<string, "ERROR" | "WARNING">>
   // OPE-1270 — vendor-site verdict (vendor-site-health.ts). A promoter sweep
   // never emits it, so it costs that source nothing.
   moved: "WARNING",
+  // OPE-1294 — a 200 parked or disabled shell (200 + tiny body; see
+  // classifyUrlHealth). WARNING: a review prompt, never an auto-null.
+  parked_page: "WARNING",
   // ⚠️ `empty_page` is deliberately NOT projected (OPE-1281 measurement,
   // 2026-10-02): 58 of 127 promoter `no_event_signal` URLs are in the same
   // near-empty branch, and spot-checked live ones (durhamfair.com, osv.org,
@@ -88,6 +91,7 @@ const PHRASE: Record<string, string> = {
   http_error: "returns an HTTP error",
   unreachable: "did not respond",
   moved: "redirects to a different domain",
+  parked_page: "serves a parked or disabled page",
 };
 
 /** `URL_HEALTH_HTTP_ERROR` etc. One issue type per verdict class. */
