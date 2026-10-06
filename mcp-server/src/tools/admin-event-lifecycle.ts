@@ -500,6 +500,11 @@ export function registerEventLifecycleTools(
       "Use preview=true first to see what will change and whether there are warnings",
       "(different promoter, different venue, overlapping vendors). Refuses to merge an",
       "event with itself or one that's already merged.",
+      "",
+      "EDITIONS: refuses (409 different_editions) two events of different years, and",
+      "(OPE-1327) two DIFFERENT editions of a multi-edition series in the same year —",
+      "both carry an edition key and the keys differ (May vs October). Merging either",
+      "would fuse two editions' vendor rosters; link them as occurrences instead.",
     ].join(" "),
     {
       keeper_event_id: z

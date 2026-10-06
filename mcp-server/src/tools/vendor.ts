@@ -1,11 +1,12 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { eq, and, or, sql } from "drizzle-orm";
+import { eq, and, or, sql, ne, isNull } from "drizzle-orm";
 import { mergeProductsJson, routeVendorTypeForWrite } from "@takemetothefair/vendor-linking";
 import {
   vendors,
   events,
   eventVendors,
+  eventSeries,
   promoters,
   venues,
   raiseEventReviewFlag,
@@ -42,6 +43,7 @@ import {
   classifySource,
   normalizeEventDate,
   decideDiscoveryRouting,
+  decideEditionPlacement,
   isUnusableEventName,
   isPlaceholderUrl,
   UNLABELED_SOURCE,
@@ -635,7 +637,8 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
     "Suggest a new event to be added to the platform. The event will be created with TENTATIVE status. " +
       "`start_date` is required so duplicate-detection can run — without a date the dedup guard silently skipped and we accrued duplicate rows like 'Winthrop Arts Festival 2026' alongside '38th Annual Winthrop Arts Festival' on the same date. If the date is genuinely unknown, hold the submission until it's confirmed rather than creating a dateless row. " +
       "Dedup runs FOUR keys in order, and the first hit wins: (1) `source_url` equality on the SAME CALENDAR DAY (`exact_url`, blocking) — same URL on a different day is `series_url` and does NOT block, so an organizer home page listing a whole season is fine; (2) venue + date within 7 days; (3) city/state + date within 7 days; (4) similar name + date. " +
-      "This description used to say dedup 'keys on venue + date', which was incomplete: the URL key runs FIRST, and when it was windowed at 7 days a weekly series had every event after the first refused against its sibling (OPE-650).",
+      "This description used to say dedup 'keys on venue + date', which was incomplete: the URL key runs FIRST, and when it was windowed at 7 days a weekly series had every event after the first refused against its sibling (OPE-650). " +
+      "EDITIONS (OPE-1327): when the match belongs to a MULTI-EDITION series (one that runs more than once a year, e.g. May and October), a same-year hit is not automatically a duplicate. The submission is created as a new edition under the series when its edition key (YYYY-MM of start_date) is free and no edition starts within 7 days; otherwise it returns reason `edition_ambiguous`, naming the edition it collided with — pass an explicit edition_key to create_occurrence for a genuinely new edition.",
     {
       name: z.string().transform(sanitizeProse).describe("Event name"),
       description: z.string().transform(sanitizeProse).optional().describe("Event description"),
@@ -1143,6 +1146,101 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
             .select({ n: sql<number>`count(*)` })
             .from(eventVendors)
             .where(eq(eventVendors.eventId, dupe.existingEvent.id));
+
+          // OPE-1327 — on a MULTI-EDITION series a same-year match may be the
+          // OTHER edition (May vs October), not a duplicate. Place it with the
+          // rule the app's submit route uses (decideEditionPlacement): create
+          // under its derived edition key when the key is free and no edition
+          // starts within ±7 days; otherwise refuse with edition_ambiguous — an
+          // explicit answer naming the edition it collided with, never a drop.
+          if (matched?.seriesId && startDate) {
+            const [mseries] = await db
+              .select({ editionMode: eventSeries.editionMode })
+              .from(eventSeries)
+              .where(eq(eventSeries.id, matched.seriesId))
+              .limit(1);
+            if (mseries?.editionMode === "multi") {
+              const members = await db
+                .select({
+                  id: events.id,
+                  startDate: events.startDate,
+                  editionKey: events.editionKey,
+                })
+                .from(events)
+                .where(
+                  and(
+                    eq(events.seriesId, matched.seriesId),
+                    ne(events.status, "REJECTED"),
+                    isNull(events.mergedInto)
+                  )
+                );
+              const placement = decideEditionPlacement(members, startDate);
+              if (placement.kind === "stage") {
+                return {
+                  content: [
+                    jsonContent({
+                      created: false,
+                      reason: "edition_ambiguous",
+                      series_id: matched.seriesId,
+                      derived_edition_key: placement.editionKey,
+                      near_edition_event_id: placement.nearEditionId,
+                      matched_event: { id: dupe.existingEvent.id, slug: dupe.existingEvent.slug },
+                      message:
+                        "This series runs more than one edition a year, and this submission " +
+                        "either carries an edition key the series already holds or starts within " +
+                        "7 days of an existing edition. If it is a NEW edition, call " +
+                        "create_occurrence with an explicit edition_key (e.g. 2027-05-xli); if it " +
+                        "is the same edition, update that event instead. force_create: true " +
+                        "creates a standalone row an operator must then reconcile.",
+                    }),
+                  ],
+                };
+              }
+              if (env?.MAIN_APP_URL && env?.INTERNAL_API_KEY) {
+                const occRes = await fetch(`${env.MAIN_APP_URL}/api/admin/occurrences/create`, {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    "x-internal-key": env.INTERNAL_API_KEY,
+                  },
+                  body: JSON.stringify({
+                    series_id: matched.seriesId,
+                    year: startDate.getUTCFullYear(),
+                    edition_key: placement.editionKey,
+                    name: params.name,
+                    venue_id: venueId,
+                    promoter_id: eventPromoterId,
+                    start_date: params.start_date,
+                    end_date: params.end_date,
+                    description: params.description,
+                    source_url: params.source_url ?? null,
+                    source_name: sourceLabel,
+                    ingestion_method: sourceClassification.ingestionMethod,
+                    categories: categoriesToStore,
+                  }),
+                });
+                const occ = (await occRes.json().catch(() => null)) as Record<
+                  string,
+                  unknown
+                > | null;
+                if (occRes.ok && occ?.created) {
+                  return {
+                    content: [
+                      jsonContent({
+                        routed: "series_occurrence",
+                        series_id: matched.seriesId,
+                        edition_key: placement.editionKey,
+                        matched_event: { id: dupe.existingEvent.id, slug: dupe.existingEvent.slug },
+                        ...occ,
+                      }),
+                    ],
+                  };
+                }
+                // Not created (race / promoter_required): fall through to the
+                // duplicate block below, so the suggestion is never silently lost.
+              }
+            }
+          }
 
           const routing = decideDiscoveryRouting({
             matched: true,
