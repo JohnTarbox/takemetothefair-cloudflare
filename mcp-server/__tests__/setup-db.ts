@@ -272,8 +272,12 @@ const SCHEMA_SQL = `
     vendor_roster_offset INTEGER,
     performer_roster_status TEXT,
     performer_roster_checked_at INTEGER,
-    performer_roster_source_url TEXT
+    performer_roster_source_url TEXT,
+    -- OPE-1325 (drizzle/0356) — multi-edition series key; NULL on annual rows.
+    edition_key TEXT
   );
+  CREATE UNIQUE INDEX idx_events_series_edition_key
+    ON events (series_id, edition_key) WHERE edition_key IS NOT NULL;
 
   -- EH3 P0 (drizzle/0127) — series parent. Needed here once tools join it
   -- (P3.4 get_vendor_events leftJoins event_series).
@@ -290,6 +294,8 @@ const SCHEMA_SQL = `
     tags TEXT DEFAULT '[]',
     primary_audience TEXT NOT NULL DEFAULT 'PUBLIC',
     public_access TEXT NOT NULL DEFAULT 'OPEN',
+    -- OPE-1325 (drizzle/0356) — 'annual' | 'multi'.
+    edition_mode TEXT NOT NULL DEFAULT 'annual' CHECK (edition_mode IN ('annual', 'multi')),
     created_at INTEGER,
     updated_at INTEGER
   );

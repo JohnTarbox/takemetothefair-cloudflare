@@ -32,6 +32,7 @@ import {
   agentHeartbeats,
   errorLogs,
   eventSeries,
+  events,
   inboundEmailEvents,
   inboundEmails,
   imageCoverageState,
@@ -1990,6 +1991,28 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
         adminActions.createdAt,
         eq(adminActions.action, "ci.trigger_watchdog.run")
       ),
+  },
+  {
+    // OPE-1325 — multi-edition series, step 2/5. Proof the edition-key writer
+    // (create_occurrence on a series with edition_mode='multi', built in
+    // OPE-1327) is still producing keyed editions. Evidence is the newest events
+    // row carrying a non-NULL `edition_key` — only that writer sets one.
+    //
+    // DORMANT: seeded with enabled_at NULL (drizzle/0356). No row can carry a
+    // key until OPE-1327 ships the writer and OPE-1328 flips NEAR-Fest, so an
+    // armed probe would only false-fire. OPE-1328 sets enabled_at.
+    //
+    // ⚠️ The window is a PLACEHOLDER, not a measurement: there is no emitting
+    // population to measure yet. NEAR-Fest runs May + October, so a new edition
+    // row should appear about twice a year; 183 days is that cadence with no
+    // margin. OPE-1328 must re-derive it from real rows (or widen it) when it
+    // arms the probe — a window set before the path exists is a guess.
+    name: "series-edition-key",
+    ownerOpe: "OPE-1325",
+    label: "multi-edition series writing edition keys",
+    priority: "P1",
+    expectedWindowHours: 4392,
+    lastEvidenceAt: (db) => maxTs(db, events, events.createdAt, isNotNull(events.editionKey)),
   },
 ];
 
