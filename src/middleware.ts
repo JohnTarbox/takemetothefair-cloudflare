@@ -514,14 +514,29 @@ async function handleRouting(request: NextRequest) {
       if (cursor !== slug) {
         // Verify the chain terminus is a live, public event before 301-ing
         // (otherwise we'd 301 into a 410 / 404 chain).
+        //
+        // OPE-1333 — and 301 to the terminus's FINAL URL in one hop. Sending
+        // `/events/<cursor>` for a series member made the request come back
+        // through the occurrence 301 above: retired slug → member slug →
+        // /<series>/<year|edition>, two hops on 280 of 326 live chains. Same
+        // fields and same rule as the live branch, so the two cannot disagree.
         const [target] = await db
-          .select({ status: events.status })
+          .select({
+            startDate: events.startDate,
+            seriesSlug: eventSeries.canonicalSlug,
+            editionMode: eventSeries.editionMode,
+            editionKey: events.editionKey,
+          })
           .from(events)
+          .leftJoin(eventSeries, eq(events.seriesId, eventSeries.id))
           .where(and(eq(events.slug, unsafeSlug(cursor)), publicEventWhere()))
           .limit(1);
         if (target) {
           const url = request.nextUrl.clone();
-          url.pathname = `/events/${cursor}`;
+          url.pathname =
+            (target.seriesSlug && cursor !== target.seriesSlug
+              ? occurrencePath(target.seriesSlug, target.startDate, target)
+              : null) ?? `/events/${cursor}`;
           return NextResponse.redirect(url, 301);
         }
       }
