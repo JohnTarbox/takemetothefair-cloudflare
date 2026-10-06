@@ -104,6 +104,24 @@ export async function rolloverEventIfRecurring(
   if (!source) return { created: false, skipReason: "source-not-found" };
 
   // --- Eligibility gates ----------------------------------------------------
+  // OPE-1332 — only an ADJUDICATED edition rolls forward: editorial status
+  // APPROVED. A rolled edition is a machine projection (TENTATIVE, dates
+  // unconfirmed) and is publicly indexable, so its source must be one a person
+  // approved; projecting PENDING / DRAFT / REJECTED / CANCELLED rows would
+  // propagate never-reviewed (or explicitly rejected) data into next year
+  // faster than adjudication can catch it.
+  //
+  // Read 2026-10-06: the occurred-sweep's pass 1 already selects APPROVED
+  // only, but pass 2 (the OCCURRED backfill) and the manual
+  // update_event_lifecycle path filter on lifecycle alone — so this core is the
+  // one place every caller passes through. Of 106 rolled rows with lineage,
+  // 105 came from APPROVED sources; one (franklin-county-field-days-vt-2027)
+  // has a source that is CANCELLED today (status at roll time unverified).
+  // TENTATIVE sources are excluded too: rolling a projection projects a
+  // projection (OPE-740).
+  if (source.status !== "APPROVED") {
+    return { created: false, skipReason: "source-not-approved" };
+  }
   const parsed = parseRecurrenceRule(source.recurrenceRule);
   if (!parsed) return { created: false, skipReason: "no-recurrence-rule" };
   if (parsed.freq !== "YEARLY") return { created: false, skipReason: "unsupported-cadence" };
