@@ -517,13 +517,17 @@ export const PERSISTENT_UNREADABLE_MESSAGE =
  * once a run. The alert row deliberately carries NO `holdoutOutcome`, so it can
  * never feed back into the cooldown or this count.
  *
- * ⚠️ WHERE IT SURFACES — read, not assumed (2026-10-06). As an `error` row it
- * appears in the admin data-health report and the analytics health tile, both
- * PULL surfaces. It is NOT pushed: the page-error canary matches only
- * `app/%page.tsx:%` sources, the standing-failure canary needs ≥3 distinct days
- * per source (a once-a-month row never qualifies), and the fault-signature
- * emitter ingests only RENDER_FAULT_SOURCES. Routing it to the technical
- * Slack/email channel is a new automated post — John's call (OPE-1316).
+ * WHERE IT SURFACES — read from source, 2026-10-06:
+ *   - the fault ledger: the hourly emitter (OPE-93, widened by OPE-615) ingests
+ *     every `error` row except its own (`faults/candidates/route.ts`, the
+ *     `notInArray(NEVER_INGEST_SOURCES)` filter), grouped by (source, message),
+ *     so every alert row joins ONE family. It becomes a fileable candidate for
+ *     the OPE-84 scan at count ≥ 3 in 7 days — true of a first run that finds
+ *     several pages (7 on 2026-10-06), NOT of a lone page found later;
+ *   - the admin data-health report and the analytics health tile (pull);
+ *   - NOT the page-error canary (`app/%page.tsx:%` only) and NOT the
+ *     standing-failure canary (≥3 distinct days per source) — so nothing
+ *     pushes it to Slack/email. Whether it should is John's call (OPE-1316).
  */
 export async function alertPersistentlyUnreadable(
   db: Db,
