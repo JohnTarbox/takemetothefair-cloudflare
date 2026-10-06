@@ -199,7 +199,10 @@ describe("OPE-860 — the four outcomes fetchCanonicalDate used to collapse", ()
 
   it("a parked domain serving an empty 200 is not 'healthy because it loaded'", () => {
     const r = classifyUrlHealth(reached("<html><body><p>Coming soon</p></body></html>"));
-    expect(r.verdict).toBe("no_event_signal");
+    // OPE-1294 — a tiny 200 shell now has its own verdict, `parked_page`
+    // (was `no_event_signal`). The point pinned here is unchanged: never `ok`.
+    expect(r.verdict).not.toBe("ok");
+    expect(r.verdict).toBe("parked_page");
   });
 });
 
@@ -227,6 +230,12 @@ describe("visibleText", () => {
       <style>.x{content:"June 2026"}</style><p>Nothing here.</p></body></html>`;
     const text = visibleText(html);
     expect(text).toBe("Nothing here.");
-    expect(classifyUrlHealth(reached(html)).verdict).toBe("no_event_signal");
+    // OPE-1294 — this tiny page now reads `parked_page`; what this test pins is
+    // that the stripped metadata contributed NO event signal, so assert that.
+    const r = classifyUrlHealth(reached(html));
+    expect(r.verdict).not.toBe("ok");
+    expect(
+      r.signals.filter((s) => ["jsonld-event", "month-name", "year", "event-language"].includes(s))
+    ).toEqual([]);
   });
 });

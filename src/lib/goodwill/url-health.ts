@@ -58,6 +58,11 @@ export type UrlHealthVerdict =
   | "ok"
   /** 2xx, real HTML, and NOTHING on it says "event". The repurposed-domain case. */
   | "no_event_signal"
+  /**
+   * OPE-1294 — a 200 that is a parked or dead shell: a tiny body with almost no
+   * visible text (a `/lander` JS bounce, "Website Disabled"). See PARKED_*.
+   */
+  | "parked_page"
   /** Reached the origin, got a non-2xx. */
   | "http_error"
   /** Never reached the origin: DNS failure, TLS failure, timeout, abort. */
@@ -197,6 +202,10 @@ export function visibleText(html: string): string {
  */
 export const MIN_MEANINGFUL_TEXT = 200;
 
+/** OPE-1294 — a parked shell is a 200 under BOTH bounds (see classifyUrlHealth). */
+export const PARKED_MAX_BODY_BYTES = 2048;
+export const PARKED_MAX_VISIBLE_CHARS = 50;
+
 export function classifyUrlHealth(input: UrlHealthInput): UrlHealthResult {
   if (!input.reachedOrigin) {
     return {
@@ -233,6 +242,28 @@ export function classifyUrlHealth(input: UrlHealthInput): UrlHealthResult {
   if (MONTH_RE.test(text)) signals.push("month-name");
   if (YEAR_RE.test(text)) signals.push("year");
   if (EVENT_LANGUAGE_RE.test(text)) signals.push("event-language");
+
+  // OPE-1294 — a parked or dead shell, told apart from a bot wall by the
+  // RAW BODY SIZE and an exact 200. Measured 2026-10-06 against what each site
+  // serves a normal browser: every genuinely parked or disabled promoter site
+  // answered 200 with 114–1,294 bytes (a `/lander` JS bounce ×2, a 518 B and a
+  // 642 B empty page, two 1,018 B parking templates, "Website Disabled"); the
+  // ~38 LIVE sites that also read "0 chars" from the Worker were a SiteGround
+  // challenge — HTTP **202**, 174 bytes — or a 45–232 KB JS-rendered page.
+  // Visible-text length alone (the rule first scoped) would have flagged all 47
+  // live sites; status 200 + size is what separates them.
+  if (
+    input.status === 200 &&
+    signals.length === 0 &&
+    text.length < PARKED_MAX_VISIBLE_CHARS &&
+    (bodyBytesOf(html) ?? Infinity) < PARKED_MAX_BODY_BYTES
+  ) {
+    return {
+      verdict: "parked_page",
+      signals: ["parked-shell"],
+      detail: `200 with a ${bodyBytesOf(html)}-byte body and ${text.length} chars of visible text (parked or disabled site)`,
+    };
+  }
 
   if (text.length < MIN_MEANINGFUL_TEXT && signals.length === 0) {
     return {
@@ -271,7 +302,12 @@ export function classifyUrlHealth(input: UrlHealthInput): UrlHealthResult {
  * history, not of one look.
  */
 export function isActionable(verdict: UrlHealthVerdict): boolean {
-  return verdict === "no_event_signal" || verdict === "http_error" || verdict === "closure_notice";
+  return (
+    verdict === "no_event_signal" ||
+    verdict === "parked_page" ||
+    verdict === "http_error" ||
+    verdict === "closure_notice"
+  );
 }
 
 /**

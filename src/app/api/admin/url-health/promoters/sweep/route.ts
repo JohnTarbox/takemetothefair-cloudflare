@@ -120,6 +120,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       examined: rows.length,
       ok: 0,
       no_event_signal: 0,
+      parked_page: 0,
       http_error: 0,
       unreachable: 0,
       closure_notice: 0,
@@ -307,7 +308,7 @@ export async function GET(request: Request): Promise<NextResponse> {
              (SELECT COUNT(*) FROM url_health_checks h
                WHERE h.url = r.url AND h.verdict = r.verdict) AS consecutive
       FROM ranked r
-      WHERE r.rn = 1 AND r.verdict IN ('domain_takeover', 'closure_notice', 'no_event_signal', 'http_error')
+      WHERE r.rn = 1 AND r.verdict IN ('domain_takeover', 'closure_notice', 'parked_page', 'no_event_signal', 'http_error')
       ORDER BY r.checked_at DESC
       LIMIT 200
     `);
