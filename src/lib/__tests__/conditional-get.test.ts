@@ -60,7 +60,7 @@ describe("matchConditionalRoute — series/year occurrence (OPE-1291)", () => {
     expect(matchConditionalRoute("/events/freeport-fall-festival/2026")).toEqual({
       type: "event-occurrence",
       slug: "freeport-fall-festival",
-      year: 2026,
+      segment: "2026",
     });
   });
 
@@ -82,8 +82,8 @@ describe("matchConditionalRoute — series/year occurrence (OPE-1291)", () => {
 
   it("the ETag names the year, so two years of one series never share a validator", () => {
     const t = new Date("2026-09-01T00:00:00Z");
-    const a = buildEntityEtag("event-occurrence", "freeport-fall-festival", t, 2026);
-    const b = buildEntityEtag("event-occurrence", "freeport-fall-festival", t, 2027);
+    const a = buildEntityEtag("event-occurrence", "freeport-fall-festival", t, "2026");
+    const b = buildEntityEtag("event-occurrence", "freeport-fall-festival", t, "2027");
     expect(a).toBe(
       `W/"event-occurrence-freeport-fall-festival-2026-${t.getTime() / 1000}-v${TEMPLATE_VERSION}"`
     );
@@ -109,15 +109,18 @@ describe("the occurrence the validator describes is the one the page renders (OP
   it("the page resolver and the middleware both use it (no second copy of the rule)", () => {
     const resolver = readFileSync(join(process.cwd(), "src/lib/series/get-occurrence.ts"), "utf8");
     const mw = readFileSync(join(process.cwd(), "src/middleware.ts"), "utf8");
-    expect(resolver).toContain("pickOccurrenceForYear(occ, year)");
-    expect(mw).toContain("pickOccurrenceForYear(occ, year)");
+    // OPE-1326 — the rule is now the shared resolver (year OR edition key),
+    // called with the series' edition_mode in both. Anchored on the CALL, so an
+    // import line can't satisfy it.
+    expect(resolver).toContain("resolveOccurrence(seriesSlug, series.editionMode, occ, segment)");
+    expect(mw).toContain("resolveOccurrence(slug, series.editionMode, occ, parsed)");
     // Same population: public occurrences only, in both.
     expect(resolver).toMatch(/eq\(events\.seriesId, series\.id\), isPublicEventStatus\(\)/);
     expect(mw).toMatch(/eq\(events\.seriesId, series\.id\), isPublicEventStatus\(\)/);
   });
   it("the validator is the later of series and occurrence updated_at (the page renders both)", () => {
     const mw = readFileSync(join(process.cwd(), "src/middleware.ts"), "utf8");
-    expect(mw).toContain("return latestOf(series.u, match.u);");
+    expect(mw).toContain("return latestOf(series.u, r.occurrence.u);");
   });
   it("a series edit moves updated_at — otherwise a rename would 304 to the old name", () => {
     expect(typeof (eventSeries.updatedAt as unknown as { onUpdateFn?: unknown }).onUpdateFn).toBe(

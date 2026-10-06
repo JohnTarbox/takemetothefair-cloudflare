@@ -98,7 +98,11 @@ const NEW_middleware301 = (row: (typeof ROWS)[number]) =>
 describe("OPE-1324 golden — every builder is byte-for-byte unchanged", () => {
   for (const row of ROWS) {
     it(`${row.slug}`, () => {
-      expect(canonicalEventPath(row)).toBe(OLD_canonicalEventPath(row));
+      // OPE-1326 — every series here is annual: the edition inputs are what an
+      // unflagged prod row carries, and must change nothing.
+      expect(canonicalEventPath({ ...row, editionMode: "annual", editionKey: null })).toBe(
+        OLD_canonicalEventPath(row)
+      );
       expect(eventCanonicalPath(row)).toBe(OLD_canonicalEventPath(row));
       expect(NEW_detailCanonical(row)).toBe(OLD_detailCanonical(row));
       expect(NEW_askAbout(row)).toBe(OLD_askAbout(row));
@@ -107,7 +111,7 @@ describe("OPE-1324 golden — every builder is byte-for-byte unchanged", () => {
       expect(occurrenceYear(row.startDate)).toBe(year);
       if (row.seriesSlug) {
         // JSON-LD subEvent url (series-schema-org occurrenceUrl).
-        expect(occurrenceUrl(row.seriesSlug, year, row.slug)).toBe(
+        expect(occurrenceUrl(row.seriesSlug, year, row.slug, null)).toBe(
           year === null
             ? `${SITE_URL}/events/${row.slug}`
             : `${SITE_URL}/events/${row.seriesSlug}/${year}`
@@ -131,22 +135,31 @@ describe("OPE-1324 golden — parsers agree on every 4-digit segment", () => {
   for (const seg of segments) {
     it(`"${seg}"`, () => {
       const old = OLD_isYearSegment(seg) ? OLD_parseOccurrenceYear(seg) : null;
-      expect(parseOccurrenceSegment(seg)?.year ?? null).toBe(old);
+      const parsed = parseOccurrenceSegment(seg);
+      expect(parsed?.kind === "year" ? parsed.year : null).toBe(old);
       expect(parseOccurrenceYear(seg)).toBe(old);
     });
   }
 
   it("non-year segments never match (vendors subroute, facets, partial years)", () => {
-    for (const seg of ["vendors", "maine", "craft-fairs", "26", "20266", "2026.0", "2026-05", ""]) {
+    for (const seg of ["vendors", "maine", "craft-fairs", "26", "20266", "2026.0", ""]) {
       expect(parseOccurrenceSegment(seg)).toBeNull();
     }
+  });
+
+  // OPE-1326 — "2026-05" was in the list above in step 1. It is now, by design,
+  // an EDITION KEY: it parses, but never as a year, so no year-based caller can
+  // read it as 2026.
+  it("an edition-key-shaped segment parses as an edition, never as a year", () => {
+    expect(parseOccurrenceSegment("2026-05")).toEqual({ kind: "edition", key: "2026-05" });
+    expect(parseOccurrenceYear("2026-05")).toBeNull();
   });
 
   it("the ETag route matcher output is unchanged", () => {
     expect(matchConditionalRoute("/events/near-fest/2026")).toEqual({
       type: "event-occurrence",
       slug: "near-fest",
-      year: 2026,
+      segment: "2026",
     });
     expect(matchConditionalRoute("/events/fryeburg-fair/vendors")).toBeNull();
     expect(matchConditionalRoute("/events/near-fest")).toEqual({

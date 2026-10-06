@@ -170,19 +170,31 @@ async function getPerformerOnce(slug: string) {
       const seriesIds = [
         ...new Set(withDays.map((e) => e.seriesId).filter((s): s is string => !!s)),
       ];
-      const seriesSlugById = new Map<string, string>();
+      // OPE-1326 — and its edition_mode, so a multi-edition appearance links to
+      // its edition (/2027-05), not to the year (which 301s to a sibling edition).
+      const seriesById = new Map<string, { canonicalSlug: string; editionMode: string }>();
       for (let i = 0; i < seriesIds.length; i += 50) {
         const srows = await db
-          .select({ id: eventSeries.id, canonicalSlug: eventSeries.canonicalSlug })
+          .select({
+            id: eventSeries.id,
+            canonicalSlug: eventSeries.canonicalSlug,
+            editionMode: eventSeries.editionMode,
+          })
           .from(eventSeries)
           .where(inArray(eventSeries.id, seriesIds.slice(i, i + 50)));
-        for (const s of srows) seriesSlugById.set(s.id, s.canonicalSlug);
+        for (const s of srows) seriesById.set(s.id, s);
       }
       return withDays.map((e) => {
-        const cslug = e.seriesId ? seriesSlugById.get(e.seriesId) : null;
+        const series = e.seriesId ? seriesById.get(e.seriesId) : null;
+        const cslug = series?.canonicalSlug ?? null;
         const year = occurrenceYear(e.startDate);
         const occurrenceHref =
-          cslug && year ? occurrenceUrl(cslug, year, e.slug).replace(SITE_URL, "") : undefined;
+          cslug && year
+            ? occurrenceUrl(cslug, year, e.slug, {
+                editionMode: series?.editionMode,
+                editionKey: e.editionKey,
+              }).replace(SITE_URL, "")
+            : undefined;
         return { ...e, occurrenceHref };
       });
     };

@@ -223,6 +223,8 @@ async function getVendorOnce(slug: string) {
           startDate: events.startDate,
           endDate: events.endDate,
           seriesId: events.seriesId,
+          // OPE-1326 — the "Shows by year" chips address a multi-edition member by it.
+          editionKey: events.editionKey,
         },
         venues: {
           id: venues.id,
@@ -303,18 +305,26 @@ async function getVendorOnce(slug: string) {
     const vendorSeriesIds = [
       ...new Set(vendorEvents.map((ve) => ve.event.seriesId).filter((x): x is string => !!x)),
     ];
-    const seriesRefById = new Map<string, { canonicalSlug: string; name: string }>();
+    const seriesRefById = new Map<
+      string,
+      { canonicalSlug: string; name: string; editionMode: string }
+    >();
     if (vendorSeriesIds.length > 0) {
       const seriesRows = await db
         .select({
           id: eventSeries.id,
           canonicalSlug: eventSeries.canonicalSlug,
           name: eventSeries.name,
+          editionMode: eventSeries.editionMode,
         })
         .from(eventSeries)
         .where(inArray(eventSeries.id, vendorSeriesIds));
       for (const s of seriesRows)
-        seriesRefById.set(s.id, { canonicalSlug: s.canonicalSlug, name: s.name });
+        seriesRefById.set(s.id, {
+          canonicalSlug: s.canonicalSlug,
+          name: s.name,
+          editionMode: s.editionMode,
+        });
     }
     const seriesShows = groupVendorShows(
       vendorEvents.map((ve) => {
@@ -323,6 +333,8 @@ async function getVendorOnce(slug: string) {
           seriesId: ve.event.seriesId ?? null,
           seriesSlug: ref?.canonicalSlug ?? null,
           seriesName: ref?.name ?? null,
+          editionMode: ref?.editionMode ?? null,
+          editionKey: ve.event.editionKey ?? null,
           eventSlug: ve.event.slug,
           eventName: ve.event.name,
           startDate: ve.event.startDate ?? null,

@@ -35,9 +35,9 @@ const SCHEMA_SQL = `
   CREATE TABLE events (
     id TEXT PRIMARY KEY, slug TEXT, status TEXT, lifecycle_status TEXT,
     completeness_score INTEGER, start_date INTEGER, end_date INTEGER,
-    updated_at INTEGER, series_id TEXT
+    updated_at INTEGER, series_id TEXT, edition_key TEXT
   );
-  CREATE TABLE event_series (id TEXT PRIMARY KEY, canonical_slug TEXT);
+  CREATE TABLE event_series (id TEXT PRIMARY KEY, canonical_slug TEXT, edition_mode TEXT NOT NULL DEFAULT 'annual');
   -- OPE-1181 — the venue indexability predicate reads these.
   CREATE TABLE series_venue_periods (id TEXT PRIMARY KEY, venue_id TEXT NOT NULL);
   CREATE TABLE venue_claim_citations (
@@ -122,6 +122,8 @@ describe("canonical event URL rule (OPE-372)", () => {
       slug: "augusta-boat-show-2026",
       seriesSlug: "augusta-boat-show",
       startDate: new Date("2026-06-01"),
+      editionMode: "annual",
+      editionKey: null,
     });
     expect(path).toBe("/events/augusta-boat-show/2026");
   });
@@ -132,6 +134,8 @@ describe("canonical event URL rule (OPE-372)", () => {
         slug: "one-off-fair",
         seriesSlug: null,
         startDate: new Date("2026-09-01"),
+        editionMode: null,
+        editionKey: null,
       })
     ).toBe("/events/one-off-fair");
   });
@@ -144,6 +148,8 @@ describe("canonical event URL rule (OPE-372)", () => {
         startDate: new Date("2026-06-01"),
         endDate: null,
         updatedAt: null,
+        editionMode: "annual",
+        editionKey: null,
       },
       {
         slug: "x-2027",
@@ -151,6 +157,8 @@ describe("canonical event URL rule (OPE-372)", () => {
         startDate: new Date("2027-06-01"),
         endDate: null,
         updatedAt: null,
+        editionMode: "annual",
+        editionKey: null,
       },
     ]);
     expect([...paths].sort()).toEqual(["/events/x", "/events/x/2026", "/events/x/2027"]);

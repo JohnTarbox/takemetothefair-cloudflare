@@ -20,7 +20,7 @@ import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import type { SeriesLanding, LandingOccurrence } from "@/lib/series/get-series-landing";
 import type { VisitorGuide } from "@/lib/blog/event-guides";
 import { formatDateRange } from "@/lib/utils";
-import { seriesOccurrencePath } from "@takemetothefair/utils";
+import { occurrencePath } from "@takemetothefair/utils";
 import { cdnImage } from "@/lib/cdn-image";
 import { toIsoDateOnlyInVenueZone } from "@/lib/datetime";
 
@@ -54,6 +54,7 @@ export function SeriesLandingPage({
   const jsonLd = buildEventSeriesJsonLd(
     {
       canonicalSlug: series.canonicalSlug,
+      editionMode: series.editionMode,
       name: series.name,
       description: series.description,
       imageUrl: series.imageUrl,
@@ -81,8 +82,13 @@ export function SeriesLandingPage({
   );
 
   // Relative Option-A occurrence path (year page, or the event slug when undated).
-  const occPath = (year: number | null, slug: string) =>
-    year === null ? `/events/${slug}` : seriesOccurrencePath(series.canonicalSlug, year);
+  // OPE-1326 — on a multi-edition series, the member's EDITION path: two 2027
+  // editions must link to two pages, not both to /2027.
+  const occPath = (o: { slug: string; startDate: Date | null; editionKey: string | null }) =>
+    occurrencePath(series.canonicalSlug, o.startDate, {
+      editionMode: series.editionMode,
+      editionKey: o.editionKey,
+    }) ?? `/events/${o.slug}`;
 
   const renderRow = (v: { id: string; year: number | null }) => {
     const o = byId.get(v.id);
@@ -91,7 +97,7 @@ export function SeriesLandingPage({
     return (
       <li key={v.id}>
         <Link
-          href={occPath(v.year, o.slug)}
+          href={occPath(o)}
           className="flex items-baseline justify-between gap-4 border-b border-secondary/15 py-3 hover:text-terracotta"
         >
           <span className="font-display font-semibold text-secondary">

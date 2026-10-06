@@ -48,12 +48,16 @@ export interface LandingOccurrence {
   ticketUrl: string | null;
   ticketPriceMinCents: number | null;
   ticketPriceMaxCents: number | null;
+  /** OPE-1326 — the stored edition key (null on an annual series). */
+  editionKey: string | null;
 }
 
 export interface SeriesLanding {
   series: {
     canonicalSlug: string;
     name: string;
+    /** OPE-1326 — 'annual' | 'multi'; decides year vs edition-key URLs. */
+    editionMode: string;
     description: string | null;
     imageUrl: string | null;
     /**
@@ -89,6 +93,7 @@ async function getSeriesLandingOnce(slug: string): Promise<SeriesLanding | null>
       id: eventSeries.id,
       canonicalSlug: eventSeries.canonicalSlug,
       name: eventSeries.name,
+      editionMode: eventSeries.editionMode,
       description: eventSeries.description,
       imageUrl: eventSeries.imageUrl,
       promoterCompanyName: promoters.companyName,
@@ -116,6 +121,7 @@ async function getSeriesLandingOnce(slug: string): Promise<SeriesLanding | null>
       ticketUrl: events.ticketUrl,
       ticketPriceMinCents: events.ticketPriceMinCents,
       ticketPriceMaxCents: events.ticketPriceMaxCents,
+      editionKey: events.editionKey,
       venueName: venues.name,
       venueAddress: venues.address,
       venueCity: venues.city,
@@ -159,6 +165,7 @@ async function getSeriesLandingOnce(slug: string): Promise<SeriesLanding | null>
     ticketUrl: r.ticketUrl,
     ticketPriceMinCents: r.ticketPriceMinCents,
     ticketPriceMaxCents: r.ticketPriceMaxCents,
+    editionKey: r.editionKey,
     // venueName is the leftJoin discriminator: null name ⇒ no venue row.
     venue: r.venueName
       ? {
@@ -206,6 +213,7 @@ async function getSeriesLandingOnce(slug: string): Promise<SeriesLanding | null>
     series: {
       canonicalSlug: series.canonicalSlug,
       name: series.name,
+      editionMode: series.editionMode,
       description: effective.description,
       imageUrl: effective.imageUrl,
       organizer,

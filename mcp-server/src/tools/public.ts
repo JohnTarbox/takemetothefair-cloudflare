@@ -1784,6 +1784,8 @@ export function registerPublicTools(server: McpServer, db: Db) {
           // EH3 P3.4 — series tagging (null until the backfill links events).
           seriesId: events.seriesId,
           seriesSlug: eventSeries.canonicalSlug,
+          seriesEditionMode: eventSeries.editionMode,
+          editionKey: events.editionKey,
           seriesName: eventSeries.name,
         })
         .from(eventVendors)
@@ -1818,6 +1820,9 @@ export function registerPublicTools(server: McpServer, db: Db) {
         series_slug: r.seriesSlug ?? null,
         series_name: r.seriesName ?? null,
         year: occurrenceYear(r.startDate),
+        // OPE-1326 — on a multi-edition series two shows can share a year;
+        // group by this instead. Null on every annual series.
+        edition_key: r.seriesEditionMode === "multi" ? (r.editionKey ?? null) : null,
       }));
 
       return {

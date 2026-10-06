@@ -55,7 +55,7 @@ export type ConditionalEntityType =
  */
 export function matchConditionalRoute(
   pathname: string
-): { type: ConditionalEntityType; slug: string; year?: number } | null {
+): { type: ConditionalEntityType; slug: string; segment?: string } | null {
   const segments = pathname.split("/").filter(Boolean);
   // OPE-1291 — the series/year occurrence page, /events/<series>/<year>. 406 of
   // 469 upcoming APPROVED events (87%) are served here, and the two-segment-only
@@ -66,7 +66,9 @@ export function matchConditionalRoute(
   if (occ) {
     const series = segments[1];
     if (series.includes(".")) return null;
-    return { type: "event-occurrence", slug: series, year: occ.year };
+    // OPE-1326 — the raw segment (a year OR an edition key), never a year read
+    // out of it: the ETag lookup resolves it with the same rule as the page.
+    return { type: "event-occurrence", slug: series, segment: segments[2] };
   }
   if (segments.length !== 2) return null;
   const [prefix, slug] = segments;
@@ -98,10 +100,12 @@ export function buildEntityEtag(
   type: ConditionalEntityType,
   slug: string,
   updatedAt: Date | null,
-  year?: number
+  segment?: string
 ): string {
   const stamp = updatedAt ? Math.floor(updatedAt.getTime() / 1000) : 0;
-  return `W/"${type}-${slug}${year === undefined ? "" : `-${year}`}-${stamp}-v${TEMPLATE_VERSION}"`;
+  // An annual segment is the year's own digits, so "-2026" is byte-identical to
+  // what the numeric year produced before OPE-1326.
+  return `W/"${type}-${slug}${segment === undefined ? "" : `-${segment}`}-${stamp}-v${TEMPLATE_VERSION}"`;
 }
 
 /**
