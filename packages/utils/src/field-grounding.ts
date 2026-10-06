@@ -129,6 +129,58 @@ export function sourceNamesMonth(isoDate: string, source: string): boolean {
   return new RegExp(`\\b${abbrev}[a-z]*\\b`, "i").test(source);
 }
 
+/**
+ * OPE-1332 — does the source state this day WITH its year? `sourceNamesDay`
+ * matches "October 15th" for any year, and the year check upstream only asks
+ * whether the year appears ANYWHERE in the text — so "our 2027 Lilac
+ * Festival … our planning meeting on October 15th" grounded an invented
+ * 2027-10-15. A year counts only when it is written as part of the same date
+ * expression: "Oct 15, 2027", "October 15th 2027", "15 October 2027",
+ * "10/15/2027", "10/15/27", or ISO.
+ */
+export function sourceNamesDayWithYear(isoDate: string, source: string): boolean {
+  const [y, m, d] = isoDate.split("-").map(Number);
+  if (!y || !m || !d) return false;
+  const abbrev = MONTHS[m - 1].slice(0, 3);
+  const yy = String(y).slice(2);
+  const patterns = [
+    // October 15, 2027 / Oct. 15th 2027 / a range ending in the year:
+    // "October 15-16, 2027", "May 2 & 3, 2027", "Oct 15 – 17 2027"
+    new RegExp(
+      `\\b${abbrev}[a-z]*\\.?\\s+0?${d}(?:st|nd|rd|th)?` +
+        `(?:\\s*(?:[-–—]|&|and|to)\\s*\\d{1,2}(?:st|nd|rd|th)?)?,?\\s+${y}(?!\\d)`,
+      "i"
+    ),
+    // 15 October 2027 / 15th Oct, 2027
+    new RegExp(`\\b0?${d}(?:st|nd|rd|th)?\\s+${abbrev}[a-z]*\\.?,?\\s+${y}(?!\\d)`, "i"),
+    // 10/15/2027, 10-15-27
+    new RegExp(`(?:^|\\D)0?${m}[/-]0?${d}[/-](?:${y}|${yy})(?!\\d)`),
+    // ISO
+    new RegExp(`(?:^|\\D)${y}-0?${m}-0?${d}(?!\\d)`),
+  ];
+  return patterns.some((re) => re.test(source));
+}
+
+/** Days a year-less mention may sit in the past and still mean this year's date. */
+export const YEARLESS_DAY_LOOKBACK_DAYS = 60;
+
+/**
+ * OPE-1332 — the one year a year-less day expression supports: the first
+ * occurrence of that month-day on or after `reference − 60 days`. An email
+ * sent 2026-10-03 that says "October 15th" means 2026-10-15; it cannot also
+ * support 2027-10-15. The lookback keeps a message that mentions a day just
+ * past ("our fair on September 20th was a success") anchored to this year.
+ */
+export function impliedYearForYearlessDay(isoDate: string, reference: Date): number | null {
+  const [, m, d] = isoDate.split("-").map(Number);
+  if (!m || !d) return null;
+  const floor = reference.getTime() - YEARLESS_DAY_LOOKBACK_DAYS * 86_400_000;
+  for (let y = reference.getUTCFullYear() - 1; y <= reference.getUTCFullYear() + 1; y++) {
+    if (Date.UTC(y, m - 1, d) >= floor) return y;
+  }
+  return null;
+}
+
 /** Last calendar day of the month an ISO date falls in. */
 function lastDayOfMonth(isoDate: string): number {
   const [y, m] = isoDate.split("-").map(Number);
@@ -182,6 +234,13 @@ export interface GroundDatesInput {
   startDate?: string | null;
   endDate?: string | null;
   sources: ReadonlyArray<string | null | undefined>;
+  /**
+   * OPE-1332 — when the source was written (an email's arrival). Decides which
+   * YEAR a year-less day expression ("October 15th") refers to. Defaults to
+   * now, which is right for the email lane: it grounds within seconds of
+   * arrival. A replay of a months-old message should pass the received time.
+   */
+  referenceDate?: Date | null;
 }
 
 /**
@@ -214,6 +273,32 @@ export function groundEventDates(input: GroundDatesInput): FieldGrounding[] {
     }
     const day = sourceNamesDay(value, source);
     if (day.hit) {
+      // OPE-1332 — the day is named; is THIS year? Only when the year is part
+      // of the date expression itself, or when the year-less day's own next
+      // occurrence is this one. Otherwise the year came from some other
+      // sentence ("our 2027 festival … on October 15th").
+      //
+      // `partial`, NOT `unsupported`: on ONE candidate this is ambiguous, not
+      // contradicted — "our 2027 show will be June 5th", sent in January 2026,
+      // has exactly this shape and means 2027. Dropping is reserved for
+      // evidence of absence (see the header). The evidence-based refusal is in
+      // the email fan-out: two candidates from one year-less day expression
+      // (`yearlessDaySplitLosers`), because one phrase cannot be two dates.
+      const reference = input.referenceDate ?? new Date();
+      const implied = impliedYearForYearlessDay(value, reference);
+      const year = Number(value.slice(0, 4));
+      if (!sourceNamesDayWithYear(value, source) && implied !== null && year !== implied) {
+        out.push({
+          field,
+          verdict: "partial",
+          reason:
+            `the source names ${value.slice(5)} without a year, which as of ` +
+            `${reference.toISOString().slice(0, 10)} means ${implied}-${value.slice(5)}; ` +
+            `the year ${year} was taken from elsewhere in the text`,
+          span: day.span,
+        });
+        continue;
+      }
       out.push({
         field,
         verdict: "supported",
@@ -342,4 +427,44 @@ export function groundingConfidence(verdict: GroundingVerdict | undefined): numb
     default:
       return null;
   }
+}
+
+/**
+ * OPE-1332 — which candidates of ONE extraction re-used the same year-less day
+ * expression under a different year. Returns the indexes to refuse.
+ *
+ * The specimen: "We are beginning to plan our 2027 Lilac Festival … our
+ * planning meeting on October 15th" became TWO candidates, 2026-10-15 and
+ * 2027-10-15. The source states Oct 15 once, with no year; as of the email
+ * (2026-10-03) that is 2026-10-15. The 2027 twin is the over-split: the same
+ * phrase cannot be two dates. A candidate is refused only when a SIBLING holds
+ * the same month-day with the implied year — a lone candidate is never refused
+ * here (its year may be legitimately borrowed; `groundEventDates` marks it
+ * `partial` instead).
+ */
+export function yearlessDaySplitLosers(
+  candidates: ReadonlyArray<{ startDate?: string | null }>,
+  sources: ReadonlyArray<string | null | undefined>,
+  referenceDate: Date = new Date()
+): number[] {
+  const source = joinSources(sources);
+  if (!source) return [];
+  const losers: number[] = [];
+  candidates.forEach((c, i) => {
+    const value = c.startDate;
+    if (!value || !/^\d{4}-\d{2}-\d{2}/.test(value)) return;
+    const iso = value.slice(0, 10);
+    if (!sourceNamesDay(iso, source).hit || sourceNamesDayWithYear(iso, source)) return;
+    const implied = impliedYearForYearlessDay(iso, referenceDate);
+    if (implied === null || Number(iso.slice(0, 4)) === implied) return;
+    const twin = candidates.some(
+      (o, j) =>
+        j !== i &&
+        typeof o.startDate === "string" &&
+        o.startDate.slice(5, 10) === iso.slice(5, 10) &&
+        Number(o.startDate.slice(0, 4)) === implied
+    );
+    if (twin) losers.push(i);
+  });
+  return losers;
 }

@@ -798,7 +798,7 @@ export interface SubmitEventContext {
  * 2026-09-30, among them "Weekly Polls on Facebook" (a link label in a
  * forwarded newsletter) and "- YouTube" (a page title). None could be deduped.
  */
-export type EmailCandidateRefusal = "no-date" | "non-event-name";
+export type EmailCandidateRefusal = "no-date" | "non-event-name" | "over-split-year";
 
 /** Platform link labels and page titles that read as names but are not events. */
 const NON_EVENT_NAME_PATTERNS: RegExp[] = [

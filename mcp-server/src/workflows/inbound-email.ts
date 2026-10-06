@@ -91,6 +91,7 @@ import {
   isHigherTier,
   classifyDedupTier,
   isBlankAskAboutEventBody,
+  yearlessDaySplitLosers,
 } from "@takemetothefair/utils";
 import type { EmailIntent } from "../email-intents.js";
 import type { SenderTrustTier } from "../intent-classifier.js";
@@ -305,7 +306,10 @@ function candidateSourceTexts(
 
 /** OPE-1253 — one reason for a set of refusals; a missing date is the floor that matters most. */
 function refusedReason(refused: Array<{ reason: EmailCandidateRefusal }>): string {
-  return refused.some((r) => r.reason === "no-date") ? "no-date" : "non-event-name";
+  if (refused.some((r) => r.reason === "no-date")) return "no-date";
+  // OPE-1332 — one year-less day expression split into two candidates.
+  if (refused.some((r) => r.reason === "over-split-year")) return "over-split-year";
+  return "non-event-name";
 }
 
 /** Dispatch table for non-submit, non-new_event intents. The submit
@@ -3292,6 +3296,13 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     // OPE-1253 — candidates the floor refused; never rows.
     const refused: Array<{ name: string; reason: EmailCandidateRefusal }> = [];
 
+    // OPE-1332 — one year-less day expression cannot be two dates. Inbound
+    // 64b2e93f ("our 2027 Lilac Festival … planning meeting on October 15th")
+    // fanned out to 2026-10-15 AND an invented 2027-10-15. Refuse the twin whose
+    // year is not the one the phrase implies, through the same refusal channel
+    // as OPE-1253 (fault + admin_actions + inbound flagged), never silently.
+    const splitLosers = new Set(yearlessDaySplitLosers(extracted.events, sourceTexts, new Date()));
+
     for (let i = 0; i < extracted.events.length; i++) {
       const childEvent = extracted.events[i];
       // Build a single-event-shaped struct so the existing submitCheck-
@@ -3303,7 +3314,9 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         event: childEvent,
       };
       const labelPrefix = `submit/fanout[${i}]`;
-      const childRefusal = refusalForCandidate(perEvent, sourceTexts);
+      const childRefusal: EmailCandidateRefusal | null = splitLosers.has(i)
+        ? "over-split-year"
+        : refusalForCandidate(perEvent, sourceTexts);
       if (childRefusal) {
         await recordCandidateRefusal(this.env, perEvent, sourceTexts, messageRowId, childRefusal);
         refused.push({ name: childEvent.name ?? "", reason: childRefusal });
