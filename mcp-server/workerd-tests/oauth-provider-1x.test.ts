@@ -185,8 +185,8 @@ beforeEach(() => {
 });
 
 describe("OPE-1323 — canonical resource", () => {
-  it("is the bare origin, and the provider constructs with both /mcp and /sse under it", () => {
-    expect(MCP_OAUTH_RESOURCE).toBe(ORIGIN);
+  it("is the origin spelled as the stored grants spell it, and constructs with both /mcp and /sse", () => {
+    expect(MCP_OAUTH_RESOURCE).toBe(`${ORIGIN}/`);
     expect(() => makeProvider()).not.toThrow();
   });
 
@@ -275,6 +275,18 @@ describe("OPE-1323 — refresh of 0.x-shaped stored grants (prod shapes, 2026-10
     const { access_token } = (await res.json()) as { access_token: string };
     const api = await call("/mcp", { headers: { Authorization: `Bearer ${access_token}` } });
     expect(api.status).toBe(200);
+  });
+
+  it('rollback-safe: refreshing a "…/" grant leaves its stored resource byte-identical', async () => {
+    const { client_id, refresh_token } = await fullLogin();
+    await rewriteGrantsToLegacy(`${ORIGIN}/`);
+    const res = await refresh(client_id, refresh_token);
+    expect(res.status).toBe(200);
+    const [key] = await storedGrantKeys();
+    const g = (await OAUTH_KV.get(key, "json")) as { resource: unknown };
+    // 0.x compares resources with ===; any respelling here would make a
+    // rollback refuse this grant with invalid_target.
+    expect(g.resource).toBe(`${ORIGIN}/`);
   });
 
   it("an absent resource binds to the sole resource and keeps refreshing", async () => {
