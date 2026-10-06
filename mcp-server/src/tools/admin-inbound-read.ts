@@ -27,10 +27,14 @@ import {
   events,
   inboundEmails,
   inboundNewsletters,
+  promoterContacts,
   promoterListArrivals,
+  promoters,
   workflowRunSteps,
   containsCI,
 } from "../schema.js";
+import { normalizeEmailAddress } from "@takemetothefair/db-schema";
+import { presentPromoterContact } from "./admin-promoter-contacts.js";
 import { buildVendorInquiryBriefing } from "../inbound/vendor-inquiry-briefing.js";
 import { jsonContent } from "../helpers.js";
 import { mainAppFetch, type MainAppEnv } from "../main-app-fetch.js";
@@ -212,6 +216,23 @@ export function registerInboundReadTools(
         .limit(1)
         .catch(() => []);
 
+      // OPE-1330 — is this sender a recorded promoter contact? Every contact row
+      // for the From address (one per promoter), so the reader sees status,
+      // method and first-validated next to matched_entities. [] when none.
+      const senderAddr = normalizeEmailAddress(row.fromAddress);
+      const contactRows = senderAddr
+        ? await db
+            .select({
+              c: promoterContacts,
+              companyName: promoters.companyName,
+              slug: promoters.slug,
+            })
+            .from(promoterContacts)
+            .leftJoin(promoters, eq(promoters.id, promoterContacts.promoterId))
+            .where(eq(promoterContacts.email, senderAddr))
+            .catch(() => [])
+        : [];
+
       // OPE-1264 — recognised as a promoter newsletter: markers, whose it is and
       // on what basis. Null for every other row.
       const [newsletter] = await db
@@ -337,6 +358,9 @@ export function registerInboundReadTools(
              * result.
              */
             matched_entities: safeJson<unknown[]>(row.matchedEntities, []),
+            promoter_contacts: contactRows.map((r) =>
+              presentPromoterContact(r.c, { companyName: r.companyName, slug: r.slug })
+            ),
             matched_entity_type: row.matchedEntityType,
             matched_entity_id: row.matchedEntityId,
             match_basis: row.matchBasis,

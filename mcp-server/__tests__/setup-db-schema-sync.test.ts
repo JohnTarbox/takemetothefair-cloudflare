@@ -33,6 +33,8 @@ const CORE_TABLES = [
   "inbound_emails",
   "admin_actions",
   "event_data_citations",
+  // OPE-1330
+  "promoter_contacts",
 ];
 
 // SQL table name -> Drizzle column SQL names.

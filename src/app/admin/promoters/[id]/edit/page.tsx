@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { FocalPointPicker } from "@/components/admin/FocalPointPicker";
+import { PromoterContactsSection } from "@/components/admin/PromoterContactsSection";
 
 interface Promoter {
   id: string;
@@ -231,6 +232,9 @@ export default function EditPromoterPage({ params }: { params: Promise<{ id: str
           </form>
         </CardContent>
       </Card>
+
+      {/* OPE-1330 — admin-only contacts record (personal data; never public). */}
+      <PromoterContactsSection promoterId={id} />
     </div>
   );
 }
