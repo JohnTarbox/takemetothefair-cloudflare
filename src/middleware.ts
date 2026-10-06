@@ -18,10 +18,10 @@ import {
   performerSlugHistory,
 } from "@/lib/db/schema";
 import { isPublicEventStatus } from "@/lib/event-status";
-import { pickOccurrenceForYear } from "@/lib/series/occurrence-year";
 import {
   occurrencePath,
   parseOccurrenceSegment,
+  resolveOccurrence,
   seriesOccurrencePath,
 } from "@takemetothefair/utils";
 import { resolveVenueRedirect } from "@/lib/venues/slug-redirect";
@@ -98,6 +98,11 @@ export const config = {
     // `/events/fryeburg-fair-me/2027` 404'd, with the history row present.
     // Year-only, so /events/<state>/<category> facet routes stay out.
     "/events/:slug/:year(\\d{4})",
+    // OPE-1326 — the EDITION form of a multi-edition series, /events/<series>/
+    // <YYYY-MM[-suffix]>. Deliberately broad (any "dddd-" + lowercase/digit/dash
+    // tail); `parseOccurrenceSegment` is the strict gate. Must accept every
+    // `occurrencePath` output — pinned by the matcher test.
+    "/events/:slug/:year(\\d{4}-[a-z0-9-]+)",
     // Blog detail pages (single slug only; not /blog itself, not /blog/tag/*,
     // not /blog/feed.xml — feed.xml is excluded by name below).
     "/blog/:slug",
@@ -338,24 +343,51 @@ async function handleRouting(request: NextRequest) {
   // redirected even once `series_slug_history` existed. The ticket asks for
   // both forms, and this is the one that would have been missed silently.
   //
-  // Deliberately narrow: exactly two segments, the second exactly four digits.
-  // Anything else falls through to the routes that already handle it.
+  // Deliberately narrow: exactly two segments, the second a canonical year or
+  // (OPE-1326) an edition key, per `parseOccurrenceSegment`. Anything else falls
+  // through to the routes that already handle it.
   {
     const rest = pathname.startsWith("/events/") ? pathname.slice("/events/".length) : "";
     const parts = rest.split("/");
-    if (parts.length === 2 && parseOccurrenceSegment(parts[1])) {
-      const [seriesSlug, year] = parts;
+    const parsed = parts.length === 2 ? parseOccurrenceSegment(parts[1]) : null;
+    if (parsed) {
+      const [seriesSlug, segment] = parts;
       const d1 = env.DB as D1Database | undefined;
       if (d1) {
         const db = drizzle(d1);
+        // OPE-1326 — year ↔ edition, decided by the shared resolver. Only a
+        // multi-edition series or an edition-shaped segment can redirect, so an
+        // annual series' year URL costs no extra query (today's path).
+        const editionRedirect = async (
+          slug: string,
+          series: { id: string; editionMode: string }
+        ): Promise<string | null> => {
+          if (series.editionMode !== "multi" && parsed.kind !== "edition") return null;
+          const occ = await db
+            .select({ id: events.id, startDate: events.startDate, editionKey: events.editionKey })
+            .from(events)
+            .where(and(eq(events.seriesId, series.id), isPublicEventStatus()));
+          const r = resolveOccurrence(slug, series.editionMode, occ, parsed);
+          return r?.action === "redirect" ? r.path : null;
+        };
         try {
           const [live] = await db
-            .select({ id: eventSeries.id })
+            .select({ id: eventSeries.id, editionMode: eventSeries.editionMode })
             .from(eventSeries)
             .where(eq(eventSeries.canonicalSlug, unsafeSlug(seriesSlug)))
             .limit(1);
-          // Only walk history on a MISS — a live series renders normally.
-          if (!live) {
+          if (live) {
+            // A live series renders normally — unless the segment names an
+            // edition by the other scheme (a year on a multi-edition series, or
+            // an edition key on an annual one: the rollback path, kept forever).
+            const to = await editionRedirect(seriesSlug, live);
+            if (to) {
+              const url = request.nextUrl.clone();
+              url.pathname = to;
+              return NextResponse.redirect(url, 301);
+            }
+          } else {
+            // Only walk history on a MISS.
             let cursor = seriesSlug;
             const seen = new Set<string>([cursor]);
             for (let hop = 0; hop < 5; hop++) {
@@ -371,15 +403,18 @@ async function handleRouting(request: NextRequest) {
             }
             if (cursor !== seriesSlug) {
               const [target] = await db
-                .select({ id: eventSeries.id })
+                .select({ id: eventSeries.id, editionMode: eventSeries.editionMode })
                 .from(eventSeries)
                 .where(eq(eventSeries.canonicalSlug, unsafeSlug(cursor)))
                 .limit(1);
               if (target) {
                 const url = request.nextUrl.clone();
-                // Keep the year: a reader asking for the 2026 edition should
-                // land on the 2026 edition, not the hub.
-                url.pathname = seriesOccurrencePath(cursor, year);
+                // Keep the edition: a reader asking for the 2026 edition should
+                // land on the 2026 edition, not the hub — and in ONE hop: on a
+                // multi-edition series the year resolves to its edition here,
+                // never by chaining through /<new-slug>/<year>.
+                url.pathname =
+                  (await editionRedirect(cursor, target)) ?? seriesOccurrencePath(cursor, segment);
                 return NextResponse.redirect(url, 301);
               }
             }
@@ -411,6 +446,11 @@ async function handleRouting(request: NextRequest) {
           // EH3 P2.6 — series occurrence → canonical /events/<series>/<year> 301.
           startDate: events.startDate,
           seriesSlug: eventSeries.canonicalSlug,
+          // OPE-1326 — …or /<series>/<edition key> on a multi-edition series.
+          // THE chokepoint: every `/events/<event-slug>` link on the site passes
+          // through here, so a missed key here sends edition B's links to A.
+          editionMode: eventSeries.editionMode,
+          editionKey: events.editionKey,
         })
         .from(events)
         .leftJoin(eventSeries, eq(events.seriesId, eventSeries.id))
@@ -446,7 +486,7 @@ async function handleRouting(request: NextRequest) {
         // (a clean-slug member), which the page must render, not redirect.
         const occPath =
           row.seriesSlug && slug !== row.seriesSlug
-            ? occurrencePath(row.seriesSlug, row.startDate)
+            ? occurrencePath(row.seriesSlug, row.startDate, row)
             : null;
         if (occPath) {
           const url = request.nextUrl.clone();
@@ -877,7 +917,7 @@ async function loadEntityMtime(
   db: ReturnType<typeof drizzle>,
   type: ConditionalEntityType,
   slug: string,
-  year?: number
+  segment?: string
 ): Promise<Date | null | undefined> {
   const s = unsafeSlug(slug);
   // `undefined` = no such row (leave routing's answer alone); `null` = found
@@ -924,24 +964,36 @@ async function loadEntityMtime(
       return r ? r.u : undefined;
     }
     case "event-occurrence": {
-      // OPE-1291 — the SAME row the page renders: resolveOccurrenceSlug's rule
-      // (series by canonical slug → public occurrences → start year), via the
-      // shared picker. The page also renders series fields (name, canonical
+      // OPE-1291 — the SAME row the page renders: resolveOccurrenceTarget's
+      // rule (series by canonical slug → public occurrences → the segment), via
+      // the shared resolver. The page also renders series fields (name, canonical
       // slug), so the validator is the later of the two rows' updated_at.
-      if (year === undefined) return undefined;
+      // OPE-1326 — a segment that 301s gets no validator: the redirect branch
+      // above answers it before any render.
+      const parsed = segment === undefined ? null : parseOccurrenceSegment(segment);
+      if (!parsed) return undefined;
       const [series] = await db
-        .select({ id: eventSeries.id, u: eventSeries.updatedAt })
+        .select({
+          id: eventSeries.id,
+          u: eventSeries.updatedAt,
+          editionMode: eventSeries.editionMode,
+        })
         .from(eventSeries)
         .where(eq(eventSeries.canonicalSlug, s))
         .limit(1);
       if (!series) return undefined;
       const occ = await db
-        .select({ id: events.id, startDate: events.startDate, u: events.updatedAt })
+        .select({
+          id: events.id,
+          startDate: events.startDate,
+          editionKey: events.editionKey,
+          u: events.updatedAt,
+        })
         .from(events)
         .where(and(eq(events.seriesId, series.id), isPublicEventStatus()));
-      const match = pickOccurrenceForYear(occ, year);
-      if (!match) return undefined; // the page 404s — no validator
-      return latestOf(series.u, match.u);
+      const r = resolveOccurrence(slug, series.editionMode, occ, parsed);
+      if (r?.action !== "render") return undefined; // the page 404s or 301s — no validator
+      return latestOf(series.u, r.occurrence.u);
     }
     case "blog": {
       const [r] = await db
@@ -990,14 +1042,14 @@ async function applyConditionalGet(
 
   let updatedAt: Date | null | undefined;
   try {
-    updatedAt = await loadEntityMtime(drizzle(d1), matched.type, matched.slug, matched.year);
+    updatedAt = await loadEntityMtime(drizzle(d1), matched.type, matched.slug, matched.segment);
   } catch {
     // A validator is an optimisation; never fail a page render for one.
     return response;
   }
   if (updatedAt === undefined) return response;
 
-  const etag = buildEntityEtag(matched.type, matched.slug, updatedAt, matched.year);
+  const etag = buildEntityEtag(matched.type, matched.slug, updatedAt, matched.segment);
 
   if (
     isNotModified({

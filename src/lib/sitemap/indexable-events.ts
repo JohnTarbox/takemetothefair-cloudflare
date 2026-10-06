@@ -51,6 +51,10 @@ export interface IndexableEventRow {
   slug: string;
   /** Non-null when this event is an occurrence of a series (EH3 P2.4). */
   seriesSlug: string | null;
+  /** OPE-1326 — the series' edition_mode (null for a standalone event). */
+  editionMode: string | null;
+  /** OPE-1326 — the member's stored edition key (null on annual series). */
+  editionKey: string | null;
   updatedAt: Date | null;
   startDate: Date | null;
   endDate: Date | null;
@@ -65,6 +69,8 @@ export async function getIndexableEventRows(db: Db): Promise<IndexableEventRow[]
     .select({
       slug: events.slug,
       seriesSlug: eventSeries.canonicalSlug,
+      editionMode: eventSeries.editionMode,
+      editionKey: events.editionKey,
       updatedAt: events.updatedAt,
       startDate: events.startDate,
       endDate: events.endDate,
@@ -83,12 +89,16 @@ export async function getIndexableEventRows(db: Db): Promise<IndexableEventRow[]
 /**
  * The canonical path for one event's detail page.
  *
- * A series occurrence resolves to `/events/<series>/<year>`; a standalone event
+ * A series occurrence resolves to `/events/<series>/<year>` (or, on a
+ * multi-edition series, `/events/<series>/<edition key>`); a standalone event
  * keeps its own slug. This is the rule that was duplicated — anything needing
  * "what is this event's URL" must call here rather than interpolate a slug.
  */
 export function canonicalEventPath(
-  row: Pick<IndexableEventRow, "slug" | "seriesSlug" | "startDate">
+  // OPE-1326 — the edition fields are REQUIRED, not optional: a caller whose
+  // query forgot them must fail to compile, not silently emit the year URL for
+  // a multi-edition series (the round-2 report's #2 failure mode).
+  row: Pick<IndexableEventRow, "slug" | "seriesSlug" | "startDate" | "editionMode" | "editionKey">
 ): string {
   // OPE-1324 — the shared rule; see @takemetothefair/utils edition-path.ts.
   return eventCanonicalPath(row);

@@ -20,7 +20,7 @@
  * the flat `<series>-<year>` slug, which is how occurrence slugs are minted.
  */
 import { and, eq, isNull } from "drizzle-orm";
-import { parseOccurrenceSegment, pickOccurrenceForYear, unsafeSlug } from "@takemetothefair/utils";
+import { parseOccurrenceSegment, resolveOccurrence, unsafeSlug } from "@takemetothefair/utils";
 import { events, eventSeries, eventSlugHistory } from "../schema.js";
 import type { Db } from "../db.js";
 
@@ -106,10 +106,12 @@ export async function resolveOwnEventUrl(
   if (seg) {
     // OPE-1324 — the shared parser and picker (@takemetothefair/utils), so this
     // resolver and the site agree on which row a /series/<year> URL names.
+    // OPE-1326 — and on which row a /series/<edition key> URL names. A segment
+    // the site would 301 (a year on a multi-edition series, a key on an annual
+    // one) still names one event: the redirect's target, which is what we brief.
     const [, seriesSlug, yearStr] = parts;
-    const year = seg.year;
     const [series] = await db
-      .select({ id: eventSeries.id })
+      .select({ id: eventSeries.id, editionMode: eventSeries.editionMode })
       .from(eventSeries)
       .where(eq(eventSeries.canonicalSlug, unsafeSlug(seriesSlug)))
       .limit(1);
@@ -121,10 +123,11 @@ export async function resolveOwnEventUrl(
           name: events.name,
           mergedInto: events.mergedInto,
           startDate: events.startDate,
+          editionKey: events.editionKey,
         })
         .from(events)
         .where(and(eq(events.seriesId, series.id), isNull(events.mergedInto)));
-      const hit = pickOccurrenceForYear(occ, year);
+      const hit = resolveOccurrence(seriesSlug, series.editionMode, occ, seg)?.occurrence;
       if (hit) return done(hit, "series-year", false);
     }
     const flat = await bySlug(db, `${seriesSlug}-${yearStr}`);

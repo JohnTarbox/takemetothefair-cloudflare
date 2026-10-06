@@ -844,6 +844,9 @@ export async function pickUrlsDetailed(
         slug: events.slug,
         seriesSlug: eventSeries.canonicalSlug,
         startDate: events.startDate,
+        // OPE-1326 — canonicalEventPath needs the edition to build the URL.
+        editionMode: eventSeries.editionMode,
+        editionKey: events.editionKey,
       })
       .from(events)
       .leftJoin(eventSeries, eq(events.seriesId, eventSeries.id))

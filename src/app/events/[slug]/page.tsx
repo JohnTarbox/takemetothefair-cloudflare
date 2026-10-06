@@ -572,7 +572,14 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
   // contact link so a question about this event arrives identifying it. Built
   // here rather than inline so the two cannot drift: a link pointing at a
   // different URL than the one we publish would match nothing on arrival.
-  const occPath = event.series ? occurrencePath(event.series.canonicalSlug, event.startDate) : null;
+  // OPE-1326 — the edition key on a multi-edition series; this occPath also
+  // feeds the EventSchema `url` below, so the two cannot disagree.
+  const occPath = event.series
+    ? occurrencePath(event.series.canonicalSlug, event.startDate, {
+        editionMode: event.series.editionMode,
+        editionKey: event.editionKey,
+      })
+    : null;
   const askAboutCanonicalUrl = occPath
     ? `${SITE_URL}${occPath}`
     : `${SITE_URL}/events/${event.slug}`;

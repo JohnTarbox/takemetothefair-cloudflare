@@ -135,6 +135,9 @@ export async function resolveEventHrefs(db: Db, slugs: string[]): Promise<Map<st
           slug: events.slug,
           startDate: events.startDate,
           seriesSlug: eventSeries.canonicalSlug,
+          // OPE-1326 — canonicalEventPath needs the edition to build the URL.
+          editionMode: eventSeries.editionMode,
+          editionKey: events.editionKey,
         })
         .from(events)
         .leftJoin(eventSeries, eq(events.seriesId, eventSeries.id))

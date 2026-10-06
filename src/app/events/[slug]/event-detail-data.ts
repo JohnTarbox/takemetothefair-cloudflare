@@ -206,10 +206,16 @@ async function getEventOnce(slug: string) {
     // series ref (canonical_slug + name) for the occurrence canonical URL +
     // schema.org superEvent. seriesId is NULL for every event until the P1
     // backfill, so this extra lookup never runs today.
-    let series: { canonicalSlug: string; name: string } | null = null;
+    // OPE-1326 — and its edition_mode, so the canonical/og:url, the JSON-LD url
+    // and the ask-about link address a multi-edition member by its edition key.
+    let series: { canonicalSlug: string; name: string; editionMode: string } | null = null;
     if (eventData.events.seriesId) {
       const [s] = await db
-        .select({ canonicalSlug: eventSeries.canonicalSlug, name: eventSeries.name })
+        .select({
+          canonicalSlug: eventSeries.canonicalSlug,
+          name: eventSeries.name,
+          editionMode: eventSeries.editionMode,
+        })
         .from(eventSeries)
         .where(eq(eventSeries.id, eventData.events.seriesId))
         .limit(1);
@@ -297,7 +303,8 @@ export async function buildEventMetadata(slug: string, asOccurrence = false): Pr
     const canonical = `${SITE_URL}${seriesHubCanonicalPath(
       landing.series.canonicalSlug,
       landing.occurrences,
-      new Date()
+      new Date(),
+      landing.series.editionMode
     )}`;
     const title = `${landing.series.name} — Meet Me at the Fair`;
     const description =
@@ -358,7 +365,12 @@ export async function buildEventMetadata(slug: string, asOccurrence = false): Pr
   // (/events/<series>/<year>), regardless of which URL served it, so the legacy
   // event slug never competes as a duplicate. Standalone events (every event
   // until backfill) keep their own self-canonical.
-  const occPath = event.series ? occurrencePath(event.series.canonicalSlug, event.startDate) : null;
+  const occPath = event.series
+    ? occurrencePath(event.series.canonicalSlug, event.startDate, {
+        editionMode: event.series.editionMode,
+        editionKey: event.editionKey,
+      })
+    : null;
   const url = occPath
     ? `${SITE_URL}${occPath}`
     : `https://meetmeatthefair.com/events/${event.slug}`;

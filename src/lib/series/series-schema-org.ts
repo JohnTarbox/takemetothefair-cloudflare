@@ -17,7 +17,7 @@
  * venue-zone ISO dates; this module only shapes JSON-LD.
  */
 import { SITE_URL } from "@takemetothefair/constants";
-import { seriesOccurrencePath } from "@takemetothefair/utils";
+import { editionKeyFor, seriesOccurrencePath, type EditionInput } from "@takemetothefair/utils";
 import { buildPlaceJsonLd, type PlaceVenue } from "@/lib/seo/place-jsonld";
 import { LIFECYCLE_TO_SCHEMA_ORG, type EventLifecycle } from "@/lib/event-lifecycle";
 import { isPastUnconfirmed, PAST_UNCONFIRMED_GRACE_MS } from "@/lib/events/past-unconfirmed";
@@ -178,6 +178,11 @@ export function derivedOffers(opts: {
 
 export interface SeriesForSchema {
   canonicalSlug: string;
+  /**
+   * OPE-1326 — 'annual' | 'multi'. Required (null = annual) so a builder that
+   * never selected it fails to compile instead of emitting year subEvent urls.
+   */
+  editionMode: string | null;
   name: string;
   description?: string | null;
   /** Absolute image URL (caller resolves; e.g. a cdn-cgi transform or og default). */
@@ -211,6 +216,8 @@ export interface OccurrenceForSchema {
   slug: string;
   /** Edition year (from start date); null when undated. */
   year: number | null;
+  /** OPE-1326 — the stored edition key, for the multi-edition url. */
+  editionKey?: string | null;
   name: string;
   /** ISO 8601 start/end, already formatted in the venue zone by the caller. */
   startDateIso?: string | null;
@@ -241,14 +248,22 @@ export function seriesUrl(canonicalSlug: string): string {
 }
 
 /**
- * `/events/<canonical_slug>/<year>` — the per-year occurrence URL (Option A).
- * Falls back to `/events/<slug>` when the year is unknown.
+ * `/events/<canonical_slug>/<year>` — the per-year occurrence URL (Option A),
+ * or (OPE-1326) `/events/<canonical_slug>/<edition key>` on a multi-edition
+ * series. Falls back to `/events/<slug>` when neither is known.
+ *
+ * `edition` is REQUIRED (pass null for "annual / unknown"): a caller that never
+ * selected the edition fields must say so, not silently emit the year URL for a
+ * multi-edition member.
  */
 export function occurrenceUrl(
   canonicalSlug: string,
   year: number | null,
-  fallbackSlug: string
+  fallbackSlug: string,
+  edition: EditionInput | null
 ): string {
+  const key = editionKeyFor(edition);
+  if (key) return `${SITE_URL}${seriesOccurrencePath(canonicalSlug, key)}`;
   return year === null
     ? `${SITE_URL}/events/${fallbackSlug}`
     : `${SITE_URL}${seriesOccurrencePath(canonicalSlug, year)}`;
@@ -282,7 +297,10 @@ function occurrenceNode(
   const node: Record<string, unknown> = {
     "@type": "Event",
     name: occ.name,
-    url: occurrenceUrl(series.canonicalSlug, occ.year, occ.slug),
+    url: occurrenceUrl(series.canonicalSlug, occ.year, occ.slug, {
+      editionMode: series.editionMode,
+      editionKey: occ.editionKey,
+    }),
   };
   node.startDate = occ.startDateIso;
   if (occ.endDateIso) node.endDate = occ.endDateIso;

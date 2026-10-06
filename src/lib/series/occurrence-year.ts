@@ -10,9 +10,14 @@
  */
 import { parseOccurrenceSegment, pickOccurrenceForYear } from "@takemetothefair/utils";
 
-/** "2026" → 2026; anything that is not a canonical 4-digit year → null. */
+/**
+ * "2026" → 2026; anything that is not a canonical 4-digit year → null —
+ * including an edition key ("2027-05"), which is not a year and must be
+ * resolved with `resolveOccurrence`, never by reading a year out of it.
+ */
 export function parseOccurrenceYear(yearStr: string): number | null {
-  return parseOccurrenceSegment(yearStr)?.year ?? null;
+  const seg = parseOccurrenceSegment(yearStr);
+  return seg?.kind === "year" ? seg.year : null;
 }
 
 export { pickOccurrenceForYear };
