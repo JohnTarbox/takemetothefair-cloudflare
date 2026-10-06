@@ -424,6 +424,13 @@ export const eventSeries = sqliteTable(
     publicAccess: text("public_access", { enum: ["OPEN", "CLOSED"] })
       .notNull()
       .default("OPEN"),
+    // OPE-1325 (drizzle/0356) — multi-edition series step 2/5. 'annual' keeps
+    // today's /events/<series>/<YYYY> URLs byte-for-byte; 'multi' addresses each
+    // occurrence by its stored `events.edition_key`. Set only by the
+    // set_series_edition_mode tool (OPE-1327). Nothing reads it before OPE-1326.
+    editionMode: text("edition_mode", { enum: ["annual", "multi"] })
+      .notNull()
+      .default("annual"),
     createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
     // OPE-1291 — maintained on every drizzle update, like the entity tables
     // (OPE-332's audit). A series/year page's ETag includes this; without it a
@@ -661,6 +668,12 @@ export const events = sqliteTable(
     // standalone one-off (every existing row at deploy). Set by P1 backfill.
     // ON DELETE SET NULL at the SQL level (mirrors rolledFromEventId).
     seriesId: text("series_id").references(() => eventSeries.id, { onDelete: "set null" }),
+    // OPE-1325 (drizzle/0356) — the edition's URL key on a multi-edition series:
+    // YYYY-MM of the start date in the venue's time zone, plus an operator suffix
+    // on a same-month clash ("2027-05-xli"). Stored and FROZEN at creation, so a
+    // date edit (or the UTC-vs-Eastern year split) never moves the URL. NULL on
+    // every annual-series occurrence. Unique per series (partial index below).
+    editionKey: text("edition_key"),
     // §10.2 cached 0-100 completeness score (drizzle/0055). Same gate as vendors:
     // entries with completenessScore < 40 are excluded from /sitemap.xml.
     completenessScore: integer("completeness_score").notNull().default(0),
@@ -837,6 +850,12 @@ export const events = sqliteTable(
     index("idx_events_merged_into")
       .on(table.mergedInto)
       .where(sql`${table.mergedInto} IS NOT NULL`),
+    // OPE-1325 (drizzle/0356) — one edition per key per series. NULLs are
+    // distinct in a SQLite UNIQUE index anyway; the partial keeps the NULL key
+    // on every annual-series row out of the index.
+    uniqueIndex("idx_events_series_edition_key")
+      .on(table.seriesId, table.editionKey)
+      .where(sql`${table.editionKey} IS NOT NULL`),
     // K2 part 5 (drizzle/0096) — partial index supports the
     // /admin/possible-duplicates queue + the Part 6 sweep's
     // cross-check ("don't surface clusters that are already flagged").

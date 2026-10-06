@@ -246,6 +246,9 @@ describe("OPE-975 — every probe's window is pinned", () => {
       "unterminated-crossing-notice": 6,
       "error-log-retention": 48,
       "indexnow-submission-retention": 48,
+      // OPE-1325 — PLACEHOLDER, dormant until OPE-1328 arms it: no emitting
+      // population exists yet. ~2 NEAR-Fest editions a year; re-derive on arming.
+      "series-edition-key": 4392,
     });
   });
 });

@@ -104,6 +104,7 @@ const SCHEMA_SQL = `
     tags text,
     primary_audience text NOT NULL DEFAULT '',
     public_access text NOT NULL DEFAULT '',
+    edition_mode text NOT NULL DEFAULT 'annual',
     created_at integer,
     updated_at integer,
     UNIQUE(canonical_slug)
@@ -208,6 +209,7 @@ const SCHEMA_SQL = `
     performer_roster_status text,
     performer_roster_checked_at integer,
     performer_roster_source_url text,
+    edition_key text,
     UNIQUE(slug)
   );
   CREATE TABLE promoters (
