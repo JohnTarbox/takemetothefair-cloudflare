@@ -417,10 +417,18 @@ export async function submitFetch(env: HandlerEnv, url: string): Promise<SubmitF
  * Empty string when there's no usable email body (free-text path uses
  * submitFreeTextExtract instead, not this function).
  */
+/**
+ * OPE-1316 — who asked for this extraction. Recorded on the route's timing row
+ * (success AND failure), so a latency distribution can be split by caller: the
+ * unattended callers are the ones a longer limit would be for.
+ */
+export type ExtractCaller = "email-workflow" | "holdout-sampler" | "photo-intake";
+
 export async function submitExtract(
   env: HandlerEnv,
   fetched: SubmitFetchResult,
-  emailBody: string = ""
+  emailBody: string = "",
+  caller: ExtractCaller = "email-workflow"
 ): Promise<SubmitExtractResult> {
   let res: Response;
   try {
@@ -439,6 +447,7 @@ export async function submitExtract(
         // Optional: forwarded only when non-empty so older /extract
         // route deploys (pre-D1) ignore the field gracefully.
         ...(emailBody.trim().length > 0 ? { emailBody: emailBody.slice(0, 8000) } : {}),
+        caller,
       }),
     });
   } catch (err) {

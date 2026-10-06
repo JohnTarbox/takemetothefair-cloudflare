@@ -59,6 +59,7 @@ import {
 } from "@/lib/db/schema";
 import { SITE_URL } from "@takemetothefair/constants";
 import { NEAR_DUPLICATE_SWEEP_ACTION } from "@/lib/duplicates/near-duplicate-sweep";
+import { AI_EXTRACTION_OK_MESSAGE, EXTRACT_LOG_SOURCE } from "@/lib/url-import/extract-telemetry";
 import type { StaleRed } from "@/lib/cpi/stale-reds";
 import type { AnyColumn, SQL } from "drizzle-orm";
 import type { SQLiteTable } from "drizzle-orm/sqlite-core";
@@ -2013,6 +2014,33 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     priority: "P1",
     expectedWindowHours: 4392,
     lastEvidenceAt: (db) => maxTs(db, events, events.createdAt, isNotNull(events.editionKey)),
+  },
+  {
+    // OPE-1316 — proof the import-url AI extractor is still ANSWERING. Every
+    // successful extraction (email workflow, holdout sampler, photo intake,
+    // admin import) now writes one `info` row; before this only failures
+    // logged, so "the extractor went quiet" and "nothing was submitted" looked
+    // identical.
+    //
+    // DORMANT (drizzle/0357, enabled_at NULL). The window below is a
+    // PLACEHOLDER: no success rows existed when this shipped, so there was no
+    // inter-arrival to measure. The arming ticket measures it and sets
+    // enabled_at; do not arm on this number.
+    name: "import-url-extract-success",
+    ownerOpe: "OPE-1316",
+    label: "import-url AI extractor returning answers",
+    priority: "P1",
+    expectedWindowHours: 336,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        errorLogs,
+        errorLogs.timestamp,
+        and(
+          eq(errorLogs.source, EXTRACT_LOG_SOURCE),
+          eq(errorLogs.message, AI_EXTRACTION_OK_MESSAGE)
+        )
+      ),
   },
 ];
 

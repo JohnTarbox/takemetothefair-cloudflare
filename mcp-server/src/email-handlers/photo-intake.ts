@@ -819,7 +819,8 @@ async function stagePosterAsPendingEvent(
         links: [],
         fetchMethod: "standard",
       },
-      ""
+      "",
+      "photo-intake"
     );
     if (!extracted.event?.name) {
       return {
