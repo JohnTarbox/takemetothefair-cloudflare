@@ -37,6 +37,7 @@
  * when two surfaces must agree about a fact, the agreement has to live in one
  * function that both call, not in two implementations that currently match.
  */
+import { eventCanonicalPath } from "@takemetothefair/utils";
 import { and, eq, gte, isNotNull } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "@/lib/db/schema";
@@ -89,10 +90,8 @@ export async function getIndexableEventRows(db: Db): Promise<IndexableEventRow[]
 export function canonicalEventPath(
   row: Pick<IndexableEventRow, "slug" | "seriesSlug" | "startDate">
 ): string {
-  if (row.seriesSlug && row.startDate) {
-    return `/events/${row.seriesSlug}/${new Date(row.startDate).getUTCFullYear()}`;
-  }
-  return `/events/${row.slug}`;
+  // OPE-1324 — the shared rule; see @takemetothefair/utils edition-path.ts.
+  return eventCanonicalPath(row);
 }
 
 /** The series landing page path — one per series with ≥1 eligible occurrence. */

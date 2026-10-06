@@ -36,7 +36,7 @@ import { buildEventTitle, buildEventMetaDescription } from "@/lib/seo-utils";
 import { cdnImage, OG_EVENT } from "@/lib/cdn-image";
 import { getSeriesLanding } from "@/lib/series/get-series-landing";
 import { seriesHubCanonicalPath } from "@/lib/series/occurrence-view";
-import { chunkedInArray } from "@takemetothefair/utils";
+import { chunkedInArray, occurrencePath } from "@takemetothefair/utils";
 import { withD1ReadLogged } from "@/lib/db/d1-resilience";
 import { DEGRADED_METADATA, isD1PlatformFault } from "@/lib/db/degraded";
 
@@ -358,12 +358,10 @@ export async function buildEventMetadata(slug: string, asOccurrence = false): Pr
   // (/events/<series>/<year>), regardless of which URL served it, so the legacy
   // event slug never competes as a duplicate. Standalone events (every event
   // until backfill) keep their own self-canonical.
-  const occYear =
-    event.series && event.startDate ? new Date(event.startDate).getUTCFullYear() : null;
-  const url =
-    event.series && occYear
-      ? `${SITE_URL}/events/${event.series.canonicalSlug}/${occYear}`
-      : `https://meetmeatthefair.com/events/${event.slug}`;
+  const occPath = event.series ? occurrencePath(event.series.canonicalSlug, event.startDate) : null;
+  const url = occPath
+    ? `${SITE_URL}${occPath}`
+    : `https://meetmeatthefair.com/events/${event.slug}`;
 
   return {
     title,

@@ -26,6 +26,8 @@
  * behaviour and never see a validator.
  */
 
+import { parseOccurrenceSegment } from "@takemetothefair/utils";
+
 /** Bump when the page template changes in a way that alters HTML for unchanged
  *  data. Without this, a layout-wide edit would ship behind stale validators —
  *  the entity row didn't change, so nothing else would signal the difference. */
@@ -59,10 +61,12 @@ export function matchConditionalRoute(
   // 469 upcoming APPROVED events (87%) are served here, and the two-segment-only
   // matcher gave none of them a validator. Only a canonical 4-digit year
   // matches, so /events/<slug>/vendors and /events/maine/<facet> never do.
-  if (segments.length === 3 && segments[0] === "events" && /^\d{4}$/.test(segments[2])) {
-    const [, series, year] = segments;
+  const occ =
+    segments.length === 3 && segments[0] === "events" ? parseOccurrenceSegment(segments[2]) : null;
+  if (occ) {
+    const series = segments[1];
     if (series.includes(".")) return null;
-    return { type: "event-occurrence", slug: series, year: Number(year) };
+    return { type: "event-occurrence", slug: series, year: occ.year };
   }
   if (segments.length !== 2) return null;
   const [prefix, slug] = segments;

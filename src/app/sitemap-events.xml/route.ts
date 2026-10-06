@@ -99,6 +99,16 @@ async function buildEventUrls(): Promise<SitemapUrl[]> {
     };
   });
 
+  // OPE-1324 — one <url> per path. Two rows that resolve to the same URL (two
+  // same-year members of one series) would otherwise list it twice; Google
+  // reports the duplicate. Keeps the first; prod has none today.
+  const seenDetail = new Set<string>();
+  const uniqueDetailPages = detailPages.filter((p) => {
+    if (seenDetail.has(p.url)) return false;
+    seenDetail.add(p.url);
+    return true;
+  });
+
   // One landing entry per series that has ≥1 sitemap-eligible occurrence.
   const seriesPages: SitemapUrl[] = [...seriesLandings.entries()].map(([slug, lastMod]) => ({
     url: `${SITEMAP_BASE_URL}${seriesLandingPath(slug)}`,
@@ -129,7 +139,7 @@ async function buildEventUrls(): Promise<SitemapUrl[]> {
     });
   }
 
-  return [...paginationPages, ...seriesPages, ...detailPages];
+  return [...paginationPages, ...seriesPages, ...uniqueDetailPages];
 }
 
 export async function GET(request: Request): Promise<Response> {

@@ -54,6 +54,7 @@ import {
 } from "./event-window.js";
 import type { SQLiteColumn } from "drizzle-orm/sqlite-core";
 import type { SQL } from "drizzle-orm";
+import { occurrenceYear } from "@takemetothefair/utils";
 
 /**
  * OPE-438 — walk a `*_slug_history` table to the current slug, mirroring what
@@ -1816,7 +1817,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
         series_id: r.seriesId ?? null,
         series_slug: r.seriesSlug ?? null,
         series_name: r.seriesName ?? null,
-        year: r.startDate ? new Date(r.startDate).getUTCFullYear() : null,
+        year: occurrenceYear(r.startDate),
       }));
 
       return {

@@ -108,6 +108,9 @@ jobs:
       - name: Guard against edge runtime decls (forbidden under OpenNext)
         run: npx tsx scripts/check-no-edge-runtime.ts
 
+      - name: Guard that occurrence URLs are built in one place (OPE-1324)
+        run: npx tsx scripts/check-occurrence-paths.ts
+
       - name: Guard that every outbound email send is ledgered (OPE-319)
         run: npx tsx scripts/check-email-sends-ledgered.ts
 

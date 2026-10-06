@@ -70,7 +70,12 @@ import { SameDayEventsButton } from "@/components/events/SameDayEventsButton";
 import { buildEventFaqItems } from "@/lib/event-faq";
 import { isFaqPilotEvent } from "@/lib/faq-pilot";
 import { SITE_URL } from "@takemetothefair/constants";
-import { buildAskAboutEventMailto, petPolicyDisplay } from "@takemetothefair/utils";
+import {
+  buildAskAboutEventMailto,
+  occurrencePath,
+  occurrenceYear,
+  petPolicyDisplay,
+} from "@takemetothefair/utils";
 import { getSeriesLanding } from "@/lib/series/get-series-landing";
 import { SeriesLandingPage } from "@/components/series/series-landing-page";
 import { buildSuperEventRef } from "@/lib/series/series-schema-org";
@@ -567,13 +572,13 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
   // contact link so a question about this event arrives identifying it. Built
   // here rather than inline so the two cannot drift: a link pointing at a
   // different URL than the one we publish would match nothing on arrival.
-  const askAboutCanonicalUrl =
-    event.series && event.startDate
-      ? `${SITE_URL}/events/${event.series.canonicalSlug}/${new Date(event.startDate).getUTCFullYear()}`
-      : `${SITE_URL}/events/${event.slug}`;
+  const occPath = event.series ? occurrencePath(event.series.canonicalSlug, event.startDate) : null;
+  const askAboutCanonicalUrl = occPath
+    ? `${SITE_URL}${occPath}`
+    : `${SITE_URL}/events/${event.slug}`;
   const askAboutHref = buildAskAboutEventMailto({
     eventName: event.name,
-    year: event.startDate ? new Date(event.startDate).getUTCFullYear() : null,
+    year: occurrenceYear(event.startDate),
     canonicalUrl: askAboutCanonicalUrl,
   });
   const eventCategories = parseJsonArray(event.categories);
@@ -632,9 +637,7 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
           imageUrl={event.imageUrl}
           galleryPhotos={eventGallery}
           url={
-            event.series && event.startDate
-              ? `${SITE_URL}/events/${event.series.canonicalSlug}/${new Date(event.startDate).getUTCFullYear()}`
-              : `https://meetmeatthefair.com/events/${event.slug}`
+            occPath ? `${SITE_URL}${occPath}` : `https://meetmeatthefair.com/events/${event.slug}`
           }
           superEvent={event.series ? buildSuperEventRef(event.series) : undefined}
           venue={

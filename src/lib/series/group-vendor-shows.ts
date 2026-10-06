@@ -7,6 +7,7 @@
  * Until the P1 backfill links events, every event has seriesId = null, so this
  * returns all-standalone and the timeline section renders nothing.
  */
+import { occurrenceYear } from "@takemetothefair/utils";
 export interface VendorShowInput {
   seriesId: string | null;
   seriesSlug: string | null;
@@ -45,7 +46,7 @@ export function groupVendorShows(items: VendorShowInput[]): {
         years: [],
       };
       g.years.push({
-        year: it.startDate ? it.startDate.getUTCFullYear() : null,
+        year: occurrenceYear(it.startDate),
         eventSlug: it.eventSlug,
         eventName: it.eventName,
         startDate: it.startDate,

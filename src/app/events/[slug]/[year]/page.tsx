@@ -11,6 +11,7 @@
  * Inert until the gated P1 backfill: resolveOccurrenceSlug returns null for every
  * (slug, year) today, so this route 404s exactly like any unknown path.
  */
+import { seriesOccurrencePath } from "@takemetothefair/utils";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import EventDetailPage from "../page";
@@ -51,7 +52,7 @@ export default async function OccurrencePage({ params }: OccurrenceProps) {
   } catch (e) {
     // OPE-1301 — an honest degraded panel, not the error boundary (09-27 specimen).
     if (isD1PlatformFault(e)) {
-      return <DegradedPanel what="this event" retryHref={`/events/${slug}/${year}`} />;
+      return <DegradedPanel what="this event" retryHref={seriesOccurrencePath(slug, year)} />;
     }
     throw e;
   }

@@ -8,6 +8,7 @@
  * formatting are P2.3 glue; the selection/partition judgment lives here so it's
  * unit-tested in isolation (same pattern as the rest of src/lib/series/).
  */
+import { occurrenceYear, seriesOccurrencePath } from "@takemetothefair/utils";
 import type { OccurrenceForSchema } from "./series-schema-org";
 import type { PlaceVenue } from "@/lib/seo/place-jsonld";
 import { toIsoDateOnlyInVenueZone } from "@/lib/datetime";
@@ -47,7 +48,7 @@ export interface OccurrenceView extends OccurrenceRow {
 }
 
 function occYear(o: OccurrenceRow): number | null {
-  return o.startDate ? o.startDate.getUTCFullYear() : null;
+  return occurrenceYear(o.startDate);
 }
 
 /** Effective end for past/upcoming classification: endDate, else startDate. */
@@ -115,7 +116,9 @@ export function seriesHubCanonicalPath(
   now: Date
 ): string {
   const hero = pickHeroOccurrence(occurrences, now);
-  return hero?.year != null ? `/events/${canonicalSlug}/${hero.year}` : `/events/${canonicalSlug}`;
+  return hero?.year != null
+    ? seriesOccurrencePath(canonicalSlug, hero.year)
+    : `/events/${canonicalSlug}`;
 }
 
 /**

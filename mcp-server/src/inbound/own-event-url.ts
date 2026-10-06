@@ -20,7 +20,7 @@
  * the flat `<series>-<year>` slug, which is how occurrence slugs are minted.
  */
 import { and, eq, isNull } from "drizzle-orm";
-import { unsafeSlug } from "@takemetothefair/utils";
+import { parseOccurrenceSegment, pickOccurrenceForYear, unsafeSlug } from "@takemetothefair/utils";
 import { events, eventSeries, eventSlugHistory } from "../schema.js";
 import type { Db } from "../db.js";
 
@@ -102,9 +102,12 @@ export async function resolveOwnEventUrl(
       path,
     }) as const;
 
-  if (parts.length === 3 && /^\d{4}$/.test(parts[2])) {
+  const seg = parts.length === 3 ? parseOccurrenceSegment(parts[2]) : null;
+  if (seg) {
+    // OPE-1324 — the shared parser and picker (@takemetothefair/utils), so this
+    // resolver and the site agree on which row a /series/<year> URL names.
     const [, seriesSlug, yearStr] = parts;
-    const year = Number(yearStr);
+    const year = seg.year;
     const [series] = await db
       .select({ id: eventSeries.id })
       .from(eventSeries)
@@ -121,7 +124,7 @@ export async function resolveOwnEventUrl(
         })
         .from(events)
         .where(and(eq(events.seriesId, series.id), isNull(events.mergedInto)));
-      const hit = occ.find((o) => o.startDate && new Date(o.startDate).getUTCFullYear() === year);
+      const hit = pickOccurrenceForYear(occ, year);
       if (hit) return done(hit, "series-year", false);
     }
     const flat = await bySlug(db, `${seriesSlug}-${yearStr}`);
