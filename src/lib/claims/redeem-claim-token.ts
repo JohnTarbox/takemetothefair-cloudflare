@@ -29,6 +29,7 @@
  *   - Single use: the token row is deleted on successful redemption.
  */
 import { and, eq } from "drizzle-orm";
+import { recordClaimantAsPromoterContact } from "@/lib/claims/promoter-contact";
 import type { Database } from "@/lib/db";
 import {
   vendors,
@@ -156,6 +157,13 @@ export async function redeemClaimToken(
       .update(promoters)
       .set({ userId, claimed: true, claimedAt: now, claimedBy: userId })
       .where(and(eq(promoters.id, token.entityId), eq(promoters.claimed, false)));
+    // OPE-1330 — the claimant becomes a validated promoter contact (best-effort).
+    await recordClaimantAsPromoterContact(db, {
+      promoterId: token.entityId,
+      userId,
+      via: "invite-token",
+      now,
+    });
   }
 
   await db

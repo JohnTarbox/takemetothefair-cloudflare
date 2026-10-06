@@ -13,6 +13,7 @@
  * role (onConflictDoNothing) and writes a fresh audit row noting the duplicate.
  */
 import { and, eq } from "drizzle-orm";
+import { recordClaimantAsPromoterContact } from "../promoter-claimant-contact.js";
 import { adminActions, entityClaims, promoters, userRoles, users } from "../schema.js";
 import { buildSettledEntityClaim, shouldRecordEntityClaim } from "@takemetothefair/db-schema";
 import type { Db } from "../db.js";
@@ -99,6 +100,13 @@ export async function approvePromoterClaim(
       })
       .where(eq(promoters.id, promoterId));
   }
+  // OPE-1330 — the claimant becomes a validated promoter contact (best-effort).
+  await recordClaimantAsPromoterContact(db, {
+    promoterId,
+    userId,
+    via: "mcp-approve-promoter-claim",
+    now,
+  });
 
   // Grant the PROMOTER role. Idempotent via the unique (user_id, role) index.
   await db

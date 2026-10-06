@@ -252,6 +252,25 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       ),
   },
   {
+    // OPE-1330 — the promoter-contacts capture step RAN. Like newsletter-classify
+    // it records itself for EVERY email the inbound workflow evaluates, match or
+    // not, so a quiet month of promoter mail (5 promoter senders in the 8 days
+    // to 2026-10-06) cannot false-fire it. 72h is that same measured window:
+    // largest gap between workflow emails in the 60 days to 2026-10-02 was 50.5h.
+    name: "promoter-contact-capture",
+    ownerOpe: "OPE-1330",
+    label: "inbound workflow promoter-contacts/capture step",
+    priority: "P1",
+    expectedWindowHours: 72,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        workflowRunSteps,
+        workflowRunSteps.recordedAt,
+        eq(workflowRunSteps.stepName, "promoter-contacts/capture")
+      ),
+  },
+  {
     // OPE-1285 — a newsletter was itemized SUCCESSFULLY. Keyed on status='ok',
     // not on the step running: a model that times out every time still writes
     // a step record, and a stream of `failed` rows must not read as alive.

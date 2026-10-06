@@ -1508,6 +1508,31 @@ const SCHEMA_SQL = `
   );
   CREATE UNIQUE INDEX uq_promoter_list_subscriptions_addr
     ON promoter_list_subscriptions (promoter_id, address);
+  CREATE TABLE promoter_contacts (
+    id TEXT PRIMARY KEY,
+    promoter_id TEXT NOT NULL REFERENCES promoters(id) ON DELETE CASCADE,
+    name TEXT,
+    role TEXT,
+    email TEXT NOT NULL CHECK (email = lower(email) AND email LIKE '%_@_%'),
+    phone TEXT,
+    validation_method TEXT NOT NULL CHECK (validation_method IN
+      ('domain_verified', 'replied_to_our_mail', 'approved_claim', 'phone',
+       'in_person', 'published_on_site', 'self_asserted')),
+    validation_evidence TEXT,
+    inbound_email_id TEXT REFERENCES inbound_emails(id) ON DELETE SET NULL,
+    sender_auth TEXT CHECK (sender_auth IS NULL OR sender_auth IN ('pass', 'partial', 'fail')),
+    auth_domain TEXT,
+    auth_domain_matches_promoter INTEGER CHECK (auth_domain_matches_promoter IS NULL OR auth_domain_matches_promoter IN (0, 1)),
+    status TEXT NOT NULL DEFAULT 'candidate' CHECK (status IN ('candidate', 'validated', 'stale', 'rejected')),
+    first_validated_at INTEGER,
+    last_heard_at INTEGER,
+    notes TEXT,
+    created_by TEXT,
+    updated_by TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE UNIQUE INDEX uq_promoter_contacts_promoter_email ON promoter_contacts (promoter_id, email);
   CREATE TABLE promoter_list_arrivals (
     id TEXT PRIMARY KEY,
     inbound_email_id TEXT NOT NULL UNIQUE,

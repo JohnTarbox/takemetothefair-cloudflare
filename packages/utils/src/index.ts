@@ -663,6 +663,8 @@ export * from "./admission-price";
 export * from "./ask-about-event";
 export * from "./promoter-dedup";
 export * from "./email-providers";
+// OPE-1330 — organizational domain (PSL-aware) + the one non-ownable-domain list.
+export * from "./org-domain";
 // OPE-1030 — error text with its cause chain, for every error_logs writer.
 export * from "./describe-error";
 export * from "./field-grounding";

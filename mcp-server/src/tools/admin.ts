@@ -181,6 +181,7 @@ import { registerEventLifecycleTools } from "./admin-event-lifecycle.js";
 import { registerSeriesBackfillTools } from "./admin-series-backfill.js";
 import { registerCreateOccurrenceTool } from "./admin-create-occurrence.js";
 import { registerSeriesEditionModeTool } from "./admin-series-edition-mode.js";
+import { registerPromoterContactTools } from "./admin-promoter-contacts.js";
 import { registerRecommendationsTools } from "./admin-recommendations.js";
 import { registerUploadImageBytesTool } from "./upload-image-bytes.js";
 import { registerRequestImageUploadSlotTool } from "./request-image-upload-slot.js";
@@ -461,6 +462,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
 
   // OPE-1327 — set_series_edition_mode (flag + edition keys, atomically; dry-run default).
   registerSeriesEditionModeTool(server, db, auth);
+
+  // OPE-1330 — promoter contacts: list / upsert / set status (admin only, audit-logged).
+  registerPromoterContactTools(server, db, auth);
 
   // Read-only recommendations feed — same data as /admin/analytics ▸
   // Recommendations. Adds get_recommendations, get_recommendation_rule.

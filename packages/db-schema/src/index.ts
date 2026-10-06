@@ -4086,6 +4086,74 @@ export const promoterListSubscriptions = sqliteTable(
   ]
 );
 
+/**
+ * OPE-1330 — the named people (or team mailboxes) at a promoter who have
+ * actually corresponded with us, and how each was validated. drizzle/0359.
+ *
+ * ⚠️ PERSONAL CONTACT DATA — admin-only on every surface. Nothing here may reach
+ * a public page, JSON-LD, the sitemap, or a public API/MCP tool; the module
+ * allow-list in `promoter-contacts-no-public-leak-ope1330.test.ts` fails the
+ * build if a non-admin file touches this table. A contact row never overwrites
+ * `promoters.contact_email` (which IS public).
+ *
+ * `email` is stored lowercase (CHECK in the migration), so the unique index on
+ * (promoter_id, email) is unique on lower(email) while staying a plain column
+ * pair that an upsert can target. Write through `planPromoterContactWrite`
+ * (./promoter-contacts.ts) so every writer applies the same rules.
+ */
+export const PROMOTER_CONTACT_VALIDATION_METHODS = [
+  "domain_verified",
+  "replied_to_our_mail",
+  "approved_claim",
+  "phone",
+  "in_person",
+  "published_on_site",
+  "self_asserted",
+] as const;
+export const PROMOTER_CONTACT_STATUSES = ["candidate", "validated", "stale", "rejected"] as const;
+
+export const promoterContacts = sqliteTable(
+  "promoter_contacts",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    promoterId: text("promoter_id")
+      .notNull()
+      .references(() => promoters.id, { onDelete: "cascade" }),
+    name: text("name"),
+    role: text("role"),
+    email: text("email").notNull(),
+    phone: text("phone"),
+    validationMethod: text("validation_method", {
+      enum: PROMOTER_CONTACT_VALIDATION_METHODS,
+    }).notNull(),
+    validationEvidence: text("validation_evidence"),
+    inboundEmailId: text("inbound_email_id").references(() => inboundEmails.id, {
+      onDelete: "set null",
+    }),
+    /** The message's overall verdict at validation (inbound_emails.sender_auth). */
+    senderAuth: text("sender_auth", { enum: ["pass", "partial", "fail"] }),
+    /** The DMARC header.from domain (the From domain when no DMARC clause). */
+    authDomain: text("auth_domain"),
+    /** Is auth_domain the promoter's own website domain? 1 / 0 / NULL (unknown). */
+    authDomainMatchesPromoter: integer("auth_domain_matches_promoter", { mode: "boolean" }),
+    status: text("status", { enum: PROMOTER_CONTACT_STATUSES }).notNull().default("candidate"),
+    firstValidatedAt: integer("first_validated_at", { mode: "timestamp" }),
+    lastHeardAt: integer("last_heard_at", { mode: "timestamp" }),
+    notes: text("notes"),
+    createdBy: text("created_by"),
+    updatedBy: text("updated_by"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    uniqueIndex("uq_promoter_contacts_promoter_email").on(t.promoterId, t.email),
+    index("idx_promoter_contacts_email").on(t.email),
+    index("idx_promoter_contacts_status").on(t.status),
+  ]
+);
+
 /** OPE-1265 — one row per inbound email to lists@ / lists+*@. drizzle/0350. */
 export const promoterListArrivals = sqliteTable(
   "promoter_list_arrivals",
@@ -6999,6 +7067,8 @@ export * from "./promoter-outreach-queue";
 export * from "./promoter-outreach-metrics";
 export * from "./promoter-outreach-state";
 export * from "./promoter-reply-link";
+// OPE-1330 — promoter contacts: domain verification + the one write rule.
+export * from "./promoter-contacts";
 export * from "./gallery-photos";
 // OPE-759 — the hours-review rule, shared because event_days has five writers.
 export * from "./hours-review-flag";

@@ -244,6 +244,8 @@ describe("OPE-975 — every probe's window is pinned", () => {
       "promoter-list-arrival": 720,
       // OPE-1264 — measured: the largest gap between workflow emails over 60 days was 50.5h.
       "newsletter-classify": 72,
+      // OPE-1330 — same population as newsletter-classify (every workflow email), same measured 72h.
+      "promoter-contact-capture": 72,
       // OPE-1285 — measured: 12 newsletters, largest gap 17.9 days.
       "newsletter-itemize": 720,
       "unterminated-crossing-notice": 6,

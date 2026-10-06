@@ -27,6 +27,7 @@
  */
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Database } from "@/lib/db";
+import { recordClaimantAsPromoterContact } from "@/lib/claims/promoter-contact";
 import {
   vendors,
   promoters,
@@ -415,6 +416,13 @@ export async function approveClaim(
       .update(promoters)
       .set({ userId: claim.userId, claimed: true, claimedAt: now, claimedBy: claim.userId })
       .where(and(eq(promoters.id, claim.entityId), eq(promoters.claimed, false)));
+    // OPE-1330 — the claimant becomes a validated promoter contact (best-effort).
+    await recordClaimantAsPromoterContact(db, {
+      promoterId: claim.entityId,
+      userId: claim.userId,
+      via: "admin-review",
+      now,
+    });
   }
 
   // Grant the entity role (idempotent).

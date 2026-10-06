@@ -117,6 +117,7 @@ import { handle as handleNoop } from "../email-handlers/noop.js";
 import { handle as handleGemba } from "../email-handlers/gemba.js";
 import { handle as handleListSubscription } from "../email-handlers/list-subscription.js";
 import { classifyAndRecordNewsletter } from "../inbound/newsletter-record.js";
+import { capturePromoterContacts } from "../inbound/promoter-contact-capture.js";
 import { processNewsletter } from "../inbound/newsletter-process.js";
 import { recordCrossing, ref } from "../inbound/crossing-ledger.js";
 import { routeToProject } from "../inbound/project-router.js";
@@ -1112,6 +1113,27 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           fanoutOtherIntents: fanoutRole.otherIntents,
         },
       };
+    }
+
+    // OPE-1330 — record a promoter contact when the sender IS a promoter's
+    // contact_email or is replying to mail we sent that promoter. Builds the
+    // record only: nothing sends, blocks or routes on it, so a failure here is
+    // logged and never touches the email's own handling. Records its step for
+    // every email (the heartbeat's evidence).
+    try {
+      await step.do(
+        "promoter-contacts/capture",
+        { retries: { limit: 2, delay: "5 seconds", backoff: "constant" }, timeout: "10 seconds" },
+        async () => capturePromoterContacts(getDb(this.env.DB), messageRowId, sessionId)
+      );
+    } catch (err) {
+      await logError(this.env.DB, {
+        source: SOURCE,
+        message: "promoter-contacts/capture failed; no contact recorded",
+        sessionId,
+        error: err,
+        context: { messageRowId },
+      });
     }
 
     // OPE-1264 — recognise a promoter newsletter, record whose it is, and keep

@@ -41,6 +41,7 @@ export const dynamic = "force-dynamic";
  */
 import { NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";
+import { recordClaimantAsPromoterContact } from "@/lib/claims/promoter-contact";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
@@ -158,6 +159,13 @@ export async function POST(request: Request) {
       .update(promoters)
       .set({ userId: user.id, claimed: true, claimedAt: now, claimedBy: user.id })
       .where(eq(promoters.id, promoter.id));
+    // OPE-1330 — the claimant becomes a validated promoter contact (best-effort).
+    await recordClaimantAsPromoterContact(db, {
+      promoterId: promoter.id,
+      userId: user.id,
+      via: "direct-email-match",
+      now,
+    });
 
     await db
       .insert(userRoles)
