@@ -176,6 +176,9 @@ describe("OPE-975 — every probe's window is pinned", () => {
       "funnel-canary": 48,
       "verification-threshold-tuner": 48,
       "photo-intake": 30 * 24,
+      // OPE-1341 — demand-conditional: only a snap left in received/processing
+      // starts the clock, so 6h cannot fire in the weeks between fairs.
+      "snap-intake": 6,
       "photo-intake-storage-record": 30 * 24,
       // OPE-325 — demand-conditional: counts from an unanswered poster, not
       // from the last success, so a short window cannot cry wolf in a quiet month.

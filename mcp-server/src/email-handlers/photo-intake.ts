@@ -48,6 +48,7 @@ import { mainAppFetch } from "../main-app-fetch.js";
 import { submitCheckDuplicate, submitEvent, submitExtract } from "./submit.js";
 import { attachPosterEvidence, type PosterEvidenceResult } from "../photo/poster-evidence.js";
 import { parseExif, type ExifData } from "../photo/exif.js";
+import { isSnapRow, parseCaptureMeta, captureMetaAsExif } from "../photo/snap-intake.js";
 import {
   resolveOccurrence,
   expandEventDates,
@@ -1062,7 +1063,15 @@ export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> =
   // (SPF/DKIM/DMARC pass) AND from a trusted sender. Everything else is held for
   // human review — no eligibility for the OPE-204 vendor write, and no reason to
   // spend R2 reads resolving a fair we won't act on.
-  const eligible = ctx.emailAuth === "pass" && ctx.senderTrust === "trusted";
+  //
+  // OPE-1341 — a snap-app row is eligible on its own provenance: it was uploaded
+  // by an ADMIN session through the main app and written over X-Internal-Key,
+  // and no mail path writes `routing_source='snap-app'`. Reading it off the ROW
+  // (not the run's params) matters: the stale-inbound sweep re-dispatches a stuck
+  // row with no senderTrust/emailAuth, which would otherwise hold every
+  // recovered snap.
+  const snap = isSnapRow(row);
+  const eligible = snap || (ctx.emailAuth === "pass" && ctx.senderTrust === "trusted");
   if (!eligible) {
     return {
       replyKind: "photo-intake-held",
@@ -1106,7 +1115,12 @@ export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> =
     ({ resolution, exif } = await resolvePhotoEvent(
       db,
       overrideSlugs,
-      () => readExif(env, refs),
+      // OPE-1341 — a snap's stored bytes are EXIF-stripped before R2, so its
+      // location comes from `capture_meta` (EXIF-or-device, decided at ingest).
+      // Same resolver, same venue × date rule; only the source of the fix differs.
+      snap
+        ? async () => captureMetaAsExif(parseCaptureMeta(row.captureMeta))
+        : () => readExif(env, refs),
       row.subject
     ));
   } catch (e) {

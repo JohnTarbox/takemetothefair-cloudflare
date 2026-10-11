@@ -1,0 +1,16 @@
+{
+  "name": "Snap booth — Meet Me at the Fair",
+  "short_name": "Snap booth",
+  "description": "Photograph a booth at a fair and send it straight into the photo-intake lane",
+  "id": "/admin/snap",
+  "start_url": "/admin/snap",
+  "scope": "/admin/snap",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#111827",
+  "theme_color": "#1E2761",
+  "icons": [
+    { "src": "/icons/icon-192x192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/icon-512x512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

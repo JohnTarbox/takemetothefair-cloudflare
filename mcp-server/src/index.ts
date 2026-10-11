@@ -105,6 +105,7 @@ import { logError } from "./logger.js";
 import { inboundEmails } from "./schema.js";
 import { eq, inArray } from "drizzle-orm";
 import { resolveHeldPhotoEmail } from "./photo/resolve-held-photos.js";
+import { ingestSnap, type SnapClientMeta } from "./photo/snap-intake.js";
 import type { SchemaOrgSyncParams } from "./workflows/schema-org-sync.js";
 import type { RecommendationsScanParams } from "./workflows/recommendations-scan.js";
 import type { EventDateDriftParams } from "./workflows/event-date-drift.js";
@@ -1384,6 +1385,52 @@ async function handleInternalApi(request: Request, env: Env, url: URL): Promise<
       results.push({ id, ...r });
     }
     return jsonResponse({ eventId, totalAttached, totalFailed, results });
+  }
+
+  // POST /api/admin/internal/snap-intake — OPE-1341. One photo from the phone
+  // capture page (/admin/snap), forwarded by the main app after it checked the
+  // ADMIN session. Multipart: `file`, `meta` (JSON SnapClientMeta), `actor`.
+  // Becomes an inbound row on the existing photo-intake Workflow; idempotent on
+  // the client's UUID, so a retried upload returns the same row.
+  if (url.pathname === "/api/admin/internal/snap-intake" && request.method === "POST") {
+    let form: FormData;
+    try {
+      form = await request.formData();
+    } catch {
+      return jsonResponse({ error: "expected multipart/form-data" }, 400);
+    }
+    const file = form.get("file");
+    const actor = form.get("actor");
+    if (!(file instanceof File) || typeof actor !== "string" || !actor.includes("@")) {
+      return jsonResponse({ error: "file and actor are required" }, 400);
+    }
+    let meta: SnapClientMeta;
+    try {
+      meta = JSON.parse(String(form.get("meta") ?? "")) as SnapClientMeta;
+    } catch {
+      return jsonResponse({ error: "meta must be JSON" }, 400);
+    }
+    if (!meta || typeof meta.clientId !== "string") {
+      return jsonResponse({ error: "meta.clientId is required" }, 400);
+    }
+    const result = await ingestSnap(env, getDb(env.DB), {
+      bytes: new Uint8Array(await file.arrayBuffer()),
+      contentType: file.type,
+      fileName: file.name,
+      meta,
+      actor,
+    });
+    if (!result.ok) return jsonResponse({ error: result.error }, result.status);
+    if (!result.deduped && !result.workflowStarted) {
+      await logError(env.DB, {
+        level: "warn",
+        source: "mcp:snap-intake",
+        message:
+          "snap stored but the workflow did not start; the stale-inbound sweep will retry it",
+        context: { rowId: result.rowId },
+      });
+    }
+    return jsonResponse(result, result.deduped ? 200 : 201);
   }
 
   // POST /api/admin/internal/enqueue-email — proxy for Pages' enqueueEmail().
