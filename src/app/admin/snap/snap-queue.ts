@@ -79,6 +79,20 @@ export const queue = {
   all: async () => ((await run<QueuedShot[]>("readonly", (s) => s.getAll())) ?? []) as QueuedShot[],
 };
 
+/**
+ * A v4 UUID from `crypto.getRandomValues` — `crypto.randomUUID()` sits above the
+ * declared browser floor (OPE-640), and an above-floor call blanks the page. The
+ * server derives the row id from this (`snap-<uuid>`), which is what makes a
+ * retried upload idempotent, so it must be a real RFC 4122 v4 value.
+ */
+export function newClientId(): string {
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const h = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+
 /** The phone's own wall-clock date — EXIF DateTimeOriginal semantics. */
 export function localDate(d: Date = new Date()): string {
   const p = (n: number) => String(n).padStart(2, "0");

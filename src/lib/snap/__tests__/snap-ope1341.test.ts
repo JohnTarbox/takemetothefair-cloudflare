@@ -134,3 +134,18 @@ describe("snap status (OPE-1341)", () => {
     ).toBe("poster");
   });
 });
+
+describe("newClientId (OPE-1341)", () => {
+  it("is always a v4 UUID the server's snapRowId accepts — idempotency depends on it", async () => {
+    const { newClientId } = await import("@/app/admin/snap/snap-queue");
+    // Same pattern as mcp-server/src/photo/snap-intake.ts UUID_RE.
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    const seen = new Set<string>();
+    for (let i = 0; i < 200; i++) {
+      const id = newClientId();
+      expect(id).toMatch(UUID_RE);
+      seen.add(id);
+    }
+    expect(seen.size).toBe(200);
+  });
+});

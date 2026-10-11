@@ -10,7 +10,14 @@
  * phone width); auth is still the admin layout's ADMIN check.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { localDate, prepareImage, queue, SNAP_SYNC_TAG, type QueuedShot } from "./snap-queue";
+import {
+  localDate,
+  newClientId,
+  prepareImage,
+  queue,
+  SNAP_SYNC_TAG,
+  type QueuedShot,
+} from "./snap-queue";
 
 interface NearbyEvent {
   id: string;
@@ -191,7 +198,7 @@ export function SnapCapture() {
     setBusy(true);
     try {
       for (const file of Array.from(files)) {
-        const clientId = crypto.randomUUID();
+        const clientId = newClientId();
         const pos = fix.current;
         const fresh = pos && Date.now() - pos.timestamp < FIX_MAX_AGE_MS ? pos : null;
         const { blob, thumb } = await prepareImage(file);

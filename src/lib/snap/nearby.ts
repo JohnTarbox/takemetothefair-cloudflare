@@ -12,6 +12,7 @@
  */
 import { and, gte, inArray, isNotNull, isNull, lte } from "drizzle-orm";
 import { PUBLIC_EVENT_STATUSES } from "@takemetothefair/constants";
+import { chunkedInArray } from "@takemetothefair/utils";
 import { eventDays, events, venues } from "@/lib/db/schema";
 import { haversineDistance } from "@/lib/geo";
 import type { getCloudflareDb } from "@/lib/cloudflare";
@@ -118,15 +119,16 @@ export async function findNearbyEvents(
     );
   if (rows.length === 0) return [];
 
-  const days = await db
-    .select({ eventId: eventDays.eventId, date: eventDays.date })
-    .from(eventDays)
-    .where(
-      inArray(
-        eventDays.eventId,
-        rows.map((r) => r.id)
-      )
-    );
+  // OPE-241 — one bound param per in-range event; a busy day in a dense area
+  // can pass D1's 100-param cap, so the IN() is chunked.
+  const days = await chunkedInArray(
+    rows.map((r) => r.id),
+    (batch) =>
+      db
+        .select({ eventId: eventDays.eventId, date: eventDays.date })
+        .from(eventDays)
+        .where(inArray(eventDays.eventId, batch))
+  );
   const daysByEvent = new Map<string, string[]>();
   for (const d of days) daysByEvent.set(d.eventId, [...(daysByEvent.get(d.eventId) ?? []), d.date]);
 

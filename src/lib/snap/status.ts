@@ -8,6 +8,7 @@
  * the lane did not record.
  */
 import { and, inArray } from "drizzle-orm";
+import { chunkedInArray } from "@takemetothefair/utils";
 import { adminActions, events, inboundEmails } from "@/lib/db/schema";
 import type { getCloudflareDb } from "@/lib/cloudflare";
 
@@ -127,10 +128,9 @@ export async function loadSnapStatuses(db: Db, ids: string[]): Promise<SnapStatu
   ];
   const names = new Map<string, string>();
   if (eventIds.length) {
-    for (const e of await db
-      .select({ id: events.id, name: events.name })
-      .from(events)
-      .where(inArray(events.id, eventIds))) {
+    for (const e of await chunkedInArray(eventIds, (batch) =>
+      db.select({ id: events.id, name: events.name }).from(events).where(inArray(events.id, batch))
+    )) {
       names.set(e.id, e.name);
     }
   }
