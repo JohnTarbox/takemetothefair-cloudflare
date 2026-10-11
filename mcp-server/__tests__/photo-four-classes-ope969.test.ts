@@ -255,6 +255,23 @@ describe("OPE-969 — performer photos, roster first", () => {
     expect(await flagged()).toBe(0);
   });
 
+  it("OPE-1339: a SALVAGED (markdown) read naming a rostered act is staged as read — no roster link, no gallery", async () => {
+    const markdown =
+      "* **Kind**: booth\n* **Name**: Axe Women Loggers of Maine\n* **Confidence**: 1.0\n* **identifiable_minor**: false";
+    const res = await run({
+      AI: { run: vi.fn().mockResolvedValue({ response: markdown }) },
+      VENDOR_ASSETS: bucket,
+      PHOTO_VISION_ENABLED: "true",
+    });
+    expect(res.performersConfirmed).toEqual([]);
+    expect(await actions(PERFORMER_CONFIRMED_ACTION)).toHaveLength(0);
+    expect(attachGeneralPhotos).not.toHaveBeenCalled();
+    expect(await appearances()).toHaveLength(3); // unchanged
+    expect(await actions(BOOTH_PROPOSED_ACTION)).toMatchObject([
+      { stage_kind: "parse_salvaged", business_name: "Axe Women Loggers of Maine", confidence: 1 },
+    ]);
+  });
+
   it("a performance with NO printed name → a performer proposal, never a booth proposal", async () => {
     await run(env(reply({ kind: "performer", name: null })));
     expect(await actions(PERFORMER_PROPOSED_ACTION)).toMatchObject([
