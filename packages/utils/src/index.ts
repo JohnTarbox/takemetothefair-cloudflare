@@ -676,3 +676,5 @@ export * from "./promoter-rule-agreement";
 // OPE-1324 — the one occurrence URL builder/parser, shared by the app and the
 // MCP Worker (which cannot import src/). See scripts/check-occurrence-paths.ts.
 export * from "./edition-path";
+// OPE-1341 — JPEG metadata strip, shared by the main app and the MCP Worker.
+export * from "./jpeg-exif-strip";

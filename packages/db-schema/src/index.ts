@@ -5487,6 +5487,10 @@ export const inboundEmails = sqliteTable(
     // give-up path emails the submitter itself. Set by `replay_inbound_email`
     // so a replay can never send a submitter another automated message.
     repliesSuppressedReason: text("replies_suppressed_reason"),
+    // OPE-1341 (drizzle/0360) — set only on `routing_source='snap-app'` rows: the
+    // capture metadata a phone upload sends instead of EXIF/subject (location and
+    // which source it came from, the pinned event, the note). JSON; NULL on email.
+    captureMeta: text("capture_meta"),
     /** Categorical failure reason for submit-intent rows whose AI extract
      *  was reached but didn't yield a usable event. Values:
      *    - `'zero-events'`  — AI returned success with empty events[]

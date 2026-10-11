@@ -17,7 +17,7 @@
  *    flag is never a false RED).
  *  - auto-file dedup reuses OPE-76's `cpi_signal_filings` ledger — nothing new.
  */
-import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, notInArray, sql } from "drizzle-orm";
 import {
   analyticsEvents,
   entityWriteLog,
@@ -743,6 +743,39 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     expectedWindowHours: 30 * 24,
     lastEvidenceAt: (db) =>
       maxTs(db, inboundEmails, inboundEmails.receivedAt, eq(inboundEmails.intent, "photo_intake")),
+  },
+  {
+    // OPE-1341 — the snap capture page (/admin/snap) writes `routing_source=
+    // 'snap-app'` inbound rows and starts the photo-intake Workflow for each.
+    // Evidence is DEMAND-CONDITIONAL (OPE-325): snaps happen only when John is at
+    // a fair, so "no snap lately" is healthy. What must never happen is a snap
+    // that sits in received/processing — stored, but never run through the lane
+    // (a failed workflow create the sweep did not recover, or a handler fault).
+    // 6h is several stale-sweep cycles past the Workflow's own 120 s budget.
+    name: "snap-intake",
+    ownerOpe: "OPE-1341",
+    label: "Snap capture page → photo-intake lane",
+    priority: "P1",
+    expectedWindowHours: 6,
+    lastEvidenceAt: async (db) =>
+      demandConditionalEvidence(
+        await maxTs(
+          db,
+          inboundEmails,
+          inboundEmails.receivedAt,
+          eq(inboundEmails.routingSource, "snap-app")
+        ),
+        await maxTs(
+          db,
+          inboundEmails,
+          inboundEmails.receivedAt,
+          and(
+            eq(inboundEmails.routingSource, "snap-app"),
+            notInArray(inboundEmails.status, ["received", "processing"])
+          )
+        ),
+        new Date()
+      ),
   },
   {
     // OPE-403 — proof the lane still RECORDS what it stored.
