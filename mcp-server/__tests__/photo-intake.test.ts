@@ -376,6 +376,88 @@ describe("resolvePhotoEvent (OPE-203, real SQLite)", () => {
     expect(resolution.status).toBe("held");
   });
 
+  // OPE-1337 — the live specimen. inbound 15b9903f / 2d29803c, 2026-10-08:
+  // EXIF GPS 43°53'37.80"N 69°55'37.34"W, ~8 m from the Brunswick Recreation
+  // Center pin, on the one day People Plus Senior Health Expo (TENTATIVE) ran.
+  // Both held as `no-event-on-date` because the occurrence lookup read
+  // `status = 'APPROVED'`; TENTATIVE events are public and must match.
+  it("resolves a TENTATIVE (public) event on the photo's date — OPE-1337 specimen", async () => {
+    const { db } = createTestDb();
+    await seed(db as unknown as Db);
+    await db.insert(venues).values({
+      id: "v-brunswick",
+      name: "Brunswick Recreation Center",
+      slug: "brunswick-recreation-center" as never,
+      address: "220 Neptune Dr",
+      city: "Brunswick",
+      state: "ME",
+      zip: "04011",
+      latitude: 43.8937598,
+      longitude: -69.9270216,
+    } as never);
+    await db.insert(events).values({
+      id: "e-expo",
+      name: "People Plus Senior Health Expo",
+      slug: "people-plus-senior-health-expo" as never,
+      promoterId: "p1",
+      venueId: "v-brunswick",
+      status: "TENTATIVE",
+      startDate: new Date("2026-10-08T12:00:00Z"),
+      endDate: new Date("2026-10-08T12:00:00Z"),
+    } as never);
+    await db
+      .insert(eventDays)
+      .values([{ id: "d-expo", eventId: "e-expo", date: "2026-10-08" }] as never);
+
+    for (const gps of [
+      { latitude: 43 + 53 / 60 + 37.8 / 3600, longitude: -(69 + 55 / 60 + 37.34 / 3600) }, // 11:03 shot
+      { latitude: 43 + 53 / 60 + 37.13 / 3600, longitude: -(69 + 55 / 60 + 37.03 / 3600) }, // 11:11 shot
+    ]) {
+      const { resolution } = await resolvePhotoEvent(db as unknown as Db, [], async () => ({
+        gps,
+        takenOnLocalDate: "2026-10-08",
+      }));
+      expect(resolution).toMatchObject({
+        status: "resolved",
+        eventId: "e-expo",
+        method: "exif",
+        venueName: "Brunswick Recreation Center",
+      });
+    }
+  });
+
+  it.each(["REJECTED", "CANCELLED", "DRAFT"])(
+    "still holds for a non-public %s event — the widening is to PUBLIC_EVENT_STATUSES only",
+    async (status) => {
+      const { db } = createTestDb();
+      await seed(db as unknown as Db);
+      await db
+        .update(events)
+        .set({ status } as never)
+        .where(eq(events.id, "e1"));
+      const { resolution } = await resolvePhotoEvent(db as unknown as Db, [], exifAt("2026-10-04"));
+      expect(resolution).toMatchObject({ status: "held", reason: "no-event-on-date" });
+    }
+  );
+
+  it("holds as ambiguous when an APPROVED and a TENTATIVE event share the venue and day", async () => {
+    const { db } = createTestDb();
+    await seed(db as unknown as Db);
+    await db.insert(events).values({
+      id: "e2",
+      name: "Fryeburg Craft Show",
+      slug: "fryeburg-craft-show" as never,
+      promoterId: "p1",
+      venueId: "v1",
+      status: "TENTATIVE",
+      startDate: new Date("2026-10-04T00:00:00Z"),
+      endDate: new Date("2026-10-04T00:00:00Z"),
+    } as never);
+    await db.insert(eventDays).values([{ id: "d3", eventId: "e2", date: "2026-10-04" }] as never);
+    const { resolution } = await resolvePhotoEvent(db as unknown as Db, [], exifAt("2026-10-04"));
+    expect(resolution).toMatchObject({ status: "held", reason: "ambiguous-multiple-events" });
+  });
+
   it("holds when GPS lands nowhere near a geocoded venue", async () => {
     const { db } = createTestDb();
     await seed(db as unknown as Db);
