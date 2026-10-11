@@ -118,25 +118,44 @@ function inviteUrl(
   return `${PUBLIC_HOST}/register?role=${entityType}&claim=${encodeURIComponent(slug)}&invite=${rawToken}`;
 }
 
+/**
+ * OPE-1340 — the magic link as a real `<a href>`, styled like the main app's
+ * email CTA (src/lib/email/templates.ts, "Read the post"). The MCP Worker cannot
+ * import that module, so the one line of markup is mirrored here.
+ *
+ * Before this, the URL went through `paragraphsToHtml` with the rest of the body
+ * and reached the HTML part as bare text — clickable only if the recipient's
+ * mail client happened to auto-link a ~200-character URL (AOL webmail does not
+ * reliably). The bare URL stays in the text part, and as a plain visible link
+ * under the button for clients that strip button styling.
+ */
+function ctaButtonHtml(url: string, label: string): string {
+  const href = escapeHtml(url);
+  return (
+    `<div style="margin:16px 0;"><a href="${href}" style="display:inline-block;padding:12px 20px;` +
+    `background:#E8960C;color:#1E2761;font-weight:600;text-decoration:none;border-radius:8px;">` +
+    `${escapeHtml(label)}</a></div>` +
+    `<p style="font-size:13px;color:#6F6455;">Or open this link: <a href="${href}">${href}</a></p>`
+  );
+}
+
 /** claim_invite copy (mirrors admin-send-vendor-email's buildTemplate) with the
- *  invite magic link substituted for the plain claim URL. */
-function renderInviteEmail(businessName: string, url: string): RenderedEmail {
-  const text = `Hi ${businessName},
+ *  invite magic link substituted for the plain claim URL. Exported for tests. */
+export function renderInviteEmail(businessName: string, url: string): RenderedEmail {
+  const intro = `Hi ${businessName},
 
 You're listed on Meet Me at the Fair — the New England directory connecting fair-, festival-, and craft-show-goers across all six states with the businesses they love. We built your listing from public event data, and we'd love for you to claim it (it's free).
 
-Claiming lets you correct your details, add photos and products, and link your website so shoppers can find you. This link is just for you and gets you straight there:
-  ${url}
-
-There's no cost and no catch — claiming just puts you in control of how your business appears.
+Claiming lets you correct your details, add photos and products, and link your website so shoppers can find you. This link is just for you and gets you straight there:`;
+  const outro = `There's no cost and no catch — claiming just puts you in control of how your business appears.
 
 If you have any questions, just reply to this email.
 
 ${SIGN_OFF}`;
   return {
     subject: `Claim your free listing on Meet Me at the Fair`,
-    text,
-    html: paragraphsToHtml(text),
+    text: `${intro}\n  ${url}\n\n${outro}`,
+    html: `${paragraphsToHtml(intro)}${ctaButtonHtml(url, "Claim your page")}${paragraphsToHtml(outro)}`,
   };
 }
 
@@ -150,7 +169,7 @@ export function registerCreateClaimInviteTool(
 
   server.tool(
     "create_claim_invite",
-    "Cold-contact claim invite (OPE-67; OPE-318 added PERFORMER). Mint a single-use, 14-day INVITE_TOKEN for an UNCLAIMED vendor, promoter or performer listing and email its contact address a magic link into the claim/register funnel. Idempotent: if an unexpired invite already exists for the same (entity, email) it is a no-op (created:false, reason:active_invite_exists). Honors the suppression list (suppressed:true, nothing sent/minted). Does NOT write an entity_claims row (deferred to redemption — entity_claims.user_id is NOT NULL). The raw token is emailed only, never returned. For vendors, records a vendor_outreach_attempts touch. Admin only.",
+    "Cold-contact claim invite (OPE-67; OPE-318 added PERFORMER). Mint a single-use, 14-day INVITE_TOKEN for an UNCLAIMED vendor, promoter or performer listing and email its contact address a magic link into the claim/register funnel. Idempotent: if an unexpired invite already exists for the same (entity, email) it is a no-op (created:false, reason:active_invite_exists) unless `resend: true`, which revokes it and sends a fresh link (OPE-1340). Honors the suppression list (suppressed:true, nothing sent/minted). Does NOT write an entity_claims row (deferred to redemption — entity_claims.user_id is NOT NULL). The raw token is emailed only, never returned. For vendors, records a vendor_outreach_attempts touch. Admin only.",
     {
       entity_type: z
         .enum(["VENDOR", "PROMOTER", "PERFORMER"])
@@ -166,8 +185,14 @@ export function registerCreateClaimInviteTool(
         .describe(
           "Override recipient. Defaults to the listing's contact_email. Compared lowercased."
         ),
+      resend: z
+        .boolean()
+        .optional()
+        .describe(
+          "OPE-1340 — reissue: when an unexpired invite already exists for this (entity, email), revoke it and mint + send a fresh one instead of returning active_invite_exists. The earlier link stops working. Use when an invite was lost or its link broke."
+        ),
     },
-    async ({ entity_type, entity_id, email }) => {
+    async ({ entity_type, entity_id, email, resend }) => {
       if (!env?.EMAIL_JOBS) {
         return {
           content: [
@@ -302,7 +327,11 @@ export function registerCreateClaimInviteTool(
           )
         );
       const active = existing.find((r) => r.expiresAt.getTime() > now.getTime());
-      if (active) {
+      // OPE-1340 — `resend` revokes the live token (swept with the stale ones
+      // below) so a broken or lost invite can be replaced inside its 14 days.
+      // Only ever one live token per (entity, email): the old link dies here.
+      const reissued = Boolean(active && resend);
+      if (active && !resend) {
         return {
           content: [
             jsonContent({
@@ -396,6 +425,7 @@ export function registerCreateClaimInviteTool(
           bcc: BCC_TO,
           expiresAt: expiresAt.toISOString(),
           outreachAttemptId,
+          reissued,
         }),
         createdAt: now,
       });
@@ -404,6 +434,7 @@ export function registerCreateClaimInviteTool(
         content: [
           jsonContent({
             created: true,
+            reissued,
             entityType: entity_type,
             entityId: entity_id,
             email: targetEmail,
