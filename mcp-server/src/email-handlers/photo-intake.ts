@@ -18,7 +18,7 @@
  *   1. Explicit override — `photos+<event-slug>@` sub-address (OPE-202 parses
  *      it) or an event slug in the subject. John naming the fair beats any
  *      inference, and is the documented escape hatch for photos with no GPS.
- *   2. EXIF — GPS → geocoded venues within a small radius → the APPROVED
+ *   2. EXIF — GPS → geocoded venues within a small radius → the public
  *      occurrence running on the photo's local date.
  *   3. Otherwise → HOLD and ask. Never a wrong silent guess: the OPE-204 tail
  *      writes vendor↔event links off this verdict, and a bad attribution would
@@ -41,6 +41,7 @@ import type { InboundEmail } from "@takemetothefair/db-schema";
 import { parsePlusSegment } from "../email-intents.js";
 import { logError } from "../logger.js";
 import { chunkedInArray, createSlug } from "@takemetothefair/utils";
+import { PUBLIC_EVENT_STATUSES } from "@takemetothefair/constants";
 import { runBoothPipeline, type BoothPipelineResult } from "../photo/booth-pipeline.js";
 import { classifyPosterText, type PosterClassification } from "../photo/poster-classify.js";
 import { mainAppFetch } from "../main-app-fetch.js";
@@ -377,12 +378,20 @@ async function loadNearbyVenues(
 }
 
 /**
- * APPROVED, non-tombstone occurrences at the given venues that could contain
- * the photo's date.
+ * Publicly visible (APPROVED or TENTATIVE), non-tombstone occurrences at the
+ * given venues that could contain the photo's date.
  *
- * APPROVED-only on purpose: a fair John is standing at is live on the site. A
+ * Public-only on purpose: a fair John is standing at is live on the site. A
  * DRAFT/PENDING row is not something we want to silently attribute photos to —
  * that case holds and he names it, which is the safe direction.
+ *
+ * OPE-1337 — this read `status = 'APPROVED'` until 2026-10-10, which is
+ * narrower than its own rationale. TENTATIVE events are live on the site too
+ * (PUBLIC_EVENT_STATUSES), so two GPS-tagged photos taken ~8 m from the venue
+ * pin of People Plus Senior Health Expo (TENTATIVE) on the day it ran held as
+ * `no-event-on-date`. Widening is safe here, unlike the subject-name matcher:
+ * venue + date already pin one occurrence, and two public events on the same
+ * day at the same venue still hold as ambiguous.
  */
 async function loadCandidateEvents(
   db: Db,
@@ -416,7 +425,7 @@ async function loadCandidateEvents(
       .where(
         and(
           inArray(events.venueId, batch),
-          eq(events.status, "APPROVED"),
+          inArray(events.status, [...PUBLIC_EVENT_STATUSES]),
           isNull(events.mergedInto),
           gte(events.startDate, lo),
           lte(events.startDate, hi)
