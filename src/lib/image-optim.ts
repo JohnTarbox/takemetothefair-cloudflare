@@ -158,6 +158,108 @@ export function stripExifFromJpeg(input: Uint8Array): StripResult {
  *  at the input MAX_BYTES (10MB) in the route. */
 export const SOFT_SIZE_LIMIT_BYTES = 1024 * 1024; // 1 MB
 
+/**
+ * OPE-1338 — read the EXIF Orientation tag (0x0112) from a JPEG, or null.
+ *
+ * Must run BEFORE `stripExifFromJpeg`: the strip drops the whole APP1 segment,
+ * Orientation included, and Phase 2b then transforms the stripped copy — so
+ * `cf.image`, which does auto-orient from EXIF (measured 2026-10-10 on the
+ * zone), has nothing left to orient from. A phone photo held upside down
+ * (Orientation=3) was stored upside down; one held upright (Orientation=1)
+ * was fine, which is why the defect looked role-specific when it was not.
+ *
+ * Returns null for non-JPEG input, no EXIF, malformed EXIF, or a value
+ * outside 1–8. Never throws: a photo must not fail upload over its metadata.
+ */
+export function readJpegOrientation(input: Uint8Array): number | null {
+  try {
+    if (input.length < 4 || input[0] !== 0xff || input[1] !== 0xd8) return null;
+    let i = 2;
+    while (i + 4 <= input.length) {
+      if (input[i] !== 0xff) return null;
+      const marker = input[i + 1];
+      // Orientation lives in the header; past start-of-scan there is none.
+      if (marker === 0xda || marker === 0xd9) return null;
+      const segLen = (input[i + 2] << 8) | input[i + 3];
+      if (segLen < 2) return null;
+      const seg = i + 4; // first payload byte
+      if (
+        marker === 0xe1 &&
+        segLen >= 16 &&
+        input[seg] === 0x45 && // "Exif\0\0"
+        input[seg + 1] === 0x78 &&
+        input[seg + 2] === 0x69 &&
+        input[seg + 3] === 0x66 &&
+        input[seg + 4] === 0 &&
+        input[seg + 5] === 0
+      ) {
+        const tiff = seg + 6;
+        const end = i + 2 + segLen;
+        const le = input[tiff] === 0x49 && input[tiff + 1] === 0x49; // "II"
+        const u16 = (o: number) =>
+          le ? input[o] | (input[o + 1] << 8) : (input[o] << 8) | input[o + 1];
+        const u32 = (o: number) =>
+          le
+            ? (input[o] | (input[o + 1] << 8) | (input[o + 2] << 16) | (input[o + 3] << 24)) >>> 0
+            : ((input[o] << 24) | (input[o + 1] << 16) | (input[o + 2] << 8) | input[o + 3]) >>> 0;
+        const ifd = tiff + u32(tiff + 4);
+        if (ifd + 2 > end) return null;
+        const count = u16(ifd);
+        for (let k = 0; k < count; k++) {
+          const entry = ifd + 2 + 12 * k;
+          if (entry + 12 > end) return null;
+          if (u16(entry) === 0x0112) {
+            const v = u16(entry + 8);
+            return v >= 1 && v <= 8 ? v : null;
+          }
+        }
+        return null;
+      }
+      i += 2 + segLen;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/** The `cf.image` operations that put an EXIF-oriented image upright. */
+export interface OrientationOps {
+  rotate?: 90 | 180 | 270;
+  flip?: "h" | "v";
+}
+
+/**
+ * OPE-1338 — map EXIF Orientation to `cf.image` `rotate`/`flip`.
+ *
+ * `cf.image` rotates CLOCKWISE (measured 2026-10-10: `rotate=90` moved an
+ * upright image's top edge to the right) and flips BEFORE it rotates (per the
+ * docs), so the mirrored cases are expressed as flip-then-rotate:
+ *   5 (transpose)  = flip h, then rotate 270
+ *   7 (transverse) = flip h, then rotate 90
+ * 1 and unknown values need nothing.
+ */
+export function orientationToCfImage(orientation: number | null | undefined): OrientationOps {
+  switch (orientation) {
+    case 2:
+      return { flip: "h" };
+    case 3:
+      return { rotate: 180 };
+    case 4:
+      return { flip: "v" };
+    case 5:
+      return { flip: "h", rotate: 270 };
+    case 6:
+      return { rotate: 90 };
+    case 7:
+      return { flip: "h", rotate: 90 };
+    case 8:
+      return { rotate: 270 };
+    default:
+      return {};
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Phase 2b — Cloudflare Image Resizing transform
 // ---------------------------------------------------------------------------
@@ -207,6 +309,14 @@ export class ImageTransformError extends Error {
 
 export interface TransformOptions {
   maxLongestEdge?: number;
+  /**
+   * OPE-1338 — the EXIF Orientation the SOURCE had before Phase 2a stripped
+   * it. Applied as explicit `rotate`/`flip`, because the stripped source no
+   * longer carries the tag `cf.image` would otherwise auto-orient from. Pass
+   * it ONLY when the source at `sourceUrl` has had its EXIF removed — on an
+   * un-stripped source `cf.image` auto-orients too, and this would rotate twice.
+   */
+  orientation?: number | null;
   quality?: number;
   /** Override fetch for tests. Defaults to global fetch. */
   fetchImpl?: typeof fetch;
@@ -215,8 +325,9 @@ export interface TransformOptions {
 /**
  * Transform a publicly-fetchable image URL via Cloudflare Image Resizing.
  * Returns WebP bytes resized to fit within `maxLongestEdge` (default 2000)
- * with quality `quality` (default 85). EXIF Orientation is applied
- * automatically — the output is upright regardless of input orientation.
+ * with quality `quality` (default 85). `cf.image` auto-orients from EXIF
+ * when the source still carries it; a source Phase 2a has stripped does not,
+ * so the caller passes the pre-strip `orientation` instead (OPE-1338).
  *
  * Throws `ImageTransformError` when Cloudflare responds non-2xx (which
  * happens when Image Resizing isn't enabled on the zone, or when the
@@ -245,6 +356,7 @@ export async function transformViaCloudflare(
     // Strip remaining metadata at the transform boundary. Phase 2a already
     // stripped on the JPEG side; this catches the PNG/WebP cases too.
     metadata: "none" as const,
+    ...orientationToCfImage(opts.orientation),
   };
 
   const startedAt = Date.now();

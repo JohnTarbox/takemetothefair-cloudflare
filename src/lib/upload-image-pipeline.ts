@@ -39,6 +39,7 @@ import { recomputeEventCompleteness } from "@/lib/completeness";
 import { sha256Hex } from "@takemetothefair/db-schema";
 import {
   stripExifFromJpeg,
+  readJpegOrientation,
   transformViaCloudflare,
   ImageTransformError,
   SOFT_SIZE_LIMIT_BYTES,
@@ -225,6 +226,9 @@ export interface Phase2bMeta {
   height: number | null;
   duration_ms: number | null;
   compression_ratio: number | null;
+  /** OPE-1338 — the EXIF Orientation applied as pixel rotation in Phase 2b
+   *  (null when none was needed or the source carried no tag). */
+  orientation_applied: number | null;
 }
 
 export interface PipelineResponseBody {
@@ -367,13 +371,20 @@ export async function runUploadPipeline(args: RunPipelineArgs): Promise<Pipeline
   // Phase 2a EXIF strip (JPEG only)
   let bytesRemovedByExifStrip = 0;
   let exifSegmentsStripped = 0;
+  // OPE-1338 — the orientation the photo had BEFORE the strip removes it.
+  // Null unless the strip actually removed the EXIF, so Phase 2b only rotates
+  // explicitly when `cf.image` can no longer see the tag (otherwise it would
+  // auto-orient AND rotate: twice).
+  let orientationToApply: number | null = null;
   if (declaredType === "image/jpeg" || declaredType === "image/jpg") {
+    const sourceOrientation = readJpegOrientation(bytes);
     const stripResult = stripExifFromJpeg(bytes);
     const stripped = new Uint8Array(stripResult.bytes.length);
     stripped.set(stripResult.bytes);
     bytes = stripped;
     bytesRemovedByExifStrip = stripResult.bytesRemoved;
     exifSegmentsStripped = stripResult.segmentsStripped;
+    if (stripResult.segmentsStripped > 0) orientationToApply = sourceOrientation;
   }
 
   const { keyPrefix, fileKind } = resolved.target;
@@ -431,7 +442,9 @@ export async function runUploadPipeline(args: RunPipelineArgs): Promise<Pipeline
   if (!skipPhase2bReason) {
     try {
       const originalUrl = `${CDN_BASE}/${originalKey}`;
-      const transform = await transformViaCloudflare(originalUrl);
+      const transform = await transformViaCloudflare(originalUrl, {
+        orientation: orientationToApply,
+      });
 
       await bucket.put(webpKey, transform.bytes, {
         httpMetadata: { contentType: "image/webp" },
@@ -695,6 +708,10 @@ export async function runUploadPipeline(args: RunPipelineArgs): Promise<Pipeline
         height: phase2bHeight,
         duration_ms: phase2bDurationMs,
         compression_ratio: compressionRatio,
+        orientation_applied:
+          phase2bStatus === "applied" && orientationToApply !== null && orientationToApply !== 1
+            ? orientationToApply
+            : null,
       },
     },
   };
