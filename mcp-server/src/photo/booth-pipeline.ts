@@ -270,7 +270,8 @@ export async function runBoothPipeline(
     // created vendor once auto-write is on. A booth name that matches an act
     // already on this event's lineup is that act.
     const boothName = d.identification.kind === "booth" ? d.identification.businessName : null;
-    if (boothName && (d.action === "write" || d.action === "stage")) {
+    // OPE-1339 — never for a salvaged read: it is staged as read, whatever it names.
+    if (boothName && !d.identification.salvaged && (d.action === "write" || d.action === "stage")) {
       try {
         if (await matchRosterPerformer(db, eventId, boothName)) {
           d = {
