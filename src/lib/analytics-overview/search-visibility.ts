@@ -4,9 +4,10 @@
  * strip (which reuses the conversions/publishing day-series loaders).
  */
 
-import { and, count, eq, gte, inArray, sql } from "drizzle-orm";
-import { analyticsEvents, indexnowSubmissions } from "@/lib/db/schema";
-import { rateOverSample } from "./render-state";
+import { and, count, eq, gte, inArray, lt, sql } from "drizzle-orm";
+import { analyticsEvents, gscDailyTotals, indexnowSubmissions } from "@/lib/db/schema";
+import { rate, rateOverSample } from "./render-state";
+import { resolveDateRange } from "@/lib/analytics-params";
 import { BingApiError, BingConfigError, getQueryStats, type BingEnv } from "@/lib/bing-webmaster";
 import {
   ScApiError,
@@ -121,6 +122,12 @@ export async function loadSearchVisibility(
       previous,
       trend: trendOf(current, previous),
       windowDays: days,
+      // OPE-1347 #5 — the exact dates GSC was asked for, so this tile and the
+      // CTR tile (a different, lagged window) can never be read as one window.
+      window: (() => {
+        const r = resolveDateRange(dateRange, { defaultPreset: "last_30d" });
+        return { start: r.startDate, end: r.endDate };
+      })(),
       bingTotal,
     };
   } catch (error) {
@@ -138,49 +145,59 @@ export async function loadSearchVisibility(
 /** Queries read for the site-wide CTR / brand-share figures (a GSC sample cap). */
 const QUERY_SAMPLE_CAP = 500;
 
-export async function loadSiteCtr(env: ScEnv, days: number): Promise<SiteCtrCard> {
-  // Prior period of equal length, immediately preceding.
-  const today = new Date();
-  const startCurr = new Date(today.getTime() - days * 86400 * 1000);
-  const startPrev = new Date(today.getTime() - 2 * days * 86400 * 1000);
-  const fmtDate = (d: Date) => d.toISOString().slice(0, 10);
-  try {
-    const [curr, prev] = await Promise.all([
-      getSiteSearchQueries(env, {
-        rowLimit: QUERY_SAMPLE_CAP,
-        dateRange: { startDate: fmtDate(startCurr), endDate: fmtDate(today) },
-      }),
-      getSiteSearchQueries(env, {
-        rowLimit: QUERY_SAMPLE_CAP,
-        dateRange: { startDate: fmtDate(startPrev), endDate: fmtDate(startCurr) },
-      }),
-    ]);
-    const ctr = curr.totals.impressions > 0 ? curr.totals.clicks / curr.totals.impressions : 0;
-    const prevCtr = prev.totals.impressions > 0 ? prev.totals.clicks / prev.totals.impressions : 0;
+/**
+ * OPE-1347 #4 — the CTR card's sub-lines read the SAME table and window as its
+ * headline badge (kpi-states `readSiteCtr`): un-dimensioned `gsc_daily_totals`,
+ * a window ending STABLE_LAG_DAYS ago so GSC's late-finalising days are excluded.
+ *
+ * They used to come from the top-500-query API sample over an un-lagged window,
+ * so the card showed "1.94%" above "1,893 / 108,170" (1.75%) and a "prev" from
+ * a third population. Two numbers on one card must be one measurement.
+ */
+const CTR_STABLE_LAG_DAYS = 2;
+
+export async function loadSiteCtr(db: Db, days: number): Promise<SiteCtrCard> {
+  const dayMs = 86400 * 1000;
+  const end = new Date(Date.now() - CTR_STABLE_LAG_DAYS * dayMs); // exclusive
+  const start = new Date(end.getTime() - days * dayMs);
+  const prevStart = new Date(start.getTime() - days * dayMs);
+  const iso = (d: Date) => d.toISOString().slice(0, 10);
+  const sum = async (from: Date, to: Date) => {
+    const [row] = await db
+      .select({
+        clicks: sql<number>`COALESCE(SUM(${gscDailyTotals.clicks}), 0)`,
+        impressions: sql<number>`COALESCE(SUM(${gscDailyTotals.impressions}), 0)`,
+        days: sql<number>`COUNT(*)`,
+      })
+      .from(gscDailyTotals)
+      .where(and(gte(gscDailyTotals.date, iso(from)), lt(gscDailyTotals.date, iso(to))));
     return {
-      ok: true,
-      clicks: curr.totals.clicks,
-      impressions: curr.totals.impressions,
-      ctr,
-      // OPE-1131 — the totals are summed over the top QUERY_SAMPLE_CAP queries
-      // only, and 0/0 impressions is not a 0% CTR.
-      ctrMeasured: rateOverSample(
-        curr.totals.clicks,
-        curr.totals.impressions,
-        "no impressions in window",
-        curr.totals.queries,
-        QUERY_SAMPLE_CAP,
-        curr.totals.queriesBeforeLimit
-      ),
-      previousCtr: prevCtr,
-      trend: trendOf(ctr, prevCtr),
+      clicks: Number(row?.clicks ?? 0),
+      impressions: Number(row?.impressions ?? 0),
+      days: Number(row?.days ?? 0),
     };
-  } catch (e) {
-    if (e instanceof ScConfigError || e instanceof ScApiError) {
-      return { ok: false, reason: e.message };
-    }
-    throw e;
+  };
+  const [curr, prev] = await Promise.all([sum(start, end), sum(prevStart, start)]);
+  if (curr.days === 0) {
+    return {
+      ok: false,
+      reason: `no gsc_daily_totals rows for ${iso(start)}–${iso(new Date(end.getTime() - dayMs))}`,
+    };
   }
+  const ctr = curr.impressions > 0 ? curr.clicks / curr.impressions : 0;
+  const prevCtr = prev.impressions > 0 ? prev.clicks / prev.impressions : 0;
+  return {
+    ok: true,
+    clicks: curr.clicks,
+    impressions: curr.impressions,
+    ctr,
+    ctrMeasured: rate(curr.clicks, curr.impressions, "no impressions in window"),
+    previousCtr: prevCtr,
+    previousMeasured: rate(prev.clicks, prev.impressions, "no prior-window data"),
+    trend: trendOf(ctr, prevCtr),
+    windowStart: iso(start),
+    windowEnd: iso(new Date(end.getTime() - dayMs)), // inclusive, for display
+  };
 }
 
 export async function loadBrandVsNonBrand(env: ScEnv, days: number): Promise<BrandVsNonBrandCard> {

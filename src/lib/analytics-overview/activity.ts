@@ -356,6 +356,16 @@ export async function loadActionQueueWithSuppressed(
     // branch and forgotten in the others.
     const ages = isLiveMeasurement({ state: measurementStateForKpi(row.state) });
     const detectedAt = ages ? (row.firstDetectedAt?.toISOString() ?? null) : null;
+    if (row.state === "STALE" && kpi === "time_to_index_h") {
+      // OPE-1347 #3 — NOT an action. This KPI's freshness is
+      // max(indexnow_submitted_at), which stops advancing exactly while
+      // IndexNow is deliberately paused (`indexnow:paused`, John's call — not
+      // to be lifted to turn this green). The tile already labels it "closed
+      // cohort, not a live breach"; a P0 for it asks for the one fix that is
+      // ruled out. A non-deliberate IndexNow stop is caught by IndexNow's own
+      // heartbeat and health signals, not by this queue entry.
+      continue;
+    }
     if (row.state === "STALE") {
       // STALE = data feed is broken. Surface as P0 with a "fix the source"
       // prompt — broken data invalidates GREEN/YELLOW/RED entirely.

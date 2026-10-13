@@ -44,7 +44,7 @@ import {
   readIndexNowPauseForDisplay,
   type BreakerState,
 } from "@/lib/indexnow-breaker";
-import { analyticsEvents, indexnowSubmissions } from "@/lib/db/schema";
+import { analyticsEvents, bingDailyMetrics, indexnowSubmissions } from "@/lib/db/schema";
 import {
   BingApiError,
   BingConfigError,
@@ -97,6 +97,9 @@ import {
   type KpiState,
 } from "@/lib/kpi-thresholds";
 import { isExpectedNonIndexing } from "@/lib/site-health-classify";
+import { CATALOG_BASIS_NOTE } from "@/lib/analytics-overview/catalog-basis";
+import { resolveTabAlias } from "@/lib/analytics-overview/tab-aliases";
+import { notFound, redirect } from "next/navigation";
 import {
   AEO_BUCKET_LABELS,
   aeoBadgeColor,
@@ -148,7 +151,19 @@ function fmtUsd(n: number): string {
 
 export default async function AdminAnalyticsPage({ searchParams }: PageProps) {
   const params = await searchParams;
-  const tab: TabKey = isTabKey(params.tab) ? params.tab : "overview";
+  // OPE-1347 #7 — an unknown tab used to fall through to Overview silently, so
+  // `?tab=first-party` showed the wrong page with no hint. A missing tab is
+  // still Overview; a known near-miss redirects to its slug; anything else is
+  // a real not-found.
+  const tabParam = typeof params.tab === "string" ? params.tab : undefined;
+  const aliased = tabParam ? resolveTabAlias(tabParam) : undefined;
+  if (aliased) {
+    const q = new URLSearchParams({ tab: aliased });
+    if (typeof params.window === "string") q.set("window", params.window);
+    redirect(`/admin/analytics?${q.toString()}`);
+  }
+  if (tabParam !== undefined && !isTabKey(tabParam)) notFound();
+  const tab: TabKey = isTabKey(tabParam) ? tabParam : "overview";
   const window: WindowKey = isWindowKey(params.window) ? params.window : "7d";
 
   return (
@@ -594,7 +609,7 @@ function SearchVisibilityCard({ snapshot }: { snapshot: OverviewSnapshot }) {
   return (
     <KpiCard
       tileId="overview.google-clicks"
-      title={`Google clicks (last ${card.windowDays}d)`}
+      title={`Google clicks (${card.window.start} → ${card.window.end})`}
       value={fmt(card.current)}
       icon={<Search className="w-5 h-5 text-royal" />}
       iconColor="bg-info-soft"
@@ -640,6 +655,8 @@ function CatalogGrowthCard({ snapshot }: { snapshot: OverviewSnapshot }) {
             {fmt(card.totals.events)} events · {fmt(card.totals.venues)} venues ·{" "}
             {fmt(card.totals.vendors)} vendors
           </span>
+          {/* OPE-1347 #2 — say which population each count is. */}
+          <span className="text-[11px] text-muted-foreground">{CATALOG_BASIS_NOTE}</span>
         </div>
       }
     />
@@ -683,10 +700,18 @@ function SiteHealthCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">
-                Site health
-                <TileInfo id="overview.site-health" title="Site health" />
+                {/* OPE-1347 #9 — a different NAME from the Site Health tab's
+                    "action items": this counts every open issue at every
+                    severity; the tab counts errors + warnings (minus expected
+                    non-indexing) plus data/traffic items. */}
+                Open site issues (all severities)
+                <TileInfo id="overview.site-health" title="Open site issues" />
               </p>
               <p className="text-3xl font-bold text-foreground mt-2 tabular-nums">{fmt(c.total)}</p>
+              <p className="text-[11px] text-muted-foreground mt-1">
+                incl. notices · the Site Health tab&apos;s &ldquo;action items&rdquo; is a narrower
+                count
+              </p>
               <div className="mt-2 text-xs flex gap-2">
                 <span
                   className={c.errors > 0 ? "text-red-700 font-semibold" : "text-muted-foreground"}
@@ -817,7 +842,7 @@ function SiteCtrCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
     <KpiCard
       tileId="overview.site-ctr"
       measurement={badge ? null : c.ctrMeasured}
-      title={badge ? "Site CTR (Google, 7d)" : "Site CTR (Google, last window)"}
+      title={`Site CTR (Google, ${c.windowStart} → ${c.windowEnd})`}
       value={badge ?? measurementText(c.ctrMeasured, (v) => fmtPct(v, 2))}
       icon={<Search className="w-5 h-5 text-violet-600" />}
       iconColor="bg-violet-100"
@@ -826,16 +851,15 @@ function SiteCtrCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
       actionPrompt={actionPrompt}
       footer={
         <div className="flex flex-col gap-0.5">
-          {badge && (
-            <span className="text-xs text-muted-foreground">
-              window view (top 500 queries): {measurementText(c.ctrMeasured, (v) => fmtPct(v, 2))}
-            </span>
-          )}
-          <span className={`inline-flex items-center gap-1 text-xs font-medium ${trendColor}`}>
-            <TrendIcon className="w-3 h-3" /> prev {fmtPct(c.previousCtr, 2)}
-          </span>
+          {/* OPE-1347 #4/#5 — same table (gsc_daily_totals) and window as the
+              headline, and the dates are printed so it never reads as another
+              tile's window. */}
           <span className="text-xs text-muted-foreground">
-            {fmt(c.clicks)} clicks / {fmt(c.impressions)} impr
+            {c.windowStart} → {c.windowEnd} · {fmt(c.clicks)} clicks / {fmt(c.impressions)} impr
+          </span>
+          <span className={`inline-flex items-center gap-1 text-xs font-medium ${trendColor}`}>
+            <TrendIcon className="w-3 h-3" /> prev{" "}
+            {measurementText(c.previousMeasured, (v) => fmtPct(v, 2))}
           </span>
         </div>
       }
@@ -1013,7 +1037,11 @@ function BrandVsNonBrandCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
       tileId="overview.brand-share"
       measurement={badge ? null : c.brandShareMeasured}
       title={
-        badge ? "Brand share (Google, 28d)" : `Brand vs non-brand (last ${c.windowDays}d, Google)`
+        // OPE-1347 #4 — the badge is a SAMPLE (top 500 queries) over days
+        // 30→3 ago (readBrandShare), not a 28-day total; say so.
+        badge
+          ? "Brand share (Google, top-500 query sample, days 30→3 ago)"
+          : `Brand vs non-brand (Google, top-500 query sample, last ${c.windowDays}d)`
       }
       value={badge ?? measurementText(c.brandShareMeasured, (v) => fmtPct(v, 0))}
       icon={<TrendingUp className="w-5 h-5 text-royal" />}
@@ -1025,7 +1053,7 @@ function BrandVsNonBrandCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
         <div className="flex flex-col gap-0.5 text-xs text-muted-foreground">
           {badge && (
             <span>
-              last {c.windowDays}d view:{" "}
+              top-500 sample, last {c.windowDays}d:{" "}
               {measurementText(c.brandShareMeasured, (v) => fmtPct(v, 0))}
             </span>
           )}
@@ -1058,13 +1086,13 @@ function SitemapQualityCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
       footer={
         <div className="flex flex-col gap-0.5 text-xs text-muted-foreground">
           {badge && (
-            <span>all-status view: {measurementText(c.overallRate, (v) => fmtPct(v, 0))}</span>
+            <span>footer basis: {measurementText(c.overallRate, (v) => fmtPct(v, 0))}</span>
           )}
           <span>
-            vendors {fmt(c.vendors.pass)}/{fmt(c.vendors.total)}
+            live vendors {fmt(c.vendors.pass)}/{fmt(c.vendors.total)}
           </span>
           <span>
-            events {fmt(c.events.pass)}/{fmt(c.events.total)}
+            public events {fmt(c.events.pass)}/{fmt(c.events.total)}
           </span>
         </div>
       }
@@ -2331,7 +2359,10 @@ async function RecommendationsTab() {
   // beats low-severity-high-count, but match count breaks ties.
   const opportunities = Array.from(ruleGroups.values())
     .map((g) => ({ group: g, score: opportunityScore(g.severity, g.items.length) }))
-    .sort((a, b) => b.score - a.score)
+    // OPE-1347 #8 — the score caps the count at 99, so within a severity every
+    // rule with ≥99 items TIED and kept insertion order (849 above 7,269). The
+    // uncapped count breaks the tie, so the list is sorted by what it states.
+    .sort((a, b) => b.score - a.score || b.group.items.length - a.group.items.length)
     .slice(0, 10);
 
   // Analyst Item 2 (2026-05-30): per-ITEM opportunities feed showing the
@@ -2682,6 +2713,9 @@ async function RecommendationsTab() {
               Top rules by impact ({opportunities.length}){" "}
               <TileInfo id="recommendations.top-rules" title="Top rules by impact" />
             </CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Sorted by severity, then by number of affected items.
+            </p>
           </CardHeader>
           <CardContent>
             <ul className="space-y-1.5 text-sm">
@@ -3828,11 +3862,32 @@ function bingSeverityClass(severity: string): string {
   return "text-muted-foreground bg-muted";
 }
 
+/**
+ * OPE-1347 #10 — why a Bing series is empty, from the record: a never-populated
+ * feed and a feed that STOPPED are different facts with different fixes.
+ */
+function bingEmptySeriesText(lastStoredDate: string | null, storedDays: number): string {
+  if (!lastStoredDate || storedDays === 0) {
+    return "No Bing traffic series yet (populates ~7–14 days post-verification).";
+  }
+  return `Bing feed stale — the live read returned no rows; last stored day ${lastStoredDate} (${storedDays} days stored).`;
+}
+
 async function BingTab() {
   const result = await loadBingData();
   if (!result.ok) {
     return <BingErrorPanel kind={result.kind} message={result.message} />;
   }
+  // OPE-1347 #10 — the stored series' last day, so an empty live read says
+  // "stale since <date>" instead of claiming the feed has never populated.
+  // bing_daily_metrics held 131 days ending 2026-09-06 while the tab read
+  // "No Bing traffic series yet (populates ~7–14 days post-verification)".
+  const [lastStored] = await getCloudflareDb()
+    .select({
+      last: sql<string | null>`MAX(${bingDailyMetrics.date})`,
+      days: sql<number>`COUNT(*)`,
+    })
+    .from(bingDailyMetrics);
   const { queries, pages, crawl, scan, quota, indexnow, traffic, sitemaps, failed } = result.data;
   // OPE-1131 — headline figures that can say "not measured" (bing-tiles.ts).
   const clicks7dM = bingWeekTotal(
@@ -3980,11 +4035,15 @@ async function BingTab() {
               <p className="text-2xl font-bold text-foreground tabular-nums">
                 {measurementText(clicks7dM, fmt)}
               </p>
-              <TrendBadge
-                trend={bingTrend(clicks7d, clicksPrior7d)}
-                current={clicks7d}
-                previous={clicksPrior7d}
-              />
+              {/* OPE-1347 #10 — no "+0% vs prior" under a "—": a trend over an
+                  unmeasured window is the A4 defect in miniature. */}
+              {clicks7dM.state === "ok" && (
+                <TrendBadge
+                  trend={bingTrend(clicks7d, clicksPrior7d)}
+                  current={clicks7d}
+                  previous={clicksPrior7d}
+                />
+              )}
             </div>
             {clicksSeries.length > 0 ? (
               <Sparkline
@@ -3994,7 +4053,7 @@ async function BingTab() {
               />
             ) : (
               <p className="text-xs text-muted-foreground italic">
-                No Bing traffic series yet (populates ~7&ndash;14 days post-verification).
+                {bingEmptySeriesText(lastStored?.last ?? null, Number(lastStored?.days ?? 0))}
               </p>
             )}
           </CardContent>
@@ -4011,11 +4070,13 @@ async function BingTab() {
               <p className="text-2xl font-bold text-foreground tabular-nums">
                 {measurementText(impr7dM, fmt)}
               </p>
-              <TrendBadge
-                trend={bingTrend(impr7d, imprPrior7d)}
-                current={impr7d}
-                previous={imprPrior7d}
-              />
+              {impr7dM.state === "ok" && (
+                <TrendBadge
+                  trend={bingTrend(impr7d, imprPrior7d)}
+                  current={impr7d}
+                  previous={imprPrior7d}
+                />
+              )}
             </div>
             {imprSeries.length > 0 ? (
               <Sparkline
@@ -4024,7 +4085,9 @@ async function BingTab() {
                 fillClass="fill-violet-100"
               />
             ) : (
-              <p className="text-xs text-muted-foreground italic">No Bing traffic series yet.</p>
+              <p className="text-xs text-muted-foreground italic">
+                {bingEmptySeriesText(lastStored?.last ?? null, Number(lastStored?.days ?? 0))}
+              </p>
             )}
           </CardContent>
         </Card>
