@@ -86,10 +86,11 @@ async function assertUsable(
 }
 
 /** Report the whole run to D1 so a canary that STOPS is detectable, not just
- *  one that fails. No-op locally: only stamps when the internal key is present. */
+ *  one that fails. No-op locally: only stamps when CANARY_STAMP_KEY is present —
+ *  the canary's own key (OPE-363), honoured by the stamp route alone. */
 async function stamp(profile: string, failures: string[], checks: number) {
   const base = process.env.PLAYWRIGHT_BASE_URL;
-  const key = process.env.INTERNAL_API_KEY;
+  const key = process.env.CANARY_STAMP_KEY;
   if (!base || !key) return;
   try {
     await fetch(`${base}/api/internal/funnel-canary`, {
