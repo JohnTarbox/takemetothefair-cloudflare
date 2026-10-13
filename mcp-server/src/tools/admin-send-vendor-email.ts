@@ -28,7 +28,7 @@ import {
   users,
 } from "../schema.js";
 import { jsonContent } from "../helpers.js";
-import { buildUnsubscribeUrl } from "@takemetothefair/utils";
+import { buildUnsubscribeUrl, unsubscribeSigningSecret } from "@takemetothefair/utils";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 
@@ -64,9 +64,10 @@ const SIGN_OFF = "— Meet Me at the Fair";
 // obvious so an un-set deploy is caught in review/inbox, not silently shipped.
 const DEFAULT_MAILING_ADDRESS = "Meet Me at the Fair, [MAILING_ADDRESS not set]";
 
-/** The HMAC key for unsubscribe tokens — dedicated secret if set, else the shared internal key. */
+/** The HMAC key for unsubscribe tokens. OPE-1346 — the ONE shared signing rule
+ *  (packages/utils), so this Worker and the main app can never disagree. */
 function unsubscribeSecret(env?: SendVendorEmailEnv): string {
-  return env?.UNSUBSCRIBE_SECRET || env?.INTERNAL_API_KEY || "";
+  return unsubscribeSigningSecret(env);
 }
 
 // Exported so K32 (send_test_email) shares this single template registry.

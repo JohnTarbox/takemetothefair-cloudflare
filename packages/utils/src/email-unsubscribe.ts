@@ -107,3 +107,83 @@ export async function verifySealedUnsubscribe(
 ): Promise<boolean> {
   return (await openUnsubscribeEmail(secret, sealed)) === normalizeEmail(email);
 }
+
+// ─── OPE-1346 — which secret signs, which secrets verify ─────────────────────
+//
+// The key was `UNSUBSCRIBE_SECRET || INTERNAL_API_KEY`, inlined at every sign
+// and verify site. With one key doing both jobs, the master cross-Worker key
+// could not be rotated — not even after a leak — without breaking every link
+// already sent, and CAN-SPAM requires those to keep working for 30 days. Adding
+// UNSUBSCRIBE_SECRET had the same trap: it took precedence on verify too.
+//
+// Now signing and verifying are separate questions with separate answers:
+//   SIGN   with the first present of UNSUBSCRIBE_SECRET, INTERNAL_API_KEY.
+//          Never `_PREVIOUS` — a retired key must not mint new links.
+//   VERIFY against every present one of UNSUBSCRIBE_SECRET, INTERNAL_API_KEY,
+//          UNSUBSCRIBE_SECRET_PREVIOUS, in that order.
+// So setting UNSUBSCRIBE_SECRET moves new mail onto it while old links keep
+// verifying under INTERNAL_API_KEY; after 30+ days INTERNAL_API_KEY can be
+// dropped from the list (docs/unsubscribe-secret-rotation.md).
+
+/** The env keys the unsubscribe secrets live under, on both Workers. */
+export interface UnsubscribeSecretEnv {
+  UNSUBSCRIBE_SECRET?: string;
+  INTERNAL_API_KEY?: string;
+  UNSUBSCRIBE_SECRET_PREVIOUS?: string;
+  /**
+   * Set to "1" at runbook step (c), once every link signed under the internal
+   * key is past 30 days: verify stops accepting INTERNAL_API_KEY, which is then
+   * free to rotate. Ignored while UNSUBSCRIBE_SECRET is unset (it is the signer).
+   */
+  UNSUBSCRIBE_RETIRE_INTERNAL_KEY?: string;
+}
+
+/** The ONE secret new footer links are signed with. Empty string = none configured. */
+export function unsubscribeSigningSecret(env: UnsubscribeSecretEnv | undefined | null): string {
+  return env?.UNSUBSCRIBE_SECRET || env?.INTERNAL_API_KEY || "";
+}
+
+/** Every secret a delivered link may have been signed with, ordered, deduplicated, non-empty. */
+export function unsubscribeVerifySecrets(env: UnsubscribeSecretEnv | undefined | null): string[] {
+  const retireInternal =
+    Boolean(env?.UNSUBSCRIBE_SECRET) && env?.UNSUBSCRIBE_RETIRE_INTERNAL_KEY === "1";
+  const ordered = [
+    env?.UNSUBSCRIBE_SECRET,
+    retireInternal ? undefined : env?.INTERNAL_API_KEY,
+    env?.UNSUBSCRIBE_SECRET_PREVIOUS,
+  ];
+  return [...new Set(ordered.filter((s): s is string => typeof s === "string" && s.length > 0))];
+}
+
+/** Legacy HMAC token: valid if it verifies under ANY accepted secret. */
+export async function verifyUnsubscribeTokenAny(
+  secrets: string[],
+  email: string,
+  token: string
+): Promise<boolean> {
+  for (const s of secrets) {
+    if (await verifyUnsubscribeToken(s, email, token)) return true;
+  }
+  return false;
+}
+
+/** Sealed (v2) link: the address it opens to under the first accepted secret that opens it. */
+export async function openUnsubscribeEmailAny(
+  secrets: string[],
+  sealed: string
+): Promise<string | null> {
+  for (const s of secrets) {
+    const email = await openUnsubscribeEmail(s, sealed);
+    if (email) return email;
+  }
+  return null;
+}
+
+/** Sealed (v2) link: valid if it opens to `email` under ANY accepted secret. */
+export async function verifySealedUnsubscribeAny(
+  secrets: string[],
+  email: string,
+  sealed: string
+): Promise<boolean> {
+  return (await openUnsubscribeEmailAny(secrets, sealed)) === normalizeEmail(email);
+}
