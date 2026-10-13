@@ -1,7 +1,10 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { withInternalKey } from "@/lib/api/with-auth";
+import type { NextRequest } from "next/server";
+import { timingSafeEqualString } from "@takemetothefair/utils";
+import { withInternalKey, type InternalContext } from "@/lib/api/with-auth";
+import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { agentHeartbeats } from "@/lib/db/schema";
 import { logError } from "@/lib/logger";
 
@@ -30,7 +33,19 @@ import { logError } from "@/lib/logger";
  * it into the existing fault/alert rail — the endpoint does not invent a second
  * alerting mechanism.
  *
- * Auth: X-Internal-Key.
+ * Auth: X-Internal-Key carrying EITHER `INTERNAL_API_KEY` OR `CANARY_STAMP_KEY`.
+ *
+ * ── Why a second key, accepted HERE ONLY (OPE-363, John 2026-10-13) ─────────
+ * The GitHub canary needs a key to stamp, and `INTERNAL_API_KEY` cannot be
+ * handed to it: nobody holds its value (Cloudflare will not show a secret),
+ * and rotating it to learn one would break every unsubscribe link already sent
+ * (they are signed with it — OPE-1346). So the canary gets its own secret.
+ *
+ * Its blast radius is this one route by construction: it is read and compared
+ * in this file only, never by `internalKeyMatches` / `api-auth.ts`, so no other
+ * route can honour it. A test proves it is refused on another `/api/internal/*`
+ * route and on an `/api/admin/*` route. An unset or empty `CANARY_STAMP_KEY`
+ * matches nothing.
  */
 const HEARTBEAT_CODE = "canary:funnel";
 
@@ -44,7 +59,7 @@ const bodySchema = z.object({
   checks: z.number().int().min(0).max(1000).optional(),
 });
 
-export const POST = withInternalKey({ source: "funnel-canary" }, async ({ request, db }) => {
+async function stamp({ request, db }: Pick<InternalContext<unknown>, "request" | "db">) {
   let raw: unknown;
   try {
     raw = await request.json();
@@ -104,4 +119,31 @@ export const POST = withInternalKey({ source: "funnel-canary" }, async ({ reques
   }
 
   return NextResponse.json({ ok: true, recorded: note, at: now.toISOString() });
-});
+}
+
+/** The canary-only key. Empty/unset never matches (timingSafeEqualString). */
+async function canaryKeyMatches(request: Request): Promise<boolean> {
+  const expected = getCloudflareEnv().CANARY_STAMP_KEY;
+  if (!expected) return false;
+  return timingSafeEqualString(request.headers.get("x-internal-key"), expected);
+}
+
+const viaInternalKey = withInternalKey({ source: "funnel-canary" }, stamp);
+
+export async function POST(request: NextRequest, ctx: { params: Promise<Record<string, never>> }) {
+  if (await canaryKeyMatches(request)) {
+    const db = getCloudflareDb();
+    try {
+      return await stamp({ request, db });
+    } catch (error) {
+      await logError(db, {
+        level: "error",
+        source: "funnel-canary",
+        message: "canary stamp threw",
+        error,
+      });
+      return NextResponse.json({ ok: false, error: "internal_error" }, { status: 500 });
+    }
+  }
+  return viaInternalKey(request, ctx);
+}

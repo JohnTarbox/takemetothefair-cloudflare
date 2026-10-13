@@ -91,6 +91,8 @@ interface CloudflareEnv {
   // ── Group A — SET on the deployed Worker (secret or dashboard var) ─────────
   AUTH_SECRET?: string;
   INTERNAL_API_KEY?: string;
+  /** OPE-363 — the funnel canary's stamp key; honoured ONLY by /api/internal/funnel-canary. Unset until John sets it. */
+  CANARY_STAMP_KEY?: string;
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
   CLAUDE_READONLY_TOKEN?: string;
