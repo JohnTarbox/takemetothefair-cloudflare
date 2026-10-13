@@ -119,6 +119,10 @@ interface CloudflareEnv {
   SLACK_WEBHOOK_URL_TECHNICAL?: string;
   SLACK_WEBHOOK_URL_BUSINESS?: string;
   UNSUBSCRIBE_SECRET?: string;
+  /** OPE-1346 — a retired unsubscribe key, still VERIFIED (never signs). See docs/unsubscribe-secret-rotation.md. */
+  UNSUBSCRIBE_SECRET_PREVIOUS?: string;
+  /** OPE-1346 — "1" = stop verifying links under INTERNAL_API_KEY (runbook step c). */
+  UNSUBSCRIBE_RETIRE_INTERNAL_KEY?: string;
   NEWSLETTER_APPROVE_SECRET?: string;
   NEWSLETTER_UNSUBSCRIBE_SECRET?: string;
   MCP_SERVER_URL?: string;
