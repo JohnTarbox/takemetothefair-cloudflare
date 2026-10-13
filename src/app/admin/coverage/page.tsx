@@ -207,6 +207,9 @@ async function getCoverage(
         state: vendors.state,
       })
       .from(vendors)
+      // OPE-1347 #2 — live vendors only (catalog-basis.ts); soft-deleted rows
+      // are not part of the catalog this page grades.
+      .where(isNull(vendors.deletedAt))
       .orderBy(desc(vendors.id));
   }
 

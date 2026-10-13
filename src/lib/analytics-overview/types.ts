@@ -36,6 +36,8 @@ export type SearchVisibilityCard =
       previous: number;
       trend: Trend;
       windowDays: number;
+      /** OPE-1347 #5 — inclusive YYYY-MM-DD dates requested from GSC. */
+      window: { start: string; end: string };
       // BWT companion clicks. Bing's API only exposes aggregate query stats
       // (no day-windowed totals), so we surface BWT clicks as a footer hint
       // rather than fold them into the day-bucketed GSC trend. null when
@@ -155,6 +157,11 @@ export type SiteCtrCard =
       ctrMeasured: import("./render-state").Measurement<number>;
       trend: Trend;
       previousCtr: number;
+      /** OPE-1347 #4 — undefined over a prior window with no data. */
+      previousMeasured: import("./render-state").Measurement<number>;
+      /** OPE-1347 — inclusive YYYY-MM-DD bounds of the measured window, for the label. */
+      windowStart: string;
+      windowEnd: string;
     }
   | { ok: false; reason: string };
 

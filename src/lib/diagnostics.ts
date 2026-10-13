@@ -7,6 +7,7 @@
  * BEFORE trusting any number on the analytics dashboard.
  */
 import { and, count, desc, eq, gte, sql } from "drizzle-orm";
+import { rate, type Measurement } from "@/lib/analytics-overview/render-state";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "@/lib/db/schema";
 import { enrichmentLog, errorLogs, indexnowSubmissions, timeToIndexLog } from "@/lib/db/schema";
@@ -35,6 +36,12 @@ export type IndexNowHealth = {
   success: number;
   failure: number;
   successRate: number;
+  /**
+   * OPE-1347 #6 — success over ATTEMPTS (success + failure). `skipped` rows
+   * (the breaker-paused outbox) are not attempts; over zero attempts this is
+   * the OPE-808 undefined state, never "0.0%".
+   */
+  successMeasured: Measurement<number>;
 };
 
 export type TimeToIndexHealth = {
@@ -72,7 +79,7 @@ export async function loadDiagnosticsSnapshot(db: Db): Promise<DiagnosticsSnapsh
   return { generatedAt: now, errorGroups, enrichmentBySource, indexnow, timeToIndex };
 }
 
-async function loadErrorGroups(db: Db, sinceDate: Date): Promise<ErrorGroup[]> {
+export async function loadErrorGroups(db: Db, sinceDate: Date): Promise<ErrorGroup[]> {
   // Group by (source, first 80 chars of message) — message tail often has a
   // unique id that would defeat grouping, so truncate.
   const rows = await db
@@ -82,7 +89,10 @@ async function loadErrorGroups(db: Db, sinceDate: Date): Promise<ErrorGroup[]> {
       timestamp: errorLogs.timestamp,
     })
     .from(errorLogs)
-    .where(gte(errorLogs.timestamp, sinceDate))
+    // OPE-1347 #6 — errors only. Info rows ("AI extraction ok", "classifier
+    // result") were grouped here as "errors"; the Overview tile already filters
+    // the same way (health.ts loadRecentErrors, F1).
+    .where(and(gte(errorLogs.timestamp, sinceDate), eq(errorLogs.level, "error")))
     .orderBy(desc(errorLogs.timestamp))
     .limit(2000);
 
@@ -145,7 +155,7 @@ async function loadEnrichmentBySource(db: Db, sinceDate: Date): Promise<Enrichme
   return Array.from(bySource.values()).sort((a, b) => b.total - a.total);
 }
 
-async function loadIndexNowHealth(db: Db, sinceDate: Date): Promise<IndexNowHealth> {
+export async function loadIndexNowHealth(db: Db, sinceDate: Date): Promise<IndexNowHealth> {
   const [totalRow, successRow, failureRow] = await Promise.all([
     db
       .select({ n: count() })
@@ -179,6 +189,11 @@ async function loadIndexNowHealth(db: Db, sinceDate: Date): Promise<IndexNowHeal
     success,
     failure,
     successRate: total > 0 ? success / total : 0,
+    successMeasured: rate(
+      success,
+      success + failure,
+      "0 attempts — every row skipped (breaker paused)"
+    ),
   };
 }
 
