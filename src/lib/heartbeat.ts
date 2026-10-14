@@ -42,6 +42,7 @@ import {
   ga4DailyMetrics,
   membraneCrossings,
   promoterOutreachAttempts,
+  promoterOutreachRuns,
   gscDailyTotals,
   gscSearchMetrics,
   promoterEnrichmentCandidates,
@@ -1834,8 +1835,24 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     // misfit; the long 14-day window carries the "this is slower-moving"
     // signal instead.
     priority: "P1",
-    expectedWindowHours: 14 * 24,
-    lastEvidenceAt: (db) => maxTs(db, promoterOutreachAttempts, promoterOutreachAttempts.createdAt),
+    // OPE-1345 — the lane is now a weekly research-first run (John, 2026-10-13:
+    // ruling A, amended the same day). Most weeks it fixes listings from the
+    // organizer's own page and sends NOTHING, so an attempts-only probe read a
+    // working lane as 19 days of silence. Evidence is now the newer of the
+    // lane's own run stamp and any attempt. Window: the weekly Tuesday cadence
+    // plus 2 days of slack, so ONE missed run goes red by Thursday — the
+    // ruling asked that "a missed week should go red". 7×24 alone would
+    // false-fire on a run that drifts a few hours later than last week's.
+    expectedWindowHours: 9 * 24,
+    lastEvidenceAt: async (db) => {
+      const [run, attempt] = await Promise.all([
+        maxTs(db, promoterOutreachRuns, promoterOutreachRuns.ranAt),
+        maxTs(db, promoterOutreachAttempts, promoterOutreachAttempts.createdAt),
+      ]);
+      if (!run) return attempt;
+      if (!attempt) return run;
+      return run.getTime() >= attempt.getTime() ? run : attempt;
+    },
   },
   // ── OPE-975 — three seeds that existed with NO registry entry ─────────
   //

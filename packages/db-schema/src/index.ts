@@ -4736,6 +4736,36 @@ export const promoterOutreachAttempts = sqliteTable(
 );
 
 /**
+ * OPE-1345 — one row per run of the weekly promoter-outreach lane.
+ *
+ * The lane is research-first (John's 2026-10-13 ruling A, amended the same
+ * day): it fixes from the organizer's own page whatever that page answers and
+ * drafts an email only for what it cannot. So a healthy week usually sends
+ * NOTHING, and `promoter_outreach_attempts` — which gets a row only when an
+ * email is drafted or sent — cannot tell a working week from a missed one.
+ * This row is the lane saying "I ran"; the heartbeat probe reads the newer of
+ * the two tables.
+ */
+export const promoterOutreachRuns = sqliteTable(
+  "promoter_outreach_runs",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    ranAt: integer("ran_at", { mode: "timestamp" }).notNull(),
+    eventsReviewed: integer("events_reviewed").notNull().default(0),
+    /** Answered from the organizer's own page and fixed with a citation. */
+    resolvedFromWeb: integer("resolved_from_web").notNull().default(0),
+    /** Emails drafted for John's approval rather than sent. */
+    draftsForApproval: integer("drafts_for_approval").notNull().default(0),
+    emailsSent: integer("emails_sent").notNull().default(0),
+    recordedBy: text("recorded_by"),
+    note: text("note"),
+  },
+  (t) => [index("idx_promoter_outreach_runs_ran_at").on(t.ranAt)]
+);
+
+/**
  * OPE-384 — statuses in which an attempt is still OPEN, i.e. we are waiting on
  * the organizer. Exported so the suppression check and the partial unique index
  * cannot drift apart; if you add a status here, add it to the index in

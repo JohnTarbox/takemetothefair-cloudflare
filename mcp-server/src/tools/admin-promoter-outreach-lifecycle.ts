@@ -13,6 +13,9 @@
  *  - `set_promoter_outreach_status` — the operator's hand on a single attempt,
  *    with the transition map enforced.
  *
+ * OPE-1345 adds `record_promoter_outreach_run` — the weekly lane's "I ran"
+ * stamp, which the heartbeat probe reads alongside the attempts table.
+ *
  * Neither sends mail. A follow-up is written as `queued`, which is exactly what
  * `send_promoter_email` produces under a closed gate, and it goes out only if
  * and when somebody sends it.
@@ -23,6 +26,7 @@ import { and, eq, isNotNull } from "drizzle-orm";
 import {
   promoters,
   promoterOutreachAttempts,
+  promoterOutreachRuns,
   adminActions,
   evaluateOutreachTimeout,
   assertOutreachTransition,
@@ -272,6 +276,51 @@ export function registerPromoterOutreachLifecycleTools(
 
       return {
         content: [jsonContent({ success: true, attempt_id, from: row.status, to: status })],
+      };
+    }
+  );
+
+  server.tool(
+    "record_promoter_outreach_run",
+    [
+      "OPE-1345 — record one run of the weekly promoter-outreach lane. Call ONCE at",
+      "the end of every run, including a run that sent nothing.",
+      "",
+      "The lane is research-first: it fixes what the organizer's own page answers",
+      "(with citations) and drafts an email only for what it cannot. Most weeks",
+      "therefore send no mail, and the `promoter-outreach-attempts` heartbeat would",
+      "read that as silence. This row is the evidence that the lane ran; the probe",
+      "reads the newer of this and the attempts table, over a 9-day window, so a",
+      "missed weekly run goes red.",
+      "Admin only. Writes one row; sends nothing.",
+    ].join("\n"),
+    {
+      events_reviewed: z.number().int().min(0).max(500),
+      resolved_from_web: z
+        .number()
+        .int()
+        .min(0)
+        .max(500)
+        .describe("Answered from the organizer's own page and fixed with a citation."),
+      drafts_for_approval: z.number().int().min(0).max(500),
+      emails_sent: z.number().int().min(0).max(500),
+      note: z.string().max(2000).optional(),
+    },
+    async ({ events_reviewed, resolved_from_web, drafts_for_approval, emails_sent, note }) => {
+      const id = crypto.randomUUID();
+      const now = new Date();
+      await db.insert(promoterOutreachRuns).values({
+        id,
+        ranAt: now,
+        eventsReviewed: events_reviewed,
+        resolvedFromWeb: resolved_from_web,
+        draftsForApproval: drafts_for_approval,
+        emailsSent: emails_sent,
+        recordedBy: auth.userId,
+        note: note ?? null,
+      });
+      return {
+        content: [jsonContent({ success: true, run_id: id, ran_at: now.toISOString() })],
       };
     }
   );
