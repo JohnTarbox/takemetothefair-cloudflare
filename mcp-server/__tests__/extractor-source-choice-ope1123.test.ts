@@ -16,7 +16,7 @@
  * assertion is on the mechanism — what the extractor was given — not on a
  * downstream gate that might have caught it for another reason.
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSlug } from "@takemetothefair/utils";
 import { InboundEmailWorkflow } from "../src/workflows/inbound-email.js";
 import { submissionProseText } from "../src/email-handlers/strip-quoted-reply.js";
@@ -124,6 +124,18 @@ beforeEach(() => {
   vi.unstubAllGlobals();
   vi.spyOn(console, "error").mockImplementation(() => {});
   vi.spyOn(console, "warn").mockImplementation(() => {});
+  // The specimens are real inbounds with real dates in their BODIES ("October
+  // 11th", "September 26, 2026"), and a date stated in the body is grounded —
+  // so on the wall clock these tests began failing the day each date passed
+  // (Hackmatack went red 2026-10-12: its Oct 11 candidate hit the past-date
+  // guard). Pin "now" to when the specimens arrived. Only Date is faked, so
+  // the pipeline's timers and awaits run normally.
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-22T12:00:00Z"));
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 /** inbound 09eccd4f, verbatim (blank-line runs condensed). */
