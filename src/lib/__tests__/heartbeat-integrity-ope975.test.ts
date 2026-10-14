@@ -236,7 +236,7 @@ describe("OPE-975 — every probe's window is pinned", () => {
       "bing-liveness": 48,
       "site-health-refresh": 48,
       "membrane-crossing-ledger": 72,
-      "promoter-outreach-attempts": 14 * 24,
+      "promoter-outreach-attempts": 9 * 24,
       "gsc-monthly-oracle": 40 * 24,
       "vendor-self-reported-events": 30 * 24,
       "performer-enrichment-producer": 7 * 24,

@@ -931,6 +931,17 @@ const SCHEMA_SQL = `
     ON promoter_outreach_attempts(event_id)
     WHERE event_id IS NOT NULL AND status IN ('queued', 'sent');
 
+  CREATE TABLE promoter_outreach_runs (
+    id TEXT PRIMARY KEY,
+    ran_at INTEGER NOT NULL,
+    events_reviewed INTEGER NOT NULL DEFAULT 0,
+    resolved_from_web INTEGER NOT NULL DEFAULT 0,
+    drafts_for_approval INTEGER NOT NULL DEFAULT 0,
+    emails_sent INTEGER NOT NULL DEFAULT 0,
+    recorded_by TEXT,
+    note TEXT
+  );
+
   CREATE TABLE enrichment_log (
     id TEXT PRIMARY KEY,
     target_type TEXT NOT NULL,
