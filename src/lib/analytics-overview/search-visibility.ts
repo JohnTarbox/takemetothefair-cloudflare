@@ -6,7 +6,7 @@
 
 import { and, count, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import { analyticsEvents, gscDailyTotals, indexnowSubmissions } from "@/lib/db/schema";
-import { rate, rateOverSample } from "./render-state";
+import { rate, rateOverSample, type Measurement } from "./render-state";
 import { resolveDateRange } from "@/lib/analytics-params";
 import { BingApiError, BingConfigError, getQueryStats, type BingEnv } from "@/lib/bing-webmaster";
 import {
@@ -200,6 +200,44 @@ export async function loadSiteCtr(db: Db, days: number): Promise<SiteCtrCard> {
   };
 }
 
+/**
+ * OPE-1347 rework #4 — brand share over the top-N query sample.
+ *
+ * Brand queries are real but tiny: 2 clicks / 12 impressions over 2026-10-04→11
+ * in `gsc_search_metrics`, against 3,236 clicks overall. They rank below the
+ * 500-query cutoff, so a capped sample usually holds NO brand row at all, and
+ * the tile read "0 of 108,170 impressions" — which looks like a broken matcher,
+ * not a sample floor. When the cap was hit and no brand query made the sample,
+ * the share is unknowable from it: say so instead of printing 0%. When the
+ * sample was complete (cap not hit), a zero is a real zero.
+ */
+export function brandShareOverSample(
+  brandClicks: number,
+  brandImpressions: number,
+  totalClicks: number,
+  sampleSize: number,
+  cap: number,
+  populationTotal: number | undefined
+): Measurement<number> {
+  const capped = sampleSize >= cap && (populationTotal ?? sampleSize) > sampleSize;
+  if (capped && brandImpressions === 0 && totalClicks > 0) {
+    return {
+      state: "truncated",
+      value: null,
+      reason: `no brand query ranked in the top ${cap} — brand volume is below the sample floor, not 0%`,
+      sampled: { of: populationTotal ?? sampleSize, cap },
+    };
+  }
+  return rateOverSample(
+    brandClicks,
+    totalClicks,
+    "no clicks in window",
+    sampleSize,
+    cap,
+    populationTotal
+  );
+}
+
 export async function loadBrandVsNonBrand(env: ScEnv, days: number): Promise<BrandVsNonBrandCard> {
   // Honor the dashboard window. Without this, the card always read 28d
   // (getSiteSearchQueries default), creating the analyst-flagged
@@ -232,10 +270,10 @@ export async function loadBrandVsNonBrand(env: ScEnv, days: number): Promise<Bra
       non_brand_clicks,
       non_brand_impressions,
       brand_share: total_clicks > 0 ? brand_clicks / total_clicks : 0,
-      brandShareMeasured: rateOverSample(
+      brandShareMeasured: brandShareOverSample(
         brand_clicks,
+        brand_impressions,
         total_clicks,
-        "no clicks in window",
         result.totals.queries,
         QUERY_SAMPLE_CAP,
         result.totals.queriesBeforeLimit
