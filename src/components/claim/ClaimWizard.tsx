@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { CheckCircle2, AlertCircle, Mail, ArrowRight, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ClaimEvidenceForm } from "@/components/claim/ClaimEvidenceForm";
+import { trackClaimStep, trackClaimView, trackFunnelInteracted } from "@/lib/analytics";
 
 type EntityType = "VENDOR" | "PROMOTER";
 
@@ -53,12 +54,41 @@ export function ClaimWizard({
   const [result, setResult] = useState<WizardResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // OPE-364 — the wizard emits the four D1 claim-funnel steps itself. Before
+  // this it sent only GA4 `_server` events, so `claim_started` and
+  // `claim_submitted` had zero rows in prod, ever. Each step fires at most once
+  // per mount: the read path compares adjacent steps by count, and a Back /
+  // Continue loop must not inflate one edge.
+  const fired = useRef<Set<string>>(new Set());
+  const once = (key: string, fn: () => void) => {
+    if (fired.current.has(key)) return;
+    fired.current.add(key);
+    fn();
+  };
+  useEffect(() => {
+    once("view", () => trackClaimView(entityType, slug, "wizard"));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per mount
+  }, []);
+  function goTo(next: number) {
+    // First Continue is the wizard's "form interacted": the preview rendered
+    // AND the claimant could act on it (OPE-361's failure was the second half).
+    if (next > step) once("interacted", () => trackFunnelInteracted("claim"));
+    // Reaching Verify signed in is the claim start — the same moment the
+    // one-click paths fire `started`, just before the claim request.
+    if (next === 2) once("started", () => trackClaimStep("started", entityType, slug, "wizard"));
+    setStep(next);
+  }
+
   const portalHref = entityType === "VENDOR" ? "/vendor/profile" : "/promoter/events";
   const kind = entityType === "VENDOR" ? "listing" : "organization";
 
   async function submitClaim() {
     setSubmitting(true);
     setError(null);
+    // On the ATTEMPT, before the POST (OPE-364 1a, John 2026-09-30), like every
+    // other path's `submitted`. Once per mount: a retry after an error is the
+    // same claim, not a second one.
+    once("submitted", () => trackClaimStep("submitted", entityType, slug, "wizard"));
     try {
       const res = await fetch("/api/claim/wizard", {
         method: "POST",
@@ -165,7 +195,7 @@ export function ClaimWizard({
               </ul>
             </div>
 
-            <Button onClick={() => setStep(1)}>
+            <Button onClick={() => goTo(1)}>
               Continue
               <ArrowRight className="ml-1 h-4 w-4" />
             </Button>
@@ -184,10 +214,10 @@ export function ClaimWizard({
                   You&apos;re signed in. Continue to verify your connection to {entityName}.
                 </p>
                 <div className="flex flex-wrap gap-2">
-                  <Button variant="outline" onClick={() => setStep(0)}>
+                  <Button variant="outline" onClick={() => goTo(0)}>
                     Back
                   </Button>
-                  <Button onClick={() => setStep(2)}>
+                  <Button onClick={() => goTo(2)}>
                     Continue
                     <ArrowRight className="ml-1 h-4 w-4" />
                   </Button>
@@ -209,7 +239,7 @@ export function ClaimWizard({
                 </div>
                 <button
                   type="button"
-                  onClick={() => setStep(0)}
+                  onClick={() => goTo(0)}
                   className="text-sm text-muted-foreground hover:underline"
                 >
                   Back
@@ -240,7 +270,7 @@ export function ClaimWizard({
                   </p>
                 )}
                 <div className="flex flex-wrap gap-2">
-                  <Button variant="outline" onClick={() => setStep(1)} disabled={submitting}>
+                  <Button variant="outline" onClick={() => goTo(1)} disabled={submitting}>
                     Back
                   </Button>
                   <Button onClick={submitClaim} disabled={submitting}>
@@ -305,7 +335,12 @@ export function ClaimWizard({
                   Tell us how you&apos;re connected to {entityName} and we&apos;ll review it. Your
                   request is recorded and an operator will follow up.
                 </p>
-                <ClaimEvidenceForm entityType={entityType} slug={slug} entityName={entityName} />
+                <ClaimEvidenceForm
+                  entityType={entityType}
+                  slug={slug}
+                  entityName={entityName}
+                  inWizard
+                />
               </ResultBox>
             )}
 
@@ -335,7 +370,12 @@ export function ClaimWizard({
                   mistake, you can add details below.
                 </p>
                 <div className="mt-4">
-                  <ClaimEvidenceForm entityType={entityType} slug={slug} entityName={entityName} />
+                  <ClaimEvidenceForm
+                    entityType={entityType}
+                    slug={slug}
+                    entityName={entityName}
+                    inWizard
+                  />
                 </div>
               </ResultBox>
             )}

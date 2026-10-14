@@ -663,7 +663,11 @@ export function trackNewsletterConfirm() {
 // entity_type / entity_id / method land as GA4 custom dimensions — see
 // docs/ope66-ga4-custom-dimensions.md.
 
-export function trackClaimView(entityType: "VENDOR" | "PROMOTER", entitySlug: string) {
+export function trackClaimView(
+  entityType: "VENDOR" | "PROMOTER",
+  entitySlug: string,
+  surface?: ClaimSurface
+) {
   const params = {
     category: "funnel" as const,
     label: `${entityType}:${entitySlug}`,
@@ -671,7 +675,29 @@ export function trackClaimView(entityType: "VENDOR" | "PROMOTER", entitySlug: st
     entity_slug: entitySlug,
   };
   trackEvent("claim_view", params);
-  sendBeacon("claim_view", "funnel", { entityType, entitySlug });
+  sendBeacon("claim_view", "funnel", { entityType, entitySlug, ...(surface ? { surface } : {}) });
+}
+
+// ── OPE-364 (2026-10-14) — claim-funnel steps from the claim WIZARD ─────────
+//
+// `claim_started` / `claim_submitted` were only ever beaconed by the two
+// email-match paths (DirectClaimButton, the owner-profile widget). The OPE-64
+// wizard at /claim/<type>/<slug> — the path every other claimant takes — sent
+// GA4 `_server` events only, so prod held ZERO rows of either step in D1, ever
+// (measured 2026-10-14: 23 claim_view, 13 claim_form_interacted, 0, 0). The
+// funnel read as total drop-off at `started` while claims were being made.
+//
+// `surface` says which entry path emitted the row, so the three can be told
+// apart without another deploy. Beacon-only, like the other OPE-364 steps.
+export type ClaimSurface = "wizard" | "evidence";
+
+export function trackClaimStep(
+  stage: "started" | "submitted",
+  entityType: "VENDOR" | "PROMOTER" | "PERFORMER",
+  entitySlug: string,
+  surface: ClaimSurface
+) {
+  sendBeacon(`claim_${stage}`, "funnel", { entityType, entitySlug, surface });
 }
 
 // ── OPE-364: per-step funnel instrumentation ────────────────────────────────
