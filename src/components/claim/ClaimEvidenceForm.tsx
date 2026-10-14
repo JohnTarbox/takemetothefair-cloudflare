@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { CheckCircle2, AlertCircle } from "lucide-react";
+import { trackClaimStep } from "@/lib/analytics";
 
 interface Props {
   // OPE-318 — performers claim through this evidence path rather than the
@@ -11,6 +12,13 @@ interface Props {
   entityType: "VENDOR" | "PROMOTER" | "PERFORMER";
   slug: string;
   entityName: string;
+  /**
+   * OPE-364 — set when rendered inside the claim wizard, which has already
+   * emitted `claim_started` and `claim_submitted` for this journey. Standalone
+   * (the performer page, /claim/verify) the form emits its own pair; inside the
+   * wizard a second `submitted` would make one claim count twice.
+   */
+  inWizard?: boolean;
 }
 
 /**
@@ -19,7 +27,9 @@ interface Props {
  * PENDING claim and flags it for operator review. Renders a terminal
  * "submitted" state on success.
  */
-export function ClaimEvidenceForm({ entityType, slug, entityName }: Props) {
+export function ClaimEvidenceForm({ entityType, slug, entityName, inWizard = false }: Props) {
+  const startedTracked = useRef(false);
+  const submittedTracked = useRef(false);
   const [evidence, setEvidence] = useState("");
   const [status, setStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [message, setMessage] = useState<string | null>(null);
@@ -33,6 +43,11 @@ export function ClaimEvidenceForm({ entityType, slug, entityName }: Props) {
     }
     setStatus("sending");
     setMessage(null);
+    // On the ATTEMPT, before the POST (OPE-364 1a), once per mount.
+    if (!inWizard && !submittedTracked.current) {
+      submittedTracked.current = true;
+      trackClaimStep("submitted", entityType, slug, "evidence");
+    }
     try {
       const res = await fetch("/api/claim/evidence", {
         method: "POST",
@@ -76,7 +91,14 @@ export function ClaimEvidenceForm({ entityType, slug, entityName }: Props) {
         id="evidence"
         name="evidence"
         value={evidence}
-        onChange={(e) => setEvidence(e.target.value)}
+        onChange={(e) => {
+          // Standalone, the first keystroke is the claim start (OPE-364).
+          if (!inWizard && !startedTracked.current) {
+            startedTracked.current = true;
+            trackClaimStep("started", entityType, slug, "evidence");
+          }
+          setEvidence(e.target.value);
+        }}
         rows={5}
         maxLength={4000}
         placeholder="e.g. I can reply from the business email, here's our Facebook/Instagram, our booth photo, or a registration/business document."
