@@ -246,3 +246,57 @@ describe("suggest_event source_label (K26)", () => {
     expect(p.ingestionMethod).toBe("discovery");
   });
 });
+
+// OPE-1348 — a press release the organizer sent us is its own ingestion lane.
+describe("suggest_event press-release lane (OPE-1348)", () => {
+  async function method(eventId: string) {
+    const rows = await db
+      .select({ m: events.ingestionMethod })
+      .from(events)
+      .where(eq(events.id, eventId))
+      .limit(1);
+    return rows[0].m;
+  }
+
+  it("the specimen: press-release + organizer URL → press_release, not direct_scrape", async () => {
+    const { payload } = await suggest({
+      name: "Rhode Island Holiday Light Show",
+      start_date: "2026-11-27",
+      source_label: "press-release",
+      source_url: "https://www.holidaylightshow.com",
+    });
+    expect(await method(payload!.event.id)).toBe("press_release");
+    expect((payload as { warnings?: Record<string, unknown> }).warnings).toBeUndefined();
+  });
+
+  it("the underscore spelling classifies the same", async () => {
+    const { payload } = await suggest({
+      name: "Underscore Press Fair",
+      start_date: "2026-11-28",
+      source_label: "press_release",
+      source_url: "https://example-producer.com",
+    });
+    expect(await method(payload!.event.id)).toBe("press_release");
+  });
+
+  it("an UNKNOWN label warns and names the fallback it used", async () => {
+    const { payload } = await suggest({
+      name: "Mystery Label Fair",
+      start_date: "2026-11-29",
+      source_label: "carrier-pigeon",
+      source_url: "https://example-producer.com",
+    });
+    expect(await method(payload!.event.id)).toBe("direct_scrape");
+    const w = (payload as { warnings?: { source_label_unrecognised?: string } }).warnings;
+    expect(w?.source_label_unrecognised).toMatch(/"carrier-pigeon".*"direct_scrape"/);
+  });
+
+  it("no label is NOT a warning — falling back is the documented OPE-491 default", async () => {
+    const { payload } = await suggest({
+      name: "Unlabelled Fair",
+      start_date: "2026-11-30",
+      source_url: "https://example-producer.com",
+    });
+    expect((payload as { warnings?: Record<string, unknown> }).warnings).toBeUndefined();
+  });
+});
