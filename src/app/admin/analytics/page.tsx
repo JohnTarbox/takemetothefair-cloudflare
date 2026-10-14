@@ -87,6 +87,7 @@ import {
   type Trend,
   type WindowKey,
 } from "@/lib/analytics-overview";
+import { gscWindowRange, windowDays } from "@/lib/analytics-overview/shared";
 import type { SiteHealthVerdict, InstrumentReading } from "@/lib/site-health-unified/verdict";
 import { ENGAGEMENT_WINDOW_DAYS } from "@/lib/site-health-unified/engagement";
 import {
@@ -170,6 +171,9 @@ export default async function AdminAnalyticsPage({ searchParams }: PageProps) {
     <div>
       <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
         <h1 className="text-2xl font-bold text-foreground">Analytics</h1>
+        {/* OPE-1347 rework — the Google tab now honours the window, so it gets
+            the selector too (links keep the tab). */}
+        {tab === "google" && <WindowSelector currentWindow={window} tab="google" />}
         {tab === "overview" && (
           <div className="flex items-center gap-3">
             <WindowSelector currentWindow={window} />
@@ -199,7 +203,7 @@ export default async function AdminAnalyticsPage({ searchParams }: PageProps) {
 
       {tab === "overview" && <OverviewTab window={window} />}
       {tab === "recommendations" && <RecommendationsTab />}
-      {tab === "google" && <GoogleTab />}
+      {tab === "google" && <GoogleTab window={window} />}
       {tab === "bing" && <BingTab />}
       {tab === "site-health" && <SiteHealthTab />}
       {tab === "first-party-events" && <FirstPartyEventsTab />}
@@ -409,7 +413,13 @@ function KpiStatusLegend() {
   );
 }
 
-function WindowSelector({ currentWindow }: { currentWindow: WindowKey }) {
+function WindowSelector({
+  currentWindow,
+  tab = "overview",
+}: {
+  currentWindow: WindowKey;
+  tab?: "overview" | "google";
+}) {
   return (
     <div className="inline-flex items-center bg-muted rounded-lg p-1 text-xs">
       {WINDOW_KEYS.map((w) => {
@@ -417,7 +427,11 @@ function WindowSelector({ currentWindow }: { currentWindow: WindowKey }) {
         return (
           <Link
             key={w}
-            href={`/admin/analytics?window=${w}`}
+            href={
+              tab === "overview"
+                ? `/admin/analytics?window=${w}`
+                : `/admin/analytics?tab=${tab}&window=${w}`
+            }
             className={`px-2.5 py-1 rounded-md font-medium ${
               active
                 ? "bg-card text-foreground shadow-sm"
@@ -1050,13 +1064,14 @@ function BrandVsNonBrandCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
       state={state}
       actionPrompt={actionPrompt}
       footer={
+        // OPE-1347 rework #4 — one window per block. With a badge, the headline
+        // is days 30→3 ago and everything below is a SEPARATE last-Nd sample;
+        // the counts used to sit unlabelled under the 30→3 heading.
         <div className="flex flex-col gap-0.5 text-xs text-muted-foreground">
-          {badge && (
-            <span>
-              top-500 sample, last {c.windowDays}d:{" "}
-              {measurementText(c.brandShareMeasured, (v) => fmtPct(v, 0))}
-            </span>
-          )}
+          <span className="font-medium">
+            {badge ? `Separately — last ${c.windowDays}d, top-500 sample:` : "Sample counts:"}
+            {badge && <> {measurementText(c.brandShareMeasured, (v) => fmtPct(v, 0))}</>}
+          </span>
           <span>
             brand {fmt(c.brand_clicks)} clicks · non-brand {fmt(c.non_brand_clicks)} clicks
           </span>
@@ -1144,7 +1159,10 @@ function TimeToIndexCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
             </p>
           </div>
         </div>
-        {(state === "RED" || state === "STALE") && actionPrompt && (
+        {/* OPE-1347 rework #3 — a closed cohort's staleness is the expected
+            state (IndexNow is paused, see the 🕒 note below), not a fault to
+            "investigate". Printing both read as a contradiction on one tile. */}
+        {(state === "RED" || (state === "STALE" && !c.feedStale)) && actionPrompt && (
           <p
             className={`text-xs mt-3 font-medium ${state === "STALE" ? "text-orange-600" : "text-red-600"}`}
           >
@@ -1371,6 +1389,7 @@ function BlogCoverageCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
               );
             })}
           </div>
+          <p className="text-[11px] text-muted-foreground mt-3">{CATALOG_BASIS_NOTE}</p>
         </CardContent>
       </Card>
     </CardLink>
@@ -2724,11 +2743,16 @@ async function RecommendationsTab() {
                 return (
                   <li key={g.ruleId} className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-2 min-w-0 flex-1">
+                      {/* OPE-1347 rework #8 — the list is sorted by SEVERITY,
+                          so the chip names the severity. It used to print the
+                          tier (T1/T2/T3), and a severity-sorted list labelled
+                          by tier reads as unsorted. Tier stays, as a quiet tag. */}
                       <span
                         className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-medium border ${sevMeta.chip}`}
                       >
-                        {g.tier}
+                        {sevMeta.label}
                       </span>
+                      <span className="text-[10px] text-muted-foreground shrink-0">{g.tier}</span>
                       <span className="text-sm text-foreground truncate">{g.title}</span>
                     </div>
                     <span className="text-xs text-muted-foreground tabular-nums shrink-0">
@@ -3284,19 +3308,23 @@ type GscLoad =
     }
   | { ok: false; kind: "config" | "api" | "unknown"; message: string };
 
-async function loadGscData(): Promise<GscLoad> {
+async function loadGscData(window: WindowKey): Promise<GscLoad> {
+  // OPE-1347 rework — the tab ignored the range selector: "Total clicks 23,826"
+  // was the API default 28d while the selector read 7d. Both window-dependent
+  // pulls now take the selected range; sitemap status has no window.
+  const dateRange = gscWindowRange(windowDays(window));
   try {
     const env = getCloudflareEnv();
     const settled = await Promise.allSettled([
       // OPE-1161 D12 — top 25 BY CLICKS, as both cards below are labelled. The
       // helper defaults to impressions, which made "Top-25 query clicks" the
       // clicks of the 25 most-SEEN queries.
-      getSiteSearchQueries(env, { rowLimit: 25, orderBy: "clicks" }),
+      getSiteSearchQueries(env, { rowLimit: 25, orderBy: "clicks", dateRange }),
       getSitemapStatus(env),
       // OPE-312 (A3) — real property totals. The rowLimit-25 pull above can
       // only ever sum its own 25 rows, so it must not feed a tile that says
       // "total".
-      getSitePropertyTotals(env),
+      getSitePropertyTotals(env, { dateRange }),
     ]);
     const firstFailure = settled.find((r) => r.status === "rejected");
     if (firstFailure && firstFailure.status === "rejected") {
@@ -3365,13 +3393,13 @@ async function loadGscMilestones(): Promise<GscMilestonePoint[]> {
   return toMilestonePoints(rows);
 }
 
-async function GoogleTab() {
+async function GoogleTab({ window }: { window: WindowKey }) {
   // Milestone card reads from our own D1 (gsc_milestone_emails), not the
   // Search Console API — so it must render whether or not SC_SITE_URL is
   // configured. Load + render it ABOVE the GSC API gate. The GSC-API
   // sections below early-return GscErrorPanel when SC is unconfigured.
   const milestones = await loadGscMilestones();
-  const result = await loadGscData();
+  const result = await loadGscData(window);
   if (!result.ok) {
     return (
       <>

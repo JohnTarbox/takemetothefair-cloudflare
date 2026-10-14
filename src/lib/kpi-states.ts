@@ -294,6 +294,17 @@ async function readBrandShare(env: ScEnv, gscMaxDate: string | null): Promise<Kp
         meta: { brand, total, gscMaxDate, reason: "no_clicks" },
       };
     }
+    // OPE-1347 rework #4 — brand queries are real but rank below a full
+    // 500-row sample (2 clicks / 12 impressions over 10-04→11 in stored rows),
+    // so a capped sample with NO brand row cannot measure the share. It was
+    // recorded as GREEN 0% (brand 0 of 6,902) — a sample floor read as a value.
+    if (brand === 0 && res.queries.length >= 500) {
+      return {
+        value: null,
+        dataAgeSeconds,
+        meta: { brand, total, gscMaxDate, reason: "brand_below_sample_floor" },
+      };
+    }
     return { value: brand / total, dataAgeSeconds, meta: { brand, total, gscMaxDate } };
   } catch (e) {
     return { value: null, dataAgeSeconds, meta: { error: String(e), gscMaxDate } };

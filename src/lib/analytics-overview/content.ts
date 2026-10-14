@@ -3,18 +3,21 @@
  * summary card (severity counts + actionable subset).
  */
 
-import { and, count, eq, isNull, sql } from "drizzle-orm";
+import { and, count, eq, sql } from "drizzle-orm";
 import { blogPosts, contentLinks, events, vendors, venues } from "@/lib/db/schema";
 import { tierFor } from "@/lib/recommendations/tiers";
 import { getActiveItems, getScanState } from "@/lib/recommendations/engine";
 import { freshness } from "./render-state";
+import { activeVenuesBasis, liveVendorsBasis, publicEventsBasis } from "./catalog-basis";
 import type { Db } from "./shared";
 import type { BlogCoverageCard, RecommendationsSummaryCard } from "./types";
 
 export async function loadBlogCoverage(db: Db): Promise<BlogCoverageCard> {
-  // Mirrors the math used by /admin/coverage: an entity is "uncovered" when no
-  // content_links row references it. Counts only APPROVED events to match the
-  // denominator on the coverage page (uncovered + covered = approved set).
+  // An entity is "uncovered" when no published post links to it.
+  // OPE-1347 rework — the nouns now use the ONE basis every admin card shares
+  // (catalog-basis.ts): public events, live vendors, active venues. This tile
+  // was the last to count APPROVED-only events and ALL venues, so it read
+  // 1,019/1,561 and 1,143/1,218 beside /admin/coverage's 1,842 and 1,201.
   const [
     eventTotalRows,
     vendorTotalRows,
@@ -23,10 +26,10 @@ export async function loadBlogCoverage(db: Db): Promise<BlogCoverageCard> {
     vendorCoveredRows,
     venueCoveredRows,
   ] = await Promise.all([
-    db.select({ c: count() }).from(events).where(eq(events.status, "APPROVED")),
+    db.select({ c: count() }).from(events).where(publicEventsBasis()),
     // OPE-1161 A7 — soft-deleted vendors are not listings anyone can cover.
-    db.select({ c: count() }).from(vendors).where(isNull(vendors.deletedAt)),
-    db.select({ c: count() }).from(venues),
+    db.select({ c: count() }).from(vendors).where(liveVendorsBasis()),
+    db.select({ c: count() }).from(venues).where(activeVenuesBasis()),
     // OPE-1161 A7 — "covered" is counted INSIDE its own denominator: a link
     // from a PUBLISHED post to an entity that is in the total. It used to count
     // every link target — draft posts, and links to non-approved events — and
@@ -40,7 +43,7 @@ export async function loadBlogCoverage(db: Db): Promise<BlogCoverageCard> {
         and(
           eq(contentLinks.targetType, "EVENT"),
           eq(blogPosts.status, "PUBLISHED"),
-          eq(events.status, "APPROVED")
+          publicEventsBasis()
         )
       ),
     db
@@ -52,7 +55,7 @@ export async function loadBlogCoverage(db: Db): Promise<BlogCoverageCard> {
         and(
           eq(contentLinks.targetType, "VENDOR"),
           eq(blogPosts.status, "PUBLISHED"),
-          isNull(vendors.deletedAt)
+          liveVendorsBasis()
         )
       ),
     db
@@ -60,7 +63,13 @@ export async function loadBlogCoverage(db: Db): Promise<BlogCoverageCard> {
       .from(contentLinks)
       .innerJoin(blogPosts, eq(blogPosts.id, contentLinks.sourceId))
       .innerJoin(venues, eq(venues.id, contentLinks.targetId))
-      .where(and(eq(contentLinks.targetType, "VENUE"), eq(blogPosts.status, "PUBLISHED"))),
+      .where(
+        and(
+          eq(contentLinks.targetType, "VENUE"),
+          eq(blogPosts.status, "PUBLISHED"),
+          activeVenuesBasis()
+        )
+      ),
   ]);
 
   const eventTotal = eventTotalRows[0]?.c ?? 0;
