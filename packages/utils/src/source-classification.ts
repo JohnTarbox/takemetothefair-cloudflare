@@ -27,7 +27,12 @@ export type IngestionMethod =
   // skill. Previously these landed as 'vendor_submission' because the skill
   // calls suggest_event (which hard-coded that label); suggest_event now
   // accepts a source_label so the skill can tag 'daily-discovery' → this.
-  | "discovery";
+  | "discovery"
+  // OPE-1348 (2026-10-14): created from a press release the organizer SENT us
+  // — their own words, on purpose, often before their site is updated. It
+  // landed as `direct_scrape` because the label was not a map key and the
+  // domain fallback saw a source_url. A different trust class from a scrape.
+  | "press_release";
 
 /** All values the ingestion_method column may take. Useful for Zod enums. */
 export const INGESTION_METHODS: readonly IngestionMethod[] = [
@@ -39,6 +44,7 @@ export const INGESTION_METHODS: readonly IngestionMethod[] = [
   "admin_manual",
   "aggregator_import",
   "discovery",
+  "press_release",
 ] as const;
 
 /**
@@ -136,7 +142,30 @@ const METHOD_BY_NAME: Record<string, IngestionMethod> = {
   discovery: "discovery",
   "daily-discovery": "discovery",
   "daily-ne-event-discovery": "discovery",
+  // OPE-1348 — both spellings: citations already use `press_release` as a
+  // source_type, and callers reach for either.
+  "press-release": "press_release",
+  press_release: "press_release",
 };
+
+/**
+ * OPE-1348 — was this label RECOGNISED, or did classification fall back to the
+ * domain chain? An unknown label used to vanish silently: `press-release`
+ * became `direct_scrape` and the caller learned nothing without reading the
+ * row back. Writers return this as a warning.
+ *
+ * `null` for no label / `unlabeled` (falling back is the documented behaviour
+ * there, OPE-491) and for a recognised label.
+ */
+export function unrecognisedSourceLabel(
+  sourceLabel: string | null | undefined,
+  sourceUrl: string | null | undefined
+): { label: string; fellBackTo: IngestionMethod } | null {
+  const key = (sourceLabel ?? "").trim().toLowerCase();
+  if (key === "" || key === UNLABELED_SOURCE) return null;
+  if (METHOD_BY_NAME[key]) return null;
+  return { label: key, fellBackTo: classifySource(sourceLabel, sourceUrl).ingestionMethod };
+}
 
 // Hostnames that, when seen as sourceDomain, force ingestion_method to
 // `aggregator_import` regardless of which scraper actually pulled them.

@@ -47,6 +47,7 @@ import {
   isUnusableEventName,
   isPlaceholderUrl,
   UNLABELED_SOURCE,
+  unrecognisedSourceLabel,
   provenanceTags,
   assertIngestionMethod,
   dollarsToCents,
@@ -695,7 +696,7 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
         .max(64)
         .optional()
         .describe(
-          "Provenance label for ingestion_method classification. Default 'vendor-submission'. Automated discovery callers pass 'daily-discovery' (classifies to ingestion_method='discovery')."
+          "Provenance label for ingestion_method classification. Automated discovery callers pass 'daily-discovery' (classifies to ingestion_method='discovery'). Events created from a press release the organizer sent us pass 'press-release' (classifies to 'press_release'). An unrecognised label falls back to inference from source_url and is reported in warnings.source_label_unrecognised; omitting the label records 'unlabeled' and infers from source_url."
         ),
       // TAX1 Phase 1 (2026-06-02) — audience / access taxonomy. Both
       // default to the permissive value, so omitting both preserves
@@ -1612,6 +1613,12 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
       }
       if (gateResult.reasons.length > 0) {
         suggestWarnings.gate_flags = gateResult.reasons;
+      }
+      // OPE-1348 — an unknown source_label used to fall back to domain
+      // inference in silence ("press-release" became direct_scrape). Say so.
+      const labelFallback = unrecognisedSourceLabel(sourceLabel, params.source_url);
+      if (labelFallback) {
+        suggestWarnings.source_label_unrecognised = `source_label "${labelFallback.label}" is not a known provenance label; ingestion_method fell back to "${labelFallback.fellBackTo}" from the source URL. Known labels include daily-discovery, email-submission, press-release, web-research.`;
       }
       if (venueStateMismatch) {
         suggestWarnings.venue_state_conflict = {
