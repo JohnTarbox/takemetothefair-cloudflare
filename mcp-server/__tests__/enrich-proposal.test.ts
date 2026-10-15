@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { computeFillEmptyProposals } from "../src/email-handlers/enrich-proposal.js";
+import { computeEnrichDisposition } from "../src/email-handlers/enrich-proposal.js";
+
+// Fill-empty proposals keyed by DB column name; empty when nothing is proposable.
+const computeFillEmptyProposals = (...args: Parameters<typeof computeEnrichDisposition>) =>
+  computeEnrichDisposition(...args).proposals;
 
 // OPE-175 — fill-empty-only enrichment proposals for dedup-on-match. The core
 // guarantee (acceptance): a populated existing field is NEVER proposed, so

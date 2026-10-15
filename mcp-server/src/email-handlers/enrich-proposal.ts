@@ -226,18 +226,6 @@ function fieldChecks(existing: ExistingEnrichFields, incoming: IncomingEnrichFie
   return out;
 }
 
-/**
- * Return the fill-empty proposals keyed by DB column name (`image_url`,
- * `vendor_fee_min_cents`, …, plus `event_days.hours`). Empty object when
- * nothing is proposable.
- */
-export function computeFillEmptyProposals(
-  existing: ExistingEnrichFields,
-  incoming: IncomingEnrichFields
-): Record<string, unknown> {
-  return computeEnrichDisposition(existing, incoming).proposals;
-}
-
 export interface EnrichDisposition {
   /** Fill-empty proposals: existing empty AND incoming present. */
   proposals: Record<string, unknown>;
