@@ -1,14 +1,14 @@
 /**
- * OPE-962 — NEEDS_ENRICHMENT gets an exit: EXHAUSTED after three consecutive
- * successful fetches that stage zero candidates. And the queue tool can order
- * by the gap a render can actually fill.
+ * OPE-962 — NEEDS_ENRICHMENT gets an exit (EXHAUSTED), and the queue tool can
+ * order by the gap a render can actually fill.
+ *
+ * OPE-1279 moved the EXHAUSTED decision to enrichment_empty_attempts (live runs
+ * only; see promoter-enrichment-empty-attempts-ope1279.test.ts). The OPE-962
+ * zero-yield streak is still written, as telemetry, and pinned here.
  */
 import { describe, it, expect, afterEach, beforeEach } from "vitest";
 import { eq } from "drizzle-orm";
-import {
-  computePromoterEnrichment,
-  PROMOTER_ENRICHMENT_EXHAUST_AFTER,
-} from "@takemetothefair/constants";
+import { computePromoterEnrichment } from "@takemetothefair/constants";
 import { CapturingMcpServer, createTestDb, mockIndexNowFetch, type TestDb } from "./setup-db.js";
 import { promoters } from "../src/schema.js";
 import {
@@ -66,22 +66,17 @@ const read = async (db: TestDb, id: string) =>
 const run = (db: TestDb, id: string, dryRun = true) =>
   processPromoterEnrichmentJob(db, ENV, { promoterId: id, jobRunId: "j", dryRun });
 
-describe("OPE-962 — the zero-yield streak and EXHAUSTED", () => {
-  it("the threshold is 3", () => {
-    expect(PROMOTER_ENRICHMENT_EXHAUST_AFTER).toBe(3);
-  });
-
-  it("three zero-candidate attempts → EXHAUSTED on the third, not before", async () => {
+describe("OPE-962 — the zero-yield streak (telemetry since OPE-1279) and EXHAUSTED", () => {
+  it("zero-candidate DRY runs count the streak but never exhaust (OPE-1279)", async () => {
     const { db } = createTestDb();
     const id = await seed(db);
     serve(BARREN);
     const outcomes = [];
     for (let i = 0; i < 3; i++) {
       outcomes.push((await run(db, id)).outcome);
-      if (i < 2) expect(await read(db, id)).toEqual({ status: "NEEDS_ENRICHMENT", streak: i + 1 });
+      expect(await read(db, id)).toEqual({ status: "NEEDS_ENRICHMENT", streak: i + 1 });
     }
-    expect(outcomes).toEqual(["staged", "staged", "exhausted"]);
-    expect(await read(db, id)).toEqual({ status: "EXHAUSTED", streak: 3 });
+    expect(outcomes).toEqual(["staged", "staged", "staged"]);
   });
 
   it("an attempt that stages a candidate RESETS the streak", async () => {
@@ -95,12 +90,12 @@ describe("OPE-962 — the zero-yield streak and EXHAUSTED", () => {
     expect(await read(db, id)).toEqual({ status: "NEEDS_ENRICHMENT", streak: 0 });
   });
 
-  it("the LIVE path counts too", async () => {
+  it("the LIVE path exhausts (OPE-1279: on the second empty live attempt)", async () => {
     const { db } = createTestDb();
     const id = await seed(db);
     serve(BARREN);
-    for (let i = 0; i < 3; i++) await run(db, id, false);
-    expect((await read(db, id)).status).toBe("EXHAUSTED");
+    for (let i = 0; i < 2; i++) await run(db, id, false);
+    expect(await read(db, id)).toEqual({ status: "EXHAUSTED", streak: 2 });
   });
 
   it("a FAILED fetch is BLOCKED, never counted toward EXHAUSTED", async () => {
@@ -114,7 +109,7 @@ describe("OPE-962 — the zero-yield streak and EXHAUSTED", () => {
     const { db } = createTestDb();
     const id = await seed(db, { enrichmentStatus: "IN_PROGRESS" });
     serve(BARREN);
-    for (let i = 0; i < 3; i++) await run(db, id);
+    for (let i = 0; i < 3; i++) await run(db, id, false);
     expect((await read(db, id)).status).toBe("IN_PROGRESS");
   });
 });

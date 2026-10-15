@@ -1016,9 +1016,9 @@ export const PROMOTER_ENRICHMENT_STATUS_VALUES = [
   "ENRICHED",
   "NO_SOURCE",
   "BLOCKED",
-  // OPE-962 — the site was fetched successfully and staged ZERO candidates on
-  // PROMOTER_ENRICHMENT_EXHAUST_AFTER consecutive attempts: there is nothing
-  // more to extract. Distinct from NO_SOURCE (no website at all) and BLOCKED
+  // OPE-962/OPE-1279 — the site was fetched successfully on
+  // PROMOTER_ENRICHMENT_EXHAUST_AFTER consecutive live attempts that applied
+  // nothing and staged nothing new: there is nothing more to extract. Distinct from NO_SOURCE (no website at all) and BLOCKED
   // (the fetch failed). Without it NEEDS_ENRICHMENT had no exit short of every
   // field filling, so unenrichable promoters were re-fetched every ~30 days
   // forever and the queue could only grow (485 on 08-19, 516 on 09-13).
@@ -1027,8 +1027,23 @@ export const PROMOTER_ENRICHMENT_STATUS_VALUES = [
 ] as const;
 export type PromoterEnrichmentStatus = (typeof PROMOTER_ENRICHMENT_STATUS_VALUES)[number];
 
-/** OPE-962 — consecutive zero-candidate attempts before a promoter is EXHAUSTED. */
-export const PROMOTER_ENRICHMENT_EXHAUST_AFTER = 3;
+/**
+ * OPE-1279 — consecutive EMPTY live attempts before a promoter is EXHAUSTED.
+ *
+ * Empty = a dry_run=false attempt that applied no field and staged no NEW
+ * candidate (`promoters.enrichment_empty_attempts`). Was 3 zero-candidate
+ * attempts under OPE-962, which never fired in prod: re-staging the same
+ * unreviewed logo reset it every run.
+ *
+ * Re-queue: `update_promoter(requeue_enrichment: true)` moves one promoter back
+ * to NEEDS_ENRICHMENT; a website change does it automatically. After an
+ * EXTRACTOR RULE change (e.g. OPE-249 hardening) the exhausted cohort may now
+ * yield, so re-queue it in bulk (an operator prod write, not automated):
+ *   UPDATE promoters SET enrichment_status = 'NEEDS_ENRICHMENT',
+ *     enrichment_empty_attempts = 0, enrichment_attempted_at = NULL
+ *   WHERE enrichment_status = 'EXHAUSTED';
+ */
+export const PROMOTER_ENRICHMENT_EXHAUST_AFTER = 2;
 
 // The five enrichment target fields tracked in `promoters.enrichment_coverage`
 // (a JSON snapshot of which are filled). Fill-rate metrics aggregate these.

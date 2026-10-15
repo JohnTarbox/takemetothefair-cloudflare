@@ -1,14 +1,15 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
-import { gte, isNotNull, sql } from "drizzle-orm";
+import { eq, gte, isNotNull, sql } from "drizzle-orm";
 import { isAuthorized } from "@/lib/api-auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { promoters, promoterEnrichmentCandidates } from "@/lib/db/schema";
+import { promoterAppliableGapSql, promoters, promoterEnrichmentCandidates } from "@/lib/db/schema";
 import { PROMOTER_ENRICHMENT_STATUS_VALUES } from "@takemetothefair/constants";
 import {
   bucketByWeek,
   computeAutoApplyShare,
   computeRuleAgreement,
+  summarizeAppliableGap,
   summarizeBlockedReasons,
 } from "@/lib/promoter-enrichment-dashboard";
 
@@ -65,6 +66,23 @@ export async function GET(request: NextRequest) {
 
     const statusCounts: Record<string, number> = { unassessed: byStatus(null) };
     for (const s of PROMOTER_ENRICHMENT_STATUS_VALUES) statusCounts[s] = byStatus(s);
+
+    // ── OPE-1279 — what the queue is made of ──
+    // The appliable gap (same SQL list_promoter_enrichment_queue selects on) and
+    // the consecutive-empty-live-attempt count, over the NEEDS_ENRICHMENT queue.
+    const gap = promoterAppliableGapSql();
+    const gapRows = await db
+      .select({ gap, n: sql<number>`count(*)` })
+      .from(promoters)
+      .where(eq(promoters.enrichmentStatus, "NEEDS_ENRICHMENT"))
+      .groupBy(gap);
+    const emptyRows = await db
+      .select({ k: promoters.enrichmentEmptyAttempts, n: sql<number>`count(*)` })
+      .from(promoters)
+      .where(eq(promoters.enrichmentStatus, "NEEDS_ENRICHMENT"))
+      .groupBy(promoters.enrichmentEmptyAttempts);
+    const queueEmptyAttempts: Record<string, number> = {};
+    for (const r of emptyRows) queueEmptyAttempts[String(r.k ?? 0)] = Number(r.n) || 0;
 
     // ── OPE-38 flywheel telemetry (derived from candidates + promoters) ──
 
@@ -124,6 +142,15 @@ export async function GET(request: NextRequest) {
       status: statusCounts,
       // The worklist the enrichment drain agent pulls from.
       queueDepth: byStatus("NEEDS_ENRICHMENT"),
+      // OPE-1279 — out of the queue: two consecutive live attempts applied
+      // nothing and staged nothing new. Re-queue: update_promoter requeue_enrichment.
+      exhausted: byStatus("EXHAUSTED"),
+      // OPE-1279 — the queue by appliable gap (logo excluded): a zero-yield drain
+      // on a gtTwo-heavy queue = extractor failing; on a gap-0/1 queue = head full.
+      queueAppliableGap: summarizeAppliableGap(gapRows),
+      // OPE-1279 — queue rows by consecutive empty live attempts ("1" = one more
+      // empty live run moves them to EXHAUSTED).
+      queueEmptyAttempts,
       // ── OPE-38 flywheel telemetry ──────────────────────────────────
       // Auto-apply share = auto_merged / (auto_merged + approved).
       autoApply,

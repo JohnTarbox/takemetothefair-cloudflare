@@ -3,6 +3,7 @@ import {
   computeAutoApplyShare,
   computeRuleAgreement,
   summarizeBlockedReasons,
+  summarizeAppliableGap,
   bucketByWeek,
   RULE_PROMOTE_MIN_PCT,
   RULE_PROMOTE_MIN_SAMPLE,
@@ -304,5 +305,27 @@ describe("OPE-249 — system closes and flagged rows do not move the promotion g
     expect(e.humanSampleSize).toBe(2);
     expect(e.cleanHumanSampleSize).toBe(2);
     expect(e.systemClosed).toBe(0);
+  });
+});
+
+// OPE-1279 — "queue head full" vs "extractor failing" without extra queries.
+describe("summarizeAppliableGap", () => {
+  it("fills the 0–5 distribution and counts gap > 0 and gap > 2", () => {
+    const r = summarizeAppliableGap([
+      { gap: 0, n: 10 },
+      { gap: 2, n: 500 },
+      { gap: 3, n: 4 },
+      { gap: 5, n: 1 },
+    ]);
+    expect(r.distribution).toEqual({ "0": 10, "1": 0, "2": 500, "3": 4, "4": 0, "5": 1 });
+    expect(r.gtZero).toBe(505);
+    expect(r.gtTwo).toBe(5);
+  });
+  it("gap exactly 2 is NOT > 2 (the 10-02 cohort reads as gtTwo 0)", () => {
+    expect(summarizeAppliableGap([{ gap: 2, n: 25 }]).gtTwo).toBe(0);
+  });
+  it("empty queue → all zeros; string counts from D1 are coerced", () => {
+    expect(summarizeAppliableGap([])).toMatchObject({ gtZero: 0, gtTwo: 0 });
+    expect(summarizeAppliableGap([{ gap: 1, n: "3" as unknown as number }]).gtZero).toBe(3);
   });
 });

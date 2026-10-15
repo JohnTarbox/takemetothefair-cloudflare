@@ -5607,6 +5607,13 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .url()
         .optional()
         .describe("OPE-979: the page that shows the status, e.g. the closure notice."),
+      // OPE-1279 — the human re-queue path for EXHAUSTED.
+      requeue_enrichment: z
+        .boolean()
+        .optional()
+        .describe(
+          "OPE-1279: true moves this promoter back into the enrichment queue — an EXHAUSTED (or BLOCKED/IN_PROGRESS) promoter becomes NEEDS_ENRICHMENT unless its coverage is complete (ENRICHED) or it has no website (NO_SOURCE); resets the empty-attempt counter and clears enrichment_attempted_at so the next drain/nightly run picks it first. Use when the site changed, an extractor rule changed (e.g. OPE-249 hardening), or a human wants it re-tried. A website change does this automatically. May be the only field in the call."
+        ),
       defer_search_ping: z
         .boolean()
         .optional()
@@ -5683,6 +5690,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           requestedFields.push(param);
         }
       }
+
+      // OPE-1279 — a re-queue is a request on its own; it writes no fieldMap column.
+      const requeue = params.requeue_enrichment === true;
+      if (requeue) requestedFields.push("requeue_enrichment");
 
       if (requestedFields.length === 0) {
         return {
@@ -5785,11 +5796,19 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         },
         // OPE-962 — a NEW website re-opens a promoter that exhausted the old one:
         // EXHAUSTED is a fact about a site, not about the organizer.
-        websiteChanged ? null : promoter.enrichmentStatus
+        // OPE-1279 — an explicit re-queue drops the sticky state the same way.
+        websiteChanged || requeue ? null : promoter.enrichmentStatus
       );
       updates.enrichmentStatus = enrichment.status;
       updates.enrichmentCoverage = enrichment.coverageJson;
-      if (websiteChanged) updates.enrichmentZeroYieldStreak = 0;
+      if (websiteChanged || requeue) {
+        updates.enrichmentZeroYieldStreak = 0;
+        updates.enrichmentEmptyAttempts = 0;
+      }
+      if (requeue) {
+        updates.enrichmentAttemptedAt = null;
+        updates.enrichmentBlockedReason = null;
+      }
 
       await db.update(promoters).set(updates).where(eq(promoters.id, promoter.id));
 
@@ -5824,8 +5843,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       // IndexNow: ping the canonical promoter URL on update. Include the
       // prior slug too if the name change generated a new slug, so engines
       // can crawl-and-redirect from the old URL. Mirrors the main-app PATCH
-      // /api/admin/promoters/[id] hook.
-      if (env) {
+      // /api/admin/promoters/[id] hook. A re-queue alone changes nothing public.
+      const requeueOnly = requestedFields.length === 1 && requeue;
+      if (env && !requeueOnly) {
         const newSlug = (updates.slug as string | undefined) ?? promoter.slug;
         const indexNowUrls: string[] = [publicUrlFor("promoters", newSlug)];
         if (updates.slug && updates.slug !== promoter.slug) {
@@ -5849,6 +5869,8 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
             fieldsUpdated: requestedFields,
             previousValues,
             newValues,
+            // OPE-1279 — so a re-queue (or a website change) shows where it landed.
+            enrichmentStatus: updates.enrichmentStatus,
           }),
         ],
       };
