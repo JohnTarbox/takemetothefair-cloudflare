@@ -196,6 +196,10 @@ describe("OPE-975 — every probe's window is pinned", () => {
       "ocr-attachment": 21 * 24,
       "email-send": 72,
       "email-delivery-events": 72,
+      // OPE-1152 — demand-conditional: the clock starts at an `already-exists`
+      // reply, and the disposition row is written seconds before that reply.
+      // 72h only absorbs a stuck workflow, never a quiet week.
+      "enrich-on-match-disposition": 72,
       "inbound-submit": 21 * 24,
       "inbound-forward-analysis": 72,
       "inbound-email-event-links": 21 * 24,

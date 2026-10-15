@@ -60,6 +60,10 @@ import {
 } from "@/lib/db/schema";
 import { SITE_URL } from "@takemetothefair/constants";
 import { NEAR_DUPLICATE_SWEEP_ACTION } from "@/lib/duplicates/near-duplicate-sweep";
+import {
+  ENRICH_NOTHING_STAGED_ACTION,
+  ENRICH_PROPOSED_ACTION,
+} from "@/lib/inbound-enrich-on-match";
 import { AI_EXTRACTION_OK_MESSAGE, EXTRACT_LOG_SOURCE } from "@/lib/url-import/extract-telemetry";
 import type { StaleRed } from "@/lib/cpi/stale-reds";
 import type { AnyColumn, SQL } from "drizzle-orm";
@@ -2025,6 +2029,38 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
         adminActions.createdAt,
         eq(adminActions.action, NEAR_DUPLICATE_SWEEP_ACTION)
       ),
+  },
+  {
+    // OPE-1152 — proof enrich-on-match still RECORDS a disposition for every
+    // match. It staged ONE proposal in its lifetime because its writer was
+    // reachable from one branch with a scope that was always already filled —
+    // and nothing could tell that apart from "no matches". The stager now
+    // writes exactly one admin_actions row per match (`dedup.enrich_proposed`
+    // or `dedup.enrich_nothing_staged`), so it owes evidence whenever an email
+    // matched. Demand = the newest `already-exists` reply (the single-event
+    // HIGH branch always stages before replying it); healthy when the newest
+    // disposition row postdates it. 72h, because matches are a low-traffic,
+    // human-paced input.
+    name: "enrich-on-match-disposition",
+    ownerOpe: "OPE-1152",
+    label: "enrich-on-match records a disposition for each matched submission",
+    priority: "P1",
+    expectedWindowHours: 72,
+    lastEvidenceAt: async (db) => {
+      const demand = await maxTs(
+        db,
+        inboundEmails,
+        inboundEmails.receivedAt,
+        eq(inboundEmails.replyKind, "already-exists")
+      );
+      const evidence = await maxTs(
+        db,
+        adminActions,
+        adminActions.createdAt,
+        inArray(adminActions.action, [ENRICH_PROPOSED_ACTION, ENRICH_NOTHING_STAGED_ACTION])
+      );
+      return demandConditionalEvidence(demand, evidence, new Date());
+    },
   },
   {
     // OPE-1205 — proof the daily sync-staleness sweep still RUNS. It writes one

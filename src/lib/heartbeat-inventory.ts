@@ -95,6 +95,7 @@ export const HEARTBEAT_INVENTORY: Record<string, InventoryEntry> = {
       "email-defect-candidate-detector",
       "photo-intake",
       "photo-intake-storage-record",
+      "enrich-on-match-disposition",
     ],
     note: "Writers inside this Workflow each carry their own probe; a new writer here needs one too, and this check cannot see it (see header).",
   },
