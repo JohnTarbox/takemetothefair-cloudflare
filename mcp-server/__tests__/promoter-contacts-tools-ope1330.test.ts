@@ -297,10 +297,19 @@ describe("the inbound workflow runs the capture step (wiring pinned on CALL synt
   it("calls capturePromoterContacts inside step 'promoter-contacts/capture', fail-soft", () => {
     const at = src.indexOf('"promoter-contacts/capture"');
     expect(at).toBeGreaterThan(0);
-    const block = src.slice(at - 200, at + 600);
+    // 1200: the block grew by the matched-but-not-captured warning (rework).
+    const block = src.slice(at - 200, at + 1200);
     expect(block).toContain("capturePromoterContacts(getDb(this.env.DB), messageRowId, sessionId)");
     expect(block).toMatch(
       /try \{[\s\S]*promoter-contacts\/capture[\s\S]*\} catch \(err\) \{[\s\S]*logError/
+    );
+  });
+  it("warns when a promoter match captured nothing (the step's result is read, not dropped)", () => {
+    const at = src.indexOf('"promoter-contacts/capture"');
+    const block = src.slice(at - 200, at + 1200);
+    expect(block).toMatch(/const capture = await step\.do\(\s*"promoter-contacts\/capture"/);
+    expect(block).toMatch(
+      /if \(captureNeedsWarning\(capture\)\) \{\s*await logError\(this\.env\.DB, \{\s*level: "warn"/
     );
   });
   it("runs BEFORE send-reply, so it is reached on every email the workflow evaluates", () => {
@@ -331,5 +340,66 @@ describe("MCP approvePromoterClaim records the claimant (twin of the app paths)"
       },
     ]);
     expect(audit().map((a) => a.action)).toEqual(["promoter_contact.claim_validated"]);
+  });
+});
+
+describe("recapture_promoter_contacts (OPE-1330 rework — capture only, no email)", () => {
+  const AT = 1791998289; // the 10-14 specimen's received_at
+  function specimen(id: string) {
+    raw
+      .prepare(
+        `INSERT INTO inbound_emails (id, received_at, from_address, to_address, intent, status, created_at,
+           dmarc_result, sender_auth, auth_results_raw, original_sender_auth, matched_entities)
+         VALUES (?, ?, 'staff@grangefair.org', 'submit@meetmeatthefair.com', 'new_event', 'awaiting_human', ?,
+           'pass', 'pass', 'mx; dmarc=pass header.from=grangefair.org policy.dmarc=none', 'not_forwarded',
+           '[{"entityType":"promoter","entityId":"p1","basis":"website-domain","confidence":0.7}]')`
+      )
+      .run(id, AT, AT);
+  }
+
+  it("bumps last_heard_at on an existing hand-written row, sends nothing, records its OWN step name", async () => {
+    specimen("ib-1");
+    raw
+      .prepare(
+        `INSERT INTO promoter_contacts (id, promoter_id, email, validation_method, status, last_heard_at, created_at, updated_at)
+         VALUES ('c1', 'p1', 'staff@grangefair.org', 'domain_verified', 'validated', NULL, ?, ?)`
+      )
+      .run(AT - 100, AT - 100);
+    const r = await call("recapture_promoter_contacts", {
+      inbound_email_id: "ib-1",
+      reason: "OPE-1330 rework: re-capture the 10-14 specimen",
+    });
+    expect(r.isError).toBe(false);
+    expect(r.body.summary).toMatchObject({ outcome: "captured", refreshed: 1 });
+    expect(r.body.contacts).toEqual([
+      expect.objectContaining({ email: "staff@grangefair.org", status: "validated" }),
+    ]);
+    expect(
+      raw.prepare("SELECT last_heard_at FROM promoter_contacts WHERE id = 'c1'").get()
+    ).toEqual({ last_heard_at: AT });
+    // no mail of any kind
+    expect(raw.prepare("SELECT COUNT(*) n FROM email_send_ledger").get()).toEqual({ n: 0 });
+    // the heartbeat's step name is NOT written by a manual run
+    expect(raw.prepare("SELECT step_name FROM workflow_run_steps").all()).toEqual([
+      { step_name: "promoter-contacts/recapture" },
+    ]);
+    expect(
+      raw.prepare("SELECT action FROM admin_actions WHERE target_type = 'inbound_email'").all()
+    ).toEqual([{ action: "promoter_contact.recaptured" }]);
+
+    // idempotent
+    const again = await call("recapture_promoter_contacts", {
+      inbound_email_id: "ib-1",
+      reason: "again",
+    });
+    expect(again.body.summary).toMatchObject({ outcome: "captured", refreshed: 0, unchanged: 1 });
+  });
+
+  it("an unknown inbound id is an error", async () => {
+    const r = await call("recapture_promoter_contacts", {
+      inbound_email_id: "nope",
+      reason: "x y z",
+    });
+    expect(r.isError).toBe(true);
   });
 });

@@ -12,7 +12,7 @@
 // site is itself a signal; we mark BLOCKED (+ reason) and ack. Only an
 // unexpected DB error retries → DLQ after max_retries.
 import { and, eq, inArray } from "drizzle-orm";
-import { applyHumanVeto, HUMAN_VETO_DECISIONS } from "./human-veto.js";
+import { applyHumanVeto } from "./human-veto.js";
 import {
   computePromoterEnrichment,
   isPlaceholderDescription,
@@ -110,6 +110,7 @@ const PROMOTER_COLUMNS = {
   contactPhone: promoters.contactPhone,
   enrichmentStatus: promoters.enrichmentStatus,
   enrichmentZeroYieldStreak: promoters.enrichmentZeroYieldStreak,
+  enrichmentEmptyAttempts: promoters.enrichmentEmptyAttempts,
   operatingStatus: promoters.operatingStatus,
 } as const;
 
@@ -347,11 +348,31 @@ export interface PromoterEnrichmentRunSummary {
   promoterId: string;
   outcome: "staged" | "merged" | "blocked" | "no_source" | "not_found" | "exhausted" | "ceased";
   candidateCount?: number;
+  /**
+   * OPE-1279 — proposals whose (field, value) this promoter has never had a
+   * candidate row for, under any decision. Re-staging is not new.
+   */
+  newCandidateCount?: number;
+  /** OPE-1279 — consecutive empty LIVE attempts after this run (live runs only). */
+  emptyAttempts?: number;
   appliedFields?: string[];
   /** OPE-1295 — affine social proposals held for review because the rule is not promotable. */
   socialStagedNotPromotable?: number;
   blockedReason?: BlockedReason;
   fetchMethod?: string;
+}
+
+/**
+ * OPE-1279 — how many proposals are NEW: no prior candidate row for this
+ * promoter carries the same (field, value), whatever its decision. Exported
+ * for tests.
+ */
+export function countNewCandidates(
+  proposals: readonly { field: string; proposedValue: string }[],
+  prior: readonly { field: string; value: string }[]
+): number {
+  const seen = new Set(prior.map((c) => JSON.stringify([c.field, c.value])));
+  return proposals.filter((p) => !seen.has(JSON.stringify([p.field, p.proposedValue]))).length;
 }
 
 /**
@@ -442,20 +463,21 @@ export async function processPromoterEnrichmentJob(
   // the identical value auto-merged as #2875 on 09-15; #1901 → #2843 (The
   // Weston Craft Show, Squarespace's own accounts) the same way. A rejection
   // is the stronger of the two human verdicts; it cannot be the weaker veto.
-  const vetoed = await db
+  //
+  // OPE-1279 — read EVERY prior candidate, not only the vetoed ones: the same
+  // rows also answer "is this proposal NEW?" (applyHumanVeto ignores any
+  // decision that is not a veto). Read BEFORE the pending rows are cleared
+  // below, so last run's re-staged-but-unreviewed proposal still counts as seen.
+  const priorCandidates = await db
     .select({
       field: promoterEnrichmentCandidates.proposedField,
       value: promoterEnrichmentCandidates.proposedValue,
       decision: promoterEnrichmentCandidates.decision,
     })
     .from(promoterEnrichmentCandidates)
-    .where(
-      and(
-        eq(promoterEnrichmentCandidates.promoterId, msg.promoterId),
-        inArray(promoterEnrichmentCandidates.decision, [...HUMAN_VETO_DECISIONS])
-      )
-    );
-  applyHumanVeto(proposals, vetoed);
+    .where(eq(promoterEnrichmentCandidates.promoterId, msg.promoterId));
+  applyHumanVeto(proposals, priorCandidates);
+  const newCandidateCount = countNewCandidates(proposals, priorCandidates);
 
   // Idempotent re-run: clear this promoter's still-open proposals, then restage
   // (honors the one-pending-per-field partial unique index).
@@ -497,24 +519,18 @@ export async function processPromoterEnrichmentJob(
 
   const stagedFields = proposals.map((p) => p.field);
 
-  // OPE-962 — count consecutive successful fetches that found NOTHING to stage.
-  // (A failed fetch never reaches here: that is BLOCKED, a different fact.) At
-  // the threshold a queue-selectable promoter becomes EXHAUSTED and the nightly
-  // selector stops re-fetching it. Operator-owned states are left alone.
+  // OPE-962 — consecutive successful fetches that staged nothing at all. Kept
+  // as telemetry only since OPE-1279: it never reached its threshold in prod
+  // (0 EXHAUSTED rows on 2026-10-15) because a site that re-proposes the SAME
+  // logo or phone every run resets it forever. EXHAUSTED is now decided by
+  // enrichment_empty_attempts on LIVE runs below.
   const streak = proposals.length === 0 ? (row.enrichmentZeroYieldStreak ?? 0) + 1 : 0;
-  const exhaust =
-    streak >= PROMOTER_ENRICHMENT_EXHAUST_AFTER &&
-    (row.enrichmentStatus === null || row.enrichmentStatus === "NEEDS_ENRICHMENT");
 
-  // --- Dry-run: stage only, stamp the attempt ---
+  // --- Dry-run: stage only, stamp the attempt (never moves toward EXHAUSTED) ---
   if (msg.dryRun) {
     await db
       .update(promoters)
-      .set({
-        enrichmentAttemptedAt: now,
-        enrichmentZeroYieldStreak: streak,
-        ...(exhaust ? { enrichmentStatus: "EXHAUSTED" as const } : {}),
-      })
+      .set({ enrichmentAttemptedAt: now, enrichmentZeroYieldStreak: streak })
       .where(eq(promoters.id, msg.promoterId));
     await logEnrichment(db, {
       targetType: "promoter",
@@ -522,14 +538,13 @@ export async function processPromoterEnrichmentJob(
       source: "browser_enrich",
       status: proposals.length > 0 ? "success" : "skipped",
       fieldsChanged: stagedFields,
-      notes:
-        `dry-run: ${proposals.length} candidate(s) staged` +
-        (exhaust ? ` — EXHAUSTED after ${streak} consecutive zero-candidate attempts` : ""),
+      notes: `dry-run: ${proposals.length} candidate(s) staged`,
     });
     return {
       promoterId: msg.promoterId,
-      outcome: exhaust ? "exhausted" : "staged",
+      outcome: "staged",
       candidateCount: proposals.length,
+      newCandidateCount,
       fetchMethod: fetched.fetchMethod,
     };
   }
@@ -538,20 +553,29 @@ export async function processPromoterEnrichmentJob(
   const socialStagedNotPromotable = await holdSocialUnlessPromotable(db, proposals);
   const applied = await applyFills(db, msg.promoterId, proposals);
   await recomputeAndStamp(db, msg.promoterId, applied.length > 0);
-  // OPE-962 — same streak on a live run. Zero proposals means nothing was
-  // applied either, so recompute cannot have completed coverage; exhaust only
-  // if the recomputed status is still the queue-selectable one.
+  // OPE-1279 — an EMPTY live attempt applied nothing AND staged nothing new
+  // (re-staging last run's unreviewed logo is not progress). Any applied field
+  // or new candidate resets the count to 0, so a promoter that gains a field
+  // cannot be exhausted on that run. At the threshold the promoter leaves the
+  // queue. The status update is conditional on the RECOMPUTED status still
+  // being NEEDS_ENRICHMENT, so operator-owned IN_PROGRESS/BLOCKED and a
+  // promoter whose coverage just completed are never touched.
+  const emptyAttempt = applied.length === 0 && newCandidateCount === 0;
+  const emptyAttempts = emptyAttempt ? (row.enrichmentEmptyAttempts ?? 0) + 1 : 0;
   await db
     .update(promoters)
-    .set({ enrichmentZeroYieldStreak: streak })
+    .set({ enrichmentZeroYieldStreak: streak, enrichmentEmptyAttempts: emptyAttempts })
     .where(eq(promoters.id, msg.promoterId));
-  if (exhaust) {
-    await db
+  let exhausted = false;
+  if (emptyAttempts >= PROMOTER_ENRICHMENT_EXHAUST_AFTER) {
+    const moved = await db
       .update(promoters)
       .set({ enrichmentStatus: "EXHAUSTED" })
       .where(
         and(eq(promoters.id, msg.promoterId), eq(promoters.enrichmentStatus, "NEEDS_ENRICHMENT"))
-      );
+      )
+      .returning({ id: promoters.id });
+    exhausted = moved.length > 0;
   }
   await logEnrichment(db, {
     targetType: "promoter",
@@ -561,13 +585,17 @@ export async function processPromoterEnrichmentJob(
     fieldsChanged: applied,
     notes:
       `auto-apply: applied ${applied.length} field(s)` +
-      (socialStagedNotPromotable > 0 ? ` — social_links held: rule not promotable` : ""),
+      (socialStagedNotPromotable > 0 ? ` — social_links held: rule not promotable` : "") +
+      ` — ${newCandidateCount} new candidate(s), empty attempts ${emptyAttempts}` +
+      (exhausted ? ` — EXHAUSTED (OPE-1279)` : ""),
   });
 
   return {
     promoterId: msg.promoterId,
-    outcome: "merged",
+    outcome: exhausted ? "exhausted" : "merged",
     candidateCount: proposals.length,
+    newCandidateCount,
+    emptyAttempts,
     appliedFields: applied,
     socialStagedNotPromotable,
     fetchMethod: fetched.fetchMethod,

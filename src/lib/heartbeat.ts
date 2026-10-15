@@ -17,7 +17,7 @@
  *    flag is never a false RED).
  *  - auto-file dedup reuses OPE-76's `cpi_signal_filings` ledger — nothing new.
  */
-import { and, eq, inArray, isNotNull, notInArray, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, isNotNull, isNull, notInArray, sql } from "drizzle-orm";
 import {
   analyticsEvents,
   entityWriteLog,
@@ -777,6 +777,62 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
         ),
         new Date()
       ),
+  },
+  {
+    // OPE-1057 rework — proof the inbound Workflow's B2 free-text branch RECORDS
+    // each run. Inbound 01ad5525 (2026-10-14) reached `submit/free-text-extract`,
+    // the extract route timed out, and the branch's bare `catch {}` wrote
+    // nothing — so a review read "0 runs ever" off a branch that had run. The
+    // branch now writes one `workflow_run_steps` row per run (ok / failed /
+    // skipped), and this probe watches that the row keeps coming.
+    //
+    // DEMAND-CONDITIONAL (OPE-325): ~1 qualifying email a fortnight, so "no row
+    // lately" is ordinary quiet. Demand is an email the classifier called
+    // `free_text`, with no parsed URL and no attachment, routed to the submit
+    // pipeline — every such run reaches the branch (a free_text body never fans
+    // out, and with no attachment there is no OCR fan-out). Only demand AFTER
+    // `enabled_at` counts, so the pre-ship specimen cannot redden it on arming.
+    // The row is written seconds after the run starts; 24h outlasts a slow
+    // Workflow queue and the digest cycle.
+    //
+    // ⚠️ SHIPS DORMANT (`enabled_at` NULL, drizzle/0363): the MCP Worker that
+    // writes the row deploys separately from the app that reads it. Arm it once
+    // the MCP deploy carrying the writer is live.
+    name: "free-text-extract-record",
+    ownerOpe: "OPE-1057",
+    label: "Inbound B2 free-text extraction → workflow_run_steps record",
+    priority: "P1",
+    expectedWindowHours: 24,
+    lastEvidenceAt: async (db) => {
+      const armed = await db
+        .select({ enabledAt: heartbeatProbes.enabledAt })
+        .from(heartbeatProbes)
+        .where(eq(heartbeatProbes.probeName, "free-text-extract-record"))
+        .limit(1);
+      const since = armed[0]?.enabledAt ?? null;
+      if (!since) return null; // dormant — the evaluator ignores it anyway
+      return demandConditionalEvidence(
+        await maxTs(
+          db,
+          inboundEmails,
+          inboundEmails.receivedAt,
+          and(
+            eq(inboundEmails.classifiedSubIntent, "free_text"),
+            isNull(inboundEmails.parsedUrl),
+            eq(inboundEmails.attachmentCount, 0),
+            eq(inboundEmails.routedToWorkflow, "submit-pipeline"),
+            gte(inboundEmails.receivedAt, since)
+          )
+        ),
+        await maxTs(
+          db,
+          workflowRunSteps,
+          workflowRunSteps.recordedAt,
+          eq(workflowRunSteps.stepName, "submit/free-text-extract")
+        ),
+        new Date()
+      );
+    },
   },
   {
     // OPE-403 — proof the lane still RECORDS what it stored.

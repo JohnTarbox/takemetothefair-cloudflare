@@ -160,6 +160,8 @@ const SCHEMA_SQL = `
     enrichment_attempted_at INTEGER,
     -- OPE-962 (drizzle/0283) — consecutive zero-candidate attempts.
     enrichment_zero_yield_streak INTEGER NOT NULL DEFAULT 0,
+    -- OPE-1279 (drizzle/0365) — consecutive EMPTY live attempts.
+    enrichment_empty_attempts INTEGER NOT NULL DEFAULT 0,
     -- OPE-63 (drizzle/0144) — promoter claim state (parity with vendors.claimed
     -- trio). approvePromoterClaim writes claimed/claimed_at/claimed_by, and the
     -- WS2b schema-sync guard covers promoters, so these are required here.
@@ -595,6 +597,15 @@ const SCHEMA_SQL = `
     new_slug TEXT NOT NULL,
     changed_at INTEGER NOT NULL,
     changed_by TEXT
+  );
+
+  -- OPE-1151 (drizzle/0367) — private per-event notes. Separate table so no
+  -- full-row events select can carry it onto a public surface.
+  CREATE TABLE event_internal_notes (
+    event_id TEXT PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE,
+    notes TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
   );
 
   CREATE TABLE event_slug_history (

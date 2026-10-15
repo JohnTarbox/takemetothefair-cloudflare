@@ -322,10 +322,17 @@ export const promoters = sqliteTable(
     }),
     // JSON snapshot of which target fields are filled: {hero,logo,description,socials,contact}.
     enrichmentCoverage: text("enrichment_coverage"),
-    // OPE-962 (drizzle/0283) — consecutive successful fetches that staged ZERO
-    // candidates. Reset to 0 by any attempt that stages one, and by a website
-    // change. At PROMOTER_ENRICHMENT_EXHAUST_AFTER the promoter becomes EXHAUSTED.
+    // OPE-962 (drizzle/0283) — consecutive successful fetches (dry-run or live)
+    // that staged ZERO candidates. TELEMETRY ONLY since OPE-1279: it never
+    // exhausted a row in prod, because a site re-proposing the same logo/phone
+    // every run reset it. EXHAUSTED is decided by enrichmentEmptyAttempts.
     enrichmentZeroYieldStreak: integer("enrichment_zero_yield_streak").notNull().default(0),
+    // OPE-1279 (drizzle/0365) — consecutive LIVE (dry_run=false) attempts that
+    // applied no field AND staged no NEW candidate (a (field, value) this
+    // promoter never had a candidate row for). Reset to 0 by any applied field
+    // or new candidate, by a website change, and by update_promoter
+    // requeue_enrichment. At PROMOTER_ENRICHMENT_EXHAUST_AFTER → EXHAUSTED.
+    enrichmentEmptyAttempts: integer("enrichment_empty_attempts").notNull().default(0),
     /**
      * When a render last WROTE a field to this row. NOT "when did we last look".
      *
@@ -748,6 +755,9 @@ export const events = sqliteTable(
     // Free-text nuance the enum pair can't hold (e.g. "members + public
     // for Saturday plant sale 9am–1pm"). NULL = the audience/access pair
     // is fully self-describing for this event.
+    // OPE-1151 — PUBLIC visitor copy: rendered verbatim on every event page
+    // that has it (admission detail, accessibility, who may attend). Analyst
+    // prose / provenance goes in `event_internal_notes`, never here.
     accessNotes: text("access_notes"),
     // Logistics axis — separate from audience/access. Defaults false.
     // Drives a future "Registration required — see ticket URL" badge
@@ -2234,6 +2244,35 @@ export const eventDays = sqliteTable("event_days", {
   imageFocalX: real("image_focal_x").notNull().default(0.5),
   imageFocalY: real("image_focal_y").notNull().default(0.5),
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+});
+
+/**
+ * OPE-1151 (drizzle/0367) — PRIVATE operator/analyst notes for an event.
+ * NEVER rendered, never read by the main app.
+ *
+ * A separate table, deliberately NOT an `events.internal_notes` column: the
+ * events row is serialized whole on public surfaces (`eventJoinProjection`
+ * carries every events column; the event page's full-row select reaches
+ * "use client" components and so the RSC payload). A private column there
+ * would need stripping at every such site — the OPE-1084 leak class. No
+ * `select().from(events)` can reach this table.
+ *
+ * `events.access_notes` is PUBLIC visitor copy (admission, accessibility,
+ * who may attend). Sweep findings, venue checks, "verify …", source citations
+ * and ticket references belong HERE. Written by MCP `update_event`
+ * (`internal_notes`), read by `get_event_details_admin`.
+ */
+export const eventInternalNotes = sqliteTable("event_internal_notes", {
+  eventId: text("event_id")
+    .primaryKey()
+    .references(() => events.id, { onDelete: "cascade" }),
+  notes: text("notes").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
 });
 
 // User Favorites table
@@ -7101,6 +7140,8 @@ export * from "./promoter-outreach-queue";
 export * from "./promoter-outreach-metrics";
 export * from "./promoter-outreach-state";
 export * from "./promoter-reply-link";
+// OPE-1279 — the shared appliable-gap SQL (queue tool + coverage route).
+export * from "./promoter-appliable-gap";
 // OPE-1330 — promoter contacts: domain verification + the one write rule.
 export * from "./promoter-contacts";
 export * from "./gallery-photos";

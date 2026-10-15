@@ -106,7 +106,10 @@ export const PATCH = withAuth<{ id: string }>(
       );
       updateData.enrichmentStatus = enrichment.status;
       updateData.enrichmentCoverage = enrichment.coverageJson;
-      if (websiteChanged) updateData.enrichmentZeroYieldStreak = 0;
+      if (websiteChanged) {
+        updateData.enrichmentZeroYieldStreak = 0;
+        updateData.enrichmentEmptyAttempts = 0; // OPE-1279
+      }
 
       await db.update(promoters).set(updateData).where(eq(promoters.id, id));
 

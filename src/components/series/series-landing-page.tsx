@@ -21,7 +21,7 @@ import type { SeriesLanding, LandingOccurrence } from "@/lib/series/get-series-l
 import type { VisitorGuide } from "@/lib/blog/event-guides";
 import { formatDateRange } from "@/lib/utils";
 import { occurrencePath } from "@takemetothefair/utils";
-import { cdnImage } from "@/lib/cdn-image";
+import { cdnImage, cdnSrcSet } from "@/lib/cdn-image";
 import { toIsoDateOnlyInVenueZone } from "@/lib/datetime";
 
 const HERO_WIDTHS = [400, 800, 1200, 1600];
@@ -158,18 +158,15 @@ export function SeriesLandingPage({
                 quality: 80,
                 onerror: "redirect",
               })}
-              srcSet={HERO_WIDTHS.map(
-                (w) =>
-                  `${cdnImage(heroImage, {
-                    width: w,
-                    height: Math.round((w * 9) / 16),
-                    fit: "cover",
-                    gravity: "auto",
-                    format: "auto",
-                    quality: 80,
-                    onerror: "redirect",
-                  })} ${w}w`
-              ).join(", ")}
+              srcSet={cdnSrcSet(heroImage, HERO_WIDTHS, (w) => ({
+                width: w,
+                height: Math.round((w * 9) / 16),
+                fit: "cover",
+                gravity: "auto",
+                format: "auto",
+                quality: 80,
+                onerror: "redirect",
+              }))}
               sizes="(max-width: 768px) 100vw, 768px"
               width={1200}
               height={675}

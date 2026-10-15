@@ -1,5 +1,5 @@
 import Link from "next/link";
-import Image from "next/image";
+import Image from "@/components/ui/responsive-image";
 import { Store, CheckCircle, Sparkles } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { rotateFeaturedVendors } from "@/lib/featured-rotation";

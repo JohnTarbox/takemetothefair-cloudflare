@@ -10,6 +10,7 @@ import {
   promoters,
   users,
   eventDays,
+  eventInternalNotes,
   vendorSlugHistory,
   eventSlugHistory,
   promoterSlugHistory,
@@ -44,6 +45,7 @@ import {
   dayHoursUnknown,
   rosterResearchTargetWhere,
 } from "@takemetothefair/db-schema";
+import { accessNotesProseReason } from "../access-notes-guard.js";
 import {
   fetchImageWithFallback,
   findPromoterDuplicates,
@@ -1246,7 +1248,14 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .transform(sanitizeProse)
         .optional()
         .describe(
-          "Free-text nuance the audience+access pair can't hold (e.g. 'Members + public for the Saturday plant sale 9am-1pm')."
+          "PUBLIC visitor copy, rendered verbatim on the event page for EVERY event (OPE-1151): admission by category, accessibility, who may attend (e.g. 'Seniors 62+ $10; first floor is fully accessible'). Do NOT put sweep findings, venue checks, source citations or ticket refs here — use internal_notes. Prose-shaped values are refused."
+        ),
+      internal_notes: z
+        .string()
+        .max(4000)
+        .optional()
+        .describe(
+          "OPE-1151 — PRIVATE operator/analyst notes for this event (sweep findings, venue checks, 'verify …', source citations). Never rendered. REPLACES the stored note; read the current one from get_event_details_admin and append to it yourself. Empty string clears it."
         ),
       registration_required: z
         .boolean()
@@ -1354,6 +1363,21 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       if (petRefusal) {
         return {
           content: [jsonContent({ error: "pet_friendly_evidence_required", message: petRefusal })],
+          isError: true,
+        };
+      }
+
+      // OPE-1151 — access_notes now renders publicly on every event. Refuse
+      // the shapes analyst prose took in it BEFORE any row is written.
+      const accessNotesProse = accessNotesProseReason(params.access_notes);
+      if (accessNotesProse) {
+        return {
+          content: [
+            jsonContent({
+              error: "access_notes_looks_internal",
+              message: `access_notes is published verbatim on the event page, and this value looks like ${accessNotesProse}. Put it in internal_notes (private), and keep access_notes to what a visitor needs.`,
+            }),
+          ],
           isError: true,
         };
       }
@@ -1517,7 +1541,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         }
       }
 
-      if (requestedFields.length === 0 && venueRequestedFields.length === 0) {
+      if (
+        requestedFields.length === 0 &&
+        venueRequestedFields.length === 0 &&
+        params.internal_notes === undefined
+      ) {
         return {
           content: [
             {
@@ -2492,10 +2520,39 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         };
       }
 
+      // OPE-1151 — private notes live in their own table (never on the events
+      // row, which public surfaces serialize whole). Replace semantics; an
+      // empty string clears.
+      let internalNotesUpdated: { previous: string | null; next: string | null } | null = null;
+      if (params.internal_notes !== undefined) {
+        const [prior] = await db
+          .select({ notes: eventInternalNotes.notes })
+          .from(eventInternalNotes)
+          .where(eq(eventInternalNotes.eventId, event.id))
+          .limit(1);
+        const next = params.internal_notes.trim();
+        if (next) {
+          const now = new Date();
+          await db
+            .insert(eventInternalNotes)
+            .values({ eventId: event.id, notes: next, createdAt: now, updatedAt: now })
+            .onConflictDoUpdate({
+              target: eventInternalNotes.eventId,
+              set: { notes: next, updatedAt: now },
+            });
+        } else {
+          await db.delete(eventInternalNotes).where(eq(eventInternalNotes.eventId, event.id));
+        }
+        internalNotesUpdated = { previous: prior?.notes ?? null, next: next || null };
+      }
+
       const result: Record<string, unknown> = {
         updated: true,
         event: { id: event.id, name: updates.name ?? event.name },
       };
+      if (internalNotesUpdated) {
+        result.internalNotesUpdated = internalNotesUpdated;
+      }
       if (requestedFields.length > 0) {
         result.fieldsUpdated = requestedFields;
         result.previousValues = previousValues;
@@ -5643,6 +5700,13 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .url()
         .optional()
         .describe("OPE-979: the page that shows the status, e.g. the closure notice."),
+      // OPE-1279 — the human re-queue path for EXHAUSTED.
+      requeue_enrichment: z
+        .boolean()
+        .optional()
+        .describe(
+          "OPE-1279: true moves this promoter back into the enrichment queue — an EXHAUSTED (or BLOCKED/IN_PROGRESS) promoter becomes NEEDS_ENRICHMENT unless its coverage is complete (ENRICHED) or it has no website (NO_SOURCE); resets the empty-attempt counter and clears enrichment_attempted_at so the next drain/nightly run picks it first. Use when the site changed, an extractor rule changed (e.g. OPE-249 hardening), or a human wants it re-tried. A website change does this automatically. May be the only field in the call."
+        ),
       defer_search_ping: z
         .boolean()
         .optional()
@@ -5719,6 +5783,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           requestedFields.push(param);
         }
       }
+
+      // OPE-1279 — a re-queue is a request on its own; it writes no fieldMap column.
+      const requeue = params.requeue_enrichment === true;
+      if (requeue) requestedFields.push("requeue_enrichment");
 
       if (requestedFields.length === 0) {
         return {
@@ -5821,11 +5889,19 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         },
         // OPE-962 — a NEW website re-opens a promoter that exhausted the old one:
         // EXHAUSTED is a fact about a site, not about the organizer.
-        websiteChanged ? null : promoter.enrichmentStatus
+        // OPE-1279 — an explicit re-queue drops the sticky state the same way.
+        websiteChanged || requeue ? null : promoter.enrichmentStatus
       );
       updates.enrichmentStatus = enrichment.status;
       updates.enrichmentCoverage = enrichment.coverageJson;
-      if (websiteChanged) updates.enrichmentZeroYieldStreak = 0;
+      if (websiteChanged || requeue) {
+        updates.enrichmentZeroYieldStreak = 0;
+        updates.enrichmentEmptyAttempts = 0;
+      }
+      if (requeue) {
+        updates.enrichmentAttemptedAt = null;
+        updates.enrichmentBlockedReason = null;
+      }
 
       await db.update(promoters).set(updates).where(eq(promoters.id, promoter.id));
 
@@ -5860,8 +5936,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       // IndexNow: ping the canonical promoter URL on update. Include the
       // prior slug too if the name change generated a new slug, so engines
       // can crawl-and-redirect from the old URL. Mirrors the main-app PATCH
-      // /api/admin/promoters/[id] hook.
-      if (env) {
+      // /api/admin/promoters/[id] hook. A re-queue alone changes nothing public.
+      const requeueOnly = requestedFields.length === 1 && requeue;
+      if (env && !requeueOnly) {
         const newSlug = (updates.slug as string | undefined) ?? promoter.slug;
         const indexNowUrls: string[] = [publicUrlFor("promoters", newSlug)];
         if (updates.slug && updates.slug !== promoter.slug) {
@@ -5885,6 +5962,8 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
             fieldsUpdated: requestedFields,
             previousValues,
             newValues,
+            // OPE-1279 — so a re-queue (or a website change) shows where it landed.
+            enrichmentStatus: updates.enrichmentStatus,
           }),
         ],
       };

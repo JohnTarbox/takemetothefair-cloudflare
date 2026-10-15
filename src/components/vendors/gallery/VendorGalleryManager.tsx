@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import Image from "next/image";
+import Image from "@/components/ui/responsive-image";
 import { Star, Trash2, ArrowUp, ArrowDown, Loader2, Upload } from "lucide-react";
 import { ConfirmButton } from "@/components/ui/confirm-button";
 

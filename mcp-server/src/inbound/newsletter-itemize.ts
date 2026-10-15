@@ -22,6 +22,7 @@
 import { WORKERS_AI_MODEL } from "@takemetothefair/constants";
 import type { AiBinding } from "../intent-classifier.js";
 import { stripForwardedPreamble } from "../email-handlers/submit.js";
+import { extractJsonValue } from "../model-json.js";
 
 /** Prompt input cap. Newsletters are mostly tracker URLs, which are stripped
  *  first: Maine Made's 27,926-char issue is ~9,000 chars without them. */
@@ -256,15 +257,10 @@ export function parseItemsResponse(raw: unknown): RawItem[] {
         : null;
   if (Array.isArray(text)) return text as RawItem[];
   if (typeof text !== "string") return [];
-  const start = text.indexOf("[");
-  const end = text.lastIndexOf("]");
-  if (start < 0 || end <= start) return [];
-  try {
-    const parsed = JSON.parse(text.slice(start, end + 1)) as unknown;
-    return Array.isArray(parsed) ? (parsed as RawItem[]) : [];
-  } catch {
-    return [];
-  }
+  // OPE-969 rework — the first balanced top-level array (fence-aware), not the
+  // greedy first-`[`-to-last-`]` span, which any trailing "[1]" broke.
+  const found = extractJsonValue(text, "array");
+  return found.ok ? (found.value as RawItem[]) : [];
 }
 
 /** Throws on a model failure; the caller records it and moves on. */
