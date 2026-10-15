@@ -327,7 +327,7 @@ export const promoters = sqliteTable(
     // exhausted a row in prod, because a site re-proposing the same logo/phone
     // every run reset it. EXHAUSTED is decided by enrichmentEmptyAttempts.
     enrichmentZeroYieldStreak: integer("enrichment_zero_yield_streak").notNull().default(0),
-    // OPE-1279 (drizzle/0363) — consecutive LIVE (dry_run=false) attempts that
+    // OPE-1279 (drizzle/0365) — consecutive LIVE (dry_run=false) attempts that
     // applied no field AND staged no NEW candidate (a (field, value) this
     // promoter never had a candidate row for). Reset to 0 by any applied field
     // or new candidate, by a website change, and by update_promoter

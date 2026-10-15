@@ -160,7 +160,7 @@ const SCHEMA_SQL = `
     enrichment_attempted_at INTEGER,
     -- OPE-962 (drizzle/0283) — consecutive zero-candidate attempts.
     enrichment_zero_yield_streak INTEGER NOT NULL DEFAULT 0,
-    -- OPE-1279 (drizzle/0363) — consecutive EMPTY live attempts.
+    -- OPE-1279 (drizzle/0365) — consecutive EMPTY live attempts.
     enrichment_empty_attempts INTEGER NOT NULL DEFAULT 0,
     -- OPE-63 (drizzle/0144) — promoter claim state (parity with vendors.claimed
     -- trio). approvePromoterClaim writes claimed/claimed_at/claimed_by, and the
