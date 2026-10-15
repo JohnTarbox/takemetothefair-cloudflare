@@ -19,6 +19,7 @@ import {
 } from "@/lib/analytics";
 import { type FieldErrors, validateAll, validateField } from "@/lib/validations/field-errors";
 import { checkEmailDomain } from "@/lib/auth/email-domain-check";
+import { useOnFirstHumanInteraction } from "@/lib/hooks/use-first-human-interaction";
 import { normalizeDeclaredWebsite } from "@/lib/validations/declared-website";
 
 // Client-side schema mirrors the server registerSchema but adds the
@@ -141,16 +142,18 @@ function RegisterForm() {
   const [isLoading, setIsLoading] = useState(false);
   const [termsAccepted, setTermsAccepted] = useState(false);
 
-  // OPE-66 — claim-funnel entry. Fire once on mount when this signup arrives
-  // from a "Claim this listing" CTA (claim= present + a vendor/promoter role).
-  // Mirrored server-side to claim_view_server in /api/analytics/track.
-  useEffect(() => {
+  // OPE-66 — claim-funnel entry, when this signup arrives from a "Claim this
+  // listing" CTA (claim= present + a vendor/promoter role). Mirrored
+  // server-side to claim_view_server in /api/analytics/track.
+  // OPE-364 rework — once per mount on the first HUMAN interaction, not on
+  // mount: a JS-rendering crawler mounts the page too, and on-mount
+  // claim_view went from 23 rows all-time to 282 in ~13h of crawler traffic.
+  useOnFirstHumanInteraction(() => {
     if (!claimSlug) return;
     const normalizedRole = defaultRole.toUpperCase();
     if (normalizedRole !== "VENDOR" && normalizedRole !== "PROMOTER") return;
     trackClaimView(normalizedRole, claimSlug);
-    // Fire once per claim landing; claimSlug/defaultRole are stable per mount.
-  }, [claimSlug, defaultRole]);
+  });
 
   // Turnstile state
   const [turnstileToken, setTurnstileToken] = useState<string>("");
