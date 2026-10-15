@@ -65,7 +65,11 @@ export type UrlHealthVerdict =
   | "parked_page"
   /** Reached the origin, got a non-2xx. */
   | "http_error"
-  /** Never reached the origin: DNS failure, TLS failure, timeout, abort. */
+  /**
+   * Could not SEE the page: DNS failure, TLS failure, timeout, abort — or
+   * (OPE-1350) a 2xx whose body came back empty or failed to read. A transport
+   * failure, never evidence about what the site serves.
+   */
   | "unreachable"
   /**
    * OPE-979 — the page ANNOUNCES the organization is gone: closing its doors,
@@ -81,6 +85,12 @@ export interface UrlHealthInput {
   status: number | null;
   /** Response body. May be null when unreachable. */
   html: string | null;
+  /**
+   * OPE-1350 — set when the response arrived but reading its body threw (the
+   * per-URL abort firing mid-stream, a reset connection). The probe used to
+   * swallow this into `""`, which then read as a 0-byte parked page.
+   */
+  bodyReadError?: string | null;
 }
 
 export interface UrlHealthResult {
@@ -228,6 +238,23 @@ export function classifyUrlHealth(input: UrlHealthInput): UrlHealthResult {
   const status = input.status ?? 0;
   if (status < 200 || status >= 300) {
     return { verdict: "http_error", signals: [], detail: `HTTP ${status}` };
+  }
+
+  // OPE-1350 — a 2xx with NO body is a transport failure, not a parked site.
+  // Specimens (source-agreement sweep, 2026-10-13): thesandwichfair.com and
+  // lebanoncraftfair.com read "200 with a 0-byte body" → `parked_page`, while
+  // serving ~1.5 MB and ~126 KB to curl with our UA, and reading `ok` on every
+  // other sweep that day (lebanoncraftfair: `ok` 13 s later). Every genuinely
+  // parked promoter site serves 114–1,294 bytes of markup; none serves zero.
+  // So this sits BEFORE the parked check, on every path that reaches it.
+  if (input.bodyReadError || (input.html ?? "").trim().length === 0) {
+    return {
+      verdict: "unreachable",
+      signals: [input.bodyReadError ? "body-read-failed" : "empty-body"],
+      detail: input.bodyReadError
+        ? `HTTP ${status} but reading the body failed: ${input.bodyReadError}`.slice(0, 300)
+        : `HTTP ${status} with an empty body (0 visible bytes) — could not see the page`,
+    };
   }
 
   const html = input.html ?? "";

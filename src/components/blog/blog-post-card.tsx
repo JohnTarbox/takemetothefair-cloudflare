@@ -7,7 +7,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatAuthorName } from "@/lib/utils";
 import { formatDateLong } from "@/lib/datetime";
-import { cdnImage, focalPointGravity } from "@/lib/cdn-image";
+import { cdnImage, cdnSrcSet, focalPointGravity } from "@/lib/cdn-image";
 
 interface BlogPostCardProps {
   post: {
@@ -74,20 +74,15 @@ export function BlogPostCard({ post, priority = false }: BlogPostCardProps) {
               // cdn-cgi transform.
               const gravity = focalPointGravity(post.imageFocalX, post.imageFocalY);
               const cardWidths = [400, 600, 800, 1200];
-              const cardSrcSet = cardWidths
-                .map((w) =>
-                  cdnImage(post.featuredImageUrl!, {
-                    width: w,
-                    height: Math.round((w * 9) / 16),
-                    fit: "cover",
-                    gravity,
-                    format: "auto",
-                    quality: 80,
-                    onerror: "redirect",
-                  })
-                )
-                .map((url, i) => `${url} ${cardWidths[i]}w`)
-                .join(", ");
+              const cardSrcSet = cdnSrcSet(post.featuredImageUrl, cardWidths, (w) => ({
+                width: w,
+                height: Math.round((w * 9) / 16),
+                fit: "cover",
+                gravity,
+                format: "auto",
+                quality: 80,
+                onerror: "redirect",
+              }));
               const cardSrc = cdnImage(post.featuredImageUrl, {
                 width: 800,
                 height: 450,

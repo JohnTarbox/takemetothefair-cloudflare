@@ -493,3 +493,92 @@ describe("OPE-969 — the Axe Women truck, as the model actually read it", () =>
     ]);
   });
 });
+
+// ── OPE-969 rework: the routing, driven by TEXT replies through the real parser ──
+//
+// Every pipeline test above hands the pipeline an already-parsed object. These
+// hand it what a model that ignores "no markdown fence" actually sends — a
+// string — so the parser AND the routing are exercised together. Each reply
+// carries a brace after the answer: the old greedy first-{ to last-} span
+// failed to parse all of them, and they staged as salvaged/unclear instead of
+// reaching their class's path.
+describe("OPE-969 rework — fenced text replies route to their class", () => {
+  const textEnv = (...texts: string[]): BoothPipelineEnv => {
+    const run = vi.fn();
+    for (const t of texts) run.mockResolvedValueOnce({ response: t });
+    return { AI: { run }, VENDOR_ASSETS: bucket, PHOTO_VISION_ENABLED: "true" };
+  };
+  const fenced = (o: Record<string, unknown>, note = "") =>
+    "```json\n" + JSON.stringify(reply(o)) + "\n```" + note;
+
+  it("SIGNAGE: a building banner whose owner is not the subject → recorded, writes nothing else", async () => {
+    const res = await run(
+      textEnv(
+        fenced(
+          {
+            kind: "signage",
+            name: "Maine Savings FCU",
+            confidence: 0.9,
+            rationale:
+              "a sponsor banner on the exhibition hall wall; no booth of theirs is the subject",
+          },
+          "\nNote: the banner text {Maine Savings FCU} is partly cut off on the right."
+        )
+      )
+    );
+    expect(res.signageRecorded).toBe(1);
+    expect(res.visionFailures).toEqual([]);
+    expect(await actions(SIGNAGE_RECORDED_ACTION)).toMatchObject([
+      { photo_class: "signage", sign_text: "Maine Savings FCU" },
+    ]);
+    // signage ≠ presence: no vendor, no proposal, no gallery, no lineup, no flag.
+    expect(await actions(BOOTH_PROPOSED_ACTION)).toHaveLength(0);
+    expect(await actions(PERFORMER_PROPOSED_ACTION)).toHaveLength(0);
+    expect(await actions(PERFORMER_CONFIRMED_ACTION)).toHaveLength(0);
+    expect(await db.select().from(vendors)).toHaveLength(0);
+    expect(await db.select().from(eventVendors)).toHaveLength(0);
+    expect(await appearances()).toHaveLength(3);
+    expect(attachGeneralPhotos).not.toHaveBeenCalled();
+    expect(await flagged()).toBe(0);
+  });
+
+  it("PERFORMER: a named act on the event's lineup → roster-first confirm, no new appearance, no booth", async () => {
+    const res = await run(
+      textEnv(
+        fenced(
+          { kind: "performer", name: "Axe Women Loggers of Maine", confidence: 0.95 },
+          "\n{end of answer}"
+        )
+      )
+    );
+    expect(res.visionFailures).toEqual([]);
+    expect(res.performersConfirmed).toEqual([
+      { performerId: "axe", performerName: "Axe Women Loggers of Maine", photoName: "1-p.jpg" },
+    ]);
+    expect(await actions(PERFORMER_CONFIRMED_ACTION)).toMatchObject([
+      { performer_id: "axe", photo_class: "performer", appearances_on_event: 3 },
+    ]);
+    expect(await appearances()).toHaveLength(3);
+    expect(await actions(BOOTH_PROPOSED_ACTION)).toHaveLength(0);
+    expect(await db.select().from(vendors)).toHaveLength(0);
+  });
+
+  it("BOOTH: the two 2026-10-10 booths, fenced, are booth proposals with their names — not 'unclear'", async () => {
+    await run(
+      textEnv(
+        fenced({ kind: "booth", name: "Radiant Glow", confidence: 0.9 }, "\n{ }"),
+        "Here is the JSON:\n" +
+          fenced(
+            { kind: "booth", name: "Aneez Aroma Therapy", confidence: 0.9 },
+            "\nNote: {8 products max}"
+          )
+      ),
+      [photo(1), photo(2)]
+    );
+    const booths = await actions(BOOTH_PROPOSED_ACTION);
+    expect(booths.map((b) => [b.business_name, b.stage_kind, b.failure_reason])).toEqual([
+      ["Radiant Glow", "booth_below_threshold", null],
+      ["Aneez Aroma Therapy", "booth_below_threshold", null],
+    ]);
+  });
+});

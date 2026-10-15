@@ -96,6 +96,7 @@ export const HEARTBEAT_INVENTORY: Record<string, InventoryEntry> = {
       "photo-intake",
       "photo-intake-storage-record",
       "enrich-on-match-disposition",
+      "free-text-extract-record",
     ],
     note: "Writers inside this Workflow each carry their own probe; a new writer here needs one too, and this check cannot see it (see header).",
   },

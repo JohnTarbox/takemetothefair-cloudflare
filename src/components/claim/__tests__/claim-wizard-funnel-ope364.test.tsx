@@ -11,7 +11,7 @@
  * the read path compares adjacent steps by count — a duplicate is a wrong ratio.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, renderHook, screen, fireEvent, waitFor } from "@testing-library/react";
 
 const beacons: string[] = [];
 vi.mock("@/lib/analytics", () => ({
@@ -24,6 +24,10 @@ vi.mock("@/lib/analytics", () => ({
 
 import { ClaimWizard } from "../ClaimWizard";
 import { ClaimEvidenceForm } from "../ClaimEvidenceForm";
+import {
+  HUMAN_INTERACTION_EVENTS,
+  useOnFirstHumanInteraction,
+} from "@/lib/hooks/use-first-human-interaction";
 
 function wizard(isLoggedIn = true) {
   return render(
@@ -110,5 +114,55 @@ describe("OPE-364 — evidence form", () => {
     fireEvent.click(screen.getByRole("button", { name: /submit/i }));
     await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy());
     expect(beacons).toEqual([]);
+  });
+});
+
+// OPE-364 rework — claim_view fired ON MOUNT, so every JS-rendering crawler
+// walking /claim/* recorded one: 23 rows all-time became 282 in ~13h
+// (2026-10-14 23:41Z → 10-15), each a different vendor slug, nearly all desktop.
+describe("OPE-364 rework — claim_view waits for a human", () => {
+  it("render alone (what a crawler does) emits NO claim_view", async () => {
+    wizard();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(beacons).toEqual([]);
+  });
+
+  it.each(HUMAN_INTERACTION_EVENTS)("first %s emits exactly one claim_view", (type) => {
+    wizard();
+    window.dispatchEvent(new Event(type));
+    window.dispatchEvent(new Event(type));
+    window.dispatchEvent(new Event("pointerdown"));
+    window.dispatchEvent(new Event("keydown"));
+    expect(beacons).toEqual(["claim_view:wizard"]);
+  });
+
+  it("a press on a control inside the page counts (capture phase, not only window targets)", () => {
+    wizard();
+    fireEvent.pointerDown(screen.getByRole("button", { name: /continue/i }));
+    expect(beacons).toEqual(["claim_view:wizard"]);
+  });
+
+  it("interaction then Continue: view still fires once, and before interacted", () => {
+    wizard();
+    window.dispatchEvent(new Event("scroll"));
+    fireEvent.click(screen.getByRole("button", { name: /continue/i }));
+    expect(beacons).toEqual(["claim_view:wizard", "claim_form_interacted"]);
+  });
+
+  it("the hook removes its listeners on unmount — no fire after the page is gone", () => {
+    const cb = vi.fn();
+    const { unmount } = renderHook(() => useOnFirstHumanInteraction(cb));
+    unmount();
+    window.dispatchEvent(new Event("pointerdown"));
+    expect(cb).not.toHaveBeenCalled();
+  });
+
+  it("the hook's fire() and a later interaction share one guard", () => {
+    const cb = vi.fn();
+    const { result } = renderHook(() => useOnFirstHumanInteraction(cb));
+    result.current();
+    result.current();
+    window.dispatchEvent(new Event("keydown"));
+    expect(cb).toHaveBeenCalledTimes(1);
   });
 });

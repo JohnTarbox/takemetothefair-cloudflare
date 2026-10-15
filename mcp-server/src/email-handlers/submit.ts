@@ -423,7 +423,11 @@ export async function submitFetch(env: HandlerEnv, url: string): Promise<SubmitF
  * (success AND failure), so a latency distribution can be split by caller: the
  * unattended callers are the ones a longer limit would be for.
  */
-export type ExtractCaller = "email-workflow" | "holdout-sampler" | "photo-intake";
+export type ExtractCaller =
+  | "email-workflow"
+  | "email-free-text"
+  | "holdout-sampler"
+  | "photo-intake";
 
 export async function submitExtract(
   env: HandlerEnv,
@@ -556,6 +560,9 @@ export async function submitFreeTextExtract(
         // No URL — extractor handles missing url gracefully (skip
         // ticketUrl fallback that defaults to sourceUrl on AI path).
         metadata: { title: null, description: null, ogImage: null, jsonLd: null },
+        // OPE-1057 rework — name the caller so the route's timing row (OPE-1316)
+        // counts free-text extractions; they were logged as `internal-unnamed`.
+        caller: "email-free-text" satisfies ExtractCaller,
       }),
     });
   } catch (err) {

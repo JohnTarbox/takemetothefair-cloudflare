@@ -4,7 +4,7 @@ import { getEventGallery } from "@/lib/event-photos";
 import { EventGallery } from "@/components/events/EventGallery";
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import Image from "next/image";
+import Image from "@/components/ui/responsive-image";
 import {
   MapPin,
   Tag,
@@ -106,7 +106,7 @@ import { DetailPageTracker } from "@/components/DetailPageTracker";
 import { ScrollDepthTracker } from "@/components/ScrollDepthTracker";
 import { PrintBeacon } from "@/components/print/PrintBeacon";
 import { formatDateMedium } from "@/lib/datetime";
-import { cdnImage } from "@/lib/cdn-image";
+import { cdnImage, cdnSrcSet } from "@/lib/cdn-image";
 import { DERIVED_DATE_EXPLANATION, shouldShowProjectedDateCopy } from "@/lib/events/derived-date";
 import { isFairgoerSourceUrl, pickEventCta } from "@/lib/events/event-cta";
 import { getVisitorGuides } from "@/lib/blog/event-guides";
@@ -834,17 +834,12 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
                 // pixelation, and `scale-110` prevents the blur halo from
                 // showing the box edge.
                 const heroWidths = [400, 640, 800, 1200, 1600, 1942];
-                const heroSrcSet = heroWidths
-                  .map((w) =>
-                    cdnImage(event.imageUrl!, {
-                      width: w,
-                      format: "auto",
-                      quality: 80,
-                      onerror: "redirect",
-                    })
-                  )
-                  .map((url, i) => `${url} ${heroWidths[i]}w`)
-                  .join(", ");
+                const heroSrcSet = cdnSrcSet(event.imageUrl, heroWidths, (w) => ({
+                  width: w,
+                  format: "auto",
+                  quality: 80,
+                  onerror: "redirect",
+                }));
                 const heroSrc = cdnImage(event.imageUrl, {
                   width: 1600,
                   format: "auto",

@@ -68,7 +68,7 @@ import {
   type ParentDisplayInput,
   type VendorDisplayInput,
 } from "@takemetothefair/utils";
-import { cdnImage, focalPointGravity, OG_EVENT, OG_SQUARE } from "@/lib/cdn-image";
+import { cdnImage, cdnSrcSet, focalPointGravity, OG_EVENT, OG_SQUARE } from "@/lib/cdn-image";
 
 export const revalidate = 300; // Cache for 5 minutes
 
@@ -1049,9 +1049,7 @@ export default async function VendorDetailPage({ params }: Props) {
                     onerror: "redirect" as const,
                   });
                   // 200px display slot; 1x/2x DPR variants.
-                  const srcSet = [200, 400]
-                    .map((w) => `${cdnImage(vendor.logoUrl!, opts(w))} ${w}w`)
-                    .join(", ");
+                  const srcSet = cdnSrcSet(vendor.logoUrl, [200, 400], (w) => opts(w));
                   return (
                     <div
                       className="w-[200px] h-[200px] rounded-xl flex-shrink-0 relative overflow-hidden"

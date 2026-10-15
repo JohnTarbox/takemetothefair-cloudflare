@@ -5,6 +5,7 @@
  *   list_promoter_contacts       read, filterable
  *   upsert_promoter_contact      create or edit one (by promoter + email)
  *   set_promoter_contact_status  candidate / validated / stale / rejected
+ *   recapture_promoter_contacts  re-run inbound capture (only) on one inbound row
  *
  * Every write is audit-logged in `admin_actions`. ⚠️ Personal contact data:
  * ADMIN ONLY (the registrar returns for anyone else), and none of it is ever
@@ -26,6 +27,7 @@ import { adminActions, inboundEmails, promoterContacts, promoters } from "../sch
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 import { decodeHtmlEntities, jsonContent } from "../helpers.js";
+import { RECAPTURE_STEP, capturePromoterContacts } from "../inbound/promoter-contact-capture.js";
 
 const iso = (d: Date | null | undefined) => (d ? d.toISOString() : null);
 
@@ -289,6 +291,64 @@ export function registerPromoterContactTools(server: McpServer, db: Db, auth: Au
           jsonContent({
             changed: c.status !== params.status,
             contact: presentPromoterContact(row),
+          }),
+        ],
+      };
+    }
+  );
+
+  // OPE-1330 rework — re-run ONLY the capture step on an inbound row that
+  // pre-dates a capture fix. `replay_inbound_email` cannot do this: it takes
+  // new_event/failed rows only, and it re-runs the whole workflow. This calls
+  // the same `capturePromoterContacts` the workflow calls and nothing else: it
+  // reads the inbound row, the send ledger and promoters, and writes only
+  // promoter_contacts, admin_actions and a step record. It sends no email.
+  // Idempotent: a repeat finds the row heard at that time and changes nothing.
+  server.tool(
+    "recapture_promoter_contacts",
+    [
+      "OPE-1330 — re-run promoter-contact capture (only) on one existing inbound email, e.g. one received",
+      "before a capture fix. Applies the same rule as the inbound workflow: inserts a candidate/validated",
+      "contact, promotes a candidate, or bumps last_heard_at. Sends NO email and re-runs nothing else.",
+      "Idempotent. Admin only; audit-logged. Returns the capture summary (outcome, notCaptured reasons).",
+    ].join(" "),
+    {
+      inbound_email_id: z.string().min(1),
+      reason: z.string().min(3).max(500).describe("Why — recorded in admin_actions."),
+    },
+    async (params) => {
+      const [ib] = await db
+        .select({ id: inboundEmails.id, fromAddress: inboundEmails.fromAddress })
+        .from(inboundEmails)
+        .where(eq(inboundEmails.id, params.inbound_email_id))
+        .limit(1);
+      if (!ib)
+        return { content: [jsonContent({ error: "inbound_email_id not found" })], isError: true };
+      const now = new Date();
+      const summary = await capturePromoterContacts(
+        db,
+        ib.id,
+        `recapture:${actor}`,
+        now,
+        RECAPTURE_STEP
+      );
+      await db.insert(adminActions).values({
+        action: "promoter_contact.recaptured",
+        actorUserId: auth.userId ?? null,
+        targetType: "inbound_email",
+        targetId: ib.id,
+        payloadJson: JSON.stringify({ reason: params.reason, summary }),
+        createdAt: now,
+      });
+      const email = normalizeEmailAddress(ib.fromAddress);
+      const rows = email
+        ? await db.select().from(promoterContacts).where(eq(promoterContacts.email, email))
+        : [];
+      return {
+        content: [
+          jsonContent({
+            summary,
+            contacts: rows.map((r) => presentPromoterContact(r)),
           }),
         ],
       };
