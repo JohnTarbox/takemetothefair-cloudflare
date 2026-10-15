@@ -3,8 +3,8 @@
 import { useEffect, useState } from "react";
 import { isPastUnconfirmed, PAST_UNCONFIRMED_LABEL } from "@/lib/events/past-unconfirmed";
 import Link from "next/link";
-import Image from "next/image";
-import { cdnImage, focalPointGravity } from "@/lib/cdn-image";
+import Image from "@/components/ui/responsive-image";
+import { cdnImage, cdnSrcSet, focalPointGravity } from "@/lib/cdn-image";
 import { Calendar, MapPin, Tag, Store, Users, Home, Trees } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -231,20 +231,15 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
               // Eventbrite's fp-x/fp-y.
               const gravity = focalPointGravity(event.imageFocalX, event.imageFocalY);
               const cardWidths = [400, 600, 800, 1200];
-              const cardSrcSet = cardWidths
-                .map((w) =>
-                  cdnImage(event.imageUrl!, {
-                    width: w,
-                    height: Math.round((w * 9) / 16),
-                    fit: "cover",
-                    ...(gravity ? { gravity } : {}),
-                    format: "auto",
-                    quality: 80,
-                    onerror: "redirect",
-                  })
-                )
-                .map((url, i) => `${url} ${cardWidths[i]}w`)
-                .join(", ");
+              const cardSrcSet = cdnSrcSet(event.imageUrl, cardWidths, (w) => ({
+                width: w,
+                height: Math.round((w * 9) / 16),
+                fit: "cover",
+                ...(gravity ? { gravity } : {}),
+                format: "auto",
+                quality: 80,
+                onerror: "redirect",
+              }));
               const cardSrc = cdnImage(event.imageUrl, {
                 width: 800,
                 height: 450,

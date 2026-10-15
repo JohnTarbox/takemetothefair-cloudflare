@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import Link from "next/link";
-import Image from "next/image";
+import Image from "@/components/ui/responsive-image";
 import { Calendar as CalendarIcon, MapPin, X, ChevronRight, CalendarPlus } from "lucide-react";
 import { AddToCalendar } from "./AddToCalendar";
 import { formatDateRange } from "@/lib/utils";

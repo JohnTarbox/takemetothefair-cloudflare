@@ -1,5 +1,5 @@
 import type { EventDay } from "@/types";
-import { cdnImage, focalPointGravity } from "@/lib/cdn-image";
+import { cdnImage, cdnSrcSet, focalPointGravity } from "@/lib/cdn-image";
 import { formatDateOnly } from "@/lib/datetime";
 
 interface EventDayImageStripProps {
@@ -55,20 +55,15 @@ export function EventDayImageStrip({ days, className }: EventDayImageStripProps)
             quality: 80,
             onerror: "redirect",
           });
-          const srcSet = [CHIP_WIDTH, CHIP_WIDTH * 2]
-            .map(
-              (w) =>
-                `${cdnImage(day.imageUrl!, {
-                  width: w,
-                  height: Math.round((w * CHIP_HEIGHT) / CHIP_WIDTH),
-                  fit: "cover",
-                  ...(gravity ? { gravity } : {}),
-                  format: "auto",
-                  quality: 80,
-                  onerror: "redirect",
-                })} ${w}w`
-            )
-            .join(", ");
+          const srcSet = cdnSrcSet(day.imageUrl, [CHIP_WIDTH, CHIP_WIDTH * 2], (w) => ({
+            width: w,
+            height: Math.round((w * CHIP_HEIGHT) / CHIP_WIDTH),
+            fit: "cover",
+            ...(gravity ? { gravity } : {}),
+            format: "auto",
+            quality: 80,
+            onerror: "redirect",
+          }));
 
           // Caption: short date + optional notes. OPE-482 — the formatter takes
           // the "YYYY-MM-DD" string directly and anchors it at noon UTC; the

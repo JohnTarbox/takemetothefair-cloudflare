@@ -1,7 +1,7 @@
 import { NewsletterSignupBlock } from "@/components/newsletter/newsletter-signup-block";
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import Image from "next/image";
+import Image from "@/components/ui/responsive-image";
 import { Calendar, ArrowLeft, Tag, User, Pencil, Link2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -32,7 +32,7 @@ import { formatAuthorName, unsafeSlug } from "@/lib/utils";
 import { TableOfContents } from "@/components/blog/table-of-contents";
 import { getEntitiesLinkedFromPost } from "@/lib/content-links-query";
 import type { Metadata } from "next";
-import { cdnImage, OG_EVENT } from "@/lib/cdn-image";
+import { cdnImage, cdnSrcSet, OG_EVENT } from "@/lib/cdn-image";
 
 export const revalidate = 300;
 
@@ -352,17 +352,12 @@ export default async function BlogPostPage({ params }: Props) {
               // content at edges; object-contain + blurred backdrop
               // preserves the whole image regardless of source AR.
               const heroWidths = [400, 640, 800, 1200, 1600, 1942];
-              const heroSrcSet = heroWidths
-                .map((w) =>
-                  cdnImage(post.featuredImageUrl!, {
-                    width: w,
-                    format: "auto",
-                    quality: 80,
-                    onerror: "redirect",
-                  })
-                )
-                .map((url, i) => `${url} ${heroWidths[i]}w`)
-                .join(", ");
+              const heroSrcSet = cdnSrcSet(post.featuredImageUrl, heroWidths, (w) => ({
+                width: w,
+                format: "auto",
+                quality: 80,
+                onerror: "redirect",
+              }));
               const heroSrc = cdnImage(post.featuredImageUrl, {
                 width: 1600,
                 format: "auto",
