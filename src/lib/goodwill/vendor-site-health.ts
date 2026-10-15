@@ -74,8 +74,17 @@ export function classifyVendorSite(
       nameDrift: unknownDrift,
     };
   }
+  // OPE-1350 — the base classifier now calls a 2xx with an empty / unreadable
+  // body `unreachable` (it used to fall into `parked_page`, which this
+  // function never returned, so such a vendor page landed in `empty_page`).
+  // Keep the vendor outcome where it was: `empty_page`, recorded but not
+  // queued — "could not see the page".
+  const emptyBody2xx =
+    base.verdict === "unreachable" &&
+    probe.reachedOrigin &&
+    (base.signals.includes("empty-body") || base.signals.includes("body-read-failed"));
   if (
-    base.verdict === "unreachable" ||
+    (base.verdict === "unreachable" && !emptyBody2xx) ||
     base.verdict === "http_error" ||
     base.verdict === "closure_notice"
   ) {
@@ -113,8 +122,8 @@ export function classifyVendorSite(
   if (chars < MIN_MEANINGFUL_TEXT) {
     return {
       verdict: "empty_page",
-      signals: driftSignals,
-      detail: `200 but only ${chars} chars of visible text`,
+      signals: emptyBody2xx ? [...base.signals, ...driftSignals] : driftSignals,
+      detail: emptyBody2xx ? base.detail : `200 but only ${chars} chars of visible text`,
       nameDrift,
     };
   }

@@ -1,6 +1,7 @@
 /**
  * The one HTTP probe every url-health sweep uses (OPE-868 promoters, OPE-1270
- * vendors). Moved here verbatim from the promoter sweep route so a second sweep
+ * vendors, and — since OPE-1350 — the OPE-988 source-agreement sweep, which had
+ * its own verbatim copy carrying the same swallowed-body bug). Moved here verbatim from the promoter sweep route so a second sweep
  * cannot drift from it — a fix to how we fetch reaches both.
  */
 import { SCRAPER_USER_AGENT } from "@takemetothefair/constants";
@@ -13,6 +14,13 @@ export interface Probe {
   html: string | null;
   /** OPE-988 — where redirects left us; a hop to another domain is a takeover signal. */
   finalUrl?: string | null;
+  /** OPE-1350 — the response arrived but its body could not be read. */
+  bodyReadError?: string | null;
+}
+
+function describeBodyError(e: unknown): string {
+  if (e instanceof Error) return `${e.name}: ${e.message}`.slice(0, 200);
+  return String(e).slice(0, 200) || "unknown body read error";
 }
 
 export async function probe(url: string): Promise<Probe> {
@@ -32,9 +40,26 @@ export async function probe(url: string): Promise<Probe> {
     // its event text past any fixed cap (easterngunexpo.com reads `ok` whole and
     // `no_event_signal` cut at 300 KB, measured). Only a non-2xx body, which
     // feeds nothing but the closure check, is capped.
-    const body = await res.text().catch(() => "");
+    //
+    // OPE-1350 — a body read that THROWS is recorded, not swallowed. It used
+    // to `.catch(() => "")`, so the abort timer firing mid-body (it covers the
+    // read as well as the headers) or a reset stream became a 0-byte 200 —
+    // which the classifier then called a parked site.
+    let body = "";
+    let bodyReadError: string | null = null;
+    try {
+      body = await res.text();
+    } catch (e) {
+      bodyReadError = describeBodyError(e);
+    }
     const html = (res.ok ? body : body.slice(0, 300_000)) || null;
-    return { reachedOrigin: true, status: res.status, html, finalUrl: res.url || null };
+    return {
+      reachedOrigin: true,
+      status: res.status,
+      html,
+      finalUrl: res.url || null,
+      bodyReadError,
+    };
   } catch {
     return { reachedOrigin: false, status: null, html: null };
   } finally {
