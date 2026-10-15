@@ -7,6 +7,7 @@ import { venues } from "@/lib/db/schema";
 import { and, eq, isNull, ne } from "drizzle-orm";
 import { geocodeAddress } from "@/lib/google-maps";
 import { logError } from "@/lib/logger";
+import { flagVenuePinIfFarFromTown } from "@/lib/venues/pin-sanity";
 
 export const POST = withAuth({ role: "ADMIN" }, async ({ request, db, session }) => {
   const env = getCloudflareEnv();
@@ -21,6 +22,7 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db, session })
 
     let success = 0;
     let failed = 0;
+    let flagged = 0;
 
     for (const venue of missingCoords) {
       const result = await geocodeAddress(
@@ -54,6 +56,19 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db, session })
           after: updates,
           note: "venues geocode-batch sweep",
         });
+        // OPE-1079 — same write-time pin check as venues_geocode. Flag only.
+        if (
+          await flagVenuePinIfFarFromTown(db, {
+            venueId: venue.id,
+            city: venue.city,
+            state: venue.state,
+            lat: result.lat,
+            lng: result.lng,
+            source: "geocode-batch",
+          })
+        ) {
+          flagged++;
+        }
         success++;
       } else {
         failed++;
@@ -63,7 +78,7 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db, session })
       await new Promise((r) => setTimeout(r, 100));
     }
 
-    return NextResponse.json({ success, failed, total: missingCoords.length });
+    return NextResponse.json({ success, failed, flagged, total: missingCoords.length });
   } catch (error) {
     await logError(db, {
       message: "Batch geocode error",

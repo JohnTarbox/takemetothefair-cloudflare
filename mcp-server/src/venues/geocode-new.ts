@@ -71,6 +71,9 @@ export interface NewVenueGeocodeVerdict {
   /** Google's top hit, so a reviewer can confirm a low-confidence match and
    *  re-run `venues_geocode` with `force` — the `dd7c30cb` candidate was right. */
   candidate: string | null;
+  /** OPE-1079 — the gate stored a pin but flagged it as far from its own town
+   *  (`venue.pin.far_from_town`). Pinned, and worth a human look. */
+  pinWarning?: string | null;
 }
 
 interface GateResultRow {
@@ -79,6 +82,7 @@ interface GateResultRow {
   candidate?: string;
   after?: { lat?: number | null; lng?: number | null };
   duplicate?: { venue_id?: string; name?: string };
+  pin_warning?: string;
 }
 
 /** Pure: read the gate endpoint's JSON body into a verdict. Exported for tests. */
@@ -99,7 +103,13 @@ export function verdictFromGateBody(body: unknown): NewVenueGeocodeVerdict {
       (row.status === "duplicate-with" && row.duplicate?.name
         ? `same Google place as venue "${row.duplicate.name}" (${row.duplicate.venue_id}) — a merge_venue candidate`
         : row.status));
-  return { pinned, status: row.status, reason, candidate: row.candidate ?? null };
+  return {
+    pinned,
+    status: row.status,
+    reason,
+    candidate: row.candidate ?? null,
+    ...(row.pin_warning ? { pinWarning: row.pin_warning } : {}),
+  };
 }
 
 export async function geocodeNewVenueViaMainApp(

@@ -78,6 +78,12 @@ export interface GeocodeOutcome {
    * Google Place. A ready-made `merge_venue` candidate.
    */
   duplicate?: { venue_id: string; name: string; slug: string };
+  /**
+   * OPE-1079 — set when the pin just written is implausibly far from the other
+   * venues in the same city+state. The pin IS stored (flag, never block); this
+   * says a human should look, and a `venue.pin.far_from_town` row records it.
+   */
+  pin_warning?: string;
 }
 
 /**
