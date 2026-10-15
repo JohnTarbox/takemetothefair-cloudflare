@@ -32,6 +32,7 @@ import {
   events,
   eventApplications,
   eventDays,
+  eventInternalNotes,
   eventVendors,
   promoters,
   vendors,
@@ -171,6 +172,14 @@ export function registerAdminEventReadTools(server: McpServer, db: Db, auth: Aut
           isError: true,
         };
       }
+
+      // OPE-1151 — the event's PRIVATE notes (a separate table so no public
+      // full-row events select can carry them). Admin read only.
+      const [internalNotesRow] = await db
+        .select({ notes: eventInternalNotes.notes })
+        .from(eventInternalNotes)
+        .where(eq(eventInternalNotes.eventId, event.id))
+        .limit(1);
 
       const vendorRows = await db
         .select({ id: eventVendors.id })
@@ -416,6 +425,9 @@ export function registerAdminEventReadTools(server: McpServer, db: Db, auth: Aut
             primary_audience: event.primaryAudience,
             public_access: event.publicAccess,
             access_notes: event.accessNotes,
+            // OPE-1151 — private; never rendered. Returned so update_event's
+            // internal_notes has a reader (OPE-534 parity).
+            internal_notes: internalNotesRow?.notes ?? null,
             registration_required: event.registrationRequired,
             recurrence_rule: event.recurrenceRule,
             discontinuous_dates: event.discontinuousDates,

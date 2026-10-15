@@ -597,6 +597,15 @@ const SCHEMA_SQL = `
     changed_by TEXT
   );
 
+  -- OPE-1151 (drizzle/0367) — private per-event notes. Separate table so no
+  -- full-row events select can carry it onto a public surface.
+  CREATE TABLE event_internal_notes (
+    event_id TEXT PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE,
+    notes TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+
   CREATE TABLE event_slug_history (
     id TEXT PRIMARY KEY,
     event_id TEXT NOT NULL,
