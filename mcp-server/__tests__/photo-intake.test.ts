@@ -476,6 +476,118 @@ describe("resolvePhotoEvent (OPE-203, real SQLite)", () => {
   });
 });
 
+// OPE-1354 — candidates are selected on date OVERLAP with the photo, not on
+// start-date proximity. Specimen: held email 2a606234 (a 2026-09-04 photo in
+// Kingfield) vs Kingfield First Friday ArtWalk 31930b5d (06-05 -> 10-02, with
+// event_days on each first Friday). The old `start_date >= photo - 60d` floor
+// never loaded the ArtWalk at all.
+describe("resolvePhotoEvent — season-long events (OPE-1354)", () => {
+  const KINGFIELD = { latitude: 44.959454, longitude: -70.154572 };
+  const exifAt = (date: string) => async (): Promise<ExifData> => ({
+    gps: KINGFIELD,
+    takenOnLocalDate: date,
+  });
+
+  async function seedVenue(db: Db) {
+    await db.insert(promoters).values({
+      id: "p1",
+      companyName: "Kingfield Arts",
+      slug: "kingfield-arts" as never,
+    } as never);
+    await db.insert(venues).values({
+      id: "v1",
+      name: "Downtown Kingfield",
+      slug: "downtown-kingfield" as never,
+      address: "Main St",
+      city: "Kingfield",
+      state: "ME",
+      zip: "04947",
+      latitude: KINGFIELD.latitude,
+      longitude: KINGFIELD.longitude,
+    } as never);
+  }
+
+  async function seedEvent(
+    db: Db,
+    id: string,
+    start: string,
+    end: string | null,
+    days: string[] = []
+  ) {
+    await db.insert(events).values({
+      id,
+      name: `Event ${id}`,
+      slug: `event-${id}` as never,
+      promoterId: "p1",
+      venueId: "v1",
+      status: "APPROVED",
+      startDate: new Date(`${start}T12:00:00Z`),
+      endDate: end ? new Date(`${end}T12:00:00Z`) : null,
+    } as never);
+    if (days.length) {
+      await db
+        .insert(eventDays)
+        .values(days.map((d, i) => ({ id: `${id}-d${i}`, eventId: id, date: d })) as never);
+    }
+  }
+
+  it("matches a range-only season-long event that started >60 days before the photo", async () => {
+    const { db } = createTestDb();
+    await seedVenue(db as unknown as Db);
+    await seedEvent(db as unknown as Db, "artwalk", "2026-06-05", "2026-10-02");
+    const { resolution } = await resolvePhotoEvent(db as unknown as Db, [], exifAt("2026-09-04"));
+    expect(resolution).toMatchObject({
+      status: "resolved",
+      eventId: "artwalk",
+      method: "exif",
+      matchedDate: "2026-09-04",
+    });
+  });
+
+  it("matches the specimen shape: season-long with event_days on the photo's date", async () => {
+    const { db } = createTestDb();
+    await seedVenue(db as unknown as Db);
+    await seedEvent(db as unknown as Db, "artwalk", "2026-06-05", "2026-10-02", [
+      "2026-06-05",
+      "2026-07-03",
+      "2026-08-07",
+      "2026-09-04",
+      "2026-10-02",
+    ]);
+    const hit = await resolvePhotoEvent(db as unknown as Db, [], exifAt("2026-09-04"));
+    expect(hit.resolution).toMatchObject({ status: "resolved", eventId: "artwalk" });
+    // event_days stays authoritative: inside the range but not an event day.
+    const miss = await resolvePhotoEvent(db as unknown as Db, [], exifAt("2026-09-05"));
+    expect(miss.resolution).toMatchObject({ status: "held", reason: "no-event-on-date" });
+  });
+
+  it("does NOT match an event that ended before the photo was taken", async () => {
+    const { db } = createTestDb();
+    await seedVenue(db as unknown as Db);
+    await seedEvent(db as unknown as Db, "summer", "2026-06-05", "2026-08-28");
+    const { resolution } = await resolvePhotoEvent(db as unknown as Db, [], exifAt("2026-09-04"));
+    expect(resolution).toMatchObject({ status: "held", reason: "no-event-on-date" });
+  });
+
+  it("does NOT match an event that starts after the photo was taken", async () => {
+    const { db } = createTestDb();
+    await seedVenue(db as unknown as Db);
+    await seedEvent(db as unknown as Db, "fall", "2026-09-10", "2026-12-20");
+    await seedEvent(db as unknown as Db, "single", "2026-09-05", null);
+    const { resolution } = await resolvePhotoEvent(db as unknown as Db, [], exifAt("2026-09-04"));
+    expect(resolution).toMatchObject({ status: "held", reason: "no-event-on-date" });
+  });
+
+  it("a season-long event and a one-day show on the same date hold as ambiguous", async () => {
+    const { db } = createTestDb();
+    await seedVenue(db as unknown as Db);
+    await seedEvent(db as unknown as Db, "artwalk", "2026-06-05", "2026-10-02");
+    await seedEvent(db as unknown as Db, "craft", "2026-09-04", null);
+    const { resolution } = await resolvePhotoEvent(db as unknown as Db, [], exifAt("2026-09-04"));
+    expect(resolution).toMatchObject({ status: "held", reason: "ambiguous-multiple-events" });
+  });
+});
+
 describe("photo-intake replies (OPE-202/203)", () => {
   it("ack reply names the count + carries the EXIF full-size tip", () => {
     const msg = buildReply("photo-intake-ack", "j@example.com", {

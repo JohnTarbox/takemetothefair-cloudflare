@@ -35,7 +35,7 @@
  */
 import { events, eventDays, venues, inboundEmails } from "../schema.js";
 import { getDb, type Db } from "../db.js";
-import { and, eq, inArray, isNull, isNotNull, gte, lte, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, isNotNull, gte, lte, or, sql } from "drizzle-orm";
 import type { HandlerFn, HandlerEnv, HandlerResult } from "./types.js";
 import type { InboundEmail } from "@takemetothefair/db-schema";
 import { parsePlusSegment } from "../email-intents.js";
@@ -70,11 +70,13 @@ export interface AttachmentRef {
 const MILES_PER_DEG_LAT = 69;
 
 /**
- * Widest event span we'll consider when looking back for an occurrence that
- * contains the photo's date. Mirrors the 60-day cap in `expandEventDates`, so
- * the SQL floor can never exclude an event the resolver would have matched.
+ * OPE-1354 — slack on each side of the photo's local date when selecting
+ * candidate events by OVERLAP. One day absorbs the local-date vs stored-UTC
+ * skew (dates are stored at UTC midnight or noon; the photo date is local).
+ * The resolver still requires an exact local-date hit, so the slack only
+ * widens the candidate set, never the match.
  */
-const MAX_EVENT_SPAN_DAYS = 60;
+const OVERLAP_SLACK_MS = 86_400_000;
 
 export function parseRefs(attachmentRefs: string | null): AttachmentRef[] {
   if (!attachmentRefs) return [];
@@ -403,10 +405,13 @@ async function loadCandidateEvents(
   if (venueIds.length === 0) return [];
   const dayMs = Date.parse(`${localDate}T00:00:00Z`);
   if (Number.isNaN(dayMs)) return [];
-  // An event containing this date must have started within the last
-  // MAX_EVENT_SPAN_DAYS and not after it.
-  const lo = new Date(dayMs - MAX_EVENT_SPAN_DAYS * 86_400_000);
-  const hi = new Date(dayMs + 86_400_000);
+  // OPE-1354 — select on OVERLAP with the photo's date, not start-date
+  // proximity. This read `start_date >= day - 60d` until 2026-10-15, so a
+  // season-long event (Kingfield First Friday ArtWalk: 06-05 → 10-02, a
+  // 09-04 photo) was never a candidate however good the venue pin was. The
+  // set stays bounded by GEOGRAPHY: `venueIds` is already the radius result.
+  const lo = new Date(dayMs - OVERLAP_SLACK_MS);
+  const hi = new Date(dayMs + OVERLAP_SLACK_MS);
 
   // OPE-241 — chunked: `venueIds` is bounded by GEOGRAPHY (a radius), not by a
   // query limit, so a dense metro can put 100+ venues in range and blow D1's
@@ -429,8 +434,10 @@ async function loadCandidateEvents(
           inArray(events.venueId, batch),
           inArray(events.status, [...PUBLIC_EVENT_STATUSES]),
           isNull(events.mergedInto),
-          gte(events.startDate, lo),
-          lte(events.startDate, hi)
+          lte(events.startDate, hi),
+          // Still running on (or ended within the slack of) the photo date.
+          // A NULL end_date is a single-day event: its start is its end.
+          or(gte(events.endDate, lo), and(isNull(events.endDate), gte(events.startDate, lo)))
         )
       )
   );
@@ -460,7 +467,14 @@ async function loadCandidateEvents(
     name: r.name,
     slug: r.slug,
     venueId: r.venueId,
-    dates: expandEventDates(daysByEvent.get(r.id) ?? [], r.startDate ?? null, r.endDate ?? null),
+    // OPE-1354 — expand range-only events AROUND the photo date, so the
+    // 60-day walk cap can't cut off a long run before it reaches the photo.
+    dates: expandEventDates(
+      daysByEvent.get(r.id) ?? [],
+      r.startDate ?? null,
+      r.endDate ?? null,
+      localDate
+    ),
   }));
 }
 
