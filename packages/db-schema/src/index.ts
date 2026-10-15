@@ -322,10 +322,17 @@ export const promoters = sqliteTable(
     }),
     // JSON snapshot of which target fields are filled: {hero,logo,description,socials,contact}.
     enrichmentCoverage: text("enrichment_coverage"),
-    // OPE-962 (drizzle/0283) — consecutive successful fetches that staged ZERO
-    // candidates. Reset to 0 by any attempt that stages one, and by a website
-    // change. At PROMOTER_ENRICHMENT_EXHAUST_AFTER the promoter becomes EXHAUSTED.
+    // OPE-962 (drizzle/0283) — consecutive successful fetches (dry-run or live)
+    // that staged ZERO candidates. TELEMETRY ONLY since OPE-1279: it never
+    // exhausted a row in prod, because a site re-proposing the same logo/phone
+    // every run reset it. EXHAUSTED is decided by enrichmentEmptyAttempts.
     enrichmentZeroYieldStreak: integer("enrichment_zero_yield_streak").notNull().default(0),
+    // OPE-1279 (drizzle/0365) — consecutive LIVE (dry_run=false) attempts that
+    // applied no field AND staged no NEW candidate (a (field, value) this
+    // promoter never had a candidate row for). Reset to 0 by any applied field
+    // or new candidate, by a website change, and by update_promoter
+    // requeue_enrichment. At PROMOTER_ENRICHMENT_EXHAUST_AFTER → EXHAUSTED.
+    enrichmentEmptyAttempts: integer("enrichment_empty_attempts").notNull().default(0),
     /**
      * When a render last WROTE a field to this row. NOT "when did we last look".
      *
@@ -7101,6 +7108,8 @@ export * from "./promoter-outreach-queue";
 export * from "./promoter-outreach-metrics";
 export * from "./promoter-outreach-state";
 export * from "./promoter-reply-link";
+// OPE-1279 — the shared appliable-gap SQL (queue tool + coverage route).
+export * from "./promoter-appliable-gap";
 // OPE-1330 — promoter contacts: domain verification + the one write rule.
 export * from "./promoter-contacts";
 export * from "./gallery-photos";

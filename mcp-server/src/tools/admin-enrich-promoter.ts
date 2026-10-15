@@ -38,7 +38,7 @@ export function registerEnrichPromoterTool(
 
   server.tool(
     "enrich_promoter",
-    "Enrich a single promoter from its own website, synchronously. Renders the promoter's `website` via Browser Rendering, extracts fill-empty-only signals (og:image classified into a full-bleed hero band vs a square logo, contact email/phone, social links, description), and STAGES the proposals in promoter_enrichment_candidates for review. Returns the staged candidates inline. dry_run defaults true (nothing touches the live promoter row); pass dry_run=false to auto-apply high-confidence fills (hero, single tel/mailto contact, recognized social domains, non-placeholder description) and recompute enrichment_status/coverage. Use for spot-checking the pipeline on a hand-picked promoter or re-enriching after a rule change. Admin only.",
+    'Enrich a single promoter from its own website, synchronously. Renders the promoter\'s `website` via Browser Rendering, extracts fill-empty-only signals (og:image classified into a full-bleed hero band vs a square logo, contact email/phone, social links, description), and STAGES the proposals in promoter_enrichment_candidates for review. Returns the staged candidates inline. dry_run defaults true (nothing touches the live promoter row); pass dry_run=false to auto-apply high-confidence fills (hero, single tel/mailto contact, recognized social domains, non-placeholder description) and recompute enrichment_status/coverage. OPE-1279: a live run that applies nothing AND stages no new candidate (re-staging a value already proposed is not new) counts as empty; the second consecutive empty live run moves the promoter to EXHAUSTED (outcome "exhausted"), which takes it out of the queue; re-queue with update_promoter requeue_enrichment. Dry runs never count. Use for spot-checking the pipeline on a hand-picked promoter or re-enriching after a rule change. Admin only.',
     {
       promoter_id: z.string().min(1).describe("Promoter ID (UUID)."),
       dry_run: z
@@ -121,6 +121,11 @@ export function registerEnrichPromoterTool(
             blocked_reason: summary.blockedReason ?? null,
             applied_fields: summary.appliedFields ?? [],
             candidate_count: candidates.length,
+            // OPE-1279 — re-staging an already-seen (field, value) is not new.
+            new_candidate_count: summary.newCandidateCount ?? null,
+            // Live runs only: consecutive attempts with nothing applied and nothing
+            // new. outcome "exhausted" = this run moved the promoter to EXHAUSTED.
+            empty_attempts: summary.emptyAttempts ?? null,
             candidates: candidates.map((c) => ({
               ...c,
               flags: JSON.parse(c.flags) as string[],
