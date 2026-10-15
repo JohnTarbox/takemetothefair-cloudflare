@@ -212,6 +212,11 @@ const SCHEMA_SQL = `
     edition_key text,
     UNIQUE(slug)
   );
+  -- OPE-1352 — mergeEvents repoints inbound_emails.resulting_event_id.
+  CREATE TABLE inbound_emails (
+    id text PRIMARY KEY,
+    resulting_event_id text
+  );
   CREATE TABLE promoters (
     id text PRIMARY KEY,
     user_id text,
@@ -525,5 +530,64 @@ describe("executeMerge — both events share ONE series (the OPE-423 shape)", ()
       .prepare(`SELECT new_slug FROM series_slug_history WHERE old_slug = ?`)
       .get(DUP_SLUG) as { new_slug: string } | undefined;
     expect(hist?.new_slug).toBe(KEEPER_SLUG);
+  });
+});
+
+describe("executeMerge — the inbound email follows the keeper (OPE-1352)", () => {
+  // Shares this file's real-SQLite fixture: the repoint is one more write in the
+  // same merge, and a mock db reads [] for the inbound select and would pass
+  // whether or not the merge ever called it.
+  beforeEach(() => {
+    seedSeries(DUP_SERIES, DUP_SLUG);
+    seedEvent(KEEPER_ID, KEEPER_SLUG, DUP_SERIES);
+    seedEvent(DUP_ID, DUP_SLUG, DUP_SERIES);
+    raw
+      .prepare(`INSERT INTO inbound_emails (id, resulting_event_id) VALUES (?,?), (?,?), (?,?)`)
+      .run("in-dup", DUP_ID, "in-keeper", KEEPER_ID, "in-none", null);
+  });
+
+  const pointer = (id: string) =>
+    (
+      raw.prepare(`SELECT resulting_event_id AS r FROM inbound_emails WHERE id = ?`).get(id) as {
+        r: string | null;
+      }
+    ).r;
+
+  it("repoints the duplicate's inbound to the keeper and leaves the others alone", async () => {
+    await executeMerge(db as never, "events", KEEPER_ID, DUP_ID, "admin-1");
+    expect(pointer("in-dup")).toBe(KEEPER_ID);
+    expect(pointer("in-keeper")).toBe(KEEPER_ID);
+    expect(pointer("in-none")).toBeNull();
+  });
+
+  it("keeps the original pointer auditable, and names it in the event.merge row", async () => {
+    await executeMerge(db as never, "events", KEEPER_ID, DUP_ID, "admin-1");
+    const audit = raw
+      .prepare(
+        `SELECT actor_user_id, target_type, target_id, payload_json FROM admin_actions
+         WHERE action = 'inbound_email.resulting_event_repoint'`
+      )
+      .all() as Array<{
+      actor_user_id: string;
+      target_type: string;
+      target_id: string;
+      payload_json: string;
+    }>;
+    expect(audit).toHaveLength(1);
+    expect(audit[0]).toMatchObject({
+      actor_user_id: "admin-1",
+      target_type: "inbound_email",
+      target_id: "in-dup",
+    });
+    expect(JSON.parse(audit[0].payload_json)).toEqual({
+      from_event_id: DUP_ID,
+      to_event_id: KEEPER_ID,
+      named_keeper_id: KEEPER_ID,
+      reason: "merged_into",
+    });
+    const merge = raw
+      .prepare(`SELECT payload_json FROM admin_actions WHERE action = 'event.merge'`)
+      .get() as { payload_json: string };
+    expect(JSON.parse(merge.payload_json).inboundEmailsRepointed).toEqual(["in-dup"]);
   });
 });

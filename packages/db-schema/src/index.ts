@@ -7132,3 +7132,4 @@ export const eventCategoryMigrationLog = sqliteTable(
 export * from "./citation-supersede-scope";
 export * from "./promoter-merge-children";
 export * from "./venue-merge-children";
+export * from "./inbound-duplicate-repoint";

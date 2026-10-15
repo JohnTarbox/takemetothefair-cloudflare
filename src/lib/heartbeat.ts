@@ -17,7 +17,7 @@
  *    flag is never a false RED).
  *  - auto-file dedup reuses OPE-76's `cpi_signal_filings` ledger — nothing new.
  */
-import { and, eq, inArray, isNotNull, notInArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, notInArray, or, sql } from "drizzle-orm";
 import {
   analyticsEvents,
   entityWriteLog,
@@ -2115,6 +2115,32 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
           eq(errorLogs.message, AI_EXTRACTION_OK_MESSAGE)
         )
       ),
+  },
+  {
+    // OPE-1352 — an inbound email never keeps naming an event that lost a
+    // duplicate adjudication. All three writers (update_event_status,
+    // flag-queue reject, mergeEvents) repoint via repointInboundEmailsToKeeper;
+    // a fourth writer that forgets to is exactly what this sees.
+    //
+    // An invariant, read as demand-conditional evidence: no inbound pointing at
+    // a `merged_into` / `rejected_as_duplicate_of` row reads healthy NOW; any
+    // such row starts the clock at the loser's updated_at (≈ the adjudication).
+    //
+    // DORMANT (drizzle/0363, enabled_at NULL): 18 pre-fix rows exist in prod
+    // until the one-time backfill runs. Arm it the day the backfill lands.
+    name: "inbound-follows-duplicate-keeper",
+    ownerOpe: "OPE-1352",
+    label: "inbound emails repointed off rejected/merged duplicates",
+    priority: "P1",
+    expectedWindowHours: 24,
+    lastEvidenceAt: async (db) => {
+      const [r] = await db
+        .select({ t: sql<number | null>`min(${events.updatedAt})` })
+        .from(inboundEmails)
+        .innerJoin(events, eq(events.id, inboundEmails.resultingEventId))
+        .where(or(isNotNull(events.mergedInto), isNotNull(events.rejectedAsDuplicateOf)));
+      return r?.t != null ? new Date(Number(r.t) * 1000) : new Date();
+    },
   },
 ];
 

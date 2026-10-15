@@ -67,6 +67,11 @@ const SCHEMA_SQL = `
     payload_json TEXT,
     created_at INTEGER NOT NULL
   );
+  -- OPE-1352 — the reject repoints inbound_emails.resulting_event_id.
+  CREATE TABLE inbound_emails (
+    id TEXT PRIMARY KEY,
+    resulting_event_id TEXT
+  );
   CREATE TABLE tunable_thresholds (
     key TEXT PRIMARY KEY,
     value REAL NOT NULL,
@@ -387,6 +392,37 @@ describe("reject as duplicate — the OPE-450 adjudication, written explicitly",
         .get()
     ).toEqual({ status: "REJECTED", rejected_as_duplicate_of: "c1e8273c", merged_into: null });
     expect(await ids()).toEqual(["bd1b1f4c"]);
+  });
+
+  it("OPE-1352: repoints the inbound that produced the row to the keeper, auditably", async () => {
+    raw
+      .prepare(`INSERT INTO inbound_emails (id, resulting_event_id) VALUES (?,?), (?,?)`)
+      .run("in-loser", "77b95478", "in-other", "bd1b1f4c");
+    await rejectFlaggedAsDuplicate(db as never, {
+      eventId: "77b95478",
+      candidateId: "c1e8273c",
+      actorUserId: "admin-1",
+      now: NOW,
+    });
+    const ptr = (id: string) =>
+      (
+        raw.prepare(`SELECT resulting_event_id AS r FROM inbound_emails WHERE id = ?`).get(id) as {
+          r: string;
+        }
+      ).r;
+    expect(ptr("in-loser")).toBe("c1e8273c");
+    expect(ptr("in-other")).toBe("bd1b1f4c");
+    const audit = raw
+      .prepare(
+        `SELECT target_id, payload_json FROM admin_actions WHERE action = 'inbound_email.resulting_event_repoint'`
+      )
+      .all() as Array<{ target_id: string; payload_json: string }>;
+    expect(audit.map((a) => a.target_id)).toEqual(["in-loser"]);
+    expect(JSON.parse(audit[0].payload_json)).toMatchObject({
+      from_event_id: "77b95478",
+      to_event_id: "c1e8273c",
+      reason: "rejected_as_duplicate_of",
+    });
   });
 });
 
