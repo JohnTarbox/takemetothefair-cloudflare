@@ -29,6 +29,9 @@ const SCHEMA_SQL = `
   CREATE TABLE inbound_emails (
     id TEXT PRIMARY KEY, received_at INTEGER NOT NULL, reply_kind TEXT
   );
+  CREATE TABLE heartbeat_probes (
+    probe_name TEXT PRIMARY KEY, enabled_at INTEGER, updated_at INTEGER
+  );
 `;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -53,6 +56,10 @@ const count = (table: string) =>
 beforeEach(() => {
   raw = new Database(":memory:");
   raw.exec(SCHEMA_SQL);
+  // Armed before every specimen below, as migration 0368 arms it at ship time.
+  raw
+    .prepare(`INSERT INTO heartbeat_probes (probe_name, enabled_at) VALUES (?, ?)`)
+    .run("enrich-on-match-disposition", T("2026-10-05T00:00:00Z"));
   db = drizzle(raw, { schema });
 });
 
@@ -84,6 +91,24 @@ describe("OPE-1152 enrich-on-match-disposition probe", () => {
     seedAction("x", "dedup.would_enrich", "2026-10-11T00:00:00Z"); // not evidence
     expect([count("inbound_emails"), count("admin_actions")]).toEqual([1, 2]);
     expect((await probe.lastEvidenceAt(db))?.toISOString()).toBe("2026-10-10T12:00:00.000Z");
+  });
+});
+
+describe("OPE-1152 probe — demand floored at enabled_at", () => {
+  it("an already-exists reply from BEFORE the probe was armed is not demand (no false RED on ship)", async () => {
+    seedReply("old", "2026-10-04T00:42:25Z", "already-exists"); // prod's newest pre-ship match
+    seedAction("a0", ENRICH_PROPOSED_ACTION, "2026-08-26T03:37:47Z");
+    expect([count("inbound_emails"), count("admin_actions"), count("heartbeat_probes")]).toEqual([
+      1, 1, 1,
+    ]);
+    expect(isNow(await probe.lastEvidenceAt(db))).toBe(true);
+  });
+
+  it("a dormant/unseeded probe sees no demand", async () => {
+    raw.exec(`DELETE FROM heartbeat_probes`);
+    seedReply("i1", "2026-10-10T12:00:00Z", "already-exists");
+    expect(count("heartbeat_probes")).toBe(0);
+    expect(isNow(await probe.lastEvidenceAt(db))).toBe(true);
   });
 });
 

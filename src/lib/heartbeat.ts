@@ -2047,11 +2047,17 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     priority: "P1",
     expectedWindowHours: 72,
     lastEvidenceAt: async (db) => {
+      // Demand counts only replies received after this probe was armed: the
+      // newest pre-ship `already-exists` (2026-10-04) predates the writer, so
+      // without the floor the probe would read red on its first evaluation.
       const demand = await maxTs(
         db,
         inboundEmails,
         inboundEmails.receivedAt,
-        eq(inboundEmails.replyKind, "already-exists")
+        and(
+          eq(inboundEmails.replyKind, "already-exists"),
+          sql`${inboundEmails.receivedAt} > coalesce((select ${heartbeatProbes.enabledAt} from ${heartbeatProbes} where ${heartbeatProbes.probeName} = 'enrich-on-match-disposition'), 4102444800)`
+        )
       );
       const evidence = await maxTs(
         db,
