@@ -28,6 +28,8 @@
  * it is a factual claim about a real business we'd be publishing.
  */
 
+import { extractJsonObject, extractJsonValue } from "../model-json.js";
+
 /**
  * Vision model. Kept as a constant (not inlined) so it is swappable in one
  * place, mirroring WORKERS_AI_MODEL's role for the text model. NOT the same
@@ -464,27 +466,22 @@ export function parseVisionReply(raw: unknown): BoothIdentification {
   if (!text.trim()) return unidentified(`empty-text raw=${describeRawShape(raw)}`);
 
   // Models often wrap JSON in prose or a ```json fence despite instructions.
-  // Take the outermost {...} span rather than trusting the whole string.
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start === -1 || end === -1 || end <= start) {
+  // OPE-969 rework — the first BALANCED top-level object (fence stripped,
+  // string-aware), not the greedy first-`{`-to-last-`}` span: that span
+  // swallowed any brace AFTER the answer (a "Note: {…}" line, a second object)
+  // and then failed to parse a reply whose answer was complete.
+  const found = extractJsonValue(text, "object");
+  if (!found.ok && found.reason === "no-json-span") {
     // Quote generously AND state the true length. On the first live occurrence
     // the quote stopped at 120 chars mid-word, which looked exactly like the
     // model being cut off — the log's own limit was mistaken for the evidence.
     const t = text.trim();
     return withSalvage(unidentified(`no-json-span len=${t.length} text="${t.slice(0, 240)}"`), t);
   }
-
-  let obj: Record<string, unknown>;
-  try {
-    obj = JSON.parse(text.slice(start, end + 1)) as Record<string, unknown>;
-  } catch (e) {
-    return withSalvage(
-      unidentified(`json-parse-failed ${e instanceof Error ? e.message : String(e)}`),
-      text
-    );
+  if (!found.ok) {
+    return withSalvage(unidentified(`json-parse-failed ${found.detail ?? ""}`.trim()), text);
   }
-  if (!obj || typeof obj !== "object") return unidentified("parsed-not-an-object");
+  const obj = found.value as Record<string, unknown>;
 
   return fromParsedObject(obj);
 }
@@ -742,16 +739,7 @@ export function presencePrompt(name: string): string {
 export function parsePresenceReply(raw: unknown): SignMount | null {
   const resp = (raw as { response?: unknown })?.response ?? raw;
   let obj: unknown = resp;
-  if (typeof resp === "string") {
-    const start = resp.indexOf("{");
-    const end = resp.lastIndexOf("}");
-    if (start === -1 || end <= start) return null;
-    try {
-      obj = JSON.parse(resp.slice(start, end + 1));
-    } catch {
-      return null;
-    }
-  }
+  if (typeof resp === "string") obj = extractJsonObject(resp);
   const v = (obj as { mounted_on?: unknown } | null)?.mounted_on;
   return typeof v === "string" && (SIGN_MOUNTS as readonly string[]).includes(v)
     ? (v as SignMount)

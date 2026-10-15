@@ -14,6 +14,7 @@
  * write unreviewed. Nothing here touches the database.
  */
 import { VISION_MODEL } from "./vision.js";
+import { extractJsonValue } from "../model-json.js";
 
 export const POSTER_PROMPT = `You are looking at an EVENT POSTER or flyer (a fair, festival, bazaar, market, show).
 
@@ -89,15 +90,14 @@ export function parsePosterReply(raw: unknown): PosterReading {
   if (raw && typeof raw === "object" && "response" in raw)
     obj = (raw as { response: unknown }).response;
   if (typeof obj === "string") {
-    const s = obj.trim();
-    const start = s.indexOf("{");
-    const end = s.lastIndexOf("}");
-    if (start === -1 || end <= start) return { ...EMPTY, failure_reason: "no-json-in-reply" };
-    try {
-      obj = JSON.parse(s.slice(start, end + 1));
-    } catch {
-      return { ...EMPTY, failure_reason: "unparseable-json" };
-    }
+    // OPE-969 rework — shared balanced-object extraction (fence-aware).
+    const found = extractJsonValue(obj, "object");
+    if (!found.ok)
+      return {
+        ...EMPTY,
+        failure_reason: found.reason === "no-json-span" ? "no-json-in-reply" : "unparseable-json",
+      };
+    obj = found.value;
   }
   if (!obj || typeof obj !== "object") return { ...EMPTY, failure_reason: "reply-not-an-object" };
   const o = obj as Record<string, unknown>;
