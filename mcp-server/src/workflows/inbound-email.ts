@@ -117,7 +117,10 @@ import { handle as handleNoop } from "../email-handlers/noop.js";
 import { handle as handleGemba } from "../email-handlers/gemba.js";
 import { handle as handleListSubscription } from "../email-handlers/list-subscription.js";
 import { classifyAndRecordNewsletter } from "../inbound/newsletter-record.js";
-import { capturePromoterContacts } from "../inbound/promoter-contact-capture.js";
+import {
+  captureNeedsWarning,
+  capturePromoterContacts,
+} from "../inbound/promoter-contact-capture.js";
 import { processNewsletter } from "../inbound/newsletter-process.js";
 import { recordCrossing, ref } from "../inbound/crossing-ledger.js";
 import { routeToProject } from "../inbound/project-router.js";
@@ -1124,16 +1127,27 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     }
 
     // OPE-1330 — record a promoter contact when the sender IS a promoter's
-    // contact_email or is replying to mail we sent that promoter. Builds the
-    // record only: nothing sends, blocks or routes on it, so a failure here is
-    // logged and never touches the email's own handling. Records its step for
-    // every email (the heartbeat's evidence).
+    // contact_email, is replying to mail we sent that promoter, or writes from
+    // that promoter's own website domain. Builds the record only: nothing
+    // sends, blocks or routes on it, so a failure here is logged and never
+    // touches the email's own handling. Records its step for every email (the
+    // heartbeat's evidence). A promoter match that captured nothing for a
+    // reason that is not by design is logged as a warning (the 10-14 shape).
     try {
-      await step.do(
+      const capture = await step.do(
         "promoter-contacts/capture",
         { retries: { limit: 2, delay: "5 seconds", backoff: "constant" }, timeout: "10 seconds" },
         async () => capturePromoterContacts(getDb(this.env.DB), messageRowId, sessionId)
       );
+      if (captureNeedsWarning(capture)) {
+        await logError(this.env.DB, {
+          level: "warn",
+          source: SOURCE,
+          message: "promoter-contacts/capture: matched a promoter but captured no contact",
+          sessionId,
+          context: { messageRowId, outcome: capture.outcome, notCaptured: capture.notCaptured },
+        });
+      }
     } catch (err) {
       await logError(this.env.DB, {
         source: SOURCE,

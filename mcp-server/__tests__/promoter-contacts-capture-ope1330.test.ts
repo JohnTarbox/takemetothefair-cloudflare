@@ -11,7 +11,10 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import type Database from "better-sqlite3";
 import { createTestDb, type TestDb } from "./setup-db.js";
-import { capturePromoterContacts } from "../src/inbound/promoter-contact-capture.js";
+import {
+  captureNeedsWarning,
+  capturePromoterContacts,
+} from "../src/inbound/promoter-contact-capture.js";
 
 let db: TestDb;
 let raw: Database.Database;
@@ -49,13 +52,15 @@ function inbound(
     refs?: string | null;
     display?: string | null;
     at?: number;
+    matched?: string | null;
   }
 ) {
   raw
     .prepare(
       `INSERT INTO inbound_emails (id, received_at, from_address, to_address, intent, created_at,
-         dmarc_result, sender_auth, auth_results_raw, original_sender_auth, in_reply_to, email_references, from_display_name)
-       VALUES (?, ?, ?, 'submit@meetmeatthefair.com', 'correction', ?, ?, ?, ?, ?, ?, ?, ?)`
+         dmarc_result, sender_auth, auth_results_raw, original_sender_auth, in_reply_to, email_references, from_display_name,
+         matched_entities)
+       VALUES (?, ?, ?, 'submit@meetmeatthefair.com', 'correction', ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       id,
@@ -68,7 +73,8 @@ function inbound(
       o.orig === undefined ? "not_forwarded" : o.orig,
       o.inReplyTo ?? null,
       o.refs ?? null,
-      o.display ?? null
+      o.display ?? null,
+      o.matched ?? null
     );
 }
 
@@ -467,8 +473,10 @@ describe("a threaded reply to mail we sent that promoter", () => {
   it("a reply to a NON-promoter send of ours (e.g. a reply to a fair-goer) creates nothing", async () => {
     promoter("p1", "https://garlicfestct.com/", "contact@garlicfestct.com");
     sent("<ack-1@meetmeatthefair.com>", "contact@garlicfestct.com", "reply:photo-intake-ack");
+    // A sender OFF the promoter's domain: on garlicfestct.com the website-domain
+    // basis (rework) would rightly capture them, which is not what this pins.
     inbound("r5", {
-      from: "someone@garlicfestct.com",
+      from: "someone@elsewhere-example.org",
       dmarc: "none",
       inReplyTo: "<ack-1@meetmeatthefair.com>",
     });
@@ -492,5 +500,277 @@ describe("a threaded reply to mail we sent that promoter", () => {
     const s = await capture("r6");
     expect(s.ambiguousThreads).toBe(1);
     expect(contacts()).toEqual([]);
+  });
+});
+
+// ── Rework (review 2026-10-15) ───────────────────────────────────────────────
+// The specimen: three inbound rows on 2026-10-14 17:18Z (13931b4c, 5c1fa4e5,
+// b8afb8fb) from a person at a promoter's own company domain. Field shapes are
+// copied from prod D1; the domains are replaced with example ones and the
+// person's address is not reproduced. Prod facts that matter:
+//   - matched_entities = one promoter, basis `website-domain`, confidence 0.7;
+//   - dmarc_result pass, sender_auth pass, original_sender_auth not_forwarded;
+//   - DMARC aligned via SPF; DKIM signed by the Google Workspace host;
+//   - in_reply_to names OUR mail, but that send's ledger source is
+//     `reply:manual` (an operator reply), which is not promoter-addressed;
+//   - the promoter's contact_email is a DIFFERENT domain (a brand mailbox);
+//   - a validated row for the sender already existed, written by hand, with
+//     last_heard_at NULL — and capture recorded {"promoters":0,…} as `ok`.
+const DAN_DOMAIN = "broadcast-example.com";
+const DAN_FROM = `staff.person@${DAN_DOMAIN}`;
+const DAN_PROMOTER = "46e1a3f4-0000-4000-8000-000000000001";
+const DAN_REPLY_TO = "<zl0DrzveExampleExampleExample@meetmeatthefair.com>";
+const DAN_RAW =
+  `mx.cloudflare.net; dkim=pass header.d=broadcast-example-com.20251104.gappssmtp.com header.s=20251104 header.b=Qr+LVZ9k; ` +
+  `dmarc=pass header.from=${DAN_DOMAIN} policy.dmarc=none; spf=none (mx.cloudflare.net: no SPF records found for postmaster@mail-lf1-x129.google.com) smtp.helo=mail-lf1-x129.google.com; ` +
+  `spf=pass (mx.cloudflare.net: domain of ${DAN_FROM} designates 2a00:1450:4864:20::129 as permitted sender) smtp.mailfrom=${DAN_FROM}; arc=pass smtp.`;
+const DAN_MATCHED = JSON.stringify([
+  {
+    entityType: "promoter",
+    entityId: DAN_PROMOTER,
+    name: "Example Media",
+    slug: "example-media",
+    basis: "website-domain",
+    matchedOn: DAN_DOMAIN,
+    confidence: 0.7,
+  },
+]);
+const DAN_AT = 1791998289; // 2026-10-14 17:18:09Z
+
+function danPromoter() {
+  promoter(DAN_PROMOTER, `https://www.${DAN_DOMAIN}`, "info@lightshow-example.com");
+}
+function danInbound(id: string, at = DAN_AT) {
+  sent(DAN_REPLY_TO, DAN_FROM, "reply:manual");
+  inbound(id, {
+    from: DAN_FROM,
+    display: "Staff Person",
+    dmarc: "pass",
+    senderAuth: "pass",
+    raw: DAN_RAW,
+    orig: "not_forwarded",
+    inReplyTo: DAN_REPLY_TO,
+    refs: `<CAKLP-example@mail.gmail.com> ${DAN_REPLY_TO}`,
+    matched: DAN_MATCHED,
+    at,
+  });
+}
+const stepRows = () =>
+  raw
+    .prepare(
+      "SELECT inbound_email_id, status, detail FROM workflow_run_steps WHERE step_name = 'promoter-contacts/capture' ORDER BY recorded_at"
+    )
+    .all() as Array<{ inbound_email_id: string; status: string; detail: string }>;
+
+describe("website-domain: a sender from the promoter's own website domain (the 10-14 specimen)", () => {
+  it("the existing hand-written validated row gets last_heard_at set — and nothing else changes", async () => {
+    danPromoter();
+    raw
+      .prepare(
+        `INSERT INTO promoter_contacts (id, promoter_id, email, name, validation_method, validation_evidence,
+           status, first_validated_at, last_heard_at, created_by, updated_by, created_at, updated_at)
+         VALUES ('c-dan', ?, ?, 'Staff Person', 'domain_verified', 'hand-written evidence', 'validated', ?, NULL, 'admin', 'admin', ?, ?)`
+      )
+      .run(DAN_PROMOTER, DAN_FROM, DAN_AT - 3591, DAN_AT - 3591, DAN_AT - 3591);
+    danInbound("13931b4c");
+
+    const s = await capture("13931b4c", new Date((DAN_AT + 60) * 1000));
+    expect(s).toMatchObject({
+      outcome: "captured",
+      promoters: 1,
+      resolverPromoters: 1,
+      refreshed: 1,
+      inserted: 0,
+      notCaptured: [],
+    });
+    const [c] = contacts();
+    expect(c).toMatchObject({
+      promoter_id: DAN_PROMOTER,
+      email: DAN_FROM,
+      status: "validated",
+      validation_method: "domain_verified",
+      validation_evidence: "hand-written evidence",
+      last_heard_at: DAN_AT,
+    });
+    expect(actions()).toEqual([]);
+    expect(stepRows()[0]).toMatchObject({ inbound_email_id: "13931b4c", status: "ok" });
+    expect(JSON.parse(stepRows()[0].detail).outcome).toBe("captured");
+    expect(captureNeedsWarning(s)).toBe(false);
+  });
+
+  it("with no prior row it is written validated / domain_verified (DMARC pass on the website domain)", async () => {
+    danPromoter();
+    danInbound("5c1fa4e5");
+    const s = await capture("5c1fa4e5", new Date((DAN_AT + 60) * 1000));
+    expect(s).toMatchObject({ outcome: "captured", inserted: 1 });
+    expect(contacts()).toEqual([
+      expect.objectContaining({
+        promoter_id: DAN_PROMOTER,
+        email: DAN_FROM,
+        name: "Staff Person",
+        status: "validated",
+        validation_method: "domain_verified",
+        sender_auth: "pass",
+        auth_domain: DAN_DOMAIN,
+        auth_domain_matches_promoter: 1,
+        last_heard_at: DAN_AT,
+      }),
+    ]);
+    expect(contacts()[0].validation_evidence).toContain("website-domain");
+    expect(actions()).toEqual([{ action: "promoter_contact.auto_validated" }]);
+  });
+
+  it("the same domain WITHOUT DMARC pass is only a candidate, self_asserted", async () => {
+    promoter("p1", "https://www.grangefair.org", null);
+    inbound("wd1", {
+      from: "volunteer@grangefair.org",
+      dmarc: "none",
+      raw: "mx; dmarc=none header.from=grangefair.org",
+    });
+    await capture("wd1");
+    expect(contacts()).toEqual([
+      expect.objectContaining({
+        promoter_id: "p1",
+        status: "candidate",
+        validation_method: "self_asserted",
+        auth_domain_matches_promoter: 1,
+      }),
+    ]);
+  });
+
+  it("a subdomain sender matches on the ORGANIZATIONAL domain", async () => {
+    promoter("p1", "https://www.grangefair.org/events", null);
+    inbound("wd2", { from: "office@mail.grangefair.org", dmarc: "none" });
+    await capture("wd2");
+    expect(contacts().map((c) => c.promoter_id)).toEqual(["p1"]);
+  });
+
+  it("a look-alike domain that merely CONTAINS the website domain is not a match", async () => {
+    promoter("p1", "https://grangefair.org", null);
+    promoter("p2", "https://www.example.org.uk-example.net/x", null);
+    inbound("wd3", {
+      from: "x@notgrangefair.org",
+      dmarc: "pass",
+      raw: passRaw("notgrangefair.org"),
+    });
+    inbound("wd4", { from: "x@grangefair.org.evil-example.net", dmarc: "none" });
+    // the sender's domain is a SUBSTRING of a stored website (the instr prefilter hits)
+    inbound("wd7", { from: "x@fair.org", dmarc: "pass", raw: passRaw("fair.org") });
+    inbound("wd8", { from: "x@example.org", dmarc: "pass", raw: passRaw("example.org") });
+    for (const id of ["wd3", "wd4", "wd7", "wd8"]) await capture(id);
+    expect(contacts()).toEqual([]);
+  });
+
+  it("a free-mail sender is never matched on domain, even to a promoter whose 'website' is that host", async () => {
+    promoter("p1", "https://www.facebook.com/somefair", null);
+    promoter("p2", "https://gmail.com", null);
+    inbound("wd5", { from: "anyone@gmail.com", dmarc: "pass", raw: passRaw("gmail.com") });
+    inbound("wd6", { from: "anyone@facebook.com", dmarc: "pass", raw: passRaw("facebook.com") });
+    await capture("wd5");
+    await capture("wd6");
+    expect(contacts()).toEqual([]);
+  });
+
+  it("a fair-goer who MENTIONS the promoter (brand-name match only) creates no row", async () => {
+    promoter("p1", "https://www.grangefair.org", "office@grangefair.org");
+    inbound("fan2", {
+      from: "fan@gmail.com",
+      dmarc: "pass",
+      raw: passRaw("gmail.com"),
+      matched: JSON.stringify([
+        { entityType: "promoter", entityId: "p1", basis: "brand-name", confidence: 0.4 },
+      ]),
+    });
+    const s = await capture("fan2");
+    expect(contacts()).toEqual([]);
+    expect(s.outcome).toBe("matched_not_captured");
+    expect(s.notCaptured).toEqual([
+      expect.objectContaining({ promoterId: "p1", basis: "brand-name", expected: true }),
+    ]);
+    expect(captureNeedsWarning(s)).toBe(false);
+  });
+});
+
+describe("matched but captured 0 is its own outcome, never a plain ok", () => {
+  it("a website-domain match on a domain two promoters share: matched_not_captured, status skipped, with reason", async () => {
+    promoter("p1", "https://www.shared-example.org/fair-a", null);
+    promoter("p2", "https://shared-example.org/fair-b", null);
+    inbound("amb", {
+      from: "clerk@shared-example.org",
+      dmarc: "pass",
+      raw: passRaw("shared-example.org"),
+      matched: JSON.stringify([
+        { entityType: "promoter", entityId: "p1", basis: "website-domain" },
+        { entityType: "promoter", entityId: "p2", basis: "website-domain" },
+      ]),
+    });
+    const s = await capture("amb");
+    expect(contacts()).toEqual([]);
+    expect(s).toMatchObject({
+      outcome: "matched_not_captured",
+      promoters: 0,
+      resolverPromoters: 2,
+      ambiguousDomain: 1,
+      alignedUnknownDomain: false,
+    });
+    expect(s.notCaptured.map((n) => [n.promoterId, n.expected])).toEqual([
+      ["p1", true],
+      ["p2", true],
+    ]);
+    expect(s.notCaptured[0].reason).toContain("ambiguous");
+    const [step] = stepRows();
+    expect(step.status).toBe("skipped");
+    expect(JSON.parse(step.detail)).toMatchObject({ outcome: "matched_not_captured" });
+    expect(captureNeedsWarning(s)).toBe(false);
+  });
+
+  it("a resolver match capture has NO basis for (the 10-14 shape) is unexpected and warns", async () => {
+    // The resolver says contact-email for p9, but p9's contact_email is not
+    // this sender and its website is elsewhere — capture and resolver disagree.
+    promoter("p9", "https://elsewhere-example.org", "someone-else@elsewhere-example.org");
+    inbound("gap", {
+      from: "person@unrelated-example.net",
+      dmarc: "pass",
+      raw: passRaw("unrelated-example.net"),
+      matched: JSON.stringify([{ entityType: "promoter", entityId: "p9", basis: "contact-email" }]),
+    });
+    const s = await capture("gap");
+    expect(s.outcome).toBe("matched_not_captured");
+    expect(s.notCaptured).toEqual([
+      expect.objectContaining({ promoterId: "p9", basis: "contact-email", expected: false }),
+    ]);
+    expect(stepRows()[0].status).toBe("skipped");
+    expect(captureNeedsWarning(s)).toBe(true);
+  });
+
+  it("the 10-14 run shape — resolver matched on website-domain — now captures, so no matched_not_captured", async () => {
+    danPromoter();
+    danInbound("b8afb8fb");
+    const s = await capture("b8afb8fb");
+    expect(s.outcome).toBe("captured");
+    expect(stepRows()[0].status).toBe("ok");
+  });
+});
+
+describe("a sender from an organizer we do not list (the 10-14 gap) — counted, not stored", () => {
+  it("DMARC pass on an ownable domain that is no promoter's website: no row, no_promoter_match, alignedUnknownDomain", async () => {
+    promoter("p1", "https://www.grangefair.org", "office@grangefair.org");
+    inbound("unk", {
+      from: "pr@new-organizer-example.com",
+      dmarc: "pass",
+      senderAuth: "pass",
+      raw: passRaw("new-organizer-example.com"),
+      matched: "[]",
+    });
+    const s = await capture("unk");
+    expect(contacts()).toEqual([]);
+    expect(s).toMatchObject({ outcome: "no_promoter_match", alignedUnknownDomain: true });
+    expect(stepRows()[0].status).toBe("ok");
+  });
+
+  it("a free-mail sender with no match is NOT flagged as an unknown organizer", async () => {
+    inbound("unk2", { from: "someone@gmail.com", dmarc: "pass", raw: passRaw("gmail.com") });
+    const s = await capture("unk2");
+    expect(s).toMatchObject({ outcome: "no_promoter_match", alignedUnknownDomain: false });
   });
 });
