@@ -755,6 +755,9 @@ export const events = sqliteTable(
     // Free-text nuance the enum pair can't hold (e.g. "members + public
     // for Saturday plant sale 9am–1pm"). NULL = the audience/access pair
     // is fully self-describing for this event.
+    // OPE-1151 — PUBLIC visitor copy: rendered verbatim on every event page
+    // that has it (admission detail, accessibility, who may attend). Analyst
+    // prose / provenance goes in `event_internal_notes`, never here.
     accessNotes: text("access_notes"),
     // Logistics axis — separate from audience/access. Defaults false.
     // Drives a future "Registration required — see ticket URL" badge
@@ -2241,6 +2244,35 @@ export const eventDays = sqliteTable("event_days", {
   imageFocalX: real("image_focal_x").notNull().default(0.5),
   imageFocalY: real("image_focal_y").notNull().default(0.5),
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+});
+
+/**
+ * OPE-1151 (drizzle/0367) — PRIVATE operator/analyst notes for an event.
+ * NEVER rendered, never read by the main app.
+ *
+ * A separate table, deliberately NOT an `events.internal_notes` column: the
+ * events row is serialized whole on public surfaces (`eventJoinProjection`
+ * carries every events column; the event page's full-row select reaches
+ * "use client" components and so the RSC payload). A private column there
+ * would need stripping at every such site — the OPE-1084 leak class. No
+ * `select().from(events)` can reach this table.
+ *
+ * `events.access_notes` is PUBLIC visitor copy (admission, accessibility,
+ * who may attend). Sweep findings, venue checks, "verify …", source citations
+ * and ticket references belong HERE. Written by MCP `update_event`
+ * (`internal_notes`), read by `get_event_details_admin`.
+ */
+export const eventInternalNotes = sqliteTable("event_internal_notes", {
+  eventId: text("event_id")
+    .primaryKey()
+    .references(() => events.id, { onDelete: "cascade" }),
+  notes: text("notes").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
 });
 
 // User Favorites table

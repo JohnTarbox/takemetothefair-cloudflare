@@ -55,6 +55,7 @@ import { DailyScheduleDisplay } from "@/components/events/DailyScheduleDisplay";
 import { EventDayImageStrip } from "@/components/events/EventDayImageStrip";
 import { parseJsonArray } from "@/types";
 import { filterPublicTags } from "@/lib/events/public-tags";
+import { publicAccessNotes } from "@/lib/events/public-access-notes";
 import type { Metadata } from "next";
 import { auth } from "@/lib/auth";
 import { logError } from "@/lib/logger";
@@ -1405,6 +1406,23 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
                     <p className="font-medium text-foreground">
                       {formatPrice(event.ticketPriceMinCents, event.ticketPriceMaxCents)}
                     </p>
+                    {/* OPE-1151 — admission / access detail, on EVERY event
+                        that has it. Its only previous reader was the audience
+                        badge, which is null at PUBLIC + OPEN, so Guilford's
+                        senior rate and Pemaquid's wheelchair answer never
+                        reached the page. Deliberately outside any
+                        audience/access condition. */}
+                    {(() => {
+                      const accessNotesText = publicAccessNotes(event.accessNotes);
+                      return accessNotesText ? (
+                        <p
+                          className="text-sm text-muted-foreground mt-1 whitespace-pre-line"
+                          data-testid="event-access-notes"
+                        >
+                          {accessNotesText}
+                        </p>
+                      ) : null;
+                    })()}
                   </div>
                 </div>
 

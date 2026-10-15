@@ -720,7 +720,7 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
         .transform(sanitizeProse)
         .optional()
         .describe(
-          "Free-text nuance the audience+access pair can't hold (e.g. 'Members + public for the Saturday plant sale 9am-1pm')."
+          "PUBLIC visitor copy, shown verbatim on the event page (OPE-1151): admission by category, accessibility, who may attend (e.g. 'Members + public for the Saturday plant sale 9am-1pm'). Never research notes, source citations or to-dos."
         ),
       registration_required: z
         .boolean()
