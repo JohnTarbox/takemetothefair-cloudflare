@@ -2126,7 +2126,7 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     // a `merged_into` / `rejected_as_duplicate_of` row reads healthy NOW; any
     // such row starts the clock at the loser's updated_at (≈ the adjudication).
     //
-    // DORMANT (drizzle/0363, enabled_at NULL): 18 pre-fix rows exist in prod
+    // DORMANT (drizzle/0364, enabled_at NULL): 18 pre-fix rows exist in prod
     // until the one-time backfill runs. Arm it the day the backfill lands.
     name: "inbound-follows-duplicate-keeper",
     ownerOpe: "OPE-1352",
