@@ -86,6 +86,7 @@ import {
   recordNewVenueGeocodeRefusal,
   type NewVenueGeocodeVerdict,
 } from "../venues/geocode-new.js";
+import { flagVenuePinIfFarFromTown } from "../venues/pin-sanity.js";
 import { checkDuplicateViaMainApp } from "../duplicates/check-duplicate.js";
 import {
   EVENT_STATUS_ENUM,
@@ -4156,6 +4157,27 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         note: "mcp update_venue",
       });
 
+      // OPE-1079 — a pin far from its own town silently breaks GPS photo
+      // matching. Flag (admin_actions + warning), never block: this is also
+      // the path a human uses to CORRECT a pin.
+      let pinWarning: string | null = null;
+      if (params.latitude !== undefined || params.longitude !== undefined) {
+        const lat = (updates.latitude as number | null | undefined) ?? venue.latitude;
+        const lng = (updates.longitude as number | null | undefined) ?? venue.longitude;
+        if (typeof lat === "number" && typeof lng === "number") {
+          const flagged = await flagVenuePinIfFarFromTown(db, {
+            venueId: venue.id,
+            city: (updates.city as string | undefined) ?? venue.city,
+            state: (updates.state as string | undefined) ?? venue.state,
+            lat,
+            lng,
+            source: "mcp:update_venue",
+            actorUserId: auth.userId ?? null,
+          });
+          pinWarning = flagged?.warning ?? null;
+        }
+      }
+
       // IndexNow: distinguish first-publish (INACTIVE→ACTIVE) from material
       // edits on already-ACTIVE venues so analytics can attribute pings.
       if (env) {
@@ -4220,6 +4242,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
             ...(petFriendlyCitationId !== undefined
               ? { pet_friendly_citation_id: petFriendlyCitationId }
               : {}),
+            ...(pinWarning ? { pin_warning: pinWarning } : {}),
           }),
         ],
       };
@@ -4478,6 +4501,18 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         };
       } else if (params.latitude != null && params.longitude != null) {
         geocode = { pinned: true, status: "caller-supplied", reason: null, candidate: null };
+        // OPE-1079 — a caller-supplied pin gets the same town sanity check
+        // the geocoder's does. Flag only.
+        const flagged = await flagVenuePinIfFarFromTown(db, {
+          venueId,
+          city: params.city,
+          state: params.state,
+          lat: params.latitude,
+          lng: params.longitude,
+          source: "mcp:create_venue",
+          actorUserId: auth.userId ?? null,
+        });
+        if (flagged) geocode.pinWarning = flagged.warning;
       } else {
         geocode = await geocodeNewVenueViaMainApp(env, venueId);
         await recordNewVenueGeocodeRefusal(
@@ -4499,6 +4534,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
             location: `${params.city}, ${params.state.toUpperCase()}`,
             status: params.status,
             geocode,
+            ...(geocode.pinWarning ? { pin_warning: geocode.pinWarning } : {}),
             ...(geocode.pinned || isFormer
               ? {}
               : {

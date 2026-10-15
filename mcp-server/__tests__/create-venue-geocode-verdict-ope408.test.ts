@@ -205,6 +205,23 @@ describe("OPE-408 — the verdict helper never throws, and says 'unavailable' wh
     expect(v.reason).toContain("The Buker Center");
     expect(v.reason).toContain("merge_venue");
   });
+
+  it("OPE-1079 — carries the gate's pin_warning on a pinned result", () => {
+    const v = verdictFromGateBody({
+      results: [
+        {
+          status: "ok",
+          after: { lat: 43.89, lng: -69.92 },
+          pin_warning: "Map pin is 14.7 km from the median of 3 other venues in Freeport, ME",
+        },
+      ],
+    });
+    expect(v.pinned).toBe(true);
+    expect(v.pinWarning).toContain("14.7 km");
+    expect(
+      verdictFromGateBody({ results: [{ status: "ok", after: { lat: 1, lng: 2 } }] })
+    ).not.toHaveProperty("pinWarning");
+  });
 });
 
 describe("OPE-408 — suggest_event, the second venue-creating caller, gets the same treatment", () => {

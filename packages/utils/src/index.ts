@@ -589,6 +589,7 @@ export * from "./discovery-routing";
 export * from "./event-approval-gate";
 export * from "./event-merged-tombstone-gate";
 export * from "./venue-city-plausibility";
+export * from "./venue-pin-sanity";
 
 // OPE-241 (2026-07-17): D1 100-bound-param cap remedy — chunkIds/chunkedInArray
 // for `inArray()` lists that scale with row count. Shared because the cap bites

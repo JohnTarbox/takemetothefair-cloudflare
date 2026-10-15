@@ -35,7 +35,9 @@ export function registerResolveHeldPhotosTool(
     [
       "Resolve one or more HELD photo-intake emails (reply_kind='photo-intake-unresolved')",
       "to a known event: attach each email's photos to that event's gallery",
-      "(image_role=gallery — never overwrites the hero) and mark the email resolved.",
+      "(image_role=gallery — never overwrites the hero) and mark the email resolved by",
+      "setting resulting_event_id + photos_stored (reply_kind is left as photo-intake-unresolved;",
+      "the skip guard keys on photos_stored, so a re-run is a no-op — OPE-1079).",
       "Idempotent: an already-resolved email is skipped; an email with no image",
       "attachments is skipped without marking resolved. Use for photos that held for",
       "lack of GPS once John has named the fair. Admin only.",

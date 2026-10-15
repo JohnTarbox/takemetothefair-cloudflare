@@ -49,6 +49,7 @@ import { submitCheckDuplicate, submitEvent, submitExtract } from "./submit.js";
 import { attachPosterEvidence, type PosterEvidenceResult } from "../photo/poster-evidence.js";
 import { parseExif, type ExifData } from "../photo/exif.js";
 import { isSnapRow, parseCaptureMeta, captureMetaAsExif } from "../photo/snap-intake.js";
+import { recordGpsMissSignal } from "../photo/gps-miss-signal.js";
 import {
   resolveOccurrence,
   expandEventDates,
@@ -1352,6 +1353,20 @@ export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> =
       resultingEventId: staged.eventId,
       status: "replied",
     };
+  }
+
+  // OPE-1079 — a held photo that carries a valid GPS fix is a signal, not just
+  // a reply: the fix is ground truth for a venue pin (New Portland's sat 9 km
+  // off and nothing but the sender ever heard). Records admin_actions + the
+  // review flag; never touches the reply below.
+  if (exif.gps && exif.takenOnLocalDate) {
+    await recordGpsMissSignal(db, {
+      inboundEmailId: row.id,
+      reason: resolution.reason,
+      gps: exif.gps,
+      takenOnLocalDate: exif.takenOnLocalDate,
+      loadEventsAt: (venueIds, localDate) => loadCandidateEvents(db, venueIds, localDate),
+    });
   }
 
   // Held: name the reason and tell John exactly how to fix it. Never guess.

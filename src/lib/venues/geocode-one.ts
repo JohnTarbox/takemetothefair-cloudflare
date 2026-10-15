@@ -32,6 +32,7 @@ import { venues, adminActions, entityDataCitations } from "@/lib/db/schema";
 import { buildEntityCitations, toCitationFields } from "@takemetothefair/utils";
 import { recordMutation } from "@/lib/audit/record-mutation";
 import { geocodeAddressDetailed, lookupPlace } from "@/lib/google-maps";
+import { flagVenuePinIfFarFromTown } from "@/lib/venues/pin-sanity";
 import {
   preflight,
   judge,
@@ -230,6 +231,18 @@ export async function geocodeVenueRow(
         createdAt: new Date(),
       });
     }
+
+    // OPE-1079 — a geocoder pin far from its own town silently breaks GPS
+    // photo matching (New Portland sat 9 km off). Flag, never block.
+    const pinCheck = await flagVenuePinIfFarFromTown(db, {
+      venueId: v.id,
+      city: v.city,
+      state: v.state,
+      lat: pin.lat,
+      lng: pin.lng,
+      source: `venues_geocode:${outcome.status}`,
+    });
+    if (pinCheck) outcome = { ...outcome, pin_warning: pinCheck.warning };
   }
 
   return outcome;
