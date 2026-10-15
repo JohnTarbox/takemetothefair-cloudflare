@@ -10,7 +10,7 @@
 
 import type { Metadata } from "next";
 import Link from "next/link";
-import Image from "next/image";
+import Image from "@/components/ui/responsive-image";
 import { ShieldCheck } from "lucide-react";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { promoters } from "@/lib/db/schema";

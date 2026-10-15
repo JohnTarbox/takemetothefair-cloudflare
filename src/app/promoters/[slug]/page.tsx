@@ -20,7 +20,7 @@
 
 import { notFound } from "next/navigation";
 import { TrackedActionLink } from "@/components/analytics/TrackedActionLink";
-import Image from "next/image";
+import Image from "@/components/ui/responsive-image";
 import { MapPin, Phone, Mail, Globe, Calendar, ShieldCheck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -43,7 +43,7 @@ import { isClosedPromoter } from "@/lib/promoters/operating-status";
 import { auth } from "@/lib/auth";
 import { unsafeSlug } from "@/lib/utils";
 import { buildPromoterMetaDescription } from "@/lib/seo-utils";
-import { cdnImage, OG_EVENT, focalPointGravity } from "@/lib/cdn-image";
+import { cdnImage, cdnSrcSet, OG_EVENT, focalPointGravity } from "@/lib/cdn-image";
 
 export const revalidate = 300; // 5-minute ISR
 
@@ -261,9 +261,7 @@ export default async function PromoterDetailPage({ params }: Props) {
                   quality: 80,
                   onerror: "redirect" as const,
                 });
-                const heroSrcSet = widths
-                  .map((w) => `${cdnImage(promoter.heroImageUrl!, opts(w))} ${w}w`)
-                  .join(", ");
+                const heroSrcSet = cdnSrcSet(promoter.heroImageUrl, widths, (w) => opts(w));
                 return (
                   <div className="aspect-[21/9] w-full overflow-hidden rounded-xl bg-muted">
                     {/* eslint-disable-next-line @next/next/no-img-element */}

@@ -33,7 +33,7 @@
  *     the 3-tier behavior for free once they adopt the primitive.
  */
 
-import Image from "next/image";
+import Image from "@/components/ui/responsive-image";
 import Link from "next/link";
 import { MapPin } from "lucide-react";
 import { cn } from "@/lib/utils";

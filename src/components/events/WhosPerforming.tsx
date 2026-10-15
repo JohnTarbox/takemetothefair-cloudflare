@@ -4,7 +4,7 @@
  * first). The parent omits this entirely when there are no confirmed acts.
  */
 import Link from "next/link";
-import Image from "next/image";
+import Image from "@/components/ui/responsive-image";
 import { Music } from "lucide-react";
 import type { EventPerformerRow } from "@/lib/performers/load-event-performers";
 

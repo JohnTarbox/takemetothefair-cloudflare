@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import Link from "next/link";
 import { CheckCircle2, AlertCircle, Mail, ArrowRight, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ClaimEvidenceForm } from "@/components/claim/ClaimEvidenceForm";
 import { trackClaimStep, trackClaimView, trackFunnelInteracted } from "@/lib/analytics";
+import { useOnFirstHumanInteraction } from "@/lib/hooks/use-first-human-interaction";
 
 type EntityType = "VENDOR" | "PROMOTER";
 
@@ -65,11 +66,16 @@ export function ClaimWizard({
     fired.current.add(key);
     fn();
   };
-  useEffect(() => {
-    once("view", () => trackClaimView(entityType, slug, "wizard"));
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per mount
-  }, []);
+  // `claim_view` waits for a HUMAN (OPE-364 rework): fired on mount, it
+  // counted every JS-rendering crawler that walked /claim/* — 23 rows
+  // all-time became 282 in ~13h, each a different slug. The first pointer /
+  // key / touch / scroll / focus fires it; so does any step below, so a later
+  // step can never be recorded without its view.
+  const fireView = useOnFirstHumanInteraction(() =>
+    once("view", () => trackClaimView(entityType, slug, "wizard"))
+  );
   function goTo(next: number) {
+    fireView();
     // First Continue is the wizard's "form interacted": the preview rendered
     // AND the claimant could act on it (OPE-361's failure was the second half).
     if (next > step) once("interacted", () => trackFunnelInteracted("claim"));

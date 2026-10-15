@@ -38,7 +38,7 @@ import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
 import { DetailPageTracker } from "@/components/DetailPageTracker";
 import { ScrollDepthTracker } from "@/components/ScrollDepthTracker";
-import { cdnImage, OG_EVENT } from "@/lib/cdn-image";
+import { cdnImage, cdnSrcSet, OG_EVENT } from "@/lib/cdn-image";
 import { indexableVenueWhere, loadVenueHistoryPublic } from "@/lib/venues/venue-history-public";
 import {
   createFootnotes,
@@ -303,17 +303,12 @@ export default async function VenueDetailPage({ params }: Props) {
                 // Pattern is reusable per [[project_img1_smart_crop_hero]] —
                 // applied here without changes to the helper signatures.
                 const heroWidths = [400, 640, 800, 1200, 1600, 1942];
-                const heroSrcSet = heroWidths
-                  .map((w) =>
-                    cdnImage(venue.imageUrl!, {
-                      width: w,
-                      format: "auto",
-                      quality: 80,
-                      onerror: "redirect",
-                    })
-                  )
-                  .map((url, i) => `${url} ${heroWidths[i]}w`)
-                  .join(", ");
+                const heroSrcSet = cdnSrcSet(venue.imageUrl, heroWidths, (w) => ({
+                  width: w,
+                  format: "auto",
+                  quality: 80,
+                  onerror: "redirect",
+                }));
                 const heroSrc = cdnImage(venue.imageUrl, {
                   width: 1600,
                   format: "auto",

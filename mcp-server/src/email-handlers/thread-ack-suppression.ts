@@ -43,10 +43,10 @@ import { emailSendLedger, inboundEmails, tunableThresholds } from "../schema.js"
 import type { Db } from "../db.js";
 import { senderAuthoredText } from "./sender-authored-text.js";
 import {
+  ANSWERS_TO_OWN_AUTOMATIC_REPLY,
   classifyRepliedToSend,
-  repliesToOwnAutomaticAck,
+  repliesToOwnAutomaticReply,
   shouldUseThreadReplyAck,
-  THREAD_REPLY_OVERRIDABLE_KINDS,
 } from "./thread-reply-ack.js";
 import { ledgerEmailSend } from "../mailer.js";
 import type { ReplyKind } from "./types.js";
@@ -61,8 +61,9 @@ export const CLOSED_BY_SENDER_STATUS = "closed_by_sender";
 export type ThreadAckSuppressReason =
   | "recent-human-reply"
   | "closed-by-sender"
-  // OPE-1240 — the message answers our own automatic ack; the sender already
-  // holds a receipt for this conversation (John's ruling 2026-09-30).
+  // OPE-1240 — the message answers one of our own automatic `reply:*` sends;
+  // the sender already holds a reply from us (John's ruling 2026-09-30). The
+  // string keeps its original name so the acceptance query still matches.
   | "reply-to-own-ack";
 
 /** Longest sender text (chars, before the sign-off) still read as closing. */
@@ -259,12 +260,14 @@ export async function decideThreadAckGuard(
   if (input.closedBySender) {
     reason = "closed-by-sender";
   } else if (
-    !becomesThreadAck &&
-    THREAD_REPLY_OVERRIDABLE_KINDS.includes(input.replyKind) &&
-    (await repliesToOwnAutomaticAck(db, r.inReplyTo, r.emailReferences))
+    !ANSWERS_TO_OWN_AUTOMATIC_REPLY.includes(input.replyKind) &&
+    (await repliesToOwnAutomaticReply(db, r.inReplyTo, r.emailReferences))
   ) {
-    // OPE-1240 — only the generic acks: a reply that carries a real request
-    // (a submission, a decision) still gets its real response.
+    // OPE-1240 — EVERY kind, not only the generic acks: the 10-01 reply to a
+    // photo hold notice drew `no-url-prose-failed` under the narrower rule.
+    // Only a reply that carries the outcome the parent asked for still goes.
+    // A human parent never reaches here (repliesToOwnAutomaticReply is false),
+    // so thread-reply-ack (OPE-706) is untouched.
     reason = "reply-to-own-ack";
   } else if (becomesThreadAck && r.receivedAt) {
     const hours = await readThreadAckQuietHours(db);
