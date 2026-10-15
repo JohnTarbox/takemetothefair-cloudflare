@@ -287,6 +287,14 @@ const ROSTER_CITATION_MAX_CHARS = 2000;
 // strand the OCR. Non-transient errors fail fast (see isTransientAiError).
 const MAX_OCR_ATTEMPTS = 3;
 
+// OPE-1057 rework — the B2 free-text extraction: one attempt, plus one more
+// only when the first was a Workers AI timeout. Step names must be
+// deterministic across replays, so each attempt has its own fixed label.
+const FREE_TEXT_EXTRACT_STEP_LABELS = [
+  "submit/free-text-extract",
+  "submit/free-text-extract-retry",
+] as const;
+
 // `classifyExtractFailure` (the K7.4 extract_fail_reason buckets) lives in
 // ./pipeline-error.ts with the step-boundary token reader it depends on (OPE-1316).
 
@@ -2513,46 +2521,114 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         // fall back to the prose-failed reply rather than send a confusing
         // partial result. The minimum-fields gate inside the workflow
         // (name + (startDate OR venueName)) catches near-empty outputs.
-        try {
-          const extracted = await step.do(
-            "submit/free-text-extract",
-            {
-              retries: { limit: 1, delay: "10 seconds", backoff: "constant" },
-              timeout: "30 seconds",
-            },
+        //
+        // OPE-1057 rework — this branch used to swallow its failure in a bare
+        // `catch {}` and write nothing, so "ran and failed" was indistinguishable
+        // from "never ran". Inbound 01ad5525 (2026-10-14, a forwarded Grange
+        // craft fair, classifier `free_text` 0.9) DID reach this step: the
+        // extract route logged a 20000 ms Workers AI timeout for its 1,470-char
+        // prose, the deterministic salvage found no name, the route failed
+        // closed, and the reply was `no-url-prose-failed` — with no record of
+        // why. Every attempt now writes one `submit/free-text-extract` row
+        // carrying the outcome and the failure token.
+        //
+        // A Workers AI TIMEOUT gets exactly one more attempt. In prod (2026-10-
+        // 03 → 10-15) the same ~1,000-char content took 8.4 s on one call and
+        // timed out at 20 s on the call before it: the timeout is tail latency,
+        // not a content problem, so a second draw usually answers. Any other
+        // failure (zero events, 4xx, network) is not retried — a retry cannot
+        // change it. `submitFreeTextExtract` throws NonRetryableError, so the
+        // step's own `retries` never fires; the retry is a separately named,
+        // deterministic step.
+        const proseForExtract = submissionProseText(
+          rowSnapshot.bodyText ?? rowSnapshot.bodyTextExcerpt ?? "",
+          subject
+        );
+        const extractStepOpts = {
+          retries: { limit: 1, delay: "10 seconds", backoff: "constant" },
+          timeout: "30 seconds",
+        } as const;
+        let extracted: import("../email-handlers/submit.js").SubmitExtractResult | null = null;
+        let extractError: unknown = null;
+        let attempts = 0;
+        for (const label of FREE_TEXT_EXTRACT_STEP_LABELS) {
+          attempts++;
+          try {
             // OPE-174 #2 — full body (not the 500-char excerpt) so a forwarded
             // submission's event details below the fold are extractable.
-            () =>
-              submitFreeTextExtract(
-                this.env,
-                submissionProseText(
-                  rowSnapshot.bodyText ?? rowSnapshot.bodyTextExcerpt ?? "",
-                  subject
-                )
-              )
-          );
-          const hasMinFields =
-            !!extracted.event.name && (!!extracted.event.startDate || !!extracted.event.venueName);
-          if (hasMinFields) {
-            return await this.submitExtractedEvent(
-              step,
-              extracted,
-              subject,
-              rowSnapshot.fromAddress,
-              rowSnapshot.attachmentCount > 0,
-              null, // no fetch happened on free-text path
-              messageRowId,
-              true, // OPE-185 — drafted from body prose → ok-low-body-extract reply
-              // OPE-465 — the body IS the source on this path.
-              [rowSnapshot.bodyText ?? rowSnapshot.bodyTextExcerpt ?? ""]
+            extracted = await step.do(label, extractStepOpts, () =>
+              submitFreeTextExtract(this.env, proseForExtract)
             );
+            extractError = null;
+            break;
+          } catch (e) {
+            extractError = e;
+            if (classifyExtractFailure(e) !== "ai-timeout") break;
           }
-        } catch {
-          // Workers AI extract failed on prose — fall through to the
-          // prose-failed reply (closes GH #244's wrong-template path).
-          // The inbound_emails row still exists for admin triage via
-          // /admin/inbound-emails.
         }
+        const hasMinFields =
+          !!extracted &&
+          !!extracted.event.name &&
+          (!!extracted.event.startDate || !!extracted.event.venueName);
+        await recordWorkflowStep(getDb(this.env.DB), {
+          instanceId,
+          workflowName: "inbound-email",
+          inboundEmailId: messageRowId,
+          stepName: "submit/free-text-extract",
+          status: hasMinFields ? "ok" : "failed",
+          detail: {
+            gate: isFreeText ? "classifier_free_text" : "classifier_skipped",
+            outcome: hasMinFields
+              ? "drafted"
+              : extracted
+                ? "insufficient-fields"
+                : "extract-failed",
+            attempts,
+            prose_chars: proseForExtract.length,
+            ...(extracted
+              ? {
+                  events_returned: extracted.totalEventsDetected ?? 1,
+                  has_name: !!extracted.event.name,
+                  has_start_date: !!extracted.event.startDate,
+                  has_venue: !!extracted.event.venueName,
+                }
+              : {
+                  fail_reason: classifyExtractFailure(extractError),
+                  error: pipelineErrorMessage(extractError).slice(0, 300),
+                }),
+          },
+        }).catch(() => {});
+        if (extracted && hasMinFields) {
+          return await this.submitExtractedEvent(
+            step,
+            extracted,
+            subject,
+            rowSnapshot.fromAddress,
+            rowSnapshot.attachmentCount > 0,
+            null, // no fetch happened on free-text path
+            messageRowId,
+            true, // OPE-185 — drafted from body prose → ok-low-body-extract reply
+            // OPE-465 — the body IS the source on this path.
+            [rowSnapshot.bodyText ?? rowSnapshot.bodyTextExcerpt ?? ""]
+          );
+        }
+        // Not enough to draft — fall through to the prose-failed reply (closes
+        // GH #244's wrong-template path). The row stays for /admin triage.
+      } else {
+        // The decline is recorded too, under the same step name, so every run
+        // that enters this branch leaves exactly one row — the heartbeat probe
+        // `free-text-extract-record` counts on it (a skip is evidence, OPE-501).
+        await recordWorkflowStep(getDb(this.env.DB), {
+          instanceId,
+          workflowName: "inbound-email",
+          inboundEmailId: messageRowId,
+          stepName: "submit/free-text-extract",
+          status: "skipped",
+          detail: {
+            reason: !hasBodyText ? "no_prose_substance" : "classifier_chose_other",
+            classified_sub_intent: rowSnapshot.classifiedSubIntent,
+          },
+        }).catch(() => {});
       }
       // OPE-453 — this branch is reached when there is no URL **or** when the
       // classifier said `free_text` (the GH #244 override, which deliberately
