@@ -1,9 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import Image from "next/image";
 import { X } from "lucide-react";
-import { cdnImage, CARD_THUMB, HERO_DESKTOP } from "@/lib/cdn-image";
+import { cdnImage, cdnSrcSet, HERO_DESKTOP, THUMB_WIDTHS, thumbOpts } from "@/lib/cdn-image";
 
 export interface EventGalleryImage {
   id: string;
@@ -26,7 +25,8 @@ export interface EventGalleryImage {
  *
  * John's guardrails, and where each lives:
  *
- *   thumbs via /cdn-cgi/image      cdnImage(url, CARD_THUMB) — 600×400
+ *   thumbs via /cdn-cgi/image      cdnSrcSet(url, THUMB_WIDTHS, thumbOpts) —
+ *                                  3:2 fit=cover at 400/800/1200w (OPE-1080)
  *   lightbox at a larger variant   cdnImage(url, HERO_DESKTOP)
  *   lazy-loaded below the fold     loading="lazy" on every tile
  *   hero fetchpriority preserved   this component NEVER renders the hero, so
@@ -61,14 +61,27 @@ export function EventGallery({
               className="relative aspect-[3/2] w-full overflow-hidden rounded-lg border border-border hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-royal"
               aria-label={`Open photo: ${img.alt}`}
             >
-              <Image
-                src={cdnImage(img.url, { ...CARD_THUMB, rotate: img.rotation })}
+              {/* OPE-1080 — raw <img> with a hand-built ladder, NOT next/image.
+                  next/image was handed an already-transformed width=600 URL;
+                  the loader returns those unchanged, so all nine srcset
+                  candidates (384w…3840w) were the same 600px render. Here each
+                  candidate's width param IS its descriptor (cdnSrcSet enforces
+                  it) and the crop stays server-side. Foreign hotlinks get no
+                  srcset at all rather than a fake one. */}
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={cdnImage(img.url, thumbOpts(800, { rotate: img.rotation }))}
+                srcSet={cdnSrcSet(img.url, THUMB_WIDTHS, (w) =>
+                  thumbOpts(w, { rotate: img.rotation })
+                )}
+                sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 300px"
                 alt={img.alt}
-                fill
-                sizes="(max-width: 640px) 50vw, 300px"
+                width={800}
+                height={533}
                 // Below the fold, always. The hero above keeps fetchpriority.
                 loading="lazy"
-                className="object-cover"
+                decoding="async"
+                className="absolute inset-0 h-full w-full object-cover"
               />
             </button>
             {img.caption && (
