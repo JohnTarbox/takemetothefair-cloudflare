@@ -149,6 +149,33 @@ export function DailyScheduleDisplay({
     return null;
   }
 
+  // OPE-1063 — a single open day that carries a note keeps a one-line form,
+  // "Sat, Oct 10, 2026: 10am - 4pm (Rain or shine.)", instead of falling to the
+  // per-day list below (an "Open …" summary plus a one-row "Dates:" list).
+  // Without a note it still takes the "Daily:" line below, unchanged.
+  if (
+    visibleDays.length === 1 &&
+    openDays.length === 1 &&
+    !openDays[0].vendorOnly && // a lone vendor-only day keeps its badge (list view)
+    hasAnyDayNote(openDays)
+  ) {
+    const only = openDays[0];
+    const range = formatRange(only.openTime, only.closeTime, only.closeTimeUnpublished);
+    const note = dayNote(only);
+    return (
+      <div className={className}>
+        <p className="text-sm text-muted-foreground flex items-start gap-1">
+          <Clock className="w-4 h-4 mt-0.5 shrink-0" />
+          <span>
+            <span className="whitespace-nowrap">{formatDateShort(only.date)}:</span>{" "}
+            <span className="text-foreground">{range}</span>
+            {range === HOURS_UNKNOWN_COPY ? ` — ${note}` : ` (${note})`}
+          </span>
+        </p>
+      </div>
+    );
+  }
+
   // For discontinuous events, always show per-day listing (users need to see which dates)
   // For contiguous events with same hours, show simplified display.
   // DQ-HOURS1: gate on COMPUTED contiguity (isContiguousDaily), not just the

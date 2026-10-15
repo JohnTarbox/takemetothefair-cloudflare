@@ -78,6 +78,45 @@ describe("DailyScheduleDisplay — OPE-1063 day notes survive unknown hours", ()
     expect(t).not.toContain("Daily:");
   });
 
+  describe("single-day events stay one readable line", () => {
+    it("known hours + note: '<date>: 10am - 4pm (note)', no one-row 'Dates:' list", () => {
+      const t = text([
+        day("2026-10-10", { openTime: "10:00", closeTime: "16:00", notes: "Rain or shine." }),
+      ]);
+      expect(t).toBe("Sat, Oct 10, 2026: 10am - 4pm (Rain or shine.)");
+    });
+
+    it("unknown hours + note: '<date>: Hours not yet confirmed — note'", () => {
+      const t = text([day("2026-10-17", { notes: "Saturday — single-day festival." })]);
+      expect(t).toBe(
+        "Sat, Oct 17, 2026: Hours not yet confirmed — Saturday — single-day festival."
+      );
+    });
+
+    it("no note: unchanged 'Daily:' line", () => {
+      const t = text([day("2026-10-10", { openTime: "10:00", closeTime: "16:00" })]);
+      expect(t).toBe("Daily: 10am - 4pm");
+    });
+
+    it("a lone vendor-only day shown with badges keeps the list view (badge survives)", () => {
+      const { container } = render(
+        <DailyScheduleDisplay
+          days={[
+            day("2026-10-10", {
+              openTime: "07:00",
+              closeTime: "09:00",
+              vendorOnly: true,
+              notes: "Load-in",
+            }),
+          ]}
+          showVendorDays="badge"
+        />
+      );
+      expect(container.textContent).toContain("Vendor Setup");
+      expect(container.textContent).toContain("(Load-in)");
+    });
+  });
+
   it("uniform known hours with NO notes still collapse to 'Daily:'", () => {
     const days = [
       day("2026-10-10", { openTime: "10:00", closeTime: "16:00" }),
