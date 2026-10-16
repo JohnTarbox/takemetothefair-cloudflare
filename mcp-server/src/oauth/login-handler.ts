@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { timingSafeEqualString } from "@takemetothefair/utils";
+import { maskEmail, timingSafeEqualString } from "@takemetothefair/utils";
 import type { AuthRequest, ClientInfo, OAuthHelpers } from "@cloudflare/workers-oauth-provider";
 import { getDb } from "../db.js";
 import { logError } from "../logger.js";
@@ -234,7 +234,7 @@ app.post("/authorize", async (c) => {
       level: "warn",
       source: "mcp:oauth",
       message: "POST /authorize unknown email or missing passwordHash",
-      context: { email },
+      context: { email: maskEmail(email) },
     });
     return loginError(c, stateData, oauthReqInfo, "Invalid email or password.");
   }
@@ -245,7 +245,7 @@ app.post("/authorize", async (c) => {
       level: "warn",
       source: "mcp:oauth",
       message: "POST /authorize password verification failed",
-      context: { email, userId: user.id },
+      context: { email: maskEmail(email), userId: user.id },
     });
     return loginError(c, stateData, oauthReqInfo, "Invalid email or password.");
   }
@@ -253,7 +253,7 @@ app.post("/authorize", async (c) => {
   // Build user props for the OAuth token
   const props = await resolveUserProps(db, user);
 
-  console.log("[LOGIN] Credentials valid for", user.email, "role:", user.role);
+  console.log("[LOGIN] Credentials valid for", maskEmail(user.email), "role:", user.role);
 
   // Complete the OAuth authorization — generates an auth code and redirects
   const { redirectTo } = await c.env.OAUTH_PROVIDER.completeAuthorization({

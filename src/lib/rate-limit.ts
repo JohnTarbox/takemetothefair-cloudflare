@@ -127,6 +127,17 @@ export const RATE_LIMITS = {
     authenticatedLimit: 15,
     windowMs: 60 * 60 * 1000, // 1 hour
   },
+  // OPE-1379 (HARD9) — POST /api/vendor/claim/initiate. Each call mints a claim
+  // token and enqueues a confirmation email (to the vendor's contact address or
+  // the caller's own), so an unbounded caller could resend it at will. Per-user
+  // (the route requires a verified session); a legitimate claimer needs one
+  // send, maybe a resend or two. Anonymous is 0 for the same reason as
+  // claim-wizard. KV-only (SOFT): the burst cohort is John's fixed eight (OPE-904).
+  "vendor-claim-initiate": {
+    anonymousLimit: 0,
+    authenticatedLimit: 5,
+    windowMs: 60 * 60 * 1000, // 1 hour
+  },
   // "Other events on these dates" widget on /events/[slug]. Lazy-fired
   // from a user button click, so well-behaved traffic is far below
   // these caps; the cap is here to prevent a misbehaving client from

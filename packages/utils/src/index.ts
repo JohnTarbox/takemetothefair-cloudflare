@@ -615,6 +615,9 @@ export * from "./date-contiguity";
 // would leave the other splitting differently (or not at all).
 export * from "./email-recipients";
 
+// OPE-1379 (HARD8) — mask addresses in log context / console lines ("j***@domain").
+export * from "./mask-email";
+
 // OPE-365 (R1) — "does a human owe this person a response?" Pure so the
 // decision can be replayed against real production rows without running the
 // inbound Workflow.
