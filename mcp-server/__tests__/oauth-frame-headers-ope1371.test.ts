@@ -95,9 +95,14 @@ describe("OPE-1371 — the authorize page cannot be framed", () => {
     expect(html).toContain("<form"); // landmark: this IS the consent page
     const csp = expectNotFrameable(res);
     // The page's only subresource is an inline <style>; it must keep rendering.
-    expect(html).toContain("<style>");
-    expect(csp).toContain("style-src 'unsafe-inline'");
-    expect(csp).not.toMatch(/script-src[^;]*'unsafe-inline'/);
+    // OPE-1380: it renders BY NONCE — the <style> carries the header's nonce.
+    const nonce = /'nonce-([^']+)'/.exec(csp)?.[1];
+    expect(nonce).toMatch(/^[A-Za-z0-9+/]{22}==$/);
+    expect(html).toContain(`<style nonce="${nonce}">`);
+    expect(csp).toContain(`style-src 'nonce-${nonce}'`);
+    expect(csp).toContain(`script-src 'nonce-${nonce}' 'strict-dynamic'`);
+    expect(csp).not.toContain("'unsafe-inline'");
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
     // The Set-Cookie the page always had is not displaced by the new headers.
     expect(res.headers.get("Set-Cookie")).toMatch(/^__Host-CSRF=/);
   });
@@ -121,9 +126,30 @@ describe("OPE-1371 — the authorize page cannot be framed", () => {
       csrf
     );
     expect(res.status).toBe(200);
-    expect(await res.text()).toContain("Invalid email or password");
+    const html = await res.text();
+    expect(html).toContain("Invalid email or password");
     const csp = expectNotFrameable(res);
     expect(csp).toContain("form-action 'self' https://claude.ai");
+    // OPE-1380 — the re-render gets its own nonce, matching its <style>.
+    const nonce = /'nonce-([^']+)'/.exec(csp)?.[1];
+    expect(html).toContain(`<style nonce="${nonce}">`);
+  });
+
+  it("OPE-1380 — the nonce is fresh on every render", async () => {
+    const nonces = new Set<string>();
+    for (let i = 0; i < 4; i++) {
+      const { res } = await beginLogin();
+      nonces.add(/'nonce-([^']+)'/.exec(res.headers.get("Content-Security-Policy") ?? "")?.[1] ?? "");
+    }
+    expect(nonces.size).toBe(4);
+    expect(nonces.has("")).toBe(false);
+  });
+
+  it("OPE-1380 — a malformed nonce never reaches the header (falls back to the baseline)", () => {
+    const csp = htmlContentSecurityPolicy("https://claude.ai/cb", "x'; script-src *");
+    expect(csp).not.toContain("script-src *");
+    expect(csp).not.toContain("nonce-");
+    expect(csp).toContain("style-src 'unsafe-inline'");
   });
 
   it("error pages (400 bad request, 403 CSRF) and 404s get the baseline", async () => {

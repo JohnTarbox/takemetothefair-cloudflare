@@ -11,7 +11,6 @@ import {
   users,
   eventDays,
   eventInternalNotes,
-  eventSlugHistory,
   adminActions,
   eventDataCitations,
   eventDuplicateDismissals,
@@ -27,8 +26,6 @@ import {
   jsonContent,
   createSlug,
   appendSlugSegment,
-  unsafeSlug,
-  type Slug,
   parseLocation,
   sanitizeProse,
   decodeHtmlEntities,
@@ -1740,10 +1737,12 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       // Mirrors the tri-case slug resolution below, so a name edit that lands
       // on the SAME slug is not blocked — only a write that would actually
       // move the URL is.
+      // OPE-1390 — a name-derived slug follows a name CHANGE only; re-sending
+      // the current name must not walk a suffixed slug (`…-1` → `…-2`).
       const prospectiveSlug =
         params.slug !== undefined
           ? createSlug(params.slug)
-          : params.name !== undefined
+          : params.name !== undefined && params.name !== event.name
             ? createSlug(params.name)
             : null;
       const tombstoneReason = mergedTombstoneBlockReason(event, {
@@ -1772,52 +1771,31 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         };
       }
 
-      // Resolve final slug. Tri-case mirror of update_vendor (admin.ts ~L2344):
+      // Resolve final slug. Tri-case mirror of update_vendor:
       //   - explicit `slug` param wins; auto-regen from name is suppressed
-      //   - name alone → derive from name
+      //   - name alone (and actually changed) → derive from name
       //   - neither → no slug change
-      // Always run through createSlug for the canonical Slug brand (PR #120
-      // three-layer defense), then collision-check with the appendSlugSegment
-      // suffix loop. Bail with a clear error after 20 collisions instead of
-      // looping forever.
-      const explicitSlug = params.slug;
-      const slugSeed =
-        explicitSlug !== undefined
-          ? createSlug(explicitSlug)
-          : params.name !== undefined
-            ? createSlug(params.name)
-            : null;
-      if (slugSeed && slugSeed !== event.slug) {
-        let finalSlug: Slug = slugSeed;
-        let suffix = 0;
-        while (true) {
-          const candidate: Slug = suffix > 0 ? appendSlugSegment(slugSeed, suffix) : slugSeed;
-          const existing = await db
-            .select({ id: events.id })
-            .from(events)
-            .where(eq(events.slug, candidate))
-            .limit(1);
-          if (existing.length === 0 || existing[0].id === event.id) {
-            finalSlug = candidate;
-            break;
-          }
-          suffix++;
-          if (suffix > 20) {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: "Too many slug collisions. Try a more unique slug.",
-                },
-              ],
-              isError: true,
-            };
-          }
-        }
-        if (finalSlug !== event.slug) {
-          updates.slug = finalSlug;
-        }
+      // OPE-1390 (DUP3) — the shared resolver (OPE-1373) replaces this tool's
+      // own collision loop, and its event_slug_history INSERT now commits in
+      // the SAME batch as the events UPDATE below. It used to be a separate
+      // insert after the update, inside a try/catch that only logged — so a
+      // failed insert left a renamed event whose old URL 404'd.
+      let slugRename: SlugRenamePlan | null = null;
+      try {
+        slugRename = await planSlugRename(db, "event", {
+          entityId: event.id,
+          currentSlug: event.slug,
+          seed: prospectiveSlug,
+          changedBy: auth.userId,
+        });
+      } catch (err) {
+        if (!(err instanceof SlugCollisionExhaustedError)) throw err;
+        return {
+          content: [{ type: "text", text: "Too many slug collisions. Try a more unique slug." }],
+          isError: true,
+        };
       }
+      if (slugRename) updates.slug = slugRename.nextSlug;
 
       // Always set updatedAt
       updates.updatedAt = new Date();
@@ -2139,14 +2117,21 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
             ? (updates.venueId as string | null)
             : event.venueId) as string | null,
         });
-        if (syndicationStmts.length > 0) {
+        // OPE-1390 — the slug-history INSERT rides in this batch too.
+        const eventWriteStmts = [
+          ...(slugRename ? [slugRename.historyInsert] : []),
+          ...syndicationStmts,
+        ];
+        if (eventWriteStmts.length > 0) {
           await db.batch([
             db.update(events).set(updates).where(eq(events.id, event.id)),
-            ...syndicationStmts,
+            ...eventWriteStmts,
           ] as unknown as Parameters<typeof db.batch>[0]);
-          await enqueueSyndicationChange(env, { entityType: "event", entityId: event.id });
         } else {
           await db.update(events).set(updates).where(eq(events.id, event.id));
+        }
+        if (syndicationStmts.length > 0) {
+          await enqueueSyndicationChange(env, { entityType: "event", entityId: event.id });
         }
         await recomputeEventCompleteness(db, event.id);
         // OPE-767 — after the write lands, recorded as a reason.
@@ -2237,27 +2222,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           );
         }
 
-        // Record slug rename in event_slug_history so the main app's
-        // middleware 301-redirects the old URL. Mirrors the admin route at
-        // src/app/api/admin/events/[id]/route.ts (drizzle/0061). Non-fatal
-        // on insert error — the rename has already succeeded above.
-        if (typeof updates.slug === "string" && updates.slug !== event.slug) {
-          const renamedFrom = event.slug;
-          const renamedTo = unsafeSlug(updates.slug);
-          try {
-            await db.insert(eventSlugHistory).values({
-              eventId: event.id,
-              oldSlug: renamedFrom,
-              newSlug: renamedTo,
-              changedAt: new Date(),
-              changedBy: auth.userId,
-            });
-          } catch (err) {
-            console.error(
-              `[MCP/update_event] failed to write event_slug_history row for ${event.id} (${event.slug} → ${updates.slug}):`,
-              err
-            );
-          }
+        // The event_slug_history row for a rename was written in the same
+        // batch as the UPDATE above (OPE-1390), so by here it has committed.
+        if (slugRename) {
+          const renamedFrom = slugRename.previousSlug;
+          const renamedTo = slugRename.nextSlug;
 
           // K43 / A3.3 — slug-change auto-repair. This Worker can't import the
           // main app's content-links lib, so fire the repair endpoint over

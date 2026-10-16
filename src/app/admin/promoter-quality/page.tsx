@@ -29,7 +29,6 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, eventDateDriftFindings, promoters } from "@/lib/db/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
-export const revalidate = 300;
 
 // Promoters with fewer than this many events default to T2 (watch) —
 // not enough signal to either trust (T1) or flag (T3). Same default
