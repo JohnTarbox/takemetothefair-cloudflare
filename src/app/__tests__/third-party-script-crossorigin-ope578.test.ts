@@ -56,7 +56,12 @@ function externalScriptTags(source: string): string[] {
   const srcPattern = /src=(?:"|\{`)https:\/\//g;
   let m: RegExpExecArray | null;
   while ((m = srcPattern.exec(source)) !== null) {
-    const open = source.lastIndexOf("<script", m.index);
+    // OPE-1380 — the layout renders its tags as <NonceScript> (a <script>
+    // that carries the CSP nonce); either element name opens a tag.
+    const open = Math.max(
+      source.lastIndexOf("<script", m.index),
+      source.lastIndexOf("<NonceScript", m.index)
+    );
     const close = source.indexOf("/>", m.index);
     if (open === -1 || close === -1) continue;
     out.push(source.slice(open, close + 2));
@@ -78,7 +83,7 @@ describe("third-party script tags in the root layout", () => {
     expect(tags.some((t) => t.includes("cloudflareinsights.com"))).toBe(true);
     // Each match must be ONE element, not a span across several.
     for (const tag of tags) {
-      expect(tag.match(/<script/g)?.length ?? 0).toBe(1);
+      expect(tag.match(/<(?:script|NonceScript)\b/g)?.length ?? 0).toBe(1);
     }
   });
 

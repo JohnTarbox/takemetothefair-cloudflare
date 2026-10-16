@@ -126,7 +126,8 @@ export const PATCH = withAuth<{ id: string }>(
       if (data.latitude !== undefined) updateData.latitude = data.latitude;
       if (data.longitude !== undefined) updateData.longitude = data.longitude;
       if (data.capacity !== undefined) updateData.capacity = data.capacity;
-      if (data.amenities) updateData.amenities = JSON.stringify(data.amenities);
+      // OPE-1389 — present-key check; an unsent amenities is no longer defaulted to [].
+      if (data.amenities !== undefined) updateData.amenities = JSON.stringify(data.amenities);
       if (data.contactEmail !== undefined) updateData.contactEmail = data.contactEmail;
       if (data.contactPhone !== undefined) updateData.contactPhone = data.contactPhone;
       if (data.website !== undefined) updateData.website = data.website;
@@ -154,7 +155,8 @@ export const PATCH = withAuth<{ id: string }>(
       // OPE-1180 — FORMER is owned by MCP update_venue, which carries the
       // lifecycle fields, their citation, and the events-after-closure check.
       // This form has none of those, so it may neither set FORMER nor move a
-      // venue out of it (the zod default would otherwise write ACTIVE).
+      // venue out of it. (Since OPE-1389 an unsent status stays undefined
+      // instead of the create default ACTIVE.)
       if (data.status === "FORMER" && currentVenue.status !== "FORMER") {
         return NextResponse.json(
           {
