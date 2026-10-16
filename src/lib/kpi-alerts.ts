@@ -19,7 +19,15 @@
  *     breach) → SLACK_WEBHOOK_URL_TECHNICAL + ALERT_EMAIL_TECHNICAL
  *
  * Transition coverage:
- *   - All RED transitions are always sent.
+ *   - RED transitions on TECHNICAL KPIs are always sent.
+ *   - RED transitions on BUSINESS KPIs are debounced 72h per KPI (OPE-1394):
+ *     if the KPI already had a RED row in the last 72h, the new RED is the
+ *     same incident flapping across the threshold and is silenced. Prod
+ *     history showed conversion_rate crossing RED↔YELLOW up to 3×/day at the
+ *     old 5% line (18 RED transitions in 90d → 2 under this debounce). Scoped
+ *     to business because that channel has never delivered (no recipient
+ *     configured), so this changes no live send; the technical channel is
+ *     live and is left exactly as it was.
  *   - YELLOW transitions are debounced 72h per KPI — if the same KPI
  *     has been YELLOW in the last 72h, the new YELLOW is silenced so
  *     a noisy oscillating KPI doesn't spam the channel.
@@ -70,6 +78,10 @@ const KPI_DISPLAY_NAME: Record<KpiName, string> = {
 /** Hours of suppression after a YELLOW alert before the next YELLOW for
  *  the same KPI is allowed to fire. RED bypasses this — every RED sends. */
 const YELLOW_DEBOUNCE_HOURS = 72;
+
+/** OPE-1394 — hours of suppression after a RED for a BUSINESS KPI before the
+ *  next RED for the same KPI may fire. Technical-KPI REDs are not debounced. */
+const BUSINESS_RED_DEBOUNCE_HOURS = 72;
 
 /** Pull a runtime env var via the Cloudflare bindings. Missing keys
  *  return undefined; caller no-ops if the channel isn't configured. */
@@ -157,28 +169,41 @@ async function isStaleFlap(
 }
 
 /**
- * Per-KPI YELLOW debounce. Returns true when the alert should fire
- * (no prior YELLOW for this KPI in the last 72h). The newly-inserted
- * row counts as the "current" YELLOW, so we look for >1 row in the
- * window — if the count is exactly 1, this is the only YELLOW and
- * we let it through.
+ * Per-KPI state debounce. Returns true when the alert should fire (no prior
+ * row in `state` for this KPI in the last `hours`). The newly-inserted row
+ * counts as the "current" one, so we look for >1 row in the window — if the
+ * count is exactly 1, this is the only such row and we let it through.
+ *
+ * Keyed on kpi_state_history ROWS (one per KPI per 10-min run), not on
+ * transitions: any time spent in `state` inside the window debounces, so a
+ * KPI that flaps across a threshold alerts once per incident, not per flap.
  */
-async function shouldSendYellowAlert(db: Db, kpiName: KpiName): Promise<boolean> {
-  const cutoff = new Date(Date.now() - YELLOW_DEBOUNCE_HOURS * 3600_000);
+async function shouldSendStateAlert(
+  db: Db,
+  kpiName: KpiName,
+  state: "YELLOW" | "RED",
+  hours: number
+): Promise<boolean> {
+  const cutoff = new Date(Date.now() - hours * 3600_000);
   const rows = await db
     .select({ c: sql<number>`COUNT(*)` })
     .from(kpiStateHistory)
     .where(
       and(
         eq(kpiStateHistory.kpiName, kpiName),
-        eq(kpiStateHistory.state, "YELLOW"),
+        eq(kpiStateHistory.state, state),
         gte(kpiStateHistory.computedAt, cutoff)
       )
     );
   const count = Number(rows[0]?.c ?? 0);
-  // If COUNT==1, only the just-inserted YELLOW exists → fire.
-  // If COUNT>=2, a prior YELLOW within window already alerted → debounce.
+  // If COUNT==1, only the just-inserted row exists → fire.
+  // If COUNT>=2, a prior row within window already alerted → debounce.
   return count <= 1;
+}
+
+/** Per-KPI YELLOW debounce (72h). */
+function shouldSendYellowAlert(db: Db, kpiName: KpiName): Promise<boolean> {
+  return shouldSendStateAlert(db, kpiName, "YELLOW", YELLOW_DEBOUNCE_HOURS);
 }
 
 interface DispatchResult {
@@ -352,7 +377,7 @@ export async function dispatchKpiAlert(
     return { dispatched: false, channel: "none", reason: "stale-flap-suppressed" };
   }
 
-  // YELLOW debounce. RED and STALE bypass — both are incident-level.
+  // YELLOW debounce. STALE bypasses — it is incident-level.
   if (toState === "YELLOW") {
     const ok = await shouldSendYellowAlert(db, kpiName);
     if (!ok) {
@@ -363,6 +388,15 @@ export async function dispatchKpiAlert(
   // STALE always goes to the technical channel regardless of which KPI
   // is stale — it's a feed/pipeline problem, not a business problem.
   const category: AlertCategory = toState === "STALE" ? "technical" : CATEGORY_BY_KPI[kpiName];
+
+  // OPE-1394 — business-KPI RED debounce (see header). Technical RED still
+  // always sends.
+  if (toState === "RED" && category === "business") {
+    const ok = await shouldSendStateAlert(db, kpiName, "RED", BUSINESS_RED_DEBOUNCE_HOURS);
+    if (!ok) {
+      return { dispatched: false, channel: "none", reason: "red-debounced" };
+    }
+  }
   const config = loadConfig(category);
   if (!config.slackWebhookUrl && !config.alertEmail) {
     return { dispatched: false, channel: "none", reason: "no-config" };
@@ -424,6 +458,7 @@ export const __test = {
   buildEmailBody,
   CATEGORY_BY_KPI,
   YELLOW_DEBOUNCE_HOURS,
+  BUSINESS_RED_DEBOUNCE_HOURS,
   STALE_FLAP_VALUE_EPSILON,
   formatValue,
 };

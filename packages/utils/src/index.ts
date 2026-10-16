@@ -689,3 +689,5 @@ export * from "./safe-href";
 export * from "./html-sanitize";
 export * from "./html-escape";
 export * from "./email-subject";
+// OPE-1393 — an operator edit to a scraper-synced field turns sync off (app + MCP).
+export * from "./scraper-sync-lock";

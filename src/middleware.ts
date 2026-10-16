@@ -35,7 +35,13 @@ import {
 } from "@/lib/conditional-get";
 import { getHelpArticle } from "@/lib/help-articles";
 import { unsafeSlug } from "@/lib/utils";
-import { shouldSample, writeRequestSample } from "@/lib/request-sampling";
+import {
+  ADMIN_RSC_ANON_KIND,
+  isAnonymousAdminRscRequest,
+  shouldSample,
+  writeRequestSample,
+} from "@/lib/request-sampling";
+import { generateNonce, isNonceCspPath, nonceContentSecurityPolicy } from "@/lib/csp";
 
 /**
  * Middleware handles five pre-route concerns that must NOT be cached:
@@ -136,6 +142,20 @@ export const config = {
     // and the layout/route auth still runs.
     "/admin/:path*",
     "/api/admin/:path*",
+    // OPE-1380 — every route that gets the per-request nonce CSP
+    // (NONCE_CSP_PREFIXES in src/lib/csp.ts). `/x/:path*` also matches `/x`.
+    // These widen `/vendor/:slug` and `/promoter/:slug` above to the whole
+    // portal. scripts/check-nonce-csp-routes.ts fails CI when a page under a
+    // protected directory is not matched.
+    "/login/:path*",
+    "/register/:path*",
+    "/forgot-password/:path*",
+    "/reset-password/:path*",
+    "/verify-email/:path*",
+    "/vendor/:path*",
+    "/promoter/:path*",
+    "/suggest-event/:path*",
+    "/dashboard/:path*",
   ],
 };
 
@@ -301,6 +321,33 @@ async function handleRouting(request: NextRequest) {
             country: request.headers.get("cf-ipcountry") ?? cf?.country ?? null,
             referer: request.headers.get("referer"),
             ray: request.headers.get("cf-ray"),
+          })
+        );
+      }
+    } catch {
+      // sampling must never affect the response path
+    }
+  }
+
+  // ── OPE-1397 — anonymous RSC hits on /admin* ───────────────────
+  // The A9 block above skips /admin. Record every /admin* request carrying
+  // `RSC` / `Next-Router-State-Tree` with no session cookie (the OPE-1365
+  // layout-bypass shape): path, timestamp, country, ASN only — no headers,
+  // no IP. Same never-throw, fire-and-forget contract as A9.
+  // No heartbeat probe, by design: this path is EXPECTED to be silent, so
+  // "no rows" is the healthy state and a probe could only false-fire.
+  if (isAnonymousAdminRscRequest(pathname, request.headers)) {
+    try {
+      const cfCtx = getCloudflareContext();
+      const d1 = cfCtx.env.DB;
+      const cf = cfCtx.cf as { asn?: number; country?: string } | undefined;
+      if (d1) {
+        cfCtx.ctx.waitUntil(
+          writeRequestSample(drizzle(d1), {
+            kind: ADMIN_RSC_ANON_KIND,
+            path: pathname,
+            asn: cf?.asn ?? null,
+            country: request.headers.get("cf-ipcountry") ?? cf?.country ?? null,
           })
         );
       }
@@ -923,8 +970,53 @@ async function handleRouting(request: NextRequest) {
  * 404s, or a renamed slug it 301s, can never be answered "nothing changed".
  */
 export async function middleware(request: NextRequest) {
+  const { pathname } = request.nextUrl;
+  if (isNonceCspPath(pathname)) {
+    // Only /admin, /vendor/<x> and /promoter/<x> have routing work to do (the
+    // read-only Bearer gate, the singular→plural typo redirect). The other
+    // nonce routes skip handleRouting so A9 request sampling stays on the
+    // public pages it was scoped to. No nonce route is a conditional-GET
+    // candidate (matchConditionalRoute), so applyConditionalGet is skipped.
+    const routed = NONCE_ROUTING_PREFIXES.some(
+      (p) => pathname === p || pathname.startsWith(`${p}/`)
+    )
+      ? await handleRouting(request)
+      : NextResponse.next();
+    return applyNonceCsp(request, routed);
+  }
   const response = await handleRouting(request);
   return await applyConditionalGet(request, response);
+}
+
+const NONCE_ROUTING_PREFIXES = ["/admin", "/vendor", "/promoter"];
+
+/**
+ * OPE-1380 — stamp a fresh nonce CSP on a protected route.
+ *
+ * For a pass-through the policy is ALSO forwarded as a REQUEST header: that is
+ * where Next.js reads the nonce it puts on its own scripts (app-render.js →
+ * getScriptNonceFromHeader). `x-nonce` is forwarded for any server component
+ * that renders a custom <Script>. A redirect / 403 just gets the response
+ * header.
+ */
+function applyNonceCsp(request: NextRequest, response: NextResponse): NextResponse {
+  const nonce = generateNonce();
+  const policy = nonceContentSecurityPolicy(nonce);
+  if (!response.headers.has("x-middleware-next")) {
+    response.headers.set("Content-Security-Policy", policy);
+    return response;
+  }
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set("x-nonce", nonce);
+  requestHeaders.set("Content-Security-Policy", policy);
+  const next = NextResponse.next({ request: { headers: requestHeaders } });
+  // Keep anything routing put on its pass-through (today: nothing), minus
+  // Next's own middleware control headers, which `next` carries itself.
+  response.headers.forEach((value, key) => {
+    if (!key.startsWith("x-middleware-")) next.headers.set(key, value);
+  });
+  next.headers.set("Content-Security-Policy", policy);
+  return next;
 }
 
 /** Per-type lookup of the validator inputs. Slug is the public identity. */

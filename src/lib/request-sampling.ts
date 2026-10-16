@@ -15,6 +15,7 @@
  */
 import type { Database } from "@/lib/db";
 import { requestSamples } from "@/lib/db/schema";
+import { hasSessionCookie } from "@/lib/conditional-get";
 
 /** Fraction of eligible requests captured. The bot is high-volume on the 21st
  *  (~11k requests on a fixed page set), so 5% still yields hundreds of bot rows
@@ -52,7 +53,37 @@ export function shouldSample(rand: number): boolean {
   return rand < REQUEST_SAMPLE_RATE;
 }
 
+/**
+ * OPE-1397 (EXP5) — an /admin* request that carries `RSC` or
+ * `Next-Router-State-Tree` and NO session cookie.
+ *
+ * That is the shape of the OPE-1365 probe: a client-supplied router state tree
+ * telling the App Router the admin layout is already mounted, so only the page
+ * segment renders and the layout's redirect never runs. Every admin page now
+ * guards itself (requireAdmin), so such a request is refused — but it left no
+ * trace, because the A9 sampler skips /admin. A signed-in admin always sends
+ * the session cookie; a signed-out browser doing a client navigation inside
+ * /admin is the only benign source, and it is rare.
+ *
+ * Recorded at 100% (not the 5% page rate): a single crafted request is the
+ * event worth finding. Stores path, timestamp, CF country and ASN only — no
+ * headers, no IP, no UA.
+ */
+export const ADMIN_RSC_ANON_KIND = "admin_rsc_anon" as const;
+
+export function isAnonymousAdminRscRequest(
+  pathname: string,
+  headers: Pick<Headers, "get">
+): boolean {
+  if (pathname !== "/admin" && !pathname.startsWith("/admin/")) return false;
+  const rsc = headers.get("rsc") !== null || headers.get("next-router-state-tree") !== null;
+  if (!rsc) return false;
+  return !hasSessionCookie(headers.get("cookie"));
+}
+
 export interface RequestSampleInput {
+  /** Defaults to "page" (the A9 public-page sample). */
+  kind?: "page" | typeof ADMIN_RSC_ANON_KIND;
   path?: string | null;
   method?: string | null;
   userAgent?: string | null;
@@ -80,6 +111,7 @@ export async function writeRequestSample(
   try {
     await db.insert(requestSamples).values({
       timestamp: now,
+      kind: input.kind ?? "page",
       path: input.path ?? null,
       method: input.method ?? null,
       userAgent: input.userAgent ?? null,

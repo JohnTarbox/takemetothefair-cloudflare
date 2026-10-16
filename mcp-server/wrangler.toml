@@ -151,10 +151,9 @@ OPERATOR_OUTBOUND_ENABLED = "true"
 # (`unclear` -> handleUnknown) instead of terminating. `classified_intent` still
 # reads `spam`; the classifier's call is never revisited.
 #
-# ⚠️ SHIPS "false" and must stay that way until John says otherwise. The ticket
-# carries an explicit STOP-gate: the recovery path may not go live before he has
-# seen a dry-run of what it would surface. Detection RUNS and is recorded while
-# this is "false" — that is how the evidence for the decision accumulates.
+# ON since OPE-803 (#1198, merged 2026-09-06): John approved the flip in session
+# after seeing a dry-run of what the detector surfaces — the ticket's STOP-gate. When "false", detection still RUNS and is recorded
+# but nothing is routed to triage. Turning it off again is John's call.
 #
 # ⚠️ This is a plaintext [vars] entry. Flipping it in the dashboard is reverted
 # by the next `wrangler deploy`, which replaces the whole block from this file.
@@ -207,6 +206,17 @@ PHOTO_VISION_ENABLED = "true"
 # directly — a relayed approval is not the approval. When it flips, also set
 # `enabled_at` on the `booth-autowrite` heartbeat probe (drizzle/0164).
 PHOTO_AUTOWRITE_ENABLED = "true"
+# OPE-1394 / OPE-469 — commit gate for the replay_inbound_attachment MCP tool
+# (src/photo/replay.ts commitBlockedReason). A replay is DRY-RUN unless the call
+# passes commit:true AND this is exactly "true"; a committed replay writes to
+# live rows (vendors, event links, hero images) exactly as a real email would.
+# Declared "false", which is what production runs with: the var is in no secret
+# and no [vars] on the deployed Worker (checked 2026-10-16 via the Workers
+# settings/secrets API). It was evidently set by hand for the 2026-10-06 OPE-978
+# CCEMA commit and wiped by the next deploy. To commit a replay, edit THIS line
+# to "true", deploy, run it, and set it back — a dashboard edit is reverted by
+# the next `wrangler deploy` (OPE-284/OPE-509).
+REPLAY_COMMIT_ENABLED = "false"
 # INTERNAL_API_KEY is set via `wrangler secret put INTERNAL_API_KEY`
 # Inbound-email failures (parse / extract / submit) get forwarded here.
 # Must be a verified destination address in Cloudflare Email Routing —

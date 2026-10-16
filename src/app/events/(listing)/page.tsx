@@ -6,7 +6,6 @@ import Link from "next/link";
 import { Search, Filter, Store, Heart, X } from "lucide-react";
 import { EventsView } from "@/components/events/events-view";
 import { CalendarSSR } from "@/components/events/calendar-ssr";
-import { isCal1SsrMonthEnabled, isCal2ViewsEnabled } from "@/lib/flags";
 import {
   upcomingEndPredicate,
   whenWindowEnd,
@@ -973,10 +972,10 @@ export default async function EventsPage({
   const favoriteUserId = isLoggedIn && params.favorites === "true" ? session.user.id : undefined;
 
   const viewMode = parseView(params.view);
-  // CAL1 — when the flag is ON, the calendar view renders the new SSR Month module
-  // (Month-only) instead of the legacy client calendar. Default OFF → no change.
-  const useSsrCalendar = viewMode === "calendar" && isCal1SsrMonthEnabled();
-  const cal2Enabled = isCal2ViewsEnabled();
+  // CAL1/CAL2 — the calendar view is the SSR calendar (Month + Agenda/Year/
+  // Week/Day sub-views). The CAL1_SSR_MONTH / CAL2_VIEWS flags that gated it
+  // were pinned "true" permanently (OPE-994) and retired in OPE-1394.
+  const useSsrCalendar = viewMode === "calendar";
   let loaded: [
     Awaited<ReturnType<typeof getEvents>>,
     Awaited<ReturnType<typeof getCategories>>,
@@ -1094,7 +1093,6 @@ export default async function EventsPage({
           <CalendarSSR
             events={eventsList}
             searchParams={params as Record<string, string | undefined>}
-            cal2Enabled={cal2Enabled}
           />
 
           <CalendarPastEventsCta />

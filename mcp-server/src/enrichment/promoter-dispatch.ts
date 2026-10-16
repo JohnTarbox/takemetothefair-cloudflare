@@ -31,6 +31,7 @@ import { isCeasedPromoter } from "../promoters/succession.js";
 import { fetchVendorSite } from "./fetch-site.js";
 import { extractPromoterSignals, type PromoterExtraction } from "./promoter-extract.js";
 import { probePromoterImage } from "./promoter-image.js";
+import { writeGuardedFills, type GuardedFill } from "./guarded-fill.js";
 
 /** One promoter pre-extraction job. */
 export interface PromoterEnrichmentMessage {
@@ -551,7 +552,7 @@ export async function processPromoterEnrichmentJob(
 
   // --- Live: auto-apply the high-confidence fills (fill-empty-only) ---
   const socialStagedNotPromotable = await holdSocialUnlessPromotable(db, proposals);
-  const applied = await applyFills(db, msg.promoterId, proposals);
+  const applied = await applyFills(db, msg.promoterId, proposals, row);
   await recomputeAndStamp(db, msg.promoterId, applied.length > 0);
   // OPE-1279 — an EMPTY live attempt applied nothing AND staged nothing new
   // (re-staging last run's unreviewed logo is not progress). Any applied field
@@ -654,19 +655,32 @@ async function holdSocialUnlessPromotable(db: Db, proposals: Proposal[]): Promis
  * non-auto-apply proposals stay staged for manual review. Marks the applied
  * candidate rows 'auto_merged'. Returns the promoter fields actually written.
  */
-async function applyFills(db: Db, promoterId: string, proposals: Proposal[]): Promise<string[]> {
-  const update: Record<string, string> = {};
-  const applied: string[] = [];
+async function applyFills(
+  db: Db,
+  promoterId: string,
+  proposals: Proposal[],
+  read: Record<string, unknown>
+): Promise<string[]> {
+  const fills: GuardedFill[] = [];
   for (const p of proposals) {
     if (!p.autoApply) continue;
     if (p.flags.length > 0) continue;
     const col = FIELD_TO_COLUMN[p.field];
     if (!col) continue;
-    update[col] = p.proposedValue;
-    applied.push(p.field);
+    fills.push({
+      field: p.field,
+      key: col,
+      value: p.proposedValue,
+      readValue: (read[col] as string | null | undefined) ?? null,
+    });
   }
+  if (fills.length === 0) return [];
+  // OPE-1393 (CLB6) — "empty" was judged from the row read BEFORE the site
+  // fetch. Each write lands only where the column still holds that read value
+  // (`IS NULL` for a null read), so an operator's value typed in meanwhile is
+  // never overwritten; only the fills that land count as applied.
+  const applied = await writeGuardedFills(db, promoters, promoters.id, promoterId, fills);
   if (applied.length === 0) return [];
-  await db.update(promoters).set(update).where(eq(promoters.id, promoterId));
   await db
     .update(promoterEnrichmentCandidates)
     .set({ decision: "auto_merged", reviewedAt: new Date(), reviewedBy: "auto-merge" })

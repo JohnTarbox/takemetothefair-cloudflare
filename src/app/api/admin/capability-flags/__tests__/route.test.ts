@@ -31,7 +31,10 @@ describe("capability-flags surface (OPE-509)", () => {
   it("THE TRAP: resolving an MCP flag against main-app env reports it dark", () => {
     // This is why the route must not simply resolve every flag. Pinning the
     // behaviour so the reason for the partition cannot be optimised away.
-    const states = resolveCapabilityFlags({}, mcp);
+    // (AUTO_REPLY_ENABLED is default-open — unset is ON by its consumer's rule —
+    // so it is the one MCP flag an empty env does not darken; OPE-1394.)
+    const states = resolveCapabilityFlags({}, mcp).filter((s) => s.name !== "AUTO_REPLY_ENABLED");
+    expect(states.length).toBeGreaterThan(0);
     expect(states.every((s) => s.dark)).toBe(true);
     expect(states.every((s) => s.value === null)).toBe(true);
   });

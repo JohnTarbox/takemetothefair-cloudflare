@@ -39,12 +39,10 @@ interface Props {
   events: CalendarEventInput[];
   /** All current search params, so the toggles preserve active filters. */
   searchParams: Record<string, string | undefined>;
-  /** Whether the CAL2 Agenda/Year sub-views are enabled (else Month-only, no sub-toggle). */
-  cal2Enabled: boolean;
 }
 
-export function CalendarSSR({ events, searchParams, cal2Enabled }: Props) {
-  const subView = cal2Enabled ? parseCalSubView(searchParams.cal_view) : "month";
+export function CalendarSSR({ events, searchParams }: Props) {
+  const subView = parseCalSubView(searchParams.cal_view);
   // Step 5 — default hides past events; the "Include past events" filter shows them.
   const includePast = searchParams.includePast === "true";
   const now = new Date().toISOString(); // host-pinned per request
@@ -97,11 +95,7 @@ export function CalendarSSR({ events, searchParams, cal2Enabled }: Props) {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3 print:hidden">
-        {cal2Enabled ? (
-          <CalendarSubViewToggle view={subView} searchParams={searchParams} />
-        ) : (
-          <span />
-        )}
+        <CalendarSubViewToggle view={subView} searchParams={searchParams} />
         <ViewToggle view="calendar" searchParams={searchParams} />
       </div>
       {body}

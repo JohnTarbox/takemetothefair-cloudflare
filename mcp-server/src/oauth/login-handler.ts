@@ -5,7 +5,11 @@ import { getDb } from "../db.js";
 import { logError } from "../logger.js";
 import { lookupUser, verifyPassword, resolveUserProps } from "./utils.js";
 import { clientIp, throttleAuthorize, type BurstCounterNamespace } from "./authorize-throttle.js";
-import { htmlSecurityHeaders, withHtmlSecurityHeaders } from "./html-security-headers.js";
+import {
+  generateNonce,
+  htmlSecurityHeaders,
+  withHtmlSecurityHeaders,
+} from "./html-security-headers.js";
 
 interface Env {
   DB: D1Database;
@@ -115,8 +119,10 @@ app.get("/authorize", async (c) => {
     expirationTtl: PENDING_STATE_TTL_SECONDS,
   });
 
-  return c.html(renderLoginPage(csrfToken, stateId, null, consent), 200, {
-    ...htmlSecurityHeaders(oauthReqInfo.redirectUri),
+  // OPE-1380 — a fresh CSP nonce per render; the page's <style> carries it.
+  const nonce = generateNonce();
+  return c.html(renderLoginPage(csrfToken, stateId, null, consent, nonce), 200, {
+    ...htmlSecurityHeaders(oauthReqInfo.redirectUri, nonce),
     "Set-Cookie": `__Host-CSRF=${csrfToken}; HttpOnly; Secure; Path=/; SameSite=Lax; Max-Age=600`,
   });
 });
@@ -213,16 +219,18 @@ app.post("/authorize", async (c) => {
     const retry = throttle.retryAfterSeconds;
     const newCsrf = crypto.randomUUID();
     const consent = await consentFor(c.env.OAUTH_PROVIDER, oauthReqInfo);
+    const nonce = generateNonce();
     return c.html(
       renderLoginPage(
         newCsrf,
         stateData,
         `Too many sign-in attempts. Please wait ${retry} seconds and try again.`,
-        consent
+        consent,
+        nonce
       ),
       429,
       {
-        ...htmlSecurityHeaders(oauthReqInfo.redirectUri),
+        ...htmlSecurityHeaders(oauthReqInfo.redirectUri, nonce),
         "Retry-After": String(retry),
         "Set-Cookie": `__Host-CSRF=${newCsrf}; HttpOnly; Secure; Path=/; SameSite=Lax; Max-Age=600`,
       }
@@ -337,8 +345,9 @@ export function accessDeniedRedirect(req: Pick<AuthRequest, "redirectUri" | "sta
 async function loginError(c: any, stateData: string, req: AuthRequest, message: string) {
   const newCsrf = crypto.randomUUID();
   const consent = await consentFor(c.env.OAUTH_PROVIDER, req);
-  return c.html(renderLoginPage(newCsrf, stateData, message, consent), 200, {
-    ...htmlSecurityHeaders(req.redirectUri),
+  const nonce = generateNonce();
+  return c.html(renderLoginPage(newCsrf, stateData, message, consent, nonce), 200, {
+    ...htmlSecurityHeaders(req.redirectUri, nonce),
     "Set-Cookie": `__Host-CSRF=${newCsrf}; HttpOnly; Secure; Path=/; SameSite=Lax; Max-Age=600`,
   });
 }
@@ -347,7 +356,8 @@ function renderLoginPage(
   csrfToken: string,
   stateData: string,
   error: string | null,
-  consent: ConsentInfo | null
+  consent: ConsentInfo | null,
+  nonce: string
 ): string {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -355,7 +365,7 @@ function renderLoginPage(
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Sign In — Meet Me at the Fair</title>
-  <style>
+  <style nonce="${nonce}">
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;

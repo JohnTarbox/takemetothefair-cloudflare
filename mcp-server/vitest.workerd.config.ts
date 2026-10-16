@@ -45,6 +45,9 @@ export default defineConfig({
           kvNamespaces: ["OAUTH_KV"],
           durableObjects: {
             BURST_COUNTER: { className: "BurstCounter", useSQLite: true },
+            // OPE-1391 — a minimal McpAgent (workerd-tests/probe-mcp.ts) for
+            // the session-binding tests.
+            MCP_OBJECT: { className: "ProbeMCP", useSQLite: true },
           },
           bindings: { TEST_MIGRATIONS: migrations },
         },

@@ -1,4 +1,3 @@
-import { redirect } from "next/navigation";
 import Link from "next/link";
 import Image from "@/components/ui/responsive-image";
 import {
@@ -14,7 +13,7 @@ import {
 } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { auth } from "@/lib/auth";
+import { requireSession } from "@/lib/require-role";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import {
   userFavorites,
@@ -229,11 +228,7 @@ function buildChecklist(
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
-  const session = await auth();
-
-  if (!session) {
-    redirect("/login?callbackUrl=/dashboard");
-  }
+  const session = await requireSession("/dashboard");
 
   const [state, upcoming] = await Promise.all([
     getDashboardState(session.user.id, session.user.role),

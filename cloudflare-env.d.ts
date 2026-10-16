@@ -16,9 +16,8 @@ interface __BaseEnv_CloudflareEnv {
   CLOUDFLARE_ACCOUNT_ID: string;
   VENDOR_DIGEST_SEND_ENABLED: string;
   CONDITIONAL_GET_PUBLIC_CACHE: string;
-  ENTRY_DEADLINES_INDEX: string;
-  CAL1_SSR_MONTH: string;
-  CAL2_VIEWS: string;
+  FAQ_PILOT_EVENT_SLUGS: string;
+  EMIT_PERFORMER_SUBEVENTS: string;
   EMAIL_REPLY_ENABLED: string;
   SUBMISSION_ACK_ENABLED: string;
   NEWSLETTER_SEND_ENABLED: string;
@@ -46,9 +45,8 @@ declare namespace NodeJS {
       | "CLOUDFLARE_ACCOUNT_ID"
       | "VENDOR_DIGEST_SEND_ENABLED"
       | "CONDITIONAL_GET_PUBLIC_CACHE"
-      | "ENTRY_DEADLINES_INDEX"
-      | "CAL1_SSR_MONTH"
-      | "CAL2_VIEWS"
+      | "FAQ_PILOT_EVENT_SLUGS"
+      | "EMIT_PERFORMER_SUBEVENTS"
       | "EMAIL_REPLY_ENABLED"
       | "SUBMISSION_ACK_ENABLED"
       | "NEWSLETTER_SEND_ENABLED"
@@ -11459,7 +11457,7 @@ type AIGatewayHeaders = {
   [key: string]: string | number | boolean | object;
 };
 type AIGatewayUniversalRequest = {
-  provider: AIGatewayProviders | string;  
+  provider: AIGatewayProviders | string;
   endpoint: string;
   headers: Partial<AIGatewayHeaders>;
   query: unknown;
@@ -11477,7 +11475,7 @@ declare abstract class AiGateway {
       signal?: AbortSignal;
     }
   ): Promise<Response>;
-  getUrl(provider?: AIGatewayProviders | string): Promise<string>;  
+  getUrl(provider?: AIGatewayProviders | string): Promise<string>;
 }
 // Copyright (c) 2022-2025 Cloudflare, Inc.
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:

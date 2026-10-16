@@ -9,6 +9,7 @@ import { WebVitals } from "@/components/WebVitals";
 import { ErrorAnalyticsBridge } from "@/components/ErrorAnalyticsBridge";
 import { TrafficAttributionCapture } from "@/components/analytics/TrafficAttributionCapture";
 import { OrganizationSchema } from "@/components/seo/OrganizationSchema";
+import { NonceScript } from "@/components/security/nonce-script";
 
 /**
  * Fonts are SELF-HOSTED, not fetched from Google at build time.
@@ -134,7 +135,7 @@ export default function RootLayout({
           script too. Cleaner long-term fix would be disabling keepNames in the
           OpenNext esbuild pass, but that knob isn't cleanly exposed today.
         */}
-        <script
+        <NonceScript
           dangerouslySetInnerHTML={{
             __html: `window.__name||(window.__name=function(t,n){try{Object.defineProperty(t,"name",{value:n,configurable:true})}catch(e){}return t});`,
           }}
@@ -185,6 +186,13 @@ export default function RootLayout({
         GitHub Actions secret. It is NOT user-controllable runtime input —
         no sanitizer needed. The G- value is also a public, low-entropy
         identifier (it ships to every browser anyway).
+
+        OPE-1380 — every <script> this layout renders is a <NonceScript>: a
+        plain <script> that carries the per-request CSP nonce on the nonce
+        routes (admin/auth/portals/account — src/lib/csp.ts), where
+        'strict-dynamic' blocks any script without one. gtag and the CF beacon
+        are allow-listed BY NONCE there. On cached public pages there is no
+        nonce and the markup is exactly the plain <script> it was.
       */}
         {process.env.NEXT_PUBLIC_GA_ID && (
           <>
@@ -199,12 +207,12 @@ export default function RootLayout({
                 `access-control-allow-origin: https://meetmeatthefair.com`, so
                 an anonymous CORS load succeeds and the errors become
                 attributable. See the guard test for the precondition. */}
-            <script
+            <NonceScript
               async
               crossOrigin="anonymous"
               src={`https://www.googletagmanager.com/gtag/js?id=${process.env.NEXT_PUBLIC_GA_ID}`}
             />
-            <script
+            <NonceScript
               dangerouslySetInnerHTML={{
                 __html: `window.dataLayer = window.dataLayer || [];
 function gtag(){dataLayer.push(arguments);}
@@ -220,7 +228,7 @@ if (!window.__ga4Inited) {
         {process.env.NEXT_PUBLIC_CF_BEACON_TOKEN && (
           // OPE-578 — see the note on the gtag tag above. Verified 2026-08-28:
           // this host answers `access-control-allow-origin: *`.
-          <script
+          <NonceScript
             defer
             crossOrigin="anonymous"
             src="https://static.cloudflareinsights.com/beacon.min.js"
