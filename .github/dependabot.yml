@@ -16,24 +16,6 @@
 # below. See the ticket comment for the measured state of those settings.
 version: 2
 
-# OPE-1385 (DEP-7) — the private `@johntarbox/*` scope lives on GitHub Packages
-# (see .npmrc: `@johntarbox:registry=https://npm.pkg.github.com`). Without this
-# block Dependabot cannot authenticate to it, so a manifest that names
-# `@johntarbox/calendar-grid` fails to resolve and the WHOLE npm update run
-# errors — not just that one package.
-#
-# ⚠️ The secret is a DEPENDABOT secret (Settings → Secrets and variables →
-# Dependabot), not an Actions secret — Dependabot cannot read Actions secrets,
-# and the Actions-side `GITHUB_TOKEN` that CI uses for NODE_AUTH_TOKEN does not
-# exist in a Dependabot run. It must be a token with `read:packages` on the
-# @johntarbox packages. Until it exists, this registry fails to authenticate
-# exactly as it does today.
-registries:
-  github-packages-johntarbox:
-    type: npm-registry
-    url: https://npm.pkg.github.com
-    token: ${{secrets.DEPENDABOT_GH_PACKAGES_TOKEN}}
-
 updates:
   # ---- npm -------------------------------------------------------------
   # Grouped so a week's patches arrive as a few reviewable PRs rather than
@@ -48,9 +30,6 @@ updates:
       timezone: "America/New_York"
     open-pull-requests-limit: 8
     versioning-strategy: "increase"
-    # OPE-1385 — lets the npm run authenticate to the @johntarbox scope above.
-    registries:
-      - github-packages-johntarbox
     groups:
       # The runtime the site actually serves on. Kept separate because these
       # are the ones worth reading carefully.
