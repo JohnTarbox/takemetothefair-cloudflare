@@ -2,7 +2,11 @@ import { getCloudflareContext } from "@opennextjs/cloudflare";
 import type { CloudflareStringEnvKey } from "@/lib/cloudflare";
 import { logError } from "@/lib/logger";
 import { SITE_URL, SUPPORT_EMAIL } from "@takemetothefair/constants";
-import { formatRecipientsForLedger, normalizeRecipients } from "@takemetothefair/utils";
+import {
+  formatRecipientsForLedger,
+  normalizeRecipients,
+  sanitizeEmailSubject,
+} from "@takemetothefair/utils";
 import { emailSendLedger } from "@/lib/db/schema";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 
@@ -145,8 +149,10 @@ async function sendViaResend(
  */
 export async function sendEmail(
   db: DrizzleD1Database<Record<string, unknown>> | null,
-  args: SendEmailArgs
+  rawArgs: SendEmailArgs
 ): Promise<SendResult> {
+  // OPE-1392 (TPL-2) — no control characters in a Subject, whatever the caller.
+  const args = { ...rawArgs, subject: sanitizeEmailSubject(rawArgs.subject) };
   const apiKey = getRuntimeEnv("RESEND_API_KEY");
 
   if (apiKey) {

@@ -683,3 +683,9 @@ export * from "./edition-path";
 // OPE-1341 — JPEG metadata strip, shared by the main app and the MCP Worker.
 export * from "./jpeg-exif-strip";
 export * from "./safe-href";
+// OPE-1392 — newsletter HTML allow-list sanitizer, the one quote-escaping HTML
+// escape, and the one email-subject control-character strip. Shared by the
+// main app and the MCP Worker.
+export * from "./html-sanitize";
+export * from "./html-escape";
+export * from "./email-subject";
