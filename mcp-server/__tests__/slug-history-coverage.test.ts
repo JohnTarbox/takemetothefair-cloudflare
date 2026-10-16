@@ -22,6 +22,11 @@ import { fileURLToPath } from "node:url";
  * history INSERT itself; the per-entity call sites are pinned below and in
  * the app-side `src/__tests__/slug-rename-guard-ope1373.test.ts`.
  *
+ * OPE-1390 — `update_event` joined them (entity "event"): its own loop and its
+ * swallowed post-update history INSERT are gone, so admin.ts no longer names
+ * `eventSlugHistory` at all; the history INSERT is built by the helper and
+ * batched with the UPDATE.
+ *
  * Anchored on the CALL syntax, never the bare symbol: the symbol also appears
  * on the import line, so a bare-name check would pass vacuously on a file that
  * imports the helper and never uses it.
@@ -33,17 +38,18 @@ const ADMIN = read("../src/tools/admin.ts");
 const PERFORMERS = read("../src/tools/admin-performers.ts");
 
 describe("slug-history write coverage (OPE-495)", () => {
-  it.each([
-    ["eventSlugHistory", ADMIN],
-    ["performerSlugHistory", PERFORMERS],
-  ])("%s is actually INSERTed into, not merely imported", (table, source) => {
-    expect(source).toContain(`insert(${table})`);
-  });
+  it.each([["performerSlugHistory", PERFORMERS]])(
+    "%s is actually INSERTed into, not merely imported",
+    (table, source) => {
+      expect(source).toContain(`insert(${table})`);
+    }
+  );
 
   it.each([
     ["promoter", 1], // update_promoter
     ["venue", 2], // update_venue + update_event's venue side-effect
     ["vendor", 2], // update_vendor + update_vendor_status custom_slug
+    ["event", 1], // update_event (OPE-1390)
   ])("OPE-1373: %s renames go through planSlugRename (%i call sites)", (entity, expected) => {
     const calls = ADMIN.match(new RegExp(`planSlugRename\\(db, "${entity}"`, "g")) ?? [];
     expect(calls.length).toBe(expected);
@@ -53,9 +59,9 @@ describe("slug-history write coverage (OPE-495)", () => {
     // Documents why the assertion above is shaped the way it is: the symbol
     // appears on the import line, so `toContain(table)` cannot distinguish
     // "imported and used" from "imported and forgotten".
-    expect(ADMIN).toContain("eventSlugHistory,"); // the import line alone
-    expect(ADMIN.indexOf("eventSlugHistory")).toBeLessThan(
-      ADMIN.indexOf("insert(eventSlugHistory)")
+    expect(PERFORMERS).toContain("performerSlugHistory,"); // the import line alone
+    expect(PERFORMERS.indexOf("performerSlugHistory")).toBeLessThan(
+      PERFORMERS.indexOf("insert(performerSlugHistory)")
     );
   });
 });
