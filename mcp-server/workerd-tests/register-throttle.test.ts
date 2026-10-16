@@ -54,8 +54,11 @@ async function worker(request: Request): Promise<Response> {
   return refused ?? provider.fetch(request, { OAUTH_KV: env.OAUTH_KV, DB: env.DB } as never, ctx);
 }
 
-describe("OPE-1391 — POST /register per-IP throttle", () => {
+// 60+ sequential real registrations per test exceed vitest's 5 s default.
+describe("OPE-1391 — POST /register per-IP throttle", { timeout: 30_000 }, () => {
   it(`allows ${REGISTER_IP_LIMIT} registrations an hour from one IP, refuses the next with 429 + Retry-After`, async () => {
+    // Shared Claude.ai egress IPs (parent review of #1621): 60/hour, the 61st → 429.
+    expect(REGISTER_IP_LIMIT).toBe(60);
     const ip = freshIp();
     for (let i = 0; i < REGISTER_IP_LIMIT; i++) {
       const res = await worker(registerRequest(ip));

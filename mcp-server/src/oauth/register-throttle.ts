@@ -7,9 +7,10 @@
  * authorize-throttle.ts) — the BurstCounter Durable Object, because the Workers
  * Rate Limiting binding was measured enforcing nothing in prod (OPE-951):
  *
- *  - per client IP, 10 / hour. A connector registers when it is (re)connected,
- *    not per request or per refresh, so 10 an hour from one address is far
- *    above legitimate use and far below a flood;
+ *  - per client IP, 60 / hour. Claude.ai performs DCR from Anthropic's shared
+ *    server egress IPs, so every user adding the connector registers from the
+ *    same few addresses — the budget is per egress IP, not per person. 60/hour
+ *    still bounds KV growth to ~1.4k records/day/IP, each expiring in 90 days;
  *  - no binding → REFUSE (it is declared in this Worker's own wrangler.toml, so
  *    its absence is a broken deploy, and a guard that silently allows is OPE-931);
  *  - the counter THROWS → allow. A Durable Object incident must not stop every
@@ -26,7 +27,7 @@ import { logError } from "../logger.js";
 
 export const REGISTER_POLICY = "mcp-oauth-register";
 export const REGISTER_PERIOD_SECONDS = 3600;
-export const REGISTER_IP_LIMIT = 10;
+export const REGISTER_IP_LIMIT = 60;
 
 export type RegisterThrottleResult =
   | { allowed: true; reason: "ok" | "limiter-threw"; error?: unknown }
