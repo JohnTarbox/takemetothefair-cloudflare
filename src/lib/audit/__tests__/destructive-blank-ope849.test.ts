@@ -20,17 +20,18 @@ import { isDestructiveBlank } from "../entity-write-log";
 
 describe("isDestructiveBlank", () => {
   it("is TRUE when a populated field is emptied — the specimen's ten fields", () => {
-    // Verbatim from entity_write_log row 9ef74078.
+    // Shape of entity_write_log row 9ef74078; the contact/address values are
+    // synthetic stand-ins (OPE-1388: never publish a vendor's real details).
     const wiped: Array<[string, unknown]> = [
       ["description", "Quality Crystals from small Businesses around the world!"],
       ["vendorType", "Crystal and crystal jewelry "],
       ["contactName", "Morgan Doe"],
-      ["contactEmail", "usertansy1@gmail.com"],
-      ["contactPhone", "9789943986"],
-      ["address", "50 Highland Street, Apt 4"],
-      ["city", "Lowell"],
-      ["state", "MA"],
-      ["zip", "01852"],
+      ["contactEmail", "user.alder@gmail.com"],
+      ["contactPhone", "2075550142"],
+      ["address", "12 Example Lane, Apt 3"],
+      ["city", "Anytown"],
+      ["state", "ME"],
+      ["zip", "04000"],
     ];
     for (const [field, before] of wiped) {
       expect(`${field}=${isDestructiveBlank(before, "")}`).toBe(`${field}=true`);
@@ -51,13 +52,13 @@ describe("isDestructiveBlank", () => {
   });
 
   it("is FALSE when a field is filled in or edited", () => {
-    expect(isDestructiveBlank(null, "Lowell")).toBe(false);
-    expect(isDestructiveBlank("Lowell", "Boston")).toBe(false);
+    expect(isDestructiveBlank(null, "Anytown")).toBe(false);
+    expect(isDestructiveBlank("Anytown", "Boston")).toBe(false);
     expect(isDestructiveBlank("[]", '["Crystals"]')).toBe(false);
   });
 
   it("treats whitespace-only as empty — a space is not a saved value", () => {
-    expect(isDestructiveBlank("Lowell", "   ")).toBe(true);
+    expect(isDestructiveBlank("Anytown", "   ")).toBe(true);
     expect(isDestructiveBlank("   ", "")).toBe(false);
   });
 
