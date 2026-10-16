@@ -84,6 +84,23 @@ const nextConfig = {
     ];
   },
   async headers() {
+    // OPE-1380 — the policy below is the PUBLIC (cached/ISR) policy. Routes
+    // under NONCE_CSP_PREFIXES (src/lib/csp.ts) get a per-request nonce policy
+    // from middleware instead, so this one must NOT also be emitted there: two
+    // CSP headers are both enforced, and the merge is the caller's problem.
+    // Keep this list equal to NONCE_CSP_PREFIXES — scripts/check-nonce-csp-
+    // routes.ts compiles this source and fails CI on any drift.
+    const NONCE_CSP_EXCLUDED_SOURCE =
+      "/((?!(?:admin|login|register|forgot-password|reset-password|verify-email|vendor|promoter|suggest-event|dashboard)(?:/|$)).*)";
+
+    const publicCsp = {
+      key: "Content-Security-Policy",
+      value:
+        "default-src 'self'; script-src 'self' 'unsafe-inline'" +
+        (process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : "") +
+        " https://challenges.cloudflare.com https://www.googletagmanager.com https://www.google-analytics.com https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https://challenges.cloudflare.com https://www.google-analytics.com https://region1.google-analytics.com https://www.google.com https://cloudflareinsights.com; frame-src https://challenges.cloudflare.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+    };
+
     const securityHeaders = [
       { key: "Strict-Transport-Security", value: "max-age=31536000; includeSubDomains" },
       { key: "X-Content-Type-Options", value: "nosniff" },
@@ -92,17 +109,6 @@ const nextConfig = {
       { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
       { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
       { key: "Cross-Origin-Resource-Policy", value: "cross-origin" },
-      // OPE-909 — no 'unsafe-eval' in production (measured: zero violations on six
-      // live pages without it). `next dev` evaluates modules with eval, so the
-      // dev server — which is what E2E runs — keeps it; without it hydration
-      // never happens and client-rendered controls never appear.
-      {
-        key: "Content-Security-Policy",
-        value:
-          "default-src 'self'; script-src 'self' 'unsafe-inline'" +
-          (process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : "") +
-          " https://challenges.cloudflare.com https://www.googletagmanager.com https://www.google-analytics.com https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https://challenges.cloudflare.com https://www.google-analytics.com https://region1.google-analytics.com https://www.google.com https://cloudflareinsights.com; frame-src https://challenges.cloudflare.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
-      },
     ];
 
     const cdnCache = (maxAge, swr = 0) => ({
@@ -115,6 +121,12 @@ const nextConfig = {
     return [
       // Global security headers
       { source: "/(.*)", headers: securityHeaders },
+      // Public CSP everywhere EXCEPT the nonce routes (see above). OPE-909 — no
+      // 'unsafe-eval' in production (measured: zero violations on six live
+      // pages without it). `next dev` evaluates modules with eval, so the dev
+      // server — which is what E2E runs — keeps it; without it hydration never
+      // happens and client-rendered controls never appear.
+      { source: NONCE_CSP_EXCLUDED_SOURCE, headers: [publicCsp] },
       // Static pages — CDN caches for 1 day
       ...[
         "/about",

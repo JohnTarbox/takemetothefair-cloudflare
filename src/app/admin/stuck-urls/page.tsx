@@ -39,7 +39,6 @@ import {
 import { unsafeSlug } from "@/lib/utils";
 import { chunkedInArray } from "@takemetothefair/utils";
 
-export const revalidate = 300;
 
 interface ClusterRow {
   bucket: EntityBucket;
