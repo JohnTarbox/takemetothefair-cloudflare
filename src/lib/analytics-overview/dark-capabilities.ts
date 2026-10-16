@@ -23,6 +23,13 @@ import { isCapabilityFlagDark } from "@takemetothefair/constants";
  * value. An automatic scrape would report a truthful list nobody could act on,
  * and would silently miss any flag that breaks the naming convention, which is
  * the same class of blindness this is meant to end.
+ *
+ * ── …but completeness IS checked (OPE-1394) ─────────────────────────────────
+ * Hand-curated drifted: by 2026-10 this listed 8 flags while the code read 15
+ * `*_ENABLED` vars. `__tests__/capability-inventory-complete-ope1394.test.ts`
+ * now scans both Workers for flag-like names and fails on any that is in
+ * neither CAPABILITY_FLAGS nor NON_CAPABILITY_FLAGS (below, each with a
+ * reason). The human still writes the sentence; CI makes sure one is written.
  */
 
 export interface CapabilityFlag {
@@ -66,8 +73,10 @@ export const CAPABILITY_FLAGS: CapabilityFlag[] = [
     darkMeans:
       "Someone who submits an event at /suggest-event gets no acknowledgment. The page " +
       "promises a reply in 24-48h and nothing sends (OPE-412).",
-    // Deliberate: the ack copy has not been approved for send yet.
-    offIsDeliberate: true,
+    // OPE-1394 — was `true` ("the ack copy has not been approved"), stale since
+    // John approved the copy and the flag went ON 2026-08-28 (#1089). Off now
+    // would be a regression, not a decision.
+    offIsDeliberate: false,
   },
   {
     name: "VENDOR_DIGEST_SEND_ENABLED",
@@ -100,6 +109,63 @@ export const CAPABILITY_FLAGS: CapabilityFlag[] = [
     darkMeans: "Classified photos are never attached to an event without a human step.",
     offIsDeliberate: true,
   },
+  // ── OPE-1394 — flags that were read in code but missing from this list ──
+  {
+    name: "AUTO_REPLY_ENABLED",
+    worker: "mcp",
+    // Default-OPEN: only the exact string "false" holds the acks (email-gates.ts).
+    darkMeans:
+      "Inbound senders get no automated acknowledgment; their mail is still stored and " +
+      "triaged, but nobody tells them it arrived (OPE-626).",
+    offIsDeliberate: false,
+  },
+  {
+    name: "OPERATOR_OUTBOUND_ENABLED",
+    worker: "mcp",
+    darkMeans:
+      "Operator-composed emails approved via review_operator_draft are never delivered (OPE-596).",
+    offIsDeliberate: false,
+  },
+  {
+    name: "PROMOTER_OUTREACH_ENABLED",
+    worker: "mcp",
+    darkMeans:
+      "Approved promoter-outreach emails are refused; nothing reaches promoters (OPE-384).",
+    offIsDeliberate: false,
+  },
+  {
+    name: "UNROUTED_ASK_ENABLED",
+    worker: "mcp",
+    darkMeans:
+      "A sender whose mail matches no event is never asked which event they meant; the " +
+      "mail is stored and forwarded to admin only. Off by OPE-6 ruling until John approves.",
+    offIsDeliberate: true,
+  },
+  {
+    name: "SPAM_EVENT_RECOVERY_ENABLED",
+    worker: "mcp",
+    darkMeans:
+      "A real event submission the classifier marked as spam terminates silently instead " +
+      "of reaching admin triage, so the submitter's event never appears (OPE-803).",
+    offIsDeliberate: false,
+  },
+  {
+    name: "FAQ_PILOT_EVENT_SLUGS",
+    worker: "main-app",
+    // List-valued: dark when it names no slug (isCapabilityFlagDark).
+    darkMeans:
+      "No event page renders the FAQ section or its FAQPage JSON-LD — the Phase A pilot " +
+      "allow-list is empty. Choosing pilot events is John's call.",
+    offIsDeliberate: true,
+  },
+  {
+    name: "EMIT_PERFORMER_SUBEVENTS",
+    worker: "main-app",
+    darkMeans:
+      "Event-page JSON-LD does not list billed performers as schema.org subEvents (OPE-114); " +
+      "performers still render on the page itself.",
+    offIsDeliberate: true,
+  },
   {
     name: "ENRICHMENT_DRY_RUN",
     worker: "mcp",
@@ -110,6 +176,23 @@ export const CAPABILITY_FLAGS: CapabilityFlag[] = [
     offIsDeliberate: true,
   },
 ];
+
+/**
+ * OPE-1394 — flag-like names the completeness check finds that are deliberately
+ * NOT capabilities: operator-only commit gates and internal data toggles that
+ * withhold nothing from a real person. Each needs a reason; an entry whose flag
+ * is no longer read anywhere fails the check too, so this list cannot rot.
+ */
+export const NON_CAPABILITY_FLAGS: Record<string, string> = {
+  REPLAY_COMMIT_ENABLED:
+    "Operator-only commit gate for the replay_inbound_attachment MCP tool (OPE-469); " +
+    "off is the normal state between deliberate replays.",
+  EH3_P1_BACKFILL_ENABLED:
+    "Operator-only commit gate for the one-shot event-series backfill (EH3); internal data.",
+  GOODWILL_FLIP_ENABLED:
+    "Internal data-resolution toggle (shadow vs write for source-reliability flips); " +
+    "nothing customer-facing is withheld while off.",
+};
 
 export interface CapabilityFlagState extends CapabilityFlag {
   value: string | null;
