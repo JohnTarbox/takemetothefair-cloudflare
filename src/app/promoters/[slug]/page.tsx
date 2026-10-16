@@ -27,9 +27,9 @@ import { Card, CardContent } from "@/components/ui/card";
 import { EventList } from "@/components/events/event-list";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { promoters, events, venues } from "@/lib/db/schema";
-import { eq, and, lt } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
-import { upcomingEndPredicate } from "@/lib/event-dates";
+import { upcomingEndPredicate, pastEndPredicate } from "@/lib/event-dates";
 import { attachEventDayDates } from "@/lib/event-days-attach";
 import { eventJoinProjection } from "@/lib/db/event-join-projection";
 import { logError } from "@/lib/logger";
@@ -86,9 +86,7 @@ async function getPromoter(slug: string) {
       .from(events)
       .leftJoin(venues, eq(events.venueId, venues.id))
       .leftJoin(promoters, eq(events.promoterId, promoters.id))
-      .where(
-        and(eq(events.promoterId, promoter.id), isPublicEventStatus(), lt(events.endDate, now))
-      )
+      .where(and(eq(events.promoterId, promoter.id), isPublicEventStatus(), pastEndPredicate(now)))
       .orderBy(events.startDate)
       .limit(12);
 

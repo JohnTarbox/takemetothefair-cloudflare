@@ -21,7 +21,7 @@ import {
   promoters,
   eventSeries,
 } from "@/lib/db/schema";
-import { eq, and, lt, inArray, sql } from "drizzle-orm";
+import { eq, and, inArray, sql } from "drizzle-orm";
 import { withD1ReadLogged } from "@/lib/db/d1-resilience";
 import { DEGRADED_METADATA, isD1PlatformFault } from "@/lib/db/degraded";
 import { DegradedPanel } from "@/components/layout/degraded-panel";
@@ -29,7 +29,7 @@ import { occurrenceUrl } from "@/lib/series/series-schema-org";
 import { occurrenceYear } from "@takemetothefair/utils";
 import { SITE_URL } from "@takemetothefair/constants";
 import { isPublicEventStatus } from "@/lib/event-status";
-import { upcomingEndPredicate } from "@/lib/event-dates";
+import { upcomingEndPredicate, pastEndPredicate } from "@/lib/event-dates";
 import { attachEventDayDates } from "@/lib/event-days-attach";
 import { eventJoinProjection } from "@/lib/db/event-join-projection";
 import { logError } from "@/lib/logger";
@@ -143,7 +143,7 @@ async function getPerformerOnce(slug: string) {
             eq(eventPerformers.performerId, performer.id),
             eq(eventPerformers.status, "CONFIRMED"),
             isPublicEventStatus(),
-            upcoming ? upcomingEndPredicate(now) : lt(events.endDate, now)
+            upcoming ? upcomingEndPredicate(now) : pastEndPredicate(now)
           )
         )
         .orderBy(events.startDate)

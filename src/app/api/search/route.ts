@@ -3,20 +3,10 @@ import { NextResponse } from "next/server";
 import { searchSlugForm } from "@takemetothefair/utils";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, vendors, blogPosts, venueNameVariants } from "@/lib/db/schema";
-import {
-  and,
-  or,
-  gte,
-  eq,
-  inArray,
-  isNull,
-  sql,
-  desc,
-  type SQL,
-  type AnyColumn,
-} from "drizzle-orm";
+import { and, or, eq, inArray, isNull, sql, desc, type SQL, type AnyColumn } from "drizzle-orm";
 import { containsCI } from "@/lib/db/contains-ci";
 import { isPublicEventStatus } from "@/lib/event-status";
+import { upcomingEndPredicate } from "@/lib/event-dates";
 import { withErrorHandler } from "@/lib/api-handler";
 import { searchHelpArticles } from "@/lib/help-articles";
 import { expandEventSearchQuery } from "@/lib/search/query-expansion";
@@ -77,11 +67,9 @@ export const GET = withErrorHandler(async (request: Request) => {
   // start date is upcoming. The old bare `endDate >= now` silently hid every
   // NULL-end event from search (e.g. the CT blueberry festivals the ticket
   // expected). start_date is non-null on all such rows, so it's a safe fallback.
-  const nowDate = new Date();
-  const notEnded = or(
-    gte(events.endDate, nowDate),
-    and(isNull(events.endDate), gte(events.startDate, nowDate))
-  );
+  // OPE-1375 — now the shared upcomingEndPredicate (same NULL-end rule, plus
+  // the A2 24h grace so an event stays searchable all day on its last day).
+  const notEnded = upcomingEndPredicate(new Date());
   // OPE-366 — instr(), not LIKE. D1 caps a LIKE PATTERN at 50 characters and
   // this route built one from the user's query, so any search past ~48 chars
   // threw SQLITE_ERROR. See src/lib/db/contains-ci.ts. No escaping needed —
