@@ -14,7 +14,7 @@
     "test": "vitest --run --passWithNoTests"
   },
   "devDependencies": {
-    "vitest": "^4.1.11"
+    "vitest": "^5.0.4"
   },
   "dependencies": {
     "@takemetothefair/utils": "*",
