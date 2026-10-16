@@ -12,9 +12,10 @@
  * The cases below pin where clustering behaviour CHANGED with the switch, so a
  * reader sees the trade explicitly rather than discovering it later:
  *   - apostrophes: "Smith's Fair" ≡ "Smiths Fair" now (shim: "smith s" ≠ "smiths")
- *   - intra-word punctuation joins words: "Arts-and-Crafts Fair" is one token
- *     "artsandcrafts", so it no longer clusters with "Arts and Crafts Fair"
- *     (the shim split it into four tokens and clustered them).
+ *   - word separators ("-", "/", "_", en/em dash) are a space, so
+ *     "Arts-and-Crafts Fair" still clusters with "Arts and Crafts Fair".
+ *     (The first cut of the switch deleted them and joined the words into
+ *     "artsandcrafts" — the regression OPE-1410 fixed in utils.)
  *   - non-ASCII letters are dropped: "Café Fest" → "caf fest".
  */
 import { describe, expect, it } from "vitest";
@@ -29,10 +30,10 @@ describe("cluster-candidates uses the shared normalizeName", () => {
   });
 
   it("agrees with utils on the cases where the old shim differed", () => {
-    expect(normalizeName("Arts-and-Crafts Fair")).toBe("artsandcrafts fair");
+    expect(normalizeName("Arts-and-Crafts Fair")).toBe("arts and crafts fair");
     expect(normalizeName("Café Fest")).toBe("caf fest");
-    // Behaviour change, recorded: hyphenated vs spaced spellings no longer cluster.
-    expect(namesDenoteSameEvent("Arts-and-Crafts Fair", "Arts and Crafts Fair")).toBe(false);
+    // OPE-1410: hyphenated and spaced spellings are one event again.
+    expect(namesDenoteSameEvent("Arts-and-Crafts Fair", "Arts and Crafts Fair")).toBe(true);
   });
 
   it("no second normalizeName is defined anywhere in mcp-server/src", () => {
