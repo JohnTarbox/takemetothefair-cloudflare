@@ -17,7 +17,11 @@ import {
   adminActions,
 } from "@/lib/db/schema";
 import { unsafeSlug } from "@takemetothefair/utils";
-import { repointPromoterChildren, repointVenueChildren } from "@takemetothefair/db-schema";
+import {
+  repointInboundEmailsToKeeper,
+  repointPromoterChildren,
+  repointVenueChildren,
+} from "@takemetothefair/db-schema";
 import { repairBlogLinksForSlugChange } from "@/lib/content-links-sync";
 import { logError } from "@/lib/logger";
 import type {
@@ -1050,6 +1054,18 @@ async function mergeEvents(
       ? unsafeSlug(`${currentSlug}-merged-${duplicateId.slice(0, 8)}`)
       : unsafeSlug(keeper.slug);
 
+  // OPE-1352 — the inbound email(s) that produced the duplicate now name the
+  // keeper. Same helper as the two reject-as-duplicate paths. Runs after every
+  // refusal above and before the tombstone batch, like repointVenueChildren:
+  // if the batch then fails, the inbound already names the event the operator
+  // chose to keep, which is the less wrong of the two half-states.
+  const inboundRepoint = await repointInboundEmailsToKeeper(db, {
+    loserId: duplicateId,
+    keeperId: primaryId,
+    reason: "merged_into",
+    actorUserId,
+  });
+
   // K3 Steps 1-3 + cleanup, in one db.batch so the slug rename + history
   // insert + status update are atomic. Order matters: the rename must
   // commit BEFORE the history row is inserted, so eventSlugHistory's
@@ -1140,6 +1156,7 @@ async function mergeEvents(
         duplicateSlugRenamed: renamedDupSlug,
         keeperSlug: keeper.slug,
         seriesCanonicalRepointed: seriesToRepoint.map((r) => r.id),
+        inboundEmailsRepointed: inboundRepoint.repointed,
         transferred,
       }),
       createdAt: new Date(),

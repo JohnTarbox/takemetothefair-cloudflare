@@ -43,6 +43,7 @@ import {
 import {
   citationSupersedeScope,
   dayHoursUnknown,
+  repointInboundEmailsToKeeper,
   rosterResearchTargetWhere,
 } from "@takemetothefair/db-schema";
 import { accessNotesProseReason } from "../access-notes-guard.js";
@@ -1075,6 +1076,18 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         createdAt: new Date(),
       });
 
+      // OPE-1352 — the inbound email that produced this row now names the
+      // keeper, not the rejected duplicate. Shared with the app's flag-queue
+      // reject and mergeEvents; it writes its own admin_actions row per inbound.
+      const inboundRepoint = rejectedAsDuplicateOf
+        ? await repointInboundEmailsToKeeper(db, {
+            loserId: event.id,
+            keeperId: rejectedAsDuplicateOf,
+            reason: "rejected_as_duplicate_of",
+            actorUserId: auth.userId,
+          })
+        : null;
+
       // IndexNow: distinguish first-publish from the TENTATIVE→APPROVED
       // upgrade — both transitions matter to the analytics tab. A bare
       // public-bucket guard misses TENTATIVE→APPROVED because both are public.
@@ -1130,6 +1143,14 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           jsonContent({
             updated: true,
             event: { id: event.id, name: event.name, previousStatus, newStatus: params.status },
+            ...(inboundRepoint && inboundRepoint.repointed.length > 0
+              ? {
+                  inbound_emails_repointed: {
+                    to_event_id: inboundRepoint.keeperId,
+                    inbound_email_ids: inboundRepoint.repointed,
+                  },
+                }
+              : {}),
             // OPE-1114 — approved with a reviewer note still in the public copy.
             ...(approvalMarker
               ? {

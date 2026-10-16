@@ -157,6 +157,9 @@ describe("OPE-975 — every probe's window is pinned", () => {
       // OPE-1316 — PLACEHOLDER, dormant until its arming ticket measures the
       // success-row inter-arrival (none existed when it shipped).
       "import-url-extract-success": 336,
+      // OPE-1352 — an invariant, not a cadence: any inbound left on a loser for
+      // a day is a writer that skipped the repoint. Dormant until the backfill.
+      "inbound-follows-duplicate-keeper": 24,
       "roster-vendor-link": 720,
       "submit-secondary-page-crawl": 576,
       "spam-event-triple-detector": 504,
