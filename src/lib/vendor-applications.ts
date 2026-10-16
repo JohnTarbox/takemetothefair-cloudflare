@@ -15,10 +15,10 @@
  * Both routes ask `checkVendorPaymentStatus` (below): only a canSelfConfirm
  * vendor may send it; anyone else gets 403 PAYMENT_STATUS_FORBIDDEN.
  *
- * MCP `apply_to_event` (mcp-server/src/tools/vendor.ts) enforces the same
- * canSelfConfirm + commercial rule in its own copy (the MCP Worker cannot
- * import from src/lib). It differs in one respect: it also accepts TENTATIVE
- * events, where this rule (matching the session route) accepts APPROVED only.
+ * OPE-1396 (DUP6) — MCP `apply_to_event` (mcp-server/src/tools/vendor.ts) used
+ * to keep its own copy of the event gate, which also accepted TENTATIVE events.
+ * The gate and the default status now live in @takemetothefair/utils
+ * (vendor-application-rules.ts) and both artifacts call them.
  */
 import { and, eq } from "drizzle-orm";
 import type { Database } from "@/lib/db";
@@ -32,8 +32,13 @@ import {
   type PaymentStatus,
 } from "@/lib/constants";
 import { isValidTransition } from "@/lib/vendor-status";
+import {
+  checkEventAcceptsVendor,
+  defaultApplicationStatus,
+  type RuleRefusal,
+} from "@takemetothefair/utils";
 
-export type RuleRefusal = { ok: false; httpStatus: number; error: string; message?: string };
+export type { RuleRefusal };
 
 /**
  * Organizer decisions a canSelfConfirm (trusted) vendor may record itself.
@@ -69,35 +74,9 @@ const JOINING_STATUSES: readonly EventVendorStatus[] = [
   EVENT_VENDOR_STATUS.CONFIRMED,
 ];
 
-/**
- * Can this vendor join this event at all? Same checks, same messages, as the
- * session route has always returned.
- */
-export function checkEventAcceptsVendor(
-  vendor: { commercial: boolean | null },
-  event: { status: string; commercialVendorsAllowed: boolean | null }
-): { ok: true } | RuleRefusal {
-  if (event.status !== "APPROVED") {
-    return {
-      ok: false,
-      httpStatus: 400,
-      error: "This event is not currently accepting vendor applications",
-    };
-  }
-  if (vendor.commercial && !event.commercialVendorsAllowed) {
-    return {
-      ok: false,
-      httpStatus: 403,
-      error: "This event does not allow commercial vendors. Only non-commercial vendors may apply.",
-    };
-  }
-  return { ok: true };
-}
-
-/** Initial status of a new self-submitted application. */
-export function defaultApplicationStatus(canSelfConfirm: boolean | null): EventVendorStatus {
-  return canSelfConfirm ? EVENT_VENDOR_STATUS.CONFIRMED : EVENT_VENDOR_STATUS.APPLIED;
-}
+// OPE-1396 (DUP6) — `checkEventAcceptsVendor` / `defaultApplicationStatus` live
+// in @takemetothefair/utils so MCP `apply_to_event` runs the same rule.
+export { checkEventAcceptsVendor, defaultApplicationStatus };
 
 export function isEventVendorStatus(v: unknown): v is EventVendorStatus {
   return typeof v === "string" && (EVENT_VENDOR_STATUS_VALUES as readonly string[]).includes(v);

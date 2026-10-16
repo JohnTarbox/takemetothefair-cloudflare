@@ -197,9 +197,8 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
       resolvedStateCode = venueRow[0]?.state ?? null;
     }
 
-    const applicationDeadline = data.applicationDeadline
-      ? new Date(data.applicationDeadline)
-      : null;
+    // OPE-1396 (DUP9) — normalized server-side like MCP update_event.
+    const applicationDeadline = normalizeEventDate(data.applicationDeadline);
 
     // Pre-ingest gate evaluation. Admin POST is typically Tier 1 (human-typed),
     // but admin can paste a Tier 3 source URL into the form — and Tier 1 still

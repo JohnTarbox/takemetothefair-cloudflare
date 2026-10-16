@@ -7208,3 +7208,8 @@ export * from "./venue-merge-children";
 export * from "./inbound-duplicate-repoint";
 // OPE-1373 — shared collision-safe rename + slug-history write.
 export * from "./slug-rename";
+// OPE-1396 (DUP7/DUP8) — `recordWorkflowOutcome` and `isEmailSuppressed` are
+// deliberately NOT re-exported here. This barrel is client-reachable (OPE-640
+// browser-floor guard), and they are server-only writers/readers. Import them
+// from the subpaths "@takemetothefair/db-schema/intent-feedback" and
+// "@takemetothefair/db-schema/email-suppression" (package.json `exports`).

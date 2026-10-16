@@ -33,6 +33,7 @@ import {
   promoterEnrichmentCandidates,
   promoters,
 } from "../schema.js";
+import { upcomingEndPredicate } from "@takemetothefair/db-schema";
 import { jsonContent, logEnrichment, publicUrlFor, triggerIndexNow } from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
@@ -139,7 +140,7 @@ export function registerPromoterEnrichmentReviewTools(
         SELECT COUNT(*) FROM ${events}
          WHERE ${events.promoterId} = ${promoters.id}
            AND ${events.status} = 'APPROVED'
-           AND ${events.endDate} >= unixepoch()
+           AND ${upcomingEndPredicate(new Date())}
       )`;
 
       // OPE-962 — the fields a render can actually APPLY (logo excluded); the

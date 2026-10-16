@@ -43,3 +43,22 @@ export function upcomingEndPredicate(now: Date): SQL {
 export function pastEndPredicate(now: Date): SQL {
   return sql`COALESCE(${events.endDate}, ${events.startDate}) < ${upcomingEndCutoffSec(now)}`;
 }
+
+type DateLike = Date | string | number | null | undefined;
+
+function toEpochSec(d: DateLike): number | null {
+  if (d == null) return null;
+  const ms = d instanceof Date ? d.getTime() : new Date(d).getTime();
+  return Number.isNaN(ms) ? null : Math.floor(ms / 1000);
+}
+
+/**
+ * OPE-1396 (DUP5) — the same rule as `pastEndPredicate`, for a row already in
+ * memory (a sitemap, a render). Effective end = endDate ?? startDate; past once
+ * it is before `upcomingEndCutoffSec(now)`. A row with neither date is not
+ * past (it matches neither predicate in SQL either).
+ */
+export function isPastEnd(row: { endDate?: DateLike; startDate?: DateLike }, now: Date): boolean {
+  const effective = toEpochSec(row.endDate) ?? toEpochSec(row.startDate);
+  return effective !== null && effective < upcomingEndCutoffSec(now);
+}
