@@ -6,7 +6,12 @@ const config: Config = {
     "./src/pages/**/*.{js,ts,jsx,tsx,mdx}",
     "./src/components/**/*.{js,ts,jsx,tsx,mdx}",
     "./src/app/**/*.{js,ts,jsx,tsx,mdx}",
-    "../mcw-calendar-grid/dist/**/*.js",
+    // OPE-1385 — the calendar grid ships compiled JSX whose classes (bg-gray-50
+    // out-of-month cells, text-gray-500 weekday labels, border-gray-100 cell
+    // rules) exist nowhere in src/. Scan the INSTALLED package; the old
+    // `../mcw-calendar-grid/dist` sibling-checkout path does not exist in CI or
+    // in any worktree, so those classes were silently never generated.
+    "./node_modules/@johntarbox/calendar-grid/dist/**/*.js",
   ],
   // Design System keystone PR 1 (2026-06-07) — switch from default 'media'
   // to 'class' so a manual toggle (next-themes, PR 4) can control dark
