@@ -17,6 +17,12 @@
 export const FETCH_TIMEOUT = 15000;
 import { isBlockedSsrfHost } from "./ssrf-guard";
 import { detectChallengePage, CHALLENGE_USER_MESSAGE } from "./challenge-page";
+import {
+  guardedFetch,
+  isGuardedFetchError,
+  GUARDED_HTML_MAX_BYTES,
+  type GuardedResponse,
+} from "./guarded-fetch";
 
 /** 25s for Browser Rendering — managed Chrome is slower. */
 export const BROWSER_RENDERING_TIMEOUT = 25000;
@@ -124,7 +130,14 @@ export const HTTPS_ATTEMPT_TIMEOUT_MS = 6000;
 
 /** A transport-level failure (DNS, TCP, TLS) — as opposed to an HTTP answer. */
 function isTransportFailure(o: FetchOutcome): boolean {
-  return !o.ok && o.status === null && o.error !== "timeout-caller";
+  return (
+    !o.ok &&
+    o.status === null &&
+    o.error !== "timeout-caller" &&
+    // A refused redirect hop is our decision, not a broken transport.
+    o.error !== "blocked_host" &&
+    o.error !== "blocked_protocol"
+  );
 }
 
 function withCap(signal: AbortSignal, ms: number): AbortSignal {
@@ -200,15 +213,81 @@ export async function fetchStandard(
  * caller has no budget left — whereas an abort from a per-attempt cap is a
  * transport failure the fallback may recover from.
  */
+/**
+ * Map a thrown fetch/read error onto a FetchOutcome. Shared by the header
+ * phase and the body read: before OPE-1370 the body read sat OUTSIDE the
+ * try, so a deadline firing mid-body threw out of fetchStandard entirely.
+ */
+function thrownOutcome(err: unknown, callerSignal?: AbortSignal): FetchOutcome {
+  if (isGuardedFetchError(err)) {
+    if (err.code === "blocked_host" || err.code === "blocked_protocol") {
+      // A redirect hop pointed somewhere we refuse to go (OPE-1370 SSRF5).
+      return {
+        ok: false,
+        status: null,
+        error: err.code,
+        // Existing generic copy on purpose: this string can reach an email
+        // reply (fetch-upstream path), and reply copy is not changed here.
+        userMessage: "Could not fetch page. Try pasting the content manually.",
+      };
+    }
+    if (err.code === "too_large") {
+      return {
+        ok: false,
+        status: err.status,
+        error: "too-large",
+        userMessage: "Could not fetch page. Try pasting the content manually.",
+      };
+    }
+    return {
+      ok: false,
+      status: null,
+      error: `network: ${err.message.replace(/^network: /, "")}`,
+      userMessage: "Could not fetch page. Try pasting the content manually.",
+    };
+  }
+  if (err instanceof Error && (err.name === "AbortError" || err.name === "TimeoutError")) {
+    if (callerSignal && !callerSignal.aborted) {
+      // Our own per-attempt cap fired, not the caller's deadline.
+      return {
+        ok: false,
+        status: null,
+        error: "network: https attempt timed out",
+        userMessage: "Could not fetch page. Try pasting the content manually.",
+      };
+    }
+    return {
+      ok: false,
+      status: null,
+      error: callerSignal ? "timeout-caller" : "timeout",
+      userMessage: "Page took too long to load. Try pasting the content manually.",
+    };
+  }
+  return {
+    ok: false,
+    status: null,
+    error: `network: ${err instanceof Error ? err.message : String(err)}`,
+    userMessage: "Could not fetch page. Try pasting the content manually.",
+  };
+}
+
+/**
+ * OPE-1370 — the standard path now goes through `guardedFetch`: every
+ * redirect hop is re-checked against the SSRF guard (it used to follow 3xx
+ * unchecked after a first-hop check in each caller), and the body is capped
+ * at GUARDED_HTML_MAX_BYTES. The deadline stays the caller's `signal`.
+ */
 async function fetchOnce(
   url: string,
   signal: AbortSignal,
   callerSignal?: AbortSignal
 ): Promise<FetchOutcome> {
-  let response: Response;
+  let response: GuardedResponse;
   try {
-    response = await fetch(url, {
+    response = await guardedFetch(url, {
       signal,
+      timeoutMs: 0,
+      maxBytes: GUARDED_HTML_MAX_BYTES,
       headers: {
         "User-Agent": FETCH_UA,
         Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -216,31 +295,10 @@ async function fetchOnce(
       },
     });
   } catch (err) {
-    if (err instanceof Error && (err.name === "AbortError" || err.name === "TimeoutError")) {
-      if (callerSignal && !callerSignal.aborted) {
-        // Our own per-attempt cap fired, not the caller's deadline.
-        return {
-          ok: false,
-          status: null,
-          error: "network: https attempt timed out",
-          userMessage: "Could not fetch page. Try pasting the content manually.",
-        };
-      }
-      return {
-        ok: false,
-        status: null,
-        error: callerSignal ? "timeout-caller" : "timeout",
-        userMessage: "Page took too long to load. Try pasting the content manually.",
-      };
-    }
-    return {
-      ok: false,
-      status: null,
-      error: `network: ${err instanceof Error ? err.message : String(err)}`,
-      userMessage: "Could not fetch page. Try pasting the content manually.",
-    };
+    return thrownOutcome(err, callerSignal);
   }
   if (!response.ok) {
+    response.cancel();
     let userMessage: string;
     if (response.status === 403) {
       userMessage = "Could not access page (403 Forbidden). Try pasting the content manually.";
@@ -253,6 +311,7 @@ async function fetchOnce(
   }
   const contentType = response.headers.get("content-type") || "";
   if (!contentType.includes("text/html") && !contentType.includes("text/plain")) {
+    response.cancel();
     // PDF gets its own code — the most common email-submission failure mode
     // (town-rec application PDFs, program PDFs). The import-url workflow uses
     // it to fire a tailored reply. Detect by Content-Type OR .pdf extension
@@ -275,7 +334,12 @@ async function fetchOnce(
       userMessage: "URL does not point to an HTML page",
     };
   }
-  const html = await response.text();
+  let html: string;
+  try {
+    html = await response.text();
+  } catch (err) {
+    return thrownOutcome(err, callerSignal);
+  }
   // A 200 is not proof we got the page we asked for. Some origins answer a
   // bot check with 200 + interstitial rather than 403, and everything
   // downstream would then extract an event from the challenge page.
@@ -288,7 +352,7 @@ async function fetchOnce(
       userMessage: CHALLENGE_USER_MESSAGE,
     };
   }
-  return { ok: true, html, finalUrl: response.url || url };
+  return { ok: true, html, finalUrl: response.url };
 }
 
 /**
@@ -335,6 +399,32 @@ export async function fetchViaBrowserRendering(
       ok: false,
       status: null,
       error: "browser-rendering-unconfigured",
+      userMessage: "Could not fetch page. Try pasting the content manually.",
+    };
+  }
+  // OPE-1370 — Browser Rendering navigates (and follows redirects) inside
+  // Cloudflare's managed Chrome, so its hops cannot be re-checked from here;
+  // the FIRST hop is the only one we can guard, and we do — every caller
+  // also guards it, this keeps the function safe on its own. The rendered
+  // HTML is not size-capped by us either; the /content API bounds it.
+  try {
+    const target = new URL(url);
+    if (
+      (target.protocol !== "http:" && target.protocol !== "https:") ||
+      isBlockedSsrfHost(target.hostname)
+    ) {
+      return {
+        ok: false,
+        status: null,
+        error: "blocked_host",
+        userMessage: "Could not fetch page. Try pasting the content manually.",
+      };
+    }
+  } catch {
+    return {
+      ok: false,
+      status: null,
+      error: "invalid_url",
       userMessage: "Could not fetch page. Try pasting the content manually.",
     };
   }
@@ -463,6 +553,10 @@ export function shouldEscalate(outcome: FetchOutcome): boolean {
   if (outcome.error === "timeout") return true;
   if (outcome.error === "content-type") return false;
   if (outcome.error === "pdf-unsupported") return false;
+  // OPE-1370 — a redirect into an internal host, or a body over the cap, must
+  // not be handed to Browser Rendering to try again.
+  if (outcome.error === "blocked_host" || outcome.error === "blocked_protocol") return false;
+  if (outcome.error === "too-large") return false;
   // A challenge is exactly what Browser Rendering exists for — a real browser
   // with a real TLS fingerprint. It does not always pass (10times.com served
   // the interstitial to BR too), but it is the one remaining option, and not
@@ -520,114 +614,80 @@ export async function fetchWithEscalation(
 /**
  * SSRF-guarded HTML fetch for a URL supplied by an UNTRUSTED party.
  *
- * `fetchStandard` deliberately does not guard: its callers pass URLs an
- * operator typed or that came from our own data. When the URL originates from
- * a public, unverified user — a vendor's self-declared website at registration
- * (OPE-237) — a single up-front host check is not enough either, because a
- * public host can 3xx-redirect to an internal address.
+ * Since OPE-1370 this is a thin adapter over `guardedFetch` (redirects
+ * followed manually and re-checked on every hop, body capped at
+ * GUARDED_HTML_MAX_BYTES — it used to read `resp.text()` uncapped), kept for
+ * its `FetchOutcome` shape and its error vocabulary (`blocked_host`,
+ * `too_many_redirects`, `http_<status>`, …) which callers record.
  *
- * So redirects are followed MANUALLY and the check re-runs on every hop, which
- * is the pattern `/api/admin/upload-image-from-url` and
- * `/api/admin/import-url/fetch` already established here.
- *
- * ⚠️ Documented residual, same as those two: **DNS rebinding is not covered.**
- * `isBlockedSsrfHost` is a string check, and the Workers runtime exposes no
- * resolved IP to validate against, so a public hostname whose A-record points
- * at a private address still resolves. Accepted for the same reason: Workers
- * have no metadata service and no internal HTTP network to pivot into. Do not
- * read this helper as making an arbitrary URL safe to fetch in a runtime that
- * DOES have those.
+ * ⚠️ Documented residual: **DNS rebinding is not covered.** See guarded-fetch.ts.
  */
 export async function fetchHtmlWithSsrfGuard(
   rawUrl: string,
   signal: AbortSignal,
   maxRedirects = 3
 ): Promise<FetchOutcome> {
-  let current: URL;
+  let resp: GuardedResponse;
   try {
-    current = new URL(rawUrl);
-  } catch {
-    return { ok: false, status: null, error: "invalid_url", userMessage: "Not a valid URL." };
+    resp = await guardedFetch(rawUrl, {
+      signal,
+      timeoutMs: 0, // the caller's signal is the deadline
+      maxRedirects,
+      maxBytes: GUARDED_HTML_MAX_BYTES,
+      headers: {
+        "User-Agent": FETCH_UA,
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      },
+    });
+  } catch (err) {
+    return ssrfGuardedFailure(err);
   }
 
-  for (let hop = 0; hop <= maxRedirects; hop++) {
-    if (current.protocol !== "http:" && current.protocol !== "https:") {
-      return {
-        ok: false,
-        status: null,
-        error: "blocked_protocol",
-        userMessage: "Only http(s) URLs are supported.",
-      };
-    }
-    if (isBlockedSsrfHost(current.hostname)) {
-      return {
-        ok: false,
-        status: null,
-        error: "blocked_host",
-        userMessage: "Internal URLs are not allowed.",
-      };
-    }
-
-    let resp: Response;
-    try {
-      resp = await fetch(current.href, {
-        signal,
-        redirect: "manual",
-        headers: {
-          "User-Agent": FETCH_UA,
-          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        },
-      });
-    } catch (err) {
-      if (err instanceof Error && err.name === "AbortError") {
-        return { ok: false, status: null, error: "timeout", userMessage: "Page took too long." };
-      }
-      return {
-        ok: false,
-        status: null,
-        error: `network: ${err instanceof Error ? err.message : String(err)}`,
-        userMessage: "Could not fetch page.",
-      };
-    }
-
-    if (resp.status >= 300 && resp.status < 400) {
-      const loc = resp.headers.get("location");
-      if (!loc) {
-        return {
-          ok: false,
-          status: resp.status,
-          error: "redirect_without_location",
-          userMessage: "Could not fetch page.",
-        };
-      }
-      try {
-        current = new URL(loc, current);
-      } catch {
-        return {
-          ok: false,
-          status: resp.status,
-          error: "invalid_redirect",
-          userMessage: "Could not fetch page.",
-        };
-      }
-      continue; // re-check the new hop at the top of the loop
-    }
-
-    if (!resp.ok) {
-      return {
-        ok: false,
-        status: resp.status,
-        error: `http_${resp.status}`,
-        userMessage: `Page returned ${resp.status}.`,
-      };
-    }
-    return { ok: true, html: await resp.text(), finalUrl: current.href };
+  if (!resp.ok) {
+    resp.cancel();
+    return {
+      ok: false,
+      status: resp.status,
+      error: `http_${resp.status}`,
+      userMessage: `Page returned ${resp.status}.`,
+    };
   }
+  try {
+    return { ok: true, html: await resp.text(), finalUrl: resp.url };
+  } catch (err) {
+    return ssrfGuardedFailure(err);
+  }
+}
 
+const SSRF_GUARDED_MESSAGES: Record<string, string> = {
+  invalid_url: "Not a valid URL.",
+  blocked_protocol: "Only http(s) URLs are supported.",
+  blocked_host: "Internal URLs are not allowed.",
+  too_many_redirects: "Too many redirects.",
+  too_large: "Page is too large.",
+  timeout: "Page took too long.",
+};
+
+function ssrfGuardedFailure(err: unknown): FetchOutcome {
+  if (isGuardedFetchError(err)) {
+    if (err.code === "network") {
+      return { ok: false, status: null, error: err.message, userMessage: "Could not fetch page." };
+    }
+    const redirectish = err.code === "redirect_without_location" || err.code === "invalid_redirect";
+    return {
+      ok: false,
+      status: redirectish || err.code === "too_large" ? err.status : null,
+      error: err.code,
+      userMessage: SSRF_GUARDED_MESSAGES[err.code] ?? "Could not fetch page.",
+    };
+  }
+  if (err instanceof Error && (err.name === "AbortError" || err.name === "TimeoutError")) {
+    return { ok: false, status: null, error: "timeout", userMessage: "Page took too long." };
+  }
   return {
     ok: false,
     status: null,
-    error: "too_many_redirects",
-    userMessage: "Too many redirects.",
+    error: `network: ${err instanceof Error ? err.message : String(err)}`,
+    userMessage: "Could not fetch page.",
   };
 }

@@ -52,6 +52,7 @@ import {
   urlLooksLikeJunk,
 } from "@/lib/og-image";
 import { classifyImageHost } from "@takemetothefair/utils";
+import { guardedFetch, GUARDED_IMAGE_MAX_BYTES } from "@takemetothefair/site-fetch";
 import { borrowedVenueImagePredicate } from "@/lib/images/borrowed";
 
 const DEFAULT_LIMIT = 5;
@@ -237,18 +238,20 @@ export const POST = withAuthorized(async ({ request, db, userId }) => {
     }
 
     let bytes: ArrayBuffer;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), IMAGE_FETCH_TIMEOUT_MS);
     try {
-      const res = await fetch(sourced.url, {
+      // OPE-1370 (SSRF6) — guardedFetch: the SSRF guard on every redirect hop
+      // (the candidate comes off a third-party page) and a 10 MB streaming cap
+      // in place of an unbounded arrayBuffer(); the timeout covers the body.
+      const res = await guardedFetch(sourced.url, {
+        maxBytes: GUARDED_IMAGE_MAX_BYTES,
+        timeoutMs: IMAGE_FETCH_TIMEOUT_MS,
         headers: {
           "User-Agent":
             "Mozilla/5.0 (compatible; MeetMeAtTheFair/1.0; +https://meetmeatthefair.com)",
         },
-        signal: controller.signal,
-        redirect: "follow",
       });
       if (!res.ok) {
+        res.cancel();
         outcomes.push({ ...base, outcome: "held", reason: `download HTTP ${res.status}` });
         continue;
       }
@@ -260,8 +263,6 @@ export const POST = withAuthorized(async ({ request, db, userId }) => {
         reason: `download failed: ${e instanceof Error ? e.message : String(e)}`,
       });
       continue;
-    } finally {
-      clearTimeout(timer);
     }
 
     const key = `venues/${v.id}/og-${Date.now()}.${ext}`;

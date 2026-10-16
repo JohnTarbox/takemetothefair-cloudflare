@@ -16,12 +16,14 @@
  * (and thus its og:image host) is operator-curated, but the guard is cheap
  * defense-in-depth, identical to fetch-site.ts.
  */
-import { isBlockedSsrfHost } from "@takemetothefair/site-fetch";
+import { guardedFetch, isBlockedSsrfHost } from "@takemetothefair/site-fetch";
 import { parseImageDimensions, looksLikeLogo } from "../../../src/lib/image-dimensions.js";
 
 /** First 64KB covers the SOF marker in even progressive JPEGs; PNG/WebP fit
  *  in the first ~64 bytes. Range header is end-inclusive. */
 const PROBE_BYTES = 64 * 1024;
+/** OPE-1370 — this probe had no timeout; a stalled CDN held the enrichment run. */
+export const PROBE_TIMEOUT_MS = 10_000;
 
 /** Minimum long/short aspect ratio for a wide hero band. */
 const HERO_MIN_ASPECT = 1.3;
@@ -83,15 +85,22 @@ export async function probePromoterImage(rawUrl: string): Promise<ProbedPromoter
   if (isBlockedSsrfHost(parsed.hostname)) return null;
 
   try {
-    const res = await fetch(parsed.href, {
+    // OPE-1370 — guardedFetch: the SSRF guard re-runs on every redirect hop
+    // (the check above covers the first only), a timeout now exists at all
+    // (there was none), and a CDN that ignores Range is read only to
+    // PROBE_BYTES instead of downloaded whole.
+    const res = await guardedFetch(parsed.href, {
+      maxBytes: PROBE_BYTES,
+      timeoutMs: PROBE_TIMEOUT_MS,
       headers: { Range: `bytes=0-${PROBE_BYTES - 1}` },
     });
     // 206 (honored Range) or 200 (CDN ignored it, sent full body) both fine.
     if (!res.ok && res.status !== 206) {
+      res.cancel();
       return classifyPromoterImage(rawUrl, null);
     }
     const contentType = res.headers.get("content-type");
-    const bytes = new Uint8Array(await res.arrayBuffer());
+    const bytes = await res.bytesPrefix(PROBE_BYTES);
     const dims = parseImageDimensions(bytes, contentType);
     return classifyPromoterImage(rawUrl, dims);
   } catch {

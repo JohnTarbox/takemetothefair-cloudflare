@@ -8,6 +8,7 @@
 // header parsing for JPEG SOF0 / PNG IHDR / WebP VP8X.
 
 import { SCRAPER_USER_AGENT } from "@takemetothefair/constants";
+import { guardedFetch, GUARDED_HTML_MAX_BYTES } from "@takemetothefair/site-fetch";
 import { parseImageDimensions, looksLikeLogo } from "./image-dimensions";
 
 export const FETCH_TIMEOUT_MS = 15_000;
@@ -156,15 +157,16 @@ export async function acceptCandidateImage(
   if (url.startsWith("data:")) return { ok: false, reason: "data_uri" };
   if (urlLooksLikeJunk(url)) return { ok: false, reason: "junk_url_pattern", detail: url };
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const res = await fetch(url, {
+    // OPE-1370 — guardedFetch: SSRF guard on every redirect hop (there was
+    // none — the candidate URL comes from a third-party page's og:image).
+    const res = await guardedFetch(url, {
       method: "HEAD",
+      maxBytes: 0,
+      timeoutMs: FETCH_TIMEOUT_MS,
       headers: { "User-Agent": SCRAPER_USER_AGENT },
-      signal: controller.signal,
-      redirect: "follow",
     });
+    res.cancel();
     if (!res.ok) {
       return { ok: false, reason: "head_failed", detail: `HTTP ${res.status}` };
     }
@@ -230,8 +232,6 @@ export async function acceptCandidateImage(
       reason: "fetch_failed",
       detail: e instanceof Error ? e.message : String(e),
     };
-  } finally {
-    clearTimeout(timer);
   }
 }
 
@@ -242,28 +242,26 @@ async function probeImageDimensions(
   url: string,
   contentType: string
 ): Promise<{ width: number; height: number } | null> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const res = await fetch(url, {
-      method: "GET",
+    const res = await guardedFetch(url, {
+      maxBytes: DIMENSION_PROBE_BYTES,
+      timeoutMs: FETCH_TIMEOUT_MS,
       headers: {
         "User-Agent": SCRAPER_USER_AGENT,
         Range: `bytes=0-${DIMENSION_PROBE_BYTES - 1}`,
       },
-      signal: controller.signal,
-      redirect: "follow",
     });
-    // Some CDNs ignore Range and return 200 with the full body; that's
-    // fine — we slice to PROBE_BYTES anyway. Reject only on error status.
-    if (!res.ok && res.status !== 206) return null;
-    const buf = new Uint8Array(await res.arrayBuffer());
-    const bytes = buf.length > DIMENSION_PROBE_BYTES ? buf.slice(0, DIMENSION_PROBE_BYTES) : buf;
+    // Some CDNs ignore Range and return 200 with the full body; OPE-1370 —
+    // we now STOP reading at DIMENSION_PROBE_BYTES instead of downloading the
+    // whole image and slicing it. Reject only on error status.
+    if (!res.ok && res.status !== 206) {
+      res.cancel();
+      return null;
+    }
+    const bytes = await res.bytesPrefix(DIMENSION_PROBE_BYTES);
     return parseImageDimensions(bytes, contentType);
   } catch {
     return null;
-  } finally {
-    clearTimeout(timer);
   }
 }
 
@@ -273,22 +271,21 @@ async function probeImageDimensions(
  * the GET with the project's polite-bot UA + a finite timeout.
  */
 export async function fetchPageHtml(url: string): Promise<string | null> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const res = await fetch(url, {
+    // OPE-1370 — SSRF guard on every hop + a 5 MB cap (was: no guard, whole body).
+    const res = await guardedFetch(url, {
+      maxBytes: GUARDED_HTML_MAX_BYTES,
+      timeoutMs: FETCH_TIMEOUT_MS,
       headers: { "User-Agent": SCRAPER_USER_AGENT },
-      signal: controller.signal,
-      redirect: "follow",
     });
-    if (!res.ok) return null;
     const ct = (res.headers.get("content-type") || "").toLowerCase();
-    if (!ct.includes("text/html") && !ct.includes("application/xhtml")) return null;
+    if (!res.ok || (!ct.includes("text/html") && !ct.includes("application/xhtml"))) {
+      res.cancel();
+      return null;
+    }
     return await res.text();
   } catch {
     return null;
-  } finally {
-    clearTimeout(timer);
   }
 }
 

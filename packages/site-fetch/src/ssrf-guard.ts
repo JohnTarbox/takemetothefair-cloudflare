@@ -1,5 +1,8 @@
 /**
- * SSRF host guard for the admin URL-import fetch route (WS3c, 2026-06-11).
+ * SSRF host guard (WS3c, 2026-06-11). Since OPE-1370 it is applied to every
+ * redirect hop by `guardedFetch` (guarded-fetch.ts), which is how outbound
+ * fetches of user/email/page-supplied URLs should call it; the paragraph below
+ * describes its original single caller and still holds as the threat model.
  *
  * THREAT MODEL / why this is defense-in-depth, not a critical control:
  *   - The only caller is the ADMIN-gated /api/admin/import-url/fetch route
@@ -64,19 +67,101 @@ function isPrivateIpv4(a: number, b: number): boolean {
     (a === 192 && b === 168) || // private 192.168.0.0/16
     (a === 169 && b === 254) || // link-local + cloud metadata 169.254.0.0/16
     a === 0 || // 0.0.0.0/8
-    (a === 100 && b >= 64 && b <= 127) // carrier-grade NAT 100.64.0.0/10
+    (a === 100 && b >= 64 && b <= 127) || // carrier-grade NAT 100.64.0.0/10
+    (a === 198 && (b === 18 || b === 19)) || // benchmarking 198.18.0.0/15
+    a >= 224 // multicast 224/4, reserved 240/4, broadcast
   );
 }
 
 /**
+ * OPE-1370 — parse an IPv6 literal (no brackets) into its eight 16-bit
+ * groups, accepting "::" elision and an embedded dotted-IPv4 tail. Returns
+ * null for anything malformed (including a zone id).
+ */
+function parseIpv6(addr: string): number[] | null {
+  if (addr.includes("%")) return null;
+  let text = addr;
+  const lastColon = text.lastIndexOf(":");
+  const v4Tail = lastColon === -1 ? "" : text.slice(lastColon + 1);
+  if (v4Tail.includes(".")) {
+    const o = v4Tail.split(".");
+    if (o.length !== 4 || !o.every((p) => /^\d{1,3}$/.test(p) && Number(p) <= 255)) return null;
+    const n = o.map(Number);
+    text =
+      text.slice(0, lastColon + 1) +
+      ((n[0] << 8) | n[1]).toString(16) +
+      ":" +
+      ((n[2] << 8) | n[3]).toString(16);
+  }
+  const halves = text.split("::");
+  if (halves.length > 2) return null;
+  const toGroups = (s: string): number[] | null => {
+    if (s === "") return [];
+    const out: number[] = [];
+    for (const g of s.split(":")) {
+      if (!/^[0-9a-f]{1,4}$/i.test(g)) return null;
+      out.push(parseInt(g, 16));
+    }
+    return out;
+  };
+  const head = toGroups(halves[0]);
+  if (!head) return null;
+  if (halves.length === 1) return head.length === 8 ? head : null;
+  const rest = toGroups(halves[1]);
+  if (!rest) return null;
+  const fill = 8 - head.length - rest.length;
+  if (fill < 1) return null;
+  return [...head, ...new Array<number>(fill).fill(0), ...rest];
+}
+
+/** First two octets of the IPv4 held in 16-bit group `i` (and `i + 1`). */
+function v4Prefix(g: number[], i: number): [number, number] {
+  return [g[i] >> 8, g[i] & 0xff];
+}
+
+/**
+ * True for an IPv6 address that is internal, or that embeds an internal IPv4.
+ * An unparseable literal is BLOCKED: one we cannot read is one we cannot vouch for.
+ */
+function isBlockedIpv6(inner: string): boolean {
+  const g = parseIpv6(inner);
+  if (!g) return true;
+  const zero = (from: number, to: number) => g.slice(from, to).every((x) => x === 0);
+  // ::/96 — unspecified (::), loopback (::1) and the deprecated
+  // IPv4-COMPATIBLE form ::a.b.c.d, which URL normalizes to e.g. [::7f00:1].
+  // OPE-1370: the previous string check let [::7f00:1] through.
+  if (zero(0, 6)) return true;
+  // ::ffff:0:0/96 IPv4-mapped, ::ffff:0:0:0/96 IPv4-translated.
+  if (zero(0, 5) && g[5] === 0xffff) return isPrivateIpv4(...v4Prefix(g, 6));
+  if (zero(0, 4) && g[4] === 0xffff && g[5] === 0) return isPrivateIpv4(...v4Prefix(g, 6));
+  // 64:ff9b::/96 NAT64 well-known prefix; 64:ff9b:1::/48 local-use NAT64.
+  if (g[0] === 0x64 && g[1] === 0xff9b) {
+    if (g[2] === 1) return true;
+    if (zero(2, 6)) return isPrivateIpv4(...v4Prefix(g, 6));
+  }
+  // 2002::/16 6to4 — the IPv4 sits in groups 1–2.
+  if (g[0] === 0x2002) return isPrivateIpv4(...v4Prefix(g, 1));
+  if ((g[0] & 0xfe00) === 0xfc00) return true; // ULA fc00::/7
+  if ((g[0] & 0xffc0) === 0xfe80) return true; // link-local fe80::/10
+  if ((g[0] & 0xffc0) === 0xfec0) return true; // site-local fec0::/10 (deprecated)
+  if ((g[0] & 0xff00) === 0xff00) return true; // multicast ff00::/8
+  return false;
+}
+
+/**
  * True if the host should be blocked as internal/private/unroutable. Covers:
- * internal name suffixes, loopback names, all IPv4 numeric encodings (dotted +
- * integer, decimal/hex/octal), and IPv6 loopback / link-local / ULA /
- * IPv4-mapped literals. Hostname should be lowercased URL.hostname (IPv6 keeps
- * its surrounding brackets, as URL.hostname returns them).
+ * internal name suffixes, loopback names (with or without the DNS root's
+ * trailing dot), all IPv4 numeric encodings (dotted + integer,
+ * decimal/hex/octal), and IPv6 unspecified / loopback / IPv4-compatible /
+ * IPv4-mapped / NAT64 / 6to4 / ULA / link-local / multicast literals.
+ * Hostname should be URL.hostname (IPv6 keeps its surrounding brackets, as
+ * URL.hostname returns them).
  */
 export function isBlockedSsrfHost(hostnameRaw: string): boolean {
-  const host = hostnameRaw.toLowerCase().trim();
+  // OPE-1370 — `localhost.` is the same name as `localhost` (the trailing dot
+  // is the DNS root) and URL.hostname keeps it, so every suffix check below
+  // missed it. Strip ALL trailing dots before comparing.
+  const host = hostnameRaw.toLowerCase().trim().replace(/\.+$/, "");
   if (!host) return true;
 
   // Internal / loopback names.
@@ -91,37 +176,10 @@ export function isBlockedSsrfHost(hostnameRaw: string): boolean {
   }
 
   // IPv6 literal (URL.hostname wraps these in []).
-  if (host.startsWith("[") && host.endsWith("]")) {
-    const inner = host.slice(1, -1);
-    // Loopback in any form (::1, 0:0:0:0:0:0:0:1), unspecified (::), ULA
-    // (fc/fd), link-local (fe80). For loopback, ignore the "::" elision and
-    // check that the only non-zero group is a trailing "1".
-    const nonEmpty = inner.split(":").filter((g) => g !== "");
-    const isLoopback =
-      inner === "::1" ||
-      (nonEmpty.length > 0 &&
-        nonEmpty.every((g, i) => (i === nonEmpty.length - 1 ? /^0*1$/.test(g) : /^0+$/.test(g))));
-    if (
-      inner === "::" ||
-      isLoopback ||
-      inner.startsWith("fc") ||
-      inner.startsWith("fd") ||
-      inner.startsWith("fe80")
-    ) {
-      return true;
-    }
-    // IPv4-mapped / -translated (::ffff:127.0.0.1, ::ffff:7f00:1, 64:ff9b::x).
-    const mapped = inner.match(/(?:::ffff:|::ffff:0:|64:ff9b::)(.+)$/);
-    if (mapped) {
-      const tail = mapped[1];
-      const v4 = looseParseIpv4(tail);
-      if (v4) return isPrivateIpv4(v4[0], v4[1]);
-      // ::ffff:7f00:1 form — two hex groups encoding the v4. Be conservative:
-      // any ::ffff: mapped literal that isn't a clearly-public dotted-quad → block.
-      return true;
-    }
-    return false;
-  }
+  if (host.startsWith("[") && host.endsWith("]")) return isBlockedIpv6(host.slice(1, -1));
+  // A bare IPv6 literal is not what URL.hostname returns, but a caller passing
+  // one should get the same answer, not a pass.
+  if (host.includes(":")) return isBlockedIpv6(host);
 
   // IPv4 in any numeric encoding.
   const v4 = looseParseIpv4(host);
