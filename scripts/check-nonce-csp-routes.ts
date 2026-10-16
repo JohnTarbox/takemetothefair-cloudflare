@@ -35,9 +35,7 @@ import { NONCE_CSP_PREFIXES, isNonceCspPath } from "../src/lib/csp";
 
 // Next's own compiler for a next.config `headers()` source — the function that
 // writes the routes-manifest regex OpenNext matches at runtime.
-const { buildCustomRoute } = createRequire(import.meta.url)(
-  "next/dist/lib/build-custom-route"
-) as {
+const { buildCustomRoute } = createRequire(import.meta.url)("next/dist/lib/build-custom-route") as {
   buildCustomRoute: (
     type: "header",
     route: { source: string; headers: unknown[] }
@@ -189,7 +187,9 @@ export function checkNonceCspRoutes(opts: {
     const re = new RegExp(buildCustomRoute("header", { source, headers: [] }).regex);
     publicCspApplies = (url) => re.test(url);
     if (!opts.nextConfigSource.includes("source: NONCE_CSP_EXCLUDED_SOURCE")) {
-      problems.push("next.config.mjs: the public CSP rule no longer uses NONCE_CSP_EXCLUDED_SOURCE");
+      problems.push(
+        "next.config.mjs: the public CSP rule no longer uses NONCE_CSP_EXCLUDED_SOURCE"
+      );
     }
     const listed = /\(\?:([^)]+)\)\(\?:\/\|\$\)/.exec(source)?.[1]?.split("|") ?? [];
     const expected = NONCE_CSP_PREFIXES.map((p) => p.slice(1));
@@ -226,18 +226,22 @@ export function checkNonceCspRoutes(opts: {
   for (const { path, source: src } of opts.files) {
     const rel = relative(ROOT, path);
     const cfg = segmentConfig(src);
-    if (cfg.revalidate) problems.push(`${rel}: exports \`revalidate\` (a nonce route must not be cached)`);
+    if (cfg.revalidate)
+      problems.push(`${rel}: exports \`revalidate\` (a nonce route must not be cached)`);
     if (cfg.generateStaticParams)
       problems.push(`${rel}: exports \`generateStaticParams\` (prerendered HTML carries no nonce)`);
     if (cfg.dynamic !== null && cfg.dynamic !== "force-dynamic")
-      problems.push(`${rel}: exports dynamic = "${cfg.dynamic}" (must be "force-dynamic" or absent)`);
+      problems.push(
+        `${rel}: exports dynamic = "${cfg.dynamic}" (must be "force-dynamic" or absent)`
+      );
 
     if (!/\/page\.tsx?$/.test(path)) continue;
     const url = urlForPage(path);
     if (!isNonceCspPath(url))
       problems.push(`${rel}: ${url} is under a protected directory but not in NONCE_CSP_PREFIXES`);
     if (!mwMatches(url)) problems.push(`${rel}: middleware matcher does not run on ${url}`);
-    if (publicCspApplies(url)) problems.push(`${rel}: next.config public CSP still applies to ${url}`);
+    if (publicCspApplies(url))
+      problems.push(`${rel}: next.config public CSP still applies to ${url}`);
 
     let dir = dirname(path);
     let covered = forceDynamic(dir, ["page.tsx", "page.ts"]);
@@ -248,8 +252,7 @@ export function checkNonceCspRoutes(opts: {
       }
       dir = dirname(dir);
     }
-    if (!covered)
-      problems.push(`${rel}: no layout above it exports dynamic = "force-dynamic"`);
+    if (!covered) problems.push(`${rel}: no layout above it exports dynamic = "force-dynamic"`);
   }
   return problems;
 }

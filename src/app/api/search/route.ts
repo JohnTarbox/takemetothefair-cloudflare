@@ -36,6 +36,9 @@ import {
 // retained only to bound input. Do not re-derive a LIKE cap from it.
 const MAX_QUERY_LENGTH = 100;
 
+/** OPE-1395 (IDX4) — browser cache for a complete, non-degraded result. */
+const SEARCH_CACHE_CONTROL = "public, max-age=60";
+
 const EMPTY_RESPONSE = { events: [], venues: [], vendors: [], blogPosts: [], help: [] };
 
 export const GET = withErrorHandler(async (request: Request) => {
@@ -240,6 +243,11 @@ export const GET = withErrorHandler(async (request: Request) => {
   // Discriminated-union narrowing preserves the per-section query types
   // (the destructured `eventsSettled` is `PromiseSettledResult<T_events>`).
   const eventResults = eventsSettled.status === "fulfilled" ? eventsSettled.value : [];
+  // OPE-1395 (IDX4) — a response missing a section (or the fuzzy fallback) is
+  // not cached; see the Cache-Control note on the response below.
+  let degraded = [eventsSettled, venuesSettled, vendorsSettled, blogSettled].some(
+    (s) => s.status === "rejected"
+  );
 
   // OPE-281 — zero-result fuzzy fallback for misspellings ("mrshfeild" →
   // "Marshfield Fair"). Only fires when the structured match found nothing AND
@@ -291,6 +299,7 @@ export const GET = withErrorHandler(async (request: Request) => {
         .slice(0, 5)
         .map((x) => x.r);
     } catch (err) {
+      degraded = true;
       await logError(db, {
         message: "Search fuzzy fallback failed",
         error: err,
@@ -409,17 +418,27 @@ export const GET = withErrorHandler(async (request: Request) => {
   // this is a synchronous substring match — no query, no Promise.allSettled slot.
   const helpResults = searchHelpArticles(q);
 
-  return NextResponse.json({
-    events: finalEventResults.map((e) => ({
-      name: e.name,
-      slug: e.slug,
-      startDate: e.startDate,
-      endDate: e.endDate,
-      venue: e.venueName ? { name: e.venueName, city: e.venueCity, state: e.venueState } : null,
-    })),
-    venues: venueResults,
-    vendors: dedupedVendors,
-    blogPosts: blogResults,
-    help: helpResults,
-  });
+  return NextResponse.json(
+    {
+      events: finalEventResults.map((e) => ({
+        name: e.name,
+        slug: e.slug,
+        startDate: e.startDate,
+        endDate: e.endDate,
+        venue: e.venueName ? { name: e.venueName, city: e.venueCity, state: e.venueState } : null,
+      })),
+      venues: venueResults,
+      vendors: dedupedVendors,
+      blogPosts: blogResults,
+      help: helpResults,
+    },
+    // OPE-1395 (IDX4) — the response depends only on `q` (no session, cookie or
+    // user state is read in this handler), so a short browser cache is safe and
+    // spares D1 the full-vendor instr() scan when a typeahead re-asks the same
+    // query. The existing next.config `Cloudflare-CDN-Cache-Control` header does
+    // nothing on its own: the OpenNext Worker generates every response, so the
+    // CDN never sees one to cache (live probe 2026-10-16: no cf-cache-status).
+    // A degraded response (a section failed and came back empty) is not cached.
+    degraded ? undefined : { headers: { "Cache-Control": SEARCH_CACHE_CONTROL } }
+  );
 }, "api/search");

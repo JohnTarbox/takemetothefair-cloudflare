@@ -475,16 +475,30 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
             const updateData: Record<string, unknown> = {
               name: decodedEventName,
               description: decodedDescription,
-              ticketUrl: gateUrlForField(
-                eventData.website || eventData.ticketUrl || eventData.sourceUrl,
-                "ticket",
-                urlClassifications
-              ),
               imageUrl: eventData.imageUrl || existing[0].imageUrl,
-              venueId: eventVenueId,
               lastSyncedAt: new Date(),
               updatedAt: new Date(),
             };
+            // OPE-1393 (CLB5) — a re-import never REMOVES a venue: a scrape with
+            // no venue (or a former-venue drop) leaves the stored one alone.
+            if (eventVenueId) updateData.venueId = eventVenueId;
+            // OPE-1393 (CLB5) — the source URL is only a fallback for a row with
+            // NO ticket link; it never replaces one (it is the listing page, not
+            // the event's own site).
+            const scrapedTicketUrl = gateUrlForField(
+              eventData.website || eventData.ticketUrl,
+              "ticket",
+              urlClassifications
+            );
+            if (scrapedTicketUrl) {
+              updateData.ticketUrl = scrapedTicketUrl;
+            } else if (!existing[0].ticketUrl) {
+              updateData.ticketUrl = gateUrlForField(
+                eventData.sourceUrl,
+                "ticket",
+                urlClassifications
+              );
+            }
             // Only update dates if provided. A3 (Dev backlog 2026-06-05):
             // route through normalizeEventDate so bare YYYY-MM-DD lands at
             // noon UTC (canonical anchor).
@@ -840,7 +854,13 @@ export const PATCH = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
           if (details.imageUrl && details.imageUrl !== event.imageUrl) {
             updates.imageUrl = details.imageUrl;
           }
-          if (details.website && details.website !== event.ticketUrl) {
+          // OPE-1393 (CLB5) — a "website" that is just the source page never
+          // replaces an existing ticket link.
+          if (
+            details.website &&
+            details.website !== event.ticketUrl &&
+            !(event.ticketUrl && details.website === event.sourceUrl)
+          ) {
             updates.ticketUrl = details.website;
           }
 

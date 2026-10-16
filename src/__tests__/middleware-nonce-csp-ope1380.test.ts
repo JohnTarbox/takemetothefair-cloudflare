@@ -18,7 +18,12 @@ function nonceOf(csp: string | null): string | undefined {
 }
 
 function scriptSrc(csp: string): string {
-  return csp.split(";").map((d) => d.trim()).find((d) => d.startsWith("script-src")) ?? "";
+  return (
+    csp
+      .split(";")
+      .map((d) => d.trim())
+      .find((d) => d.startsWith("script-src")) ?? ""
+  );
 }
 
 const PROTECTED = [
@@ -39,18 +44,21 @@ const PROTECTED = [
 ];
 
 describe("OPE-1380 — protected routes get a per-request nonce CSP", () => {
-  it.each(PROTECTED)("%s → nonce + strict-dynamic, no 'unsafe-inline' in script-src", async (path) => {
-    const res = await middleware(req(path));
-    const csp = res.headers.get("Content-Security-Policy");
-    expect(csp, path).toBeTruthy();
-    const nonce = nonceOf(csp);
-    expect(nonce, path).toMatch(/^[A-Za-z0-9+/]{22}==$/); // 16 random bytes
-    const src = scriptSrc(csp!);
-    expect(src).toContain("'strict-dynamic'");
-    expect(src).not.toContain("'unsafe-inline'");
-    expect(src).not.toContain("'unsafe-eval'"); // vitest is not `next dev`
-    expect(csp).toContain("frame-ancestors 'none'");
-  });
+  it.each(PROTECTED)(
+    "%s → nonce + strict-dynamic, no 'unsafe-inline' in script-src",
+    async (path) => {
+      const res = await middleware(req(path));
+      const csp = res.headers.get("Content-Security-Policy");
+      expect(csp, path).toBeTruthy();
+      const nonce = nonceOf(csp);
+      expect(nonce, path).toMatch(/^[A-Za-z0-9+/]{22}==$/); // 16 random bytes
+      const src = scriptSrc(csp!);
+      expect(src).toContain("'strict-dynamic'");
+      expect(src).not.toContain("'unsafe-inline'");
+      expect(src).not.toContain("'unsafe-eval'"); // vitest is not `next dev`
+      expect(csp).toContain("frame-ancestors 'none'");
+    }
+  );
 
   it("forwards the SAME policy + nonce on the request, where Next.js reads it", async () => {
     const res = await middleware(req("/login"));
@@ -64,7 +72,9 @@ describe("OPE-1380 — protected routes get a per-request nonce CSP", () => {
   it("the nonce differs on every request", async () => {
     const seen = new Set<string>();
     for (let i = 0; i < 5; i++) {
-      seen.add(nonceOf((await middleware(req("/admin/claims"))).headers.get("Content-Security-Policy"))!);
+      seen.add(
+        nonceOf((await middleware(req("/admin/claims"))).headers.get("Content-Security-Policy"))!
+      );
     }
     expect(seen.size).toBe(5);
   });

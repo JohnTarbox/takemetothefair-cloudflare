@@ -1,9 +1,8 @@
-import { redirect } from "next/navigation";
 import Link from "next/link";
 import { Calendar, FileText, Sparkles } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { auth } from "@/lib/auth";
+import { requireRole } from "@/lib/require-role";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { vendors, eventVendors, events, venues } from "@/lib/db/schema";
 import { eq, desc } from "drizzle-orm";
@@ -148,8 +147,7 @@ interface PageProps {
 export const dynamic = "force-dynamic";
 
 export default async function VendorApplicationsPage({ searchParams }: PageProps) {
-  const session = await auth();
-  if (!session) redirect("/login");
+  const session = await requireRole("VENDOR", "/vendor/applications");
 
   const params = await searchParams;
   const activeTab = (params.status || "ALL").toUpperCase();

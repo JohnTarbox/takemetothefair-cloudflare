@@ -29,12 +29,14 @@ import { normalizeEventDate } from "@/lib/event-dates";
 import { notifyApprovalIfNeeded } from "@/lib/approval-notification";
 import {
   centsToDollars,
+  changedScraperSyncedFields,
   dollarsToCents,
   evaluateGates,
   eventApprovalBlockReason,
   mergedTombstoneBlockReason,
   mirroredFieldsChanged,
   nextGateFlags,
+  shouldDisableScraperSync,
 } from "@takemetothefair/utils";
 import { eventSyndicationStatements } from "@/lib/syndication/outbox";
 import { enqueueSyndicationChange } from "@/lib/queues/producers";
@@ -188,6 +190,10 @@ export const PATCH = withAuth<{ id: string }>(
           mergedInto: events.mergedInto,
           isStatewide: events.isStatewide,
           stateCode: events.stateCode,
+          // OPE-1393 — the rest of the scraper-synced set + the flag itself.
+          imageUrl: events.imageUrl,
+          ticketUrl: events.ticketUrl,
+          syncEnabled: events.syncEnabled,
         })
         .from(events)
         .where(eq(events.id, id))
@@ -435,6 +441,21 @@ export const PATCH = withAuth<{ id: string }>(
         updateData.applicationInstructions = data.applicationInstructions;
       if (data.walkInsAllowed !== undefined) updateData.walkInsAllowed = data.walkInsAllowed;
       if (data.syncEnabled !== undefined) updateData.syncEnabled = data.syncEnabled;
+
+      // OPE-1393 (CLB5) — a hand edit to a field the scraper sync writes turns
+      // sync off, or the next sync silently reverts it. The edit form posts
+      // `syncEnabled` on every save, so it counts as intent only when it differs
+      // from the stored value.
+      const syncLockFields = changedScraperSyncedFields(currentEvent, updateData);
+      const syncDisabledByEdit = shouldDisableScraperSync({
+        currentSyncEnabled: currentEvent.syncEnabled,
+        explicitSyncEnabled:
+          data.syncEnabled !== undefined && data.syncEnabled !== currentEvent.syncEnabled
+            ? data.syncEnabled
+            : undefined,
+        changedFields: syncLockFields,
+      });
+      if (syncDisabledByEdit) updateData.syncEnabled = false;
 
       // Re-run pre-ingest gates on material edits (analyst 2026-05-22 P2).
       // Before this hook, gates fired only on INSERT — a PATCH that introduced
@@ -752,7 +773,11 @@ export const PATCH = withAuth<{ id: string }>(
             actorUserId: session.user.id,
             targetType: "event",
             targetId: id,
-            payloadJson: JSON.stringify({ fields: changedFields, source: "admin_ui" }),
+            payloadJson: JSON.stringify({
+              fields: changedFields,
+              source: "admin_ui",
+              ...(syncDisabledByEdit ? { sync_disabled_by_edit: syncLockFields } : {}),
+            }),
             createdAt: new Date(),
           });
         } catch (err) {
@@ -834,6 +859,7 @@ export const PATCH = withAuth<{ id: string }>(
       const warnings: Record<string, unknown> = {};
       if (gateFlagsWarning) warnings.gate_flags = gateFlagsWarning;
       if (datesConfirmedWarning) warnings.dates_confirmed_downgraded = datesConfirmedWarning;
+      if (syncDisabledByEdit) warnings.sync_disabled = { fields: syncLockFields };
       const responseEvent = updatedEvent ? withDollarPrices(updatedEvent) : updatedEvent;
       if (Object.keys(warnings).length > 0) {
         return NextResponse.json({ ...responseEvent, warnings });

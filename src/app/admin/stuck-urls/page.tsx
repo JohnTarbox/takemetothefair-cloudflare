@@ -39,7 +39,6 @@ import {
 import { unsafeSlug } from "@/lib/utils";
 import { chunkedInArray, safeHref } from "@takemetothefair/utils";
 
-
 interface ClusterRow {
   bucket: EntityBucket;
   /** Sub-cluster key: for events this is the state code; for everything

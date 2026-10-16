@@ -25,7 +25,11 @@ describe("segmentConfig", () => {
     const cfg = segmentConfig(
       '// export const revalidate = 300\nconst revalidate = 5;\nexport const dynamic = "force-dynamic";'
     );
-    expect(cfg).toEqual({ revalidate: false, generateStaticParams: false, dynamic: "force-dynamic" });
+    expect(cfg).toEqual({
+      revalidate: false,
+      generateStaticParams: false,
+      dynamic: "force-dynamic",
+    });
   });
 });
 

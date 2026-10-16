@@ -14,7 +14,8 @@ import { eq, and, isNull } from "drizzle-orm";
 import { events, inboundEmails } from "./schema.js";
 import type { Db } from "./db.js";
 import { issueToken } from "./feedback-tokens.js";
-import { isEmailSuppressed, recordWorkflowOutcome } from "@takemetothefair/db-schema";
+import { isEmailSuppressed } from "@takemetothefair/db-schema/email-suppression";
+import { recordWorkflowOutcome } from "@takemetothefair/db-schema/intent-feedback";
 
 interface EmailJobMessage {
   to: string;

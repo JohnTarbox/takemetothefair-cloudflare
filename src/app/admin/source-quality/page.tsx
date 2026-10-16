@@ -26,7 +26,6 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { extractDomain } from "@/lib/url-classification";
 
-
 // Sources with fewer than this many total events are too small to score
 // meaningfully. Filtering them keeps the table focused on the high-volume
 // long tail where reliability scoring actually matters.

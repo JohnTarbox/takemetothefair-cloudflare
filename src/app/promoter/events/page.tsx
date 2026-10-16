@@ -1,11 +1,10 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import { Plus, Eye, Pencil, Calendar, Copy, FileText, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatDate } from "@/lib/utils";
-import { auth } from "@/lib/auth";
+import { requireRole } from "@/lib/require-role";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { promoters, events, venues, eventVendors } from "@/lib/db/schema";
 import { eventVenueJoinProjection } from "@/lib/db/event-join-projection";
@@ -127,8 +126,7 @@ async function getPromoterEvents(userId: string): Promise<PromoterEvent[]> {
 export const dynamic = "force-dynamic";
 
 export default async function PromoterEventsPage() {
-  const session = await auth();
-  if (!session) redirect("/login");
+  const session = await requireRole("PROMOTER", "/promoter/events");
 
   const allEvents = await getPromoterEvents(session.user.id);
   const drafts = allEvents.filter((e) => e.status === "DRAFT");

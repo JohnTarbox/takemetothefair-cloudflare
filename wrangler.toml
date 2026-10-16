@@ -80,30 +80,27 @@ VENDOR_DIGEST_SEND_ENABLED = "true"
 # src/lib/__tests__/conditional-get.test.ts; flipping it back is a decision for
 # John, not a cleanup.
 CONDITIONAL_GET_PUBLIC_CACHE = "true"
-# OPE-738 — flip to "true" to serve /fair-entry-deadlines, the cross-event
-# exhibitor & competition entry-deadline index, and to show its footer link.
-# LIVE since 2026-09-02 — /fair-entry-deadlines is public.
-# Shipped dark on 2026-09-01 (OPE-738) as a NEW customer-facing surface behind
-# a STOP-gate; John approved publishing at issue level, then confirmed it
-# directly in session on 2026-09-02, and this line is that approval.
-# Reversal is this one line: set "false", deploy, and the route 404s with the
-# footer link gone. No data is written and no mail sends either way.
-# Must live HERE, not in the dashboard: a dashboard [vars] override is silently
-# wiped by the next deploy (OPE-284/OPE-509) — which for an ON gate would mean
-# the page quietly going dark again, so the committed value is the only value.
-# `entry-deadlines-gate-ope738.test.ts` asserts this literal, so changing it
-# stays a reviewed edit rather than a drive-by.
-ENTRY_DEADLINES_INDEX = "true"
-# CAL1 — serves the SSR Month calendar at /events?view=calendar
-# (@jonnyboats/calendar-react). "false" = the legacy client calendar.
-# ON PERMANENTLY since the 2026-06 prod verification: the SSR calendar is the
-# shipped calendar (OPE-994, John 2026-09-14). Turning this off reverts
-# /events?view=calendar to the legacy client calendar and disables CAL2 below.
-CAL1_SSR_MONTH = "true"
-# CAL2 — adds the Agenda + Year sub-views to the SSR calendar
-# (?cal_view=agenda|year). Requires CAL1_SSR_MONTH = "true"; "false" = Month only.
-# ON PERMANENTLY alongside CAL1 (OPE-994, John 2026-09-14).
-CAL2_VIEWS = "true"
+# OPE-1394 — ENTRY_DEADLINES_INDEX, CAL1_SSR_MONTH and CAL2_VIEWS were RETIRED.
+# All three sat at "true" permanently (OPE-738 go-live 2026-09-02; CAL1/CAL2 per
+# OPE-994, John 2026-09-14), so their OFF branches were dead code and were
+# deleted: /fair-entry-deadlines, the SSR calendar and its sub-views are now
+# unconditional. Do NOT re-add these lines — nothing reads them any more, so a
+# "false" here would look like a kill switch and do nothing.
+#
+# OPE-1394 — FAQ Phase A pilot allow-list (src/lib/faq-pilot.ts): comma-separated
+# event slugs that render the event-page FAQ section + its FAQPage JSON-LD.
+# Declared EMPTY, which is exactly what production has always run with (the var
+# had never been set anywhere — unset reads as "" too), so no event renders the
+# FAQ. Declared here so the pilot's state is greppable; adding slugs is a
+# customer-facing change and a decision for John. Edit THIS line, not the
+# dashboard (a dashboard [vars] value is wiped by the next deploy).
+FAQ_PILOT_EVENT_SLUGS = ""
+# OPE-1394 — OPE-114 performer sub-events: when "true", the event page's JSON-LD
+# emits each billed performer as a schema.org subEvent
+# (src/app/events/[slug]/page.tsx). Read as `=== "true"`, so the never-set state
+# production has always run with is OFF; "false" is that same behaviour, now
+# declared. Turning it on changes public structured data — John's call.
+EMIT_PERFORMER_SUBEVENTS = "false"
 # OPE-163 — customer-facing reply send gate for the /admin/inbound-emails Reply
 # panel. The endpoint refuses to enqueue unless this is "true"; the MCP consumer
 # enforces the same flag as the authoritative hard stop.
@@ -123,10 +120,11 @@ CAL2_VIEWS = "true"
 # This committed line is the source of truth. Change it here, deploy, and read
 # the resolved runtime value at GET /api/admin/capability-flags.
 EMAIL_REPLY_ENABLED = "true"
-# OPE-412 — submission-received acknowledgment. OFF until John approves the
-# copy (OPE-6 gate on new customer-facing templates). While off, a submission
-# still succeeds and the skip is logged, so "we chose not to send" stays
-# distinguishable from "we tried and failed".
+# OPE-412 — submission-received acknowledgment (customer-facing email).
+# ON since 2026-08-28 (#1089): John approved the ack copy and opened the OPE-6
+# gate on the issue, 2026-08-27. When "false", a submission still succeeds and
+# the skip is logged, so "we chose not to send" stays distinguishable from "we
+# tried and failed". Turning it off again is John's call.
 SUBMISSION_ACK_ENABLED = "true"
 # OPE-169 — newsletter BROADCAST gate. POST /api/admin/newsletter/send refuses a
 # real broadcast to the subscriber list unless this is "true" (a single-address

@@ -861,6 +861,14 @@ export const events = sqliteTable(
     index("idx_events_state_code").on(table.stateCode),
     index("idx_events_completeness_score").on(table.completenessScore),
     index("idx_events_lifecycle_status").on(table.lifecycleStatus),
+    // OPE-1395 (drizzle/0374) — find-duplicate.ts stage 1 looks up source_url.
+    index("idx_events_source_url").on(table.sourceUrl),
+    // OPE-1395 (drizzle/0374) also creates the EXPRESSION index
+    //   idx_events_status_effective_end ON events(status, COALESCE(end_date, start_date))
+    // for upcomingEndPredicate/pastEndPredicate (event-end-predicates.ts).
+    // It is deliberately NOT declared here: several test fixtures build DDL
+    // from getTableConfig(...).indexes by column NAME, and an SQL expression
+    // has none (they emit `ON events (status, )` and every suite fails).
     // K3 (drizzle/0095) — partial index for "show me events merged into X"
     // queries + the admin_actions reverse lookup. Most events have NULL
     // mergedInto so the partial keeps the index small.
@@ -1215,6 +1223,12 @@ export const vendors = sqliteTable(
     vendorsClaimedByIdx: index("idx_vendors_claimed_by").on(t.claimedBy),
     vendorsRedirectToIdx: index("idx_vendors_redirect_to").on(t.redirectToVendorId),
     vendorsVerifiedProByIdx: index("idx_vendors_verified_pro_by").on(t.verifiedProBy),
+    // OPE-1395 (drizzle/0374) — /vendors: `deleted_at IS NULL ORDER BY business_name`
+    // without a temp B-tree sort.
+    vendorsDeletedBusinessNameIdx: index("idx_vendors_deleted_business_name").on(
+      t.deletedAt,
+      t.businessName
+    ),
   })
 );
 
@@ -1727,7 +1741,9 @@ export const seriesSlugHistory = sqliteTable(
     changedBy: text("changed_by"),
   },
   (t) => [
-    index("idx_series_slug_history_old_slug").on(t.oldSlug),
+    // OPE-1395 (drizzle/0374) — the non-unique twin was dropped; this UNIQUE
+    // one (drizzle/0209) is the index that exists in D1.
+    uniqueIndex("idx_series_slug_history_old_slug_unique").on(t.oldSlug),
     index("idx_series_slug_history_series_id").on(t.seriesId),
   ]
 );
@@ -2641,7 +2657,6 @@ export const blogPosts = sqliteTable(
   },
   (table) => [
     index("idx_blogposts_status_publishdate").on(table.status, table.publishDate),
-    index("idx_blogposts_slug").on(table.slug),
     index("idx_blogposts_authorid").on(table.authorId),
     index("idx_blogposts_status_featured").on(table.status, table.featured),
   ]
@@ -3752,6 +3767,12 @@ export const requestSamples = sqliteTable(
     country: text("country"),
     referer: text("referer"),
     ray: text("ray"),
+    // OPE-1397 (drizzle/0373) — "page" = the A9 public-page sample (5%);
+    // "admin_rsc_anon" = an /admin* request carrying RSC / Next-Router-State-Tree
+    // with no session cookie (path, timestamp, country, ASN only).
+    kind: text("kind", { enum: ["page", "admin_rsc_anon"] })
+      .notNull()
+      .default("page"),
   },
   (t) => ({
     tsIdx: index("request_samples_timestamp_idx").on(t.timestamp),
@@ -7187,7 +7208,8 @@ export * from "./venue-merge-children";
 export * from "./inbound-duplicate-repoint";
 // OPE-1373 — shared collision-safe rename + slug-history write.
 export * from "./slug-rename";
-// OPE-1396 (DUP7/DUP8) — classifier workflow-outcome write + suppression-list check,
-// shared by the app and MCP approval-notification twins and the salvage notice.
-export * from "./intent-feedback";
-export * from "./email-suppression";
+// OPE-1396 (DUP7/DUP8) — `recordWorkflowOutcome` and `isEmailSuppressed` are
+// deliberately NOT re-exported here. This barrel is client-reachable (OPE-640
+// browser-floor guard), and they are server-only writers/readers. Import them
+// from the subpaths "@takemetothefair/db-schema/intent-feedback" and
+// "@takemetothefair/db-schema/email-suppression" (package.json `exports`).

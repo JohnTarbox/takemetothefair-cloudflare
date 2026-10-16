@@ -26,7 +26,7 @@ import { eq, inArray } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "@/lib/db/schema";
 import { events, inboundEmails } from "@/lib/db/schema";
-import { isEmailSuppressed } from "@takemetothefair/db-schema";
+import { isEmailSuppressed } from "@takemetothefair/db-schema/email-suppression";
 
 type Db = DrizzleD1Database<typeof schema>;
 

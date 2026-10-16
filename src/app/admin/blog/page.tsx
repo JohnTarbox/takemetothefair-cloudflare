@@ -34,7 +34,6 @@ import {
   type ClusterRollupRow,
 } from "@/lib/admin/blog-coverage";
 
-
 type SortKey =
   | "title"
   | "publishDate"

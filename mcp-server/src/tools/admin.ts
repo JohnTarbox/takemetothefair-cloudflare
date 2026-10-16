@@ -125,6 +125,8 @@ import {
   checkFormerVenue,
   gateDatesConfirmed,
   organizerHostsFrom,
+  changedScraperSyncedFields,
+  shouldDisableScraperSync,
 } from "@takemetothefair/utils";
 import {
   eventOutboxStatements,
@@ -2099,6 +2101,17 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         updates.publicEndDate = publicEndDate;
       }
 
+      // OPE-1393 (CLB5) — a hand edit to a field the scraper sync writes turns
+      // sync off, or the next sync silently reverts it. An explicit
+      // `sync_enabled` in the same call always wins.
+      const syncLockFields = changedScraperSyncedFields(event, updates);
+      const syncDisabledByEdit = shouldDisableScraperSync({
+        currentSyncEnabled: event.syncEnabled,
+        explicitSyncEnabled: params.sync_enabled,
+        changedFields: syncLockFields,
+      });
+      if (syncDisabledByEdit) updates.syncEnabled = false;
+
       // Execute event update (skip if only venue fields provided)
       if (requestedFields.length > 0) {
         // SYN1 — outbox row + version bump in the SAME batch as the UPDATE so a
@@ -2212,7 +2225,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
             actorUserId: auth.userId,
             targetType: "event",
             targetId: event.id,
-            payloadJson: JSON.stringify({ fields: requestedFields, source: "mcp" }),
+            payloadJson: JSON.stringify({
+              fields: requestedFields,
+              source: "mcp",
+              ...(syncDisabledByEdit ? { sync_disabled_by_edit: syncLockFields } : {}),
+            }),
             createdAt: new Date(),
           });
         } catch (err) {
@@ -2542,6 +2559,12 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }
       if (venueUpdateResult) {
         result.venueUpdated = venueUpdateResult;
+      }
+      if (syncDisabledByEdit) {
+        result.syncDisabled = {
+          fields: syncLockFields,
+          note: "Scraper sync turned off so the next sync cannot revert this edit. Pass sync_enabled: true to turn it back on.",
+        };
       }
       if (params.pet_friendly !== undefined) {
         // OPE-1061 — the evidence citation, after the column write (same order

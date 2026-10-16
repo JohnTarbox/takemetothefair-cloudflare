@@ -22,7 +22,8 @@ import { eq, and, isNull } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "@/lib/db/schema";
 import { events, inboundEmails } from "@/lib/db/schema";
-import { isEmailSuppressed, recordWorkflowOutcome } from "@takemetothefair/db-schema";
+import { isEmailSuppressed } from "@takemetothefair/db-schema/email-suppression";
+import { recordWorkflowOutcome } from "@takemetothefair/db-schema/intent-feedback";
 import { issueToken } from "@/lib/feedback-tokens";
 
 type Db = DrizzleD1Database<typeof schema>;
