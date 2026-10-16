@@ -863,13 +863,12 @@ export const events = sqliteTable(
     index("idx_events_lifecycle_status").on(table.lifecycleStatus),
     // OPE-1395 (drizzle/0374) — find-duplicate.ts stage 1 looks up source_url.
     index("idx_events_source_url").on(table.sourceUrl),
-    // OPE-1395 (drizzle/0374) — the effective-end expression of
-    // upcomingEndPredicate/pastEndPredicate (event-end-predicates.ts). SQLite
-    // matches it against Drizzle's quoted COALESCE("events"."end_date", …).
-    index("idx_events_status_effective_end").on(
-      table.status,
-      sql`COALESCE(${table.endDate}, ${table.startDate})`
-    ),
+    // OPE-1395 (drizzle/0374) also creates the EXPRESSION index
+    //   idx_events_status_effective_end ON events(status, COALESCE(end_date, start_date))
+    // for upcomingEndPredicate/pastEndPredicate (event-end-predicates.ts).
+    // It is deliberately NOT declared here: several test fixtures build DDL
+    // from getTableConfig(...).indexes by column NAME, and an SQL expression
+    // has none (they emit `ON events (status, )` and every suite fails).
     // K3 (drizzle/0095) — partial index for "show me events merged into X"
     // queries + the admin_actions reverse lookup. Most events have NULL
     // mergedInto so the partial keeps the index small.
