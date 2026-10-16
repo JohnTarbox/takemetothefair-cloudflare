@@ -79,8 +79,14 @@ export async function POST(request: NextRequest) {
       id?: string;
       submit?: boolean;
     };
-    const existingId = typeof raw.id === "string" ? raw.id : undefined;
-    const submit = raw.submit === true;
+    const existingId = typeof raw?.id === "string" ? raw.id : undefined;
+    const submit = raw?.submit === true;
+    // OPE-1393 (CLB7) — which fields the caller actually SENT. The create
+    // schema fills absent keys (`categories ?? []`, `isStatewide: false`, …) and
+    // turns an absent price/deadline into null, so `data` alone cannot tell
+    // "cleared" from "not mentioned".
+    const sent = (key: string) =>
+      raw !== null && typeof raw === "object" && Object.prototype.hasOwnProperty.call(raw, key);
 
     const validation = await validateRequestBody(request, promoterEventCreateSchema);
     if (!validation.success) {
@@ -134,52 +140,77 @@ export async function POST(request: NextRequest) {
         );
       }
 
+      // OPE-1393 (CLB7) — write ONLY the fields the caller sent. This used to
+      // rewrite the whole row from the create schema, so a partial save wiped
+      // categories/tags to [], prices and the deadline to null, and the event
+      // days to nothing.
+      const set: Partial<typeof events.$inferInsert> = {
+        status: finalStatus,
+        updatedAt: new Date(),
+      };
+      if (sent("name")) set.name = data.name;
+      if (sent("description")) set.description = data.description;
+      if (sent("venueId")) set.venueId = data.venueId || null;
+      if (sent("stateCode")) set.stateCode = data.stateCode || null;
+      if (sent("isStatewide")) set.isStatewide = data.isStatewide ?? false;
+      // OPE-482: `new Date("YYYY-MM-DD")` is midnight UTC = 8pm Eastern the
+      // previous day. normalizeEventDate anchors at noon UTC.
+      const daysDriveDates = isDiscontinuous && sent("eventDays") && eventDaysInput.length > 0;
+      if (sent("startDate") || daysDriveDates) set.startDate = normalizeEventDate(startDate);
+      if (sent("endDate") || daysDriveDates) set.endDate = normalizeEventDate(endDate);
+      if (sent("discontinuousDates")) set.discontinuousDates = isDiscontinuous;
+      if (sent("eventDays")) {
+        set.publicStartDate = publicStartDate;
+        set.publicEndDate = publicEndDate;
+      } else if (set.startDate !== undefined || set.endDate !== undefined) {
+        // Dates moved, days untouched: re-derive the public span from the days
+        // already stored (NULL when there are none — readers fall back).
+        const storedDays = await db
+          .select({ date: eventDays.date, vendorOnly: eventDays.vendorOnly })
+          .from(eventDays)
+          .where(eq(eventDays.eventId, existingId));
+        const stored = computePublicDates(storedDays);
+        set.publicStartDate = stored.publicStartDate;
+        set.publicEndDate = stored.publicEndDate;
+      }
+      if (sent("categories")) set.categories = JSON.stringify(data.categories ?? []);
+      if (sent("tags")) set.tags = JSON.stringify(data.tags ?? []);
+      if (sent("ticketUrl")) set.ticketUrl = data.ticketUrl;
+      if (sent("ticketPriceMin")) set.ticketPriceMinCents = dollarsToCents(data.ticketPriceMin);
+      if (sent("ticketPriceMax")) set.ticketPriceMaxCents = dollarsToCents(data.ticketPriceMax);
+      if (sent("imageUrl")) set.imageUrl = data.imageUrl;
+      if (sent("vendorFeeMin")) set.vendorFeeMinCents = dollarsToCents(data.vendorFeeMin);
+      if (sent("vendorFeeMax")) set.vendorFeeMaxCents = dollarsToCents(data.vendorFeeMax);
+      if (sent("vendorFeeNotes")) set.vendorFeeNotes = data.vendorFeeNotes;
+      if (sent("indoorOutdoor")) set.indoorOutdoor = data.indoorOutdoor;
+      if (sent("estimatedAttendance")) set.estimatedAttendance = data.estimatedAttendance;
+      if (sent("eventScale")) set.eventScale = data.eventScale;
+      if (sent("applicationDeadline"))
+        set.applicationDeadline = data.applicationDeadline
+          ? new Date(data.applicationDeadline)
+          : null;
+      if (sent("applicationUrl")) set.applicationUrl = data.applicationUrl;
+      if (sent("applicationInstructions"))
+        set.applicationInstructions = data.applicationInstructions;
+      if (sent("walkInsAllowed")) set.walkInsAllowed = data.walkInsAllowed;
+
+      // The row as it will stand after this save, for the checks below.
+      const effectiveVenueId = set.venueId !== undefined ? set.venueId : existing.venueId;
+      const effectiveEnd = set.endDate !== undefined ? set.endDate : existing.endDate;
+      const effectiveStart = set.startDate !== undefined ? set.startDate : existing.startDate;
+
       // OPE-1180 — a FORMER venue after its closure is refused; inside the
       // closure's uncertainty window it is allowed and flagged for review.
       const formerVenue = await checkEventVenue(
         db,
-        data.venueId || null,
-        normalizeEventDate(endDate) ?? normalizeEventDate(startDate)
+        effectiveVenueId ?? null,
+        effectiveEnd ?? effectiveStart ?? null
       );
       if (formerVenue.kind === "refuse") {
         return NextResponse.json({ error: formerVenue.message }, { status: 409 });
       }
 
-      await db
-        .update(events)
-        .set({
-          name: data.name,
-          description: data.description,
-          venueId: data.venueId || null,
-          stateCode: data.stateCode || null,
-          isStatewide: data.isStatewide ?? false,
-          // OPE-482: `new Date("YYYY-MM-DD")` is midnight UTC = 8pm Eastern the
-          // previous day. normalizeEventDate anchors at noon UTC.
-          startDate: normalizeEventDate(startDate),
-          endDate: normalizeEventDate(endDate),
-          publicStartDate,
-          publicEndDate,
-          discontinuousDates: isDiscontinuous,
-          categories: JSON.stringify(data.categories ?? []),
-          tags: JSON.stringify(data.tags ?? []),
-          ticketUrl: data.ticketUrl,
-          ticketPriceMinCents: dollarsToCents(data.ticketPriceMin),
-          ticketPriceMaxCents: dollarsToCents(data.ticketPriceMax),
-          imageUrl: data.imageUrl,
-          vendorFeeMinCents: dollarsToCents(data.vendorFeeMin),
-          vendorFeeMaxCents: dollarsToCents(data.vendorFeeMax),
-          vendorFeeNotes: data.vendorFeeNotes,
-          indoorOutdoor: data.indoorOutdoor,
-          estimatedAttendance: data.estimatedAttendance,
-          eventScale: data.eventScale,
-          applicationDeadline: data.applicationDeadline ? new Date(data.applicationDeadline) : null,
-          applicationUrl: data.applicationUrl,
-          applicationInstructions: data.applicationInstructions,
-          walkInsAllowed: data.walkInsAllowed,
-          status: finalStatus,
-          updatedAt: new Date(),
-        })
-        .where(eq(events.id, existingId));
+      await db.update(events).set(set).where(eq(events.id, existingId));
       // OPE-767 — recorded as a reason, so it can be discharged on its own.
       if (formerVenue.kind === "flag") {
         await raiseEventReviewFlag(db, existingId, "former_venue");
@@ -191,23 +222,27 @@ export async function POST(request: NextRequest) {
       // The DELETE is what makes this indistinguishable from a fabrication
       // afterwards: the old rows are gone, so only the audit says the hours
       // were REPLACED rather than invented.
-      await recordMutation(db, {
-        entityType: "event_day",
-        entityId: existingId,
-        verb: "delete",
-        actor: session.user.id,
-        note: `promoter day-set replace on event ${existingId}`,
-      });
-      await db.delete(eventDays).where(eq(eventDays.eventId, existingId));
-      await insertEventDaysBatched(db, existingId, eventDaysInput, session.user.id);
+      // OPE-1393 (CLB7) — only when the caller sent a day set; a save that does
+      // not mention eventDays used to delete every stored day.
+      if (sent("eventDays")) {
+        await recordMutation(db, {
+          entityType: "event_day",
+          entityId: existingId,
+          verb: "delete",
+          actor: session.user.id,
+          note: `promoter day-set replace on event ${existingId}`,
+        });
+        await db.delete(eventDays).where(eq(eventDays.eventId, existingId));
+        await insertEventDaysBatched(db, existingId, eventDaysInput, session.user.id);
+      }
 
       // OPE-472 (bounce) — the draft path never attached a series, so an
       // event finished here (submitted, or given its venue on a later save)
       // was born unparented: 4 PENDING rows since 08-20. Fill-only and
       // venue-gated, so it is a no-op until a venue exists and never re-parents.
       await attachEventToSeries(db, existingId, {
-        name: data.name,
-        venueId: data.venueId || null,
+        name: set.name ?? existing.name,
+        venueId: effectiveVenueId ?? null,
         promoterId: promoter.id,
       });
 

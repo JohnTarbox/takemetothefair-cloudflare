@@ -683,3 +683,5 @@ export * from "./edition-path";
 // OPE-1341 — JPEG metadata strip, shared by the main app and the MCP Worker.
 export * from "./jpeg-exif-strip";
 export * from "./safe-href";
+// OPE-1393 — an operator edit to a scraper-synced field turns sync off (app + MCP).
+export * from "./scraper-sync-lock";
