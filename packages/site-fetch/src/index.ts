@@ -6,5 +6,7 @@
 export * from "./browser-rendering";
 export * from "./challenge-page";
 export * from "./ssrf-guard";
+// OPE-1370 — the one guarded fetch for URLs we did not write ourselves.
+export * from "./guarded-fetch";
 // OPE-837 — robots.txt for the bounded submit@ nav crawl.
 export * from "./robots";

@@ -2685,7 +2685,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           retries: { limit: 3, delay: "5 seconds", backoff: "exponential" },
           timeout: "30 seconds",
         },
-        () => submitFetch(this.env, url)
+        () => submitFetch(this.env, url, { sender: rowSnapshot.fromAddress })
       );
     } catch (fetchErr) {
       // OPE-193 — before bouncing to body-extract, for a known share/redirect
@@ -2713,7 +2713,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
                 retries: { limit: 2, delay: "5 seconds", backoff: "exponential" },
                 timeout: "30 seconds",
               },
-              () => submitFetch(this.env, resolvedUrl)
+              () => submitFetch(this.env, resolvedUrl, { sender: rowSnapshot.fromAddress })
             );
           }
         } catch {
@@ -4391,7 +4391,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             retries: { limit: 3, delay: "5 seconds", backoff: "exponential" },
             timeout: "30 seconds",
           },
-          () => submitFetch(this.env, source.url)
+          () => submitFetch(this.env, source.url, { sender: fromAddress })
         );
       } catch {
         // OPE-277 — parity with the single-source path (OPE-193): the multi-source
@@ -4419,7 +4419,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
                   retries: { limit: 2, delay: "5 seconds", backoff: "exponential" },
                   timeout: "30 seconds",
                 },
-                () => submitFetch(this.env, resolvedUrl)
+                () => submitFetch(this.env, resolvedUrl, { sender: fromAddress })
               );
             }
           } catch {
@@ -4506,7 +4506,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
                   retries: { limit: 1, delay: "5 seconds", backoff: "constant" },
                   timeout: "30 seconds",
                 },
-                () => submitFetch(this.env, url)
+                () => submitFetch(this.env, url, { sender: fromAddress })
               );
               return {
                 url: page.url,
@@ -5368,7 +5368,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             retries: { limit: 3, delay: "5 seconds", backoff: "exponential" },
             timeout: "30 seconds",
           },
-          () => submitFetch(this.env, url)
+          () => submitFetch(this.env, url, { sender: fromAddress })
         );
         await this.flagIfInsecureTransport(
           step,

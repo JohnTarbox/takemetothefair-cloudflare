@@ -82,6 +82,13 @@ export const GET = withAuthorized(
     // see @takemetothefair/site-fetch ssrf-guard. Defense-in-depth on an
     // admin-only route on Cloudflare Workers (no metadata service / internal
     // HTTP network).
+    //
+    // OPE-1370 (SSRF5) — this is the FIRST-hop check. This route receives
+    // email-supplied URLs (submit@ → mcp-server submit.ts), and redirects used
+    // to be followed unchecked after it; `fetchStandard` now re-checks every
+    // hop (site-fetch guardedFetch) and caps the body, and a refused hop is
+    // never escalated. Browser Rendering's own navigation cannot be re-checked
+    // per hop — `fetchViaBrowserRendering` guards its first hop only.
     if (isBlockedSsrfHost(parsedUrl.hostname)) {
       return NextResponse.json(
         { success: false, error: "Internal URLs are not allowed" },

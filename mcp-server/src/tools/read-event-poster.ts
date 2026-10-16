@@ -10,6 +10,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
 import { fetchImageWithFallback, imageFetchHeaders } from "@takemetothefair/utils";
+import { guardedFetch, isGuardedFetchError } from "@takemetothefair/site-fetch";
 import { jsonContent } from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
@@ -61,18 +62,17 @@ export function registerReadEventPosterTool(
 
       let bytes: Uint8Array;
       try {
-        const fetched = await fetchImageWithFallback(async (userAgent) => {
-          const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 15_000);
-          try {
-            return await fetch(image_url, {
-              headers: imageFetchHeaders(userAgent),
-              signal: controller.signal,
-            });
-          } finally {
-            clearTimeout(timeout);
-          }
-        });
+        // OPE-1370 (SSRF6) — guardedFetch: the SSRF guard on every redirect
+        // hop (there was no guard at all), the body read as a stream and
+        // stopped at POSTER_MAX_BYTES (it was read whole, THEN size-checked),
+        // and the 15s timeout now covers the body as well as the headers.
+        const fetched = await fetchImageWithFallback((userAgent) =>
+          guardedFetch(image_url, {
+            maxBytes: POSTER_MAX_BYTES,
+            timeoutMs: 15_000,
+            headers: imageFetchHeaders(userAgent),
+          })
+        );
         if (!fetched.ok) {
           return {
             content: [
@@ -84,20 +84,19 @@ export function registerReadEventPosterTool(
             isError: true,
           };
         }
-        const buf = await fetched.response.arrayBuffer();
-        if (buf.byteLength > POSTER_MAX_BYTES) {
+        bytes = await fetched.response.bytes();
+      } catch (err) {
+        if (isGuardedFetchError(err) && err.code === "too_large") {
           return {
             content: [
               {
                 type: "text" as const,
-                text: `Image is ${buf.byteLength} bytes; read_event_poster reads at most ${POSTER_MAX_BYTES}.`,
+                text: `Image is larger than ${POSTER_MAX_BYTES} bytes; read_event_poster reads at most ${POSTER_MAX_BYTES}.`,
               },
             ],
             isError: true,
           };
         }
-        bytes = new Uint8Array(buf);
-      } catch (err) {
         return {
           content: [
             {

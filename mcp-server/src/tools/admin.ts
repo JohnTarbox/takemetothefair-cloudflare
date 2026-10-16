@@ -55,6 +55,11 @@ import {
   readInboundAttachmentAsResponse,
   checkImageUrl,
 } from "@takemetothefair/utils";
+import {
+  guardedFetch,
+  isGuardedFetchError,
+  type GuardedResponse,
+} from "@takemetothefair/site-fetch";
 
 /**
  * OPE-1112 — `logo_url` must point at an image, on every writer.
@@ -2746,23 +2751,24 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           isError: true,
         };
       }
-      let imageResponse: Response;
+      const MAX_SOURCE_BYTES = 5 * 1024 * 1024;
+      let imageResponse: Response | GuardedResponse;
       try {
-        const fetched = await fetchImageWithFallback(async (userAgent) => {
-          if (ownedKey && env.VENDOR_ASSETS) {
-            return readInboundAttachmentAsResponse(env.VENDOR_ASSETS, ownedKey);
-          }
-          const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 15_000);
-          try {
-            return await fetch(params.image_url, {
+        const fetched = await fetchImageWithFallback<Response | GuardedResponse>(
+          async (userAgent) => {
+            if (ownedKey && env.VENDOR_ASSETS) {
+              return readInboundAttachmentAsResponse(env.VENDOR_ASSETS, ownedKey);
+            }
+            // OPE-1370 (SSRF6) — guardedFetch: the SSRF guard on every redirect
+            // hop (there was none), the body stopped at the 5 MB cap instead of
+            // buffered whole, and the 15s timeout covering the body too.
+            return guardedFetch(params.image_url, {
+              maxBytes: MAX_SOURCE_BYTES,
+              timeoutMs: 15_000,
               headers: imageFetchHeaders(userAgent),
-              signal: controller.signal,
             });
-          } finally {
-            clearTimeout(timeout);
           }
-        });
+        );
         if (!fetched.ok) {
           return {
             content: [
@@ -2788,10 +2794,34 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }
 
       const contentType = imageResponse.headers.get("Content-Type") ?? "application/octet-stream";
-      const bytes = await imageResponse.arrayBuffer();
+      let bytes: ArrayBuffer;
+      try {
+        bytes = await imageResponse.arrayBuffer();
+      } catch (err) {
+        if (isGuardedFetchError(err) && err.code === "too_large") {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Source image is over 5 MB — max 5 MB. Resize or pick a smaller variant.",
+              },
+            ],
+            isError: true,
+          };
+        }
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Failed to fetch source image: ${err instanceof Error ? err.message : "unknown error"}`,
+            },
+          ],
+          isError: true,
+        };
+      }
       // Mirror the main-app endpoint's 5MB cap so we surface a clearer error
       // here rather than letting the multipart POST fail with HTTP 400.
-      if (bytes.byteLength > 5 * 1024 * 1024) {
+      if (bytes.byteLength > MAX_SOURCE_BYTES) {
         return {
           content: [
             {

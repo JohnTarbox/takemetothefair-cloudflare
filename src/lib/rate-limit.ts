@@ -317,6 +317,14 @@ export interface MeteredRateLimitOptions {
  */
 export function meteredCallerIdentifier(request: Request, userId: string | null): string {
   if (userId) return `user:${userId}`;
+  // OPE-1370 (SSRF8) — an inbound-email fetch carries the ORIGINAL sender's
+  // hashed address (mcp-server submit.ts `senderMeterKey`). Keyed per sender,
+  // a stream of rotating senders spends its own buckets instead of the one
+  // shared `caller:`/IP bucket every email fetch used to fall into. Only ever
+  // read on routes that already authorized the caller (admin session or
+  // X-Internal-Key), and only a well-formed 32-hex digest is honoured.
+  const sender = request.headers.get("x-mmatf-sender");
+  if (sender && /^[0-9a-f]{32}$/.test(sender)) return `sender:${sender}`;
   const entrypoint = request.headers.get("x-mmatf-entrypoint");
   if (entrypoint) return `caller:${entrypoint}`;
   return `ip:${getClientIp(request)}`;

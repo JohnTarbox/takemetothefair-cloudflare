@@ -98,6 +98,28 @@ describe("GET /api/admin/import-url/fetch — Browser Rendering escalation", () 
     vi.clearAllMocks();
   });
 
+  // OPE-1370 (SSRF5) — this route takes email-supplied URLs. The first hop is
+  // checked here; the redirect is what points inward, and it used to be
+  // followed unchecked. It must be refused, and NOT handed to Browser Rendering.
+  it("refuses a public URL that redirects to [::7f00:1], without escalating", async () => {
+    const seen: string[] = [];
+    global.fetch = vi.fn(async (input: Request | URL | string) => {
+      const u = String(input instanceof Request ? input.url : input);
+      seen.push(u);
+      return u === "https://example.com/event"
+        ? new Response(null, { status: 302, headers: { location: "http://[::7f00:1]/" } })
+        : new Response("<html><body>internal</body></html>", {
+            status: 200,
+            headers: { "content-type": "text/html" },
+          });
+    }) as unknown as typeof fetch;
+
+    const res = await GET(makeRequest("https://example.com/event"), noParams);
+    const body = (await res.json()) as { success: boolean; fetchMethod?: string };
+    expect(body).toMatchObject({ success: false, fetchMethod: "failed" });
+    expect(seen).toEqual(["https://example.com/event"]);
+  });
+
   it("returns fetchMethod='standard' when initial fetch succeeds", async () => {
     global.fetch = vi.fn(
       async () =>
@@ -445,11 +467,13 @@ describe("GET /api/admin/import-url/fetch — OPE-1250 post-redirect page URL", 
 
   it("resolves anchors against, and reports, the URL the redirect landed on", async () => {
     const landed = "https://wgme.com/news/local/cumberland-fair-returns";
-    global.fetch = vi.fn(async () => {
-      const r = new Response("<html><body>ok</body></html>", { status: 200 });
-      Object.defineProperty(r, "url", { value: landed });
-      return r;
-    }) as unknown as typeof fetch;
+    // OPE-1370 — redirects are followed manually (every hop SSRF-checked), so
+    // the redirect is a real 301 here rather than a runtime-set `Response.url`.
+    global.fetch = vi.fn(async (input: RequestInfo | URL) =>
+      String(input) === landed
+        ? new Response("<html><body>ok</body></html>", { status: 200 })
+        : new Response(null, { status: 301, headers: { location: landed } })
+    ) as unknown as typeof fetch;
     const { extractAnchors } = await import("@/lib/url-import/html-parser");
     vi.mocked(extractAnchors).mockReturnValue([
       { url: "https://wgme.com/news/local", text: "Local" },

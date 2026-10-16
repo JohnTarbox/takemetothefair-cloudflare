@@ -139,4 +139,21 @@ describe("POST /api/internal/harvest-fetch (OPE-200)", () => {
     expect(j.success).toBe(false);
     expect(j.fetchMethod).toBe("failed");
   });
+
+  // OPE-1370 (SSRF5) — the route's first-hop check passed; the redirect is
+  // what points inward. It must be refused, never requested, and never handed
+  // to Browser Rendering instead.
+  it("refuses a public sitemap that redirects to loopback, without escalating", async () => {
+    const seen: string[] = [];
+    mockFetch((url) => {
+      seen.push(url);
+      return url === "https://visitrhodeisland.com/sitemap.xml"
+        ? new Response(null, { status: 301, headers: { location: "http://[::7f00:1]/" } })
+        : new Response(SITEMAP, { status: 200, headers: { "content-type": "application/xml" } });
+    }, EVENT_HTML);
+    const res = await POST(req({ url: "https://visitrhodeisland.com/sitemap.xml" }), ctx);
+    const j = (await res.json()) as { success: boolean; error: string; fetchMethod: string };
+    expect(j).toMatchObject({ success: false, error: "forbidden_host", fetchMethod: "failed" });
+    expect(seen).toEqual(["https://visitrhodeisland.com/sitemap.xml"]);
+  });
 });
