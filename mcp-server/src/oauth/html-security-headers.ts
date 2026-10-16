@@ -7,7 +7,8 @@
  * What the page actually loads (login-handler.ts `renderLoginPage`): one inline
  * `<style>` block, no scripts, no images, no fonts, one form posting to
  * `/authorize`. Hence `style-src 'unsafe-inline'` and nothing else beyond
- * `default-src 'self'`.
+ * `default-src 'self'` — for the baseline. OPE-1380: the rendered page itself
+ * now carries a per-request nonce policy instead (see htmlContentSecurityPolicy).
  *
  * `form-action` MUST also allow the client's redirect origin: Chrome (and
  * Firefox) enforce `form-action` on the REDIRECT that follows a form POST, and
@@ -53,17 +54,56 @@ export function redirectFormActionSource(redirectUri: string | undefined | null)
   return SCHEME_SOURCE_RE.test(u.protocol) ? u.protocol : null;
 }
 
-export function htmlContentSecurityPolicy(redirectUri?: string | null): string {
+/** OPE-1380 — 128 random bits, base64: a fresh CSP nonce per rendered page. */
+export function generateNonce(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin);
+}
+
+const NONCE_RE = /^[A-Za-z0-9+/_-]+={0,2}$/;
+
+/**
+ * OPE-1380 — with a `nonce`, the policy for a page we RENDER (the sign-in /
+ * consent form): scripts only by nonce under `'strict-dynamic'` (the page has
+ * none today, so nothing runs; a script added later must carry the nonce), and
+ * the inline `<style>` only by nonce — no `'unsafe-inline'` anywhere. Without
+ * one, the OPE-1371 baseline for responses that render no markup of ours
+ * (error text, redirects, 404s).
+ */
+export function htmlContentSecurityPolicy(
+  redirectUri?: string | null,
+  nonce?: string | null
+): string {
   const extra = redirectFormActionSource(redirectUri);
   const formAction = extra ? `form-action 'self' ${extra}` : "form-action 'self'";
+  if (nonce && NONCE_RE.test(nonce)) {
+    return [
+      "default-src 'self'",
+      `script-src 'nonce-${nonce}' 'strict-dynamic'`,
+      `style-src 'nonce-${nonce}'`,
+      ...BASE_DIRECTIVES.filter((d) => !d.startsWith("default-src") && !d.startsWith("style-src")),
+      formAction,
+    ].join("; ");
+  }
   return [...BASE_DIRECTIVES, formAction].join("; ");
 }
 
-/** Headers for an HTML response; spread into `c.html(..., headers)`. */
-export function htmlSecurityHeaders(redirectUri?: string | null): Record<string, string> {
+/**
+ * Headers for an HTML response; spread into `c.html(..., headers)`. Pass the
+ * `nonce` the page was rendered with; such a page is also `no-store`, since a
+ * cached copy would replay one nonce (and one CSRF token) to every viewer.
+ */
+export function htmlSecurityHeaders(
+  redirectUri?: string | null,
+  nonce?: string | null
+): Record<string, string> {
   return {
     "X-Frame-Options": "DENY",
-    "Content-Security-Policy": htmlContentSecurityPolicy(redirectUri),
+    "Content-Security-Policy": htmlContentSecurityPolicy(redirectUri, nonce),
+    ...(nonce ? { "Cache-Control": "no-store" } : {}),
   };
 }
 

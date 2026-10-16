@@ -1,5 +1,6 @@
 /**
- * OPE-1373 — one rename path for promoter / venue / vendor slugs, app and MCP.
+ * OPE-1373 — one rename path for promoter / venue / vendor (and, since OPE-1390,
+ * event) slugs, app and MCP.
  *
  * ## The defect this closes
  *
@@ -37,7 +38,13 @@ import * as schema from "./index";
 
 type Db = DrizzleD1Database<typeof schema>;
 
-export type SlugRenameEntity = "promoter" | "venue" | "vendor";
+/**
+ * OPE-1390 (DUP3) — `event` joined the set: the admin event PATCH and both MCP
+ * `update_event` rename paths each carried their own collision loop, and the
+ * MCP one wrote its `event_slug_history` row OUTSIDE the UPDATE, in a
+ * swallowed try/catch — a rename whose redirect could silently go missing.
+ */
+export type SlugRenameEntity = "promoter" | "venue" | "vendor" | "event";
 
 /** Every candidate slug in the bounded sequence was already taken. */
 export class SlugCollisionExhaustedError extends Error {
@@ -63,6 +70,12 @@ async function slugTakenByOther(
       .select({ id: schema.promoters.id })
       .from(schema.promoters)
       .where(and(eq(schema.promoters.slug, candidate), ne(schema.promoters.id, selfId)))
+      .limit(1);
+  } else if (entity === "event") {
+    rows = await db
+      .select({ id: schema.events.id })
+      .from(schema.events)
+      .where(and(eq(schema.events.slug, candidate), ne(schema.events.id, selfId)))
       .limit(1);
   } else if (entity === "venue") {
     rows = await db
@@ -123,6 +136,9 @@ export function slugHistoryInsert(
   };
   if (entity === "promoter") {
     return db.insert(schema.promoterSlugHistory).values({ promoterId: row.entityId, ...common });
+  }
+  if (entity === "event") {
+    return db.insert(schema.eventSlugHistory).values({ eventId: row.entityId, ...common });
   }
   if (entity === "venue") {
     return db.insert(schema.venueSlugHistory).values({ venueId: row.entityId, ...common });
