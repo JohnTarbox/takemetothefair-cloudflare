@@ -46,16 +46,12 @@ function findProjectionFiles(dir: string, out: string[] = []): string[] {
 /** Identifiers imported from the schema module (the table objects). */
 function schemaImports(src: string): string[] {
   const names: string[] = [];
-  const re =
-    /import\s+(?:type\s+)?\{([^}]*)\}\s+from\s+["'](?:@\/lib\/db\/schema|@takemetothefair\/db-schema)["']/g;
+  const re = /import\s+(?:type\s+)?\{([^}]*)\}\s+from\s+["'](?:@\/lib\/db\/schema|@takemetothefair\/db-schema)["']/g;
   for (const m of src.matchAll(re)) {
     for (const part of m[1].split(",")) {
       const p = part.trim();
       if (!p) continue;
-      const alias = p
-        .split(/\s+as\s+/)
-        .pop()!
-        .trim();
+      const alias = p.split(/\s+as\s+/).pop()!.trim();
       names.push(alias);
     }
   }
@@ -79,9 +75,7 @@ export function findViolations(file: string, raw: string): string[] {
   }
   if (resolve(file) === PRIMARY) {
     for (const name of ["eventJoinProjection", "eventVenueJoinProjection"]) {
-      const block = new RegExp(
-        `export const ${name}\\s*=\\s*\\{\\s*events:\\s*publicEventColumns\\b`
-      );
+      const block = new RegExp(`export const ${name}\\s*=\\s*\\{\\s*events:\\s*publicEventColumns\\b`);
       if (!block.test(src)) {
         out.push(`${relative(ROOT, file)}: ${name}.events must be \`publicEventColumns\``);
       }
@@ -97,9 +91,7 @@ function main() {
   const args = process.argv.slice(2);
   const files = args.length ? args.map((a) => resolve(a)) : findProjectionFiles(DB_DIR);
   if (!args.length && !files.some((f) => resolve(f) === PRIMARY)) {
-    console.error(
-      `check-public-event-projection: ${basename(PRIMARY)} not found — guard is blind.`
-    );
+    console.error(`check-public-event-projection: ${basename(PRIMARY)} not found — guard is blind.`);
     process.exit(1);
   }
   const violations = files.flatMap((f) => findViolations(f, readFileSync(f, "utf8")));
