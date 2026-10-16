@@ -2,8 +2,8 @@
 //
 // Like ViewToggle, these are plain <Link>s (the `cal_view` param is the source of
 // truth) so back/forward + direct links work with no client JS and they're
-// crawlable. Shown only when CAL2_VIEWS is on; otherwise the calendar is Month-only
-// and no sub-toggle renders. Styling mirrors ViewToggle's segmented control.
+// crawlable. Always shown (the CAL2_VIEWS gate was retired in OPE-1394). Styling
+// mirrors ViewToggle's segmented control.
 
 import Link from "next/link";
 import { CalendarDays, List, CalendarRange, Columns3, Square, LayoutGrid } from "lucide-react";

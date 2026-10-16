@@ -26,6 +26,7 @@ interface __BaseEnv_WorkerEnv {
   SPAM_EVENT_RECOVERY_ENABLED: string;
   PHOTO_VISION_ENABLED: string;
   PHOTO_AUTOWRITE_ENABLED: string;
+  REPLAY_COMMIT_ENABLED: string;
   SUBMIT_ADMIN_FORWARD: string;
   MCP_OBJECT: DurableObjectNamespace<import("./src/index").MeetMeAtTheFairMCP>;
   BURST_COUNTER: DurableObjectNamespace<import("./src/index").BurstCounter>;
@@ -70,6 +71,7 @@ declare namespace NodeJS {
       | "SPAM_EVENT_RECOVERY_ENABLED"
       | "PHOTO_VISION_ENABLED"
       | "PHOTO_AUTOWRITE_ENABLED"
+      | "REPLAY_COMMIT_ENABLED"
       | "SUBMIT_ADMIN_FORWARD"
     >
   > {}

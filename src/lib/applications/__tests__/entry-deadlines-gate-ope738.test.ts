@@ -1,19 +1,18 @@
 /**
- * OPE-738 — the gate must ship DARK, and it must stay that way until John says
- * otherwise.
+ * OPE-738 → OPE-1394 — /fair-entry-deadlines is unconditionally public.
  *
- * The ticket STOP-gates a new customer-facing surface on issue-level approval.
- * The code is merged and deployed ahead of that approval deliberately, so the
- * only thing standing between a visitor and an unapproved public page is one
- * string in wrangler.toml. That makes the string worth a test.
+ * OPE-738 shipped the page dark behind ENTRY_DEADLINES_INDEX and this file
+ * pinned that gate. John approved publishing on 2026-09-02 and the flag sat at
+ * "true" from then on, so its OFF branch (a notFound() on the route and a
+ * hidden footer link) was dead code. OPE-1394 retired it.
  *
- * Keyed on the ACT, not on the fix: this asserts the committed default is OFF
- * and that the route and its footer link both consult the same flag. A guard
- * that only checked "the flag exists" would go green against a page that never
- * reads it — which is the shape of failure this repo keeps logging.
- *
- * When John approves, flipping the value SHOULD fail this test. That is the
- * point: the flip becomes a deliberate, reviewed edit rather than a drive-by.
+ * What is pinned now is the retirement itself, from both ends:
+ *   - no [vars] line survives that would LOOK like a working kill switch
+ *     (a stale `ENTRY_DEADLINES_INDEX = "false"` edit would silently do
+ *     nothing, which is worse than no line);
+ *   - the page does not 404 itself and the footer links it unconditionally, so
+ *     the entry point and the page cannot drift apart.
+ * Taking the page down is now a code change, reviewed like one.
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
@@ -23,48 +22,23 @@ import { readWranglerConfig, wranglerVars } from "../../../../scripts/lib/wrangl
 const ROOT = process.cwd();
 const read = (...p: string[]) => readFileSync(join(ROOT, ...p), "utf8");
 
-describe("OPE-738 — /fair-entry-deadlines and its flag", () => {
-  it("declares ENTRY_DEADLINES_INDEX in the committed wrangler.toml", () => {
-    // It must live in the committed file, not the dashboard: a dashboard
-    // [vars] override is wiped wholesale by the next `wrangler deploy`
-    // (OPE-284/OPE-509).
-    // OPE-1292 — parsed: the top-level [vars] table, not a line anywhere.
-    expect(wranglerVars(readWranglerConfig("main"))).toHaveProperty("ENTRY_DEADLINES_INDEX");
+describe("OPE-1394 — /fair-entry-deadlines gate retired", () => {
+  it("no longer declares ENTRY_DEADLINES_INDEX in the committed wrangler.toml", () => {
+    expect(wranglerVars(readWranglerConfig("main"))).not.toHaveProperty("ENTRY_DEADLINES_INDEX");
   });
 
-  it('has that flag committed as "true" — LIVE since 2026-09-02', () => {
-    // Flipped on John's direct in-session approval, 2026-09-02, executing the
-    // issue-level sign-off recorded on OPE-738 the previous day.
-    //
-    // ⚠️ This assertion is kept, not deleted, and it still has to be able to
-    // FAIL. Its job was never "the page is off"; it is "the flag's live value
-    // is a deliberate, reviewed constant in the committed file". Deleting it
-    // on go-live would remove the only thing that notices a silent flip back —
-    // and would leave the dashboard-override hazard below asserted by nothing.
-    //
-    // So the expected value moves with the decision, and changing it stays a
-    // reviewed edit rather than a drive-by.
-    const vars = wranglerVars(readWranglerConfig("main"));
-    expect(vars).toHaveProperty("ENTRY_DEADLINES_INDEX");
-    expect(vars.ENTRY_DEADLINES_INDEX).toBe("true");
-  });
-
-  it("404s the route when the flag is off — the page actually consults it", () => {
+  it("the route does not 404 itself on a flag", () => {
     const page = read("src", "app", "fair-entry-deadlines", "page.tsx");
-    expect(page).toMatch(/isEntryDeadlinesIndexEnabled/);
-    // The guard must run before any render, and it must be a notFound().
-    expect(page).toMatch(/if\s*\(!isEntryDeadlinesIndexEnabled\(\)\)\s*notFound\(\)/);
+    expect(page).not.toMatch(/notFound\(\)/);
+    // A read of the retired var in any form (the header comment may still name it).
+    expect(page).not.toMatch(
+      /isEntryDeadlinesIndexEnabled|\.ENTRY_DEADLINES_INDEX|"ENTRY_DEADLINES_INDEX"/
+    );
   });
 
-  it("gates the footer link on the same flag, so no link points at a 404", () => {
+  it("the footer links the page unconditionally", () => {
     const footer = read("src", "components", "layout", "footer.tsx");
-    expect(footer).toMatch(/isEntryDeadlinesIndexEnabled/);
-    expect(footer).toMatch(/fair-entry-deadlines/);
-  });
-
-  it("reads the flag through the shared helper, not an ad-hoc env read", () => {
-    const flags = read("src", "lib", "flags.ts");
-    expect(flags).toMatch(/export function isEntryDeadlinesIndexEnabled/);
-    expect(flags).toMatch(/isOn\("ENTRY_DEADLINES_INDEX"\)/);
+    expect(footer).toMatch(/\{ name: "Fair Entry Deadlines", href: "\/fair-entry-deadlines" \}/);
+    expect(footer).not.toMatch(/isEntryDeadlinesIndexEnabled/);
   });
 });
