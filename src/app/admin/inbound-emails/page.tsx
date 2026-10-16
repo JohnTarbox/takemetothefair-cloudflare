@@ -19,6 +19,7 @@ import { Check, ExternalLink, HelpCircle, RotateCw, X } from "lucide-react";
 import { formatTimestamp, formatDateMedium } from "@/lib/datetime";
 import { SortHeader, sortBy, nextSort, type SortState } from "@/components/admin/sortable-table";
 import type { EnrichOnMatchEntry } from "@/lib/inbound-enrich-on-match";
+import { safeHref } from "@takemetothefair/utils";
 
 const CF_ACCOUNT_ID = "e6011e48b7014ef83c77e3c767dac6cf";
 const WORKFLOWS_DASH = `https://dash.cloudflare.com/${CF_ACCOUNT_ID}/workers/workflows/inbound-email/instance`;
@@ -1060,7 +1061,7 @@ export default function AdminInboundEmailsPage() {
                                 <div>
                                   <span className="font-medium">Parsed URL:</span>{" "}
                                   <a
-                                    href={row.parsedUrl}
+                                    href={safeHref(row.parsedUrl)}
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     className="text-royal hover:underline break-all"

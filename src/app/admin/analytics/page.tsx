@@ -114,6 +114,7 @@ import {
   type FacebookTrafficSummary,
   type Ga4Env,
 } from "@/lib/ga4";
+import { safeHref } from "@takemetothefair/utils";
 
 export const dynamic = "force-dynamic";
 
@@ -2214,7 +2215,7 @@ function ActivityFeedCard({
                   <p className="text-sm text-foreground break-words">
                     {entry.href ? (
                       <a
-                        href={entry.href}
+                        href={safeHref(entry.href, { allowRelative: true })}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="hover:underline"
@@ -2698,16 +2699,24 @@ async function RecommendationsTab() {
                       <div className="min-w-0 flex-1">
                         <div className="text-sm text-foreground truncate">{o.query}</div>
                         <div className="text-xs text-muted-foreground mt-0.5">
-                          {o.targetUrl && (
-                            <Link
-                              href={o.targetUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-royal hover:underline"
-                            >
-                              {o.targetUrl}
-                            </Link>
-                          )}
+                          {o.targetUrl &&
+                            (() => {
+                              // OPE-1385 — a stored page path/URL: link it only when
+                              // it is http(s) or a same-origin path.
+                              const href = safeHref(o.targetUrl, { allowRelative: true });
+                              return href ? (
+                                <Link
+                                  href={href}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-royal hover:underline"
+                                >
+                                  {o.targetUrl}
+                                </Link>
+                              ) : (
+                                <span>{o.targetUrl}</span>
+                              );
+                            })()}
                           {o.targetUrl && " · "}
                           <span className="tabular-nums">
                             {o.impressions} imp, {o.clicks} clicks, pos {o.position}
@@ -3101,7 +3110,7 @@ async function IndexNowTab({ limit: rawLimit, source }: { limit?: string; source
                         "—"
                       ) : urlsArr.length === 1 ? (
                         <a
-                          href={urlsArr[0]}
+                          href={safeHref(urlsArr[0])}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="font-mono text-navy hover:underline"
@@ -3121,7 +3130,7 @@ async function IndexNowTab({ limit: rawLimit, source }: { limit?: string; source
                             {urlsArr.map((url, i) => (
                               <li key={i} className="font-mono break-all">
                                 <a
-                                  href={url}
+                                  href={safeHref(url)}
                                   target="_blank"
                                   rel="noopener noreferrer"
                                   className="text-navy hover:underline"
@@ -4863,7 +4872,7 @@ function SiteHealthIssueGroups({
                   >
                     {u.url ? (
                       <a
-                        href={u.url}
+                        href={safeHref(u.url, { allowRelative: true })}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="max-w-lg truncate font-mono text-royal hover:underline"
