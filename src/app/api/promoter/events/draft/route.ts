@@ -172,7 +172,7 @@ export async function POST(request: NextRequest) {
           indoorOutdoor: data.indoorOutdoor,
           estimatedAttendance: data.estimatedAttendance,
           eventScale: data.eventScale,
-          applicationDeadline: data.applicationDeadline ? new Date(data.applicationDeadline) : null,
+          applicationDeadline: normalizeEventDate(data.applicationDeadline), // OPE-1396 (DUP9)
           applicationUrl: data.applicationUrl,
           applicationInstructions: data.applicationInstructions,
           walkInsAllowed: data.walkInsAllowed,
@@ -290,7 +290,7 @@ export async function POST(request: NextRequest) {
       indoorOutdoor: data.indoorOutdoor,
       estimatedAttendance: data.estimatedAttendance,
       eventScale: data.eventScale,
-      applicationDeadline: data.applicationDeadline ? new Date(data.applicationDeadline) : null,
+      applicationDeadline: normalizeEventDate(data.applicationDeadline), // OPE-1396 (DUP9)
       applicationUrl: data.applicationUrl,
       applicationInstructions: data.applicationInstructions,
       walkInsAllowed: data.walkInsAllowed,

@@ -340,9 +340,8 @@ export const PATCH = withAuth<{ id: string }>(
         updateData.estimatedAttendance = data.estimatedAttendance;
       if (data.eventScale !== undefined) updateData.eventScale = data.eventScale;
       if (data.applicationDeadline !== undefined)
-        updateData.applicationDeadline = data.applicationDeadline
-          ? new Date(data.applicationDeadline)
-          : null;
+        // OPE-1396 (DUP9) — normalized server-side like MCP update_event.
+        updateData.applicationDeadline = normalizeEventDate(data.applicationDeadline);
       if (data.applicationUrl !== undefined) updateData.applicationUrl = data.applicationUrl;
       if (data.applicationInstructions !== undefined)
         updateData.applicationInstructions = data.applicationInstructions;

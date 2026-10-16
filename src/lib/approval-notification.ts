@@ -22,7 +22,7 @@ import { eq, and, isNull } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "@/lib/db/schema";
 import { events, inboundEmails } from "@/lib/db/schema";
-import { recordWorkflowOutcome } from "@/lib/intent-feedback";
+import { isEmailSuppressed, recordWorkflowOutcome } from "@takemetothefair/db-schema";
 import { issueToken } from "@/lib/feedback-tokens";
 
 type Db = DrizzleD1Database<typeof schema>;
@@ -101,6 +101,7 @@ export interface NotifyApprovalResult {
     | "skipped:no-suggester-email"
     | "skipped:not-approved"
     | "skipped:already-notified"
+    | "skipped:suppressed"
     | "skipped:not-found"
     | "error:queue-missing";
 }
@@ -137,6 +138,12 @@ export async function notifyApprovalIfNeeded(
   if (!e.suggesterEmail) return { outcome: "skipped:no-suggester-email" };
   if (e.status !== "APPROVED") return { outcome: "skipped:not-approved" };
   if (e.approvalNotifiedAt !== null) return { outcome: "skipped:already-notified" };
+  // OPE-1396 (DUP8) — the receipt ack's suppression check, applied here too.
+  // approval_notified_at stays NULL, so lifting the suppression re-opens it.
+  if (await isEmailSuppressed(db, e.suggesterEmail)) {
+    await recordApprovalOutcome(db, eventId);
+    return { outcome: "skipped:suppressed" };
+  }
 
   if (!env.EMAIL_JOBS) return { outcome: "error:queue-missing" };
 
@@ -188,15 +195,22 @@ export async function notifyApprovalIfNeeded(
     .set({ approvalNotifiedAt: new Date() })
     .where(and(eq(events.id, eventId), isNull(events.approvalNotifiedAt)));
 
-  // Phase D.2: record the implicit positive signal for the classifier
-  // that originally routed this submission. Best-effort — any error
-  // is swallowed so the approval flow stays clean (the feedback loop
-  // is observability, not user-facing).
+  await recordApprovalOutcome(db, eventId);
+
+  return { outcome: "sent" };
+}
+
+/**
+ * Phase D.2: record the implicit positive signal for the classifier that
+ * originally routed this submission. Best-effort — any error is swallowed so
+ * the approval flow stays clean (the feedback loop is observability, not
+ * user-facing). Runs whether or not the email went out: a suppressed
+ * submitter's event was still approved.
+ */
+async function recordApprovalOutcome(db: Db, eventId: string): Promise<void> {
   try {
     await recordWorkflowOutcome(db, { eventId, newStatus: "APPROVED" });
   } catch {
     // Intentional swallow — see comment above.
   }
-
-  return { outcome: "sent" };
 }

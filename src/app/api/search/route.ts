@@ -170,15 +170,20 @@ export const GET = withErrorHandler(async (request: Request) => {
       })
       .from(vendors)
       .where(
-        or(
-          containsCI(vendors.businessName, q),
-          containsCI(sql`COALESCE(${vendors.displayName}, '')`, q),
-          // OPE-647 — the diacritic bridge. SQLite's LIKE/lower() are ASCII-only,
-          // so `aehko` never matched the stored `aéhkō`. `slug` already holds the
-          // transliterated form, so folding the QUERY the same way closes it with
-          // no schema change. Null-guarded: a punctuation-only query slugifies to
-          // nothing and must not match every row.
-          ...(vendorSlugQuery ? [containsCI(vendors.slug, vendorSlugQuery)] : [])
+        and(
+          // OPE-1396 (API4) — a soft-deleted vendor's page is 301/410
+          // (middleware), so the dropdown must not offer its slug.
+          isNull(vendors.deletedAt),
+          or(
+            containsCI(vendors.businessName, q),
+            containsCI(sql`COALESCE(${vendors.displayName}, '')`, q),
+            // OPE-647 — the diacritic bridge. SQLite's LIKE/lower() are ASCII-only,
+            // so `aehko` never matched the stored `aéhkō`. `slug` already holds the
+            // transliterated form, so folding the QUERY the same way closes it with
+            // no schema change. Null-guarded: a punctuation-only query slugifies to
+            // nothing and must not match every row.
+            ...(vendorSlugQuery ? [containsCI(vendors.slug, vendorSlugQuery)] : [])
+          )
         )
       )
       .orderBy(vendors.businessName)

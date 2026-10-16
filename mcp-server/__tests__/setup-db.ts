@@ -1202,6 +1202,20 @@ const SCHEMA_SQL = `
     created_at INTEGER NOT NULL
   );
 
+  -- drizzle/0080 — classifier ground-truth feedback. OPE-1396 (DUP7): the MCP
+  -- approval-notification twin now writes workflow_outcome rows here.
+  CREATE TABLE inbound_email_intent_feedback (
+    id TEXT PRIMARY KEY,
+    inbound_email_id TEXT NOT NULL,
+    feedback_source TEXT NOT NULL,
+    original_intent TEXT,
+    corrected_intent TEXT NOT NULL,
+    classifier_version TEXT,
+    admin_note TEXT,
+    created_by TEXT,
+    created_at INTEGER NOT NULL
+  );
+
   CREATE TABLE blog_posts (
     id TEXT PRIMARY KEY,
     slug TEXT NOT NULL UNIQUE,

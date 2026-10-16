@@ -683,3 +683,5 @@ export * from "./edition-path";
 // OPE-1341 — JPEG metadata strip, shared by the main app and the MCP Worker.
 export * from "./jpeg-exif-strip";
 export * from "./safe-href";
+// OPE-1396 (DUP6) — vendor-joins-event rule, shared by the app routes and MCP apply_to_event.
+export * from "./vendor-application-rules";

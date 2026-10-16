@@ -7,6 +7,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { notifySalvageIfNeeded } from "../salvage-notification";
+import * as schema from "../db/schema";
 
 interface FakeInboundRow {
   id: string;
@@ -21,28 +22,27 @@ interface FakeEventRow {
   slug: string;
 }
 
-function makeDb(inbound: FakeInboundRow | null, events: FakeEventRow[]) {
+function makeDb(inbound: FakeInboundRow | null, events: FakeEventRow[], suppressed = false) {
   const updateSpy = vi.fn(async () => undefined);
   const setSpy = vi.fn(() => ({ where: updateSpy }));
   const updateRoot = vi.fn(() => ({ set: setSpy }));
 
-  // Two SELECTs in sequence: first the inbound row, then the events list.
-  // The mock returns each on successive .limit / await terminations.
-  let selectCallCount = 0;
-  const selectSpy = vi.fn(() => {
-    selectCallCount += 1;
-    const isInboundCall = selectCallCount === 1;
-    if (isInboundCall) {
-      const limitSpy = vi.fn(async () => (inbound ? [inbound] : []));
-      const whereSpy = vi.fn(() => ({ limit: limitSpy }));
-      const fromSpy = vi.fn(() => ({ where: whereSpy }));
-      return { from: fromSpy };
-    }
-    // Events lookup — no .limit, just terminal await
-    const whereSpy = vi.fn(async () => events);
-    const fromSpy = vi.fn(() => ({ where: whereSpy }));
-    return { from: fromSpy };
-  });
+  // SELECTs dispatch on the table: the inbound row, the OPE-1396 suppression
+  // lookup, and the events list (no .limit, just a terminal await).
+  const selectSpy = vi.fn(() => ({
+    from: vi.fn((table: unknown) => {
+      if (table === schema.events) return { where: vi.fn(async () => events) };
+      const rows =
+        table === schema.emailSuppressionList
+          ? suppressed
+            ? [{ email: inbound?.fromAddress }]
+            : []
+          : inbound
+            ? [inbound]
+            : [];
+      return { where: vi.fn(() => ({ limit: vi.fn(async () => rows) })) };
+    }),
+  }));
 
   return {
     db: { select: selectSpy, update: updateRoot } as never,
@@ -114,6 +114,17 @@ describe("notifySalvageIfNeeded — gate conditions", () => {
     const r = await notifySalvageIfNeeded(db, { EMAIL_JOBS: queue }, "ie_k1lx", ["evt_1"]);
     expect(r.outcome).toBe("skipped:already-notified");
     expect(send).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  it("OPE-1396 — skips with 'suppressed' when the sender is on email_suppression_list", async () => {
+    const { db, spies } = makeDb(baseInbound, k1lxEvents, true);
+    const { queue, send } = makeQueue();
+    const r = await notifySalvageIfNeeded(db, { EMAIL_JOBS: queue }, "ie_k1lx", ["evt_1"]);
+    expect(r.outcome).toBe("skipped:suppressed");
+    expect(send).not.toHaveBeenCalled();
+    // salvage_notified_at untouched — lifting the suppression re-opens the notice.
+    expect(spies.updateRoot).not.toHaveBeenCalled();
     warnSpy.mockRestore();
   });
 

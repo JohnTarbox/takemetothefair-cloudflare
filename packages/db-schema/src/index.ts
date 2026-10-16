@@ -7187,3 +7187,7 @@ export * from "./venue-merge-children";
 export * from "./inbound-duplicate-repoint";
 // OPE-1373 — shared collision-safe rename + slug-history write.
 export * from "./slug-rename";
+// OPE-1396 (DUP7/DUP8) — classifier workflow-outcome write + suppression-list check,
+// shared by the app and MCP approval-notification twins and the salvage notice.
+export * from "./intent-feedback";
+export * from "./email-suppression";
