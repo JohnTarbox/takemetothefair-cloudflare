@@ -28,6 +28,7 @@ import {
   captureAttachments,
   type AttachmentRef,
 } from "../src/email-handler.js";
+import { media } from "./helpers/magic-bytes.js";
 
 interface PutCall {
   key: string;
@@ -40,6 +41,7 @@ interface PutCall {
 function mockBucket(opts: { throwAlways?: boolean } = {}) {
   const puts: PutCall[] = [];
   const bucket = {
+    head: vi.fn(async () => null),
     put: vi.fn(async (key: string, value: ArrayBuffer | ArrayBufferView, options?: unknown) => {
       if (opts.throwAlways) throw new Error("R2 put failed");
       const len =
@@ -61,8 +63,12 @@ describe("captureAttachments — media selection + refs", () => {
   it("stores image + PDF attachments and returns refs with key/name/mimeType/size", async () => {
     const { bucket, puts } = mockBucket();
     const { refs, skipped } = await captureAttachments(bucket, "grp1", [
-      { filename: "poster.png", mimeType: "image/png", content: bytes(120) },
-      { filename: "flyer.pdf", mimeType: "application/pdf", content: bytes(300) },
+      { filename: "poster.png", mimeType: "image/png", content: media("image/png", 120) },
+      {
+        filename: "flyer.pdf",
+        mimeType: "application/pdf",
+        content: media("application/pdf", 300),
+      },
     ]);
     expect(refs).toHaveLength(2);
     expect(puts).toHaveLength(2);
@@ -94,7 +100,7 @@ describe("captureAttachments — media selection + refs", () => {
         content: bytes(100),
       },
       { filename: "invite.ics", mimeType: "text/calendar", content: bytes(100) },
-      { filename: "poster.jpg", mimeType: "image/jpeg", content: bytes(100) },
+      { filename: "poster.jpg", mimeType: "image/jpeg", content: media("image/jpeg", 100) },
     ]);
     // Only the image is stored — unchanged behaviour.
     expect(refs).toHaveLength(1);
@@ -116,7 +122,7 @@ describe("captureAttachments — media selection + refs", () => {
     const many = Array.from({ length: over }, (_, i) => ({
       filename: `p${i}.png`,
       mimeType: "image/png",
-      content: bytes(50),
+      content: media("image/png", 50),
     }));
     const { refs, skipped } = await captureAttachments(bucket, "grp3", many);
     expect(refs).toHaveLength(ATTACHMENT_MAX_COUNT);
@@ -137,8 +143,12 @@ describe("captureAttachments — media selection + refs", () => {
   it("skips attachments over the 10 MB per-file cap", async () => {
     const { bucket, puts } = mockBucket();
     const { refs, skipped } = await captureAttachments(bucket, "grp4", [
-      { filename: "huge.png", mimeType: "image/png", content: bytes(10 * 1024 * 1024 + 1) },
-      { filename: "ok.png", mimeType: "image/png", content: bytes(500) },
+      {
+        filename: "huge.png",
+        mimeType: "image/png",
+        content: media("image/png", 10 * 1024 * 1024 + 1),
+      },
+      { filename: "ok.png", mimeType: "image/png", content: media("image/png", 500) },
     ]);
     expect(refs).toHaveLength(1);
     expect(refs[0].name).toBe("ok.png");
@@ -165,7 +175,7 @@ describe("captureAttachments — best-effort isolation", () => {
     // Must NOT reject: the whole point is that a storage failure can't bubble
     // into the email entrypoint and block ingestion.
     const { refs, skipped } = await captureAttachments(bucket, "grp5", [
-      { filename: "poster.png", mimeType: "image/png", content: bytes(200) },
+      { filename: "poster.png", mimeType: "image/png", content: media("image/png", 200) },
     ]);
     expect(refs).toEqual([]);
     // A put failure is the one reason here that is unambiguously a fault
@@ -184,7 +194,7 @@ describe("captureAttachments — best-effort isolation", () => {
 
   it("no-ops (stores nothing) when the bucket binding is absent (tests / non-R2 env)", async () => {
     const { refs, skipped } = await captureAttachments(undefined, "grp6", [
-      { filename: "poster.png", mimeType: "image/png", content: bytes(200) },
+      { filename: "poster.png", mimeType: "image/png", content: media("image/png", 200) },
     ]);
     expect(refs).toEqual([]);
     // Still reported: the sender did attach this, and a missing binding is our
@@ -201,7 +211,11 @@ describe("captureAttachments — best-effort isolation", () => {
   it("sanitizes unsafe filenames into the R2 key", async () => {
     const { bucket } = mockBucket();
     const { refs, skipped } = await captureAttachments(bucket, "grp8", [
-      { filename: "my poster (final)!!.png", mimeType: "image/png", content: bytes(50) },
+      {
+        filename: "my poster (final)!!.png",
+        mimeType: "image/png",
+        content: media("image/png", 50),
+      },
     ]);
     expect(refs[0].key).toBe("inbound-attachments/grp8/0-my-poster-final-.png");
     expect(skipped).toEqual([]);
@@ -224,28 +238,32 @@ describe("everything handed in is accounted for", () => {
       input: Array.from({ length: ATTACHMENT_MAX_COUNT + 1 }, (_, i) => ({
         filename: `p${i}.pdf`,
         mimeType: "application/pdf",
-        content: bytes(100),
+        content: media("application/pdf", 100),
       })),
     },
     {
       label: "the 34b06089 shape — an unsupported part ahead of a real one",
       input: [
         { filename: "roster.xlsx", mimeType: "application/vnd.ms-excel", content: bytes(100) },
-        { filename: "flyer.png", mimeType: "image/png", content: bytes(100) },
+        { filename: "flyer.png", mimeType: "image/png", content: media("image/png", 100) },
       ],
     },
     {
       label: "a mixture of every skip reason at once",
       input: [
-        { filename: "a.png", mimeType: "image/png", content: bytes(50) },
+        { filename: "a.png", mimeType: "image/png", content: media("image/png", 50) },
         { filename: "b.docx", mimeType: "application/msword", content: bytes(50) },
-        { filename: "c.png", mimeType: "image/png", content: bytes(10 * 1024 * 1024 + 1) },
+        {
+          filename: "c.png",
+          mimeType: "image/png",
+          content: media("image/png", 10 * 1024 * 1024 + 1),
+        },
         { filename: "d.png", mimeType: "image/png", content: new Uint8Array(0) },
-        { filename: "e.pdf", mimeType: "application/pdf", content: bytes(50) },
-        { filename: "f.pdf", mimeType: "application/pdf", content: bytes(50) },
-        { filename: "g.pdf", mimeType: "application/pdf", content: bytes(50) },
-        { filename: "h.pdf", mimeType: "application/pdf", content: bytes(50) },
-        { filename: "i.pdf", mimeType: "application/pdf", content: bytes(50) },
+        { filename: "e.pdf", mimeType: "application/pdf", content: media("application/pdf", 50) },
+        { filename: "f.pdf", mimeType: "application/pdf", content: media("application/pdf", 50) },
+        { filename: "g.pdf", mimeType: "application/pdf", content: media("application/pdf", 50) },
+        { filename: "h.pdf", mimeType: "application/pdf", content: media("application/pdf", 50) },
+        { filename: "i.pdf", mimeType: "application/pdf", content: media("application/pdf", 50) },
       ],
     },
   ];
@@ -276,7 +294,7 @@ describe("everything handed in is accounted for", () => {
       ...Array.from({ length: ATTACHMENT_MAX_COUNT + 1 }, (_, i) => ({
         filename: `p${i}.png`,
         mimeType: "image/png",
-        content: bytes(50),
+        content: media("image/png", 50),
       })),
     ]);
     expect(refs).toHaveLength(ATTACHMENT_MAX_COUNT);
@@ -333,7 +351,11 @@ describe("captureAttachments — forwarded messages (OPE-944)", () => {
     const { bucket } = mockBucket();
     const out = await captureAttachments(bucket, "grp", [
       eml("fwd.eml", "message/rfc822"),
-      eml("poster.pdf", "application/pdf"),
+      {
+        filename: "poster.pdf",
+        mimeType: "application/pdf",
+        content: media("application/pdf", 64),
+      },
       eml("notes.zip", "application/zip"),
     ]);
     expect(out.refs.length + out.skipped.length).toBe(3);

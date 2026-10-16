@@ -1,3 +1,4 @@
+import { safeJsonLd } from "@/lib/seo/safe-json-ld";
 type ItemListOrder = "ascending" | "descending" | "unordered";
 
 const itemListOrderMap: Record<ItemListOrder, string> = {
@@ -64,7 +65,7 @@ export function ItemListSchema({
   return (
     <script
       type="application/ld+json"
-      dangerouslySetInnerHTML={{ __html: JSON.stringify(cleanSchema) }}
+      dangerouslySetInnerHTML={{ __html: safeJsonLd(cleanSchema) }}
     />
   );
 }

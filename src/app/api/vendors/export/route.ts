@@ -2,9 +2,10 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { vendors, eventVendors, events } from "@/lib/db/schema";
-import { eq, and, gte, inArray } from "drizzle-orm";
-import { isPublicVendorStatus } from "@/lib/vendor-status";
+import { eq, and, inArray, isNull } from "drizzle-orm";
+import { isPublicVendorStatus, isPubliclyVisibleVendorLink } from "@/lib/vendor-status";
 import { isPublicEventStatus } from "@/lib/event-status";
+import { upcomingEndPredicate } from "@/lib/event-dates";
 import { parseJsonArray } from "@/types";
 import { auth } from "@/lib/auth";
 import { logError } from "@/lib/logger";
@@ -22,6 +23,12 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  // OPE-1362 — the export button sits on the public /vendors view and
+  // registration is open, so "signed in" is not a trust boundary. Only ADMIN
+  // gets the contact / internal columns; every other role gets the CSV with
+  // those columns removed entirely (no header, not blanked).
+  const isAdmin = session.user.role === "ADMIN";
+
   const db = getCloudflareDb();
   try {
     const { searchParams } = new URL(request.url);
@@ -29,23 +36,41 @@ export async function GET(request: Request) {
     const hasEvents = searchParams.get("hasEvents");
     const query = searchParams.get("q");
 
-    // Build conditions
-    const conditions: ReturnType<typeof eq>[] = [];
+    // OPE-1362 — soft-deleted vendors (drizzle/0053) are excluded for EVERY
+    // role. This matches the public /vendors listing
+    // (src/app/vendors/(listing)/page.tsx getVendorsOnce), whose only
+    // row-level visibility filter is `deleted_at IS NULL`.
+    const conditions = [isNull(vendors.deletedAt)];
     if (type) {
       conditions.push(eq(vendors.vendorType, type));
     }
 
-    // Get vendors
-    let vendorResults;
-    if (conditions.length > 0) {
-      vendorResults = await db
-        .select()
-        .from(vendors)
-        .where(and(...conditions))
-        .orderBy(vendors.businessName);
-    } else {
-      vendorResults = await db.select().from(vendors).orderBy(vendors.businessName);
-    }
+    // Explicit projection: the CSV never needs the whole row.
+    let vendorResults = await db
+      .select({
+        id: vendors.id,
+        businessName: vendors.businessName,
+        vendorType: vendors.vendorType,
+        description: vendors.description,
+        products: vendors.products,
+        website: vendors.website,
+        contactName: vendors.contactName,
+        contactEmail: vendors.contactEmail,
+        contactPhone: vendors.contactPhone,
+        address: vendors.address,
+        city: vendors.city,
+        state: vendors.state,
+        zip: vendors.zip,
+        yearEstablished: vendors.yearEstablished,
+        paymentMethods: vendors.paymentMethods,
+        licenseInfo: vendors.licenseInfo,
+        insuranceInfo: vendors.insuranceInfo,
+        verified: vendors.verified,
+        commercial: vendors.commercial,
+      })
+      .from(vendors)
+      .where(and(...conditions))
+      .orderBy(vendors.businessName);
 
     // Filter by search query if provided
     if (query) {
@@ -76,9 +101,14 @@ export async function GET(request: Request) {
           .where(
             and(
               inArray(eventVendors.vendorId, batch),
-              isPublicVendorStatus(),
+              // Non-admins count the same link set the public listing shows
+              // (status AND the vendor's public_visible opt-out, OPE-316);
+              // admins keep the operator view, where a hidden link still counts.
+              isAdmin ? isPublicVendorStatus() : isPubliclyVisibleVendorLink(),
               isPublicEventStatus(),
-              gte(events.endDate, new Date())
+              // OPE-1375 — the shared "upcoming" predicate (24h end-of-day
+              // grace; NULL end falls back to start), same as /vendors.
+              upcomingEndPredicate(new Date())
             )
           );
 
@@ -104,53 +134,39 @@ export async function GET(request: Request) {
       return str;
     };
 
-    // Build CSV
-    const headers = [
-      "Business Name",
-      "Type",
-      "Description",
-      "Products",
-      "Website",
-      "Contact Name",
-      "Contact Email",
-      "Contact Phone",
-      "Address",
-      "City",
-      "State",
-      "ZIP",
-      "Year Established",
-      "Payment Methods",
-      "License Info",
-      "Insurance Info",
-      "Verified",
-      "Commercial",
-      "Upcoming Events",
+    // Build CSV. `adminOnly` columns are personal contact data (contact
+    // name/email/phone) or internal records the public vendor page does not
+    // render (license, insurance). For non-admins they are dropped entirely.
+    type VendorRow = (typeof vendorResults)[number];
+    const columns: {
+      header: string;
+      adminOnly?: boolean;
+      value: (v: VendorRow) => string | number | boolean | null | undefined;
+    }[] = [
+      { header: "Business Name", value: (v) => v.businessName },
+      { header: "Type", value: (v) => v.vendorType },
+      { header: "Description", value: (v) => v.description },
+      { header: "Products", value: (v) => parseJsonArray(v.products).join("; ") },
+      { header: "Website", value: (v) => v.website },
+      { header: "Contact Name", adminOnly: true, value: (v) => v.contactName },
+      { header: "Contact Email", adminOnly: true, value: (v) => v.contactEmail },
+      { header: "Contact Phone", adminOnly: true, value: (v) => v.contactPhone },
+      { header: "Address", value: (v) => v.address },
+      { header: "City", value: (v) => v.city },
+      { header: "State", value: (v) => v.state },
+      { header: "ZIP", value: (v) => v.zip },
+      { header: "Year Established", value: (v) => v.yearEstablished },
+      { header: "Payment Methods", value: (v) => parseJsonArray(v.paymentMethods).join("; ") },
+      { header: "License Info", adminOnly: true, value: (v) => v.licenseInfo },
+      { header: "Insurance Info", adminOnly: true, value: (v) => v.insuranceInfo },
+      { header: "Verified", value: (v) => (v.verified ? "Yes" : "No") },
+      { header: "Commercial", value: (v) => (v.commercial ? "Yes" : "No") },
+      { header: "Upcoming Events", value: (v) => eventCounts.get(v.id) || 0 },
     ];
-    const rows = filteredVendors.map((v) => {
-      const products = parseJsonArray(v.products);
-      const paymentMethods = parseJsonArray(v.paymentMethods);
-      return [
-        escapeCSV(v.businessName),
-        escapeCSV(v.vendorType),
-        escapeCSV(v.description),
-        escapeCSV(products.join("; ")),
-        escapeCSV(v.website),
-        escapeCSV(v.contactName),
-        escapeCSV(v.contactEmail),
-        escapeCSV(v.contactPhone),
-        escapeCSV(v.address),
-        escapeCSV(v.city),
-        escapeCSV(v.state),
-        escapeCSV(v.zip),
-        escapeCSV(v.yearEstablished),
-        escapeCSV(paymentMethods.join("; ")),
-        escapeCSV(v.licenseInfo),
-        escapeCSV(v.insuranceInfo),
-        escapeCSV(v.verified ? "Yes" : "No"),
-        escapeCSV(v.commercial ? "Yes" : "No"),
-        escapeCSV(eventCounts.get(v.id) || 0),
-      ];
-    });
+    const exportColumns = isAdmin ? columns : columns.filter((c) => !c.adminOnly);
+
+    const headers = exportColumns.map((c) => c.header);
+    const rows = filteredVendors.map((v) => exportColumns.map((c) => escapeCSV(c.value(v))));
 
     const csvContent = [headers.join(","), ...rows.map((row) => row.join(","))].join("\n");
 

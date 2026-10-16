@@ -25,6 +25,7 @@ import {
   captureAttachments,
   isSignatureFurniture,
 } from "../src/email-handler.js";
+import { media } from "./helpers/magic-bytes.js";
 
 /** An R2 stub that records what was actually stored. */
 function bucketStub() {
@@ -32,6 +33,7 @@ function bucketStub() {
   return {
     puts,
     bucket: {
+      head: async () => null,
       put: async (key: string) => {
         puts.push(key);
       },
@@ -45,7 +47,7 @@ const bytes = (n: number) => new Uint8Array(n).buffer;
 const icon = (i: number, size = 600) => ({
   filename: `image00${i}.png`,
   mimeType: "image/png",
-  content: bytes(size),
+  content: media("image/png", size),
   contentId: `<image00${i}@01DB.OUTLOOK>`,
   disposition: "inline" as const,
   related: true,
@@ -55,7 +57,7 @@ const icon = (i: number, size = 600) => ({
 const poster = (name = "chowdafest-poster.jpg", size = 900_000) => ({
   filename: name,
   mimeType: "image/jpeg",
-  content: bytes(size),
+  content: media("image/jpeg", size),
   disposition: "attachment" as const,
 });
 
@@ -265,7 +267,7 @@ describe("forwarded-message containers do not consume payload slots (f8ef71e5)",
   const png = (name: string, size: number) => ({
     filename: name,
     mimeType: "image/png",
-    content: bytes(size),
+    content: media("image/png", size),
     disposition: "attachment" as const,
   });
   // The specimen's seven attachments with their real sizes, in a plausible order.
@@ -279,7 +281,7 @@ describe("forwarded-message containers do not consume payload slots (f8ef71e5)",
     {
       filename: "Mobile-Vendor-License-Application-2-.pdf",
       mimeType: "application/pdf",
-      content: bytes(404_786),
+      content: media("application/pdf", 404_786),
       disposition: "attachment" as const,
     },
   ];

@@ -10,6 +10,7 @@ import {
   performerSchemaType,
   type ConfirmedAppearance,
 } from "@/lib/performers/event-jsonld";
+import { safeJsonLd } from "@/lib/seo/safe-json-ld";
 
 interface EventDay {
   date: string;
@@ -651,7 +652,7 @@ export function EventSchema({
   return (
     <script
       type="application/ld+json"
-      dangerouslySetInnerHTML={{ __html: JSON.stringify(cleanSchema) }}
+      dangerouslySetInnerHTML={{ __html: safeJsonLd(cleanSchema) }}
     />
   );
 }
