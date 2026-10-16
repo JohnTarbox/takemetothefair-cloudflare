@@ -68,6 +68,17 @@ describe("submitFetch — retry contract", () => {
     await expect(submitFetch(ENV, "https://example.org")).rejects.toBeInstanceOf(NonRetryableError);
   });
 
+  // OPE-1412 — the main app's GLOBAL daily email-fetch ceiling refuses with the
+  // same 429 as the per-sender bucket. It must stay a NON-retryable `fetch-`
+  // failure: the workflow then takes its existing failed-fetch path (body
+  // fallback, same reply), and a retry would only re-spend against the cap.
+  it("a 429 (per-sender or global ceiling) is a non-retryable fetch- failure", async () => {
+    mockFetch(() => new Response("Too many requests", { status: 429 }));
+    const err = await submitFetch(ENV, "https://example.org", { sender: "a@b.c" }).catch((e) => e);
+    expect(err).toBeInstanceOf(NonRetryableError);
+    expect(err.message).toBe("fetch-429");
+  });
+
   it("throws plain Error on 5xx (retry transient failures)", async () => {
     mockFetch(() => new Response("upstream down", { status: 503 }));
     const err = await submitFetch(ENV, "https://example.org").catch((e) => e);

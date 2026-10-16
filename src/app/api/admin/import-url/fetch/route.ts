@@ -17,6 +17,7 @@ import { getCloudflareEnv } from "@/lib/cloudflare";
 import { logError } from "@/lib/logger";
 import { recordBrowserRenderingAttempt } from "@/lib/browser-rendering-attempt";
 import { checkRateLimit, meteredCallerIdentifier, rateLimitResponse } from "@/lib/rate-limit";
+import { checkEmailFetchDailyCeiling, isEmailDrivenCaller } from "@/lib/email-fetch-ceiling";
 
 // The fetch-with-Browser-Rendering-escalation primitives (fetchStandard,
 // fetchViaBrowserRendering, shouldEscalate) moved to
@@ -47,8 +48,9 @@ export const GET = withAuthorized(
   async ({ request, db, userId }) => {
     // OPE-972 — every call may escalate to billed Browser Rendering. Metered:
     // keyed on the admin (or the internal caller), fail-closed.
+    const meteredIdentifier = meteredCallerIdentifier(request, userId);
     const rate = await checkRateLimit(request, "import-url-fetch", {
-      metered: { identifier: meteredCallerIdentifier(request, userId) },
+      metered: { identifier: meteredIdentifier },
     });
     if (!rate.allowed) return rateLimitResponse(rate);
 
@@ -94,6 +96,18 @@ export const GET = withAuthorized(
         { success: false, error: "Internal URLs are not allowed" },
         { status: 400 }
       );
+    }
+
+    // OPE-1412 — the GLOBAL daily ceiling on email-driven fetches, on top of
+    // the per-sender bucket above (which a sender-rotating stream sidesteps).
+    // Checked here, after the per-sender bucket allowed the call and after the
+    // URL is known to be fetchable, so neither a sender already over its own
+    // limit nor a refused URL spends a global slot. A refusal is the same 429
+    // the per-sender bucket returns → `fetch-429` in submitFetch → the existing
+    // failed-fetch path; the email is still processed and gets the same reply.
+    if (isEmailDrivenCaller(meteredIdentifier)) {
+      const ceiling = await checkEmailFetchDailyCeiling(request, db);
+      if (!ceiling.allowed) return rateLimitResponse(ceiling);
     }
 
     try {
