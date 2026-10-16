@@ -14,6 +14,7 @@ import { getCloudflareEnv, getCloudflareDb } from "@/lib/cloudflare";
 import { type SendEmailArgs } from "@/lib/email/send";
 import { pingIndexNow } from "@/lib/indexnow";
 import { logError } from "@/lib/logger";
+import { sanitizeEmailSubject } from "@takemetothefair/utils";
 import type {
   EmailJobMessage,
   IndexNowMessage,
@@ -48,7 +49,10 @@ const MCP_DEFAULT_URL = "https://mcp.meetmeatthefair.com";
  * Returns immediately on the queue path — the caller should NOT `await`
  * delivery.
  */
-export async function enqueueEmail(args: SendEmailArgs & { source: string }): Promise<void> {
+export async function enqueueEmail(rawArgs: SendEmailArgs & { source: string }): Promise<void> {
+  // OPE-1392 (TPL-2) — every enqueued Subject loses its control characters
+  // here, whatever the caller built it from. A clean subject is unchanged.
+  const args = { ...rawArgs, subject: sanitizeEmailSubject(rawArgs.subject) };
   const env = getCloudflareEnv();
 
   // Path 1: direct queue binding — the NORMAL path on this stack.

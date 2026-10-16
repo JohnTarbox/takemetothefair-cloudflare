@@ -44,6 +44,7 @@ import { and, eq, gte, lt, or, sql } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "@/lib/db/schema";
 import { emailSendLedger, emailSuppressionList, events } from "@/lib/db/schema";
+import { sanitizeEmailSubject } from "@takemetothefair/utils";
 
 type Db = DrizzleD1Database<typeof schema>;
 
@@ -154,7 +155,8 @@ Thanks for helping us keep Maine and New England's fairs and festivals listed.
 
 — The Meet Me at the Fair team`;
 
-  return { subject: `We received your event — ${input.eventName}`, text };
+  // OPE-1392 (TPL-2) — the event name is submitter-supplied.
+  return { subject: sanitizeEmailSubject(`We received your event — ${input.eventName}`), text };
 }
 
 /**

@@ -42,7 +42,7 @@ import {
 } from "@/lib/email/newsletter-broadcast";
 import { newsletterNameForAudience } from "@/lib/newsletter-masthead";
 import { getSiteUrl } from "@/lib/email/send";
-import { createSlug } from "@takemetothefair/utils";
+import { createSlug, sanitizeEmailSubject, sanitizeNewsletterHtml } from "@takemetothefair/utils";
 
 // Cap the recipient list echoed back in a preview so a full-list pre-flight
 // doesn't return a multi-thousand-entry payload. The count is always exact.
@@ -64,8 +64,17 @@ export const POST = withAuthorized(async ({ request, db }) => {
   } catch {
     return NextResponse.json({ error: "invalid_json" }, { status: 400 });
   }
-  const subject = typeof body.subject === "string" ? body.subject.trim() : "";
-  const contentHtml = typeof body.content_html === "string" ? body.content_html.trim() : "";
+  // OPE-1392 (TPL-2) — the subject is stored and mailed; no CR/LF in a header.
+  const subject = typeof body.subject === "string" ? sanitizeEmailSubject(body.subject.trim()) : "";
+  const rawContentHtml = typeof body.content_html === "string" ? body.content_html.trim() : "";
+  // OPE-1392 (TPL-1) — sanitize to the newsletter allow-list BEFORE it is
+  // stored or mailed. The body is composed by an agent from DB event names,
+  // which arrive through the public suggest_event path, so an unescaped name
+  // was stored XSS on the apex and in every subscriber's inbox. The public page
+  // and the broadcast enqueue sanitize again on the way out (covering rows
+  // written before this shipped) — this is the write half of that guard.
+  const contentHtml = sanitizeNewsletterHtml(rawContentHtml).trim();
+  const contentHtmlSanitized = contentHtml !== rawContentHtml;
   const contentText = typeof body.content_text === "string" ? body.content_text : undefined;
   const testRecipient =
     typeof body.test_recipient === "string" ? body.test_recipient.trim().toLowerCase() : "";
@@ -141,6 +150,9 @@ export const POST = withAuthorized(async ({ request, db }) => {
         subject,
         audience,
         html_length: contentHtml.length,
+        // OPE-1392 — true when the allow-list removed something, so the
+        // pre-flight shows a composer that its markup will not go out as sent.
+        html_sanitized: contentHtmlSanitized,
         would_set_sent_at: isBroadcast,
       },
       // OPE-795 — echoed at the top level too, so a pre-flight reader cannot
@@ -243,5 +255,6 @@ export const POST = withAuthorized(async ({ request, db }) => {
     issue_slug: slug,
     view_in_browser: viewInBrowserUrl,
     recipients: queued,
+    html_sanitized: contentHtmlSanitized,
   });
 });
