@@ -6,6 +6,7 @@
 import { SOCIAL_LINKS } from "@/lib/social-links";
 import { htmlToPlainText } from "@/lib/email/html-to-text";
 import type { NewsletterList } from "@/lib/db/schema";
+import { escapeHtml, sanitizeEmailSubject, sanitizeNewsletterHtml } from "@takemetothefair/utils";
 import {
   BAND_GREEN,
   EYEBROW_GOLD,
@@ -36,7 +37,7 @@ function baseLayout(args: {
                 <div style="font-size:16px;line-height:1.55;color:#2A2521;">${body}</div>
                 ${
                   cta
-                    ? `<div style="margin-top:24px;"><a href="${cta.url}" style="display:inline-block;padding:12px 20px;background:#E8960C;color:#1E2761;font-weight:600;text-decoration:none;border-radius:8px;">${cta.label}</a></div>`
+                    ? `<div style="margin-top:24px;"><a href="${escapeHtml(cta.url)}" style="display:inline-block;padding:12px 20px;background:#E8960C;color:#1E2761;font-weight:600;text-decoration:none;border-radius:8px;">${escapeHtml(cta.label)}</a></div>`
                     : ""
                 }
                 <hr style="border:none;border-top:1px solid #EBE5DA;margin:28px 0;" />
@@ -62,7 +63,7 @@ export function passwordResetTemplate(args: { resetUrl: string; name: string | n
   const greeting = args.name ? `Hi ${args.name},` : "Hi,";
   const html = baseLayout({
     heading: "Reset your password",
-    body: `<p style="margin:0 0 12px;">${escapeHtmlText(greeting)}</p><p style="margin:0 0 12px;">We received a request to reset the password on your Meet Me at the Fair account. Click the button below to choose a new one. This link expires in 1 hour.</p>`,
+    body: `<p style="margin:0 0 12px;">${escapeHtml(greeting)}</p><p style="margin:0 0 12px;">We received a request to reset the password on your Meet Me at the Fair account. Click the button below to choose a new one. This link expires in 1 hour.</p>`,
     cta: { url: args.resetUrl, label: "Reset password" },
   });
   const text = `${greeting}\n\nWe received a request to reset the password on your Meet Me at the Fair account. Click the link below to choose a new one. This link expires in 1 hour.\n\n${args.resetUrl}\n\nIf you didn't expect this email, you can safely ignore it.`;
@@ -77,7 +78,7 @@ export function emailVerificationTemplate(args: { verifyUrl: string; name: strin
   const greeting = args.name ? `Hi ${args.name},` : "Hi,";
   const html = baseLayout({
     heading: "Verify your email",
-    body: `<p style="margin:0 0 12px;">${escapeHtmlText(greeting)}</p><p style="margin:0 0 12px;">Welcome to Meet Me at the Fair. Please confirm this email address so we can keep you in the loop about events, applications, and updates. This link expires in 24 hours.</p>`,
+    body: `<p style="margin:0 0 12px;">${escapeHtml(greeting)}</p><p style="margin:0 0 12px;">Welcome to Meet Me at the Fair. Please confirm this email address so we can keep you in the loop about events, applications, and updates. This link expires in 24 hours.</p>`,
     cta: { url: args.verifyUrl, label: "Verify email" },
   });
   const text = `${greeting}\n\nWelcome to Meet Me at the Fair. Please confirm this email address by opening the link below. It expires in 24 hours.\n\n${args.verifyUrl}\n\nIf you didn't sign up, you can safely ignore this email.`;
@@ -88,17 +89,19 @@ export function vendorClaimVerificationTemplate(args: {
   businessName: string;
   verifyUrl: string;
 }): { subject: string; html: string; text: string } {
-  const escape = (s: string) =>
-    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const html = baseLayout({
     heading: "Confirm your vendor claim",
-    body: `<p style="margin:0 0 12px;">You requested to claim the Meet Me at the Fair listing for <strong>${escape(args.businessName)}</strong>.</p>
+    body: `<p style="margin:0 0 12px;">You requested to claim the Meet Me at the Fair listing for <strong>${escapeHtml(args.businessName)}</strong>.</p>
 <p style="margin:0 0 12px;">Click the button below to confirm. This link expires in 24 hours and can be used once.</p>
 <p style="margin:0 0 12px;">If you didn't request this, no action is needed — the listing stays as it is.</p>`,
     cta: { url: args.verifyUrl, label: "Confirm claim" },
   });
   const text = `You requested to claim the Meet Me at the Fair listing for "${args.businessName}".\n\nConfirm by opening:\n${args.verifyUrl}\n\nThis link expires in 24 hours. If you didn't request this, no action is needed.`;
-  return { subject: `Confirm your claim of ${args.businessName}`, html, text };
+  return {
+    subject: sanitizeEmailSubject(`Confirm your claim of ${args.businessName}`),
+    html,
+    text,
+  };
 }
 
 export function vendorClaimConfirmationTemplate(args: {
@@ -106,19 +109,21 @@ export function vendorClaimConfirmationTemplate(args: {
   vendorSlug: string;
   siteUrl: string;
 }): { subject: string; html: string; text: string } {
-  const escape = (s: string) =>
-    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const profileUrl = `${args.siteUrl}/vendor/profile`;
   const publicUrl = `${args.siteUrl}/vendors/${args.vendorSlug}`;
   const html = baseLayout({
     heading: "Your listing is now claimed",
-    body: `<p style="margin:0 0 12px;">Your Meet Me at the Fair listing for <strong>${escape(args.businessName)}</strong> is now marked as Claimed.</p>
-<p style="margin:0 0 12px;">A "Claimed" badge appears on your public page, signalling to event-goers that the business itself maintains this listing. Update your profile any time at <a href="${profileUrl}" style="color:#1E2761;">${profileUrl}</a>.</p>
-<p style="margin:0 0 12px;">View your public page: <a href="${publicUrl}" style="color:#1E2761;">${publicUrl}</a></p>`,
+    body: `<p style="margin:0 0 12px;">Your Meet Me at the Fair listing for <strong>${escapeHtml(args.businessName)}</strong> is now marked as Claimed.</p>
+<p style="margin:0 0 12px;">A "Claimed" badge appears on your public page, signalling to event-goers that the business itself maintains this listing. Update your profile any time at <a href="${escapeHtml(profileUrl)}" style="color:#1E2761;">${escapeHtml(profileUrl)}</a>.</p>
+<p style="margin:0 0 12px;">View your public page: <a href="${escapeHtml(publicUrl)}" style="color:#1E2761;">${escapeHtml(publicUrl)}</a></p>`,
     cta: { url: profileUrl, label: "Open vendor profile" },
   });
   const text = `Your Meet Me at the Fair listing for "${args.businessName}" is now marked as Claimed.\n\nA "Claimed" badge appears on your public page. Update your profile any time:\n${profileUrl}\n\nPublic page: ${publicUrl}`;
-  return { subject: `Your ${args.businessName} listing is now claimed`, html, text };
+  return {
+    subject: sanitizeEmailSubject(`Your ${args.businessName} listing is now claimed`),
+    html,
+    text,
+  };
 }
 
 export function promoterBlogMentionTemplate(args: {
@@ -129,19 +134,17 @@ export function promoterBlogMentionTemplate(args: {
   eventUrl: string;
 }): { subject: string; html: string; text: string } {
   const greeting = args.promoterName ? `Hi ${args.promoterName},` : "Hi,";
-  const escape = (s: string) =>
-    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const html = baseLayout({
     heading: "Your event was featured on our blog",
-    body: `<p style="margin:0 0 12px;">${escape(greeting)}</p>
-<p style="margin:0 0 12px;">We just published a blog post that mentions your event <strong>${escape(args.eventName)}</strong>:</p>
-<p style="margin:0 0 12px;"><a href="${args.postUrl}" style="color:#1E2761;">${escape(args.postTitle)}</a></p>
-<p style="margin:0 0 12px;">Feel free to share it — or visit <a href="${args.eventUrl}" style="color:#1E2761;">your event page</a> to see how it's being surfaced alongside related coverage.</p>`,
+    body: `<p style="margin:0 0 12px;">${escapeHtml(greeting)}</p>
+<p style="margin:0 0 12px;">We just published a blog post that mentions your event <strong>${escapeHtml(args.eventName)}</strong>:</p>
+<p style="margin:0 0 12px;"><a href="${escapeHtml(args.postUrl)}" style="color:#1E2761;">${escapeHtml(args.postTitle)}</a></p>
+<p style="margin:0 0 12px;">Feel free to share it — or visit <a href="${escapeHtml(args.eventUrl)}" style="color:#1E2761;">your event page</a> to see how it's being surfaced alongside related coverage.</p>`,
     cta: { url: args.postUrl, label: "Read the post" },
   });
   const text = `${greeting}\n\nWe just published a blog post that mentions your event "${args.eventName}":\n\n${args.postTitle}\n${args.postUrl}\n\nEvent page: ${args.eventUrl}\n\nFeel free to share it with your audience.`;
   return {
-    subject: `"${args.postTitle}" mentions ${args.eventName}`,
+    subject: sanitizeEmailSubject(`"${args.postTitle}" mentions ${args.eventName}`),
     html,
     text,
   };
@@ -161,9 +164,7 @@ export function claimDecisionTemplate(args: {
   reason?: string;
   manageUrl?: string;
 }): { subject: string; html: string; text: string } {
-  const escape = (s: string) =>
-    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  const name = escape(args.entityName);
+  const name = escapeHtml(args.entityName);
 
   if (args.decision === "approved") {
     const html = baseLayout({
@@ -175,11 +176,15 @@ export function claimDecisionTemplate(args: {
     const text = `Your claim for "${args.entityName}" was approved — you can now manage the listing.${
       args.manageUrl ? `\n\nManage it here:\n${args.manageUrl}` : ""
     }`;
-    return { subject: `Your claim for ${args.entityName} was approved`, html, text };
+    return {
+      subject: sanitizeEmailSubject(`Your claim for ${args.entityName} was approved`),
+      html,
+      text,
+    };
   }
 
   const reasonBlock = args.reason
-    ? `<p style="margin:0 0 12px;"><strong>Reason:</strong> ${escape(args.reason)}</p>`
+    ? `<p style="margin:0 0 12px;"><strong>Reason:</strong> ${escapeHtml(args.reason)}</p>`
     : "";
   const html = baseLayout({
     heading: "Your claim wasn't approved",
@@ -189,7 +194,11 @@ ${reasonBlock}
   });
   const reasonText = args.reason ? `\n\nReason: ${args.reason}` : "";
   const text = `Your claim for "${args.entityName}" wasn't approved.${reasonText}\n\nIf you believe this is a mistake, reply to this email with additional evidence that you represent this business and we'll take another look.`;
-  return { subject: `Your claim for ${args.entityName} wasn't approved`, html, text };
+  return {
+    subject: sanitizeEmailSubject(`Your claim for ${args.entityName} wasn't approved`),
+    html,
+    text,
+  };
 }
 
 /**
@@ -277,7 +286,7 @@ function renderNewsletterSocialLinks(): string {
   if (SOCIAL_LINKS.length === 0) return "";
   const links = SOCIAL_LINKS.map(
     (s) =>
-      `<a href="${s.href}" style="color:${EYEBROW_GOLD};text-decoration:underline;">${escapeHtmlText(s.name)}</a>`
+      `<a href="${s.href}" style="color:${EYEBROW_GOLD};text-decoration:underline;">${escapeHtml(s.name)}</a>`
   ).join(` <span style="color:${SUBTITLE_GOLD};">&middot;</span> `);
   return `<div style="margin-top:10px;">${links}</div>`;
 }
@@ -304,7 +313,7 @@ function renderNewsletterSocialLinks(): string {
  * forwarding note it is rather than as a prompt to sign up twice.
  */
 function vendorForwardCtaHtml(siteOrigin: string): string {
-  return `<div style="margin-top:12px;color:#ffffff;">Did a fellow exhibitor forward this? <a href="${siteOrigin}/newsletter/vendor" style="color:${EYEBROW_GOLD};text-decoration:underline;">Get ${escapeHtmlText(VENDOR_NEWSLETTER_NAME)} in your own inbox</a> — free, one email a week.</div>`;
+  return `<div style="margin-top:12px;color:#ffffff;">Did a fellow exhibitor forward this? <a href="${siteOrigin}/newsletter/vendor" style="color:${EYEBROW_GOLD};text-decoration:underline;">Get ${escapeHtml(VENDOR_NEWSLETTER_NAME)} in your own inbox</a> — free, one email a week.</div>`;
 }
 
 function newsletterFooterHtml(args: {
@@ -335,7 +344,7 @@ function newsletterFooterHtml(args: {
       <div style="margin-top:8px;">
         <a href="${unsubscribeUrl}" style="color:${ON_BAND_MUTED};text-decoration:underline;">Unsubscribe</a>
       </div>
-      <div style="margin-top:8px;color:${ON_BAND_MUTED};">${escapeHtmlText(mailing)}</div>
+      <div style="margin-top:8px;color:${ON_BAND_MUTED};">${escapeHtml(mailing)}</div>
     </td>
   </tr>
 </table>`;
@@ -475,12 +484,17 @@ export function newsletterDigestTemplate(args: {
   // masthead and the plain-text footer can never disagree, and so the OPE-191
   // vendor digest's override ("New This Week") flows to both.
   const wordmark = args.wordmark?.trim() || NEWSLETTER_NAME;
+  // OPE-1392 (TPL-1) — the issue body is sanitized to the newsletter allow-list
+  // on the way into EVERY digest email. This is the one renderer the send,
+  // approve and vendor-digest paths all share, so a row stored before the
+  // write-side sanitizer shipped cannot reach an inbox unsanitized.
+  const contentHtml = sanitizeNewsletterHtml(args.contentHtml);
   const html = newsletterLayout({
     wordmark,
     // The subject carries the date ("This Weekend at the Fair — Jul 31"); show
     // it as a subtitle rather than a duplicate <h1> (scope §1).
     subtitle: args.subject,
-    body: args.contentHtml,
+    body: contentHtml,
     unsubscribeUrl: args.unsubscribeUrl,
     viewInBrowserUrl: args.viewInBrowserUrl,
     mailing,
@@ -490,16 +504,12 @@ export function newsletterDigestTemplate(args: {
   });
 
   // OPE-1107 — entities decoded, links kept, paragraphs kept. See html-to-text.ts.
-  const bodyText = args.contentText ?? htmlToPlainText(args.contentHtml);
+  const bodyText = args.contentText ?? htmlToPlainText(contentHtml);
   const text = `${args.subject}\n\nView this issue in your browser: ${args.viewInBrowserUrl}\n\n${bodyText}\n\n—\nYou're receiving this because you subscribed to ${wordmark}, the Meet Me at the Fair weekly newsletter.\nUnsubscribe: ${args.unsubscribeUrl}\n${mailing}${
     args.audience === "vendor"
       ? `\n\nDid a fellow exhibitor forward this? Get ${VENDOR_NEWSLETTER_NAME} in your own inbox: ${new URL(args.viewInBrowserUrl).origin}/newsletter/vendor`
       : ""
   }`;
 
-  return { subject: args.subject, html, text };
-}
-
-function escapeHtmlText(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return { subject: sanitizeEmailSubject(args.subject), html, text };
 }

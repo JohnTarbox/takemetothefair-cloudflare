@@ -28,6 +28,7 @@
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { sanitizeEmailSubject, sanitizeNewsletterHtml } from "@takemetothefair/utils";
 import { jsonContent } from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
@@ -144,8 +145,11 @@ export function registerSendNewsletterBroadcastTool(
         },
         body: JSON.stringify({
           audience: params.audience,
-          subject: params.subject,
-          content_html: params.content_html,
+          // OPE-1392 — sanitized here as well as in the endpoint (which is the
+          // authority: it re-sanitizes before storing). The composer builds
+          // this body from DB event names, which are public input.
+          subject: sanitizeEmailSubject(params.subject),
+          content_html: sanitizeNewsletterHtml(params.content_html),
           ...(params.content_text ? { content_text: params.content_text } : {}),
           ...(isTest ? { test_recipient: params.test_recipient } : {}),
           ...(isPreview ? { preview_only: true } : {}),

@@ -24,6 +24,7 @@ import { targetUserIsVerified } from "@/lib/api-auth";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { logError } from "@/lib/logger";
 import { unsafeSlug } from "@/lib/utils";
+import { sanitizeEmailSubject } from "@takemetothefair/utils";
 
 const bodySchema = z.object({
   senderName: z.string().min(1).max(100),
@@ -93,7 +94,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
       return NextResponse.json({ error: "contact_not_available" }, { status: 400 });
     }
 
-    const subject = `[MMATF] Inquiry from ${parsed.data.senderName}`;
+    // OPE-1392 (TPL-2) — senderName is free text from a public form.
+    const subject = sanitizeEmailSubject(`[MMATF] Inquiry from ${parsed.data.senderName}`);
     const text = `From: ${parsed.data.senderName} <${parsed.data.senderEmail}>
 
 ${parsed.data.message}

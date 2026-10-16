@@ -22,7 +22,8 @@ describe("OPE-1368 — name escaped in email HTML", () => {
       name: EVIL,
     });
     expect(t.html).not.toContain('<a href="https://evil.example');
-    expect(t.html).toContain('Hi &lt;a href="https://evil.example/login"&gt;Click here');
+    // OPE-1392 — the shared escapeHtml also escapes quotes.
+    expect(t.html).toContain("Hi &lt;a href=&quot;https://evil.example/login&quot;&gt;Click here");
     // plain text unchanged
     expect(t.text.startsWith(`Hi ${EVIL},`)).toBe(true);
   });

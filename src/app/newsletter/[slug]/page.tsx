@@ -8,6 +8,7 @@ import { eq } from "drizzle-orm";
 import { NewsletterSignupBlock } from "@/components/newsletter/newsletter-signup-block";
 import { NEWSLETTER_NAME, newsletterMastheadHtml } from "@/lib/newsletter-masthead";
 import { auth } from "@/lib/auth";
+import { sanitizeNewsletterHtml } from "@takemetothefair/utils";
 
 /**
  * OPE-170 — public per-issue newsletter page. Renders the issue's stored HTML
@@ -110,9 +111,15 @@ export default async function NewsletterIssuePage({ params }: Props) {
         <div
           dangerouslySetInnerHTML={{ __html: newsletterMastheadHtml({ subtitle: issue.subject }) }}
         />
-        {/* Stored issue HTML is admin-authored (send endpoint is admin-gated),
-            so it's trusted content — same posture as rendered blog bodies. */}
-        <article className="p-6 sm:p-8" dangerouslySetInnerHTML={{ __html: issue.html }} />
+        {/* OPE-1392 (TPL-1) — NOT trusted. The send endpoint is admin-gated,
+            but the body is composed from DB event names that arrive through
+            the public suggest_event path. It is sanitized to the newsletter
+            allow-list here (render) as well as at write, so rows stored before
+            the write-side sanitizer shipped are covered too. */}
+        <article
+          className="p-6 sm:p-8"
+          dangerouslySetInnerHTML={{ __html: sanitizeNewsletterHtml(issue.html) }}
+        />
       </div>
 
       {issue.sentAt && (
