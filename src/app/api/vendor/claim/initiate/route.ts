@@ -10,6 +10,7 @@ import { getSiteUrl } from "@/lib/email/send";
 import { enqueueEmail } from "@/lib/queues/producers";
 import { vendorClaimVerificationTemplate } from "@/lib/email/templates";
 import { logError } from "@/lib/logger";
+import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
 /**
  * Mask the local-part of an email for surfacing in API responses.
@@ -26,7 +27,7 @@ function maskEmail(addr: string): string {
   return `${visible}${"*".repeat(Math.max(3, local.length - visible.length))}${domain}`;
 }
 
-export async function POST() {
+export async function POST(request: Request) {
   // OPE-238 — `/api/vendor/claim/direct` already refuses an unverified account
   // ("Please verify your email before claiming a listing"). Starting the
   // token-based claim is the same act by a slower route, so it takes the same
@@ -38,6 +39,11 @@ export async function POST() {
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  // OPE-1379 (HARD9) — every call below mints a token and sends an email, so
+  // cap it per user before any of that work happens.
+  const rl = await checkRateLimit(request, "vendor-claim-initiate");
+  if (!rl.allowed) return rateLimitResponse(rl);
 
   const db = getCloudflareDb();
   try {

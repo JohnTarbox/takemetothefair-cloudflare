@@ -156,6 +156,7 @@ describe("the cohort is exactly the eight John approved", () => {
     "analytics-track",
     "events-same-day",
     "vendor-photo-upload",
+    "vendor-claim-initiate",
   ] as const;
 
   it.each(BURST)("consults the binding for %s", async (endpoint) => {

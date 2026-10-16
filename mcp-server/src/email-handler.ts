@@ -56,6 +56,7 @@ import {
 } from "./schema.js";
 import { desc, eq, inArray, sql } from "drizzle-orm";
 import {
+  maskEmail,
   participantKey,
   normalizeThreadSubject,
   resolveThread,
@@ -265,7 +266,7 @@ export async function handleInboundEmail(
         message: "PostalMime parse failed",
         error: err,
         sessionId,
-        context: { from: message.from, to: toAddr, rawSize: message.rawSize },
+        context: { from: maskEmail(message.from), to: toAddr, rawSize: message.rawSize },
       });
       await forwardToAdminBestEffort(message, env, `parse-failed: ${errMsg(err)}`, sessionId);
       return;
@@ -396,7 +397,7 @@ export async function handleInboundEmail(
           message:
             "non-actionable audit/system sender; recorded audit-noop, skipped classifier + workflow",
           sessionId,
-          context: { from: fromAddr, to: toAddr, reason: nonActionable.reason },
+          context: { from: maskEmail(fromAddr), to: toAddr, reason: nonActionable.reason },
         }).catch(() => {});
       } catch (err) {
         await logError(env.DB, {
@@ -404,7 +405,7 @@ export async function handleInboundEmail(
           message: "failed to insert audit-noop row for non-actionable sender",
           error: err,
           sessionId,
-          context: { from: fromAddr, to: toAddr, reason: nonActionable.reason },
+          context: { from: maskEmail(fromAddr), to: toAddr, reason: nonActionable.reason },
         }).catch(() => {});
       }
       return;
@@ -461,7 +462,7 @@ export async function handleInboundEmail(
           message: "failed to insert held-automated row",
           error: err,
           sessionId,
-          context: { from: fromAddr, to: toAddr, reason: automated.reason },
+          context: { from: maskEmail(fromAddr), to: toAddr, reason: automated.reason },
         }).catch(() => {});
       }
       if (automated.kind === "forwarding-confirmation") {
@@ -479,7 +480,7 @@ export async function handleInboundEmail(
               ? `auto-forwarded mailbox mail held (no reply, no event): ${automated.reason}`
               : `automated sender held (no reply, no event): ${automated.reason}`,
         sessionId,
-        context: { from: fromAddr, to: toAddr, subject, reason: automated.reason },
+        context: { from: maskEmail(fromAddr), to: toAddr, subject, reason: automated.reason },
       }).catch(() => {});
       return;
     }
@@ -503,7 +504,7 @@ export async function handleInboundEmail(
           message: "failed to insert burst-held row",
           error: err,
           sessionId,
-          context: { from: fromAddr, to: toAddr },
+          context: { from: maskEmail(fromAddr), to: toAddr },
         }).catch(() => {});
       }
       if (burst.crossing) {
@@ -546,7 +547,7 @@ export async function handleInboundEmail(
           message: "failed to insert solicitation-held row",
           error: err,
           sessionId,
-          context: { from: fromAddr, to: toAddr, reason: solicitation.reason },
+          context: { from: maskEmail(fromAddr), to: toAddr, reason: solicitation.reason },
         }).catch(() => {});
       }
       await logError(env.DB, {
@@ -554,7 +555,7 @@ export async function handleInboundEmail(
         source: SOURCE,
         message: `solicitation held (no reply, no event): ${solicitation.reason}`,
         sessionId,
-        context: { from: fromAddr, to: toAddr, subject, reason: solicitation.reason },
+        context: { from: maskEmail(fromAddr), to: toAddr, subject, reason: solicitation.reason },
       }).catch(() => {});
       return;
     }
@@ -572,7 +573,7 @@ export async function handleInboundEmail(
         message: "rate-limited sender; dropped without reply or forward",
         sessionId,
         context: {
-          from: fromAddr,
+          from: maskEmail(fromAddr),
           subject,
           to: toAddr,
           limit: senderLimit,
@@ -655,7 +656,7 @@ export async function handleInboundEmail(
         source: "email-handler:ope-315-photo-only",
         message: `photo-only mail to ${toAddr} rerouted from ${addressIntent} to photo_intake`,
         sessionId,
-        context: { from: fromAddr, to: toAddr, addressIntent, attachmentCount },
+        context: { from: maskEmail(fromAddr), to: toAddr, addressIntent, attachmentCount },
       });
     }
     if (senderTrust === "trusted" && emailAuth !== "pass") {
@@ -668,7 +669,7 @@ export async function handleInboundEmail(
               ? "trusted sender has no aligned DMARC pass — fast-path not honoured"
               : "trusted sender email auth unverifiable (no Cloudflare Authentication-Results)",
         source: "email-handler:ws3e-auth-gate",
-        context: { from: fromAddr, to: toAddr, emailAuth },
+        context: { from: maskEmail(fromAddr), to: toAddr, emailAuth },
       });
     }
 
@@ -707,7 +708,7 @@ export async function handleInboundEmail(
             ? `GSC milestone email auto-ingested (status ${res.status})`
             : `GSC milestone auto-ingest returned ${res.status}`,
           sessionId,
-          context: { from: fromAddr, subject },
+          context: { from: maskEmail(fromAddr), subject },
         });
 
         // OPE-456 scope 1a — a successfully-ingested milestone is TERMINAL.
@@ -751,7 +752,7 @@ export async function handleInboundEmail(
               message: "failed to record terminal row for ingested GSC milestone",
               error: err,
               sessionId,
-              context: { from: fromAddr, subject },
+              context: { from: maskEmail(fromAddr), subject },
             }).catch(() => {});
           }
           await logError(env.DB, {
@@ -760,7 +761,7 @@ export async function handleInboundEmail(
             message:
               "GSC milestone ingested; skipped classifier + submission workflow (OPE-456 scope 1a)",
             sessionId,
-            context: { from: fromAddr, subject },
+            context: { from: maskEmail(fromAddr), subject },
           }).catch(() => {});
           return;
         }
@@ -771,7 +772,7 @@ export async function handleInboundEmail(
           message: "GSC milestone auto-ingest failed (email still processed normally)",
           error: e,
           sessionId,
-          context: { from: fromAddr, subject },
+          context: { from: maskEmail(fromAddr), subject },
         });
       }
     }
@@ -923,7 +924,7 @@ export async function handleInboundEmail(
               "duplicate inbound delivery (message_id seen); skipping before attachment capture",
             sessionId,
             context: {
-              from: fromAddr,
+              from: maskEmail(fromAddr),
               to: toAddr,
               subject,
               messageId,
@@ -955,7 +956,7 @@ export async function handleInboundEmail(
             message: `attachment accounting mismatch: claimed ${attachmentCount}, stored ${refs.length}, skipped ${skipped.length}`,
             sessionId,
             context: {
-              from: fromAddr,
+              from: maskEmail(fromAddr),
               to: toAddr,
               attachmentCount,
               stored: refs.length,
@@ -971,7 +972,7 @@ export async function handleInboundEmail(
           message: "attachment capture failed; continuing without attachment_refs",
           error: err,
           sessionId,
-          context: { from: fromAddr, to: toAddr, attachmentCount },
+          context: { from: maskEmail(fromAddr), to: toAddr, attachmentCount },
         }).catch(() => {});
       }
     }
@@ -1047,7 +1048,7 @@ export async function handleInboundEmail(
           message: "failed to insert multi-intent parent row; aborting",
           error: err,
           sessionId,
-          context: { from: fromAddr, to: toAddr, subject },
+          context: { from: maskEmail(fromAddr), to: toAddr, subject },
         });
         return;
       }
@@ -1058,7 +1059,7 @@ export async function handleInboundEmail(
           source: SOURCE,
           message: "duplicate inbound delivery (multi-intent); skipping",
           sessionId,
-          context: { from: fromAddr, to: toAddr, subject, messageId },
+          context: { from: maskEmail(fromAddr), to: toAddr, subject, messageId },
         });
         return;
       }
@@ -1124,7 +1125,7 @@ export async function handleInboundEmail(
           message: `failed to insert inbound_emails row [${i}]; aborting remaining`,
           error: err,
           sessionId,
-          context: { from: fromAddr, to: toAddr, subject, intent: r.intent },
+          context: { from: maskEmail(fromAddr), to: toAddr, subject, intent: r.intent },
         });
         return;
       }
@@ -1146,7 +1147,7 @@ export async function handleInboundEmail(
           source: SOURCE,
           message: "duplicate inbound delivery; skipping workflow create",
           sessionId,
-          context: { from: fromAddr, to: toAddr, subject, intent: r.intent, messageId },
+          context: { from: maskEmail(fromAddr), to: toAddr, subject, intent: r.intent, messageId },
         });
         return;
       }
@@ -1179,7 +1180,7 @@ export async function handleInboundEmail(
           message: "INBOUND_EMAIL.create failed; row remains in 'received' state",
           error: err,
           sessionId,
-          context: { messageRowId: rowId, intent: r.intent, from: fromAddr },
+          context: { messageRowId: rowId, intent: r.intent, from: maskEmail(fromAddr) },
         });
       }
     }
@@ -1213,7 +1214,7 @@ export async function handleInboundEmail(
       message: "unhandled exception in email entrypoint",
       error: err,
       sessionId,
-      context: { from: message.from, to: toAddr, rawSize: message.rawSize },
+      context: { from: maskEmail(message.from), to: toAddr, rawSize: message.rawSize },
     }).catch(() => {});
     throw err;
   }
@@ -1854,7 +1855,7 @@ async function forwardToAdminBestEffort(
       source: SOURCE,
       message: "SUBMIT_ADMIN_FORWARD env not set; dropping forward attempt",
       sessionId,
-      context: { reason, from: message.from, to: message.to },
+      context: { reason, from: maskEmail(message.from), to: message.to },
     });
     return;
   }
@@ -1868,8 +1869,8 @@ async function forwardToAdminBestEffort(
       sessionId,
       context: {
         reason,
-        destination: env.SUBMIT_ADMIN_FORWARD,
-        from: message.from,
+        destination: maskEmail(env.SUBMIT_ADMIN_FORWARD),
+        from: maskEmail(message.from),
         to: message.to,
       },
     });
@@ -2203,7 +2204,7 @@ async function computeRouting(args: {
       source: SOURCE,
       message: "claim_request sibling dropped: no explicit claim ask in the sender's own text",
       sessionId,
-      context: { from: fromAddr, intents: rawResult.intents.map((c) => c.intent) },
+      context: { from: maskEmail(fromAddr), intents: rawResult.intents.map((c) => c.intent) },
     });
   }
 
@@ -2213,7 +2214,7 @@ async function computeRouting(args: {
     message: "classifier result",
     sessionId,
     context: {
-      from: fromAddr,
+      from: maskEmail(fromAddr),
       to: toAddr,
       addressIntent,
       classifierIntents: result.intents.map((c) => ({
@@ -2620,7 +2621,7 @@ async function resolveSenderColumns(
       message: "sender identity resolution failed; recording no-match",
       error: err,
       sessionId,
-      context: { from: fromAddr },
+      context: { from: maskEmail(fromAddr) },
     }).catch(() => {});
     return { ...NO_SENDER_MATCH, matchedEntities: null };
   }
@@ -2872,7 +2873,7 @@ export async function insertSpamAuditRow(
       message: "failed to insert spam-quarantine audit row",
       error: err,
       sessionId,
-      context: { from: fromAddr, to: toAddr, subject },
+      context: { from: maskEmail(fromAddr), to: toAddr, subject },
     });
     // No row, so nothing to attach an observation to.
     return null;
