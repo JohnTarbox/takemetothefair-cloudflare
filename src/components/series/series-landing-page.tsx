@@ -23,6 +23,7 @@ import { formatDateRange } from "@/lib/utils";
 import { occurrencePath } from "@takemetothefair/utils";
 import { cdnImage, cdnSrcSet } from "@/lib/cdn-image";
 import { toIsoDateOnlyInVenueZone } from "@/lib/datetime";
+import { safeJsonLd } from "@/lib/seo/safe-json-ld";
 
 const HERO_WIDTHS = [400, 800, 1200, 1600];
 
@@ -125,7 +126,7 @@ export function SeriesLandingPage({
           // Escape `<` so a series name/description containing `</script>` can't
           // break out of the JSON-LD block (defense beyond EventSchema's plain
           // stringify; series text is first-party but cheap to harden).
-          dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd).replace(/</g, "\\u003c") }}
+          dangerouslySetInnerHTML={{ __html: safeJsonLd(jsonLd) }}
         />
       ) : null}
 

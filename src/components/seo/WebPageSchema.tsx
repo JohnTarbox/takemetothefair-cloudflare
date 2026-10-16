@@ -1,3 +1,4 @@
+import { safeJsonLd } from "@/lib/seo/safe-json-ld";
 type WebPageType = "WebPage" | "ContactPage" | "AboutPage" | "CollectionPage";
 
 interface WebPageSchemaProps {
@@ -7,12 +8,7 @@ interface WebPageSchemaProps {
   url: string;
 }
 
-export function WebPageSchema({
-  type = "WebPage",
-  name,
-  description,
-  url,
-}: WebPageSchemaProps) {
+export function WebPageSchema({ type = "WebPage", name, description, url }: WebPageSchemaProps) {
   const schema = {
     "@context": "https://schema.org",
     "@type": type,
@@ -29,9 +25,6 @@ export function WebPageSchema({
 
   // Schema data is constructed from trusted server-side props only
   return (
-    <script
-      type="application/ld+json"
-      dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}
-    />
+    <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: safeJsonLd(schema) }} />
   );
 }
