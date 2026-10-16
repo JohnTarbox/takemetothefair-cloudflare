@@ -52,6 +52,7 @@ import {
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 import { jsonContent, unsafeSlug } from "../helpers.js";
+import { logError } from "../logger.js";
 import { repointPromoterChildren, repointVenueChildren } from "@takemetothefair/db-schema";
 
 export function registerMergeEntitiesTools(server: McpServer, db: Db, auth: AuthContext) {
@@ -158,9 +159,29 @@ export function registerMergeEntitiesTools(server: McpServer, db: Db, auth: Auth
           changedAt: new Date(),
           changedBy: auth.userId ?? null,
         });
-      } catch {
-        // Idempotent re-run: a slug-history row may already exist.
-        // Drop silently — the merge can still proceed.
+      } catch (historyErr) {
+        // OPE-1373 — this catch used to swallow the failure as "a slug-history
+        // row may already exist". That cannot happen: only series_slug_history
+        // has a UNIQUE index (drizzle/0209), so a re-run inserts a second row
+        // rather than throwing. The catch only ever hid REAL failures — and
+        // the merge then went on to tombstone the duplicate's slug with the
+        // redirect gone. Abort instead, before that step.
+        await logError(db, {
+          message:
+            "merge_venue: slug-history insert failed; merge aborted before the duplicate was tombstoned",
+          error: historyErr,
+          source: "mcp:merge_venue",
+          context: { keeperId: params.keeper_venue_id, duplicateId: params.duplicate_venue_id },
+        });
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Merge ABORTED: could not write the slug-history redirect for the duplicate, so the duplicate was left in place (not tombstoned). ${historyErr instanceof Error ? historyErr.message : String(historyErr)}`,
+            },
+          ],
+          isError: true,
+        };
       }
 
       // 3. Tombstone the loser. Slug renamed to `*-merged-<id8>` so the
@@ -174,6 +195,7 @@ export function registerMergeEntitiesTools(server: McpServer, db: Db, auth: Auth
       // OPE-1183 — the tombstone's OWN slug redirects too. Only the original
       // slug used to get a history row, so the parked `*-merged-<id8>` URL
       // (which is where the tombstone now lives) 404'd.
+      let tombstoneHistoryWritten = true;
       try {
         await db.insert(venueSlugHistory).values({
           venueId: params.keeper_venue_id,
@@ -182,8 +204,21 @@ export function registerMergeEntitiesTools(server: McpServer, db: Db, auth: Auth
           changedAt: new Date(),
           changedBy: auth.userId ?? null,
         });
-      } catch {
-        // Same idempotency posture as the row above.
+      } catch (tombstoneHistoryErr) {
+        // OPE-1373 — not swallowed: the tombstone UPDATE has already committed,
+        // so aborting cannot undo it, but the missing redirect for the parked
+        // `*-merged-*` URL must reach error_logs rather than vanish.
+        tombstoneHistoryWritten = false;
+        await logError(db, {
+          message: "merge_venue: tombstone slug-history insert failed",
+          error: tombstoneHistoryErr,
+          source: "mcp:merge_venue",
+          context: {
+            keeperId: params.keeper_venue_id,
+            duplicateId: params.duplicate_venue_id,
+            tombstoneSlug,
+          },
+        });
       }
 
       // 4. Audit trail.
@@ -202,6 +237,7 @@ export function registerMergeEntitiesTools(server: McpServer, db: Db, auth: Auth
             events_reassigned: reassignedCount,
             children_repointed: children,
             slug_history_written: true,
+            tombstone_slug_history_written: tombstoneHistoryWritten,
           }),
           createdAt: new Date(),
         });
@@ -221,6 +257,7 @@ export function registerMergeEntitiesTools(server: McpServer, db: Db, auth: Auth
             events_reassigned: reassignedCount,
             children_repointed: children,
             slug_history_written: true,
+            tombstone_slug_history_written: tombstoneHistoryWritten,
           }),
         ],
       };
@@ -313,9 +350,32 @@ export function registerMergeEntitiesTools(server: McpServer, db: Db, auth: Auth
           changedAt: new Date(),
           changedBy: auth.userId ?? null,
         });
-      } catch {
-        // Idempotent re-run: a slug-history row may already exist.
-        // Drop silently — the merge can still proceed.
+      } catch (historyErr) {
+        // OPE-1373 — this catch used to swallow the failure as "a slug-history
+        // row may already exist". That cannot happen: only series_slug_history
+        // has a UNIQUE index (drizzle/0209), so a re-run inserts a second row
+        // rather than throwing. The catch only ever hid REAL failures — and
+        // the merge then went on to HARD-DELETE the duplicate with the
+        // redirect gone. Abort instead, before that step.
+        await logError(db, {
+          message:
+            "merge_promoter: slug-history insert failed; merge aborted before the duplicate was deleted",
+          error: historyErr,
+          source: "mcp:merge_promoter",
+          context: {
+            keeperId: params.keeper_promoter_id,
+            duplicateId: params.duplicate_promoter_id,
+          },
+        });
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Merge ABORTED: could not write the slug-history redirect for the duplicate, so the duplicate was left in place (not deleted). ${historyErr instanceof Error ? historyErr.message : String(historyErr)}`,
+            },
+          ],
+          isError: true,
+        };
       }
 
       // 2b. OPE-1120 — the rows no FK protects. Before the delete, so nothing
