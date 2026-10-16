@@ -10,6 +10,7 @@ import { inArray, eq } from "drizzle-orm";
 import { loadClassifications, gateUrlForField } from "@/lib/url-classification";
 import { recomputeEventCompleteness } from "@/lib/completeness";
 import { logEnrichment } from "@/lib/enrichment-log";
+import { loadOperatorLockedFields } from "@/lib/scrapers/operator-edited-fields";
 
 export async function POST(request: Request) {
   const db = getCloudflareDb();
@@ -54,12 +55,16 @@ export async function POST(request: Request) {
       found: targetEvents.length,
       updated: 0,
       skipped: 0,
+      /** OPE-1410 — total field writes withheld because an operator edited them. */
+      operatorEditedFieldsSkipped: 0,
       errors: [] as string[],
       details: [] as {
         id: string;
         name: string;
         status: "updated" | "skipped" | "no_source" | "no_scraper" | "error";
         fieldsUpdated?: string[];
+        /** OPE-1410 — fields the scrape would have changed but an operator owns. */
+        fieldsSkippedOperatorEdited?: string[];
         error?: string;
       }[],
     };
@@ -67,6 +72,13 @@ export async function POST(request: Request) {
     // Load classifications once for the whole batch — used to gate any
     // detail-scraped website URL before assigning it to ticket_url.
     const urlClassifications = await loadClassifications(db);
+
+    // OPE-1410 — fields an operator edited after the scraper last wrote them.
+    // The rescrape never overwrites those; it reports them instead.
+    const operatorLocked = await loadOperatorLockedFields(
+      db,
+      targetEvents.map((e) => e.id)
+    );
 
     for (const event of targetEvents) {
       // Skip events without source info
@@ -98,42 +110,56 @@ export async function POST(request: Request) {
         // Build updates for all changed fields (same as sync)
         const updates: Record<string, unknown> = {};
         const fieldsUpdated: string[] = [];
+        const locked = operatorLocked.get(event.id);
+        const fieldsSkippedOperatorEdited: string[] = [];
+        // Every write below goes through here: an operator-edited field is
+        // reported, not overwritten.
+        const setField = (
+          field: "description" | "startDate" | "endDate" | "imageUrl" | "ticketUrl",
+          value: unknown
+        ) => {
+          if (locked?.has(field)) {
+            fieldsSkippedOperatorEdited.push(field);
+            return;
+          }
+          updates[field] = value;
+          fieldsUpdated.push(field);
+        };
 
         // K22 — sanitize at the persistence boundary (decode entities + strip
         // the "… Read more »" truncation tail) so re-scrapes can't refill the
         // bucket with encoded/truncated previews.
         const cleanDescription = sanitizeScrapedDescription(details.description);
         if (cleanDescription && cleanDescription !== event.description) {
-          updates.description = cleanDescription;
-          fieldsUpdated.push("description");
+          setField("description", cleanDescription);
         }
         if (
           details.startDate &&
           (!event.startDate || details.startDate.getTime() !== new Date(event.startDate).getTime())
         ) {
-          updates.startDate = details.startDate;
-          fieldsUpdated.push("startDate");
+          setField("startDate", details.startDate);
         }
         if (
           details.endDate &&
           (!event.endDate || details.endDate.getTime() !== new Date(event.endDate).getTime())
         ) {
-          updates.endDate = details.endDate;
-          fieldsUpdated.push("endDate");
+          setField("endDate", details.endDate);
         }
         if (details.imageUrl && details.imageUrl !== event.imageUrl) {
-          updates.imageUrl = details.imageUrl;
-          fieldsUpdated.push("imageUrl");
+          setField("imageUrl", details.imageUrl);
         }
         if (details.website && details.website !== event.ticketUrl) {
           // Gate detail-scraped URL against classification — otherwise rescrape
           // re-introduces aggregator URLs to events that were manually cleaned.
           const gatedWebsite = gateUrlForField(details.website, "ticket", urlClassifications);
           if (gatedWebsite !== event.ticketUrl) {
-            updates.ticketUrl = gatedWebsite;
-            fieldsUpdated.push("ticketUrl");
+            setField("ticketUrl", gatedWebsite);
           }
         }
+
+        results.operatorEditedFieldsSkipped += fieldsSkippedOperatorEdited.length;
+        const skippedReport =
+          fieldsSkippedOperatorEdited.length > 0 ? { fieldsSkippedOperatorEdited } : {};
 
         if (fieldsUpdated.length > 0) {
           updates.lastSyncedAt = new Date();
@@ -154,6 +180,7 @@ export async function POST(request: Request) {
             name: event.name,
             status: "updated",
             fieldsUpdated,
+            ...skippedReport,
           });
         } else {
           // Update sync timestamp even if nothing changed
@@ -163,6 +190,7 @@ export async function POST(request: Request) {
             id: event.id,
             name: event.name,
             status: "skipped",
+            ...skippedReport,
           });
         }
       } catch (error) {
