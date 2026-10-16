@@ -22,6 +22,7 @@ import {
 import { formatDateRange } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DuplicateFlagActions } from "@/components/admin/DuplicateFlagActions";
+import { safeHref } from "@takemetothefair/utils";
 
 export const dynamic = "force-dynamic";
 
@@ -59,7 +60,12 @@ function Side({ title, side }: { title: string; side: FlagSide | null }) {
         {side.sourceUrl && (
           <>
             {" · "}
-            <a href={side.sourceUrl} target="_blank" rel="noreferrer" className="underline">
+            <a
+              href={safeHref(side.sourceUrl)}
+              target="_blank"
+              rel="noreferrer"
+              className="underline"
+            >
               {side.sourceUrl}
             </a>
           </>

@@ -49,7 +49,16 @@ export interface SafeHrefOptions {
   allowMailto?: boolean;
   /** Also allow `tel:`. */
   allowTel?: boolean;
+  /**
+   * OPE-1385 — also allow a same-origin root-relative path ("/events/x"), for
+   * admin surfaces whose stored value is sometimes a site path rather than an
+   * absolute URL. Anything the browser would resolve OFF-origin
+   * ("//evil.test", "/\\evil.test", "/\t/evil.test") is still refused.
+   */
+  allowRelative?: boolean;
 }
+
+const SAME_ORIGIN_PROBE = "https://same-origin.invalid";
 
 /**
  * Return a value safe to render as an `href`, or `undefined` when there is no
@@ -62,6 +71,14 @@ export function safeHref(url: unknown, opts: SafeHrefOptions = {}): string | und
   if (typeof url !== "string") return undefined;
   const candidate = normalizeWebUrlInput(url);
   if (!candidate) return undefined;
+  if (opts.allowRelative === true && candidate.startsWith("/")) {
+    try {
+      const resolved = new URL(candidate, SAME_ORIGIN_PROBE);
+      return resolved.origin === SAME_ORIGIN_PROBE ? candidate : undefined;
+    } catch {
+      return undefined;
+    }
+  }
   let parsed: URL;
   try {
     parsed = new URL(candidate);

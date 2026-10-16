@@ -50,6 +50,36 @@ describe("safeHref", () => {
     expect(safeHref("tel:+15555550100", { allowTel: true })).toBe("tel:+15555550100");
     expect(safeHref("javascript:alert(1)", { allowMailto: true, allowTel: true })).toBeUndefined();
   });
+
+  // OPE-1385 — admin surfaces whose stored value is sometimes a site path.
+  describe("allowRelative", () => {
+    const rel = { allowRelative: true };
+    it("accepts a same-origin root-relative path, unchanged", () => {
+      expect(safeHref("/events/acme-fair", rel)).toBe("/events/acme-fair");
+      expect(safeHref("/admin/recommendations?x=1#y", rel)).toBe("/admin/recommendations?x=1#y");
+      expect(safeHref("/", rel)).toBe("/");
+    });
+
+    it("still refuses a relative path when not opted in", () => {
+      expect(safeHref("/events/acme-fair")).toBeUndefined();
+    });
+
+    it.each([
+      "//evil.test/x",
+      "/\\evil.test/x",
+      "/\t/evil.test/x",
+      "/\n/evil.test/x",
+      "javascript:alert(1)",
+      "data:text/html,x",
+      "events/no-leading-slash",
+    ])("refuses %j (resolves off-origin or is not a web URL)", (v) => {
+      expect(safeHref(v, rel)).toBeUndefined();
+    });
+
+    it("still accepts absolute http(s)", () => {
+      expect(safeHref("https://example.com/a", rel)).toBe("https://example.com/a");
+    });
+  });
 });
 
 describe("normalizeWebUrlInput", () => {

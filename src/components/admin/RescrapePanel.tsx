@@ -5,6 +5,7 @@ import { RefreshCw, ExternalLink, CheckCircle, AlertCircle } from "lucide-react"
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { formatTimestamp } from "@/lib/datetime";
+import { safeHref } from "@takemetothefair/utils";
 
 interface RescrapePanelProps {
   eventId: string;
@@ -105,7 +106,7 @@ export function RescrapePanel({
             <div className="flex justify-between">
               <span className="text-muted-foreground">URL</span>
               <a
-                href={sourceUrl}
+                href={safeHref(sourceUrl)}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-royal hover:underline flex items-center gap-1 max-w-xs truncate"
