@@ -14,7 +14,10 @@
  *
  * Routing:
  *   - Revenue/marketing KPIs (site_ctr, conversion_rate, brand_share)
- *     → SLACK_WEBHOOK_URL_BUSINESS + ALERT_EMAIL_BUSINESS
+ *     → SLACK_WEBHOOK_URL_BUSINESS + ALERT_EMAIL_BUSINESS. OPE-1409: when
+ *     ALERT_EMAIL_BUSINESS is unset the business EMAIL falls back to
+ *     ALERT_EMAIL_TECHNICAL (same recipients). Slack has NO fallback — an
+ *     unset SLACK_WEBHOOK_URL_BUSINESS stays silent.
  *   - Technical KPIs (sitemap_quality, time_to_index_h, any STALE-state
  *     breach) → SLACK_WEBHOOK_URL_TECHNICAL + ALERT_EMAIL_TECHNICAL
  *
@@ -25,9 +28,9 @@
  *     same incident flapping across the threshold and is silenced. Prod
  *     history showed conversion_rate crossing RED↔YELLOW up to 3×/day at the
  *     old 5% line (18 RED transitions in 90d → 2 under this debounce). Scoped
- *     to business because that channel has never delivered (no recipient
- *     configured), so this changes no live send; the technical channel is
- *     live and is left exactly as it was.
+ *     to business; the technical channel is left exactly as it was. The
+ *     debounce shipped while business had no recipient, and is what makes
+ *     the OPE-1409 fallback (business email → technical recipients) safe.
  *   - YELLOW transitions are debounced 72h per KPI — if the same KPI
  *     has been YELLOW in the last 72h, the new YELLOW is silenced so
  *     a noisy oscillating KPI doesn't spam the channel.
@@ -39,7 +42,8 @@
  * Configuration:
  *   - If neither SLACK_WEBHOOK_URL_* nor ALERT_EMAIL_* is set for a
  *     category, alerts for that category no-op (no errors). Lets us
- *     ship the code path before SecOps wires the webhook.
+ *     ship the code path before SecOps wires the webhook. (Business email
+ *     counts ALERT_EMAIL_TECHNICAL as set, per the OPE-1409 fallback.)
  */
 
 import type { DrizzleD1Database } from "drizzle-orm/d1";
@@ -102,8 +106,12 @@ interface AlertConfig {
 function loadConfig(category: AlertCategory): AlertConfig {
   if (category === "business") {
     return {
+      // No fallback for Slack: an unset business webhook stays silent.
       slackWebhookUrl: getEnvVar("SLACK_WEBHOOK_URL_BUSINESS"),
-      alertEmail: getEnvVar("ALERT_EMAIL_BUSINESS"),
+      // OPE-1409 — business KPI email goes to the technical recipients unless
+      // a dedicated ALERT_EMAIL_BUSINESS is set. `||` (not `??`) so an
+      // empty-string secret counts as unset rather than silencing the alert.
+      alertEmail: getEnvVar("ALERT_EMAIL_BUSINESS") || getEnvVar("ALERT_EMAIL_TECHNICAL"),
     };
   }
   return {
