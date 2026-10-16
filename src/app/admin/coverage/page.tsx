@@ -1,3 +1,4 @@
+import { requireAdmin } from "@/lib/require-admin";
 import Link from "next/link";
 import { Calendar, ChevronRight, Eye, Heart, MapPin, Store, FileText } from "lucide-react";
 import { and, desc, eq, isNull, or, sql } from "drizzle-orm";
@@ -519,6 +520,7 @@ export default async function AdminCoveragePage({
 }: {
   searchParams: Promise<{ scope?: string; filter?: string; sort?: string }>;
 }) {
+  await requireAdmin();
   const { scope: rawScope, filter: rawFilter, sort: rawSort } = await searchParams;
   const scope: EventScope = rawScope === "upcoming" ? "upcoming" : "all";
   const filter: CoverageFilter =

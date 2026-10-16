@@ -13,6 +13,7 @@
  * Server-rendered, edge runtime, no client interactivity. Same conventions
  * as /admin/source-quality.
  */
+import { requireAdmin } from "@/lib/require-admin";
 import Link from "next/link";
 import { eq, inArray, sql, desc } from "drizzle-orm";
 import { ArrowLeft } from "lucide-react";
@@ -192,6 +193,7 @@ function pct(n: number): string {
 }
 
 export default async function AutomationCandidatesPage() {
+  await requireAdmin();
   const [sources, clusters, fields] = await Promise.all([
     loadSourceRejectRate(),
     loadVendorLinkClusters(),

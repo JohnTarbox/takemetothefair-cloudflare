@@ -24,6 +24,7 @@
  * pattern as /admin/source-quality + /admin/blog.
  */
 
+import { requireAdmin } from "@/lib/require-admin";
 import { inArray, notInArray } from "drizzle-orm";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, gscInspectionState } from "@/lib/db/schema";
@@ -205,6 +206,7 @@ function bucketLabel(b: EntityBucket): string {
 export const dynamic = "force-dynamic";
 
 export default async function StuckUrlsPage() {
+  await requireAdmin();
   const { clusters, totalRows, totalStuckRows } = await loadClusters();
   const indexedRows = totalRows - totalStuckRows;
   const indexedPct = totalRows > 0 ? Math.round((indexedRows / totalRows) * 1000) / 10 : 0;
