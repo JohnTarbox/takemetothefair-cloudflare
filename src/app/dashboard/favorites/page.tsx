@@ -1,9 +1,8 @@
-import { redirect } from "next/navigation";
 import Link from "next/link";
 import { Calendar, MapPin, Store, Heart } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { auth } from "@/lib/auth";
+import { requireSession } from "@/lib/require-role";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { userFavorites, events, venues, vendors } from "@/lib/db/schema";
 import { eventVenueJoinProjection } from "@/lib/db/event-join-projection";
@@ -107,11 +106,7 @@ async function getFavorites(userId: string) {
 export const dynamic = "force-dynamic";
 
 export default async function FavoritesPage() {
-  const session = await auth();
-
-  if (!session) {
-    redirect("/login?callbackUrl=/dashboard/favorites");
-  }
+  const session = await requireSession("/dashboard/favorites");
 
   const {
     events: eventsList,

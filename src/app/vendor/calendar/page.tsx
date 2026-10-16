@@ -1,7 +1,6 @@
-import { redirect } from "next/navigation";
 import Link from "next/link";
 import { Calendar, ArrowLeft } from "lucide-react";
-import { auth } from "@/lib/auth";
+import { requireRole } from "@/lib/require-role";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { vendors, eventVendors, events, venues, promoters } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
@@ -104,11 +103,7 @@ async function getVendorEvents(userId: string) {
 export const dynamic = "force-dynamic";
 
 export default async function VendorCalendarPage() {
-  const session = await auth();
-
-  if (!session) {
-    redirect("/login");
-  }
+  const session = await requireRole("VENDOR", "/vendor/calendar");
 
   const { events: eventsList, vendorCoords } = await getVendorEvents(session.user.id);
 
