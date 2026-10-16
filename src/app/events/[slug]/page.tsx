@@ -44,7 +44,7 @@ import {
   contentLinks,
   eventSeries,
 } from "@/lib/db/schema";
-import { eq, and, ne, like, desc, or } from "drizzle-orm";
+import { eq, and, ne, desc } from "drizzle-orm";
 import { dedupeByResolvedSlug } from "@/lib/event-vendor-display";
 import { STATUS_BADGE_VARIANTS } from "@/lib/vendor-status";
 import type { EventVendorStatus } from "@/lib/constants";
@@ -84,6 +84,8 @@ import { buildSuperEventRef } from "@/lib/series/series-schema-org";
 // K46 — getEvent + buildEventMetadata moved to a sibling module so the /year
 // occurrence route can share them (Next forbids extra exports from page.tsx).
 import { getEvent, buildEventMetadata, countEventView } from "./event-detail-data";
+import { getCategoryMatchedBlogPosts } from "@/lib/blog/category-matched-posts";
+import { containsCI } from "@/lib/db/contains-ci";
 import { isD1PlatformFault } from "@/lib/db/degraded";
 import { DegradedPanel } from "@/components/layout/degraded-panel";
 import { ShareButtons } from "@/components/ShareButtons";
@@ -263,7 +265,7 @@ async function getRelatedEvents(eventId: string, venueId: string | null, categor
         .from(events)
         .leftJoin(venues, eq(events.venueId, venues.id))
         .leftJoin(promoters, eq(events.promoterId, promoters.id))
-        .where(and(...baseConditions, like(events.categories, `%${primaryCategory}%`)))
+        .where(and(...baseConditions, containsCI(events.categories, primaryCategory)))
         .orderBy(events.startDate)
         .limit(4);
 
@@ -363,48 +365,6 @@ async function getDirectlyLinkedBlogPosts(
   }
 }
 
-/**
- * Category/tag-based matches. Used to fill remaining slots once the direct
- * links are in. Excludes slugs already surfaced as direct links so we don't
- * double-render the same post.
- */
-async function getCategoryMatchedBlogPosts(
-  eventName: string,
-  categories: string[],
-  excludeSlugs: string[],
-  limit: number
-): Promise<RelatedBlogPost[]> {
-  if (limit <= 0) return [];
-  try {
-    const db = getCloudflareDb();
-    const searchConditions = [
-      like(blogPosts.tags, `%${eventName}%`),
-      ...categories.map((cat) => like(blogPosts.tags, `%${cat}%`)),
-      ...categories.map((cat) => like(blogPosts.categories, `%${cat}%`)),
-    ];
-
-    const posts = await db
-      .select({
-        title: blogPosts.title,
-        slug: blogPosts.slug,
-        excerpt: blogPosts.excerpt,
-        publishDate: blogPosts.publishDate,
-      })
-      .from(blogPosts)
-      .where(and(eq(blogPosts.status, "PUBLISHED"), or(...searchConditions)))
-      .orderBy(desc(blogPosts.publishDate))
-      .limit(limit + excludeSlugs.length);
-
-    const excluded = new Set(excludeSlugs);
-    return posts
-      .filter((p) => !excluded.has(p.slug))
-      .slice(0, limit)
-      .map((p) => ({ ...p, kind: "category" as const }));
-  } catch {
-    return [];
-  }
-}
-
 async function getRelatedBlogPosts(
   eventId: string,
   eventName: string,
@@ -438,6 +398,7 @@ async function getRelatedBlogPosts(
   const remaining = 3 - picked.length;
   if (remaining <= 0) return picked;
   const category = await getCategoryMatchedBlogPosts(
+    getCloudflareDb(),
     eventName,
     categories,
     picked.map((p) => p.slug),
