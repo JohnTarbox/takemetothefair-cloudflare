@@ -34,6 +34,28 @@ npx wrangler d1 execute takemetothefair-db --remote \
 
 ---
 
+## There is no in-app restore (OPE-1367, 2026-10-16)
+
+`/admin/database` used to have a **Restore from Backup** button backed by
+`POST /api/admin/database/restore`, which dropped every table and replayed an
+uploaded `.sql` file from inside a Worker request. It was retired: it was an
+unbounded, non-atomic, admin-session-reachable wipe of production, and Time
+Travel already does the job better (point-in-time, ≈0 RPO, reversible via the
+undo bookmark). The **Download Backup** button remains as a read-only export.
+
+Recovery is the CLI path above. In order:
+
+1. `set -a; . ./.env; set +a` then `npx wrangler whoami` — confirm
+   **John Tarbox - Account** (`e6011e48b7014ef83c77e3c767dac6cf`). Stop if not.
+2. `npx wrangler d1 time-travel info takemetothefair-db` — **record the current
+   bookmark** before touching anything (your own undo point, independent of the
+   one the restore prints).
+3. `npx wrangler d1 time-travel restore takemetothefair-db --timestamp=<ISO 8601 or unix seconds>`
+   (or `--bookmark=<bookmark>`). Window: **30 days**. Overwrites in place.
+4. Save the undo bookmark it prints, then read back counts (step 5 above).
+
+---
+
 ## ⚠️ The thing most likely to be got wrong
 
 **Time Travel cannot restore into a different database.** It only overwrites in
