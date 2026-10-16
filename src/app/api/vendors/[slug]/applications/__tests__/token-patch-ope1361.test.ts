@@ -105,6 +105,55 @@ describe("PATCH /api/vendors/[slug]/applications (OPE-1361)", () => {
     expect(linkStatus("e-open")).toBeUndefined();
   });
 
+  it("OPE-1381: a plain vendor sending paymentStatus PAID is 403 PAYMENT_STATUS_FORBIDDEN, nothing written", async () => {
+    const res = await patch("plain", { eventId: "e-open", paymentStatus: "PAID" });
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { error: string }).error).toBe("PAYMENT_STATUS_FORBIDDEN");
+    expect(linkStatus("e-open")).toBeUndefined();
+  });
+
+  it("OPE-1381: a plain vendor cannot flip an existing row to PAID", async () => {
+    raw
+      .prepare(
+        "INSERT INTO event_vendors (id, event_id, vendor_id, status, payment_status) VALUES ('ev1','e-open','v1','APPLIED','NOT_REQUIRED')"
+      )
+      .run();
+    const res = await patch("plain", { eventId: "e-open", paymentStatus: "PAID" });
+    expect(res.status).toBe(403);
+    expect(
+      (
+        raw.prepare("SELECT payment_status p FROM event_vendors WHERE id='ev1'").get() as {
+          p: string;
+        }
+      ).p
+    ).toBe("NOT_REQUIRED");
+  });
+
+  it("OPE-1381: the Cardworks tracker payload (canSelfConfirm vendor) still lands CONFIRMED + PAID", async () => {
+    const TRUSTED = "mmatf_trustedvendortoken";
+    raw
+      .prepare("INSERT INTO users (id, email, email_verified) VALUES ('u2','t@x.com',1780000000)")
+      .run();
+    raw
+      .prepare(
+        "INSERT INTO vendors (id, user_id, business_name, slug, can_self_confirm, commercial) VALUES ('v2','u2','Trusted','trusted',1,0)"
+      )
+      .run();
+    raw
+      .prepare("INSERT INTO api_tokens (id, user_id, token_hash, name) VALUES ('t2','u2',?,'T')")
+      .run(createHash("sha256").update(TRUSTED).digest("hex"));
+    // Exact body shape of apps/shows/src/lib/mmf-push.ts (PARTICIPATING).
+    const res = await patch(
+      "trusted",
+      { eventId: "e-open", status: "CONFIRMED", paymentStatus: "PAID" },
+      TRUSTED
+    );
+    expect(res.status).toBe(201);
+    expect(
+      raw.prepare("SELECT status, payment_status p FROM event_vendors WHERE vendor_id='v2'").get()
+    ).toEqual({ status: "CONFIRMED", p: "PAID" });
+  });
+
   it("a revoked token is 401", async () => {
     raw.prepare("UPDATE api_tokens SET revoked_at = 1").run();
     const res = await patch("plain", { eventId: "e-open" });

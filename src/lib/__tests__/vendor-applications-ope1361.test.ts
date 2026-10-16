@@ -16,7 +16,9 @@ import type { Database as AppDb } from "../db";
 import {
   applyVendorTokenPatch,
   checkEventAcceptsVendor,
+  checkVendorPaymentStatus,
   defaultApplicationStatus,
+  PAYMENT_STATUS_FORBIDDEN,
 } from "../vendor-applications";
 
 function ddlFor(table: Parameters<typeof getTableConfig>[0]): string {
@@ -210,14 +212,14 @@ describe("applyVendorTokenPatch — existing application (OPE-1361)", () => {
     expect(linkRow("plain", "open")?.paymentStatus).toBe("NOT_REQUIRED");
   });
 
-  it("accepts an enum paymentStatus", async () => {
+  it("OPE-1381: a non-canSelfConfirm vendor's enum paymentStatus is refused, not applied", async () => {
     addLink("plain", "open", "APPLIED");
     const r = await applyVendorTokenPatch(db, "plain", {
       eventId: "open",
       paymentStatus: "PENDING",
     });
-    expect(r).toMatchObject({ ok: true, body: { paymentStatus: "PENDING" } });
-    expect(linkRow("plain", "open")?.paymentStatus).toBe("PENDING");
+    expect(r).toMatchObject({ ok: false, httpStatus: 403, error: "PAYMENT_STATUS_FORBIDDEN" });
+    expect(linkRow("plain", "open")?.paymentStatus).toBe("NOT_REQUIRED");
   });
 
   it("an unverified vendor cannot change an existing row either", async () => {
@@ -261,5 +263,98 @@ describe("shared session-route rules", () => {
         { status: "APPROVED", commercialVendorsAllowed: true }
       )
     ).toEqual({ ok: true });
+  });
+});
+
+describe("OPE-1381 — a vendor cannot set its own paymentStatus", () => {
+  it("a non-canSelfConfirm vendor creating a row with PAID is 403 and writes nothing", async () => {
+    const r = await applyVendorTokenPatch(db, "plain", { eventId: "open", paymentStatus: "PAID" });
+    expect(r).toMatchObject({ ok: false, httpStatus: 403, error: PAYMENT_STATUS_FORBIDDEN });
+    expect(linkRow("plain", "open")).toBeUndefined();
+  });
+
+  it("a non-canSelfConfirm vendor flipping an existing row to PAID is 403, row untouched", async () => {
+    addLink("plain", "open", "APPLIED");
+    const r = await applyVendorTokenPatch(db, "plain", { eventId: "open", paymentStatus: "PAID" });
+    expect(r).toMatchObject({ ok: false, httpStatus: 403, error: PAYMENT_STATUS_FORBIDDEN });
+    expect(linkRow("plain", "open")).toEqual({ status: "APPLIED", paymentStatus: "NOT_REQUIRED" });
+  });
+
+  it("refuses even a value equal to the stored one (never silently dropped, never a no-op pass)", async () => {
+    addLink("plain", "open", "APPLIED");
+    const r = await applyVendorTokenPatch(db, "plain", {
+      eventId: "open",
+      paymentStatus: "NOT_REQUIRED",
+    });
+    expect(r).toMatchObject({ ok: false, httpStatus: 403, error: PAYMENT_STATUS_FORBIDDEN });
+  });
+
+  it("refuses the whole request — a valid status riding along with PAID is not applied", async () => {
+    addLink("plain", "open", "APPLIED");
+    const r = await applyVendorTokenPatch(db, "plain", {
+      eventId: "open",
+      status: "WITHDRAWN",
+      paymentStatus: "PAID",
+    });
+    expect(r).toMatchObject({ ok: false, httpStatus: 403 });
+    expect(linkRow("plain", "open")?.status).toBe("APPLIED");
+  });
+
+  it("a request WITHOUT paymentStatus from a plain vendor still works", async () => {
+    addLink("plain", "open", "APPLIED");
+    const r = await applyVendorTokenPatch(db, "plain", { eventId: "open", status: "WITHDRAWN" });
+    expect(r).toMatchObject({ ok: true, body: { status: "WITHDRAWN" } });
+  });
+
+  // The live token client: Maine Cardworks' show tracker,
+  // apps/shows/src/lib/mmf-push.ts STATUS_MAP, body = { eventId, ...mapping }.
+  // The vendor behind it (maine-cardworks-inc) is canSelfConfirm in prod.
+  it("the Cardworks tracker's real payloads pass for a canSelfConfirm vendor", async () => {
+    // PARTICIPATING on a new row
+    let r = await applyVendorTokenPatch(db, "trusted", {
+      eventId: "open",
+      status: "CONFIRMED",
+      paymentStatus: "PAID",
+    });
+    expect(r).toMatchObject({ ok: true, httpStatus: 201 });
+    expect(linkRow("trusted", "open")).toEqual({ status: "CONFIRMED", paymentStatus: "PAID" });
+
+    // ACCEPTED then PAYMENT_DUE on a new row
+    addEvent("open2", "APPROVED");
+    r = await applyVendorTokenPatch(db, "trusted", {
+      eventId: "open2",
+      status: "APPLIED",
+      paymentStatus: "NOT_REQUIRED",
+    });
+    expect(r).toMatchObject({ ok: true, httpStatus: 201 });
+    r = await applyVendorTokenPatch(db, "trusted", {
+      eventId: "open2",
+      status: "APPLIED",
+      paymentStatus: "PENDING",
+    });
+    expect(r).toMatchObject({ ok: true, body: { paymentStatus: "PENDING" } });
+    // then PARTICIPATING on the existing row
+    r = await applyVendorTokenPatch(db, "trusted", {
+      eventId: "open2",
+      status: "CONFIRMED",
+      paymentStatus: "PAID",
+    });
+    expect(r).toMatchObject({ ok: true, body: { status: "CONFIRMED", paymentStatus: "PAID" } });
+    expect(linkRow("trusted", "open2")).toEqual({ status: "CONFIRMED", paymentStatus: "PAID" });
+  });
+
+  it("checkVendorPaymentStatus: absent ok, bad enum 400, plain 403, trusted ok", () => {
+    expect(checkVendorPaymentStatus(false, undefined)).toEqual({
+      ok: true,
+      paymentStatus: undefined,
+    });
+    expect(checkVendorPaymentStatus(true, "FREE")).toMatchObject({ ok: false, httpStatus: 400 });
+    expect(checkVendorPaymentStatus(false, "PAID")).toMatchObject({
+      ok: false,
+      httpStatus: 403,
+      error: PAYMENT_STATUS_FORBIDDEN,
+    });
+    expect(checkVendorPaymentStatus(null, "PAID")).toMatchObject({ ok: false, httpStatus: 403 });
+    expect(checkVendorPaymentStatus(true, "PAID")).toEqual({ ok: true, paymentStatus: "PAID" });
   });
 });
