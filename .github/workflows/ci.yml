@@ -112,6 +112,13 @@ jobs:
       - name: Guard against edge runtime decls (forbidden under OpenNext)
         run: npx tsx scripts/check-no-edge-runtime.ts
 
+      # OPE-1380 — beside OPE-1365's requireAdmin page guard (a vitest, run in the
+      # test job): every admin/auth/portal/account page renders per request and
+      # is covered by the nonce-CSP middleware matcher, prefix list and the
+      # next.config public-CSP exclusion.
+      - name: Guard nonce-CSP routes render dynamically and are covered (OPE-1380)
+        run: npx tsx scripts/check-nonce-csp-routes.ts
+
       - name: Guard that occurrence URLs are built in one place (OPE-1324)
         run: npx tsx scripts/check-occurrence-paths.ts
 

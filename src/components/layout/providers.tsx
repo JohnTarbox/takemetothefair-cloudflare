@@ -3,8 +3,12 @@
 import { SessionProvider } from "next-auth/react";
 import { ThemeProvider } from "next-themes";
 import { FavoritesProvider } from "@/components/FavoritesProvider";
+import { useCspNonce } from "@/components/security/nonce-script";
+// OPE-1380 — side effect: stop zod's blocked `Function("")` eval probe.
+import "@/lib/validations/zod-jitless";
 
 export function Providers({ children }: { children: React.ReactNode }) {
+  const nonce = useCspNonce();
   return (
     // Design System keystone — dark mode UNLOCKED (2026-06-07).
     //
@@ -30,7 +34,17 @@ export function Providers({ children }: { children: React.ReactNode }) {
     //     animating during theme swap
     //   - <html> in layout.tsx carries suppressHydrationWarning
     //     (required by next-themes' pre-hydration <script>)
-    <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
+    //
+    // OPE-1380 — `nonce`: next-themes' no-flash inline <script> must carry the
+    // per-request CSP nonce on the nonce routes or 'strict-dynamic' blocks it.
+    // Undefined on cached public pages (no nonce, same markup as before).
+    <ThemeProvider
+      attribute="class"
+      defaultTheme="system"
+      enableSystem
+      disableTransitionOnChange
+      nonce={nonce}
+    >
       <SessionProvider>
         {/*
          * Cohort 4 (2026-06-01) — wraps inside SessionProvider so
