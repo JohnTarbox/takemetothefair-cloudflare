@@ -34,7 +34,8 @@ import {
 import { formatOccurrenceDate } from "@/lib/k18-vendor-grouping";
 import { groupVendorShows } from "@/lib/series/group-vendor-shows";
 import { VendorShowsByYear } from "@/components/vendors/VendorShowsByYear";
-import { eq, ne, and, or, asc, desc, sql, isNull, inArray, gte } from "drizzle-orm";
+import { eq, ne, and, or, asc, desc, sql, isNull, inArray } from "drizzle-orm";
+import { upcomingEndPredicate } from "@/lib/event-dates";
 import { withD1ReadLogged } from "@/lib/db/d1-resilience";
 import { DEGRADED_METADATA, isD1PlatformFault } from "@/lib/db/degraded";
 import { DegradedPanel } from "@/components/layout/degraded-panel";
@@ -527,7 +528,7 @@ async function getVendorOnce(slug: string) {
               and(
                 inArray(eventVendors.vendorId, batch),
                 isPubliclyVisibleVendorLink(),
-                gte(events.endDate, new Date())
+                upcomingEndPredicate(new Date())
               )
             )
             .orderBy(asc(events.startDate))

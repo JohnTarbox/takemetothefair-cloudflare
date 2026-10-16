@@ -21,7 +21,8 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { EventList } from "@/components/events/event-list";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { venues, events, promoters } from "@/lib/db/schema";
-import { eq, and, gte, inArray } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
+import { upcomingEndPredicate } from "@/lib/event-dates";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { attachEventDayDates } from "@/lib/event-days-attach";
 import { eventJoinProjection } from "@/lib/db/event-join-projection";
@@ -92,7 +93,7 @@ async function getVenue(slug: string) {
       .leftJoin(venues, eq(events.venueId, venues.id))
       .leftJoin(promoters, eq(events.promoterId, promoters.id))
       .where(
-        and(eq(events.venueId, venue.id), isPublicEventStatus(), gte(events.endDate, new Date()))
+        and(eq(events.venueId, venue.id), isPublicEventStatus(), upcomingEndPredicate(new Date()))
       )
       .orderBy(events.startDate)
       .limit(6);
