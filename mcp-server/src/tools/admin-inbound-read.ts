@@ -21,8 +21,9 @@
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import {
+  adminActions,
   emailSendLedger,
   events,
   inboundEmails,
@@ -35,6 +36,10 @@ import {
 } from "../schema.js";
 import { normalizeEmailAddress } from "@takemetothefair/db-schema";
 import { presentPromoterContact } from "./admin-promoter-contacts.js";
+import {
+  ENRICH_NOTHING_STAGED_ACTION,
+  ENRICH_PROPOSED_ACTION,
+} from "../email-handlers/enrich-proposal.js";
 import { buildVendorInquiryBriefing } from "../inbound/vendor-inquiry-briefing.js";
 import { jsonContent } from "../helpers.js";
 import { mainAppFetch, type MainAppEnv } from "../main-app-fetch.js";
@@ -205,6 +210,43 @@ export function registerInboundReadTools(
         };
       } catch {
         acknowledgment = null;
+      }
+
+      // OPE-1152 — what enrich-on-match staged (or recorded as dropped) for
+      // this email. Fail-soft: the row is what the caller came for.
+      let enrichOnMatch: Array<Record<string, unknown>> | null = null;
+      try {
+        const rows = await db
+          .select({
+            id: adminActions.id,
+            action: adminActions.action,
+            targetId: adminActions.targetId,
+            payloadJson: adminActions.payloadJson,
+            createdAt: adminActions.createdAt,
+          })
+          .from(adminActions)
+          .where(
+            and(
+              inArray(adminActions.action, [ENRICH_PROPOSED_ACTION, ENRICH_NOTHING_STAGED_ACTION]),
+              sql`json_extract(${adminActions.payloadJson}, '$.inboundEmailId') = ${row.id}`
+            )
+          )
+          .orderBy(adminActions.createdAt);
+        enrichOnMatch = rows.map((r) => {
+          const p = safeJson<Record<string, unknown>>(r.payloadJson, {});
+          return {
+            action: r.action,
+            event_id: r.targetId,
+            created_at: r.createdAt instanceof Date ? r.createdAt.toISOString() : r.createdAt,
+            path: p.path ?? null,
+            match_type: p.matchType ?? null,
+            proposals: p.proposals ?? {},
+            extracted_fields: p.extractedFields ?? [],
+            unstaged_fields: p.unstagedFields ?? [],
+          };
+        });
+      } catch {
+        enrichOnMatch = null;
       }
 
       // OPE-1265 — mail to lists@: attribution, and a double-opt-in's confirm
@@ -408,6 +450,9 @@ export function registerInboundReadTools(
             resulting_event: resulting[0] ?? null,
             resulting_event_note:
               "Singular by schema — an email that created several events records only one here (OPE-464).",
+            enrich_on_match: enrichOnMatch,
+            enrich_on_match_note:
+              "OPE-1152 — one row per match against an EXISTING event: `dedup.enrich_proposed` (fill-empty proposals, staged only — nothing was applied) or `dedup.enrich_nothing_staged` (`unstaged_fields` = carried by the email but the event already holds a different value; compare by hand). `null` means the read failed. Empty = no match was staged from this email (or it predates OPE-1152).",
             attachment_count: row.attachmentCount,
             attachment_refs: refs,
             attachment_skips: skips,

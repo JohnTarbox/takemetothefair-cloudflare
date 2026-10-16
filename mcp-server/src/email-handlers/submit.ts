@@ -33,6 +33,7 @@ import { getDb } from "../db.js";
 import { logError } from "../logger.js";
 import { decideEventGrounding, type EventGroundingDecision } from "@takemetothefair/utils";
 import { emitExtractionFault } from "../faults/extraction-emitter.js";
+import { stageEnrichOnMatch } from "./enrich-proposal.js";
 
 const SOURCE_FETCH = "mcp:email-handler:extract:fetch";
 const SOURCE_EXTRACT = "mcp:email-handler:extract:ai";
@@ -1028,6 +1029,8 @@ export async function submitEvent(
         success: true;
         routed?: "occurrence" | "occurrence_exists";
         event: { id: string; slug: string };
+        /** OPE-1152 — the candidate the route tagged the new row against. */
+        possibleDuplicateOf?: string | null;
       }
     | { success: false; error: string }
     | null;
@@ -1095,6 +1098,41 @@ export async function submitEvent(
   // identical to one that passed a real check.
   if (context.dedupWasBlind) {
     await recordBlindDedupCreation(env, extracted, created, context.inboundEmailId);
+  }
+
+  // OPE-1152 — the submit route is itself a MATCH surface, and both of its
+  // match outcomes used to drop the email's content with no record:
+  //   - `occurrence_exists`: the edition already exists under its series, so
+  //     nothing was created and the content went nowhere (New Gloucester,
+  //     inbound 9fc287ef — replied `ok-medium`, staged nothing).
+  //   - `possibleDuplicateOf`: a PENDING row was created and tagged against an
+  //     existing event (Hackmatack, 09eccd4f — three PENDING twins, all later
+  //     rejected, the vendor terms applied to the keeper by hand).
+  // Stage against the matched event in both cases. Staging only, never throws.
+  const matchedEventId =
+    created.routed === "occurrence_exists"
+      ? created.id
+      : (body.possibleDuplicateOf ?? context.possibleDuplicateOf ?? null);
+  if (matchedEventId) {
+    try {
+      await stageEnrichOnMatch(getDb(env.DB), {
+        existingEventId: matchedEventId,
+        url: extracted.url,
+        event: groundedEvent as unknown as Record<string, unknown>,
+        matchType:
+          created.routed === "occurrence_exists" ? "occurrence_exists" : "possible_duplicate",
+        path: created.routed === "occurrence_exists" ? "occurrence-exists" : "possible-duplicate",
+        inboundEmailId: context.inboundEmailId || null,
+        fromAddress,
+      });
+    } catch (err) {
+      await logError(getDb(env.DB), {
+        source: "mcp:workflow:enrich-proposal",
+        message: "dedup enrich-proposal capture failed (submit route match)",
+        error: err,
+        context: { matchedEventId, routed: created.routed },
+      }).catch(() => {});
+    }
   }
 
   return created;

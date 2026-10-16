@@ -1019,6 +1019,10 @@ export async function POST(request: NextRequest) {
         slug: finalEventSlug,
         name: effectiveName,
       },
+      // OPE-1152 — echo the match so the email lane can stage the submission's
+      // content against the EXISTING event (report-only), rather than leaving it
+      // only on a PENDING twin an operator will reject.
+      possibleDuplicateOf: possibleDuplicateOf ?? null,
     });
   } catch (error) {
     await logError(db, {

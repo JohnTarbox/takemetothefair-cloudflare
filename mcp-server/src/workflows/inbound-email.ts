@@ -84,7 +84,7 @@ import {
 import { openObligationIfOwed } from "../email-handlers/open-obligation.js";
 import { heldSendReason } from "../inbound/replies-suppressed.js";
 import { isZeroConfidenceUnclear } from "../email-handlers/automated-mail.js";
-import { inboundEmails, adminActions, events } from "../schema.js";
+import { inboundEmails, adminActions } from "../schema.js";
 import { logError } from "../logger.js";
 import {
   classifyDomainTier,
@@ -193,7 +193,7 @@ import { countOutcomes } from "../email-handlers/outcome-counts.js";
 import { clusterSubmissionCandidates } from "../email-handlers/cluster-candidates.js";
 import { classifySourceStaleness, sourceDomainOf } from "../email-handlers/stale-source.js";
 import { recordSourceStale } from "../goodwill/scoring.js";
-import { computeFillEmptyProposals } from "../email-handlers/enrich-proposal.js";
+import { stageEnrichOnMatch, type StageEnrichInput } from "../email-handlers/enrich-proposal.js";
 import { detectRosterEntries, type RosterEntry } from "../email-handlers/roster-detect.js";
 import { isShareRedirectHost, resolveShareRedirect } from "../email-handlers/share-redirect.js";
 import { toMarkdownWithRetry } from "../email-handlers/ocr-retry.js";
@@ -3135,73 +3135,22 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         );
 
         // OPE-175 — enrich-on-match, STAGED FOR REVIEW (John's call 2026-07-13:
-        // fill-empty only, land PENDING). When a submission dedups to an existing
-        // event, capture the fields the email could FILL that are currently EMPTY
-        // on that event (image_url, source_url, description) and flag the inbound
-        // row for operator review — WITHOUT mutating the live (usually APPROVED)
-        // event. The operator applies the fills by hand from /admin/inbound-emails.
-        // Fill-empty-only: a populated field is never proposed, so curated data is
-        // untouchable. Distinct from the tier-audit's `dedup.would_enrich`
-        // observation above (which fires on source-tier promotion, not empty
-        // fields). Failsoft — a hiccup here must not block the already-exists reply.
+        // fill-empty only, land PENDING). Never mutates the live (usually
+        // APPROVED) event; the operator applies fills by hand from
+        // /admin/inbound-emails. Distinct from the tier-audit's
+        // `dedup.would_enrich` observation above. OPE-1152 widened the scope and
+        // made a stage-nothing match record itself (enrich-proposal.ts). Failsoft
+        // — a hiccup here must not block the already-exists reply.
         if (dedup.existingEventId) {
-          const existingEventId = dedup.existingEventId;
-          await step.do(
-            "submit/enrich-proposal",
-            {
-              retries: { limit: 1, delay: "5 seconds", backoff: "constant" },
-              timeout: "5 seconds",
-            },
-            async () => {
-              try {
-                const db = getDb(this.env.DB);
-                const [existing] = await db
-                  .select({
-                    imageUrl: events.imageUrl,
-                    sourceUrl: events.sourceUrl,
-                    description: events.description,
-                  })
-                  .from(events)
-                  .where(eq(events.id, existingEventId))
-                  .limit(1);
-                if (!existing) return;
-                const proposals = computeFillEmptyProposals(existing, {
-                  imageUrl: extracted.event.imageUrl,
-                  sourceUrl: extracted.url,
-                  description: extracted.event.description,
-                });
-                if (Object.keys(proposals).length === 0) return;
-
-                await db.insert(adminActions).values({
-                  action: "dedup.enrich_proposed",
-                  actorUserId: null,
-                  targetType: "event",
-                  targetId: existingEventId,
-                  payloadJson: JSON.stringify({
-                    proposals,
-                    matchType: dedup.matchType ?? "exact_url",
-                    source: extracted.url || null,
-                    inboundEmailId: messageRowId,
-                    fromAddress,
-                  }),
-                  createdAt: new Date(),
-                });
-                // Surface the row in the /admin/inbound-emails review queue so an
-                // operator sees "matched + has fillable data" rather than a silent
-                // already-exists. SET only — never clears an operator's own flag.
-                await db
-                  .update(inboundEmails)
-                  .set({ flaggedForReview: 1 })
-                  .where(eq(inboundEmails.id, messageRowId));
-              } catch (err) {
-                await logError(getDb(this.env.DB), {
-                  source: "mcp:workflow:enrich-proposal",
-                  message: "dedup enrich-proposal capture failed",
-                  error: err,
-                });
-              }
-            }
-          );
+          await this.stageEnrichBestEffort(step, "submit/enrich-proposal", {
+            existingEventId: dedup.existingEventId,
+            url: extracted.url,
+            event: extracted.event as unknown as Record<string, unknown>,
+            matchType: dedup.matchType ?? "exact_url",
+            path: "single-high",
+            inboundEmailId: messageRowId,
+            fromAddress,
+          });
         }
 
         return {
@@ -3358,6 +3307,38 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
    * row (`extract_fail_reason`) and logged, so it is never a silent drop. The
    * reply is the existing no-URL-family copy — no new wording.
    */
+  /**
+   * OPE-1152 — enrich-on-match for ONE matched submission, from ANY match
+   * branch. Before this, the stager was reachable only from the single-event
+   * HIGH branch: the fan-out, multi-source and multi-URL dedup hits pushed an
+   * `already-exists` bullet and moved on, so organizer content arriving on
+   * those paths was discarded with no record. Every dedup-hit site now routes
+   * through here. Staging only — `stageEnrichOnMatch` never writes `events`.
+   * Fail-soft: a staging failure is logged and never fails the submission.
+   */
+  private async stageEnrichBestEffort(
+    step: WorkflowStep,
+    label: string,
+    input: StageEnrichInput
+  ): Promise<void> {
+    await step.do(
+      label,
+      { retries: { limit: 1, delay: "5 seconds", backoff: "constant" }, timeout: "10 seconds" },
+      async () => {
+        try {
+          await stageEnrichOnMatch(getDb(this.env.DB), input);
+        } catch (err) {
+          await logError(getDb(this.env.DB), {
+            source: "mcp:workflow:enrich-proposal",
+            message: "dedup enrich-proposal capture failed",
+            error: err,
+            context: { path: input.path, existingEventId: input.existingEventId },
+          });
+        }
+      }
+    );
+  }
+
   private async refusedCandidatesResult(
     subject: string,
     url: string | null,
@@ -3448,6 +3429,18 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             eventStatus: dedup.existingEventStatus,
             eventId: dedup.existingEventId,
           });
+          // OPE-1152 — this branch used to drop the child's content silently.
+          if (dedup.existingEventId) {
+            await this.stageEnrichBestEffort(step, `${labelPrefix}/enrich-proposal`, {
+              existingEventId: dedup.existingEventId,
+              url: perEvent.url,
+              event: childEvent as unknown as Record<string, unknown>,
+              matchType: dedup.matchType ?? null,
+              path: "fanout",
+              inboundEmailId: messageRowId,
+              fromAddress,
+            });
+          }
           continue;
         }
         const submitted = await step.do(
@@ -5033,6 +5026,16 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           // source's provenance to the keeper before dropping the candidate, so
           // "another source also cited these fields" is preserved. Best-effort.
           if (dedup.existingEventId) {
+            // OPE-1152 — stage what the candidate carried that the keeper lacks.
+            await this.stageEnrichBestEffort(step, `${labelPrefix}/enrich-proposal`, {
+              existingEventId: dedup.existingEventId,
+              url: sourceUrl,
+              event: extracted.event as unknown as Record<string, unknown>,
+              matchType: dedup.matchType ?? null,
+              path: "multi-source",
+              inboundEmailId: messageRowId,
+              fromAddress,
+            });
             await this.recordCitationsBestEffort(
               step,
               `${labelPrefix}/cite-keeper`,
@@ -5418,6 +5421,18 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             eventStatus: dedup.existingEventStatus,
             eventId: dedup.existingEventId,
           });
+          // OPE-1152 — this branch used to drop the page's content silently.
+          if (dedup.existingEventId) {
+            await this.stageEnrichBestEffort(step, `${labelPrefix}/enrich-proposal`, {
+              existingEventId: dedup.existingEventId,
+              url: extracted.url,
+              event: extracted.event as unknown as Record<string, unknown>,
+              matchType: dedup.matchType ?? null,
+              path: "multi-url",
+              inboundEmailId: messageRowId,
+              fromAddress,
+            });
+          }
           continue;
         }
         const submitted = await step.do(
