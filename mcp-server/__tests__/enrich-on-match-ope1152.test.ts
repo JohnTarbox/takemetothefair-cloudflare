@@ -202,7 +202,7 @@ describe("stageEnrichOnMatch — the three OPE-1152 specimens", () => {
       matchType: "possible_duplicate",
       path: "possible-duplicate",
       inboundEmailId: "09eccd4f",
-      fromAddress: "aram@hackmatack.org",
+      fromAddress: "heathdesk@hackmatack.org",
     });
 
     expect(out.outcome).toBe("proposed");

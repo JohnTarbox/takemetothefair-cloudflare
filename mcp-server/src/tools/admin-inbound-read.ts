@@ -160,7 +160,7 @@ export function registerInboundReadTools(
       // second query.
       //
       // `inbound_emails.reply_kind` is SINGLE-VALUED and is overwritten by
-      // whatever replied last. Jeremy Hall's `ce16f4a1` row reads
+      // whatever replied last. Jordan Sample's `ce16f4a1` row reads
       // `reply_kind='manual'` because a human eventually answered it by hand —
       // which makes it look handled and destroys the evidence that no automated
       // acknowledgment ever fired. The ledger keeps every send, so it is the

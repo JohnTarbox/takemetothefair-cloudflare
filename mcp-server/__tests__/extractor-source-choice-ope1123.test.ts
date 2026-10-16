@@ -143,9 +143,9 @@ const HACKMATACK =
   "Hi Carolyn,\n\nHope you're doing well! I wanted to confirm if you'll be joining us at " +
   "Hackmatack for our fall festival on October 11th? We'd love to have you! Please let me " +
   "know, Thank you!\n\nBest,\n\nAram\n\nhttps://www.hackmatackplayhouse.org/\n\n" +
-  "Aram Guptill | Executive Producer\n\nHackmatack Farm + Playhouse\n\n~ (207) 698-1807\n\n" +
+  "Avery Sample | Executive Producer\n\nHackmatack Farm + Playhouse\n\n~ (207) 698-1807\n\n" +
   "~ 538 School Street, Berwick, ME 03901\n\n\n\n" +
-  'From: Aram Guptill <aram@hackmatack.org>\nTo: "colors"<colors@symdak.com>\n' +
+  'From: Avery Sample <heathdesk@hackmatack.org>\nTo: "colors"<orchiddesk@symdak.com>\n' +
   "Date: Thu, 14 May 2026 08:23:19 -0400\nSubject: Hackmatack Open Farm Day- June 21st\n\n" +
   "Hello Carolyn\n\nI hope you're doing well! Thank you for reaching out to be a part of our " +
   "craft + community fair at Hackmatack. Some logistics: I have you down as being interested " +
@@ -188,7 +188,7 @@ describe("OPE-1123 specimen 2 — quoted history is not a source", () => {
     });
     const { step } = makeStep({
       parsedUrl: null,
-      fromAddress: "shpandabear10@gmail.com",
+      fromAddress: "userpoppy@gmail.com",
       subject: "",
       attachmentCount: 0,
       classifiedSubIntent: "new_event",

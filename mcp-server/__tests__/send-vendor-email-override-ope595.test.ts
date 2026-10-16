@@ -57,7 +57,7 @@ beforeEach(() => {
   registerSendVendorEmailTool(server as never, db, AUTH, env as never);
 
   raw["prepare"](
-    `INSERT INTO users (id, email, name, role) VALUES ('u-owner','21streetbeads@gmail.com','Owner','VENDOR')`
+    `INSERT INTO users (id, email, name, role) VALUES ('u-owner','useraster1@gmail.com','Owner','VENDOR')`
   ).run();
   raw["prepare"](
     `INSERT INTO users (id, email, name, role) VALUES ('u-other','stranger@example.com','Stranger','VENDOR')`
@@ -83,11 +83,11 @@ const send = (args: Record<string, unknown>) =>
 
 describe("OPE-595 — recipient override", () => {
   it("sends to a vendor whose contact_email is NULL when the owner's address is supplied", async () => {
-    const out = parse(await send({ vendor_id: "v-1", email: "21streetbeads@gmail.com" }));
+    const out = parse(await send({ vendor_id: "v-1", email: "useraster1@gmail.com" }));
     expect(out.success).toBe(true);
-    expect(out.sent_to).toBe("21streetbeads@gmail.com");
+    expect(out.sent_to).toBe("useraster1@gmail.com");
     // Primary + operator BCC.
-    expect(sent.map((m) => m.to)).toContain("21streetbeads@gmail.com");
+    expect(sent.map((m) => m.to)).toContain("useraster1@gmail.com");
     expect(sent.find((m) => m.source === "email:vendor-outreach")).toBeTruthy();
   });
 
@@ -106,7 +106,7 @@ describe("OPE-595 — recipient override", () => {
   });
 
   it("refuses when the vendor has no owner and no claimant, and says why", async () => {
-    const res = (await send({ vendor_id: "v-orphan", email: "21streetbeads@gmail.com" })) as {
+    const res = (await send({ vendor_id: "v-orphan", email: "useraster1@gmail.com" })) as {
       isError?: boolean;
     };
     expect(res.isError).toBe(true);
@@ -115,38 +115,38 @@ describe("OPE-595 — recipient override", () => {
   });
 
   it("matches the owner case-insensitively, as the parameter promises", async () => {
-    const out = parse(await send({ vendor_id: "v-1", email: "21StreetBeads@Gmail.com" }));
+    const out = parse(await send({ vendor_id: "v-1", email: "useraster1@Gmail.com" }));
     expect(out.success).toBe(true);
-    expect(out.sent_to).toBe("21streetbeads@gmail.com");
+    expect(out.sent_to).toBe("useraster1@gmail.com");
   });
 
   it("honours suppression on the OVERRIDE address, not just contact_email", async () => {
     // The gate has to follow the recipient. Checking the vendor's (NULL)
     // contact_email would let a suppressed override through silently.
     raw["prepare"](
-      `INSERT INTO email_suppression_list (email, reason, created_at) VALUES ('21streetbeads@gmail.com','unsubscribed',unixepoch())`
+      `INSERT INTO email_suppression_list (email, reason, created_at) VALUES ('useraster1@gmail.com','unsubscribed',unixepoch())`
     ).run();
-    const out = parse(await send({ vendor_id: "v-1", email: "21streetbeads@gmail.com" }));
+    const out = parse(await send({ vendor_id: "v-1", email: "useraster1@gmail.com" }));
     expect(out.suppressed).toBe(true);
     expect(sent).toHaveLength(0);
   });
 
   it("records the override in the audit row, so the ledger says where it went", async () => {
-    await send({ vendor_id: "v-1", email: "21streetbeads@gmail.com" });
+    await send({ vendor_id: "v-1", email: "useraster1@gmail.com" });
     const [action] = await db.select().from(adminActions);
     const payload = JSON.parse(action.payloadJson ?? "{}");
     // Without this the audit row names the vendor and not the human.
-    expect(payload.to).toBe("21streetbeads@gmail.com");
-    expect(payload.recipient_override).toBe("21streetbeads@gmail.com");
+    expect(payload.to).toBe("useraster1@gmail.com");
+    expect(payload.recipient_override).toBe("useraster1@gmail.com");
     const [attempt] = await db.select().from(vendorOutreachAttempts);
     expect(attempt.notes).toContain("override");
   });
 
   it("writes no audit or outreach row when suppressed", async () => {
     raw["prepare"](
-      `INSERT INTO email_suppression_list (email, reason, created_at) VALUES ('21streetbeads@gmail.com','unsubscribed',unixepoch())`
+      `INSERT INTO email_suppression_list (email, reason, created_at) VALUES ('useraster1@gmail.com','unsubscribed',unixepoch())`
     ).run();
-    await send({ vendor_id: "v-1", email: "21streetbeads@gmail.com" });
+    await send({ vendor_id: "v-1", email: "useraster1@gmail.com" });
     expect(await db.select().from(adminActions)).toHaveLength(0);
     expect(await db.select().from(vendorOutreachAttempts)).toHaveLength(0);
   });

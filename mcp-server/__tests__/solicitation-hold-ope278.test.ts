@@ -17,16 +17,16 @@ import {
 const read = (rel: string) => readFileSync(resolve(__dirname, "..", rel), "utf8");
 
 const SPECIMENS: Array<[string, string]> = [
-  ["sara.beth.sovrago@gmail.com", "Complete Attendee Information for CraftFest Cotuit 2026"],
+  ["user.basil1@gmail.com", "Complete Attendee Information for CraftFest Cotuit 2026"],
   [
-    "lucy.morgan.leadstream@gmail.com",
+    "user.clover1@gmail.com",
     "Complete Visitor List for New England Made Giftware & Specialty Food Show 2026",
   ],
   [
-    "charles.anderson.leadstream@gmail.com",
+    "user.sample.leadstream@gmail.com",
     "47th Annual Fall Connecticut Home Show 2026: Full List of Registered Visitors",
   ],
-  ["mia.johsonn@gmail.com", "Norwalk Boat Show 2026 - Attendee List"],
+  ["user.daisy1@gmail.com", "Norwalk Boat Show 2026 - Attendee List"],
 ];
 
 const NEAR_MISSES = [
@@ -46,7 +46,7 @@ describe("OPE-278 — the pattern rule", () => {
 
   it("holds the same subject from a FRESH address — what an address block cannot do", () => {
     const v = detectListBrokerSolicitation({
-      fromAddr: "olivia.harper2291@gmail.com",
+      fromAddr: "user.fern1@gmail.com",
       subject: "Big E 2026 - Attendee List",
     });
     expect(v).toEqual({ kind: "list-broker", reason: "list-broker:subject" });
@@ -55,7 +55,7 @@ describe("OPE-278 — the pattern rule", () => {
   it("holds a leadstream sender whatever the subject says", () => {
     expect(
       detectListBrokerSolicitation({
-        fromAddr: "new.person-leadstream@gmail.com",
+        fromAddr: "user.other.leadstream@gmail.com",
         subject: "Quick question",
       })
     ).toEqual({ kind: "list-broker", reason: "list-broker:sender-token:leadstream" });

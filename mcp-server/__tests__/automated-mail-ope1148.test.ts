@@ -83,7 +83,7 @@ const INCIDENT: [string, string, string, string, string][] = [
   ["5608c92a", "feedback@e.democrats.org", GMAIL, "2026-09-24T01:07:00Z", "classifier spam"],
   [
     "034570a9",
-    "premium@academia-mail.com",
+    "umberdesk@academia-mail.com",
     "mail-dl2-x10.google.com",
     "2026-09-24T01:16:00Z",
     "ACKED",
@@ -179,13 +179,13 @@ describe("OPE-1148 — the detector, rule by rule", () => {
 
   it("REGRESSION: a genuine organizer email with no automated signal proceeds", () => {
     expect(d("secretary@fryeburgfair.org")).toBeNull();
-    expect(d("maryjane.smith@gmail.com")).toBeNull();
+    expect(d("user.vine@gmail.com")).toBeNull();
   });
 
   it.each([
     "noreplyfan@x.com",
     "notifyme@x.com",
-    "bounce.house@funrentals.com",
+    "pat.willow@funrentals.com",
     "bounce-rentals@x.com",
   ])("a person or vendor whose address merely contains a robot word proceeds: %s", (from) => {
     expect(d(from)).toBeNull();

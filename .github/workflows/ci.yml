@@ -171,6 +171,9 @@ jobs:
       - name: Guard the vendor write-log wiring (OPE-830)
         run: npx tsx scripts/check-write-log-wiring.ts
 
+      - name: Guard against real people's email addresses in tracked files (OPE-1363)
+        run: npx tsx scripts/check-no-real-addresses.ts
+
       # OPE-975 — OPE-246's probe rule, enforced: every declared execution path
       # names a heartbeat probe or a waiver, and the probe registry matches its
       # heartbeat_probes seed rows (read by replaying the migrations).

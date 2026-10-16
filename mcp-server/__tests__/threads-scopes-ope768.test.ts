@@ -124,13 +124,13 @@ describe("scope 2 — one waiting obligation per conversation", () => {
     // Heather Santiago, 2026-07-11: "account" → support@, "booth set up" → hello@.
     const a = await inbound({
       id: "ade34b9e",
-      fromAddress: "heathersantiago@furbabymedical.com",
+      fromAddress: "laurel1desk@furbabymedical.com",
       subject: "account",
       threadId: "TH-a",
     });
     const b = await inbound({
       id: "428f8546",
-      fromAddress: "heathersantiago@furbabymedical.com",
+      fromAddress: "laurel1desk@furbabymedical.com",
       toAddress: "hello@meetmeatthefair.com",
       subject: "booth set up",
       threadId: "TH-b",
@@ -144,7 +144,7 @@ describe("scope 2 — one waiting obligation per conversation", () => {
       open_rows: 2,
     });
     expect(new Set(out.obligations.map((o: any) => o.correspondent))).toEqual(
-      new Set(["heathersantiago@furbabymedical.com"])
+      new Set(["laurel1desk@furbabymedical.com"])
     );
   });
 });
@@ -158,7 +158,7 @@ describe("scope 3 — an operator forward opens no obligation", () => {
       subject: "Fwd: Account creation",
       threadId: "TC",
       threadBasis: "operator_forward",
-      originalSenderAddress: "celina.daigle@freedomboatclub.us",
+      originalSenderAddress: "pat.vine1@freedomboatclub.us",
     });
     expect(await openObligationIfOwed({ DB: {} as never }, db, f, "t")).toBeNull();
     expect(db.select().from(supportObligations).all()).toHaveLength(0);
@@ -170,8 +170,8 @@ describe("scope 3 — an operator forward opens no obligation", () => {
         threadId: "TC",
         messageId: "<a@x>",
         normalizedSubject: "account creation",
-        participants: "celina.daigle@freedomboatclub.us|support@meetmeatthefair.com",
-        fromAddress: "celina.daigle@freedomboatclub.us",
+        participants: "pat.vine1@freedomboatclub.us|support@meetmeatthefair.com",
+        fromAddress: "pat.vine1@freedomboatclub.us",
       },
     ];
     const base = {
@@ -180,7 +180,7 @@ describe("scope 3 — an operator forward opens no obligation", () => {
     };
     expect(
       resolveThread(
-        { ...base, forwardOf: "Celina <celina.daigle@freedomboatclub.us>" },
+        { ...base, forwardOf: "Celina <pat.vine1@freedomboatclub.us>" },
         candidates,
         "N"
       )
@@ -189,7 +189,7 @@ describe("scope 3 — an operator forward opens no obligation", () => {
     // "Account creation" is a subject two strangers can share.
     const stranger = [{ ...candidates[0], threadId: "TS", fromAddress: "someone.else@z.test" }];
     expect(
-      resolveThread({ ...base, forwardOf: "celina.daigle@freedomboatclub.us" }, stranger, "N").basis
+      resolveThread({ ...base, forwardOf: "pat.vine1@freedomboatclub.us" }, stranger, "N").basis
     ).toBe("new");
     // No hint (an untrusted forwarder) → the forwarder is the person waiting.
     expect(resolveThread(base, candidates, "N").basis).toBe("new");
@@ -199,7 +199,7 @@ describe("scope 3 — an operator forward opens no obligation", () => {
         {
           ...base,
           subject: "Fwd: Washington County Fair",
-          forwardOf: "celina.daigle@freedomboatclub.us",
+          forwardOf: "pat.vine1@freedomboatclub.us",
         },
         candidates,
         "N"
@@ -211,10 +211,10 @@ describe("scope 3 — an operator forward opens no obligation", () => {
     expect(
       correspondentKey({
         fromAddress: "jtarboxme@gmail.com",
-        originalSenderAddress: "Celina.Daigle@freedomboatclub.us",
+        originalSenderAddress: "Pat.vine1@freedomboatclub.us",
         threadBasis: "operator_forward",
       })
-    ).toBe("celina.daigle@freedomboatclub.us");
+    ).toBe("pat.vine1@freedomboatclub.us");
     // Not an operator forward → the sender, whatever the nested From says.
     expect(
       correspondentKey({
@@ -263,7 +263,7 @@ const row = (o: Partial<BackfillInboundRow> & { id: string; receivedAt: number }
     ...o,
   }) as BackfillInboundRow;
 
-const CELINA = "celina.daigle@freedomboatclub.us";
+const CELINA = "pat.vine1@freedomboatclub.us";
 const T = (d: string) => Date.parse(d);
 /** Celina's five rows + John's forward, as in prod (subjects, ids, header ids). */
 const CELINA_ROWS = [
@@ -372,14 +372,14 @@ describe("scope 5 — backfill plan", () => {
       row({
         id: "47d77f37",
         receivedAt: T("2026-08-05T15:14:47Z"),
-        fromAddress: "holly@plushcargo.com",
+        fromAddress: "elmdesk@plushcargo.com",
         subject: "Event merch for fairs and festivals",
         messageId: "<010e-1@x>",
       }),
       row({
         id: "5be28ce5",
         receivedAt: T("2026-08-05T15:14:48Z"),
-        fromAddress: "holly@plushcargo.com",
+        fromAddress: "elmdesk@plushcargo.com",
         toAddress: "hello@meetmeatthefair.com",
         subject: "Event merch for fairs and festivals",
         messageId: "<010e-2@x>",

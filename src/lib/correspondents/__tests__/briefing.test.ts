@@ -101,9 +101,9 @@ describe("the ticket's replay cases", () => {
   it("Katie: a stranger with a problem, in one line", async () => {
     // "gmail sender, no matched entity, no prior contact, first contact,
     // intent support. That is enough to see she is a stranger with a problem."
-    inbound("k1", "katie@gmail.com", daysAgo(2), { intent: "support", matchBasis: "none" });
+    inbound("k1", "userhazel2@gmail.com", daysAgo(2), { intent: "support", matchBasis: "none" });
     const b = await build();
-    const katie = b.rows.find((r) => r.fromAddress === "katie@gmail.com")!;
+    const katie = b.rows.find((r) => r.fromAddress === "userhazel2@gmail.com")!;
     expect(katie.isFirstContact).toBe(true);
     expect(katie.priorMessageCount).toBe(1);
     expect(katie.matchedEntityType).toBeNull();

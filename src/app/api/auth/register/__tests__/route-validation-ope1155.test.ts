@@ -41,7 +41,7 @@ function post(body: unknown) {
 }
 
 const validVendor = {
-  email: "maker@gmail.com",
+  email: "userthistle1@gmail.com",
   password: "correct-horse",
   name: "Pat Maker",
   role: "VENDOR",

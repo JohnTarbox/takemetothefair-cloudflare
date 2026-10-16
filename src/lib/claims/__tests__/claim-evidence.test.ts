@@ -153,9 +153,9 @@ describe("recordClaimEvidence (OPE-237 writer)", () => {
     const out = await recordClaimEvidence(db as never, {
       vendorId: "v-1",
       userId: "u-1",
-      claimantName: "Colette Dewan",
+      claimantName: "Casey Doe",
       businessName: "CD Ceramics and Florals",
-      email: "cdceramicsandflorals@gmail.com",
+      email: "usercdceramics@gmail.com",
       emailVerified: false,
     });
 
@@ -181,7 +181,7 @@ describe("recordClaimEvidence (OPE-237 writer)", () => {
       userId: null,
       claimantName: null,
       businessName: "Douse",
-      email: "jo@gmail.com",
+      email: "userbramble1@gmail.com",
       emailVerified: false,
     });
     expect(onConflictDoNothing).toHaveBeenCalledTimes(1);

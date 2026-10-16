@@ -13,9 +13,9 @@
  * Three real accounts are in that state, each matching a logged collision to
  * the second:
  *
- *   21streetbeads@gmail.com          2026-08-26 06:16:43  → "21 Street Beads"
+ *   useraster1@gmail.com          2026-08-26 06:16:43  → "21 Street Beads"
  *   Admin@kewlkandylz.com            2026-08-07 17:19:41  → "Kewl Kandylz"
- *   gooseberryleathercompany@gmail.com 2026-07-22 01:23:43 → "Gooseberry Leather Company"
+ *   userginkgo2@gmail.com 2026-07-22 01:23:43 → "Gooseberry Leather Company"
  *
  * (The third predates the OPE-25/OPE-80 logging, which is why the ticket's
  * count of 2 was correctly filed as a floor rather than a total.)

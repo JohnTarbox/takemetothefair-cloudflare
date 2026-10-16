@@ -12,10 +12,10 @@
  * public double-opt-in signups confirmed in the window between the 08-21
  * backfill and the writer's deploy:
  *
- *   doreen_m_gamache@homedepot.com   08-21 17:58:36   footer
- *   learninstuffct@gmail.com         08-21 19:10:26   footer
- *   jfazz@mail.com                   08-22 00:50:21   footer
- *   deeogt@gmail.com                 08-23 15:05:36   footer
+ *   quince4desk@homedepot.com   08-21 17:58:36   footer
+ *   userfir@gmail.com         08-21 19:10:26   footer
+ *   userginkgo@mail.com                   08-22 00:50:21   footer
+ *   userhazel@gmail.com                 08-23 15:05:36   footer
  *
  * They received nothing for five to seven days, and were found BY HAND — a
  * `preview_only` broadcast resolved 29 recipients against 34 confirmed-active

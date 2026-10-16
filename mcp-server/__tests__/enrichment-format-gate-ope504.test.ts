@@ -3,7 +3,7 @@
  *
  * `email_domain_mismatch` was doing the job of format checking, and it fails
  * precisely when a malformed value sits on the RIGHT domain. Verified in prod
- * 2026-08-20: candidate 7149 proposed `bill.@thirstyrobotbrewing.com` at
+ * 2026-08-20: candidate 7149 proposed `pat.@thirstyrobotbrewing.com` at
  * confidence 0.90 with `flags: []` — clean, prior NULL, and therefore inside
  * the auto-merge predicate under consideration on OPE-374.
  *
@@ -21,7 +21,7 @@ describe("email format validation (OPE-504)", () => {
   it("rejects a malformed local-part on the vendor's OWN domain — prod candidate 7149", () => {
     // The headline defect: domain matches, so email_domain_mismatch never
     // fired, and nothing else looked at the string's shape.
-    expect(isMalformedEmail("bill.@thirstyrobotbrewing.com")).toBe(true);
+    expect(isMalformedEmail("pat.@thirstyrobotbrewing.com")).toBe(true);
   });
 
   it.each([
@@ -42,7 +42,7 @@ describe("email format validation (OPE-504)", () => {
 
   it.each([
     "info@thirstyrobotbrewing.com",
-    "bill.smith@thirstyrobotbrewing.com",
+    "pat.moss@thirstyrobotbrewing.com",
     "first.last+tag@sub.domain.co.uk",
     "o'brien@example.com",
     "a@b.io",
@@ -205,7 +205,7 @@ describe("revalidate_enrichment_candidates (OPE-504)", () => {
       .get()?.d;
 
   it("DRY RUN reports what it would do and writes nothing", async () => {
-    const id = seed({ proposedValue: "bill.@thirstyrobotbrewing.com" });
+    const id = seed({ proposedValue: "pat.@thirstyrobotbrewing.com" });
     const res = await call(); // default dry_run
     expect(res.dry_run).toBe(true);
     expect(res.would_reject).toBe(1);
@@ -215,7 +215,7 @@ describe("revalidate_enrichment_candidates (OPE-504)", () => {
   });
 
   it("rejects the malformed backlog row when run live, and is idempotent", async () => {
-    const id = seed({ proposedValue: "bill.@thirstyrobotbrewing.com" });
+    const id = seed({ proposedValue: "pat.@thirstyrobotbrewing.com" });
     await call({ dry_run: false });
     expect(decisionOf(id)).toBe("rejected");
 
@@ -305,7 +305,7 @@ describe("revalidate_enrichment_candidates (OPE-504)", () => {
     // OPE-249: the extractor moved onto normalizeExtractedEmail and this repair
     // path did not, so cand 7530 came back "nothing to do" while a fresh
     // extraction would have fixed it. Same fix, two paths, one of them missed.
-    const id = seed({ proposedValue: "\u200Bhello@moatmountain.com" });
+    const id = seed({ proposedValue: "\u200bhello@moatmountain.com" });
     const res = await call({ dry_run: false });
     expect(res.would_rewrite_value).toBe(1);
     const after = db

@@ -5,7 +5,7 @@
  * parent row (`intent='multi'`) plus one synthesized child per intent, and
  * starts an independent workflow for each child. Each child then composed and
  * sent its own acknowledgement, so a two-topic email drew two replies:
- * ewelford@paradisecityarts.com received two `correction-ack`s seconds apart on
+ * reeddesk@paradisecityarts.com received two `correction-ack`s seconds apart on
  * 2026-08-17, for one message, while a human was mid-correspondence with her.
  *
  * The children are a ROUTING artefact. The person sent one email and should get

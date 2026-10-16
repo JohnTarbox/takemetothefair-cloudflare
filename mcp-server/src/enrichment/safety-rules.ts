@@ -482,7 +482,7 @@ export function buildEnrichmentResult(
     // OPE-504 — malformed is dropped, same as placeholder. `email_domain_mismatch`
     // was doing the job of format validation and fails exactly when the bad
     // value sits on the vendor's OWN domain (prod 7149,
-    // `bill.@thirstyrobotbrewing.com`, staged clean at 0.90 with no flags).
+    // `pat.@thirstyrobotbrewing.com`, staged clean at 0.90 with no flags).
     if (!isPlaceholderEmail(ex.email.value) && !isMalformedEmail(ex.email.value)) {
       // I3: flag (don't drop) an email whose domain is unrelated to the
       // vendor's own website — it may be the real contact or a scraped third
