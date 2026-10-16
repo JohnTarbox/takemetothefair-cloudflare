@@ -2240,6 +2240,56 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       return r?.t != null ? new Date(Number(r.t) * 1000) : new Date();
     },
   },
+  {
+    // OPE-1408 — proof the K7.4 extract-context writer still runs for URL
+    // submissions. `content_length_chars` / `content_sha256_first16` were NULL on
+    // every row from 2026-08-24 to ship: the writer lived only in the single-URL
+    // path, the multi-source fan-out never called it, and OPE-537 (#1019) moved
+    // all bare-URL traffic into the fan-out. Nothing noticed for 7 weeks.
+    //
+    // Demand = an inbound row whose URL was extracted (`parsed_url` set AND
+    // `extraction_method` in ai/json-ld/thin — set at mark-done, AFTER the
+    // persist step in the same run). Evidence = a row carrying
+    // content_length_chars. The clock starts at the OLDEST demand row newer
+    // than the newest evidence: keying on the newest demand instead would let a
+    // steady inflow of unserved emails reset the clock forever and never fire.
+    //
+    // Floored at enabled_at so the ~45 pre-fix NULL rows are not demand.
+    //
+    // 240h, MEASURED (prod, n=60 URL-extract rows, all-time): inter-arrival
+    // mean 58.4h; the largest gaps are 647h, 416h, 218h, 185h, 166h. A dead
+    // writer fires 10 days after its first unserved email. A lone LEGITIMATE
+    // miss (a fan-out whose URL fetch failed but whose body prose produced the
+    // event still records extraction_method='ai') is cleared by the next served
+    // email, and only 2 of 59 gaps exceed 240h — so a false RED needs that rare
+    // miss to land right before a rare lull.
+    name: "extract-context-telemetry",
+    ownerOpe: "OPE-1408",
+    label: "URL submissions record extract context (content_length_chars)",
+    priority: "P1",
+    expectedWindowHours: 240,
+    lastEvidenceAt: async (db) => {
+      const evidence = await maxTs(
+        db,
+        inboundEmails,
+        inboundEmails.receivedAt,
+        isNotNull(inboundEmails.contentLengthChars)
+      );
+      const [r] = await db
+        .select({ t: sql<number | null>`min(${inboundEmails.receivedAt})` })
+        .from(inboundEmails)
+        .where(
+          and(
+            isNotNull(inboundEmails.parsedUrl),
+            inArray(inboundEmails.extractionMethod, ["ai", "json-ld", "thin"]),
+            // Newer than the newest evidence ⇒ unserved by construction.
+            sql`${inboundEmails.receivedAt} > ${evidence ? Math.floor(evidence.getTime() / 1000) : 0}`,
+            sql`${inboundEmails.receivedAt} > coalesce((select ${heartbeatProbes.enabledAt} from ${heartbeatProbes} where ${heartbeatProbes.probeName} = 'extract-context-telemetry'), 4102444800)`
+          )
+        );
+      return r?.t != null ? new Date(Number(r.t) * 1000) : new Date();
+    },
+  },
 ];
 
 /** A probe joined to its enablement anchor + newest evidence — the input to the

@@ -10,16 +10,19 @@
  *                                  → new_event was wrong (negative)
  *   REJECTED for other reasons      → ambiguous; no feedback row
  *
- * This module exposes one function called from approval-notification.ts
- * + the admin lifecycle endpoint. Best-effort: any failure to write a
- * feedback row logs and returns; never throws (the calling path's job
- * is to update event status, not feedback bookkeeping).
+ * Called from BOTH approval-notification twins (src/lib/ and mcp-server/src/).
+ * Callers wrap it in try/catch: the calling path's job is to update event
+ * status, not feedback bookkeeping.
+ *
+ * OPE-1396 (DUP7) — moved here from src/lib/intent-feedback.ts so the MCP
+ * twin can call it. Before the move only the app copy did, so approvals made
+ * through MCP `update_event_status` never fed the classifier.
  */
 
 import { eq, and, isNotNull } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
-import * as schema from "@/lib/db/schema";
-import { inboundEmails, inboundEmailIntentFeedback } from "@/lib/db/schema";
+import * as schema from "./index";
+import { inboundEmails, inboundEmailIntentFeedback } from "./index";
 
 type Db = DrizzleD1Database<typeof schema>;
 

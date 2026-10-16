@@ -61,6 +61,7 @@ import {
 } from "./pipeline-error.js";
 import { and, eq, gte, sql } from "drizzle-orm";
 import { getDb } from "../db.js";
+import { persistExtractContext } from "./extract-context.js";
 import { ledgerEmailSend } from "../mailer.js";
 import { isAutoReplyEnabled, AUTO_REPLY_HELD_REASON, type EmailGateEnv } from "../email-gates.js";
 import {
@@ -2800,41 +2801,15 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     }
 
     // K7.4 (analyst, 2026-05-31): persist what we're about to send to the
-    // AI extractor BEFORE the AI call, so we can tell what the AI saw
-    // even when extraction fails. drizzle/0094 added the three columns —
-    // content_length_chars + content_sha256_first16 cluster identical
-    // pages on /admin/source-quality so the operator can see "this URL's
-    // extracted content has failed 12 times with the same hash."
-    // Wrapped in try/catch INSIDE the step body so a transient D1 hiccup
-    // on the audit write doesn't fail the whole pipeline — telemetry is
-    // not load-bearing. Per [[feedback_workflow_cosmetic_steps_failsoft]].
-    await step.do(
+    // AI extractor BEFORE the AI call, so we can tell what the AI saw even
+    // when extraction fails. OPE-1408 — shared with both fan-outs via
+    // persistExtractContextStep; this path alone owning the writer is why it
+    // went silent once OPE-537 routed bare-URL email into the fan-out.
+    await this.persistExtractContextStep(
+      step,
       "submit/persist-extract-context",
-      { retries: { limit: 1, delay: "2 seconds", backoff: "constant" }, timeout: "5 seconds" },
-      async () => {
-        try {
-          const enc = new TextEncoder().encode(fetched.content);
-          const hashBuf = await crypto.subtle.digest("SHA-256", enc);
-          const hashHex = Array.from(new Uint8Array(hashBuf))
-            .map((b) => b.toString(16).padStart(2, "0"))
-            .join("")
-            .slice(0, 16);
-          const db = getDb(this.env.DB);
-          await db
-            .update(inboundEmails)
-            .set({
-              contentLengthChars: fetched.content.length,
-              contentSha256First16: hashHex,
-            })
-            .where(eq(inboundEmails.id, messageRowId));
-        } catch (err) {
-          await logError(getDb(this.env.DB), {
-            source: "mcp:workflow:persist-extract-context",
-            message: "extract-context persist failed",
-            error: err,
-          });
-        }
-      }
+      fetched.content,
+      messageRowId
     );
 
     // K1 (analyst, 2026-05-29 PM): when AI extraction on the fetched URL
@@ -3824,6 +3799,40 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
    * writes extract_fail_reason when the result carries one, so it never clobbers
    * this value.
    */
+  /**
+   * K7.4 / OPE-1408 — write content_length_chars + content_sha256_first16 for
+   * the page about to go to `submitExtract`. Every URL fetch that feeds
+   * `submitExtract` in this file calls this (pinned by
+   * __tests__/extract-context-wiring-ope1408.test.ts).
+   *
+   * Wrapped in try/catch INSIDE the step body so a transient D1 hiccup on the
+   * audit write doesn't fail the pipeline — telemetry is not load-bearing.
+   * Per [[feedback_workflow_cosmetic_steps_failsoft]].
+   */
+  private async persistExtractContextStep(
+    step: WorkflowStep,
+    stepName: string,
+    content: string,
+    messageRowId: string
+  ): Promise<void> {
+    await step.do(
+      stepName,
+      { retries: { limit: 1, delay: "2 seconds", backoff: "constant" }, timeout: "5 seconds" },
+      async () => {
+        try {
+          await persistExtractContext(getDb(this.env.DB), messageRowId, content);
+        } catch (err) {
+          await logError(getDb(this.env.DB), {
+            source: "mcp:workflow:persist-extract-context",
+            message: "extract-context persist failed",
+            error: err,
+            context: { messageRowId, stepName },
+          });
+        }
+      }
+    );
+  }
+
   private async recordExtractFailReason(messageRowId: string, reason: string): Promise<void> {
     try {
       await getDb(this.env.DB)
@@ -4340,6 +4349,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     // page the submitter pointed at is the authority, and crawling every URL
     // in a multi-link email would multiply the fetch budget by the link count.
     let primaryPage: CrawlFetchResult | null = null;
+    // OPE-1408 — see the persist-extract-context call in Phase A.
+    let extractContextPersisted = false;
 
     // ── Phase A: extract candidate events from every source. ──────────
     for (let i = 0; i < sources.length; i++) {
@@ -4431,6 +4442,17 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           continue;
         }
         fetched = recovered;
+      }
+      // OPE-1408 — the row holds ONE extract context, so the first URL source
+      // that fetched writes it (the page the submitter pointed at first).
+      if (!extractContextPersisted) {
+        extractContextPersisted = true;
+        await this.persistExtractContextStep(
+          step,
+          `${labelPrefix}/persist-extract-context`,
+          fetched.content,
+          messageRowId
+        );
       }
       try {
         const extracted = await step.do(
@@ -5355,6 +5377,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     }
     const outcomes: UrlOutcome[] = [];
     let firstCreatedEventId: string | null = null;
+    // OPE-1408 — see the persist-extract-context call in the loop.
+    let extractContextPersisted = false;
 
     for (let i = 0; i < urls.length; i++) {
       const url = urls[i];
@@ -5376,6 +5400,16 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           messageRowId,
           `${labelPrefix}/flag-insecure-transport`
         );
+        // OPE-1408 — first URL that fetched writes the row's extract context.
+        if (!extractContextPersisted) {
+          extractContextPersisted = true;
+          await this.persistExtractContextStep(
+            step,
+            `${labelPrefix}/persist-extract-context`,
+            fetched.content,
+            messageRowId
+          );
+        }
         const extracted = await step.do(
           `${labelPrefix}/ai-extract`,
           {

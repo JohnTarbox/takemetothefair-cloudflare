@@ -41,7 +41,7 @@
  * that defect as a side effect rather than needing its own rule.
  */
 
-import { normalizeName } from "./normalize-name-shim.js";
+import { normalizeName } from "@takemetothefair/utils";
 
 /** The slice of a pipeline candidate this needs. Structural, so the real
  *  SourceCandidate is assignable without importing the workflow. */

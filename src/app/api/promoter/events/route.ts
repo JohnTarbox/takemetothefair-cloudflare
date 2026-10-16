@@ -236,7 +236,7 @@ export async function POST(request: NextRequest) {
       indoorOutdoor,
       estimatedAttendance,
       eventScale,
-      applicationDeadline: applicationDeadline ? new Date(applicationDeadline) : null,
+      applicationDeadline: normalizeEventDate(applicationDeadline), // OPE-1396 (DUP9)
       applicationUrl,
       applicationInstructions,
       walkInsAllowed,

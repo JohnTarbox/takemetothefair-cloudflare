@@ -31,6 +31,7 @@ export {
   upcomingEndCutoffSec,
   upcomingEndPredicate,
   pastEndPredicate,
+  isPastEnd,
 } from "@takemetothefair/db-schema";
 
 /**

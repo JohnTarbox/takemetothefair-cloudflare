@@ -37,6 +37,43 @@ const ALLOWED: Record<string, string> = {
     "caller-supplied `since` date-range filter",
 };
 
+/**
+ * OPE-1396 (DUP5) — raw SQL comparisons slipped past CALL_RE: a literal
+ * `events.end_date >= unixepoch('now')` in a subquery string, or
+ * `${events.endDate} < ${nowSecs}` inside a sql`` template. Same act, so same
+ * guard; keyed on `file::<matched comparison>` like the drizzle calls.
+ */
+const RAW_ALLOWED: Record<string, string> = {
+  "mcp-server/src/events/elapsed-tentative.ts::${events.endDate} < ${nowSecs}":
+    "OPE-702 population report: buckets NULL end_date SEPARATELY on purpose (end_date_null)",
+  "mcp-server/src/events/elapsed-tentative.ts::${events.endDate} >= ${nowSecs}":
+    "same report's still_running bucket (NULL end counted apart)",
+  "mcp-server/src/events/elapsed-tentative.ts::${events.endDate} >= ${thirtyDaysAgo}":
+    "a 30-day window bound, not the upcoming/past boundary",
+  "mcp-server/src/tools/event-window.ts::end_date >= active_from;":
+    "tool-parameter DESCRIPTION text, not SQL",
+};
+
+const RAW_RE = /(?:\$\{events\.endDate\}|\bend_date)\s*(?:>=|<=|<|>)\s*[^\s)]+/g;
+
+function findRawEndDateComparisons(root: string): { hits: string[]; present: Set<string> } {
+  const files: string[] = [];
+  for (const d of SCAN_DIRS) walk(join(root, d), files);
+  const hits: string[] = [];
+  const present = new Set<string>();
+  for (const f of files) {
+    const rel = relative(root, f).split("\\").join("/");
+    if (rel === HELPER) continue;
+    const src = stripComments(readFileSync(f, "utf8"));
+    for (const m of src.matchAll(RAW_RE)) {
+      const key = `${rel}::${m[0].replace(/\s+/g, " ")}`;
+      present.add(key);
+      if (!(key in RAW_ALLOWED)) hits.push(key);
+    }
+  }
+  return { hits: hits.sort(), present };
+}
+
 const CALL_RE = /\b(?:gte|gt|lte|lt)\(\s*events\.endDate\s*,\s*[^)]*\)/g;
 
 function walk(dir: string, out: string[]): void {
@@ -88,6 +125,27 @@ describe("OPE-1375 — events.endDate upcoming/past comparisons go through the s
       }
     }
     expect(Object.keys(ALLOWED).filter((k) => !present.has(k))).toEqual([]);
+  });
+
+  it("finds no raw-SQL end_date comparison outside the helper (OPE-1396)", () => {
+    expect(findRawEndDateComparisons(ROOT).hits).toEqual([]);
+  });
+
+  it("every raw-SQL allow-list entry still exists (no stale exemptions)", () => {
+    const { present } = findRawEndDateComparisons(ROOT);
+    expect(Object.keys(RAW_ALLOWED).filter((k) => !present.has(k))).toEqual([]);
+  });
+
+  it("the raw scanner matches string SQL and sql`` template shapes", () => {
+    const sample = [
+      "AND events.end_date >= unixepoch('now')",
+      "AND ${events.endDate} >= unixepoch()",
+      "${events.endDate} IS NOT NULL AND ${events.endDate} < ${nowSecs}",
+    ].join("\n");
+    expect(stripComments(sample).match(RAW_RE)?.length).toBe(3);
+    expect(
+      "// was `end_date < now`".replace(/(^|[^:"'`])\/\/.*$/gm, "$1").match(RAW_RE)
+    ).toBeNull();
   });
 
   it("the scanner actually matches the banned shapes (multi-line, any 'now' spelling)", () => {

@@ -186,9 +186,7 @@ export async function POST(request: NextRequest) {
       if (sent("estimatedAttendance")) set.estimatedAttendance = data.estimatedAttendance;
       if (sent("eventScale")) set.eventScale = data.eventScale;
       if (sent("applicationDeadline"))
-        set.applicationDeadline = data.applicationDeadline
-          ? new Date(data.applicationDeadline)
-          : null;
+        set.applicationDeadline = normalizeEventDate(data.applicationDeadline); // OPE-1396 (DUP9)
       if (sent("applicationUrl")) set.applicationUrl = data.applicationUrl;
       if (sent("applicationInstructions"))
         set.applicationInstructions = data.applicationInstructions;
@@ -325,7 +323,7 @@ export async function POST(request: NextRequest) {
       indoorOutdoor: data.indoorOutdoor,
       estimatedAttendance: data.estimatedAttendance,
       eventScale: data.eventScale,
-      applicationDeadline: data.applicationDeadline ? new Date(data.applicationDeadline) : null,
+      applicationDeadline: normalizeEventDate(data.applicationDeadline), // OPE-1396 (DUP9)
       applicationUrl: data.applicationUrl,
       applicationInstructions: data.applicationInstructions,
       walkInsAllowed: data.walkInsAllowed,

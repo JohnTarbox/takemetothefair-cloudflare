@@ -9,7 +9,7 @@ import {
   canonicalEventPath,
   seriesLandingPath,
 } from "@/lib/sitemap/indexable-events";
-import { upcomingEndPredicate } from "@/lib/event-dates";
+import { isPastEnd, upcomingEndPredicate } from "@/lib/event-dates";
 import {
   SITEMAP_BASE_URL,
   safeLastMod,
@@ -73,7 +73,8 @@ async function buildEventUrls(): Promise<SitemapUrl[]> {
   const seriesLandings = new Map<string, Date | null>();
 
   const detailPages: SitemapUrl[] = eventRows.map((event) => {
-    const isPast = event.endDate && new Date(event.endDate) < now;
+    // OPE-1396 (DUP5) — the same past/upcoming rule as the SQL predicates.
+    const isPast = isPastEnd(event, now);
     if (event.seriesSlug) {
       // Occurrence → canonical /events/<series>/<year>; collect its landing.
       // Landing lastModified = the most recent occurrence updatedAt.

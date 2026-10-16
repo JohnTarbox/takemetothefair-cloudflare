@@ -57,6 +57,8 @@ import {
   venueStateConflict,
   sourceOutsideNewEngland,
   checkFormerVenue,
+  checkEventAcceptsVendor,
+  defaultApplicationStatus,
 } from "@takemetothefair/utils";
 import { loadGuardVenue } from "../venues/lifecycle.js";
 import {
@@ -342,27 +344,20 @@ export function registerVendorTools(
 
       const event = eventRows[0];
 
-      if (event.status !== "APPROVED" && event.status !== "TENTATIVE") {
-        return {
-          content: [
-            { type: "text", text: "This event is not currently accepting vendor applications." },
-          ],
-          isError: true,
-        };
-      }
-
-      // Check commercial vendor restriction
       const vendorRows = await db
         .select({ commercial: vendors.commercial, canSelfConfirm: vendors.canSelfConfirm })
         .from(vendors)
         .where(eq(vendors.id, vendorId))
         .limit(1);
 
-      if (vendorRows[0]?.commercial && !event.commercialVendorsAllowed) {
-        return {
-          content: [{ type: "text", text: "This event does not allow commercial vendors." }],
-          isError: true,
-        };
+      // OPE-1396 (DUP6) — the app's rule, not a local copy: APPROVED events
+      // only (this tool used to accept TENTATIVE too) + the commercial rule.
+      const gate = checkEventAcceptsVendor(
+        { commercial: vendorRows[0]?.commercial ?? null },
+        event
+      );
+      if (!gate.ok) {
+        return { content: [{ type: "text", text: gate.error }], isError: true };
       }
 
       // Check for existing application
@@ -379,7 +374,7 @@ export function registerVendorTools(
         };
       }
 
-      const autoConfirm = vendorRows[0]?.canSelfConfirm ?? false;
+      const status = defaultApplicationStatus(vendorRows[0]?.canSelfConfirm);
       const applicationId = crypto.randomUUID();
 
       await db.insert(eventVendors).values({
@@ -387,7 +382,7 @@ export function registerVendorTools(
         eventId: event.id,
         vendorId,
         boothInfo: params.booth_info || null,
-        status: autoConfirm ? "CONFIRMED" : "APPLIED",
+        status,
       });
 
       return {
@@ -396,7 +391,7 @@ export function registerVendorTools(
             applied: true,
             applicationId,
             event: event.name,
-            status: autoConfirm ? "CONFIRMED" : "APPLIED",
+            status,
           }),
         ],
       };

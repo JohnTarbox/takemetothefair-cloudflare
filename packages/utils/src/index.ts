@@ -689,5 +689,7 @@ export * from "./safe-href";
 export * from "./html-sanitize";
 export * from "./html-escape";
 export * from "./email-subject";
+// OPE-1396 (DUP6) — vendor-joins-event rule, shared by the app routes and MCP apply_to_event.
+export * from "./vendor-application-rules";
 // OPE-1393 — an operator edit to a scraper-synced field turns sync off (app + MCP).
 export * from "./scraper-sync-lock";
