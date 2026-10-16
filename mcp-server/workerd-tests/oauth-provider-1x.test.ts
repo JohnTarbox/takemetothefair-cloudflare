@@ -12,7 +12,8 @@
  *   absent                                                      — 2 grants from 2026-03-31
  *   "https://meetmeatthefair-mcp.john-tarbox-account.workers.dev/" — 6 stale pre-domain grants
  */
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, beforeAll } from "vitest";
+import { applyD1Migrations } from "cloudflare:test";
 import OAuthProvider from "@cloudflare/workers-oauth-provider";
 import type { OAuthHelpers } from "@cloudflare/workers-oauth-provider";
 import { MCP_OAUTH_RESOURCE, mcpOAuthProviderOptions } from "../src/oauth/provider-options";
@@ -23,14 +24,31 @@ const REDIRECT = "https://claude.ai/api/mcp/auth_callback";
 import { env as workerEnv } from "cloudflare:workers";
 import type { WorkerdTestEnv } from "./env.js";
 
-const { OAUTH_KV } = workerEnv as unknown as WorkerdTestEnv;
+const { OAUTH_KV, DB, TEST_MIGRATIONS } = workerEnv as unknown as WorkerdTestEnv;
 
 // Each test logs in as its own user, so grants written by one test can never
 // satisfy (or pollute) another's assertions in the shared local KV.
 let currentUser = "user-0";
 let userSeq = 0;
 
-type TestEnv = { OAUTH_KV: KVNamespace; OAUTH_PROVIDER: OAuthHelpers };
+type TestEnv = { OAUTH_KV: KVNamespace; DB: D1Database; OAUTH_PROVIDER: OAuthHelpers };
+
+// OPE-1366 — refresh re-reads the user from D1 (token-exchange.ts), so every
+// test's user has a real row in a D1 migrated from the repo's drizzle/ files.
+beforeAll(async () => {
+  await applyD1Migrations(DB, TEST_MIGRATIONS);
+});
+
+async function seedUser(id: string, role = "USER") {
+  await DB.prepare(
+    "INSERT INTO users (id, email, name, role, created_at, updated_at) VALUES (?, ?, ?, ?, unixepoch(), unixepoch())"
+  )
+    .bind(id, `${id}@example.com`, id, role)
+    .run();
+}
+
+// What login-handler.ts stamps: the props resolveUserProps builds at login.
+let loginProps: Record<string, unknown> | null = null;
 
 const apiHandler = {
   async fetch(_req: Request, _env: TestEnv, ctx: ExecutionContext & { props?: unknown }) {
@@ -54,7 +72,7 @@ const loginHandler = {
       userId: currentUser,
       metadata: {},
       scope: info.scope,
-      props: { userId: currentUser, email: "test@example.com" },
+      props: loginProps ?? { userId: currentUser, email: "test@example.com" },
     });
     return Response.redirect(redirectTo, 302);
   },
@@ -178,10 +196,12 @@ async function rewriteGrantsToLegacy(resource: string | undefined) {
   }
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   currentUser = `user-${++userSeq}`;
+  loginProps = null;
+  await seedUser(currentUser);
   provider = makeProvider();
-  env = { OAUTH_KV } as unknown as TestEnv;
+  env = { OAUTH_KV, DB } as unknown as TestEnv;
 });
 
 describe("OPE-1323 — canonical resource", () => {
@@ -305,5 +325,97 @@ describe("OPE-1323 — refresh of 0.x-shaped stored grants (prod shapes, 2026-10
     // …and a fresh authorization for the same client then succeeds.
     const again = await authorize(client_id);
     expect(again.res.status).toBe(302);
+  });
+});
+
+describe("OPE-1366 — refresh re-resolves props from D1 and honours session_version", () => {
+  async function apiProps(accessToken: string) {
+    const res = await call("/mcp", { headers: { Authorization: `Bearer ${accessToken}` } });
+    expect(res.status).toBe(200);
+    return ((await res.json()) as { props: Record<string, unknown> }).props;
+  }
+
+  it("a demoted ADMIN's refreshed token carries the CURRENT role, not the login-time one", async () => {
+    await DB.prepare("UPDATE users SET role = 'ADMIN' WHERE id = ?").bind(currentUser).run();
+    loginProps = { userId: currentUser, email: "x@example.com", role: "ADMIN", sessionVersion: 0 };
+    const { client_id, refresh_token, access_token } = await fullLogin();
+    expect((await apiProps(access_token)).role).toBe("ADMIN");
+
+    // Demotion through a path that does not bump the version (e.g. the admin
+    // promoter-delete route): the refresh still re-reads the role.
+    await DB.prepare("UPDATE users SET role = 'USER' WHERE id = ?").bind(currentUser).run();
+    const res = await refresh(client_id, refresh_token);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { access_token: string; refresh_token: string };
+    expect((await apiProps(body.access_token)).role).toBe("USER");
+
+    // The grant now stores the fresh props, so the NEXT refresh starts from USER.
+    const again = await refresh(client_id, body.refresh_token);
+    expect(again.status).toBe(200);
+    const body2 = (await again.json()) as { access_token: string };
+    expect((await apiProps(body2.access_token)).role).toBe("USER");
+  });
+
+  it("a bumped session_version (password reset / role change) refuses the refresh with invalid_grant and revokes the grant", async () => {
+    loginProps = { userId: currentUser, email: "x@example.com", role: "USER", sessionVersion: 0 };
+    const { client_id, refresh_token, access_token } = await fullLogin();
+    await DB.prepare("UPDATE users SET session_version = session_version + 1 WHERE id = ?")
+      .bind(currentUser)
+      .run();
+
+    const res = await refresh(client_id, refresh_token);
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe("invalid_grant");
+    // invalid_grant from the callback revokes the grant and its tokens.
+    expect(await storedGrantKeys()).toHaveLength(0);
+    const api = await call("/mcp", { headers: { Authorization: `Bearer ${access_token}` } });
+    expect(api.status).toBe(401);
+  });
+
+  it("a pre-OPE-1366 grant (no sessionVersion in props) keeps refreshing while the row is still at 0", async () => {
+    // beforeEach's default props carry no sessionVersion — the shape of every live grant today.
+    const { client_id, refresh_token } = await fullLogin();
+    const res = await refresh(client_id, refresh_token);
+    expect(res.status).toBe(200);
+  });
+
+  it("…and is refused once the row's version moves past 0", async () => {
+    const { client_id, refresh_token } = await fullLogin();
+    await DB.prepare("UPDATE users SET session_version = 1 WHERE id = ?").bind(currentUser).run();
+    const res = await refresh(client_id, refresh_token);
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe("invalid_grant");
+  });
+
+  it("a deleted user's refresh is refused with invalid_grant", async () => {
+    const { client_id, refresh_token } = await fullLogin();
+    await DB.prepare("DELETE FROM users WHERE id = ?").bind(currentUser).run();
+    const res = await refresh(client_id, refresh_token);
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe("invalid_grant");
+  });
+
+  it("a D1 failure answers temporarily_unavailable and does NOT revoke the grant", async () => {
+    const { client_id, refresh_token } = await fullLogin();
+    const brokenDb = {
+      prepare() {
+        throw new Error("D1_ERROR: simulated outage");
+      },
+    } as unknown as D1Database;
+    const res = await provider.fetch(
+      new Request(`${ORIGIN}/token`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ grant_type: "refresh_token", refresh_token, client_id }),
+      }),
+      { OAUTH_KV, DB: brokenDb } as never,
+      ctx()
+    );
+    expect(res.status).toBe(503);
+    expect(((await res.json()) as { error: string }).error).toBe("temporarily_unavailable");
+    expect(await storedGrantKeys()).toHaveLength(1);
+    // D1 back: the same refresh token still works.
+    const ok = await refresh(client_id, refresh_token);
+    expect(ok.status).toBe(200);
   });
 });

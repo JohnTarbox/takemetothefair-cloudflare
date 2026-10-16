@@ -6,6 +6,7 @@ import { eq } from "drizzle-orm";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { users, passwordResetTokens } from "@/lib/db/schema";
 import { hashPassword } from "@/lib/auth";
+import { bumpSessionVersion } from "@/lib/auth/session-version";
 import { logError } from "@/lib/logger";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { hashResetToken } from "@/lib/auth/password-reset-token";
@@ -66,6 +67,9 @@ export async function POST(request: NextRequest) {
       .update(users)
       .set({ passwordHash: newHash, updatedAt: new Date() })
       .where(eq(users.id, record.userId));
+
+    // OPE-1366 — a reset ends every session already held (web + MCP).
+    await bumpSessionVersion(db, record.userId);
 
     // Any other outstanding links for this account die with the reset — an
     // older email sitting in the inbox must not be able to set the password

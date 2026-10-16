@@ -111,7 +111,8 @@ const SCHEMA_SQL = `
     image TEXT,
     oauth_provider TEXT,
     created_at INTEGER,
-    updated_at INTEGER
+    updated_at INTEGER,
+    session_version INTEGER NOT NULL DEFAULT 0
   );
   CREATE TABLE admin_actions (
     id TEXT PRIMARY KEY, action TEXT, actor_user_id TEXT, target_type TEXT,
