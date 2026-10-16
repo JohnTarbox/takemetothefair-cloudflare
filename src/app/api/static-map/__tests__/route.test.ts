@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 // Mocks need to be hoisted ABOVE the dynamic import — vi.mock is auto-hoisted
