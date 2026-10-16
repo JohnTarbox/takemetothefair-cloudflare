@@ -105,6 +105,10 @@ jobs:
       - name: Typecheck (app + packages + mcp-server)
         run: npm run typecheck:all
 
+      - name: Report route.ts files with no test (warn-only, OPE-1377)
+        continue-on-error: true
+        run: npx tsx scripts/report-untested-routes.ts
+
       - name: Guard against edge runtime decls (forbidden under OpenNext)
         run: npx tsx scripts/check-no-edge-runtime.ts
 
