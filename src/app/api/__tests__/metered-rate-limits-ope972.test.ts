@@ -195,7 +195,12 @@ describe("OPE-972 — policy shape", () => {
       src.indexOf("]);", src.indexOf("const BURST_POLICIES"))
     );
     expect(burst).toContain('"auth-register"'); // landmark: this IS the burst set
-    for (const p of ["import-url-fetch", "import-url-extract-image", "harvest-fetch"]) {
+    for (const p of [
+      "import-url-fetch",
+      "import-url-extract-image",
+      "harvest-fetch",
+      "import-url-fetch-email-daily", // OPE-1412
+    ]) {
       expect(burst).not.toContain(`"${p}"`);
     }
   });

@@ -9,6 +9,14 @@ export interface RateLimitConfig {
   windowMs: number; // Window in milliseconds (e.g., 3600000 for 1 hour)
 }
 
+/**
+ * OPE-1412 — the most email-driven URL fetches (submit@ pipeline, all senders
+ * together, crawl pages included) allowed per UTC day. The ONE place to change
+ * it. Measured 90-day peak at ship time: 34 (4 URL emails + 30 crawl pages,
+ * 2026-09-19); typical days are under 10.
+ */
+export const EMAIL_FETCH_DAILY_CEILING = 50;
+
 // Pre-configured limits for suggest-event endpoints
 export const RATE_LIMITS = {
   "suggest-event-submit": {
@@ -179,6 +187,17 @@ export const RATE_LIMITS = {
     // Each call may escalate to Browser Rendering at most twice.
     authenticatedLimit: 60,
     windowMs: 60 * 60 * 1000, // 1 hour
+  },
+  // OPE-1412 — the GLOBAL ceiling on email-driven fetches, across every
+  // sender, checked IN ADDITION to the per-sender `import-url-fetch` bucket
+  // (OPE-1370 keyed that one per sender, which left a sender-rotating stream
+  // with no total cap). Counted under one key per UTC day
+  // (`global:YYYY-MM-DD`, see src/lib/email-fetch-ceiling.ts), so it resets
+  // at UTC midnight. Change the number at EMAIL_FETCH_DAILY_CEILING.
+  "import-url-fetch-email-daily": {
+    anonymousLimit: 0,
+    authenticatedLimit: EMAIL_FETCH_DAILY_CEILING,
+    windowMs: 24 * 60 * 60 * 1000,
   },
   "import-url-extract-image": {
     anonymousLimit: 0,
