@@ -14,9 +14,10 @@
  * the body with `res.text().catch(() => "")`, so a body read that threw — the
  * 10 s abort firing mid-body, a reset stream — became an empty 200.
  *
- * Regression control: the 7 genuinely parked promoter sites (prod rows on
- * 2026-10-15) still read `parked_page`, from their bodies as served to our UA
- * on 2026-10-15 (fixtures/ope1350).
+ * Regression control: the promoter sites recorded `parked_page` in prod on
+ * 2026-10-15, from their bodies as served to our UA that day
+ * (fixtures/ope1350). OPE-1353: only 3 of those 7 are genuinely parked; the
+ * other 4 are live JS-app shells / frame pages and are pinned NOT parked.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -24,6 +25,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { classifyUrlHealth, isActionable } from "../url-health";
 import { classifyVendorSite } from "../vendor-site-health";
 import { probe } from "../url-probe";
+import { PROJECTED_URL_HEALTH } from "@/lib/url-health-issues";
 
 const fixture = (f: string) => readFileSync(join(__dirname, "fixtures", "ope1350", f), "utf8");
 
@@ -68,21 +70,55 @@ describe("OPE-1350 — an empty 200 is not a parked page (classifier)", () => {
   });
 });
 
-describe("OPE-1350 — the 7 genuinely parked promoter sites still read parked_page", () => {
+// OPE-1353 — of the 7 sites OPE-1294 called parked, only 3 are: the other 4
+// are a JS-app shell (×2) and a frame page (×2) wrapping a live site. Those
+// now read no_event_signal (recorded, not projected to the review queue).
+describe("OPE-1350/OPE-1353 — the 3 genuinely parked promoter sites still read parked_page", () => {
   it.each([
-    ["norfieldgrange_com.html", 114],
-    ["vacationlandent_org.html", 114],
-    ["cheshiregrange_org.html", 518],
-    ["grandesfestas_org.html", 642],
-    ["madisonct_com.html", 1018],
-    ["wethersfieldchamber_com.html", 1018],
-    ["capitalquiltersguild_com.html", 1294],
-  ])("%s (%i bytes) is parked_page", (file, bytes) => {
+    ["norfieldgrange_com.html", 114, "lander-redirect"],
+    ["vacationlandent_org.html", 114, "lander-redirect"],
+    ["capitalquiltersguild_com.html", 1294, "site-disabled"],
+  ])("%s (%i bytes) is parked_page via %s", (file, bytes, marker) => {
     const html = fixture(file);
     expect(new TextEncoder().encode(html).length).toBe(bytes);
     const r = classifyUrlHealth({ reachedOrigin: true, status: 200, html });
     expect(r.verdict).toBe("parked_page");
+    expect(r.signals).toContain(marker);
     expect(r.detail).toContain(`${bytes}-byte body`);
+  });
+});
+
+describe("OPE-1353 — the 4 live wrappers are NOT parked_page", () => {
+  it.each([
+    ["madisonct_com.html", 1018, "js-app-shell"],
+    ["wethersfieldchamber_com.html", 1018, "js-app-shell"],
+    ["cheshiregrange_org.html", 518, "frame-wrapper"],
+    ["grandesfestas_org.html", 642, "frame-wrapper"],
+  ])("%s (%i bytes) is no_event_signal (%s), not parked", (file, bytes, kind) => {
+    const html = fixture(file);
+    expect(new TextEncoder().encode(html).length).toBe(bytes);
+    const r = classifyUrlHealth({ reachedOrigin: true, status: 200, html });
+    expect(r.verdict).not.toBe("parked_page");
+    expect(r.verdict).toBe("no_event_signal");
+    expect(r.signals).toEqual([kind]);
+    expect(PROJECTED_URL_HEALTH[r.verdict]).toBeUndefined();
+  });
+
+  it("a frame page names where its content lives", () => {
+    expect(
+      classifyUrlHealth({
+        reachedOrigin: true,
+        status: 200,
+        html: fixture("cheshiregrange_org.html"),
+      }).detail
+    ).toContain("harvest/grangehome.asp?PagesID=3");
+    expect(
+      classifyUrlHealth({
+        reachedOrigin: true,
+        status: 200,
+        html: fixture("grandesfestas_org.html"),
+      }).detail
+    ).toContain("santamariacenter.com/Sites/Grandesfestas/");
   });
 });
 
