@@ -35,7 +35,12 @@ import {
 } from "@/lib/conditional-get";
 import { getHelpArticle } from "@/lib/help-articles";
 import { unsafeSlug } from "@/lib/utils";
-import { shouldSample, writeRequestSample } from "@/lib/request-sampling";
+import {
+  ADMIN_RSC_ANON_KIND,
+  isAnonymousAdminRscRequest,
+  shouldSample,
+  writeRequestSample,
+} from "@/lib/request-sampling";
 
 /**
  * Middleware handles five pre-route concerns that must NOT be cached:
@@ -301,6 +306,33 @@ async function handleRouting(request: NextRequest) {
             country: request.headers.get("cf-ipcountry") ?? cf?.country ?? null,
             referer: request.headers.get("referer"),
             ray: request.headers.get("cf-ray"),
+          })
+        );
+      }
+    } catch {
+      // sampling must never affect the response path
+    }
+  }
+
+  // ── OPE-1397 — anonymous RSC hits on /admin* ───────────────────
+  // The A9 block above skips /admin. Record every /admin* request carrying
+  // `RSC` / `Next-Router-State-Tree` with no session cookie (the OPE-1365
+  // layout-bypass shape): path, timestamp, country, ASN only — no headers,
+  // no IP. Same never-throw, fire-and-forget contract as A9.
+  // No heartbeat probe, by design: this path is EXPECTED to be silent, so
+  // "no rows" is the healthy state and a probe could only false-fire.
+  if (isAnonymousAdminRscRequest(pathname, request.headers)) {
+    try {
+      const cfCtx = getCloudflareContext();
+      const d1 = cfCtx.env.DB;
+      const cf = cfCtx.cf as { asn?: number; country?: string } | undefined;
+      if (d1) {
+        cfCtx.ctx.waitUntil(
+          writeRequestSample(drizzle(d1), {
+            kind: ADMIN_RSC_ANON_KIND,
+            path: pathname,
+            asn: cf?.asn ?? null,
+            country: request.headers.get("cf-ipcountry") ?? cf?.country ?? null,
           })
         );
       }

@@ -3752,6 +3752,12 @@ export const requestSamples = sqliteTable(
     country: text("country"),
     referer: text("referer"),
     ray: text("ray"),
+    // OPE-1397 (drizzle/0373) — "page" = the A9 public-page sample (5%);
+    // "admin_rsc_anon" = an /admin* request carrying RSC / Next-Router-State-Tree
+    // with no session cookie (path, timestamp, country, ASN only).
+    kind: text("kind", { enum: ["page", "admin_rsc_anon"] })
+      .notNull()
+      .default("page"),
   },
   (t) => ({
     tsIdx: index("request_samples_timestamp_idx").on(t.timestamp),

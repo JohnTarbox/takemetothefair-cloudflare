@@ -9,6 +9,7 @@ import { isPublicVendorStatus } from "@/lib/vendor-status";
 import { upcomingEndPredicate } from "@/lib/event-dates";
 import { eventJoinProjection, eventVenueJoinProjection } from "@/lib/db/event-join-projection";
 import { EventVendorsPanel } from "@/components/admin/event-vendors-panel";
+import { toEventVendorsPanelRow } from "@/lib/admin/event-vendors-panel-row";
 import { SchemaOrgSyncButton } from "@/components/admin/SchemaOrgSyncButton";
 import { logError } from "@/lib/logger";
 import { realUserWhere } from "@takemetothefair/db-schema";
@@ -137,12 +138,11 @@ async function getUpcomingEventsWithVendorCounts() {
 
     const countMap = new Map(vendorCounts.map((vc) => [vc.eventId, vc.count]));
 
-    type FullVenue = typeof venues.$inferSelect;
-    return upcomingEvents.map((e) => ({
-      ...e.events,
-      venue: e.venue as FullVenue | null,
-      vendorCount: countMap.get(e.events.id) || 0,
-    }));
+    // OPE-1397: the result is passed to a client component, so it is
+    // serialized into the page payload — project to only what it renders.
+    return upcomingEvents.map((e) =>
+      toEventVendorsPanelRow(e.events, e.venue, countMap.get(e.events.id) || 0)
+    );
   } catch (e) {
     await logError(db, {
       message: "Error fetching upcoming events",

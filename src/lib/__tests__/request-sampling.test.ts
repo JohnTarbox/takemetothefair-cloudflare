@@ -5,7 +5,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import * as schema from "../db/schema";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
+  ADMIN_RSC_ANON_KIND,
+  isAnonymousAdminRscRequest,
   shouldSample,
   truncateIp,
   writeRequestSample,
@@ -21,21 +25,12 @@ describe("shouldSample", () => {
   });
 });
 
-const SCHEMA_SQL = `
-  CREATE TABLE request_samples (
-    id TEXT PRIMARY KEY,
-    timestamp INTEGER NOT NULL,
-    path TEXT,
-    method TEXT,
-    user_agent TEXT,
-    ip TEXT,
-    asn INTEGER,
-    as_organization TEXT,
-    country TEXT,
-    referer TEXT,
-    ray TEXT
-  );
-`;
+// OPE-1397 — built from the real migrations (0130 creates the table, 0373 adds
+// `kind`) rather than hand-written DDL, so the test cannot drift from prod.
+const DRIZZLE = join(__dirname, "..", "..", "..", "drizzle");
+const SCHEMA_SQL = ["0130_request_samples.sql", "0373_ope1397_request_samples_kind.sql"]
+  .map((f) => readFileSync(join(DRIZZLE, f), "utf8"))
+  .join("\n");
 
 let raw: Database.Database;
 let db: ReturnType<typeof drizzle<typeof schema>>;
@@ -98,6 +93,72 @@ describe("writeRequestSample", () => {
       },
     };
     await expect(writeRequestSample(brokenDb as never, { path: "/x" })).resolves.toBeUndefined();
+  });
+});
+
+describe("OPE-1397 — kind", () => {
+  it("an A9 sample defaults to kind='page'", async () => {
+    await writeRequestSample(db as never, { path: "/events/x" });
+    const r = raw.prepare(`SELECT kind FROM request_samples`).get() as { kind: string };
+    expect(r.kind).toBe("page");
+  });
+
+  it("an admin-RSC row stores path/country/ASN and nothing else", async () => {
+    await writeRequestSample(db as never, {
+      kind: ADMIN_RSC_ANON_KIND,
+      path: "/admin/claims",
+      asn: 13335,
+      country: "US",
+    });
+    const r = raw.prepare(`SELECT * FROM request_samples`).get() as Record<string, unknown>;
+    expect(r.kind).toBe("admin_rsc_anon");
+    expect(r.path).toBe("/admin/claims");
+    expect(r.asn).toBe(13335);
+    expect(r.country).toBe("US");
+    for (const c of ["user_agent", "ip", "as_organization", "referer", "ray", "method"]) {
+      expect(r[c]).toBeNull();
+    }
+  });
+
+  it("migration 0373 backfills pre-existing rows to 'page'", () => {
+    const m = new Database(":memory:");
+    m.exec(readFileSync(join(DRIZZLE, "0130_request_samples.sql"), "utf8"));
+    m.prepare(`INSERT INTO request_samples (id, timestamp) VALUES ('a', 1)`).run();
+    m.exec(readFileSync(join(DRIZZLE, "0373_ope1397_request_samples_kind.sql"), "utf8"));
+    expect((m.prepare(`SELECT kind FROM request_samples`).get() as { kind: string }).kind).toBe(
+      "page"
+    );
+    m.close();
+  });
+});
+
+describe("OPE-1397 — isAnonymousAdminRscRequest", () => {
+  const h = (o: Record<string, string>) => new Headers(o);
+  it("matches /admin* with RSC or Next-Router-State-Tree and no session cookie", () => {
+    expect(isAnonymousAdminRscRequest("/admin/claims", h({ rsc: "1" }))).toBe(true);
+    expect(isAnonymousAdminRscRequest("/admin", h({ "next-router-state-tree": "%5B%5D" }))).toBe(
+      true
+    );
+    expect(
+      isAnonymousAdminRscRequest("/admin/x", h({ rsc: "1", cookie: "theme=dark; other=1" }))
+    ).toBe(true);
+  });
+
+  it("ignores a request with a session cookie (either Auth.js name)", () => {
+    for (const cookie of [
+      "authjs.session-token=abc",
+      "a=1; __Secure-authjs.session-token=abc",
+      "next-auth.session-token=abc",
+    ]) {
+      expect(isAnonymousAdminRscRequest("/admin/claims", h({ rsc: "1", cookie }))).toBe(false);
+    }
+  });
+
+  it("ignores a plain GET (no RSC headers) and non-admin paths", () => {
+    expect(isAnonymousAdminRscRequest("/admin/claims", h({}))).toBe(false);
+    expect(isAnonymousAdminRscRequest("/administrator", h({ rsc: "1" }))).toBe(false);
+    expect(isAnonymousAdminRscRequest("/api/admin/claims", h({ rsc: "1" }))).toBe(false);
+    expect(isAnonymousAdminRscRequest("/vendor/profile", h({ rsc: "1" }))).toBe(false);
   });
 });
 
