@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { requireVerifiedSession } from "@/lib/api-auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { apiTokens } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
@@ -44,12 +45,17 @@ export async function GET() {
   return NextResponse.json(tokens);
 }
 
-/** POST — create a new API token. Returns the raw token ONCE. */
+/**
+ * POST — create a new API token. Returns the raw token ONCE.
+ *
+ * OPE-1361 — minting requires a verified email (same gate as the session
+ * write routes). A token is a standing credential for vendor writes; an
+ * account that hasn't proven email control must not get one.
+ */
 export async function POST(request: NextRequest) {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const gate = await requireVerifiedSession();
+  if (!gate.ok) return gate.response;
+  const session = { user: { id: gate.userId } };
 
   const db = getCloudflareDb();
 

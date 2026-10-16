@@ -1,7 +1,7 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { apiTokens, vendors } from "@/lib/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, gt, isNull, or } from "drizzle-orm";
 import { unsafeSlug } from "@/lib/utils";
 
 function toHex(buffer: ArrayBuffer): string {
@@ -39,11 +39,20 @@ export async function authenticateVendorToken(
   const db = getCloudflareDb();
   const tokenHash = await hashToken(rawToken);
 
-  // Look up the token
+  // Look up the token. OPE-1361 — a revoked or expired token is refused
+  // exactly like an unknown one, matching the MCP side (mcp-server/src/auth.ts,
+  // OPE-903). Before this, `revoke_api_token` stopped a token on MCP but it kept
+  // working on every main-app token route.
   const tokenResults = await db
     .select({ userId: apiTokens.userId })
     .from(apiTokens)
-    .where(eq(apiTokens.tokenHash, tokenHash))
+    .where(
+      and(
+        eq(apiTokens.tokenHash, tokenHash),
+        isNull(apiTokens.revokedAt),
+        or(isNull(apiTokens.expiresAt), gt(apiTokens.expiresAt, new Date()))
+      )
+    )
     .limit(1);
 
   if (tokenResults.length === 0) {
