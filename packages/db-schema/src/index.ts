@@ -861,6 +861,15 @@ export const events = sqliteTable(
     index("idx_events_state_code").on(table.stateCode),
     index("idx_events_completeness_score").on(table.completenessScore),
     index("idx_events_lifecycle_status").on(table.lifecycleStatus),
+    // OPE-1395 (drizzle/0374) — find-duplicate.ts stage 1 looks up source_url.
+    index("idx_events_source_url").on(table.sourceUrl),
+    // OPE-1395 (drizzle/0374) — the effective-end expression of
+    // upcomingEndPredicate/pastEndPredicate (event-end-predicates.ts). SQLite
+    // matches it against Drizzle's quoted COALESCE("events"."end_date", …).
+    index("idx_events_status_effective_end").on(
+      table.status,
+      sql`COALESCE(${table.endDate}, ${table.startDate})`
+    ),
     // K3 (drizzle/0095) — partial index for "show me events merged into X"
     // queries + the admin_actions reverse lookup. Most events have NULL
     // mergedInto so the partial keeps the index small.
@@ -1215,6 +1224,12 @@ export const vendors = sqliteTable(
     vendorsClaimedByIdx: index("idx_vendors_claimed_by").on(t.claimedBy),
     vendorsRedirectToIdx: index("idx_vendors_redirect_to").on(t.redirectToVendorId),
     vendorsVerifiedProByIdx: index("idx_vendors_verified_pro_by").on(t.verifiedProBy),
+    // OPE-1395 (drizzle/0374) — /vendors: `deleted_at IS NULL ORDER BY business_name`
+    // without a temp B-tree sort.
+    vendorsDeletedBusinessNameIdx: index("idx_vendors_deleted_business_name").on(
+      t.deletedAt,
+      t.businessName
+    ),
   })
 );
 
@@ -1727,7 +1742,9 @@ export const seriesSlugHistory = sqliteTable(
     changedBy: text("changed_by"),
   },
   (t) => [
-    index("idx_series_slug_history_old_slug").on(t.oldSlug),
+    // OPE-1395 (drizzle/0374) — the non-unique twin was dropped; this UNIQUE
+    // one (drizzle/0209) is the index that exists in D1.
+    uniqueIndex("idx_series_slug_history_old_slug_unique").on(t.oldSlug),
     index("idx_series_slug_history_series_id").on(t.seriesId),
   ]
 );
@@ -2641,7 +2658,6 @@ export const blogPosts = sqliteTable(
   },
   (table) => [
     index("idx_blogposts_status_publishdate").on(table.status, table.publishDate),
-    index("idx_blogposts_slug").on(table.slug),
     index("idx_blogposts_authorid").on(table.authorId),
     index("idx_blogposts_status_featured").on(table.status, table.featured),
   ]
