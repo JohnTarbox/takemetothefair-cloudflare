@@ -176,6 +176,35 @@ const emailSchema = z
   .or(z.literal(""));
 const phoneSchema = z.string().max(VALIDATION.PHONE_MAX_LENGTH).optional().nullable();
 
+// OPE-1389 — an UPDATE schema must not invent values for fields the caller
+// did not send.
+//
+// zod 4 (4.6.5 here) keeps a field's `.default(x)` through `.partial()`: an
+// omitted key on a partial schema still parses to the CREATE default. So every
+// admin PATCH that never mentioned `categories` wrote `[]`, every Enhanced
+// Profile save that sent only `{claimed:true}` reset `verified` / `commercial`
+// / `canSelfConfirm` to false, and every venue save without `amenities`
+// emptied them — silently, because the route's `!== undefined` checks saw a
+// real value. `blogPostUpdateSchema` worked around it by re-declaring each
+// defaulted field; this does the same for a whole object, so a default added
+// to a create schema later cannot leak into its update twin.
+//
+// Apply BEFORE `.partial()`: partial wraps each field in ZodOptional, after
+// which the ZodDefault is no longer at the top of the field.
+type StripDefault<T> = T extends z.ZodDefault<infer Inner extends z.ZodType> ? Inner : T;
+type StripDefaults<S extends z.ZodRawShape> = { [K in keyof S]: StripDefault<S[K]> };
+
+export function withoutDefaults<S extends z.ZodRawShape>(
+  schema: z.ZodObject<S>
+): z.ZodObject<StripDefaults<S>> {
+  const shape: Record<string, z.ZodType> = {};
+  for (const [key, field] of Object.entries(schema.shape)) {
+    shape[key] =
+      field instanceof z.ZodDefault ? (field.unwrap() as z.ZodType) : (field as z.ZodType);
+  }
+  return schema.extend(shape) as unknown as z.ZodObject<StripDefaults<S>>;
+}
+
 // Venue schemas.
 //
 // The base object schema is `_venueCreateBaseSchema` (NOT exported) — used
@@ -234,7 +263,7 @@ export const venueCreateSchema = _venueCreateBaseSchema.transform((v) => {
 
 // Update keeps every field optional and skips the DQ2 transform — admins
 // editing an existing venue should not be second-guessed about its name.
-export const venueUpdateSchema = _venueCreateBaseSchema.partial();
+export const venueUpdateSchema = withoutDefaults(_venueCreateBaseSchema).partial();
 
 // Promoter schemas
 export const promoterCreateSchema = z.object({
@@ -250,7 +279,9 @@ export const promoterCreateSchema = z.object({
   imageFocalY: z.number().min(0).max(1).optional().default(0.5),
 });
 
-export const promoterUpdateSchema = promoterCreateSchema.partial().omit({ userId: true });
+export const promoterUpdateSchema = withoutDefaults(promoterCreateSchema)
+  .partial()
+  .omit({ userId: true });
 
 // Vendor schemas
 export const vendorCreateSchema = z.object({
@@ -308,7 +339,7 @@ export const vendorCreateSchema = z.object({
   insuranceInfo: z.string().max(500).optional().nullable(),
 });
 
-export const vendorUpdateSchema = vendorCreateSchema
+export const vendorUpdateSchema = withoutDefaults(vendorCreateSchema)
   .partial()
   .omit({ userId: true })
   .extend({
@@ -557,7 +588,7 @@ export const eventCreateSchema = eventBaseSchema
     }
   );
 
-export const eventUpdateSchema = eventBaseSchema
+export const eventUpdateSchema = withoutDefaults(eventBaseSchema)
   .partial()
   .refine(
     (data) => {

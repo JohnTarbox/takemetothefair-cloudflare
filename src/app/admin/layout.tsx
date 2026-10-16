@@ -45,6 +45,11 @@ const adminNav = [
   { name: "Error Logs", href: "/admin/logs", icon: FileWarning },
 ];
 
+// OPE-1380 — a nonce-CSP route (src/lib/csp.ts): it must render per request,
+// or the HTML carries no nonce and every script on it is blocked. Guarded by
+// scripts/check-nonce-csp-routes.ts.
+export const dynamic = "force-dynamic";
+
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   // Same rule every admin page.tsx applies for itself (OPE-1365): a layout is
   // NOT an authorization boundary — an RSC request whose Next-Router-State-Tree

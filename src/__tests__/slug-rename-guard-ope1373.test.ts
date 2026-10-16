@@ -53,18 +53,13 @@ const FROM_HELPER = /^\w+\.nextSlug$/;
  * Raw slug assignments that are NOT promoter/venue/vendor renames, by count.
  * Each of these entities writes its own history table on its own path.
  */
+// OPE-1390 — the admin event PATCH and MCP `update_event` used to be
+// allow-listed here with their own loops; both now go through planSlugRename
+// (entity "event"), so neither may carry a raw assignment any more.
 const ALLOWED_RAW: Record<string, { count: number; why: string }> = {
-  "src/app/api/admin/events/[id]/route.ts": {
-    count: 1,
-    why: "event rename — writes event_slug_history itself",
-  },
   "src/app/api/blog-posts/[slug]/route.ts": {
     count: 1,
     why: "blog rename — writes blog_slug_history itself",
-  },
-  "mcp-server/src/tools/admin.ts": {
-    count: 1,
-    why: "update_event rename — writes event_slug_history itself",
   },
 };
 
