@@ -39,8 +39,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { LogOutreachButton } from "@/components/admin/log-outreach-button";
 import { safeHref } from "@takemetothefair/utils";
 
-export const revalidate = 300;
-
 const WEIGHT_EVENT_COUNT = 0.35;
 const WEIGHT_VIEW_COUNT = 0.3;
 const WEIGHT_COMPLETENESS = 0.2;

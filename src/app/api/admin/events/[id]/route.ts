@@ -12,11 +12,11 @@ import {
   eventVendors,
   vendors,
   eventDays,
-  eventSlugHistory,
   adminActions,
 } from "@/lib/db/schema";
-import { eq, and, ne, sql } from "drizzle-orm";
-import { createSlug, computePublicDates, appendSlugSegment, unsafeSlug } from "@/lib/utils";
+import { eq, sql } from "drizzle-orm";
+import { createSlug, computePublicDates, unsafeSlug } from "@/lib/utils";
+import { planSlugRename, SlugCollisionExhaustedError } from "@takemetothefair/db-schema";
 import { eventUpdateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 import { PUBLIC_EVENT_STATUSES } from "@/lib/constants";
@@ -28,8 +28,12 @@ import { parseTimestamp } from "@/lib/datetime";
 import { normalizeEventDate } from "@/lib/event-dates";
 import { notifyApprovalIfNeeded } from "@/lib/approval-notification";
 import {
+  centsToDollars,
   changedScraperSyncedFields,
+  dollarsToCents,
   evaluateGates,
+  eventApprovalBlockReason,
+  mergedTombstoneBlockReason,
   mirroredFieldsChanged,
   nextGateFlags,
   shouldDisableScraperSync,
@@ -41,6 +45,32 @@ import { raiseHoursReviewFlag } from "@/lib/events/hours-review-flag";
 import { loadUnresolvedFlagForEvent } from "@/lib/duplicates/flag-queue";
 
 const PUBLIC_EVENT_SET = new Set<string>(PUBLIC_EVENT_STATUSES);
+
+/**
+ * OPE-1390 (CLB4) — the price/fee columns are integer CENTS
+ * (`ticket_price_min_cents` …, packages/db-schema), but the admin form and
+ * `eventUpdateSchema` speak DOLLARS as `ticketPriceMin` etc. The PATCH used to
+ * write `updateData.ticketPriceMin`, a key with no column, which Drizzle drops
+ * without a word — so every price an admin typed vanished — and the GET
+ * returned only the `*Cents` keys, so the form always rendered blanks. Both
+ * directions go through the shared `dollarsToCents` / `centsToDollars` pair.
+ */
+function withDollarPrices<
+  T extends {
+    ticketPriceMinCents?: number | null;
+    ticketPriceMaxCents?: number | null;
+    vendorFeeMinCents?: number | null;
+    vendorFeeMaxCents?: number | null;
+  },
+>(row: T) {
+  return {
+    ...row,
+    ticketPriceMin: centsToDollars(row.ticketPriceMinCents),
+    ticketPriceMax: centsToDollars(row.ticketPriceMaxCents),
+    vendorFeeMin: centsToDollars(row.vendorFeeMinCents),
+    vendorFeeMax: centsToDollars(row.vendorFeeMaxCents),
+  };
+}
 
 /**
  * OPE-1387 — the ADMIN edit form needs every events column (suggester email,
@@ -90,7 +120,7 @@ export const GET = withAuth<{ id: string }>({ role: "ADMIN" }, async ({ request,
       .orderBy(eventDays.date);
 
     const event = {
-      ...eventData.events,
+      ...withDollarPrices(eventData.events),
       venue: eventData.venue,
       promoter: eventData.promoter,
       eventVendors: eventVendorResults.map((ev) => ({
@@ -156,6 +186,10 @@ export const PATCH = withAuth<{ id: string }>(
           // way to tell "was never flagged" from "was flagged and is now
           // repaired", and only the second one needs a write.
           gateFlags: events.gateFlags,
+          // OPE-1390 (DUP2) — inputs to the tombstone + approval gates below.
+          mergedInto: events.mergedInto,
+          isStatewide: events.isStatewide,
+          stateCode: events.stateCode,
           // OPE-1393 — the rest of the scraper-synced set + the flag itself.
           imageUrl: events.imageUrl,
           ticketUrl: events.ticketUrl,
@@ -169,33 +203,75 @@ export const PATCH = withAuth<{ id: string }>(
         return NextResponse.json({ error: "Event not found" }, { status: 404 });
       }
 
-      const updateData: Record<string, unknown> = { updatedAt: new Date() };
-      if (data.name) {
-        updateData.name = data.name;
-        const newSlug = createSlug(data.name);
+      // OPE-1390 (DUP3) — the slug follows a name CHANGE, not every save. The
+      // edit form sends `name` on every submit; regenerating from an unchanged
+      // name would walk a collision-suffixed slug (`…-2026-1`) to a new suffix
+      // on each save, and would rename a merged tombstone back off its parked
+      // `…-merged-<id8>` slug.
+      const nameChanged = data.name !== undefined && data.name !== currentEvent.name;
+      const slugSeed = nameChanged && data.name ? createSlug(data.name) : null;
+      const statusChanging = data.status !== undefined && data.status !== currentEvent.status;
 
-        // Only update slug if it would change
-        if (newSlug !== currentEvent.slug) {
-          // Check if new slug already exists for another event
-          const slug = newSlug;
-          let slugSuffix = 0;
-          while (true) {
-            const existingSlug = await db
-              .select({ id: events.id })
-              .from(events)
-              .where(
-                and(
-                  eq(events.slug, slugSuffix > 0 ? appendSlugSegment(slug, slugSuffix) : slug),
-                  ne(events.id, id)
-                )
-              )
-              .limit(1);
-            if (existingSlug.length === 0) break;
-            slugSuffix++;
-          }
-          updateData.slug = slugSuffix > 0 ? `${slug}-${slugSuffix}` : slug;
+      // OPE-1390 (DUP2) — OPE-423: a merged tombstone stays dead. This PATCH
+      // is the one-click path that can re-approve one or rename it back onto
+      // its keeper's URL; the approve route and MCP already refuse both.
+      const tombstoneReason = mergedTombstoneBlockReason(currentEvent, {
+        nextStatus: statusChanging ? data.status : undefined,
+        slugChange: slugSeed !== null && slugSeed !== currentEvent.slug,
+      });
+      if (tombstoneReason) {
+        return NextResponse.json(
+          { error: tombstoneReason, code: "merged_tombstone" },
+          { status: 422 }
+        );
+      }
+
+      // OPE-1390 (DUP2) — OPE-244 #3: an APPROVED event must have a derivable
+      // location. Judged on the row AS IT WILL BE after this PATCH, and only
+      // when the PATCH moves it into APPROVED or actually changes its location
+      // — the edit form re-sends venue/statewide/state on every save, so
+      // "present in the payload" is not "changing". An unrelated edit of an
+      // already-approved legacy row is not held hostage; un-linking the venue
+      // of an approved event is refused.
+      const statusAfterPatch = data.status ?? currentEvent.status;
+      const nextLocation = {
+        venueId: data.venueId !== undefined ? data.venueId || null : currentEvent.venueId,
+        isStatewide: data.isStatewide !== undefined ? data.isStatewide : currentEvent.isStatewide,
+        stateCode: data.stateCode !== undefined ? data.stateCode || null : currentEvent.stateCode,
+      };
+      const locationChanging =
+        nextLocation.venueId !== currentEvent.venueId ||
+        Boolean(nextLocation.isStatewide) !== Boolean(currentEvent.isStatewide) ||
+        nextLocation.stateCode !== currentEvent.stateCode;
+      if (statusAfterPatch === "APPROVED" && (statusChanging || locationChanging)) {
+        const blockReason = eventApprovalBlockReason(nextLocation);
+        if (blockReason) {
+          return NextResponse.json({ error: blockReason, code: "no_location" }, { status: 422 });
         }
       }
+
+      const updateData: Record<string, unknown> = { updatedAt: new Date() };
+      if (data.name) updateData.name = data.name;
+
+      // OPE-1390 (DUP3) — the shared resolver (OPE-1373). Its history INSERT
+      // rides in the same batch as the UPDATE below, so the rename and its 301
+      // commit together or not at all.
+      let slugRename: Awaited<ReturnType<typeof planSlugRename>> = null;
+      try {
+        slugRename = await planSlugRename(db, "event", {
+          entityId: id,
+          currentSlug: currentEvent.slug,
+          seed: slugSeed,
+          changedBy: session.user.id,
+        });
+      } catch (err) {
+        if (!(err instanceof SlugCollisionExhaustedError)) throw err;
+        return NextResponse.json(
+          { error: "Too many events already use that name's slug. Pick a more distinct name." },
+          { status: 409 }
+        );
+      }
+      if (slugRename) updateData.slug = slugRename.nextSlug;
       if (data.description !== undefined) updateData.description = data.description;
       if (data.venueId !== undefined) updateData.venueId = data.venueId || null;
       if (data.isStatewide !== undefined) updateData.isStatewide = data.isStatewide;
@@ -223,9 +299,9 @@ export const PATCH = withAuth<{ id: string }>(
       if (data.endDate !== undefined) {
         updateData.endDate = normalizeEventDate(data.endDate);
       }
-      // OPE-1200 — TRUE only with a qualifying start_date citation. Note the
-      // zod schema defaults an omitted datesConfirmed to true, so this gate is
-      // also what stops a PATCH that never mentioned the flag from re-asserting it.
+      // OPE-1200 — TRUE only with a qualifying start_date citation. (Since
+      // OPE-1389 an omitted datesConfirmed stays undefined — the update schema
+      // no longer fills the create default — so this only runs when sent.)
       let datesConfirmedWarning: string | undefined;
       if (data.datesConfirmed !== undefined) {
         const gate = await gateDatesConfirmedWrite(db, {
@@ -310,11 +386,17 @@ export const PATCH = withAuth<{ id: string }>(
         }
       }
 
-      if (data.categories) updateData.categories = JSON.stringify(data.categories);
-      if (data.tags) updateData.tags = JSON.stringify(data.tags);
+      // OPE-1389 — present-key checks. The schema no longer defaults an unsent
+      // `categories`/`tags` to [] (the edit form never sends them), and an
+      // explicit [] is a real "clear".
+      if (data.categories !== undefined) updateData.categories = JSON.stringify(data.categories);
+      if (data.tags !== undefined) updateData.tags = JSON.stringify(data.tags);
       if (data.ticketUrl !== undefined) updateData.ticketUrl = data.ticketUrl;
-      if (data.ticketPriceMin !== undefined) updateData.ticketPriceMin = data.ticketPriceMin;
-      if (data.ticketPriceMax !== undefined) updateData.ticketPriceMax = data.ticketPriceMax;
+      // OPE-1390 (CLB4) — dollars in, cents stored. See withDollarPrices.
+      if (data.ticketPriceMin !== undefined)
+        updateData.ticketPriceMinCents = dollarsToCents(data.ticketPriceMin);
+      if (data.ticketPriceMax !== undefined)
+        updateData.ticketPriceMaxCents = dollarsToCents(data.ticketPriceMax);
       if (data.imageUrl !== undefined) updateData.imageUrl = data.imageUrl;
       // IMG1 §1b Phase 1 (2026-06-08) — focal point clamped to [0,1] here
       // as defense-in-depth: the UI clamps in FocalPointPicker + Zod
@@ -342,8 +424,10 @@ export const PATCH = withAuth<{ id: string }>(
           updateData.gateFlags = null;
         }
       }
-      if (data.vendorFeeMin !== undefined) updateData.vendorFeeMin = data.vendorFeeMin;
-      if (data.vendorFeeMax !== undefined) updateData.vendorFeeMax = data.vendorFeeMax;
+      if (data.vendorFeeMin !== undefined)
+        updateData.vendorFeeMinCents = dollarsToCents(data.vendorFeeMin);
+      if (data.vendorFeeMax !== undefined)
+        updateData.vendorFeeMaxCents = dollarsToCents(data.vendorFeeMax);
       if (data.vendorFeeNotes !== undefined) updateData.vendorFeeNotes = data.vendorFeeNotes;
       if (data.indoorOutdoor !== undefined) updateData.indoorOutdoor = data.indoorOutdoor;
       if (data.estimatedAttendance !== undefined)
@@ -501,8 +585,7 @@ export const PATCH = withAuth<{ id: string }>(
       // event_days rows pass 9 columns (8 explicit + the $defaultFn createdAt),
       // so chunks are capped at 11 rows (11 × 9 = 99). Lifting the BATCH_SIZE
       // back up changes the cap, not the limit — the limit is per statement.
-      const slugChanged =
-        typeof updateData.slug === "string" && updateData.slug !== currentEvent.slug;
+      const slugChanged = slugRename !== null;
 
       const eventDayRows =
         data.eventDays && data.eventDays.length > 0
@@ -573,17 +656,7 @@ export const PATCH = withAuth<{ id: string }>(
       // so cast-spreading the conditional statements is safe.
       const batchStatements = [
         db.update(events).set(updateData).where(eq(events.id, id)),
-        ...(slugChanged
-          ? [
-              db.insert(eventSlugHistory).values({
-                eventId: id,
-                oldSlug: currentEvent.slug,
-                newSlug: unsafeSlug(updateData.slug as string),
-                changedAt: new Date(),
-                changedBy: session.user.id,
-              }),
-            ]
-          : []),
+        ...(slugRename ? [slugRename.historyInsert] : []),
         ...(data.eventDays !== undefined
           ? [
               db.delete(eventDays).where(eq(eventDays.eventId, id)),
@@ -788,10 +861,11 @@ export const PATCH = withAuth<{ id: string }>(
       if (gateFlagsWarning) warnings.gate_flags = gateFlagsWarning;
       if (datesConfirmedWarning) warnings.dates_confirmed_downgraded = datesConfirmedWarning;
       if (syncDisabledByEdit) warnings.sync_disabled = { fields: syncLockFields };
+      const responseEvent = updatedEvent ? withDollarPrices(updatedEvent) : updatedEvent;
       if (Object.keys(warnings).length > 0) {
-        return NextResponse.json({ ...updatedEvent, warnings });
+        return NextResponse.json({ ...responseEvent, warnings });
       }
-      return NextResponse.json(updatedEvent);
+      return NextResponse.json(responseEvent);
     } catch (error) {
       await logError(db, {
         message: "Failed to update event",

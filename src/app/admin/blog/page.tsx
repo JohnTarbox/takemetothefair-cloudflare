@@ -34,8 +34,6 @@ import {
   type ClusterRollupRow,
 } from "@/lib/admin/blog-coverage";
 
-export const revalidate = 300;
-
 type SortKey =
   | "title"
   | "publishDate"

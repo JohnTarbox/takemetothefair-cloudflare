@@ -2,6 +2,8 @@ import { opaqueErrorResponse } from "./error-response.js";
 import { lastGeocodeSweepCursor, sweepGeocodePages } from "./venues/geocode-sweep-pager.js";
 import OAuthProvider from "@cloudflare/workers-oauth-provider";
 import { mcpOAuthProviderOptions } from "./oauth/provider-options";
+import { bindMcpSessionsToUser } from "./mcp-session-binding.js";
+import { guardClientRegistration } from "./oauth/register-throttle.js";
 import type { EmailGateEnv } from "./email-gates.js";
 import { McpAgent } from "agents/mcp";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -503,8 +505,11 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
 // ---------------------------------------------------------------------------
 const oauthProvider = new OAuthProvider<Env>(
   mcpOAuthProviderOptions<Env>({
-    mcp: MeetMeAtTheFairMCP.serve("/mcp"),
-    sse: MeetMeAtTheFairMCP.serveSSE("/sse"),
+    // OPE-1391 — the session's Durable Object is named under the OAuth user,
+    // so another user's token presenting this session id reaches a different
+    // (uninitialized) object → 404. Both transports; see mcp-session-binding.ts.
+    mcp: bindMcpSessionsToUser(MeetMeAtTheFairMCP.serve("/mcp")),
+    sse: bindMcpSessionsToUser(MeetMeAtTheFairMCP.serveSSE("/sse")),
     login: LoginHandler,
   })
 );
@@ -2212,6 +2217,11 @@ export default {
       const response = await handleInternalApi(request, env, url);
       if (response) return response;
     }
+
+    // OPE-1391 — dynamic client registration is unauthenticated and writes to
+    // OAUTH_KV; cap it per IP before the provider sees the request.
+    const registrationRefused = await guardClientRegistration(request, env);
+    if (registrationRefused) return registrationRefused;
 
     // Everything else goes through the OAuth provider
     try {
