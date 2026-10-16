@@ -11,10 +11,7 @@ import {
   users,
   eventDays,
   eventInternalNotes,
-  vendorSlugHistory,
   eventSlugHistory,
-  promoterSlugHistory,
-  venueSlugHistory,
   adminActions,
   eventDataCitations,
   eventDuplicateDismissals,
@@ -45,6 +42,9 @@ import {
   dayHoursUnknown,
   repointInboundEmailsToKeeper,
   rosterResearchTargetWhere,
+  planSlugRename,
+  SlugCollisionExhaustedError,
+  type SlugRenamePlan,
 } from "@takemetothefair/db-schema";
 import { accessNotesProseReason } from "../access-notes-guard.js";
 import {
@@ -81,7 +81,6 @@ import {
   rejectReasonRequired,
 } from "@takemetothefair/constants";
 import { emitExtractionFault } from "../faults/extraction-emitter.js";
-import { recordSlugRename } from "../slug-history.js";
 import {
   geocodeNewVenueViaMainApp,
   recordNewVenueGeocodeRefusal,
@@ -2475,50 +2474,38 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           }
         }
 
-        // If venue_name changed, regenerate slug
+        // If venue_name changed, regenerate slug.
+        // OPE-1373 — shared resolver (the old loop here `break`-ed out after 20
+        // collisions and wrote the still-taken candidate anyway); its history
+        // INSERT commits in the same batch as the venue UPDATE below.
+        let venueSlugRename: SlugRenamePlan | null = null;
         if (venueUpdates.name !== undefined) {
-          const baseSlug = createSlug(venueUpdates.name as string);
-          let finalSlug = baseSlug;
-          let suffix = 0;
-          while (true) {
-            const candidate = suffix > 0 ? appendSlugSegment(baseSlug, suffix) : baseSlug;
-            const existing = await db
-              .select({ id: venues.id })
-              .from(venues)
-              .where(eq(venues.slug, candidate))
-              .limit(1);
-            if (existing.length === 0 || existing[0].id === venue.id) {
-              finalSlug = candidate;
-              break;
-            }
-            suffix++;
-            if (suffix > 20) break;
+          venueSlugRename = await planSlugRename(db, "venue", {
+            entityId: venue.id,
+            currentSlug: venue.slug,
+            seed: createSlug(venueUpdates.name as string),
+            changedBy: auth.userId,
+          });
+          if (venueSlugRename) {
+            venueUpdates.slug = venueSlugRename.nextSlug;
+            venuePreviousValues.slug = venue.slug;
+            venueNewValues.slug = venueSlugRename.nextSlug;
           }
-          venueUpdates.slug = finalSlug;
-          venuePreviousValues.slug = venue.slug;
-          venueNewValues.slug = finalSlug;
         }
 
         venueUpdates.updatedAt = new Date();
-        await db.update(venues).set(venueUpdates).where(eq(venues.id, venue.id));
         // OPE-495 — the venue can be renamed as a SIDE EFFECT of update_event,
         // which the comment below already calls the least expected way a
         // published venue changes. It owes a redirect exactly like a direct
         // update_venue does, and is the easiest of the three to forget.
-        await recordSlugRename({
-          label: "update_event:venue",
-          entityId: venue.id,
-          previousSlug: venue.slug,
-          nextSlug: venueUpdates.slug as string | undefined,
-          write: (oldSlug, newSlug) =>
-            db.insert(venueSlugHistory).values({
-              venueId: venue.id,
-              oldSlug,
-              newSlug,
-              changedAt: new Date(),
-              changedBy: auth.userId,
-            }),
-        });
+        if (venueSlugRename) {
+          await db.batch([
+            db.update(venues).set(venueUpdates).where(eq(venues.id, venue.id)),
+            venueSlugRename.historyInsert,
+          ]);
+        } else {
+          await db.update(venues).set(venueUpdates).where(eq(venues.id, venue.id));
+        }
         // OPE-433 scope 5 — a venue edited as a SIDE EFFECT of an event update.
         // This is the least expected way a published venue changes, so it is
         // the one most worth naming.
@@ -4076,33 +4063,26 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         return { content: [jsonContent(lifecycle.error)], isError: true };
       }
 
-      // If name changed, regenerate slug with collision check
+      // If name changed, regenerate slug with collision check.
+      // OPE-1373 — shared resolver; its history INSERT commits in the same batch
+      // as the UPDATE below, so the rename and its 301 land together.
+      let slugRename: SlugRenamePlan | null = null;
       if (params.name !== undefined) {
-        const baseSlug = createSlug(params.name);
-        let finalSlug = baseSlug;
-        let suffix = 0;
-        while (true) {
-          const candidate = suffix > 0 ? appendSlugSegment(baseSlug, suffix) : baseSlug;
-          const existing = await db
-            .select({ id: venues.id })
-            .from(venues)
-            .where(eq(venues.slug, candidate))
-            .limit(1);
-          if (existing.length === 0 || existing[0].id === venue.id) {
-            finalSlug = candidate;
-            break;
-          }
-          suffix++;
-          if (suffix > 20) {
-            return {
-              content: [
-                { type: "text", text: "Too many slug collisions. Try a more unique name." },
-              ],
-              isError: true,
-            };
-          }
+        try {
+          slugRename = await planSlugRename(db, "venue", {
+            entityId: venue.id,
+            currentSlug: venue.slug,
+            seed: createSlug(params.name),
+            changedBy: auth.userId,
+          });
+        } catch (err) {
+          if (!(err instanceof SlugCollisionExhaustedError)) throw err;
+          return {
+            content: [{ type: "text", text: "Too many slug collisions. Try a more unique name." }],
+            isError: true,
+          };
         }
-        updates.slug = finalSlug;
+        if (slugRename) updates.slug = slugRename.nextSlug;
       }
 
       updates.updatedAt = new Date();
@@ -4137,29 +4117,19 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       if (venueSyndicationStmts.length > 0) {
         await db.batch([
           db.update(venues).set(updates).where(eq(venues.id, venue.id)),
+          ...(slugRename ? [slugRename.historyInsert] : []),
           ...venueSyndicationStmts,
         ] as unknown as Parameters<typeof db.batch>[0]);
         await enqueueSyndicationChange(env, { entityType: "venue", entityId: venue.id });
+      } else if (slugRename) {
+        // OPE-495/OPE-1373 — the venue_slug_history row commits WITH the rename.
+        await db.batch([
+          db.update(venues).set(updates).where(eq(venues.id, venue.id)),
+          slugRename.historyInsert,
+        ]);
       } else {
         await db.update(venues).set(updates).where(eq(venues.id, venue.id));
       }
-
-      // OPE-495 — same defect as update_promoter, same fix. venue_slug_history
-      // also held zero MCP-written rows before this.
-      await recordSlugRename({
-        label: "update_venue",
-        entityId: venue.id,
-        previousSlug: venue.slug,
-        nextSlug: updates.slug as string | undefined,
-        write: (oldSlug, newSlug) =>
-          db.insert(venueSlugHistory).values({
-            venueId: venue.id,
-            oldSlug,
-            newSlug,
-            changedAt: new Date(),
-            changedBy: auth.userId,
-          }),
-      });
 
       // OPE-433 scope 5 — `update_venue` over MCP. An agent holding the admin
       // token can change a published venue, and before this there was nothing
@@ -5099,34 +5069,23 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
             ? createSlug(params.business_name)
             : null;
 
-      if (slugSeed && slugSeed !== vendor.slug) {
-        let finalSlug = slugSeed;
-        let suffix = 0;
-        while (true) {
-          const candidate = suffix > 0 ? appendSlugSegment(slugSeed, suffix) : slugSeed;
-          const existing = await db
-            .select({ id: vendors.id })
-            .from(vendors)
-            .where(eq(vendors.slug, candidate))
-            .limit(1);
-          if (existing.length === 0 || existing[0].id === vendor.id) {
-            finalSlug = candidate;
-            break;
-          }
-          suffix++;
-          if (suffix > 20) {
-            return {
-              content: [
-                { type: "text", text: "Too many slug collisions. Try a more unique name." },
-              ],
-              isError: true,
-            };
-          }
-        }
-        if (finalSlug !== vendor.slug) {
-          updates.slug = finalSlug;
-        }
+      // OPE-1373 — shared resolver; history INSERT batched with the UPDATE.
+      let slugRename: SlugRenamePlan | null = null;
+      try {
+        slugRename = await planSlugRename(db, "vendor", {
+          entityId: vendor.id,
+          currentSlug: vendor.slug,
+          seed: slugSeed,
+          changedBy: auth.userId,
+        });
+      } catch (err) {
+        if (!(err instanceof SlugCollisionExhaustedError)) throw err;
+        return {
+          content: [{ type: "text", text: "Too many slug collisions. Try a more unique name." }],
+          isError: true,
+        };
       }
+      if (slugRename) updates.slug = slugRename.nextSlug;
 
       updates.updatedAt = new Date();
 
@@ -5144,7 +5103,16 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         }
       }
 
-      await db.update(vendors).set(updates).where(eq(vendors.id, vendor.id));
+      // Slug change: the old→new vendor_slug_history row (301s on /vendors/[slug])
+      // commits in the same batch as the rename.
+      if (slugRename) {
+        await db.batch([
+          db.update(vendors).set(updates).where(eq(vendors.id, vendor.id)),
+          slugRename.historyInsert,
+        ]);
+      } else {
+        await db.update(vendors).set(updates).where(eq(vendors.id, vendor.id));
+      }
 
       await recomputeVendorCompleteness(db, vendor.id);
 
@@ -5157,17 +5125,6 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         fieldsChanged: Object.keys(updates).filter((k) => k !== "updatedAt"),
         notes: "MCP update_vendor",
       });
-
-      // Slug change: record the old→new mapping for 301 redirects on /vendors/[slug].
-      if (updates.slug && updates.slug !== vendor.slug) {
-        await db.insert(vendorSlugHistory).values({
-          vendorId: vendor.id,
-          oldSlug: vendor.slug,
-          newSlug: unsafeSlug(updates.slug as string),
-          changedAt: new Date(),
-          changedBy: auth.userId,
-        });
-      }
 
       // IndexNow: ping when fields rendered on the public vendor page change.
       // The material list now includes Enhanced Profile fields (round-3) since
@@ -5280,39 +5237,40 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }
 
       // Custom slug handling — same shape as update_vendor's slug logic.
-      let slugChanged: { from: Slug; to: Slug } | null = null;
+      // OPE-1373 — shared resolver; history INSERT batched with the UPDATE.
+      let slugRename: SlugRenamePlan | null = null;
       if (params.custom_slug && params.custom_slug !== vendor.slug) {
-        const slugSeed = createSlug(params.custom_slug);
-        let finalSlug = slugSeed;
-        let suffix = 0;
-        while (true) {
-          const candidate = suffix > 0 ? appendSlugSegment(slugSeed, suffix) : slugSeed;
-          const existing = await db
-            .select({ id: vendors.id })
-            .from(vendors)
-            .where(eq(vendors.slug, candidate))
-            .limit(1);
-          if (existing.length === 0 || existing[0].id === vendor.id) {
-            finalSlug = candidate;
-            break;
-          }
-          suffix++;
-          if (suffix > 20) {
-            return {
-              content: [
-                { type: "text", text: "Too many slug collisions on the requested custom slug." },
-              ],
-              isError: true,
-            };
-          }
+        try {
+          slugRename = await planSlugRename(db, "vendor", {
+            entityId: vendor.id,
+            currentSlug: vendor.slug,
+            seed: createSlug(params.custom_slug),
+            changedBy: auth.userId,
+            changedAt: now,
+          });
+        } catch (err) {
+          if (!(err instanceof SlugCollisionExhaustedError)) throw err;
+          return {
+            content: [
+              { type: "text", text: "Too many slug collisions on the requested custom slug." },
+            ],
+            isError: true,
+          };
         }
-        if (finalSlug !== vendor.slug) {
-          updates.slug = finalSlug;
-          slugChanged = { from: vendor.slug, to: finalSlug };
-        }
+        if (slugRename) updates.slug = slugRename.nextSlug;
       }
+      const slugChanged = slugRename
+        ? { from: slugRename.previousSlug, to: slugRename.nextSlug }
+        : null;
 
-      await db.update(vendors).set(updates).where(eq(vendors.id, vendor.id));
+      if (slugRename) {
+        await db.batch([
+          db.update(vendors).set(updates).where(eq(vendors.id, vendor.id)),
+          slugRename.historyInsert,
+        ]);
+      } else {
+        await db.update(vendors).set(updates).where(eq(vendors.id, vendor.id));
+      }
 
       await recomputeVendorCompleteness(db, vendor.id);
 
@@ -5325,16 +5283,6 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         fieldsChanged: Object.keys(updates).filter((k) => k !== "updatedAt"),
         notes: "MCP update_vendor_status",
       });
-
-      if (slugChanged) {
-        await db.insert(vendorSlugHistory).values({
-          vendorId: vendor.id,
-          oldSlug: slugChanged.from,
-          newSlug: slugChanged.to,
-          changedAt: now,
-          changedBy: auth.userId,
-        });
-      }
 
       // Audit log row — captures the lifecycle transition for later analysis.
       await db.insert(adminActions).values({
@@ -5841,33 +5789,25 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }
       if (params.operating_status !== undefined) updates.operatingStatusVerifiedAt = new Date();
 
-      // If name changed, regenerate slug
+      // If name changed, regenerate slug.
+      // OPE-1373 — shared resolver; history INSERT batched with the UPDATE.
+      let slugRename: SlugRenamePlan | null = null;
       if (params.name !== undefined) {
-        const baseSlug = createSlug(params.name);
-        let finalSlug = baseSlug;
-        let suffix = 0;
-        while (true) {
-          const candidate = suffix > 0 ? appendSlugSegment(baseSlug, suffix) : baseSlug;
-          const existing = await db
-            .select({ id: promoters.id })
-            .from(promoters)
-            .where(eq(promoters.slug, candidate))
-            .limit(1);
-          if (existing.length === 0 || existing[0].id === promoter.id) {
-            finalSlug = candidate;
-            break;
-          }
-          suffix++;
-          if (suffix > 20) {
-            return {
-              content: [
-                { type: "text", text: "Too many slug collisions. Try a more unique name." },
-              ],
-              isError: true,
-            };
-          }
+        try {
+          slugRename = await planSlugRename(db, "promoter", {
+            entityId: promoter.id,
+            currentSlug: promoter.slug,
+            seed: createSlug(params.name),
+            changedBy: auth.userId,
+          });
+        } catch (err) {
+          if (!(err instanceof SlugCollisionExhaustedError)) throw err;
+          return {
+            content: [{ type: "text", text: "Too many slug collisions. Try a more unique name." }],
+            isError: true,
+          };
         }
-        updates.slug = finalSlug;
+        if (slugRename) updates.slug = slugRename.nextSlug;
       }
 
       updates.updatedAt = new Date();
@@ -5924,27 +5864,18 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         updates.enrichmentBlockedReason = null;
       }
 
-      await db.update(promoters).set(updates).where(eq(promoters.id, promoter.id));
-
       // OPE-495 — record the rename so /promoters/<old-slug> keeps 301-ing.
-      // `update_promoter` regenerates the slug from `name` through the same
-      // collision loop update_event uses, but never wrote the history row, so
-      // every MCP rename silently orphaned a live URL. Verified in prod: all 10
-      // promoter_slug_history rows were admin-UI writes; not one came from MCP.
-      await recordSlugRename({
-        label: "update_promoter",
-        entityId: promoter.id,
-        previousSlug: promoter.slug,
-        nextSlug: updates.slug as string | undefined,
-        write: (oldSlug, newSlug) =>
-          db.insert(promoterSlugHistory).values({
-            promoterId: promoter.id,
-            oldSlug,
-            newSlug,
-            changedAt: new Date(),
-            changedBy: auth.userId,
-          }),
-      });
+      // OPE-1373 — the promoter_slug_history row now commits in the SAME batch
+      // as the rename (was a fail-soft insert after it), so a rename can no
+      // longer land without its redirect.
+      if (slugRename) {
+        await db.batch([
+          db.update(promoters).set(updates).where(eq(promoters.id, promoter.id)),
+          slugRename.historyInsert,
+        ]);
+      } else {
+        await db.update(promoters).set(updates).where(eq(promoters.id, promoter.id));
+      }
 
       const newValues: Record<string, unknown> = {};
       for (const field of requestedFields) {

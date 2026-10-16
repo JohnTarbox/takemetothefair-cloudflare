@@ -7177,3 +7177,5 @@ export * from "./citation-supersede-scope";
 export * from "./promoter-merge-children";
 export * from "./venue-merge-children";
 export * from "./inbound-duplicate-repoint";
+// OPE-1373 — shared collision-safe rename + slug-history write.
+export * from "./slug-rename";
