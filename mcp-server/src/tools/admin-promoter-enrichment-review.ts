@@ -36,6 +36,7 @@ import {
 import { jsonContent, logEnrichment, publicUrlFor, triggerIndexNow } from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
+import { logAuditWriteFailure } from "../audit/log-audit-failure.js";
 
 interface Env {
   MAIN_APP?: { fetch: typeof fetch };
@@ -723,7 +724,14 @@ async function writeAudit(
       }),
       createdAt: new Date(),
     });
-  } catch {
+  } catch (error) {
     /* audit is non-critical — never fail the review on an audit-write hiccup */
+    await logAuditWriteFailure(db, {
+      source: "mcp:tool:review_promoter_enrichment_candidate",
+      action: "promoter.enrichment_review",
+      targetType: "promoter",
+      targetId: cand.promoterId,
+      error,
+    });
   }
 }

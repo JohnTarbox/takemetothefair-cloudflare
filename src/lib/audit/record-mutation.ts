@@ -14,6 +14,7 @@ import { adminActions } from "@/lib/db/schema";
 import { buildMutationAudit, type MutationAuditInput } from "@takemetothefair/utils";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "@/lib/db/schema";
+import { logAuditWriteFailure } from "@/lib/audit/log-audit-failure";
 
 type Db = DrizzleD1Database<typeof schema>;
 
@@ -30,7 +31,16 @@ export async function recordMutation(db: Db, input: MutationAuditInput): Promise
     if (!row) return false;
     await db.insert(adminActions).values(row);
     return true;
-  } catch {
+  } catch (error) {
+    // Still best-effort (never fails the write it describes), but no longer
+    // silent: the lost row is logged with the entity it described (OPE-1374).
+    await logAuditWriteFailure(db, {
+      source: "audit:record-mutation",
+      action: `${input.entityType}.${input.verb}`,
+      targetType: input.entityType,
+      targetId: input.entityId,
+      error,
+    });
     return false;
   }
 }

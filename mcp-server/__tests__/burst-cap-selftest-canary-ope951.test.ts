@@ -67,7 +67,10 @@ describe("runScheduledBurstCapSelfTest", () => {
 
   it("is registered in the daily cron branch", () => {
     // Anchor on the CALL, not the bare name, which also matches the import.
+    // OPE-1374 — the daily batch is now a list of named settleCronTasks thunks.
     const src = readFileSync(join(__dirname, "..", "src", "index.ts"), "utf8");
-    expect(src).toMatch(/^\s+runScheduledBurstCapSelfTest\(env\),$/m);
+    expect(src).toMatch(
+      /^\s+\["burst-cap-self-test", \(\) => runScheduledBurstCapSelfTest\(env\)\],$/m
+    );
   });
 });

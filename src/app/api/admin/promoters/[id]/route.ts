@@ -10,6 +10,7 @@ import { logError } from "@/lib/logger";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 import { computePromoterEnrichment } from "@takemetothefair/constants";
 import { deletePromoterChildren } from "@takemetothefair/db-schema";
+import { logAuditWriteFailure } from "@/lib/audit/log-audit-failure";
 
 export const GET = withAuth<{ id: string }>({ role: "ADMIN" }, async ({ request, db, params }) => {
   const { id } = params;
@@ -203,8 +204,15 @@ export const DELETE = withAuth<{ id: string }>(
           }),
           createdAt: new Date(),
         });
-      } catch {
+      } catch (error) {
         // Never fail the delete over its audit row.
+        await logAuditWriteFailure(db, {
+          source: "admin:promoters:delete",
+          action: "promoter.delete",
+          targetType: "promoter",
+          targetId: id,
+          error,
+        });
       }
       return NextResponse.json({ success: true });
     } catch (error) {

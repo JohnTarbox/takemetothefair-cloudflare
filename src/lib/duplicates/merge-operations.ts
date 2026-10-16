@@ -30,6 +30,7 @@ import type {
   MergeResponse,
   RelationshipCounts,
 } from "./types";
+import { logAuditWriteFailure } from "@/lib/audit/log-audit-failure";
 
 /**
  * Get merge preview for two entities
@@ -381,8 +382,15 @@ async function mergePromoters(
       }),
       createdAt: new Date(),
     });
-  } catch {
+  } catch (error) {
     // Audit failure shouldn't fail the merge itself (same rule as the MCP tool).
+    await logAuditWriteFailure(db, {
+      source: "admin:duplicates:merge",
+      action: "promoter.merge",
+      targetType: "promoter",
+      targetId: primaryId,
+      error,
+    });
   }
 
   const [mergedEntity] = await db.select().from(promoters).where(eq(promoters.id, primaryId));

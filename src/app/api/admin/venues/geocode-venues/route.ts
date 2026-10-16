@@ -55,6 +55,7 @@ import {
   type GeocodeOutcome,
   type VenueForGeocode,
 } from "@/lib/venues/geocode-decision";
+import { logAuditWriteFailure } from "@/lib/audit/log-audit-failure";
 
 /**
  * Hard cap per call. Each venue costs one Google round-trip (8s timeout) plus a
@@ -291,10 +292,17 @@ export const POST = withInternalKey(
             next_cursor,
           }),
         });
-      } catch {
+      } catch (error) {
         // A liveness row must never fail the sweep it describes — same
         // contract as `recordMutation`. A missed row reads as one late night,
         // and the 48h probe window absorbs it.
+        await logAuditWriteFailure(db, {
+          source: "admin:venues:geocode-sweep",
+          action: "venue.geocode.sweep",
+          targetType: "venue",
+          targetId: "sweep",
+          error,
+        });
       }
     }
 

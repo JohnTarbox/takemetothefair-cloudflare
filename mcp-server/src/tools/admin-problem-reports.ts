@@ -18,6 +18,7 @@ import type { Db } from "../db.js";
 import { jsonContent } from "../helpers.js";
 import { LOOKBACK_MINUTES, LOOKAHEAD_MINUTES } from "../problem-reports/intake.js";
 import { correlateProblemReportCore } from "../problem-reports/correlate.js";
+import { logAuditWriteFailure } from "../audit/log-audit-failure.js";
 
 export function registerAdminProblemReportTools(server: McpServer, db: Db) {
   // ── list_problem_reports ────────────────────────────────────────
@@ -261,8 +262,15 @@ export function registerAdminProblemReportTools(server: McpServer, db: Db) {
           }),
           createdAt: new Date(),
         });
-      } catch {
-        // Audit failure shouldn't fail the resolve — log nothing further.
+      } catch (error) {
+        // Audit failure shouldn't fail the resolve — but the lost row is logged (OPE-1374).
+        await logAuditWriteFailure(db, {
+          source: "mcp:tool:resolve_problem_report",
+          action: "problem_report.resolve",
+          targetType: "problem_report",
+          targetId: params.id,
+          error,
+        });
       }
 
       return {

@@ -10,6 +10,7 @@ import { planPromoterContactWrite } from "@takemetothefair/db-schema";
 import type { Db } from "./db.js";
 import { adminActions, promoterContacts, users } from "./schema.js";
 import { decodeHtmlEntities } from "./helpers.js";
+import { logError } from "./logger.js";
 
 export async function recordClaimantAsPromoterContact(
   db: Db,
@@ -84,7 +85,15 @@ export async function recordClaimantAsPromoterContact(
       });
     }
     return outcome;
-  } catch {
+  } catch (error) {
+    // Never fails the claim — but the module contract says a failure is
+    // logged, and it was not (OPE-1374).
+    await logError(db, {
+      source: "mcp:promoter-claimant-contact",
+      message: "recording the claimant as a promoter contact failed; the claim itself stands",
+      error,
+      context: { promoterId: input.promoterId, userId: input.userId, via: input.via },
+    });
     return "skipped";
   }
 }
