@@ -1,3 +1,4 @@
+import { safeJsonLd } from "@/lib/seo/safe-json-ld";
 interface ArticleSchemaProps {
   headline: string;
   description?: string | null;
@@ -79,12 +80,9 @@ export function ArticleSchema({
     schema.articleSection = categories[0];
   }
 
-  // JSON.stringify produces safe output for JSON-LD script tags —
-  // all values come from our own database, not user-generated HTML
+  // safeJsonLd escapes `<`/`>`/`&` so a `</script>` in any field cannot
+  // break out of the script element (OPE-1360).
   return (
-    <script
-      type="application/ld+json"
-      dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}
-    />
+    <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: safeJsonLd(schema) }} />
   );
 }

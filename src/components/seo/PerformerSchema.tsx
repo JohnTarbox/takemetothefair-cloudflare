@@ -9,6 +9,7 @@ import {
   buildPerformerInEvents,
   type PerformerInEventInput,
 } from "@/lib/performers/performer-in-jsonld";
+import { safeJsonLd } from "@/lib/seo/safe-json-ld";
 
 export interface PerformerSchemaProps {
   name: string;
@@ -56,6 +57,6 @@ export function PerformerSchema({
   // performer data, conditional spreads → no undefined). Escape `<` so a stray
   // "</script>" in a name can't break out of the tag (defensive; the sibling
   // schema components predate this hardening).
-  const json = JSON.stringify(schema).replace(/</g, "\\u003c");
+  const json = safeJsonLd(schema);
   return <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: json }} />;
 }

@@ -1,3 +1,4 @@
+import { safeJsonLd } from "@/lib/seo/safe-json-ld";
 // Emits the WebSite + SearchAction JSON-LD node on the homepage only.
 // References the Organization emitted site-wide by <OrganizationSchema> via
 // its stable @id, so the two surfaces stay linked without duplicating the
@@ -27,9 +28,6 @@ export function WebSiteSchema() {
   };
 
   return (
-    <script
-      type="application/ld+json"
-      dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}
-    />
+    <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: safeJsonLd(schema) }} />
   );
 }

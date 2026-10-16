@@ -1,3 +1,4 @@
+import { safeJsonLd } from "@/lib/seo/safe-json-ld";
 interface FAQSchemaProps {
   items: Array<{
     question: string;
@@ -22,9 +23,6 @@ export function FAQSchema({ items }: FAQSchemaProps) {
   };
 
   return (
-    <script
-      type="application/ld+json"
-      dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}
-    />
+    <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: safeJsonLd(schema) }} />
   );
 }
