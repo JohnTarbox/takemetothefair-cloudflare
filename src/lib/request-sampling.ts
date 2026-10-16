@@ -68,6 +68,13 @@ export function shouldSample(rand: number): boolean {
  * Recorded at 100% (not the 5% page rate): a single crafted request is the
  * event worth finding. Stores path, timestamp, CF country and ASN only — no
  * headers, no IP, no UA.
+ *
+ * ⚠️ Only meaningful on the RAW request, i.e. from a Worker's own fetch
+ * (a custom Worker entry, src/worker/admin-rsc-sampler.ts — not shipped as of
+ * this writing, so nothing records these rows today). Next deletes these
+ * headers before middleware (web/adapter.js:137-146) and before `headers()` in
+ * render (async-storage/request-store.js:33-38), so there it is always false.
+ * Guarded by src/__tests__/middleware-no-flight-headers-ope1397.test.ts.
  */
 export const ADMIN_RSC_ANON_KIND = "admin_rsc_anon" as const;
 

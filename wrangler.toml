@@ -3,7 +3,11 @@
 # 25 MiB *uncompressed* Function cap was at the redline; Workers cap on
 # *gzipped* size (~3.85 MiB here vs 10 MiB paid) gives real headroom.
 name = "meetmeatthefair-app"
-main = ".open-next/worker.js"
+# OPE-1397 fix — a thin wrapper around OpenNext's generated `.open-next/worker.js`
+# (built by `opennextjs-cloudflare build`): the anonymous-RSC-on-/admin sampler
+# must see the raw request, and Next strips the RSC headers before middleware
+# and render. See worker.mjs / src/worker/admin-rsc-sampler.ts.
+main = "worker.mjs"
 # OPE-994 — explicit, not the account default. The app is served only on
 # meetmeatthefair.com/* (see [[routes]]); a *.workers.dev hostname would be a
 # second front door outside every zone rule (the OPE-929 Cardworks incident).
