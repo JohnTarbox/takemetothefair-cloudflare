@@ -623,12 +623,11 @@ export async function handleInboundEmail(
     // 3b-ii. WS3e (2026-06-11) — verify the message actually authenticated
     //     before the trusted fast-path honors a (spoofable) From address.
     //     Cloudflare Email Routing attaches an Authentication-Results header;
-    //     parseEmailAuth condenses it to pass/fail/unknown. We only DOWNGRADE
-    //     on a proven "fail" (fail-open on "unknown" so existing trusted
-    //     senders aren't broken if the header is absent). Log trusted senders
-    //     whose mail isn't a clean "pass" so prod can confirm header presence
-    //     before we tighten the gate to require "pass".
-    const emailAuth = parseEmailAuth(message.headers?.get("Authentication-Results"));
+    //     parseEmailAuth reads ONLY Cloudflare's own (first) header and calls
+    //     "pass" only an aligned DMARC pass for fromAddr's domain (OPE-1369).
+    //     Anything else — partial, unknown, fail — does not honour the trusted
+    //     tier. Trusted senders whose mail isn't a "pass" are logged.
+    const emailAuth = parseEmailAuth(message.headers?.get("Authentication-Results"), fromAddr);
 
     // 3b-iii. OPE-315 — a photo-only mail is a photo submission whatever
     //     address it arrived at. John mailed two booth photos to submit@ with
@@ -665,7 +664,9 @@ export async function handleInboundEmail(
         message:
           emailAuth === "fail"
             ? "trusted sender failed email auth — fast-path downgraded (possible From spoof)"
-            : "trusted sender email auth unverifiable (no/none Authentication-Results)",
+            : emailAuth === "partial"
+              ? "trusted sender has no aligned DMARC pass — fast-path not honoured"
+              : "trusted sender email auth unverifiable (no Cloudflare Authentication-Results)",
         source: "email-handler:ws3e-auth-gate",
         context: { from: fromAddr, to: toAddr, emailAuth },
       });
@@ -2035,8 +2036,8 @@ async function computeRouting(args: {
   sessionId: string;
   addressIntent: EmailIntent;
   senderTrust: SenderTrustTier;
-  /** WS3e — pass/fail/unknown verdict from the Authentication-Results header. */
-  emailAuth: "pass" | "fail" | "unknown";
+  /** WS3e / OPE-1369 — verdict from Cloudflare's Authentication-Results header. */
+  emailAuth: EmailAuthVerdict;
   toAddr: string;
   fromAddr: string;
   subject: string;
@@ -2110,7 +2111,9 @@ async function computeRouting(args: {
   if (heldPhotoReply) return heldPhotoReply;
 
   const replyChainHeader = isReplyToOurThread(inReplyTo, references);
-  if (senderTrust === "trusted" && emailAuth !== "fail" && env.AI) {
+  // OPE-1369 — only an aligned DMARC pass honours the (spoofable) trusted From.
+  // "partial"/"unknown" used to fail open here; they now take the classifier.
+  if (senderTrust === "trusted" && emailAuth === "pass" && env.AI) {
     const fastpath = hasMultiIntentOrSpecialSignal({
       bodyText,
       bodyHtml,
@@ -2634,8 +2637,8 @@ async function resolveSenderColumns(
  * scale. A spread cannot be half-applied.
  *
  * ⚠️ REPORT-ONLY. Nothing here branches, blocks, routes or sends. The
- * trusted-sender fast-path still calls `parseEmailAuth` on its own, and that
- * function is untouched — see the note on `parseEmailAuthDetail`.
+ * trusted-sender fast-path calls `parseEmailAuth` on its own — see the note on
+ * `parseEmailAuthDetail`.
  */
 export interface SenderSignals {
   authResultsRaw: string | null;
