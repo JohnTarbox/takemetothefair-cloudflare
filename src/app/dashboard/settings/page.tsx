@@ -99,8 +99,9 @@ export default function SettingsPage() {
         setNewTokenName("");
         await fetchTokens();
       } else {
-        const data = (await res.json()) as { error?: string };
-        setTokenMessage(data.error || "Failed to create token");
+        // OPE-1361 — an unverified account gets {error:"email_unverified", message}.
+        const data = (await res.json()) as { error?: string; message?: string };
+        setTokenMessage(data.message || data.error || "Failed to create token");
       }
     } catch {
       setTokenMessage("Failed to create token");

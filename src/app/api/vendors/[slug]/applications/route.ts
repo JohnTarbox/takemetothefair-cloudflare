@@ -2,8 +2,8 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { withApiToken } from "@/lib/api/with-auth";
 import { eventVendors, events } from "@/lib/db/schema";
-import { eq, and } from "drizzle-orm";
-import { isValidTransition } from "@/lib/vendor-status";
+import { eq } from "drizzle-orm";
+import { applyVendorTokenPatch, type TokenPatchBody } from "@/lib/vendor-applications";
 
 export const GET = withApiToken<{ slug: string }>(
   { source: "api/vendors/[slug]/applications" },
@@ -41,79 +41,34 @@ export const GET = withApiToken<{ slug: string }>(
   }
 );
 
-/** PATCH — update vendor's own application status/paymentStatus for an event */
+/**
+ * PATCH — create or update the vendor's own application for an event.
+ *
+ * OPE-1361: the rules live in `applyVendorTokenPatch` (shared with the session
+ * route's checks) — APPLIED by default, CONFIRMED/APPROVED only for a
+ * canSelfConfirm vendor, APPROVED events only, commercial rule, verified email,
+ * paymentStatus held to its enum.
+ */
 export const PATCH = withApiToken<{ slug: string }>(
   { source: "api/vendors/[slug]/applications" },
   async ({ request, db, vendorId }) => {
-    let body: { eventId?: string; status?: string; paymentStatus?: string };
+    let body: TokenPatchBody;
     try {
-      body = await request.json();
+      body = (await request.json()) as TokenPatchBody;
     } catch {
       return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
     }
-
-    if (!body.eventId) {
-      return NextResponse.json({ error: "eventId is required" }, { status: 400 });
+    if (!body || typeof body !== "object") {
+      return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
     }
 
-    // Find existing application or create one
-    const [existing] = await db
-      .select()
-      .from(eventVendors)
-      .where(and(eq(eventVendors.vendorId, vendorId), eq(eventVendors.eventId, body.eventId)))
-      .limit(1);
-
-    if (!existing) {
-      // Create new vendor-event record
-      const newStatus = (body.status ?? "CONFIRMED") as typeof eventVendors.$inferInsert.status;
-      const newPayment = (body.paymentStatus ??
-        "NOT_REQUIRED") as typeof eventVendors.$inferInsert.paymentStatus;
-
-      await db.insert(eventVendors).values({
-        eventId: body.eventId,
-        vendorId,
-        status: newStatus,
-        paymentStatus: newPayment,
-      });
-
+    const result = await applyVendorTokenPatch(db, vendorId, body);
+    if (!result.ok) {
       return NextResponse.json(
-        {
-          eventId: body.eventId,
-          status: newStatus,
-          paymentStatus: newPayment,
-          created: true,
-        },
-        { status: 201 }
+        result.message ? { error: result.error, message: result.message } : { error: result.error },
+        { status: result.httpStatus }
       );
     }
-
-    const updates: Record<string, string> = {};
-
-    // Validate status transition if provided
-    if (body.status && body.status !== existing.status) {
-      if (!isValidTransition(existing.status, body.status)) {
-        return NextResponse.json(
-          { error: `Cannot transition from ${existing.status} to ${body.status}` },
-          { status: 400 }
-        );
-      }
-      updates.status = body.status;
-    }
-
-    if (body.paymentStatus) {
-      updates.paymentStatus = body.paymentStatus;
-    }
-
-    if (Object.keys(updates).length === 0) {
-      return NextResponse.json({ message: "No changes" });
-    }
-
-    await db.update(eventVendors).set(updates).where(eq(eventVendors.id, existing.id));
-
-    return NextResponse.json({
-      eventId: body.eventId,
-      status: updates.status ?? existing.status,
-      paymentStatus: updates.paymentStatus ?? existing.paymentStatus,
-    });
+    return NextResponse.json(result.body, { status: result.httpStatus });
   }
 );
