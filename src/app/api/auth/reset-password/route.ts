@@ -8,6 +8,7 @@ import { users, passwordResetTokens } from "@/lib/db/schema";
 import { hashPassword } from "@/lib/auth";
 import { logError } from "@/lib/logger";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
+import { hashResetToken } from "@/lib/auth/password-reset-token";
 
 const schema = z.object({
   token: z.string().min(32).max(128),
@@ -34,9 +35,15 @@ export async function POST(request: NextRequest) {
 
     const { token, password } = parsed.data;
 
-    const record = await db.query.passwordResetTokens.findFirst({
-      where: eq(passwordResetTokens.token, token),
-    });
+    // OPE-1378 (AUTH8) — tokens are stored as SHA-256(token), and the row is
+    // consumed in ONE statement (DELETE … RETURNING). The old read-then-delete
+    // let two concurrent requests both pass the read; now exactly one gets the
+    // row back and any other sees 0 rows, i.e. "already used".
+    const tokenHash = await hashResetToken(token);
+    const [record] = await db
+      .delete(passwordResetTokens)
+      .where(eq(passwordResetTokens.token, tokenHash))
+      .returning({ userId: passwordResetTokens.userId, expires: passwordResetTokens.expires });
 
     if (!record) {
       return NextResponse.json(
@@ -45,9 +52,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Expired: the DELETE above already cleaned it up.
     if (record.expires.getTime() < Date.now()) {
-      // Clean up expired token
-      await db.delete(passwordResetTokens).where(eq(passwordResetTokens.token, token));
       return NextResponse.json(
         { error: "This reset link has expired. Please request a new one." },
         { status: 400 }
@@ -61,8 +67,10 @@ export async function POST(request: NextRequest) {
       .set({ passwordHash: newHash, updatedAt: new Date() })
       .where(eq(users.id, record.userId));
 
-    // Consume the token so it can't be reused.
-    await db.delete(passwordResetTokens).where(eq(passwordResetTokens.token, token));
+    // Any other outstanding links for this account die with the reset — an
+    // older email sitting in the inbox must not be able to set the password
+    // again.
+    await db.delete(passwordResetTokens).where(eq(passwordResetTokens.userId, record.userId));
 
     return NextResponse.json({ ok: true });
   } catch (error) {
