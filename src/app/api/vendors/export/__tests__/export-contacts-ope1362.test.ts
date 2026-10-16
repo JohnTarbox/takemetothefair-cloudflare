@@ -32,7 +32,9 @@ const SCHEMA_SQL = `
     id TEXT PRIMARY KEY, business_name TEXT NOT NULL, vendor_type TEXT,
     description TEXT, products TEXT DEFAULT '[]', website TEXT,
     contact_name TEXT, contact_email TEXT, contact_phone TEXT,
-    address TEXT, city TEXT, state TEXT, zip TEXT, year_established INTEGER,
+    address TEXT, city TEXT, state TEXT, zip TEXT,
+    self_signup INTEGER NOT NULL DEFAULT 0, show_street_address INTEGER NOT NULL DEFAULT 0,
+    year_established INTEGER,
     payment_methods TEXT DEFAULT '[]', license_info TEXT, insurance_info TEXT,
     verified INTEGER DEFAULT 0, commercial INTEGER DEFAULT 0, deleted_at INTEGER
   );
@@ -150,6 +152,44 @@ describe("GET /api/vendors/export (OPE-1362)", () => {
     const { headers, rows } = await exportCsv();
     const countIdx = headers.indexOf("Upcoming Events");
     expect(rows[0].split(",")[countIdx]).toBe("2");
+  });
+
+  describe("OPE-1398 — self-signup street address", () => {
+    beforeEach(() => {
+      // Alpha: self-signup, not opted in → street hidden for non-admins.
+      // Bravo: admin/import-created → street stays.
+      sqlite.exec(`
+        UPDATE vendors SET address = '12 Hidden Lane Apt 3', zip = '04037', self_signup = 1 WHERE id = '1';
+        UPDATE vendors SET address = '99 Fairground Rd', zip = '04038' WHERE id = '2';
+      `);
+    });
+
+    for (const r of ["USER", "VENDOR", "PROMOTER"]) {
+      it(`${r} session: self-signup street address is blank; city/state/zip and others stay`, async () => {
+        role = r;
+        const { text, headers, rows } = await exportCsv();
+        expect(text).not.toContain("Hidden Lane");
+        expect(text).toContain("99 Fairground Rd");
+        const alpha = rows[0].split(",");
+        expect(alpha[headers.indexOf("Address")]).toBe("");
+        expect(alpha[headers.indexOf("City")]).toBe("Fryeburg");
+        expect(alpha[headers.indexOf("State")]).toBe("ME");
+        expect(alpha[headers.indexOf("ZIP")]).toBe("04037");
+      });
+    }
+
+    it("a self-signup vendor that opted in shows its street address", async () => {
+      role = "USER";
+      sqlite.exec(`UPDATE vendors SET show_street_address = 1 WHERE id = '1'`);
+      const { text } = await exportCsv();
+      expect(text).toContain("12 Hidden Lane Apt 3");
+    });
+
+    it("ADMIN keeps the full street address", async () => {
+      role = "ADMIN";
+      const { text } = await exportCsv();
+      expect(text).toContain("12 Hidden Lane Apt 3");
+    });
   });
 
   it("ADMIN session: keeps contact columns and values, still no deleted vendors", async () => {

@@ -35,7 +35,7 @@ import { buildEventTitle, buildEventMetaDescription } from "@/lib/seo-utils";
 import { cdnImage, OG_EVENT } from "@/lib/cdn-image";
 import { getSeriesLanding } from "@/lib/series/get-series-landing";
 import { seriesHubCanonicalPath } from "@/lib/series/occurrence-view";
-import { chunkedInArray, occurrencePath } from "@takemetothefair/utils";
+import { chunkedInArray, occurrencePath, withPublicStreetAddress } from "@takemetothefair/utils";
 import { withD1ReadLogged } from "@/lib/db/d1-resilience";
 import { DEGRADED_METADATA, isD1PlatformFault } from "@/lib/db/degraded";
 
@@ -235,7 +235,9 @@ async function getEventOnce(slug: string) {
         );
         return {
           ...ev.event_vendors,
-          vendor,
+          // OPE-1398 — full vendor rows reach client components (RSC payload);
+          // a self-signup vendor's street address is nulled before they do.
+          vendor: withPublicStreetAddress(vendor),
           displayTarget,
         };
       }),

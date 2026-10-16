@@ -70,6 +70,10 @@ interface VendorProfile {
   city: string | null;
   state: string | null;
   zip: string | null;
+  // OPE-1398 — street address hidden publicly for self-signup vendors unless
+  // they opt back in.
+  selfSignup?: boolean;
+  showStreetAddress?: boolean;
   latitude: number | null;
   longitude: number | null;
   // Business Details
@@ -129,6 +133,7 @@ export default function VendorProfilePage() {
     city: "",
     state: "",
     zip: "",
+    showStreetAddress: false,
     latitude: null as number | null,
     longitude: null as number | null,
     // Business Details
@@ -193,6 +198,7 @@ export default function VendorProfilePage() {
           city: data.city || "",
           state: data.state || "",
           zip: data.zip || "",
+          showStreetAddress: Boolean(data.showStreetAddress),
           latitude: data.latitude,
           longitude: data.longitude,
           // Business Details
@@ -745,6 +751,27 @@ export default function VendorProfilePage() {
                   onChange={handleChange}
                   placeholder="123 Main Street"
                 />
+                {/* OPE-1398 — self-signup vendors' street address is private
+                    by default; city, state and ZIP still show. */}
+                {profile?.selfSignup && (
+                  <label className="flex items-start gap-2 text-sm text-foreground">
+                    <input
+                      type="checkbox"
+                      name="showStreetAddress"
+                      className="mt-0.5"
+                      checked={formData.showStreetAddress}
+                      onChange={(e) =>
+                        setFormData((prev) => ({ ...prev, showStreetAddress: e.target.checked }))
+                      }
+                    />
+                    <span>
+                      Show my street address on my public profile
+                      <span className="block text-xs text-muted-foreground">
+                        Off by default. Your city, state and ZIP code are always shown.
+                      </span>
+                    </span>
+                  </label>
+                )}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div className="col-span-2">
                     <Input label="City" name="city" value={formData.city} onChange={handleChange} />

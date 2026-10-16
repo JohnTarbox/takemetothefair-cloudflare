@@ -8,6 +8,7 @@ import { userFavorites, events, venues, vendors } from "@/lib/db/schema";
 import { eventVenueJoinProjection } from "@/lib/db/event-join-projection";
 import { eq, inArray, desc } from "drizzle-orm";
 import { logError } from "@/lib/logger";
+import { withPublicStreetAddress } from "@takemetothefair/utils";
 import { PrintButton } from "@/components/print/PrintButton";
 import { PrintEventSheetFooter } from "@/components/print/PrintEventSheetFooter";
 
@@ -70,7 +71,9 @@ async function getFavorites(userId: string) {
       for (let i = 0; i < ids.length; i += BATCH_SIZE) {
         const batch = ids.slice(i, i + BATCH_SIZE);
         const batchResults = await db.select().from(vendors).where(inArray(vendors.id, batch));
-        results.push(...batchResults);
+        // OPE-1398 — any user can favorite any vendor; never carry a hidden
+        // street address into this page.
+        results.push(...batchResults.map((v) => withPublicStreetAddress(v)));
       }
       return results;
     }

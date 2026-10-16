@@ -723,6 +723,9 @@ export const vendorProfileUpdateSchema = z.object({
   city: z.string().max(VALIDATION.CITY_MAX_LENGTH).optional().nullable(),
   state: z.string().max(VALIDATION.STATE_MAX_LENGTH).optional().nullable(),
   zip: z.string().max(VALIDATION.ZIP_MAX_LENGTH).optional().nullable(),
+  // OPE-1398 — the vendor's own opt-back-in to showing its street address
+  // publicly. Only meaningful for self-signup vendors (hidden by default).
+  showStreetAddress: z.boolean().optional(),
   latitude: z.number().min(-90).max(90).optional().nullable(),
   longitude: z.number().min(-180).max(180).optional().nullable(),
   // Upper bound evaluated per-validation via .refine() rather than

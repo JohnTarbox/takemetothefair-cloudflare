@@ -525,6 +525,8 @@ const SCHEMA_SQL = `
     city TEXT,
     state TEXT,
     zip TEXT,
+    self_signup INTEGER NOT NULL DEFAULT 0,
+    show_street_address INTEGER NOT NULL DEFAULT 0,
     latitude REAL,
     longitude REAL,
     year_established INTEGER,

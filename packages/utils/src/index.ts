@@ -560,6 +560,10 @@ export * from "./vendor-display";
 // page and get_vendor_details cannot disagree about what is in a gallery.
 export * from "./vendor-gallery";
 
+// OPE-1398 (2026-10-16): the one rule for showing a vendor's street address
+// publicly (hidden by default for self-signup vendors; city/state stay).
+export * from "./vendor-public-address";
+
 // OPE-1112 (2026-09-22): "is this a link to an image?" — shared by the
 // self-service form, the profile API and update_vendor, so a page URL cannot
 // enter logo_url through whichever writer nobody remembered to guard.

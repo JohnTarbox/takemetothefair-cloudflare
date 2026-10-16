@@ -69,6 +69,7 @@ import {
   type ParentDisplayInput,
   type VendorDisplayInput,
   safeHref,
+  withPublicStreetAddress,
 } from "@takemetothefair/utils";
 import { cdnImage, cdnSrcSet, focalPointGravity, OG_EVENT, OG_SQUARE } from "@/lib/cdn-image";
 
@@ -551,7 +552,11 @@ async function getVendorOnce(slug: string) {
     }
 
     return {
-      ...vendor.vendors,
+      // OPE-1398 — the street address is nulled HERE, at the one loader, for a
+      // self-signup vendor that has not opted in. The Location card, the
+      // VendorSchema JSON-LD and every client prop read this object, so none
+      // of them can render or serialize the hidden string.
+      ...withPublicStreetAddress(vendor.vendors),
       user: vendor.users
         ? { name: vendor.users.name, email: vendor.users.email }
         : { name: null, email: null },
@@ -693,6 +698,10 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   // inclusion must never disagree for the same vendor.
   const indexable = isVendorIndexable({
     ...vendor,
+    // OPE-1398 — the sitemap's SQL gate counts a STORED address as geo; a
+    // hidden one is still on file, so feed the predicate its presence, not the
+    // (possibly nulled) string. Hiding an address must not flip noindex.
+    address: vendor.hasStreetAddress ? "on file" : null,
     eventAssociationCount: vendor.seoEventAssociationCount,
     eventVenueGeoCount: vendor.seoEventVenueGeoCount,
   });
