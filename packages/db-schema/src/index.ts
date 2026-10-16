@@ -2258,10 +2258,11 @@ export const eventDays = sqliteTable("event_days", {
  * NEVER rendered, never read by the main app.
  *
  * A separate table, deliberately NOT an `events.internal_notes` column: the
- * events row is serialized whole on public surfaces (`eventJoinProjection`
- * carries every events column; the event page's full-row select reaches
- * "use client" components and so the RSC payload). A private column there
- * would need stripping at every such site — the OPE-1084 leak class. No
+ * events row was serialized whole on public surfaces (`eventJoinProjection`
+ * carried every events column until OPE-1387 made it the `publicEventColumns`
+ * allow-list; any remaining full-row select that reaches a "use client"
+ * component ships the RSC payload). A private column there would need
+ * stripping at every such site — the OPE-1084 leak class. No
  * `select().from(events)` can reach this table.
  *
  * `events.access_notes` is PUBLIC visitor copy (admission, accessibility,

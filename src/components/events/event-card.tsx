@@ -14,7 +14,8 @@ import { parseJsonArray } from "@/types";
 import { nextOccurrence, showsNextOccurrence } from "@/lib/event-occurrence";
 import { relativeTimeLabel, type RelativeTimeTone } from "@/lib/events/relative-time-label";
 import { formatAudienceBadge } from "@/lib/event-audience";
-import type { events, venues, promoters } from "@/lib/db/schema";
+import type { venues, promoters } from "@/lib/db/schema";
+import type { PublicEvent } from "@/lib/db/event-join-projection";
 import { AddToCalendar } from "./AddToCalendar";
 import { FavoriteButton } from "@/components/FavoriteButton";
 import { getCategoryColors, getCategoryBadgeClass, getCategoryImage } from "@/lib/category-colors";
@@ -22,7 +23,8 @@ import { getStateName } from "@/lib/states";
 import { formatDateMedium, formatDateShort, formatMonthShort } from "@/lib/datetime";
 import { DERIVED_DATE_SHORT, shouldShowProjectedDateCopy } from "@/lib/events/derived-date";
 
-type Event = typeof events.$inferSelect;
+// OPE-1387 — public allow-listed shape; never the full events row.
+type Event = PublicEvent;
 type Venue = typeof venues.$inferSelect;
 type Promoter = typeof promoters.$inferSelect;
 
