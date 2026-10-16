@@ -21,7 +21,6 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { adminActions, events, eventDataCitations } from "@/lib/db/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
-
 const MIN_REVIEWS_FOR_RATE = 5; // don't let a 1-event source read as 100% reject.
 const MIN_CLUSTER_SIZE = 3; // a "burst" worth a batch UI is ≥3 links in a day.
 

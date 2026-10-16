@@ -29,7 +29,6 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, eventDateDriftFindings, promoters } from "@/lib/db/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
-
 // Promoters with fewer than this many events default to T2 (watch) —
 // not enough signal to either trust (T1) or flag (T3). Same default
 // philosophy as the source-quality MIN_EVENTS_FOR_SCORING gate, but the

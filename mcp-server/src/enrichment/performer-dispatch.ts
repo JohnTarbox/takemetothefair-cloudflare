@@ -22,6 +22,7 @@ import { logEnrichment } from "../helpers.js";
 import { fetchVendorSite } from "./fetch-site.js";
 import { extractPerformerSignals, type PerformerExtraction } from "./performer-extract.js";
 import { probePromoterImage } from "./promoter-image.js";
+import { writeGuardedFills, type GuardedFill } from "./guarded-fill.js";
 
 /** One performer pre-extraction job. */
 export interface PerformerEnrichmentMessage {
@@ -301,7 +302,7 @@ export async function processPerformerEnrichmentJob(
   }
 
   // --- Live: auto-apply the high-confidence fills (fill-empty-only) ---
-  const applied = await applyFills(db, msg.performerId, proposals);
+  const applied = await applyFills(db, msg.performerId, proposals, row);
   await recomputeAndStamp(db, msg.performerId, applied.length > 0);
   await logEnrichment(db, {
     targetType: "performer",
@@ -327,19 +328,30 @@ export async function processPerformerEnrichmentJob(
  * review. Marks the applied candidate rows 'auto_merged'. Returns the performer
  * fields actually written.
  */
-async function applyFills(db: Db, performerId: string, proposals: Proposal[]): Promise<string[]> {
-  const update: Record<string, string> = {};
-  const applied: string[] = [];
+async function applyFills(
+  db: Db,
+  performerId: string,
+  proposals: Proposal[],
+  read: Record<string, unknown>
+): Promise<string[]> {
+  const fills: GuardedFill[] = [];
   for (const p of proposals) {
     if (!p.autoApply) continue;
     if (p.flags.length > 0) continue;
     const col = FIELD_TO_COLUMN[p.field];
     if (!col) continue;
-    update[col] = p.proposedValue;
-    applied.push(p.field);
+    fills.push({
+      field: p.field,
+      key: col,
+      value: p.proposedValue,
+      readValue: (read[col] as string | null | undefined) ?? null,
+    });
   }
+  if (fills.length === 0) return [];
+  // OPE-1393 (CLB6) — same read-then-overwrite race as the vendor/promoter
+  // dispatchers: each write lands only if the column is unchanged since the read.
+  const applied = await writeGuardedFills(db, performers, performers.id, performerId, fills);
   if (applied.length === 0) return [];
-  await db.update(performers).set(update).where(eq(performers.id, performerId));
   await db
     .update(performerEnrichmentCandidates)
     .set({ decision: "auto_merged", reviewedAt: new Date(), reviewedBy: "auto-merge" })

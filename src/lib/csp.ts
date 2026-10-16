@@ -82,10 +82,7 @@ const SCRIPT_HOSTS =
  * public policy in next.config.mjs, so a page moving between the two only
  * changes how scripts are trusted.
  */
-export function nonceContentSecurityPolicy(
-  nonce: string,
-  opts: { dev?: boolean } = {}
-): string {
+export function nonceContentSecurityPolicy(nonce: string, opts: { dev?: boolean } = {}): string {
   const dev = opts.dev ?? process.env.NODE_ENV === "development";
   return [
     "default-src 'self'",

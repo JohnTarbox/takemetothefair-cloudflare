@@ -139,7 +139,9 @@ describe("OPE-1371 — the authorize page cannot be framed", () => {
     const nonces = new Set<string>();
     for (let i = 0; i < 4; i++) {
       const { res } = await beginLogin();
-      nonces.add(/'nonce-([^']+)'/.exec(res.headers.get("Content-Security-Policy") ?? "")?.[1] ?? "");
+      nonces.add(
+        /'nonce-([^']+)'/.exec(res.headers.get("Content-Security-Policy") ?? "")?.[1] ?? ""
+      );
     }
     expect(nonces.size).toBe(4);
     expect(nonces.has("")).toBe(false);
