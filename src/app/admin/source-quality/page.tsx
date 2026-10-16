@@ -17,6 +17,7 @@
  * filter-by-ingestion-method via query string.
  */
 
+import { requireAdmin } from "@/lib/require-admin";
 import Link from "next/link";
 import { and, eq, gte, isNotNull, isNull, sql } from "drizzle-orm";
 import { getCloudflareDb } from "@/lib/cloudflare";
@@ -251,6 +252,7 @@ export default async function SourceQualityPage({
 }: {
   searchParams: Promise<{ method?: string }>;
 }) {
+  await requireAdmin();
   const params = await searchParams;
   const filterMethod = params.method && params.method !== "all" ? params.method : null;
 

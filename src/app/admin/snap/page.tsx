@@ -3,6 +3,7 @@
  * layout. Installable on its own (`snap-manifest.json`, start_url + scope
  * `/admin/snap`) so it opens full-screen from the phone's home screen.
  */
+import { requireAdmin } from "@/lib/require-admin";
 import type { Metadata, Viewport } from "next";
 import { SnapCapture } from "./snap-capture";
 
@@ -19,6 +20,7 @@ export const viewport: Viewport = {
   initialScale: 1,
 };
 
-export default function SnapPage() {
+export default async function SnapPage() {
+  await requireAdmin();
   return <SnapCapture />;
 }

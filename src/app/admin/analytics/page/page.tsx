@@ -1,3 +1,4 @@
+import { requireAdmin } from "@/lib/require-admin";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
@@ -98,6 +99,7 @@ function buildCsv(rows: PageViewsDay[]): string {
 }
 
 export default async function AdminAnalyticsPageDetail({ searchParams }: PageProps) {
+  await requireAdmin();
   const { path, refresh } = await searchParams;
   if (!path || !path.startsWith("/")) notFound();
   const skipCache = refresh === "1";
