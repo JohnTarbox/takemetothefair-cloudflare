@@ -97,6 +97,7 @@ import {
   type SenderAuthVerdict,
 } from "./email-auth.js";
 import { isNonActionableSender } from "./email-handlers/audit-sender.js";
+import { sniffAttachmentType } from "./attachment-sniff.js";
 import {
   automationHeadersJson,
   BURST_THRESHOLD_KEYS,
@@ -905,21 +906,32 @@ export async function handleInboundEmail(
     let attachmentSkipsJson: string | null = null;
     if (attachmentCount > 0) {
       try {
-        // Derive a stable, path-safe group id from the Message-ID so a
-        // redelivery overwrites the same R2 keys (idempotent — no orphans)
-        // rather than storing a fresh copy under a random id.
-        const safeMsgId = messageId
-          ? messageId
-              .replace(/[^a-zA-Z0-9._-]+/g, "-")
-              .replace(/^-+|-+$/g, "")
-              .slice(0, 80)
-          : "";
-        const groupId = safeMsgId || crypto.randomUUID();
-        const { refs, skipped } = await captureAttachments(
+        // OPE-1364 — dedup on message_id BEFORE anything is written, then store
+        // under a random per-delivery key. See captureDeliveryAttachments.
+        const capture = await captureDeliveryAttachments(
+          getDb(env.DB),
           env.VENDOR_ASSETS,
-          groupId,
+          messageId,
           effectiveAttachments
         );
+        if (capture.duplicateOf !== null) {
+          await logError(env.DB, {
+            level: "warn",
+            source: SOURCE,
+            message:
+              "duplicate inbound delivery (message_id seen); skipping before attachment capture",
+            sessionId,
+            context: {
+              from: fromAddr,
+              to: toAddr,
+              subject,
+              messageId,
+              priorRowId: capture.duplicateOf,
+            },
+          }).catch(() => {});
+          return;
+        }
+        const { refs, skipped } = capture;
         if (refs.length > 0) attachmentRefsJson = JSON.stringify(refs);
         if (skipped.length > 0) attachmentSkipsJson = JSON.stringify(skipped);
 
@@ -1039,6 +1051,7 @@ export async function handleInboundEmail(
         return;
       }
       if (parentInserted.length === 0) {
+        await discardStoredAttachments(env.VENDOR_ASSETS, attachmentRefsJson);
         await logError(env.DB, {
           level: "warn",
           source: SOURCE,
@@ -1118,6 +1131,15 @@ export async function handleInboundEmail(
         // Should only happen for single-intent rows (messageId dedup).
         // Multi-intent children have null messageId; their parent INSERT
         // already handled the dedup gate.
+        //
+        // OPE-1364 — reached only by a concurrent duplicate that passed the
+        // pre-capture check too. Its attachments went to fresh random keys
+        // that no row references; delete them so a race leaves no orphans.
+        // (Single-intent only: a multi-intent child can't conflict, and its
+        // refs already belong to the parent row that did insert.)
+        if (!parentRowId) {
+          await discardStoredAttachments(env.VENDOR_ASSETS, attachmentRefsJson);
+        }
         await logError(env.DB, {
           level: "warn",
           source: SOURCE,
@@ -1401,6 +1423,81 @@ export function isSignatureFurniture(
   return embedded && sizeBytes > 0 && sizeBytes <= SIGNATURE_MAX_BYTES;
 }
 
+/**
+ * OPE-1364 — has a delivery with this Message-ID already been recorded?
+ * Returns the prior row id, or null (also for a null Message-ID: those skip
+ * dedup, as they always have). Same column the INSERT's partial-unique index
+ * covers, so this answers exactly the question the INSERT gate would.
+ * Exported for unit tests.
+ */
+export async function findPriorDeliveryByMessageId(
+  db: Db,
+  messageId: string | null
+): Promise<string | null> {
+  if (!messageId) return null;
+  const [row] = await db
+    .select({ id: inboundEmails.id })
+    .from(inboundEmails)
+    .where(eq(inboundEmails.messageId, messageId))
+    .limit(1);
+  return row?.id ?? null;
+}
+
+/**
+ * OPE-1364 — the receive-time attachment step for one delivery.
+ *
+ * 1. If a row with this Message-ID already exists, return `{ duplicateOf }`
+ *    having written NOTHING. This used to be decided only at the row INSERT,
+ *    after the bytes were stored under a key derived from the sender's
+ *    Message-ID: a second email reusing a Message-ID (anyone on the thread has
+ *    it) overwrote the original message's attachments, then had its own row
+ *    skipped as a "duplicate", leaving the original row's attachment_refs
+ *    (OCR, poster hero, photo intake) pointing at the attacker's file.
+ * 2. Otherwise store under a RANDOM group id. The Message-ID lives only in
+ *    the row. Readers take keys from attachment_refs and never rebuild them.
+ *
+ * Redelivery idempotency: a true redelivery stops at (1). Two concurrent
+ * copies can both pass (1); the INSERT's partial-unique index still picks one,
+ * and the loser deletes its own freshly-keyed objects
+ * (discardStoredAttachments), so neither case leaves orphans or touches the
+ * winner's bytes.
+ *
+ * The lookup is fail-open: an error there falls through to the INSERT gate,
+ * which is the previous behaviour. Exported for unit tests.
+ */
+export async function captureDeliveryAttachments(
+  db: Db,
+  bucket: R2Bucket | undefined,
+  messageId: string | null,
+  attachments: CapturableAttachment[] | undefined
+): Promise<{ duplicateOf: string } | ({ duplicateOf: null } & AttachmentCapture)> {
+  const prior = await findPriorDeliveryByMessageId(db, messageId).catch(() => null);
+  if (prior) return { duplicateOf: prior };
+  const capture = await captureAttachments(bucket, crypto.randomUUID(), attachments);
+  return { duplicateOf: null, ...capture };
+}
+
+/**
+ * OPE-1364 — delete objects this delivery stored when its row lost the
+ * message_id INSERT race. Best-effort; never throws. Only `inbound-attachments/`
+ * keys are touched. Exported for unit tests.
+ */
+export async function discardStoredAttachments(
+  bucket: R2Bucket | undefined,
+  refsJson: string | null
+): Promise<void> {
+  if (!bucket || !refsJson) return;
+  try {
+    const refs = JSON.parse(refsJson) as AttachmentRef[];
+    const keys = refs
+      .map((r) => r?.key)
+      .filter((k): k is string => typeof k === "string" && k.startsWith("inbound-attachments/"));
+    if (keys.length > 0) await bucket.delete(keys);
+  } catch {
+    // An orphan is a storage cost, not a correctness fault.
+  }
+}
+
 /** Filesystem-safe attachment name for the R2 key. Collapses anything that
  *  isn't a safe filename char to a dash, trims, and caps length. */
 function sanitizeAttachmentName(name: string | null, index: number): string {
@@ -1446,6 +1543,10 @@ export type AttachmentSkipReason =
   | "too-large"
   /** Zero-length or undecodable content. */
   | "empty"
+  /** OPE-1364 — declared as media, but the bytes are none of JPEG / PNG / GIF /
+   *  WebP / HEIC / HEIF / PDF. Includes every SVG (refused by policy: it is an
+   *  image type that executes script). */
+  | "unrecognized-content"
   /** The R2 put threw. The only reason here that is unambiguously a fault. */
   | "put-failed";
 
@@ -1489,7 +1590,9 @@ export interface AttachmentCapture {
  * (tests / non-R2 envs) short-circuits. Callers wrap the whole thing in their
  * own try/catch too — this helper never throws.
  *
- * Only `image/*` and `application/pdf` attachments are stored, within a
+ * Candidates are parts DECLARED `image/*` / `application/pdf` (plus forwarded
+ * messages); OPE-1364 then admits only those whose BYTES are JPEG, PNG, GIF,
+ * WebP, HEIC/HEIF or PDF, stored under the sniffed type — within a
  * per-attachment size cap (ATTACHMENT_MAX_BYTES) and a total-count cap
  * (ATTACHMENT_MAX_COUNT).
  *
@@ -1614,6 +1717,17 @@ export async function captureAttachments(
       note("too-large");
       continue;
     }
+    // OPE-1364 — the declared type above only decides whether a part is a
+    // CANDIDATE. What is stored, and under what Content-Type, is decided by
+    // the bytes: an `image/svg+xml` part (script-capable) or a mislabelled
+    // HTML file is refused here, and a PNG declared as anything is stored as
+    // `image/png`. Forwarded-message containers keep their OPE-944 handling
+    // (stored verbatim — DKIM needs the octets) under a fixed, inert type.
+    const storedType = item.container ? "message/rfc822" : sniffAttachmentType(bytes);
+    if (!storedType) {
+      note("unrecognized-content");
+      continue;
+    }
     // Two quotas, so furniture cannot consume a payload slot. This is the
     // whole fix: the acceptance case is "six icons plus one real poster stores
     // the poster", and it holds because the poster is not furniture and the
@@ -1631,8 +1745,19 @@ export async function captureAttachments(
     }
     const key = `inbound-attachments/${groupId}/${i}-${name}`;
     try {
-      await bucket.put(key, bytes, { httpMetadata: { contentType: mimeType } });
-      refs.push({ key, name, mimeType, size: bytes.byteLength });
+      // OPE-1364 — never overwrite. The caller's group id is random per
+      // delivery, so an existing object here means a collision, and the bytes
+      // already stored belong to some other row's attachment_refs.
+      if (await bucket.head(key)) throw new Error(`refusing to overwrite ${key}`);
+      await bucket.put(key, bytes, {
+        // `attachment`: a direct CDN navigation downloads rather than renders.
+        // <img> loading ignores Content-Disposition, and the admin viewer
+        // streams through its own route with its own headers
+        // (src/lib/inbound-attachment-stream.ts), so nothing that displays
+        // these is affected.
+        httpMetadata: { contentType: storedType, contentDisposition: "attachment" },
+      });
+      refs.push({ key, name, mimeType: storedType, size: bytes.byteLength });
       if (item.container) storedContainers++;
       else if (item.furniture) storedFurniture++;
       else stored++;
