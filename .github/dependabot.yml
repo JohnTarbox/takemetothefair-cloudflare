@@ -97,8 +97,28 @@ updates:
           - "drizzle-orm"
           - "drizzle-kit"
       # Everything else, split by risk rather than by name.
-      dev-tooling:
+      #
+      # OPE-1400 — dev-tooling follows the OPE-1372 split too. Unsplit, a dev
+      # major (e.g. tailwindcss 3→4) rode in the same PR as the week's
+      # safe dev patches, so the patches waited on a migration. Keep the
+      # two halves' patterns and exclude-patterns IDENTICAL.
+      dev-tooling-minor-and-patch:
         dependency-type: "development"
+        update-types:
+          - "minor"
+          - "patch"
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "@opennextjs/*"
+          - "wrangler"
+          - "@cloudflare/*"
+          - "next*"
+          - "drizzle*"
+      dev-tooling-major:
+        dependency-type: "development"
+        update-types:
+          - "major"
         patterns:
           - "*"
         exclude-patterns:
@@ -133,7 +153,7 @@ updates:
       #     cover every update type (OPE-1372 split each into minor-and-patch
       #     + major), so their packages' majors (e.g. next 15→16) land in the
       #     named *-major group and never reach this one;
-      #   - dev-tooling already takes every development major;
+      #   - dev-tooling-major already takes every development major;
       #   - production-minor-and-patch filters to minor/patch, so a production
       #     major falls through it to here.
       # Keep this group LAST, and keep its exclude-patterns identical to the one
@@ -157,6 +177,16 @@ updates:
           - "@auth/*"
           - "react*"
           - "drizzle*"
+    # OPE-1400 — majors that already have a ticket deciding them. Without these,
+    # the dev-tooling-major PR reopens every Monday for a migration that has
+    # been explicitly deferred. Remove an entry when its ticket is picked up.
+    ignore:
+      # OPE-1406: skip TypeScript 7 (native/Go compiler) for now.
+      - dependency-name: "typescript"
+        versions: [">=7"]
+      # OPE-1405: Tailwind v4 migration is on hold.
+      - dependency-name: "tailwindcss"
+        versions: [">=4"]
     labels:
       - "dependencies"
     commit-message:
