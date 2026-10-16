@@ -13,8 +13,10 @@
  *
  * 1. Proves the stripping against the REAL adapter (so if a Next upgrade stops
  *    stripping, this goes red and the reasoning can be revisited).
- * 2. Fails if any src file other than the Worker-entry sampler reads a flight
- *    header or calls isAnonymousAdminRscRequest.
+ * 2. Fails if any src file other than the predicate's own module (and a
+ *    future custom-Worker-entry sampler at src/worker/admin-rsc-sampler.ts,
+ *    the only place the raw headers are visible) reads a flight header or
+ *    calls isAnonymousAdminRscRequest.
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -108,7 +110,7 @@ describe("OPE-1397 — no src file behind Next reads a flight header", () => {
       "These files read a Next flight header (RSC / Next-Router-State-Tree / …). Next deletes " +
         "those before middleware (next/dist/server/web/adapter.js:137-146) and before headers() " +
         "in render (next/dist/server/async-storage/request-store.js:33-38) — the read is always " +
-        "null. Read them in the Worker entry instead: src/worker/admin-rsc-sampler.ts (OPE-1397)."
+        "null. Only a custom Worker entry's fetch sees them: src/worker/admin-rsc-sampler.ts (OPE-1397)."
     ).toEqual([]);
   });
 
@@ -119,8 +121,8 @@ describe("OPE-1397 — no src file behind Next reads a flight header", () => {
     expect(
       offenders,
       "isAnonymousAdminRscRequest is always false behind Next (flight headers are stripped " +
-        "by next/dist/server/web/adapter.js:137-146). Call it only from " +
-        "src/worker/admin-rsc-sampler.ts (OPE-1397)."
+        "by next/dist/server/web/adapter.js:137-146 and request-store.js:33-38). Call it only " +
+        "from a custom Worker entry: src/worker/admin-rsc-sampler.ts (OPE-1397)."
     ).toEqual([]);
   });
 });

@@ -326,9 +326,9 @@ async function handleRouting(request: NextRequest) {
 
   // OPE-1397 — anonymous RSC hits on /admin* are NOT recorded here, and cannot
   // be: Next deletes RSC / Next-Router-State-Tree (FLIGHT_HEADERS) before this
-  // function runs (node_modules/next/dist/server/web/adapter.js:137-146). The
-  // sampler lives in the Worker entry instead — src/worker/admin-rsc-sampler.ts.
-  // Guarded by src/__tests__/middleware-no-flight-headers-ope1397.test.ts.
+  // function runs (node_modules/next/dist/server/web/adapter.js:137-146), and
+  // before headers() in render too (async-storage/request-store.js:33-38). Only
+  // the Worker's own fetch sees them (a custom Worker entry — not shipped). Guarded by src/__tests__/middleware-no-flight-headers-ope1397.test.ts.
 
   // ── /admin/* + /api/admin/* — read-only Bearer method gate ─────
   // For requests carrying a valid CLAUDE_READONLY_TOKEN Bearer header,
