@@ -103,8 +103,8 @@ describe("participantKey", () => {
 describe("resolveThread — tier 1, the header chain", () => {
   it("threads a reply onto the message it answers", () => {
     const r = resolveThread(
-      { inReplyTo: "<orig@mail.com>", participants: "a|b" },
-      [row({ threadId: "t-1", messageId: "<orig@mail.com>" })],
+      { inReplyTo: "<userpoppy1@mail.com>", participants: "a|b" },
+      [row({ threadId: "t-1", messageId: "<userpoppy1@mail.com>" })],
       NEW_ID
     );
     expect(r).toEqual({ threadId: "t-1", basis: "header_chain" });
@@ -116,10 +116,10 @@ describe("resolveThread — tier 1, the header chain", () => {
     const r = resolveThread(
       {
         inReplyTo: "<ours@meetmeatthefair.com>",
-        emailReferences: "<orig@mail.com>",
+        emailReferences: "<userpoppy1@mail.com>",
         participants: "a|b",
       },
-      [row({ threadId: "t-1", messageId: "<orig@mail.com>" })],
+      [row({ threadId: "t-1", messageId: "<userpoppy1@mail.com>" })],
       NEW_ID
     );
     expect(r.basis).toBe("header_chain");
@@ -128,8 +128,12 @@ describe("resolveThread — tier 1, the header chain", () => {
 
   it("threads across a RENAMED subject — a header match outranks the subject", () => {
     const r = resolveThread(
-      { inReplyTo: "<orig@mail.com>", subject: "completely different now", participants: "a|b" },
-      [row({ threadId: "t-1", messageId: "<orig@mail.com>", normalizedSubject: "original" })],
+      {
+        inReplyTo: "<userpoppy1@mail.com>",
+        subject: "completely different now",
+        participants: "a|b",
+      },
+      [row({ threadId: "t-1", messageId: "<userpoppy1@mail.com>", normalizedSubject: "original" })],
       NEW_ID
     );
     expect(r.basis).toBe("header_chain");
@@ -139,8 +143,8 @@ describe("resolveThread — tier 1, the header chain", () => {
     // Rows written before drizzle/0263 have no thread. Adopting their NULL
     // would write NULL as this message's thread and lose it entirely.
     const r = resolveThread(
-      { inReplyTo: "<orig@mail.com>", participants: "a|b" },
-      [row({ threadId: null, messageId: "<orig@mail.com>" })],
+      { inReplyTo: "<userpoppy1@mail.com>", participants: "a|b" },
+      [row({ threadId: null, messageId: "<userpoppy1@mail.com>" })],
       NEW_ID
     );
     expect(r).toEqual({ threadId: NEW_ID, basis: "new" });

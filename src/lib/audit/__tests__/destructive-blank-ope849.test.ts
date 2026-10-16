@@ -24,8 +24,8 @@ describe("isDestructiveBlank", () => {
     const wiped: Array<[string, unknown]> = [
       ["description", "Quality Crystals from small Businesses around the world!"],
       ["vendorType", "Crystal and crystal jewelry "],
-      ["contactName", "Melissa Dube"],
-      ["contactEmail", "melissamdube22@gmail.com"],
+      ["contactName", "Morgan Doe"],
+      ["contactEmail", "usertansy1@gmail.com"],
       ["contactPhone", "9789943986"],
       ["address", "50 Highland Street, Apt 4"],
       ["city", "Lowell"],

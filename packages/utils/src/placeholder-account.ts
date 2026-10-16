@@ -71,7 +71,7 @@
 
 /**
  * The address shape ingestion mints. Anchored at both ends: a user who signed
- * up as `notpending+x@meetmeatthefair.com`, or `pending+x@gmail.com`, is a real
+ * up as `notpending+x@meetmeatthefair.com`, or `userreed1@gmail.com`, is a real
  * person and must not be locked out.
  */
 const PLACEHOLDER_PREFIX = "pending+";

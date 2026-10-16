@@ -46,7 +46,7 @@ function spamArgs(over: Record<string, unknown> = {}) {
     // through the `db` argument.
     env: { DB: null } as never,
     sessionId: "s-1",
-    fromAddr: "jordan@corporatedigitalagency.com",
+    fromAddr: "sagedesk@corporatedigitalagency.com",
     toAddr: "hello@meetmeatthefair.com",
     subject: "Re: meetmeatthefair.com: Improve 1st Ranking in Google!!!",
     bodyTextExcerpt: SPAM_BODY.slice(0, 500),

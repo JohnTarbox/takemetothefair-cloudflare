@@ -2,7 +2,7 @@
 --
 -- ── The finding ───────────────────────────────────────────────────────────
 --
--- Five high-value correspondents measured 2026-09-02: Jeremy Hall (CT DEEP),
+-- Five high-value correspondents measured 2026-09-02: Jordan Sample (CT DEEP),
 -- Paradise City Arts, David Lerner, aéhkō, TIMEPROOFUSA. All five were already
 -- entities in our own database at the moment they wrote. None was recognised.
 -- Two got the same acknowledgement template twice.

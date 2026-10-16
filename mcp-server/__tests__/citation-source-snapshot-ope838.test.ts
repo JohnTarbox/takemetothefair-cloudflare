@@ -98,7 +98,7 @@ describe("OPE-838 — a fetched page leaves a snapshot on every citation it prod
       eventId,
       extracted: specimen(),
       source: urlSource,
-      fromAddress: "organizer@mainecheesefestival.org",
+      fromAddress: "yarrowdesk@mainecheesefestival.org",
       snapshot,
     });
     expect(res.reason).toBeNull();
@@ -126,7 +126,7 @@ describe("OPE-838 — a fetched page leaves a snapshot on every citation it prod
       eventId,
       extracted: specimen(),
       source: urlSource,
-      fromAddress: "organizer@mainecheesefestival.org",
+      fromAddress: "yarrowdesk@mainecheesefestival.org",
       snapshot,
     });
     const rows = readCitations(eventId);
@@ -143,7 +143,7 @@ describe("OPE-838 — a fetched page leaves a snapshot on every citation it prod
       eventId,
       extracted: specimen(),
       source: urlSource,
-      fromAddress: "organizer@mainecheesefestival.org",
+      fromAddress: "yarrowdesk@mainecheesefestival.org",
       snapshot: { title: "T", text: long, fetchedAt: FETCHED_AT },
     });
     const [row] = readCitations(eventId);
@@ -162,7 +162,7 @@ describe("OPE-838 — a fetched page leaves a snapshot on every citation it prod
       eventId,
       extracted: { ...specimen(), url: "" },
       source: { kind: "body" as const },
-      fromAddress: "organizer@mainecheesefestival.org",
+      fromAddress: "yarrowdesk@mainecheesefestival.org",
       snapshot,
       supportingText: PAGE_TEXT,
     });
@@ -182,7 +182,7 @@ describe("OPE-838 — a fetched page leaves a snapshot on every citation it prod
       eventId,
       extracted: specimen(),
       source: urlSource,
-      fromAddress: "organizer@mainecheesefestival.org",
+      fromAddress: "yarrowdesk@mainecheesefestival.org",
     });
     const rows = readCitations(eventId);
     expect(rows.length).toBeGreaterThan(0);
@@ -230,7 +230,7 @@ describe("OPE-838 scope 2 — source_type reflects an origin signal independent 
       eventId,
       extracted: { ...specimen(), url: "https://someaggregator.com/e/123" },
       source: { kind: "url" as const, url: "https://someaggregator.com/e/123" },
-      fromAddress: "randomperson@gmail.com",
+      fromAddress: "userzinnia@gmail.com",
       snapshot,
     });
     const [row] = readCitations(eventId);

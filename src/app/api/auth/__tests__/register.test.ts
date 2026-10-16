@@ -418,7 +418,7 @@ describe("POST /api/auth/register — OPE-986", () => {
 
   const vendorBody = {
     password: "password123",
-    name: "Douglas Souza",
+    name: "Dana Sample",
     role: "VENDOR",
     businessName: "Sanza Studio Creations",
   };
@@ -441,13 +441,13 @@ describe("POST /api/auth/register — OPE-986", () => {
     );
   }
 
-  it("refuses sanzaarts@gmail.vom with a 'Did you mean' and creates nothing", async () => {
+  it("refuses userstudios@gmail.vom with a 'Did you mean' and creates nothing", async () => {
     allowInserts();
-    const response = await post({ ...vendorBody, email: "sanzaarts@gmail.vom" });
+    const response = await post({ ...vendorBody, email: "userstudios@gmail.vom" });
     const data = (await response.json()) as any;
 
     expect(response.status).toBe(400);
-    expect(data.error).toBe("Did you mean sanzaarts@gmail.com?");
+    expect(data.error).toBe("Did you mean userstudios@gmail.com?");
     // No users row and no vendor row. (registration_attempts may be written by
     // its own fail-soft helper — that row carries neither field.)
     const inserted = mockDb.values.mock.calls.map((c) => c[0] as Record<string, unknown>);
@@ -455,9 +455,9 @@ describe("POST /api/auth/register — OPE-986", () => {
     expect(inserted.some((row) => row && "businessName" in row)).toBe(false);
   });
 
-  it("accepts sanzaart@gmail.com — deliverable, so not this check's call", async () => {
+  it("accepts userstudio@gmail.com — deliverable, so not this check's call", async () => {
     allowInserts();
-    const response = await post({ ...vendorBody, email: "sanzaart@gmail.com" });
+    const response = await post({ ...vendorBody, email: "userstudio@gmail.com" });
     expect(response.status).toBe(201);
   });
 
@@ -472,7 +472,7 @@ describe("POST /api/auth/register — OPE-986", () => {
 
   it("runs the near-duplicate check for a self-registered vendor, with both ids", async () => {
     allowInserts();
-    const response = await post({ ...vendorBody, email: "sanzaarts@gmail.com" });
+    const response = await post({ ...vendorBody, email: "userstudios@gmail.com" });
     const data = (await response.json()) as any;
 
     expect(response.status).toBe(201);
@@ -480,8 +480,8 @@ describe("POST /api/auth/register — OPE-986", () => {
     const [, input] = vi.mocked(flagNearDuplicateVendorRegistration).mock.calls[0];
     expect(input.userId).toBe(data.user.id);
     expect(input.businessName).toBe("Sanza Studio Creations");
-    expect(input.ownerName).toBe("Douglas Souza");
-    expect(input.email).toBe("sanzaarts@gmail.com");
+    expect(input.ownerName).toBe("Dana Sample");
+    expect(input.email).toBe("userstudios@gmail.com");
     // The vendorId handed to the check is the id actually inserted.
     const vendorRow = mockDb.values.mock.calls
       .map((c) => c[0] as Record<string, unknown>)

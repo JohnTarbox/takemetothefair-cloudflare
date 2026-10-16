@@ -3,7 +3,7 @@
  * waiting in it.
  *
  * ── The specimen ────────────────────────────────────────────────────────────
- * Kenneth Soares claimed `gooseberry-leather-company` on 2026-07-22 and offered
+ * Kendall Sample claimed `gooseberry-leather-company` on 2026-07-22 and offered
  * to verify from his business domain. Nobody ever asked. The claim sat PENDING
  * for 36 days and was found only because an unrelated sweep happened to read
  * the table — which at the time held TWO ROWS IN ITS ENTIRE HISTORY. It was not

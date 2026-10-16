@@ -5,7 +5,7 @@
  * 2026-10-06):
  *   e188a9f7 — contact@garlicfestct.com, own domain, NO DMARC record,
  *              Yahoo-signed (dkim d=yahoo.com) → sender_auth partial.
- *   ae679c84 — christmasprelude@gmail.com, DMARC pass on gmail.com.
+ *   ae679c84 — userivy1@gmail.com, DMARC pass on gmail.com.
  * Both must land `candidate`; domain verification (a)–(f) each get a test.
  */
 import { describe, it, expect, beforeEach } from "vitest";
@@ -23,7 +23,7 @@ const T0 = Math.floor(Date.UTC(2026, 9, 6, 3, 18) / 1000);
 const GARLIC_RAW =
   "mx.cloudflare.net; dkim=pass header.d=yahoo.com header.s=s2048 header.b=HKZkOXfi; dmarc=none header.from=garlicfestct.com policy.dmarc=none; spf=none smtp.mailfrom=contact@garlicfestct.com";
 const PRELUDE_RAW =
-  "mx.cloudflare.net; dkim=pass header.d=gmail.com header.s=20251104; dmarc=pass header.from=gmail.com policy.dmarc=none; spf=pass smtp.mailfrom=christmasprelude@gmail.com";
+  "mx.cloudflare.net; dkim=pass header.d=gmail.com header.s=20251104; dmarc=pass header.from=gmail.com policy.dmarc=none; spf=pass smtp.mailfrom=userivy1@gmail.com";
 const passRaw = (domain: string) =>
   `mx.cloudflare.net; dkim=pass header.d=${domain}; dmarc=pass header.from=${domain} policy.dmarc=reject; spf=pass smtp.mailfrom=x@${domain}`;
 
@@ -154,9 +154,9 @@ describe("the two real specimens land as candidates", () => {
   });
 
   it("ae679c84 — Gmail, DMARC pass on gmail.com: candidate, domain match FALSE (case c, real)", async () => {
-    promoter("3718a702", "https://christmasprelude.com", "christmasprelude@gmail.com");
+    promoter("3718a702", "https://christmasprelude.com", "userivy1@gmail.com");
     inbound("ae679c84", {
-      from: "christmasprelude@gmail.com",
+      from: "userivy1@gmail.com",
       dmarc: "pass",
       senderAuth: "pass",
       raw: PRELUDE_RAW,
@@ -222,7 +222,7 @@ describe("who never becomes a contact", () => {
   it("a fair-goer who merely MENTIONS a promoter creates no row (and the step still records)", async () => {
     promoter("p1", "https://garlicfestct.com/", "contact@garlicfestct.com");
     inbound("fan", {
-      from: "fan@gmail.com",
+      from: "userjuniper1@gmail.com",
       dmarc: "pass",
       senderAuth: "pass",
       raw: passRaw("gmail.com"),
@@ -283,9 +283,9 @@ describe("domain verification (scope item 6) — each case on its own", () => {
   });
 
   it("(c) DMARC pass on gmail.com for a promoter whose contact address is Gmail stays candidate", async () => {
-    promoter("p1", "https://gmail.com", "fairfolks@gmail.com");
+    promoter("p1", "https://gmail.com", "userkale1@gmail.com");
     inbound("c", {
-      from: "fairfolks@gmail.com",
+      from: "userkale1@gmail.com",
       dmarc: "pass",
       senderAuth: "pass",
       raw: passRaw("gmail.com"),
@@ -400,18 +400,18 @@ describe("a threaded reply to mail we sent that promoter", () => {
       "content-links-sync.promoter-mention"
     );
     inbound("r1", {
-      from: "david@garlicfestct.com",
+      from: "larch1desk@garlicfestct.com",
       dmarc: "none",
       raw: "mx; dmarc=none header.from=garlicfestct.com",
       inReplyTo: "notice-1@meetmeatthefair.com", // bare form: the ledger stores <…>
-      display: "David Harkness",
+      display: "Drew Sample",
     });
     await capture("r1");
     expect(contacts()).toEqual([
       expect.objectContaining({
         promoter_id: "p1",
-        email: "david@garlicfestct.com",
-        name: "David Harkness",
+        email: "larch1desk@garlicfestct.com",
+        name: "Drew Sample",
         status: "candidate",
       }),
     ]);
@@ -664,7 +664,7 @@ describe("website-domain: a sender from the promoter's own website domain (the 1
   it("a free-mail sender is never matched on domain, even to a promoter whose 'website' is that host", async () => {
     promoter("p1", "https://www.facebook.com/somefair", null);
     promoter("p2", "https://gmail.com", null);
-    inbound("wd5", { from: "anyone@gmail.com", dmarc: "pass", raw: passRaw("gmail.com") });
+    inbound("wd5", { from: "usermaple1@gmail.com", dmarc: "pass", raw: passRaw("gmail.com") });
     inbound("wd6", { from: "anyone@facebook.com", dmarc: "pass", raw: passRaw("facebook.com") });
     await capture("wd5");
     await capture("wd6");
@@ -674,7 +674,7 @@ describe("website-domain: a sender from the promoter's own website domain (the 1
   it("a fair-goer who MENTIONS the promoter (brand-name match only) creates no row", async () => {
     promoter("p1", "https://www.grangefair.org", "office@grangefair.org");
     inbound("fan2", {
-      from: "fan@gmail.com",
+      from: "userjuniper1@gmail.com",
       dmarc: "pass",
       raw: passRaw("gmail.com"),
       matched: JSON.stringify([

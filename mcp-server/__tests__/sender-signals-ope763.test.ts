@@ -109,12 +109,12 @@ describe("OPE-763 scope 5 — the live trusted-sender gate is untouched", () => 
 
 describe("extractSenderSignals — the classic tells", () => {
   it("captures a display name that disagrees with the address", () => {
-    // `"Jeremy Hall" <random@gmail.com>` is the whole reason the column exists.
+    // `"Jordan Sample" <userquince@gmail.com>` is the whole reason the column exists.
     const s = extractSenderSignals(
       hdr("mx.cloudflare.net; spf=pass; dkim=pass; dmarc=pass"),
-      email({ from: { name: "Jeremy Hall", address: "random@gmail.com" } })
+      email({ from: { name: "Jordan Sample", address: "userquince@gmail.com" } })
     );
-    expect(s.fromDisplayName).toBe("Jeremy Hall");
+    expect(s.fromDisplayName).toBe("Jordan Sample");
     expect(s.senderAuth).toBe("pass");
   });
 
@@ -134,7 +134,7 @@ describe("extractSenderSignals — the classic tells", () => {
   });
 
   it("pulls the sending host from the Received chain", () => {
-    // The OPE-763 specimen: the real Jeremy Hall message came via a Microsoft
+    // The OPE-763 specimen: the real Jordan Sample message came via a Microsoft
     // 365 tenant, which is checkable. We checked nothing because we kept
     // nothing.
     const s = extractSenderSignals(

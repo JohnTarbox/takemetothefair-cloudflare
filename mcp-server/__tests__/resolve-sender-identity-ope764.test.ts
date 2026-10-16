@@ -59,7 +59,7 @@ describe("senderDomain", () => {
 });
 
 describe("OPE-764 — the five-domain replay, by the tool", () => {
-  it("recognises Jeremy Hall (CT DEEP) via portal.ct.gov — and NOT the four municipal domains", async () => {
+  it("recognises Jordan Sample (CT DEEP) via portal.ct.gov — and NOT the four municipal domains", async () => {
     // The real rows. `portal.ct.gov` is a genuine ct.gov subdomain; the four
     // town sites are DIFFERENT registrable domains that merely contain the
     // string "ct.gov".
@@ -86,7 +86,7 @@ describe("OPE-764 — the five-domain replay, by the tool", () => {
     );
     promoter("p-berlin", "Town of Berlin, CT", "https://www.berlinct.gov");
 
-    const r = await resolveSenderIdentity(db as never, { fromAddress: "jeremy.hall@ct.gov" });
+    const r = await resolveSenderIdentity(db as never, { fromAddress: "pat.tamarack@ct.gov" });
 
     // ⚠️ The ticket credits ct.gov with "2 vendors, 4 promoters, 4 events".
     // The 2 vendors are real. The rest are substring artefacts —
@@ -111,7 +111,7 @@ describe("OPE-764 — the five-domain replay, by the tool", () => {
     );
 
     const r = await resolveSenderIdentity(db as never, {
-      fromAddress: "ewelford@paradisecityarts.com",
+      fromAddress: "reeddesk@paradisecityarts.com",
     });
 
     expect(r.matchedTypes.sort()).toEqual(["event", "promoter"]);
@@ -124,7 +124,7 @@ describe("OPE-764 — the five-domain replay, by the tool", () => {
     vendor("v-tpu", "TIMEPROOFUSA", "https://timeproofusa.com/");
 
     for (const [addr, id] of [
-      ["carol.pace@davidlerner.com", "v-lerner"],
+      ["pat.thistle@davidlerner.com", "v-lerner"],
       ["contact@aehko.com", "v-aehko"],
       ["events@timeproofusa.com", "v-tpu"],
     ] as const) {
@@ -141,7 +141,7 @@ describe("OPE-764 — the five-domain replay, by the tool", () => {
     vendor("v-fbc", "Freedom Boat Club", "https://www.freedomboatclub.com/locations/maine");
 
     const r = await resolveSenderIdentity(db as never, {
-      fromAddress: "celina.daigle@freedomboatclub.us",
+      fromAddress: "pat.vine1@freedomboatclub.us",
     });
 
     expect(r.best?.entityId).toBe("v-fbc");
@@ -161,14 +161,14 @@ describe("OPE-764 — the five-domain replay, by the tool", () => {
 describe("OPE-764 — precision, because a false match is worse than none", () => {
   it("does not match a domain that merely contains ours as a suffix-less substring", async () => {
     promoter("p-fake", "Not Us", "https://connect.government-example.com");
-    const r = await resolveSenderIdentity(db as never, { fromAddress: "x@ct.gov" });
+    const r = await resolveSenderIdentity(db as never, { fromAddress: "willow1desk@ct.gov" });
     expect(r.matches).toEqual([]);
   });
 
   it("does not match ct.gov against a ct.gov-prefixed impostor domain", async () => {
     // `https://ct.gov.evil.example` contains "//ct.gov" but is not ct.gov.
     promoter("p-evil", "Impostor", "https://ct.gov.evil.example/path");
-    const r = await resolveSenderIdentity(db as never, { fromAddress: "x@ct.gov" });
+    const r = await resolveSenderIdentity(db as never, { fromAddress: "willow1desk@ct.gov" });
     expect(r.matches).toEqual([]);
   });
 

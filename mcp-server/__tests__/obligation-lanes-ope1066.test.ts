@@ -108,9 +108,9 @@ beforeEach(() => {
 describe("openObligationIfOwed — the three lanes that were invisible (OPE-1066)", () => {
   // The real senders from the ticket's measured table.
   it.each([
-    ["correction", "gnancylasson@gmail.com"],
-    ["claim_request", "guinther.sarah@gmail.com"],
-    ["press", "advisor@flippa.com"],
+    ["correction", "useracorn@gmail.com"],
+    ["claim_request", "user.bramble@gmail.com"],
+    ["press", "alder1desk@flippa.com"],
   ])("opens an obligation for %s", async (intent, from) => {
     const row = await seed(`e-${intent}`, intent, from);
     const ref = await openObligationIfOwed({ DB: {} as never }, db, row, "test");
@@ -124,17 +124,17 @@ describe("openObligationIfOwed — the three lanes that were invisible (OPE-1066
   });
 
   it("opens one for a .gov correction — the sender class this most needed to see", async () => {
-    const row = await seed("e-gov", "correction", "jeremy.hall@ct.gov");
+    const row = await seed("e-gov", "correction", "pat.tamarack@ct.gov");
     expect(await openObligationIfOwed({ DB: {} as never }, db, row, "test")).toBeTruthy();
     expect(obligations()).toHaveLength(1);
   });
 
   it("opens one for cold outreach too, deliberately", async () => {
-    // aria@thetechnobrand.com is an SEO pitch classified `correction`. It lands
+    // birch1desk@thetechnobrand.com is an SEO pitch classified `correction`. It lands
     // in the queue on purpose: nothing in a classified row separates it from a
     // real customer, and closing it as not_an_obligation takes seconds. Guessing
     // here is how OPE-365 was built — the system guessed importance, backwards.
-    const row = await seed("e-pitch", "correction", "aria@thetechnobrand.com");
+    const row = await seed("e-pitch", "correction", "birch1desk@thetechnobrand.com");
     expect(await openObligationIfOwed({ DB: {} as never }, db, row, "test")).toBeTruthy();
     expect(obligations()).toHaveLength(1);
   });
@@ -156,7 +156,7 @@ describe("openObligationIfOwed — the three lanes that were invisible (OPE-1066
   it("is idempotent — a Workflow retry does not open a second row", async () => {
     // Workflows are at-least-once. Without onConflictDoNothing a retried step
     // doubles the queue depth for one person.
-    const row = await seed("e-retry", "correction", "ltzuc900@yahoo.com");
+    const row = await seed("e-retry", "correction", "usercedar1@yahoo.com");
     const first = await openObligationIfOwed({ DB: {} as never }, db, row, "test");
     const second = await openObligationIfOwed({ DB: {} as never }, db, row, "test");
 

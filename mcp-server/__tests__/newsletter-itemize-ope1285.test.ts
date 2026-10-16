@@ -99,7 +99,7 @@ const MLF_MODEL: RawItem[] = [
 
 /** a14543b8 — New England Made "Meet the Maker", MailerLite, received 2026-08-17. */
 const NEM = `---------- Forwarded message ---------
-From: New England Made <whitney@greentreeevents.com>
+From: New England Made <wrendesk@greentreeevents.com>
 Date: Mon, Aug 17, 2026 at 8:16 AM
 Subject: NEM Meet the Maker: Studio 1119, Inc.💡
 

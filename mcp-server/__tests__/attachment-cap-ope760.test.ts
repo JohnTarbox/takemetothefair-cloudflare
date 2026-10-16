@@ -3,7 +3,7 @@
  * content-limited.
  *
  * ── The specimen ───────────────────────────────────────────────────────────
- * Inbound `ce16f4a1` (jeremy.hall@ct.gov → hello@, "Chowdafest Westport
+ * Inbound `ce16f4a1` (pat.tamarack@ct.gov → hello@, "Chowdafest Westport
  * Sherwood Island CT"): six attachments, ALL Outlook signature graphics —
  * a 24,897 B CT DEEP logo and five social icons at 498–1,083 B. Five stored,
  * the sixth skipped `over-count-cap`.

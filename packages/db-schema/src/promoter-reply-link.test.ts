@@ -22,7 +22,7 @@ describe("normalizeEmailAddress", () => {
   it("pulls the address out of a display-name From header", () => {
     // The organizer whose client adds a display name is exactly the organizer
     // we most want to hear from; raw comparison would drop them.
-    expect(normalizeEmailAddress('"Jane Doe" <Jane@Grange.ORG>')).toBe("jane@grange.org");
+    expect(normalizeEmailAddress('"Jane Doe" <jane@grange.org>')).toBe("jane@grange.org");
   });
 
   it("accepts a bare address and lowercases it", () => {

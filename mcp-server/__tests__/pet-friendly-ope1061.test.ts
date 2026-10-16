@@ -207,7 +207,7 @@ describe("no inheritance — the venue's value is never the event's", () => {
     db.update(venues).set({ petFriendly: "YES" }).where(eq(venues.id, VENUE_ID)).run();
     const b = await buildVendorInquiryBriefing(db, {
       id: "i1",
-      fromAddress: "ap@mcrmanagement.com",
+      fromAddress: "hazel1desk@mcrmanagement.com",
       subject: "Is the Olde Mystic Village Garlic Festival 2026 Pet (Dog) Friendly?",
       parsedUrl: "https://meetmeatthefair.com/events/olde-mistick-village-garlic-festival-2026",
     });
@@ -230,7 +230,7 @@ describe("no inheritance — the venue's value is never the event's", () => {
     });
     const b = await buildVendorInquiryBriefing(db, {
       id: "i2",
-      fromAddress: "ap@mcrmanagement.com",
+      fromAddress: "hazel1desk@mcrmanagement.com",
       subject: "dogs?",
       parsedUrl: "https://meetmeatthefair.com/events/olde-mistick-village-garlic-festival-2026",
     });

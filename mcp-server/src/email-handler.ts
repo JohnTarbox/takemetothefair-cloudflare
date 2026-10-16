@@ -1367,7 +1367,7 @@ interface CapturableAttachment {
  * Largest an inline, `cid:`-referenced image can be and still be assumed to be
  * signature furniture rather than a payload.
  *
- * 64 KB. The observed specimen (inbound `ce16f4a1`, jeremy.hall@ct.gov) is the
+ * 64 KB. The observed specimen (inbound `ce16f4a1`, pat.tamarack@ct.gov) is the
  * calibration: four social icons at 498–713 B, a LinkedIn icon at 1,083 B, and
  * a CT DEEP logo at 24,897 B — all six `cid:`-referenced Outlook signature
  * graphics. 64 KB clears the logo with room to spare.
@@ -1519,7 +1519,7 @@ export async function captureAttachments(
   //
   // The cap used to fill in arrival order, so six Outlook signature icons
   // could exhaust it before the sender's actual poster was reached. Observed
-  // on inbound `ce16f4a1` (jeremy.hall@ct.gov): five icons stored, the sixth
+  // on inbound `ce16f4a1` (pat.tamarack@ct.gov): five icons stored, the sixth
   // skipped `over-count-cap`, and every one of them decorative.
   //
   // Nothing of value was lost that time. The defect is that nothing about the
@@ -2589,7 +2589,7 @@ export function extractSenderSignals(
     senderAuth: auth.verdict,
     // Deliberately NOT lowercased and NOT defaulted to the address: a display
     // name that merely repeats the address is a real, different observation
-    // from having none, and both differ from `"Jeremy Hall" <random@gmail.com>`.
+    // from having none, and both differ from `"Jordan Sample" <userquince@gmail.com>`.
     fromDisplayName: clip(parsed.from && "name" in parsed.from ? parsed.from.name : null),
     replyTo: clip(replyTo),
     returnPath: clip(parsed.returnPath),

@@ -23,8 +23,8 @@ const INNER_BODY = "NEW GLOUCESTER COMMUNITY FAIR\r\nabout 70 vendors\r\n9:00 AM
 /** The organizer's own message, with a roster PDF attached. */
 function innerMessage(withDkim = true): string {
   return [
-    "From: Sarah Rodriguez <recdirector@newgloucester.com>",
-    "To: Sarah Rodriguez <recdirector@newgloucester.com>",
+    "From: Riley Sample <basildesk@newgloucester.com>",
+    "To: Riley Sample <basildesk@newgloucester.com>",
     "Subject: New Gloucester Community Fair - Information",
     "Date: Thu, 10 Sep 2026 12:04:00 -0400",
     ...(withDkim
@@ -53,7 +53,7 @@ function innerMessage(withDkim = true): string {
 /** Carolyn's forward. `asAttachment` picks the Gmail "Forward as attachment" shape. */
 function outerMessage(asAttachment: boolean, withDkim = true): string {
   return [
-    "From: Carolyn Smith <shpandabear10@gmail.com>",
+    "From: Casey Sample <userpoppy@gmail.com>",
     "To: submit@meetmeatthefair.com",
     "Subject: Fwd: New Gloucester Community Fair - Information",
     'Content-Type: multipart/mixed; boundary="OUT"',
@@ -155,7 +155,7 @@ describe("OPE-944 — recovering the attached message", () => {
       resolveTxt: async () => [],
     });
     expect(r.originalSenderAuth).toBe("no_signature");
-    expect(r.originalSenderAddress).toBe("recdirector@newgloucester.com");
+    expect(r.originalSenderAddress).toBe("basildesk@newgloucester.com");
   });
 
   it("does not report alignment for a signature that FAILED", async () => {
@@ -177,10 +177,10 @@ describe("OPE-944 — the inline forward is labelled honestly", () => {
     // The real stored body of 9fc287ef, opening lines verbatim.
     const bodyText = [
       "---------- Forwarded message ---------",
-      "From: Sarah Rodriguez <recdirector@newgloucester.com>",
+      "From: Riley Sample <basildesk@newgloucester.com>",
       "Date: Thu, Sep 10, 2026 at 12:04 PM",
       "Subject: New Gloucester Community Fair - Information",
-      "To: Sarah Rodriguez <recdirector@newgloucester.com>",
+      "To: Riley Sample <basildesk@newgloucester.com>",
       "",
       "*NEW GLOUCESTER COMMUNITY FAIR*",
       "about 70 vendors, crafters, community groups",
@@ -190,7 +190,7 @@ describe("OPE-944 — the inline forward is labelled honestly", () => {
     expect(r.kind).toBe("inline_forward");
     expect(r.originalSenderAuth).toBe("unverifiable_inline_forward");
     // Captured for the audit trail, explicitly as a CLAIM and not as evidence.
-    expect(r.originalSenderAddress).toBe("recdirector@newgloucester.com");
+    expect(r.originalSenderAddress).toBe("basildesk@newgloucester.com");
     expect(r.originalSenderDomainAligned).toBeNull();
   });
 

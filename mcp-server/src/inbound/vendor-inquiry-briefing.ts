@@ -88,7 +88,7 @@ export function senderNameVariants(fromAddress: string, signatureName?: string |
     // `someone@gmail.com` used to contribute BOTH `gmail` and `gmail.com`.
     // `brandKey("gmail.com")` is "gmailcom" — eight characters, so it clears
     // the fragment matcher's six-character gate — and it substring-matches the
-    // vendor whose businessName is the bare address `craftigalcreative@gmail.com`.
+    // vendor whose businessName is the bare address `usermoss1@gmail.com`.
     // Six of twelve real inbound emails in the 09-09 audit census carried that
     // false "existing vendor" match.
     //
@@ -214,7 +214,7 @@ export async function matchVendorByVariants(
         .where(and(isNull(vendors.deletedAt), sql`instr(${despacedCol}, ${key}) > 0`))
         // OPE-856 scope 2 — a vendor whose businessName is a bare address on a
         // generic provider must not be FRAGMENT-reachable. The only
-        // distinctive part of `craftigalcreative@gmail.com` is the local part;
+        // distinctive part of `usermoss1@gmail.com` is the local part;
         // the provider half is what every unrelated sender collides with.
         //
         // Filtered in JS rather than SQL because the predicate is "is this

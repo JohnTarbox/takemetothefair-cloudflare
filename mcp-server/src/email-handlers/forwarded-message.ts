@@ -5,12 +5,12 @@
  * ## The problem this exists for
  *
  * Much of our best organizer data reaches submit@ second-hand. On inbound
- * `9fc287ef`, Carolyn (`shpandabear10@gmail.com`) forwarded the Town of New
+ * `9fc287ef`, Carolyn (`userpoppy@gmail.com`) forwarded the Town of New
  * Gloucester's vendor packet; it drove hours, attendance, a no-pets rule and a
  * 59-vendor roster onto a live page. The stored verdict for that message reads
  * `dkim=pass header.d=gmail.com`, `dmarc=pass`, `sender_auth: partial` — all
  * true, and all about CAROLYN'S GMAIL. The
- * `From: Sarah Rodriguez <recdirector@newgloucester.com>` line inside it is
+ * `From: Riley Sample <basildesk@newgloucester.com>` line inside it is
  * body text that anyone could type.
  *
  * A reader of `get_inbound_email` sees a pass and can easily attribute it to

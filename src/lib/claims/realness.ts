@@ -75,9 +75,9 @@ export interface CoherenceSignals {
   emailDomainMatchesWebsite: boolean;
   /** Free provider (gmail/yahoo/...). NOT negative — just carries no domain signal. */
   freeMailProvider: boolean;
-  /** The person's name is embedded in the business name (Colette Dewan → CD Ceramics). */
+  /** The person's name is embedded in the business name (Casey Doe → CD Ceramics). */
   claimantNameInBusiness: boolean;
-  /** The email local part carries the person's own name (Blaise Tardif → bntardif). */
+  /** The email local part carries the person's own name (Blakely Tanner → bntanner). */
   emailMatchesClaimantName: boolean;
   websiteProvided: boolean;
   /** Spam fingerprints found in the free text. Any hit is a strong negative. */
@@ -176,7 +176,7 @@ function meaningfulTokens(s: string): string[] {
   return splitTokens(s).filter((t) => t.length >= 3 && !STOPWORDS.has(t));
 }
 
-/** Initials of the meaningful words, e.g. "Colette Dewan" → "cd". */
+/** Initials of the meaningful words, e.g. "Casey Doe" → "cd". */
 function initials(s: string): string {
   return s
     .toLowerCase()
@@ -189,8 +189,8 @@ function initials(s: string): string {
 /**
  * Minimum prefix length for a fuzzy name match.
  *
- * "Blaise Tardif" registered "Blaisbtwoodworking" — the business name elides
- * the trailing 'e' AND runs every word together, so neither an exact token
+ * "Blakely Tanner" registered "Blakebtwoodworking" — the business name elides
+ * the trailing letters AND runs every word together, so neither an exact token
  * match nor a word-boundary initials match fires. Five characters is short
  * enough to catch that and long enough that "Mark" doesn't match "Market".
  */
@@ -201,7 +201,7 @@ const NAME_PREFIX_MIN = 5;
  * concatenation and truncation people actually use when naming a business?
  *
  * Tokens of >= NAME_PREFIX_MIN chars match on any prefix of that length, so
- * "blaise" matches "blaisbtwoodworking" via "blais". Shorter tokens require a
+ * "blakely" matches "blakebtwoodworking" via "blake". Shorter tokens require a
  * whole-word match, because a 3-4 char substring inside a longer word is
  * coincidence more often than signal.
  */
@@ -295,7 +295,7 @@ export function computeCoherenceSignals(input: CoherenceInput): CoherenceSignals
 
   // The person's name in the business name — either a full token overlap
   // ("Roxy" in "Foxy Roxy Homemade") or the initials pattern the analyst
-  // spotted by hand (Colette Dewan → CD Ceramics and Florals).
+  // spotted by hand (Casey Doe → CD Ceramics and Florals).
   const claimantName = (input.claimantName ?? "").trim();
   const nameTokens = meaningfulTokens(claimantName);
   const bizLower = input.businessName.toLowerCase();
@@ -305,8 +305,8 @@ export function computeCoherenceSignals(input: CoherenceInput): CoherenceSignals
     (nameInitials.length >= 2 && new RegExp(`\\b${nameInitials}\\b`, "i").test(input.businessName));
 
   // OPE-237 calibration — the email carrying the registrant's OWN name is
-  // coherence too, and it is what a human reads first. "bntardif" for Blaise
-  // Tardif is a real person using a real address; the original screen scored it
+  // coherence too, and it is what a human reads first. "bntanner" for Blakely
+  // Tanner is a real person using a real address; the original screen scored it
   // as nothing because the address didn't reference the BUSINESS.
   const emailMatchesClaimantName = nameTokens.some((t) =>
     nameTokenAppearsIn(t, localPart, localPart)
@@ -445,7 +445,7 @@ export function scoreRealness(
   // SUSPECT requires an ACTUAL NEGATIVE, not merely an absence of positives.
   //
   // Shipped 2026-07-27 without this and the very first live signup proved it
-  // wrong: Blaise Tardif, a plausible woodworker on Gmail with no website who
+  // wrong: Blakely Tanner, a plausible woodworker on Gmail with no website who
   // simply hadn't clicked the verification link yet, scored 0 and was branded
   // SUSPECT — with three reason lines that each said "unknown", not "wrong".
   // That is the modal legitimate craft vendor here (13 of 14 existing claimed

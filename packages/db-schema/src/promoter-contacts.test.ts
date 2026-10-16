@@ -47,7 +47,7 @@ describe("decidePromoterContactDomain — guards beyond the capture tests", () =
     const v = decidePromoterContactDomain(
       {
         ...facts,
-        fromAddress: "fairfolks@gmail.com",
+        fromAddress: "userkale1@gmail.com",
         authResultsRaw: "mx; dmarc=pass header.from=gmail.com",
       },
       "https://gmail.com"
@@ -93,7 +93,7 @@ describe("contactSenderAuth", () => {
 describe("planPromoterContactWrite", () => {
   const base = {
     promoterId: "p1",
-    email: "Jane@GrangeFair.org",
+    email: "Oak1desk@GrangeFair.org",
     fields: { validationMethod: "approved_claim" as const, status: "validated" as const },
     actor: "t",
     now: NOW,
@@ -114,7 +114,7 @@ describe("planPromoterContactWrite", () => {
     const p = planPromoterContactWrite({ ...base, writer: "claim", existing: null });
     expect(p).toMatchObject({
       kind: "insert",
-      values: { email: "jane@grangefair.org", firstValidatedAt: NOW },
+      values: { email: "oak1desk@grangefair.org", firstValidatedAt: NOW },
     });
     const c = planPromoterContactWrite({
       ...base,

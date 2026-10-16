@@ -9,7 +9,7 @@
  *    UNROUTED hold step, which suppresses a follow-up QUESTION and nothing else.
  *    A blocked sender was still classified and could still be acknowledged.
  * 2. The brokers rotate addresses. Two of the four known ones share the
- *    `leadstream` token, and the 09-18 one (`charles.anderson.leadstream@…`) got
+ *    `leadstream` token, and the 09-18 one (`user.sample.leadstream@…`) got
  *    a support-ack through a classifier timeout. An address-keyed block cannot
  *    catch the next fresh address; the subject shape can.
  *

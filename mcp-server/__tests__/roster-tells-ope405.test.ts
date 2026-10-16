@@ -20,7 +20,7 @@ Kristin McDowell, Recreation Director, Town of Belgrade`;
 
 describe("34b06089 — the regression case", () => {
   it("fires all three tells", () => {
-    const t = detectRosterTells("Fwd: Artisan Fair", BELGRADE_BODY, "shpandabear10@gmail.com");
+    const t = detectRosterTells("Fwd: Artisan Fair", BELGRADE_BODY, "userpoppy@gmail.com");
     expect(t.attachingAList).toBe(true);
     expect(t.distributionList).toBe(true);
     expect(t.organizerSender).toBe(true);
@@ -31,7 +31,7 @@ describe("34b06089 — the regression case", () => {
     // The forwarding contributor is an ordinary gmail address; the signal is
     // the municipal address quoted in the body. Checking only the envelope
     // sender would miss every forwarded roster, which is most of them.
-    const t = detectRosterTells(null, BELGRADE_BODY, "shpandabear10@gmail.com");
+    const t = detectRosterTells(null, BELGRADE_BODY, "userpoppy@gmail.com");
     expect(t.organizerSender).toBe(true);
   });
 
@@ -62,8 +62,8 @@ describe("does not fire on ordinary mail", () => {
   it("a short forward between two people", () => {
     const t = detectRosterTells(
       "Fwd: fair",
-      "From: bob@gmail.com\nTo: sue@gmail.com\n\nThought you'd like this.",
-      "sue@gmail.com"
+      "From: userbob@gmail.com\nTo: userzinnia1@gmail.com\n\nThought you'd like this.",
+      "userzinnia1@gmail.com"
     );
     expect(t.distributionList).toBe(false);
     expect(hasRosterSuspicion(t)).toBe(false);
@@ -71,7 +71,7 @@ describe("does not fire on ordinary mail", () => {
 
   it("counts DISTINCT addresses, so a quoted thread does not inflate the count", () => {
     const repeated = Array.from({ length: 20 }, () => "bob@example.com").join(", ");
-    const t = detectRosterTells(null, repeated, "sue@gmail.com");
+    const t = detectRosterTells(null, repeated, "userzinnia1@gmail.com");
     expect(t.addressCount).toBe(1);
     expect(t.distributionList).toBe(false);
   });

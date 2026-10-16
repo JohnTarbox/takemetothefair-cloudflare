@@ -29,8 +29,8 @@
 -- what the number counts" hazard this whole R-series is about.
 --
 -- ── Why there is no cleverness about spam ───────────────────────────────────
--- The SEO cold-outreach from wayne@plushcargo.com, james@dowebnseo.com and
--- holly@plushcargo.com is ALSO classified `support` (0.82), with the same
+-- The SEO cold-outreach from cedardesk@plushcargo.com, dogwooddesk@dowebnseo.com and
+-- elmdesk@plushcargo.com is ALSO classified `support` (0.82), with the same
 -- reply_kind and a null sub_intent. Nothing already in the row separates them
 -- from Katie. The temptation is a heuristic; that is precisely how this bug was
 -- built. The system guessed importance and guessed backwards.

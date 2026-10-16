@@ -2,8 +2,8 @@
  * OPE-986 — undeliverable email domains are refused at registration.
  *
  * Pinned from BOTH sides. The rejection half is the 2026-09-13 bounce
- * (`sanzaarts@gmail.vom`). The acceptance half matters as much: the same
- * person's OTHER address, `sanzaart@gmail.com`, was a typo of his mailbox but a
+ * (`userstudios@gmail.vom`). The acceptance half matters as much: the same
+ * person's OTHER address, `userstudio@gmail.com`, was a typo of his mailbox but a
  * perfectly deliverable address — this check cannot know it was the wrong one,
  * and must not pretend to. Legitimate newer TLDs must keep working.
  */
@@ -11,34 +11,34 @@ import { describe, it, expect } from "vitest";
 import { checkEmailDomain } from "../email-domain-check";
 
 describe("checkEmailDomain — refuses known-undeliverable domains", () => {
-  it("rejects sanzaarts@gmail.vom and suggests gmail.com (the incident address)", () => {
-    const v = checkEmailDomain("sanzaarts@gmail.vom");
+  it("rejects userstudios@gmail.vom and suggests gmail.com (the incident address)", () => {
+    const v = checkEmailDomain("userstudios@gmail.vom");
     expect(v.ok).toBe(false);
     if (v.ok) return;
-    expect(v.suggestion).toBe("sanzaarts@gmail.com");
-    expect(v.message).toBe("Did you mean sanzaarts@gmail.com?");
+    expect(v.suggestion).toBe("userstudios@gmail.com");
+    expect(v.message).toBe("Did you mean userstudios@gmail.com?");
   });
 
   it.each([
-    ["jane@gmail.con", "jane@gmail.com"],
-    ["jane@gmail.cmo", "jane@gmail.com"],
-    ["jane@gmail.comm", "jane@gmail.com"],
-    ["jane@gmail.cm", "jane@gmail.com"],
-    ["jane@gmail.co", "jane@gmail.com"],
-    ["jane@gmial.com", "jane@gmail.com"],
-    ["jane@gamil.com", "jane@gmail.com"],
-    ["jane@hotmial.com", "jane@hotmail.com"],
-    ["jane@yaho.com", "jane@yahoo.com"],
-    ["jane@outlok.com", "jane@outlook.com"],
-    ["jane@iclod.com", "jane@icloud.com"],
+    ["userjane@gmail.con", "userjane@gmail.com"],
+    ["userjane@gmail.cmo", "userjane@gmail.com"],
+    ["userjane@gmail.comm", "userjane@gmail.com"],
+    ["userjane@gmail.cm", "userjane@gmail.com"],
+    ["userjane@gmail.co", "userjane@gmail.com"],
+    ["userjane@gmial.com", "userjane@gmail.com"],
+    ["userjane@gamil.com", "userjane@gmail.com"],
+    ["userjane@hotmial.com", "userjane@hotmail.com"],
+    ["userjane@yaho.com", "userjane@yahoo.com"],
+    ["userjane@outlok.com", "userjane@outlook.com"],
+    ["userjane@iclod.com", "userjane@icloud.com"],
     // A provider-label slip AND a TLD slip in the same address.
-    ["jane@gmial.vom", "jane@gmail.com"],
+    ["userjane@gmial.vom", "userjane@gmail.com"],
     // A typo TLD on a domain we know nothing about still gets its TLD fixed.
     ["jane@mapleworks.ocm", "jane@mapleworks.com"],
     ["jane@grange.ogr", "jane@grange.org"],
     // Case and a trailing dot do not dodge the check.
-    ["Jane@GMAIL.VOM", "Jane@gmail.com"],
-    ["jane@gmail.vom.", "jane@gmail.com"],
+    ["Userjane@GMAIL.VOM", "Userjane@gmail.com"],
+    ["userjane@gmail.vom.", "userjane@gmail.com"],
   ])("rejects %s with suggestion %s", (email, suggestion) => {
     const v = checkEmailDomain(email);
     expect(v.ok).toBe(false);
@@ -59,8 +59,8 @@ describe("checkEmailDomain — refuses known-undeliverable domains", () => {
 });
 
 describe("checkEmailDomain — accepts deliverable addresses", () => {
-  it("accepts sanzaart@gmail.com — deliverable, even though it was the wrong mailbox", () => {
-    expect(checkEmailDomain("sanzaart@gmail.com")).toEqual({ ok: true });
+  it("accepts userstudio@gmail.com — deliverable, even though it was the wrong mailbox", () => {
+    expect(checkEmailDomain("userstudio@gmail.com")).toEqual({ ok: true });
   });
 
   it.each([
@@ -69,11 +69,11 @@ describe("checkEmailDomain — accepts deliverable addresses", () => {
     "hello@beadshop.shop",
     "maker@wool.farm",
     "sam@studio.co.uk",
-    "me@yahoo.ca",
-    "me@hotmail.co.uk",
+    "userme@yahoo.ca",
+    "userme@hotmail.co.uk",
     "someone@company.co",
     "a@b.xn--p1ai",
-    "person@comcast.net",
+    "userperson@comcast.net",
   ])("accepts %s", (email) => {
     expect(checkEmailDomain(email)).toEqual({ ok: true });
   });

@@ -75,8 +75,8 @@ const SECOND = {
   vendorId: "v-sanza",
   userId: "u-sanza",
   businessName: "Sanza Studio Creations",
-  ownerName: "Douglas Souza",
-  email: "sanzaarts@gmail.vom",
+  ownerName: "Dana Sample",
+  email: "userstudios@gmail.vom",
 };
 
 beforeEach(() => {
@@ -92,8 +92,8 @@ describe("nearDuplicateReasons", () => {
     expect(
       nearDuplicateReasons(SECOND, {
         businessName: "Sansa Studio Creations",
-        ownerName: "Douglas Souza",
-        email: "sanzaart@gmail.com",
+        ownerName: "Dana Sample",
+        email: "userstudio@gmail.com",
       })
     ).toEqual(["similar_business_name", "same_owner_name_similar_email"]);
   });
@@ -103,7 +103,7 @@ describe("nearDuplicateReasons", () => {
       nearDuplicateReasons(SECOND, {
         businessName: "Blue Heron Pottery",
         ownerName: "Ann Marsh",
-        email: "ann@blueheron.com",
+        email: "violet1desk@blueheron.com",
       })
     ).toEqual([]);
   });
@@ -124,8 +124,8 @@ describe("flagNearDuplicateVendorRegistration", () => {
       vendorId: "v-sansa",
       userId: "u-sansa",
       businessName: "Sansa Studio Creations",
-      ownerName: "Douglas Souza",
-      email: "sanzaart@gmail.com",
+      ownerName: "Dana Sample",
+      email: "userstudio@gmail.com",
       minutesAgo: 8,
     });
 
@@ -152,7 +152,7 @@ describe("flagNearDuplicateVendorRegistration", () => {
       userId: "u-other",
       businessName: "Blue Heron Pottery",
       ownerName: "Ann Marsh",
-      email: "ann@blueheron.com",
+      email: "violet1desk@blueheron.com",
       minutesAgo: 5,
     });
     expect(await flagNearDuplicateVendorRegistration(db as never, { ...SECOND, now: NOW })).toEqual(
@@ -174,8 +174,8 @@ describe("flagNearDuplicateVendorRegistration", () => {
       vendorId: "v-sansa",
       userId: "u-sansa",
       businessName: "Sansa Studio Creations",
-      ownerName: "Douglas Souza",
-      email: "sanzaart@gmail.com",
+      ownerName: "Dana Sample",
+      email: "userstudio@gmail.com",
       minutesAgo: 45,
     });
     expect(await flagNearDuplicateVendorRegistration(db as never, { ...SECOND, now: NOW })).toEqual(

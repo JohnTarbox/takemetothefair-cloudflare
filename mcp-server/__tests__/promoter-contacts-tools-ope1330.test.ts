@@ -60,7 +60,7 @@ describe("upsert_promoter_contact / set_promoter_contact_status / list_promoter_
   it("creates a contact (email lowercased, entities decoded), audit-logged", async () => {
     const r = await call("upsert_promoter_contact", {
       promoter_id: "p1",
-      email: "Jane.Doe@GrangeFair.org",
+      email: "Pat.nutmeg1@GrangeFair.org",
       name: "Jane Doe &amp; Co",
       role: "Vendor Coordinator",
       validation_method: "phone",
@@ -72,7 +72,7 @@ describe("upsert_promoter_contact / set_promoter_contact_status / list_promoter_
     expect(r.body.contact).toMatchObject({
       promoter_id: "p1",
       promoter_name: "Grange Fair",
-      email: "jane.doe@grangefair.org",
+      email: "pat.nutmeg1@grangefair.org",
       name: "Jane Doe & Co",
       validation_method: "phone",
       status: "candidate",
@@ -89,14 +89,14 @@ describe("upsert_promoter_contact / set_promoter_contact_status / list_promoter_
   it("a second upsert for the same address edits the SAME row and keeps omitted fields", async () => {
     await call("upsert_promoter_contact", {
       promoter_id: "p1",
-      email: "jane@grangefair.org",
+      email: "oak1desk@grangefair.org",
       name: "Jane",
       role: "Coordinator",
       validation_method: "phone",
     });
     const r = await call("upsert_promoter_contact", {
       promoter_id: "p1",
-      email: "JANE@grangefair.org",
+      email: "OAK1DESK@grangefair.org",
       validation_method: "in_person",
       status: "validated",
     });
@@ -148,7 +148,7 @@ describe("upsert_promoter_contact / set_promoter_contact_status / list_promoter_
   it("set_promoter_contact_status changes status with a required reason, audit-logged with from → to", async () => {
     const { body } = await call("upsert_promoter_contact", {
       promoter_id: "p1",
-      email: "x@grangefair.org",
+      email: "pine1desk@grangefair.org",
       validation_method: "self_asserted",
     });
     expect(
@@ -177,13 +177,13 @@ describe("upsert_promoter_contact / set_promoter_contact_status / list_promoter_
   it("list_promoter_contacts filters by promoter, status, method and email", async () => {
     await call("upsert_promoter_contact", {
       promoter_id: "p1",
-      email: "a@grangefair.org",
+      email: "quince1desk@grangefair.org",
       validation_method: "phone",
       status: "validated",
     });
     await call("upsert_promoter_contact", {
       promoter_id: "p1",
-      email: "b@grangefair.org",
+      email: "rowan1desk@grangefair.org",
       validation_method: "self_asserted",
     });
     expect((await call("list_promoter_contacts", { promoter_id: "p1" })).body.count).toBe(2);
@@ -191,13 +191,13 @@ describe("upsert_promoter_contact / set_promoter_contact_status / list_promoter_
       (await call("list_promoter_contacts", { status: "validated" })).body.contacts.map(
         (c: { email: string }) => c.email
       )
-    ).toEqual(["a@grangefair.org"]);
+    ).toEqual(["quince1desk@grangefair.org"]);
     expect(
       (await call("list_promoter_contacts", { validation_method: "self_asserted" })).body.count
     ).toBe(1);
-    expect((await call("list_promoter_contacts", { email: "B@GrangeFair.org" })).body.count).toBe(
-      1
-    );
+    expect(
+      (await call("list_promoter_contacts", { email: "ROWAN1DESK@GrangeFair.org" })).body.count
+    ).toBe(1);
     expect((await call("list_promoter_contacts", { promoter_id: "nobody" })).body).toEqual({
       count: 0,
       contacts: [],
@@ -213,7 +213,7 @@ describe("reader and writer field sets match (OPE-534 class)", () => {
     );
     await call("upsert_promoter_contact", {
       promoter_id: "p1",
-      email: "a@grangefair.org",
+      email: "quince1desk@grangefair.org",
       validation_method: "phone",
     });
     const [row] = (await call("list_promoter_contacts", {})).body.contacts;
@@ -275,7 +275,7 @@ describe("the PUBLIC get_promoter_details never carries contact data", () => {
   it("returns no contacts key even when the promoter has validated contacts", async () => {
     await call("upsert_promoter_contact", {
       promoter_id: "p1",
-      email: "jane@grangefair.org",
+      email: "oak1desk@grangefair.org",
       name: "Jane Secret",
       phone: "207-555-0100",
       validation_method: "phone",
@@ -285,7 +285,7 @@ describe("the PUBLIC get_promoter_details never carries contact data", () => {
     registerPublicTools(pub as never, db);
     const r = (await pub.invoke("get_promoter_details", { slug: "grange-fair" })) as Result;
     const text = r.content[0].text;
-    expect(text).not.toContain("jane@grangefair.org");
+    expect(text).not.toContain("oak1desk@grangefair.org");
     expect(text).not.toContain("Jane Secret");
     expect(text).not.toContain("207-555-0100");
     expect(text).not.toMatch(/"contacts"|promoter_contacts/);
@@ -321,7 +321,7 @@ describe("MCP approvePromoterClaim records the claimant (twin of the app paths)"
   it("the claimant becomes validated / approved_claim; a rejected row is left alone", async () => {
     raw
       .prepare(
-        "INSERT INTO users (id, email, name) VALUES ('u-owner', 'Owner@GrangeFair.org', 'Pat Owner')"
+        "INSERT INTO users (id, email, name) VALUES ('u-owner', 'Spruce1desk@GrangeFair.org', 'Pat Owner')"
       )
       .run();
     await approvePromoterClaim(db, {
@@ -333,7 +333,7 @@ describe("MCP approvePromoterClaim records the claimant (twin of the app paths)"
       raw.prepare("SELECT email, name, status, validation_method FROM promoter_contacts").all()
     ).toEqual([
       {
-        email: "owner@grangefair.org",
+        email: "spruce1desk@grangefair.org",
         name: "Pat Owner",
         status: "validated",
         validation_method: "approved_claim",

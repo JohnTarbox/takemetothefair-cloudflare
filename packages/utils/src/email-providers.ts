@@ -7,7 +7,7 @@
  * `gmail.com` as candidate business names. `brandKey("gmail.com")` is
  * `"gmailcom"` — eight characters, so it clears the fragment matcher's
  * six-character gate — and it substring-matches the vendor whose
- * `businessName` is the bare address `craftigalcreative@gmail.com`.
+ * `businessName` is the bare address `usermoss1@gmail.com`.
  *
  * Result: **6 of 12** real inbound emails in the 2026-09-09 audit census — every
  * gmail sender — carried a false "existing vendor" match against a business
@@ -85,7 +85,7 @@ export function isGenericEmailProvider(domain: string | null | undefined): boole
  * Is this string a bare email address on a generic provider?
  *
  * OPE-856 scope 2: a vendor whose `businessName` is literally
- * `craftigalcreative@gmail.com` must not be reachable by FRAGMENT matching —
+ * `usermoss1@gmail.com` must not be reachable by FRAGMENT matching —
  * the only distinctive thing about it is the local part, and the provider half
  * is what every unrelated sender collides with. An exact contact-email match
  * still finds it, which is the correct way to reach that row.

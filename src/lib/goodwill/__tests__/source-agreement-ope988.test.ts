@@ -68,7 +68,7 @@ describe("town and venue matching", () => {
       checkSourceAgreement(page(`${FILLER} Held in LEOMINSTER, rain or shine.`), ctx).agrees
     ).toBe(true);
     // `Leominster` inside a longer token is not the town.
-    const inside = checkSourceAgreement(page(`${FILLER} Email leominsterrotary@gmail.com.`), ctx);
+    const inside = checkSourceAgreement(page(`${FILLER} Email userpine2@gmail.com.`), ctx);
     expect(inside.agrees).toBeNull();
   });
 

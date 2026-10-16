@@ -4,7 +4,7 @@
  *
  * ── The case ────────────────────────────────────────────────────────────────
  * On 2026-09-13 a crafter registered twice in eight minutes. The second address
- * was `sanzaarts@gmail.vom`. The verification email hard-bounced 16 seconds
+ * was `userstudios@gmail.vom`. The verification email hard-bounced 16 seconds
  * after the send ("unknown public suffix: gmail.vom"), the address went onto
  * the suppression list, and the account could never be verified. Nothing on
  * the form objected: `z.string().email()` checks SHAPE, and `gmail.vom` is a

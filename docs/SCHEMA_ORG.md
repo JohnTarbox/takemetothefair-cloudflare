@@ -244,7 +244,7 @@ interface VendorSchemaProps {
     "addressCountry": "US"
   },
   "telephone": "(207) 555-0123",
-  "email": "betty@bettypies.com",
+  "email": "alderdesk@bettypies.com",
   "foundingDate": "2015",
   "paymentAccepted": "Cash, Credit Cards",
   "sameAs": ["https://bettypies.com", "https://facebook.com/bettypies"],

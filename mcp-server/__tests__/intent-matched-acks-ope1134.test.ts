@@ -2,8 +2,8 @@
  * OPE-1134 — the ack matches what the sender asked, and promises nothing
  * nobody delivers.
  *
- * Specimens: carol.pace@davidlerner.com (vendor_inquiry, 2026-07-08) got the
- * bug-report support-ack and then 8 weeks of silence; boblloydmagic@gmail.com
+ * Specimens: pat.thistle@davidlerner.com (vendor_inquiry, 2026-07-08) got the
+ * bug-report support-ack and then 8 weeks of silence; usertansy@gmail.com
  * (claim_request, 2026-07-22) got "we've recorded your correction request".
  */
 import { describe, it, expect } from "vitest";

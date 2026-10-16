@@ -675,7 +675,7 @@ export async function undeliveredAuthEmailFlow(db: Db, now: Date): Promise<Queue
  * this reports an honest zero rather than indicting every historical NULL.
  *
  * Recipient matching is case-insensitive: `users.email` preserves the casing a
- * person typed (`Leavienessa@gmail.com` is a live row) while the ledger records
+ * person typed (`Usermaple@gmail.com` is a live row) while the ledger records
  * what was passed to the mailer. An exact-equality join would silently
  * undercount, and a signal that quietly reads low is worse than no signal.
  */

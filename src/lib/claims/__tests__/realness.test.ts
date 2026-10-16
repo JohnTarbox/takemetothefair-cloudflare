@@ -16,9 +16,9 @@ import {
 
 /** The signup that motivated the ticket — analyst screened this one by hand. */
 const CD_CERAMICS: CoherenceInput = {
-  claimantName: "Colette Dewan",
+  claimantName: "Casey Doe",
   businessName: "CD Ceramics and Florals",
-  email: "cdceramicsandflorals@gmail.com",
+  email: "usercdceramics@gmail.com",
   emailVerified: true,
   website: null,
   description: "Handmade ceramics and dried floral arrangements.",
@@ -26,9 +26,9 @@ const CD_CERAMICS: CoherenceInput = {
 
 /** Textbook domain-match: email domain === website domain. */
 const SKVL: CoherenceInput = {
-  claimantName: "Shazad Chikliwala",
+  claimantName: "Shay Kaplan",
   businessName: "SKVL Organic World Inc.",
-  email: "shazad.chikliwala@moreA2.com",
+  email: "pat.pine@moreA2.com",
   emailVerified: false,
   website: "https://www.morea2.com",
   description: "Organic products.",
@@ -43,7 +43,7 @@ describe("computeCoherenceSignals (OPE-237)", () => {
     expect(s.emailDomainMatchesWebsite).toBe(false);
   });
 
-  it("spots the initials pattern the analyst found by hand (Colette Dewan → CD Ceramics)", () => {
+  it("spots the initials pattern the analyst found by hand (Casey Doe → CD Ceramics)", () => {
     expect(computeCoherenceSignals(CD_CERAMICS).claimantNameInBusiness).toBe(true);
   });
 
@@ -59,7 +59,7 @@ describe("computeCoherenceSignals (OPE-237)", () => {
     const s = computeCoherenceSignals({
       claimantName: "Alex Rivera",
       businessName: "The Sourced Parlor",
-      email: "thebest@gmail.com",
+      email: "useralder2@gmail.com",
       emailVerified: true,
     });
     expect(s.emailMatchesBusiness).toBe(false);
@@ -85,7 +85,7 @@ describe("spam fingerprints (OPE-237)", () => {
     const one = computeCoherenceSignals({
       claimantName: "Pat Lee",
       businessName: "Bri Paints",
-      email: "pat@gmail.com",
+      email: "userbirch2@gmail.com",
       emailVerified: true,
       description: "See our work at https://bripaints.com",
     });
@@ -94,7 +94,7 @@ describe("spam fingerprints (OPE-237)", () => {
     const many = computeCoherenceSignals({
       claimantName: "Pat Lee",
       businessName: "Bri Paints",
-      email: "pat@gmail.com",
+      email: "userbirch2@gmail.com",
       emailVerified: true,
       description: "Cheap https://a.example www.b.example https://c.example",
     });
@@ -105,7 +105,7 @@ describe("spam fingerprints (OPE-237)", () => {
     const short = computeCoherenceSignals({
       claimantName: "Sam",
       businessName: "Kewl Kandylz",
-      email: "sam@gmail.com",
+      email: "usercedar2@gmail.com",
       emailVerified: true,
       description: "Candy candy candy.",
     });
@@ -114,7 +114,7 @@ describe("spam fingerprints (OPE-237)", () => {
     const stuffed = computeCoherenceSignals({
       claimantName: "Sam",
       businessName: "Kewl Kandylz",
-      email: "sam@gmail.com",
+      email: "usercedar2@gmail.com",
       emailVerified: true,
       description:
         "candy candy candy candy candy candy best sweets treats fudge caramel candy candy",
@@ -126,7 +126,7 @@ describe("spam fingerprints (OPE-237)", () => {
     const real = computeCoherenceSignals({
       claimantName: "Jo Fox",
       businessName: "Douse",
-      email: "jo@gmail.com",
+      email: "userbramble1@gmail.com",
       emailVerified: true,
     });
     expect(real.spamFlags).not.toContain("gibberish_business_name");
@@ -175,7 +175,7 @@ describe("scoreRealness — banding (OPE-237)", () => {
     // domain-match rung is evidence independent of whether HTML renders.
     const dead = assessRealness(SKVL, "WEAK");
     const noPresenceAtAll = assessRealness(
-      { ...SKVL, website: null, email: "shazad@gmail.com" },
+      { ...SKVL, website: null, email: "userdogwood2@gmail.com" },
       "NONE"
     );
     expect(dead.score).toBeGreaterThan(noPresenceAtAll.score);
@@ -300,16 +300,16 @@ describe("self-reported fair participation (OPE-239)", () => {
 /**
  * OPE-237 calibration fix (2026-07-28) — driven by the FIRST live signup.
  *
- * `Blaise Tardif` / `bntardif@gmail` / "Blaisbtwoodworking" scored 0 and was
+ * `Blakely Tanner` / `userbntanner@gmail.com` / "Blakebtwoodworking" scored 0 and was
  * branded SUSPECT with three reason lines that each said "unknown", not
  * "wrong". Nothing about the registrant was suspicious; the screen simply
  * couldn't see two signals a human reads instantly, and then treated an absence
  * of positives as evidence of guilt.
  */
 const BLAISE: CoherenceInput = {
-  claimantName: "Blaise Tardif",
-  businessName: "Blaisbtwoodworking",
-  email: "bntardif@gmail.com",
+  claimantName: "Blakely Tanner",
+  businessName: "Blakebtwoodworking",
+  email: "userbntanner@gmail.com",
   emailVerified: false,
   website: null,
 };
@@ -328,7 +328,7 @@ describe("banding requires a real negative (OPE-237 calibration)", () => {
       {
         claimantName: "Sam Rivera",
         businessName: "Kewl Kandylz",
-        email: "srivera@gmail.com",
+        email: "userfir2@gmail.com",
         emailVerified: false,
       },
       "UNAVAILABLE"
@@ -362,12 +362,12 @@ describe("banding requires a real negative (OPE-237 calibration)", () => {
 });
 
 describe("name matching survives concatenation and elision (OPE-237 calibration)", () => {
-  it("matches Blaise -> Blaisbtwoodworking via a 5-char prefix", () => {
+  it("matches Blakely -> Blakebtwoodworking via a 5-char prefix", () => {
     expect(computeCoherenceSignals(BLAISE).claimantNameInBusiness).toBe(true);
   });
 
   it("reads the registrant's own name in their email local part", () => {
-    // bntardif = initials + surname. A real person using a real address.
+    // bntanner = initials + surname. A real person using a real address.
     expect(computeCoherenceSignals(BLAISE).emailMatchesClaimantName).toBe(true);
   });
 
@@ -376,7 +376,7 @@ describe("name matching survives concatenation and elision (OPE-237 calibration)
     const s = computeCoherenceSignals({
       claimantName: "Mark Ellis",
       businessName: "Market Fresh Produce",
-      email: "hello@gmail.com",
+      email: "userhello@gmail.com",
       emailVerified: false,
     });
     expect(s.claimantNameInBusiness).toBe(false);
@@ -386,7 +386,7 @@ describe("name matching survives concatenation and elision (OPE-237 calibration)
     const s = computeCoherenceSignals({
       claimantName: "Mark Ellis",
       businessName: "Mark Ellis Woodcraft",
-      email: "hello@gmail.com",
+      email: "userhello@gmail.com",
       emailVerified: false,
     });
     expect(s.claimantNameInBusiness).toBe(true);

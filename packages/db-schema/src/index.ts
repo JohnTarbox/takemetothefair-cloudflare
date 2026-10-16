@@ -5694,7 +5694,7 @@ export const inboundEmails = sqliteTable(
     originalSenderAddress: text("original_sender_address"),
     originalSenderAuth: text("original_sender_auth"),
     originalSenderDomainAligned: integer("original_sender_domain_aligned"),
-    /** The display name, which is where `"Jeremy Hall" <random@gmail.com>` shows. */
+    /** The display name, which is where `"Jordan Sample" <userquince@gmail.com>` shows. */
     fromDisplayName: text("from_display_name"),
     replyTo: text("reply_to"),
     returnPath: text("return_path"),

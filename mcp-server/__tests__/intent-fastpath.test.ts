@@ -114,7 +114,7 @@ describe("hasMultiIntentOrSpecialSignal — reply chain", () => {
   });
 
   it("3rd-party In-Reply-To does not trigger", () => {
-    expect(isReplyToOurThread("<x@gmail.com>", null)).toBe(false);
+    expect(isReplyToOurThread("<userx@gmail.com>", null)).toBe(false);
   });
 });
 

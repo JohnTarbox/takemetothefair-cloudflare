@@ -24,7 +24,7 @@ import {
 /** inbound 2f35a893, verbatim from the stored row (trimmed at the sign-off). */
 const SPECIMEN = {
   toAddress: "hello@meetmeatthefair.com",
-  fromAddress: "charles.anderson.leadstream@gmail.com",
+  fromAddress: "user.sample.leadstream@gmail.com",
   senderTrustTier: "unknown" as const,
   isReplyToOurThread: false,
   attachmentCount: 0,

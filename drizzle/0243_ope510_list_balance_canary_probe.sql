@@ -8,8 +8,8 @@
 -- from a cron that never runs.
 --
 -- The cost of that gap, from the 2026-08-28 review: four public double-opt-in
--- signups (doreen_m_gamache@homedepot.com, learninstuffct@gmail.com,
--- jfazz@mail.com, deeogt@gmail.com) confirmed between the 08-21 backfill and
+-- signups (quince4desk@homedepot.com, userfir@gmail.com,
+-- userginkgo@mail.com, userhazel@gmail.com) confirmed between the 08-21 backfill and
 -- the writer's deploy, received nothing for five to seven days, and were found
 -- BY HAND when a preview_only broadcast resolved 29 recipients against 34
 -- confirmed-active and somebody chased the delta. That comparison is precisely

@@ -8,10 +8,10 @@
 -- enumeration safety. They cannot sign in unless they reproduce their own
 -- capitalisation exactly, cannot reset, and are told nothing is wrong.
 --
---   Angelacurtis14@aol.com            Marleny.Abreu@unitedwayri.org
---   Carolcohen173@gmail.com           Menageriestudio293@gmail.com
---   Leavienessa@gmail.com             Queenofcupsapothecary@gmail.com
---   jim@mfeSelfDefense.com            shazad.chikliwala@moreA2.com
+--   Userivy@aol.com            Pat.juniper@unitedwayri.org
+--   Userkale@gmail.com           Userlarch@gmail.com
+--   Usermaple@gmail.com             Usernutmeg@gmail.com
+--   oakdesk@mfeSelfDefense.com            pat.pine@moreA2.com
 --
 -- The ninth is `Admin@kewlkandylz.com` — Jan Merrill's duplicate, the only
 -- LOWER(email) collision in 7,494 rows. The NOT EXISTS clause deliberately

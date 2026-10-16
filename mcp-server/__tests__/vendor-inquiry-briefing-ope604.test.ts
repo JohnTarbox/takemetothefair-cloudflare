@@ -303,7 +303,7 @@ describe("distinctive-token fallback — the SoNo case", () => {
     seedEvent({ id: "e1", name: "SoNo Arts Festival 2026", slug: "sono-arts-festival-2026" });
     const b = await buildVendorInquiryBriefing(db, {
       id: "i1",
-      fromAddress: "carol.pace@davidlerner.com",
+      fromAddress: "pat.thistle@davidlerner.com",
       subject: "SoNo Art Festival",
       parsedUrl: null,
     });

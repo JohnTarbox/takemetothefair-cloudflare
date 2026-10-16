@@ -82,7 +82,7 @@ export function parseEmailAuth(headerRaw: string | null | undefined): EmailAuthV
  * values the WS3e trusted-sender gate needs, uses it, and throws the rest
  * away. That was right for a gate and wrong for a record: John's framing —
  * *"an email from a spammer in China … spoofing someone else's email is of a
- * far different caliber from an email from someone like Jeremy Hall, Assistant
+ * far different caliber from an email from someone like Jordan Sample, Assistant
  * Division Director … CT DEEP"* — is a question about a specific message that
  * we could not answer, because the distinguishing bytes were read and
  * discarded in the same function call.
