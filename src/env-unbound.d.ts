@@ -117,6 +117,8 @@ interface CloudflareEnv {
   FACEBOOK_CLIENT_ID?: string;
   FACEBOOK_CLIENT_SECRET?: string;
   // Named nowhere as configured (not in docs/, scripts/, .github/, .env.example):
+  /** OPE-1409 — optional override. Unset (as in prod), business KPI alert email
+   *  falls back to ALERT_EMAIL_TECHNICAL (src/lib/kpi-alerts.ts loadConfig). */
   ALERT_EMAIL_BUSINESS?: string;
   SLACK_WEBHOOK_URL_TECHNICAL?: string;
   SLACK_WEBHOOK_URL_BUSINESS?: string;
