@@ -286,7 +286,7 @@ When `/api/admin/import-url/extract` calls Workers AI and gets zero events back,
 - Month-day-range regex over cleaned text (`JUNE 19-20, 2026`) — `date-regex.ts`
 - OG title / h1 / h2 / URL-slug — `og-name.ts`
 
-Gate: `name + (date OR venue)`. On pass, returns `extractionMethod: "thin"` which flips `inbound_emails.flagged_for_review=1` at the workflow's `mark-done` step. Telemetry columns `extract_fail_reason`, `content_sha256_first16`, `content_length_chars` on `inbound_emails` are populated by the workflow's `submit/persist-extract-context` step (after fetch, before AI extract).
+Gate: `name + (date OR venue)`. On pass, returns `extractionMethod: "thin"` which flips `inbound_emails.flagged_for_review=1` at the workflow's `mark-done` step. Telemetry columns `content_sha256_first16` + `content_length_chars` on `inbound_emails` are written by `persistExtractContextStep` (`mcp-server/src/workflows/extract-context.ts`) after fetch, before AI extract — step `submit/persist-extract-context` on the single-URL path, `submit/multi[i]/persist-extract-context` (first fetched URL) on the fan-outs, which carry nearly all URL email since 2026-08-24 (OPE-1408; heartbeat probe `extract-context-telemetry`). `extract_fail_reason` is written separately, on failure (`submit/persist-extract-fail-reason`, `recordExtractFailReason`, or the fan-out's `extractFailReason` result).
 
 ### Key column semantics
 
