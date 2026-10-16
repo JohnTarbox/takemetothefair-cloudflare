@@ -17,6 +17,7 @@ import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { NextRequest } from "next/server";
 import * as schema from "@/lib/db/schema";
+import { hashResetToken } from "@/lib/auth/password-reset-token";
 import {
   refreshSessionToken,
   SESSION_RECHECK_INTERVAL_MS,
@@ -213,7 +214,8 @@ describe("writers bump users.session_version, ending sessions minted before", ()
     const token = "t".repeat(40);
     raw
       .prepare("INSERT INTO password_reset_tokens (token, user_id, expires) VALUES (?, 'u1', ?)")
-      .run(token, Math.floor(Date.now() / 1000) + 3600);
+      // OPE-1378 stores SHA-256(token); the route hashes what it's handed.
+      .run(await hashResetToken(token), Math.floor(Date.now() / 1000) + 3600);
 
     const { POST } = await import("@/app/api/auth/reset-password/route");
     const res = await POST(

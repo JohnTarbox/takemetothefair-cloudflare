@@ -18,37 +18,20 @@
  */
 import { sql, type SQL } from "drizzle-orm";
 import { events, eventDays } from "@/lib/db/schema";
+import { upcomingEndPredicate } from "@takemetothefair/db-schema";
 
 export { normalizeEventDate } from "@takemetothefair/utils";
 
-/** Number of milliseconds in 24 hours. Public for tests. */
-export const UPCOMING_END_GRACE_MS = 24 * 60 * 60 * 1000;
-
-/**
- * Drizzle predicate for "this event is still upcoming." Compares
- * `events.end_date` to `(now - 24h)` so an evening event whose stored
- * end-date sits at noon UTC the same calendar day doesn't fall out of
- * the upcoming filter at 8am EDT. Uses a 24h grace because the precise
- * close-time fix (joining event_days.close_time per row) is a deeper
- * change; the email's "give it one more day" rule is the minimal
- * conservative fix that matches operator intuition ("an event happening
- * today should be searchable today").
- *
- * OPE-1035 — an event with NO end_date is treated as ending on its start
- * date: `COALESCE(end_date, start_date)`. This used to be `end_date >= cutoff`,
- * and `NULL >= x` is NULL, so every NULL-end event was dropped from every
- * upcoming list while `search_events` and the detail page served it. Measured
- * 2026-09-15: 9 upcoming public events, including an APPROVED fair missing from
- * its own state's this-weekend page. The old docblock told callers to wrap in
- * `or(…, isNull(events.endDate))` to include them; the two surfaces that
- * handled NULL did so to INCLUDE the rows (admin/coverage; api/search's
- * `isNull(end) AND start >= now`), and no caller relied on the exclusion.
- * A row with neither date still matches nothing.
- */
-export function upcomingEndPredicate(now: Date): SQL {
-  const cutoffSec = Math.floor((now.getTime() - UPCOMING_END_GRACE_MS) / 1000);
-  return sql`COALESCE(${events.endDate}, ${events.startDate}) >= ${cutoffSec}`;
-}
+// OPE-1375 — the predicates now live in @takemetothefair/db-schema so the MCP
+// Worker runs the same SQL. Re-exported here so `@/lib/event-dates` imports keep
+// working. See packages/db-schema/src/event-end-predicates.ts for the rule
+// (A2 grace + OPE-1035 NULL-end handling) and its history.
+export {
+  UPCOMING_END_GRACE_MS,
+  upcomingEndCutoffSec,
+  upcomingEndPredicate,
+  pastEndPredicate,
+} from "@takemetothefair/db-schema";
 
 /**
  * C2 P2 (2026-06-12) — upper bound on `events.start_date` for the homepage
@@ -84,15 +67,10 @@ export function whenWindowEnd(when: string | undefined, from: Date = new Date())
 }
 
 /**
- * Variant for tables joined under an alias (rare). Most callers use the
- * bare `upcomingEndPredicate(now)`. Kept here so any future SQL builder
- * that needs an inline literal can call this without re-deriving the
- * cutoff.
+ * Variant kept for existing callers; identical to `upcomingEndPredicate`.
  */
 export function upcomingEndPredicateRaw(now: Date): SQL {
-  const cutoffSec = Math.floor((now.getTime() - UPCOMING_END_GRACE_MS) / 1000);
-  // OPE-1035 — same NULL-end semantics as upcomingEndPredicate.
-  return sql`COALESCE(${events.endDate}, ${events.startDate}) >= ${cutoffSec}`;
+  return upcomingEndPredicate(now);
 }
 
 /** Format a Date as a UTC "YYYY-MM-DD" day string (matches `event_days.date`). */

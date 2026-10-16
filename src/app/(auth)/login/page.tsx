@@ -8,11 +8,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { trackLogin } from "@/lib/analytics";
+import { safeCallbackUrl } from "@/lib/auth/safe-callback-url";
 
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const callbackUrl = searchParams.get("callbackUrl") || "/";
+  // OPE-1378 — same-origin relative paths only; an absolute or
+  // protocol-relative callbackUrl was an open redirect after sign-in.
+  const callbackUrl = safeCallbackUrl(searchParams.get("callbackUrl"));
   const authError = searchParams.get("error");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");

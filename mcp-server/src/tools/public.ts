@@ -21,7 +21,11 @@ import {
   containsCI,
   nameOrSlugContains,
 } from "../schema.js";
-import { vendorLinkIsPublicallyVisible, rotationCdnOption } from "@takemetothefair/db-schema";
+import {
+  vendorLinkIsPublicallyVisible,
+  rotationCdnOption,
+  upcomingEndPredicate,
+} from "@takemetothefair/db-schema";
 import { PRIMARY_AUDIENCE, PUBLIC_ACCESS, EVENT_STATUS_VALUES } from "@takemetothefair/constants";
 import {
   parseJsonArray,
@@ -1250,7 +1254,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
         .select({ id: events.id })
         .from(events)
         .where(
-          and(eq(events.venueId, venue.id), publicEventWhere(), gte(events.endDate, new Date()))
+          and(eq(events.venueId, venue.id), publicEventWhere(), upcomingEndPredicate(new Date()))
         );
 
       return {
@@ -1459,7 +1463,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
             eq(eventVendors.vendorId, vendor.id),
             inArray(eventVendors.status, [...PUBLIC_VENDOR_STATUSES]),
             publicEventWhere(),
-            gte(events.endDate, new Date())
+            upcomingEndPredicate(new Date())
           )
         );
 
@@ -1623,7 +1627,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
           and(
             eq(events.promoterId, promoter.id),
             publicEventWhere(),
-            gte(events.endDate, new Date())
+            upcomingEndPredicate(new Date())
           )
         );
 
