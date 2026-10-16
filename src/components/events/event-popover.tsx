@@ -8,9 +8,11 @@ import { AddToCalendar } from "./AddToCalendar";
 import { formatDateRange } from "@/lib/utils";
 import { getCategoryBadgeClass, getCategoryImage } from "@/lib/category-colors";
 import { parseJsonArray } from "@/types";
-import type { events, venues, promoters } from "@/lib/db/schema";
+import type { venues, promoters } from "@/lib/db/schema";
+import type { PublicEvent } from "@/lib/db/event-join-projection";
 
-type Event = typeof events.$inferSelect;
+// OPE-1387 — public allow-listed shape; never the full events row.
+type Event = PublicEvent;
 type Venue = typeof venues.$inferSelect;
 type Promoter = typeof promoters.$inferSelect;
 
