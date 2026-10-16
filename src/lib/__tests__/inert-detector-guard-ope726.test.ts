@@ -61,6 +61,10 @@ const ALLOWED: Record<string, string> = {
   isTentativeEvent: "Self-contained, 5 tests, no caller. Real finding — see OPE-726.",
   isDiscontinuousWithoutDays: "Self-contained, 4 tests, no caller. Real finding — see OPE-726.",
 
+  // ── Parked on an open operator decision. ────────────────────────────────
+  isAnonymousAdminRscRequest:
+    "Its only valid caller is a custom Worker entry (draft PR #1632) — Next strips flight headers before middleware and headers(), so no in-app call can work (OPE-1397). Whether to ship that entry is John's call on OPE-1411; delete this if the answer is don't ship.",
+
   // ── Zero tests AND zero callers. Probably dead; not deleted blind. ───────
   isOperatorReplyEnabled:
     "Half of OPE-626's deliberately asymmetric gate pair; its sibling isAutoReplyEnabled IS called. An unused gate is a gate that is not gating — check before deleting.",
