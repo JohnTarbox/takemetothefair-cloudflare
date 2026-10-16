@@ -23,6 +23,7 @@ import {
   decodeHtmlEntities,
   coerceVenueNameAtIngest,
   checkImageUrl,
+  normalizeWebUrlInput,
 } from "@takemetothefair/utils";
 
 /**
@@ -55,6 +56,8 @@ import { parseDateOnly } from "@takemetothefair/datetime";
 export const VALIDATION = {
   NAME_MIN_LENGTH: 1,
   NAME_MAX_LENGTH: 255,
+  /** OPE-1368 — a PERSON's account name (users.name), not an entity name. */
+  USER_NAME_MAX_LENGTH: 100,
   DESCRIPTION_MAX_LENGTH: 5000,
   SLUG_MAX_LENGTH: 255,
   URL_MAX_LENGTH: 2048,
@@ -104,13 +107,42 @@ export function looksLikeUrlOrEmail(value: string): boolean {
   return false;
 }
 
-const urlSchema = z
-  .string()
-  .url()
-  .max(VALIDATION.URL_MAX_LENGTH)
+/**
+ * OPE-1368 — a web URL: `http:` or `https:` only.
+ *
+ * This used to be `z.string().url()`, i.e. "does `new URL()` parse it", so
+ * `javascript:alert(1)//` and `data:text/html,…` passed and later rendered raw
+ * as an `href` (vendor self-edit of `website` reached a public page). The
+ * protocol is now restricted. A bare domain ("www.foo.com" — 41 prod vendor
+ * websites on 2026-10-15) is upgraded to `https://` by `normalizeWebUrlInput`
+ * rather than refused, so re-saving one of those rows does not block the edit.
+ * The render side applies the same rule via `safeHref` for rows written before
+ * this, or by other surfaces.
+ */
+const WEB_URL_PROTOCOL = /^https?$/;
+const WEB_URL_MESSAGE = "Must be a web address starting with http:// or https://";
+
+function webUrlString(protocol: RegExp = WEB_URL_PROTOCOL, message = WEB_URL_MESSAGE) {
+  return z
+    .string()
+    .max(VALIDATION.URL_MAX_LENGTH)
+    .transform(normalizeWebUrlInput)
+    .pipe(z.string().url({ protocol, message }));
+}
+
+const urlSchema = webUrlString().optional().nullable().or(z.literal(""));
+
+/**
+ * An event's application link may legitimately be an email address — two prod
+ * `events.application_url` rows are `mailto:` (2026-10-15) — so `mailto:` is
+ * allowed here in addition to http(s). Rendered with `safeHref(…, { allowMailto })`.
+ */
+const applicationUrlSchema = webUrlString(
+  /^(https?|mailto)$/,
+  "Must be a web address (http:// or https://) or a mailto: link"
+)
   .optional()
-  .nullable()
-  .or(z.literal(""));
+  .nullable();
 /**
  * OPE-1112 — a URL that must point at an IMAGE, not merely be well-formed.
  *
@@ -289,7 +321,7 @@ export const vendorUpdateSchema = vendorCreateSchema
     gallery_images: z
       .array(
         z.object({
-          url: z.string().url().max(VALIDATION.URL_MAX_LENGTH),
+          url: webUrlString(),
           alt: z.string().max(200),
           caption: z.string().max(500).optional(),
         })
@@ -437,7 +469,7 @@ const eventBaseSchema = z.object({
     .optional()
     .nullable(),
   applicationDeadline: z.string().datetime().optional().nullable(),
-  applicationUrl: z.string().url().max(VALIDATION.URL_MAX_LENGTH).optional().nullable(),
+  applicationUrl: applicationUrlSchema,
   applicationInstructions: z.string().max(2000).optional().nullable(),
   walkInsAllowed: z.boolean().optional().nullable(),
   status: z
@@ -752,7 +784,7 @@ export const promoterEventCreateSchema = z
       .optional()
       .nullable(),
     applicationDeadline: z.string().datetime().optional().nullable(),
-    applicationUrl: z.string().url().max(VALIDATION.URL_MAX_LENGTH).optional().nullable(),
+    applicationUrl: applicationUrlSchema,
     applicationInstructions: z.string().max(2000).optional().nullable(),
     walkInsAllowed: z.boolean().optional().nullable(),
   })
@@ -817,7 +849,10 @@ export const promoterEventCreateSchema = z
 
 // User profile update
 export const userProfileUpdateSchema = z.object({
-  name: z.string().max(VALIDATION.NAME_MAX_LENGTH).optional().nullable(),
+  // OPE-1368 — a person's name is interpolated into transactional email (the
+  // greeting in verification / reset mail); capped well below the 255 entity
+  // limit. The email templates escape it as well.
+  name: z.string().max(VALIDATION.USER_NAME_MAX_LENGTH).optional().nullable(),
 });
 
 // Favorite toggle

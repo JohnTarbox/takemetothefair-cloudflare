@@ -679,3 +679,4 @@ export * from "./promoter-rule-agreement";
 export * from "./edition-path";
 // OPE-1341 — JPEG metadata strip, shared by the main app and the MCP Worker.
 export * from "./jpeg-exif-strip";
+export * from "./safe-href";
