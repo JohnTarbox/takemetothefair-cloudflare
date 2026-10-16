@@ -40,7 +40,7 @@ export const dynamic = "force-dynamic";
  * OPE-697.
  */
 import { NextResponse } from "next/server";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull, or } from "drizzle-orm";
 import { recordClaimantAsPromoterContact } from "@/lib/claims/promoter-contact";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
@@ -50,6 +50,7 @@ import { buildSettledEntityClaim, shouldRecordEntityClaim } from "@takemetothefa
 import { logError } from "@/lib/logger";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 import { unsafeSlug } from "@/lib/utils";
+import { changedRows } from "@/lib/db/changed-rows";
 
 const schema = z.object({
   slug: z.string().min(1).max(200),
@@ -112,6 +113,7 @@ export async function POST(request: Request) {
         id: promoters.id,
         slug: promoters.slug,
         userId: promoters.userId,
+        claimed: promoters.claimed,
         companyName: promoters.companyName,
         contactEmail: promoters.contactEmail,
       })
@@ -155,10 +157,40 @@ export async function POST(request: Request) {
     // On an idempotent re-claim the id is already ours while `claimed` may
     // still be 0 — which is exactly the row this defect leaves behind, so
     // skipping the update there would make the bug unfixable by retrying.
-    await db
-      .update(promoters)
-      .set({ userId: user.id, claimed: true, claimedAt: now, claimedBy: user.id })
-      .where(eq(promoters.id, promoter.id));
+    //
+    // OPE-1385 — the UPDATE is guarded the way OPE-1378 (AUTH7) guarded the
+    // vendor sibling. The pre-check above reads the row, then this writes; a
+    // claim landing in between (wizard, admin approve, another direct claim)
+    // was silently re-owned. The WHERE now requires the row to still be
+    // unclaimed AND unowned-or-ours; 0 rows changed means someone else won:
+    // 409, and no contact / role / entity_claims / audit side effects.
+    //
+    // A row already fully claimed by THIS user skips the write (nothing to
+    // change) so the re-claim stays idempotent rather than tripping the 409.
+    // The OPE-697 repair case (user_id ours, claimed = 0) still writes.
+    if (!(promoter.claimed && promoter.userId === user.id)) {
+      const updated = await db
+        .update(promoters)
+        .set({ userId: user.id, claimed: true, claimedAt: now, claimedBy: user.id })
+        .where(
+          and(
+            eq(promoters.id, promoter.id),
+            eq(promoters.claimed, false),
+            or(isNull(promoters.userId), eq(promoters.userId, user.id))
+          )
+        );
+
+      if (changedRows(updated) === 0) {
+        return NextResponse.json(
+          {
+            error: "already_claimed",
+            message:
+              "This promoter has been claimed by another account. If that's an error, please contact support.",
+          },
+          { status: 409 }
+        );
+      }
+    }
     // OPE-1330 — the claimant becomes a validated promoter contact (best-effort).
     await recordClaimantAsPromoterContact(db, {
       promoterId: promoter.id,

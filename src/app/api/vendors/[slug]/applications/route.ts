@@ -47,7 +47,8 @@ export const GET = withApiToken<{ slug: string }>(
  * OPE-1361: the rules live in `applyVendorTokenPatch` (shared with the session
  * route's checks) — APPLIED by default, CONFIRMED/APPROVED only for a
  * canSelfConfirm vendor, APPROVED events only, commercial rule, verified email,
- * paymentStatus held to its enum.
+ * paymentStatus refused (403 PAYMENT_STATUS_FORBIDDEN) unless canSelfConfirm
+ * (OPE-1381).
  */
 export const PATCH = withApiToken<{ slug: string }>(
   { source: "api/vendors/[slug]/applications" },

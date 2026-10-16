@@ -91,7 +91,7 @@ async function patch(id: string, body: Record<string, unknown>) {
 
 const row = (id: string) => db.select().from(events).where(eq(events.id, id)).get()!;
 
-function seed(id: string, extra: Partial<typeof events.$inferInsert> = {}) {
+function seed(id: string, extra: Record<string, unknown> = {}) {
   db.insert(events)
     .values({
       id,

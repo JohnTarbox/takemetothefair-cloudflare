@@ -33,11 +33,13 @@ import { formatDateRange } from "@/lib/utils";
 import { haversineDistance } from "@/lib/geo";
 import { trackFilterApplied } from "@/lib/analytics";
 import { parseJsonArray } from "@/types";
-import type { events, venues, promoters } from "@/lib/db/schema";
+import type { venues, promoters } from "@/lib/db/schema";
+import type { PublicEvent } from "@/lib/db/event-join-projection";
 
 type CalendarViewType = "day" | "week" | "month" | "year" | "schedule";
 
-type Event = typeof events.$inferSelect;
+// OPE-1387 — public allow-listed shape; never the full events row.
+type Event = PublicEvent;
 type Venue = typeof venues.$inferSelect;
 type Promoter = typeof promoters.$inferSelect;
 

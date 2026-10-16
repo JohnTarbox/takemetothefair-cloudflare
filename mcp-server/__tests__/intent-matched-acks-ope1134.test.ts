@@ -3,7 +3,7 @@
  * nobody delivers.
  *
  * Specimens: pat.thistle@davidlerner.com (vendor_inquiry, 2026-07-08) got the
- * bug-report support-ack and then 8 weeks of silence; usertansy@gmail.com
+ * bug-report support-ack and then 8 weeks of silence; user.alder@gmail.com
  * (claim_request, 2026-07-22) got "we've recorded your correction request".
  */
 import { describe, it, expect } from "vitest";

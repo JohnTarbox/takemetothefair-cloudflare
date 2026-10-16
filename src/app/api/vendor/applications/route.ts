@@ -6,7 +6,11 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { vendors, events, eventVendors } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { logError } from "@/lib/logger";
-import { checkEventAcceptsVendor, defaultApplicationStatus } from "@/lib/vendor-applications";
+import {
+  checkEventAcceptsVendor,
+  checkVendorPaymentStatus,
+  defaultApplicationStatus,
+} from "@/lib/vendor-applications";
 
 export async function GET(request: NextRequest) {
   const db = getCloudflareDb();
@@ -81,6 +85,19 @@ export async function POST(request: NextRequest) {
 
     const vendor = vendorResults[0];
 
+    // OPE-1381 — payment is the organizer's to record. Refuse (never drop)
+    // a paymentStatus from a vendor that is not canSelfConfirm; same rule
+    // as the token route.
+    const payment = checkVendorPaymentStatus(vendor.canSelfConfirm, body.paymentStatus);
+    if (!payment.ok) {
+      return NextResponse.json(
+        payment.message
+          ? { error: payment.error, message: payment.message }
+          : { error: payment.error },
+        { status: payment.httpStatus }
+      );
+    }
+
     // Get the event
     const eventResults = await db
       .select()
@@ -122,6 +139,7 @@ export async function POST(request: NextRequest) {
       vendorId: vendor.id,
       boothInfo: boothInfo as string | undefined,
       status: defaultApplicationStatus(vendor.canSelfConfirm),
+      ...(payment.paymentStatus ? { paymentStatus: payment.paymentStatus } : {}),
     });
 
     const newApplication = await db

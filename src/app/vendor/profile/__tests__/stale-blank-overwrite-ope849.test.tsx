@@ -62,12 +62,12 @@ const POPULATED = {
   website: null,
   logoUrl: null,
   contactName: "Morgan Doe",
-  contactEmail: "usertansy1@gmail.com",
-  contactPhone: "9789943986",
-  address: "50 Highland Street, Apt 4",
-  city: "Lowell",
-  state: "MA",
-  zip: "01852",
+  contactEmail: "user.alder@gmail.com",
+  contactPhone: "2075550142",
+  address: "12 Example Lane, Apt 3",
+  city: "Anytown",
+  state: "ME",
+  zip: "04000",
   latitude: null,
   longitude: null,
   yearEstablished: null,
@@ -172,7 +172,7 @@ describe("OPE-849 — THE WIPE: a stale form must not blank what it never loaded
     const body = patchBodies[patchBodies.length - 1];
     // Positive landmark: the form really did load 16 populated values, so an
     // empty payload here means "nothing changed", not "nothing was loaded".
-    expect(screen.getByDisplayValue("50 Highland Street, Apt 4")).toBeTruthy();
+    expect(screen.getByDisplayValue("12 Example Lane, Apt 3")).toBeTruthy();
     expect(Object.keys(body)).toHaveLength(0);
   });
 });
@@ -183,7 +183,7 @@ describe("clearing a field must still work — the fix must not overcorrect", ()
     // never delete their phone number again.
     await renderLoaded(POPULATED);
 
-    const phone = screen.getByDisplayValue("9789943986");
+    const phone = screen.getByDisplayValue("2075550142");
     fireEvent.change(phone, { target: { name: "contactPhone", value: "" } });
     submit();
 
@@ -197,7 +197,7 @@ describe("clearing a field must still work — the fix must not overcorrect", ()
 
   it("sends an edited field with its new value", async () => {
     await renderLoaded(POPULATED);
-    const city = screen.getByDisplayValue("Lowell");
+    const city = screen.getByDisplayValue("Anytown");
     fireEvent.change(city, { target: { name: "city", value: "Boston" } });
     submit();
 

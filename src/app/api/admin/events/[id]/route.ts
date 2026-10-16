@@ -70,6 +70,18 @@ function withDollarPrices<
   };
 }
 
+/**
+ * OPE-1387 — the ADMIN edit form needs every events column (suggester email,
+ * gate flags, dedup pointers, sync/roster state). `eventJoinProjection` is now
+ * the PUBLIC allow-list, so this admin-only route declares its own full-row
+ * projection rather than widening the public one. Admin-gated by withAuth.
+ */
+const adminEventJoinProjection = {
+  events: events,
+  venue: eventJoinProjection.venue,
+  promoter: { ...eventJoinProjection.promoter, userId: promoters.userId },
+} as const;
+
 export const GET = withAuth<{ id: string }>({ role: "ADMIN" }, async ({ request, db, params }) => {
   const { id } = params;
 
@@ -78,7 +90,7 @@ export const GET = withAuth<{ id: string }>({ role: "ADMIN" }, async ({ request,
     // 100-col cap (events 62 + venue 13 + promoter 7 = 82 cols). Was bare
     // .select() = 107 cols post-P3a, silently returning zero rows.
     const eventResults = await db
-      .select(eventJoinProjection)
+      .select(adminEventJoinProjection)
       .from(events)
       .leftJoin(venues, eq(events.venueId, venues.id))
       .leftJoin(promoters, eq(events.promoterId, promoters.id))
