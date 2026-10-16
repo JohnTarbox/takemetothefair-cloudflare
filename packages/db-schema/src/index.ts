@@ -57,6 +57,13 @@ export const users = sqliteTable("users", {
   oauthProvider: text("oauth_provider"),
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  /**
+   * OPE-1366 — session generation (drizzle/0371). Bumped on an admin role
+   * change and on a password reset; web JWTs and MCP OAuth grants carry the
+   * value they were minted with and are ended when it no longer matches.
+   * Bump with `bumpSessionVersion()` (`session_version + 1`), never an absolute.
+   */
+  sessionVersion: integer("session_version").notNull().default(0),
 });
 
 /**
@@ -7129,6 +7136,9 @@ export * from "./vendor-link-visibility";
 // OPE-1028 — "is this event in state X?", shared so list pages and the MCP
 // reader run the same SQL.
 export * from "./event-state";
+// OPE-1375 — "is this event upcoming / past?", shared so list pages and the MCP
+// tools agree on the same day boundary.
+export * from "./event-end-predicates";
 
 // OPE-391 — shared with the MCP Worker; see the file header.
 export * from "./data-health-kpis";
@@ -7174,3 +7184,5 @@ export * from "./citation-supersede-scope";
 export * from "./promoter-merge-children";
 export * from "./venue-merge-children";
 export * from "./inbound-duplicate-repoint";
+// OPE-1373 — shared collision-safe rename + slug-history write.
+export * from "./slug-rename";

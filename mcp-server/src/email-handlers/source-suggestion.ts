@@ -9,8 +9,8 @@
  *           They get the polished "thanks, already on it" reply with no
  *           admin queue entry.
  *
- *   Tier 2: events.source_url LIKE check. If we have events sourced from
- *           this host (informal usage) but no email_source_suggestions row,
+ *   Tier 2: events.source_url substring check (containsCI, see below).
+ *           If we have events sourced from this host (informal usage) but no email_source_suggestions row,
  *           tell the sender we use the source AND flag for admin to
  *           formally register it (admin_actions row tagged
  *           source_suggestion.register_informal).
@@ -29,7 +29,8 @@
 
 import { adminActions, emailSourceSuggestions, events } from "../schema.js";
 import { getDb } from "../db.js";
-import { sql, like, eq, and } from "drizzle-orm";
+import { sql, eq, and } from "drizzle-orm";
+import { containsCI } from "@takemetothefair/db-schema";
 import type { HandlerFn, HandlerResult } from "./types.js";
 
 export const handle: HandlerFn = async (env, _ctx, row): Promise<HandlerResult> => {
@@ -57,11 +58,15 @@ export const handle: HandlerFn = async (env, _ctx, row): Promise<HandlerResult> 
     if (existing.length > 0) {
       tier = "registered";
     } else {
-      // Tier 2: informal-usage check via events.source_url LIKE.
+      // Tier 2: informal-usage check — does any event's source_url contain
+      // this host? OPE-1376: containsCI (instr), NOT `like(…, \`%${host}%\`)`.
+      // The host comes from the sender's email, and D1 throws on a LIKE
+      // pattern over 50 chars, so any host of ~49+ chars failed the whole
+      // handler instead of reaching tier 3.
       const usageRows = await db
         .select({ n: sql<number>`COUNT(*)` })
         .from(events)
-        .where(like(events.sourceUrl, `%${host}%`))
+        .where(containsCI(events.sourceUrl, host))
         .limit(1);
       informalUsageCount = Number(usageRows[0]?.n ?? 0);
 

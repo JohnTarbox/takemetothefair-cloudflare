@@ -1,3 +1,4 @@
+import { requireAdmin } from "@/lib/require-admin";
 import Link from "next/link";
 import { normalizeHealthMessageKey } from "@/lib/site-health-group-key";
 import {
@@ -151,6 +152,7 @@ function fmtUsd(n: number): string {
 }
 
 export default async function AdminAnalyticsPage({ searchParams }: PageProps) {
+  await requireAdmin();
   const params = await searchParams;
   // OPE-1347 #7 — an unknown tab used to fall through to Overview silently, so
   // `?tab=first-party` showed the wrong page with no hint. A missing tab is

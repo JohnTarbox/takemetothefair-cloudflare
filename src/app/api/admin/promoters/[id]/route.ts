@@ -9,7 +9,7 @@ import { promoterUpdateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 import { computePromoterEnrichment } from "@takemetothefair/constants";
-import { deletePromoterChildren } from "@takemetothefair/db-schema";
+import { deletePromoterChildren, planSlugRename } from "@takemetothefair/db-schema";
 import { logAuditWriteFailure } from "@/lib/audit/log-audit-failure";
 
 export const GET = withAuth<{ id: string }>({ role: "ADMIN" }, async ({ request, db, params }) => {
@@ -54,7 +54,7 @@ export const GET = withAuth<{ id: string }>({ role: "ADMIN" }, async ({ request,
 
 export const PATCH = withAuth<{ id: string }>(
   { role: "ADMIN" },
-  async ({ request, db, params }) => {
+  async ({ request, db, params, session }) => {
     const { id } = params;
 
     // Validate request body
@@ -69,11 +69,24 @@ export const PATCH = withAuth<{ id: string }>(
       // Read the prior row: its slug (IndexNow old+new on rename) and its current
       // field values (OPE-35 — needed to recompute enrichment from the merge).
       const [prior] = await db.select().from(promoters).where(eq(promoters.id, id)).limit(1);
+      if (!prior) {
+        return NextResponse.json({ error: "Promoter not found" }, { status: 404 });
+      }
 
       const updateData: Record<string, unknown> = { updatedAt: new Date() };
+      // OPE-1373 — a rename resolves a collision-safe slug (this path had no
+      // loop, so a taken slug was a UNIQUE-index 500) and writes the
+      // promoter_slug_history row the middleware 301s from, in the same batch.
+      let slugRename: Awaited<ReturnType<typeof planSlugRename>> = null;
       if (data.companyName) {
         updateData.companyName = data.companyName;
-        updateData.slug = createSlug(data.companyName);
+        slugRename = await planSlugRename(db, "promoter", {
+          entityId: id,
+          currentSlug: prior.slug,
+          seed: createSlug(data.companyName),
+          changedBy: session.user.id,
+        });
+        if (slugRename) updateData.slug = slugRename.nextSlug;
       }
       if (data.description !== undefined) updateData.description = data.description;
       if (data.website !== undefined) updateData.website = data.website;
@@ -112,7 +125,12 @@ export const PATCH = withAuth<{ id: string }>(
         updateData.enrichmentEmptyAttempts = 0; // OPE-1279
       }
 
-      await db.update(promoters).set(updateData).where(eq(promoters.id, id));
+      const promoterUpdate = db.update(promoters).set(updateData).where(eq(promoters.id, id));
+      if (slugRename) {
+        await db.batch([promoterUpdate, slugRename.historyInsert]);
+      } else {
+        await promoterUpdate;
+      }
 
       const [updatedPromoter] = await db
         .select()

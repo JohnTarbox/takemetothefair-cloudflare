@@ -6,10 +6,11 @@
  * reject each with one click. Approving transfers ownership + grants the role +
  * emails the claimant; rejecting records the reason in the audit payload + email.
  *
- * Server component. Admin auth is enforced by src/app/admin/layout.tsx — not
- * re-guarded here. Renders a clean empty state when there are zero claims (an
+ * Server component. Admin auth is enforced HERE via requireAdmin() — the layout
+ * check alone is skippable by a crafted RSC request (OPE-1365). Renders a clean empty state when there are zero claims (an
  * empty collection must never throw — the OPE-58 crash class).
  */
+import { requireAdmin } from "@/lib/require-admin";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { listReviewableClaims } from "@/lib/claims/admin-review";
 import { getClaimEstate, DIVERGENCE_WINDOW_DAYS } from "@/lib/claims/claim-estate";
@@ -52,6 +53,7 @@ function corroborationClasses(c: string): string {
 }
 
 export default async function AdminClaimsPage() {
+  await requireAdmin();
   const db = getCloudflareDb();
   const [claims, evidence, estate] = await Promise.all([
     listReviewableClaims(db),

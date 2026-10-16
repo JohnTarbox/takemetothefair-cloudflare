@@ -4,8 +4,9 @@ import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/api/with-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { venues, events } from "@/lib/db/schema";
-import { eq, desc, and, ne } from "drizzle-orm";
-import { createSlug, unsafeSlug } from "@/lib/utils";
+import { eq, desc } from "drizzle-orm";
+import { planSlugRename } from "@takemetothefair/db-schema";
+import { createSlug } from "@/lib/utils";
 import { venueUpdateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 import { recordMutation } from "@/lib/audit/record-mutation";
@@ -104,31 +105,19 @@ export const PATCH = withAuth<{ id: string }>(
       }
 
       const updateData: Record<string, unknown> = { updatedAt: new Date() };
+      // OPE-1373 — collision-safe slug + the venue_slug_history row the
+      // middleware 301s from, committed in the same batch as the UPDATE.
+      // This path used to rename with no history row, so the old URL 404'd.
+      let slugRename: Awaited<ReturnType<typeof planSlugRename>> = null;
       if (data.name) {
         updateData.name = data.name;
-        const newSlug = createSlug(data.name);
-
-        // Only update slug if it would change
-        if (newSlug !== currentVenue.slug) {
-          // Check if new slug already exists for another venue
-          const slug = newSlug;
-          let slugSuffix = 0;
-          while (true) {
-            const existingSlug = await db
-              .select({ id: venues.id })
-              .from(venues)
-              .where(
-                and(
-                  eq(venues.slug, unsafeSlug(slugSuffix > 0 ? `${slug}-${slugSuffix}` : slug)),
-                  ne(venues.id, id)
-                )
-              )
-              .limit(1);
-            if (existingSlug.length === 0) break;
-            slugSuffix++;
-          }
-          updateData.slug = slugSuffix > 0 ? `${slug}-${slugSuffix}` : slug;
-        }
+        slugRename = await planSlugRename(db, "venue", {
+          entityId: id,
+          currentSlug: currentVenue.slug,
+          seed: createSlug(data.name),
+          changedBy: session.user.id,
+        });
+        if (slugRename) updateData.slug = slugRename.nextSlug;
       }
       if (data.address) updateData.address = data.address;
       if (data.city) updateData.city = data.city;
@@ -199,6 +188,7 @@ export const PATCH = withAuth<{ id: string }>(
       });
       const venueBatch = [
         db.update(venues).set(updateData).where(eq(venues.id, id)),
+        ...(slugRename ? [slugRename.historyInsert] : []),
         ...venueSyndicationStmts,
       ] as const;
       await db.batch(venueBatch as unknown as Parameters<typeof db.batch>[0]);

@@ -14,8 +14,9 @@ import {
   blogPosts,
   recommendationItems,
 } from "@/lib/db/schema";
-import { eq, and, ne, inArray, gte, sql } from "drizzle-orm";
-import { createSlug, appendSlugSegment, unsafeSlug, type Slug } from "@/lib/utils";
+import { eq, and, inArray, gte, sql } from "drizzle-orm";
+import { createSlug, type Slug } from "@/lib/utils";
+import { planSlugRename } from "@takemetothefair/db-schema";
 import { vendorUpdateSchema, vendorDeleteSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
@@ -153,33 +154,15 @@ export const PATCH = withAuth<{ id: string }>(
           ? createSlug(data.businessName)
           : null;
 
-      if (slugSeed && slugSeed !== currentVendor.slug) {
-        let slugSuffix = 0;
-        let candidate = slugSeed;
-        while (true) {
-          const existingSlug = await db
-            .select({ id: vendors.id })
-            .from(vendors)
-            .where(
-              and(
-                eq(
-                  vendors.slug,
-                  slugSuffix > 0 ? appendSlugSegment(slugSeed, slugSuffix) : slugSeed
-                ),
-                ne(vendors.id, id)
-              )
-            )
-            .limit(1);
-          if (existingSlug.length === 0) {
-            candidate = slugSuffix > 0 ? appendSlugSegment(slugSeed, slugSuffix) : slugSeed;
-            break;
-          }
-          slugSuffix++;
-        }
-        if (candidate !== currentVendor.slug) {
-          updateData.slug = candidate;
-        }
-      }
+      // OPE-1373 — shared collision-safe resolver; the history INSERT rides
+      // in the same batch as the UPDATE below.
+      const slugRename = await planSlugRename(db, "vendor", {
+        entityId: id,
+        currentSlug: currentVendor.slug,
+        seed: slugSeed,
+        changedBy: session.user.id,
+      });
+      if (slugRename) updateData.slug = slugRename.nextSlug;
       if (data.description !== undefined) updateData.description = data.description;
       if (vendorType !== undefined) updateData.vendorType = vendorType;
       for (const col of ["sellsCategory", "businessSector", "vendorIdentity"] as const) {
@@ -380,7 +363,12 @@ export const PATCH = withAuth<{ id: string }>(
         gateTransitioned = data.display_override_permitted ? "granted" : "revoked";
       }
 
-      await db.update(vendors).set(updateData).where(eq(vendors.id, id));
+      const vendorUpdate = db.update(vendors).set(updateData).where(eq(vendors.id, id));
+      if (slugRename) {
+        await db.batch([vendorUpdate, slugRename.historyInsert]);
+      } else {
+        await vendorUpdate;
+      }
 
       await recomputeVendorCompleteness(db, id);
 
@@ -392,18 +380,6 @@ export const PATCH = withAuth<{ id: string }>(
         actorUserId: session.user.id,
         fieldsChanged: Object.keys(updateData).filter((k) => k !== "updatedAt"),
       });
-
-      // Slug history write — fires whenever the resolved slug actually changed,
-      // regardless of whether it came from `slug` param or `businessName` rename.
-      if (updateData.slug && updateData.slug !== currentVendor.slug) {
-        await db.insert(vendorSlugHistory).values({
-          vendorId: id,
-          oldSlug: currentVendor.slug,
-          newSlug: unsafeSlug(updateData.slug as string),
-          changedAt: now,
-          changedBy: session.user.id,
-        });
-      }
 
       // Audit log: record Enhanced Profile lifecycle transitions.
       if (enhancedProfileTransitioned) {

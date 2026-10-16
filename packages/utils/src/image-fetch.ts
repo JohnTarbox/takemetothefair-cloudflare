@@ -108,10 +108,22 @@ export function classifyImageResponse(f: ImageResponseFacts): ImageFetchVerdict 
  * (and only when) the first answer is a block. `doFetch` is injected so the
  * main app can keep its SSRF-guarded redirect walk.
  */
-export async function fetchImageWithFallback(
-  doFetch: (userAgent: string) => Promise<Response>
+/**
+ * The slice of a response the fallback reads. A real `Response` satisfies it,
+ * and so does site-fetch's `GuardedResponse` (OPE-1370), whose body reads are
+ * size-capped — which is why this is structural rather than `Response`.
+ */
+export interface ImageFetchResponseLike {
+  status: number;
+  url: string;
+  headers: Headers;
+  text(): Promise<string>;
+}
+
+export async function fetchImageWithFallback<R extends ImageFetchResponseLike = Response>(
+  doFetch: (userAgent: string) => Promise<R>
 ): Promise<
-  | { ok: true; response: Response; userAgent: string; attempts: string[] }
+  | { ok: true; response: R; userAgent: string; attempts: string[] }
   | { ok: false; verdict: Exclude<ImageFetchVerdict, { kind: "image" }>; attempts: string[] }
 > {
   const attempts: string[] = [];

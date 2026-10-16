@@ -34,7 +34,8 @@ import {
 import { formatOccurrenceDate } from "@/lib/k18-vendor-grouping";
 import { groupVendorShows } from "@/lib/series/group-vendor-shows";
 import { VendorShowsByYear } from "@/components/vendors/VendorShowsByYear";
-import { eq, ne, and, or, asc, desc, sql, isNull, inArray, gte } from "drizzle-orm";
+import { eq, ne, and, or, asc, desc, sql, isNull, inArray } from "drizzle-orm";
+import { upcomingEndPredicate } from "@/lib/event-dates";
 import { withD1ReadLogged } from "@/lib/db/d1-resilience";
 import { DEGRADED_METADATA, isD1PlatformFault } from "@/lib/db/degraded";
 import { DegradedPanel } from "@/components/layout/degraded-panel";
@@ -67,6 +68,7 @@ import {
   type DisplayableParent,
   type ParentDisplayInput,
   type VendorDisplayInput,
+  safeHref,
 } from "@takemetothefair/utils";
 import { cdnImage, cdnSrcSet, focalPointGravity, OG_EVENT, OG_SQUARE } from "@/lib/cdn-image";
 
@@ -527,7 +529,7 @@ async function getVendorOnce(slug: string) {
               and(
                 inArray(eventVendors.vendorId, batch),
                 isPubliclyVisibleVendorLink(),
-                gte(events.endDate, new Date())
+                upcomingEndPredicate(new Date())
               )
             )
             .orderBy(asc(events.startDate))
@@ -951,6 +953,8 @@ export default async function VendorDetailPage({ params }: Props) {
   // surfaces (H1, JSON-LD, breadcrumb, OG/Twitter, gallery alt) move to
   // the resolved string.
   const resolvedName = resolveDisplayName(vendor);
+  // OPE-1368 — stored URLs render through safeHref (http/https only).
+  const websiteHref = safeHref(vendor.website);
   return (
     <>
       <DetailPageTracker type="vendor" slug={vendor.slug} name={vendor.businessName} />
@@ -1610,12 +1614,12 @@ export default async function VendorDetailPage({ params }: Props) {
                     {vendor.contactPhone}
                   </TrackedActionLink>
                 )}
-                {vendor.website && (
+                {websiteHref && (
                   <TrackedActionLink
                     event="outbound_website_click"
                     entityType="VENDOR"
                     entitySlug={vendor.slug}
-                    href={vendor.website}
+                    href={websiteHref}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="flex items-center gap-3 text-foreground hover:text-navy"
@@ -1625,17 +1629,21 @@ export default async function VendorDetailPage({ params }: Props) {
                   </TrackedActionLink>
                 )}
                 {Object.entries(parseVendorSocialLinks(vendor.socialLinks)).map(
-                  ([platform, url]) => (
-                    <a
-                      key={platform}
-                      href={url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center gap-3 text-foreground hover:text-navy capitalize"
-                    >
-                      {platform}
-                    </a>
-                  )
+                  ([platform, url]) => {
+                    const socialHref = safeHref(url);
+                    if (!socialHref) return null;
+                    return (
+                      <a
+                        key={platform}
+                        href={socialHref}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-3 text-foreground hover:text-navy capitalize"
+                      >
+                        {platform}
+                      </a>
+                    );
+                  }
                 )}
               </CardContent>
             </Card>

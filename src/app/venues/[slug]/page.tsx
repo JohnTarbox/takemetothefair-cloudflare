@@ -14,14 +14,15 @@ import {
   ParkingSquare,
   PawPrint,
 } from "lucide-react";
-import { venuePetPolicyDisplay } from "@takemetothefair/utils";
+import { venuePetPolicyDisplay, safeHref } from "@takemetothefair/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { EventList } from "@/components/events/event-list";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { venues, events, promoters } from "@/lib/db/schema";
-import { eq, and, gte, inArray } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
+import { upcomingEndPredicate } from "@/lib/event-dates";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { attachEventDayDates } from "@/lib/event-days-attach";
 import { eventJoinProjection } from "@/lib/db/event-join-projection";
@@ -92,7 +93,7 @@ async function getVenue(slug: string) {
       .leftJoin(venues, eq(events.venueId, venues.id))
       .leftJoin(promoters, eq(events.promoterId, promoters.id))
       .where(
-        and(eq(events.venueId, venue.id), isPublicEventStatus(), gte(events.endDate, new Date()))
+        and(eq(events.venueId, venue.id), isPublicEventStatus(), upcomingEndPredicate(new Date()))
       )
       .orderBy(events.startDate)
       .limit(6);
@@ -235,6 +236,8 @@ export default async function VenueDetailPage({ params }: Props) {
   // A pin only for real coordinates — a FORMER venue never gets a centroid or
   // an address-search link built from a blank address.
   const showMapLink = !venue.isFormer || (venue.latitude != null && venue.longitude != null);
+  // OPE-1368 — stored URLs render through safeHref (http/https only).
+  const websiteHref = safeHref(venue.website);
 
   return (
     <>
@@ -581,12 +584,12 @@ export default async function VenueDetailPage({ params }: Props) {
                       {venue.contactEmail}
                     </TrackedActionLink>
                   )}
-                  {venue.website && (
+                  {websiteHref && (
                     <TrackedActionLink
                       event="outbound_website_click"
                       entityType="VENUE"
                       entitySlug={venue.slug}
-                      href={venue.website}
+                      href={websiteHref}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="flex items-center gap-3 text-foreground hover:text-navy"

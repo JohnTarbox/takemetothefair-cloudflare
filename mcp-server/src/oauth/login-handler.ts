@@ -1,10 +1,11 @@
 import { Hono } from "hono";
-import { timingSafeEqualString } from "@takemetothefair/utils";
+import { maskEmail, timingSafeEqualString } from "@takemetothefair/utils";
 import type { AuthRequest, ClientInfo, OAuthHelpers } from "@cloudflare/workers-oauth-provider";
 import { getDb } from "../db.js";
 import { logError } from "../logger.js";
 import { lookupUser, verifyPassword, resolveUserProps } from "./utils.js";
 import { clientIp, throttleAuthorize, type BurstCounterNamespace } from "./authorize-throttle.js";
+import { htmlSecurityHeaders, withHtmlSecurityHeaders } from "./html-security-headers.js";
 
 interface Env {
   DB: D1Database;
@@ -35,6 +36,14 @@ const PENDING_STATE_TTL_SECONDS = 600;
 const STATE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 const app = new Hono<{ Bindings: Env }>();
+
+// OPE-1371 — no response from this handler may be framed. Pages that render
+// the login form set a redirect-aware CSP themselves (see htmlSecurityHeaders);
+// everything else — error text, 404s, redirects — gets the baseline here.
+app.use("*", async (c, next) => {
+  await next();
+  c.res = withHtmlSecurityHeaders(c.res);
+});
 
 // ---------------------------------------------------------------------------
 // GET / — server info (Claude.ai probes this first)
@@ -107,6 +116,7 @@ app.get("/authorize", async (c) => {
   });
 
   return c.html(renderLoginPage(csrfToken, stateId, null, consent), 200, {
+    ...htmlSecurityHeaders(oauthReqInfo.redirectUri),
     "Set-Cookie": `__Host-CSRF=${csrfToken}; HttpOnly; Secure; Path=/; SameSite=Lax; Max-Age=600`,
   });
 });
@@ -212,6 +222,7 @@ app.post("/authorize", async (c) => {
       ),
       429,
       {
+        ...htmlSecurityHeaders(oauthReqInfo.redirectUri),
         "Retry-After": String(retry),
         "Set-Cookie": `__Host-CSRF=${newCsrf}; HttpOnly; Secure; Path=/; SameSite=Lax; Max-Age=600`,
       }
@@ -234,7 +245,7 @@ app.post("/authorize", async (c) => {
       level: "warn",
       source: "mcp:oauth",
       message: "POST /authorize unknown email or missing passwordHash",
-      context: { email },
+      context: { email: maskEmail(email) },
     });
     return loginError(c, stateData, oauthReqInfo, "Invalid email or password.");
   }
@@ -245,7 +256,7 @@ app.post("/authorize", async (c) => {
       level: "warn",
       source: "mcp:oauth",
       message: "POST /authorize password verification failed",
-      context: { email, userId: user.id },
+      context: { email: maskEmail(email), userId: user.id },
     });
     return loginError(c, stateData, oauthReqInfo, "Invalid email or password.");
   }
@@ -253,7 +264,7 @@ app.post("/authorize", async (c) => {
   // Build user props for the OAuth token
   const props = await resolveUserProps(db, user);
 
-  console.log("[LOGIN] Credentials valid for", user.email, "role:", user.role);
+  console.log("[LOGIN] Credentials valid for", maskEmail(user.email), "role:", user.role);
 
   // Complete the OAuth authorization — generates an auth code and redirects
   const { redirectTo } = await c.env.OAUTH_PROVIDER.completeAuthorization({
@@ -327,6 +338,7 @@ async function loginError(c: any, stateData: string, req: AuthRequest, message: 
   const newCsrf = crypto.randomUUID();
   const consent = await consentFor(c.env.OAUTH_PROVIDER, req);
   return c.html(renderLoginPage(newCsrf, stateData, message, consent), 200, {
+    ...htmlSecurityHeaders(req.redirectUri),
     "Set-Cookie": `__Host-CSRF=${newCsrf}; HttpOnly; Secure; Path=/; SameSite=Lax; Max-Age=600`,
   });
 }

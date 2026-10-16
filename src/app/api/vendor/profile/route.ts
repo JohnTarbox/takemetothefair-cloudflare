@@ -4,9 +4,10 @@ import { mergeProductsJson, routeVendorCategoriesForWrite } from "@takemetothefa
 import { auth } from "@/lib/auth";
 import { requireVerifiedSession } from "@/lib/api-auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
-import { vendors, vendorSlugHistory, adminActions, users } from "@/lib/db/schema";
-import { and, eq, ne } from "drizzle-orm";
-import { appendSlugSegment, createSlug, type Slug } from "@/lib/utils";
+import { vendors, adminActions, users } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
+import { createSlug, type Slug } from "@/lib/utils";
+import { planSlugRename } from "@takemetothefair/db-schema";
 import { validateRequestBody, vendorProfileUpdateSchema } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 import {
@@ -205,33 +206,22 @@ export async function PATCH(request: NextRequest) {
     const now = new Date();
     const updateData: Record<string, unknown> = { updatedAt: now };
     let resolvedSlug: Slug | null = null;
+    let slugRename: Awaited<ReturnType<typeof planSlugRename>> = null;
     if (businessName) {
       updateData.businessName = businessName;
-      const slugSeed = createSlug(businessName);
-      if (slugSeed !== currentVendor.slug) {
-        // Collision loop: append -1, -2, … until a free slug is found,
-        // excluding our own row. Without this, a rename to a name an
-        // existing vendor owns hits the UNIQUE constraint and returns
-        // an opaque 500.
-        let suffix = 0;
-        let candidate: Slug = slugSeed;
-        while (true) {
-          const probe = suffix > 0 ? appendSlugSegment(slugSeed, suffix) : slugSeed;
-          const taken = await db
-            .select({ id: vendors.id })
-            .from(vendors)
-            .where(and(eq(vendors.slug, probe), ne(vendors.id, currentVendor.id)))
-            .limit(1);
-          if (taken.length === 0) {
-            candidate = probe;
-            break;
-          }
-          suffix++;
-        }
-        if (candidate !== currentVendor.slug) {
-          updateData.slug = candidate;
-          resolvedSlug = candidate;
-        }
+      // OPE-1373 — shared collision-safe resolver (excludes our own row, so a
+      // rename onto a name another vendor owns gets a suffix, not a 500); its
+      // history INSERT rides in the same batch as the UPDATE below.
+      slugRename = await planSlugRename(db, "vendor", {
+        entityId: currentVendor.id,
+        currentSlug: currentVendor.slug,
+        seed: createSlug(businessName),
+        changedBy: gate.userId,
+        changedAt: now,
+      });
+      if (slugRename) {
+        updateData.slug = slugRename.nextSlug;
+        resolvedSlug = slugRename.nextSlug;
       }
     }
     if (description !== undefined) updateData.description = description;
@@ -279,7 +269,12 @@ export async function PATCH(request: NextRequest) {
     const displayModeChanged =
       displayMode !== undefined && displayMode !== currentVendor.displayMode;
 
-    await db.update(vendors).set(updateData).where(eq(vendors.userId, gate.userId));
+    const vendorUpdate = db.update(vendors).set(updateData).where(eq(vendors.userId, gate.userId));
+    if (slugRename) {
+      await db.batch([vendorUpdate, slugRename.historyInsert]);
+    } else {
+      await vendorUpdate;
+    }
 
     if (displayModeChanged) {
       // vendor.display_preference_change — the office expressing/altering its
@@ -364,16 +359,6 @@ export async function PATCH(request: NextRequest) {
         source: "vendor_self",
         actorUserId: gate.userId,
         changes,
-      });
-    }
-
-    if (resolvedSlug) {
-      await db.insert(vendorSlugHistory).values({
-        vendorId: currentVendor.id,
-        oldSlug: currentVendor.slug,
-        newSlug: resolvedSlug,
-        changedAt: now,
-        changedBy: gate.userId,
       });
     }
 

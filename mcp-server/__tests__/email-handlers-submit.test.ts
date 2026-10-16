@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NonRetryableError } from "cloudflare:workflows";
 import {
   submitFetch,
+  senderMeterKey,
   submitExtract,
   submitCheckDuplicate,
   submitEvent,
@@ -126,6 +127,35 @@ describe("submitFetch — retry contract", () => {
     const err = await submitFetch(ENV, "https://example.org").catch((e) => e);
     expect(err).toBeInstanceOf(NonRetryableError);
     expect(err.message).toMatch(/^fetch-upstream:/);
+  });
+});
+
+// OPE-1370 (SSRF8) — the main app meters import-url-fetch per ORIGINAL sender.
+describe("submitFetch — per-sender metering stamp", () => {
+  const headersOf = async (sender?: string) => {
+    const spy = vi.fn(
+      async (_i: RequestInfo | URL, _init?: RequestInit) =>
+        Response.json({ success: true, content: "x" }) as Response
+    );
+    vi.stubGlobal("fetch", spy);
+    await submitFetch(ENV, "https://example.org", sender ? { sender } : {});
+    return new Headers(spy.mock.calls[0][1]?.headers);
+  };
+
+  it("sends a stable, case-insensitive hash of the sender — never the address", async () => {
+    const h = await headersOf("Organizer@Example.org");
+    const key = h.get("x-mmatf-sender");
+    expect(key).toMatch(/^[0-9a-f]{32}$/);
+    expect(key).toBe(await senderMeterKey("organizer@example.org "));
+    expect(key).not.toBe(await senderMeterKey("someone-else@example.org"));
+    expect(h.get("x-mmatf-entrypoint")).toBe("workflow");
+    expect([...h.values()].join(" ")).not.toMatch(/example\.org/i);
+    expect(h.get("x-internal-key")).toBe("test-key");
+  });
+
+  it("sends no sender stamp when there is no sender (holdout re-fetch)", async () => {
+    const h = await headersOf();
+    expect(h.get("x-mmatf-sender")).toBeNull();
   });
 });
 

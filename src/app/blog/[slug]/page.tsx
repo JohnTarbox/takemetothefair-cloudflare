@@ -7,7 +7,9 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { blogPosts, users, events, venues } from "@/lib/db/schema";
-import { eq, and, ne, desc, or, like, sql } from "drizzle-orm";
+import { eq, and, ne, desc, or, sql } from "drizzle-orm";
+import { containsCI } from "@/lib/db/contains-ci";
+import { logError } from "@/lib/logger";
 import { upcomingEndPredicate } from "@/lib/event-dates";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { auth } from "@/lib/auth";
@@ -96,13 +98,16 @@ async function getRecentPosts(excludeId: string) {
 async function getRelatedEvents(tags: string[], categories: string[]) {
   try {
     const db = getCloudflareDb();
-    // Build search terms from tags and categories
-    const searchTerms = [...tags, ...categories].filter(Boolean);
+    // Build search terms from tags and categories. Capped at 40 terms (2 bound
+    // params each) so the statement stays under D1's 100-param cap (OPE-1376).
+    const searchTerms = [...tags, ...categories].filter(Boolean).slice(0, 40);
     if (searchTerms.length === 0) return [];
 
-    // Match events whose name or categories overlap with blog tags
+    // Match events whose name or categories overlap with blog tags.
+    // OPE-1376: containsCI (instr), not LIKE — a tag over ~48 chars tripped
+    // D1's 50-char LIKE-pattern cap and silently emptied this block.
     const searchConditions = searchTerms.map((term) =>
-      or(like(events.name, `%${term}%`), like(events.categories, `%${term}%`))
+      or(containsCI(events.name, term), containsCI(events.categories, term))
     );
 
     const results = await db
@@ -127,7 +132,13 @@ async function getRelatedEvents(tags: string[], categories: string[]) {
       .limit(3);
 
     return results;
-  } catch {
+  } catch (e) {
+    await logError(getCloudflareDb(), {
+      message: "Error fetching related events for blog post",
+      error: e,
+      source: "app/blog/[slug]/page.tsx:getRelatedEvents",
+      context: { termCount: tags.length + categories.length },
+    });
     return [];
   }
 }

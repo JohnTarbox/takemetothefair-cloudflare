@@ -18,12 +18,7 @@
  *    examples proves the examples.
  */
 import { describe, it, expect } from "vitest";
-import {
-  parseEmailAuth,
-  parseEmailAuthDetail,
-  collapseSenderAuth,
-  type EmailAuthVerdict,
-} from "../src/email-auth.js";
+import { parseEmailAuth, parseEmailAuthDetail, type EmailAuthVerdict } from "../src/email-auth.js";
 import { extractSenderSignals } from "../src/email-handler.js";
 import type { Email } from "postal-mime";
 
@@ -45,15 +40,13 @@ describe("parseEmailAuthDetail — the record, not the gate", () => {
     expect(d.raw).toContain("ct.gov");
   });
 
-  it("calls a mailing-list forward `partial`, not `pass`", () => {
-    // spf=fail + dkim=pass is ordinary forwarded mail, and the 3-value verdict
-    // has to call it "pass" so the fast-path is not broken. That is right for
-    // a gate and wrong for a record: it is NOT a clean DMARC pass, and an
-    // audit trail that cannot say so is not an audit trail.
+  it("calls a mailing-list forward `partial`, not `pass` — record and gate alike", () => {
+    // spf=fail + dkim=pass with no DMARC is ordinary forwarded mail. It is NOT
+    // a clean DMARC pass; since OPE-1369 the gate says so too.
     const d = parseEmailAuthDetail("mx.cloudflare.net; spf=fail; dkim=pass header.d=list.example");
     expect(d.verdict).toBe("partial");
     expect(parseEmailAuth("mx.cloudflare.net; spf=fail; dkim=pass header.d=list.example")).toBe(
-      "pass"
+      "partial"
     );
   });
 
@@ -75,35 +68,39 @@ describe("parseEmailAuthDetail — the record, not the gate", () => {
   });
 });
 
-describe("OPE-763 scope 5 — the live trusted-sender gate is untouched", () => {
-  it("agrees with parseEmailAuth on every combination of method results", () => {
-    // Generated, not hand-picked: 6 values x 3 methods = 216 headers, which is
-    // every shape the parser can see. A hand-written table would prove the
-    // table.
+describe("gate ↔ record relationship (OPE-763, restated by OPE-1369)", () => {
+  it("over every combination: fail agrees exactly; a gate pass implies a record DMARC pass", () => {
+    // Generated, not hand-picked: 6 values x 3 methods = 216 headers. A
+    // hand-written table would prove the table.
     const values = ["pass", "fail", "none", "neutral", "softfail", "temperror"];
-    const disagreements: string[] = [];
+    const violations: string[] = [];
     let checked = 0;
+    let gatePasses = 0;
 
     for (const spf of values) {
       for (const dkim of values) {
         for (const dmarc of values) {
-          const header = `mx.cloudflare.net; spf=${spf}; dkim=${dkim}; dmarc=${dmarc}`;
-          const gate: EmailAuthVerdict = parseEmailAuth(header);
-          const record = collapseSenderAuth(parseEmailAuthDetail(header).verdict);
+          const header = `mx.cloudflare.net; spf=${spf} smtp.mailfrom=a@x.test; dkim=${dkim}; dmarc=${dmarc} header.from=x.test`;
+          const gate: EmailAuthVerdict = parseEmailAuth(header, "a@x.test");
+          const record = parseEmailAuthDetail(header);
           checked++;
-          if (gate !== record) disagreements.push(`${header} → gate=${gate} record=${record}`);
+          if ((gate === "fail") !== (record.verdict === "fail"))
+            violations.push(`${header} → fail disagreement gate=${gate} record=${record.verdict}`);
+          if (gate === "pass") {
+            gatePasses++;
+            if (record.dmarc !== "pass")
+              violations.push(`${header} → gate pass without DMARC pass`);
+          }
+          if (gate !== "pass" && gate !== "fail" && record.dmarc === "pass")
+            violations.push(`${header} → aligned DMARC pass not a gate pass (gate=${gate})`);
         }
       }
     }
 
-    // Positive landmark: if the loop ever stops running, "no disagreements" is
-    // indistinguishable from "no comparisons".
+    // Positive landmarks: the loop ran, and the pass branch was exercised.
     expect(checked).toBe(values.length ** 3);
-    expect(
-      disagreements,
-      "the richer parser has diverged from the one that gates the trusted-sender fast-path — " +
-        "OPE-763 is report-only and must not change routing"
-    ).toEqual([]);
+    expect(gatePasses).toBeGreaterThan(0);
+    expect(violations).toEqual([]);
   });
 });
 
@@ -233,13 +230,23 @@ describe("SPF — the record reads the MAIL FROM check, not the first spf=", () 
     expect(parseEmailAuthDetail(h).spf).toBe("pass");
   });
 
-  it("scope 5: the GATE is unchanged — it still reads the first spf= (known divergence)", () => {
-    // Pinned from both sides so a later "fix" to the gate is a deliberate,
-    // visible change (OPE-764's call), not a side effect of this one.
+  it("OPE-1369: the gate now reads the MAIL FROM spf= too — the old divergence is gone", () => {
     const h = "mx.cloudflare.net; spf=pass smtp.helo=mail.y.test; spf=fail smtp.mailfrom=x@y.test";
-    expect(parseEmailAuth(h)).toBe("pass");
-    expect(collapseSenderAuth(parseEmailAuthDetail(h).verdict)).toBe("fail");
-    // On the real specimen the two still agree, because DMARC passed.
-    expect(parseEmailAuth(GMAIL_TWO_SPF)).toBe("pass");
+    expect(parseEmailAuth(h)).toBe("fail");
+    expect(parseEmailAuthDetail(h).verdict).toBe("fail");
+    // The real specimen: aligned DMARC pass for gmail.com.
+    expect(parseEmailAuth(GMAIL_TWO_SPF, "jtarboxme@gmail.com")).toBe("pass");
+  });
+
+  it("OPE-1369: the record reads Cloudflare's header only, not a forged trailing one", () => {
+    const h =
+      "mx.cloudflare.net; dmarc=none header.from=x.test; spf=none smtp.mailfrom=a@x.test, " +
+      "evil.test; dkim=pass header.d=x.test; dmarc=pass header.from=x.test";
+    expect(parseEmailAuthDetail(h)).toMatchObject({
+      dkim: null,
+      dmarc: "none",
+      verdict: "unknown",
+    });
+    expect(parseEmailAuthDetail(h).raw).toBe(h);
   });
 });

@@ -5,6 +5,7 @@
  * cannot drift from it — a fix to how we fetch reaches both.
  */
 import { SCRAPER_USER_AGENT } from "@takemetothefair/constants";
+import { guardedFetch } from "@takemetothefair/site-fetch";
 
 export const FETCH_TIMEOUT_MS = 10_000;
 
@@ -23,14 +24,24 @@ function describeBodyError(e: unknown): string {
   return String(e).slice(0, 200) || "unknown body read error";
 }
 
+/**
+ * OPE-1370 (SSRF6) — the cap on a 2xx body. It used to be read whole; a page
+ * past this is far beyond any organizer site, and its first 5 MB is still
+ * read (a prefix, not an error), so the classifier sees what it always saw.
+ */
+export const PROBE_MAX_BYTES = 5 * 1024 * 1024;
+const NON_2XX_BODY_CAP = 300_000;
+
 export async function probe(url: string): Promise<Probe> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  // OPE-1370 — through `guardedFetch`: redirects are followed manually with
+  // the SSRF guard re-run on every hop (it followed them unchecked, with no
+  // guard at all), the body is size-capped, and FETCH_TIMEOUT_MS still covers
+  // the body read as well as the headers. A refused hop is unreachable.
   try {
-    const res = await fetch(url, {
+    const res = await guardedFetch(url, {
+      maxBytes: PROBE_MAX_BYTES,
+      timeoutMs: FETCH_TIMEOUT_MS,
       headers: { "User-Agent": SCRAPER_USER_AGENT },
-      signal: controller.signal,
-      redirect: "follow",
     });
     // OPE-979 — the body is read on EVERY status. The classifier still
     // ignores a non-2xx body for its event-signal verdicts (a themed 404 must
@@ -48,11 +59,11 @@ export async function probe(url: string): Promise<Probe> {
     let body = "";
     let bodyReadError: string | null = null;
     try {
-      body = await res.text();
+      body = await res.textPrefix(res.ok ? PROBE_MAX_BYTES : NON_2XX_BODY_CAP);
     } catch (e) {
       bodyReadError = describeBodyError(e);
     }
-    const html = (res.ok ? body : body.slice(0, 300_000)) || null;
+    const html = (res.ok ? body : body.slice(0, NON_2XX_BODY_CAP)) || null;
     return {
       reachedOrigin: true,
       status: res.status,
@@ -62,7 +73,5 @@ export async function probe(url: string): Promise<Probe> {
     };
   } catch {
     return { reachedOrigin: false, status: null, html: null };
-  } finally {
-    clearTimeout(timer);
   }
 }

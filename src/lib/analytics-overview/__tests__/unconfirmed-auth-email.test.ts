@@ -37,7 +37,8 @@ const SCHEMA_SQL = `
   CREATE TABLE users (
     id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, password_hash TEXT,
     origin TEXT, name TEXT, role TEXT, email_verified INTEGER, image TEXT,
-    oauth_provider TEXT, created_at INTEGER, updated_at INTEGER
+    oauth_provider TEXT, created_at INTEGER, updated_at INTEGER,
+    session_version INTEGER NOT NULL DEFAULT 0
   );
 `;
 

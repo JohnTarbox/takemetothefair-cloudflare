@@ -332,12 +332,41 @@ interface ExtractedEvent {
  *   - upstream {success:false}  → NonRetryableError with upstream message
  *   - 5xx response or network   → plain Error, workflow retries
  */
-export async function submitFetch(env: HandlerEnv, url: string): Promise<SubmitFetchResult> {
+/**
+ * OPE-1370 (SSRF8) — the per-sender key for the main app's metered
+ * `import-url-fetch` bucket. Every inbound-email fetch arrives from this
+ * Worker's egress, so with no caller stamp they all counted under ONE IP key:
+ * a stream of rotating senders could spend the shared 60/hour budget and
+ * starve legitimate submissions. The address is hashed (never sent raw — the
+ * key only needs to be stable per sender) and lowercased so case variants of
+ * one mailbox share a bucket.
+ */
+export async function senderMeterKey(fromAddress: string): Promise<string> {
+  const data = new TextEncoder().encode(fromAddress.trim().toLowerCase());
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", data));
+  return Array.from(digest.slice(0, 16), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+export interface SubmitFetchOptions {
+  /** The original sender; metered per sender when present (SSRF8). */
+  sender?: string | null;
+}
+
+export async function submitFetch(
+  env: HandlerEnv,
+  url: string,
+  opts: SubmitFetchOptions = {}
+): Promise<SubmitFetchResult> {
+  const headers: Record<string, string> = { "x-internal-key": env.INTERNAL_API_KEY };
+  if (opts.sender) {
+    headers["X-MMATF-Entrypoint"] = "workflow";
+    headers["X-MMATF-Sender"] = await senderMeterKey(opts.sender);
+  }
   let res: Response;
   try {
     res = await fetch(
       `${env.MAIN_APP_URL}/api/admin/import-url/fetch?url=${encodeURIComponent(url)}`,
-      { headers: { "x-internal-key": env.INTERNAL_API_KEY } }
+      { headers }
     );
   } catch (err) {
     // Network error — retryable

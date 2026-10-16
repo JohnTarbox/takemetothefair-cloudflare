@@ -18,6 +18,7 @@
  */
 
 import { SITE_URL } from "@takemetothefair/constants";
+import { safeHref } from "@takemetothefair/utils";
 import { extractDomain } from "@/lib/url-classification";
 
 export type EventCtaSource = "ticket_url" | "source_url";
@@ -95,7 +96,8 @@ export function pickEventCta(input: {
   vettedSourceUrl: string | null | undefined;
   ticketPriceMaxCents: number | null | undefined;
 }): EventCta | null {
-  const ticketUrl = input.ticketUrl?.trim();
+  // OPE-1368 — ticket_url is user-supplied; only an http(s) link becomes a CTA.
+  const ticketUrl = safeHref(input.ticketUrl);
   if (ticketUrl) {
     return { url: ticketUrl, ctaSource: "ticket_url", label: "Event Website" };
   }

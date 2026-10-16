@@ -64,6 +64,7 @@ import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 import { jsonContent, unsafeSlug } from "../helpers.js";
 import { logAuditWriteFailure } from "../audit/log-audit-failure.js";
+import { logError } from "../logger.js";
 
 /**
  * D1 caps a statement at 100 bound parameters (OPE-241), so every `inArray`
@@ -443,8 +444,29 @@ export function registerMergeVendorTool(server: McpServer, db: Db, auth: AuthCon
           changedAt: new Date(),
           changedBy: auth.userId ?? null,
         });
-      } catch {
-        // Idempotent re-run — a history row may already exist.
+      } catch (historyErr) {
+        // OPE-1373 — this catch used to swallow the failure as "a slug-history
+        // row may already exist". That cannot happen: only series_slug_history
+        // has a UNIQUE index (drizzle/0209), so a re-run inserts a second row
+        // rather than throwing. The catch only ever hid REAL failures — and
+        // the merge then went on to tombstone the duplicate's slug with the
+        // redirect gone. Abort instead, before that step.
+        await logError(db, {
+          message:
+            "merge_vendor: slug-history insert failed; merge aborted before the duplicate was tombstoned",
+          error: historyErr,
+          source: "mcp:merge_vendor",
+          context: { keeperId: keeperId, duplicateId: duplicateId },
+        });
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Merge ABORTED: could not write the slug-history redirect for the duplicate, so the duplicate was left in place (not tombstoned). ${historyErr instanceof Error ? historyErr.message : String(historyErr)}`,
+            },
+          ],
+          isError: true,
+        };
       }
 
       // Tombstone last.

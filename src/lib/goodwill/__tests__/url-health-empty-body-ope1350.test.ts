@@ -24,7 +24,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { classifyUrlHealth, isActionable } from "../url-health";
 import { classifyVendorSite } from "../vendor-site-health";
-import { probe } from "../url-probe";
+import { probe, PROBE_MAX_BYTES } from "../url-probe";
 import { PROJECTED_URL_HEALTH } from "@/lib/url-health-issues";
 
 const fixture = (f: string) => readFileSync(join(__dirname, "fixtures", "ope1350", f), "utf8");
@@ -170,5 +170,68 @@ describe("OPE-1350 — the probe records a failed body read instead of swallowin
     expect(p.bodyReadError).toBeNull();
     expect(p.html).toBe(html);
     expect(classifyUrlHealth(p).verdict).toBe("parked_page");
+  });
+});
+
+// OPE-1370 (SSRF6) — the probe went through bare `fetch` with redirect:
+// "follow" and no guard. It now walks redirects itself, re-checking each hop.
+describe("OPE-1370 — the probe is SSRF-guarded per hop and size-capped", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("a public site that redirects to loopback is unreachable, and the hop is never requested", async () => {
+    const seen: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        seen.push(String(input));
+        return String(input) === "https://promoter.example.org/"
+          ? new Response(null, { status: 302, headers: { location: "http://localhost./admin" } })
+          : new Response("<html>internal</html>", { status: 200 });
+      })
+    );
+    const p = await probe("https://promoter.example.org/");
+    expect(p.reachedOrigin).toBe(false);
+    expect(seen).toEqual(["https://promoter.example.org/"]);
+  });
+
+  it("still reports where a public redirect chain landed (OPE-988 takeover signal)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) =>
+        String(input) === "https://old.example.org/"
+          ? new Response(null, {
+              status: 301,
+              headers: { location: "https://parked.example.net/" },
+            })
+          : new Response("<html><body>for sale</body></html>", { status: 200 })
+      )
+    );
+    const p = await probe("https://old.example.org/");
+    expect(p.finalUrl).toBe("https://parked.example.net/");
+    expect(p.html).toContain("for sale");
+  });
+
+  it("an oversize 2xx body is read as a capped prefix, not an error and not whole", async () => {
+    let sent = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              pull(c) {
+                if (sent >= 64 * 1024 * 1024) return c.close();
+                sent += 1024 * 1024;
+                c.enqueue(new Uint8Array(1024 * 1024).fill(0x61));
+              },
+            }),
+            { status: 200, headers: { "content-type": "text/html" } }
+          )
+      )
+    );
+    const p = await probe("https://huge.example.org/");
+    expect(p.bodyReadError).toBeNull();
+    expect(p.html?.length).toBe(PROBE_MAX_BYTES);
+    expect(sent).toBeLessThan(16 * 1024 * 1024);
   });
 });

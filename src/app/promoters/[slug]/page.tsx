@@ -27,9 +27,9 @@ import { Card, CardContent } from "@/components/ui/card";
 import { EventList } from "@/components/events/event-list";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { promoters, events, venues } from "@/lib/db/schema";
-import { eq, and, lt } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
-import { upcomingEndPredicate } from "@/lib/event-dates";
+import { upcomingEndPredicate, pastEndPredicate } from "@/lib/event-dates";
 import { attachEventDayDates } from "@/lib/event-days-attach";
 import { eventJoinProjection } from "@/lib/db/event-join-projection";
 import { logError } from "@/lib/logger";
@@ -42,6 +42,7 @@ import { PromoterClosedNotice } from "@/components/promoters/PromoterClosedNotic
 import { isClosedPromoter } from "@/lib/promoters/operating-status";
 import { auth } from "@/lib/auth";
 import { unsafeSlug } from "@/lib/utils";
+import { safeHref } from "@takemetothefair/utils";
 import { buildPromoterMetaDescription } from "@/lib/seo-utils";
 import { cdnImage, cdnSrcSet, OG_EVENT, focalPointGravity } from "@/lib/cdn-image";
 
@@ -86,9 +87,7 @@ async function getPromoter(slug: string) {
       .from(events)
       .leftJoin(venues, eq(events.venueId, venues.id))
       .leftJoin(promoters, eq(events.promoterId, promoters.id))
-      .where(
-        and(eq(events.promoterId, promoter.id), isPublicEventStatus(), lt(events.endDate, now))
-      )
+      .where(and(eq(events.promoterId, promoter.id), isPublicEventStatus(), pastEndPredicate(now)))
       .orderBy(events.startDate)
       .limit(12);
 
@@ -205,6 +204,8 @@ export default async function PromoterDetailPage({ params }: Props) {
   const isOwner = !!session?.user?.id && session.user.id === promoter.userId;
 
   const locationStr = [promoter.city, promoter.state].filter(Boolean).join(", ");
+  // OPE-1368 — stored URLs render through safeHref (http/https only).
+  const websiteHref = safeHref(promoter.website);
 
   return (
     <>
@@ -351,7 +352,7 @@ export default async function PromoterDetailPage({ params }: Props) {
             <Card>
               <CardContent className="py-6 space-y-3">
                 <h2 className="text-lg font-semibold text-foreground">Contact</h2>
-                {promoter.website && (
+                {websiteHref && (
                   <p className="flex items-center gap-2 text-sm">
                     <Globe className="w-4 h-4 text-muted-foreground" />
                     {/* Was next/link — an external, nofollow'd destination
@@ -361,12 +362,12 @@ export default async function PromoterDetailPage({ params }: Props) {
                       event="outbound_website_click"
                       entityType="PROMOTER"
                       entitySlug={promoter.slug}
-                      href={promoter.website}
+                      href={websiteHref}
                       target="_blank"
                       rel="noopener noreferrer nofollow"
                       className="text-navy hover:underline break-all"
                     >
-                      {promoter.website.replace(/^https?:\/\//, "")}
+                      {websiteHref.replace(/^https?:\/\//, "")}
                     </TrackedActionLink>
                   </p>
                 )}

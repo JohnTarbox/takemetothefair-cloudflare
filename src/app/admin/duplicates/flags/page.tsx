@@ -10,6 +10,7 @@
  * enforced by src/app/admin/layout.tsx. An empty queue renders a clean empty
  * state (the OPE-58 crash class).
  */
+import { requireAdmin } from "@/lib/require-admin";
 import Link from "next/link";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import {
@@ -74,6 +75,7 @@ function Side({ title, side }: { title: string; side: FlagSide | null }) {
 }
 
 export default async function AdminDuplicateFlagsPage() {
+  await requireAdmin();
   const db = getCloudflareDb();
   const now = new Date();
   const [flags, alertDays] = await Promise.all([

@@ -16,7 +16,7 @@ import {
   users,
   contentLinks,
 } from "@/lib/db/schema";
-import { and, gte, eq, count, lte, sql, inArray } from "drizzle-orm";
+import { and, eq, count, lte, sql, inArray } from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { eventJoinProjection } from "@/lib/db/event-join-projection";
 import {
@@ -155,7 +155,7 @@ async function getWeekEvents() {
     const poolWhere = (starters: boolean) =>
       and(
         isPublicEventStatus(),
-        gte(events.endDate, now),
+        upcomingEndPredicate(now),
         lte(events.startDate, horizon),
         // OPE-48 — exclude season-long recurring events whose next actual
         // event_days occurrence is beyond this week (label/date agreement).
@@ -292,7 +292,7 @@ async function getRecentBlogPosts() {
           eq(contentLinks.sourceType, "BLOG_POST"),
           eq(contentLinks.targetType, "EVENT"),
           isPublicEventStatus(),
-          gte(events.endDate, now)
+          upcomingEndPredicate(now)
         )
       )
       .groupBy(contentLinks.sourceId);

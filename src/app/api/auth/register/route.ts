@@ -9,6 +9,7 @@ import "@/lib/validations/zod-locale";
 import { z } from "zod";
 import { normalizeDeclaredWebsite } from "@/lib/validations/declared-website";
 import { zodIssuesToFieldErrors } from "@/lib/validations/field-errors";
+import { VALIDATION } from "@takemetothefair/validation";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { users, userRoles, promoters, vendors, verificationTokens } from "@/lib/db/schema";
 import { hashPassword } from "@/lib/auth";
@@ -53,7 +54,16 @@ const registerSchema = z.object({
       if (!verdict.ok) ctx.addIssue({ code: "custom", message: verdict.message });
     }),
   password: z.string().min(8, "Password must be at least 8 characters"),
-  name: z.string().min(2, "Name must be at least 2 characters"),
+  // OPE-1368 — the name is the greeting in the verification email, which goes
+  // to whatever address was typed; uncapped, it carried arbitrary HTML from
+  // our domain. Capped here; the template escapes it too.
+  name: z
+    .string()
+    .min(2, "Name must be at least 2 characters")
+    .max(
+      VALIDATION.USER_NAME_MAX_LENGTH,
+      `Name must be at most ${VALIDATION.USER_NAME_MAX_LENGTH} characters`
+    ),
   role: z.enum(["USER", "PROMOTER", "VENDOR"]).optional().default("USER"),
   companyName: z.string().optional(),
   businessName: z.string().optional(),

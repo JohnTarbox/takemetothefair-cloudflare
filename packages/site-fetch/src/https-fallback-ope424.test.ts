@@ -107,9 +107,12 @@ describe("fetchStandard — transport policy", () => {
   });
 
   it("an http:// fetch that redirects onto https was a TLS fetch after all", async () => {
+    // OPE-1370 — redirects are followed manually (each hop SSRF-checked), so
+    // the redirect is a real 301 here, not a runtime-followed `Response.url`.
     mockFetch(async (u) => {
+      if (u === "https://www.example.org/") return page(u);
       if (u.startsWith("https:")) throw new TypeError("handshake failure");
-      return page("https://www.example.org/");
+      return new Response(null, { status: 301, headers: { location: "https://www.example.org/" } });
     });
     const r = await fetchStandard("http://example.org/", signal());
     expect(r).toMatchObject({ ok: true, transport: "https" });

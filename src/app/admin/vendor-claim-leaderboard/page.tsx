@@ -30,6 +30,7 @@
  * pattern as /admin/source-quality + /admin/blog + /admin/stuck-urls.
  */
 
+import { requireAdmin } from "@/lib/require-admin";
 import Link from "next/link";
 import { and, desc, eq, inArray, isNotNull, isNull, ne, sql } from "drizzle-orm";
 import { getCloudflareDb } from "@/lib/cloudflare";
@@ -296,6 +297,7 @@ function outcomeBadgeClasses(outcome: string): string {
 export const dynamic = "force-dynamic";
 
 export default async function VendorClaimLeaderboardPage() {
+  await requireAdmin();
   const rows = await loadLeaderboard();
   const totalRows = rows.length;
 

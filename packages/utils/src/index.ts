@@ -615,6 +615,9 @@ export * from "./date-contiguity";
 // would leave the other splitting differently (or not at all).
 export * from "./email-recipients";
 
+// OPE-1379 (HARD8) — mask addresses in log context / console lines ("j***@domain").
+export * from "./mask-email";
+
 // OPE-365 (R1) — "does a human owe this person a response?" Pure so the
 // decision can be replayed against real production rows without running the
 // inbound Workflow.
@@ -679,3 +682,4 @@ export * from "./promoter-rule-agreement";
 export * from "./edition-path";
 // OPE-1341 — JPEG metadata strip, shared by the main app and the MCP Worker.
 export * from "./jpeg-exif-strip";
+export * from "./safe-href";

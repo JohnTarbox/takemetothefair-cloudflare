@@ -1,3 +1,4 @@
+import { requireAdmin } from "@/lib/require-admin";
 import Link from "next/link";
 import { Calendar, MapPin, Store, Users, Clock, UserPlus, BarChart3 } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -155,6 +156,7 @@ async function getUpcomingEventsWithVendorCounts() {
 export const dynamic = "force-dynamic";
 
 export default async function AdminDashboard() {
+  await requireAdmin();
   const [stats, recentSubmissions, upcomingEvents] = await Promise.all([
     getStats(),
     getRecentSubmissions(),

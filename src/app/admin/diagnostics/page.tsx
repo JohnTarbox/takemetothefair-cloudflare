@@ -10,8 +10,7 @@
  *
  * Auth: redirected to /signin if not admin (mirrors /admin/analytics).
  */
-import { redirect } from "next/navigation";
-import { auth } from "@/lib/auth";
+import { requireAdmin } from "@/lib/require-admin";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { loadDiagnosticsSnapshot } from "@/lib/diagnostics";
@@ -37,10 +36,7 @@ function fmtAge(seconds: number | null): string {
 }
 
 export default async function AdminDiagnosticsPage() {
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
-    redirect("/signin");
-  }
+  await requireAdmin({ allowReadonlyBearer: false });
 
   const db = getCloudflareDb();
   const snapshot = await loadDiagnosticsSnapshot(db);

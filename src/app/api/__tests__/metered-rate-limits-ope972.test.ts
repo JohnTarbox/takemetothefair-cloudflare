@@ -209,4 +209,23 @@ describe("OPE-972 — policy shape", () => {
     );
     expect(meteredCallerIdentifier(r({ "cf-connecting-ip": "203.0.113.9" }), null)).toMatch(/^ip:/);
   });
+
+  // OPE-1370 (SSRF8) — inbound-email fetches are keyed by the ORIGINAL sender.
+  it("keys an inbound-email fetch by the sender hash, ahead of the entrypoint", async () => {
+    const { meteredCallerIdentifier } = await import("@/lib/rate-limit");
+    const r = (h: Record<string, string>) => new Request("http://x/", { headers: h });
+    const a = "0123456789abcdef0123456789abcdef";
+    const b = "fedcba9876543210fedcba9876543210";
+    const ep = { "x-mmatf-entrypoint": "workflow" };
+    expect(meteredCallerIdentifier(r({ ...ep, "x-mmatf-sender": a }), null)).toBe(`sender:${a}`);
+    // Two senders → two buckets (the starvation this fixes).
+    expect(meteredCallerIdentifier(r({ ...ep, "x-mmatf-sender": b }), null)).not.toBe(
+      meteredCallerIdentifier(r({ ...ep, "x-mmatf-sender": a }), null)
+    );
+    // A session user still wins; a malformed value is ignored, not trusted.
+    expect(meteredCallerIdentifier(r({ "x-mmatf-sender": a }), "u1")).toBe("user:u1");
+    expect(meteredCallerIdentifier(r({ ...ep, "x-mmatf-sender": "anything:else" }), null)).toBe(
+      "caller:workflow"
+    );
+  });
 });

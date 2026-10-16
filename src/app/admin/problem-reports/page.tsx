@@ -15,8 +15,7 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { problemReports } from "@/lib/db/schema";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { auth } from "@/lib/auth";
-import { redirect } from "next/navigation";
+import { requireAdmin } from "@/lib/require-admin";
 
 // No revalidate — operator workflow is real-time.
 export const dynamic = "force-dynamic";
@@ -31,8 +30,7 @@ export default async function AdminProblemReportsPage({
 }: {
   searchParams: Promise<SearchParams>;
 }) {
-  const session = await auth();
-  if (session?.user?.role !== "ADMIN") redirect("/");
+  await requireAdmin({ allowReadonlyBearer: false });
 
   const resolved = await searchParams;
   const resolvedFilter = resolved.resolved ?? "false";
