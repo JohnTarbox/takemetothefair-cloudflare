@@ -320,8 +320,8 @@ describe("rework 1 — Laiken Mae: the site's TRADING name is its WebSite title"
         url: "https://laikenmaehandmade.squarespace.com",
       })
     ) +
-    ld({ "@type": "Organization", legalName: "Laiken Flynn", telephone: "5182670524" }) +
-    ld({ "@type": "LocalBusiness", name: "Laiken Flynn", address: "364 Leedale Street" });
+    ld({ "@type": "Organization", legalName: "Jordan Sample", telephone: "5185550142" }) +
+    ld({ "@type": "LocalBusiness", name: "Jordan Sample", address: "12 Example Lane" });
 
   it("ACCEPTANCE NEGATIVE: 'Laiken Mae Hand Made' raises NOTHING", () => {
     expect(detectNameDrift("Laiken Mae Hand Made", LAIKEN).drift).toBe(false);

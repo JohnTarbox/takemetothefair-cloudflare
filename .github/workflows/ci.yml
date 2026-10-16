@@ -131,6 +131,9 @@ jobs:
       - name: Check D1 100-column join cap
         run: npx tsx scripts/check-d1-100col-joins.ts
 
+      - name: Guard that shared projections are column allow-lists (OPE-1387)
+        run: npx tsx scripts/check-public-event-projection.ts
+
       - name: Check D1 100-bound-param cap (OPE-241 — unbounded inArray lists)
         run: npx tsx scripts/check-d1-inarray-params.ts
 

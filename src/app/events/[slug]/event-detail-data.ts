@@ -21,7 +21,6 @@ import {
   promoters,
   eventVendors,
   vendors,
-  users,
   eventDays,
   eventApplications,
   eventSeries,
@@ -88,14 +87,10 @@ async function getEventOnce(slug: string) {
 
     const eventData = eventResults[0];
 
-    // Get promoter's user
-    const promoterUser = eventData.promoter?.userId
-      ? await db
-          .select({ name: users.name, email: users.email })
-          .from(users)
-          .where(eq(users.id, eventData.promoter.userId))
-          .limit(1)
-      : [];
+    // OPE-1387 — the promoter's account (name + EMAIL) used to be loaded here
+    // and attached as `promoter.user`. Nothing rendered it, but it rode the
+    // page's event object; a public page has no business holding an account
+    // email. Removed rather than stripped.
 
     // Get event vendors. Soft-deleted vendors (drizzle/0053) are filtered
     // out — the entry hides entirely from the event's vendor lineup per the
@@ -226,12 +221,7 @@ async function getEventOnce(slug: string) {
       ...eventData.events,
       series,
       venue: eventData.venue as FullVenue | null,
-      promoter: eventData.promoter
-        ? {
-            ...(eventData.promoter as FullPromoter),
-            user: promoterUser[0] || { name: null, email: null },
-          }
-        : null,
+      promoter: eventData.promoter ? (eventData.promoter as FullPromoter) : null,
       eventVendors: eventVendorResults.map((ev) => {
         const vendor = ev.vendors!;
         // EH2 — resolved public-facing {name, slug}. For brand_parent /
