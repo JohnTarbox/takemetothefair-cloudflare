@@ -18,6 +18,7 @@ import { drizzle } from "drizzle-orm/better-sqlite3";
 import * as schema from "../db/schema";
 import { autoLinkVenue } from "../venue-matching";
 import { normalizeName } from "@takemetothefair/utils";
+import { emulateD1LikeCap } from "@/test/d1-like-cap";
 
 type TestDb = ReturnType<typeof drizzle<typeof schema>>;
 
@@ -295,5 +296,19 @@ describe("autoLinkVenue — OPE-1180 name-variant tier", () => {
       venueState: "VT",
     });
     expect(r.venueId).toBeNull();
+  });
+});
+
+describe("autoLinkVenue — OPE-1376 D1 LIKE-pattern cap", () => {
+  it("a venue whose first word is 60 chars still exact-matches (no D1 LIKE throw)", async () => {
+    emulateD1LikeCap(raw);
+    const longWord = "Northeastregionalagriculturalandmechanicalexpositioncenterxx";
+    expect(longWord.length).toBe(60);
+    insertVenue({ id: "v-long", name: `${longWord} Grounds`, state: "ME" });
+    const result = await autoLinkVenue(asDb(db), {
+      venueName: `${longWord} Grounds`,
+      venueState: "ME",
+    });
+    expect(result.venueId).toBe("v-long");
   });
 });

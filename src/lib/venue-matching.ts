@@ -23,7 +23,8 @@
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "@/lib/db/schema";
 import { adminActions, venueNameVariants, venues } from "@/lib/db/schema";
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
+import { containsCI } from "@/lib/db/contains-ci";
 import {
   combinedSimilarity,
   normalizeName,
@@ -122,7 +123,7 @@ export async function autoLinkVenue(db: Db, input: AutoLinkInput): Promise<Venue
   const state = input.venueState?.trim().toUpperCase() || null;
   const address = input.venueAddress?.trim() || null;
 
-  // Pull a candidate set by LIKE on the first 2 words of the name. Bounded
+  // Pull a candidate set by substring on the first word of the name. Bounded
   // small in practice (venues ≪ 10k rows; first-token matches < 50).
   const firstTokens = normalizedName.split(" ").slice(0, 2).join(" ");
   const candidates = await db
@@ -134,7 +135,9 @@ export async function autoLinkVenue(db: Db, input: AutoLinkInput): Promise<Venue
       address: venues.address,
     })
     .from(venues)
-    .where(sql`LOWER(${venues.name}) LIKE ${"%" + firstTokens.split(" ")[0] + "%"}`)
+    // OPE-1376: containsCI (instr), not LIKE — a first token over ~48 chars
+    // tripped D1's 50-char LIKE-pattern cap and threw out of the matcher.
+    .where(containsCI(venues.name, firstTokens.split(" ")[0]))
     .limit(100);
 
   // Tier 1+2: exact normalized-name match.
