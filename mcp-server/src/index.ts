@@ -102,6 +102,7 @@ import { runScheduledQueueRerank } from "./goodwill/queue-ranking.js";
 import { runScheduledGoodwillHealthCanary } from "./goodwill/health-canary.js";
 import { runScheduledHoldoutSampling } from "./goodwill/holdout-sampling.js";
 import { logError } from "./logger.js";
+import { sequenceCronTasks, settleCronTasks } from "./cron-tasks.js";
 import { inboundEmails } from "./schema.js";
 import { eq, inArray } from "drizzle-orm";
 import { resolveHeldPhotoEmail } from "./photo/resolve-held-photos.js";
@@ -1768,28 +1769,30 @@ export default {
       // tenant. ~1 COUNT query + 1 small SELECT + (rarely) 1 UPSERT;
       // adds negligible load to the */10 fire. See page-error-canary.ts
       // for thresholds, debounce, and scope rationale.
+      // OPE-1374 — settleCronTasks, not Promise.all: every task is awaited and
+      // each rejection is logged by name (see cron-tasks.ts).
       ctx.waitUntil(
-        Promise.all([
-          runScheduledKpiRecompute(env),
-          runScheduledInboundEmailStaleSweep(env),
-          runScheduledPageErrorCanary(env),
+        settleCronTasks(env.DB, controller.cron, [
+          ["kpi-recompute", () => runScheduledKpiRecompute(env)],
+          ["inbound-email-stale-sweep", () => runScheduledInboundEmailStaleSweep(env)],
+          ["page-error-canary", () => runScheduledPageErrorCanary(env)],
           // OPE-1239 — main's HEAD must have a push CI run (else it never deployed).
-          runScheduledCiTriggerWatchdog(env),
+          ["ci-trigger-watchdog", () => runScheduledCiTriggerWatchdog(env)],
         ]).then(() => undefined)
       );
       return;
     }
     if (controller.cron === "0 * * * *") {
       ctx.waitUntil(
-        Promise.all([
-          runScheduledPendingPingsFlush(env),
+        settleCronTasks(env.DB, controller.cron, [
+          ["pending-pings-flush", () => runScheduledPendingPingsFlush(env)],
           // OPE-93 — hourly render-fault emitter run (error_logs → fault_signatures).
-          runScheduledFaultCandidatesEmit(env),
+          ["fault-candidates-emit", () => runScheduledFaultCandidatesEmit(env)],
           // OPE-366 — E2 conditional push: email when a NEW membrane crossing
           // has sat destination-less past the age threshold. The standing
           // backlog stays in the Monday inventory. Failsoft (catches its own).
-          runUnterminatedCrossingNotice(env, getDb(env.DB)).then(() => undefined),
-        ])
+          ["unterminated-crossing-notice", () => runUnterminatedCrossingNotice(env, getDb(env.DB))],
+        ]).then(() => undefined)
       );
       return;
     }
@@ -1914,29 +1917,42 @@ export default {
     // recovering per-chunk failures via step.do retry. The remaining
     // three are single-call sweeps via runMainAppSweep (low score in
     // docs/cloudflare-workflows-audit.md, left as-is).
+    //
+    // OPE-1374 — settleCronTasks, not Promise.all. Promise.all settled on the
+    // first rejection, so waitUntil's promise resolved while ~28 siblings were
+    // still in flight and the rejection was logged nowhere. Now every task is
+    // awaited and each rejection lands in error_logs as `mcp:schedule:<name>`.
     ctx.waitUntil(
-      Promise.all([
-        createWorkflowOrLog(env, "recommendations-scan", () =>
-          env.RECOMMENDATIONS_SCAN.create({
-            retention: { successRetention: "7 days", errorRetention: "7 days" },
-          })
-        ),
-        runScheduledGscSweep(env),
-        runScheduledBingInspectionSweep(env),
-        runScheduledSiteHealthRefresh(env),
-        runScheduledTimeToIndexSweep(env),
-        runScheduledGa4LivenessCheck(env),
-        runScheduledBingLivenessCheck(env),
+      settleCronTasks(env.DB, controller.cron, [
+        [
+          "recommendations-scan",
+          () =>
+            createWorkflowOrLog(env, "recommendations-scan", () =>
+              env.RECOMMENDATIONS_SCAN.create({
+                retention: { successRetention: "7 days", errorRetention: "7 days" },
+              })
+            ),
+        ],
+        ["gsc-sweep", () => runScheduledGscSweep(env)],
+        ["bing-inspection-sweep", () => runScheduledBingInspectionSweep(env)],
+        ["site-health-refresh", () => runScheduledSiteHealthRefresh(env)],
+        ["time-to-index-sweep", () => runScheduledTimeToIndexSweep(env)],
+        ["ga4-liveness-check", () => runScheduledGa4LivenessCheck(env)],
+        ["bing-liveness-check", () => runScheduledBingLivenessCheck(env)],
         // A12 (analyst 2026-06-26) — durable GSC+GA4 search-performance
         // time-series. Incremental daily upsert; first-run 16-month backfill
         // is driven out-of-band by scripts/gsc-backfill.ts. Failsoft via
         // runMainAppSweep (a sync failure logs, never crashes the batch).
-        runScheduledGscMetricsSync(env),
-        createWorkflowOrLog(env, "event-date-drift", () =>
-          env.EVENT_DATE_DRIFT.create({
-            retention: { successRetention: "7 days", errorRetention: "7 days" },
-          })
-        ),
+        ["gsc-metrics-sync", () => runScheduledGscMetricsSync(env)],
+        [
+          "event-date-drift",
+          () =>
+            createWorkflowOrLog(env, "event-date-drift", () =>
+              env.EVENT_DATE_DRIFT.create({
+                retention: { successRetention: "7 days", errorRetention: "7 days" },
+              })
+            ),
+        ],
         // A3 / PR-6 (2026-06-01 EVE) — daily Slack canary for dedup sweep
         // cluster count growth. Polls /api/admin/duplicates/sweep, snapshots
         // dedup_sweep_snapshots, alerts on RED (+1 day-over-day, always) or
@@ -1949,17 +1965,17 @@ export default {
         // the subject. Sequential within one Worker invocation — cheaper
         // than three separate cron registrations and the three sweeps
         // share the same internal-key auth round-trip cost.
-        runScheduledDedupSweepCanary(env, "events"),
-        runScheduledDedupSweepCanary(env, "venues"),
-        runScheduledDedupSweepCanary(env, "promoters"),
+        ["dedup-sweep-canary:events", () => runScheduledDedupSweepCanary(env, "events")],
+        ["dedup-sweep-canary:venues", () => runScheduledDedupSweepCanary(env, "venues")],
+        ["dedup-sweep-canary:promoters", () => runScheduledDedupSweepCanary(env, "promoters")],
         // OPE-1201 — daily near-duplicate CANDIDATE pass over existing events.
         // OPE-627's check only runs at insert, so rows that predate it (its own
         // PTTF / Scarborough fixtures) were never evaluated. Report-only: writes
         // possible_duplicate_of where NULL; the OPE-1117 queue is the reader.
-        runScheduledNearDuplicateSweep(env),
+        ["near-duplicate-sweep", () => runScheduledNearDuplicateSweep(env)],
         // OPE-1205 — a synced row whose source went quiet (> N days, tunable)
         // stops claiming confirmed dates unless a qualifying citation backs it.
-        runScheduledSyncStaleSweep(env),
+        ["sync-stale-sweep", () => runScheduledSyncStaleSweep(env)],
         // OPE-75 (2026-07-03) — CPI Move 1: daily stale-red canary. POSTs the
         // main-app scan endpoint, which rebuilds the §6.3 action queue, picks
         // the P0/P1 signals red past threshold (P0 > 24h, P1 > 72h), and
@@ -1967,7 +1983,7 @@ export default {
         // Turns the pull-only dashboard into a self-escalating loop so a red
         // signal can't sit silent for weeks (the IndexNow-dead-2-weeks case).
         // Failsoft by construction — logs + swallows, never throws.
-        runScheduledCpiStaleRedCanary(env),
+        ["cpi-stale-red-canary", () => runScheduledCpiStaleRedCanary(env)],
         // OPE-510 §3 (2026-08-28) — newsletter list-balance canary.
         //
         // Compares confirmed-and-active subscribers against members of any
@@ -1981,12 +1997,12 @@ export default {
         // the sibling notices' "quiet unless the count changed" debounce. This
         // is an invariant violation, not a backlog, and a steady count of 4 is
         // four people still receiving nothing. Failsoft; never throws.
-        runScheduledNewsletterListBalanceCanary(env),
+        ["newsletter-list-balance-canary", () => runScheduledNewsletterListBalanceCanary(env)],
         // OPE-951 (2026-09-13) — burst-cap self-test. The Workers Rate Limiting
         // binding it replaced was inert in production for its whole life while
         // every mocked test passed. This drives the REAL cap to a refusal once a
         // day and stamps a heartbeat only on a pass. Failsoft; never throws.
-        runScheduledBurstCapSelfTest(env),
+        ["burst-cap-self-test", () => runScheduledBurstCapSelfTest(env)],
         // OPE-599 (2026-08-28) — operator work queues with something waiting.
         //
         // A vendor's claim on his own listing sat PENDING for 36 DAYS in a
@@ -1997,7 +2013,7 @@ export default {
         // Silent when both queues are clear — an alert that fires daily
         // regardless becomes wallpaper, which is how the sibling canaries on
         // this rail stay useful.
-        runScheduledOperatorQueueNotice(env),
+        ["operator-queue-notice", () => runScheduledOperatorQueueNotice(env)],
         // OPE-225 (2026-07-20) — photo-coverage rails. Refreshes
         // image_coverage_state for every live entity (coverage by demand tier,
         // image_set_at first-observation, hotlink health) so the OPE-226
@@ -2008,14 +2024,21 @@ export default {
         // OPE-225 — coverage scan, THEN the rot sweep. Sequenced, not raced:
         // as siblings in this Promise.all the sweep ran first against an empty
         // table on day one and checked nothing (url_checked stayed 0). The
-        // sweep reads rows the scan writes, so it must follow it. Chained
+        // sweep reads rows the scan writes, so it must follow it. Sequenced
         // rather than merged so a sweep failure still cannot fail the scan.
-        runScheduledPhotoCoverageScan(env)
-          .then(() => runScheduledImageUrlHealthSweep(env))
-          // OPE-227 — hero proposals read the scan's fresh demand ranking, so
-          // they follow it too. Each runner swallows its own failure, so one
-          // stage cannot stop the next.
-          .then(() => runScheduledHeroProposals(env)),
+        // OPE-227 — hero proposals read the scan's fresh demand ranking, so
+        // they follow it too. OPE-1374 — sequenceCronTasks runs each stage even
+        // when the previous one rejected (a `.then` chain skipped the rest) and
+        // logs each rejection by name.
+        [
+          "photo-coverage-sequence",
+          () =>
+            sequenceCronTasks(env.DB, controller.cron, [
+              ["photo-coverage-scan", () => runScheduledPhotoCoverageScan(env)],
+              ["image-url-health-sweep", () => runScheduledImageUrlHealthSweep(env)],
+              ["hero-proposals", () => runScheduledHeroProposals(env)],
+            ]),
+        ],
         // GW1b (analyst, 2026-06-02) — Goodwill Engine Phase 1 capture
         // hooks. Both consume the foundations from GW1a (drizzle/0101)
         // and emit event_discrepancies rows for GW1c/d/e to score and
@@ -2024,8 +2047,8 @@ export default {
         // catches its own errors and returns a result struct so a
         // single bad row doesn't pull down the sibling crons. Pass the
         // wrapped Db directly per [[feedback_drizzle_d1_unit_test_inject_db]].
-        runScheduledStalePageRadar(getDb(env.DB)).then(() => undefined),
-        runScheduledSelfConsistencyCron(getDb(env.DB)).then(() => undefined),
+        ["stale-page-radar", () => runScheduledStalePageRadar(getDb(env.DB))],
+        ["self-consistency", () => runScheduledSelfConsistencyCron(getDb(env.DB))],
         // OPE-245 (2026-07-17) — GW1d outreach-queue rank safety net. The
         // ranker shipped in PR #317 but nothing on the capture path ever
         // called it, so all 6,121 open discrepancies were NULL-scored from
@@ -2034,22 +2057,26 @@ export default {
         // slips through so the all-NULL queue can't silently return. NOT a full
         // view-count refresh (GW1d defers that) — processes ≈0 rows/night once
         // write-time scoring holds. Cosmetic-failsoft like its siblings.
-        runScheduledQueueRerank(getDb(env.DB)).then(() => undefined),
+        ["queue-rerank", () => runScheduledQueueRerank(getDb(env.DB))],
         // GW1e (2026-06-02) — daily goodwill-health canary mirrors the
         // dedup-sweep-canary pattern from PR #306. Writes the snapshot,
         // dispatches RED on +1 open growth day-over-day, YELLOW on
         // >10% weighted-priority growth (72h-debounced).
-        runScheduledGoodwillHealthCanary(getDb(env.DB), {
-          slackWebhookUrl: env.SLACK_WEBHOOK_URL_TECHNICAL ?? null,
-          alertEmail: env.ALERT_EMAIL_TECHNICAL ?? null,
-          emailQueue: env.EMAIL_JOBS ?? null,
-        }).then(() => undefined),
+        [
+          "goodwill-health-canary",
+          () =>
+            runScheduledGoodwillHealthCanary(getDb(env.DB), {
+              slackWebhookUrl: env.SLACK_WEBHOOK_URL_TECHNICAL ?? null,
+              alertEmail: env.ALERT_EMAIL_TECHNICAL ?? null,
+              emailQueue: env.EMAIL_JOBS ?? null,
+            }),
+        ],
         // D — DQ3 safety-net (2026-06-06) — daily recompute of
         // completeness_score for rows touched in the last 24h. Catches
         // cache rot from ad-hoc D1 bulk-enrichment writes that bypass
         // recompute*Completeness. Cosmetic-failsoft: any per-row error
         // is swallowed inside the helper; the cron always resolves.
-        runScheduledCompletenessRecompute(getDb(env.DB)).then(() => undefined),
+        ["completeness-recompute", () => runScheduledCompletenessRecompute(getDb(env.DB))],
         // A5 (2026-06-08, REL3 sibling) — standing-failure detector.
         // Catches "same error_logs.source recurring across ≥3 distinct
         // days in 7-day window" — the persistence signal the page-error
@@ -2058,7 +2085,7 @@ export default {
         // mcp-server/src/standing-failure-canary.ts. Cosmetic-failsoft
         // by construction (the helper catches its own errors and only
         // logs).
-        runScheduledStandingFailureCanary(env),
+        ["standing-failure-canary", () => runScheduledStandingFailureCanary(env)],
         // K27 (2026-06-15) — daily OCCURRED auto-transition + recurring-event
         // rollover. Pass 1 flips past-end APPROVED events SCHEDULED→OCCURRED
         // (the transition that had no cron before K27) and rolls FREQ=YEARLY
@@ -2070,55 +2097,65 @@ export default {
         // Monday inventory (weekly-inventory-notice.ts): inventories answer
         // "how big is the backlog", which has a weekly rhythm, and daily sends
         // are how a channel stops being read. The sweep itself is unchanged.
-        runOccurredTransitionSweep(getDb(env.DB)).then(() => undefined),
+        ["occurred-transition-sweep", () => runOccurredTransitionSweep(getDb(env.DB))],
         // OPE-971 — request_samples retention on a schedule (was a 1% dice roll
         // on the middleware's write path). Stamps watchdog:request-sample-retention.
-        runRequestSampleRetention(getDb(env.DB)).then(() => undefined),
+        ["request-sample-retention", () => runRequestSampleRetention(getDb(env.DB))],
         // OPE-993 — error_logs + indexnow_submissions 30-day retention (were 1%
-        // dice rolls on their write paths). Each in its own try/catch so a
-        // throw — sync or async — cannot skip a sibling. Each stamps
+        // dice rolls on their write paths). Each is its own task, so a throw —
+        // sync or async — cannot skip a sibling (and is now logged to
+        // error_logs by name, OPE-1374). Each stamps
         // watchdog:<table>-retention ONLY on a successful run.
-        (async () => {
-          try {
-            await runErrorLogRetention(getDb(env.DB));
-          } catch (error) {
-            console.error("[cron] runErrorLogRetention threw", error);
-          }
-        })(),
-        (async () => {
-          try {
-            await runIndexNowSubmissionRetention(getDb(env.DB));
-          } catch (error) {
-            console.error("[cron] runIndexNowSubmissionRetention threw", error);
-          }
-        })(),
+        ["error-log-retention", () => runErrorLogRetention(getDb(env.DB))],
+        ["indexnow-submission-retention", () => runIndexNowSubmissionRetention(getDb(env.DB))],
         // OPE-17 (2026-06-29) — inbound-email exception rails. Reconciles
         // exception statuses (already-handled → salvaged; spam/unsubscribe →
         // reversible rejected) then notifies the operator when the human-triage
         // salvage queue is non-empty AND changed (≤1/day). Independent of the
         // occurred-sweep, so it runs as its own failsoft sibling here. See
         // mcp-server/src/inbound-exception-notice.ts.
-        runInboundExceptionNotice(env),
+        ["inbound-exception-notice", () => runInboundExceptionNotice(env)],
         // OPE-308 — ONE Monday inventory replacing the daily queue notices
         // (roster research + promoter enrichment + goodwill open count), with a
         // week-over-week delta. Self-gates to Monday, so it is safe to call on
         // the daily cron. Alarms are untouched and still push on condition.
         // OPE-1164 — the weekly vendor-category watch runs FIRST (Monday-gated,
         // once per Monday) so the inventory email can report its new values.
-        runScheduledVendorCategoryWatch(getDb(env.DB), (message, error) =>
-          logError(env.DB, { source: "mcp:schedule:vendor-category-watch", message, error })
-        ).then(() => runWeeklyInventoryNotice(env)),
+        // OPE-1374 — sequenced, NOT chained: a `.then` chain meant a rejection
+        // in the watch silently skipped Monday's inventory notice.
+        [
+          "vendor-category-watch+weekly-inventory",
+          () =>
+            sequenceCronTasks(env.DB, controller.cron, [
+              [
+                "vendor-category-watch",
+                () =>
+                  runScheduledVendorCategoryWatch(getDb(env.DB), (message, error) =>
+                    logError(env.DB, {
+                      source: "mcp:schedule:vendor-category-watch",
+                      message,
+                      error,
+                    })
+                  ),
+              ],
+              ["weekly-inventory-notice", () => runWeeklyInventoryNotice(env)],
+            ]),
+        ],
         // A3.2 / K43 (2026-06-25) — nightly blog-link integrity audit. Sweeps
         // every PUBLISHED post and reports internal /events,/vendors,/venues,
         // /blog links that no longer resolve (drift a slug rename/merge left
         // behind). Writes an error_logs warn on any drift so the standing-
         // failure / page-error canaries alert. Failsoft via runMainAppSweep.
-        runMainAppSweep(
-          env,
+        [
           "blog-link-audit",
-          "/api/admin/content-links/audit",
-          (r) => `affected=${r.posts_affected ?? "?"} unresolved=${r.unresolved_total ?? "?"}`
-        ),
+          () =>
+            runMainAppSweep(
+              env,
+              "blog-link-audit",
+              "/api/admin/content-links/audit",
+              (r) => `affected=${r.posts_affected ?? "?"} unresolved=${r.unresolved_total ?? "?"}`
+            ),
+        ],
       ]).then(() => undefined)
     );
   },

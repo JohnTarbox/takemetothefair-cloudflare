@@ -48,6 +48,7 @@
 import { mainAppBindingRequest } from "../main-app-fetch.js";
 import type { Db } from "../db.js";
 import { adminActions } from "../schema.js";
+import { logAuditWriteFailure } from "../audit/log-audit-failure.js";
 
 export interface GeocodeNewVenueEnv {
   MAIN_APP?: { fetch: typeof fetch };
@@ -194,7 +195,14 @@ export async function recordNewVenueGeocodeRefusal(
       }),
       createdAt: new Date(),
     });
-  } catch {
+  } catch (error) {
     // Contract: never fail the creation over its own audit row.
+    await logAuditWriteFailure(db, {
+      source: "mcp:venues:geocode-new",
+      action: "venue.geocode.refused",
+      targetType: "venue",
+      targetId: venueId,
+      error,
+    });
   }
 }

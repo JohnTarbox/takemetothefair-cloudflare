@@ -32,6 +32,7 @@ import {
   tokenize,
   venueLocationCompatible,
 } from "@takemetothefair/utils";
+import { logAuditWriteFailure } from "@/lib/audit/log-audit-failure";
 
 type Db = DrizzleD1Database<typeof schema>;
 
@@ -370,8 +371,15 @@ async function recordAmbiguousMatch(
       }),
       createdAt: new Date(),
     });
-  } catch {
+  } catch (error) {
     // Best-effort — never block the autoLink decision on the audit row.
+    await logAuditWriteFailure(db, {
+      source: "venue-matching",
+      action: "venue.ambiguous_match",
+      targetType: "venue",
+      targetId: candidatesList[0]?.id ?? "unknown",
+      error,
+    });
   }
 }
 

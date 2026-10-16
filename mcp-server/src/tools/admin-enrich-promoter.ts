@@ -27,6 +27,7 @@ import {
 } from "../enrichment/promoter-dispatch.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
+import { logAuditWriteFailure } from "../audit/log-audit-failure.js";
 
 export function registerEnrichPromoterTool(
   server: McpServer,
@@ -105,8 +106,15 @@ export function registerEnrichPromoterTool(
           }),
           createdAt: new Date(),
         });
-      } catch {
+      } catch (error) {
         /* audit is non-critical */
+        await logAuditWriteFailure(db, {
+          source: "mcp:tool:enrich_promoter",
+          action: "promoter.enrich",
+          targetType: "promoter",
+          targetId: params.promoter_id,
+          error,
+        });
       }
 
       return {

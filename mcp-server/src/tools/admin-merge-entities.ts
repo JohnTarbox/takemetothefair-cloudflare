@@ -52,6 +52,7 @@ import {
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 import { jsonContent, unsafeSlug } from "../helpers.js";
+import { logAuditWriteFailure } from "../audit/log-audit-failure.js";
 import { logError } from "../logger.js";
 import { repointPromoterChildren, repointVenueChildren } from "@takemetothefair/db-schema";
 
@@ -241,8 +242,15 @@ export function registerMergeEntitiesTools(server: McpServer, db: Db, auth: Auth
           }),
           createdAt: new Date(),
         });
-      } catch {
+      } catch (error) {
         // Audit failure shouldn't fail the merge itself.
+        await logAuditWriteFailure(db, {
+          source: "mcp:tool:merge_venue",
+          action: "venue.merge",
+          targetType: "venue",
+          targetId: params.keeper_venue_id,
+          error,
+        });
       }
 
       return {
@@ -410,8 +418,15 @@ export function registerMergeEntitiesTools(server: McpServer, db: Db, auth: Auth
           }),
           createdAt: new Date(),
         });
-      } catch {
+      } catch (error) {
         // Audit failure shouldn't fail the merge itself.
+        await logAuditWriteFailure(db, {
+          source: "mcp:tool:merge_promoter",
+          action: "promoter.merge",
+          targetType: "promoter",
+          targetId: params.keeper_promoter_id,
+          error,
+        });
       }
 
       return {

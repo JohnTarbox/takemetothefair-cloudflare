@@ -21,6 +21,7 @@ import { jsonContent } from "../helpers.js";
 import { processEnrichmentJob, type EnrichmentEnv } from "../enrichment/dispatch.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
+import { logAuditWriteFailure } from "../audit/log-audit-failure.js";
 
 export function registerEnrichVendorTool(
   server: McpServer,
@@ -95,8 +96,15 @@ export function registerEnrichVendorTool(
           }),
           createdAt: new Date(),
         });
-      } catch {
+      } catch (error) {
         /* audit is non-critical */
+        await logAuditWriteFailure(db, {
+          source: "mcp:tool:enrich_vendor",
+          action: "vendor.enrich",
+          targetType: "vendor",
+          targetId: params.vendor_id,
+          error,
+        });
       }
 
       return {

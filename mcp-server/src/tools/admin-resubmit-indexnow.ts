@@ -35,6 +35,7 @@ import { jsonContent } from "../helpers.js";
 import { submitIndexNowBatch } from "../pending-pings.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
+import { logAuditWriteFailure } from "../audit/log-audit-failure.js";
 
 interface Env {
   DB?: D1Database;
@@ -210,8 +211,15 @@ export function registerResubmitIndexNowTool(
           }),
           createdAt: new Date(),
         });
-      } catch {
+      } catch (error) {
         /* audit is non-critical */
+        await logAuditWriteFailure(db, {
+          source: "mcp:tool:resubmit_indexnow",
+          action: "indexnow.resubmit",
+          targetType: "system",
+          targetId: null,
+          error,
+        });
       }
 
       return {

@@ -108,6 +108,7 @@ import {
   isBurstCrossing,
   type BurstThresholds,
 } from "./email-handlers/automated-mail.js";
+import { logAuditWriteFailure } from "./audit/log-audit-failure.js";
 
 // ---------------------------------------------------------------------------
 // Env shape required by this module
@@ -2920,8 +2921,15 @@ async function recordSpamTripleObservation(
       }),
       createdAt: new Date(),
     });
-  } catch {
-    // Intentionally silent — see the note above.
+  } catch (error) {
+    // Never throws (see the note above) — but the lost observation is logged (OPE-1374).
+    await logAuditWriteFailure(db, {
+      source: "mcp:email-handler",
+      action: "spam.event_triple",
+      targetType: "inbound_email",
+      targetId: args.inboundEmailId,
+      error,
+    });
   }
 }
 

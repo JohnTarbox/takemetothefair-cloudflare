@@ -28,6 +28,7 @@ import {
 } from "../enrichment/performer-dispatch.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
+import { logAuditWriteFailure } from "../audit/log-audit-failure.js";
 
 export function registerEnrichPerformerTool(
   server: McpServer,
@@ -108,8 +109,15 @@ export function registerEnrichPerformerTool(
           }),
           createdAt: new Date(),
         });
-      } catch {
+      } catch (error) {
         /* audit is non-critical */
+        await logAuditWriteFailure(db, {
+          source: "mcp:tool:enrich_performer",
+          action: "performer.enrich",
+          targetType: "performer",
+          targetId: params.performer_id,
+          error,
+        });
       }
 
       return {

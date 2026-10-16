@@ -63,6 +63,7 @@ import {
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 import { jsonContent, unsafeSlug } from "../helpers.js";
+import { logAuditWriteFailure } from "../audit/log-audit-failure.js";
 import { logError } from "../logger.js";
 
 /**
@@ -497,8 +498,15 @@ export function registerMergeVendorTool(server: McpServer, db: Db, auth: AuthCon
           }),
           createdAt: new Date(),
         });
-      } catch {
+      } catch (error) {
         // Audit failure must not fail the merge.
+        await logAuditWriteFailure(db, {
+          source: "mcp:tool:merge_vendor",
+          action: "vendor.merge",
+          targetType: "vendor",
+          targetId: keeperId,
+          error,
+        });
       }
 
       return {

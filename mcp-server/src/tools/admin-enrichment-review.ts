@@ -56,6 +56,7 @@ function parseFlags(raw: string): string[] {
   }
 }
 import type { AuthContext } from "../auth.js";
+import { logAuditWriteFailure } from "../audit/log-audit-failure.js";
 
 interface Env {
   MAIN_APP?: { fetch: typeof fetch };
@@ -755,7 +756,14 @@ async function writeAudit(
       }),
       createdAt: new Date(),
     });
-  } catch {
+  } catch (error) {
     /* audit is non-critical — never fail the review on an audit-write hiccup */
+    await logAuditWriteFailure(db, {
+      source: "mcp:tool:review_enrichment_candidate",
+      action: "vendor.enrichment_review",
+      targetType: "vendor",
+      targetId: cand.vendorId,
+      error,
+    });
   }
 }
