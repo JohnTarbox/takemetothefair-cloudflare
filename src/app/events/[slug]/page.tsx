@@ -76,6 +76,7 @@ import {
   occurrencePath,
   occurrenceYear,
   petPolicyDisplay,
+  safeHref,
 } from "@takemetothefair/utils";
 import { getSeriesLanding } from "@/lib/series/get-series-landing";
 import { SeriesLandingPage } from "@/components/series/series-landing-page";
@@ -607,6 +608,10 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
         eventDays: event.eventDays,
       })
     : [];
+  // OPE-1368 — stored URLs render through safeHref. An application link may
+  // be a mailto: (two prod rows are), so that one also allows mailto.
+  const applicationHref = safeHref(event.applicationUrl, { allowMailto: true });
+  const promoterWebsiteHref = safeHref(event.promoter?.website);
 
   return (
     <>
@@ -1534,11 +1539,11 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
                           {event.applicationInstructions}
                         </p>
                       )}
-                      {event.applicationUrl && (
+                      {applicationHref && (
                         <OutboundEventLink
                           kind="application"
                           eventSlug={event.slug}
-                          href={event.applicationUrl}
+                          href={applicationHref}
                           className="text-sm text-royal hover:underline mt-1 inline-block"
                         >
                           Apply Now →
@@ -1562,49 +1567,52 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
                       <p className="text-sm text-muted-foreground">
                         Exhibitor &amp; Competition Entries
                       </p>
-                      {event.applicationRoutes.map((route) => (
-                        <div key={route.id} className="mt-1">
-                          {route.department && (
-                            <p className="text-sm font-medium text-foreground">
-                              {route.department}
-                            </p>
-                          )}
-                          {/* Dates render ONLY when stored. NULL means "not
+                      {event.applicationRoutes
+                        // OPE-1368 — a route's URL renders through safeHref.
+                        .map((r) => ({ ...r, safeUrl: safeHref(r.url, { allowMailto: true }) }))
+                        .map((route) => (
+                          <div key={route.id} className="mt-1">
+                            {route.department && (
+                              <p className="text-sm font-medium text-foreground">
+                                {route.department}
+                              </p>
+                            )}
+                            {/* Dates render ONLY when stored. NULL means "not
                               confirmed" and is never filled in from the event's
                               own dates — there is no rule to infer from, and a
                               guessed deadline that makes someone miss an entry
                               is worse than no deadline. */}
-                          {route.closesAt && (
-                            <p
-                              className={`text-sm ${new Date(route.closesAt) < new Date() ? "text-destructive" : "text-foreground"}`}
-                            >
-                              Entries close: {formatDateMedium(route.closesAt)}
-                              {new Date(route.closesAt) < new Date() && " (Passed)"}
-                            </p>
-                          )}
-                          {route.notes && (
-                            <p className="text-xs text-muted-foreground mt-0.5">{route.notes}</p>
-                          )}
-                          {route.url && (
-                            <OutboundEventLink
-                              kind="application"
-                              eventSlug={event.slug}
-                              href={route.url}
-                              className="text-sm text-royal hover:underline mt-1 inline-block"
-                            >
-                              Enter or view rules →
-                            </OutboundEventLink>
-                          )}
-                          {!route.url && route.contactEmail && (
-                            <a
-                              href={`mailto:${route.contactEmail}`}
-                              className="text-sm text-royal hover:underline mt-1 inline-block break-all"
-                            >
-                              {route.contactEmail}
-                            </a>
-                          )}
-                        </div>
-                      ))}
+                            {route.closesAt && (
+                              <p
+                                className={`text-sm ${new Date(route.closesAt) < new Date() ? "text-destructive" : "text-foreground"}`}
+                              >
+                                Entries close: {formatDateMedium(route.closesAt)}
+                                {new Date(route.closesAt) < new Date() && " (Passed)"}
+                              </p>
+                            )}
+                            {route.notes && (
+                              <p className="text-xs text-muted-foreground mt-0.5">{route.notes}</p>
+                            )}
+                            {route.safeUrl && (
+                              <OutboundEventLink
+                                kind="application"
+                                eventSlug={event.slug}
+                                href={route.safeUrl}
+                                className="text-sm text-royal hover:underline mt-1 inline-block"
+                              >
+                                Enter or view rules →
+                              </OutboundEventLink>
+                            )}
+                            {!route.safeUrl && route.contactEmail && (
+                              <a
+                                href={`mailto:${route.contactEmail}`}
+                                className="text-sm text-royal hover:underline mt-1 inline-block break-all"
+                              >
+                                {route.contactEmail}
+                              </a>
+                            )}
+                          </div>
+                        ))}
                     </div>
                   </div>
                 )}
@@ -1766,13 +1774,13 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
                       )}
                     </div>
                   </Link>
-                  {event.promoter.website && (
+                  {promoterWebsiteHref && (
                     <TrackedLink
-                      href={event.promoter.website}
+                      href={promoterWebsiteHref}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="mt-4 text-sm text-royal hover:text-navy flex items-center gap-1"
-                      eventLabel={event.promoter.website}
+                      eventLabel={promoterWebsiteHref}
                     >
                       Visit Website <ExternalLink className="w-3 h-3" />
                     </TrackedLink>

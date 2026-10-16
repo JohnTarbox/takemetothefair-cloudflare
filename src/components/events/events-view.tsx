@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
 import { isPastUnconfirmed, PAST_UNCONFIRMED_LABEL } from "@/lib/events/past-unconfirmed";
 import Link from "next/link";
+import { safeHref } from "@takemetothefair/utils";
 import { MonthCalendar, type CalendarDay } from "@johntarbox/calendar-grid";
 import { useSearchParams } from "next/navigation";
 import {
@@ -1600,9 +1601,9 @@ export function EventsView({
                         >
                           View
                         </Link>
-                        {event.ticketUrl && (
+                        {safeHref(event.ticketUrl) && (
                           <a
-                            href={event.ticketUrl}
+                            href={safeHref(event.ticketUrl)}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="text-muted-foreground hover:text-muted-foreground"

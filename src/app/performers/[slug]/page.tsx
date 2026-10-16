@@ -26,7 +26,7 @@ import { withD1ReadLogged } from "@/lib/db/d1-resilience";
 import { DEGRADED_METADATA, isD1PlatformFault } from "@/lib/db/degraded";
 import { DegradedPanel } from "@/components/layout/degraded-panel";
 import { occurrenceUrl } from "@/lib/series/series-schema-org";
-import { occurrenceYear } from "@takemetothefair/utils";
+import { occurrenceYear, safeHref } from "@takemetothefair/utils";
 import { SITE_URL } from "@takemetothefair/constants";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { upcomingEndPredicate } from "@/lib/event-dates";
@@ -295,6 +295,8 @@ export default async function PerformerDetailPage({ params }: Props) {
     venue: e.venue ?? null,
     stateCode: e.stateCode ?? null,
   }));
+  // OPE-1368 — stored URLs render through safeHref (http/https only).
+  const websiteHref = safeHref(performer.website);
 
   return (
     <>
@@ -405,16 +407,16 @@ export default async function PerformerDetailPage({ params }: Props) {
             <Card>
               <CardContent className="py-6 space-y-3">
                 <h2 className="text-lg font-semibold text-foreground">Links</h2>
-                {performer.website ? (
+                {websiteHref ? (
                   <p className="flex items-center gap-2 text-sm">
                     <Globe className="w-4 h-4 text-muted-foreground" />
                     <Link
-                      href={performer.website}
+                      href={websiteHref}
                       target="_blank"
                       rel="noopener noreferrer nofollow"
                       className="text-navy hover:underline break-all"
                     >
-                      {performer.website.replace(/^https?:\/\//, "")}
+                      {websiteHref.replace(/^https?:\/\//, "")}
                     </Link>
                   </p>
                 ) : (

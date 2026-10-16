@@ -42,6 +42,7 @@ import { PromoterClosedNotice } from "@/components/promoters/PromoterClosedNotic
 import { isClosedPromoter } from "@/lib/promoters/operating-status";
 import { auth } from "@/lib/auth";
 import { unsafeSlug } from "@/lib/utils";
+import { safeHref } from "@takemetothefair/utils";
 import { buildPromoterMetaDescription } from "@/lib/seo-utils";
 import { cdnImage, cdnSrcSet, OG_EVENT, focalPointGravity } from "@/lib/cdn-image";
 
@@ -205,6 +206,8 @@ export default async function PromoterDetailPage({ params }: Props) {
   const isOwner = !!session?.user?.id && session.user.id === promoter.userId;
 
   const locationStr = [promoter.city, promoter.state].filter(Boolean).join(", ");
+  // OPE-1368 — stored URLs render through safeHref (http/https only).
+  const websiteHref = safeHref(promoter.website);
 
   return (
     <>
@@ -351,7 +354,7 @@ export default async function PromoterDetailPage({ params }: Props) {
             <Card>
               <CardContent className="py-6 space-y-3">
                 <h2 className="text-lg font-semibold text-foreground">Contact</h2>
-                {promoter.website && (
+                {websiteHref && (
                   <p className="flex items-center gap-2 text-sm">
                     <Globe className="w-4 h-4 text-muted-foreground" />
                     {/* Was next/link — an external, nofollow'd destination
@@ -361,12 +364,12 @@ export default async function PromoterDetailPage({ params }: Props) {
                       event="outbound_website_click"
                       entityType="PROMOTER"
                       entitySlug={promoter.slug}
-                      href={promoter.website}
+                      href={websiteHref}
                       target="_blank"
                       rel="noopener noreferrer nofollow"
                       className="text-navy hover:underline break-all"
                     >
-                      {promoter.website.replace(/^https?:\/\//, "")}
+                      {websiteHref.replace(/^https?:\/\//, "")}
                     </TrackedActionLink>
                   </p>
                 )}

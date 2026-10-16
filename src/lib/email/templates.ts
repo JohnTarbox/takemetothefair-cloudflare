@@ -62,7 +62,7 @@ export function passwordResetTemplate(args: { resetUrl: string; name: string | n
   const greeting = args.name ? `Hi ${args.name},` : "Hi,";
   const html = baseLayout({
     heading: "Reset your password",
-    body: `<p style="margin:0 0 12px;">${greeting}</p><p style="margin:0 0 12px;">We received a request to reset the password on your Meet Me at the Fair account. Click the button below to choose a new one. This link expires in 1 hour.</p>`,
+    body: `<p style="margin:0 0 12px;">${escapeHtmlText(greeting)}</p><p style="margin:0 0 12px;">We received a request to reset the password on your Meet Me at the Fair account. Click the button below to choose a new one. This link expires in 1 hour.</p>`,
     cta: { url: args.resetUrl, label: "Reset password" },
   });
   const text = `${greeting}\n\nWe received a request to reset the password on your Meet Me at the Fair account. Click the link below to choose a new one. This link expires in 1 hour.\n\n${args.resetUrl}\n\nIf you didn't expect this email, you can safely ignore it.`;
@@ -77,7 +77,7 @@ export function emailVerificationTemplate(args: { verifyUrl: string; name: strin
   const greeting = args.name ? `Hi ${args.name},` : "Hi,";
   const html = baseLayout({
     heading: "Verify your email",
-    body: `<p style="margin:0 0 12px;">${greeting}</p><p style="margin:0 0 12px;">Welcome to Meet Me at the Fair. Please confirm this email address so we can keep you in the loop about events, applications, and updates. This link expires in 24 hours.</p>`,
+    body: `<p style="margin:0 0 12px;">${escapeHtmlText(greeting)}</p><p style="margin:0 0 12px;">Welcome to Meet Me at the Fair. Please confirm this email address so we can keep you in the loop about events, applications, and updates. This link expires in 24 hours.</p>`,
     cta: { url: args.verifyUrl, label: "Verify email" },
   });
   const text = `${greeting}\n\nWelcome to Meet Me at the Fair. Please confirm this email address by opening the link below. It expires in 24 hours.\n\n${args.verifyUrl}\n\nIf you didn't sign up, you can safely ignore this email.`;
@@ -133,7 +133,7 @@ export function promoterBlogMentionTemplate(args: {
     s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const html = baseLayout({
     heading: "Your event was featured on our blog",
-    body: `<p style="margin:0 0 12px;">${greeting}</p>
+    body: `<p style="margin:0 0 12px;">${escape(greeting)}</p>
 <p style="margin:0 0 12px;">We just published a blog post that mentions your event <strong>${escape(args.eventName)}</strong>:</p>
 <p style="margin:0 0 12px;"><a href="${args.postUrl}" style="color:#1E2761;">${escape(args.postTitle)}</a></p>
 <p style="margin:0 0 12px;">Feel free to share it — or visit <a href="${args.eventUrl}" style="color:#1E2761;">your event page</a> to see how it's being surfaced alongside related coverage.</p>`,
