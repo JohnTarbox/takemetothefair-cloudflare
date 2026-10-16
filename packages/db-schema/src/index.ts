@@ -1061,6 +1061,13 @@ export const vendors = sqliteTable(
     city: text("city"),
     state: text("state"),
     zip: text("zip"),
+    // OPE-1398 (drizzle/0376) — street-address privacy. `selfSignup` marks a
+    // vendor minted by self-registration (/api/auth/register); its street
+    // address is hidden on every public surface unless the vendor opts back in
+    // via `showStreetAddress`. The rule lives in ONE place:
+    // isStreetAddressHidden() in @takemetothefair/utils (vendor-public-address).
+    selfSignup: integer("self_signup", { mode: "boolean" }).notNull().default(false),
+    showStreetAddress: integer("show_street_address", { mode: "boolean" }).notNull().default(false),
     // Geolocation (auto-populated from Google Places)
     latitude: real("latitude"),
     longitude: real("longitude"),

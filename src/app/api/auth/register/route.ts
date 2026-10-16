@@ -386,6 +386,9 @@ export async function POST(request: NextRequest) {
             claimed: true,
             claimedAt: new Date(),
             claimedBy: userId,
+            // OPE-1398 — a self-registered vendor; its street address is
+            // hidden publicly until it opts back in (isStreetAddressHidden).
+            selfSignup: true,
           });
         } catch (slugErr) {
           // OPE-573 backstop — the pre-flight lost a race. Undo the account and

@@ -10,6 +10,7 @@ import { parseJsonArray } from "@/types";
 import { auth } from "@/lib/auth";
 import { logError } from "@/lib/logger";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
+import { publicStreetAddress } from "@takemetothefair/utils";
 
 export async function GET(request: Request) {
   // Rate limiting check
@@ -58,6 +59,8 @@ export async function GET(request: Request) {
         contactEmail: vendors.contactEmail,
         contactPhone: vendors.contactPhone,
         address: vendors.address,
+        selfSignup: vendors.selfSignup,
+        showStreetAddress: vendors.showStreetAddress,
         city: vendors.city,
         state: vendors.state,
         zip: vendors.zip,
@@ -151,7 +154,10 @@ export async function GET(request: Request) {
       { header: "Contact Name", adminOnly: true, value: (v) => v.contactName },
       { header: "Contact Email", adminOnly: true, value: (v) => v.contactEmail },
       { header: "Contact Phone", adminOnly: true, value: (v) => v.contactPhone },
-      { header: "Address", value: (v) => v.address },
+      // OPE-1398 — admins get the stored street address; everyone else gets it
+      // only where the public rule allows (blank for a self-signup vendor that
+      // has not opted in). City/State/ZIP stay for every role.
+      { header: "Address", value: (v) => (isAdmin ? v.address : publicStreetAddress(v)) },
       { header: "City", value: (v) => v.city },
       { header: "State", value: (v) => v.state },
       { header: "ZIP", value: (v) => v.zip },

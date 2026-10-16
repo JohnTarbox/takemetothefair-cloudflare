@@ -144,6 +144,7 @@ export async function PATCH(request: NextRequest) {
       city,
       state,
       zip,
+      showStreetAddress,
       latitude,
       longitude,
       yearEstablished,
@@ -247,6 +248,8 @@ export async function PATCH(request: NextRequest) {
     if (city !== undefined) updateData.city = city;
     if (state !== undefined) updateData.state = state;
     if (zip !== undefined) updateData.zip = zip;
+    // OPE-1398 — opt back in to showing the street address publicly.
+    if (showStreetAddress !== undefined) updateData.showStreetAddress = showStreetAddress;
     // Geolocation
     if (latitude !== undefined) updateData.latitude = latitude;
     if (longitude !== undefined) updateData.longitude = longitude;
