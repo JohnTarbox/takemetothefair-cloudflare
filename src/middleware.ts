@@ -35,12 +35,7 @@ import {
 } from "@/lib/conditional-get";
 import { getHelpArticle } from "@/lib/help-articles";
 import { unsafeSlug } from "@/lib/utils";
-import {
-  ADMIN_RSC_ANON_KIND,
-  isAnonymousAdminRscRequest,
-  shouldSample,
-  writeRequestSample,
-} from "@/lib/request-sampling";
+import { shouldSample, writeRequestSample } from "@/lib/request-sampling";
 import { generateNonce, isNonceCspPath, nonceContentSecurityPolicy } from "@/lib/csp";
 
 /**
@@ -329,32 +324,11 @@ async function handleRouting(request: NextRequest) {
     }
   }
 
-  // ── OPE-1397 — anonymous RSC hits on /admin* ───────────────────
-  // The A9 block above skips /admin. Record every /admin* request carrying
-  // `RSC` / `Next-Router-State-Tree` with no session cookie (the OPE-1365
-  // layout-bypass shape): path, timestamp, country, ASN only — no headers,
-  // no IP. Same never-throw, fire-and-forget contract as A9.
-  // No heartbeat probe, by design: this path is EXPECTED to be silent, so
-  // "no rows" is the healthy state and a probe could only false-fire.
-  if (isAnonymousAdminRscRequest(pathname, request.headers)) {
-    try {
-      const cfCtx = getCloudflareContext();
-      const d1 = cfCtx.env.DB;
-      const cf = cfCtx.cf as { asn?: number; country?: string } | undefined;
-      if (d1) {
-        cfCtx.ctx.waitUntil(
-          writeRequestSample(drizzle(d1), {
-            kind: ADMIN_RSC_ANON_KIND,
-            path: pathname,
-            asn: cf?.asn ?? null,
-            country: request.headers.get("cf-ipcountry") ?? cf?.country ?? null,
-          })
-        );
-      }
-    } catch {
-      // sampling must never affect the response path
-    }
-  }
+  // OPE-1397 — anonymous RSC hits on /admin* are NOT recorded here, and cannot
+  // be: Next deletes RSC / Next-Router-State-Tree (FLIGHT_HEADERS) before this
+  // function runs (node_modules/next/dist/server/web/adapter.js:137-146). The
+  // sampler lives in the Worker entry instead — src/worker/admin-rsc-sampler.ts.
+  // Guarded by src/__tests__/middleware-no-flight-headers-ope1397.test.ts.
 
   // ── /admin/* + /api/admin/* — read-only Bearer method gate ─────
   // For requests carrying a valid CLAUDE_READONLY_TOKEN Bearer header,
