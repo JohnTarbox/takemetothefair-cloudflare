@@ -1,4 +1,5 @@
 import type { OAuthProviderOptions } from "@cloudflare/workers-oauth-provider";
+import { refreshGrantProps } from "./token-exchange.js";
 
 /**
  * OPE-1323 — the OAuth provider's configuration, split out of index.ts so the
@@ -31,9 +32,14 @@ type Handlers<E> = {
   login: OAuthProviderOptions<E>["defaultHandler"];
 };
 
-export function mcpOAuthProviderOptions<E>(handlers: Handlers<E>): OAuthProviderOptions<E> {
+export function mcpOAuthProviderOptions<E extends { DB: D1Database }>(
+  handlers: Handlers<E>
+): OAuthProviderOptions<E> {
   return {
     resourceMetadata: { resource: MCP_OAUTH_RESOURCE },
+    // OPE-1366 — refresh re-resolves props from D1 and refuses a grant whose
+    // user is gone or whose session_version moved (see token-exchange.ts).
+    tokenExchangeCallback: refreshGrantProps<E>,
     apiHandlers: {
       "/mcp": handlers.mcp,
       "/sse": handlers.sse,

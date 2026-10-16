@@ -57,6 +57,13 @@ export const users = sqliteTable("users", {
   oauthProvider: text("oauth_provider"),
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  /**
+   * OPE-1366 — session generation (drizzle/0371). Bumped on an admin role
+   * change and on a password reset; web JWTs and MCP OAuth grants carry the
+   * value they were minted with and are ended when it no longer matches.
+   * Bump with `bumpSessionVersion()` (`session_version + 1`), never an absolute.
+   */
+  sessionVersion: integer("session_version").notNull().default(0),
 });
 
 /**
