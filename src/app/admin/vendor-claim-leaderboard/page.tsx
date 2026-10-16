@@ -37,6 +37,7 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { analyticsEvents, eventVendors, vendors, vendorOutreachAttempts } from "@/lib/db/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { LogOutreachButton } from "@/components/admin/log-outreach-button";
+import { safeHref } from "@takemetothefair/utils";
 
 
 const WEIGHT_EVENT_COUNT = 0.35;
@@ -377,7 +378,7 @@ export default async function VendorClaimLeaderboardPage() {
                         {r.contactPhone && <div>{r.contactPhone}</div>}
                         {r.website && (
                           <a
-                            href={r.website}
+                            href={safeHref(r.website)}
                             target="_blank"
                             rel="noreferrer"
                             className="text-royal hover:underline truncate inline-block max-w-[200px]"

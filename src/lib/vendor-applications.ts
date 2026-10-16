@@ -11,6 +11,10 @@
  * any self-registered vendor could mint a token and publish itself as a
  * confirmed vendor of any event. Both routes now ask this module.
  *
+ * OPE-1381 — `paymentStatus` is the organizer's ledger, not the vendor's.
+ * Both routes ask `checkVendorPaymentStatus` (below): only a canSelfConfirm
+ * vendor may send it; anyone else gets 403 PAYMENT_STATUS_FORBIDDEN.
+ *
  * MCP `apply_to_event` (mcp-server/src/tools/vendor.ts) enforces the same
  * canSelfConfirm + commercial rule in its own copy (the MCP Worker cannot
  * import from src/lib). It differs in one respect: it also accepts TENTATIVE
@@ -103,6 +107,52 @@ export function isPaymentStatus(v: unknown): v is PaymentStatus {
   return typeof v === "string" && (PAYMENT_STATUS_VALUES as readonly string[]).includes(v);
 }
 
+/** OPE-1381 — the error code a vendor gets for sending `paymentStatus`. */
+export const PAYMENT_STATUS_FORBIDDEN = "PAYMENT_STATUS_FORBIDDEN";
+
+/**
+ * OPE-1381 — may this vendor put `requested` into its own row's
+ * `payment_status`? Payment is recorded by the event's promoter or an admin
+ * (MCP `update_application_status` in promoter.ts / admin.ts, and
+ * `PATCH /api/admin/events/[id]/vendors`).
+ *
+ * The one exception is a canSelfConfirm vendor, which already attests
+ * organizer decisions (CONFIRMED / WAITLISTED) about itself: the live token
+ * client, Maine Cardworks' show tracker (apps/shows/src/lib/mmf-push.ts),
+ * sends `{eventId, status: "CONFIRMED", paymentStatus: "PAID"}` when a show
+ * becomes PARTICIPATING, and that fire-and-forget push ignores the response —
+ * a 403 there would silently drop the CONFIRMED status too.
+ *
+ * Any presence of the field from a non-canSelfConfirm vendor is refused —
+ * including a value equal to the stored one. The field is never silently
+ * dropped, and "it happened to match" is not a permission.
+ *
+ * `undefined` (field absent) is ok. Returns the typed value when allowed.
+ */
+export function checkVendorPaymentStatus(
+  canSelfConfirm: boolean | null | undefined,
+  requested: unknown
+): { ok: true; paymentStatus: PaymentStatus | undefined } | RuleRefusal {
+  if (requested === undefined) return { ok: true, paymentStatus: undefined };
+  if (!isPaymentStatus(requested)) {
+    return {
+      ok: false,
+      httpStatus: 400,
+      error: `Invalid paymentStatus. Must be one of: ${PAYMENT_STATUS_VALUES.join(", ")}`,
+    };
+  }
+  if (!canSelfConfirm) {
+    return {
+      ok: false,
+      httpStatus: 403,
+      error: PAYMENT_STATUS_FORBIDDEN,
+      message:
+        "Payment status is recorded by the event organizer or a site admin, not by the vendor. Remove paymentStatus from the request.",
+    };
+  }
+  return { ok: true, paymentStatus: requested };
+}
+
 export const EMAIL_UNVERIFIED_REFUSAL: RuleRefusal = {
   ok: false,
   httpStatus: 403,
@@ -126,7 +176,8 @@ export type TokenPatchResult =
  * `event_vendors` row for `body.eventId`, under the same rules as the session
  * route (verified email, APPROVED event, commercial rule, canSelfConfirm),
  * with status changes held to `vendorSettableStatuses` AND the
- * `VALID_TRANSITIONS` state machine, and `paymentStatus` held to its enum.
+ * `VALID_TRANSITIONS` state machine, and `paymentStatus` refused unless the
+ * vendor is canSelfConfirm (OPE-1381, `checkVendorPaymentStatus`).
  */
 export async function applyVendorTokenPatch(
   db: Database,
@@ -145,15 +196,7 @@ export async function applyVendorTokenPatch(
       error: `Invalid status. Must be one of: ${EVENT_VENDOR_STATUS_VALUES.join(", ")}`,
     };
   }
-  if (body.paymentStatus !== undefined && !isPaymentStatus(body.paymentStatus)) {
-    return {
-      ok: false,
-      httpStatus: 400,
-      error: `Invalid paymentStatus. Must be one of: ${PAYMENT_STATUS_VALUES.join(", ")}`,
-    };
-  }
   const requestedStatus = body.status as EventVendorStatus | undefined;
-  const requestedPayment = body.paymentStatus as PaymentStatus | undefined;
 
   const [vendor] = await db
     .select({
@@ -173,6 +216,13 @@ export async function applyVendorTokenPatch(
   if (!vendor.emailVerified) return EMAIL_UNVERIFIED_REFUSAL;
 
   const canSelfConfirm = vendor.canSelfConfirm ?? false;
+
+  // OPE-1381 — checked before any write: a refused paymentStatus refuses the
+  // whole request (status included), so nothing is half-applied.
+  const payment = checkVendorPaymentStatus(canSelfConfirm, body.paymentStatus);
+  if (!payment.ok) return payment;
+  const requestedPayment = payment.paymentStatus;
+
   const settable = vendorSettableStatuses(canSelfConfirm);
 
   const loadEvent = async () => {

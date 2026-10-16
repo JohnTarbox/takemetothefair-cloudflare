@@ -26,6 +26,7 @@ import {
   ScConfigError,
   type SearchQueryRow,
 } from "@/lib/search-console";
+import { safeHref } from "@takemetothefair/utils";
 
 export const dynamic = "force-dynamic";
 
@@ -133,7 +134,7 @@ export default async function AdminAnalyticsPageDetail({ searchParams }: PagePro
             <RefreshCw className="w-4 h-4" /> Refresh
           </Link>
           <a
-            href={path}
+            href={safeHref(path, { allowRelative: true })}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1.5 text-sm text-royal hover:text-navy"

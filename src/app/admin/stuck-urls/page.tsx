@@ -37,7 +37,7 @@ import {
   type IndexState,
 } from "@/lib/gsc-index-state";
 import { unsafeSlug } from "@/lib/utils";
-import { chunkedInArray } from "@takemetothefair/utils";
+import { chunkedInArray, safeHref } from "@takemetothefair/utils";
 
 
 interface ClusterRow {
@@ -288,7 +288,7 @@ export default async function StuckUrlsPage() {
                         return (
                           <li key={u} className="font-mono text-muted-foreground truncate">
                             <a
-                              href={u}
+                              href={safeHref(u)}
                               target="_blank"
                               rel="noreferrer"
                               className="hover:text-royal hover:underline"
