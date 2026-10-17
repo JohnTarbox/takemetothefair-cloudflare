@@ -23,6 +23,9 @@ import {
   FileText,
   CheckCircle,
   PawPrint,
+  Phone,
+  Mail,
+  Globe,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -60,6 +63,17 @@ import type { Metadata } from "next";
 import { auth } from "@/lib/auth";
 import { logError } from "@/lib/logger";
 import { VendorApplyButton } from "@/components/events/VendorApplyButton";
+import { VendorOrganizerCard } from "@/components/events/VendorOrganizerCard";
+import {
+  isPlaceholderPromoter,
+  resolveOrganizerContact,
+  resolveVendorCta,
+  stickyBarLabel,
+  telHref,
+} from "@/lib/events/vendor-cta";
+import { getPromoterVendorContact } from "@/lib/events/vendor-cta-data";
+import { resolveVisitingLines } from "@/lib/events/visiting";
+import { getVisitingFacts } from "@/lib/events/visiting-data";
 import { AddToCalendar } from "@/components/events/AddToCalendar";
 import { EventSchema } from "@/components/seo/EventSchema";
 import { getPublicNameVariants } from "@/lib/events/public-name-variants";
@@ -573,6 +587,45 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
   // be a mailto: (two prod rows are), so that one also allows mailto.
   const applicationHref = safeHref(event.applicationUrl, { allowMailto: true });
   const promoterWebsiteHref = safeHref(event.promoter?.website);
+  // OPE-986 (A2 + B2) — which vendor CTA this page shows. `claimed` and the
+  // contact come from their own read: the lite projection lacks them.
+  const promoterVendorContact = await getPromoterVendorContact(
+    getCloudflareDb(),
+    event.promoter?.id
+  );
+  const ctaPromoter =
+    event.promoter && promoterVendorContact
+      ? {
+          id: event.promoter.id,
+          slug: event.promoter.slug,
+          companyName: event.promoter.companyName,
+          website: event.promoter.website,
+          ...promoterVendorContact,
+        }
+      : null;
+  const vendorCta = resolveVendorCta({
+    applicationHref: applicationHref ?? null,
+    applicationDeadline: event.applicationDeadline ? new Date(event.applicationDeadline) : null,
+    promoter: ctaPromoter,
+    promoterWebsiteHref: promoterWebsiteHref ?? null,
+    signedIn: !!session,
+    isVendor: !!vendorInfo,
+    hasExistingApplication: !!vendorInfo?.existingApplication,
+  });
+  const vendorStickyLabel = stickyBarLabel(vendorCta);
+  // OPE-1477 item 1 — who to ask, shown above our own "Ask about this event".
+  const organizerContact = resolveOrganizerContact(ctaPromoter, promoterWebsiteHref ?? null);
+  // OPE-1479 — the "Visiting" box. Venue Google options + the pet citation
+  // date come from their own read: the lite venue projection lacks them.
+  const visitingFacts = await getVisitingFacts(getCloudflareDb(), event.id, event.venueId);
+  const visitingLines = resolveVisitingLines({
+    petFriendly: event.petFriendly,
+    petCitedOn: visitingFacts.petCitedOn,
+    venueAccessibility: visitingFacts.venueAccessibility,
+    venueParking: visitingFacts.venueParking,
+    venuePetFriendly: visitingFacts.venuePetFriendly,
+    placeholderPromoter: !ctaPromoter || isPlaceholderPromoter(ctaPromoter),
+  });
 
   return (
     <>
@@ -1611,8 +1664,9 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
               </CardContent>
             </Card>
 
-            {/* Vendor Application Section */}
-            {vendorInfo && (
+            {/* Vendor Application Section — OPE-986 B2: only where the promoter has
+                claimed the listing (or the vendor already has a row here). */}
+            {vendorInfo && vendorCta.kind === "in_app" && (
               <Card id="vendor-apply">
                 <CardHeader>
                   <h3 className="font-semibold text-foreground flex items-center gap-2">
@@ -1686,7 +1740,11 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
               </Card>
             )}
 
-            {!session && (
+            {(vendorCta.kind === "organizer_apply" || vendorCta.kind === "organizer_contact") && (
+              <VendorOrganizerCard cta={vendorCta} eventName={event.name} eventSlug={event.slug} />
+            )}
+
+            {vendorCta.kind === "login_to_apply" && (
               <Card id="vendor-apply">
                 <CardContent className="p-6 text-center">
                   <Store className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
@@ -1750,6 +1808,60 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
               </Card>
             )}
 
+            {/* OPE-1479 — Parking / Accessibility / Pets, each saying where its
+                answer comes from. Google's venue options are labelled as the
+                BUILDING's, never as the event's own arrangements. Nothing here
+                is inferred from type or category (resolveVisitingLines takes
+                no such input). */}
+            {!isPastEvent && (
+              <Card className="mt-6" data-visiting>
+                <CardHeader>
+                  <h3 className="font-semibold text-foreground">Visiting</h3>
+                </CardHeader>
+                <CardContent>
+                  <dl className="space-y-3 text-sm">
+                    {visitingLines.map((line) => (
+                      <div key={line.topic}>
+                        <dt className="font-medium text-foreground">
+                          {line.topic === "parking"
+                            ? "Parking"
+                            : line.topic === "accessibility"
+                              ? "Accessibility"
+                              : "Pets"}
+                        </dt>
+                        <dd className="mt-0.5 text-muted-foreground">
+                          {line.source === "organizer" && (
+                            <>
+                              {line.text}
+                              {line.citedOn && (
+                                <span className="block text-xs">
+                                  Published by the organizer; recorded{" "}
+                                  {formatDateMedium(line.citedOn)}
+                                </span>
+                              )}
+                            </>
+                          )}
+                          {line.source === "venue_google" && (
+                            <>
+                              <span className="block text-xs">About the venue (from Google):</span>
+                              {line.phrases.join(", ")}
+                            </>
+                          )}
+                          {line.source === "venue_rule" && line.text}
+                          {line.source === "unknown" && line.text}
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                  {organizerContact && visitingLines.some((l) => l.source !== "organizer") && (
+                    <p className="mt-3 text-xs text-muted-foreground">
+                      For fair-day arrangements, ask the organizer — contact details below.
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+
             {/* OPE-851 Scope A — carry the event with the question.
                 A fair-goer asked us "is it ok to have a well-behaved dog on a
                 leash ?" and it arrived with parsed_url null and match_basis
@@ -1766,6 +1878,48 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
                     the authority. If you&apos;d rather ask us, this carries the event with it so we
                     know which one you mean.
                   </p>
+                  {organizerContact && (
+                    <div className="mt-3 text-sm" data-organizer-contact>
+                      <p className="font-medium text-foreground">{organizerContact.name}</p>
+                      <ul className="mt-1 space-y-1">
+                        {organizerContact.phone && (
+                          <li className="flex items-center gap-2">
+                            <Phone className="w-4 h-4 text-muted-foreground" aria-hidden />
+                            <a
+                              href={telHref(organizerContact.phone)}
+                              className="text-royal hover:text-navy"
+                            >
+                              {organizerContact.phone}
+                            </a>
+                          </li>
+                        )}
+                        {organizerContact.email && (
+                          <li className="flex items-center gap-2">
+                            <Mail className="w-4 h-4 text-muted-foreground" aria-hidden />
+                            <a
+                              href={`mailto:${organizerContact.email}`}
+                              className="text-royal hover:text-navy break-all"
+                            >
+                              {organizerContact.email}
+                            </a>
+                          </li>
+                        )}
+                        {organizerContact.websiteHref && (
+                          <li className="flex items-center gap-2">
+                            <Globe className="w-4 h-4 text-muted-foreground" aria-hidden />
+                            <a
+                              href={organizerContact.websiteHref}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-royal hover:text-navy"
+                            >
+                              Organizer website
+                            </a>
+                          </li>
+                        )}
+                      </ul>
+                    </div>
+                  )}
                   <a
                     href={askAboutHref}
                     className="mt-4 inline-flex items-center gap-1 text-sm text-royal hover:text-navy"
@@ -1844,10 +1998,15 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
         )}
 
         {/* Mobile-only sticky apply CTA */}
-        {!isPastEvent && !session && <StickyApplyBar label="Login to Apply" href="/login" />}
-        {!isPastEvent && vendorInfo && !vendorInfo.existingApplication && (
-          <StickyApplyBar label="Apply as Vendor" scrollTarget="vendor-apply" />
+        {!isPastEvent && vendorCta.kind === "login_to_apply" && (
+          <StickyApplyBar label="Login to Apply" href="/login" />
         )}
+        {!isPastEvent &&
+          vendorStickyLabel &&
+          vendorCta.kind !== "login_to_apply" &&
+          !vendorInfo?.existingApplication && (
+            <StickyApplyBar label={vendorStickyLabel} scrollTarget="vendor-apply" />
+          )}
 
         {/* MMATF-UIUX-PrintSheet-Spec — static map "visual anchor" for
           the printed event sheet. Hidden on screen (the existing

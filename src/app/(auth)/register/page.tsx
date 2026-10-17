@@ -460,7 +460,7 @@ function RegisterForm() {
       <Card className="w-full max-w-md">
         <CardHeader>
           <h1 className="text-2xl font-bold text-center text-foreground">Create an Account</h1>
-          <p className="text-center text-muted-foreground mt-2">Join Meet Me at the Fair</p>
+          <p className="text-center text-muted-foreground mt-2">Create your free account</p>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4" noValidate>
@@ -599,7 +599,7 @@ function RegisterForm() {
                   aria-describedby="website-help"
                 />
                 <p id="website-help" className="mt-1 text-xs text-muted-foreground">
-                  Helps us confirm your listing is yours — speeds up review.
+                  Helps us confirm your listing is yours.
                 </p>
               </div>
             )}

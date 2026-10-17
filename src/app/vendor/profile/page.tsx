@@ -456,8 +456,18 @@ export default function VendorProfilePage() {
     <div className="max-w-2xl">
       <WelcomeBanner
         storageKey="mmatf.welcome.vendor"
-        title="Welcome to Meet Me at the Fair!"
-        body="Complete your vendor profile below so promoters have what they need to approve your event applications."
+        title="Your free directory listing is set up."
+        body={
+          // OPE-986 A1 — copy approved verbatim by John, 2026-10-17. A crafter
+          // read the old "approve your event applications" as having applied.
+          <p>
+            This is a listing on Meet Me at the Fair — it is not an application to any fair. Each
+            fair takes its own vendor applications, usually on the fair&apos;s website or by
+            contacting the organizer. We sent a verification link to{" "}
+            {profile.ownerEmail ? <strong>{profile.ownerEmail}</strong> : "your email address"}; if
+            that address is wrong, contact support@meetmeatthefair.com.
+          </p>
+        }
       />
       <VendorClaimWidget
         claimed={profile.claimed}
