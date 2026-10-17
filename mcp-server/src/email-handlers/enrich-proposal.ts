@@ -26,8 +26,14 @@
  * was staged, and flags the inbound row when content was dropped.
  *
  * NOT in scope because the extractor does not produce them (follow-up, not
- * invented here): `access_notes`, `pet_friendly`, performers. The roster is
- * linked on the keeper by OPE-847 on the multi-source path only.
+ * invented here): `access_notes`, performers. The roster is linked on the
+ * keeper by OPE-847 on the multi-source path only.
+ *
+ * OPE-1484 — `parking_notes`, `accessibility_notes` and `pet_friendly` are
+ * staged from the extract route's deterministic `visitorFacts` (verbatim page
+ * sentences, src/lib/url-import/visitor-facts.ts). Each proposal is
+ * `{ value, excerpt }` — exactly the evidence `update_event` requires to apply
+ * it (OPE-1061 / OPE-1481), with the payload's `source` as the source_url.
  */
 import { and, eq, isNotNull } from "drizzle-orm";
 import { adminActions, eventDays, events, inboundEmails } from "../schema.js";
@@ -64,6 +70,16 @@ export interface ExistingEnrichFields {
   categories?: string | null;
   /** True when any event_days row of the event already carries an open time. */
   hasDayHours?: boolean;
+  /** OPE-1484 — the organizer-published visitor fields. */
+  parkingNotes?: string | null;
+  accessibilityNotes?: string | null;
+  petFriendly?: string | null;
+}
+
+/** OPE-1484 — one verbatim page sentence, and (pets) the rule it states. */
+export interface IncomingVisitorFact {
+  value: string;
+  excerpt: string;
 }
 
 /** Values carried by the inbound submission, in the EXTRACTOR's units
@@ -89,6 +105,9 @@ export interface IncomingEnrichFields {
   endTime?: string | null;
   hoursNotes?: string | null;
   dayHours?: unknown[] | null;
+  parkingNotes?: IncomingVisitorFact | null;
+  accessibilityNotes?: IncomingVisitorFact | null;
+  petFriendly?: IncomingVisitorFact | null;
 }
 
 const toCents = (dollars: number | null | undefined): number | null =>
@@ -223,6 +242,43 @@ function fieldChecks(existing: ExistingEnrichFields, incoming: IncomingEnrichFie
     sameAsExisting: false,
   });
 
+  // OPE-1484 — visitor facts. Fill-empty like everything else; `pet_friendly`
+  // is empty when UNSET (NOT_PUBLISHED is an answer: we looked, they're silent).
+  const fact = (
+    col: string,
+    curEmpty: boolean,
+    cur: string | null | undefined,
+    next: IncomingVisitorFact | null | undefined
+  ): FieldCheck => {
+    const inc = next && !isEmpty(next.value) && !isEmpty(next.excerpt) ? next : null;
+    return {
+      col,
+      existingEmpty: curEmpty,
+      incoming: inc ? { value: inc.value.trim(), excerpt: inc.excerpt.trim() } : null,
+      sameAsExisting: inc != null && !curEmpty && cur === inc.value.trim(),
+    };
+  };
+  out.push(
+    fact(
+      "parking_notes",
+      isEmpty(existing.parkingNotes),
+      existing.parkingNotes,
+      incoming.parkingNotes
+    ),
+    fact(
+      "accessibility_notes",
+      isEmpty(existing.accessibilityNotes),
+      existing.accessibilityNotes,
+      incoming.accessibilityNotes
+    ),
+    fact(
+      "pet_friendly",
+      existing.petFriendly == null || existing.petFriendly === "UNSET",
+      existing.petFriendly,
+      incoming.petFriendly
+    )
+  );
+
   return out;
 }
 
@@ -281,6 +337,33 @@ export function incomingFromExtracted(
     endTime: s("endTime"),
     hoursNotes: s("hoursNotes"),
     dayHours: Array.isArray(event.dayHours) ? (event.dayHours as unknown[]) : null,
+    ...visitorFactsFromExtracted(event.visitorFacts),
+  };
+}
+
+/** OPE-1484 — the extract route's `visitorFacts` (verbatim sentences) onto the
+ *  incoming shape. Anything malformed reads as absent; nothing is inferred. */
+function visitorFactsFromExtracted(raw: unknown): {
+  parkingNotes: IncomingVisitorFact | null;
+  accessibilityNotes: IncomingVisitorFact | null;
+  petFriendly: IncomingVisitorFact | null;
+} {
+  const f = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const excerptOf = (v: unknown): string | null => {
+    const e = v && typeof v === "object" ? (v as { excerpt?: unknown }).excerpt : null;
+    return typeof e === "string" && e.trim().length > 0 ? e.trim() : null;
+  };
+  const parking = excerptOf(f.parking);
+  const access = excerptOf(f.accessibility);
+  const pet = excerptOf(f.pets);
+  const petValue =
+    f.pets && typeof f.pets === "object" ? (f.pets as { value?: unknown }).value : null;
+  return {
+    // A note's value IS the organizer's sentence, so value and excerpt match.
+    parkingNotes: parking ? { value: parking, excerpt: parking } : null,
+    accessibilityNotes: access ? { value: access, excerpt: access } : null,
+    petFriendly:
+      pet && (petValue === "YES" || petValue === "NO") ? { value: petValue, excerpt: pet } : null,
   };
 }
 
@@ -340,6 +423,9 @@ export async function stageEnrichOnMatch(
       applicationInstructions: events.applicationInstructions,
       walkInsAllowed: events.walkInsAllowed,
       categories: events.categories,
+      parkingNotes: events.parkingNotes,
+      accessibilityNotes: events.accessibilityNotes,
+      petFriendly: events.petFriendly,
     })
     .from(events)
     .where(eq(events.id, input.existingEventId))
