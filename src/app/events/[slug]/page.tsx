@@ -60,6 +60,9 @@ import type { Metadata } from "next";
 import { auth } from "@/lib/auth";
 import { logError } from "@/lib/logger";
 import { VendorApplyButton } from "@/components/events/VendorApplyButton";
+import { VendorOrganizerCard } from "@/components/events/VendorOrganizerCard";
+import { resolveVendorCta, stickyBarLabel } from "@/lib/events/vendor-cta";
+import { getPromoterVendorContact } from "@/lib/events/vendor-cta-data";
 import { AddToCalendar } from "@/components/events/AddToCalendar";
 import { EventSchema } from "@/components/seo/EventSchema";
 import { getPublicNameVariants } from "@/lib/events/public-name-variants";
@@ -573,6 +576,31 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
   // be a mailto: (two prod rows are), so that one also allows mailto.
   const applicationHref = safeHref(event.applicationUrl, { allowMailto: true });
   const promoterWebsiteHref = safeHref(event.promoter?.website);
+  // OPE-986 (A2 + B2) — which vendor CTA this page shows. `claimed` and the
+  // contact come from their own read: the lite projection lacks them.
+  const promoterVendorContact = await getPromoterVendorContact(
+    getCloudflareDb(),
+    event.promoter?.id
+  );
+  const vendorCta = resolveVendorCta({
+    applicationHref: applicationHref ?? null,
+    applicationDeadline: event.applicationDeadline ? new Date(event.applicationDeadline) : null,
+    promoter:
+      event.promoter && promoterVendorContact
+        ? {
+            id: event.promoter.id,
+            slug: event.promoter.slug,
+            companyName: event.promoter.companyName,
+            website: event.promoter.website,
+            ...promoterVendorContact,
+          }
+        : null,
+    promoterWebsiteHref: promoterWebsiteHref ?? null,
+    signedIn: !!session,
+    isVendor: !!vendorInfo,
+    hasExistingApplication: !!vendorInfo?.existingApplication,
+  });
+  const vendorStickyLabel = stickyBarLabel(vendorCta);
 
   return (
     <>
@@ -1611,8 +1639,9 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
               </CardContent>
             </Card>
 
-            {/* Vendor Application Section */}
-            {vendorInfo && (
+            {/* Vendor Application Section — OPE-986 B2: only where the promoter has
+                claimed the listing (or the vendor already has a row here). */}
+            {vendorInfo && vendorCta.kind === "in_app" && (
               <Card id="vendor-apply">
                 <CardHeader>
                   <h3 className="font-semibold text-foreground flex items-center gap-2">
@@ -1686,7 +1715,11 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
               </Card>
             )}
 
-            {!session && (
+            {(vendorCta.kind === "organizer_apply" || vendorCta.kind === "organizer_contact") && (
+              <VendorOrganizerCard cta={vendorCta} eventName={event.name} eventSlug={event.slug} />
+            )}
+
+            {vendorCta.kind === "login_to_apply" && (
               <Card id="vendor-apply">
                 <CardContent className="p-6 text-center">
                   <Store className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
@@ -1844,10 +1877,15 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
         )}
 
         {/* Mobile-only sticky apply CTA */}
-        {!isPastEvent && !session && <StickyApplyBar label="Login to Apply" href="/login" />}
-        {!isPastEvent && vendorInfo && !vendorInfo.existingApplication && (
-          <StickyApplyBar label="Apply as Vendor" scrollTarget="vendor-apply" />
+        {!isPastEvent && vendorCta.kind === "login_to_apply" && (
+          <StickyApplyBar label="Login to Apply" href="/login" />
         )}
+        {!isPastEvent &&
+          vendorStickyLabel &&
+          vendorCta.kind !== "login_to_apply" &&
+          !vendorInfo?.existingApplication && (
+            <StickyApplyBar label={vendorStickyLabel} scrollTarget="vendor-apply" />
+          )}
 
         {/* MMATF-UIUX-PrintSheet-Spec — static map "visual anchor" for
           the printed event sheet. Hidden on screen (the existing
