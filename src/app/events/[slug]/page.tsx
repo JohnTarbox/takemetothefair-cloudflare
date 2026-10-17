@@ -65,12 +65,15 @@ import { logError } from "@/lib/logger";
 import { VendorApplyButton } from "@/components/events/VendorApplyButton";
 import { VendorOrganizerCard } from "@/components/events/VendorOrganizerCard";
 import {
+  isPlaceholderPromoter,
   resolveOrganizerContact,
   resolveVendorCta,
   stickyBarLabel,
   telHref,
 } from "@/lib/events/vendor-cta";
 import { getPromoterVendorContact } from "@/lib/events/vendor-cta-data";
+import { resolveVisitingLines } from "@/lib/events/visiting";
+import { getVisitingFacts } from "@/lib/events/visiting-data";
 import { AddToCalendar } from "@/components/events/AddToCalendar";
 import { EventSchema } from "@/components/seo/EventSchema";
 import { getPublicNameVariants } from "@/lib/events/public-name-variants";
@@ -612,6 +615,16 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
   const vendorStickyLabel = stickyBarLabel(vendorCta);
   // OPE-1477 item 1 — who to ask, shown above our own "Ask about this event".
   const organizerContact = resolveOrganizerContact(ctaPromoter, promoterWebsiteHref ?? null);
+  // OPE-1479 — the "Visiting" box. Venue Google options + the pet citation
+  // date come from their own read: the lite venue projection lacks them.
+  const visitingFacts = await getVisitingFacts(getCloudflareDb(), event.id, event.venueId);
+  const visitingLines = resolveVisitingLines({
+    petFriendly: event.petFriendly,
+    petCitedOn: visitingFacts.petCitedOn,
+    venueAccessibility: visitingFacts.venueAccessibility,
+    venueParking: visitingFacts.venueParking,
+    placeholderPromoter: !ctaPromoter || isPlaceholderPromoter(ctaPromoter),
+  });
 
   return (
     <>
@@ -1789,6 +1802,59 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
                     >
                       Visit Website <ExternalLink className="w-3 h-3" />
                     </TrackedLink>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+
+            {/* OPE-1479 — Parking / Accessibility / Pets, each saying where its
+                answer comes from. Google's venue options are labelled as the
+                BUILDING's, never as the event's own arrangements. Nothing here
+                is inferred from type or category (resolveVisitingLines takes
+                no such input). */}
+            {!isPastEvent && (
+              <Card className="mt-6" data-visiting>
+                <CardHeader>
+                  <h3 className="font-semibold text-foreground">Visiting</h3>
+                </CardHeader>
+                <CardContent>
+                  <dl className="space-y-3 text-sm">
+                    {visitingLines.map((line) => (
+                      <div key={line.topic}>
+                        <dt className="font-medium text-foreground">
+                          {line.topic === "parking"
+                            ? "Parking"
+                            : line.topic === "accessibility"
+                              ? "Accessibility"
+                              : "Pets"}
+                        </dt>
+                        <dd className="mt-0.5 text-muted-foreground">
+                          {line.source === "organizer" && (
+                            <>
+                              {line.text}
+                              {line.citedOn && (
+                                <span className="block text-xs">
+                                  Published by the organizer; recorded{" "}
+                                  {formatDateMedium(line.citedOn)}
+                                </span>
+                              )}
+                            </>
+                          )}
+                          {line.source === "venue_google" && (
+                            <>
+                              <span className="block text-xs">About the venue (from Google):</span>
+                              {line.phrases.join(", ")}
+                            </>
+                          )}
+                          {line.source === "unknown" && line.text}
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                  {organizerContact && visitingLines.some((l) => l.source !== "organizer") && (
+                    <p className="mt-3 text-xs text-muted-foreground">
+                      For fair-day arrangements, ask the organizer — contact details below.
+                    </p>
                   )}
                 </CardContent>
               </Card>
