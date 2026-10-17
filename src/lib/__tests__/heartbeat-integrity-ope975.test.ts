@@ -205,6 +205,7 @@ describe("OPE-975 — every probe's window is pinned", () => {
       // reply, and the disposition row is written seconds before that reply.
       // 72h only absorbs a stuck workflow, never a quiet week.
       "enrich-on-match-disposition": 72,
+      "venue-google-amenities": 72,
       "inbound-submit": 21 * 24,
       "inbound-forward-analysis": 72,
       "inbound-email-event-links": 21 * 24,
