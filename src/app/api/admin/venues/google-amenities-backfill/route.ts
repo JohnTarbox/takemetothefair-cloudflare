@@ -16,7 +16,8 @@ export const dynamic = "force-dynamic";
  * real run would make) and makes no Google call at all.
  */
 import { NextResponse } from "next/server";
-import { and, asc, eq, gt, gte, inArray, isNotNull, isNull, or } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNotNull, isNull, or } from "drizzle-orm";
+import { upcomingEndPredicate } from "@takemetothefair/db-schema";
 import { withInternalKey } from "@/lib/api/with-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { events, venues } from "@/lib/db/schema";
@@ -71,7 +72,7 @@ export const POST = withInternalKey(
             db
               .select({ id: events.venueId })
               .from(events)
-              .where(and(eq(events.status, "APPROVED"), gte(events.endDate, new Date())))
+              .where(and(eq(events.status, "APPROVED"), upcomingEndPredicate(new Date())))
           )
         : undefined;
     const where = and(
