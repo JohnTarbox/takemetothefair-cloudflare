@@ -16,10 +16,10 @@ export const dynamic = "force-dynamic";
  * real run would make) and makes no Google call at all.
  */
 import { NextResponse } from "next/server";
-import { and, asc, gt, isNotNull, isNull, or, eq } from "drizzle-orm";
+import { and, asc, eq, gt, gte, inArray, isNotNull, isNull, or } from "drizzle-orm";
 import { withInternalKey } from "@/lib/api/with-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
-import { venues } from "@/lib/db/schema";
+import { events, venues } from "@/lib/db/schema";
 import { fillVenueGoogleAmenities, type AmenityFillResult } from "@/lib/venues/google-amenity-fill";
 
 const MAX_PER_CALL = 50;
@@ -31,6 +31,8 @@ interface Body {
   after?: string;
   /** Also re-ask Google for columns holding "{}". */
   refetch_empty?: boolean;
+  /** "upcoming" = only venues behind an APPROVED event that has not ended. */
+  scope?: "all" | "upcoming";
 }
 
 export const POST = withInternalKey(
@@ -62,13 +64,24 @@ export const POST = withInternalKey(
           eq(venues.accessibility, ""),
           eq(venues.parking, "")
         );
+    const inScope =
+      body.scope === "upcoming"
+        ? inArray(
+            venues.id,
+            db
+              .select({ id: events.venueId })
+              .from(events)
+              .where(and(eq(events.status, "APPROVED"), gte(events.endDate, new Date())))
+          )
+        : undefined;
     const where = and(
       isNotNull(venues.googlePlaceId),
       needs,
+      inScope,
       body.after ? gt(venues.id, body.after) : undefined
     );
 
-    const total = await db.$count(venues, and(isNotNull(venues.googlePlaceId), needs));
+    const total = await db.$count(venues, and(isNotNull(venues.googlePlaceId), needs, inScope));
 
     const page = await db
       .select({ id: venues.id })
@@ -96,6 +109,7 @@ export const POST = withInternalKey(
 
     return NextResponse.json({
       dry_run: dryRun,
+      scope: body.scope === "upcoming" ? "upcoming" : "all",
       candidates_total: total,
       page_size: page.length,
       places_calls_this_page: dryRun
