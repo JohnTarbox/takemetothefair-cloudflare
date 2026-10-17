@@ -49,6 +49,7 @@ import { venues, adminActions } from "@/lib/db/schema";
 import { inArray, isNull, and, gt, ne, sql } from "drizzle-orm";
 import { logError } from "@/lib/logger";
 import { geocodeVenueRow } from "@/lib/venues/geocode-one";
+import { fillVenueGoogleAmenities } from "@/lib/venues/google-amenity-fill";
 import { PARKED, isSweepRefusal, recordSweepRefusal } from "@/lib/venues/geocode-sweep-park";
 import {
   nextCursor,
@@ -193,6 +194,14 @@ export const POST = withInternalKey(
       try {
         const outcome = await geocodeVenueRow(db, v, apiKey, force);
         results.push(outcome);
+        // OPE-1480 — a venue this sweep just matched also gets Google's
+        // accessibility + parking. No-op without a place id or once both
+        // columns hold an answer, so it never re-bills a venue.
+        try {
+          await fillVenueGoogleAmenities(db, v.id, apiKey, { actor: "venues_geocode:amenities" });
+        } catch {
+          /* additive; the pin outcome above stands */
+        }
         // OPE-408 rework — count the nightly sweep's refusals only. An explicit
         // id list is a person asking, and must not park anything.
         //
