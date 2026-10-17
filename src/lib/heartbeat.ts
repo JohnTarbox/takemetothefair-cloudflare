@@ -57,6 +57,7 @@ import {
   vendorCategoryWatchRuns,
   gembaObservations,
   promoterListArrivals,
+  venues,
 } from "@/lib/db/schema";
 import { SITE_URL } from "@takemetothefair/constants";
 import { NEAR_DUPLICATE_SWEEP_ACTION } from "@/lib/duplicates/near-duplicate-sweep";
@@ -124,6 +125,42 @@ async function maxTs(
  * DORMANT via a null `enabled_at` — it can't false-fire until John flips the flag.
  */
 export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
+  {
+    // OPE-1480 — proof that venue CREATION still pulls Google's accessibility +
+    // parking (geocodeNewVenue → fillVenueGoogleAmenities), so the OPE-1479
+    // "About the venue (from Google)" line does not decay into "Not published"
+    // the way coordinates did before OPE-408. Every new venue with a place id
+    // owes both columns (an answer, or "{}" = Google has none). Demand = the
+    // newest such venue created after the probe was armed; evidence = the
+    // newest such venue holding both. 72h: venue creation is human-paced, and
+    // the fill is synchronous with it, so a miss is a broken path, not a lull.
+    name: "venue-google-amenities",
+    ownerOpe: "OPE-1480",
+    label: "new venues get Google accessibility + parking",
+    priority: "P1",
+    expectedWindowHours: 72,
+    lastEvidenceAt: async (db) => {
+      const armed = sql`${venues.createdAt} > coalesce((select ${heartbeatProbes.enabledAt} from ${heartbeatProbes} where ${heartbeatProbes.probeName} = 'venue-google-amenities'), 4102444800)`;
+      const demand = await maxTs(
+        db,
+        venues,
+        venues.createdAt,
+        and(isNotNull(venues.googlePlaceId), armed)
+      );
+      const evidence = await maxTs(
+        db,
+        venues,
+        venues.createdAt,
+        and(
+          isNotNull(venues.googlePlaceId),
+          isNotNull(venues.accessibility),
+          isNotNull(venues.parking),
+          armed
+        )
+      );
+      return demandConditionalEvidence(demand, evidence, new Date());
+    },
+  },
   {
     // OPE-1089 — proof the intent classifier is still ANSWERING, not just running.
     //
