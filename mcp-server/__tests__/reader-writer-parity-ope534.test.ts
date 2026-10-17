@@ -51,6 +51,8 @@ const NON_COLUMN_WRITER_PARAMS = new Set([
   "event_id", // addresses the row; not stored on it
   "citation", // writes event_data_citations, a different table
   "pet_friendly_evidence", // OPE-1061 — also writes event_data_citations; the VALUE (pet_friendly) is read back
+  "parking_notes_evidence", // OPE-1481 — same shape: a citation row; parking_notes IS read back
+  "accessibility_notes_evidence", // OPE-1481 — same shape: a citation row; accessibility_notes IS read back
   "acknowledge_possible_duplicates", // suppresses a warning
   "defer_search_ping", // suppresses an IndexNow ping
 ]);
@@ -127,10 +129,14 @@ describe("reader / writer parity", () => {
     // If this list grows, the test above gets weaker. Pinning its contents
     // makes widening it a deliberate, reviewable act.
     expect([...NON_COLUMN_WRITER_PARAMS].sort()).toEqual([
+      // OPE-1481 — deliberate, same shape as pet_friendly_evidence: the
+      // evidence is a citation row; the note it supports IS read back.
+      "accessibility_notes_evidence",
       "acknowledge_possible_duplicates",
       "citation",
       "defer_search_ping",
       "event_id",
+      "parking_notes_evidence",
       // OPE-1061 — deliberate: the evidence is a citation row; the value it
       // supports (`pet_friendly`) IS a column and IS read back.
       "pet_friendly_evidence",

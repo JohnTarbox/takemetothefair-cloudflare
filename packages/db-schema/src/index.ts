@@ -176,9 +176,10 @@ export const venues = sqliteTable(
     contactPhone: text("contact_phone"),
     website: text("website"),
     description: text("description"),
-    // OPE-1061 (drizzle/0296) — the VENUE's own pet policy. Rendered on the
-    // venue page only, labelled as the venue's; never displayed as, merged
-    // into, or defaulted onto an event's answer.
+    // OPE-1061 (drizzle/0296) — the VENUE's own pet policy. Never displayed
+    // as, merged into, or defaulted onto an event's answer. One labelled
+    // exception (OPE-1479): the event page's Visiting box shows it as
+    // "At this venue: …" when the event's own value is UNSET.
     petFriendly: text("pet_friendly", { enum: ["UNSET", "YES", "NO", "NOT_PUBLISHED"] })
       .notNull()
       .default("UNSET"),
@@ -599,6 +600,13 @@ export const events = sqliteTable(
     petFriendly: text("pet_friendly", { enum: ["UNSET", "YES", "NO", "NOT_PUBLISHED"] })
       .notNull()
       .default("UNSET"),
+    // OPE-1481 (drizzle/0378) — what the ORGANIZER publishes about parking /
+    // accessibility at THIS event, as public visitor copy (≤300 chars). NULL =
+    // not published. Every value carries an event_data_citations row
+    // (field_name 'parking_notes' / 'accessibility_notes') with a verbatim
+    // excerpt; never inferred, never copied from the venue or Google.
+    parkingNotes: text("parking_notes"),
+    accessibilityNotes: text("accessibility_notes"),
     estimatedAttendance: integer("estimated_attendance"),
     eventScale: text("event_scale"), // SMALL, MEDIUM, LARGE, MAJOR
     applicationDeadline: integer("application_deadline", { mode: "timestamp" }),

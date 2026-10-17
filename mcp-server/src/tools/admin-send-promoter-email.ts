@@ -138,6 +138,12 @@ If you have a moment, could you confirm:
   • Opening and closing times each day
   • Whether you're accepting vendor or crafter applications, and where to apply
 
+And, if you know them — these are the questions visitors ask us most:
+
+  • Where should visitors park?
+  • Is the event wheelchair accessible?
+  • Are pets allowed?
+
 Just reply to this email — whatever you can tell us, we'll put straight onto the listing. There's no cost and nothing to sign up for.${link}
 
 Thank you,

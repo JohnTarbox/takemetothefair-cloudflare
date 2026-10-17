@@ -2,8 +2,9 @@
  * OPE-1479 — the event page's "Visiting" box: Parking, Accessibility, Pets.
  *
  * Each line says WHERE its answer comes from, in this order:
- *   1. organizer — the event's own published value (today only `pet_friendly`
- *      YES/NO, which carries a citation by construction, OPE-1061);
+ *   1. organizer — the event's own published value: `pet_friendly` YES/NO
+ *      (OPE-1061) and `parking_notes` / `accessibility_notes` (OPE-1481), each
+ *      of which carries a verbatim citation by construction;
  *   2. venue_google — Google's options for the BUILDING, labelled
  *      "About the venue (from Google):" and never presented as the event's own
  *      arrangements (fair-day parking can be a field lot or a shuttle);
@@ -44,6 +45,11 @@ export interface VisitingInput {
   /** venues.accessibility / venues.parking (Google Places JSON). */
   venueAccessibility: string | null | undefined;
   venueParking: string | null | undefined;
+  /** events.parking_notes / accessibility_notes — the organizer's own words (OPE-1481). */
+  parkingNotes?: string | null;
+  parkingCitedOn?: Date | null;
+  accessibilityNotes?: string | null;
+  accessibilityCitedOn?: Date | null;
   /** venues.pet_friendly — the VENUE's own rule; used only when the event's is UNSET. */
   venuePetFriendly: string | null | undefined;
   /** The event sits on a placeholder promoter — no organizer to point at. */
@@ -63,6 +69,16 @@ export function resolveVisitingLines(input: VisitingInput): VisitingLine[] {
   });
   const fromVenue = (topic: VisitingTopic, phrases: string[]): VisitingLine =>
     phrases.length > 0 ? { topic, source: "venue_google", phrases } : unknown(topic);
+  // The organizer's own note wins its line; Google's building data is the fallback.
+  const organizerOr = (
+    topic: VisitingTopic,
+    note: string | null | undefined,
+    citedOn: Date | null | undefined,
+    fallback: () => VisitingLine
+  ): VisitingLine =>
+    note?.trim()
+      ? { topic, source: "organizer", text: note.trim(), citedOn: citedOn ?? null }
+      : fallback();
 
   const pet = petPolicyDisplay(input.petFriendly);
   const eventPetUnset = input.petFriendly == null || input.petFriendly === "UNSET";
@@ -73,10 +89,14 @@ export function resolveVisitingLines(input: VisitingInput): VisitingLine[] {
       ? { topic: "pets", source: "venue_rule", text: VENUE_PET_TEXT[venuePet.tone] }
       : unknown("pets");
   return [
-    fromVenue("parking", googleAmenityPhrases(input.venueParking, GOOGLE_PARKING_LABELS)),
-    fromVenue(
-      "accessibility",
-      googleAmenityPhrases(input.venueAccessibility, GOOGLE_ACCESSIBILITY_LABELS)
+    organizerOr("parking", input.parkingNotes, input.parkingCitedOn, () =>
+      fromVenue("parking", googleAmenityPhrases(input.venueParking, GOOGLE_PARKING_LABELS))
+    ),
+    organizerOr("accessibility", input.accessibilityNotes, input.accessibilityCitedOn, () =>
+      fromVenue(
+        "accessibility",
+        googleAmenityPhrases(input.venueAccessibility, GOOGLE_ACCESSIBILITY_LABELS)
+      )
     ),
     petLine,
   ];

@@ -624,6 +624,10 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
     venueAccessibility: visitingFacts.venueAccessibility,
     venueParking: visitingFacts.venueParking,
     venuePetFriendly: visitingFacts.venuePetFriendly,
+    parkingNotes: visitingFacts.parkingNotes,
+    parkingCitedOn: visitingFacts.parkingCitedOn,
+    accessibilityNotes: visitingFacts.accessibilityNotes,
+    accessibilityCitedOn: visitingFacts.accessibilityCitedOn,
     placeholderPromoter: !ctaPromoter || isPlaceholderPromoter(ctaPromoter),
   });
 
