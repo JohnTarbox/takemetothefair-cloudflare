@@ -196,6 +196,8 @@ const SCHEMA_SQL = `
     primary_audience text NOT NULL DEFAULT '',
     public_access text NOT NULL DEFAULT '',
     access_notes text,
+    parking_notes text,
+    accessibility_notes text,
     registration_required integer NOT NULL DEFAULT 0,
     created_at integer,
     updated_at integer,

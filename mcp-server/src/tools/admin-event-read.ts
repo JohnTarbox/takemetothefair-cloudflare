@@ -130,6 +130,8 @@ export function registerAdminEventReadTools(server: McpServer, db: Db, auth: Aut
           eventScale: events.eventScale,
           indoorOutdoor: events.indoorOutdoor,
           petFriendly: events.petFriendly,
+          parkingNotes: events.parkingNotes,
+          accessibilityNotes: events.accessibilityNotes,
           imageUrl: events.imageUrl,
           imageFocalX: events.imageFocalX,
           imageFocalY: events.imageFocalY,
@@ -416,6 +418,9 @@ export function registerAdminEventReadTools(server: McpServer, db: Db, auth: Aut
             // (the OPE-497 shape). The event's OWN value; the venue's is under
             // `venue.pet_friendly` and must not be substituted for it.
             pet_friendly: event.petFriendly,
+            // OPE-1481 — the organizer's own notes; each value is cited.
+            parking_notes: event.parkingNotes,
+            accessibility_notes: event.accessibilityNotes,
             image_url: event.imageUrl,
             image_focal_x: event.imageFocalX,
             image_focal_y: event.imageFocalY,

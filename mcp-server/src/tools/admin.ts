@@ -168,6 +168,14 @@ import {
   writeEventPetCitation,
   writeVenuePetCitation,
 } from "./pet-friendly.js";
+import {
+  ACCESSIBILITY_NOTES_PARAM,
+  PARKING_NOTES_PARAM,
+  VISITOR_NOTE_EVIDENCE_PARAM,
+  VISITOR_NOTE_FIELDS,
+  visitorNoteParamError,
+  writeEventVisitorNoteCitation,
+} from "./visitor-notes.js";
 import { registerEnrichmentReviewTools } from "./admin-enrichment-review.js";
 import { registerPromoterEnrichmentReviewTools } from "./admin-promoter-enrichment-review.js";
 import { registerPerformerEnrichmentReviewTools } from "./admin-performer-enrichment-review.js";
@@ -1238,6 +1246,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .describe("Indoor/outdoor designation"),
       pet_friendly: PET_FRIENDLY_PARAM,
       pet_friendly_evidence: PET_FRIENDLY_EVIDENCE_PARAM,
+      parking_notes: PARKING_NOTES_PARAM,
+      parking_notes_evidence: VISITOR_NOTE_EVIDENCE_PARAM,
+      accessibility_notes: ACCESSIBILITY_NOTES_PARAM,
+      accessibility_notes_evidence: VISITOR_NOTE_EVIDENCE_PARAM,
       estimated_attendance: z.number().int().optional().describe("Expected attendance count"),
       event_scale: z
         .enum(["SMALL", "MEDIUM", "LARGE", "MAJOR"])
@@ -1391,6 +1403,22 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         };
       }
 
+      // OPE-1481 — the same rule for the organizer's parking / accessibility
+      // notes: no verbatim citation, no value. Refused before any write.
+      for (const field of VISITOR_NOTE_FIELDS) {
+        const refusal = visitorNoteParamError(
+          field,
+          params[field],
+          params[`${field}_evidence` as const]
+        );
+        if (refusal) {
+          return {
+            content: [jsonContent({ error: `${field}_evidence_required`, message: refusal })],
+            isError: true,
+          };
+        }
+      }
+
       // OPE-1151 — access_notes now renders publicly on every event. Refuse
       // the shapes analyst prose took in it BEFORE any row is written.
       const accessNotesProse = accessNotesProseReason(params.access_notes);
@@ -1449,6 +1477,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         { param: "indoor_outdoor", column: "indoorOutdoor" },
         // OPE-1061 — evidence is checked above and cited below.
         { param: "pet_friendly", column: "petFriendly" },
+        // OPE-1481 — evidence is checked above and cited below.
+        { param: "parking_notes", column: "parkingNotes" },
+        { param: "accessibility_notes", column: "accessibilityNotes" },
         { param: "estimated_attendance", column: "estimatedAttendance" },
         { param: "event_scale", column: "eventScale" },
         {
@@ -2576,6 +2607,20 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           evidence: params.pet_friendly_evidence,
           userId: auth.userId ?? null,
         });
+      }
+      // OPE-1481 — the notes' evidence, after the column write (never a
+      // citation without the value it supports).
+      for (const field of VISITOR_NOTE_FIELDS) {
+        const value = params[field];
+        if (value === undefined) continue;
+        const citationId = await writeEventVisitorNoteCitation(db, {
+          eventId: event.id,
+          field,
+          value,
+          evidence: params[`${field}_evidence` as const],
+          userId: auth.userId ?? null,
+        });
+        result[`${field}CitationId`] = citationId;
       }
       if (citationsInserted.length > 0) {
         result.citationsInserted = citationsInserted;
