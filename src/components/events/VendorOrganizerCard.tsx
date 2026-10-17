@@ -2,7 +2,7 @@ import { Mail, Phone, Store } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { OutboundEventLink } from "@/components/OutboundEventLink";
 import { formatDateMedium } from "@/lib/datetime";
-import type { VendorCta } from "@/lib/events/vendor-cta";
+import { telHref, type VendorCta } from "@/lib/events/vendor-cta";
 
 type OrganizerCta = Extract<VendorCta, { kind: "organizer_apply" | "organizer_contact" }>;
 
@@ -79,10 +79,7 @@ export function VendorOrganizerCard({ cta, eventName, eventSlug }: Props) {
                 {cta.contactPhone && (
                   <li className="flex items-center gap-2">
                     <Phone className="w-4 h-4 text-muted-foreground" aria-hidden />
-                    <a
-                      href={`tel:${cta.contactPhone.replace(/[^\d+]/g, "")}`}
-                      className="text-royal hover:underline"
-                    >
+                    <a href={telHref(cta.contactPhone)} className="text-royal hover:underline">
                       {cta.contactPhone}
                     </a>
                   </li>

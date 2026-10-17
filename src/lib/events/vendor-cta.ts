@@ -123,3 +123,30 @@ export function stickyBarLabel(cta: VendorCta): string | null {
       return null;
   }
 }
+
+/**
+ * OPE-1477 item 1 — the organizer contact shown above "Ask about this event",
+ * so a reader sees who to ask before they see our inbox. Only what is on the
+ * promoter row; NULL for a placeholder promoter, or when we hold no way to
+ * reach the organizer (a bare name is not a contact).
+ */
+export function resolveOrganizerContact(
+  promoter: VendorCtaPromoter | null,
+  websiteHref: string | null
+): {
+  name: string;
+  email: string | null;
+  phone: string | null;
+  websiteHref: string | null;
+} | null {
+  if (!promoter || isPlaceholderPromoter(promoter)) return null;
+  const email = promoter.contactEmail?.trim() || null;
+  const phone = promoter.contactPhone?.trim() || null;
+  if (!email && !phone && !websiteHref) return null;
+  return { name: promoter.companyName, email, phone, websiteHref };
+}
+
+/** `tel:` target — digits and a leading `+` only. */
+export function telHref(phone: string): string {
+  return `tel:${phone.replace(/[^\d+]/g, "")}`;
+}

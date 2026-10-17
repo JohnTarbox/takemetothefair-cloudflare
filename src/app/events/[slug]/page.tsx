@@ -23,6 +23,9 @@ import {
   FileText,
   CheckCircle,
   PawPrint,
+  Phone,
+  Mail,
+  Globe,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -61,7 +64,12 @@ import { auth } from "@/lib/auth";
 import { logError } from "@/lib/logger";
 import { VendorApplyButton } from "@/components/events/VendorApplyButton";
 import { VendorOrganizerCard } from "@/components/events/VendorOrganizerCard";
-import { resolveVendorCta, stickyBarLabel } from "@/lib/events/vendor-cta";
+import {
+  resolveOrganizerContact,
+  resolveVendorCta,
+  stickyBarLabel,
+  telHref,
+} from "@/lib/events/vendor-cta";
 import { getPromoterVendorContact } from "@/lib/events/vendor-cta-data";
 import { AddToCalendar } from "@/components/events/AddToCalendar";
 import { EventSchema } from "@/components/seo/EventSchema";
@@ -582,25 +590,28 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
     getCloudflareDb(),
     event.promoter?.id
   );
+  const ctaPromoter =
+    event.promoter && promoterVendorContact
+      ? {
+          id: event.promoter.id,
+          slug: event.promoter.slug,
+          companyName: event.promoter.companyName,
+          website: event.promoter.website,
+          ...promoterVendorContact,
+        }
+      : null;
   const vendorCta = resolveVendorCta({
     applicationHref: applicationHref ?? null,
     applicationDeadline: event.applicationDeadline ? new Date(event.applicationDeadline) : null,
-    promoter:
-      event.promoter && promoterVendorContact
-        ? {
-            id: event.promoter.id,
-            slug: event.promoter.slug,
-            companyName: event.promoter.companyName,
-            website: event.promoter.website,
-            ...promoterVendorContact,
-          }
-        : null,
+    promoter: ctaPromoter,
     promoterWebsiteHref: promoterWebsiteHref ?? null,
     signedIn: !!session,
     isVendor: !!vendorInfo,
     hasExistingApplication: !!vendorInfo?.existingApplication,
   });
   const vendorStickyLabel = stickyBarLabel(vendorCta);
+  // OPE-1477 item 1 — who to ask, shown above our own "Ask about this event".
+  const organizerContact = resolveOrganizerContact(ctaPromoter, promoterWebsiteHref ?? null);
 
   return (
     <>
@@ -1799,6 +1810,48 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
                     the authority. If you&apos;d rather ask us, this carries the event with it so we
                     know which one you mean.
                   </p>
+                  {organizerContact && (
+                    <div className="mt-3 text-sm" data-organizer-contact>
+                      <p className="font-medium text-foreground">{organizerContact.name}</p>
+                      <ul className="mt-1 space-y-1">
+                        {organizerContact.phone && (
+                          <li className="flex items-center gap-2">
+                            <Phone className="w-4 h-4 text-muted-foreground" aria-hidden />
+                            <a
+                              href={telHref(organizerContact.phone)}
+                              className="text-royal hover:text-navy"
+                            >
+                              {organizerContact.phone}
+                            </a>
+                          </li>
+                        )}
+                        {organizerContact.email && (
+                          <li className="flex items-center gap-2">
+                            <Mail className="w-4 h-4 text-muted-foreground" aria-hidden />
+                            <a
+                              href={`mailto:${organizerContact.email}`}
+                              className="text-royal hover:text-navy break-all"
+                            >
+                              {organizerContact.email}
+                            </a>
+                          </li>
+                        )}
+                        {organizerContact.websiteHref && (
+                          <li className="flex items-center gap-2">
+                            <Globe className="w-4 h-4 text-muted-foreground" aria-hidden />
+                            <a
+                              href={organizerContact.websiteHref}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-royal hover:text-navy"
+                            >
+                              Organizer website
+                            </a>
+                          </li>
+                        )}
+                      </ul>
+                    </div>
+                  )}
                   <a
                     href={askAboutHref}
                     className="mt-4 inline-flex items-center gap-1 text-sm text-royal hover:text-navy"
