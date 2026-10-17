@@ -1384,7 +1384,8 @@ interface CapturableAttachment {
    * lost.
    */
   contentId?: string;
-  disposition?: "attachment" | "inline" | null;
+  // postal-mime 4 (OPE-1401): any string — only "inline" is ever compared.
+  disposition?: "attachment" | "inline" | (string & {}) | null;
   related?: boolean;
 }
 

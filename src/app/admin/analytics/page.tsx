@@ -29,7 +29,6 @@ import {
   CheckCircle2,
   ClipboardList,
   DollarSign,
-  Facebook,
   FileText,
   Search,
   Sparkles,
@@ -115,6 +114,7 @@ import {
   type Ga4Env,
 } from "@/lib/ga4";
 import { safeHref } from "@takemetothefair/utils";
+import { FacebookIcon } from "@/components/icons/brand-icons";
 
 export const dynamic = "force-dynamic";
 
@@ -999,7 +999,7 @@ function FacebookReferralsCardView({ summary }: { summary: FacebookTrafficSummar
         tileId="overview.facebook-traffic"
         title="Facebook traffic (last 28d)"
         value="—"
-        icon={<Facebook className="w-5 h-5 text-muted-foreground" />}
+        icon={<FacebookIcon className="w-5 h-5 text-muted-foreground" />}
         iconColor="bg-muted"
         href="/admin/analytics/ga4"
         footer={<span className="text-xs text-muted-foreground">GA4 unavailable</span>}
@@ -1019,7 +1019,7 @@ function FacebookReferralsCardView({ summary }: { summary: FacebookTrafficSummar
       measurement={sessionsM}
       title="Facebook traffic (last 28d)"
       value={measurementText(sessionsM, fmt)}
-      icon={<Facebook className="w-5 h-5 text-royal" />}
+      icon={<FacebookIcon className="w-5 h-5 text-royal" />}
       iconColor="bg-info-soft"
       href="/admin/analytics/ga4"
       footer={
