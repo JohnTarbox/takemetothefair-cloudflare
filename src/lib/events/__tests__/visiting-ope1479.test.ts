@@ -23,6 +23,7 @@ function input(over: Partial<VisitingInput> = {}): VisitingInput {
     petCitedOn: null,
     venueAccessibility: null,
     venueParking: null,
+    venuePetFriendly: null,
     placeholderPromoter: false,
     ...over,
   };
@@ -71,6 +72,35 @@ describe("resolveVisitingLines", () => {
 
   it("NOT_PUBLISHED is unknown, never a no", () => {
     expect(resolveVisitingLines(input({ petFriendly: "NOT_PUBLISHED" }))[2].source).toBe("unknown");
+  });
+
+  it("venue pet rule: shown as the VENUE's, only when the event's own value is UNSET", () => {
+    // UNSET and NULL both mean nobody has looked at the event → the venue's rule shows.
+    for (const petFriendly of ["UNSET", null, undefined]) {
+      expect(resolveVisitingLines(input({ petFriendly, venuePetFriendly: "NO" }))[2]).toEqual({
+        topic: "pets",
+        source: "venue_rule",
+        text: "At this venue: service animals only — no pets",
+      });
+    }
+    expect(resolveVisitingLines(input({ venuePetFriendly: "YES" }))[2]).toMatchObject({
+      source: "venue_rule",
+      text: "At this venue: pets generally allowed",
+    });
+    // The event's own answer always wins — even when it disagrees with the venue.
+    expect(
+      resolveVisitingLines(input({ petFriendly: "YES", venuePetFriendly: "NO" }))[2]
+    ).toMatchObject({ source: "organizer", text: "Pets allowed, per the organizer" });
+    // NOT_PUBLISHED = we looked and the organizer is silent: the building's rule
+    // must not stand in for the event's.
+    expect(
+      resolveVisitingLines(input({ petFriendly: "NOT_PUBLISHED", venuePetFriendly: "NO" }))[2]
+        .source
+    ).toBe("unknown");
+    // A venue value that is itself UNSET / NOT_PUBLISHED adds nothing.
+    for (const venuePetFriendly of ["UNSET", "NOT_PUBLISHED", null]) {
+      expect(resolveVisitingLines(input({ venuePetFriendly }))[2].source).toBe("unknown");
+    }
   });
 
   it("placeholder promoter: 'Not published.' with no organizer named", () => {

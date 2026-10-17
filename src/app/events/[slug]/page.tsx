@@ -623,6 +623,7 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
     petCitedOn: visitingFacts.petCitedOn,
     venueAccessibility: visitingFacts.venueAccessibility,
     venueParking: visitingFacts.venueParking,
+    venuePetFriendly: visitingFacts.venuePetFriendly,
     placeholderPromoter: !ctaPromoter || isPlaceholderPromoter(ctaPromoter),
   });
 
@@ -1846,6 +1847,7 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
                               {line.phrases.join(", ")}
                             </>
                           )}
+                          {line.source === "venue_rule" && line.text}
                           {line.source === "unknown" && line.text}
                         </dd>
                       </div>

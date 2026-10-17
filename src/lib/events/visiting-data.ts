@@ -15,12 +15,17 @@ export async function getVisitingFacts(
 ): Promise<{
   venueAccessibility: string | null;
   venueParking: string | null;
+  venuePetFriendly: string | null;
   petCitedOn: Date | null;
 }> {
   const [venueRow, citation] = await Promise.all([
     venueId
       ? db
-          .select({ accessibility: venues.accessibility, parking: venues.parking })
+          .select({
+            accessibility: venues.accessibility,
+            parking: venues.parking,
+            petFriendly: venues.petFriendly,
+          })
           .from(venues)
           .where(eq(venues.id, venueId))
           .limit(1)
@@ -43,6 +48,7 @@ export async function getVisitingFacts(
   return {
     venueAccessibility: venueRow?.accessibility ?? null,
     venueParking: venueRow?.parking ?? null,
+    venuePetFriendly: venueRow?.petFriendly ?? null,
     petCitedOn: citation?.createdAt ?? null,
   };
 }
