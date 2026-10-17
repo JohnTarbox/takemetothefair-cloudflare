@@ -103,6 +103,35 @@ describe("resolveVisitingLines", () => {
     }
   });
 
+  it("OPE-1481: the organizer's own parking / accessibility note wins its line over Google", () => {
+    const d = new Date("2026-10-17T12:00:00Z");
+    const lines = resolveVisitingLines(
+      input({
+        venueAccessibility: AUGUSTA_ACCESS,
+        venueParking: AUGUSTA_PARKING,
+        parkingNotes: "  Park in the field lot off Route 4; shuttle every 15 min.  ",
+        parkingCitedOn: d,
+      })
+    );
+    expect(lines[0]).toEqual({
+      topic: "parking",
+      source: "organizer",
+      text: "Park in the field lot off Route 4; shuttle every 15 min.",
+      citedOn: d,
+    });
+    // No accessibility note → Google's building data still answers that line.
+    expect(lines[1]).toMatchObject({ topic: "accessibility", source: "venue_google" });
+    expect(
+      resolveVisitingLines(input({ accessibilityNotes: "Paved paths; accessible restrooms." }))[1]
+    ).toMatchObject({
+      source: "organizer",
+      text: "Paved paths; accessible restrooms.",
+      citedOn: null,
+    });
+    // A blank note is no note.
+    expect(resolveVisitingLines(input({ parkingNotes: "   " }))[0].source).toBe("unknown");
+  });
+
   it("placeholder promoter: 'Not published.' with no organizer named", () => {
     const lines = resolveVisitingLines(input({ placeholderPromoter: true }));
     expect(lines.every((l) => "text" in l && l.text === "Not published.")).toBe(true);
