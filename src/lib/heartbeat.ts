@@ -1475,7 +1475,14 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     label: "Booth-photo decision stage (auto-write + staging)",
     priority: "P1",
     // DORMANT until PHOTO_AUTOWRITE_ENABLED flips on — set `enabled_at` that day
-    // (drizzle/0164 seeded it NULL). Re-pointed 2026-09-13, while still dormant:
+    // (drizzle/0164 seeded it NULL). Armed 2026-09-26 (drizzle/0327) with the flip.
+    //
+    // OPE-1486 (2026-10-18): the flag is back to "false" (John's 09-30 ruling on
+    // OPE-240) and the probe is deliberately LEFT ARMED. Its evidence is the
+    // stage's decision, not the auto-write: with the gate off every would-write
+    // booth stages as `vendor.photo_proposed` (would_auto_write: true), so the
+    // flag going off cannot make this probe go silent. Silence here still means
+    // the stage stopped running. Re-pointed 2026-09-13, while still dormant:
     //
     // Evidence is the booth stage's DECISION for any photo — a staged proposal
     // OR an auto-write — not auto-writes alone. The original watched only
