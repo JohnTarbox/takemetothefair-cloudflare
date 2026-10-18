@@ -50,6 +50,14 @@ import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { MobileFilterDrawer } from "@/components/ui/mobile-filter-drawer";
 import { countPublicFilteredEvents, hasPublicFilters } from "@/lib/events-filter-count";
 import { withD1ReadLogged } from "@/lib/db/d1-resilience";
+import {
+  DAYS_FILTERS,
+  DAYS_FILTER_LABELS,
+  DAYS_FILTER_SHORT_LABELS,
+  daysFilterPredicate,
+  easternDateStr,
+  parseDaysFilter,
+} from "@/lib/events/days-filter";
 
 export const revalidate = 300; // Cache for 5 minutes
 
@@ -123,6 +131,8 @@ interface SearchParams {
   includePast?: string;
   includeTBD?: string;
   when?: string;
+  /** OPE-1487 — day-of-week filter: weekday-only | weekday-any | weekend-only | weekend-any. */
+  days?: string;
   myEvents?: string;
   favorites?: string;
   indoorOutdoor?: string;
@@ -236,6 +246,18 @@ async function getEventsOnce(
       if (searchParams.when === "week" || searchParams.when === "weekend") {
         conditions.push(hasOccurrenceInWindowOrUndated(new Date(), whenEnd));
       }
+    }
+
+    // OPE-1487 — Days filter. Pure SQL (a few bound params), so it composes
+    // with paging and the count. Only upcoming days count unless includePast.
+    const daysFilter = parseDaysFilter(searchParams.days);
+    if (daysFilter) {
+      conditions.push(
+        daysFilterPredicate(
+          daysFilter,
+          searchParams.includePast === "true" ? null : easternDateStr(new Date())
+        )
+      );
     }
 
     if (searchParams.query) {
@@ -555,6 +577,7 @@ async function getEventsOnce(
       searchParams.includePast ||
       searchParams.includeTBD ||
       searchParams.when ||
+      searchParams.days ||
       searchParams.myEvents ||
       searchParams.favorites
     );
@@ -629,6 +652,7 @@ async function getEventsOnce(
           categoryLen: searchParams.category?.length ?? 0,
           state: searchParams.state ?? null,
           when: searchParams.when ?? null,
+          days: searchParams.days ?? null,
           view: searchParams.view ?? null,
           includePast: searchParams.includePast ?? null,
           includeTBD: searchParams.includeTBD ?? null,
@@ -823,6 +847,29 @@ function EventsFilter({
             </option>
           ))}
         </select>
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium text-foreground mb-1" htmlFor="events-days">
+          Days
+        </label>
+        <select
+          id="events-days"
+          name="days"
+          defaultValue={parseDaysFilter(searchParams.days) ?? ""}
+          aria-describedby="events-days-hint"
+          className="w-full px-3 py-2 border border-input rounded-lg focus:border-royal focus:outline-none focus:ring-1 focus:ring-royal"
+        >
+          <option value="">Any day</option>
+          {DAYS_FILTERS.map((f) => (
+            <option key={f} value={f}>
+              {DAYS_FILTER_LABELS[f]}
+            </option>
+          ))}
+        </select>
+        <p id="events-days-hint" className="text-xs text-muted-foreground mt-1">
+          &ldquo;Only&rdquo; means every open day; &ldquo;Open on&rdquo; means at least one.
+        </p>
       </div>
 
       <div>
@@ -1123,7 +1170,9 @@ export default async function EventsPage({
               emptyMessage={
                 params.myEvents === "true"
                   ? "You are not participating in any events yet. Apply to events to see them here."
-                  : "No events match your filters. Try adjusting your search."
+                  : parseDaysFilter(params.days)
+                    ? `No events match “${DAYS_FILTER_SHORT_LABELS[parseDaysFilter(params.days)!]}” with your other filters. Try “Any day” or the other weekday/weekend option.`
+                    : "No events match your filters. Try adjusting your search."
               }
               currentPage={page}
               totalPages={totalPages}
