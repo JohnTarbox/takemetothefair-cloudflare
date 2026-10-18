@@ -138,6 +138,8 @@ interface SearchParams {
   cal_year?: string;
   /** CAL2 — anchor date ("YYYY-MM-DD") for the Week/Day/Custom time-grid views; default today. */
   cal_date?: string;
+  /** OPE-1488 — the calendar's focus date ("YYYY-MM-DD"), shared by every sub-view. */
+  date?: string;
   /** CAL2 — day count (2–7) for the Custom time-grid view; default 3. */
   cal_days?: string;
 }
@@ -734,6 +736,7 @@ function EventsFilter({
       {searchParams.cal_date && (
         <input type="hidden" name="cal_date" value={searchParams.cal_date} />
       )}
+      {searchParams.date && <input type="hidden" name="date" value={searchParams.date} />}
       {searchParams.cal_days && (
         <input type="hidden" name="cal_days" value={searchParams.cal_days} />
       )}

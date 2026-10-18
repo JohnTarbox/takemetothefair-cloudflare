@@ -12,7 +12,16 @@ import { CalendarYearClient } from "./calendar-year-client";
 
 const DISPLAY_TIME_ZONE = "America/New_York";
 
-export async function CalendarYearSSR({ year }: { year: number }) {
+export async function CalendarYearSSR({
+  year,
+  focusDate,
+  today,
+}: {
+  year: number;
+  /** OPE-1488 — carried through so a view switch from Year keeps the date. */
+  focusDate: string;
+  today: string;
+}) {
   const db = getCloudflareDb();
   const { presence, categoryColors } = await getYearPresence(db, year);
   const now = new Date().toISOString(); // host-pinned per request
@@ -24,6 +33,8 @@ export async function CalendarYearSSR({ year }: { year: number }) {
       now={now}
       displayTimeZone={DISPLAY_TIME_ZONE}
       theme={buildCalendarTheme(categoryColors)}
+      focusDate={focusDate}
+      today={today}
     />
   );
 }

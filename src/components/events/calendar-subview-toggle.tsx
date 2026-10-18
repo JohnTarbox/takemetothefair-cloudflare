@@ -7,6 +7,7 @@
 
 import Link from "next/link";
 import { CalendarDays, List, CalendarRange, Columns3, Square, LayoutGrid } from "lucide-react";
+import { withFocus } from "@/lib/calendar/focus-date";
 
 export type CalendarSubView = "month" | "agenda" | "year" | "week" | "day" | "custom";
 
@@ -36,23 +37,16 @@ const ITEMS: ReadonlyArray<readonly [CalendarSubView, string, typeof CalendarDay
 export function CalendarSubViewToggle({
   view,
   searchParams,
+  focusDate,
 }: {
   view: CalendarSubView;
   searchParams: Record<string, string | undefined>;
+  /** OPE-1488 — the date being viewed; every tab opens on it (Month → its month, Week → its week). */
+  focusDate: string;
 }) {
-  const hrefFor = (v: CalendarSubView) => {
-    const params = new URLSearchParams();
-    // Preserve every active filter; reset pagination. `cal`/`cal_year` are kept so
-    // returning to a view restores its last anchor.
-    for (const [k, val] of Object.entries(searchParams)) {
-      if (typeof val === "string" && val && k !== "page" && k !== "view" && k !== "cal_view") {
-        params.set(k, val);
-      }
-    }
-    params.set("view", "calendar");
-    params.set("cal_view", v);
-    return `/events?${params.toString()}`;
-  };
+  // Preserve every active filter; reset pagination; carry the focus date.
+  const hrefFor = (v: CalendarSubView) =>
+    `/events?${withFocus(searchParams, focusDate, v).toString()}`;
 
   return (
     <div
