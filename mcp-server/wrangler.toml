@@ -205,7 +205,15 @@ PHOTO_VISION_ENABLED = "true"
 # stages instead of publishing). The flip itself waits for John to confirm
 # directly — a relayed approval is not the approval. When it flips, also set
 # `enabled_at` on the `booth-autowrite` heartbeat probe (drizzle/0164).
-PHOTO_AUTOWRITE_ENABLED = "true"
+#
+# ⛔ BACK TO "false" 2026-10-18 (OPE-1486), enforcing John's 2026-09-30 ruling on
+# OPE-240: "keep PHOTO_AUTOWRITE_ENABLED OFF for now". That ruling was made on a
+# receipt that said `current: "false"`, but this line had read "true" since the
+# 09-26 flip (#1425) and nothing reverted it. On 10-10 it auto-wrote 5 vendors
+# at one show and 3 of the 5 were wrong (a misread name, an invented URL). Flip
+# it again only on John's direct word, and read the DEPLOYED value before you
+# quote a "current" value: `get_send_gates` → `write_gates`.
+PHOTO_AUTOWRITE_ENABLED = "false"
 # OPE-1394 / OPE-469 — commit gate for the replay_inbound_attachment MCP tool
 # (src/photo/replay.ts commitBlockedReason). A replay is DRY-RUN unless the call
 # passes commit:true AND this is exactly "true"; a committed replay writes to
