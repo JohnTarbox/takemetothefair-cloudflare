@@ -6,8 +6,7 @@
 // (which write the URL so back/forward + direct links work). All-day events render
 // in the top strip; events with confirmed hours (DQ4) render as timed hour blocks.
 
-import { useCallback } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useCallback, useRef } from "react";
 import {
   TimeGridCalendar,
   type CalendarEvent,
@@ -15,6 +14,8 @@ import {
   type TimeGridView,
 } from "@jonnyboats/calendar-react";
 import "@jonnyboats/calendar-react/styles";
+import { useCalendarNav } from "./calendar-nav";
+import { useCalendarDayLinks } from "./use-calendar-day-links";
 
 interface Props {
   events: CalendarEvent[];
@@ -38,44 +39,22 @@ export function CalendarTimeGridClient({
   anchor,
   customViewDays,
 }: Props) {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-
-  const pushWith = useCallback(
-    (mutate: (p: URLSearchParams) => void) => {
-      const params = new URLSearchParams(searchParams.toString());
-      params.set("view", "calendar");
-      params.delete("page");
-      mutate(params);
-      router.push(`/events?${params.toString()}`);
-    },
-    [router, searchParams]
-  );
+  // OPE-1488 — the anchor IS the focus date; every push writes `date=` (and keeps
+  // `cal`/`cal_year` in step) so Day → Week → Month stays on the same day.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const { pushFocus, navigateToDay, switchView } = useCalendarNav(anchor);
+  useCalendarDayLinks(rootRef, navigateToDay, switchView);
 
   // Prev/next/today → move the anchor (server refetches/re-windows).
   const onNavigate = useCallback(
-    (next: { anchor: string }) =>
-      pushWith((p) => {
-        p.set("cal_view", view);
-        p.set("cal_date", next.anchor);
-      }),
-    [pushWith, view]
-  );
-
-  // Click a day-column header → Day view for that date.
-  const onNavigateToDay = useCallback(
-    (date: string) =>
-      pushWith((p) => {
-        p.set("cal_view", "day");
-        p.set("cal_date", date);
-      }),
-    [pushWith]
+    (next: { anchor: string }) => pushFocus(next.anchor, view),
+    [pushFocus, view]
   );
 
   // `cal-legend-left` keeps the legend in a left sidebar, consistent with the
   // other calendar views (CSS in src/app/globals.css, >=768px).
   return (
-    <div className="cal-legend-left">
+    <div className="cal-legend-left" ref={rootRef}>
       <TimeGridCalendar
         events={events}
         now={now}
@@ -92,7 +71,8 @@ export function CalendarTimeGridClient({
         weekScrollAnchorHour={8}
         maxStripLanes={3}
         onNavigate={onNavigate}
-        onNavigateToDay={onNavigateToDay}
+        // Click a day-column header → Day view for that date.
+        onNavigateToDay={navigateToDay}
       />
     </div>
   );
