@@ -749,7 +749,35 @@ export function trackFunnelInteracted(funnel: "register" | "claim" | "submit") {
   sendBeacon(`${funnel}_form_interacted`, "funnel");
 }
 
-/** Fire when the funnel's form is actually submitted by the user. */
-export function trackFunnelSubmitted(funnel: "register" | "submit") {
-  sendBeacon(`${funnel}_submitted`, "funnel");
+/**
+ * Fire when the funnel's form is actually submitted by the user.
+ *
+ * OPE-1500 — `attempt` numbers the submits within one page mount. Step 2
+ * (`*_form_interacted`) is latched to first touch, but every submit ATTEMPT
+ * beacons step 3, so a visitor who retries after a validation or Turnstile
+ * error counted once on step 2 and N times on step 3. Real-visitor register read
+ * interacted→submitted = 125% (7d to 2026-10-19), and every excess row was a
+ * retry inside one visit. Retries are still beaconed, because a visitor
+ * resubmitting three times in a minute is a friction signal. The funnel read path
+ * counts only `attempt = 1` as the step.
+ */
+export function trackFunnelSubmitted(funnel: "register" | "submit", attempt: number) {
+  sendBeacon(`${funnel}_submitted`, "funnel", { attempt });
+}
+
+/**
+ * OPE-1500 — one per page mount (`useMemo(() => makeSubmitAttemptTracker(…), [])`):
+ * each call beacons the next attempt number, starting at 1. A re-mount is a new
+ * visit and starts again at 1. `send` is injectable for tests.
+ */
+export function makeSubmitAttemptTracker(
+  funnel: "register" | "submit",
+  send: typeof trackFunnelSubmitted = trackFunnelSubmitted
+): () => number {
+  let attempts = 0;
+  return () => {
+    attempts += 1;
+    send(funnel, attempts);
+    return attempts;
+  };
 }

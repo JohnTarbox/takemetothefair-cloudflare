@@ -216,7 +216,7 @@ describe("terminal funnel steps fire on the attempt", () => {
 
   it("suggest-event beacons submit_submitted BEFORE the POST", () => {
     const s = src("app/suggest-event/page.tsx");
-    const beacon = s.indexOf('trackFunnelSubmitted("submit")');
+    const beacon = s.indexOf("trackSubmitAttempt();");
     const post = s.indexOf('fetch("/api/suggest-event/submit"');
     expect(beacon).toBeGreaterThan(-1);
     expect(post).toBeGreaterThan(-1);
@@ -225,7 +225,7 @@ describe("terminal funnel steps fire on the attempt", () => {
 
   it("register beacons register_submitted BEFORE its POST", () => {
     const s = src("app/(auth)/register/page.tsx");
-    const beacon = s.indexOf('trackFunnelSubmitted("register")');
+    const beacon = s.indexOf("trackSubmitAttempt();");
     const post = s.indexOf('fetch("/api/auth/register"');
     expect(beacon).toBeGreaterThan(-1);
     if (post > -1) expect(beacon).toBeLessThan(post);
