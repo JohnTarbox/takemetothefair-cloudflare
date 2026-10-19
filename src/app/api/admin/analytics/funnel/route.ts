@@ -16,6 +16,11 @@ import {
   notSynthetic,
   syntheticCompletenessNote,
 } from "@/lib/analytics/synthetic-traffic";
+import {
+  firstSubmitAttempt,
+  submitRetry,
+  SUBMIT_ATTEMPT_SINCE,
+} from "@/lib/analytics/funnel-attempts";
 
 /**
  * GET /api/admin/analytics/funnel?days=7[&include_synthetic=true]  (OPE-364)
@@ -69,13 +74,31 @@ export async function GET(request: NextRequest) {
       and(
         inArray(analyticsEvents.eventName, [...ALL_FUNNEL_STEP_NAMES]),
         gte(analyticsEvents.timestamp, since),
-        includeSynthetic ? undefined : notSynthetic(analyticsEvents.properties)
+        includeSynthetic ? undefined : notSynthetic(analyticsEvents.properties),
+        // OPE-1500 — a retry is not a second visitor reaching the step.
+        firstSubmitAttempt(analyticsEvents.properties)
       )
     )
     .groupBy(
       analyticsEvents.eventName,
       sql`COALESCE(json_extract(${analyticsEvents.properties}, '$.device'), 'unknown')`
     );
+
+  // OPE-1500 — the retries the step count leaves out, per step. A visitor
+  // resubmitting several times in a minute is friction worth seeing.
+  const retryRows = await db
+    .select({ eventName: analyticsEvents.eventName, n: sql<number>`count(*)` })
+    .from(analyticsEvents)
+    .where(
+      and(
+        inArray(analyticsEvents.eventName, [...ALL_FUNNEL_STEP_NAMES]),
+        gte(analyticsEvents.timestamp, since),
+        includeSynthetic ? undefined : notSynthetic(analyticsEvents.properties),
+        submitRetry(analyticsEvents.properties)
+      )
+    )
+    .groupBy(analyticsEvents.eventName);
+  const submitRetries = Object.fromEntries(retryRows.map((r) => [r.eventName, Number(r.n ?? 0)]));
 
   // device -> step -> count, plus an "all" rollup.
   const byDevice = new Map<string, Record<string, number>>();
@@ -106,6 +129,7 @@ export async function GET(request: NextRequest) {
     since: since.toISOString(),
     includeSynthetic,
     funnels,
+    submitRetries,
     completeness: {
       summable: false,
       reason:
@@ -114,7 +138,11 @@ export async function GET(request: NextRequest) {
         "JS-disabled clients emit nothing. Not ad-blocked (first-party endpoint), so the usual " +
         "analytics undercount does not apply. Loss is roughly uniform across steps, so " +
         "ratioFromPrevious is trustworthy and counts are a FLOOR, not a total. " +
-        syntheticCompletenessNote(includeSynthetic),
+        syntheticCompletenessNote(includeSynthetic) +
+        ` Each *_submitted step counts the first submit attempt per page visit; retries ` +
+        `(properties.attempt >= 2, numbered from ${SUBMIT_ATTEMPT_SINCE}, OPE-1500) are left ` +
+        `out of the step and reported in submitRetries. Earlier rows carry no attempt and ` +
+        `each counts once, retries included.`,
       startedAt: "2026-08-16 (OPE-364) — rows before this date have no device dimension",
     },
   });

@@ -8,7 +8,13 @@
  * path counts only attempt 1.
  */
 import { describe, expect, it, vi } from "vitest";
+import Database from "better-sqlite3";
+import { drizzle } from "drizzle-orm/better-sqlite3";
+import { sql } from "drizzle-orm";
+import * as schema from "../../db/schema";
+import { analyticsEvents } from "../../db/schema";
 import { makeSubmitAttemptTracker } from "../../analytics";
+import { firstSubmitAttempt, submitRetry } from "../funnel-attempts";
 
 describe("makeSubmitAttemptTracker", () => {
   it("numbers attempts within one mount: retries are attempt 2, 3", () => {
@@ -34,5 +40,39 @@ describe("makeSubmitAttemptTracker", () => {
       ["submit", 1],
       ["submit", 1],
     ]);
+  });
+});
+
+describe("firstSubmitAttempt / submitRetry on real SQLite", () => {
+  it("counts attempt 1 and legacy rows as the step, and attempt 2+ as retries", () => {
+    const sqlite = new Database(":memory:");
+    sqlite.exec(`CREATE TABLE analytics_events (
+      id TEXT PRIMARY KEY, event_name TEXT NOT NULL, event_category TEXT NOT NULL,
+      timestamp INTEGER NOT NULL, properties TEXT DEFAULT '{}', user_id TEXT, source TEXT)`);
+    const rows: Array<[string, string, string]> = [
+      ["legacy", "register_submitted", JSON.stringify({ device: "mobile" })],
+      ["a1", "register_submitted", JSON.stringify({ attempt: 1 })],
+      ["a2", "register_submitted", JSON.stringify({ attempt: 2 })],
+      ["a3", "register_submitted", JSON.stringify({ attempt: 3 })],
+      ["view", "register_view", "{}"],
+    ];
+    const ins = sqlite.prepare(
+      "INSERT INTO analytics_events VALUES (?, ?, 'funnel', 1, ?, NULL, 'client_beacon')"
+    );
+    for (const [id, name, props] of rows) ins.run(id, name, props);
+    const db = drizzle(sqlite, { schema });
+    const ids = (where: ReturnType<typeof firstSubmitAttempt>) =>
+      db
+        .select({ id: analyticsEvents.id })
+        .from(analyticsEvents)
+        .where(where)
+        .orderBy(sql`id`)
+        .all()
+        .map((r) => r.id);
+
+    // Landmark: five rows exist, so a split of 3 + 2 is a filter, not an empty table.
+    expect(db.select({ id: analyticsEvents.id }).from(analyticsEvents).all()).toHaveLength(5);
+    expect(ids(firstSubmitAttempt(analyticsEvents.properties))).toEqual(["a1", "legacy", "view"]);
+    expect(ids(submitRetry(analyticsEvents.properties))).toEqual(["a2", "a3"]);
   });
 });
