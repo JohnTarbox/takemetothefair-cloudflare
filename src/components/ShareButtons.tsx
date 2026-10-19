@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Share2, Twitter, Facebook, Linkedin, Mail, Link2, Check } from "lucide-react";
+import { Share2, Mail, Link2, Check } from "lucide-react";
+import { FacebookIcon, LinkedinIcon, TwitterIcon } from "@/components/icons/brand-icons";
 import { IconButton } from "@/components/ui/icon-button";
 import { trackShare, type ShareMethod, type ShareEntityType } from "@/lib/analytics";
 
@@ -128,7 +129,7 @@ export function ShareButtons({
             role="menuitem"
             aria-label="Share on Twitter"
           >
-            <Twitter className="w-4 h-4" aria-hidden="true" />
+            <TwitterIcon className="w-4 h-4" aria-hidden="true" />
             Twitter
           </button>
           <button
@@ -140,7 +141,7 @@ export function ShareButtons({
             role="menuitem"
             aria-label="Share on Facebook"
           >
-            <Facebook className="w-4 h-4" aria-hidden="true" />
+            <FacebookIcon className="w-4 h-4" aria-hidden="true" />
             Facebook
           </button>
           <button
@@ -152,7 +153,7 @@ export function ShareButtons({
             role="menuitem"
             aria-label="Share on LinkedIn"
           >
-            <Linkedin className="w-4 h-4" aria-hidden="true" />
+            <LinkedinIcon className="w-4 h-4" aria-hidden="true" />
             LinkedIn
           </button>
           <a

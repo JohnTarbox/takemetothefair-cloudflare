@@ -109,7 +109,8 @@ export interface NestedMessage {
     filename: string | null;
     mimeType: string;
     content: ArrayBuffer | Uint8Array | string;
-    disposition?: "attachment" | "inline" | null;
+    // postal-mime 4 (OPE-1401): any string — only "inline" is ever compared.
+    disposition?: "attachment" | "inline" | (string & {}) | null;
     contentId?: string;
     related?: boolean;
   }>;
@@ -135,7 +136,8 @@ export interface ForwardCandidateAttachment {
   filename: string | null;
   mimeType: string;
   content: ArrayBuffer | Uint8Array | string;
-  disposition?: "attachment" | "inline" | null;
+  // postal-mime 4 (OPE-1401): any string — only "inline" is ever compared.
+  disposition?: "attachment" | "inline" | (string & {}) | null;
   contentId?: string;
   related?: boolean;
   /** postal-mime sets this on an rfc822 part it refused to open at the depth cap. */
