@@ -37,6 +37,7 @@
  * CDN. Requires PLAYWRIGHT_BASE_URL to be set to the production origin.
  */
 import { test, expect, type Page, type Locator } from "@playwright/test";
+import { SYNTHETIC_COOKIE, SYNTHETIC_SOURCES } from "../src/lib/analytics/synthetic-traffic";
 
 /** Widths that matter in the field: iPhone SE, iPhone 12/13/14, Pro Max. */
 const MOBILE_WIDTHS = [320, 390, 430];
@@ -111,6 +112,22 @@ test.describe("funnel canary (OPE-363)", () => {
     !process.env.PLAYWRIGHT_BASE_URL,
     "funnel canary runs against a deployed origin; set PLAYWRIGHT_BASE_URL"
   );
+
+  // OPE-1498 — mark this traffic as synthetic so the funnel read paths stop
+  // counting the canary as visitors (it was ~3 of 4 submit_view rows). A
+  // first-party COOKIE, not extraHTTPHeaders: a custom header goes on every
+  // request including Turnstile's cross-origin ones and forces a CORS
+  // preflight, which could change what this canary measures. Touches no
+  // assertion and nothing about the stop-before-POST boundary.
+  test.beforeEach(async ({ context }) => {
+    await context.addCookies([
+      {
+        name: SYNTHETIC_COOKIE,
+        value: SYNTHETIC_SOURCES.funnelCanary,
+        url: process.env.PLAYWRIGHT_BASE_URL!,
+      },
+    ]);
+  });
 
   for (const width of MOBILE_WIDTHS) {
     test(`register funnel is usable at ${width}px`, async ({ page }, testInfo) => {

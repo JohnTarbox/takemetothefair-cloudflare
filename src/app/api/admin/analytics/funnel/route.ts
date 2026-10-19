@@ -11,9 +11,18 @@ import {
   computeStepRatios,
   type Funnel,
 } from "@/lib/analytics/funnel-steps";
+import {
+  includeSyntheticParam,
+  notSynthetic,
+  syntheticCompletenessNote,
+} from "@/lib/analytics/synthetic-traffic";
 
 /**
- * GET /api/admin/analytics/funnel?days=7  (OPE-364)
+ * GET /api/admin/analytics/funnel?days=7[&include_synthetic=true]  (OPE-364)
+ *
+ * OPE-1498 — synthetic rows (the funnel canary, production-verify, self-declared
+ * crawlers) are EXCLUDED by default. On the low-volume funnels the canary was
+ * ~3 of 4 submit_view rows, so the default must be the visitor view.
  *
  * The read path. The ticket is explicit that an instrument nobody can read does
  * not close it — a half-built pipeline whose missing half is the connection is
@@ -43,6 +52,7 @@ export async function GET(request: NextRequest) {
   const daysRaw = Number(url.searchParams.get("days") ?? 7);
   const days = Number.isFinite(daysRaw) ? Math.min(Math.max(Math.trunc(daysRaw), 1), MAX_DAYS) : 7;
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const includeSynthetic = includeSyntheticParam(url);
 
   // One grouped scan for every step across every funnel, split by the
   // server-derived device dimension. json_extract on `properties` is why the
@@ -58,7 +68,8 @@ export async function GET(request: NextRequest) {
     .where(
       and(
         inArray(analyticsEvents.eventName, [...ALL_FUNNEL_STEP_NAMES]),
-        gte(analyticsEvents.timestamp, since)
+        gte(analyticsEvents.timestamp, since),
+        includeSynthetic ? undefined : notSynthetic(analyticsEvents.properties)
       )
     )
     .groupBy(
@@ -93,6 +104,7 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({
     windowDays: days,
     since: since.toISOString(),
+    includeSynthetic,
     funnels,
     completeness: {
       summable: false,
@@ -101,7 +113,8 @@ export async function GET(request: NextRequest) {
         "rate limit drops events past 60/hour anonymous (120 authenticated) PER CLIENT, and " +
         "JS-disabled clients emit nothing. Not ad-blocked (first-party endpoint), so the usual " +
         "analytics undercount does not apply. Loss is roughly uniform across steps, so " +
-        "ratioFromPrevious is trustworthy and counts are a FLOOR, not a total.",
+        "ratioFromPrevious is trustworthy and counts are a FLOOR, not a total. " +
+        syntheticCompletenessNote(includeSynthetic),
       startedAt: "2026-08-16 (OPE-364) — rows before this date have no device dimension",
     },
   });
