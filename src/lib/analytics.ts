@@ -666,7 +666,9 @@ export function trackNewsletterConfirm() {
 export function trackClaimView(
   entityType: "VENDOR" | "PROMOTER",
   entitySlug: string,
-  surface?: ClaimSurface
+  surface?: ClaimSurface,
+  // OPE-364 — which input admitted the view (see use-first-human-interaction).
+  trigger?: string
 ) {
   const params = {
     category: "funnel" as const,
@@ -675,7 +677,12 @@ export function trackClaimView(
     entity_slug: entitySlug,
   };
   trackEvent("claim_view", params);
-  sendBeacon("claim_view", "funnel", { entityType, entitySlug, ...(surface ? { surface } : {}) });
+  sendBeacon("claim_view", "funnel", {
+    entityType,
+    entitySlug,
+    ...(surface ? { surface } : {}),
+    ...(trigger ? { trigger } : {}),
+  });
 }
 
 // ── OPE-364 (2026-10-14) — claim-funnel steps from the claim WIZARD ─────────

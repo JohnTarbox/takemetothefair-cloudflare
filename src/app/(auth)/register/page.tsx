@@ -148,11 +148,11 @@ function RegisterForm() {
   // OPE-364 rework — once per mount on the first HUMAN interaction, not on
   // mount: a JS-rendering crawler mounts the page too, and on-mount
   // claim_view went from 23 rows all-time to 282 in ~13h of crawler traffic.
-  useOnFirstHumanInteraction(() => {
+  useOnFirstHumanInteraction((trigger) => {
     if (!claimSlug) return;
     const normalizedRole = defaultRole.toUpperCase();
     if (normalizedRole !== "VENDOR" && normalizedRole !== "PROMOTER") return;
-    trackClaimView(normalizedRole, claimSlug);
+    trackClaimView(normalizedRole, claimSlug, undefined, trigger);
   });
 
   // Turnstile state
