@@ -44,28 +44,37 @@ function fetchError(): globalThis.Error {
   return e;
 }
 
-const marker = (c: HTMLElement) =>
-  c.querySelector('meta[name="x-render-fault"]')?.getAttribute("content") ?? null;
+// OPE-1403 — React 19 hoists a rendered <meta> into document.head, so it is no
+// longer inside the render container. Query the whole document: that is what
+// the external body-shape probe sees (the tag is still in the served HTML,
+// hoisted). Exactly one, so a tag left over from another render cannot answer
+// for this one — RTL's auto-cleanup unmounts between tests and React removes
+// hoisted tags on unmount.
+const marker = () => {
+  const tags = document.querySelectorAll('meta[name="x-render-fault"]');
+  expect(tags).toHaveLength(1);
+  return tags[0].getAttribute("content");
+};
 
 describe("the render-fault marker", () => {
   it("marks a failed data fetch as fetch-error", () => {
-    const { container } = render(<Error error={fetchError()} reset={() => {}} />);
-    expect(marker(container)).toBe("fetch-error");
+    render(<Error error={fetchError()} reset={() => {}} />);
+    expect(marker()).toBe("fetch-error");
   });
 
   it("DISTINGUISHES a render crash from a failed fetch", () => {
     // The whole point of the `content` value. A marker that said the same thing
     // for both would tell an operator something happened and nothing about
     // what to do — a D1 outage and a component crash need different responses.
-    const { container } = render(
+    render(
       <Error error={new globalThis.Error("Cannot read properties of undefined")} reset={() => {}} />
     );
-    expect(marker(container)).toBe("render-error");
+    expect(marker()).toBe("render-error");
   });
 
   it("keeps noindex alongside it, so an outage cannot be indexed", () => {
-    const { container } = render(<Error error={fetchError()} reset={() => {}} />);
-    expect(container.querySelector('meta[name="robots"]')?.getAttribute("content")).toBe("noindex");
+    render(<Error error={fetchError()} reset={() => {}} />);
+    expect(document.querySelector('meta[name="robots"]')?.getAttribute("content")).toBe("noindex");
   });
 
   it("still renders the H1 the deploy smoke depends on", () => {

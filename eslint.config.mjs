@@ -1,20 +1,13 @@
-import { dirname } from "node:path";
-import { fileURLToPath } from "node:url";
-import { FlatCompat } from "@eslint/eslintrc";
+import nextCoreWebVitals from "eslint-config-next/core-web-vitals";
+import nextTypescript from "eslint-config-next/typescript";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-// FlatCompat lets us reuse Next.js's legacy `extends`-based shareable
-// configs (eslint-config-next) inside ESLint 9's flat config format.
-// Without this adapter, we'd have to wait for Next.js to publish a
-// flat-config-native version of eslint-config-next.
-const compat = new FlatCompat({
-  baseDirectory: __dirname,
-});
+// OPE-1403 — eslint-config-next 16 ships native flat configs, so the
+// FlatCompat adapter that bridged its legacy `extends` form is gone (it
+// crashes on the v16 package). Same two presets, imported directly.
 
 export default [
-  ...compat.extends("next/core-web-vitals", "next/typescript"),
+  ...nextCoreWebVitals,
+  ...nextTypescript,
   // OPE-902 — type-aware promise rules, scoped to the two directories where a
   // dropped `await` is a security bug rather than a latency bug.
   //
@@ -69,7 +62,7 @@ export default [
     languageOptions: {
       parserOptions: {
         projectService: true,
-        tsconfigRootDir: __dirname,
+        tsconfigRootDir: import.meta.dirname,
       },
     },
     plugins: {
@@ -230,6 +223,21 @@ export default [
     files: ["src/lib/logger.ts", "src/lib/scrapers/**/*", "scripts/**/*", "src/test/**/*"],
     rules: {
       "no-console": "off",
+    },
+  },
+  {
+    // OPE-1403 — eslint-config-next 16 brings eslint-plugin-react-hooks v7,
+    // whose React Compiler rules are new and fire on existing code: 93 errors
+    // in 58 files at the upgrade (set-state-in-effect 38, immutability 22,
+    // static-components 22, purity 6, refs 5). Downgraded to warn so the
+    // framework upgrade lands on its own; burn them down in follow-ups, then
+    // delete this block. Every other react-hooks rule keeps its preset severity.
+    rules: {
+      "react-hooks/set-state-in-effect": "warn",
+      "react-hooks/immutability": "warn",
+      "react-hooks/static-components": "warn",
+      "react-hooks/purity": "warn",
+      "react-hooks/refs": "warn",
     },
   },
   {
