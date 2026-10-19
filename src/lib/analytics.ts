@@ -128,10 +128,17 @@ export function trackApiError(endpoint: string, statusCode: number, detail?: str
 
 type BeaconCategory = "funnel" | "engagement" | "conversion";
 
-/** OPE-1165 — `{trafficMedium, trafficSource}` for a click beacon, or nothing. */
+/** OPE-1165 — `{trafficMedium, trafficSource}` for a click beacon, or nothing.
+ *  OPE-1496 — plus `campaign` (the landing `utm_campaign`) when there was one,
+ *  the same key the `/go/` redirect writes, so both report the same way. */
 function trafficProps(): Record<string, string> {
   const a = getTrafficAttribution();
-  return a ? { trafficMedium: a.medium, trafficSource: a.source } : {};
+  if (!a) return {};
+  return {
+    trafficMedium: a.medium,
+    trafficSource: a.source,
+    ...(a.campaign ? { campaign: a.campaign } : {}),
+  };
 }
 
 function sendBeacon(name: string, category: BeaconCategory, properties?: Record<string, unknown>) {
