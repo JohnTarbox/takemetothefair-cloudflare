@@ -154,6 +154,10 @@ describe("OPE-975 — every probe's window is pinned", () => {
       // the last 90 days, mean 14.1h. Sized off the MAX rather than the mean
       // because inbound volume is lumpy and a quiet week is normal.
       "classifier-execution": 240,
+      // OPE-1496 — PLACEHOLDER, dormant until the first digest links through
+      // /go/; its arming ticket measures the redirect-row inter-arrival then.
+      // Two weekly sends, because scanners prefetch every link on each send.
+      "go-click-redirect": 336,
       // OPE-1316 — PLACEHOLDER, dormant until its arming ticket measures the
       // success-row inter-arrival (none existed when it shipped).
       "import-url-extract-success": 336,

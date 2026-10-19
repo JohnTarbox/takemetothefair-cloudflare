@@ -126,6 +126,40 @@ async function maxTs(
  */
 export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
   {
+    // OPE-1496 — the `/go/<kind>/<slug>` newsletter click redirect writes one
+    // analytics_events row (source='redirect') per hit, human or scanner. Mail
+    // scanners prefetch every link in a sent message, so a digest that links
+    // through /go/ produces rows within minutes of every send even if nobody
+    // clicks. Silence across two weekly sends means the writer is dead.
+    //
+    // Seeded DORMANT (drizzle/0380, enabled_at NULL): today no digest links
+    // through /go/ yet — the analyst lane switches the vendor + weekend
+    // digests over once this ships. ARMING CONDITION: set enabled_at the day
+    // the first digest sends with /go/ links (follow-up ticket on OPE-1496).
+    name: "go-click-redirect",
+    ownerOpe: "OPE-1496",
+    label: "Newsletter /go/ click redirect logs its clicks",
+    priority: "P1",
+    expectedWindowHours: 14 * 24,
+    // Keyed on the four names first so idx_analytics_events_name_ts narrows
+    // the scan; `source` has no index of its own.
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        analyticsEvents,
+        analyticsEvents.timestamp,
+        and(
+          inArray(analyticsEvents.eventName, [
+            "outbound_application_click",
+            "outbound_ticket_click",
+            "outbound_application_click_scanner",
+            "outbound_ticket_click_scanner",
+          ]),
+          eq(analyticsEvents.source, "redirect")
+        )
+      ),
+  },
+  {
     // OPE-1480 — proof that venue CREATION still pulls Google's accessibility +
     // parking (geocodeNewVenue → fillVenueGoogleAmenities), so the OPE-1479
     // "About the venue (from Google)" line does not decay into "Not published"
