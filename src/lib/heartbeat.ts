@@ -1437,16 +1437,18 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     // live value. The silence this watches for is the specimen's: passes keep
     // finding defects and writing them as prose, and the queue goes quiet.
     //
-    // ⚠️ SHIPS DORMANT (`enabled_at` NULL, drizzle/0295). The path is new and
-    // has produced two rows (the backfill), so there is no inter-arrival to
-    // size a window from, and 720h below is a placeholder, not a measurement —
-    // the same stance as roster-vendor-link (OPE-847). Arming is its own
-    // ticket: measure the gaps once passes use the argument, then set both.
+    // Shipped dormant (drizzle/0295, 720h placeholder); ARMED by OPE-1083
+    // (drizzle/0379) on a measurement. Prod, 2026-09-19 → 10-19: 28 rows, 26
+    // organic (two hand backfills on 09-19 excluded). They arrive in batches
+    // per verification pass, on 10 distinct pass days; the gaps between
+    // passes run from under a day to 130h (09-23→09-29), 144h (10-11→10-17)
+    // and 166h (10-04→10-11), the longest. 336h is ~2× that longest gap: a
+    // normal slow week does not page, two silent weeks do.
     name: "citation-live-defect",
     ownerOpe: "OPE-1065",
     label: "Citation live-defect findings → event_discrepancies",
     priority: "P1",
-    expectedWindowHours: 720,
+    expectedWindowHours: 336,
     lastEvidenceAt: (db) =>
       maxTs(
         db,
