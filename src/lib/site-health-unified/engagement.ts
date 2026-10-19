@@ -23,6 +23,7 @@ import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "@/lib/db/schema";
 import { analyticsEvents, supportObligations } from "@/lib/db/schema";
 import { notSynthetic } from "@/lib/analytics/synthetic-traffic";
+import { firstSubmitAttempt } from "@/lib/analytics/funnel-attempts";
 
 type Db = DrizzleD1Database<typeof schema>;
 
@@ -235,7 +236,9 @@ export async function getEmailFacet(
           sql`${analyticsEvents.eventName} IN ('newsletter_submit','newsletter_confirm','register_view','register_form_interacted','register_submitted')`,
           // OPE-1498 — the funnel canary walks /register daily (12 views + 9
           // interactions per run); without this it is most of the register row.
-          notSynthetic(analyticsEvents.properties)
+          notSynthetic(analyticsEvents.properties),
+          // OPE-1500 — register_submitted counts the first attempt per visit.
+          firstSubmitAttempt(analyticsEvents.properties)
         )
       )
       .groupBy(analyticsEvents.eventName),

@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState, useCallback, useRef, useEffect } from "react";
+import { Suspense, useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
@@ -15,7 +15,7 @@ import {
   trackClaimView,
   trackFunnelView,
   trackFunnelInteracted,
-  trackFunnelSubmitted,
+  makeSubmitAttemptTracker,
 } from "@/lib/analytics";
 import { type FieldErrors, validateAll, validateField } from "@/lib/validations/field-errors";
 import { checkEmailDomain } from "@/lib/auth/email-domain-check";
@@ -252,6 +252,7 @@ function RegisterForm() {
   // start dropping the very steps being measured. A ref, not state, so latching
   // costs no re-render.
   const interactionTracked = useRef(false);
+  const trackSubmitAttempt = useMemo(() => makeSubmitAttemptTracker("register"), []);
   const markInteracted = useCallback(() => {
     if (interactionTracked.current) return;
     interactionTracked.current = true;
@@ -300,7 +301,11 @@ function RegisterForm() {
     // `register_submitted` measures "did they get as far as trying". A step
     // that only fired on success would hide a form that cannot be submitted —
     // the same blind spot as counting views and conversions alone.
-    trackFunnelSubmitted("register");
+    // OPE-1500 — numbered per mount; the read path counts attempt 1 as the
+    // step. markInteracted() first, so `submitted <= interacted` holds by
+    // construction even for a submit no change/focus event preceded.
+    markInteracted();
+    trackSubmitAttempt();
 
     // OPE-150 — never let the user submit into the unsolvable server-side
     // "complete the security check" dead-end when the widget can't exist.
