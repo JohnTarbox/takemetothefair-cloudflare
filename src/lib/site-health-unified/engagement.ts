@@ -22,6 +22,7 @@ import { and, desc, eq, gte, lt, sql } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "@/lib/db/schema";
 import { analyticsEvents, supportObligations } from "@/lib/db/schema";
+import { notSynthetic } from "@/lib/analytics/synthetic-traffic";
 
 type Db = DrizzleD1Database<typeof schema>;
 
@@ -231,7 +232,10 @@ export async function getEmailFacet(
         and(
           gte(analyticsEvents.timestamp, since),
           lt(analyticsEvents.timestamp, now),
-          sql`${analyticsEvents.eventName} IN ('newsletter_submit','newsletter_confirm','register_view','register_form_interacted','register_submitted')`
+          sql`${analyticsEvents.eventName} IN ('newsletter_submit','newsletter_confirm','register_view','register_form_interacted','register_submitted')`,
+          // OPE-1498 — the funnel canary walks /register daily (12 views + 9
+          // interactions per run); without this it is most of the register row.
+          notSynthetic(analyticsEvents.properties)
         )
       )
       .groupBy(analyticsEvents.eventName),

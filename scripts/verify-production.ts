@@ -7,6 +7,7 @@
  */
 
 import { chromium } from "playwright";
+import { SYNTHETIC_COOKIE, SYNTHETIC_SOURCES } from "../src/lib/analytics/synthetic-traffic";
 
 const BASE_URL = process.env.BASE_URL || "https://meetmeatthefair.com";
 
@@ -35,6 +36,12 @@ async function main() {
     userAgent:
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
   });
+  // OPE-1498 — this spoofs a desktop Windows UA, so without the marker its
+  // beacon rows (filter_applied etc.) read as a visitor's. Cookie, not header:
+  // see src/lib/analytics/synthetic-traffic.ts.
+  await context.addCookies([
+    { name: SYNTHETIC_COOKIE, value: SYNTHETIC_SOURCES.productionVerify, url: BASE_URL },
+  ]);
 
   try {
     // ── Homepage Tests ─────────────────────────────────────────
