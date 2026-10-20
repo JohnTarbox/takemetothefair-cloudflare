@@ -934,6 +934,57 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     },
   },
   {
+    // OPE-1505 — proof the no-URL submit branch RECORDS its text match. The
+    // matcher (mcp-server/src/inbound/text-event-match.ts) runs on every no-URL
+    // submission, before and independent of the AI extraction — on 01ad5525 the
+    // extraction timed out and no match was ever attempted — and writes one
+    // `submit/text-match` row per run whatever the outcome (matched / ambiguous
+    // / below-threshold / no-candidate / no-query, in `detail`). So "it never
+    // matches" is countable from those rows, and THIS probe catches the row
+    // disappearing, which would make that count read 0 for the wrong reason.
+    //
+    // DEMAND-CONDITIONAL on exactly the free-text-extract-record demand: every
+    // such email enters the same branch, and the text match runs first in it.
+    //
+    // ⚠️ SHIPS DORMANT (`enabled_at` NULL, drizzle/0384) for the same reason as
+    // its sibling: the writer is in the separately deployed MCP Worker.
+    name: "text-match-record",
+    ownerOpe: "OPE-1505",
+    label: "Inbound no-URL submission → text-match record",
+    priority: "P1",
+    expectedWindowHours: 24,
+    lastEvidenceAt: async (db) => {
+      const armed = await db
+        .select({ enabledAt: heartbeatProbes.enabledAt })
+        .from(heartbeatProbes)
+        .where(eq(heartbeatProbes.probeName, "text-match-record"))
+        .limit(1);
+      const since = armed[0]?.enabledAt ?? null;
+      if (!since) return null; // dormant — the evaluator ignores it anyway
+      return demandConditionalEvidence(
+        await maxTs(
+          db,
+          inboundEmails,
+          inboundEmails.receivedAt,
+          and(
+            eq(inboundEmails.classifiedSubIntent, "free_text"),
+            isNull(inboundEmails.parsedUrl),
+            eq(inboundEmails.attachmentCount, 0),
+            eq(inboundEmails.routedToWorkflow, "submit-pipeline"),
+            gte(inboundEmails.receivedAt, since)
+          )
+        ),
+        await maxTs(
+          db,
+          workflowRunSteps,
+          workflowRunSteps.recordedAt,
+          eq(workflowRunSteps.stepName, "submit/text-match")
+        ),
+        new Date()
+      );
+    },
+  },
+  {
     // OPE-403 — proof the lane still RECORDS what it stored.
     //
     // The probe directly above watches `intent='photo_intake'` arrivals, and it

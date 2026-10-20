@@ -375,7 +375,8 @@ export type EnrichMatchPath =
   | "multi-source" // body + URLs, a candidate matched
   | "multi-url" // N URLs, one matched
   | "occurrence-exists" // submit route: the edition already exists under its series
-  | "possible-duplicate"; // submit route created a PENDING row tagged possible_duplicate_of
+  | "possible-duplicate" // submit route created a PENDING row tagged possible_duplicate_of
+  | "text-match"; // OPE-1505 — no URL, extraction failed, the email's TEXT named a listed event
 
 export interface StageEnrichInput {
   existingEventId: string;
