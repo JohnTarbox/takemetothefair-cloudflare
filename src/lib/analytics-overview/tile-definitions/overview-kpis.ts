@@ -89,7 +89,7 @@ export const OVERVIEW_KPI_TILES = {
     measures:
       "OPE-1511 — share of contact emails (mail from a non-rejected promoter contact, one per email, not per intent row) that got a human reply within 1 New York business day, with the prior window beside it. The footer adds coverage, their reply rate to our outreach, and leakage counts.",
     source:
-      "D1 `promoter_contacts`, `inbound_emails`, `email_send_ledger` (reply:manual* / operator:outbound), `promoter_outreach_attempts`, `support_obligations`. The same computation as the MCP tool get_contact_scorecard, whose description lists every query.",
+      "D1 promoter-contacts table, `inbound_emails`, `email_send_ledger` (reply:manual* / operator:outbound), `promoter_outreach_attempts`, `support_obligations`. The same computation as the MCP tool get_contact_scorecard, whose description lists every query.",
     window:
       "Fixed 28 days rolling from now, compared with the 28 days before. Ignores the window selector. Live D1 read.",
     caveats:
