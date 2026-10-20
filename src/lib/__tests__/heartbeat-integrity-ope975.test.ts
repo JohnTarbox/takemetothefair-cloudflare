@@ -160,7 +160,8 @@ describe("OPE-975 — every probe's window is pinned", () => {
       "go-click-redirect": 336,
       // OPE-1316 — PLACEHOLDER, dormant until its arming ticket measures the
       // success-row inter-arrival (none existed when it shipped).
-      "import-url-extract-success": 336,
+      // OPE-1329 — measured: 33 rows, max gap 24.01h (daily holdout sampler) → 3 × max.
+      "import-url-extract-success": 72,
       // OPE-1352 — an invariant, not a cadence: any inbound left on a loser for
       // a day is a writer that skipped the repoint. Dormant until the backfill.
       "inbound-follows-duplicate-keeper": 24,

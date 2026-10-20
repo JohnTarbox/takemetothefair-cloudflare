@@ -2274,15 +2274,21 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     // logged, so "the extractor went quiet" and "nothing was submitted" looked
     // identical.
     //
-    // DORMANT (drizzle/0357, enabled_at NULL). The window below is a
-    // PLACEHOLDER: no success rows existed when this shipped, so there was no
-    // inter-arrival to measure. The arming ticket measures it and sets
-    // enabled_at; do not arm on this number.
+    // Seeded dormant (drizzle/0357). ARMED 2026-10-20 (OPE-1329, drizzle/0383),
+    // window MEASURED on prod 2026-10-07 → 10-19: 33 rows, 32 gaps, largest
+    // 24.01h, p90 24.0h, mean ~9.75h. By caller: holdout-sampler 29 (one daily
+    // 06:10Z run, so it sets the cadence), email-workflow 2, internal-unnamed 2.
+    // 72h = 3 × the largest gap: two consecutive missed sampler days fire it.
+    //
+    // ⚠️ What it can and cannot see: it proves the shared extractor endpoint
+    // still answers, because the daily sampler calls it. It cannot tell the
+    // email path alone going quiet (n=2 in 13 days, nothing to size a window
+    // from) — that would need its own per-caller probe once there is volume.
     name: "import-url-extract-success",
     ownerOpe: "OPE-1316",
     label: "import-url AI extractor returning answers",
     priority: "P1",
-    expectedWindowHours: 336,
+    expectedWindowHours: 72,
     lastEvidenceAt: (db) =>
       maxTs(
         db,
