@@ -24,7 +24,8 @@
  */
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { and, eq, gte, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { upcomingEndPredicate } from "@takemetothefair/db-schema";
 import {
   EVENT_APPLICATION_LANES,
   VENDOR_CAPACITY_STATUSES,
@@ -397,8 +398,6 @@ export function registerEventApplicationTools(server: McpServer, db: Db, auth: A
     async (params) => {
       const lane = params.lane ?? "commercial_vendor";
       const now = new Date();
-      // A day of slack on the SQL side; the calendar-day rule below is the gate.
-      const floor = new Date(now.getTime() - 36 * 3600 * 1000);
       const rows = await db
         .select({
           app: eventApplications,
@@ -420,7 +419,9 @@ export function registerEventApplicationTools(server: McpServer, db: Db, auth: A
             eq(eventApplications.capacityStatus, "OPEN"),
             inArray(events.status, ["APPROVED", "TENTATIVE"]),
             isNull(events.mergedInto),
-            gte(events.endDate, floor)
+            // OPE-1375 — the one "still upcoming" rule (COALESCE(end, start),
+            // 24h grace for the noon-UTC anchor); never an inline end_date compare.
+            upcomingEndPredicate(now)
           )
         )
         .orderBy(
@@ -432,9 +433,6 @@ export function registerEventApplicationTools(server: McpServer, db: Db, auth: A
       const examined = rows.length;
       const calls = rows
         .filter((r) => isVendorCallCurrent(r.app, now))
-        .filter(
-          (r) => !r.endDate || toIsoDateOnlyInVenueZone(r.endDate) >= toIsoDateOnlyInVenueZone(now)
-        )
         .map((r) => ({ r, app: presentApplication(r.app) }))
         .filter(({ app }) => !params.with_categories_only || app.categories_wanted.length > 0)
         .slice(0, params.limit ?? 50)
