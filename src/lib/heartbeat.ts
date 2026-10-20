@@ -985,6 +985,57 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     },
   },
   {
+    // OPE-1506 — proof that auto-apply APPLIES. A trusted sender's or verified
+    // organizer's unambiguous match with an empty, allowed field writes it in
+    // the same step and records `dedup.enrich_applied`. The OPE-1152 shape this
+    // guards against: a writer that ran on every match and applied ONE row in
+    // its lifetime, while every match row looked healthy.
+    //
+    // DEMAND-CONDITIONAL: demand is a staged enrich row (`dedup.enrich_proposed`
+    // / `dedup.enrich_nothing_staged`) whose payload records a qualifying
+    // sender (`autoApply.basis` set) AND at least one eligible field. Such a
+    // match owes an applied row within seconds; 24h outlasts a slow queue.
+    // A field filled meanwhile is a legitimate non-apply, so a single miss
+    // reads red until the next qualifying match applies — that is the intent.
+    //
+    // ⚠️ SHIPS DORMANT (`enabled_at` NULL, drizzle/0385): the writer is in the
+    // separately deployed MCP Worker. Arm once that deploy is live.
+    name: "enrich-auto-apply",
+    ownerOpe: "OPE-1506",
+    label: "Enrich-on-match auto-apply (trusted/verified senders) → dedup.enrich_applied",
+    priority: "P1",
+    expectedWindowHours: 24,
+    lastEvidenceAt: async (db) => {
+      const armed = await db
+        .select({ enabledAt: heartbeatProbes.enabledAt })
+        .from(heartbeatProbes)
+        .where(eq(heartbeatProbes.probeName, "enrich-auto-apply"))
+        .limit(1);
+      const since = armed[0]?.enabledAt ?? null;
+      if (!since) return null; // dormant — the evaluator ignores it anyway
+      return demandConditionalEvidence(
+        await maxTs(
+          db,
+          adminActions,
+          adminActions.createdAt,
+          and(
+            inArray(adminActions.action, ["dedup.enrich_proposed", "dedup.enrich_nothing_staged"]),
+            sql`json_extract(${adminActions.payloadJson}, '$.autoApply.basis') IS NOT NULL`,
+            sql`json_array_length(json_extract(${adminActions.payloadJson}, '$.autoApply.eligible')) > 0`,
+            gte(adminActions.createdAt, since)
+          )
+        ),
+        await maxTs(
+          db,
+          adminActions,
+          adminActions.createdAt,
+          eq(adminActions.action, "dedup.enrich_applied")
+        ),
+        new Date()
+      );
+    },
+  },
+  {
     // OPE-403 — proof the lane still RECORDS what it stored.
     //
     // The probe directly above watches `intent='photo_intake'` arrivals, and it

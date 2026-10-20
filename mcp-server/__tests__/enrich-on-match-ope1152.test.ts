@@ -161,6 +161,7 @@ describe("computeEnrichDisposition — widened fill-empty scope", () => {
       proposals: {},
       extractedFields: [],
       unstagedFields: [],
+      differing: {},
     });
   });
 });
