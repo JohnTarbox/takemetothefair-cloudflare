@@ -295,6 +295,13 @@ const ROSTER_CITATION_MAX_CHARS = 2000;
 // strand the OCR. Non-transient errors fail fast (see isTransientAiError).
 const MAX_OCR_ATTEMPTS = 3;
 
+// OPE-1316 Ask 2 — a step that WAITS on /api/admin/import-url/extract must
+// outlast the route's unattended AI limit (UNATTENDED_AI_EXTRACT_TIMEOUT_MS,
+// 90 s, in src/lib/url-import/ai-extractor.ts) plus the page fetch and the
+// round trip. At 30 s the step killed every slow-but-successful extraction the
+// route had just been allowed to finish.
+const EXTRACT_STEP_TIMEOUT = "120 seconds" as const;
+
 // OPE-1057 rework — the B2 free-text extraction: one attempt, plus one more
 // only when the first was a Workers AI timeout. Step names must be
 // deterministic across replays, so each attempt has its own fixed label.
@@ -2653,7 +2660,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         );
         const extractStepOpts = {
           retries: { limit: 1, delay: "10 seconds", backoff: "constant" },
-          timeout: "30 seconds",
+          timeout: EXTRACT_STEP_TIMEOUT,
         } as const;
         let extracted: import("../email-handlers/submit.js").SubmitExtractResult | null = null;
         let extractError: unknown = null;
@@ -2858,7 +2865,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
               "submit/fetch-fail-body-extract",
               {
                 retries: { limit: 1, delay: "10 seconds", backoff: "constant" },
-                timeout: "30 seconds",
+                timeout: EXTRACT_STEP_TIMEOUT,
               },
               () => submitFreeTextExtract(this.env, rawBody)
             );
@@ -2926,7 +2933,10 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         "submit/ai-extract",
         // limit:1 — audit doc found Workers AI load-timeouts don't recover
         // on tight retries; submitExtract throws NonRetryableError anyway.
-        { retries: { limit: 1, delay: "10 seconds", backoff: "constant" }, timeout: "30 seconds" },
+        {
+          retries: { limit: 1, delay: "10 seconds", backoff: "constant" },
+          timeout: EXTRACT_STEP_TIMEOUT,
+        },
         () => submitExtract(this.env, fetched, rowSnapshot.bodyTextExcerpt ?? "")
       );
     } catch (e) {
@@ -2964,7 +2974,10 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       if (!isZeroEvents || !bodyText || bodyText.trim().length === 0) throw e;
       extracted = await step.do(
         "submit/free-text-fallback",
-        { retries: { limit: 1, delay: "10 seconds", backoff: "constant" }, timeout: "30 seconds" },
+        {
+          retries: { limit: 1, delay: "10 seconds", backoff: "constant" },
+          timeout: EXTRACT_STEP_TIMEOUT,
+        },
         () => submitFreeTextExtract(this.env, bodyText)
       );
     }
@@ -4460,7 +4473,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             stepLabel,
             {
               retries: { limit: 1, delay: "10 seconds", backoff: "constant" },
-              timeout: "30 seconds",
+              timeout: EXTRACT_STEP_TIMEOUT,
             },
             () => submitFreeTextExtract(this.env, source.text)
           );
@@ -4551,7 +4564,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           `${labelPrefix}/ai-extract`,
           {
             retries: { limit: 1, delay: "10 seconds", backoff: "constant" },
-            timeout: "30 seconds",
+            timeout: EXTRACT_STEP_TIMEOUT,
           },
           () => submitExtract(this.env, fetched, emailBody)
         );
@@ -4750,7 +4763,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           "submit/subject/extract",
           {
             retries: { limit: 1, delay: "10 seconds", backoff: "constant" },
-            timeout: "30 seconds",
+            timeout: EXTRACT_STEP_TIMEOUT,
           },
           () => submitFreeTextExtract(this.env, subject)
         );
@@ -5506,7 +5519,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           `${labelPrefix}/ai-extract`,
           {
             retries: { limit: 1, delay: "10 seconds", backoff: "constant" },
-            timeout: "30 seconds",
+            timeout: EXTRACT_STEP_TIMEOUT,
           },
           // D1 (analyst, 2026-05-29 PM): same body-priority pass-through
           // as the single-URL path. Email body is plumbed through as
