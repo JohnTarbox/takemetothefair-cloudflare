@@ -122,6 +122,7 @@ import {
   captureNeedsWarning,
   capturePromoterContacts,
 } from "../inbound/promoter-contact-capture.js";
+import { linkOutreachReplies } from "../inbound/outreach-reply-link.js";
 import { processNewsletter } from "../inbound/newsletter-process.js";
 import {
   createNewsletterCandidates,
@@ -1197,6 +1198,37 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       await logError(this.env.DB, {
         source: SOURCE,
         message: "promoter-contacts/capture failed; no contact recorded",
+        sessionId,
+        error: err,
+        context: { messageRowId },
+      });
+    }
+
+    // OPE-1509 — an organizer's answer to an outreach ask moves the ask to
+    // `replied` here, without anyone calling link_promoter_reply. Same matcher
+    // as the tool; never confirms, never writes an event, never sends. Its own
+    // failure is logged and never touches the email's handling.
+    try {
+      await step.do(
+        "promoter-outreach/link-reply",
+        { retries: { limit: 2, delay: "5 seconds", backoff: "constant" }, timeout: "10 seconds" },
+        async () => {
+          const r = await linkOutreachReplies(getDb(this.env.DB), {
+            inboundEmailId: messageRowId,
+            apply: true,
+            actorUserId: null,
+            via: "capture",
+          });
+          return {
+            linked: r.linked,
+            verdict: (r.results[0]?.verdict as string | undefined) ?? null,
+          };
+        }
+      );
+    } catch (err) {
+      await logError(this.env.DB, {
+        source: SOURCE,
+        message: "promoter-outreach/link-reply failed; ask left as it was",
         sessionId,
         error: err,
         context: { messageRowId },
