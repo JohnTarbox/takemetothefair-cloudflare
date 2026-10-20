@@ -221,7 +221,8 @@ describe("OPE-975 — every probe's window is pinned", () => {
       // OPE-987 — run stamp of a pass on the daily 06:00Z drift workflow: one
       // missed run tolerated, two not.
       "organizer-cancellation-recheck": 48,
-      "owed-human-notice": 720,
+      // OPE-1034 — measured: 19 notices, p90 gap 124.1h, max 255.4h → 3 × p90.
+      "owed-human-notice": 372,
       "source-agreement-sweep": 72,
       "vendor-enrichment": 7 * 24,
       "image-coverage-scan": 48,
