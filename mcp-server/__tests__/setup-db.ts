@@ -877,6 +877,10 @@ const SCHEMA_SQL = `
     capacity_status TEXT NOT NULL DEFAULT 'UNKNOWN',
     capacity_as_of INTEGER,
     capacity_note TEXT,
+    -- OPE-1512 (drizzle/0387).
+    categories_wanted TEXT,
+    categories_full TEXT,
+    categories_as_of INTEGER,
     created_at INTEGER NOT NULL DEFAULT 0,
     updated_at INTEGER NOT NULL DEFAULT 0
   );
