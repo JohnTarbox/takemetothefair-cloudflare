@@ -317,10 +317,10 @@ describe("OPE-1509 — subject plus organizer domain", () => {
     expect(v.match).toBe("none");
   });
 
-  it("a mailbox provider is never an organizer domain: ask to a@gmail.com, Re: from b@gmail.com", () => {
+  it("a mailbox provider is never an organizer domain: ask to user.alder@gmail.com, Re: from user.birch@gmail.com", () => {
     const v = linkPromoterReply({
-      inbound: { ...noThread, fromAddress: "b@gmail.com" },
-      candidates: [usa({ providerMessageIds: [], toAddress: "a@gmail.com" })],
+      inbound: { ...noThread, fromAddress: "user.birch@gmail.com" },
+      candidates: [usa({ providerMessageIds: [], toAddress: "user.alder@gmail.com" })],
     });
     expect(v.match).toBe("none");
   });

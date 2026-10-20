@@ -230,7 +230,7 @@ function hostOf(addressOrUrl: string | null | undefined): string | null {
 }
 
 /** Mailbox providers: a shared domain here says nothing about the organizer
- *  (an ask to a@gmail.com is not answered by every Gmail user). */
+ *  (an ask to user.alder@gmail.com is not answered by every Gmail user). */
 const FREEMAIL = new Set([
   "gmail.com",
   "googlemail.com",
