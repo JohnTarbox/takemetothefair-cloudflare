@@ -44,6 +44,7 @@ import { registerSendTestEmailTool } from "./tools/admin-send-test-email.js";
 import { registerSendPromoterEmailTool } from "./tools/admin-send-promoter-email.js";
 import { registerPromoterOutreachQueueTool } from "./tools/admin-promoter-outreach-queue.js";
 import { registerPromoterOutreachMetricsTool } from "./tools/admin-promoter-outreach-metrics.js";
+import { registerContactScorecardTool } from "./tools/admin-contact-scorecard.js";
 import { registerPromoterOutreachLifecycleTools } from "./tools/admin-promoter-outreach-lifecycle.js";
 import { registerPromoterReplyIngestTools } from "./tools/admin-promoter-reply-ingest.js";
 import { registerGalleryPhotoTools } from "./tools/admin-gallery-photos.js";
@@ -442,6 +443,7 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
         registerSendPromoterEmailTool(this.server, db, auth, this.env);
         registerPromoterOutreachQueueTool(this.server, db, auth);
         registerPromoterOutreachMetricsTool(this.server, db, auth);
+        registerContactScorecardTool(this.server, db, auth);
         registerPromoterOutreachLifecycleTools(this.server, db, auth);
         registerPromoterReplyIngestTools(this.server, db, auth);
         registerGalleryPhotoTools(this.server, auth, this.env);
@@ -600,6 +602,7 @@ async function handleLegacyMcpRequest(
       registerSendPromoterEmailTool(server, db, auth, env);
       registerPromoterOutreachQueueTool(server, db, auth);
       registerPromoterOutreachMetricsTool(server, db, auth);
+      registerContactScorecardTool(server, db, auth);
       registerPromoterOutreachLifecycleTools(server, db, auth);
       registerPromoterReplyIngestTools(server, db, auth);
       registerGalleryPhotoTools(server, auth, env);
