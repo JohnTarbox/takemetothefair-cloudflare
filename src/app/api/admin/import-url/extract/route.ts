@@ -3,7 +3,12 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { withAuthorized } from "@/lib/api/with-auth";
 import { getCloudflareAi } from "@/lib/cloudflare";
-import { extractMultipleEvents } from "@/lib/url-import/ai-extractor";
+import {
+  extractMultipleEvents,
+  INTERACTIVE_AI_EXTRACT_TIMEOUT_MS,
+  UNATTENDED_AI_EXTRACT_TIMEOUT_MS,
+  UNATTENDED_EXTRACT_CALLERS,
+} from "@/lib/url-import/ai-extractor";
 import { tryExtractFromJsonLd } from "@/lib/url-import/jsonld-to-event";
 import type { PageMetadata, ExtractedEvent } from "@/lib/url-import/types";
 import { expandCadence } from "@/lib/url-import/cadence-expander";
@@ -150,7 +155,12 @@ export const POST = withAuthorized(async ({ request, db, userId }) => {
         ai,
         content,
         (metadata || {}) as PageMetadata,
-        emailBody
+        emailBody,
+        // OPE-1316 Ask 2 — 90 s for the callers nobody is waiting on (email
+        // workflow, free-text, holdout sampler); 20 s for the admin import.
+        UNATTENDED_EXTRACT_CALLERS.has(caller)
+          ? UNATTENDED_AI_EXTRACT_TIMEOUT_MS
+          : INTERACTIVE_AI_EXTRACT_TIMEOUT_MS
       ));
     } catch (aiError) {
       aiFailure = aiError instanceof Error ? aiError.message : String(aiError);
