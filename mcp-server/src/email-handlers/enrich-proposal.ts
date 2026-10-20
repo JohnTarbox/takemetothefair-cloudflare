@@ -36,8 +36,16 @@
  * it (OPE-1061 / OPE-1481), with the payload's `source` as the source_url.
  */
 import { and, eq, isNotNull } from "drizzle-orm";
-import { adminActions, eventDays, events, inboundEmails } from "../schema.js";
+import { adminActions, eventDays, events, inboundEmails, promoters } from "../schema.js";
 import type { Db } from "../db.js";
+import {
+  AUTO_APPLY_FIELDS,
+  applyEmptyFields,
+  isUnambiguousMatch,
+  recordEnrichApplied,
+  resolveAutoApplyBasis,
+  type AutoApplyBasis,
+} from "./enrich-auto-apply.js";
 
 export const ENRICH_PROPOSED_ACTION = "dedup.enrich_proposed";
 /** OPE-1152 — a match that staged zero proposals. One row per match, always. */
@@ -389,8 +397,13 @@ export interface StageEnrichInput {
 }
 
 export type StageEnrichOutcome =
-  | { outcome: "proposed"; disposition: EnrichDisposition }
-  | { outcome: "nothing-staged"; disposition: EnrichDisposition; flagged: boolean }
+  | { outcome: "proposed"; disposition: EnrichDisposition; applied?: string[] }
+  | {
+      outcome: "nothing-staged";
+      disposition: EnrichDisposition;
+      flagged: boolean;
+      applied?: string[];
+    }
   | { outcome: "event-missing" };
 
 /**
@@ -427,8 +440,11 @@ export async function stageEnrichOnMatch(
       parkingNotes: events.parkingNotes,
       accessibilityNotes: events.accessibilityNotes,
       petFriendly: events.petFriendly,
+      promoterId: events.promoterId,
+      promoterWebsite: promoters.website,
     })
     .from(events)
+    .leftJoin(promoters, eq(promoters.id, events.promoterId))
     .where(eq(events.id, input.existingEventId))
     .limit(1);
   if (!existing) return { outcome: "event-missing" };
@@ -443,12 +459,70 @@ export async function stageEnrichOnMatch(
     { ...existing, hasDayHours: !!hoursRow },
     incomingFromExtracted(input.url, input.event)
   );
+  // OPE-1506 — trusted senders and verified organizers: the allowed, empty
+  // fields are WRITTEN (with citations) instead of staged; the rest stays a
+  // proposal exactly as before. See enrich-auto-apply.ts for the predicate.
+  let autoApply: {
+    basis: AutoApplyBasis | null;
+    reason: string;
+    eligible: string[];
+    applied: string[];
+    errors?: Record<string, string>;
+  } | null = null;
+  const eligible = Object.keys(disposition.proposals).filter((f) => AUTO_APPLY_FIELDS.has(f));
+  if (input.inboundEmailId && eligible.length > 0) {
+    if (!isUnambiguousMatch(input.path, input.matchType)) {
+      autoApply = {
+        basis: null,
+        reason: `match not unambiguous (${input.path}/${input.matchType})`,
+        eligible,
+        applied: [],
+      };
+    } else {
+      const b = await resolveAutoApplyBasis(db, {
+        inboundEmailId: input.inboundEmailId,
+        promoterId: existing.promoterId ?? null,
+        promoterWebsite: existing.promoterWebsite ?? null,
+      });
+      if (!b.basis) {
+        autoApply = { basis: null, reason: b.reason, eligible, applied: [] };
+      } else {
+        const r = await applyEmptyFields(db, {
+          eventId: input.existingEventId,
+          proposals: disposition.proposals,
+          inboundEmailId: input.inboundEmailId,
+          receivedAt: b.receivedAt ?? null,
+        });
+        if (r.applied.length > 0) {
+          await recordEnrichApplied(db, {
+            eventId: input.existingEventId,
+            applied: r.applied,
+            basis: b.basis,
+            inboundEmailId: input.inboundEmailId,
+            path: input.path,
+            matchType: input.matchType,
+          });
+        }
+        disposition.proposals = r.notApplied;
+        autoApply = {
+          basis: b.basis,
+          reason: b.reason,
+          eligible,
+          applied: r.applied.map((a) => a.field),
+          ...(Object.keys(r.errors).length ? { errors: r.errors } : {}),
+        };
+      }
+    }
+  }
+
   const proposed = Object.keys(disposition.proposals).length > 0;
   // Flag when a human has something to do: review a proposal, or compare the
   // content that was carried but could not be staged. A match whose email
   // carried nothing new (or only what the event already says) is recorded but
   // not flagged — flagging it would be queue noise.
-  const flag = proposed || disposition.unstagedFields.length > 0;
+  // OPE-1506 — an auto-applied write is also something a human should see.
+  const flag =
+    proposed || disposition.unstagedFields.length > 0 || (autoApply?.applied.length ?? 0) > 0;
 
   await db.insert(adminActions).values({
     action: proposed ? ENRICH_PROPOSED_ACTION : ENRICH_NOTHING_STAGED_ACTION,
@@ -464,6 +538,9 @@ export async function stageEnrichOnMatch(
       source: input.url || null,
       inboundEmailId: input.inboundEmailId,
       fromAddress: input.fromAddress,
+      // OPE-1506 — the auto-apply verdict, on every match that had an eligible
+      // field: the probe reads `basis` + `eligible` here as its DEMAND.
+      ...(autoApply ? { autoApply } : {}),
     }),
     createdAt: new Date(),
   });
@@ -476,7 +553,8 @@ export async function stageEnrichOnMatch(
       .where(eq(inboundEmails.id, input.inboundEmailId));
   }
 
+  const applied = autoApply?.applied ?? [];
   return proposed
-    ? { outcome: "proposed", disposition }
-    : { outcome: "nothing-staged", disposition, flagged: flag };
+    ? { outcome: "proposed", disposition, applied }
+    : { outcome: "nothing-staged", disposition, flagged: flag, applied };
 }

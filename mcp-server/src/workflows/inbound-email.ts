@@ -200,6 +200,7 @@ import { classifySourceStaleness, sourceDomainOf } from "../email-handlers/stale
 import { recordSourceStale } from "../goodwill/scoring.js";
 import { stageEnrichOnMatch, type StageEnrichInput } from "../email-handlers/enrich-proposal.js";
 import { matchEventFromText, type TextMatchResult } from "../inbound/text-event-match.js";
+import { findVisitorFacts } from "@takemetothefair/utils";
 import { detectRosterEntries, type RosterEntry } from "../email-handlers/roster-detect.js";
 import { isShareRedirectHost, resolveShareRedirect } from "../email-handlers/share-redirect.js";
 import { toMarkdownWithRetry } from "../email-handlers/ocr-retry.js";
@@ -2737,10 +2738,19 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         // enrich-on-match (staging only, never writes `events`) and flag the row
         // so a human sees an organizer email the extractor could not read.
         if (textMatch?.outcome === "matched" && textMatch.matched) {
+          // OPE-1506 — the extraction failed, so the only fields this email
+          // can contribute are the organizer's own visitor sentences, read
+          // deterministically (verbatim by construction) from the body.
+          const textMatchEvent: Record<string, unknown> = {
+            ...((extracted?.event ?? {}) as unknown as Record<string, unknown>),
+          };
+          if (!textMatchEvent.visitorFacts) {
+            textMatchEvent.visitorFacts = findVisitorFacts(proseForExtract);
+          }
           await this.stageEnrichBestEffort(step, "submit/text-match-enrich", {
             existingEventId: textMatch.matched.id,
             url: null,
-            event: (extracted?.event ?? {}) as unknown as Record<string, unknown>,
+            event: textMatchEvent,
             matchType: "text_match",
             path: "text-match",
             inboundEmailId: messageRowId,
