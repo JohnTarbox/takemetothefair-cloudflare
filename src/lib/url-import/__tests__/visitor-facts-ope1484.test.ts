@@ -116,3 +116,26 @@ describe("withVisitorFacts", () => {
     expect("visitorFacts" in e).toBe(false);
   });
 });
+
+describe("OPE-1506 — a ramp to the building is accessibility; other ramps are not", () => {
+  it("reads the Manchester Grange sentence (inbound 01ad5525) as accessibility, verbatim", () => {
+    const s =
+      "There is a ramp at the back of the building which may be easier to use than the front of the building which has stairs.";
+    expect(findVisitorFacts(s).accessibility?.excerpt).toBe(s);
+  });
+
+  it("step-free access counts", () => {
+    expect(
+      findVisitorFacts("The hall is step-free from the main parking area to the stage.")
+        .accessibility
+    ).not.toBeNull();
+  });
+
+  it.each([
+    "The boat ramp at the lake will be closed for the weekend crowds.",
+    "Take the on-ramp from I-95 and follow the signs to the fair.",
+    "Vendors should ramp up their displays early this year please.",
+  ])("not accessibility: %s", (s) => {
+    expect(findVisitorFacts(s).accessibility).toBeNull();
+  });
+});
