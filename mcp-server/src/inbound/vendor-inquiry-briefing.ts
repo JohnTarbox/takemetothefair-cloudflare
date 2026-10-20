@@ -33,6 +33,7 @@ import {
 import { isGenericEmailProvider, isBareGenericProviderAddress } from "@takemetothefair/utils";
 import type { Db } from "../db.js";
 import { resolveOwnEventUrl } from "./own-event-url.js";
+import { matchEventFromText } from "./text-event-match.js";
 
 /**
  * Brand key: lowercase, alphanumerics only.
@@ -326,7 +327,7 @@ export interface VendorInquiryBriefing {
     slug: string;
     name: string;
     url: string;
-    matchedOn: "own_event_url" | "source_url" | "subject";
+    matchedOn: "own_event_url" | "source_url" | "text" | "subject";
   } | null;
   /**
    * OPE-977 — what happened to `parsed_url`, stated rather than implied:
@@ -463,6 +464,8 @@ export async function buildVendorInquiryBriefing(
     subject: string | null;
     parsedUrl: string | null;
     bodyText?: string | null;
+    /** OPE-1505 — anchors "upcoming" for the text match; defaults to now. */
+    receivedAt?: Date | null;
   }
 ): Promise<VendorInquiryBriefing> {
   const warnings: string[] = [];
@@ -512,6 +515,34 @@ export async function buildVendorInquiryBriefing(
         url: `https://meetmeatthefair.com/events/${byUrl.slug}`,
         matchedOn: "source_url",
       };
+    }
+  }
+  // OPE-1505 — the whole-name, date-and-place text match (text-event-match.ts),
+  // tried before the single-word tiers below. Those tiers asked whether ONE
+  // subject word named exactly one event; on 01ad5525 "manchester" and
+  // "grange" each named several and the briefing gave up on a fair it lists.
+  if (!matched) {
+    const tm = await matchEventFromText(db, {
+      subject: inbound.subject,
+      bodyText: inbound.bodyText ?? null,
+      receivedAt: Math.floor((inbound.receivedAt ?? new Date()).getTime() / 1000),
+    });
+    const top = tm.candidates
+      .map((c) => `"${c.name}"${c.startDate ? ` (${c.startDate})` : ""} ${c.score}`)
+      .join("; ");
+    if (tm.outcome === "matched" && tm.matched) {
+      matched = {
+        id: tm.matched.id,
+        slug: tm.matched.slug,
+        name: tm.matched.name,
+        url: `https://meetmeatthefair.com/events/${tm.matched.slug}`,
+        matchedOn: "text",
+      };
+      warnings.push(
+        `Event matched on the email's TEXT, not a URL: ${tm.matched.reasons.join(", ")}. Confirm it is the right event before quoting anything from it.`
+      );
+    } else if (tm.candidates.length > 0) {
+      warnings.push(`Text match: ${tm.outcome}. Top candidates: ${top}.`);
     }
   }
   if (!matched) {

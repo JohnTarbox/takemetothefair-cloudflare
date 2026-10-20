@@ -314,6 +314,7 @@ export function registerInboundReadTools(
             subject: row.subject,
             parsedUrl: row.parsedUrl,
             bodyText: row.bodyText ?? row.bodyTextExcerpt ?? null,
+            receivedAt: row.receivedAt ?? null,
           });
         } catch (err) {
           briefingError = err instanceof Error ? err.message : String(err);

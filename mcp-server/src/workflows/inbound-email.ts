@@ -199,6 +199,7 @@ import { clusterSubmissionCandidates } from "../email-handlers/cluster-candidate
 import { classifySourceStaleness, sourceDomainOf } from "../email-handlers/stale-source.js";
 import { recordSourceStale } from "../goodwill/scoring.js";
 import { stageEnrichOnMatch, type StageEnrichInput } from "../email-handlers/enrich-proposal.js";
+import { matchEventFromText, type TextMatchResult } from "../inbound/text-event-match.js";
 import { detectRosterEntries, type RosterEntry } from "../email-handlers/roster-detect.js";
 import { isShareRedirectHost, resolveShareRedirect } from "../email-handlers/share-redirect.js";
 import { toMarkdownWithRetry } from "../email-handlers/ocr-retry.js";
@@ -2147,6 +2148,10 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             // attributing an organizer's packet to whoever passed it along.
             originalSenderAddress: inboundEmails.originalSenderAddress,
             originalSenderAuth: inboundEmails.originalSenderAuth,
+            // OPE-1505 — arrival time anchors the text match's "upcoming". Raw
+            // unix SECONDS, not a Date: a step result must survive replay
+            // serialization as the same value.
+            receivedAtSec: sql<number>`${inboundEmails.receivedAt}`,
           })
           .from(inboundEmails)
           .where(eq(inboundEmails.id, messageRowId))
@@ -2607,6 +2612,11 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     // signature-only or bare-URL body still gets `no-url` (OPE-457/OPE-537).
     const classifierSkipped = rowSnapshot.classifiedSubIntent == null;
     if (noUrlOrFreeText) {
+      // OPE-1505 — which listed event is this email about, read from its text
+      // alone? Runs on EVERY no-URL submission, before and independent of the
+      // AI extraction, and records its candidates either way (Ask 5). On
+      // 01ad5525 the extraction timed out and no match was ever attempted.
+      const textMatch = await this.textMatchStep(step, instanceId, messageRowId, rowSnapshot);
       // Track whether we actually attempted prose extraction so the
       // fallback reply distinguishes "tried, didn't extract enough" from
       // "nothing to try." Drives `no-url-prose-failed` vs `no-url` below.
@@ -2721,6 +2731,44 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         }
         // Not enough to draft — fall through to the prose-failed reply (closes
         // GH #244's wrong-template path). The row stays for /admin triage.
+        //
+        // OPE-1505 — but if the TEXT named an event we list, the email is about
+        // that listing, and its content is not lost: hand the match to
+        // enrich-on-match (staging only, never writes `events`) and flag the row
+        // so a human sees an organizer email the extractor could not read.
+        if (textMatch?.outcome === "matched" && textMatch.matched) {
+          await this.stageEnrichBestEffort(step, "submit/text-match-enrich", {
+            existingEventId: textMatch.matched.id,
+            url: null,
+            event: (extracted?.event ?? {}) as unknown as Record<string, unknown>,
+            matchType: "text_match",
+            path: "text-match",
+            inboundEmailId: messageRowId,
+            fromAddress: rowSnapshot.fromAddress,
+          });
+          try {
+            await step.do(
+              "submit/text-match-flag",
+              { retries: { limit: 2, delay: "5 seconds", backoff: "constant" } },
+              async () => {
+                // SET only — never clears an operator's own flag.
+                await getDb(this.env.DB)
+                  .update(inboundEmails)
+                  .set({ flaggedForReview: 1 })
+                  .where(eq(inboundEmails.id, messageRowId));
+                return { flagged: true };
+              }
+            );
+          } catch (e) {
+            // Fail-soft, like the staging above: a flag hiccup must not cost
+            // the sender their reply.
+            await logError(getDb(this.env.DB), {
+              source: "mcp:workflow:text-match-flag",
+              message: "text-match review flag failed",
+              error: e,
+            }).catch(() => {});
+          }
+        }
       } else {
         // The decline is recorded too, under the same step name, so every run
         // that enters this branch leaves exactly one row — the heartbeat probe
@@ -3374,6 +3422,70 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
    * row (`extract_fail_reason`) and logged, so it is never a silent drop. The
    * reply is the existing no-URL-family copy — no new wording.
    */
+  /**
+   * OPE-1505 — the deterministic text match for a no-URL submission, as one
+   * workflow step plus one `submit/text-match` step row naming the outcome,
+   * the searched words and the top three candidates with their scores. The
+   * row is written whatever the outcome, so "matched", "ambiguous" and "never
+   * ran" are three different facts in the record.
+   *
+   * Fail-soft: a matcher error is recorded and returns null — matching is an
+   * aid, and must never cost a submission its reply.
+   */
+  private async textMatchStep(
+    step: WorkflowStep,
+    instanceId: string,
+    messageRowId: string,
+    row: {
+      subject: string | null;
+      bodyText: string | null;
+      bodyTextExcerpt: string | null;
+      receivedAtSec?: number | null;
+    }
+  ): Promise<TextMatchResult | null> {
+    let result: TextMatchResult | null = null;
+    let error: string | null = null;
+    try {
+      result = await step.do(
+        "submit/text-match",
+        { retries: { limit: 1, delay: "5 seconds", backoff: "constant" }, timeout: "20 seconds" },
+        async () =>
+          await matchEventFromText(getDb(this.env.DB), {
+            subject: row.subject,
+            bodyText: row.bodyText ?? row.bodyTextExcerpt ?? null,
+            receivedAt: row.receivedAtSec ?? Math.floor(Date.now() / 1000),
+          })
+      );
+    } catch (e) {
+      error = pipelineErrorMessage(e).slice(0, 300);
+    }
+    await recordWorkflowStep(getDb(this.env.DB), {
+      instanceId,
+      workflowName: "inbound-email",
+      inboundEmailId: messageRowId,
+      stepName: "submit/text-match",
+      // `ok` = the matcher RAN; whether it matched is `detail.outcome`. A no-match
+      // is a healthy run, and a probe counting runs must not read it as silence.
+      status: error ? "failed" : "ok",
+      detail: result
+        ? {
+            outcome: result.outcome,
+            matched_event_id: result.matched?.id ?? null,
+            searched: result.searched,
+            candidates: result.candidates.map((c) => ({
+              id: c.id,
+              name: c.name,
+              start: c.startDate,
+              score: c.score,
+              eligible: c.eligible,
+              reasons: c.reasons,
+            })),
+          }
+        : { outcome: "error", error },
+    }).catch(() => {});
+    return result;
+  }
+
   /**
    * OPE-1152 — enrich-on-match for ONE matched submission, from ANY match
    * branch. Before this, the stager was reachable only from the single-event
