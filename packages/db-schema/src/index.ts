@@ -7189,6 +7189,7 @@ export * from "./promoter-outreach-queue";
 export * from "./promoter-outreach-metrics";
 export * from "./promoter-outreach-state";
 export * from "./promoter-reply-link";
+export * from "./contact-scorecard";
 // OPE-1279 — the shared appliable-gap SQL (queue tool + coverage route).
 export * from "./promoter-appliable-gap";
 // OPE-1330 — promoter contacts: domain verification + the one write rule.
