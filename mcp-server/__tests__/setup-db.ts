@@ -1551,6 +1551,14 @@ const SCHEMA_SQL = `
   );
   CREATE UNIQUE INDEX uq_promoter_list_subscriptions_addr
     ON promoter_list_subscriptions (promoter_id, address);
+  -- OPE-1506 — copied from drizzle/0075 (no later ALTERs).
+  CREATE TABLE inbound_email_senders (
+    email TEXT PRIMARY KEY,
+    trust_status TEXT NOT NULL DEFAULT 'unknown',
+    notes TEXT,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch('now')),
+    updated_at INTEGER NOT NULL DEFAULT (unixepoch('now'))
+  );
   CREATE TABLE promoter_contacts (
     id TEXT PRIMARY KEY,
     promoter_id TEXT NOT NULL REFERENCES promoters(id) ON DELETE CASCADE,
