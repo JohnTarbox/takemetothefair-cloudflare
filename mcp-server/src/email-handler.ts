@@ -56,6 +56,7 @@ import {
 } from "./schema.js";
 import { desc, eq, inArray, sql } from "drizzle-orm";
 import {
+  htmlToPlainText,
   maskEmail,
   participantKey,
   normalizeThreadSubject,
@@ -323,7 +324,15 @@ export async function handleInboundEmail(
     const mergedText = forward?.nested?.text
       ? `${parsed.text ?? ""}\n\n${forward.nested.text}`.trim()
       : (parsed.text ?? "");
-    const bodyText = mergedText.slice(0, MAX_BODY_LEN);
+    // OPE-1504 — a message with NO text/plain part (Apple Mail sends HTML-only)
+    // used to be stored with body_text NULL, so the classifier decided from the
+    // subject alone and every reader showed it as empty. Derive the text from
+    // the HTML here, before anything reads `bodyText`, so the classifier, the
+    // excerpt, the stored row and the workflow all see the same body. Recorded
+    // in `capture_meta` so a reader can tell the text was derived.
+    const bodyTextFromHtml = !mergedText.trim() && parsed.html ? htmlToPlainText(parsed.html) : "";
+    const bodyText = (bodyTextFromHtml || mergedText).slice(0, MAX_BODY_LEN);
+    const bodyCaptureMeta = bodyTextFromHtml ? JSON.stringify({ body_text_source: "html" }) : null;
     const bodyHtml = parsed.html || "";
     const bodyTextExcerpt = bodyText.slice(0, BODY_EXCERPT_LEN);
     // OPE-156 — full body persisted for the admin viewer (list preview stays
@@ -384,6 +393,7 @@ export async function handleInboundEmail(
           bodyTextExcerpt,
           bodyTextStored,
           bodyHtmlStored,
+          bodyCaptureMeta,
           senderSignals,
           senderIdentity,
           threadColumns,
@@ -424,6 +434,7 @@ export async function handleInboundEmail(
       bodyTextExcerpt,
       bodyTextStored,
       bodyHtmlStored,
+      bodyCaptureMeta,
       senderSignals,
       senderIdentity,
       threadColumns,
@@ -739,6 +750,7 @@ export async function handleInboundEmail(
               bodyTextExcerpt,
               bodyTextStored,
               bodyHtmlStored,
+              bodyCaptureMeta,
               senderSignals,
               senderIdentity,
               threadColumns,
@@ -824,6 +836,7 @@ export async function handleInboundEmail(
         bodyTextExcerpt,
         bodyTextStored,
         bodyHtmlStored,
+        bodyCaptureMeta,
         senderSignals,
         senderIdentity,
         threadColumns,
@@ -1014,6 +1027,7 @@ export async function handleInboundEmail(
             bodyTextExcerpt: bodyTextExcerpt || null,
             bodyText: bodyTextStored,
             bodyHtml: bodyHtmlStored,
+            captureMeta: bodyCaptureMeta,
             // OPE-763 / OPE-764 — report-only capture; nothing branches on these.
             ...senderSignals,
             ...senderIdentity,
@@ -1088,6 +1102,7 @@ export async function handleInboundEmail(
             bodyTextExcerpt: bodyTextExcerpt || null,
             bodyText: bodyTextStored,
             bodyHtml: bodyHtmlStored,
+            captureMeta: bodyCaptureMeta,
             // OPE-763 / OPE-764 — report-only capture; nothing branches on these.
             ...senderSignals,
             ...senderIdentity,
@@ -2796,6 +2811,9 @@ export async function insertSpamAuditRow(
      */
     bodyTextStored: string | null;
     bodyHtmlStored: string | null;
+    /** OPE-1504 — `{"body_text_source":"html"}` when body_text was derived from
+     *  the HTML part, else null. REQUIRED for the OPE-762 reason above. */
+    bodyCaptureMeta: string | null;
     /** OPE-763 — captured once by `extractSenderSignals`, spread into the row. */
     senderSignals: SenderSignals;
     /** OPE-764 — resolved once at ingest, spread into the row. */
@@ -2820,6 +2838,7 @@ export async function insertSpamAuditRow(
     bodyTextExcerpt,
     bodyTextStored,
     bodyHtmlStored,
+    bodyCaptureMeta,
     senderSignals,
     senderIdentity,
     threadColumns,
@@ -2846,6 +2865,7 @@ export async function insertSpamAuditRow(
         bodyTextExcerpt: bodyTextExcerpt || null,
         bodyText: bodyTextStored,
         bodyHtml: bodyHtmlStored,
+        captureMeta: bodyCaptureMeta,
         ...senderSignals,
         ...senderIdentity,
         ...threadColumns,
@@ -2971,6 +2991,9 @@ export async function insertAuditNoopRow(
      */
     bodyTextStored: string | null;
     bodyHtmlStored: string | null;
+    /** OPE-1504 — `{"body_text_source":"html"}` when body_text was derived from
+     *  the HTML part, else null. REQUIRED for the OPE-762 reason above. */
+    bodyCaptureMeta: string | null;
     /** OPE-763 — same object, same reason: a spread cannot be half-applied. */
     senderSignals: SenderSignals;
     /** OPE-764 — likewise. */
@@ -3011,6 +3034,7 @@ export async function insertAuditNoopRow(
       bodyTextExcerpt: args.bodyTextExcerpt || null,
       bodyText: args.bodyTextStored,
       bodyHtml: args.bodyHtmlStored,
+      captureMeta: args.bodyCaptureMeta,
       ...args.senderSignals,
       ...args.senderIdentity,
       ...args.threadColumns,

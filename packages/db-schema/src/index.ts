@@ -5602,7 +5602,9 @@ export const inboundEmails = sqliteTable(
     repliesSuppressedReason: text("replies_suppressed_reason"),
     // OPE-1341 (drizzle/0360) — set only on `routing_source='snap-app'` rows: the
     // capture metadata a phone upload sends instead of EXIF/subject (location and
-    // which source it came from, the pinned event, the note). JSON; NULL on email.
+    // which source it came from, the pinned event, the note). JSON.
+    // OPE-1504 — on EMAIL rows it is NULL, or `{"body_text_source":"html"}` when
+    // the message had no text/plain part and body_text was derived from body_html.
     captureMeta: text("capture_meta"),
     /** Categorical failure reason for submit-intent rows whose AI extract
      *  was reached but didn't yield a usable event. Values:
