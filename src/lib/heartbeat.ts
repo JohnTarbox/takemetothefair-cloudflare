@@ -2122,6 +2122,50 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       return run.getTime() >= attempt.getTime() ? run : attempt;
     },
   },
+  {
+    // OPE-1509 — an organizer's reply moves its outreach ask to `replied` at
+    // capture (`promoter-outreach/link-reply`), with no tool call. Before this,
+    // the Message-ID rule compared a bracketed ledger id to a bracket-stripped
+    // header and never matched, and nothing ran the linker unless asked.
+    //
+    // The failure is directly observable, so there is no separate evidence
+    // query: an inbound that THREADS to one of our outreach sends (its
+    // In-Reply-To/References carry the ledger's provider_message_id) while the
+    // ask it answers is STILL `sent` (sent before the reply arrived). That row
+    // existing means the link did not happen. 24h outlasts every retry.
+    //
+    // ⚠️ SHIPS DORMANT (`enabled_at` NULL, drizzle/0386): the linker is in the
+    // separately deployed MCP Worker. Arm once that deploy is live.
+    name: "outreach-reply-link",
+    ownerOpe: "OPE-1509",
+    label: "Outreach reply linked at capture → promoter_outreach_attempts 'replied'",
+    priority: "P1",
+    expectedWindowHours: 24,
+    lastEvidenceAt: async (db) => {
+      const [r] = await db
+        .select({ t: sql<number | null>`max(${inboundEmails.receivedAt})` })
+        .from(inboundEmails)
+        .innerJoin(
+          emailSendLedger,
+          and(
+            eq(emailSendLedger.source, "email:promoter-outreach"),
+            isNotNull(emailSendLedger.providerMessageId),
+            sql`(instr(coalesce(${inboundEmails.inReplyTo}, ''), ${emailSendLedger.providerMessageId}) > 0
+              OR instr(coalesce(${inboundEmails.emailReferences}, ''), ${emailSendLedger.providerMessageId}) > 0)`
+          )
+        )
+        .innerJoin(
+          promoterOutreachAttempts,
+          and(
+            sql`lower(${promoterOutreachAttempts.toAddress}) = lower(${emailSendLedger.recipient})`,
+            eq(promoterOutreachAttempts.status, "sent"),
+            sql`${promoterOutreachAttempts.sentAt} <= ${inboundEmails.receivedAt}`
+          )
+        );
+      const unlinked = r?.t != null ? new Date(Number(r.t) * 1000) : null;
+      return demandConditionalEvidence(unlinked, null, new Date());
+    },
+  },
   // ── OPE-975 — three seeds that existed with NO registry entry ─────────
   //
   // Found by scripts/check-heartbeat-probes.ts on its first run. A seed row
