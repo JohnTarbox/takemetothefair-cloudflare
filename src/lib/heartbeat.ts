@@ -1452,14 +1452,16 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     // Two arrivals are not an inter-arrival distribution, so any window here
     // would be a guess — and a guessed window either cries wolf on a quiet
     // fortnight or sleeps through a dead path. A dormant probe never
-    // false-fires. ARMING CONDITION: once ≥8 qualifying replies exist, set
-    // `enabled_at` and replace this window with ~3× the measured p90 gap
-    // (tracked as its own date-gated ticket).
+    // false-fires.
+    //
+    // ARMED 2026-10-20 (OPE-1034, drizzle/0382), window MEASURED: 19 `sent`
+    // notices 2026-09-17 → 10-17, 18 gaps; p90 (nearest rank, 17th of 18) =
+    // 124.1h, largest 255.4h. 3 × p90 = 372h, ~1.46× the largest gap seen.
     name: "owed-human-notice",
     ownerOpe: "OPE-1018",
     label: "Operator notice: a customer answered a human's email",
     priority: "P1",
-    expectedWindowHours: 30 * 24,
+    expectedWindowHours: 372,
     lastEvidenceAt: (db) =>
       maxTs(
         db,
