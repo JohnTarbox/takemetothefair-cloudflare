@@ -693,15 +693,33 @@ export async function POST(request: NextRequest) {
     // A wrong owner is invisibly incorrect (it publishes on someone else's
     // page); the placeholder is merely visibly incomplete.
     let resolvedPromoterId: string = COMMUNITY_PROMOTER_ID;
-    try {
-      const owner = await resolvePromoterForSource(db, {
-        sourceUrl: data.sourceUrl ?? null,
-        eventName: effectiveName,
-      });
-      if (owner) resolvedPromoterId = owner.promoterId;
-    } catch {
-      // Never fail a submission over ownership enrichment — the placeholder is
-      // a correct, reviewable answer.
+    // OPE-1286 — the newsletter lane already knows whose newsletter it read
+    // (sender domain, or the lists+<slug>@ subscription). An internal caller's
+    // promoterId wins over URL inference; a public caller's is ignored, and an
+    // id that names no row falls through to inference rather than failing.
+    const statedOwner =
+      isInternal && data.promoterId
+        ? await db
+            .select({ id: promoters.id })
+            .from(promoters)
+            .where(eq(promoters.id, data.promoterId))
+            .limit(1)
+            .then((r) => r[0]?.id ?? null)
+            .catch(() => null)
+        : null;
+    if (statedOwner) {
+      resolvedPromoterId = statedOwner;
+    } else {
+      try {
+        const owner = await resolvePromoterForSource(db, {
+          sourceUrl: data.sourceUrl ?? null,
+          eventName: effectiveName,
+        });
+        if (owner) resolvedPromoterId = owner.promoterId;
+      } catch {
+        // Never fail a submission over ownership enrichment — the placeholder is
+        // a correct, reviewable answer.
+      }
     }
 
     // OPE-627 — the caller-supplied tag WINS.

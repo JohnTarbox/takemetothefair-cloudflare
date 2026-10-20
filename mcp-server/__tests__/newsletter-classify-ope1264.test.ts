@@ -211,8 +211,13 @@ describe("the workflow never sends a single-event ack for a newsletter (source-l
     expect(step).toBeGreaterThan(-1);
     expect(step).toBeLessThan(WF.indexOf('"reply-guard/zero-confidence-unclear"'));
     expect(step).toBeLessThan(WF.indexOf('"send-reply",'));
-    const after = WF.slice(step, step + 1500);
-    expect(after).toMatch(/if \(newsletter\.isNewsletter && result\.replyKind !== null/);
-    expect(after).toContain("suppressReply: true");
+    // OPE-1286 — classify now runs before dispatch; the suppression still sits
+    // after it (and after dispatch, which is what can choose a reply) and
+    // before send-reply.
+    const suppress = WF.indexOf("if (newsletter.isNewsletter && result.replyKind !== null");
+    expect(suppress).toBeGreaterThan(step);
+    expect(suppress).toBeGreaterThan(WF.indexOf('"dispatch",'));
+    expect(suppress).toBeLessThan(WF.indexOf('"send-reply",'));
+    expect(WF.slice(suppress, suppress + 600)).toContain("suppressReply: true");
   });
 });

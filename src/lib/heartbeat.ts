@@ -366,6 +366,30 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       ),
   },
   {
+    // OPE-1286 — the newsletter lane's creating step RAN for a newsletter the
+    // lane owns (it records `ok` even when the issue has no unmatched item, so
+    // a quiet month of fully-matched newsletters cannot false-fire it).
+    // Seeded DORMANT: only one newsletter had been itemized since OPE-1285
+    // shipped (2026-10-10), so there is no inter-arrival to size a window from.
+    // 720h is newsletter-itemize's measured window, as a placeholder; arming
+    // it from real rows is OPE-1286's follow-up.
+    name: "newsletter-candidates",
+    ownerOpe: "OPE-1286",
+    label: "inbound workflow newsletter/candidates step (status ok)",
+    priority: "P1",
+    expectedWindowHours: 720,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        workflowRunSteps,
+        workflowRunSteps.recordedAt,
+        and(
+          eq(workflowRunSteps.stepName, "newsletter/candidates"),
+          eq(workflowRunSteps.status, "ok")
+        )
+      ),
+  },
+  {
     // OPE-1139 — the self-announced exhibitor lane (link an existing vendor
     // live, or stage a new one in exhibitor_proposals). Evidence: its step
     // record, written on EVERY evaluation, declines included.
