@@ -683,7 +683,10 @@ describe("the workflow runs itemize only for a newsletter, and never lets it fai
     const itemize = WF.indexOf('"newsletter/itemize",');
     expect(classify).toBeGreaterThan(-1);
     expect(itemize).toBeGreaterThan(classify);
-    const before = WF.slice(classify, itemize);
-    expect(before).toMatch(/if \(newsletter\.isNewsletter\) \{\s*try \{\s*await step\.do\(\s*$/);
+    // OPE-1286 moved classify ahead of dispatch, so anchor on the guard itself.
+    const before = WF.slice(WF.lastIndexOf("if (newsletter.isNewsletter) {", itemize), itemize);
+    expect(before).toMatch(
+      /^if \(newsletter\.isNewsletter\) \{\s*let itemized: "ok" \| "skipped" \| "failed" = "failed";\s*try \{\s*const itemize = await step\.do\(\s*$/
+    );
   });
 });

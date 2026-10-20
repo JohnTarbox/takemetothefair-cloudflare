@@ -7,9 +7,10 @@
  *   discrepancy   matched, but the dates disagree → an `event_discrepancies`
  *                 row naming both values, and NO corroborating citation.
  *   unmatched     no event of ours → recorded with what a candidate would be.
- *                 Nothing is created here: in shadow mode the submit pipeline
- *                 still runs on the same email, and two writers would race.
- *                 Creating the PENDING candidate is the switch-over increment.
+ *                 Nothing is created HERE: creation is its own step
+ *                 (newsletter-candidates.ts, OPE-1286), runs only once the
+ *                 lane owns the email (never beside the submit pipeline, or
+ *                 two writers would race), and records its outcome on the item.
  *   skipped       unmatched AND either yearless or already past — a yearless
  *                 date in a bulletin is a workshop list, a TV slot, a sale.
  *
@@ -21,6 +22,24 @@
 import type { CheckDuplicateInput, CheckDuplicateResult } from "../duplicates/check-duplicate.js";
 import type { NewsletterItem } from "./newsletter-itemize.js";
 
+/**
+ * OPE-1286 — the outcome of trying to turn one `unmatched` item into a PENDING
+ * event. `exists` is the submit lane's HIGH dedup tier, including a prior human
+ * adjudication (OPE-450): no row. `refused` is the OPE-1253 floor.
+ */
+export type CandidateOutcome =
+  | {
+      outcome: "created";
+      eventId: string;
+      routed: "created" | "occurrence";
+      possibleDuplicateOf: string | null;
+      citedFields: string[];
+    }
+  | { outcome: "occurrence-exists"; eventId: string }
+  | { outcome: "exists"; eventId: string | null; matchType: string }
+  | { outcome: "refused"; reason: string }
+  | { outcome: "failed"; error: string };
+
 export type Disposition =
   | { kind: "matched"; eventId: string; matchType: string; citedFields: string[] }
   | {
@@ -30,7 +49,17 @@ export type Disposition =
       stored: { start: string; end: string | null };
       newsletter: { start: string; end: string | null };
     }
-  | { kind: "unmatched"; promoterId: string | null }
+  | {
+      kind: "unmatched";
+      promoterId: string | null;
+      /**
+       * OPE-1286 — what the lane did with it once switched over. Absent means
+       * not yet attempted (shadow mode, or a step that has not reached it):
+       * the candidate step skips any item that already carries one, so a retry
+       * never creates twice.
+       */
+      candidate?: CandidateOutcome;
+    }
   | { kind: "skipped"; reason: "no-year" | "past" };
 
 export interface DisposedItem extends NewsletterItem {

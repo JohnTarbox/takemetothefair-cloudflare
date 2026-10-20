@@ -265,6 +265,8 @@ describe("OPE-975 — every probe's window is pinned", () => {
       "promoter-contact-capture": 72,
       // OPE-1285 — measured: 12 newsletters, largest gap 17.9 days.
       "newsletter-itemize": 720,
+      // OPE-1286 — dormant placeholder (n=1 newsletter since OPE-1285); armed from real rows later.
+      "newsletter-candidates": 720,
       "unterminated-crossing-notice": 6,
       "error-log-retention": 48,
       "indexnow-submission-retention": 48,

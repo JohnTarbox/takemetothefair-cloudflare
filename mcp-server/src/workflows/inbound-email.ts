@@ -123,6 +123,10 @@ import {
   capturePromoterContacts,
 } from "../inbound/promoter-contact-capture.js";
 import { processNewsletter } from "../inbound/newsletter-process.js";
+import {
+  createNewsletterCandidates,
+  newsletterLaneOwns,
+} from "../inbound/newsletter-candidates.js";
 import { recordCrossing, ref } from "../inbound/crossing-ledger.js";
 import { routeToProject } from "../inbound/project-router.js";
 import {
@@ -756,6 +760,38 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       }
     );
 
+    // OPE-1264 / OPE-1286 — recognise a promoter newsletter and record whose it
+    // is. Runs for EVERY email (cheap: string markers + one promoter read only
+    // when it IS a newsletter) and records its step every time, which is the
+    // heartbeat's evidence. It runs BEFORE dispatch since OPE-1286, because its
+    // verdict now decides whether the submit pipeline runs at all: a newsletter
+    // the lane owns (`newsletterLaneOwns`) is itemized and its unmatched items
+    // become PENDING candidates, instead of being read as one event submission.
+    // Fails OPEN to "not a newsletter": ahead of dispatch, an unguarded failure
+    // here would stop every email before the submit pipeline, which is the
+    // path it took before this step existed.
+    let newsletter: Awaited<ReturnType<typeof classifyAndRecordNewsletter>> = {
+      isNewsletter: false,
+      basis: null,
+      promoterId: null,
+    };
+    try {
+      newsletter = await step.do(
+        "newsletter/classify",
+        { retries: { limit: 2, delay: "5 seconds", backoff: "constant" }, timeout: "10 seconds" },
+        async () => classifyAndRecordNewsletter(getDb(this.env.DB), messageRowId, sessionId)
+      );
+    } catch (err) {
+      await logError(this.env.DB, {
+        source: SOURCE,
+        message: "newsletter/classify failed; treating as not a newsletter (OPE-1286)",
+        sessionId,
+        error: err,
+        context: { messageRowId },
+      });
+    }
+    const newsletterLane = newsletterLaneOwns(newsletter, senderTrust);
+
     if (blankQuestion) {
       routedToWorkflow = "short-circuit:blank-question";
       // OPE-985 Ask B (ruled 2026-09-20). Two conditions ride here:
@@ -801,6 +837,13 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         // widen an enum read across the inbound sweeps for a cosmetic gain.
         result = { replyKind: "empty-message", status: "replied", suppressReply: true };
       }
+    } else if (newsletterLane && (intent === "submit" || intent === "new_event")) {
+      // OPE-1286 — the switch-over. The submit pipeline reads one event out of
+      // a newsletter (or none, and answers `no-url`); the lane below itemizes
+      // every dated mention instead. No reply: the newsletter copy is gated on
+      // John (OPE-1264), and the shadow-mode rows were already silent.
+      routedToWorkflow = "newsletter-lane";
+      result = { replyKind: null, status: "replied" };
     } else {
       try {
         if (intent === "submit" || intent === "new_event") {
@@ -1159,19 +1202,12 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       });
     }
 
-    // OPE-1264 — recognise a promoter newsletter, record whose it is, and keep
-    // it from drawing a single-event ack. Runs for EVERY email (cheap: string
-    // markers + one promoter read only when it IS a newsletter) and records its
-    // step every time, which is the heartbeat's evidence. Shadow mode: the
-    // dispatch above still ran, so an event the submit lane found is kept;
-    // what changes is that a newsletter never gets `no-url` / `unfetchable-url`
-    // / `ok-*` back. Its own reply copy is gated on John (OPE-1264 STOP), so
-    // until then: no reply rather than a wrong one.
-    const newsletter = await step.do(
-      "newsletter/classify",
-      { retries: { limit: 2, delay: "5 seconds", backoff: "constant" }, timeout: "10 seconds" },
-      async () => classifyAndRecordNewsletter(getDb(this.env.DB), messageRowId, sessionId)
-    );
+    // OPE-1264 — a newsletter never draws a single-event ack. Classified BEFORE
+    // dispatch now (OPE-1286, see `newsletter/classify` above); for a newsletter
+    // the lane does not own, the submit pipeline still ran, and this keeps its
+    // `no-url` / `unfetchable-url` / `ok-*` from going out. Its own reply copy
+    // is gated on John (OPE-1264 STOP), so until then: no reply rather than a
+    // wrong one.
     if (newsletter.isNewsletter && result.replyKind !== null && !result.suppressReply) {
       await logError(this.env.DB, {
         level: "info",
@@ -1188,12 +1224,14 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     // the submit pipeline in shadow mode. Its own failure costs the itemizing,
     // never the email — the step records it and the workflow carries on.
     if (newsletter.isNewsletter) {
+      let itemized: "ok" | "skipped" | "failed" = "failed";
       try {
-        await step.do(
+        const itemize = await step.do(
           "newsletter/itemize",
           { retries: { limit: 1, delay: "10 seconds", backoff: "constant" }, timeout: "3 minutes" },
           async () => processNewsletter(getDb(this.env.DB), this.env, messageRowId, sessionId)
         );
+        itemized = itemize.status;
       } catch (err) {
         await logError(this.env.DB, {
           source: SOURCE,
@@ -1202,6 +1240,60 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           error: err,
           context: { messageRowId },
         });
+      }
+      // OPE-1286 — once the lane owns the email, its unmatched items become
+      // PENDING candidates. Its own step, after the item list is persisted, and
+      // idempotent per item, so a retry never creates twice. A `skipped`
+      // itemize (already itemized: a replay) still runs it, which is how a
+      // replay of a partly-processed email finishes the job.
+      // `laneDone` is the candidates step's own verdict, so an itemize that
+      // skipped for want of a body or a model reads as NOT done, not as done.
+      let laneDone = false;
+      if (newsletterLane && itemized !== "failed") {
+        try {
+          const made = await step.do(
+            "newsletter/candidates",
+            {
+              retries: { limit: 1, delay: "10 seconds", backoff: "constant" },
+              timeout: "5 minutes",
+            },
+            async () =>
+              createNewsletterCandidates(getDb(this.env.DB), this.env, messageRowId, sessionId)
+          );
+          laneDone = made.status === "ok" && !made.counts.failed;
+        } catch (err) {
+          await logError(this.env.DB, {
+            source: SOURCE,
+            message: "newsletter/candidates step failed (OPE-1286)",
+            sessionId,
+            error: err,
+            context: { messageRowId },
+          });
+        }
+      }
+      if (newsletterLane) {
+        if (!laneDone) {
+          // The submit pipeline did not run on this email, so an incomplete
+          // lane must not be a silent drop: flag it for a person. Its
+          // items_json stays NULL, or the failed items carry their outcome, so
+          // the row says what is missing.
+          await step.do(
+            "newsletter/lane-failed-flag",
+            {
+              retries: { limit: 2, delay: "5 seconds", backoff: "constant" },
+              timeout: "10 seconds",
+            },
+            async () => {
+              await getDb(this.env.DB)
+                .update(inboundEmails)
+                .set({ flaggedForReview: 1 })
+                .where(eq(inboundEmails.id, messageRowId));
+            }
+          );
+        } else if (result.status === "held") {
+          // OPE-1265 parked lists@ issues for this lane. It has run: no longer held.
+          result = { ...result, status: "replied" };
+        }
       }
     }
 
