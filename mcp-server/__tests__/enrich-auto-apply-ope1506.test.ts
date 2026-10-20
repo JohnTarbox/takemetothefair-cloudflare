@@ -344,3 +344,234 @@ describe("OPE-1506 — the write itself re-checks emptiness (a field filled mean
     expect(citations("ev")).toHaveLength(0);
   });
 });
+
+// ── Amendment (John, 2026-10-20 12:42 ET): a VALIDATED CONTACT replaces filled
+// fields; trusted forwards and DMARC-aligned non-contacts stay empty-only.
+function validatedContact(promoterId: string, email: string) {
+  db.insert(promoterContacts)
+    .values({
+      id: `pc-${email}`,
+      promoterId,
+      email,
+      validationMethod: "replied_to_our_mail",
+      status: "validated",
+      createdAt: NOW,
+      updatedAt: NOW,
+    } as never)
+    .run();
+}
+
+function cite(
+  eventId: string,
+  fieldName: string,
+  value: string,
+  sourceUrl: string,
+  sourceType: string
+) {
+  const id = `cite-${fieldName}`;
+  db.insert(eventDataCitations)
+    .values({
+      id,
+      eventId,
+      fieldName,
+      value,
+      year: null,
+      sourceUrl,
+      sourceType,
+      state: "active",
+      createdAt: new Date("2026-09-01T00:00:00Z"),
+      updatedAt: new Date("2026-09-01T00:00:00Z"),
+    } as never)
+    .run();
+  return id;
+}
+
+const appliedPayload = () => JSON.parse(actions(ENRICH_APPLIED_ACTION)[0].payloadJson!);
+
+describe("OPE-1506 amendment — a validated contact replaces filled fields", () => {
+  it("acceptance: replaces a filled value cited to the organizer's site, supersedes that citation, records old→new and the conflict", async () => {
+    seedPromoter("usa", "https://usathanksgiving.org");
+    seedEvent("ev", "usa", { estimatedAttendance: 900 });
+    const prior = cite(
+      "ev",
+      "estimated_attendance",
+      "900",
+      "https://www.eventhub.example/usa",
+      "official_website"
+    );
+    seedInbound("in-1", "debra@usathanksgiving.org", "pass");
+    validatedContact("usa", "debra@usathanksgiving.org");
+
+    const r = await stage({ event: { estimatedAttendance: 2000 } });
+
+    expect(r.applied).toEqual(["estimated_attendance"]);
+    expect(event("ev").estimatedAttendance).toBe(2000);
+    // The contact wins: the website citation is superseded, not left active.
+    const all = db
+      .select()
+      .from(eventDataCitations)
+      .where(eq(eventDataCitations.eventId, "ev"))
+      .all();
+    expect(all.find((c) => c.id === prior)!.state).toBe("superseded");
+    const active = citations("ev");
+    expect(active).toHaveLength(1);
+    expect(active[0]).toMatchObject({
+      value: "2000",
+      sourceType: "user_submitted",
+      supersedesCitationId: prior,
+    });
+    // Audit: old → new, reversible by hand, and the conflict the reply must name.
+    expect(appliedPayload()).toMatchObject({
+      basis: "verified-contact",
+      fields: [
+        {
+          field: "estimated_attendance",
+          old: 900,
+          new: 2000,
+          overwrote: true,
+          supersededCitationId: prior,
+          conflictWithSourceUrl: "https://www.eventhub.example/usa",
+        },
+      ],
+    });
+    // A replaced field is no longer something a human must compare by hand.
+    expect(r.disposition.unstagedFields).not.toContain("estimated_attendance");
+    const [staged] = db
+      .select()
+      .from(adminActions)
+      .where(eq(adminActions.targetId, "ev"))
+      .all()
+      .filter((a) => a.action !== ENRICH_APPLIED_ACTION);
+    expect(JSON.parse(staged.payloadJson!).autoApply).toMatchObject({
+      overwritten: ["estimated_attendance"],
+    });
+  });
+
+  it("a DMARC-aligned sender who is NOT a validated contact stays empty-only (negative control)", async () => {
+    seedPromoter("usa", "https://usathanksgiving.org");
+    seedEvent("ev", "usa", { estimatedAttendance: 900 });
+    seedInbound("in-1", "debra@usathanksgiving.org", "pass");
+    const r = await stage({ event: { estimatedAttendance: 2000 } });
+    expect(event("ev").estimatedAttendance).toBe(900);
+    expect(r.applied).toEqual([]);
+    expect(r.disposition.unstagedFields).toContain("estimated_attendance");
+  });
+
+  it("a prior citation to a non-organizer source (an earlier email) is replaced but is NOT a page conflict", async () => {
+    seedPromoter("usa", "https://usathanksgiving.org");
+    seedEvent("ev", "usa", { vendorFeeMinCents: 4000 });
+    cite(
+      "ev",
+      "vendor_fee_min",
+      "40.00",
+      "https://meetmeatthefair.com/admin/inbound-emails#old",
+      "user_submitted"
+    );
+    seedInbound("in-1", "debra@usathanksgiving.org", "pass");
+    validatedContact("usa", "debra@usathanksgiving.org");
+    await stage({ event: { vendorFeeMin: 50 } });
+    expect(event("ev").vendorFeeMinCents).toBe(5000);
+    expect(appliedPayload().fields[0]).toMatchObject({
+      old: 4000,
+      new: 5000,
+      overwrote: true,
+      conflictWithSourceUrl: null,
+    });
+  });
+
+  it("an UNCITED filled value on an event with a source page is a conflict with that page", async () => {
+    seedPromoter("usa", null);
+    seedEvent("ev", "usa", {
+      estimatedAttendance: 900,
+      sourceUrl: "https://usathanksgiving.org/show",
+    });
+    seedInbound("in-1", "debra@usathanksgiving.org", "pass");
+    validatedContact("usa", "debra@usathanksgiving.org");
+    await stage({ event: { estimatedAttendance: 2000 } });
+    expect(appliedPayload().fields[0].conflictWithSourceUrl).toBe(
+      "https://usathanksgiving.org/show"
+    );
+  });
+
+  it("pet_friendly NO → YES is replaced with the contact's verbatim excerpt", async () => {
+    seedPromoter("usa", null);
+    seedEvent("ev", "usa", { petFriendly: "NO" });
+    seedInbound("in-1", "debra@usathanksgiving.org", "pass");
+    validatedContact("usa", "debra@usathanksgiving.org");
+    await stage({
+      event: {
+        visitorFacts: { pets: { value: "YES", excerpt: "Leashed dogs are welcome at the show." } },
+      },
+    });
+    expect(event("ev").petFriendly).toBe("YES");
+    expect(appliedPayload().fields[0]).toMatchObject({
+      field: "pet_friendly",
+      old: "NO",
+      new: "YES",
+    });
+  });
+
+  it("hours are never re-timed, even by a validated contact: days that already have hours keep them", async () => {
+    seedPromoter("usa", null);
+    seedEvent("ev", "usa");
+    db.update(eventDays)
+      .set({ openTime: "09:00", closeTime: "17:00" })
+      .where(eq(eventDays.eventId, "ev"))
+      .run();
+    seedInbound("in-1", "debra@usathanksgiving.org", "pass");
+    validatedContact("usa", "debra@usathanksgiving.org");
+    const r = await stage({ event: { startTime: "10:00", endTime: "16:00" } });
+    const day = db.select().from(eventDays).where(eq(eventDays.eventId, "ev")).get()!;
+    expect([day.openTime, day.closeTime]).toEqual(["09:00", "17:00"]);
+    expect(r.applied).toEqual([]);
+  });
+
+  it("never-auto fields stay staged for a validated contact too (description differs, is not replaced)", async () => {
+    seedPromoter("usa", null);
+    seedEvent("ev", "usa", { description: "The old description." });
+    seedInbound("in-1", "debra@usathanksgiving.org", "pass");
+    validatedContact("usa", "debra@usathanksgiving.org");
+    const r = await stage({
+      event: { description: "A completely different description of the show." },
+    });
+    expect(event("ev").description).toBe("The old description.");
+    expect(r.applied).toEqual([]);
+    expect(r.disposition.unstagedFields).toContain("description");
+  });
+});
+
+describe("OPE-1506 amendment — the overwrite is compare-and-set", () => {
+  it("an overwrite whose stored value already equals the new one writes nothing", async () => {
+    const { applyEmptyFields } = await import("../src/email-handlers/enrich-auto-apply.js");
+    seedPromoter("p", null);
+    seedEvent("ev", "p", { estimatedAttendance: 2000 });
+    seedInbound("in-1", "x@example.com", "pass");
+    const r = await applyEmptyFields(db as never, {
+      eventId: "ev",
+      proposals: {},
+      overwrites: { estimated_attendance: 2000 },
+      inboundEmailId: "in-1",
+      receivedAt: NOW,
+    });
+    expect(r.applied).toEqual([]);
+    expect(r.notOverwritten).toEqual({ estimated_attendance: 2000 });
+    expect(citations("ev")).toHaveLength(0);
+  });
+
+  it("hours offered as an overwrite are refused by the allow-list itself", async () => {
+    const { applyEmptyFields } = await import("../src/email-handlers/enrich-auto-apply.js");
+    seedPromoter("p", null);
+    seedEvent("ev", "p");
+    seedInbound("in-1", "x@example.com", "pass");
+    const r = await applyEmptyFields(db as never, {
+      eventId: "ev",
+      proposals: {},
+      overwrites: { "event_days.hours": { startTime: "10:00", endTime: "16:00" } },
+      inboundEmailId: "in-1",
+      receivedAt: NOW,
+    });
+    expect(r.applied).toEqual([]);
+    const day = db.select().from(eventDays).where(eq(eventDays.eventId, "ev")).get()!;
+    expect(day.openTime).toBeNull();
+  });
+});

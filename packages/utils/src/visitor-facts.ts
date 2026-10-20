@@ -66,10 +66,15 @@ const PET_NO =
 const PET_YES =
   /\b(?:pets|dogs)\b[^.]{0,40}\b(?:are |is )?(?:welcome|allowed|permitted)\b|\bleashed (?:pets|dogs)\b|\b(?:pet|dog)[- ]friendly\b/i;
 
-/** Sentences and list items, whitespace-normalised. */
+/** Sentences and list items, whitespace-normalised. The sentence break keeps
+ *  its punctuation by turning the following whitespace into a newline rather
+ *  than splitting on a lookbehind: this module is re-exported from the package
+ *  index, so it reaches client bundles, and lookbehind needs Safari 16.4
+ *  (scripts/check-browser-api-floor.ts). */
 export function splitSentences(text: string): string[] {
   return text
-    .split(/(?<=[.!?])\s+|\n+|\s*•\s*|\s+\|\s+/)
+    .replace(/([.!?])\s+/g, "$1\n")
+    .split(/\n+|\s*•\s*|\s+\|\s+/)
     .map((s) => s.replace(/\s+/g, " ").trim())
     .filter((s) => s.length >= MIN_LEN && s.length <= VISITOR_FACT_MAX);
 }
