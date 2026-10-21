@@ -29,54 +29,10 @@
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { and, eq, inArray, desc } from "drizzle-orm";
-import {
-  inboundEmails,
-  emailSendLedger,
-  promoterOutreachAttempts,
-  adminActions,
-  linkPromoterReply,
-  normalizeEmailAddress,
-  assertOutreachTransition,
-  type ReplyLinkCandidate,
-  type PromoterOutreachStatus,
-} from "../schema.js";
-import { chunkIds } from "@takemetothefair/utils";
+import { linkOutreachReplies, OUTREACH_SOURCE } from "../inbound/outreach-reply-link.js";
 import { jsonContent } from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
-
-const OUTREACH_SOURCE = "email:promoter-outreach";
-
-/**
- * Message-IDs the provider assigned to each open ask, keyed by attempt.
- *
- * The ledger has no attempt id, so the join is on `recipient` within the
- * outreach source. Chunked at 80 — D1 caps a statement at 100 bind parameters,
- * and stage 2 learned that on its first prod call rather than in review.
- */
-async function ledgerIdsByAddress(db: Db, addresses: string[]): Promise<Map<string, string[]>> {
-  const out = new Map<string, string[]>();
-  for (const chunk of chunkIds([...new Set(addresses)], 80)) {
-    const rows = await db
-      .select({
-        recipient: emailSendLedger.recipient,
-        providerMessageId: emailSendLedger.providerMessageId,
-      })
-      .from(emailSendLedger)
-      .where(
-        and(eq(emailSendLedger.source, OUTREACH_SOURCE), inArray(emailSendLedger.recipient, chunk))
-      );
-    for (const r of rows) {
-      const key = normalizeEmailAddress(r.recipient);
-      if (!key || !r.providerMessageId) continue;
-      const list = out.get(key) ?? [];
-      list.push(r.providerMessageId);
-      out.set(key, list);
-    }
-  }
-  return out;
-}
 
 export function registerPromoterReplyIngestTools(server: McpServer, db: Db, auth: AuthContext) {
   if (auth.role !== "ADMIN") return;
@@ -95,6 +51,13 @@ export function registerPromoterReplyIngestTools(server: McpServer, db: Db, auth
       "wrong link marks an ask answered and lets its event leave the queue",
       "carrying somebody else's answer.",
       "",
+      "Verdicts, strongest first: `message_id` (the reply threads to our send),",
+      "`address` (from the address we wrote to), `subject_domain` (Re: our subject,",
+      "from the organizer's own domain — never a mailbox provider's).",
+      "",
+      "The inbound workflow runs this with apply=true on every email (OPE-1509), so",
+      "by hand it is for a dry-run look or an `ambiguous` override.",
+      "",
       "DRY RUN by default: pass apply=true to write. Admin only.",
     ].join("\n"),
     {
@@ -110,137 +73,26 @@ export function registerPromoterReplyIngestTools(server: McpServer, db: Db, auth
       limit: z.number().int().min(1).max(100).default(25),
     },
     async ({ inbound_email_id, attempt_id, apply, limit }) => {
-      // Open asks are the only ones a reply can answer. `replied` is excluded:
-      // it already has an inbound, and a second message on the same thread is
-      // a continuation, not a new answer to find a home for.
-      const openAttempts = await db
-        .select({
-          attemptId: promoterOutreachAttempts.id,
-          eventId: promoterOutreachAttempts.eventId,
-          promoterId: promoterOutreachAttempts.promoterId,
-          toAddress: promoterOutreachAttempts.toAddress,
-          sentAt: promoterOutreachAttempts.sentAt,
-          status: promoterOutreachAttempts.status,
-        })
-        .from(promoterOutreachAttempts)
-        .where(eq(promoterOutreachAttempts.status, "sent"));
-
-      const ledger = await ledgerIdsByAddress(
-        db,
-        openAttempts.map((a) => a.toAddress)
-      );
-      const candidates: ReplyLinkCandidate[] = openAttempts.map((a) => ({
-        attemptId: a.attemptId,
-        eventId: a.eventId,
-        toAddress: a.toAddress,
-        sentAt: a.sentAt,
-        providerMessageIds: ledger.get(normalizeEmailAddress(a.toAddress) ?? "") ?? [],
-      }));
-
-      const inbounds = await db
-        .select({
-          id: inboundEmails.id,
-          fromAddress: inboundEmails.fromAddress,
-          subject: inboundEmails.subject,
-          receivedAt: inboundEmails.receivedAt,
-          inReplyTo: inboundEmails.inReplyTo,
-          emailReferences: inboundEmails.emailReferences,
-        })
-        .from(inboundEmails)
-        .where(inbound_email_id ? eq(inboundEmails.id, inbound_email_id) : undefined)
-        .orderBy(desc(inboundEmails.receivedAt))
-        .limit(inbound_email_id ? 1 : limit);
-
-      if (inbound_email_id && inbounds.length === 0) {
+      const r = await linkOutreachReplies(db, {
+        inboundEmailId: inbound_email_id,
+        attemptId: attempt_id,
+        apply,
+        limit,
+        actorUserId: auth.userId,
+        via: "tool",
+      });
+      if (inbound_email_id && r.inbounds_examined === 0 && r.open_attempts > 0) {
         return {
           content: [{ type: "text" as const, text: `No inbound email ${inbound_email_id}.` }],
         };
       }
-
-      const results: Array<Record<string, unknown>> = [];
-      let linked = 0;
-
-      for (const inb of inbounds) {
-        const verdict = attempt_id
-          ? ({ match: "address", attemptId: attempt_id } as const)
-          : linkPromoterReply({
-              inbound: {
-                fromAddress: inb.fromAddress,
-                inReplyTo: inb.inReplyTo,
-                emailReferences: inb.emailReferences,
-                receivedAt: inb.receivedAt,
-              },
-              candidates,
-            });
-
-        const row: Record<string, unknown> = {
-          inbound_email_id: inb.id,
-          from: inb.fromAddress,
-          subject: inb.subject,
-          verdict: verdict.match,
-          ...("attemptId" in verdict ? { attempt_id: verdict.attemptId } : {}),
-          ...("attemptIds" in verdict ? { candidates: verdict.attemptIds } : {}),
-          ...("reason" in verdict ? { reason: verdict.reason } : {}),
-          ...("note" in verdict && verdict.note ? { note: verdict.note } : {}),
-        };
-
-        if (verdict.match !== "message_id" && verdict.match !== "address") {
-          results.push(row);
-          continue;
-        }
-
-        const target = openAttempts.find((a) => a.attemptId === verdict.attemptId);
-        if (!target) {
-          results.push({ ...row, verdict: "none", reason: "attempt is not open" });
-          continue;
-        }
-
-        // Enforced rather than assumed: the transition map is the one place
-        // that decides what may follow `sent`, and an operator override that
-        // named a closed attempt would otherwise reopen it.
-        try {
-          assertOutreachTransition(target.status as PromoterOutreachStatus, "replied");
-        } catch (e) {
-          results.push({ ...row, verdict: "refused", reason: (e as Error).message });
-          continue;
-        }
-
-        if (apply) {
-          const now = new Date();
-          await db
-            .update(promoterOutreachAttempts)
-            .set({ status: "replied", outcomeAt: now, inboundEmailId: inb.id })
-            .where(eq(promoterOutreachAttempts.id, target.attemptId));
-
-          await db.insert(adminActions).values({
-            action: "promoter.outreach_replied",
-            actorUserId: auth.userId,
-            targetType: "promoter",
-            targetId: target.promoterId,
-            payloadJson: JSON.stringify({
-              attemptId: target.attemptId,
-              eventId: target.eventId,
-              inboundEmailId: inb.id,
-              matchedBy: verdict.match,
-              overridden: !!attempt_id,
-            }),
-            createdAt: now,
-          });
-        }
-        linked++;
-        results.push(row);
-      }
-
+      const { noProviderIds, ...out } = r;
       return {
         content: [
           jsonContent({
-            applied: apply,
-            open_attempts: openAttempts.length,
-            inbounds_examined: inbounds.length,
-            linked,
-            results,
+            ...out,
             next: "A linked ask is `replied`, not `confirmed`. Apply the answer with update_event + citation, then set_promoter_outreach_status(confirmed).",
-            ...(inbounds.length > 0 && candidates.every((c) => c.providerMessageIds?.length === 0)
+            ...(noProviderIds
               ? {
                   warning:
                     "No provider Message-IDs found for any open ask, so only the address rule can fire. " +

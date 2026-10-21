@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   linkPromoterReply,
   normalizeEmailAddress,
+  normalizeReplySubject,
   parseMessageIds,
   type ReplyLinkCandidate,
 } from "./promoter-reply-link";
@@ -233,5 +234,133 @@ describe("linkPromoterReply — fuzzy match on the address we wrote to", () => {
       ],
     });
     expect(v).toEqual({ match: "message_id", attemptId: "a2" });
+  });
+});
+
+// ── OPE-1509 — the stored shapes, from prod (2026-10-20) ─────────────────────
+// email_send_ledger.provider_message_id is stored WITH angle brackets; the
+// fixtures above used bare ids, which is why the Message-ID rule was green in
+// tests and dead in prod. These use the real rows.
+const USA_LEDGER_ID = "<w8voNnJbNnXtnpB2iYn87ZeQXp9qzFetTxAX@meetmeatthefair.com>";
+const SUBJECT = "America's Hometown Thanksgiving 2026 hours";
+const usa = (over: Partial<ReplyLinkCandidate> = {}): ReplyLinkCandidate => ({
+  attemptId: "cf364db2",
+  eventId: "evt-usa",
+  toAddress: "info@usathanksgiving.com",
+  sentAt: SENT,
+  subject: SUBJECT,
+  promoterWebsite: null,
+  providerMessageIds: [USA_LEDGER_ID],
+  ...over,
+});
+// Debra's reply (inbound 0dcec818): a different address at the same organizer.
+const debra = {
+  fromAddress: "marketing@usathanksgiving.com",
+  subject: `Re: ${SUBJECT}`,
+  inReplyTo: USA_LEDGER_ID,
+  emailReferences: USA_LEDGER_ID,
+  receivedAt: REPLY,
+};
+
+describe("OPE-1509 — Message-ID as the ledger stores it", () => {
+  it("links Debra's reply (inbound 0dcec818) on the thread, though she wrote from another address", () => {
+    expect(linkPromoterReply({ inbound: debra, candidates: [usa()] })).toEqual({
+      match: "message_id",
+      attemptId: "cf364db2",
+    });
+  });
+
+  it("a bracketed ledger id still matches a bare References token", () => {
+    const v = linkPromoterReply({
+      inbound: { ...debra, inReplyTo: null, emailReferences: USA_LEDGER_ID.slice(1, -1) },
+      candidates: [usa()],
+    });
+    expect(v.match).toBe("message_id");
+  });
+});
+
+describe("OPE-1509 — subject plus organizer domain", () => {
+  const noThread = { ...debra, inReplyTo: null, emailReferences: null };
+
+  it("links Re: our subject from another address at the organizer's domain", () => {
+    expect(
+      linkPromoterReply({ inbound: noThread, candidates: [usa({ providerMessageIds: [] })] })
+    ).toEqual({
+      match: "subject_domain",
+      attemptId: "cf364db2",
+    });
+  });
+
+  it("the promoter's website domain counts as the organizer's", () => {
+    const v = linkPromoterReply({
+      inbound: { ...noThread, fromAddress: "debra@usathanksgiving.org" },
+      candidates: [
+        usa({ providerMessageIds: [], promoterWebsite: "https://www.usathanksgiving.org/" }),
+      ],
+    });
+    expect(v.match).toBe("subject_domain");
+  });
+
+  it("a matching subject from a DIFFERENT domain is not linked", () => {
+    const v = linkPromoterReply({
+      inbound: { ...noThread, fromAddress: "someone@otherfair.org" },
+      candidates: [usa({ providerMessageIds: [] })],
+    });
+    expect(v.match).toBe("none");
+  });
+
+  it("a lookalike domain is not the organizer's (suffix is not subdomain)", () => {
+    const v = linkPromoterReply({
+      inbound: { ...noThread, fromAddress: "x@notusathanksgiving.com" },
+      candidates: [usa({ providerMessageIds: [] })],
+    });
+    expect(v.match).toBe("none");
+  });
+
+  it("a mailbox provider is never an organizer domain: ask to user.alder@gmail.com, Re: from user.birch@gmail.com", () => {
+    const v = linkPromoterReply({
+      inbound: { ...noThread, fromAddress: "user.birch@gmail.com" },
+      candidates: [usa({ providerMessageIds: [], toAddress: "user.alder@gmail.com" })],
+    });
+    expect(v.match).toBe("none");
+  });
+
+  it("not a reply (no Re:) — the same subject alone does not link", () => {
+    const v = linkPromoterReply({
+      inbound: { ...noThread, subject: SUBJECT },
+      candidates: [usa({ providerMessageIds: [] })],
+    });
+    expect(v.match).toBe("none");
+  });
+
+  it("two open asks fitting the reply are ambiguous, and neither is linked", () => {
+    const v = linkPromoterReply({
+      inbound: noThread,
+      candidates: [
+        usa({ providerMessageIds: [] }),
+        usa({ attemptId: "other", providerMessageIds: [] }),
+      ],
+    });
+    expect(v).toMatchObject({ match: "ambiguous", attemptIds: ["cf364db2", "other"] });
+  });
+
+  it("a reply that predates the ask is not an answer to it", () => {
+    const v = linkPromoterReply({
+      inbound: { ...noThread, receivedAt: new Date("2026-05-01T00:00:00Z") },
+      candidates: [usa({ providerMessageIds: [] })],
+    });
+    expect(v.match).toBe("none");
+  });
+});
+
+describe("normalizeReplySubject", () => {
+  it("drops any run of Re:/Fwd: prefixes, case and spacing", () => {
+    expect(normalizeReplySubject("RE: Fwd: re:  Saco  Holiday Festival")).toEqual({
+      isReply: true,
+      base: "saco holiday festival",
+    });
+  });
+  it("Fwd: alone is not a reply", () => {
+    expect(normalizeReplySubject("Fwd: Saco Holiday Festival").isReply).toBe(false);
   });
 });

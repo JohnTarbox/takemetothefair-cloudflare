@@ -85,6 +85,16 @@ export const OVERVIEW_KPI_TILES = {
     thresholds:
       "Display-only colour, not in the KPI state machine or action queue: green at 10 or more, amber 5 to 9, red below 5.",
   },
+  "overview.contact-scorecard": {
+    measures:
+      "OPE-1511 — share of contact emails (mail from a non-rejected promoter contact, one per email, not per intent row) that got a human reply within 1 New York business day, with the prior window beside it. The footer adds coverage, their reply rate to our outreach, and leakage counts.",
+    source:
+      "D1 promoter-contacts table, `inbound_emails`, `email_send_ledger` (reply:manual* / operator:outbound), `promoter_outreach_attempts`, `support_obligations`. The same computation as the MCP tool get_contact_scorecard, whose description lists every query.",
+    window:
+      "Fixed 28 days rolling from now, compared with the 28 days before. Ignores the window selector. Live D1 read.",
+    caveats:
+      "A FLOOR: replies sent from Gmail never reach email_send_ledger, so an email John answered from Gmail counts as unanswered here. Business days skip weekends and US federal holidays. Rates show — on an empty denominator, never 0%.",
+  },
   "overview.facebook-traffic": {
     measures:
       "GA4 sessions (and summed active users) from Facebook sources such as facebook.com, m.facebook.com, l.facebook.com, fb.me and facebook.",

@@ -224,8 +224,10 @@ describe("the assembled briefing", () => {
       subject: "Winterfair Hartford 2026 - Vendor Inquiry",
       parsedUrl: null,
     });
-    expect(b.matchedEvent?.matchedOn).toBe("subject");
-    expect(b.warnings.join(" ")).toContain("SUBJECT TEXT");
+    // OPE-1505 — the whole-name text tier now finds it first; the warning still
+    // says the match is not URL-backed.
+    expect(b.matchedEvent?.matchedOn).toBe("text");
+    expect(b.warnings.join(" ")).toContain("matched on the email's TEXT, not a URL");
   });
 
   it("assembles the whole specimen and surfaces the date warning", async () => {
@@ -353,10 +355,33 @@ describe("OPE-1056 — every distinctive token is tried, not only the longest", 
       parsedUrl: null,
     });
     expect(b.matchedEvent?.id).toBe("2965cda9");
+    // OPE-1505 — same event, found by the whole-name tier: "summer" and "blow"
+    // are BOTH in the subject, so the name is 100% present, while the other
+    // three events have only "summer".
+    expect(b.matchedEvent?.matchedOn).toBe("text");
+    expect(b.warnings.join(" ")).toContain("name 100%");
+  });
+
+  it("OPE-1505 — the legacy subject tiers still run when the text tier refuses", async () => {
+    // A four-token name with only "blow" in the subject is below the text
+    // tier's bar; the unique-subject tier is unchanged and still identifies it.
+    seedEvent({ id: "s1", name: "Summer Arts Festival", slug: "summer-arts" });
+    seedEvent({
+      id: "2965cda9",
+      name: "Riverside Summer Blow Out Extravaganza",
+      slug: "riverside-blow-out",
+    });
+    const b = await buildVendorInquiryBriefing(db, {
+      id: "bc9e1ddb",
+      fromAddress: "vendor@example.com",
+      subject: "Blow out booth question",
+      parsedUrl: null,
+    });
+    expect(b.matchedEvent?.id).toBe("2965cda9");
     expect(b.matchedEvent?.matchedOn).toBe("subject");
     const w = b.warnings.join(" ");
-    expect(w).toContain('SINGLE TOKEN ("blow"');
-    expect(w).toContain('"summer" (ambiguous)');
+    expect(w).toContain("Text match: below-threshold");
+    expect(w).toContain('SUBJECT TEXT ("Blow out")');
   });
 
   it("still refuses when EVERY token is ambiguous — and names what it tried", async () => {

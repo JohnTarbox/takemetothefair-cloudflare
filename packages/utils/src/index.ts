@@ -692,6 +692,8 @@ export * from "./safe-href";
 // main app and the MCP Worker.
 export * from "./html-sanitize";
 export * from "./html-escape";
+export * from "./html-to-text";
+export * from "./visitor-facts";
 export * from "./email-subject";
 // OPE-1396 (DUP6) — vendor-joins-event rule, shared by the app routes and MCP apply_to_event.
 export * from "./vendor-application-rules";

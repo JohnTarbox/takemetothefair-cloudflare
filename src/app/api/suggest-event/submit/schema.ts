@@ -78,4 +78,8 @@ export const submitEventSchema = z.object({
   // Trusted-internal field; not exposed via the public vendor / community
   // suggest forms.
   possibleDuplicateOf: z.string().nullable().optional(),
+  // OPE-1286 — the promoter the inbound newsletter lane attributed the item to.
+  // Honoured by the route ONLY for an internal caller, and only when the row
+  // exists; a public caller's value is ignored, never trusted.
+  promoterId: z.string().nullable().optional(),
 });

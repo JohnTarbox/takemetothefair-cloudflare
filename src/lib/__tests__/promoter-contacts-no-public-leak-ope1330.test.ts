@@ -52,6 +52,10 @@ const ALLOWED: Array<{ path: RegExp; why: string }> = [
     path: /^mcp-server\/src\/tools\/admin-inbound-read\.ts$/,
     why: "admin-gated get_inbound_email",
   },
+  {
+    path: /^mcp-server\/src\/email-handlers\/enrich-auto-apply\.ts$/,
+    why: "reader (OPE-1506 sender basis): yields only whether a validated contact matched",
+  },
 ];
 
 const FILES = [...walk(join(ROOT, "src")), ...walk(join(ROOT, "mcp-server", "src"))];

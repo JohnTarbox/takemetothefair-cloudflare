@@ -160,7 +160,8 @@ describe("OPE-975 — every probe's window is pinned", () => {
       "go-click-redirect": 336,
       // OPE-1316 — PLACEHOLDER, dormant until its arming ticket measures the
       // success-row inter-arrival (none existed when it shipped).
-      "import-url-extract-success": 336,
+      // OPE-1329 — measured: 33 rows, max gap 24.01h (daily holdout sampler) → 3 × max.
+      "import-url-extract-success": 72,
       // OPE-1352 — an invariant, not a cadence: any inbound left on a loser for
       // a day is a writer that skipped the repoint. Dormant until the backfill.
       "inbound-follows-duplicate-keeper": 24,
@@ -188,6 +189,9 @@ describe("OPE-975 — every probe's window is pinned", () => {
       // starts the clock, so 6h cannot fire in the weeks between fairs.
       "snap-intake": 6,
       "free-text-extract-record": 24,
+      "text-match-record": 24,
+      "outreach-reply-link": 24,
+      "enrich-auto-apply": 24,
       "photo-intake-storage-record": 30 * 24,
       // OPE-325 — demand-conditional: counts from an unanswered poster, not
       // from the last success, so a short window cannot cry wolf in a quiet month.
@@ -221,7 +225,8 @@ describe("OPE-975 — every probe's window is pinned", () => {
       // OPE-987 — run stamp of a pass on the daily 06:00Z drift workflow: one
       // missed run tolerated, two not.
       "organizer-cancellation-recheck": 48,
-      "owed-human-notice": 720,
+      // OPE-1034 — measured: 19 notices, p90 gap 124.1h, max 255.4h → 3 × p90.
+      "owed-human-notice": 372,
       "source-agreement-sweep": 72,
       "vendor-enrichment": 7 * 24,
       "image-coverage-scan": 48,
@@ -231,7 +236,8 @@ describe("OPE-975 — every probe's window is pinned", () => {
       "vendor-claim-evidence": 30 * 24,
       "claim-corroboration-sweep": 48,
       "promoter-enrichment": 7 * 24,
-      "discrepancy-detection": 72,
+      // OPE-1503 — measured post-tuning: longest gap between new rows 102h.
+      "discrepancy-detection": 240,
       // OPE-1083 — armed on a measurement: longest gap between passes 166h.
       "citation-live-defect": 336,
       "gw1d-scorer": 7 * 24,
@@ -265,6 +271,8 @@ describe("OPE-975 — every probe's window is pinned", () => {
       "promoter-contact-capture": 72,
       // OPE-1285 — measured: 12 newsletters, largest gap 17.9 days.
       "newsletter-itemize": 720,
+      // OPE-1286 — dormant placeholder (n=1 newsletter since OPE-1285); armed from real rows later.
+      "newsletter-candidates": 720,
       "unterminated-crossing-notice": 6,
       "error-log-retention": 48,
       "indexnow-submission-retention": 48,

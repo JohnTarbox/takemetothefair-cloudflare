@@ -31,6 +31,7 @@ import {
   DollarSign,
   Facebook,
   FileText,
+  MessageSquare,
   Search,
   Sparkles,
   TrendingUp,
@@ -115,6 +116,7 @@ import {
   type Ga4Env,
 } from "@/lib/ga4";
 import { safeHref } from "@takemetothefair/utils";
+import { computeContactScorecard, type ContactScorecard } from "@takemetothefair/db-schema";
 
 export const dynamic = "force-dynamic";
 
@@ -233,10 +235,11 @@ async function loadAeoReferralsSafe(env: Ga4Env): Promise<AeoReferralsResult | n
 async function OverviewTab({ window }: { window: WindowKey }) {
   const db = getCloudflareDb();
   const env = getCloudflareEnv();
-  const [snapshot, aeo, fb] = await Promise.all([
+  const [snapshot, aeo, fb, contacts] = await Promise.all([
     loadOverviewSnapshot(db, env, window),
     loadAeoReferralsSafe(env),
     getFacebookTrafficSafe(env),
+    loadContactScorecardSafe(db),
   ]);
 
   return (
@@ -292,6 +295,7 @@ async function OverviewTab({ window }: { window: WindowKey }) {
         <AccountEngagementCardView snapshot={snapshot} />
         <AeoReferralsCardView aeo={aeo} />
         <FacebookReferralsCardView summary={fb} />
+        <ContactScorecardCardView card={contacts} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
@@ -952,6 +956,73 @@ function aeoStateFromTotal(total: number): KpiState {
   if (color === "green") return "GREEN";
   if (color === "yellow") return "YELLOW";
   return "RED";
+}
+
+// OPE-1511 — contact relationship scorecard. A read failure shows "—" rather
+// than taking the Overview tab down with it.
+async function loadContactScorecardSafe(
+  db: ReturnType<typeof getCloudflareDb>
+): Promise<ContactScorecard | null> {
+  try {
+    return await computeContactScorecard(db, { windowDays: 28 });
+  } catch (e) {
+    console.error("[analytics] contact scorecard failed", e);
+    return null;
+  }
+}
+
+function pctOrDash(x: number | null): string {
+  return x === null ? "—" : fmtPct(x, 0);
+}
+
+function ContactScorecardCardView({ card }: { card: ContactScorecard | null }) {
+  const title = "Contact replies ≤1 business day (28d)";
+  if (!card) {
+    return (
+      <KpiCard
+        tileId="overview.contact-scorecard"
+        title={title}
+        value="—"
+        icon={<MessageSquare className="w-5 h-5 text-muted-foreground" />}
+        iconColor="bg-muted"
+        footer={<span className="text-xs text-muted-foreground">Scorecard unavailable</span>}
+      />
+    );
+  }
+  const cur = card.current;
+  const pri = card.prior;
+  const leaks =
+    cur.leakage.contactEmailsWithoutObligation.length +
+    card.allTime.unlinkedOutreachReplies.length +
+    card.allTime.validatedContactsSilent12Months.length;
+  return (
+    <KpiCard
+      tileId="overview.contact-scorecard"
+      title={title}
+      value={pctOrDash(cur.ourResponsiveness.pctWithin1BusinessDay)}
+      icon={<MessageSquare className="w-5 h-5 text-teal-600" />}
+      iconColor="bg-teal-100"
+      footer={
+        <div className="text-xs text-muted-foreground space-y-0.5">
+          <div>
+            Prior 28d: {pctOrDash(pri.ourResponsiveness.pctWithin1BusinessDay)} ·{" "}
+            {fmt(cur.ourResponsiveness.contactEmails)} contact emails (prior{" "}
+            {fmt(pri.ourResponsiveness.contactEmails)})
+          </div>
+          <div>
+            {fmt(card.coverage.contactsByStatus.validated ?? 0)} validated of{" "}
+            {fmt(card.coverage.contactsTotal)} contacts · upcoming covered{" "}
+            {pctOrDash(card.coverage.pctUpcomingWithValidatedContact)}
+          </div>
+          <div>
+            Their reply rate {pctOrDash(cur.theirResponsiveness.replyRate)} (prior{" "}
+            {pctOrDash(pri.theirResponsiveness.replyRate)}) · leakage {fmt(leaks)}
+          </div>
+          <div>Floor: Gmail-sent replies are not counted.</div>
+        </div>
+      }
+    />
+  );
 }
 
 function AeoReferralsCardView({ aeo }: { aeo: AeoReferralsResult | null }) {

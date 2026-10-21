@@ -28,13 +28,20 @@ export type ReplyLinkCandidate = {
   /** The address as SENT — history, not a live lookup. */
   toAddress: string;
   sentAt: Date | null;
-  /** Message-IDs the provider assigned to this ask, via `email_send_ledger`. */
+  /** Message-IDs the provider assigned to this ask, via `email_send_ledger`.
+   *  Any shape — `<id@host>` as the ledger stores it, or bare: both sides are
+   *  normalised through `parseMessageIds` before comparing (OPE-1509). */
   providerMessageIds?: readonly string[];
+  /** The ask's subject as sent. Read only by the `subject_domain` rule. */
+  subject?: string | null;
+  /** The promoter's website. Its domain is an organizer domain too. */
+  promoterWebsite?: string | null;
 };
 
 export type ReplyLinkVerdict =
   | { match: "message_id"; attemptId: string; note?: string }
   | { match: "address"; attemptId: string }
+  | { match: "subject_domain"; attemptId: string }
   | { match: "ambiguous"; attemptIds: string[]; reason: string }
   | { match: "none"; reason: string };
 
@@ -81,6 +88,7 @@ export function parseMessageIds(...headers: Array<string | null | undefined>): s
 export function linkPromoterReply(input: {
   inbound: {
     fromAddress: string | null;
+    subject?: string | null;
     inReplyTo?: string | null;
     emailReferences?: string | null;
     receivedAt: Date;
@@ -96,8 +104,12 @@ export function linkPromoterReply(input: {
   // ---- 1. Exact: the provider's own Message-ID.
   const referenced = new Set(parseMessageIds(inbound.inReplyTo, inbound.emailReferences));
   if (referenced.size > 0) {
+    // OPE-1509: the ledger stores `<id@host>` WITH brackets and
+    // parseMessageIds strips them from the inbound side, so comparing the raw
+    // ledger value never matched — this rule was dead from the day it shipped
+    // (the test fixture used bare ids). Normalise both sides the same way.
     const hits = candidates.filter((c) =>
-      (c.providerMessageIds ?? []).some((id) => referenced.has(id))
+      parseMessageIds(...(c.providerMessageIds ?? [])).some((id) => referenced.has(id))
     );
     if (hits.length === 1) {
       // NO timestamp guard here, unlike the address rule below. A Message-ID
@@ -150,8 +162,104 @@ export function linkPromoterReply(input: {
     };
   }
 
+  // ---- 3. Fuzzy: our subject, answered from the organizer's domain (OPE-1509).
+  // A shared inbox (info@) that a named person answers from their own address
+  // is the normal case. Both halves are required: the subject alone is
+  // guessable, and the domain alone matches any mail from that organizer.
+  const subject = normalizeReplySubject(inbound.subject);
+  const fromDomain = hostOf(from);
+  if (subject.isReply && subject.base && fromDomain) {
+    const bySubject = candidates.filter((c) => {
+      if (!c.sentAt || c.sentAt.getTime() > inbound.receivedAt.getTime()) return false;
+      if (normalizeReplySubject(c.subject).base !== subject.base) return false;
+      const own = [hostOf(c.toAddress), hostOf(c.promoterWebsite)].filter((d): d is string => !!d);
+      return own.some((d) => sameOrganizerDomain(d, fromDomain));
+    });
+    if (bySubject.length === 1)
+      return { match: "subject_domain", attemptId: bySubject[0].attemptId };
+    if (bySubject.length > 1) {
+      return {
+        match: "ambiguous",
+        attemptIds: bySubject.map((c) => c.attemptId),
+        reason: "more than one open ask has this subject at this organizer's domain",
+      };
+    }
+  }
+
   return {
     match: "none",
     reason: "no open ask to this address that predates the reply",
   };
+}
+
+/**
+ * `"RE: Fwd: re:  Saco  Holiday Festival"` -> `{ isReply: true, base: "saco
+ * holiday festival" }`. Case, whitespace and any run of Re:/Fwd:/Fw: prefixes
+ * are dropped; `isReply` says whether a Re: was among them.
+ */
+export function normalizeReplySubject(raw: string | null | undefined): {
+  isReply: boolean;
+  base: string;
+} {
+  let s = (raw ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+  let isReply = false;
+  for (;;) {
+    const m = s.match(/^(re|fwd?|aw|sv)\s*(\[\d+\])?\s*:\s*/);
+    if (!m) break;
+    if (m[1] === "re" || m[1] === "aw" || m[1] === "sv") isReply = true;
+    s = s.slice(m[0].length);
+  }
+  return { isReply, base: s };
+}
+
+/** Host of an email address or URL, lowercased, without `www.`. */
+function hostOf(addressOrUrl: string | null | undefined): string | null {
+  if (!addressOrUrl) return null;
+  const t = addressOrUrl.trim().toLowerCase();
+  let host: string;
+  if (t.includes("@") && !t.includes("/")) host = t.split("@").pop()!;
+  else {
+    try {
+      host = new URL(/^https?:\/\//.test(t) ? t : `https://${t}`).hostname;
+    } catch {
+      return null;
+    }
+  }
+  host = host.replace(/^www\./, "").replace(/>$/, "");
+  return host.includes(".") ? host : null;
+}
+
+/** Mailbox providers: a shared domain here says nothing about the organizer
+ *  (an ask to user.alder@gmail.com is not answered by every Gmail user). */
+const FREEMAIL = new Set([
+  "gmail.com",
+  "googlemail.com",
+  "yahoo.com",
+  "ymail.com",
+  "aol.com",
+  "hotmail.com",
+  "outlook.com",
+  "live.com",
+  "msn.com",
+  "icloud.com",
+  "me.com",
+  "mac.com",
+  "comcast.net",
+  "verizon.net",
+  "att.net",
+  "sbcglobal.net",
+  "charter.net",
+  "roadrunner.com",
+  "myfairpoint.net",
+  "protonmail.com",
+  "proton.me",
+  "gmx.com",
+]);
+
+/** `mail.grange.org` and `grange.org` are one organizer; `grange.org` and
+ *  `notgrange.org` are not. A subdomain matches its parent, never a suffix.
+ *  A mailbox provider's domain never counts as an organizer's. */
+function sameOrganizerDomain(a: string, b: string): boolean {
+  if (FREEMAIL.has(a) || FREEMAIL.has(b)) return false;
+  return a === b || a.endsWith(`.${b}`) || b.endsWith(`.${a}`);
 }

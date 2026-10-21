@@ -366,6 +366,30 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       ),
   },
   {
+    // OPE-1286 — the newsletter lane's creating step RAN for a newsletter the
+    // lane owns (it records `ok` even when the issue has no unmatched item, so
+    // a quiet month of fully-matched newsletters cannot false-fire it).
+    // Seeded DORMANT: only one newsletter had been itemized since OPE-1285
+    // shipped (2026-10-10), so there is no inter-arrival to size a window from.
+    // 720h is newsletter-itemize's measured window, as a placeholder; arming
+    // it from real rows is OPE-1286's follow-up.
+    name: "newsletter-candidates",
+    ownerOpe: "OPE-1286",
+    label: "inbound workflow newsletter/candidates step (status ok)",
+    priority: "P1",
+    expectedWindowHours: 720,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        workflowRunSteps,
+        workflowRunSteps.recordedAt,
+        and(
+          eq(workflowRunSteps.stepName, "newsletter/candidates"),
+          eq(workflowRunSteps.status, "ok")
+        )
+      ),
+  },
+  {
     // OPE-1139 — the self-announced exhibitor lane (link an existing vendor
     // live, or stage a new one in exhibitor_proposals). Evidence: its step
     // record, written on EVERY evaluation, declines included.
@@ -910,6 +934,108 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     },
   },
   {
+    // OPE-1505 — proof the no-URL submit branch RECORDS its text match. The
+    // matcher (mcp-server/src/inbound/text-event-match.ts) runs on every no-URL
+    // submission, before and independent of the AI extraction — on 01ad5525 the
+    // extraction timed out and no match was ever attempted — and writes one
+    // `submit/text-match` row per run whatever the outcome (matched / ambiguous
+    // / below-threshold / no-candidate / no-query, in `detail`). So "it never
+    // matches" is countable from those rows, and THIS probe catches the row
+    // disappearing, which would make that count read 0 for the wrong reason.
+    //
+    // DEMAND-CONDITIONAL on exactly the free-text-extract-record demand: every
+    // such email enters the same branch, and the text match runs first in it.
+    //
+    // ⚠️ SHIPS DORMANT (`enabled_at` NULL, drizzle/0384) for the same reason as
+    // its sibling: the writer is in the separately deployed MCP Worker.
+    name: "text-match-record",
+    ownerOpe: "OPE-1505",
+    label: "Inbound no-URL submission → text-match record",
+    priority: "P1",
+    expectedWindowHours: 24,
+    lastEvidenceAt: async (db) => {
+      const armed = await db
+        .select({ enabledAt: heartbeatProbes.enabledAt })
+        .from(heartbeatProbes)
+        .where(eq(heartbeatProbes.probeName, "text-match-record"))
+        .limit(1);
+      const since = armed[0]?.enabledAt ?? null;
+      if (!since) return null; // dormant — the evaluator ignores it anyway
+      return demandConditionalEvidence(
+        await maxTs(
+          db,
+          inboundEmails,
+          inboundEmails.receivedAt,
+          and(
+            eq(inboundEmails.classifiedSubIntent, "free_text"),
+            isNull(inboundEmails.parsedUrl),
+            eq(inboundEmails.attachmentCount, 0),
+            eq(inboundEmails.routedToWorkflow, "submit-pipeline"),
+            gte(inboundEmails.receivedAt, since)
+          )
+        ),
+        await maxTs(
+          db,
+          workflowRunSteps,
+          workflowRunSteps.recordedAt,
+          eq(workflowRunSteps.stepName, "submit/text-match")
+        ),
+        new Date()
+      );
+    },
+  },
+  {
+    // OPE-1506 — proof that auto-apply APPLIES. A trusted sender's or verified
+    // organizer's unambiguous match with an empty, allowed field writes it in
+    // the same step and records `dedup.enrich_applied`. The OPE-1152 shape this
+    // guards against: a writer that ran on every match and applied ONE row in
+    // its lifetime, while every match row looked healthy.
+    //
+    // DEMAND-CONDITIONAL: demand is a staged enrich row (`dedup.enrich_proposed`
+    // / `dedup.enrich_nothing_staged`) whose payload records a qualifying
+    // sender (`autoApply.basis` set) AND at least one eligible field. Such a
+    // match owes an applied row within seconds; 24h outlasts a slow queue.
+    // A field filled meanwhile is a legitimate non-apply, so a single miss
+    // reads red until the next qualifying match applies — that is the intent.
+    //
+    // ⚠️ SHIPS DORMANT (`enabled_at` NULL, drizzle/0385): the writer is in the
+    // separately deployed MCP Worker. Arm once that deploy is live.
+    name: "enrich-auto-apply",
+    ownerOpe: "OPE-1506",
+    label: "Enrich-on-match auto-apply (trusted/verified senders) → dedup.enrich_applied",
+    priority: "P1",
+    expectedWindowHours: 24,
+    lastEvidenceAt: async (db) => {
+      const armed = await db
+        .select({ enabledAt: heartbeatProbes.enabledAt })
+        .from(heartbeatProbes)
+        .where(eq(heartbeatProbes.probeName, "enrich-auto-apply"))
+        .limit(1);
+      const since = armed[0]?.enabledAt ?? null;
+      if (!since) return null; // dormant — the evaluator ignores it anyway
+      return demandConditionalEvidence(
+        await maxTs(
+          db,
+          adminActions,
+          adminActions.createdAt,
+          and(
+            inArray(adminActions.action, ["dedup.enrich_proposed", "dedup.enrich_nothing_staged"]),
+            sql`json_extract(${adminActions.payloadJson}, '$.autoApply.basis') IS NOT NULL`,
+            sql`json_array_length(json_extract(${adminActions.payloadJson}, '$.autoApply.eligible')) > 0`,
+            gte(adminActions.createdAt, since)
+          )
+        ),
+        await maxTs(
+          db,
+          adminActions,
+          adminActions.createdAt,
+          eq(adminActions.action, "dedup.enrich_applied")
+        ),
+        new Date()
+      );
+    },
+  },
+  {
     // OPE-403 — proof the lane still RECORDS what it stored.
     //
     // The probe directly above watches `intent='photo_intake'` arrivals, and it
@@ -1428,14 +1554,16 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     // Two arrivals are not an inter-arrival distribution, so any window here
     // would be a guess — and a guessed window either cries wolf on a quiet
     // fortnight or sleeps through a dead path. A dormant probe never
-    // false-fires. ARMING CONDITION: once ≥8 qualifying replies exist, set
-    // `enabled_at` and replace this window with ~3× the measured p90 gap
-    // (tracked as its own date-gated ticket).
+    // false-fires.
+    //
+    // ARMED 2026-10-20 (OPE-1034, drizzle/0382), window MEASURED: 19 `sent`
+    // notices 2026-09-17 → 10-17, 18 gaps; p90 (nearest rank, 17th of 18) =
+    // 124.1h, largest 255.4h. 3 × p90 = 372h, ~1.46× the largest gap seen.
     name: "owed-human-notice",
     ownerOpe: "OPE-1018",
     label: "Operator notice: a customer answered a human's email",
     priority: "P1",
-    expectedWindowHours: 30 * 24,
+    expectedWindowHours: 372,
     lastEvidenceAt: (db) =>
       maxTs(
         db,
@@ -1454,11 +1582,18 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       maxTs(db, promoterEnrichmentCandidates, promoterEnrichmentCandidates.createdAt),
   },
   {
+    // OPE-1503 — re-measured after gate tuning (OPE-1032 09-15, OPE-815 09-23)
+    // cut inflow from tens of rows a day to a few a week. Prod, 09-24 → 10-21:
+    // the longest closed gap between new rows was 102h (10-07 → 10-11), next
+    // 77.5h; the old 72h window paged on ordinary quiet stretches while the
+    // detectors ran clean (holdout + source_agreement touched rows daily, no
+    // capture errors in error_logs). 240h is ~2.35× the longest gap, with
+    // margin for the off-season, when fewer future events exist to check.
     name: "discrepancy-detection",
     ownerOpe: "OPE-GW1",
     label: "Discrepancy detection",
     priority: "P1",
-    expectedWindowHours: 72,
+    expectedWindowHours: 240,
     lastEvidenceAt: (db) => maxTs(db, eventDiscrepancies, eventDiscrepancies.detectedAt),
   },
   {
@@ -1994,6 +2129,50 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       return run.getTime() >= attempt.getTime() ? run : attempt;
     },
   },
+  {
+    // OPE-1509 — an organizer's reply moves its outreach ask to `replied` at
+    // capture (`promoter-outreach/link-reply`), with no tool call. Before this,
+    // the Message-ID rule compared a bracketed ledger id to a bracket-stripped
+    // header and never matched, and nothing ran the linker unless asked.
+    //
+    // The failure is directly observable, so there is no separate evidence
+    // query: an inbound that THREADS to one of our outreach sends (its
+    // In-Reply-To/References carry the ledger's provider_message_id) while the
+    // ask it answers is STILL `sent` (sent before the reply arrived). That row
+    // existing means the link did not happen. 24h outlasts every retry.
+    //
+    // ⚠️ SHIPS DORMANT (`enabled_at` NULL, drizzle/0386): the linker is in the
+    // separately deployed MCP Worker. Arm once that deploy is live.
+    name: "outreach-reply-link",
+    ownerOpe: "OPE-1509",
+    label: "Outreach reply linked at capture → promoter_outreach_attempts 'replied'",
+    priority: "P1",
+    expectedWindowHours: 24,
+    lastEvidenceAt: async (db) => {
+      const [r] = await db
+        .select({ t: sql<number | null>`max(${inboundEmails.receivedAt})` })
+        .from(inboundEmails)
+        .innerJoin(
+          emailSendLedger,
+          and(
+            eq(emailSendLedger.source, "email:promoter-outreach"),
+            isNotNull(emailSendLedger.providerMessageId),
+            sql`(instr(coalesce(${inboundEmails.inReplyTo}, ''), ${emailSendLedger.providerMessageId}) > 0
+              OR instr(coalesce(${inboundEmails.emailReferences}, ''), ${emailSendLedger.providerMessageId}) > 0)`
+          )
+        )
+        .innerJoin(
+          promoterOutreachAttempts,
+          and(
+            sql`lower(${promoterOutreachAttempts.toAddress}) = lower(${emailSendLedger.recipient})`,
+            eq(promoterOutreachAttempts.status, "sent"),
+            sql`${promoterOutreachAttempts.sentAt} <= ${inboundEmails.receivedAt}`
+          )
+        );
+      const unlinked = r?.t != null ? new Date(Number(r.t) * 1000) : null;
+      return demandConditionalEvidence(unlinked, null, new Date());
+    },
+  },
   // ── OPE-975 — three seeds that existed with NO registry entry ─────────
   //
   // Found by scripts/check-heartbeat-probes.ts on its first run. A seed row
@@ -2274,15 +2453,21 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     // logged, so "the extractor went quiet" and "nothing was submitted" looked
     // identical.
     //
-    // DORMANT (drizzle/0357, enabled_at NULL). The window below is a
-    // PLACEHOLDER: no success rows existed when this shipped, so there was no
-    // inter-arrival to measure. The arming ticket measures it and sets
-    // enabled_at; do not arm on this number.
+    // Seeded dormant (drizzle/0357). ARMED 2026-10-20 (OPE-1329, drizzle/0383),
+    // window MEASURED on prod 2026-10-07 → 10-19: 33 rows, 32 gaps, largest
+    // 24.01h, p90 24.0h, mean ~9.75h. By caller: holdout-sampler 29 (one daily
+    // 06:10Z run, so it sets the cadence), email-workflow 2, internal-unnamed 2.
+    // 72h = 3 × the largest gap: two consecutive missed sampler days fire it.
+    //
+    // ⚠️ What it can and cannot see: it proves the shared extractor endpoint
+    // still answers, because the daily sampler calls it. It cannot tell the
+    // email path alone going quiet (n=2 in 13 days, nothing to size a window
+    // from) — that would need its own per-caller probe once there is volume.
     name: "import-url-extract-success",
     ownerOpe: "OPE-1316",
     label: "import-url AI extractor returning answers",
     priority: "P1",
-    expectedWindowHours: 336,
+    expectedWindowHours: 72,
     lastEvidenceAt: (db) =>
       maxTs(
         db,
