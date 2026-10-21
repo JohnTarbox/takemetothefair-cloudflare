@@ -1582,11 +1582,18 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       maxTs(db, promoterEnrichmentCandidates, promoterEnrichmentCandidates.createdAt),
   },
   {
+    // OPE-1503 — re-measured after gate tuning (OPE-1032 09-15, OPE-815 09-23)
+    // cut inflow from tens of rows a day to a few a week. Prod, 09-24 → 10-21:
+    // the longest closed gap between new rows was 102h (10-07 → 10-11), next
+    // 77.5h; the old 72h window paged on ordinary quiet stretches while the
+    // detectors ran clean (holdout + source_agreement touched rows daily, no
+    // capture errors in error_logs). 240h is ~2.35× the longest gap, with
+    // margin for the off-season, when fewer future events exist to check.
     name: "discrepancy-detection",
     ownerOpe: "OPE-GW1",
     label: "Discrepancy detection",
     priority: "P1",
-    expectedWindowHours: 72,
+    expectedWindowHours: 240,
     lastEvidenceAt: (db) => maxTs(db, eventDiscrepancies, eventDiscrepancies.detectedAt),
   },
   {
