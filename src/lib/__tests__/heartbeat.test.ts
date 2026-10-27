@@ -3,6 +3,8 @@
  * integration-silence.test (OPE-243), the pattern this extends.
  */
 import { describe, it, expect } from "vitest";
+import type { SQL } from "drizzle-orm";
+import { SQLiteSyncDialect } from "drizzle-orm/sqlite-core";
 import {
   assessHeartbeatSilence,
   HEARTBEAT_PROBES,
@@ -249,6 +251,29 @@ describe("OPE-944 inbound-forward-analysis probe", () => {
     expect(captured.called).toBe(true);
     expect(captured.where).toBeDefined();
     expect(captured.columns).toEqual(["original_sender_auth"]);
+  });
+});
+
+/**
+ * OPE-1530 — the inbound-submit probe sat red ~22 days on a live lane because
+ * it keyed on `intent = 'submit'`, which is only the submit@ address-fallback
+ * intent; a confident classifier stores `new_event`. Pin the evidence predicate
+ * to BOTH intents the submit pipeline dispatches on.
+ */
+describe("OPE-1530 inbound-submit probe", () => {
+  const probe = HEARTBEAT_PROBES.find((p) => p.name === "inbound-submit")!;
+
+  it("counts new_event AND submit rows as evidence — not the fallback slice alone", () => {
+    const captured = captureProbeWhere(probe);
+    expect(captured.called).toBe(true);
+    expect(captured.columns).toEqual(["intent"]);
+    const { sql, params } = new SQLiteSyncDialect().sqlToQuery(captured.where as SQL);
+    expect(sql).toMatch(/"intent" in \(\?, \?\)/i);
+    expect([...params].sort()).toEqual(["new_event", "submit"]);
+  });
+
+  it("keeps the measured 21d window (2.6x the worst observed 197h gap)", () => {
+    expect(probe.expectedWindowHours).toBe(21 * 24);
   });
 });
 
