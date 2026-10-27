@@ -1373,3 +1373,13 @@ export * from "./send-gates";
 // OPE-1293 — the shared "is this flag dark?" rule (main app + MCP inventory).
 export * from "./capability-flag-dark";
 export * from "./extraction-families";
+
+// ── OPE-1531 — inbound intents the submit pipeline runs on ────────
+// `submit` is only the submit@ ADDRESS-FALLBACK intent (classifier below
+// threshold or errored — `routeIntents`, mcp-server/src/email-handler.ts); a
+// confident classifier stores `new_event`. Both dispatch to the same submit
+// pipeline (mcp-server/src/workflows/inbound-email.ts). A reader that filters
+// on `submit` alone sees only the low-confidence slice — the bug behind
+// OPE-1530 (heartbeat red ~22d on a live lane) and OPE-1531 (sender quality
+// + source-quality yield). Guarded by src/lib/__tests__/submit-intents-ope1531.test.ts.
+export const SUBMIT_PIPELINE_INTENTS = ["submit", "new_event"] as const;
