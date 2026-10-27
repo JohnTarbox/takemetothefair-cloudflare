@@ -1116,13 +1116,31 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     lastEvidenceAt: (db) => maxTs(db, emailDeliveryEvents, emailDeliveryEvents.receivedAt),
   },
   {
+    // OPE-1530 — evidence is EITHER intent the submit pipeline runs on.
+    //
+    // `submit` is only the submit@ ADDRESS-FALLBACK intent (classifier below
+    // threshold or errored — `routeIntents`, mcp-server/src/email-handler.ts);
+    // a confident classifier stores `new_event`, and both dispatch to the same
+    // submit pipeline (workflows/inbound-email.ts). Keyed on `submit` alone,
+    // the probe watched the low-confidence slice of the lane: its last row was
+    // 2026-10-05 15:01Z, and the probe sat red ~22 days while `new_event`
+    // submissions kept arriving (11 in the 30 days to 10-27, last 10-26).
+    //
+    // 21d window, re-measured 2026-10-27 on BOTH intents: 169 inter-arrival
+    // gaps since 2026-05-18, worst 197h (07-01 → 07-10), then 195h and 169h,
+    // p90 78h. 504h ≈ 2.6x the worst real gap — kept, not widened.
     name: "inbound-submit",
     ownerOpe: "OPE-174",
     label: "Inbound event submissions",
     priority: "P1",
     expectedWindowHours: 21 * 24,
     lastEvidenceAt: (db) =>
-      maxTs(db, inboundEmails, inboundEmails.receivedAt, eq(inboundEmails.intent, "submit")),
+      maxTs(
+        db,
+        inboundEmails,
+        inboundEmails.receivedAt,
+        inArray(inboundEmails.intent, ["submit", "new_event"])
+      ),
   },
   {
     // OPE-944 — proof the original-sender forward analysis is still executing.
