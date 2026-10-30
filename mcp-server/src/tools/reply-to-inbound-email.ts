@@ -22,7 +22,7 @@ import { z } from "zod";
 import { eq } from "drizzle-orm";
 import { inboundEmails, adminActions, pendingEmailReplies } from "../schema.js";
 // OPE-368 — shared with the admin route so both refusal sites behave identically.
-import { buildRefusedReply, refusedReplyMessage } from "@takemetothefair/utils";
+import { buildRefusedReply, refusedReplyMessage, replySubject } from "@takemetothefair/utils";
 import { logError } from "../logger.js";
 import { MANUAL_REPLY_SOURCE } from "../support-obligations-close.js";
 import { jsonContent } from "../helpers.js";
@@ -212,7 +212,7 @@ export async function handleReplyToInbound(
     };
   }
 
-  const subject = (args.subject?.trim() || `Re: ${row.subject || "your message"}`).slice(0, 200);
+  const subject = (args.subject?.trim() || replySubject(row.subject)).slice(0, 200);
   const text = args.body;
   const html = args.html?.trim() ? args.html : textToHtml(args.body);
 
@@ -277,7 +277,9 @@ export function registerReplyToInboundEmailTool(
         .min(1)
         .max(200)
         .optional()
-        .describe("Reply subject. Defaults to 'Re: <original subject>'."),
+        .describe(
+          "Reply subject. Defaults to 'Re: <original subject>', or the original subject unchanged when it already starts with Re:/AW:/SV:."
+        ),
       body: z.string().min(1).describe("Plain-text reply body (sent as-is; no footer appended)."),
       html: z
         .string()
