@@ -33,6 +33,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { and, eq, ne } from "drizzle-orm";
 import { createSlug, unsafeSlug, type Slug } from "@takemetothefair/utils";
+import { invalidEventCategories } from "@takemetothefair/constants";
 import {
   adminActions,
   eventSeries,
@@ -113,7 +114,15 @@ export function planSeriesUpdate(
   diff("description", current.description, args.description);
   diff("image_url", current.imageUrl, args.image_url);
   if (args.categories !== undefined) {
-    diff("categories", current.categories, JSON.stringify(args.categories));
+    // OPE-1058: one allow-list for every categories writer. Series categories
+    // seed new occurrences, so they share the event vocabulary. Refused rather
+    // than dropped, as in update_event: a caller named these on purpose.
+    const bad = invalidEventCategories(args.categories);
+    if (bad.length > 0) {
+      plan.problems.push(`categories not in EVENT_CATEGORIES: ${bad.join(", ")}`);
+    } else {
+      diff("categories", current.categories, JSON.stringify(args.categories));
+    }
   }
   if (args.tags !== undefined) diff("tags", current.tags, JSON.stringify(args.tags));
 

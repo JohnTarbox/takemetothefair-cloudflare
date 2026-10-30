@@ -276,6 +276,14 @@ describe("planSeriesUpdate (pure)", () => {
   it("refuses a blank name", () => {
     expect(planSeriesUpdate(row, { name: "   " }).problems).toEqual(["name is blank"]);
   });
+  it("refuses a category outside EVENT_CATEGORIES (OPE-1058), and accepts one inside", () => {
+    expect(planSeriesUpdate(row, { categories: ["Craft Fsir"] }).problems).toEqual([
+      "categories not in EVENT_CATEGORIES: Craft Fsir",
+    ]);
+    const ok = planSeriesUpdate(row, { categories: ["Craft Fair"] });
+    expect(ok.problems).toEqual([]);
+    expect(ok.changes.categories).toEqual({ from: "[]", to: '["Craft Fair"]' });
+  });
   it("clears a description with null, and ignores unchanged tags", () => {
     const p = planSeriesUpdate({ ...row, description: "x" }, { description: null, tags: [] });
     expect(p.changes).toEqual({ description: { from: "x", to: null } });
