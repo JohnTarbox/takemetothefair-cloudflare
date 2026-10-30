@@ -224,6 +224,25 @@ describe("rolloverEventIfRecurring — happy path", () => {
     const [rolled] = db.select().from(events).where(eq(events.id, res.newEventId!)).all();
     expect(rolled.name).toBe("Fryeburg Fair");
   });
+
+  // OPE-1543 — a display line in the source name must not ride into next year
+  // with this year's dates ("… 2027 — Aug 27–30 in Cummington, MA").
+  it("strips a date-range display suffix instead of year-swapping it forward", async () => {
+    const sourceId = seedAnnual({
+      id: "evt-display",
+      name: "Cummington Fair 2026 — Aug 27–30 in Cummington, MA",
+      slug: unsafeSlug("cummington-fair-2026"),
+    });
+    const res = await rolloverEventIfRecurring(db, sourceId, {
+      via: "cron",
+      actorUserId: null,
+      now: NOW,
+    });
+    expect(res.created).toBe(true);
+    expect(res.newSlug).toBe("cummington-fair-2027");
+    const [rolled] = db.select().from(events).where(eq(events.id, res.newEventId!)).all();
+    expect(rolled.name).toBe("Cummington Fair 2027");
+  });
 });
 
 describe("rolloverEventIfRecurring — idempotency + gates", () => {
