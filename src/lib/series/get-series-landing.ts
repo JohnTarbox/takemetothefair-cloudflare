@@ -12,14 +12,15 @@
  * is inert and event pages behave exactly as today.
  */
 import { cache } from "react";
-import { eq, and } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
 import { unsafeSlug } from "@takemetothefair/utils";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { withD1ReadLogged } from "@/lib/db/d1-resilience";
-import { eventSeries, events, venues, promoters } from "@/lib/db/schema";
+import { eventSeries, events, eventDays, venues, promoters } from "@/lib/db/schema";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { pickHeroOccurrence, resolveSeriesLandingContent } from "@/lib/series/occurrence-view";
 import type { PlaceVenue } from "@/lib/seo/place-jsonld";
+import type { JsonLdEventDay } from "@/lib/seo/column-date-jsonld";
 import type { SchemaOrganizer } from "@/lib/series/series-schema-org";
 
 export interface LandingOccurrence {
@@ -50,6 +51,13 @@ export interface LandingOccurrence {
   ticketPriceMaxCents: number | null;
   /** OPE-1326 — the stored edition key (null on an annual series). */
   editionKey: string | null;
+  /**
+   * OPE-1547 — the occurrence's day rows (only the four fields the JSON-LD date
+   * rule reads; no notes/provenance reach the page) and its venue zone, so the
+   * series JSON-LD dates match the event page's.
+   */
+  eventDays: JsonLdEventDay[];
+  venueTimezone: string | null;
 }
 
 export interface SeriesLanding {
@@ -129,6 +137,7 @@ async function getSeriesLandingOnce(slug: string): Promise<SeriesLanding | null>
       venueZip: venues.zip,
       venueLat: venues.latitude,
       venueLng: venues.longitude,
+      venueTimezone: venues.timezone,
     })
     .from(events)
     .leftJoin(venues, eq(events.venueId, venues.id))
@@ -153,6 +162,29 @@ async function getSeriesLandingOnce(slug: string): Promise<SeriesLanding | null>
   // never unmask an event page that used to render as a landing.
   if (rows.length === 0) return null;
 
+  // OPE-1547 — day rows for the JSON-LD date rule. One SELECT per 50 ids
+  // ([[feedback_d1_batch_param_limit]]: D1 caps a statement at 100 bound params,
+  // and a long-running market series can hold well over 100 occurrences).
+  const daysByEvent = new Map<string, JsonLdEventDay[]>();
+  const ids = rows.map((r) => r.id);
+  for (let i = 0; i < ids.length; i += 50) {
+    const dayRows = await db
+      .select({
+        eventId: eventDays.eventId,
+        date: eventDays.date,
+        openTime: eventDays.openTime,
+        closeTime: eventDays.closeTime,
+        closed: eventDays.closed,
+      })
+      .from(eventDays)
+      .where(inArray(eventDays.eventId, ids.slice(i, i + 50)));
+    for (const { eventId, ...day } of dayRows) {
+      const list = daysByEvent.get(eventId) ?? [];
+      list.push(day);
+      daysByEvent.set(eventId, list);
+    }
+  }
+
   const occurrences: LandingOccurrence[] = rows.map((r) => ({
     id: r.id,
     slug: r.slug,
@@ -166,6 +198,8 @@ async function getSeriesLandingOnce(slug: string): Promise<SeriesLanding | null>
     ticketPriceMinCents: r.ticketPriceMinCents,
     ticketPriceMaxCents: r.ticketPriceMaxCents,
     editionKey: r.editionKey,
+    eventDays: daysByEvent.get(r.id) ?? [],
+    venueTimezone: r.venueTimezone ?? null,
     // venueName is the leftJoin discriminator: null name ⇒ no venue row.
     venue: r.venueName
       ? {
