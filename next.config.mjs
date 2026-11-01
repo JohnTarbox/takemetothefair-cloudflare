@@ -106,7 +106,12 @@ const nextConfig = {
       { key: "X-Content-Type-Options", value: "nosniff" },
       { key: "X-Frame-Options", value: "DENY" },
       { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-      { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+      // OPE-1549 — geolocation=(self), NOT (): an empty allowlist disables the
+      // Geolocation API for the whole site, whatever the user's site permission
+      // says. It silently broke the Snap app's location (every upload arrived
+      // location_source "none") and the public events "Near me" sort. `self` still
+      // denies it to every cross-origin frame.
+      { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(self)" },
       { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
       { key: "Cross-Origin-Resource-Policy", value: "cross-origin" },
     ];
