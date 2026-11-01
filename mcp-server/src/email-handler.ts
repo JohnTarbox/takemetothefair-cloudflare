@@ -62,6 +62,7 @@ import {
   normalizeThreadSubject,
   resolveThread,
   type ThreadBasis,
+  identifyUnsupportedImageFormat,
 } from "@takemetothefair/utils";
 import {
   isPhotoOnlySubmission,
@@ -1577,6 +1578,13 @@ export interface AttachmentSkip {
   size: number;
   reason: AttachmentSkipReason;
   /**
+   * OPE-1550 — on an `unrecognized-content` skip, the image format the bytes
+   * actually are when we can name it (e.g. "image/jxl" for JPEG XL, "image/avif",
+   * "image/tiff"). Absent when the bytes are nothing we recognise. Lets the
+   * operator notice say "a JPEG XL was refused" instead of "something was".
+   */
+  detectedFormat?: string;
+  /**
    * OPE-760 — was this skip signature furniture rather than something the
    * sender meant to send?
    *
@@ -1744,6 +1752,11 @@ export async function captureAttachments(
     const storedType = item.container ? "message/rfc822" : sniffAttachmentType(bytes);
     if (!storedType) {
       note("unrecognized-content");
+      // OPE-1550 — name it when we can: JPEG XL (Chrome 155 / Firefox 158 open
+      // .jxl natively now), AVIF, TIFF, BMP. Cloudflare's transform can't read
+      // JXL, so this stays a refusal — but a named one.
+      const known = identifyUnsupportedImageFormat(bytes);
+      if (known) skipped[skipped.length - 1].detectedFormat = known.mime;
       continue;
     }
     // Two quotas, so furniture cannot consume a payload slot. This is the

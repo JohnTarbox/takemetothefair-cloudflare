@@ -60,7 +60,7 @@ export function registerUploadImageBytesTool(server: McpServer, auth: AuthContex
       content_type: z
         .enum(ALLOWED_CONTENT_TYPES)
         .describe(
-          "MIME type of the image. Server verifies magic bytes match — a misdeclared SVG-as-JPEG is rejected."
+          "MIME type of the image. Server verifies magic bytes match — a misdeclared SVG-as-JPEG is rejected. JPEG XL, AVIF and HEIC are not accepted (OPE-1550): convert to JPEG/PNG/WebP first."
         ),
       target_type: z
         .enum(["event", "vendor", "venue", "promoter"])

@@ -164,6 +164,13 @@ export interface OperatorQueueCounts {
    */
   droppedRealAttachments: number;
   /**
+   * OPE-1550 — inbound images in the last 7 days refused because of their
+   * FORMAT (JPEG XL, AVIF, TIFF, BMP — `attachment_skips[].detectedFormat`).
+   * Nothing tells the sender, so this line is the only place a refused photo
+   * reaches a person. Expected steady state is zero.
+   */
+  refusedFormatAttachments: number;
+  /**
    * OPE-1011 — upcoming public events whose `start_date` or `public_start_date`
    * renders a DIFFERENT calendar date in America/New_York than in UTC.
    *
@@ -216,6 +223,7 @@ export function decideOperatorQueueNotice(
     | "pendingOperatorDrafts"
     | "agedAwaitingDecision"
     | "droppedRealAttachments"
+    | "refusedFormatAttachments"
     | "venueDateShifts"
     | "authEmailProblems"
     | "unpinnedVenueImminent"
@@ -245,6 +253,7 @@ export function totalWaiting(
     | "pendingOperatorDrafts"
     | "agedAwaitingDecision"
     | "droppedRealAttachments"
+    | "refusedFormatAttachments"
     | "venueDateShifts"
     | "authEmailProblems"
     | "unpinnedVenueImminent"
@@ -272,6 +281,8 @@ export function totalWaiting(
     // on a completely empty queue.
     (counts.agedAwaitingDecision ?? 0) +
     (counts.droppedRealAttachments ?? 0) +
+    // OPE-1550 — `?? 0` for the NaN reason above.
+    (counts.refusedFormatAttachments ?? 0) +
     (counts.venueDateShifts ?? 0) +
     (counts.authEmailProblems ?? 0) +
     // OPE-1290 — `?? 0` for the reason the comment above gives.
@@ -527,6 +538,7 @@ export async function readOperatorQueues(
   // specimen — against 94 rows carrying attachments. So the expected steady
   // state is zero, which is what makes a non-zero worth an email.
   let droppedRealAttachments = 0;
+  let refusedFormatAttachments = 0;
   try {
     const recent = await db
       .select({ id: inboundEmails.id, skips: inboundEmails.attachmentSkips })
@@ -538,8 +550,13 @@ export async function readOperatorQueues(
         )
       );
     for (const r of recent) {
-      let parsed: Array<{ name?: string; reason?: string; furniture?: boolean; size?: number }> =
-        [];
+      let parsed: Array<{
+        name?: string;
+        reason?: string;
+        furniture?: boolean;
+        size?: number;
+        detectedFormat?: string;
+      }> = [];
       try {
         parsed = JSON.parse(r.skips ?? "[]");
       } catch {
@@ -554,6 +571,20 @@ export async function readOperatorQueues(
         lines.push(
           `⚠️ ${real.length} real attachment(s) dropped by the count cap on inbound ${r.id} — ` +
             `${real.map((k) => k.name ?? "(unnamed)").join(", ")} (OPE-760)`
+        );
+      }
+      // OPE-1550 — an image we refused because of its FORMAT (JPEG XL, AVIF,
+      // TIFF…). Nothing replies to the sender about it, so without this line the
+      // only record is `attachment_skips` on the row, which nobody reads unprompted.
+      const refusedFormat = parsed.filter(
+        (k) => k.reason === "unrecognized-content" && k.detectedFormat && k.furniture !== true
+      );
+      if (refusedFormat.length > 0) {
+        refusedFormatAttachments += refusedFormat.length;
+        lines.push(
+          `⚠️ ${refusedFormat.length} image(s) refused for format on inbound ${r.id} — ` +
+            `${refusedFormat.map((k) => `${k.name ?? "(unnamed)"} [${k.detectedFormat}]`).join(", ")} ` +
+            `(OPE-1550: convert and attach by hand, or reply asking for a JPEG)`
         );
       }
     }
@@ -737,6 +768,7 @@ export async function readOperatorQueues(
     pendingOperatorDrafts,
     agedAwaitingDecision,
     droppedRealAttachments,
+    refusedFormatAttachments,
     venueDateShifts,
     authEmailProblems,
     unpinnedVenueImminent,
