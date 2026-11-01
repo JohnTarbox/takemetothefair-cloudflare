@@ -41,6 +41,7 @@ import {
   analyzeForward,
   isRfc822Attachment,
   POSTAL_MIME_OPTIONS,
+  type AttachmentDispositionToken,
   type ForwardAnalysis,
 } from "./email-handlers/forwarded-message.js";
 import { createDohResolver } from "./email-handlers/dkim-verify.js";
@@ -1400,7 +1401,7 @@ interface CapturableAttachment {
    * lost.
    */
   contentId?: string;
-  disposition?: "attachment" | "inline" | null;
+  disposition?: AttachmentDispositionToken | null;
   related?: boolean;
 }
 
