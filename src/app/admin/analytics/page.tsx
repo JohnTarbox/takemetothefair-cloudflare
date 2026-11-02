@@ -75,7 +75,7 @@ import {
   type SiteSearchQueriesResult,
   type SitemapStatus,
 } from "@/lib/search-console";
-import { computeMilestoneLayout, MILESTONE_CHART_DIMS } from "@/lib/charts/milestone-layout";
+import { MilestoneEChart } from "@/components/admin/charts/admin-charts";
 import { toMilestonePoints, type GscMilestonePoint } from "@/lib/charts/milestone-points";
 import { formatDateOnly, formatTimestampForServer } from "@/lib/datetime";
 import {
@@ -2112,142 +2112,19 @@ function GscMilestoneChartCard({ points }: { points: GscMilestonePoint[] }) {
   );
 }
 
+// OPE-1565 — was hand-rolled SVG with stride/anchor collision arithmetic
+// (`@/lib/charts/milestone-layout`, OPE-602) that broke again as the series
+// grew to 42 points, and viewBox-scaled text (~5px on a phone). Now the shared
+// admin ECharts host; label collisions are the library's job.
 function MilestoneChart({ points }: { points: GscMilestonePoint[] }) {
-  // OPE-602 — layout maths extracted to `@/lib/charts/milestone-layout` so the
-  // label-collision and edge-clipping rules are testable. They are arithmetic,
-  // and none of it could be tested while it lived inside this markup.
-  const d = MILESTONE_CHART_DIMS;
-  const layout = computeMilestoneLayout(points, fmt, d);
-  const { coords, ticks, linePath, areaPath, dateLabelIndices, labelStride } = layout;
-  if (coords.length === 0) return null;
-  const baselineY = d.height - d.padBottom;
-
   return (
-    <svg
-      viewBox={`0 0 ${d.width} ${d.height}`}
-      // OPE-602 ROOT CAUSE. This was `preserveAspectRatio="none"` with a pinned
-      // `h-56`, which let the axes scale independently: every glyph and dot was
-      // stretched, and the amount CHANGED WITH THE WINDOW (1.41x too wide at
-      // 1151px, 0.41x at 380px). `r={4}` painted an 11.5 x 8.1px ellipse.
-      //
-      // `meet` alone would letterbox, so the box is given the viewBox's own
-      // aspect ratio and the SVG fills it exactly — undistorted at every width,
-      // with height scaling instead of glyphs.
-      preserveAspectRatio="xMidYMid meet"
-      style={{ aspectRatio: `${d.width} / ${d.height}` }}
-      className="w-full h-auto"
-      aria-label="Search clicks milestone growth chart"
-      role="img"
-    >
-      {/* OPE-602 defect 4 — log-scale gridlines and ticks. The subtitle
-          promised "log scale" while the plot had a single baseline rule and no
-          ticks, so nothing let a reader take a value off the curve: the line
-          was decorative and the printed labels were the only data. */}
-      {ticks.map((t) => (
-        <g key={`tick-${t.value}`}>
-          <line
-            x1={d.padLeft}
-            y1={t.y}
-            x2={d.width - d.padRight}
-            y2={t.y}
-            className="stroke-gray-100"
-            strokeWidth={1}
-          />
-          <text
-            x={d.padLeft}
-            y={t.y - 2}
-            textAnchor="start"
-            className="fill-gray-400"
-            style={{ fontSize: "9px" }}
-          >
-            {fmt(t.value)}
-          </text>
-        </g>
-      ))}
-      {/* baseline at the bottom of the plot area */}
-      <line
-        x1={d.padLeft}
-        y1={baselineY}
-        x2={d.width - d.padRight}
-        y2={baselineY}
-        className="stroke-gray-200"
-        strokeWidth={1}
-      />
-      <path d={areaPath} className="fill-blue-100" opacity={0.5} />
-      <path d={linePath} className="stroke-blue-600 fill-none" strokeWidth={2} />
-      {coords.map((c, i) => (
-        <g key={`${c.date}-${i}`}>
-          {/* dot — OPE-456: a HOLLOW dot is a crossing we derived from our own
-              daily totals; a solid dot is a badge Google actually awarded.
-              Shape rather than colour so the distinction survives a greyscale
-              print and does not depend on the legend being read. */}
-          <circle
-            cx={c.x}
-            cy={c.y}
-            r={4}
-            className={c.derived ? "fill-white stroke-blue-600" : "fill-blue-600"}
-            strokeWidth={c.derived ? 2 : 0}
-          />
-          {/* OPE-602 defect 6 — per-point detail. There were zero <title>
-              elements and one aria-label on the whole svg, so hovering a dot
-              gave nothing and a screen reader got "growth chart" and no data. */}
-          <title>
-            {`${fmt(c.threshold)} clicks — ${formatDateOnly(c.date) || c.date}${
-              c.derived ? " (derived from our own daily totals)" : ""
-            }`}
-          </title>
-          {/* value label — drawn every `labelStride` points (defect 1) and
-              anchored away from the edge (defect 2). */}
-          {c.showLabel && (
-            <text
-              x={c.x}
-              y={c.y - 10}
-              textAnchor={c.labelAnchor}
-              className="fill-gray-900 text-xs font-semibold"
-              style={{ fontSize: "11px" }}
-            >
-              {fmt(c.threshold)}
-            </text>
-          )}
-        </g>
-      ))}
-      {dateLabelIndices.map((idx) => {
-        const c = coords[idx];
-        const anchor: "start" | "middle" | "end" =
-          idx === 0 ? "start" : idx === coords.length - 1 ? "end" : "middle";
-        return (
-          <text
-            key={`date-${idx}`}
-            x={c.x}
-            y={baselineY + 16}
-            textAnchor={anchor}
-            className="fill-gray-600"
-            style={{ fontSize: "11px" }}
-          >
-            {formatDateOnly(c.date) || c.date}
-          </text>
-        );
-      })}
-      {/* OPE-602 defect 3, stated rather than silently fixed: points are
-          INDEX-spaced, so the middle date label sits at the middle MILESTONE,
-          not the middle date, and the curve's right-hand flattening is partly
-          a spacing artifact. Date-spacing them honestly is blocked on OPE-456
-          — `reached_date` defaults to the forwarding email's date and
-          keep-earliest idempotency makes it uncorrectable — so a date-spaced
-          axis would be no more truthful than this one, only more convincing.
-          The caption below the chart now says so. */}
-      {labelStride > 1 && (
-        <text
-          x={d.width - d.padRight}
-          y={d.padTop - 16}
-          textAnchor="end"
-          className="fill-gray-400"
-          style={{ fontSize: "9px" }}
-        >
-          {`every ${labelStride}${labelStride === 2 ? "nd" : labelStride === 3 ? "rd" : "th"} milestone labelled`}
-        </text>
-      )}
-    </svg>
+    <MilestoneEChart
+      points={points.map((p) => ({
+        threshold: p.threshold,
+        dateLabel: formatDateOnly(p.date) || p.date,
+        derived: p.derived,
+      }))}
+    />
   );
 }
 
