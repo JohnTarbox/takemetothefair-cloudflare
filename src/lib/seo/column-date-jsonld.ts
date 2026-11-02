@@ -21,6 +21,23 @@ export interface JsonLdEventDay {
   openTime: string | null;
   closeTime: string | null;
   closed?: boolean | null;
+  /** OPE-1563 — a vendor-setup window, never a public session. */
+  vendorOnly?: boolean | null;
+}
+
+/**
+ * OPE-1563 — the one predicate for "this `event_days` row is a day the public
+ * can attend", for every JSON-LD and calendar reader. A `vendor_only` row is a
+ * setup window ("Vendor setup, 7–9 AM"); the visible schedule already hides it
+ * (`DailyScheduleDisplay` showVendorDays="hide"), but the JSON-LD did not, so
+ * GAHS Holiday Craft Fair told search engines it had a public "Day 2" opening
+ * at 7 AM. A `closed` row is a day the event does not run.
+ */
+export function isPublicEventDay(d: {
+  closed?: boolean | null;
+  vendorOnly?: boolean | null;
+}): boolean {
+  return !d.closed && !d.vendorOnly;
 }
 
 /**
@@ -55,7 +72,9 @@ export function columnDateForJsonLd(
   // Noon UTC falls on the same calendar day in every US zone.
   const day = value.toISOString().slice(0, 10);
   const instants = (eventDays ?? [])
-    .filter((d) => d.date === day && !d.closed && d.openTime != null && d.closeTime != null)
+    .filter(
+      (d) => d.date === day && isPublicEventDay(d) && d.openTime != null && d.closeTime != null
+    )
     .map((d) =>
       parseWallClockInVenueZone(day, (edge === "start" ? d.openTime : d.closeTime)!, venueTz)
     )
