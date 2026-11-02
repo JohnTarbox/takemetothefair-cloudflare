@@ -1,5 +1,14 @@
 import Link from "next/link";
-import { Plus, Eye, Pencil, Calendar, Copy, FileText, CheckCircle2, Store } from "lucide-react";
+import {
+  Plus,
+  Eye,
+  Calendar,
+  Copy,
+  FileText,
+  CheckCircle2,
+  Store,
+  MessageSquare,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -286,11 +295,20 @@ export default async function PromoterEventsPage() {
                             Vendor call
                           </Button>
                         </Link>
-                        <Link href={`/promoter/events/${event.id}/edit`} aria-label="Edit event">
-                          <Button variant="ghost" size="sm">
-                            <Pencil className="w-4 h-4" />
+                        {/* OPE-1514 (John, 2026-11-02: option D) — there is no promoter
+                            edit page, so the old pencil here 404'd on every click. A change
+                            to a submitted listing goes to a person until the staged-proposal
+                            edit flow (option C, tracked under OPE-1560) exists. */}
+                        <a
+                          href={`mailto:corrections@meetmeatthefair.com?subject=${encodeURIComponent(
+                            `Change request: ${event.name} (${event.id.slice(0, 8)})`
+                          )}`}
+                        >
+                          <Button variant="ghost" size="sm" aria-label="Request a change">
+                            <MessageSquare className="w-4 h-4 mr-1" />
+                            Request a change
                           </Button>
-                        </Link>
+                        </a>
                       </div>
                     </div>
                   ))}
