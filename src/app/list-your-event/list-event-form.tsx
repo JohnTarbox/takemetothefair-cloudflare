@@ -83,8 +83,12 @@ type Phase = "form" | "duplicate" | "submitting" | "done";
 
 const PUBLIC_STATUSES = new Set<string>(PUBLIC_EVENT_STATUSES);
 
-export function ListEventForm() {
-  const [input, setInput] = useState<ListYourEventInput>(EMPTY_LIST_YOUR_EVENT_INPUT);
+export function ListEventForm({ defaultState = "" }: { defaultState?: string } = {}) {
+  // OPE-1559 — a per-state landing page pre-selects its state.
+  const [input, setInput] = useState<ListYourEventInput>({
+    ...EMPTY_LIST_YOUR_EVENT_INPUT,
+    state: defaultState,
+  });
   const [errors, setErrors] = useState<ListYourEventErrors>({});
   const [formError, setFormError] = useState("");
   const [phase, setPhase] = useState<Phase>("form");
@@ -275,7 +279,11 @@ export function ListEventForm() {
           <Button
             type="button"
             onClick={() => {
-              setInput((prev) => ({ ...EMPTY_LIST_YOUR_EVENT_INPUT, email: prev.email }));
+              setInput((prev) => ({
+                ...EMPTY_LIST_YOUR_EVENT_INPUT,
+                state: defaultState,
+                email: prev.email,
+              }));
               setResult(null);
               setDuplicate(null);
               resetTurnstile();

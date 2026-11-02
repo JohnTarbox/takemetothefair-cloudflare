@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { FooterNewsletterSlot } from "./footer-newsletter-slot";
+import { ListEventCtaLink } from "@/components/list-your-event/list-event-cta";
 import { SOCIAL_LINKS } from "@/lib/social-links";
 
 export function Footer() {
@@ -29,7 +30,8 @@ export function Footer() {
     forBusiness: [
       { name: "For Promoters", href: "/for-promoters" },
       { name: "For Vendors", href: "/for-vendors" },
-      { name: "List Your Event", href: "/register?role=promoter" },
+      // OPE-1559 (John, 2026-11-02) — the no-login form, not account signup.
+      { name: "List Your Event", href: "/list-your-event" },
     ],
     company: [
       { name: "About Us", href: "/about" },
@@ -83,12 +85,21 @@ export function Footer() {
             <ul className="mt-4 space-y-2">
               {footerLinks.forBusiness.map((link) => (
                 <li key={link.name}>
-                  <Link
-                    href={link.href}
-                    className="text-sm hover:text-footer-foreground transition-colors"
-                  >
-                    {link.name}
-                  </Link>
+                  {link.href === "/list-your-event" ? (
+                    <ListEventCtaLink
+                      placement="footer"
+                      className="text-sm hover:text-footer-foreground transition-colors"
+                    >
+                      {link.name}
+                    </ListEventCtaLink>
+                  ) : (
+                    <Link
+                      href={link.href}
+                      className="text-sm hover:text-footer-foreground transition-colors"
+                    >
+                      {link.name}
+                    </Link>
+                  )}
                 </li>
               ))}
             </ul>
