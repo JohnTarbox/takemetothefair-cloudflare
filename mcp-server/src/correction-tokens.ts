@@ -24,7 +24,7 @@ const TOKEN_TTL_DAYS = 30;
  *  `${MAIN_APP_URL}/submit-event/${token}`. */
 export async function issueCorrectionToken(
   db: Db,
-  args: { eventId: string; inboundEmailId: string }
+  args: { eventId: string; inboundEmailId: string | null }
 ): Promise<string> {
   const raw = new Uint8Array(TOKEN_BYTES);
   crypto.getRandomValues(raw);

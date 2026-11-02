@@ -40,16 +40,17 @@ function toBase64Url(bytes: Uint8Array): string {
 }
 
 /**
- * Mint a new correction token and persist it. Caller is responsible for
- * passing the eventId of the freshly-created PENDING event and the
- * inboundEmailId that produced it (both required for audit trail).
+ * Mint a new correction token and persist it. Caller passes the eventId of
+ * the freshly-created PENDING event and the inboundEmailId that produced it,
+ * or `null` when the event came from a web form (OPE-1558: the
+ * /list-your-event receipt carries a correction link; drizzle/0389).
  *
  * Returns the bare token string. Callers compose the URL via
  * `${MAIN_APP_URL}/submit-event/${token}`.
  */
 export async function issueCorrectionToken(
   db: Db,
-  args: { eventId: string; inboundEmailId: string }
+  args: { eventId: string; inboundEmailId: string | null }
 ): Promise<string> {
   const bytes = crypto.getRandomValues(new Uint8Array(TOKEN_BYTES));
   const token = toBase64Url(bytes);
