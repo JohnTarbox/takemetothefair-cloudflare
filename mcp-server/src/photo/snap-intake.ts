@@ -30,7 +30,13 @@
  * `capture_meta`, which is not public.
  */
 import { eq } from "drizzle-orm";
-import { stripExifFromJpeg } from "@takemetothefair/utils";
+import {
+  stripExifFromJpeg,
+  identifyUnsupportedImageFormat,
+  unsupportedImageFormatForMime,
+  unsupportedImageMessage,
+} from "@takemetothefair/utils";
+import { sniffAttachmentType } from "../attachment-sniff.js";
 import { inboundEmails } from "../schema.js";
 import type { Db } from "../db.js";
 import { parseExif, type ExifData } from "./exif.js";
@@ -245,9 +251,31 @@ export async function ingestSnap(
   const contentType = input.contentType.toLowerCase().split(";")[0].trim();
   const type = contentType === "image/jpg" ? "image/jpeg" : contentType;
   if (!SNAP_ALLOWED_TYPES.has(type)) {
-    return { ok: false, status: 415, error: `unsupported content type ${contentType}` };
+    // OPE-1550 — name the format. The capture page sends the camera original
+    // when the browser can't decode it, so a JPEG XL lands here as image/jxl.
+    const known = unsupportedImageFormatForMime(contentType);
+    return {
+      ok: false,
+      status: 415,
+      error: known ? unsupportedImageMessage(known) : `unsupported content type ${contentType}`,
+    };
   }
   if (input.bytes.length === 0) return { ok: false, status: 400, error: "empty file" };
+  // OPE-1550 — the declared type is only a label. A JPEG XL renamed .jpg
+  // arrives as image/jpeg; storing it under that type hands every downstream
+  // reader (vision, EXIF, the admin viewer, a hero via /cdn-cgi/image) bytes it
+  // can't decode. Refuse unless the bytes ARE the declared format.
+  const sniffed = sniffAttachmentType(input.bytes);
+  if (sniffed !== type) {
+    const known = identifyUnsupportedImageFormat(input.bytes);
+    return {
+      ok: false,
+      status: 415,
+      error: known
+        ? unsupportedImageMessage(known)
+        : `file bytes are not ${type}${sniffed ? ` (they look like ${sniffed})` : ""}`,
+    };
+  }
   if (input.bytes.length > SNAP_MAX_BYTES) {
     return { ok: false, status: 413, error: `file exceeds ${SNAP_MAX_BYTES} bytes` };
   }

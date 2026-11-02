@@ -17,6 +17,8 @@
  * a boundary instead of near one.
  */
 
+import { replySubject } from "@takemetothefair/utils";
+
 /** Mirrors the `status` enum on `promoterOutreachAttempts`. */
 export type PromoterOutreachStatus =
   | "queued"
@@ -166,7 +168,7 @@ export function buildFollowUpDraft(input: {
 }): { subject: string; body: string } {
   const sent = input.originalSentAt.toISOString().slice(0, 10);
   return {
-    subject: `Re: ${input.originalSubject}`.slice(0, 200),
+    subject: replySubject(input.originalSubject).slice(0, 200),
     body: `Hello,
 
 I wrote on ${sent} to check this year's dates for ${input.eventName}, and I know how easily an email like that gets buried.

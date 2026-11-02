@@ -42,8 +42,12 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm ci
 
+      # OPE-1516 — @opennextjs/aws hard-exits (process.exit 1) on a Next major
+      # more than two years past its release; Next 15's cutoff was
+      # 2026-10-21T00:00Z. Stop-gap until the Next 16 upgrade — remove the flag
+      # with that upgrade. It only skips the date check; the build is unchanged.
       - name: Build with OpenNext adapter
-        run: npx opennextjs-cloudflare build
+        run: npx opennextjs-cloudflare build --dangerously-use-unsupported-next-version
 
       # OPE-1128 — Safari < 16.4 cannot parse a lookbehind regex LITERAL, and one
       # in any emitted chunk crashes every route that loads it. Source scans

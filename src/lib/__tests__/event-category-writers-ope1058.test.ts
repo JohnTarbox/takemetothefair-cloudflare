@@ -125,6 +125,7 @@ describe("OPE-1058 — every events.categories writer reads the shared allow-lis
   it("finds the known writers — a scan that matches nothing proves nothing", () => {
     expect(writers.map((w) => w.file)).toEqual(
       [
+        "mcp-server/src/tools/admin-update-series.ts",
         "mcp-server/src/tools/vendor.ts",
         "src/app/api/admin/events/[id]/route.ts",
         "src/app/api/admin/events/route.ts",

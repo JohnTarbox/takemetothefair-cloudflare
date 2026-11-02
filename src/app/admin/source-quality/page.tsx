@@ -19,7 +19,8 @@
 
 import { requireAdmin } from "@/lib/require-admin";
 import Link from "next/link";
-import { and, eq, gte, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import { SUBMIT_PIPELINE_INTENTS } from "@takemetothefair/constants";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, eventDateDriftFindings, inboundEmails } from "@/lib/db/schema";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -105,7 +106,7 @@ async function loadSourceQuality(filterMethod: string | null): Promise<SourceRow
     .from(inboundEmails)
     .where(
       and(
-        eq(inboundEmails.intent, "submit"),
+        inArray(inboundEmails.intent, [...SUBMIT_PIPELINE_INTENTS]),
         gte(inboundEmails.receivedAt, sql`${thirtyDaysAgoSeconds}`)
       )
     );

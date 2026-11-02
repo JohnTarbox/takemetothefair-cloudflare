@@ -17,7 +17,8 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { eq, sql } from "drizzle-orm";
+import { inArray, sql } from "drizzle-orm";
+import { SUBMIT_PIPELINE_INTENTS } from "@takemetothefair/constants";
 import { adminActions, events, inboundEmails, inboundEmailSenders } from "../schema.js";
 import { jsonContent } from "../helpers.js";
 import type { Db } from "../db.js";
@@ -80,7 +81,7 @@ async function computeSenderSummaries(db: Db, limit: number): Promise<SenderSumm
       lastSeen: sql<number>`MAX(${inboundEmails.receivedAt})`,
     })
     .from(inboundEmails)
-    .where(eq(inboundEmails.intent, "submit"))
+    .where(inArray(inboundEmails.intent, [...SUBMIT_PIPELINE_INTENTS]))
     .groupBy(inboundEmails.fromAddress);
 
   const eventRows = await db

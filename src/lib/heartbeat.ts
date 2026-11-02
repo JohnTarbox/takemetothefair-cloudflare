@@ -160,6 +160,30 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       ),
   },
   {
+    // OPE-1558 — the no-login /list-your-event form beacons `list_view` on every
+    // mount (funnel-steps.ts `list`). A page that still renders but whose
+    // beacon silently stopped (allowlist drift, a client error before the
+    // effect) would read as "nobody came", which is the one reading this
+    // funnel exists to rule out.
+    //
+    // Seeded DORMANT (drizzle/0388, enabled_at NULL): the page ships noindex
+    // and unlinked — OPE-1559 owns the nav CTA and indexing, gated on John — so
+    // real traffic is ~0 and a live window would false-fire. ARMING CONDITION:
+    // set enabled_at the day OPE-1559's nav/contextual CTA ships.
+    name: "list-your-event-view",
+    ownerOpe: "OPE-1558",
+    label: "No-login /list-your-event form records its page views",
+    priority: "P1",
+    expectedWindowHours: 7 * 24,
+    lastEvidenceAt: (db) =>
+      maxTs(
+        db,
+        analyticsEvents,
+        analyticsEvents.timestamp,
+        eq(analyticsEvents.eventName, "list_view")
+      ),
+  },
+  {
     // OPE-1480 — proof that venue CREATION still pulls Google's accessibility +
     // parking (geocodeNewVenue → fillVenueGoogleAmenities), so the OPE-1479
     // "About the venue (from Google)" line does not decay into "Not published"
@@ -1116,13 +1140,31 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
     lastEvidenceAt: (db) => maxTs(db, emailDeliveryEvents, emailDeliveryEvents.receivedAt),
   },
   {
+    // OPE-1530 — evidence is EITHER intent the submit pipeline runs on.
+    //
+    // `submit` is only the submit@ ADDRESS-FALLBACK intent (classifier below
+    // threshold or errored — `routeIntents`, mcp-server/src/email-handler.ts);
+    // a confident classifier stores `new_event`, and both dispatch to the same
+    // submit pipeline (workflows/inbound-email.ts). Keyed on `submit` alone,
+    // the probe watched the low-confidence slice of the lane: its last row was
+    // 2026-10-05 15:01Z, and the probe sat red ~22 days while `new_event`
+    // submissions kept arriving (11 in the 30 days to 10-27, last 10-26).
+    //
+    // 21d window, re-measured 2026-10-27 on BOTH intents: 169 inter-arrival
+    // gaps since 2026-05-18, worst 197h (07-01 → 07-10), then 195h and 169h,
+    // p90 78h. 504h ≈ 2.6x the worst real gap — kept, not widened.
     name: "inbound-submit",
     ownerOpe: "OPE-174",
     label: "Inbound event submissions",
     priority: "P1",
     expectedWindowHours: 21 * 24,
     lastEvidenceAt: (db) =>
-      maxTs(db, inboundEmails, inboundEmails.receivedAt, eq(inboundEmails.intent, "submit")),
+      maxTs(
+        db,
+        inboundEmails,
+        inboundEmails.receivedAt,
+        inArray(inboundEmails.intent, ["submit", "new_event"])
+      ),
   },
   {
     // OPE-944 — proof the original-sender forward analysis is still executing.
@@ -1582,11 +1624,18 @@ export const HEARTBEAT_PROBES: HeartbeatProbe[] = [
       maxTs(db, promoterEnrichmentCandidates, promoterEnrichmentCandidates.createdAt),
   },
   {
+    // OPE-1503 — re-measured after gate tuning (OPE-1032 09-15, OPE-815 09-23)
+    // cut inflow from tens of rows a day to a few a week. Prod, 09-24 → 10-21:
+    // the longest closed gap between new rows was 102h (10-07 → 10-11), next
+    // 77.5h; the old 72h window paged on ordinary quiet stretches while the
+    // detectors ran clean (holdout + source_agreement touched rows daily, no
+    // capture errors in error_logs). 240h is ~2.35× the longest gap, with
+    // margin for the off-season, when fewer future events exist to check.
     name: "discrepancy-detection",
     ownerOpe: "OPE-GW1",
     label: "Discrepancy detection",
     priority: "P1",
-    expectedWindowHours: 72,
+    expectedWindowHours: 240,
     lastEvidenceAt: (db) => maxTs(db, eventDiscrepancies, eventDiscrepancies.detectedAt),
   },
   {

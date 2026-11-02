@@ -4,7 +4,7 @@ import { use, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 
 interface Props {
@@ -87,18 +87,18 @@ export default function ResetPasswordPage({ params }: Props) {
                   ) : null}
                 </div>
               )}
-              <Input
+              <PasswordInput
                 label="New password"
-                type="password"
+                autoComplete="new-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="At least 8 characters"
                 required
                 autoFocus
               />
-              <Input
+              <PasswordInput
                 label="Confirm password"
-                type="password"
+                autoComplete="new-password"
                 value={confirm}
                 onChange={(e) => setConfirm(e.target.value)}
                 placeholder="Re-enter the password"
