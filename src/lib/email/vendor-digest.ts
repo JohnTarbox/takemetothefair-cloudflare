@@ -48,6 +48,15 @@ export interface VendorDigestEvent {
    * Optional so older callers and fixtures read as UNKNOWN.
    */
   capacity?: "OPEN" | "UNKNOWN" | "WAITLIST";
+  /**
+   * OPE-1564 — who may be a vendor (OPEN | MEMBERS_ONLY | JURIED |
+   * INVITATION_ONLY) and the org for MEMBERS_ONLY. Carried for the selection
+   * reader so a card CAN show a "Members only" chip; this renderer does not
+   * print it yet (a copy change to a sent email is its own approval).
+   * Optional so older callers and fixtures read as OPEN.
+   */
+  vendorEligibility?: string | null;
+  vendorEligibilityOrg?: string | null;
 }
 
 function esc(s: string): string {

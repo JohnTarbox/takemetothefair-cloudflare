@@ -59,6 +59,7 @@ import { EventDayImageStrip } from "@/components/events/EventDayImageStrip";
 import { parseJsonArray } from "@/types";
 import { filterPublicTags } from "@/lib/events/public-tags";
 import { publicAccessNotes } from "@/lib/events/public-access-notes";
+import { vendorEligibilityLine } from "@takemetothefair/utils";
 import type { Metadata } from "next";
 import { auth } from "@/lib/auth";
 import { logError } from "@/lib/logger";
@@ -586,6 +587,10 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
   // OPE-1368 — stored URLs render through safeHref. An application link may
   // be a mailto: (two prod rows are), so that one also allows mailto.
   const applicationHref = safeHref(event.applicationUrl, { allowMailto: true });
+  const vendorEligibilityText = vendorEligibilityLine(
+    event.vendorEligibility,
+    event.vendorEligibilityOrg
+  );
   const promoterWebsiteHref = safeHref(event.promoter?.website);
   // OPE-986 (A2 + B2) — which vendor CTA this page shows. `claimed` and the
   // contact come from their own read: the lite projection lacks them.
@@ -1539,11 +1544,23 @@ export default async function EventDetailPage({ params }: Props, asOccurrence = 
 
                 {(event.applicationDeadline ||
                   event.applicationUrl ||
-                  event.applicationInstructions) && (
+                  event.applicationInstructions ||
+                  vendorEligibilityText) && (
                   <div className="flex items-start gap-3">
                     <FileText className="w-5 h-5 text-amber-500 mt-0.5" />
                     <div>
                       <p className="text-sm text-muted-foreground">Vendor Applications</p>
+                      {/* OPE-1564 — who may be a vendor, one plain line. Null
+                          for OPEN (the default), so an event with no value set
+                          renders exactly as before. */}
+                      {vendorEligibilityText && (
+                        <p
+                          className="text-sm font-medium text-foreground"
+                          data-testid="event-vendor-eligibility"
+                        >
+                          {vendorEligibilityText}
+                        </p>
+                      )}
                       {event.applicationDeadline && (
                         <p
                           className={`text-sm font-medium ${new Date(event.applicationDeadline) < new Date() ? "text-destructive" : "text-foreground"}`}

@@ -325,6 +325,12 @@ export async function rolloverEventIfRecurring(
     applicationUrl: source.applicationUrl,
     applicationInstructions: source.applicationInstructions,
     walkInsAllowed: source.walkInsAllowed,
+    // OPE-1564 — a guild's members-only rule is a standing org rule, like the
+    // portal/instructions above (which, for the Craftworkers row, carry the
+    // same sentence); a rolled edition that dropped it would present a closed
+    // show as open vendor space.
+    vendorEligibility: source.vendorEligibility,
+    vendorEligibilityOrg: source.vendorEligibilityOrg,
     primaryAudience: source.primaryAudience,
     publicAccess: source.publicAccess,
     accessNotes: source.accessNotes,
